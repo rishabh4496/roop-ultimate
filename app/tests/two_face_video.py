@@ -784,16 +784,40 @@ def main():
     print(f"[bench] sources: {names[0]} ({len(facesets[0].faces)} faces), "
           f"{names[1]} ({len(facesets[1].faces)} faces)", flush=True)
 
-    if args.capture >= 0:
-        cap_idx, cap_frame = args.capture, frame_at(args.video, args.capture)
+    if args.capture >= 0 or args.capture_extra.strip():
+        # Manual override path, unchanged: an explicit frame (and/or extra
+        # angle frames) was asked for, so honor it exactly rather than
+        # second-guessing it with the automatic capture below.
+        if args.capture >= 0:
+            cap_idx, cap_frame = args.capture, frame_at(args.video, args.capture)
+        else:
+            cap_idx, cap_frame = separated_frame_with_fallback(args.video)
+        print(f"[bench] target faces captured from frame {cap_idx}", flush=True)
+        extra = [frame_at(args.video, int(x)) for x in args.capture_extra.split(",") if x.strip()]
+        targets, groups = capture_targets(cap_frame, extra)
+        if extra:
+            print(f"[bench] plus {len(extra)} extra angle frame(s): {args.capture_extra}",
+                  flush=True)
     else:
-        cap_idx, cap_frame = separated_frame_with_fallback(args.video)
-    print(f"[bench] target faces captured from frame {cap_idx}", flush=True)
-    extra = [frame_at(args.video, int(x)) for x in args.capture_extra.split(",") if x.strip()]
-    targets, groups = capture_targets(cap_frame, extra)
-    if extra:
-        print(f"[bench] plus {len(extra)} extra angle frame(s): {args.capture_extra}",
+        # Default path. `separated_frame_with_fallback` + `capture_targets`
+        # (a single shared frame) breaks down hard when the clip never has a
+        # clean separated moment — the fallback then seeds from whatever
+        # overlapping frame it lands on, which can be a near-featureless
+        # crop (measured: an ArcFace-aligned capture that was pure neck/chin,
+        # no eyes, on a content-heavy clip). `capture_targets_best_frontal`
+        # keeps the same seed for stable left/right assignment but then
+        # independently finds each person's own best (lowest off-axis) frame
+        # anywhere in the clip — its own docstring documents fixing this
+        # exact failure mode on a different clip (68-70% -> under 20%
+        # not-swapped) and never makes the capture worse (falls back to the
+        # seed per-person if nothing better is found). `enrich_targets_auto_angles`
+        # then grows a multi-angle bank the same way the real app's harvest
+        # button does. This matches sample_bench.py's already-proven default
+        # capture path exactly — see tests/sample_bench.py.
+        targets, groups = capture_targets_best_frontal(args.video)
+        print(f"[bench] target faces captured from each person's own best-frontal frame",
               flush=True)
+        targets, groups = enrich_targets_auto_angles(args.video, targets, groups, log_prefix="[bench]")
 
     clip = trim(args.video, args.start, args.end,
                 os.path.join(work, "clip.mp4"))
