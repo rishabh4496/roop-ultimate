@@ -1,0 +1,7 @@
+{
+  "title": "roop-ultimate",
+  "description": "EXPERIMENTAL recode branch of roop-unleashed-wip — face detection, mask engines, and enhancers being rebuilt for robustness. Demo/test only until verified.",
+  "plugin": {
+    "menu": []
+  }
+}

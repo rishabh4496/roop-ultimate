@@ -1,0 +1,45 @@
+# IDE
+.vs
+.idea
+.vscode
+.claude
+
+# Python
+__pycache__
+*.pth
+venv
+.ruff_cache
+
+# Pinokio launcher env/cache
+/env
+/start.bat
+/run.bat
+/start.sh
+cache
+logs
+
+# App runtime directories (also covered by app/.gitignore)
+app/env
+app/models
+app/temp
+app/output
+app/config.yaml
+app/saved_configs
+app/facesets
+
+# app/output and app/temp are already ignored above as directories
+
+# Local snapshot of the v1 React UI (canonical backup is the react-ui-v1 git tag)
+react-ui-v1-backup/
+
+# Learned runtime-estimate store (per-machine, grows over time)
+app/runtime_calibration.json
+app/run_history.json
+app/profiles.json
+# Persisted batch queue (per-machine; jobs reference locally loaded targets)
+app/queue.json
+app/facesets/
+# KEEP sidecar local state (venv, cloned repo, weights)
+app/sidecar_keep/.venv/
+app/sidecar_keep/KEEP/
+app/sidecar_keep/weights/

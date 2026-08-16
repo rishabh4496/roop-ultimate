@@ -1,0 +1,10 @@
+# Sidecar-only dependencies — installed into sidecar_keep/.venv, NEVER into the
+# main app env (their basicsr/hub pins are exactly what conflicts there).
+# torch is installed separately by setup_sidecar.py (CUDA index).
+basicsr>=1.4.2
+facexlib>=0.3.0
+einops
+numpy<2
+opencv-python
+scipy
+Pillow

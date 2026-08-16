@@ -1,0 +1,1374 @@
+@import "tailwindcss";
+
+/* ── Typography, vendored ─────────────────────────────────────────────────
+   Plus Jakarta Sans used to be pulled from fonts.googleapis.com. This app is
+   launched by Pinokio and runs entirely against 127.0.0.1, so that was the one
+   asset in the whole UI that needed the internet: offline, the request simply
+   failed and every surface silently fell back to Segoe UI — the type scale
+   below still applied, but none of the letterforms it was tuned against. Even
+   online it cost a render-blocking round trip to a second origin on every
+   launch, before a single pixel could paint.
+
+   These are the upstream VARIABLE files (one per subset instead of six static
+   weights each), so the whole family is 49 KB and any weight in the range is
+   available rather than the six that were listed. That range is 200-800, which
+   is the real family — the old import asked for 900 as well and Google quietly
+   dropped it, so `font-black` was already being clamped to 800 by the browser.
+   Declaring 200-800 honestly renders exactly what shipped before.
+
+   Vite fingerprints and rewrites these URLs at build time, so they resolve
+   under any base path. `swap` keeps text visible during the (now local, near
+   instant) load rather than flashing invisible. */
+@font-face {
+  font-family: 'Plus Jakarta Sans';
+  font-style: normal;
+  font-weight: 200 800;
+  font-display: swap;
+  src: url('./assets/fonts/plus-jakarta-sans-latin.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: 'Plus Jakarta Sans';
+  font-style: normal;
+  font-weight: 200 800;
+  font-display: swap;
+  src: url('./assets/fonts/plus-jakarta-sans-latin-ext.woff2') format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
+/* ── Ultrawide breakpoints ────────────────────────────────────────────────
+   Tailwind's defaults stop at 2xl (1536px), so on ultrawide monitors (2560px,
+   3440px, 5120px) the layout would just sit in a centered column with huge empty
+   side margins. These extra breakpoints let the container and grids expand to use
+   the horizontal space. Usage: `3xl:max-w-[1800px]`, `4xl:grid-cols-4`, etc. */
+@theme {
+  --breakpoint-3xl: 1920px;
+  --breakpoint-4xl: 2560px;
+  --breakpoint-5xl: 3440px;
+
+  /* ── Type scale ────────────────────────────────────────────────────────
+     This app is dense — badges, HUD readouts, micro-labels — so most of its
+     text lives BELOW Tailwind's `text-xs` (12px), where Tailwind offers no
+     steps at all. That gap is why 303 one-off `text-[Npx]` values had
+     accumulated across eleven sizes from 7px to 34px: every author picked a
+     number, and nothing made the ramp visible or reviewable.
+
+     These are deliberately font-size ONLY. Tailwind's own `text-xs`/`text-sm`
+     also set a line-height, and the arbitrary values they replace did not, so
+     naming them without a line-height is what keeps this a rename rather than
+     a silent re-layout of every dense row in the app.
+
+     Sizes below `nano` are gone on purpose: 7px and 8px uppercase text with
+     letter-spacing is past legible, so those uses are promoted to the 9px
+     floor. `test_ui_type_scale.py` keeps new one-off sizes out. */
+  --text-nano: 9px;      /* badges + overlay chips; the legibility floor */
+  --text-micro: 10px;    /* micro-labels — the workhorse of this UI */
+  --text-mini: 11px;     /* captions, secondary metadata */
+  --text-note: 12px;     /* like text-xs, without its line-height */
+  --text-compact: 13px;  /* dense body copy */
+  --text-plain: 14px;    /* like text-sm, without its line-height */
+  --text-lead: 15px;     /* panel + dialog titles */
+  --text-title: 17px;    /* stat readouts */
+  --text-display: 34px;  /* the single hero numeral (live FPS) */
+}
+
+/* ── Theme Definitions ────────────────────────────────────────────────── */
+:root {
+  /* Default: Obsidian — refined premium dark (calm surfaces, hairline borders) */
+  --bg-gradient: radial-gradient(at 18% -12%, rgba(233, 69, 96, 0.05) 0px, transparent 42%), radial-gradient(at 100% 108%, rgba(139, 92, 246, 0.035) 0px, transparent 45%), linear-gradient(162deg, #06070B, #0A0B11 55%, #070810);
+  --card-bg: rgba(19, 21, 29, 0.55);
+  --surface-2: rgba(255, 255, 255, 0.035);
+  --text-main: #F4F5F7;
+  --text-muted: rgba(244, 245, 247, 0.55);
+  --accent: #E94560;
+  --accent-hover: #F1657C;
+  --accent-glow: rgba(233, 69, 96, 0.14);
+  --border-color: rgba(255, 255, 255, 0.07);
+  --border-strong: rgba(255, 255, 255, 0.13);
+  --input-bg: rgba(8, 9, 13, 0.55);
+  --input-focus: rgba(233, 69, 96, 0.14);
+  --scrollbar-thumb: rgba(255, 255, 255, 0.13);
+  --scrollbar-thumb-hover: rgba(255, 255, 255, 0.3);
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.28), 0 10px 30px rgba(0, 0, 0, 0.22);
+  --radius-lg: 16px;
+  /* The top-edge highlight on a glass panel — the surface catching light.
+     This was hardcoded white in .glass-panel and .card-lift, at two slightly
+     different alphas, which meant light themes composited a white highlight
+     against a near-white card and got nothing visible for the cost. Now each
+     mode can state its own edge; see the light override further down. */
+  --specular: rgba(255, 255, 255, 0.05);
+
+  /* ── Semantic status ──────────────────────────────────────────────────
+     Four states this UI genuinely has to signal, as tokens.
+
+     Their ABSENCE is the whole explanation for 321 hardcoded palette
+     utilities across 15 hue families (amber 80, emerald 72, red 71,
+     indigo 30, blue 14, pink 13, cyan 12 …): the design language allows one
+     accent, but nothing existed to express "this is a warning" or "this
+     control is active", so every author reached for a Tailwind swatch. In the
+     always-visible run bar alone that put FOUR rogue accent hues — indigo,
+     blue, amber, rose — next to the one accent, and none of them move when the
+     theme does.
+
+     Declared ONCE here, not in all 37 theme blocks: custom properties inherit,
+     so every theme gets them and any theme can still override one. Same
+     "repoint the variable, never enumerate" rule as --color-white below. */
+  --ok: #34D399;
+  --warn: #FBBF24;
+  --danger: #F87171;
+  --info: #60A5FA;
+}
+
+.theme-glass-light {
+  --bg-gradient: linear-gradient(135deg, #f7f9fc, #e5e9f0, #e2e8f0, #eedee8);
+  --card-bg: rgba(255, 255, 255, 0.6);
+  --text-main: #1f2937;
+  --text-muted: rgba(31, 41, 55, 0.6);
+  --accent: #E94560;
+  --accent-hover: #d63450;
+  --accent-glow: rgba(233, 69, 96, 0.15);
+  --border-color: rgba(0, 0, 0, 0.06);
+  --input-bg: rgba(255, 255, 255, 0.5);
+  --input-focus: rgba(233, 69, 96, 0.12);
+  --scrollbar-thumb: rgba(0, 0, 0, 0.12);
+  --scrollbar-thumb-hover: rgba(0, 0, 0, 0.28);
+}
+
+.theme-cyberpunk-dark {
+  --bg-gradient: linear-gradient(135deg, #09010f, #030006, #00040e, #0e0007);
+  --card-bg: rgba(18, 4, 28, 0.65);
+  --text-main: #00ffcc;
+  --text-muted: rgba(0, 255, 204, 0.65);
+  --accent: #ff007f;
+  --accent-hover: #ff3399;
+  --accent-glow: rgba(255, 0, 127, 0.35);
+  --border-color: rgba(0, 255, 204, 0.15);
+  --input-bg: rgba(8, 1, 16, 0.45);
+  --input-focus: rgba(0, 255, 204, 0.18);
+  --scrollbar-thumb: rgba(0, 255, 204, 0.22);
+  --scrollbar-thumb-hover: rgba(0, 255, 204, 0.42);
+}
+
+.theme-cyberpunk-light {
+  --bg-gradient: linear-gradient(135deg, #fff2f6, #f2fff2, #f2f7ff, #fff6f2);
+  --card-bg: rgba(255, 255, 255, 0.75);
+  --text-main: #270b4a;
+  --text-muted: rgba(39, 11, 74, 0.6);
+  --accent: #ff007f;
+  --accent-hover: #e00070;
+  --accent-glow: rgba(255, 0, 127, 0.18);
+  --border-color: rgba(39, 11, 74, 0.08);
+  --input-bg: rgba(255, 255, 255, 0.55);
+  --input-focus: rgba(255, 0, 127, 0.1);
+  --scrollbar-thumb: rgba(39, 11, 74, 0.12);
+  --scrollbar-thumb-hover: rgba(39, 11, 74, 0.28);
+}
+
+.theme-emerald-dark {
+  --bg-gradient: linear-gradient(135deg, #040f0a, #06140d, #040c12, #0a0715);
+  --card-bg: rgba(10, 24, 17, 0.6);
+  --text-main: #def0e7;
+  --text-muted: rgba(222, 240, 231, 0.55);
+  --accent: #10b981;
+  --accent-hover: #34d399;
+  --accent-glow: rgba(16, 185, 129, 0.25);
+  --border-color: rgba(255, 255, 255, 0.06);
+  --input-bg: rgba(0, 0, 0, 0.3);
+  --input-focus: rgba(16, 185, 129, 0.18);
+  --scrollbar-thumb: rgba(16, 185, 129, 0.2);
+  --scrollbar-thumb-hover: rgba(16, 185, 129, 0.38);
+}
+
+.theme-emerald-light {
+  --bg-gradient: linear-gradient(135deg, #effef4, #e6f6e8, #def2f0, #e1f2fc);
+  --card-bg: rgba(255, 255, 255, 0.65);
+  --text-main: #044333;
+  --text-muted: rgba(4, 67, 51, 0.6);
+  --accent: #059669;
+  --accent-hover: #047857;
+  --accent-glow: rgba(5, 150, 105, 0.18);
+  --border-color: rgba(0, 0, 0, 0.06);
+  --input-bg: rgba(255, 255, 255, 0.5);
+  --input-focus: rgba(5, 150, 105, 0.12);
+  --scrollbar-thumb: rgba(5, 150, 105, 0.15);
+  --scrollbar-thumb-hover: rgba(5, 150, 105, 0.32);
+}
+
+.theme-nordic-dark {
+  --bg-gradient: linear-gradient(135deg, #0b0f19, #121826, #080c14, #171420);
+  --card-bg: rgba(24, 32, 48, 0.6);
+  --text-main: #e5e9f0;
+  --text-muted: rgba(229, 233, 240, 0.55);
+  --accent: #88c0d0;
+  --accent-hover: #8fbcbb;
+  --accent-glow: rgba(136, 192, 208, 0.25);
+  --border-color: rgba(255, 255, 255, 0.06);
+  --input-bg: rgba(0, 0, 0, 0.3);
+  --input-focus: rgba(136, 192, 208, 0.18);
+  --scrollbar-thumb: rgba(136, 192, 208, 0.2);
+  --scrollbar-thumb-hover: rgba(136, 192, 208, 0.38);
+}
+
+.theme-nordic-light {
+  --bg-gradient: linear-gradient(135deg, #f6f8fa, #e6ebf0, #dbe0e6, #e2e2e8);
+  --card-bg: rgba(255, 255, 255, 0.65);
+  --text-main: #2b303c;
+  --text-muted: rgba(43, 48, 60, 0.6);
+  --accent: #5e81ac;
+  --accent-hover: #4c566a;
+  --accent-glow: rgba(94, 129, 172, 0.18);
+  --border-color: rgba(0, 0, 0, 0.06);
+  --input-bg: rgba(255, 255, 255, 0.5);
+  --input-focus: rgba(94, 129, 172, 0.12);
+  --scrollbar-thumb: rgba(94, 129, 172, 0.15);
+  --scrollbar-thumb-hover: rgba(94, 129, 172, 0.32);
+}
+
+.theme-midnight-violet {
+  --bg-gradient: radial-gradient(at 0% 0%, rgba(155, 93, 229, 0.10) 0px, transparent 50%), radial-gradient(at 100% 100%, rgba(0, 187, 249, 0.06) 0px, transparent 50%), linear-gradient(140deg, #07030f, #0d0819 45%, #060412);
+  --card-bg: rgba(18, 12, 32, 0.5);
+  --text-main: #f3eeff;
+  --text-muted: rgba(243, 238, 255, 0.6);
+  --accent: #9b5de5;
+  --accent-hover: #b07ff0;
+  --accent-glow: rgba(155, 93, 229, 0.3);
+  --border-color: rgba(255, 255, 255, 0.06);
+  --input-bg: rgba(8, 4, 18, 0.6);
+  --input-focus: rgba(155, 93, 229, 0.18);
+  --scrollbar-thumb: rgba(155, 93, 229, 0.22);
+  --scrollbar-thumb-hover: rgba(155, 93, 229, 0.42);
+}
+
+.theme-sunset-amber {
+  --bg-gradient: radial-gradient(at 0% 0%, rgba(245, 158, 11, 0.10) 0px, transparent 50%), radial-gradient(at 100% 100%, rgba(233, 69, 96, 0.06) 0px, transparent 50%), linear-gradient(140deg, #0d0703, #14100a 45%, #0a0604);
+  --card-bg: rgba(28, 18, 8, 0.5);
+  --text-main: #fdf3e7;
+  --text-muted: rgba(253, 243, 231, 0.6);
+  --accent: #f59e0b;
+  --accent-hover: #fbbf24;
+  --accent-glow: rgba(245, 158, 11, 0.28);
+  --border-color: rgba(255, 255, 255, 0.06);
+  --input-bg: rgba(16, 10, 3, 0.6);
+  --input-focus: rgba(245, 158, 11, 0.18);
+  --scrollbar-thumb: rgba(245, 158, 11, 0.22);
+  --scrollbar-thumb-hover: rgba(245, 158, 11, 0.42);
+}
+
+.theme-ocean-teal {
+  --bg-gradient: radial-gradient(at 0% 0%, rgba(0, 187, 249, 0.10) 0px, transparent 50%), radial-gradient(at 100% 100%, rgba(16, 185, 129, 0.06) 0px, transparent 50%), linear-gradient(140deg, #030a0f, #071620 45%, #04101a);
+  --card-bg: rgba(10, 24, 34, 0.55);
+  --text-main: #e6f6ff;
+  --text-muted: rgba(230, 246, 255, 0.6);
+  --accent: #00bbf9;
+  --accent-hover: #38ceff;
+  --accent-glow: rgba(0, 187, 249, 0.28);
+  --border-color: rgba(255, 255, 255, 0.06);
+  --input-bg: rgba(3, 12, 18, 0.6);
+  --input-focus: rgba(0, 187, 249, 0.18);
+  --scrollbar-thumb: rgba(0, 187, 249, 0.22);
+  --scrollbar-thumb-hover: rgba(0, 187, 249, 0.42);
+}
+
+.theme-rose-gold {
+  --bg-gradient: radial-gradient(at 0% 0%, rgba(244, 114, 152, 0.10) 0px, transparent 50%), radial-gradient(at 100% 100%, rgba(197, 168, 128, 0.07) 0px, transparent 50%), linear-gradient(140deg, #0e070a, #150a10 45%, #0b0508);
+  --card-bg: rgba(28, 14, 20, 0.5);
+  --text-main: #fdeef3;
+  --text-muted: rgba(253, 238, 243, 0.6);
+  --accent: #f472a0;
+  --accent-hover: #f890b5;
+  --accent-glow: rgba(244, 114, 160, 0.28);
+  --border-color: rgba(255, 255, 255, 0.06);
+  --input-bg: rgba(16, 8, 12, 0.6);
+  --input-focus: rgba(244, 114, 160, 0.18);
+  --scrollbar-thumb: rgba(244, 114, 160, 0.22);
+  --scrollbar-thumb-hover: rgba(244, 114, 160, 0.42);
+}
+
+.theme-dracula {
+  --bg-gradient: radial-gradient(at 0% 0%, rgba(189, 147, 249, 0.10) 0px, transparent 50%), radial-gradient(at 100% 100%, rgba(255, 121, 198, 0.06) 0px, transparent 50%), linear-gradient(140deg, #191a26, #21222c 45%, #14151d);
+  --card-bg: rgba(40, 42, 54, 0.55);
+  --text-main: #f8f8f2;
+  --text-muted: rgba(248, 248, 242, 0.6);
+  --accent: #bd93f9;
+  --accent-hover: #d0aefb;
+  --accent-glow: rgba(189, 147, 249, 0.3);
+  --border-color: rgba(255, 255, 255, 0.07);
+  --input-bg: rgba(25, 26, 38, 0.6);
+  --input-focus: rgba(189, 147, 249, 0.18);
+  --scrollbar-thumb: rgba(189, 147, 249, 0.24);
+  --scrollbar-thumb-hover: rgba(189, 147, 249, 0.44);
+}
+
+.theme-solarized-dark {
+  --bg-gradient: radial-gradient(at 0% 0%, rgba(38, 139, 210, 0.10) 0px, transparent 50%), radial-gradient(at 100% 100%, rgba(133, 153, 0, 0.06) 0px, transparent 50%), linear-gradient(140deg, #04222b, #073642 45%, #032630);
+  --card-bg: rgba(7, 54, 66, 0.5);
+  --text-main: #eee8d5;
+  --text-muted: rgba(238, 232, 213, 0.6);
+  --accent: #268bd2;
+  --accent-hover: #4aa3e0;
+  --accent-glow: rgba(38, 139, 210, 0.28);
+  --border-color: rgba(238, 232, 213, 0.08);
+  --input-bg: rgba(3, 33, 41, 0.6);
+  --input-focus: rgba(38, 139, 210, 0.18);
+  --scrollbar-thumb: rgba(38, 139, 210, 0.22);
+  --scrollbar-thumb-hover: rgba(38, 139, 210, 0.42);
+}
+
+.theme-monochrome {
+  --bg-gradient: radial-gradient(at 0% 0%, rgba(255, 255, 255, 0.05) 0px, transparent 50%), linear-gradient(140deg, #050505, #0d0d0d 45%, #060606);
+  --card-bg: rgba(20, 20, 20, 0.55);
+  --text-main: #fafafa;
+  --text-muted: rgba(250, 250, 250, 0.55);
+  --accent: #d4d4d8;
+  --accent-hover: #f4f4f5;
+  --accent-glow: rgba(212, 212, 216, 0.2);
+  --border-color: rgba(255, 255, 255, 0.08);
+  --input-bg: rgba(0, 0, 0, 0.55);
+  --input-focus: rgba(255, 255, 255, 0.12);
+  --scrollbar-thumb: rgba(255, 255, 255, 0.2);
+  --scrollbar-thumb-hover: rgba(255, 255, 255, 0.4);
+}
+
+.theme-sakura-light {
+  --bg-gradient: linear-gradient(135deg, #fff5f8, #ffeef4, #fbe9f0, #fef2f6);
+  --card-bg: rgba(255, 255, 255, 0.7);
+  --text-main: #4a1d2e;
+  --text-muted: rgba(74, 29, 46, 0.6);
+  --accent: #e0538a;
+  --accent-hover: #cf3e78;
+  --accent-glow: rgba(224, 83, 138, 0.16);
+  --border-color: rgba(74, 29, 46, 0.08);
+  --input-bg: rgba(255, 255, 255, 0.55);
+  --input-focus: rgba(224, 83, 138, 0.12);
+  --scrollbar-thumb: rgba(224, 83, 138, 0.18);
+  --scrollbar-thumb-hover: rgba(224, 83, 138, 0.34);
+}
+
+/* ── AMOLED family: true #000000 for OLED power saving (no ambient glow) ─── */
+.theme-amoled {
+  --bg-gradient: #000000;
+  --card-bg: rgba(12, 12, 12, 0.72);
+  --surface-2: rgba(255, 255, 255, 0.028);
+  --text-main: #f4f4f5;
+  --text-muted: rgba(244, 244, 245, 0.55);
+  --accent: #E94560;
+  --accent-hover: #f1657c;
+  --accent-glow: rgba(233, 69, 96, 0.16);
+  --border-color: rgba(255, 255, 255, 0.06);
+  --border-strong: rgba(255, 255, 255, 0.12);
+  --input-bg: rgba(0, 0, 0, 0.85);
+  --input-focus: rgba(233, 69, 96, 0.16);
+  --scrollbar-thumb: rgba(255, 255, 255, 0.14);
+  --scrollbar-thumb-hover: rgba(255, 255, 255, 0.3);
+}
+
+.theme-amoled-ice {
+  --bg-gradient: #000000;
+  --card-bg: rgba(12, 12, 12, 0.72);
+  --surface-2: rgba(255, 255, 255, 0.028);
+  --text-main: #eaf6ff;
+  --text-muted: rgba(234, 246, 255, 0.55);
+  --accent: #38bdf8;
+  --accent-hover: #5cccfb;
+  --accent-glow: rgba(56, 189, 248, 0.16);
+  --border-color: rgba(255, 255, 255, 0.06);
+  --border-strong: rgba(255, 255, 255, 0.12);
+  --input-bg: rgba(0, 0, 0, 0.85);
+  --input-focus: rgba(56, 189, 248, 0.16);
+  --scrollbar-thumb: rgba(56, 189, 248, 0.2);
+  --scrollbar-thumb-hover: rgba(56, 189, 248, 0.4);
+}
+
+.theme-amoled-matrix {
+  --bg-gradient: #000000;
+  --card-bg: rgba(12, 12, 12, 0.72);
+  --surface-2: rgba(255, 255, 255, 0.028);
+  --text-main: #e5ffe9;
+  --text-muted: rgba(229, 255, 233, 0.55);
+  --accent: #22c55e;
+  --accent-hover: #4ade80;
+  --accent-glow: rgba(34, 197, 94, 0.16);
+  --border-color: rgba(255, 255, 255, 0.06);
+  --border-strong: rgba(255, 255, 255, 0.12);
+  --input-bg: rgba(0, 0, 0, 0.85);
+  --input-focus: rgba(34, 197, 94, 0.16);
+  --scrollbar-thumb: rgba(34, 197, 94, 0.2);
+  --scrollbar-thumb-hover: rgba(34, 197, 94, 0.4);
+}
+
+.theme-amoled-gold {
+  --bg-gradient: #000000;
+  --card-bg: rgba(12, 12, 12, 0.72);
+  --surface-2: rgba(255, 255, 255, 0.028);
+  --text-main: #fbf4dd;
+  --text-muted: rgba(251, 244, 221, 0.55);
+  --accent: #d4af37;
+  --accent-hover: #e6c454;
+  --accent-glow: rgba(212, 175, 55, 0.16);
+  --border-color: rgba(255, 255, 255, 0.06);
+  --border-strong: rgba(255, 255, 255, 0.12);
+  --input-bg: rgba(0, 0, 0, 0.85);
+  --input-focus: rgba(212, 175, 55, 0.16);
+  --scrollbar-thumb: rgba(212, 175, 55, 0.2);
+  --scrollbar-thumb-hover: rgba(212, 175, 55, 0.4);
+}
+
+.theme-amoled-violet {
+  --bg-gradient: #000000;
+  --card-bg: rgba(12, 12, 12, 0.72);
+  --surface-2: rgba(255, 255, 255, 0.028);
+  --text-main: #f3ecff;
+  --text-muted: rgba(243, 236, 255, 0.55);
+  --accent: #a855f7;
+  --accent-hover: #bd7bf9;
+  --accent-glow: rgba(168, 85, 247, 0.16);
+  --border-color: rgba(255, 255, 255, 0.06);
+  --border-strong: rgba(255, 255, 255, 0.12);
+  --input-bg: rgba(0, 0, 0, 0.85);
+  --input-focus: rgba(168, 85, 247, 0.16);
+  --scrollbar-thumb: rgba(168, 85, 247, 0.2);
+  --scrollbar-thumb-hover: rgba(168, 85, 247, 0.4);
+}
+
+.theme-crimson-noir {
+  --bg-gradient: radial-gradient(at 0% 0%, rgba(239, 68, 68, 0.10) 0px, transparent 50%), linear-gradient(140deg, #070303, #0a0505 45%, #050202);
+  --card-bg: rgba(24, 12, 12, 0.55);
+  --text-main: #fdeaea;
+  --text-muted: rgba(253, 234, 234, 0.58);
+  --accent: #ef4444;
+  --accent-hover: #f76a6a;
+  --accent-glow: rgba(239, 68, 68, 0.28);
+  --border-color: rgba(255, 255, 255, 0.06);
+  --input-bg: rgba(10, 4, 4, 0.6);
+  --input-focus: rgba(239, 68, 68, 0.18);
+  --scrollbar-thumb: rgba(239, 68, 68, 0.22);
+  --scrollbar-thumb-hover: rgba(239, 68, 68, 0.42);
+}
+
+.theme-deep-space {
+  --bg-gradient: radial-gradient(at 10% 0%, rgba(99, 102, 241, 0.12) 0px, transparent 50%), radial-gradient(at 100% 100%, rgba(14, 165, 233, 0.06) 0px, transparent 50%), linear-gradient(150deg, #03040b, #05060f 45%, #020309);
+  --card-bg: rgba(14, 16, 30, 0.55);
+  --text-main: #e7e9ff;
+  --text-muted: rgba(231, 233, 255, 0.58);
+  --accent: #6366f1;
+  --accent-hover: #818cf8;
+  --accent-glow: rgba(99, 102, 241, 0.3);
+  --border-color: rgba(255, 255, 255, 0.06);
+  --input-bg: rgba(5, 6, 15, 0.6);
+  --input-focus: rgba(99, 102, 241, 0.18);
+  --scrollbar-thumb: rgba(99, 102, 241, 0.22);
+  --scrollbar-thumb-hover: rgba(99, 102, 241, 0.42);
+}
+
+.theme-gruvbox-dark {
+  --bg-gradient: radial-gradient(at 0% 0%, rgba(250, 189, 47, 0.08) 0px, transparent 50%), linear-gradient(140deg, #1d2021, #282828 45%, #1d2021);
+  --card-bg: rgba(60, 56, 54, 0.5);
+  --text-main: #ebdbb2;
+  --text-muted: rgba(235, 219, 178, 0.6);
+  --accent: #fabd2f;
+  --accent-hover: #fe8019;
+  --accent-glow: rgba(250, 189, 47, 0.26);
+  --border-color: rgba(235, 219, 178, 0.09);
+  --input-bg: rgba(29, 32, 33, 0.6);
+  --input-focus: rgba(250, 189, 47, 0.18);
+  --scrollbar-thumb: rgba(250, 189, 47, 0.22);
+  --scrollbar-thumb-hover: rgba(250, 189, 47, 0.42);
+}
+
+.theme-tokyo-night {
+  --bg-gradient: radial-gradient(at 0% 0%, rgba(122, 162, 247, 0.12) 0px, transparent 50%), radial-gradient(at 100% 100%, rgba(187, 154, 247, 0.07) 0px, transparent 50%), linear-gradient(150deg, #16161e, #1a1b26 45%, #13131a);
+  --card-bg: rgba(36, 40, 59, 0.55);
+  --text-main: #c0caf5;
+  --text-muted: rgba(192, 202, 245, 0.6);
+  --accent: #7aa2f7;
+  --accent-hover: #9db4f9;
+  --accent-glow: rgba(122, 162, 247, 0.28);
+  --border-color: rgba(192, 202, 245, 0.08);
+  --input-bg: rgba(19, 19, 26, 0.6);
+  --input-focus: rgba(122, 162, 247, 0.18);
+  --scrollbar-thumb: rgba(122, 162, 247, 0.22);
+  --scrollbar-thumb-hover: rgba(122, 162, 247, 0.42);
+}
+
+.theme-catppuccin-mocha {
+  --bg-gradient: radial-gradient(at 0% 0%, rgba(203, 166, 247, 0.12) 0px, transparent 50%), radial-gradient(at 100% 100%, rgba(137, 180, 250, 0.07) 0px, transparent 50%), linear-gradient(150deg, #181825, #1e1e2e 45%, #11111b);
+  --card-bg: rgba(49, 50, 68, 0.55);
+  --text-main: #cdd6f4;
+  --text-muted: rgba(205, 214, 244, 0.6);
+  --accent: #cba6f7;
+  --accent-hover: #ddbbfb;
+  --accent-glow: rgba(203, 166, 247, 0.28);
+  --border-color: rgba(205, 214, 244, 0.08);
+  --input-bg: rgba(17, 17, 27, 0.6);
+  --input-focus: rgba(203, 166, 247, 0.18);
+  --scrollbar-thumb: rgba(203, 166, 247, 0.22);
+  --scrollbar-thumb-hover: rgba(203, 166, 247, 0.42);
+}
+
+.theme-blood-moon {
+  --bg-gradient: radial-gradient(at 50% 0%, rgba(255, 46, 77, 0.14) 0px, transparent 45%), linear-gradient(160deg, #080304, #0c0406 45%, #060203);
+  --card-bg: rgba(26, 10, 14, 0.55);
+  --text-main: #ffe6ea;
+  --text-muted: rgba(255, 230, 234, 0.58);
+  --accent: #ff2e4d;
+  --accent-hover: #ff5a72;
+  --accent-glow: rgba(255, 46, 77, 0.32);
+  --border-color: rgba(255, 255, 255, 0.06);
+  --input-bg: rgba(10, 3, 5, 0.6);
+  --input-focus: rgba(255, 46, 77, 0.18);
+  --scrollbar-thumb: rgba(255, 46, 77, 0.22);
+  --scrollbar-thumb-hover: rgba(255, 46, 77, 0.44);
+}
+
+.theme-forest-night {
+  --bg-gradient: radial-gradient(at 0% 0%, rgba(74, 222, 128, 0.10) 0px, transparent 50%), radial-gradient(at 100% 100%, rgba(16, 185, 129, 0.06) 0px, transparent 50%), linear-gradient(150deg, #040a05, #071108 45%, #030704);
+  --card-bg: rgba(12, 26, 16, 0.55);
+  --text-main: #e4f5e8;
+  --text-muted: rgba(228, 245, 232, 0.58);
+  --accent: #4ade80;
+  --accent-hover: #6ee79b;
+  --accent-glow: rgba(74, 222, 128, 0.26);
+  --border-color: rgba(255, 255, 255, 0.06);
+  --input-bg: rgba(4, 10, 5, 0.6);
+  --input-focus: rgba(74, 222, 128, 0.18);
+  --scrollbar-thumb: rgba(74, 222, 128, 0.22);
+  --scrollbar-thumb-hover: rgba(74, 222, 128, 0.42);
+}
+
+.theme-espresso {
+  --bg-gradient: radial-gradient(at 0% 0%, rgba(200, 149, 109, 0.10) 0px, transparent 50%), linear-gradient(150deg, #0d0805, #120c08 45%, #0a0604);
+  --card-bg: rgba(32, 22, 14, 0.55);
+  --text-main: #f2e5d6;
+  --text-muted: rgba(242, 229, 214, 0.58);
+  --accent: #c8956d;
+  --accent-hover: #d8a982;
+  --accent-glow: rgba(200, 149, 109, 0.26);
+  --border-color: rgba(255, 255, 255, 0.06);
+  --input-bg: rgba(13, 8, 5, 0.6);
+  --input-focus: rgba(200, 149, 109, 0.18);
+  --scrollbar-thumb: rgba(200, 149, 109, 0.22);
+  --scrollbar-thumb-hover: rgba(200, 149, 109, 0.42);
+}
+
+.theme-royal-purple {
+  --bg-gradient: radial-gradient(at 0% 0%, rgba(168, 85, 247, 0.12) 0px, transparent 50%), radial-gradient(at 100% 100%, rgba(217, 70, 239, 0.06) 0px, transparent 50%), linear-gradient(150deg, #08040f, #0c0616 45%, #060310);
+  --card-bg: rgba(22, 14, 34, 0.55);
+  --text-main: #f2e9ff;
+  --text-muted: rgba(242, 233, 255, 0.58);
+  --accent: #a855f7;
+  --accent-hover: #bd7bf9;
+  --accent-glow: rgba(168, 85, 247, 0.3);
+  --border-color: rgba(255, 255, 255, 0.06);
+  --input-bg: rgba(8, 4, 15, 0.6);
+  --input-focus: rgba(168, 85, 247, 0.18);
+  --scrollbar-thumb: rgba(168, 85, 247, 0.22);
+  --scrollbar-thumb-hover: rgba(168, 85, 247, 0.42);
+}
+
+.theme-neon-lime {
+  --bg-gradient: radial-gradient(at 0% 0%, rgba(163, 230, 53, 0.10) 0px, transparent 50%), linear-gradient(150deg, #06090b, #0a0f04 45%, #050803);
+  --card-bg: rgba(16, 22, 10, 0.55);
+  --text-main: #edffd6;
+  --text-muted: rgba(237, 255, 214, 0.58);
+  --accent: #a3e635;
+  --accent-hover: #bef264;
+  --accent-glow: rgba(163, 230, 53, 0.28);
+  --border-color: rgba(255, 255, 255, 0.06);
+  --input-bg: rgba(6, 9, 4, 0.6);
+  --input-focus: rgba(163, 230, 53, 0.18);
+  --scrollbar-thumb: rgba(163, 230, 53, 0.22);
+  --scrollbar-thumb-hover: rgba(163, 230, 53, 0.42);
+}
+
+.theme-copper {
+  --bg-gradient: radial-gradient(at 0% 0%, rgba(224, 120, 86, 0.10) 0px, transparent 50%), linear-gradient(150deg, #0f0805, #140a06 45%, #0b0604);
+  --card-bg: rgba(34, 20, 14, 0.55);
+  --text-main: #f7e6dc;
+  --text-muted: rgba(247, 230, 220, 0.58);
+  --accent: #e07856;
+  --accent-hover: #e89174;
+  --accent-glow: rgba(224, 120, 86, 0.28);
+  --border-color: rgba(255, 255, 255, 0.06);
+  --input-bg: rgba(15, 8, 5, 0.6);
+  --input-focus: rgba(224, 120, 86, 0.18);
+  --scrollbar-thumb: rgba(224, 120, 86, 0.22);
+  --scrollbar-thumb-hover: rgba(224, 120, 86, 0.42);
+}
+
+.theme-steel-slate {
+  --bg-gradient: radial-gradient(at 0% 0%, rgba(56, 189, 248, 0.08) 0px, transparent 50%), linear-gradient(150deg, #070b0f, #0b0f14 45%, #060a0e);
+  --card-bg: rgba(20, 26, 34, 0.55);
+  --text-main: #e6edf3;
+  --text-muted: rgba(230, 237, 243, 0.58);
+  --accent: #38bdf8;
+  --accent-hover: #5cccfb;
+  --accent-glow: rgba(56, 189, 248, 0.24);
+  --border-color: rgba(255, 255, 255, 0.06);
+  --input-bg: rgba(7, 11, 15, 0.6);
+  --input-focus: rgba(56, 189, 248, 0.18);
+  --scrollbar-thumb: rgba(56, 189, 248, 0.2);
+  --scrollbar-thumb-hover: rgba(56, 189, 248, 0.4);
+}
+
+.theme-vaporwave {
+  --bg-gradient: radial-gradient(at 0% 0%, rgba(255, 113, 206, 0.12) 0px, transparent 50%), radial-gradient(at 100% 100%, rgba(1, 205, 254, 0.08) 0px, transparent 50%), linear-gradient(150deg, #0a0414, #10061a 45%, #08030f);
+  --card-bg: rgba(26, 14, 40, 0.55);
+  --text-main: #fdeaff;
+  --text-muted: rgba(253, 234, 255, 0.6);
+  --accent: #ff71ce;
+  --accent-hover: #ff92db;
+  --accent-glow: rgba(255, 113, 206, 0.3);
+  --border-color: rgba(255, 255, 255, 0.06);
+  --input-bg: rgba(10, 4, 20, 0.6);
+  --input-focus: rgba(255, 113, 206, 0.18);
+  --scrollbar-thumb: rgba(255, 113, 206, 0.22);
+  --scrollbar-thumb-hover: rgba(255, 113, 206, 0.42);
+}
+
+.theme-arctic-light {
+  --bg-gradient: linear-gradient(135deg, #f5f9fd, #eef4fa, #e4eef7, #eef2fb);
+  --card-bg: rgba(255, 255, 255, 0.68);
+  --text-main: #0f2a3f;
+  --text-muted: rgba(15, 42, 63, 0.6);
+  --accent: #0ea5e9;
+  --accent-hover: #0284c7;
+  --accent-glow: rgba(14, 165, 233, 0.16);
+  --border-color: rgba(15, 42, 63, 0.08);
+  --input-bg: rgba(255, 255, 255, 0.55);
+  --input-focus: rgba(14, 165, 233, 0.12);
+  --scrollbar-thumb: rgba(14, 165, 233, 0.16);
+  --scrollbar-thumb-hover: rgba(14, 165, 233, 0.32);
+}
+
+.theme-latte-light {
+  --bg-gradient: linear-gradient(135deg, #f6f7fb, #eff1f5, #e6e9ef, #eceef4);
+  --card-bg: rgba(255, 255, 255, 0.7);
+  --text-main: #4c4f69;
+  --text-muted: rgba(76, 79, 105, 0.6);
+  --accent: #8839ef;
+  --accent-hover: #7420e0;
+  --accent-glow: rgba(136, 57, 239, 0.15);
+  --border-color: rgba(76, 79, 105, 0.08);
+  --input-bg: rgba(255, 255, 255, 0.55);
+  --input-focus: rgba(136, 57, 239, 0.12);
+  --scrollbar-thumb: rgba(136, 57, 239, 0.16);
+  --scrollbar-thumb-hover: rgba(136, 57, 239, 0.32);
+}
+
+.theme-sepia-light {
+  --bg-gradient: linear-gradient(135deg, #f8f1e6, #f4ece0, #efe4d3, #f5eddf);
+  --card-bg: rgba(255, 252, 246, 0.72);
+  --text-main: #4a3b2a;
+  --text-muted: rgba(74, 59, 42, 0.62);
+  --accent: #b45309;
+  --accent-hover: #92400e;
+  --accent-glow: rgba(180, 83, 9, 0.14);
+  --border-color: rgba(74, 59, 42, 0.1);
+  --input-bg: rgba(255, 252, 246, 0.6);
+  --input-focus: rgba(180, 83, 9, 0.12);
+  --scrollbar-thumb: rgba(180, 83, 9, 0.16);
+  --scrollbar-thumb-hover: rgba(180, 83, 9, 0.32);
+}
+
+@layer base {
+  body {
+    margin: 0;
+    color: var(--text-main);
+    min-height: 100vh;
+    background-attachment: fixed;
+    /* Soft top-lit ambient glow over a deep obsidian backdrop — no busy grid. */
+    background:
+      radial-gradient(circle at 50% -10%, var(--accent-glow), transparent 38%),
+      var(--bg-gradient);
+    background-size: 100% 100%, 100% 100%;
+    font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    letter-spacing: -0.01em;
+    transition: background 0.6s cubic-bezier(0.16, 1, 0.3, 1), color 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+}
+
+/* Custom smooth transitions matching Apple-style spring animations */
+.apple-transition {
+  transition: all 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.apple-spring-active:active {
+  transform: scale(0.96);
+  transition: transform 0.12s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* ── Global interaction motion ─────────────────────────────────────────────
+   Give every interactive control a smooth, springy easing on hover/focus so
+   colours, borders, shadows and transforms glide instead of snapping. Uses an
+   element selector (lower specificity than Tailwind's transition classes), so
+   components that set their own transition keep it; raw controls inherit this. */
+@media (prefers-reduced-motion: no-preference) {
+  a,
+  button,
+  select,
+  summary,
+  label,
+  [role="button"],
+  [role="tab"],
+  .interactive {
+    transition-property: color, background-color, border-color, box-shadow, opacity, transform, filter;
+    transition-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
+    transition-duration: 0.28s;
+  }
+}
+
+/* Blanket tactile press: every clickable "sinks" slightly on press so no click
+   feels dead. Framer-Motion controls (Button/Toggle/tabs) set an inline
+   transform that supersedes this; Tailwind active:scale-* utilities are more
+   specific and win where a component wants its own amount. Disabled buttons and
+   reduce-motion users are excluded. */
+@media (prefers-reduced-motion: no-preference) {
+  button:not(:disabled):active,
+  [role="button"]:not([aria-disabled="true"]):active {
+    transform: scale(0.97);
+  }
+}
+
+/* Clustered icon controls (timeline transport, preview HUD, marker buttons):
+   one marker class on the container springs EVERY button inside with an
+   overshoot pop on hover and a crisp shrink on press — the "bold" tactile feel
+   without converting each raw button to a motion element. The higher specificity
+   (class + element + pseudo) intentionally wins over stray active:scale-* utils
+   so the whole cluster is consistent. */
+@media (prefers-reduced-motion: no-preference) {
+  .spring-cluster button {
+    transition: transform 0.26s cubic-bezier(0.34, 1.56, 0.64, 1),
+                color 0.2s, background-color 0.2s, border-color 0.2s, box-shadow 0.2s, opacity 0.2s;
+  }
+  .spring-cluster button:hover:not(:disabled) { transform: scale(1.14); }
+  .spring-cluster button:active:not(:disabled) { transform: scale(0.88); }
+}
+
+/* Tactile press + hover-lift for tiles/cards/thumbnails (opt-in via .tap). */
+.tap {
+  transition: transform 0.24s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.tap:hover {
+  transform: translateY(-2px);
+}
+.tap:active {
+  transform: scale(0.97);
+  transition-duration: 0.09s;
+}
+
+/* Springy icon/emoji nudge on hover — for small glyph buttons. */
+.icon-pop {
+  transition: transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.icon-pop:hover {
+  transform: scale(1.15) rotate(-3deg);
+}
+.icon-pop:active {
+  transform: scale(0.9);
+}
+
+/* Deferred loading state. A Suspense fallback that appears and disappears
+   within a couple of frames reads as a flicker, which is worse than showing
+   nothing. Holding it invisible for 220ms means a warm/prefetched chunk swaps
+   in silently, while a genuinely slow load still gets its spinner. */
+.deferred-fallback {
+  animation: deferred-in 0.28s cubic-bezier(0.16, 1, 0.3, 1) 0.22s both;
+}
+@keyframes deferred-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* Accessibility & battery: honour the OS "reduce motion" setting. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ── Render-lite ───────────────────────────────────────────────────────────
+   Set on <html> while a swap run is in flight (FaceSwap.jsx, switchable from
+   the processing dock). This window is composited by Chromium on the same GPU
+   the swap is saturating, so whatever the compositor does mid-run is taken
+   straight off the render.
+
+   Two things dominate and both are switched off here.
+
+   backdrop-filter: each blurred panel makes the compositor read back what is
+   behind it and blur it, and it must redo that whenever anything under it
+   changes. Something changes every second during a run — the progress poll
+   lands — so these are not the one-off cost they are while idle.
+
+   The looping animations that drive a PAINT (or worse, a layout) rather than
+   just a compositor transform. Only three of ours do, and they are named
+   explicitly rather than swept up by a blanket `animation: none`, because the
+   rest are transform/opacity — they run entirely on the compositor's existing
+   layers, cost effectively nothing, and are the ones carrying meaning:
+   `animate-spin` and `animate-ping` are how the UI says it is still alive, and
+   freezing those mid-run would make a working render read as a hung one.
+
+     * progress-stripes — background-position, repaints the bar every frame
+       (.progress-bar-animated)
+     * pulse-glow       — box-shadow + border-color, repaints every frame
+       (.preview-glow, .animate-drag-pulse)
+     * scanner-sweep    — animates `top`, so it re-runs LAYOUT every frame
+       (.animate-scanner-sweep)
+
+   Deliberately NOT touched: colour, layout, spacing, borders, one-shot
+   transitions, and every compositor-only animation. The panels go solid
+   instead of translucent and three things stop moving; nothing else changes. */
+html[data-render-lite] *,
+html[data-render-lite] *::before,
+html[data-render-lite] *::after {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+html[data-render-lite] .progress-bar-animated,
+html[data-render-lite] .preview-glow,
+html[data-render-lite] .animate-drag-pulse,
+html[data-render-lite] .animate-scanner-sweep {
+  animation: none !important;
+}
+
+/* Slim modern scrollbars to match macOS */
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border-radius: 99px;
+  transition: background 0.2s;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-hover);
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+@keyframes float-up {
+  0% { transform: translateY(20px) scale(0.5); opacity: 0; }
+  20% { opacity: 1; transform: translateY(0px) scale(1.1); }
+  80% { opacity: 1; transform: translateY(-40px) scale(1); }
+  100% { transform: translateY(-60px) scale(0.8); opacity: 0; }
+}
+
+.emoji-float {
+  animation: float-up 2s ease-in-out infinite;
+}
+
+@keyframes pulse-glow {
+  0%, 100% { box-shadow: 0 0 15px var(--accent-glow); border-color: var(--border-color); }
+  50% { box-shadow: 0 0 25px rgba(233, 69, 96, 0.3); border-color: var(--accent); }
+}
+
+.preview-glow {
+  animation: pulse-glow 3s infinite;
+}
+
+/* Preview stage: a deep, matte viewing surface with a hairline edge that firms
+   up on hover. Deliberately NOT animated — a rendering preview says so with the
+   indeterminate bar below, not by making the whole panel breathe. */
+.preview-stage {
+  background:
+    radial-gradient(120% 90% at 50% 0%, rgba(255, 255, 255, 0.035), transparent 62%),
+    #06070b;
+  border: 1px solid var(--border-color);
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  transition: border-color 0.3s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.preview-stage:hover {
+  border-color: var(--border-strong);
+}
+
+/* Run panel: same matte family as the preview stage so switching between
+   "previewing" and "processing" doesn't change the shape of the workspace. */
+.processing-stage {
+  background:
+    radial-gradient(90% 60% at 50% 0%, var(--accent-glow), transparent 58%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.03), rgba(0, 0, 0, 0.22));
+  border: 1px solid var(--border-color);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
+/* Indeterminate progress sliver for "a preview is rendering". */
+@keyframes indeterminate-slide {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(400%); }
+}
+.preview-indeterminate {
+  animation: indeterminate-slide 1.15s cubic-bezier(0.65, 0, 0.35, 1) infinite;
+}
+
+@keyframes confetti-fall {
+  0% { top: -5%; opacity: 1; }
+  100% { top: 105%; opacity: 0.9; transform: translateX(40px) rotate(720deg); }
+}
+
+@keyframes skeleton {
+  100% { transform: translateX(100%); }
+}
+
+@keyframes progress-stripes {
+  0% { background-position: 1rem 0; }
+  100% { background-position: 0 0; }
+}
+
+.progress-bar-animated {
+  background-image: linear-gradient(45deg, rgba(255, 255, 255, 0.1) 25%, transparent 25%, transparent 50%, rgba(255, 255, 255, 0.1) 50%, rgba(255, 255, 255, 0.1) 75%, transparent 75%, transparent);
+  background-size: 1rem 1rem;
+  animation: progress-stripes 1s linear infinite;
+}
+
+@keyframes slide-up {
+  from { opacity: 0; transform: translateY(16px) scale(0.97); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.animate-slide-up {
+  animation: slide-up 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes tooltip-fade {
+  from { opacity: 0; transform: translateY(4px) scale(0.95); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.group-hover\:animate-tooltip:hover .tooltip-content {
+  display: block;
+  animation: tooltip-fade 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+/* Premium glass surface — calm elevation, hairline border, quiet hover. */
+/* ── Status + active chrome ───────────────────────────────────────────────
+   One class per state, rather than the three-utility incantation
+   (`bg-amber-500/20 text-amber-300 border-amber-500/40`) that was being
+   retyped with a different swatch and three different alphas at every call
+   site. Same shape as .glass-panel/.glass-input: the surface knows how to
+   render itself, and the tint follows the theme because it is mixed FROM the
+   token rather than picked next to it.
+
+   `.state-accent` is the important one — "this control is active" was being
+   drawn in indigo throughout, which is a second accent by another name. It now
+   follows --accent, so it is crimson on Obsidian and mauve on Catppuccin
+   instead of indigo on both.
+
+   color-mix keeps this to four tokens instead of twelve: one hue in, ink +
+   surface + hairline out, at fixed ratios so every state reads at the same
+   strength. */
+.state-ok,
+.state-warn,
+.state-danger,
+.state-info,
+.state-accent {
+  border: 1px solid color-mix(in oklab, var(--state-hue) 34%, transparent);
+  background: color-mix(in oklab, var(--state-hue) 15%, transparent);
+  color: var(--state-hue);
+}
+
+.state-ok { --state-hue: var(--ok); }
+.state-warn { --state-hue: var(--warn); }
+.state-danger { --state-hue: var(--danger); }
+.state-info { --state-hue: var(--info); }
+.state-accent { --state-hue: var(--accent); }
+
+/* Text-only variants, for a label or numeral that must not also draw a chip. */
+.ink-ok { color: var(--ok); }
+.ink-warn { color: var(--warn); }
+.ink-danger { color: var(--danger); }
+.ink-info { color: var(--info); }
+.ink-accent { color: var(--accent); }
+
+/* A solid accent fill — the single primary action per screen. Deliberately a
+   FLAT fill, not a gradient: the run bar's Start button was
+   `from-blue-600 via-indigo-600 to-purple-600` with a coloured glow shadow,
+   which is three hues and a glow in the one element the eye lands on first,
+   and is the exact "red+gold gradient" decoration this UI was cleaned of.
+
+   ── The ink is COMPUTED, and it has to be ────────────────────────────────
+   "White ink is safe on every theme's accent" was the standing assumption here
+   and in the light-mode block below. It is measurably false. White on each
+   theme's own accent:
+
+     lime #c6ff00  1.19 : 1      teal   #00bbf9  2.22 : 1
+     gold #ffd700  1.40 : 1      emerald #10b981 2.54 : 1
+     mauve #cba6f7 2.03 : 1      CRIMSON #E94560 3.83 : 1  <- the default theme
+
+   Not one of them reaches 4.5:1, and the default theme is among the failures —
+   so this was never a light-accent edge case. Black ink on the same six runs
+   5.48 to 17.71.
+
+   `oklch(from …)` reads the accent's OWN lightness and picks the ink, so all 38
+   presets and any user-authored theme are correct by construction instead of
+   needing 38 hand-set values. `clamp(0, (0.62 - l) * 1000, 1)` is a step: below
+   l 0.62 the ink is white, above it black. Chroma 0 keeps it neutral — at
+   lightness 0 or 1 a hue carries no chroma anyway.
+
+   The plain `#fff` first is the fallback: an engine without relative colour
+   syntax drops the second declaration and keeps the old behaviour rather than
+   inheriting the page's ink. */
+.fill-accent {
+  background: var(--accent);
+  color: #fff;
+  color: oklch(from var(--accent) clamp(0, (0.62 - l) * 1000, 1) 0 h);
+  border: 1px solid transparent;
+}
+
+.fill-accent:hover {
+  background: var(--accent-hover);
+  color: oklch(from var(--accent-hover) clamp(0, (0.62 - l) * 1000, 1) 0 h);
+}
+
+/* The status hues are fixed, so their ink does not need computing — but it does
+   need to be right: --danger is #F87171 on dark (white 2.6:1, black 8.1:1) and
+   #B91C1C on light (white 6.4:1). Same expression, same reason. */
+.fill-danger {
+  background: var(--danger);
+  color: #fff;
+  color: oklch(from var(--danger) clamp(0, (0.62 - l) * 1000, 1) 0 h);
+  border: 1px solid transparent;
+}
+
+.glass-panel {
+  background: var(--card-bg);
+  /* Backdrop blur is re-sampled every time content scrolls behind the panel
+     (and the sticky header does this on every scroll frame). The cost scales
+     with the blur radius, so we keep it modest — 14px reads as the same frosted
+     glass as 20px but is markedly cheaper to composite during scroll. */
+  backdrop-filter: blur(14px) saturate(140%);
+  -webkit-backdrop-filter: blur(14px) saturate(140%);
+  border: 1px solid var(--border-color);
+  color: var(--text-main);
+  box-shadow: var(--shadow-card), inset 0 1px 0 var(--specular);
+  transition: border-color 0.28s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.28s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.glass-panel:hover {
+  border-color: var(--border-strong);
+}
+
+/* Card hover depth — a shadow + border swell (no positional bob), so large
+   form panels gain a sense of lift without shifting the controls under the
+   cursor. Discrete targets (buttons, toggles, thumbnails) do the actual
+   spring-movement via Framer Motion instead. */
+.card-lift {
+  transition: border-color 0.32s cubic-bezier(0.16, 1, 0.3, 1),
+              box-shadow 0.32s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.card-lift:hover {
+  border-color: var(--border-strong);
+  box-shadow: var(--shadow-card), 0 14px 46px rgba(0, 0, 0, 0.3),
+              inset 0 1px 0 var(--specular);
+}
+
+.shimmer-sweep {
+  position: relative;
+  overflow: hidden;
+}
+
+.shimmer-sweep::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: -100%;
+  width: 50%;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.06) 30%,
+    rgba(255, 255, 255, 0.16) 50%,
+    rgba(255, 255, 255, 0.06) 70%,
+    transparent 100%
+  );
+  transform: skewX(-20deg);
+  transition: all 0.75s ease;
+  pointer-events: none;
+}
+
+.shimmer-sweep:hover::after {
+  left: 150%;
+}
+
+.glass-input {
+  background: var(--input-bg);
+  border: 1px solid var(--border-color);
+  color: var(--text-main);
+  transition: border-color 0.4s cubic-bezier(0.16, 1, 0.3, 1), background-color 0.4s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.glass-input:hover {
+  border-color: var(--border-strong);
+}
+
+.glass-input:focus {
+  border-color: var(--accent);
+  /* Was a hardcoded rgba(0,0,0,0.4), which is only right for a dark theme. On a
+     light one, focusing an input turned its background dark while `color` above
+     stayed the theme's DARK ink — so the text you were typing went nearly
+     invisible at the moment you started typing it. A `select` happened to
+     escape that, but only because the light-theme block used to force its
+     background with !important; that crutch is gone now, so the fix belongs
+     here. The default keeps every dark theme byte-for-byte identical. */
+  background: var(--input-bg-focus, rgba(0, 0, 0, 0.4));
+  box-shadow: 0 0 0 3px var(--input-focus);
+}
+
+/* Custom Webkit range input styling to match Apple Sliders */
+input[type="range"] {
+  -webkit-appearance: none;
+  width: 100%;
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 99px;
+  outline: none;
+  transition: background 0.3s;
+}
+
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 15px;
+  height: 15px;
+  border-radius: 99px;
+  background: #ffffff;
+  border: 2px solid var(--accent);
+  box-shadow: 0 2px 6px rgba(0,0,0,0.35);
+  cursor: pointer;
+  transition: transform 0.15s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.2s ease;
+}
+
+input[type="range"]::-webkit-slider-thumb:hover {
+  box-shadow: 0 0 0 5px var(--input-focus);
+}
+
+input[type="range"]::-webkit-slider-thumb:active {
+  transform: scale(1.25);
+}
+
+/* ── Light Theme Readability & Contrast ────────────────────────────────────
+   Tailwind v4 compiles the ENTIRE `*-white` family — text, background, border,
+   ring; every alpha; under every variant — down to one expression:
+   `color-mix(in oklab, var(--color-white) N%, transparent)`. So repointing that
+   single variable at the theme's ink colour corrects all of them at once, and
+   keeps correcting utilities nobody has written yet.
+
+   This replaces an enumeration of `.text-white\/30 … \/95`, which had two
+   problems. It could only cover the alphas someone remembered to list, so it
+   missed /15 /20 /25 /35 /45 /55 /85 (88 uses) and every variant-prefixed one —
+   `hover:text-white` (55 uses) still flipped to invisible white on hover. And
+   it worked by setting `opacity`, which fades an element's children, border and
+   background too, when `text-white/60` only ever means a text COLOUR.
+
+   This used to be a hand-written list of the eight light theme CLASS names,
+   which had to be kept in step with `mode: 'light'` in themes.js by memory
+   alone — a test existed purely to catch the drift. It also could not express a
+   USER-authored light theme at all: a custom theme has no preset class, so it
+   would have matched nothing here and rendered white-on-white.
+
+   Keying off `data-theme-mode`, which App.jsx derives from the resolved theme's
+   own `mode`, removes both problems at the source. A light theme cannot be
+   forgotten, because nothing is written down twice. */
+[data-theme-mode="light"] {
+  --color-white: var(--text-main);
+
+  /* The status tokens are tuned for dark surfaces; on a light page the same
+     hues carry no contrast as INK (#34D399 on white is 1.9:1, well under the
+     4.5:1 small text needs). These are the 700-weight equivalents, all above
+     4.5:1 on white, so `.state-*` stays legible without every call site
+     knowing which mode it is in. */
+  --ok: #047857;
+  --warn: #B45309;
+  --danger: #B91C1C;
+  --info: #1D4ED8;
+
+  /* On a light page the panel is already brighter than what sits behind it, so
+     a white top-edge highlight has nothing to catch. A faint inner SHADE at the
+     top edge reads the way the white one does on dark: as the surface having a
+     thickness. */
+  --specular: rgba(0, 0, 0, 0.035);
+
+  /* Focusing an input must not darken it on a light page — see .glass-input
+     :focus. Slightly brighter than the resting --input-bg so focus still reads
+     as a state change. */
+  --input-bg-focus: rgba(255, 255, 255, 0.92);
+
+  /* Surfaces that stay dark in EVERY theme: media scrims, the preview HUD, and
+     the handful of hardcoded near-black panels. A dark scrim over a photo is
+     still right in light mode, so these keep white ink. Custom properties
+     inherit, so repointing the variable on the surface covers its whole
+     subtree — which is exactly the question being asked ("am I sitting on
+     something dark?"), and is why this scopes correctly where a flat list of
+     text utilities could not. */
+  [class*="bg-black/"],
+  .hud-glass,
+  .bg-\[\#121420\],
+  .bg-\[\#181016\],
+  .bg-\[\#0E0F15\]\/95,
+  .bg-\[\#0c0e14\]\/90 {
+    --color-white: #fff;
+  }
+
+  /* An accent fill must not follow the PAGE's ink — it is its own surface. It
+     was assumed dark enough for white in every theme; measured, no theme's
+     accent reaches 4.5:1 against white and the default crimson manages 3.83
+     (see .fill-accent). So the ink is computed from the fill's own lightness
+     here too, and `--color-white` is repointed to match so any `text-white/N`
+     on a child lands on the correct side rather than at its intended alpha of
+     the wrong colour. */
+  .bg-\[var\(--accent\)\],
+  .bg-\[\#E94560\] {
+    --color-white: oklch(from var(--accent) clamp(0, (0.62 - l) * 1000, 1) 0 h);
+    color: #ffffff;
+    color: oklch(from var(--accent) clamp(0, (0.62 - l) * 1000, 1) 0 h);
+  }
+
+  /* Native <option> lists are painted by the OS, so they inherit none of the
+     above and still need explicit colours. */
+  select.glass-input option {
+    background-color: #ffffff;
+    color: #1f2937;
+  }
+}
+
+/* The command palette can send you to one control in a four-column panel.
+   Scrolling there is not enough on its own — you still have to find it — so the
+   target pulses its accent ring twice and settles. Ring + background only, both
+   compositor-cheap, and it decays to nothing so no state is left behind. */
+@keyframes setting-flash {
+  0%, 100% { box-shadow: 0 0 0 0 transparent; background-color: transparent; }
+  15%, 55% { box-shadow: 0 0 0 3px var(--accent-glow); background-color: var(--accent-glow); }
+  35% { box-shadow: 0 0 0 1px var(--accent-glow); background-color: transparent; }
+}
+
+.setting-flash {
+  border-radius: 10px;
+  animation: setting-flash 1.5s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* Still needs to say "here" — just without the pulse. */
+  .setting-flash {
+    animation: none;
+    box-shadow: 0 0 0 3px var(--accent-glow);
+  }
+}
+
+@keyframes scanner-sweep {
+  0% { top: 0%; }
+  50% { top: 100%; }
+  100% { top: 0%; }
+}
+
+.animate-scanner-sweep {
+  animation: scanner-sweep 3.5s ease-in-out infinite;
+}
+
+@keyframes pulse-glow {
+  0%, 100% { box-shadow: 0 0 0px rgba(233, 69, 96, 0); border-color: rgba(233, 69, 96, 0.2); }
+  50% { box-shadow: 0 0 20px var(--accent-glow); border-color: var(--accent); }
+}
+
+.animate-drag-pulse {
+  animation: pulse-glow 1.8s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+
+@keyframes float-ambient-1 {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  50% { transform: translate(60px, 40px) scale(1.1); }
+}
+
+@keyframes float-ambient-2 {
+  0%, 100% { transform: translate(0, 0) scale(1.05); }
+  50% { transform: translate(-50px, -30px) scale(0.95); }
+}
+
+.animate-float-1 {
+  animation: float-ambient-1 22s ease-in-out infinite;
+}
+
+.animate-float-2 {
+  animation: float-ambient-2 18s ease-in-out infinite;
+}
+
+/* Timeline track: a recessed well, so the filmstrip reads as material sitting
+   INSIDE the panel rather than a flat strip painted on top of it. Calm — the
+   depth comes from an inset sheen + vignette, not from a glow. */
+.timeline-track {
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.06),
+    inset 0 -14px 26px rgba(0, 0, 0, 0.45),
+    0 1px 0 rgba(255, 255, 255, 0.03);
+  transition: border-color 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.timeline-track:hover {
+  border-color: var(--border-strong);
+}
+
+.hud-glass {
+  background: rgba(10, 10, 15, 0.75) !important;
+  backdrop-filter: blur(16px) saturate(160%);
+  -webkit-backdrop-filter: blur(16px) saturate(160%);
+  border: 1px solid rgba(255, 255, 255, 0.08) !important;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5) !important;
+}
+
+.hud-glass-button {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  color: rgba(255, 255, 255, 0.7);
+  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.hud-glass-button:hover {
+  background: rgba(255, 255, 255, 0.12);
+  border-color: rgba(255, 255, 255, 0.18);
+  color: #ffffff;
+  transform: translateY(-1px);
+}
+
+.hud-glass-button:active {
+  transform: translateY(1px);
+}
+
+/* ── Accessibility ─────────────────────────────────────────────────────────
+   The app root sets `select-none` for a native-app feel; `.selectable` (and its
+   children) opt specific text back in — paths, errors, log lines, filenames —
+   so users can actually copy them. */
+.selectable, .selectable * {
+  user-select: text !important;
+  -webkit-user-select: text !important;
+  cursor: text;
+}
+
+/* Keyboard focus ring. Mouse clicks don't show it (:focus-visible only), so the
+   premium look is untouched for pointer users while keyboard users get a clear,
+   theme-accent focus indicator on every interactive control. */
+*:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+*:focus:not(:focus-visible) { outline: none; }
+
+/* Visually-hidden but exposed to screen readers (aria-live status region). */
+.sr-only {
+  position: absolute;
+  width: 1px; height: 1px;
+  padding: 0; margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Horizontal tab strips (media sessions, console part tabs) scroll but should
+   not show a scrollbar over their own chips — the overflow is discoverable by
+   dragging/wheel and a 15px bar would eat a third of the strip's height. */
+.no-scrollbar { scrollbar-width: none; -ms-overflow-style: none; }
+.no-scrollbar::-webkit-scrollbar { display: none; }
