@@ -93,6 +93,19 @@ _BATCH_SWAP = os.environ.get('ROOP_BATCH_SWAP', '0') == '1'
 # ROOP_TEST_NO_AUTOANGLES.
 _PARTIAL_MISS_RESCUE = os.environ.get('ROOP_NO_PARTIAL_MISS_RESCUE', '0') != '1'
 
+# On by default: in the track-mode identity-lock branch, when a face's spatial
+# entry match is CONTESTED (more than one track's predicted position is
+# plausibly this face — two people standing/leaning close), prefer the
+# candidate whose bound source is the better identity match over the
+# candidate that is merely closer in position. Position is the least
+# reliable signal precisely in this scenario, and doing nothing here is what
+# six prior fix attempts converged on as the real gap (see the comment at the
+# identity-lock branch's `best_j` loop in ProcessMgr.py and the
+# interacting-faces-recall-fixes-rejected memory). Uncontested faces (0 or 1
+# gate-passing candidate) are completely unaffected. Kill switch for a clean
+# A/B and as an escape hatch.
+_TRACK_ENTRY_IDENTITY = os.environ.get('ROOP_TRACK_ENTRY_IDENTITY', '1') != '0'
+
 
 
 # ── Jaw / chin reshape warp ──────────────────────────────────────────────────
@@ -2305,6 +2318,32 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                 # attempting this again — it would need phase 1's cost function
                 # to be as identity-discriminating as phase 2's, not just a
                 # different claim order.
+                #
+                # Seventh attempt (2026-08-17): rather than reordering claims,
+                # made the `best_j` loop's COST identity-aware exactly where the
+                # standing note above says it needs to be — ONLY when a face is
+                # genuinely contested (>=2 entries pass the appearance gate),
+                # prefer the candidate whose bound source fits better in
+                # _dist_to_source() over the one that is merely closer in
+                # position, leaving the claim ORDER and the uncontested case
+                # (<=1 candidate) completely untouched. See ROOP_TRACK_ENTRY_IDENTITY
+                # near the top of this file. Measured bit-identical to baseline
+                # on a new, much harder stress clip (d6.mp4, 8431 faces, 72.6%
+                # sharing a crop with a neighbour, 50.1% not-swapped) — every
+                # SWAP AUDIT bucket unchanged. Root cause: that clip's dominant
+                # failure (42.7% "track matched but has no source") is a
+                # track-to-source BINDING refusal in _assign_track_sources
+                # (procmgr_tracking.py), upstream of this loop entirely — most
+                # faces there hit the `exact` track-id fast path (bypassing
+                # `best_j`), and the few that do reach `best_j` never happened to
+                # have >=2 gate-passing candidates on this content. Kept on by
+                # default anyway (harmless, real fix for the case it targets,
+                # 939/939 tests pass, verified true no-op when
+                # ROOP_TRACK_ENTRY_IDENTITY=0) — it just doesn't move the needle
+                # on THIS clip's specific bottleneck. Do not re-measure this on
+                # d6 expecting a different result without a further change; the
+                # next lead is the assign_max gate in _assign_track_sources, not
+                # another variant of this loop.
                 entries = self._track_assignments.get(frame_idx)
                 if not entries:
                     # Fallback lookup to nearest tracked frame within a 5-frame window
@@ -2426,6 +2465,7 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                         exact = None        # defensive: shouldn't happen (one face per track per frame)
 
                     best_j, best_cost = -1, float('inf')
+                    gate_passed = []
                     if exact is None and entries:
                         bb = face.bbox
                         c = np.array([(bb[0] + bb[2]) * 0.5, (bb[1] + bb[3]) * 0.5], np.float32)
@@ -2457,8 +2497,35 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                             if dirty:
                                 d_cosine = 0.0
                             cost = d_spatial * (1.0 + 2.5 * d_cosine)
+                            gate_passed.append(j)
                             if cost < best_cost:
                                 best_cost, best_j = cost, j
+
+                        # ── Contested tiebreak (ROOP_TRACK_ENTRY_IDENTITY) ────
+                        # More than one track's predicted position passed the
+                        # appearance gate for this face — two people are close
+                        # enough that POSITION, the dominant term in `cost`
+                        # above, is exactly the least reliable signal available;
+                        # that is the definition of "contested". Prefer the
+                        # candidate whose bound source is the better identity
+                        # match instead, using the same _dist_to_source()
+                        # evidence the veto below already trusts, falling back
+                        # to the spatial pick if identity distance can't be
+                        # computed for any candidate. An uncontested face (<=1
+                        # gate-passing candidate) is completely untouched —
+                        # same pick as before this change. Not applied on a
+                        # dirty/shared crop: its embedding measures the pair,
+                        # not the person, so identity distance means nothing
+                        # there either (matches the `dirty` handling above and
+                        # the veto's own `elif dirty: pass`).
+                        if _TRACK_ENTRY_IDENTITY and not dirty and len(gate_passed) >= 2:
+                            id_best_j, id_best_d = -1, float('inf')
+                            for j in gate_passed:
+                                d_id = _dist_to_source(face, entries[j][1])
+                                if d_id is not None and d_id < id_best_d:
+                                    id_best_d, id_best_j = d_id, j
+                            if id_best_j >= 0:
+                                best_j = id_best_j
 
                     src_index = None
                     veto = None
