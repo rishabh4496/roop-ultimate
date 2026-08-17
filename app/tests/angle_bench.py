@@ -124,7 +124,7 @@ def init_pipeline(provider, swap_model, enhancer, mask_engine):
     g.no_face_action = 0
     g.vr_mode = False
     g.autorotate_faces = bool(g.CFG.autorotate_faces)
-    g.subsample_size = 256
+    g.subsample_size = int(os.environ.get('ROOP_BENCH_SUBSAMPLE', '256') or '256')
     g.refine_landmarks = True             # the bench grades on 106 landmarks
     g.rescue_small_faces = bool(g.CFG.rescue_small_faces)
     g.detector_engine = g.CFG.detector_engine

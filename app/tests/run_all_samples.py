@@ -114,12 +114,20 @@ def start_pause_watcher():
               f"Delete it to begin.", flush=True)
 
 
-def _pipeline(threads=None, provider=None):
+def _pipeline(threads=None, provider=None, swap_model=None, mask_engine_name=None, enhancer=None):
     from settings import Settings
     cfg_probe = Settings("config.yaml")
-    swap_model = cfg_probe.swap_model
-    mask_engine = sb.map_mask_engine(cfg_probe.mask_engine)
-    enhancer = cfg_probe.selected_enhancer or "None"
+    # Each of swap_model/mask_engine_name/enhancer overrides the live
+    # config.yaml value when given, so a characterization run can pin an
+    # exact model combination (e.g. "the model the user actually runs")
+    # without editing config.yaml itself, which the real app also reads.
+    if swap_model is None:
+        swap_model = cfg_probe.swap_model
+    if mask_engine_name is None:
+        mask_engine_name = cfg_probe.mask_engine
+    mask_engine = sb.map_mask_engine(mask_engine_name)
+    if enhancer is None:
+        enhancer = cfg_probe.selected_enhancer or "None"
     # Pull the execution provider from the live config too (it was previously
     # hardcoded to "cuda" here, silently overriding config.yaml's actual
     # "tensorrt" and running the whole baseline on the wrong, slower backend).
@@ -145,7 +153,7 @@ def _pipeline(threads=None, provider=None):
     g.stabilize_face = bool(g.CFG.stabilize_face)
     options = ab.build_options(g, swap_model, mask_engine, bool(g.CFG.use_source_bank))
     options.stabilize_face = g.stabilize_face
-    print(f"[run_all] pipeline: swap_model={swap_model} mask_engine={cfg_probe.mask_engine} "
+    print(f"[run_all] pipeline: swap_model={swap_model} mask_engine={mask_engine_name} "
           f"({mask_engine}) enhancer={enhancer} detector={g.detector_engine} "
           f"det_size={g.face_detector_size} det_thresh={g.face_detector_threshold} "
           f"rescue_small_faces={g.rescue_small_faces} track_identities={track} "
@@ -206,10 +214,21 @@ def main():
                          "folder names (e.g. '_realityux' -> baseline_single_realityux) "
                          "so a different mask/swap/enhancer config doesn't collide with "
                          "or get skipped-as-already-done against an existing baseline")
+    ap.add_argument("--swap-model", default=None,
+                    help="overrides config.yaml's live 'swap_model' — pin an exact model "
+                         "for characterization without editing the live config the real "
+                         "app also reads")
+    ap.add_argument("--mask-engine", default=None,
+                    help="overrides config.yaml's live 'mask_engine', display name e.g. "
+                         "'RealityUX' (see sample_bench.py's _MASK_ENGINE_MAP)")
+    ap.add_argument("--enhancer", default=None,
+                    help="overrides config.yaml's live 'selected_enhancer'; pass 'None' "
+                         "to run with no enhancer regardless of the live config")
     args = ap.parse_args()
 
     ensure_ffmpeg()
-    g, options = _pipeline(args.threads, args.provider)
+    g, options = _pipeline(args.threads, args.provider, args.swap_model,
+                           args.mask_engine, args.enhancer)
     start_pause_watcher()
 
     if args.only in ("single", "both"):
