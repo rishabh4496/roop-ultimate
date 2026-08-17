@@ -684,7 +684,7 @@ def get_meta():
         "face_detection_modes": ["First found", "All input faces", "All female",
                                   "All male", "All faces", "Selected face"],
         "mask_engines": ["None", "Clip2Seg", "DFL XSeg", "Face Parser (BiSeNet)",
-                          "Face Occluder", "Face Occluder v3 (XSeg-3)",
+                          "RealityUX", "Face Occluder", "Face Occluder v3 (XSeg-3)",
                           "Segment Anything (MobileSAM)", "Segment Anything (FastSAM)",
                           "Segment Anything 2 (tracked)"],
         "sam2_model_sizes": ["tiny", "small", "base_plus", "large"],
