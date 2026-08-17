@@ -206,19 +206,6 @@ def pick_seed(rows, expect=None):
         f"check the separation score.")
 
 
-def seed_capture(frame, expect=None):
-    """Faces from one frame as `(faces, groups)`, left person first.
-
-    Left-to-right so a person's index is stable across runs and matches the
-    numbered boxes the preview overlay draws.
-    """
-    from roop.face_util import get_all_faces
-    faces = sorted(get_all_faces(frame) or [], key=lambda f: float(f.bbox[0]))
-    if expect is not None and len(faces) != expect:
-        return [], []
-    return list(faces), list(range(len(faces)))
-
-
 def separation(targets, groups):
     """Smallest cosine distance between any two DIFFERENT captured people.
 
