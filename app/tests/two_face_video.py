@@ -838,8 +838,15 @@ def main():
         reason = face_reasons(face_log.get(i) or [])
         for person, r in enumerate(grade(plates[i], swapped[i], means,
                                          targets, groups)):
+            # `person` enumerates every detected FACE in the frame, which can
+            # exceed len(r["ident"]) (always == the captured-group count, 2)
+            # when a bystander or extra detection puts a 5th+ face in the
+            # frame — 1 - person then indexes outside a 2-element list.
+            # Measured crashing d4.mp4 (2026-08-17). Guard both the same way.
             own = r["ident"][person] if person < len(r["ident"]) else float("nan")
-            other = r["ident"][1 - person] if len(r["ident"]) > 1 else float("nan")
+            other = (r["ident"][1 - person]
+                     if person < len(r["ident"]) and len(r["ident"]) > 1
+                     else float("nan"))
             rows.append({
                 "frame": args.start + i, "person": person,
                 "x0": r["box"][0], "y0": r["box"][1],
