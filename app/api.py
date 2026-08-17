@@ -48,6 +48,7 @@ from roop.face_util import extract_face_images, get_all_faces
 from roop.FaceSet import FaceSet
 from roop.capturer import get_video_frame, get_video_frame_total, get_image_frame
 from roop.ProcessEntry import ProcessEntry
+from roop import capture_seed
 from roop import segment_writer
 from roop import live_preview
 from roop import procmgr_runtime as _procmgr_runtime
@@ -1848,6 +1849,86 @@ def target_auto_angles(payload: dict = Body(...)):
         "seed_span": ({"min": seed_ds[0],
                        "median": seed_ds[len(seed_ds) // 2],
                        "max": seed_ds[-1]} if seed_ds else None),
+    })
+
+
+@app.post("/api/target/auto_capture")
+def target_auto_capture(payload: dict = Body(...)):
+    """Find each person in the clip and capture them from their own best frame.
+
+    Replaces "scrub to a frame, click the boxes" as the way to get target
+    people, because that flow picks the seed frame by whatever the user happens
+    to be looking at — and on footage where people interact, the frames that
+    obviously show two boxes are the frames where they TOUCH, which is the worst
+    possible reference (roop/capture_seed.py has the measurements).
+
+    Additive by default so a user can auto-capture and then keep hand-adding
+    angles; pass `replace: true` to clear the existing people first, which is
+    what the UI button does since re-running it otherwise duplicates everyone.
+    """
+    idx = int(payload.get("index", state.selected_target_index))
+    if idx >= len(list_files_process):
+        return _target_faces_payload({"count": 0, "message": "no target selected"})
+    target_path = list_files_process[idx].filename
+    if not util.is_video(target_path):
+        return _target_faces_payload({"count": 0, "message": "auto-capture needs a video target"})
+    roop_globals.target_path = target_path
+
+    expect = payload.get("people")
+    expect = int(expect) if expect else None
+    result = capture_seed.auto_capture(
+        target_path,
+        expect=expect,
+        time_budget=float(payload.get("time_budget", 90.0)),
+    )
+    if not result["targets"]:
+        return _target_faces_payload({"count": 0,
+                                      "message": "; ".join(result["notes"]) or "found nobody",
+                                      "notes": result["notes"]})
+
+    if bool(payload.get("replace", True)):
+        roop_globals.TARGET_FACES.clear()
+        roop_globals.TARGET_FACE_GROUP.clear()
+        if getattr(roop_globals, 'TARGET_FACE_NAMES', None):
+            roop_globals.TARGET_FACE_NAMES.clear()
+        ui_globals.ui_target_thumbs.clear()
+
+    next_id = (max(roop_globals.TARGET_FACE_GROUP) + 1) if roop_globals.TARGET_FACE_GROUP else 0
+    from roop.face_util import _attach_source_crops, clamp_cut_values
+    for face, grp, info in zip(result["targets"], result["groups"], result["per_person"]):
+        # The scan keeps faces, not frames (487 frames of 1280x632 would be a
+        # gigabyte). Re-decode just the handful actually chosen, for the crop the
+        # thumbnail needs and for the source crops the image-source swap models
+        # consume — both must come from the frame this face's kps belong to.
+        #
+        # +1 is not slop: capture_seed counts frames the way cv2 does
+        # (CAP_PROP_POS_FRAMES, 0-based) while get_video_frame takes the UI's
+        # 1-based number and subtracts one itself. Without the conversion every
+        # crop comes from the frame BEFORE the face, which on a moving head
+        # misplaces the thumbnail and silently warps _attach_source_crops'
+        # aligned crops off the actual face.
+        img = get_video_frame(target_path, int(info["frame"]) + 1)
+        if img is None:
+            continue
+        sx, sy, ex, ey = face["bbox"].astype("int")
+        sx, ex, sy, ey = clamp_cut_values(sx, ex, sy, ey, img)
+        crop = img[sy:ey, sx:ex]
+        if crop.size < 1:
+            crop = img
+        _attach_source_crops(face, img)
+        roop_globals.TARGET_FACES.append(face)
+        roop_globals.TARGET_FACE_GROUP.append(next_id + grp)
+        ui_globals.ui_target_thumbs.append(util.convert_to_gradio(crop))
+
+    return _target_faces_payload({
+        "count": len(result["targets"]),
+        "separation": None if result["separation"] is None else round(float(result["separation"]), 3),
+        "seed_frame": result["seed_index"],
+        "per_person": result["per_person"],
+        "scanned": result["scanned"],
+        "seconds": result["seconds"],
+        "complete": result["complete"],
+        "notes": result["notes"],
     })
 
 

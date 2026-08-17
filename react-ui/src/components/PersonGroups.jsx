@@ -62,6 +62,7 @@ export default function PersonGroups({
   const [dropTarget, setDropTarget] = useState(null); // rank being hovered in a drag
   const [busy, setBusy] = useState(false);
   const [harvesting, setHarvesting] = useState(null); // rank being auto-harvested
+  const [scanning, setScanning] = useState(false);    // whole-clip auto-capture
   const containerRef = useRef(null);
 
   const people = groupByPerson(targetGroups.slice(0, targetFaces.length));
@@ -159,6 +160,50 @@ export default function PersonGroups({
     if (res) { setExpanded({}); notify(`Grouped into ${res.people} ${res.people === 1 ? 'person' : 'people'}`); }
   };
 
+  // Scan the clip, find everyone in it, and capture each person from THEIR own
+  // most-frontal frame. Preferred over capturing by hand: picking the frame
+  // yourself means seeding identity from whatever you happen to be looking at,
+  // and on footage where people interact the frames that obviously show two
+  // boxes are the frames where they touch — the worst possible reference.
+  const autoCapture = async () => {
+    if (targetFaces.length && !(await confirmDialog({
+      title: 'Replace captured people?',
+      message: 'Auto-capture scans the clip and captures everyone from scratch, replacing the people you already have.',
+      confirmLabel: 'Scan and replace',
+    }))) return;
+    setScanning(true);
+    try {
+      const res = await postJSON('/api/target/auto_capture', { index: selTarget, replace: true });
+      applyPayload(res);
+      if (!res.count) {
+        notify(res.message || 'Auto-capture found nobody in this clip', 'warning');
+        return;
+      }
+      setExpanded({});
+      setSelTargetFace(0);
+      // `separation` is the distance between the captured people, and it is the
+      // number that decides whether any later identity decision can work: two
+      // people captured 0.12 apart are one identity as far as the matcher is
+      // concerned, and every swap after that is a coin flip. Surfaced rather
+      // than buried because the failure it predicts (nothing swaps, or the
+      // wrong face swaps) shows up much later and looks like a different bug.
+      const sep = res.separation;
+      const quality = sep == null ? '' :
+        sep >= 0.7 ? ` — identities are clearly distinct (${sep.toFixed(2)})`
+        : sep >= 0.4 ? ` — identities are usable but close (${sep.toFixed(2)})`
+        : ` — WARNING: identities are only ${sep.toFixed(2)} apart and will be mixed up`;
+      notify(
+        `Captured ${res.count} ${res.count === 1 ? 'person' : 'people'} from ${res.scanned} scanned frames in ${res.seconds}s${quality}`,
+        sep != null && sep < 0.4 ? 'warning' : 'success',
+      );
+      (res.notes || []).forEach((n) => { if (/WARNING|never clearly apart|overlap/.test(n)) notify(n, 'warning'); });
+    } catch (e) {
+      notify(e.message, 'error');
+    } finally {
+      setScanning(false);
+    }
+  };
+
   // Remove every captured person/angle from the layout (keeps target media).
   const clearAllFaces = async () => {
     if (!targetFaces.length) return;
@@ -210,11 +255,21 @@ export default function PersonGroups({
 
   if (targetFaces.length === 0) {
     return (
-      <div className="rounded-xl border border-dashed border-white/10 bg-black/10 p-4 text-center space-y-1.5 select-none">
+      <div className="rounded-xl border border-dashed border-white/10 bg-black/10 p-4 text-center space-y-2.5 select-none">
         <div className="flex justify-center opacity-40"><Icon.faces size={22} /></div>
         <div className="text-xs text-white/50 font-semibold">No people captured yet</div>
+        <button type="button" disabled={scanning} onClick={autoCapture}
+          title="Scan the clip, find everyone in it, and capture each person from their own clearest frame"
+          className="mx-auto px-3 py-1.5 rounded-lg text-mini font-bold bg-[var(--accent)]/15 border border-[var(--accent)]/40 text-[var(--accent)] hover:bg-[var(--accent)]/25 transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
+          {scanning ? 'Scanning the clip…' : 'Auto-capture people'}
+        </button>
         <div className="text-mini text-white/45 leading-relaxed">
-          Load a target below, scrub to a clear frame, then use <span className="text-white/50 font-bold">“Face from frame”</span> to capture people. Add more angles per person for steadier video swaps.
+          Recommended: it picks each person's clearest frame for you. Capturing by hand from
+          a frame where people touch gives the matcher two near-identical faces, which is what
+          makes swaps refuse or mix people up.
+        </div>
+        <div className="text-mini text-white/30 leading-relaxed">
+          Or scrub to a clear frame and use <span className="text-white/45 font-bold">“Face from frame”</span>.
         </div>
       </div>
     );
@@ -233,6 +288,11 @@ export default function PersonGroups({
           {people.length} {people.length === 1 ? 'person' : 'people'} · {targetFaces.length} {targetFaces.length === 1 ? 'angle' : 'angles'}
         </span>
         <div className="flex gap-1.5">
+          <button type="button" disabled={busy || scanning} onClick={autoCapture}
+            title="Re-scan the clip and capture everyone from their own clearest frame, replacing the current people"
+            className="px-2 py-1 rounded-lg text-micro font-bold bg-[var(--accent)]/10 border border-[var(--accent)]/30 text-[var(--accent)] hover:bg-[var(--accent)]/20 transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
+            {scanning ? 'Scanning…' : 'Auto-capture'}
+          </button>
           <button type="button" disabled={busy} onClick={autoCluster}
             title="Group every captured face by identity automatically"
             className="px-2 py-1 rounded-lg text-micro font-bold bg-[var(--accent)]/10 border border-[var(--accent)]/30 text-[var(--accent)] hover:bg-[var(--accent)]/20 transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
