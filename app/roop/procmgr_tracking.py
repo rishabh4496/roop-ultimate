@@ -25,7 +25,8 @@ from roop.procmgr_runtime import (_DEBUG_MATCH, _TRACK_EMB_MAX, _TRACK_ASSIGN_MA
                                   _TRACK_STITCH_EMB, _TRACK_STITCH_AMBIG,
                                   _TRACK_INHERIT_MAX, _TRACK_INHERIT_GAIN,
                                   _TRACK_INHERIT_MARGIN, _TRACK_ELIM_FRAC,
-                                  _INTERP_MAX_TRAVEL, _INTERP_MAX_SCALE)
+                                  _INTERP_MAX_TRAVEL, _INTERP_MAX_SCALE,
+                                  _INTERP_COLLIDE_FRAC)
 
 import roop.globals
 from roop import session_pool
@@ -1336,6 +1337,10 @@ class TrackingMixin:
                            for g in uniq_groups}
                 claimant = max(overlap, key=overlap.get)
                 if overlap[claimant] < _TRACK_ELIM_FRAC * t_len:
+                    if _DEBUG_MATCH:
+                        print(f"[ELIM] track {tid} (len={t_len}) refused: claimant {claimant} "
+                              f"overlap={overlap[claimant]} < {_TRACK_ELIM_FRAC * t_len:.1f} "
+                              f"needed  overlaps={overlap}", flush=True)
                     continue
                 target_g = next((g for g in uniq_groups if g != claimant), None)
                 if target_g is None:
@@ -1345,6 +1350,11 @@ class TrackingMixin:
                 # already on screen there too, so this track cannot BE that
                 # person either (two bodies, not one).
                 if overlap.get(target_g, 0) >= _TRACK_ELIM_FRAC * t_len:
+                    if _DEBUG_MATCH:
+                        print(f"[ELIM] track {tid} (len={t_len}) refused: target {target_g} "
+                              f"ALSO overlaps {overlap.get(target_g, 0)} >= "
+                              f"{_TRACK_ELIM_FRAC * t_len:.1f} (two bodies present)  "
+                              f"claimant={claimant} overlaps={overlap}", flush=True)
                     continue
                 # Spatial confirmation: must sit clearly apart from the
                 # claimant's bound track(s) on the frames they share — the
@@ -1354,7 +1364,15 @@ class TrackingMixin:
                 # risk swapping the wrong faceset onto one person's own face.
                 sep = _min_separation(tid, person_tracks.get(claimant, []))
                 if sep is None or sep < 0.35:
+                    if _DEBUG_MATCH:
+                        print(f"[ELIM] track {tid} (len={t_len}) refused: separation from "
+                              f"claimant {claimant}'s track(s) = {sep} < 0.35 widths  "
+                              f"target={target_g} overlaps={overlap}", flush=True)
                     continue
+                if _DEBUG_MATCH:
+                    print(f"[ELIM] track {tid} (len={t_len}) -> assigned to {target_g} by "
+                          f"elimination (claimant={claimant}, sep={sep:.2f})  overlaps={overlap}",
+                          flush=True)
                 track_src[tid] = rank[target_g]
                 inherited[tid] = (claimant, -1.0)  # negative distance = elimination, not a distance
                 person_tracks.setdefault(target_g, []).append(tid)
@@ -1478,6 +1496,42 @@ class TrackingMixin:
         return travel <= _INTERP_MAX_TRAVEL * float(span) * (wa + wb) * 0.5
 
     @staticmethod
+    def _interp_collides(face, tid, frame_idx, other_real):
+        """True if an interpolated face's bbox lands on top of another track's
+        REAL (actually detected) face at the same frame.
+
+        _bridgeable only judges the straight line between two anchors against
+        a travel budget — it has no idea what else is on screen. A close or
+        kissing pair's real face can curve toward contact and back rather than
+        travel in a line, so a bridge that passes _bridgeable can still place
+        the invented face on the neighbour's actual position for one frame.
+        That invented face is swapped unconditionally (see _interp_face), so
+        this is the only guard against it. If _INTERP_COLLIDE_FRAC disables
+        this, the pre-fix behaviour is unchanged."""
+        if _INTERP_COLLIDE_FRAC <= 0:
+            return False
+        others = other_real.get(frame_idx)
+        if not others:
+            return False
+        try:
+            fb = np.asarray(face.bbox, np.float64)
+        except Exception:
+            return False
+        area = max(1.0, (fb[2] - fb[0]) * (fb[3] - fb[1]))
+        for otid, oface in others:
+            if otid == tid:
+                continue
+            try:
+                ob = np.asarray(oface.bbox, np.float64)
+            except Exception:
+                continue
+            iw = max(0.0, min(fb[2], ob[2]) - max(fb[0], ob[0]))
+            ih = max(0.0, min(fb[3], ob[3]) - max(fb[1], ob[1]))
+            if (iw * ih) / area >= _INTERP_COLLIDE_FRAC:
+                return True
+        return False
+
+    @staticmethod
     def _interp_face(a, b, w, emb_mean):
         """Linear blend of two Face observations at fraction w ∈ (0,1) of a→b.
         NB: copy.copy() crashes on an insightface Face (its __getattr__ returns
@@ -1516,6 +1570,14 @@ class TrackingMixin:
         out = {}
         self._interp_refused = 0
         total_coasts = 0
+        # Every track's REAL (actually detected, non-interpolated) observation,
+        # indexed by frame — used below so gap-fill never invents a face on top
+        # of someone who was genuinely seen there that frame. See
+        # _interp_collides for why _bridgeable's travel check alone misses this.
+        other_real = {}
+        for t in tracks:
+            for f_idx, face in (t.get('obs') or {}).items():
+                other_real.setdefault(f_idx, []).append((t['id'], face))
         for t in tracks:
             obs = t.get('obs') or {}
             if not obs:
@@ -1537,7 +1599,11 @@ class TrackingMixin:
                         prev = i
                         continue
                     for g in range(prev + 1, i):
-                        merged[g] = self._interp_face(a, b, (g - prev) / span, emb_mean)
+                        cand = self._interp_face(a, b, (g - prev) / span, emb_mean)
+                        if self._interp_collides(cand, t['id'], g, other_real):
+                            self._interp_refused += 1
+                            continue
+                        merged[g] = cand
                 prev = i
 
             if os.environ.get('ROOP_DEBUG_GAPS') == '1':

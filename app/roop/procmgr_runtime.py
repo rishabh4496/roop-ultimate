@@ -161,6 +161,21 @@ _TRACK_REID_MAX = float(os.environ.get('ROOP_TRACK_REID_MAX', '0.5'))
 _INTERP_MAX_TRAVEL = float(os.environ.get('ROOP_INTERP_MAX_TRAVEL', '0.5'))
 _INTERP_MAX_SCALE = float(os.environ.get('ROOP_INTERP_MAX_SCALE', '2.0'))
 
+# _bridgeable above only judges the STRAIGHT LINE between two real anchors
+# against a travel budget — it has no idea what else is on screen. On a close
+# or kissing pair, a real face can curve toward contact and back rather than
+# travel in a straight line, so a plausible-looking bridge can still land the
+# invented face on top of the OTHER person's actual, correctly-detected face
+# for that exact frame. That invented face passes every identity check by
+# construction (see _interp_face's track-mean embedding), so nothing
+# downstream would ever catch it — it gets swapped and paints a warped patch
+# over the real neighbour's face (the "melted nose" artefact measured on
+# d6.mp4 frames 2695-2708, 2026-08-17). Refuse the bridge for any single
+# frame where the invented bbox overlaps another track's REAL observation by
+# more than this fraction of its own area. Same 0.35 bar face_contact.py uses
+# for crop contamination, for consistency. 0 disables the guard.
+_INTERP_COLLIDE_FRAC = float(os.environ.get('ROOP_INTERP_COLLIDE_FRAC', '0.35'))
+
 
 # ── Track → source assignment gate ───────────────────────────────────────────
 # Binding a track to a source is a DURABLE decision: every face on that track,
