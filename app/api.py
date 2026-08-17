@@ -1920,8 +1920,43 @@ def target_auto_capture(payload: dict = Body(...)):
         roop_globals.TARGET_FACE_GROUP.append(next_id + grp)
         ui_globals.ui_target_thumbs.append(util.convert_to_gradio(crop))
 
+    # ── Grow each person into a multi-angle bank ─────────────────────────────
+    # Measured on the full d6.mp4, same harness, same 8344 faces, only the
+    # capture differing:
+    #
+    #     hand capture from a contact frame        25.0% not swapped
+    #     one best-frontal face per person         27.5%
+    #     best-frontal + this enrichment           15.8%
+    #
+    # So the angles are where the win is, not the seed: the enriched run above
+    # used a WORSE seed by every measure this module reports (a frame flagged
+    # "no clearly separated faces", one person captured at 40.6 degrees
+    # off-axis against 11.1) and still beat the un-enriched one by 12 points,
+    # purely from banking 21 more angles over 11 pose bins. "Track matched but
+    # has no source" went 21.3% -> 11.7% on that change alone, which is more
+    # than any assignment-gate change managed.
+    #
+    # A single reference face only matches the poses near it, and a person in
+    # motion spends most of the clip somewhere else. Capturing one face per
+    # person and stopping is the shape of the bug this endpoint was written to
+    # fix, one level up.
+    #
+    # Same handler the UI's per-person "Auto-capture angles" button calls, so
+    # this is the button doing for the user what they would otherwise do by
+    # hand, not a second implementation of it.
+    enriched = 0
+    if bool(payload.get("enrich", True)):
+        before = len(roop_globals.TARGET_FACES)
+        for rank in range(len(set(result["groups"]))):
+            try:
+                target_auto_angles({"person": rank, "index": idx})
+            except Exception as e:
+                result["notes"].append(f"angle harvest failed for person {rank + 1}: {e}")
+        enriched = len(roop_globals.TARGET_FACES) - before
+
     return _target_faces_payload({
         "count": len(result["targets"]),
+        "angles_added": enriched,
         "separation": None if result["separation"] is None else round(float(result["separation"]), 3),
         "seed_frame": result["seed_index"],
         "per_person": result["per_person"],

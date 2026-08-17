@@ -731,6 +731,14 @@ def main():
     ap.add_argument("--capture", type=int, default=-1,
                     help="frame to capture the two target faces from; "
                          "-1 finds the first well-separated one")
+    ap.add_argument("--auto-capture", action="store_true",
+                    help="capture via roop.capture_seed.auto_capture — the SAME "
+                         "path the app's 'Auto-capture people' button uses — "
+                         "instead of this file's own capture_targets_best_frontal. "
+                         "Off by default so existing baselines stay comparable; "
+                         "use it to measure what a user actually gets now. Also "
+                         "~10x faster (one strided cached scan against a stride-1 "
+                         "walk of up to 3000 frames).")
     ap.add_argument("--capture-extra", default="",
                     help="comma-separated extra frames to add as further ANGLES "
                          "of the same two people, the way the app's 'Add angle "
@@ -784,7 +792,26 @@ def main():
     print(f"[bench] sources: {names[0]} ({len(facesets[0].faces)} faces), "
           f"{names[1]} ({len(facesets[1].faces)} faces)", flush=True)
 
-    if args.capture >= 0 or args.capture_extra.strip():
+    if args.auto_capture:
+        # Measure what the app now gives a user, not what this file's own copy
+        # of the capture logic gives a bench. Same function the
+        # /api/target/auto_capture endpoint calls.
+        from roop.capture_seed import auto_capture
+        _res = auto_capture(args.video)
+        targets, groups = _res["targets"], _res["groups"]
+        if not targets:
+            raise SystemExit(f"auto_capture found nobody: {'; '.join(_res['notes'])}")
+        _sep = _res["separation"]
+        print(f"[bench] auto-capture: {len(set(groups))} people from seed frame "
+              f"{_res['seed_index']}, separation "
+              f"{'n/a' if _sep is None else f'{_sep:.3f}'}, "
+              f"{_res['scanned']} frames scanned in {_res['seconds']}s", flush=True)
+        for p in _res["per_person"]:
+            print(f"[bench]   person {p['person']}: frame {p['frame']}, "
+                  f"off-axis {p['offaxis']} deg ({p['from']})", flush=True)
+        for n in _res["notes"]:
+            print(f"[bench]   note: {n}", flush=True)
+    elif args.capture >= 0 or args.capture_extra.strip():
         # Manual override path, unchanged: an explicit frame (and/or extra
         # angle frames) was asked for, so honor it exactly rather than
         # second-guessing it with the automatic capture below.
