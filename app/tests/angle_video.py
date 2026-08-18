@@ -143,6 +143,9 @@ def main():
     ap.add_argument("--enhancer", default="None")
     ap.add_argument("--mask-engine", default="None")
     ap.add_argument("--step", type=float, default=2.0)
+    ap.add_argument("--threads", type=int, default=20,
+                    help="execution threads; the project benches at 20, which is "
+                         "also what config.yaml runs")
     ap.add_argument("--facesets", default="ashna,harjot")
     ap.add_argument("--yaws", default="",
                     help="comma-separated yaws to render, e.g. -90,90; default all five")
@@ -156,11 +159,22 @@ def main():
 
     ensure_ffmpeg()
     a, b = args.facesets.split(",")
+    # --mask-engine takes a UI display name ("RealityUX"); ProcessOptions keys
+    # its processor dict by processorname ("mask_realityux"). Handing the display
+    # name straight through builds a processor dict ProcessMgr cannot resolve —
+    # the same defect `4310da4` fixed in frontal_roll_video.py, where it meant no
+    # roll sweep in this project's history had ever run with a mask engine on.
+    from sample_bench import map_mask_engine
+    mask_engine = (map_mask_engine(args.mask_engine)
+                   if args.mask_engine != "None" else "None")
+    if mask_engine is None:
+        raise SystemExit(f"unknown --mask-engine {args.mask_engine!r}; "
+                         f"use a display name from sample_bench._MASK_ENGINE_MAP")
     g = ab.init_pipeline(args.provider, args.swap_model, args.enhancer,
-                         args.mask_engine)
+                         mask_engine)
     g.video_encoder = "libx264"
     g.video_quality = 12
-    g.execution_threads = 4
+    g.execution_threads = args.threads
     # The whole point is the tracking pre-pass, which is where the roll is
     # resolved. Without it every frame is detected independently and there is
     # no track to be continuous along.
@@ -172,7 +186,7 @@ def main():
     g.CFG.track_identities = True
     g.temporal_detection = True
     g.CFG.temporal_detection = True
-    options = ab.build_options(g, args.swap_model, args.mask_engine, False)
+    options = ab.build_options(g, args.swap_model, mask_engine, False)
 
     from roop import orientation
     outdir = os.path.join(args.out, args.tag)

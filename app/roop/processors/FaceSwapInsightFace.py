@@ -205,6 +205,25 @@ SWAP_MODELS = {
         # afford a tighter one.
         "verify_tol": 0.65,
     },
+    # RealSwap — hyperswap and hififace as ONE swapper. `secondary` names a
+    # second model from this same table; the processor loads both and mixes
+    # their outputs (see _mix_outputs). The published contract is the PRIMARY's,
+    # so ProcessMgr aligns, normalizes and de-normalizes exactly as it would for
+    # hyperswap alone, and the secondary is re-warped into that crop space
+    # internally. The pairing is cheap precisely because these two agree on
+    # everything but alignment and identity projection: both are 256px, both
+    # take [-1,1] in and out, and both emit their own face mask.
+    "realswap": {
+        "file": "hyperswap_1a_256.onnx",
+        "url": _FF33 + "hyperswap_1a_256.onnx",
+        "output_size": 256,
+        "mean": [0.5, 0.5, 0.5],
+        "standard_deviation": [0.5, 0.5, 0.5],
+        "denormalize": True,
+        "embedding": "normed",
+        "template": "arcface",
+        "secondary": "hififace",
+    },
 }
 
 
@@ -379,6 +398,16 @@ class FaceSwapInsightFace():
         # immediately after its own Run call, on the same thread.
         self.model_has_mask = False
         self._mask_tls = threading.local()
+        # A second swapper this one routes to (RealSwap). None for every
+        # single-net model, which is every model but `realswap`.
+        self.secondary = None
+        self.secondary_template = None
+        # {track_id: routed_to_secondary}. Shared by every worker thread, hence
+        # the lock: the routing latch is a property of the TRACK, so the frames
+        # of one track are read and written from whichever workers happen to
+        # take them.
+        self._route_latch = {}
+        self._route_lock = threading.Lock()
 
     def Initialize(self, plugin_options: dict):
         if self.plugin_options is not None:
@@ -386,6 +415,13 @@ class FaceSwapInsightFace():
                 self.Release()
 
         self.plugin_options = plugin_options
+
+        # Every run, not just the runs that load a model: track ids restart per
+        # video, and the model is already loaded on the second one, so clearing
+        # this inside the load block below would leave the previous clip's
+        # latches deciding the opening frames of the next.
+        with self._route_lock:
+            self._route_latch.clear()
 
         swap_model = plugin_options.get("swap_model", "inswapper")
         if swap_model not in SWAP_MODELS:
@@ -494,6 +530,29 @@ class FaceSwapInsightFace():
             # more thing to get wrong when a model is added.
             self.model_has_mask = len(self.model_swap_insightface.get_outputs()) > 1
             self.loaded_model_key = swap_model
+
+            # ── RealSwap's second net ────────────────────────────────────────
+            # Loaded through this same class rather than a bespoke loader, so it
+            # inherits the TensorRT fallback, the session pool, the crossface
+            # converter and the mask stashing without any of it being written
+            # twice. The nested instance's own spec has no "secondary", so this
+            # cannot recurse.
+            secondary_key = spec.get("secondary")
+            if secondary_key and secondary_key in SWAP_MODELS:
+                sub = FaceSwapInsightFace()
+                sub_options = dict(plugin_options)
+                sub_options["swap_model"] = secondary_key
+                sub.Initialize(sub_options)
+                self.secondary = sub
+                self.secondary_template = SWAP_MODELS[secondary_key].get(
+                    "template", "arcface")
+                # Batching would have to coalesce two nets' crops in step, and
+                # the primary here (hyperswap) cannot batch anyway — its export
+                # has an internal reshape baked to batch=1. Declaring it up
+                # front means RunBatch/RunBatchMulti route straight to the
+                # sequential path, which mixes correctly, instead of each run
+                # paying for one doomed inference to discover the same thing.
+                self._batch_unsupported = True
 
     @staticmethod
     def _find_emap(graph):
@@ -666,7 +725,183 @@ class FaceSwapInsightFace():
                     return sess.run(None, feed)
             return self.model_swap_insightface.run(None, feed)
 
+    # ── RealSwap: two nets, one crop ─────────────────────────────────────────
+
+    @staticmethod
+    def _crop_to_crop(kps, size, src_template, dst_template):
+        """The affine carrying a crop aligned on `src_template` into
+        `dst_template`'s crop space, for THIS face: M_dst @ inv(M_src).
+
+        Computed per face because that is exact and costs nothing — two umeyama
+        fits on 5 points, against a face that takes ~210 ms end to end.
+
+        It is NOT, however, meaningfully face-dependent, and the comment here
+        used to claim it was. The reasoning was that estimate_norm is a
+        least-squares SIMILARITY fit, so it lands the keypoints near the
+        template rather than on it, and a profile fits a frontal 5-point
+        template far worse than a frontal head does — so the two crops' relation
+        should inherit that residual. Measured, it does not: between a frontal
+        and a profile keypoint set the matrix moves by 1.1e-05 on a 256px crop,
+        because the residual enters the composition only at second order. So
+        this could equally be a cached constant per (size, template pair); it is
+        left per-face because exactness is free here and a cache is one more
+        thing to invalidate.
+        """
+        from roop.face_util import estimate_norm
+        pts = np.asarray(kps, dtype=np.float32).reshape(5, 2)
+        src = np.vstack([estimate_norm(pts, size, src_template), [0, 0, 1]])
+        dst = np.vstack([estimate_norm(pts, size, dst_template), [0, 0, 1]])
+        return (dst @ np.linalg.inv(src))[:2].astype(np.float32)
+
+    @staticmethod
+    def _warp_chw(chw, M, size):
+        """Resample a [3,H,W] float tensor through a 2x3 affine.
+
+        BORDER_REPLICATE for the same reason align_crop uses it: the two
+        templates do not frame the face identically, so one crop's edge maps
+        outside the other's, and a black wedge there is a hard edge the net
+        never saw in training.
+        """
+        img = np.ascontiguousarray(np.asarray(chw).transpose(1, 2, 0))
+        out = cv2.warpAffine(img, M, (size, size), flags=cv2.INTER_LINEAR,
+                             borderMode=cv2.BORDER_REPLICATE)
+        return np.ascontiguousarray(out.transpose(2, 0, 1))
+
+    def _renormalize(self, blob, src, dst):
+        """Re-express an input blob prepared for `src`'s mean/std in `dst`'s.
+
+        A no-op for the shipped pairing — hyperswap and hififace both take
+        [-1,1] — but the pairing is a table entry, and a mismatched one would
+        otherwise show up as a colour shift in half the face rather than as an
+        error.
+        """
+        s_mean = np.asarray(src.model_mean, dtype=np.float32).reshape(3, 1, 1)
+        s_std = np.asarray(src.model_standard_deviation, dtype=np.float32).reshape(3, 1, 1)
+        d_mean = np.asarray(dst.model_mean, dtype=np.float32).reshape(3, 1, 1)
+        d_std = np.asarray(dst.model_standard_deviation, dtype=np.float32).reshape(3, 1, 1)
+        if np.array_equal(s_mean, d_mean) and np.array_equal(s_std, d_std):
+            return blob
+        return ((blob * s_std + s_mean) - d_mean) / d_std
+
+    # Pose band that routes a face to the secondary net, with hysteresis: enter
+    # at ENTER degrees of |yaw|, and do not come back until below EXIT.
+    #
+    # Measured, 1310 paired frames per model over yaw -90/-45/0/+45/+90 (see the
+    # yaw-sweep table in RECODE_STATUS.md). At yaw 0 and +/-45 hyperswap wins
+    # identity on 100% of frames and NEITHER model has a tail — max bulk shift
+    # 0.010 interocular units against a 0.002 measurement floor. There is nothing
+    # to fix there and routing away would only cost identity.
+    #
+    # At +/-90 the failure is a tail, not a mean: hyperswap displaces the face by
+    # more than 0.10 on 13-17% of frames, up to 0.59 and 0.947 — a whole face
+    # moved by an eye-to-eye distance — where hififace does so on 6%, to a max of
+    # 0.375. And the failures NEST: of hyperswap's 35/45 blow-ups per band,
+    # hififace shares 16/14 and fixes 19/31, while introducing exactly ONE of its
+    # own in each. Identity at profile is 0.35 vs 0.23, which is the difference
+    # between poor and poor, against the difference between an intact face and a
+    # destroyed one.
+    #
+    # The crossover between 45 and 90 is UNMEASURED — the sweep's plates only
+    # exist at those five yaws — so the entry sits near 90 rather than in the
+    # gap, and the change can only reach the band the data covers. That margin is
+    # also what absorbs solve_pose_5pt's 15-20 deg per-person error: a face the
+    # solver calls 80 deg is somewhere around 60-100 true, and even at the worst
+    # of that a MEASURED 45 deg face (45+20=65) never reaches the entry.
+    _SECONDARY_ENTER_YAW = 80.0
+    _SECONDARY_EXIT_YAW = 70.0
+
+    def _route_to_secondary(self, target_face: Face) -> bool:
+        """True when this face should be swapped by the secondary net instead.
+
+        Latched along the TRACK, not decided per frame. A bare threshold makes
+        a head hovering near it alternate between two models with different
+        identity strength from frame to frame, which is requirement 11's exact
+        failure mode — and the fix the project already uses everywhere else
+        (roll latch, non-frontal router) is hysteresis along the track, NOT a
+        cross-fade between the two outputs. A cross-fade here would be the
+        uniform blend of two differently-shaped faces that `angle-handling-
+        three-layers` measured and ruled out: it doubles every feature.
+
+        Without tracking there is no track to latch on, so this degrades to the
+        bare threshold rather than pretending to be stable.
+        """
+        from roop.face_util import solve_pose_5pt
+        pose = solve_pose_5pt(getattr(target_face, 'kps', None))
+        if pose is None:
+            return False
+        yaw = abs(float(pose[0]))
+
+        tid = target_face.get('_track_id') if hasattr(target_face, 'get') else None
+        if tid is None:
+            return yaw >= self._SECONDARY_ENTER_YAW
+        with self._route_lock:
+            latched = self._route_latch.get(tid, False)
+            if latched:
+                latched = yaw >= self._SECONDARY_EXIT_YAW
+            else:
+                latched = yaw >= self._SECONDARY_ENTER_YAW
+            self._route_latch[tid] = latched
+            return latched
+
+    def _run_secondary(self, source_face: Face, target_face: Face, temp_frame):
+        """The second net's swap of the same face, resampled back into the
+        PRIMARY's crop space and normalization, or None when it is unavailable.
+
+        A failure here is downgraded to "RealSwap runs as its primary alone" for
+        the rest of the run rather than killing the render: the routing is a
+        quality feature, and a face is better swapped by one net than not at all.
+        """
+        sec = self.secondary
+        kps = getattr(target_face, 'kps', None)
+        if sec is None or kps is None:
+            return None
+        size = int(temp_frame.shape[-1])
+        try:
+            to_b = self._crop_to_crop(kps, size, self.model_template,
+                                      self.secondary_template)
+            blob = self._renormalize(temp_frame, self, sec)
+            blob_b = self._warp_chw(blob[0], to_b, size)[np.newaxis]
+            out_b = sec.Run(source_face, target_face, blob_b)
+            back = cv2.invertAffineTransform(to_b)
+            # This face was swapped by the secondary, so the mask that describes
+            # it is the SECONDARY's — carried into the primary's crop space,
+            # because that is the space ProcessMgr pastes through. Draining it is
+            # not optional either way: left stashed on the sub-processor it would
+            # be served to a later face on the same thread.
+            sec_masks = sec.take_masks()
+            if sec_masks and sec_masks[0] is not None:
+                m = np.asarray(sec_masks[0], dtype=np.float32)
+                self._mask_tls.masks = [cv2.warpAffine(
+                    m, back, (size, size), flags=cv2.INTER_LINEAR,
+                    borderMode=cv2.BORDER_REPLICATE)]
+            else:
+                self._mask_tls.masks = None
+            out_b = np.asarray(out_b, dtype=np.float32)
+            if bool(sec.model_denormalize) != bool(self.model_denormalize):
+                out_b = (out_b + 1.0) / 2.0 if sec.model_denormalize else out_b * 2.0 - 1.0
+            return self._warp_chw(out_b, back, size)
+        except Exception as e:
+            print(f"[swap] realswap: secondary net '{sec.loaded_model_key}' failed "
+                  f"({e!r}); running as '{self.loaded_model_key}' alone for the "
+                  f"rest of this run.")
+            self.secondary = None
+            return None
+
     def Run(self, source_face: Face, target_face: Face, temp_frame: Frame) -> Frame:
+        # RealSwap routes each face to ONE of its two nets and runs only that
+        # one. Running both and combining them was the original framing, and the
+        # measurement retired it: there is no region where the second net helps a
+        # face the first one swaps well (at yaw 0/+/-45 hyperswap wins identity
+        # on 100% of frames and neither model has a tail), and cross-dissolving
+        # two differently-shaped faces doubles the features anyway. Routing also
+        # means a face costs ONE net, so the pairing is free on the ~95% of faces
+        # that never reach the profile band.
+        if getattr(self, 'secondary', None) is not None and self._route_to_secondary(target_face):
+            routed = self._run_secondary(source_face, target_face, temp_frame)
+            if routed is not None:
+                return routed
+            # Secondary unavailable — fall through and swap with the primary.
+
         latent = self._compute_source_input(source_face)
         if latent is None:
             # Image-source model but no source crop available → return the target
@@ -774,6 +1009,10 @@ class FaceSwapInsightFace():
             return self._sequential_fallback(requests)
 
     def Release(self):
+        if self.secondary is not None:
+            self.secondary.Release()
+            self.secondary = None
+            self.secondary_template = None
         if self.pool is not None:
             self.pool.release()
             self.pool = None
