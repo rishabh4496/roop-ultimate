@@ -115,8 +115,9 @@ class TestWiring(unittest.TestCase):
 
         seen = {}
 
-        def fake(result, kps, bbox, tol=None):
+        def fake(result, kps, bbox, tol=None, rotation_action=None):
             seen['tol'] = tol
+            seen['rotation_action'] = rotation_action
             return False        # "did not move" -> swap stands, result returned
 
         orig = PM.swap_moved_the_face
@@ -127,6 +128,12 @@ class TestWiring(unittest.TestCase):
                     (0, 0, 10, 10), frame[0:10, 0:10].copy())
             PM.ProcessMgr._verify_after(frame, snap, tol=0.65)
             self.assertEqual(seen.get('tol'), 0.65)
+            # The turn must reach the guard too, or the re-detection reads a
+            # rolled face with the raw detector and discards good swaps —
+            # measured as 2 un-swapped frames in a 0-360 roll sweep.
+            seen.clear()
+            PM.ProcessMgr._verify_after(frame, snap, rotation_action="rotate_180")
+            self.assertEqual(seen.get('rotation_action'), "rotate_180")
             seen.clear()
             PM.ProcessMgr._verify_after(frame, snap)
             self.assertIsNone(seen.get('tol'),

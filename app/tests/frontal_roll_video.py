@@ -241,8 +241,17 @@ def main():
     args = ap.parse_args()
 
     ensure_ffmpeg()
-    g = ab.init_pipeline(args.provider, args.swap_model, args.enhancer,
-                         args.mask_engine)
+    # The mask engine arrives as the display name the app and config.yaml use
+    # ("RealityUX"); everything downstream wants the internal key
+    # ("mask_realityux"). This bench passed the display name straight through,
+    # so every engine except "None" died with a KeyError deep in build_options —
+    # which is why a roll sweep had never been run with a mask engine on at all.
+    from sample_bench import map_mask_engine
+    mask_engine = map_mask_engine(args.mask_engine) if args.mask_engine != "None" else "None"
+    if mask_engine is None:
+        raise SystemExit(f"unknown --mask-engine {args.mask_engine!r}; "
+                         f"use a display name from sample_bench._MASK_ENGINE_MAP")
+    g = ab.init_pipeline(args.provider, args.swap_model, args.enhancer, mask_engine)
     g.video_encoder = "libx264"
     g.video_quality = 12
     g.execution_threads = 4
@@ -253,7 +262,7 @@ def main():
     g.CFG.track_identities = track
     g.temporal_detection = track
     g.CFG.temporal_detection = track
-    options = ab.build_options(g, args.swap_model, args.mask_engine, False)
+    options = ab.build_options(g, args.swap_model, mask_engine, False)
 
     from roop import orientation
     outdir = os.path.join(args.out, args.tag)

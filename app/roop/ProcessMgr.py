@@ -3104,16 +3104,23 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
             return True     # unreadable pose — check, as before
 
     @staticmethod
-    def _verify_after(result, snap, tol=None):
+    def _verify_after(result, snap, tol=None, rotation_action=None):
         """Undo this face's swap if it moved the face off where the plate's was.
 
         `tol` is the loaded swap model's own tolerance when it publishes one
         (see FaceSwapInsightFace.verify_tol_for); None keeps face_util's shared
         default, which is what every model but hififace uses.
+
+        `rotation_action` is forwarded so the re-detection reads the face the
+        same way up the plate's keypoints were read. This runs AFTER
+        `auto_unrotate_frame`, so without it the check looks at a rolled face
+        with the raw detector — the one reading `_upright_remeasure` exists to
+        correct — and discards good swaps. See `swap_moved_the_face`.
         """
         try:
             kps, bbox, (rx0, ry0, rx1, ry1), patch = snap
-            if not swap_moved_the_face(result, kps, bbox, tol=tol):
+            if not swap_moved_the_face(result, kps, bbox, tol=tol,
+                                       rotation_action=rotation_action):
                 return result
             _audit_hit(AUDIT_SWAP_MOVED)
             result[ry0:ry1, rx0:rx1] = patch
@@ -4103,7 +4110,8 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
             # session with no lock — the freeze d63982d fixed everywhere else.
             with _prof('verify'), _gpu_guard(pooled=analysis_pooled()):
                 result = self._verify_after(
-                    result, _vs, tol=_swap_verify_tol_for(swap_p))
+                    result, _vs, tol=_swap_verify_tol_for(swap_p),
+                    rotation_action=rotation_action)
 
         return result
 

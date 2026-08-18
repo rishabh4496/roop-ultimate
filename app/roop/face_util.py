@@ -336,7 +336,7 @@ def get_all_faces_in_roi(frame, bbox, pad_ratio=1.0, min_crop=160):
     return faces
 
 
-def detect_boxes_in_roi(frame, bbox, pad_ratio=1.0, min_crop=160):
+def detect_boxes_in_roi(frame, bbox, pad_ratio=1.0, min_crop=160, rotation_action=None):
     """Like `get_all_faces_in_roi`, but the DETECTOR ONLY — no aux models.
 
     A caller that reads nothing but `bbox` and `kps` has no use for the three
@@ -347,18 +347,36 @@ def detect_boxes_in_roi(frame, bbox, pad_ratio=1.0, min_crop=160):
     the call, for output that is discarded. See `swap_moved_the_face`, which runs
     once per SWAPPED FACE and is the reason this exists.
 
+    `rotation_action` turns the ROI upright before detecting and maps the
+    results back, for a caller holding a face the pipeline had to rotate. It
+    matters for the same reason `_upright_remeasure` exists: on a rolled face
+    the detector does not fail, it succeeds badly, returning a confident set of
+    keypoints for an upright face that is not the one in front of it. A caller
+    comparing those against keypoints that WERE corrected is comparing two
+    different readings of the same face and will conclude it moved.
+
     Returns Face objects carrying bbox/kps/det_score and nothing else, in
-    full-frame coordinates.
+    full-frame coordinates, whichever way the ROI was turned to find them.
     """
     win = _roi_window(frame, bbox, pad_ratio, min_crop)
     if win is None:
         return []
     crop, cx1, cy1 = win
+    turns = {"rotate_clockwise": ("clockwise", rotate_clockwise),
+             "rotate_anticlockwise": ("anticlockwise", rotate_anticlockwise),
+             "rotate_180": ("180", rotate_image_180)}
+    turn = turns.get(rotation_action)
+    ch, cw = crop.shape[:2]
+    if turn is not None:
+        crop = turn[1](crop)
     try:
         faces = _detect_faces_raw(crop, aux=False) or []
     except Exception:
         return []
     for face in faces:
+        if turn is not None:
+            # Pre-rotation crop dimensions, matching _upright_remeasure's call.
+            _unrotate_face_coords(face, cw, ch, turn[0])
         _offset_face_coords(face, cx1, cy1)
     return faces
 
@@ -2395,7 +2413,7 @@ def _bbox_iou_1d(a, b):
     return iou - 1e-3 * (d / scale)
 
 
-def swap_moved_the_face(result, plate_kps, bbox, tol=None):
+def swap_moved_the_face(result, plate_kps, bbox, tol=None, rotation_action=None):
     """True when the swapped result no longer has the face where the plate did.
 
     Past roughly 90 degrees of yaw a head shows cheek and ear and no face at
@@ -2417,6 +2435,16 @@ def swap_moved_the_face(result, plate_kps, bbox, tol=None):
     A miss (no face found in the box) returns False — the swap stands. On the
     measured clip that is 2 frames in 317, and refusing on a miss would throw
     away good swaps to catch almost nothing.
+
+    `rotation_action` is the turn the pipeline applied to this face, and it is
+    passed to the re-detection so the result is read the same way up the plate
+    was. Without it this guard destroys good swaps on rolled faces: the plate's
+    keypoints have been corrected by `_upright_remeasure`, the re-detection has
+    not, and on an inverted face the raw detector confidently returns an upright
+    constellation with the mouth points on the forehead. The two disagree by the
+    whole inversion error, `moved` lands far over any tolerance, and a correct
+    swap is replaced with the original face. Measured on a 0-360 roll of a real
+    frontal face: 2 frames of 180, at roll 192 and 194, silently un-swapped.
     """
     if tol is None:
         tol = SWAP_MOVED_TOL
@@ -2429,7 +2457,8 @@ def swap_moved_the_face(result, plate_kps, bbox, tol=None):
         interocular = float(np.linalg.norm(kps[0] - kps[1]))
         if not (interocular > 1e-6):
             return False
-        found = detect_boxes_in_roi(result, bbox, pad_ratio=0.6)
+        found = detect_boxes_in_roi(result, bbox, pad_ratio=0.6,
+                                    rotation_action=rotation_action)
         if not found:
             return False
         # WHICH detection in the window. The padding is 0.6 of the box, so with
