@@ -7,7 +7,7 @@
 // anything outside this tab.
 export const FACESWAP_DEFAULTS = {
   // Swap settings
-  swap_model: 'hyperswap_1c',
+  swap_model: 'realswap',
   face_detection_mode: 'Selected face',
   detector_engine: 'retinaface_r50',
   face_detector_size: '640',

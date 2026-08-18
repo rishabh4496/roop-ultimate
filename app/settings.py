@@ -179,7 +179,7 @@ class Settings:
         # Target frontalization (Option 2)
         self.use_frontalization = self.default_get(data, 'use_frontalization', False)
         self.frontalization_threshold = self.default_get(data, 'frontalization_threshold', 30.0)
-        self.swap_model = self.default_get(data, 'swap_model', 'inswapper')
+        self.swap_model = self.default_get(data, 'swap_model', 'realswap')
         # One Euro temporal face stabilization (video)
         self.stabilize_face = self.default_get(data, 'stabilize_face', False)
         self.stabilize_method = self.default_get(data, 'stabilize_method', 'one_euro')
