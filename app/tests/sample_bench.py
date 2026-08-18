@@ -249,7 +249,8 @@ def main():
     # measured a capture no user takes. Kept as the fallback for a clip whose
     # faces are all below the scan's quality floors.
     from two_face_video import auto_capture_targets
-    targets, groups = auto_capture_targets(args.video, log_prefix="[bench]", strict=False)
+    targets, groups = auto_capture_targets(args.video, expect=len(names),
+                                           log_prefix="[bench]", strict=False)
     if targets is None:
         cap_idx, _, faces = first_face_frame(args.video)
         targets, groups = [select_primary_face(faces)], [0]

@@ -503,7 +503,8 @@ def enrich_targets_auto_angles(video, targets, groups, log_prefix="[capture]"):
     return list(g.TARGET_FACES), list(g.TARGET_FACE_GROUP)
 
 
-def auto_capture_targets(video, time_budget=90.0, log_prefix="[capture]", strict=True):
+def auto_capture_targets(video, expect=None, time_budget=90.0, log_prefix="[capture]",
+                         strict=True):
     """Capture the target people exactly the way the app now does it.
 
     This is the bench's half of the fix in commits d32d833/aa93ab3. The seed
@@ -528,6 +529,15 @@ def auto_capture_targets(video, time_budget=90.0, log_prefix="[capture]", strict
     best-frontal plus angle enrichment 15.8%. A single reference face only
     matches poses near it.
 
+    `expect` is how many people the CALLER can actually swap — always pass it
+    when you know, which a bench does: it has one faceset per person on the
+    command line. Left to itself the scan infers the count from the footage, and
+    on a one-faceset clip that found 2 people (measured on s1.mp4, a bystander
+    in shot), which captures a second person into group 1 that has no source and
+    therefore can never be swapped. `expect` also makes the seed search demand a
+    frame holding exactly that many clear faces, which is a stricter and better
+    seed than "two or more".
+
     `strict=False` returns ``(None, None)`` instead of raising when the scan
     finds nobody, so a caller with an older capture path of its own can fall
     back to it rather than dropping a clip. The scan applies real quality floors
@@ -538,7 +548,7 @@ def auto_capture_targets(video, time_budget=90.0, log_prefix="[capture]", strict
     from roop.capturer import get_video_frame
     from roop.face_util import _attach_source_crops
 
-    res = auto_capture(video, time_budget=time_budget)
+    res = auto_capture(video, expect=expect, time_budget=time_budget)
     targets, groups = res["targets"], res["groups"]
     if not targets:
         msg = f"auto-capture found nobody: {'; '.join(res['notes'])}"
@@ -928,7 +938,8 @@ def main():
     else:
         # Default path: the app's own "Auto-capture people" button, end to end.
         targets, groups = auto_capture_targets(
-            args.video, time_budget=args.capture_budget, log_prefix="[bench]")
+            args.video, expect=len(names), time_budget=args.capture_budget,
+            log_prefix="[bench]")
 
     clip = trim(args.video, args.start, args.end,
                 os.path.join(work, "clip.mp4"))

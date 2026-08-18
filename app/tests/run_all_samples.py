@@ -176,7 +176,8 @@ def run_one(video, names, facesets, options, out_dir):
     # Same capture the app performs, for singles and doubles alike — see
     # sample_bench.py's note. Falls back to the old first-face capture only when
     # the scan finds nobody clearing its quality floors.
-    targets, groups = auto_capture_targets(video, log_prefix="[run_all]", strict=False)
+    targets, groups = auto_capture_targets(video, expect=len(names),
+                                           log_prefix="[run_all]", strict=False)
     if targets is None:
         cap_idx, _, faces = sb.first_face_frame(video)
         targets, groups = [sb.select_primary_face(faces)], [0]
