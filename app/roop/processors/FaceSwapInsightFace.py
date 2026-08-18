@@ -808,31 +808,30 @@ class FaceSwapInsightFace():
     # between poor and poor, against the difference between an intact face and a
     # destroyed one.
     #
-    # !! THIS THRESHOLD IS NOT TRUSTWORTHY ON REAL FOOTAGE. !!
+    # These fire on ~2/3 of the faces in the `double/` clips, which looked like a
+    # broken gate and is not one. The two-person clips are people facing EACH
+    # OTHER, so both heads are near-profile to camera; d1's solver readings have
+    # a MEDIAN |yaw| of 85 deg and 61.7% of faces at or above 80.
     #
-    # It was placed against the distribution solve_pose_5pt reports on the
-    # SYNTHETIC sweep plates, where it separates cleanly: 34-44 deg for the
-    # "+/-45" plates and 85-87 for the "+/-90" ones, leaving a 41 deg gap with no
-    # population in it, stable to the degree across every roll.
+    # Checked against a signal the solver has no part in — eye separation as a
+    # fraction of face width, which collapses when a head turns and one eye goes
+    # behind the nose. Calibrated on plates of known pose (true frontal 0.460,
+    # true 90 deg 0.047), it tracks the solver monotonically on real footage:
     #
-    # On real video that distribution does not hold. Measured over d1.mp4 — an
-    # ordinary two-person clip, not a profile-heavy one — the solver reports a
-    # MEDIAN |yaw| of 85 deg, p25 of 71, and 61.7% of faces at or above 80. The
-    # gap the threshold sits in does not exist there; the bulk of the population
-    # sits on top of it, and 69% of that clip's faces routed to the secondary.
+    #   solver |yaw|      0-30   30-50   50-70   70-80   80-95
+    #   d1  eye-sep/w    0.496   0.381   0.237   0.183   0.091
+    #   d6  eye-sep/w    0.353   0.306   0.270   0.184   0.121
     #
-    # The consequence is invisible to the swap audit, which is why it nearly got
-    # away: every face still swaps, so the audit reads 100% clean, while two
-    # thirds of them are quietly being swapped by the net measured to carry 0.12
-    # LESS identity.
+    # So the faces this routes really are turned that far, and the routing rate
+    # is a property of the material, not a misfire.
     #
-    # Whether that is real pose or the solver over-reading on detector-grade
-    # keypoints is not yet established (see pose-solve-head-shape-limit: 15-20
-    # deg of per-person error is already known). Until it is, do NOT simply raise
-    # these numbers — that is tuning a gate against a population that has not
-    # been characterised, which is the mistake this project has now made five
-    # times. Characterise first: label real profiles, and check the solver
-    # against them.
+    # The one caveat left: the 80-95 band reads 0.09-0.12 where a TRUE 90 deg
+    # face reads 0.047, so that band likely holds faces nearer 70-85 than 90 —
+    # consistent with the 15-20 deg per-person error in
+    # pose-solve-head-shape-limit. The sweep only proved hififace better at the
+    # plates' 85-87, so the lower part of this band is routed on an
+    # extrapolation. Narrowing it needs footage at a KNOWN intermediate yaw,
+    # which the five-plate sweep cannot provide.
     _SECONDARY_ENTER_YAW = 80.0
     _SECONDARY_EXIT_YAW = 70.0
 
