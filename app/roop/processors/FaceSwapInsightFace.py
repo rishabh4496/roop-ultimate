@@ -358,6 +358,10 @@ class FaceSwapInsightFace():
     processorname = 'faceswap'
     type = 'swap'
 
+    # (size, template) -> feathered eye-band mask. Face-independent (the crop is
+    # the template), so it is built once for the whole run.
+    _EYE_MASK_CACHE = {}
+
     def __init__(self):
         self.plugin_options = None
         self.model_swap_insightface = None
@@ -409,9 +413,9 @@ class FaceSwapInsightFace():
         self._route_latch = {}
         self._route_lock = threading.Lock()
         # How much of a run actually used the second net. Without this a clean
-        # result on real footage is ambiguous — "the routing is safe" and "the
-        # routing never fired" look identical from the audit.
-        self._routed_faces = 0
+        # result on real footage is ambiguous — "the second net helped" and "the
+        # second net never ran" look identical from the audit.
+        self._mixed_faces = 0
         self._seen_faces = 0
 
     def Initialize(self, plugin_options: dict):
@@ -427,7 +431,7 @@ class FaceSwapInsightFace():
         # latches deciding the opening frames of the next.
         with self._route_lock:
             self._route_latch.clear()
-            self._routed_faces = 0
+            self._mixed_faces = 0
             self._seen_faces = 0
 
         swap_model = plugin_options.get("swap_model", "inswapper")
@@ -809,95 +813,86 @@ class FaceSwapInsightFace():
             return blob
         return ((blob * s_std + s_mean) - d_mean) / d_std
 
-    # Pose band that routes a face to the secondary net, with hysteresis: enter
-    # at ENTER degrees of |yaw|, and do not come back until below EXIT.
+    # ── The composition rule ─────────────────────────────────────────────────
+    # hyperswap is the base for the whole face; hififace contributes ONLY the
+    # eyelid / eyelash band around each eye.
     #
-    # Measured, 1310 paired frames per model over yaw -90/-45/0/+45/+90 (see the
-    # yaw-sweep table in RECODE_STATUS.md). At yaw 0 and +/-45 hyperswap wins
-    # identity on 100% of frames and NEITHER model has a tail — max bulk shift
-    # 0.010 interocular units against a 0.002 measurement floor. There is nothing
-    # to fix there and routing away would only cost identity.
+    # This is the user's own brief, given by feature rather than by pose:
+    # hyperswap is the better model for faithfulness to the faceset and for the
+    # nose, eye interior, mouth, chin and cheeks; hififace is the better one for
+    # eyelids, eyelashes and expression. So the base is hyperswap and hififace
+    # fills the ~15-20% it is weak at.
     #
-    # At +/-90 the failure is a tail, not a mean: hyperswap displaces the face by
-    # more than 0.10 on 13-17% of frames, up to 0.59 and 0.947 — a whole face
-    # moved by an eye-to-eye distance — where hififace does so on 6%, to a max of
-    # 0.375. And the failures NEST: of hyperswap's 35/45 blow-ups per band,
-    # hififace shares 16/14 and fixes 19/31, while introducing exactly ONE of its
-    # own in each. Identity at profile is 0.35 vs 0.23, which is the difference
-    # between poor and poor, against the difference between an intact face and a
-    # destroyed one.
+    # It replaces a pose ROUTER that sent whole faces to hififace past ~80 deg of
+    # yaw. That was measured on real contact footage (d1, 170 routed faces) and
+    # is not coming back: identity to the faceset fell to 0.168 against
+    # hyperswap's 0.424 -- 0.26 of identity for no gain in sharpness (90.2 vs
+    # 93.6) -- and it read on screen as "the face is not visible, no definitive
+    # landmark". The synthetic sweep had predicted only 0.35 -> 0.23; real
+    # footage was more than twice as bad.
     #
-    # These fire on ~2/3 of the faces in the `double/` clips, which looked like a
-    # broken gate and is not one. The two-person clips are people facing EACH
-    # OTHER, so both heads are near-profile to camera; d1's solver readings have
-    # a MEDIAN |yaw| of 85 deg and 61.7% of faces at or above 80.
-    #
-    # Checked against a signal the solver has no part in — eye separation as a
-    # fraction of face width, which collapses when a head turns and one eye goes
-    # behind the nose. Calibrated on plates of known pose (true frontal 0.460,
-    # true 90 deg 0.047), it tracks the solver monotonically on real footage:
-    #
-    #   solver |yaw|      0-30   30-50   50-70   70-80   80-95
-    #   d1  eye-sep/w    0.496   0.381   0.237   0.183   0.091
-    #   d6  eye-sep/w    0.353   0.306   0.270   0.184   0.121
-    #
-    # So the faces this routes really are turned that far, and the routing rate
-    # is a property of the material, not a misfire.
-    #
-    # The one caveat left: the 80-95 band reads 0.09-0.12 where a TRUE 90 deg
-    # face reads 0.047, so that band likely holds faces nearer 70-85 than 90 —
-    # consistent with the 15-20 deg per-person error in
-    # pose-solve-head-shape-limit. The sweep only proved hififace better at the
-    # plates' 85-87, so the lower part of this band is routed on an
-    # extrapolation. Narrowing it needs footage at a KNOWN intermediate yaw,
-    # which the five-plate sweep cannot provide.
-    _SECONDARY_ENTER_YAW = 80.0
-    _SECONDARY_EXIT_YAW = 70.0
+    # Why a region composite is allowed here when a uniform blend is not: an
+    # identity swap MOVES the features, so cross-dissolving two differently
+    # shaped WHOLE faces superimposes two sets of them and there is no strength
+    # at which that does not double (angle-handling-three-layers). Both crops
+    # here are aligned from the SAME keypoints, so each eye lands in the same
+    # place in both, and the blend is confined to a band whose feathered edge
+    # falls on skin -- brow ridge above, cheek below -- where there is no feature
+    # to double. `ghost` in the angle sweep is the check: above 1.0 means the two
+    # faces are superimposing.
+    _EYE_RX = 0.51        # ellipse radii as a fraction of the interocular distance
+    _EYE_RY = 0.38
+    _EYE_LIFT = 0.10      # centre offset ABOVE the eye, toward lid and lashes
+    _EYE_FEATHER = 0.16   # gaussian feather, also in interocular units
 
-    def _route_to_secondary(self, target_face: Face) -> bool:
-        """True when this face should be swapped by the secondary net instead.
+    @classmethod
+    def _eye_region_mask(cls, size, template='arcface'):
+        """A feathered [H,W] mask over both eyelid bands, in crop space.
 
-        Latched along the TRACK, not decided per frame. A bare threshold makes
-        a head hovering near it alternate between two models with different
-        identity strength from frame to frame, which is requirement 11's exact
-        failure mode — and the fix the project already uses everywhere else
-        (roll latch, non-frontal router) is hysteresis along the track, NOT a
-        cross-fade between the two outputs. A cross-fade here would be the
-        uniform blend of two differently-shaped faces that `angle-handling-
-        three-layers` measured and ruled out: it doubles every feature.
-
-        Without tracking there is no track to latch on, so this degrades to the
-        bare threshold rather than pretending to be stable.
+        Face-independent, so it is built once per (size, template) and cached:
+        the crop IS the template, so every aligned face puts its eyes on the
+        same two points by construction. That is also what makes the composite
+        safe -- the band is anchored to the alignment, not to a per-face
+        landmark fit that could wander.
         """
-        from roop.face_util import solve_pose_5pt
-        pose = solve_pose_5pt(getattr(target_face, 'kps', None))
-        if pose is None:
-            return False
-        yaw = abs(float(pose[0]))
+        key = (int(size), str(template))
+        cached = cls._EYE_MASK_CACHE.get(key)
+        if cached is not None:
+            return cached
+        from roop.face_util import swap_template_points
+        pts = np.asarray(swap_template_points(int(size), template), dtype=np.float32)
+        left, right = pts[0], pts[1]
+        sep = float(np.linalg.norm(right - left)) or (size * 0.27)
+        rx, ry = cls._EYE_RX * sep, cls._EYE_RY * sep
+        m = np.zeros((int(size), int(size)), np.float32)
+        for eye in (left, right):
+            c = (int(round(eye[0])), int(round(eye[1] - cls._EYE_LIFT * sep)))
+            cv2.ellipse(m, c, (int(round(rx)), int(round(ry))), 0, 0, 360, 1.0, -1)
+        k = int(cls._EYE_FEATHER * sep) | 1
+        m = cv2.GaussianBlur(m, (k, k), 0)
+        cls._EYE_MASK_CACHE[key] = m
+        return m
 
-        tid = target_face.get('_track_id') if hasattr(target_face, 'get') else None
+    def _mix_outputs(self, primary, secondary, size):
+        """hyperswap everywhere, hififace inside the eyelid band."""
+        m = self._eye_region_mask(size, self.model_template)
         with self._route_lock:
-            if tid is None:
-                latched = yaw >= self._SECONDARY_ENTER_YAW
-            else:
-                latched = self._route_latch.get(tid, False)
-                latched = (yaw >= self._SECONDARY_EXIT_YAW if latched
-                           else yaw >= self._SECONDARY_ENTER_YAW)
-                self._route_latch[tid] = latched
             self._seen_faces += 1
-            self._routed_faces += int(latched)
-            return latched
+            self._mixed_faces += 1
+        return primary * (1.0 - m) + secondary * m
 
-    def route_summary(self):
-        """One line on how many faces this run sent to the second net, or None
-        for a single-net model. Read by the benches so a clean result can be
-        told apart from an idle router."""
+    def mix_summary(self):
+        """One line on how many faces were composited, or None for a single-net
+        model. A two-path feature is unreadable without it: "the second net
+        helped" and "the second net never ran" look identical from the audit."""
         if self.secondary is None or not self._seen_faces:
             return None
-        pct = 100.0 * self._routed_faces / self._seen_faces
-        return (f"[swap] {self.loaded_model_key}: {self._routed_faces} of "
-                f"{self._seen_faces} faces ({pct:.1f}%) routed to "
-                f"'{self.secondary.loaded_model_key}'")
+        cov = float(self._eye_region_mask(self.model_output_size,
+                                          self.model_template).mean())
+        return (f"[swap] {self.loaded_model_key}: {self._mixed_faces} of "
+                f"{self._seen_faces} faces composited with "
+                f"'{self.secondary.loaded_model_key}' over the eye band "
+                f"({100.0 * cov:.1f}% of the crop)")
 
     def _run_secondary(self, source_face: Face, target_face: Face, temp_frame):
         """The second net's swap of the same face, resampled back into the
@@ -952,12 +947,6 @@ class FaceSwapInsightFace():
         # two differently-shaped faces doubles the features anyway. Routing also
         # means a face costs ONE net, so the pairing is free on the ~95% of faces
         # that never reach the profile band.
-        if getattr(self, 'secondary', None) is not None and self._route_to_secondary(target_face):
-            routed = self._run_secondary(source_face, target_face, temp_frame)
-            if routed is not None:
-                return routed
-            # Secondary unavailable — fall through and swap with the primary.
-
         latent = self._compute_source_input(source_face)
         if latent is None:
             # Image-source model but no source crop available → return the target
@@ -976,7 +965,17 @@ class FaceSwapInsightFace():
         # output [0]; the mask is kept for this thread rather than dropped — see
         # `model_has_mask` and `take_masks`.
         self._stash_masks(ort_outs, 1)
-        return ort_outs[0][0]
+        out = ort_outs[0][0]
+
+        # RealSwap: composite the second net's eyelid band over this face. The
+        # primary's mask is the one already stashed and the one published, since
+        # the base of the composite -- and every pixel outside the eye band -- is
+        # the primary's.
+        if getattr(self, 'secondary', None) is not None:
+            other = self._run_secondary(source_face, target_face, temp_frame)
+            if other is not None:
+                out = self._mix_outputs(out, other, int(temp_frame.shape[-1]))
+        return out
 
     def _sequential_fallback(self, requests: list) -> list:
         """requests = list of (source_face, target_face, blob). Runs each crop
@@ -1065,7 +1064,7 @@ class FaceSwapInsightFace():
             return self._sequential_fallback(requests)
 
     def Release(self):
-        summary = self.route_summary()
+        summary = self.mix_summary()
         if summary:
             print(summary)
         if self.secondary is not None:
