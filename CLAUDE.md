@@ -472,3 +472,64 @@ The `torch.js` script also includes ways to install pytorch dependent libraries 
 3. **Follow Conventions:** Match existing project patterns
 4. **Test Thoroughly:** Use CLI to verify launcher functionality
 5. **Document Changes:** Update relevant metadata and documentation
+
+---
+
+# Working on THIS app (roop-ultimate) — read before touching `app/`
+
+Everything above is the Pinokio launcher guide. This section is about the face-swap
+app itself, which is what work in this repo is almost always about.
+
+## Start every session here
+
+1. **Read `G:\pinokio\roop-keep\RECODE_STATUS.md`, newest section first.** It is the
+   running state of a multi-session recode. The top section is always the current one;
+   older sections below it are history and go stale — when a table and a prose summary
+   disagree, trust the table.
+2. **Current phase: PHASE 4 — "RealSwap"**, a hyperswap+hififace swap model against a
+   19-point quality checklist. Explicitly multi-session: update that section before
+   context runs out rather than relying on chat memory.
+3. Phases 1 (detection) and 2 (mask engines / RealityUX) are closed bar one checklist
+   cell and two accept-or-close decisions. Phase 3's headline ask (interacting faces)
+   is characterized but unsolved.
+
+## Benchmarking rules that are not optional
+
+- **Bench the models the user actually runs.** Read `app/config.yaml` live — swap model,
+  mask engine, provider, detector, threads — and pass them explicitly. Tool CLI defaults
+  are not production. This has been violated twice and invalidated whole sessions.
+- **`--threads 20`** on every bench run.
+- **Report processing fps to the user roughly every 3 minutes** during a run, not just
+  at the end.
+- **One render at a time.** Do not run the test suite, another bench, or anything that
+  loads models while a bench is rendering — that killed a run on 2026-08-18. The render
+  holds ~12-15 GB.
+- **Measure model cost through `angle_bench.init_pipeline`**, never a bare python
+  process: without the app's init, TensorRT's DLLs are off PATH, ORT falls back to CPU
+  silently, and a 4 ms model reports as 210 ms.
+
+## The discipline that keeps being learned the hard way
+
+- **Before tuning a gate, measure the distribution that gate actually reads.** Four gate
+  changes have now been implemented and reverted because the population was not in the
+  band the change targeted. Reasoning from a debug table to a failure is not evidence —
+  connect them by measurement first.
+- **Verify a "pure refactor" is pure**: re-run a clip end to end and compare `rows.csv`
+  by hash, not by eye.
+- **A negative result is a deliverable.** Record what was tried, the numbers, and why it
+  was rejected, in the code at the site and in `RECODE_STATUS.md`. Several days have been
+  spent re-attempting ideas that were already measured and thrown away.
+- **Ship the fix, not the flag.** A feature that defaults off is off for everyone; if a
+  change is right, default it on and prove no regression.
+
+## Repo and UI
+
+- Commit and push to the GitHub fork without asking; run the full suite first
+  (`env/Scripts/python.exe -m unittest discover -s tests -t . -p "test_*.py"` from `app/`).
+- `G:\pinokio\roop-keep\` is NOT a git repo — `RECODE_STATUS.md` lives there and is saved
+  by editing it, not by committing.
+- The Gradio UI under `app/ui/` is frozen. All new UI work is the React app in `react-ui/`.
+- A new setting must be registered in **three** places (`settings.py`, the panel, and
+  `settingsCatalog.js`) and, if it drives a `ROOP_*` flag, mapped in `run.py::_apply_perf_env`.
+  Grep that something actually READS it — a control bound to a value nothing consumes
+  looks completely wired.
