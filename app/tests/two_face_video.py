@@ -940,8 +940,21 @@ def main():
         rs = [r for r in rows if r["person"] == person]
         if not rs:
             continue
-        t = np.array([r["touched"] for r in rs])
-        sw = t > 2.0                       # bimodal: ~1.5 untouched vs ~6.5 swapped
+        # Did the pipeline swap this face? Read its OWN decision log, not the
+        # pixel difference against the plate. The pixel test is unusable on
+        # contact footage: the neighbour's swap overlaps this face's box, so a
+        # face the pipeline explicitly REFUSED still reads as touched. Measured
+        # on d6, both arms of the 2026-08-18 capture A/B: 97% and 99% of refused
+        # faces had touched > 2.0, and this line reported 99.8%/99.6% swapped on
+        # runs whose own logs refused 7.0% and 15.5% of every detection. It is
+        # the same contamination the rest of this file is careful about, reached
+        # through the box instead of the crop.
+        #
+        # The pixel test remains the fallback for a row no log entry matched,
+        # and it is sound where the faces are apart — the two measures agree to
+        # within 13 rows in 8262 on the swapped side.
+        sw = np.array([("swapped (" in r["why"]) if r["why"].strip()
+                       else (r["touched"] > 2.0) for r in rs])
         graded = [r for r, s in zip(rs, sw) if s and r["own"] != "" and r["other"] != ""]
         looks_other = sum(1 for r in graded if r["other"] < r["own"])
         # The decision, not a re-measurement: which faceset the pipeline
