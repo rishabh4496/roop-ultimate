@@ -48,7 +48,15 @@ def _apply_perf_env():
     _set('ROOP_EXPR_POOL', cfg.get('perf_expr_pool'))
     _set('ROOP_ENCODER_PRESET', cfg.get('perf_encoder_preset'))
     for var, key in (('ROOP_PROFILE', 'perf_profile'), ('ROOP_BATCH_SWAP', 'perf_batch_swap'),
-                     ('ROOP_NVDEC', 'perf_nvdec')):
+                     ('ROOP_NVDEC', 'perf_nvdec'),
+                     # Identity/tracking features that used to be reachable only
+                     # by editing a launcher's environment. Same 'auto' contract:
+                     # leave the env alone and let each module keep its own
+                     # default, so exposing them changed no shipped behaviour.
+                     ('ROOP_FACE_DEMARCATE', 'face_demarcate'),
+                     ('ROOP_TRACK_STITCH', 'track_stitch'),
+                     ('ROOP_VERIFY_SWAP', 'verify_swap'),
+                     ('ROOP_UPRIGHT_REMEASURE', 'upright_remeasure')):
         v = str(cfg.get(key, 'auto')).strip().lower()
         if v == 'on' or (v == 'auto' and var == 'ROOP_BATCH_SWAP'):
             os.environ[var] = '1'
@@ -58,6 +66,19 @@ def _apply_perf_env():
             os.environ[var] = '0'
             if var == 'ROOP_BATCH_SWAP':
                 os.environ['ROOP_BATCH_SWAP_XFRAME'] = '0'
+
+    # Not tri-state: a model choice and a priority class.
+    _rec = str(cfg.get('recognizer', 'default')).strip().lower()
+    if _rec == 'adaface':
+        os.environ['ROOP_ADAFACE'] = '1'
+    elif _rec == 'default':
+        os.environ['ROOP_ADAFACE'] = '0'
+    # Only the names keep_awake._PRIORITY_CLASSES accepts; it falls back to
+    # 'high' for anything else, so passing a value it does not know through
+    # would present as a working setting that does nothing.
+    _pri = str(cfg.get('process_priority', 'auto')).strip().lower()
+    if _pri in ('high', 'above_normal', 'normal'):
+        os.environ['ROOP_PRIORITY'] = _pri
 
 _apply_perf_env()
 

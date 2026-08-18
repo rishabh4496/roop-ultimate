@@ -695,6 +695,14 @@ def get_meta():
                              "fast", "medium", "slow", "slower", "veryslow"],
         "pool_sizes": ["auto", "1", "2", "3", "4", "5", "6", "7", "8"],
         "tristate": ["auto", "on", "off"],
+        # Identity & tracking selects. Kept here rather than hardcoded in the
+        # panel for the same reason every other list is: the dropdown and the
+        # backend that has to accept the value stay defined in one place.
+        "recognizers": ["default", "adaface"],
+        # Exactly the keys keep_awake._PRIORITY_CLASSES accepts. It falls back
+        # to 'high' for anything it does not recognise, so an option outside
+        # this list would look like a working choice and do nothing.
+        "priorities": ["auto", "high", "above_normal", "normal"],
         "no_face_actions": no_face_choices,
         "upscale": ["128px", "256px", "512px"],
         "video_methods": ["Extract Frames to media", "In-Memory processing"],

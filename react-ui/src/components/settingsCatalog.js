@@ -42,6 +42,14 @@ export const SETTINGS_CATALOG = [
   { key: 'perf_batch_swap', label: 'Batched swap', section: 'Advanced performance' },
   { key: 'perf_profile', label: 'Stage profiling (terminal)', section: 'Advanced performance' },
 
+  // Identity & tracking
+  { key: 'recognizer', label: 'Recognition model', section: 'Identity & tracking' },
+  { key: 'face_demarcate', label: 'Interacting-face demarcation', section: 'Identity & tracking' },
+  { key: 'track_stitch', label: 'Track stitching', section: 'Identity & tracking' },
+  { key: 'verify_swap', label: 'Swap outcome guard', section: 'Identity & tracking' },
+  { key: 'upright_remeasure', label: 'Upright re-measure (rolled faces)', section: 'Identity & tracking' },
+  { key: 'process_priority', label: 'Process priority', section: 'Identity & tracking' },
+
   // Output
   { key: 'output_image_format', label: 'Image format', section: 'Output' },
   { key: 'output_video_format', label: 'Video format', section: 'Output' },

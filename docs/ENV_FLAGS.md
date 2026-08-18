@@ -154,7 +154,7 @@ touch the render pipeline, which uses its own readers.
 | `ROOP_UPSCALE_TRT` | 0 | `1` runs ESRGAN x4 upscalers under TensorRT (**not recommended** — goes all-black under TRT FP16; default forces CUDA/CPU FP32). |
 | `ROOP_UPSCALE_TILE` | 256 | Tile size (px) for AI upscalers; lower if VRAM is tight on heavy ×4 models. |
 | `ROOP_CAS_STRENGTH` | 0.5 | Contrast-Adaptive Sharpening strength for the `fsr` classical upscaler (0 = plain Lanczos). |
-| `ROOP_YAW_ALIGN` | `off` | Seeds the **Angled-face alignment** selector in the Face Swap tab (the selector overrides it per run; a saved setting wins once you touch it). `off` \| `stabilize` \| `pose` — `1`/`on`/`true` are accepted as legacy aliases for `stabilize`, and `0`/`off`/`false` for `off`. `stabilize` fades in from 40° off-axis; `pose` covers yaw **and** pitch and fades in from 15°. Frontal faces are bit-identical in every mode. **Default is `off`.** It was `pose` for one day; see *Angle handling* below for the measurement that moved it back — the pose it solves is 15–20° wrong on a head whose nose differs from the reference, systematically and per person. `ROOP_YAW_ALIGN=pose` to A/B it on your own footage. Not to be confused with `ROOP_PROFILE` (stage timing). See below. |
+| ~~`ROOP_YAW_ALIGN`~~ | — | **REMOVED — this flag no longer exists.** The three angle-handling layers it drove were deleted outright in `31aa622`, not merely defaulted off: `estimate_norm` now does the bare similarity fit unconditionally, and there is no `yaw_align` key left anywhere in the app, the API or the UI (verified 2026-08-18). Setting it does nothing. The measurements that justified removing it are kept in *Angle handling* below, because they are the reason not to rebuild it the same way — read that section before proposing any new pose-based alignment. |
 
 ### Angled-face alignment modes
 
@@ -229,7 +229,7 @@ shared code and apply identically to every model:
 
 | Layer | What it fixes | Control | Default |
 |---|---|---|---|
-| 1. Pose-matched alignment | Crop breathes 1.354× in scale over the pose sphere, so the model is handed a face at a size it was not trained on and the crop wobbles frame to frame. Holds it to 1.072×. | `ROOP_YAW_ALIGN` / *Angled-face alignment* | `off` |
+| 1. Pose-matched alignment | Crop breathes 1.354× in scale over the pose sphere, so the model is handed a face at a size it was not trained on and the crop wobbles frame to frame. Holds it to 1.072×. | ~~`ROOP_YAW_ALIGN`~~ — **deleted in `31aa622`, no control remains** | removed |
 | 2. Hidden-surface trim | Meant to stop a profile pasting swap pixels over hair and neck. Measured, **everything it actually removed was forehead** — see below. Its top edge is now opened up, which takes it to 0% at every pose on test geometry. Leave it off. | *Angle: trim hidden surface* | off |
 | 3. Off-axis fade | Past ~55° off-axis the crop is outside every model's training distribution and the model stops reconstructing and starts inventing. Fades the swapped crop back toward the original footage instead. **This is the layer that bounds how wrong an extreme angle can look.** | *Angle: extreme-angle fade* (0–100) | 0 |
 

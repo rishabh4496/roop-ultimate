@@ -263,6 +263,36 @@ class Settings:
         self.perf_profile = self.default_get(data, 'perf_profile', 'auto')       # auto|on|off
         self.perf_batch_swap = self.default_get(data, 'perf_batch_swap', 'auto')  # auto|on|off
 
+        # ── Identity & tracking behaviour ────────────────────────────────────
+        # Features that shipped reachable only through a ROOP_* environment
+        # variable, which means reachable only by someone editing a launcher.
+        # Each maps to its flag in run.py::_apply_perf_env and each defaults to
+        # 'auto' == "leave the environment alone", so the shipped behaviour is
+        # unchanged and an explicit choice still wins. They are read at import
+        # time, hence the "restart to apply" grouping in the panel.
+        #
+        # `recognizer` is the one that is genuinely a MODEL choice rather than a
+        # switch: AdaFace is a second recognition model with its own distance
+        # scale (roop/recognizer_adaface.py rescales every identity constant to
+        # match), and it was previously unreachable from the UI entirely.
+        self.recognizer = self.default_get(data, 'recognizer', 'default')     # default|adaface
+        # Demarcation between two swapped faces that touch — the phase-3 work in
+        # roop/face_overlap.py. Ships ON; exposed so it can be turned off.
+        self.face_demarcate = self.default_get(data, 'face_demarcate', 'auto')  # auto|on|off
+        # Chains track fragments back together across a cut or a brief occlusion.
+        self.track_stitch = self.default_get(data, 'track_stitch', 'auto')      # auto|on|off
+        # Re-detects the swapped result and undoes the swap if the face moved —
+        # catches a frontal face painted onto a head pointing away.
+        self.verify_swap = self.default_get(data, 'verify_swap', 'auto')        # auto|on|off
+        # Re-measures a heavily rolled/inverted face on an uprighted frame
+        # before anything reads its keypoints or embedding.
+        self.upright_remeasure = self.default_get(data, 'upright_remeasure', 'auto')  # auto|on|off
+        # Scheduling priority class while rendering. Only the names
+        # keep_awake._PRIORITY_CLASSES knows are valid — it silently falls back
+        # to 'high' for anything else. EcoQoS power throttling is opted out of
+        # unconditionally there and is not a choice.
+        self.process_priority = self.default_get(data, 'process_priority', 'auto')  # auto|high|above_normal|normal
+
         # ── Theme ────────────────────────────────────────────────────────────
         # User-authored themes, each a small recipe the UI expands into the full
         # CSS variable set (see react-ui/src/themeVars.js). Stored here rather
@@ -399,6 +429,12 @@ class Settings:
             'perf_encoder_preset': self.perf_encoder_preset,
             'perf_profile': self.perf_profile,
             'perf_batch_swap': self.perf_batch_swap,
+            'recognizer': self.recognizer,
+            'face_demarcate': self.face_demarcate,
+            'track_stitch': self.track_stitch,
+            'verify_swap': self.verify_swap,
+            'upright_remeasure': self.upright_remeasure,
+            'process_priority': self.process_priority,
             'auto_thread_selection': getattr(self, 'auto_thread_selection', True),
             'benchmark_results': getattr(self, 'benchmark_results', {}),
         }
