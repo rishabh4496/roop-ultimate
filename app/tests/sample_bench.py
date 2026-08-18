@@ -242,15 +242,18 @@ def main():
           f"detector_pool={os.environ.get('ROOP_DETECTOR_POOL', 'unset')} "
           f"expr_pool={os.environ.get('ROOP_EXPR_POOL', 'unset')}", flush=True)
 
-    if len(names) == 1:
-        cap_idx, cap_frame, faces = first_face_frame(args.video)
+    # One capture path for every clip and every bench: the app's own
+    # "Auto-capture people" button (roop/capture_seed.py + the auto_angles
+    # harvest). Single-person clips went through it too — the old
+    # first-face-in-the-clip capture is neither best-frontal nor enriched, so it
+    # measured a capture no user takes. Kept as the fallback for a clip whose
+    # faces are all below the scan's quality floors.
+    from two_face_video import auto_capture_targets
+    targets, groups = auto_capture_targets(args.video, log_prefix="[bench]", strict=False)
+    if targets is None:
+        cap_idx, _, faces = first_face_frame(args.video)
         targets, groups = [select_primary_face(faces)], [0]
-        print(f"[bench] target face captured from frame {cap_idx}", flush=True)
-    else:
-        from two_face_video import capture_targets_best_frontal, enrich_targets_auto_angles
-        targets, groups = capture_targets_best_frontal(args.video)
-        print(f"[bench] target faces captured from each person's own best-frontal frame", flush=True)
-        targets, groups = enrich_targets_auto_angles(args.video, targets, groups, log_prefix="[bench]")
+        print(f"[bench] fell back to the first-face capture, frame {cap_idx}", flush=True)
 
     stem = os.path.splitext(os.path.basename(args.video))[0]
     out_dir = os.path.join(args.out, args.tag)

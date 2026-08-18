@@ -79,8 +79,7 @@ _apply_perf_env()
 
 import angle_bench as ab                                        # noqa: E402
 from angle_video import ensure_ffmpeg                            # noqa: E402
-from two_face_video import (load_library_faceset, separated_frame_with_fallback,  # noqa: E402
-                            capture_targets_best_frontal, enrich_targets_auto_angles)
+from two_face_video import load_library_faceset, auto_capture_targets  # noqa: E402
 import sample_bench as sb                                        # noqa: E402
 
 SINGLE_DIR = r"G:/pinokio/roop-keep/single"
@@ -174,15 +173,14 @@ def run_one(video, names, facesets, options, out_dir):
         return
 
     print(f"[run_all] === {stem} ({', '.join(names)}) ===", flush=True)
-    if len(names) == 1:
-        cap_idx, cap_frame, faces = sb.first_face_frame(video)
+    # Same capture the app performs, for singles and doubles alike — see
+    # sample_bench.py's note. Falls back to the old first-face capture only when
+    # the scan finds nobody clearing its quality floors.
+    targets, groups = auto_capture_targets(video, log_prefix="[run_all]", strict=False)
+    if targets is None:
+        cap_idx, _, faces = sb.first_face_frame(video)
         targets, groups = [sb.select_primary_face(faces)], [0]
-        print(f"[run_all] target captured from frame {cap_idx}", flush=True)
-    else:
-        _, cap_frame = separated_frame_with_fallback(video, log_prefix="[run_all]")
-        targets, groups = capture_targets_best_frontal(video, seed_frame=cap_frame)
-        print(f"[run_all] targets captured from each person's own best-frontal frame", flush=True)
-        targets, groups = enrich_targets_auto_angles(video, targets, groups, log_prefix="[run_all]")
+        print(f"[run_all] fell back to the first-face capture, frame {cap_idx}", flush=True)
 
     os.makedirs(out_dir, exist_ok=True)
     out, elapsed, face_log = sb.run_swap(video, facesets, targets, groups, options, out_dir)

@@ -503,6 +503,75 @@ def enrich_targets_auto_angles(video, targets, groups, log_prefix="[capture]"):
     return list(g.TARGET_FACES), list(g.TARGET_FACE_GROUP)
 
 
+def auto_capture_targets(video, time_budget=90.0, log_prefix="[capture]", strict=True):
+    """Capture the target people exactly the way the app now does it.
+
+    This is the bench's half of the fix in commits d32d833/aa93ab3. The seed
+    scan used to live only in this file, so bench runs got a good capture and
+    the product shipped the failure mode; the scan was promoted to
+    `roop/capture_seed.py` and wired to `/api/target/auto_capture`. Pointing the
+    benches back at the promoted module closes the loop — the numbers a bench
+    prints now describe the path a user takes, and there is one implementation
+    to keep correct instead of two that drift.
+
+    It is also far cheaper. `capture_targets_best_frontal` (still here, still
+    used by the diag_* scripts) walks up to 3000 frames at stride 1 with
+    detection on every one: ~9-10 minutes per run before rendering even starts.
+    `capture_seed.scan_video` does the equivalent in one strided cached pass —
+    487 frames, 40s, on d6.
+
+    Both product-side steps are called, not reimplemented: the scan, and then
+    the same `target_auto_angles` handler the endpoint loops over. Enrichment is
+    not optional garnish — measured on the full d6, same harness, same 8344
+    detected faces, only the capture differing: a hand capture from a contact
+    frame gave 25.0% not-swapped, one best-frontal face per person 27.5%, and
+    best-frontal plus angle enrichment 15.8%. A single reference face only
+    matches poses near it.
+
+    `strict=False` returns ``(None, None)`` instead of raising when the scan
+    finds nobody, so a caller with an older capture path of its own can fall
+    back to it rather than dropping a clip. The scan applies real quality floors
+    (60px, det_score 0.6) that a first-face-in-the-clip capture does not, so a
+    clip shot at background scale can legitimately come back empty here.
+    """
+    from roop.capture_seed import auto_capture
+    from roop.capturer import get_video_frame
+    from roop.face_util import _attach_source_crops
+
+    res = auto_capture(video, time_budget=time_budget)
+    targets, groups = res["targets"], res["groups"]
+    if not targets:
+        msg = f"auto-capture found nobody: {'; '.join(res['notes'])}"
+        if strict:
+            raise SystemExit(msg)
+        print(f"{log_prefix} {msg}", flush=True)
+        return None, None
+
+    sep = res["separation"]
+    print(f"{log_prefix} auto-capture: {len(set(groups))} people, seed frame "
+          f"{res['seed_index']}, separation "
+          f"{'n/a' if sep is None else f'{sep:.3f}'}, {res['scanned']} frames "
+          f"scanned in {res['seconds']}s", flush=True)
+    for p in res["per_person"]:
+        print(f"{log_prefix}   person {p['person']}: frame {p['frame']}, "
+              f"off-axis {p['offaxis']} deg ({p['from']})", flush=True)
+    for n in res["notes"]:
+        print(f"{log_prefix}   note: {n}", flush=True)
+
+    # The endpoint attaches these at capture time, so a bench that skips them
+    # measures a different pipeline for the image-source swap models
+    # (BlendSwap / UniFace) that read them. +1 is not slop: capture_seed reports
+    # 0-based cv2 positions while get_video_frame takes the UI's 1-based number
+    # and subtracts one itself — without it every crop comes from the frame
+    # BEFORE the face, which on a moving head is silently wrong.
+    for face, info in zip(targets, res["per_person"]):
+        img = get_video_frame(video, int(info["frame"]) + 1)
+        if img is not None:
+            _attach_source_crops(face, img)
+
+    return enrich_targets_auto_angles(video, targets, groups, log_prefix=log_prefix)
+
+
 def trim(video, start, end, out_path, fps=None):
     """Write frames [start, end) to a new clip (the bench's unit of work)."""
     cap = cv2.VideoCapture(video)
@@ -731,14 +800,16 @@ def main():
     ap.add_argument("--capture", type=int, default=-1,
                     help="frame to capture the two target faces from; "
                          "-1 finds the first well-separated one")
-    ap.add_argument("--auto-capture", action="store_true",
-                    help="capture via roop.capture_seed.auto_capture — the SAME "
-                         "path the app's 'Auto-capture people' button uses — "
-                         "instead of this file's own capture_targets_best_frontal. "
-                         "Off by default so existing baselines stay comparable; "
-                         "use it to measure what a user actually gets now. Also "
-                         "~10x faster (one strided cached scan against a stride-1 "
-                         "walk of up to 3000 frames).")
+    ap.add_argument("--legacy-capture", action="store_true",
+                    help="capture with this file's own capture_targets_best_frontal "
+                         "fork instead of roop.capture_seed — the pre-2026-08-18 "
+                         "default. Only for reproducing an older baseline; it is "
+                         "both slower (a stride-1 walk of up to 3000 frames) and "
+                         "no longer the path the app takes.")
+    ap.add_argument("--capture-budget", type=float, default=90.0,
+                    help="seconds the auto-capture scan may spend; raise it on a "
+                         "long clip, where the default can stop the scan early "
+                         "and miss better frames (reported as a note).")
     ap.add_argument("--capture-extra", default="",
                     help="comma-separated extra frames to add as further ANGLES "
                          "of the same two people, the way the app's 'Add angle "
@@ -792,26 +863,7 @@ def main():
     print(f"[bench] sources: {names[0]} ({len(facesets[0].faces)} faces), "
           f"{names[1]} ({len(facesets[1].faces)} faces)", flush=True)
 
-    if args.auto_capture:
-        # Measure what the app now gives a user, not what this file's own copy
-        # of the capture logic gives a bench. Same function the
-        # /api/target/auto_capture endpoint calls.
-        from roop.capture_seed import auto_capture
-        _res = auto_capture(args.video)
-        targets, groups = _res["targets"], _res["groups"]
-        if not targets:
-            raise SystemExit(f"auto_capture found nobody: {'; '.join(_res['notes'])}")
-        _sep = _res["separation"]
-        print(f"[bench] auto-capture: {len(set(groups))} people from seed frame "
-              f"{_res['seed_index']}, separation "
-              f"{'n/a' if _sep is None else f'{_sep:.3f}'}, "
-              f"{_res['scanned']} frames scanned in {_res['seconds']}s", flush=True)
-        for p in _res["per_person"]:
-            print(f"[bench]   person {p['person']}: frame {p['frame']}, "
-                  f"off-axis {p['offaxis']} deg ({p['from']})", flush=True)
-        for n in _res["notes"]:
-            print(f"[bench]   note: {n}", flush=True)
-    elif args.capture >= 0 or args.capture_extra.strip():
+    if args.capture >= 0 or args.capture_extra.strip():
         # Manual override path, unchanged: an explicit frame (and/or extra
         # angle frames) was asked for, so honor it exactly rather than
         # second-guessing it with the automatic capture below.
@@ -825,26 +877,16 @@ def main():
         if extra:
             print(f"[bench] plus {len(extra)} extra angle frame(s): {args.capture_extra}",
                   flush=True)
-    else:
-        # Default path. `separated_frame_with_fallback` + `capture_targets`
-        # (a single shared frame) breaks down hard when the clip never has a
-        # clean separated moment — the fallback then seeds from whatever
-        # overlapping frame it lands on, which can be a near-featureless
-        # crop (measured: an ArcFace-aligned capture that was pure neck/chin,
-        # no eyes, on a content-heavy clip). `capture_targets_best_frontal`
-        # keeps the same seed for stable left/right assignment but then
-        # independently finds each person's own best (lowest off-axis) frame
-        # anywhere in the clip — its own docstring documents fixing this
-        # exact failure mode on a different clip (68-70% -> under 20%
-        # not-swapped) and never makes the capture worse (falls back to the
-        # seed per-person if nothing better is found). `enrich_targets_auto_angles`
-        # then grows a multi-angle bank the same way the real app's harvest
-        # button does. This matches sample_bench.py's already-proven default
-        # capture path exactly — see tests/sample_bench.py.
+    elif args.legacy_capture:
+        # The pre-2026-08-18 default, kept only for reproducing older baselines.
         targets, groups = capture_targets_best_frontal(args.video)
         print(f"[bench] target faces captured from each person's own best-frontal frame",
               flush=True)
         targets, groups = enrich_targets_auto_angles(args.video, targets, groups, log_prefix="[bench]")
+    else:
+        # Default path: the app's own "Auto-capture people" button, end to end.
+        targets, groups = auto_capture_targets(
+            args.video, time_budget=args.capture_budget, log_prefix="[bench]")
 
     clip = trim(args.video, args.start, args.end,
                 os.path.join(work, "clip.mp4"))
