@@ -947,14 +947,24 @@ def main():
         reason = face_reasons(face_log.get(i) or [])
         for person, r in enumerate(grade(plate, swapped, means,
                                          targets, groups)):
-            # `person` enumerates every detected FACE in the frame, which can
-            # exceed len(r["ident"]) (always == the captured-group count, 2)
-            # when a bystander or extra detection puts a 5th+ face in the
-            # frame — 1 - person then indexes outside a 2-element list.
-            # Measured crashing d4.mp4 (2026-08-17). Guard both the same way.
-            own = r["ident"][person] if person < len(r["ident"]) else float("nan")
-            other = (r["ident"][1 - person]
-                     if person < len(r["ident"]) and len(r["ident"]) > 1
+            # Index the identity distances by WHO this face is, not by where it
+            # sits in the frame. `person` enumerates detected faces left to
+            # right; `r["who"]` is which captured person the plate face actually
+            # is. The two agree only while each person stays on their own side,
+            # so on any frame where they cross, keying by position reads person
+            # A's distance off person B's row — which reports an inter-swap that
+            # never happened. Falls back to the position when the grader could
+            # not attribute the face (contaminated crop), where these columns
+            # are blanked anyway.
+            #
+            # `person` can also exceed len(r["ident"]) (always the captured-group
+            # count, 2) when a bystander puts a 5th+ face in the frame, so
+            # 1 - person would index outside a 2-element list. Measured crashing
+            # d4.mp4 (2026-08-17). Guard both the same way.
+            gid = r["who"] if r["who"] is not None else person
+            own = r["ident"][gid] if gid < len(r["ident"]) else float("nan")
+            other = (r["ident"][1 - gid]
+                     if gid < len(r["ident"]) and len(r["ident"]) > 1
                      else float("nan"))
             rows.append({
                 "frame": args.start + i, "person": person,
@@ -1000,16 +1010,23 @@ def main():
         # The decision, not a re-measurement: which faceset the pipeline
         # actually put on this person's face. Unlike the cosine columns this
         # is exact on contact frames, which is the only place it matters.
-        # Only frames where the PLATE face is confidently this person. A
-        # duplicate box on the other person graded here is how a correct run
-        # reports an inter-swap that never happened.
-        got = [r for r in rs if r["src"] != "" and str(r["who"]) == str(person)]
-        wrong_src = sum(1 for r in got if r["src"] != person)
+        #
+        # Keyed on WHO, over every row — not on `person`, which is the
+        # left-to-right box index. This line used to read
+        # `str(r["who"]) == str(person)` inside the positional slice, comparing
+        # an identity id against a position: it kept only the rows where the two
+        # happened to coincide, so every frame in which the pair crossed sides
+        # was dropped and the survivors were labelled by whoever stood there.
+        # Measured on d3: it printed "72 of 83" where the identity-keyed count
+        # over the same file is 104 of 2099.
+        got = [r for r in rows if r["src"] != "" and str(r["who"]) == str(person)]
+        wrong_src = sum(1 for r in got if str(r["src"]) != str(person))
         flips = sum(1 for a, b in zip(sw[:-1], sw[1:]) if a != b)
-        print(f"  person {person} ({names[person]}): {len(rs)} frames, "
+        print(f"  box {person} from the left ({names[person]}): {len(rs)} frames, "
               f"swapped {int(sw.sum())} ({100.0*sw.mean():.1f}%), "
               f"on/off transitions {flips}")
-        print(f"      WRONG FACESET APPLIED on {wrong_src} of {len(got)} swapped "
+        print(f"      WRONG FACESET APPLIED on {wrong_src} of {len(got)} swaps "
+              f"attributed to {names[person]} anywhere in frame "
               f"(from the pipeline's own decision)")
         print(f"      output re-measured as the other person on {looks_other} of "
               f"{len(graded)} gradable frames")
