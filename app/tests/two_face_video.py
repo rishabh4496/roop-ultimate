@@ -92,7 +92,7 @@ def _apply_perf_env():
 _apply_perf_env()
 
 import angle_bench as ab                     # noqa: E402
-from angle_video import ensure_ffmpeg, read_frames    # noqa: E402
+from angle_video import ensure_ffmpeg    # noqa: E402
 
 LIB = os.path.join(APP, "facesets")
 
@@ -572,6 +572,48 @@ def auto_capture_targets(video, time_budget=90.0, log_prefix="[capture]", strict
     return enrich_targets_auto_angles(video, targets, groups, log_prefix=log_prefix)
 
 
+def frame_count(path):
+    cap = cv2.VideoCapture(path)
+    try:
+        return int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    finally:
+        cap.release()
+
+
+def iter_frame_pairs(plate_path, swapped_path):
+    """Yield (plate_frame, swapped_frame) one pair at a time.
+
+    The grading pass used to hold BOTH whole clips in RAM as decoded arrays,
+    which is what killed every long run on this roster — and the kills were
+    misread for two sessions as a harness quirk, because the second copy is
+    allocated right after the SWAP AUDIT prints, so the process always died at
+    the same visible point. At 1280x720 the cost is 2.8 MB per frame per copy:
+
+        d1   141 frames    0.8 GB   fine
+        d2  4177 frames   23.1 GB   completed, barely
+        d3  5979 frames   33.1 GB   over this machine's 31.7 GB — always died
+        d4 13305 frames   73.6 GB   never had a chance
+
+    Streaming the pair holds two frames instead of two clips, so clip length
+    stops being a limit at all. Sequential reads only, never a seek: cv2's
+    seeking has been measured returning the wrong frame entirely on long clips
+    here, and a silently misaligned pair would grade every row against the
+    wrong plate.
+    """
+    a = cv2.VideoCapture(plate_path)
+    b = cv2.VideoCapture(swapped_path)
+    try:
+        while True:
+            ok_a, fa = a.read()
+            ok_b, fb = b.read()
+            if not ok_a or not ok_b or fa is None or fb is None:
+                return
+            yield fa, fb
+    finally:
+        a.release()
+        b.release()
+
+
 def trim(video, start, end, out_path, fps=None):
     """Write frames [start, end) to a new clip (the bench's unit of work)."""
     cap = cv2.VideoCapture(video)
@@ -890,22 +932,20 @@ def main():
 
     clip = trim(args.video, args.start, args.end,
                 os.path.join(work, "clip.mp4"))
-    plates = read_frames(clip)
-    print(f"[bench] clip: {len(plates)} frames "
-          f"[{args.start}..{args.start + len(plates)})", flush=True)
+    n_plates = frame_count(clip)
+    print(f"[bench] clip: {n_plates} frames "
+          f"[{args.start}..{args.start + n_plates})", flush=True)
 
     out, (swap_log, face_log) = run_swap(clip, facesets, targets, groups, options, work)
     if not out:
         raise SystemExit("no output produced")
-    swapped = read_frames(out)
-    n = min(len(plates), len(swapped))
-    print(f"[bench] output: {len(swapped)} frames", flush=True)
+    print(f"[bench] output: {frame_count(out)} frames", flush=True)
 
     rows = []
-    for i in range(n):
+    for i, (plate, swapped) in enumerate(iter_frame_pairs(clip, out)):
         applied = applied_sources(swap_log.get(i) or [])
         reason = face_reasons(face_log.get(i) or [])
-        for person, r in enumerate(grade(plates[i], swapped[i], means,
+        for person, r in enumerate(grade(plate, swapped, means,
                                          targets, groups)):
             # `person` enumerates every detected FACE in the frame, which can
             # exceed len(r["ident"]) (always == the captured-group count, 2)
