@@ -210,6 +210,21 @@ class TestRouting(unittest.TestCase):
     def test_single_net_models_never_route(self):
         p = FaceSwapInsightFace()          # secondary stays None
         self.assertIsNone(p.secondary)
+        self.assertIsNone(p.route_summary())
+
+    def test_counts_how_many_faces_routed(self):
+        # Without this a clean result on real footage is ambiguous: "the routing
+        # is safe" and "the routing never fired" read the same from the audit.
+        p = _proc()
+        p.loaded_model_key, p.secondary = 'realswap', _proc()
+        p.secondary.loaded_model_key = 'hififace'
+        with _yaw(p._SECONDARY_ENTER_YAW + 5):
+            p._route_to_secondary(_Face(track=1))
+        with _yaw(0.0):
+            p._route_to_secondary(_Face(track=2))
+            p._route_to_secondary(_Face(track=3))
+        self.assertEqual((p._routed_faces, p._seen_faces), (1, 3))
+        self.assertIn('1 of 3', p.route_summary())
 
 
 if __name__ == '__main__':

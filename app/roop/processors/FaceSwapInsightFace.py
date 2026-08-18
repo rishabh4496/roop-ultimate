@@ -408,6 +408,11 @@ class FaceSwapInsightFace():
         # take them.
         self._route_latch = {}
         self._route_lock = threading.Lock()
+        # How much of a run actually used the second net. Without this a clean
+        # result on real footage is ambiguous — "the routing is safe" and "the
+        # routing never fired" look identical from the audit.
+        self._routed_faces = 0
+        self._seen_faces = 0
 
     def Initialize(self, plugin_options: dict):
         if self.plugin_options is not None:
@@ -422,6 +427,8 @@ class FaceSwapInsightFace():
         # latches deciding the opening frames of the next.
         with self._route_lock:
             self._route_latch.clear()
+            self._routed_faces = 0
+            self._seen_faces = 0
 
         swap_model = plugin_options.get("swap_model", "inswapper")
         if swap_model not in SWAP_MODELS:
@@ -801,12 +808,31 @@ class FaceSwapInsightFace():
     # between poor and poor, against the difference between an intact face and a
     # destroyed one.
     #
-    # The crossover between 45 and 90 is UNMEASURED — the sweep's plates only
-    # exist at those five yaws — so the entry sits near 90 rather than in the
-    # gap, and the change can only reach the band the data covers. That margin is
-    # also what absorbs solve_pose_5pt's 15-20 deg per-person error: a face the
-    # solver calls 80 deg is somewhere around 60-100 true, and even at the worst
-    # of that a MEASURED 45 deg face (45+20=65) never reaches the entry.
+    # !! THIS THRESHOLD IS NOT TRUSTWORTHY ON REAL FOOTAGE. !!
+    #
+    # It was placed against the distribution solve_pose_5pt reports on the
+    # SYNTHETIC sweep plates, where it separates cleanly: 34-44 deg for the
+    # "+/-45" plates and 85-87 for the "+/-90" ones, leaving a 41 deg gap with no
+    # population in it, stable to the degree across every roll.
+    #
+    # On real video that distribution does not hold. Measured over d1.mp4 — an
+    # ordinary two-person clip, not a profile-heavy one — the solver reports a
+    # MEDIAN |yaw| of 85 deg, p25 of 71, and 61.7% of faces at or above 80. The
+    # gap the threshold sits in does not exist there; the bulk of the population
+    # sits on top of it, and 69% of that clip's faces routed to the secondary.
+    #
+    # The consequence is invisible to the swap audit, which is why it nearly got
+    # away: every face still swaps, so the audit reads 100% clean, while two
+    # thirds of them are quietly being swapped by the net measured to carry 0.12
+    # LESS identity.
+    #
+    # Whether that is real pose or the solver over-reading on detector-grade
+    # keypoints is not yet established (see pose-solve-head-shape-limit: 15-20
+    # deg of per-person error is already known). Until it is, do NOT simply raise
+    # these numbers — that is tuning a gate against a population that has not
+    # been characterised, which is the mistake this project has now made five
+    # times. Characterise first: label real profiles, and check the solver
+    # against them.
     _SECONDARY_ENTER_YAW = 80.0
     _SECONDARY_EXIT_YAW = 70.0
 
@@ -832,16 +858,28 @@ class FaceSwapInsightFace():
         yaw = abs(float(pose[0]))
 
         tid = target_face.get('_track_id') if hasattr(target_face, 'get') else None
-        if tid is None:
-            return yaw >= self._SECONDARY_ENTER_YAW
         with self._route_lock:
-            latched = self._route_latch.get(tid, False)
-            if latched:
-                latched = yaw >= self._SECONDARY_EXIT_YAW
-            else:
+            if tid is None:
                 latched = yaw >= self._SECONDARY_ENTER_YAW
-            self._route_latch[tid] = latched
+            else:
+                latched = self._route_latch.get(tid, False)
+                latched = (yaw >= self._SECONDARY_EXIT_YAW if latched
+                           else yaw >= self._SECONDARY_ENTER_YAW)
+                self._route_latch[tid] = latched
+            self._seen_faces += 1
+            self._routed_faces += int(latched)
             return latched
+
+    def route_summary(self):
+        """One line on how many faces this run sent to the second net, or None
+        for a single-net model. Read by the benches so a clean result can be
+        told apart from an idle router."""
+        if self.secondary is None or not self._seen_faces:
+            return None
+        pct = 100.0 * self._routed_faces / self._seen_faces
+        return (f"[swap] {self.loaded_model_key}: {self._routed_faces} of "
+                f"{self._seen_faces} faces ({pct:.1f}%) routed to "
+                f"'{self.secondary.loaded_model_key}'")
 
     def _run_secondary(self, source_face: Face, target_face: Face, temp_frame):
         """The second net's swap of the same face, resampled back into the
@@ -1009,6 +1047,9 @@ class FaceSwapInsightFace():
             return self._sequential_fallback(requests)
 
     def Release(self):
+        summary = self.route_summary()
+        if summary:
+            print(summary)
         if self.secondary is not None:
             self.secondary.Release()
             self.secondary = None
