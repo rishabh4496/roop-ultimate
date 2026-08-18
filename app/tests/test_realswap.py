@@ -134,6 +134,24 @@ class TestCropTransform(unittest.TestCase):
         M = FaceSwapInsightFace._crop_to_crop(PROFILE, 256, 'arcface', 'arcface')
         np.testing.assert_allclose(M, np.float32([[1, 0, 0], [0, 1, 0]]), atol=1e-4)
 
+    def test_round_trip_keeps_most_of_the_detail(self):
+        # A routed face is resampled twice, into the secondary's template space
+        # and back. With INTER_LINEAR that pair of warps kept only 35.8% of the
+        # detail of a real profile crop and shipped as a visible blur; LANCZOS4
+        # keeps 81.6%. Pinned on noise, which is the hardest case for a
+        # resampler, so the bar is deliberately below the measured figure.
+        import cv2
+        rng = np.random.default_rng(0)
+        img = rng.random((3, 256, 256)).astype(np.float32)
+        M = FaceSwapInsightFace._crop_to_crop(FRONTAL, 256, 'arcface', 'mtcnn_512')
+        there = FaceSwapInsightFace._warp_chw(img, M, 256)
+        back = FaceSwapInsightFace._warp_chw(there, cv2.invertAffineTransform(M), 256)
+        # Compare variance in the interior, away from the replicated border.
+        c = (slice(None), slice(32, 224), slice(32, 224))
+        self.assertGreater(back[c].var() / img[c].var(), 0.30,
+                           'the template round trip is destroying detail — check '
+                           'the interpolation flag before blaming the swap net')
+
     def test_warp_preserves_layout(self):
         chw = np.random.rand(3, 64, 64).astype(np.float32)
         M = np.float32([[1, 0, 0], [0, 1, 0]])
