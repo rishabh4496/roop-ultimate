@@ -1369,6 +1369,26 @@ class TrackingMixin:
                               f"claimant {claimant}'s track(s) = {sep} < 0.35 widths  "
                               f"target={target_g} overlaps={overlap}", flush=True)
                     continue
+                # TRIED AND REJECTED, 2026-08-18 — do not re-add without new
+                # evidence. The table this pass prints shows bindings that
+                # contradict the track's own embedding (track 8: p0=0.43 p1=0.74
+                # -> person 1; track 31: p0=0.70 p1=0.57 -> person 0), and
+                # refusing those looked like the obvious fix for d2's
+                # one-directional wrong-faceset stretches. Implemented as
+                # "refuse when d(claimant) is inside the gate and >= 0.10 nearer
+                # than d(target)", and measured on the full d2:
+                #
+                #     not swapped        24.8% -> 30.4%
+                #     person 1 swapped   67.2% -> 53.8%
+                #     WRONG FACESET     101/893 -> 102/907   (unchanged)
+                #
+                # It cost 13 points of coverage and corrected nothing, which
+                # says the wrong-faceset stretches are NOT produced by these
+                # eliminations — they were connected by inference off this
+                # table, never by measurement. Tracing a wrong swap back to the
+                # decision that bound it needs the track id carried into the
+                # audit rows; that does not exist yet, and is the honest next
+                # step rather than a second guess at this pass.
                 if _DEBUG_MATCH:
                     print(f"[ELIM] track {tid} (len={t_len}) -> assigned to {target_g} by "
                           f"elimination (claimant={claimant}, sep={sep:.2f})  overlaps={overlap}",
