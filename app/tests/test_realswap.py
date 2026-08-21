@@ -215,13 +215,32 @@ class TestEyeBandComposite(unittest.TestCase):
             self.assertLess(m[int(q[1]), int(q[0])], 0.02,
                             f'{name} belongs wholly to the base model')
 
-    def test_band_is_a_minority_of_the_crop(self):
-        # The brief is 80-85% base model. The mask is feathered, so its MEAN is
-        # the honest measure of how much of the face is not purely the base.
-        cov = float(FaceSwapInsightFace._eye_region_mask(256, 'arcface').mean())
-        self.assertTrue(0.02 < cov < 0.25,
-                        f'eye band covers {cov:.1%} of the crop; the base model '
-                        f'must remain the great majority of the face')
+    def test_band_is_the_15_percent_the_user_asked_for(self):
+        # The user's split: hififace 15%, hyperswap 85%. Measured against a FACE
+        # OVAL, not the crop -- the crop is only 36.1% face, the rest hair and
+        # background, so quoting "% of the crop" understates the split by ~2.8x.
+        import cv2
+        from roop.face_util import swap_template_points
+        size = 256
+        m = FaceSwapInsightFace._eye_region_mask(size, 'arcface')
+        pts = np.asarray(swap_template_points(size, 'arcface'), dtype=np.float32)
+        sep = float(np.linalg.norm(pts[1] - pts[0]))
+        eye_mid, mouth_mid = (pts[0] + pts[1]) / 2.0, (pts[3] + pts[4]) / 2.0
+        cx = (eye_mid[0] + mouth_mid[0]) / 2.0
+        cy = (eye_mid[1] + mouth_mid[1]) / 2.0 + 0.10 * sep
+        oval = np.zeros((size, size), np.uint8)
+        cv2.ellipse(oval, (int(cx), int(cy)),
+                    (int(1.05 * sep), int(1.45 * sep)), 0, 0, 360, 1, -1)
+        share = float((m * oval).sum()) / float(oval.sum())
+        self.assertTrue(0.12 < share < 0.18,
+                        f'hififace covers {share:.1%} of the face; the brief is '
+                        f'15% (hyperswap 85%)')
+
+    def test_band_does_not_cross_the_nose_bridge(self):
+        # The eye centres sit at +-0.5 sep, so a ring wider than ~0.45 runs the
+        # two ellipses into each other over the bridge -- which is the base
+        # model's outright, along with the nose below it.
+        self.assertLess(FaceSwapInsightFace._OUTER_X, 0.45)
 
     def test_edges_are_feathered_not_hard(self):
         # A hard edge between two swapped faces is a visible seam. The band has
@@ -412,20 +431,13 @@ class TestBandOpacity(unittest.TestCase):
         FaceSwapInsightFace._EYE_ALPHA = self._alpha
         FaceSwapInsightFace._EYE_MASK_CACHE.clear()
 
-    def test_default_is_the_measured_value(self):
-        # Set from real footage (d5, 6158 rows): 0.5308 -> 0.4804 of identity
-        # distance against the full band, better on 91.0% of frames, closing 65%
-        # of the gap to plain hyperswap. Changing it changes the picture for
-        # everyone, so it moves only on a new measurement of the same kind.
-        self.assertEqual(FaceSwapInsightFace._EYE_ALPHA, 0.5)
-
-    def test_opacity_is_not_an_env_knob(self):
-        # It was one while the curve was being measured. Leaving it there would
-        # make the shipped value a per-machine accident.
-        import inspect
-        src = inspect.getsource(FaceSwapInsightFace)
-        head = src.split('def _eye_region_mask')[0]
-        self.assertNotIn('ROOP_REALSWAP_BAND_ALPHA', head)
+    def test_default_is_FULL_for_the_lash_band(self):
+        # Opacity 0.5 belonged to the wide LID RING, where halving it bought
+        # back most of the identity that band cost. The lash band is a different
+        # instrument: it costs little because it is tiny and avoids periocular
+        # skin, and the requirement is that the lashes ARE hififace's -- which a
+        # 50% blend does not satisfy. So full opacity over a much smaller area.
+        self.assertEqual(FaceSwapInsightFace._EYE_ALPHA, 1.0)
 
     def test_alpha_scales_the_peak(self):
         FaceSwapInsightFace._EYE_ALPHA = 0.5
@@ -618,7 +630,51 @@ class TestCropSourceIsReported(unittest.TestCase):
         line = p.mix_summary()
         self.assertIn('0% cropped from the plate', line)
         self.assertIn('fell back to the derived crop', line)
-        self.assertIn('opacity 0.5', line)
+        self.assertIn('opacity 1', line)
+
+
+
+class TestLashBandTargetsOnlyTheLashLine(unittest.TestCase):
+    """hififace gets the lashes; hyperswap keeps the identity.
+
+    The user's requirement, given directly: RealSwap's identity must match
+    hyperswap's and only the EYELASHES come from hififace. So the band has to
+    sit ON the lid margin, where lashes grow, and stay off three things that
+    would cost identity -- the eye aperture, the lid/socket above it, and the
+    brow. ArcFace reads identity most densely from exactly that periocular
+    skin, which is why the wide lid ring it replaced cost 0.03 of identity.
+    """
+
+    def setUp(self):
+        FaceSwapInsightFace._EYE_MASK_CACHE.clear()
+
+    def test_lash_line_is_the_secondary_s_and_the_rest_is_not(self):
+        from roop.face_util import swap_template_points
+        m = FaceSwapInsightFace._eye_region_mask(256, 'arcface')
+        peak = float(m.max())
+        pts = np.asarray(swap_template_points(256, 'arcface'), dtype=np.float32)
+        sep = float(np.linalg.norm(pts[1] - pts[0]))
+        for eye in (pts[0], pts[1]):
+            x, y = int(eye[0]), int(eye[1])
+            self.assertLess(m[y, x], 0.05 * peak,
+                            'the eye APERTURE must stay with the base model')
+            self.assertGreater(m[y - int(0.10 * sep), x], 0.5 * peak,
+                               'the UPPER LASH LINE must come from the secondary')
+            self.assertLess(m[y - int(0.42 * sep), x], 0.10 * peak,
+                            'the BROW belongs to the base model; the ring '
+                            'reach it')
+        for name, q in (('nose', pts[2]), ('mouth-left', pts[3])):
+            self.assertLess(m[int(q[1]), int(q[0])], 0.02 * peak,
+                            f'{name} belongs wholly to the base model')
+
+    def test_lashes_are_FULLY_the_secondary_s_not_a_blend(self):
+        # "Eyelashes must match hififace" is not satisfied by a 50% mix of two
+        # models' lashes -- that is the doubling the whole design forbids.
+        m = FaceSwapInsightFace._eye_region_mask(256, 'arcface')
+        self.assertGreater(float(m.max()), 0.99)
+        self.assertGreater(float((m > 0.95).sum()), 200,
+                           'no pixel region is fully the secondary; the lash '
+                           'line is a blend, not the secondary alone')
 
 
 if __name__ == '__main__':

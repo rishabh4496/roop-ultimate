@@ -82,8 +82,19 @@ from angle_video import ensure_ffmpeg                            # noqa: E402
 from two_face_video import load_library_faceset, auto_capture_targets  # noqa: E402
 import sample_bench as sb                                        # noqa: E402
 
+# The material was reorganised 2026-08-21: single/ and double/ are gone, and
+# three purpose-built folders replace them. They test different things, so they
+# are graded differently -- expression/ is about whether a blink and a mouth
+# survive the swap, which no identity metric sees.
+EXPRESSION_DIR = r"G:/pinokio/roop-keep/expression"
+THREED_DIR = r"G:/pinokio/roop-keep/3d model"
+FINAL_DIR = r"G:/pinokio/roop-keep/final"
+# Kept only so an old tag still resolves if someone re-runs a saved command;
+# both folders are gone and glob will simply return nothing.
 SINGLE_DIR = r"G:/pinokio/roop-keep/single"
 DOUBLE_DIR = r"G:/pinokio/roop-keep/double"
+
+SETS = {"expression": EXPRESSION_DIR, "3d": THREED_DIR, "final": FINAL_DIR}
 OUT_ROOT = os.path.join(APP, "output")
 PAUSE_FLAG = r"G:/pinokio/roop-keep/PAUSE_TESTS"
 

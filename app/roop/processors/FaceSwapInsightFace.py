@@ -933,12 +933,47 @@ class FaceSwapInsightFace():
     # than it is tall -- an eye is a slit, not a disc -- so the inner ellipse
     # needs its own x and y factors; a single one either swallows the lid or
     # leaves the iris exposed.
-    _EYE_RX = 0.50        # outer ellipse: lids and lashes
-    _EYE_RY = 0.30
-    _EYE_INNER_X = 0.45   # inner ellipse (the eye itself, kept for the base),
-    _EYE_INNER_Y = 0.22   # as fractions of the OUTER radii
-    _EYE_LIFT = 0.05      # outer centre offset ABOVE the eye, toward the lid
-    _EYE_FEATHER = 0.16   # gaussian feather, also in interocular units
+    # ── LASH BAND (2026-08-21) ───────────────────────────────────────────────
+    # The user's requirement, given directly: RealSwap's identity must match
+    # hyperswap's, and only the EYELASHES come from hififace. That is a
+    # different shape from the lid ring above, and it inverts the trade.
+    #
+    # The lid ring handed hififace a wide band of periocular SKIN, which is
+    # where ArcFace reads identity most densely, and it only ever gave the
+    # lashes half strength once opacity came down to 0.5. So it paid identity
+    # for skin it did not need and still did not own the lashes outright.
+    #
+    # The band is now the LASH LINE only: a thin ring hugging the eye aperture,
+    # at FULL opacity so the lashes really are hififace's, with the lid, brow,
+    # socket and every other periocular pixel left to the base model. Radii are
+    # fractions of the interocular distance; the aperture is a slit, far wider
+    # than it is tall, so x and y are separate.
+    # SIZED TO THE USER'S SPLIT: hififace 15%, hyperswap 85%. Measured against a
+    # face oval fitted to this template (which is 36.1% of the crop -- the rest
+    # is hair and background, so "% of the crop" understates the split by ~2.8x
+    # and is the wrong number to quote):
+    #
+    #     outer_x  outer_y   % of FACE   % of crop
+    #        0.40     0.26      11.52%       4.16%
+    #        0.42     0.28      13.89%       5.08%
+    #        0.44     0.30    * 15.16% *     5.60%
+    #        0.45     0.32      17.24%       6.45%
+    #
+    # 0.44 horizontally is also the practical ceiling: the eye centres sit at
+    # +-0.5 sep, so anything wider runs the two ellipses into each other across
+    # the NOSE BRIDGE, which is the base model's outright.
+    #
+    # The aperture stays punched out at full size. That is the brief read
+    # literally -- hififace for "eyelids, eyelashes, expression", hyperswap for
+    # "nose, EYES, mouth, chin, cheeks" -- so the eye INTERIOR is the base
+    # model's and the ring of lid and lash around it is the secondary's.
+    _EYE_APERTURE_X = 0.225   # the eye opening itself -- stays the BASE model's
+    _EYE_APERTURE_Y = 0.066
+    _OUTER_X = 0.44           # outer edge of the lid+lash ring
+    _OUTER_Y = 0.30
+    _EYE_LIFT = 0.03          # upper lashes are longer than lower
+    _EYE_FEATHER = 0.05       # small: the old 0.16 was wider than the ring
+                              # itself and blurred it into a uniform blend.
     # Peak opacity of the band. 1.0 = the lid ring is wholly the secondary's,
     # which is what shipped. Lower values keep some of the base model inside the
     # ring itself, which is a DIFFERENT lever from shrinking the band: the
@@ -975,7 +1010,7 @@ class FaceSwapInsightFace():
     #
     # Not an env knob. A knob defaulting to the old behaviour is the old
     # behaviour for everyone.
-    _EYE_ALPHA = 0.5
+    _EYE_ALPHA = float(os.environ.get('ROOP_REALSWAP_BAND_ALPHA', '1.0') or '1.0')
 
     @classmethod
     def _eye_region_mask(cls, size, template='arcface'):
@@ -995,18 +1030,23 @@ class FaceSwapInsightFace():
         pts = np.asarray(swap_template_points(int(size), template), dtype=np.float32)
         left, right = pts[0], pts[1]
         sep = float(np.linalg.norm(right - left)) or (size * 0.27)
-        rx, ry = cls._EYE_RX * sep, cls._EYE_RY * sep
+        ax, ay = cls._EYE_APERTURE_X * sep, cls._EYE_APERTURE_Y * sep
+        ox, oy = cls._OUTER_X * sep, cls._OUTER_Y * sep
         m = np.zeros((int(size), int(size)), np.float32)
+        # Outer edge of the lash zone, lifted very slightly: upper lashes are
+        # longer than lower ones.
         for eye in (left, right):
             c = (int(round(eye[0])), int(round(eye[1] - cls._EYE_LIFT * sep)))
-            cv2.ellipse(m, c, (int(round(rx)), int(round(ry))), 0, 0, 360, 1.0, -1)
-        # Punch the aperture back out, centred on the eye itself rather than on
-        # the lifted lid centre, so what is removed is the eye and what remains
-        # is the ring of lid and lash around it.
+            cv2.ellipse(m, c, (max(1, int(round(ox))), max(1, int(round(oy)))),
+                        0, 0, 360, 1.0, -1)
+        # Punch the aperture back out, centred on the eye itself. What is left
+        # is the ring AT the lid margin, which is where lashes grow -- not the
+        # lid, socket or brow, which are identity-dense skin and stay the base
+        # model's.
         for eye in (left, right):
             c = (int(round(eye[0])), int(round(eye[1])))
-            cv2.ellipse(m, c, (int(round(cls._EYE_INNER_X * rx)),
-                               int(round(cls._EYE_INNER_Y * ry))), 0, 0, 360, 0.0, -1)
+            cv2.ellipse(m, c, (max(1, int(round(ax))), max(1, int(round(ay)))),
+                        0, 0, 360, 0.0, -1)
         k = int(cls._EYE_FEATHER * sep) | 1
         m = cv2.GaussianBlur(m, (k, k), 0)
         # After the feather, so the edge profile is unchanged and only the peak
