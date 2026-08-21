@@ -884,6 +884,18 @@ class FaceSwapInsightFace():
     _EYE_INNER_Y = 0.22   # as fractions of the OUTER radii
     _EYE_LIFT = 0.05      # outer centre offset ABOVE the eye, toward the lid
     _EYE_FEATHER = 0.16   # gaussian feather, also in interocular units
+    # Peak opacity of the band. 1.0 = the lid ring is wholly the secondary's,
+    # which is what shipped. Lower values keep some of the base model inside the
+    # ring itself, which is a DIFFERENT lever from shrinking the band: the
+    # annulus cut 61% of the band's AREA and recovered only 29% of the identity
+    # the disc gave up, because the cost is not at the aperture -- it is spread
+    # through the ring, which area-shrinking never touched. Opacity attacks the
+    # ring directly.
+    #
+    # Overridable from the environment for the measurement only. If a value
+    # other than 1.0 wins, BAKE IT IN here and delete the override: a knob that
+    # defaults to the old behaviour is the old behaviour for everyone.
+    _EYE_ALPHA = float(os.environ.get('ROOP_REALSWAP_BAND_ALPHA', '1.0') or '1.0')
 
     @classmethod
     def _eye_region_mask(cls, size, template='arcface'):
@@ -895,7 +907,7 @@ class FaceSwapInsightFace():
         safe -- the band is anchored to the alignment, not to a per-face
         landmark fit that could wander.
         """
-        key = (int(size), str(template))
+        key = (int(size), str(template), float(cls._EYE_ALPHA))
         cached = cls._EYE_MASK_CACHE.get(key)
         if cached is not None:
             return cached
@@ -917,6 +929,12 @@ class FaceSwapInsightFace():
                                int(round(cls._EYE_INNER_Y * ry))), 0, 0, 360, 0.0, -1)
         k = int(cls._EYE_FEATHER * sep) | 1
         m = cv2.GaussianBlur(m, (k, k), 0)
+        # After the feather, so the edge profile is unchanged and only the peak
+        # moves -- scaling before the blur would do the same thing here, but the
+        # intent is "how much secondary at most", not "a smaller shape".
+        a = float(cls._EYE_ALPHA)
+        if a != 1.0:
+            m = m * max(0.0, min(1.0, a))
         cls._EYE_MASK_CACHE[key] = m
         return m
 
