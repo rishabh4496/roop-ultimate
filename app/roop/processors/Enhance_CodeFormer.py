@@ -141,6 +141,18 @@ class Enhance_CodeFormer():
             # never broken.
             if session_pool.pooling_enabled():
                 n = session_pool.pool_size()
+                # A caller that is loading this net ALONGSIDE other heavy models
+                # can cap the pool. Measured 2026-08-22: with realswap's two
+                # nets, RealityUX and the detector pools already resident, this
+                # pool's extra contexts push a 12GB card to 96% and the render
+                # collapses to 0.2 fps -- 100% "utilisation" at a THIRD of the
+                # power limit, which is thrashing, not compute. The comment
+                # above anticipated exactly that ("a big swapper, an expression
+                # pool and four restorer contexts all want the same 12GB").
+                # Absent, nothing changes for any existing caller.
+                cap = plugin_options.get('pool_size')
+                if cap:
+                    n = max(1, min(int(n), int(cap)))
                 extras = []
                 try:
                     extras = [_build(i) for i in range(n - 1)]

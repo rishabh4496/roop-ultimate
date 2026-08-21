@@ -109,7 +109,7 @@ class Enhance_UltraMax:
             from roop.processors.Enhance_GPEN import Enhance_GPEN
             g = Enhance_GPEN()
             opts = dict(plugin_options)
-            opts["size"] = 256
+            opts["size"] = 512
             g.Initialize(opts)
             self.gpen = g
         if self.codeformer is None:
@@ -121,6 +121,19 @@ class Enhance_UltraMax:
             # dynamic batch axis the fp32 export does not -- which is the only
             # route to amortising it further if that is ever wanted.
             opts["fp16"] = True
+            # ONE context, not the VRAM-tier default. This model runs a second
+            # 512 restorer BESIDE realswap's two swap nets, RealityUX and the
+            # detector pools, and measured 2026-08-22 that combination fills a
+            # 12GB card to 96% and thrashes: e2 took 932s at 0.2 fps, and
+            # CodeFormer ALONE as the ordinary enhancer was equally slow, so the
+            # cost is residency rather than anything in this class.
+            #
+            # Concurrency is not what is being given up. Even fully serialised
+            # behind the global GPU lock the arithmetic is comfortable: GPEN on
+            # every face plus CodeFormer on one in four is ~19 ms of GPU time a
+            # face, about 4 seconds for a 200-frame clip. The card cannot afford
+            # the contexts; it can easily afford the queue.
+            opts["pool_size"] = 1
             c.Initialize(opts)
             self.codeformer = c
 
@@ -178,6 +191,22 @@ class Enhance_UltraMax:
         # reports 1 because sized() has already resized its 256 output back up
         # to the crop, and CodeFormer's is discarded because its pixels only
         # ever reach the caller through the residual.
+        # CodeFormer is the BASE on a refresh, not a garnish on top of GPEN.
+        #
+        # The first build had GPEN-256 as the base with a CodeFormer detail
+        # residual added over it, and it shipped plastic skin: a 256px
+        # reconstruction stretched to the crop has already thrown the pores
+        # away, and NO residual can restore detail the base never carried. The
+        # still-image measurement that endorsed it (4.39x Laplacian variance)
+        # was measuring ADDED EDGE ENERGY, not skin, which is the
+        # over-sharpening trap this project has now hit three times.
+        #
+        # So the fill model is GPEN-512, which at least resolves what it is
+        # asked to. Be clear about what that costs: GPEN-512 is 30.2 ms against
+        # CodeFormer's 37.4, only 19% cheaper, so the amortisation that
+        # justified this design at 256 is largely gone. What makes the model
+        # usable is not this loop -- it is capping CodeFormer's session pool,
+        # which took e2 from 932s to 175s by keeping the card out of thrash.
         base, scale_factor = self.gpen.Run(source_faceset, target_face, temp_frame)
         if not is_usable(base):
             return temp_frame, scale_factor
@@ -210,16 +239,22 @@ class Enhance_UltraMax:
                     cf_f = cv2.resize(cf_f, (base_f.shape[1], base_f.shape[0]),
                                       interpolation=cv2.INTER_CUBIC)
                 fresh = self._highpass(cf_f - base_f)
+                # On the refresh face itself, hand back CodeFormer's OWN pixels
+                # rather than base+residual. They are what the user is asking
+                # for, they cost nothing extra here, and reconstructing them
+                # from a high-pass of their own difference can only lose.
                 with self._lock:
                     self._cf_calls += 1
                     if key is not None:
                         prev = ent['detail'] if ent is not None else None
-                        self._cache[key] = {
-                            'detail': fresh, 'prev': prev, 'age': 0,
-                            'blend': 0 if prev is None else int(self._BLEND_FRAMES)}
-                        ent = self._cache[key]
-                    else:
-                        ent = {'detail': fresh, 'prev': None, 'age': 0, 'blend': 0}
+                        self._cache[key] = {'detail': fresh, 'prev': prev,
+                                            'age': 0,
+                                            'blend': 0 if prev is None
+                                            else int(self._BLEND_FRAMES)}
+                if cf_f.shape == base_f.shape:
+                    return np.clip(cf_f, 0, 255).astype(np.uint8), scale_factor
+                ent = (self._cache.get(key) if key is not None
+                       else {'detail': fresh, 'prev': None, 'age': 0, 'blend': 0})
 
         if ent is None or ent.get('detail') is None:
             # A claimed-but-not-yet-filled slot, or no track: hand back GPEN's
