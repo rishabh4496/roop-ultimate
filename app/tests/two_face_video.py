@@ -879,12 +879,26 @@ def main():
     ap.add_argument("--threads", type=int, default=None,
                     help="defaults to config.yaml's live 'max_threads' setting if not "
                          "given, matching what the real app actually runs with")
+    ap.add_argument("--swap-model-mask-strength", type=float, default=None,
+                    help="the swap net's own face mask, 0-100. Defaults to "
+                         "config.yaml's live value, like --threads above, because "
+                         "this bench grades what the app renders. Until 2026-08-21 "
+                         "it was not passed at all and fell through to "
+                         "roop.globals' 0.0, so every two_face arm before then "
+                         "ran the mask OFF while production ran 25.")
     ap.add_argument("--out", default=os.path.join(APP, "output", "bench_two_face"))
     args = ap.parse_args()
 
     ensure_ffmpeg()
+    _mm = args.swap_model_mask_strength
     g = ab.init_pipeline(args.provider, args.swap_model, args.enhancer,
                          args.mask_engine)
+    # After init_pipeline, which has already built CFG from config.yaml -- so a
+    # None here can resolve to the live production value rather than to a
+    # hardcoded one, the same way --threads does.
+    if _mm is None:
+        _mm = float(getattr(g.CFG, 'swap_model_mask_strength', 0.0) or 0.0)
+    g.swap_model_mask_strength = float(_mm)
     g.video_encoder = "libx264"
     g.video_quality = 12
     g.execution_threads = args.threads if args.threads is not None else g.CFG.max_threads
@@ -901,6 +915,14 @@ def main():
     options = ab.build_options(g, args.swap_model, map_mask_engine(args.mask_engine), False,
                                stabilize_mask=(args.stabilize_mask == "1"),
                                stabilize_mask_strength=args.stabilize_mask_strength)
+
+    # The settings that decide what this arm measured, on the arm's own log, so
+    # a later comparison does not have to guess them from the tag. Recovering
+    # them by hash-matching a re-render is possible but costs a full arm.
+    print(f"[bench] swap_model={args.swap_model} mask_engine={args.mask_engine} "
+          f"enhancer={args.enhancer} provider={args.provider} "
+          f"threads={g.execution_threads} tracking={track} "
+          f"swap_model_mask={g.swap_model_mask_strength}", flush=True)
 
     outdir = os.path.join(args.out, args.tag)
     work = os.path.join(outdir, "work")
