@@ -26,6 +26,33 @@ export default function PresetStudioModal({
   // api.py's meta lists by app/tests/test_ui_preset_recipes.py.
   const CURATED_RECIPES = [
     {
+      id: 'ultramax_photoreal',
+      title: 'UltraMax Photoreal Master',
+      desc: 'RealSwap with UltraMax enhancer (GPEN-512 + CodeFormer texture residual), RealityUX fusion mask, 0.40 detail transfer, and post-enhance color matching.',
+      badge: 'ULTRA REALISTIC',
+      color: 'from-purple-500/20 to-indigo-500/20 border-purple-500/40 text-purple-300',
+      params: {
+        swap_model: 'realswap',
+        selected_enhancer: 'UltraMax',
+        mask_engine: 'RealityUX',
+        blend_ratio: 1,
+        face_mask_blend: 12,
+        swap_model_mask_strength: 0,
+        detail_transfer_strength: 0.4,
+        color_match_after_enhance: true,
+        merger_degrade: 0,
+        merger_hist_match: 0.4,
+        merger_grain_match: 0.45,
+        merger_sharpen: 0.35,
+        subsample_upscale: '512px',
+        temporal_detection: true,
+        stabilize_enhancer: true,
+        stabilize_enhancer_strength: 0.25,
+        stabilize_mask: true,
+        num_swap_steps: 1,
+      },
+    },
+    {
       id: 'cinematic_4k',
       title: 'Cinematic 4K Ultra',
       desc: 'Maximum fidelity. GPEN 1024 face restore, Real-ESRGAN ×4 second pass, temporal anti-flicker, enhancer and mask stabilisation.',

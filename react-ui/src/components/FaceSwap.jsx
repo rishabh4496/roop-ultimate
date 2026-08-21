@@ -673,9 +673,9 @@ export default function FaceSwap({
   // resolution, pixel-boost upscale, enhancer, swap steps); other settings (mask
   // engine, target selection, etc.) are left as-is. Pure UI — no runtime cost.
   const PRESETS = {
-    Fast:     { default_det_size: false, face_detector_size: '320', face_detector_threshold: 0.50, subsample_upscale: '128px', selected_enhancer: 'None',            num_swap_steps: 1 },
-    Balanced: { default_det_size: true,  face_detector_size: '640', face_detector_threshold: 0.50, subsample_upscale: '256px', selected_enhancer: 'GPEN',            num_swap_steps: 1 },
-    Quality:  { default_det_size: true,  face_detector_size: '640', face_detector_threshold: 0.50, subsample_upscale: '512px', selected_enhancer: 'Restoreformer++', num_swap_steps: 2 },
+    Fast:     { default_det_size: false, face_detector_size: '320', face_detector_threshold: 0.50, subsample_upscale: '128px', selected_enhancer: 'None',     num_swap_steps: 1 },
+    Balanced: { default_det_size: true,  face_detector_size: '640', face_detector_threshold: 0.50, subsample_upscale: '256px', selected_enhancer: 'GPEN',     num_swap_steps: 1 },
+    Quality:  { default_det_size: true,  face_detector_size: '640', face_detector_threshold: 0.50, subsample_upscale: '512px', selected_enhancer: 'UltraMax', swap_model: 'realswap', mask_engine: 'RealityUX', num_swap_steps: 1 },
   };
   const activePreset = Object.keys(PRESETS).find((name) =>
     Object.entries(PRESETS[name]).every(([k, v]) =>

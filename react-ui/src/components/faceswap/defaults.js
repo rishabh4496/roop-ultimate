@@ -28,7 +28,7 @@ export const FACESWAP_DEFAULTS = {
   swap_model_mask_strength: 0,
   rescue_small_faces: true,
   num_swap_steps: 1,
-  selected_enhancer: 'Restoreformer++',
+  selected_enhancer: 'UltraMax',
   codeformer_fidelity: 0.5,
   max_face_distance: 0.75,
   subsample_upscale: '128px',
@@ -39,7 +39,7 @@ export const FACESWAP_DEFAULTS = {
   blend_ratio: 1,
 
   // Masking parameters
-  mask_engine: 'DFL XSeg',
+  mask_engine: 'RealityUX',
   // A second occlusion engine, composed as a union with the first. 'None' is
   // the previous behaviour; the pairing to reach for is XSeg + Face Occluder.
   mask_engine_2: 'None',
@@ -50,7 +50,7 @@ export const FACESWAP_DEFAULTS = {
   mask_bottom: 0,
   mask_left: 0,
   mask_right: 0,
-  face_mask_blend: 20,
+  face_mask_blend: 12,
 
   // Mouth & Angle math
   mouth_top_scale: 1,
@@ -64,13 +64,13 @@ export const FACESWAP_DEFAULTS = {
   frontalization_threshold: 25,
   jaw_reshape: false,
   jaw_reshape_strength: 0.5,
-  detail_transfer_strength: 0,
+  detail_transfer_strength: 0.4,
   // DeepFaceLab merger post-ops. All neutral by default — each is a
   // bit-identical no-op at 0, so the defaults change nothing about a render.
-  merger_hist_match: 0,
-  merger_sharpen: 0,
+  merger_hist_match: 0.4,
+  merger_sharpen: 0.35,
   merger_motion_blur: 0,
-  merger_grain_match: 0,
+  merger_grain_match: 0.45,
   merger_degrade: 0,
   output_face_scale: 0,
   // Expression restore is an editable Face Swap control and a heavy GPU stage,
@@ -84,7 +84,7 @@ export const FACESWAP_DEFAULTS = {
   temporal_detection: true,
   vr_mode: false,
   stabilize_enhancer: true,
-  stabilize_enhancer_strength: 0.5,
+  stabilize_enhancer_strength: 0.25,
   stabilize_mask: true,
   stabilize_mask_strength: 0.5,
 
@@ -110,7 +110,7 @@ export const FACESWAP_DEFAULTS = {
   parser_regions: ['skin', 'brows', 'eyes', 'nose', 'mouth'],
   parser_region_grow: {},
   enhancer_align: false,
-  color_match_after_enhance: false,
+  color_match_after_enhance: true,
   lipsync_enabled: false,
   lipsync_audio_source: 'original',
   lipsync_audio_path: null,

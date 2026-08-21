@@ -406,7 +406,7 @@ class MaskingMixin:
 
         img_matte = np.reshape(img_matte, [img_matte.shape[0], img_matte.shape[1], 1])
         paste_face = cv2.warpAffine(upsk_face, IM, (target_img.shape[1], target_img.shape[0]), borderMode=cv2.BORDER_REPLICATE)
-        if upsk_face is not fake_face:
+        if upsk_face is not fake_face and getattr(self.options, 'blend_ratio', 1.0) < 0.999:
             # IM is scaled to upsk_face's resolution — bring fake_face to the same
             # size first, or the blend layer lands misaligned (quarter-size ghost
             # with GPEN 1024/2048, whose output is larger than the 512 swap crop).

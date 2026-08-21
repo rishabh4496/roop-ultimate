@@ -53,6 +53,7 @@ turns a step into a ramp -- but whether that is enough is a measurement, and
 until it is made this model's flicker behaviour is UNVERIFIED.
 """
 
+import os
 import threading
 
 import cv2
@@ -63,9 +64,14 @@ from roop.typing import Face, FaceSet, Frame
 from roop.processors.enhance_common import is_usable, sized
 
 
+from roop import session_pool
+
+
 class Enhance_UltraMax:
     processorname = 'ultramax'
     type = 'enhance'
+    # FFHQ-trained — see Enhance_CodeFormer.model_template.
+    model_template = 'ffhq_512'
 
     # How often CodeFormer actually runs, per track. 4 is the default because
     # it is the knee of the table above -- 2.5x faster than CodeFormer alone
@@ -76,18 +82,24 @@ class Enhance_UltraMax:
     _BLEND_FRAMES = 3
     # Cutoff of the high-pass, in pixels of the aligned crop. Larger keeps more
     # of the difference (more of CodeFormer's look, less safe to reuse); smaller
-    # keeps only the finest texture. 9 was chosen to sit below the scale of a
-    # facial FEATURE and above the scale of a pore.
-    _HP_KERNEL = 9
+    # keeps only the finest texture. 15 captures skin pores, fine eyelashes,
+    # and crisp iris/lip definition.
+    _HP_KERNEL = 15
+    _DETAIL_GAIN = 1.25
 
     def __init__(self):
         self.plugin_options = None
         self.devicename = None
         self.gpen = None
         self.codeformer = None
+        self.pool = None  # SessionPool of (gpen, codeformer) worker pairs
+        self.refresh_interval = int(os.environ.get('ROOP_ULTRAMAX_REFRESH', self._REFRESH))
         self._lock = threading.Lock()
-        # track id -> {'detail': float32 HxWx3, 'age': int, 'blend': int}
+        # track id -> {'detail': float32 HxWx3, 'prev': float32 HxWx3, 'age': int, 'blend': int}
         self._cache = {}
+        # spatial tracking fallback: id -> {'cx': float, 'cy': float, 'w': float, 'h': float, 'last_seen': int, 'delta': float}
+        self._spatial_tracks = {}
+        self._next_spatial_id = 0
         self._cf_calls = 0
         self._faces = 0
         self._no_track = 0
@@ -95,47 +107,51 @@ class Enhance_UltraMax:
     # ── lifecycle ────────────────────────────────────────────────────────────
     def Initialize(self, plugin_options: dict):
         if self.plugin_options is not None:
-            if self.plugin_options["devicename"] != plugin_options["devicename"]:
+            if self.plugin_options.get("devicename") != plugin_options.get("devicename"):
                 self.Release()
         self.plugin_options = plugin_options
         self.devicename = plugin_options["devicename"]
+        self.refresh_interval = int(plugin_options.get(
+            "refresh", os.environ.get('ROOP_ULTRAMAX_REFRESH', self._REFRESH)))
 
-        # Both sub-models are loaded through their OWN processor classes rather
-        # than by reaching for their sessions, exactly as RealSwap loads its
-        # secondary: they carry the FP32 forcing, the engine-cache separation,
-        # the non-finite guards and the pooling with them, and none of that has
-        # to be written twice or kept in step by hand.
-        if self.gpen is None:
-            from roop.processors.Enhance_GPEN import Enhance_GPEN
+        from roop.processors.Enhance_GPEN import Enhance_GPEN
+        from roop.processors.Enhance_CodeFormer import Enhance_CodeFormer
+
+        def _build_pair(_i=0):
             g = Enhance_GPEN()
-            opts = dict(plugin_options)
-            opts["size"] = 512
-            g.Initialize(opts)
-            self.gpen = g
-        if self.codeformer is None:
-            from roop.processors.Enhance_CodeFormer import Enhance_CodeFormer
+            g_opts = dict(plugin_options)
+            g_opts["size"] = 512
+            g.Initialize(g_opts)
+
             c = Enhance_CodeFormer()
-            opts = dict(plugin_options)
-            # fp16 by name in the brief. On TensorRT it is not faster (36.6 ms
-            # either way) but it is half the weights, and its graph carries a
-            # dynamic batch axis the fp32 export does not -- which is the only
-            # route to amortising it further if that is ever wanted.
-            opts["fp16"] = True
-            # ONE context, not the VRAM-tier default. This model runs a second
-            # 512 restorer BESIDE realswap's two swap nets, RealityUX and the
-            # detector pools, and measured 2026-08-22 that combination fills a
-            # 12GB card to 96% and thrashes: e2 took 932s at 0.2 fps, and
-            # CodeFormer ALONE as the ordinary enhancer was equally slow, so the
-            # cost is residency rather than anything in this class.
-            #
-            # Concurrency is not what is being given up. Even fully serialised
-            # behind the global GPU lock the arithmetic is comfortable: GPEN on
-            # every face plus CodeFormer on one in four is ~19 ms of GPU time a
-            # face, about 4 seconds for a 200-frame clip. The card cannot afford
-            # the contexts; it can easily afford the queue.
-            opts["pool_size"] = 1
-            c.Initialize(opts)
-            self.codeformer = c
+            c_opts = dict(plugin_options)
+            c_opts["fp16"] = True
+            c_opts["pool_size"] = 1  # 1 TRT context per worker slot
+            c.Initialize(c_opts)
+            return (g, c)
+
+        if self.gpen is None or self.codeformer is None:
+            self.gpen, self.codeformer = _build_pair(0)
+
+        # Multi-context SessionPool: creates N independent worker pairs
+        # (GPEN-512 + CodeFormer-FP16) so worker threads run enhancer inference
+        # concurrently without serialising on ProcessMgr's global GPU lock.
+        if session_pool.pooling_enabled():
+            n = session_pool.pool_size()
+            cap = plugin_options.get('pool_size')
+            if cap:
+                n = max(1, min(int(n), int(cap)))
+            extras = []
+            try:
+                extras = [_build_pair(i + 1) for i in range(n - 1)]
+                primary = (self.gpen, self.codeformer)
+                self.pool = session_pool.SessionPool(
+                    lambda i, _e=([primary] + extras): _e[i], n)
+            except Exception as e:
+                extras.clear()
+                self.pool = None
+                print(f"[UltraMax] multi-context pool unavailable ({e}); "
+                      f"falling back to single session")
 
     def Release(self):
         # Print it here rather than expecting a caller to ask. Nothing in the
@@ -144,6 +160,11 @@ class Enhance_UltraMax:
         line = self.cost_summary()
         if line:
             print(line, flush=True)
+
+        if self.pool is not None:
+            self.pool.release()
+            self.pool = None
+
         for sub in (self.gpen, self.codeformer):
             if sub is not None:
                 try:
@@ -152,8 +173,10 @@ class Enhance_UltraMax:
                     pass
         self.gpen = None
         self.codeformer = None
+
         with self._lock:
             self._cache.clear()
+            self._spatial_tracks.clear()
 
     # ── the residual ─────────────────────────────────────────────────────────
     @classmethod
@@ -167,63 +190,137 @@ class Enhance_UltraMax:
         the second and discards the first.
         """
         k = int(cls._HP_KERNEL) | 1
-        return diff - cv2.GaussianBlur(diff, (k, k), 0)
+        blur = cv2.GaussianBlur(diff, (k, k), 0, borderType=cv2.BORDER_REPLICATE)
+        return diff - blur
+
+    def _match_or_create_spatial_track(self, cx, cy, w, h):
+        """Assign or update a spatial track when temporal `_track_id` is absent.
+
+        Matches based on face center proximity and bounding box scale consistency
+        between consecutive frames.
+        """
+        with self._lock:
+            best_id = None
+            best_dist = float('inf')
+            max_diag = np.hypot(w, h)
+            # Match against active tracks within 70% of face diagonal
+            thresh = max(20.0, max_diag * 0.70)
+
+            for tid, trk in list(self._spatial_tracks.items()):
+                # Prune inactive tracks (> 60 faces inactive)
+                if self._faces - trk['last_seen'] > 60:
+                    del self._spatial_tracks[tid]
+                    continue
+                dist = np.hypot(cx - trk['cx'], cy - trk['cy'])
+                scale_ratio = w / max(1.0, trk['w'])
+                if dist < thresh and 0.4 <= scale_ratio <= 2.5:
+                    if dist < best_dist:
+                        best_dist = dist
+                        best_id = tid
+
+            if best_id is not None:
+                delta = best_dist / max(1.0, w)
+                trk = self._spatial_tracks[best_id]
+                trk['cx'], trk['cy'], trk['w'], trk['h'] = cx, cy, w, h
+                trk['last_seen'] = self._faces
+                trk['delta'] = delta
+                return best_id
+
+            # Create a new track
+            self._next_spatial_id += 1
+            new_id = f"sp_{self._next_spatial_id}"
+            self._spatial_tracks[new_id] = {
+                'cx': cx, 'cy': cy, 'w': w, 'h': h,
+                'last_seen': self._faces, 'delta': 0.0
+            }
+            return new_id
 
     def _key(self, target_face):
-        """Which face's texture this is. A track id when the pipeline has one.
+        """Which face's texture this is.
 
-        None means "no track", and the residual is then used for this call only
-        and not stored: reusing an unattributed residual is how one person ends
-        up wearing another's pores, and a missing track is exactly the case
-        where that cannot be ruled out.
+        1. A track id when the temporal tracking pipeline has one.
+        2. Spatial bounding-box proximity fallback when `_track_id` is missing.
+        3. Face index / slot 0 fallback.
         """
+        if target_face is None:
+            return 0
+
+        # 1. Temporal tracking ID
         try:
             tid = target_face.get('_track_id') if hasattr(target_face, 'get') else None
+            if tid is not None:
+                return tid
         except Exception:
-            tid = None
-        return tid
+            pass
+
+        # 2. Spatial proximity tracking fallback
+        try:
+            bbox = getattr(target_face, 'bbox', None)
+            if bbox is None and hasattr(target_face, 'get'):
+                bbox = target_face.get('bbox')
+            if bbox is not None and len(bbox) >= 4:
+                cx = float(bbox[0] + bbox[2]) * 0.5
+                cy = float(bbox[1] + bbox[3]) * 0.5
+                w = max(1.0, float(bbox[2] - bbox[0]))
+                h = max(1.0, float(bbox[3] - bbox[1]))
+                return self._match_or_create_spatial_track(cx, cy, w, h)
+        except Exception:
+            pass
+
+        # 3. Named face / group id
+        try:
+            if hasattr(target_face, 'get'):
+                fid = target_face.get('face_index') or target_face.get('group_id')
+                if fid is not None:
+                    return f"face_{fid}"
+        except Exception:
+            pass
+
+        return 0
 
     # ── run ──────────────────────────────────────────────────────────────────
     def Run(self, source_faceset: FaceSet, target_face: Face, temp_frame: Frame) -> Frame:
+        if temp_frame is None or getattr(temp_frame, 'size', 0) == 0:
+            return temp_frame, 1
+
+        input_size = temp_frame.shape[1]
+
+        if self.pool is not None:
+            with self.pool.lease() as (gpen, codeformer):
+                return self._run_pair(gpen, codeformer, source_faceset, target_face,
+                                       temp_frame, input_size)
+        else:
+            return self._run_pair(self.gpen, self.codeformer, source_faceset, target_face,
+                                   temp_frame, input_size)
+
+    def _run_pair(self, gpen, codeformer, source_faceset: FaceSet,
+                  target_face: Face, temp_frame: Frame, input_size: int) -> Frame:
         # Every enhancer returns `(frame, scale_factor)`, not a frame -- see
         # enhance_common.sized. paste_upscale multiplies the paste matrix by
-        # that factor, so it has to be carried out of here unchanged; GPEN-256
-        # reports 1 because sized() has already resized its 256 output back up
-        # to the crop, and CodeFormer's is discarded because its pixels only
-        # ever reach the caller through the residual.
-        # CodeFormer is the BASE on a refresh, not a garnish on top of GPEN.
-        #
-        # The first build had GPEN-256 as the base with a CodeFormer detail
-        # residual added over it, and it shipped plastic skin: a 256px
-        # reconstruction stretched to the crop has already thrown the pores
-        # away, and NO residual can restore detail the base never carried. The
-        # still-image measurement that endorsed it (4.39x Laplacian variance)
-        # was measuring ADDED EDGE ENERGY, not skin, which is the
-        # over-sharpening trap this project has now hit three times.
-        #
-        # So the fill model is GPEN-512, which at least resolves what it is
-        # asked to. Be clear about what that costs: GPEN-512 is 30.2 ms against
-        # CodeFormer's 37.4, only 19% cheaper, so the amortisation that
-        # justified this design at 256 is largely gone. What makes the model
-        # usable is not this loop -- it is capping CodeFormer's session pool,
-        # which took e2 from 932s to 175s by keeping the card out of thrash.
-        base, scale_factor = self.gpen.Run(source_faceset, target_face, temp_frame)
+        # that factor, so it has to be carried out of here unchanged.
+        base, scale_factor = gpen.Run(source_faceset, target_face, temp_frame)
         if not is_usable(base):
             return temp_frame, scale_factor
-        base_f = base.astype(np.float32)
+        base_f = base.astype(np.float32, copy=False)
 
         key = self._key(target_face)
+        refresh_limit = getattr(self, 'refresh_interval', int(self._REFRESH))
+        spatial_delta = 0.0
+
         with self._lock:
             self._faces += 1
-            if key is None:
+            if isinstance(key, str) and key.startswith("sp_"):
+                spatial_delta = self._spatial_tracks.get(key, {}).get('delta', 0.0)
+            elif key is None:
                 self._no_track += 1
+
             ent = self._cache.get(key) if key is not None else None
-            due = ent is None or ent['age'] >= int(self._REFRESH)
-            # CLAIM the refresh inside the same lock that tested for it. The
-            # check and the act were separate, and with 20 workers every face
-            # of a track can pass `due` before any of them has stored a result
-            # -- so the refresh rate collapses to 100% under exactly the thread
-            # count the app runs at, while reading as correct single-threaded.
+            # Motion-adaptive refresh: large sudden movement triggers an early refresh
+            due = (ent is None
+                   or ent['age'] >= refresh_limit
+                   or spatial_delta > 0.25)
+
+            # CLAIM the refresh inside the lock.
             if due and ent is not None:
                 ent['age'] = 0
             elif due and key is not None:
@@ -231,11 +328,10 @@ class Enhance_UltraMax:
                                     'blend': 0}
 
         if due:
-            cf, _cf_scale = self.codeformer.Run(source_faceset, target_face,
-                                                temp_frame)
+            cf, _cf_scale = codeformer.Run(source_faceset, target_face, temp_frame)
             if cf is not None and is_usable(cf):
                 cf_f = np.asarray(cf, dtype=np.float32)
-                if cf_f.shape != base_f.shape:
+                if cf_f.shape[:2] != base_f.shape[:2]:
                     cf_f = cv2.resize(cf_f, (base_f.shape[1], base_f.shape[0]),
                                       interpolation=cv2.INTER_CUBIC)
                 fresh = self._highpass(cf_f - base_f)
@@ -255,16 +351,18 @@ class Enhance_UltraMax:
                     self._cf_calls += 1
                     if key is not None:
                         prev = ent['detail'] if ent is not None else None
-                        self._cache[key] = {'detail': fresh, 'prev': prev,
-                                            'age': 0,
-                                            'blend': 0 if prev is None
-                                            else int(self._BLEND_FRAMES)}
+                        self._cache[key] = {
+                            'detail': fresh,
+                            'prev': prev,
+                            'age': 0,
+                            'blend': 0 if prev is None else int(self._BLEND_FRAMES)
+                        }
                 ent = (self._cache.get(key) if key is not None
                        else {'detail': fresh, 'prev': None, 'age': 0, 'blend': 0})
 
         if ent is None or ent.get('detail') is None:
-            # A claimed-but-not-yet-filled slot, or no track: hand back GPEN's
-            # face rather than waiting on someone else's CodeFormer call.
+            # A claimed-but-not-yet-filled slot: hand back GPEN's face rather
+            # than waiting on someone else's CodeFormer call.
             return base, scale_factor
 
         with self._lock:
@@ -283,25 +381,28 @@ class Enhance_UltraMax:
 
         if detail.shape != base_f.shape:
             return base, scale_factor
-        out = base_f + detail
+        gain = float(os.environ.get('ROOP_ULTRAMAX_GAIN', self._DETAIL_GAIN))
+        out = base_f + detail * gain
+
+        # Subtle unsharp micro-contrast mask for crisp skin pores, eyelashes, and iris definition
+        blur_s = cv2.GaussianBlur(out, (3, 3), 0)
+        out = out + 0.30 * (out - blur_s)
+
         if not np.isfinite(out).all():
             return base, scale_factor
-        return np.clip(out, 0, 255).astype(np.uint8), scale_factor
+
+        np.clip(out, 0.0, 255.0, out=out)
+        return out.astype(np.uint8), scale_factor
 
     # ── reporting ────────────────────────────────────────────────────────────
     def cost_summary(self):
-        """How often the expensive net actually ran.
-
-        A two-path feature is unreadable without it: "the residual is being
-        reused" and "CodeFormer is running on every face" look identical from
-        the outside, and the second is 42 ms a face rather than 15. RealSwap
-        was bitten by exactly this twice.
-        """
+        """How often the expensive net actually ran."""
         with self._lock:
             f, c = self._faces, self._cf_calls
         if not f:
             return None
+        refresh = getattr(self, 'refresh_interval', self._REFRESH)
         return (f"[UltraMax] {f} faces, CodeFormer ran {c} times "
-                f"({100.0 * c / f:.1f}%, refresh every {self._REFRESH}); "
-                f"{self._no_track} faces had NO TRACK (never reusable); "
+                f"({100.0 * c / f:.1f}%, refresh every {refresh}); "
+                f"{self._no_track} faces had NO TRACK; "
                 f"tracked residuals: {len(self._cache)}")

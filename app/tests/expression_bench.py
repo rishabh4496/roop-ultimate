@@ -173,6 +173,10 @@ def main():
             os.rename(out, final)
 
         cp, co = cv2.VideoCapture(clip), cv2.VideoCapture(final)
+        total_vid_frames = int(co.get(cv2.CAP_PROP_FRAME_COUNT)) or int(cp.get(cv2.CAP_PROP_FRAME_COUNT)) or 1
+        fps_swapped = total_vid_frames / max(0.001, elapsed)
+        print(f"[expr] Swap finished in {elapsed:.2f}s for {total_vid_frames} frames ({fps_swapped:.2f} FPS). Grading expression survival...", flush=True)
+
         pe, po, pm, pmo, ids, det, tot = [], [], [], [], [], 0, 0
         while True:
             okp, fp = cp.read()
@@ -201,7 +205,7 @@ def main():
         es, ms = pair_stats(pe, po), pair_stats(pm, pmo)
         idm = float(np.mean(ids)) if ids else float("nan")
         rows.append((name, final, tot, det, idm, es, ms, elapsed))
-        print(f"[expr] {name}: {elapsed:.1f}s -> {final}", flush=True)
+        print(f"[expr] {name}: {elapsed:.1f}s ({fps_swapped:.2f} FPS) -> {final}", flush=True)
 
     print("\n" + "=" * 96)
     print("EXPRESSION RESULTS   r = does the output move WITH the plate;  "

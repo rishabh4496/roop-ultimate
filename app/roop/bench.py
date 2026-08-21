@@ -296,6 +296,7 @@ def _enhancer_model(name):
         'GPEN 1024': ('gpen_bfr_1024.onnx', 'FP32-forced under TRT'),
         'GPEN 2048': ('gpen_bfr_2048.onnx', 'FP32-forced under TRT'),
         'Restoreformer++': ('restoreformer_plus_plus.onnx', ''),
+        'UltraMax': ('GPEN-BFR-512.onnx', 'GPEN-512 base with CodeFormer texture residual'),
     }
     if name not in table:
         return None, f'{name} is not a single-file ONNX enhancer'
@@ -412,10 +413,10 @@ def build_catalogue(faces_per_frame=1.0):
         enh_path, enh_note = _enhancer_model(enh_name)
         if enh_path:
             is_gpen = enh_name.startswith('GPEN')
-            # CodeFormer and RestoreFormer++ pool on ROOP_TRT_POOL; GPEN, GFPGAN
+            # CodeFormer, RestoreFormer++ and UltraMax pool on ROOP_TRT_POOL; GPEN, GFPGAN
             # and DMDNet have no pool at all, so under TensorRT they hold the
             # global lock and serialise the whole pipeline behind one face.
-            pooled_enh = enh_name.startswith('Codeformer') or enh_name == 'Restoreformer++'
+            pooled_enh = enh_name.startswith('Codeformer') or enh_name in ('Restoreformer++', 'UltraMax')
             stages.append(Stage(
                 'enhance', f'Enhancer — {enh_name}', enh_path,
                 _fp32_trt_providers(prov) if is_gpen else prov,

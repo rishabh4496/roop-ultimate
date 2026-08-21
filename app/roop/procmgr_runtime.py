@@ -792,22 +792,20 @@ def _stream_is_terminal() -> bool:
 def _progress_every() -> int:
     """Frames per reported chunk."""
     raw = os.environ.get("ROOP_PROGRESS_EVERY")
-    if raw is None:
-        raw = os.environ.get("ROOP_RESUME_CHUNK", "1000")
-    try:
-        return max(1, int(raw))
-    except (TypeError, ValueError):
-        return 1000
+    if raw is not None:
+        try:
+            return max(1, int(raw))
+        except (TypeError, ValueError):
+            pass
+    return 25
 
 
 def _progress_max_gap() -> float:
-    """Longest silence allowed between lines. A chunk of a thousand frames can
-    take minutes on a slow model, and a terminal that has said nothing for that
-    long reads as a hang — so report on whichever comes first, frames or time."""
+    """Longest silence allowed between lines."""
     try:
-        return max(0.0, float(os.environ.get("ROOP_PROGRESS_SECS", "15")))
+        return max(0.0, float(os.environ.get("ROOP_PROGRESS_SECS", "4.0")))
     except (TypeError, ValueError):
-        return 15.0
+        return 4.0
 
 
 class ChunkedProgress(tqdm):

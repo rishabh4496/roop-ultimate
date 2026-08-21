@@ -897,7 +897,7 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                 update()
 
 
-    def _post_sentinels(self, queues, num_threads, tag, give_up_after=30.0):
+    def _post_sentinels(self, queues, num_threads, tag, give_up_after=300.0):
         """Tell each worker its queue is finished, without being able to hang.
 
         This used to be a bare `put(None)`. A bare put has no timeout, and at
@@ -908,11 +908,12 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
         in `queue.put`. In a long-lived server that is one leaked thread and one
         1080p frame per render.
 
-        A worker that is still alive drains within milliseconds; one that has
-        died never will, and no amount of waiting changes that. So: bounded.
+        A worker that is still alive drains within its normal per-frame time;
+        deadline is per-worker so multi-threaded renders with full queues have
+        enough time to drain without prematurely abandoning sentinels.
         """
-        deadline = time.perf_counter() + float(give_up_after)
         for i in range(num_threads):
+            deadline = time.perf_counter() + float(give_up_after)
             while True:
                 try:
                     queues[i].put(None, timeout=0.1)
@@ -923,6 +924,7 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                     if time.perf_counter() > deadline:
                         bar_write(f'[{tag}] worker {i} never drained its queue; '
                                   f'abandoning its sentinel so this thread can exit')
+                        roop.globals.processing = False
                         break
 
     def read_frames_thread(self, cap, frame_start, frame_end, num_threads):
@@ -2422,9 +2424,10 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                 # as its embedding, so it would otherwise always score better
                 # than the real face it is competing with), then closest first.
                 # Ordering only — no face is added or dropped here.
-                faces = sorted(faces, key=lambda f: (
-                    bool(f.get('_interpolated')) if isinstance(f, dict) else False,
-                    _dist_to_any_person(f)))
+                if len(faces) > 1:
+                    faces = sorted(faces, key=lambda f: (
+                        bool(f.get('_interpolated')) if isinstance(f, dict) else False,
+                        _dist_to_any_person(f)))
 
                 for face in faces:
                     audit_face_begin(frame_idx, face)

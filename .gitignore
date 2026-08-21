@@ -17,6 +17,7 @@ venv
 /start.sh
 cache
 logs
+models
 
 # App runtime directories (also covered by app/.gitignore)
 app/env
