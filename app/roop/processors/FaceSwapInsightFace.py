@@ -961,19 +961,25 @@ class FaceSwapInsightFace():
             blob_b = self._warp_chw(blob[0], to_b, size)[np.newaxis]
             out_b = sec.Run(source_face, target_face, blob_b)
             back = cv2.invertAffineTransform(to_b)
-            # This face was swapped by the secondary, so the mask that describes
-            # it is the SECONDARY's — carried into the primary's crop space,
-            # because that is the space ProcessMgr pastes through. Draining it is
-            # not optional either way: left stashed on the sub-processor it would
-            # be served to a later face on the same thread.
-            sec_masks = sec.take_masks()
-            if sec_masks and sec_masks[0] is not None:
-                m = np.asarray(sec_masks[0], dtype=np.float32)
-                self._mask_tls.masks = [cv2.warpAffine(
-                    m, back, (size, size), flags=cv2.INTER_LINEAR,
-                    borderMode=cv2.BORDER_REPLICATE)]
-            else:
-                self._mask_tls.masks = None
+            # Drain the secondary's mask and DISCARD it. Draining is not
+            # optional: left stashed on the sub-processor it would be served to a
+            # later face on the same thread. Discarding is the composite's
+            # contract — the published mask says where the pasted face is, and
+            # under the composite that face is the PRIMARY's everywhere but the
+            # ~6% eye band, so the primary's mask (already stashed by Run before
+            # this call) is the one that describes it.
+            #
+            # This block used to overwrite the primary's mask with the
+            # secondary's. That was correct under the pose ROUTER it was written
+            # for (a95dd42), where the whole face really was the secondary's, and
+            # it was left behind when the router became a region composite
+            # (aeff9df) — whose own comment in `Run` already states the primary's
+            # mask is the one published. Two ways it was wrong: hififace's
+            # verdict on where the face is was trimming the paste matte of a
+            # face hyperswap had painted, and a secondary that emitted no mask
+            # nulled the primary's too, dropping the matte trim for that face
+            # entirely.
+            sec.take_masks()
             out_b = np.asarray(out_b, dtype=np.float32)
             if bool(sec.model_denormalize) != bool(self.model_denormalize):
                 out_b = (out_b + 1.0) / 2.0 if sec.model_denormalize else out_b * 2.0 - 1.0
@@ -986,14 +992,15 @@ class FaceSwapInsightFace():
             return None
 
     def Run(self, source_face: Face, target_face: Face, temp_frame: Frame) -> Frame:
-        # RealSwap routes each face to ONE of its two nets and runs only that
-        # one. Running both and combining them was the original framing, and the
-        # measurement retired it: there is no region where the second net helps a
-        # face the first one swaps well (at yaw 0/+/-45 hyperswap wins identity
-        # on 100% of frames and neither model has a tail), and cross-dissolving
-        # two differently-shaped faces doubles the features anyway. Routing also
-        # means a face costs ONE net, so the pairing is free on the ~95% of faces
-        # that never reach the profile band.
+        # RealSwap runs BOTH of its nets on EVERY face and composites them by
+        # region (see "The composition rule" above): hyperswap is the base, and
+        # hififace supplies only the eyelid annulus. So a face costs two nets,
+        # +4.0 ms, about +1.9% of the ~210 ms swap+mask+enhance budget.
+        #
+        # This replaced a pose ROUTER that ran one net per face, picked by yaw.
+        # The router is measured and rejected, not merely superseded: on real
+        # contact footage it cost 0.26 of faceset identity for no gain in
+        # sharpness. Do not reach for it again.
         latent = self._compute_source_input(source_face)
         if latent is None:
             # Image-source model but no source crop available → return the target
@@ -1043,13 +1050,38 @@ class FaceSwapInsightFace():
         self._republish_masks(masks)
         return results
 
+    # ── Why a composite model declines the batched paths ─────────────────────
+    # Both batched entry points below run the PRIMARY net over a batch and
+    # return its output directly; neither calls `_run_secondary`. For every
+    # single-net model that is exactly right, but for `realswap` it silently
+    # returns hyperswap alone — the eye band, which is the entire reason the
+    # model exists, never happens, and nothing says so: `mix_summary` counts
+    # only faces that reached `_mix_outputs`, so it reports "0 of 0" and prints
+    # nothing at all.
+    #
+    # It has been dormant rather than harmless. The default config disables both
+    # paths by accident: the cross-frame batcher refuses to start while
+    # `swap_model_mask_strength > 0` (ProcessMgr._make_swap_batcher) and
+    # RunBatch needs more than one pixel-boost tile, of which the default has
+    # one. Drop the mask slider to 0, or turn pixel boost up, and the default
+    # swap model quietly becomes a different model.
+    #
+    # So a composite declines batching and takes the sequential fallback, which
+    # is `Run` per crop and therefore composites. That costs realswap the
+    # batching win it was not getting under the shipped config anyway; the
+    # alternative — batching the secondary too — is a real change to both paths
+    # and to the batcher's contract, and it is not worth it until a measurement
+    # says the batched path is on realswap's critical route.
     def RunBatch(self, source_face: Face, target_face: Face, temp_frames: list) -> list:
         """Batched equivalent of Run: temp_frames is a list of [1,3,H,W]
         preprocessed crops sharing the same source identity. Returns a list of
         [3,H,W] outputs, one per crop — numerically identical to calling Run on
         each, but in a single inference (better GPU utilization). Requires the
         session to be batch-dynamic (ROOP_BATCH_SWAP=1)."""
-        if self._batch_unsupported:
+        # getattr, not attribute access: `Run` guards the same way, because a
+        # subclass that drives these methods over a stub session (the batch
+        # fallback tests) never runs __init__.
+        if self._batch_unsupported or getattr(self, 'secondary', None) is not None:
             return self._sequential_fallback(
                 [(source_face, target_face, t) for t in temp_frames])
         latent = self._compute_source_input(source_face)
@@ -1088,7 +1120,10 @@ class FaceSwapInsightFace():
         cross-frame coalescing where different faces batch together).
         requests = list of (source_face, target_face, blob[1,3,H,W]); the
         target_face is unused by the swap net. Returns a list of [3,H,W]."""
-        if self._batch_unsupported:
+        # getattr, not attribute access: `Run` guards the same way, because a
+        # subclass that drives these methods over a stub session (the batch
+        # fallback tests) never runs __init__.
+        if self._batch_unsupported or getattr(self, 'secondary', None) is not None:
             return self._sequential_fallback(requests)
         latents = [self._compute_source_input(src) for src, _tgt, _blob in requests]
         if any(l is None for l in latents):

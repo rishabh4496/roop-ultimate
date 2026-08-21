@@ -264,5 +264,123 @@ class TestEyeBandComposite(unittest.TestCase):
         self.assertIsNone(p.mix_summary())
 
 
+class _FakeSecondary:
+    """Enough of a processor for `_run_secondary`: it swaps, and it stashes a
+    mask of its own that the caller is expected to drain."""
+
+    loaded_model_key = 'hififace'
+    model_mean = [0.5, 0.5, 0.5]
+    model_standard_deviation = [0.5, 0.5, 0.5]
+    model_denormalize = True
+
+    def __init__(self):
+        self.masks = None
+        self.runs = 0
+
+    def Run(self, source_face, target_face, blob):
+        self.runs += 1
+        self.masks = [np.full((256, 256), 0.25, np.float32)]   # "my" face mask
+        return np.zeros((3, 256, 256), np.float32)
+
+    def take_masks(self):
+        m, self.masks = self.masks, None
+        return m
+
+
+class TestPublishedMaskIsThePrimarySown(unittest.TestCase):
+    """The mask ProcessMgr pastes through must describe the face it is pasting.
+
+    Under the composite that face is the PRIMARY's everywhere but the ~6% eye
+    band, so the primary's mask is the one to publish. `_run_secondary` used to
+    overwrite it with the secondary's — correct under the pose ROUTER it was
+    written for, where the whole face was the secondary's, and left behind when
+    the router became a region composite.
+    """
+
+    def _primed(self):
+        p = _proc()
+        p.secondary = _FakeSecondary()
+        p.model_mean = [0.5, 0.5, 0.5]
+        p.model_standard_deviation = [0.5, 0.5, 0.5]
+        p.model_denormalize = True
+        primary_mask = np.full((256, 256), 0.75, np.float32)
+        p._mask_tls.masks = [primary_mask]                     # as Run stashes it
+        return p, primary_mask
+
+    def test_primary_mask_survives_the_secondary(self):
+        p, primary_mask = self._primed()
+        out = p._run_secondary(_Face(), _Face(), np.zeros((1, 3, 256, 256), np.float32))
+        self.assertIsNotNone(out, 'the secondary should have produced a swap')
+        published = p.take_masks()
+        self.assertIsNotNone(published, 'the primary mask was dropped')
+        self.assertTrue(np.allclose(published[0], 0.75),
+                        "the secondary's mask was published in the primary's place")
+
+    def test_secondary_mask_is_drained_not_left_for_the_next_face(self):
+        # Left stashed on the sub-processor it would be served to a later face
+        # on the same thread.
+        p, _ = self._primed()
+        p._run_secondary(_Face(), _Face(), np.zeros((1, 3, 256, 256), np.float32))
+        self.assertIsNone(p.secondary.masks, "the secondary's mask was not drained")
+
+    def test_a_maskless_secondary_does_not_null_the_primary_s(self):
+        p, _ = self._primed()
+
+        def _no_mask(source_face, target_face, blob):
+            p.secondary.masks = None
+            return np.zeros((3, 256, 256), np.float32)
+
+        p.secondary.Run = _no_mask
+        p._run_secondary(_Face(), _Face(), np.zeros((1, 3, 256, 256), np.float32))
+        published = p.take_masks()
+        self.assertIsNotNone(published,
+                             'a secondary with no mask nulled the primary\'s too')
+        self.assertTrue(np.allclose(published[0], 0.75))
+
+
+class TestBatchedPathsStillComposite(unittest.TestCase):
+    """A batched path that runs only the primary IS a different swap model.
+
+    RunBatch and RunBatchMulti return the primary's batch output directly. For
+    a single-net model that is right; for realswap it silently drops the eye
+    band — and `mix_summary` cannot report it, because it counts only faces that
+    reached `_mix_outputs` and so prints nothing at all.
+    """
+
+    def _spy(self):
+        p = _proc()
+        p.secondary = _FakeSecondary()
+        calls = []
+        p._sequential_fallback = lambda reqs: calls.append(reqs) or [
+            r[2][0] for r in reqs]
+        return p, calls
+
+    def test_runbatch_defers_to_the_compositing_path(self):
+        p, calls = self._spy()
+        crops = [np.zeros((1, 3, 256, 256), np.float32) for _ in range(3)]
+        p.RunBatch(_Face(), _Face(), crops)
+        self.assertEqual(len(calls), 1, 'RunBatch ran the primary alone')
+        self.assertEqual(len(calls[0]), 3)
+
+    def test_runbatchmulti_defers_to_the_compositing_path(self):
+        p, calls = self._spy()
+        reqs = [(_Face(), _Face(), np.zeros((1, 3, 256, 256), np.float32))
+                for _ in range(2)]
+        p.RunBatchMulti(reqs)
+        self.assertEqual(len(calls), 1, 'RunBatchMulti ran the primary alone')
+
+    def test_single_net_models_keep_their_batching(self):
+        # The opt-out is the composite's, not every model's: batching is a real
+        # throughput win and nothing about one net needs it disabled.
+        p = FaceSwapInsightFace()
+        self.assertIsNone(p.secondary)
+        called = []
+        p._sequential_fallback = lambda reqs: called.append(reqs) or []
+        p._batch_unsupported = False
+        p._compute_source_input = lambda src: None      # stops before inference
+        p.RunBatch(_Face(), _Face(), [np.zeros((1, 3, 256, 256), np.float32)])
+        self.assertEqual(called, [], 'a single-net model lost its batching')
+
+
 if __name__ == '__main__':
     unittest.main()
