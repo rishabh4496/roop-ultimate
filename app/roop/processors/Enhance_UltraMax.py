@@ -239,10 +239,18 @@ class Enhance_UltraMax:
                     cf_f = cv2.resize(cf_f, (base_f.shape[1], base_f.shape[0]),
                                       interpolation=cv2.INTER_CUBIC)
                 fresh = self._highpass(cf_f - base_f)
-                # On the refresh face itself, hand back CodeFormer's OWN pixels
-                # rather than base+residual. They are what the user is asking
-                # for, they cost nothing extra here, and reconstructing them
-                # from a high-pass of their own difference can only lose.
+                # DO NOT hand back CodeFormer's own pixels here. v2 did, and it
+                # FLICKERED -- confirmed on e2. One frame in four came from
+                # CodeFormer and three from GPEN-512+residual, and two different
+                # networks' output alternating at 1-in-4 is a flicker generator
+                # that no blend length can fix: _BLEND_FRAMES fades the
+                # RESIDUAL, and the residual was never the discontinuity --
+                # which model drew the frame was.
+                #
+                # Every frame now comes from the SAME base, GPEN-512, with a
+                # residual that changes slowly and fades in over several faces.
+                # That is the property that makes a reused residual safe at all:
+                # hold the base constant and move only the detail.
                 with self._lock:
                     self._cf_calls += 1
                     if key is not None:
@@ -251,8 +259,6 @@ class Enhance_UltraMax:
                                             'age': 0,
                                             'blend': 0 if prev is None
                                             else int(self._BLEND_FRAMES)}
-                if cf_f.shape == base_f.shape:
-                    return np.clip(cf_f, 0, 255).astype(np.uint8), scale_factor
                 ent = (self._cache.get(key) if key is not None
                        else {'detail': fresh, 'prev': None, 'age': 0, 'blend': 0})
 
