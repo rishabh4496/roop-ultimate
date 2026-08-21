@@ -840,9 +840,49 @@ class FaceSwapInsightFace():
     # falls on skin -- brow ridge above, cheek below -- where there is no feature
     # to double. `ghost` in the angle sweep is the check: above 1.0 means the two
     # faces are superimposing.
-    _EYE_RX = 0.51        # ellipse radii as a fraction of the interocular distance
-    _EYE_RY = 0.38
-    _EYE_LIFT = 0.10      # centre offset ABOVE the eye, toward lid and lashes
+    # The band is an ANNULUS, not a disc: the lid margins and lashes are
+    # hififace's, the eye APERTURE inside them stays hyperswap's. That is the
+    # brief read exactly -- hififace for "eyelids, eyelashes, expression",
+    # hyperswap for "nose, EYES, mouth, chin, cheeks" -- and it is also what the
+    # measurement points to. A disc over the whole eye cost a mean 0.041 of
+    # identity over the six non-profile cells of the yaw sweep, against a total
+    # hyperswap->hififace gap of 0.118 in those same cells: 16.6% of the crop
+    # AREA bought 34% of the available identity gap, about twice its share,
+    # because ArcFace draws more identity per pixel from the periocular
+    # interior than from anywhere else on a face. Keeping the aperture is the
+    # attempt to put that back.
+    # GRADED (yaw sweep, 1310 paired frames, 786 of them non-profile):
+    #
+    #                  hyperswap  hififace   disc  annulus
+    #   id_source         0.7934    0.6751 0.7525   0.7645   +0.0120 vs disc
+    #   eyes drift        0.0282    0.0247 0.0254   0.0245   -0.0009
+    #   ghost             0.9530    0.9002 0.9172   0.9151   -0.0021
+    #
+    # Identity is higher on 95.7% of frames (t=+48.5) and the eye geometry did
+    # NOT spring back -- it improved, to just under hififace's own 0.0247
+    # (t=-9.4). Nose and mouth are unmoved. So the annulus is kept.
+    #
+    # But the reasoning that produced it did NOT hold, and that is the useful
+    # part: cutting 61% of the band's AREA recovered only 29% of the identity
+    # the disc gave up. Had the aperture been the identity-dense region, it
+    # would have recovered most of it. The cost is spread across the band, if
+    # anything weighted toward the lid ring that is still the secondary's. Do
+    # not shrink this band further expecting identity back at that rate.
+    #
+    # Unfixed by this, and now the composite's largest single cost: `ghost` is
+    # 0.038 below hyperswap and the annulus did not improve it (-0.0021).
+    # Less secondary area bought no sharpness. One untested explanation is that
+    # an annulus has TWO feathered edges rather than one, the inner running
+    # straight across the eye. Measure before acting on that.
+    # Radii are fractions of the interocular distance. The aperture is far wider
+    # than it is tall -- an eye is a slit, not a disc -- so the inner ellipse
+    # needs its own x and y factors; a single one either swallows the lid or
+    # leaves the iris exposed.
+    _EYE_RX = 0.50        # outer ellipse: lids and lashes
+    _EYE_RY = 0.30
+    _EYE_INNER_X = 0.45   # inner ellipse (the eye itself, kept for the base),
+    _EYE_INNER_Y = 0.22   # as fractions of the OUTER radii
+    _EYE_LIFT = 0.05      # outer centre offset ABOVE the eye, toward the lid
     _EYE_FEATHER = 0.16   # gaussian feather, also in interocular units
 
     @classmethod
@@ -868,6 +908,13 @@ class FaceSwapInsightFace():
         for eye in (left, right):
             c = (int(round(eye[0])), int(round(eye[1] - cls._EYE_LIFT * sep)))
             cv2.ellipse(m, c, (int(round(rx)), int(round(ry))), 0, 0, 360, 1.0, -1)
+        # Punch the aperture back out, centred on the eye itself rather than on
+        # the lifted lid centre, so what is removed is the eye and what remains
+        # is the ring of lid and lash around it.
+        for eye in (left, right):
+            c = (int(round(eye[0])), int(round(eye[1])))
+            cv2.ellipse(m, c, (int(round(cls._EYE_INNER_X * rx)),
+                               int(round(cls._EYE_INNER_Y * ry))), 0, 0, 360, 0.0, -1)
         k = int(cls._EYE_FEATHER * sep) | 1
         m = cv2.GaussianBlur(m, (k, k), 0)
         cls._EYE_MASK_CACHE[key] = m

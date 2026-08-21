@@ -188,23 +188,34 @@ class TestEyeBandComposite(unittest.TestCase):
     composite must leave the great majority of the face untouched.
     """
 
-    def test_band_covers_the_eyes_and_not_the_rest(self):
-        m = FaceSwapInsightFace._eye_region_mask(256, 'arcface')
+    def test_band_is_the_lids_and_NOT_the_eye_itself(self):
+        # The band is an annulus. The lid margins and lashes are the secondary's;
+        # the eye aperture inside them stays the base model's, because ArcFace
+        # draws more identity per pixel from the periocular interior than from
+        # anywhere else — a disc over the whole eye took 16.6% of the crop area
+        # and 34% of the available identity gap.
         from roop.face_util import swap_template_points
+        m = FaceSwapInsightFace._eye_region_mask(256, 'arcface')
         pts = np.asarray(swap_template_points(256, 'arcface'), dtype=np.float32)
+        sep = float(np.linalg.norm(pts[1] - pts[0]))
         for eye in (pts[0], pts[1]):
-            self.assertGreater(m[int(eye[1]), int(eye[0])], 0.5,
-                               'the eye itself must be inside the band')
-        for name, p in (('nose', pts[2]), ('mouth-left', pts[3]),
+            x, y = int(eye[0]), int(eye[1])
+            self.assertLess(m[y, x], 0.05,
+                            'the eye APERTURE must stay with the base model')
+            self.assertGreater(m[y - int(0.13 * sep), x], 0.5,
+                               'the upper lid must come from the secondary')
+            self.assertGreater(m[y + int(0.11 * sep), x], 0.5,
+                               'the lower lid must come from the secondary')
+        for name, q in (('nose', pts[2]), ('mouth-left', pts[3]),
                         ('mouth-right', pts[4])):
-            self.assertLess(m[int(p[1]), int(p[0])], 0.02,
+            self.assertLess(m[int(q[1]), int(q[0])], 0.02,
                             f'{name} belongs wholly to the base model')
 
     def test_band_is_a_minority_of_the_crop(self):
-        # The brief is 80-85% hyperswap. The mask is feathered, so its MEAN is
+        # The brief is 80-85% base model. The mask is feathered, so its MEAN is
         # the honest measure of how much of the face is not purely the base.
         cov = float(FaceSwapInsightFace._eye_region_mask(256, 'arcface').mean())
-        self.assertTrue(0.03 < cov < 0.25,
+        self.assertTrue(0.02 < cov < 0.25,
                         f'eye band covers {cov:.1%} of the crop; the base model '
                         f'must remain the great majority of the face')
 
@@ -229,7 +240,11 @@ class TestEyeBandComposite(unittest.TestCase):
         out = p._mix_outputs(base, other, 256)
         from roop.face_util import swap_template_points
         pts = np.asarray(swap_template_points(256, 'arcface'), dtype=np.float32)
-        self.assertGreater(out[0, int(pts[0][1]), int(pts[0][0])], 0.5)
+        sep = float(np.linalg.norm(pts[1] - pts[0]))
+        lid = (int(pts[0][1] - 0.13 * sep), int(pts[0][0]))
+        self.assertGreater(out[0, lid[0], lid[1]], 0.5, 'lid comes from the secondary')
+        self.assertLess(out[0, int(pts[0][1]), int(pts[0][0])], 0.05,
+                        'the eye aperture stays with the base')
         self.assertLess(out[0, int(pts[2][1]), int(pts[2][0])], 0.02)
         self.assertLess(out[0, 8, 8], 0.02, 'crop corners are pure base')
 
