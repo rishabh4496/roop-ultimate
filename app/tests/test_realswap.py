@@ -346,12 +346,16 @@ class TestPublishedMaskIsThePrimarySown(unittest.TestCase):
 
 
 class TestBatchedPathsStillComposite(unittest.TestCase):
-    """A batched path that runs only the primary IS a different swap model.
+    """A batched path that runs only the primary would BE a different swap model.
 
-    RunBatch and RunBatchMulti return the primary's batch output directly. For
-    a single-net model that is right; for realswap it silently drops the eye
-    band — and `mix_summary` cannot report it, because it counts only faces that
-    reached `_mix_outputs` and so prints nothing at all.
+    Note this pins a property, not a fix: `Load` already sets
+    `_batch_unsupported = True` whenever a secondary is configured, so the
+    composite has always taken the sequential fallback. These tests exist so
+    that if that flag is ever cleared — it means "this model cannot batch",
+    which is a different proposition and could legitimately change — the eye
+    band does not start disappearing silently. `mix_summary` could not report
+    it either: it counts only faces that reached `_mix_outputs`, so it would
+    print nothing rather than "0 of N".
     """
 
     def _spy(self):

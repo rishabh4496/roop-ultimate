@@ -1199,19 +1199,23 @@ class FaceSwapInsightFace():
     # only faces that reached `_mix_outputs`, so it reports "0 of 0" and prints
     # nothing at all.
     #
-    # It has been dormant rather than harmless. The default config disables both
-    # paths by accident: the cross-frame batcher refuses to start while
-    # `swap_model_mask_strength > 0` (ProcessMgr._make_swap_batcher) and
-    # RunBatch needs more than one pixel-boost tile, of which the default has
-    # one. Drop the mask slider to 0, or turn pixel boost up, and the default
-    # swap model quietly becomes a different model.
+    # CORRECTION (2026-08-21, same day): this was first written as a live bug
+    # and it is NOT one. `Load` already sets `_batch_unsupported = True`
+    # whenever a secondary is configured — it has since a95dd42, for a different
+    # stated reason (the primary's export has an internal reshape baked to
+    # batch=1, so batching it is doomed anyway) — and both methods below check
+    # that flag first. So a composite has always taken the sequential fallback,
+    # and the eye band has never been silently dropped.
     #
-    # So a composite declines batching and takes the sequential fallback, which
-    # is `Run` per crop and therefore composites. That costs realswap the
-    # batching win it was not getting under the shipped config anyway; the
-    # alternative — batching the secondary too — is a real change to both paths
-    # and to the batcher's contract, and it is not worth it until a measurement
-    # says the batched path is on realswap's critical route.
+    # The guard is kept because it says WHY in terms of the composite rather
+    # than relying on a flag that means "this model cannot batch", which is a
+    # different proposition that could be fixed one day and would then re-open
+    # the hole. It is belt-and-braces, not a fix, and it should not be cited as
+    # one.
+    #
+    # If batching a composite is ever wanted, the work is real: the secondary's
+    # crops have to be coalesced in step with the primary's, which changes both
+    # methods and the batcher's contract.
     def RunBatch(self, source_face: Face, target_face: Face, temp_frames: list) -> list:
         """Batched equivalent of Run: temp_frames is a list of [1,3,H,W]
         preprocessed crops sharing the same source identity. Returns a list of
