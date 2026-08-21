@@ -146,6 +146,11 @@ def main():
     ap.add_argument("--threads", type=int, default=20,
                     help="execution threads; the project benches at 20, which is "
                          "also what config.yaml runs")
+    ap.add_argument("--swap-model-mask-strength", type=float, default=0.0,
+                    help="the swap net's own face mask, 0-100. Production runs "
+                         "25; the default is 0 because that is what every arm "
+                         "saved before 2026-08-21 used, and changing it would "
+                         "make this run incomparable to them.")
     ap.add_argument("--facesets", default="ashna,harjot")
     ap.add_argument("--yaws", default="",
                     help="comma-separated yaws to render, e.g. -90,90; default all five")
@@ -171,7 +176,7 @@ def main():
         raise SystemExit(f"unknown --mask-engine {args.mask_engine!r}; "
                          f"use a display name from sample_bench._MASK_ENGINE_MAP")
     g = ab.init_pipeline(args.provider, args.swap_model, args.enhancer,
-                         mask_engine)
+                         mask_engine, args.swap_model_mask_strength)
     g.video_encoder = "libx264"
     g.video_quality = 12
     g.execution_threads = args.threads
@@ -196,7 +201,10 @@ def main():
     os.makedirs(work, exist_ok=True)
 
     print(f"[angle_video] tag={args.tag} roll_latch={orientation.ENABLED} "
-          f"model={args.swap_model} step={args.step}deg", flush=True)
+          f"model={args.swap_model} step={args.step}deg "
+          f"mask_engine={args.mask_engine} enhancer={args.enhancer} "
+          f"provider={args.provider} threads={args.threads} "
+          f"swap_model_mask={args.swap_model_mask_strength}", flush=True)
 
     fs_dir = os.path.join(APP, "facesets")
     rows = []

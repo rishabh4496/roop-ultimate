@@ -92,7 +92,8 @@ YAW_LABEL = {0: -90, 1: -45, 2: 0, 3: 45, 4: 90}   # plate index -> real yaw
 
 # ── pipeline setup ───────────────────────────────────────────────────────────
 
-def init_pipeline(provider, swap_model, enhancer, mask_engine):
+def init_pipeline(provider, swap_model, enhancer, mask_engine,
+                  swap_model_mask_strength=0.0):
     """Bring roop up headlessly, with every angle-relevant setting stated here
     rather than inherited from config.yaml.
 
@@ -133,6 +134,19 @@ def init_pipeline(provider, swap_model, enhancer, mask_engine):
     g.face_detector_threshold = float(g.CFG.face_detector_threshold)
     g.face_detector_nms = float(g.CFG.face_detector_nms)
     g.color_transfer_mode = g.CFG.color_transfer_mode
+    # The swap net's OWN face mask, which trims the paste matte to where the net
+    # says it put a face. Stated here because it is angle-relevant in exactly the
+    # way this bench measures: the matte's excess over the model's verdict is
+    # 15-27% on a frontal head and 31% on a profile, so leaving it unstated makes
+    # the sweep's profile numbers differ from production's by more than its
+    # frontal ones.
+    #
+    # It defaults to 0.0 -- OFF -- which is roop.globals' default and therefore
+    # what every arm rendered before 2026-08-21 silently used, including all of
+    # the yaw_* sweeps saved under output/bench_angle_video. Production runs 25.
+    # The default is kept at 0.0 so those saved arms stay comparable; pass the
+    # production value explicitly to measure what the user actually renders.
+    g.swap_model_mask_strength = float(swap_model_mask_strength)
     return g
 
 
