@@ -90,6 +90,7 @@ class Enhance_UltraMax:
         self._cache = {}
         self._cf_calls = 0
         self._faces = 0
+        self._no_track = 0
 
     # ── lifecycle ────────────────────────────────────────────────────────────
     def Initialize(self, plugin_options: dict):
@@ -124,6 +125,12 @@ class Enhance_UltraMax:
             self.codeformer = c
 
     def Release(self):
+        # Print it here rather than expecting a caller to ask. Nothing in the
+        # pipeline calls cost_summary, and a reuse rate that has silently
+        # collapsed to 100% looks exactly like the model being slow.
+        line = self.cost_summary()
+        if line:
+            print(line, flush=True)
         for sub in (self.gpen, self.codeformer):
             if sub is not None:
                 try:
@@ -179,8 +186,20 @@ class Enhance_UltraMax:
         key = self._key(target_face)
         with self._lock:
             self._faces += 1
+            if key is None:
+                self._no_track += 1
             ent = self._cache.get(key) if key is not None else None
             due = ent is None or ent['age'] >= int(self._REFRESH)
+            # CLAIM the refresh inside the same lock that tested for it. The
+            # check and the act were separate, and with 20 workers every face
+            # of a track can pass `due` before any of them has stored a result
+            # -- so the refresh rate collapses to 100% under exactly the thread
+            # count the app runs at, while reading as correct single-threaded.
+            if due and ent is not None:
+                ent['age'] = 0
+            elif due and key is not None:
+                self._cache[key] = {'detail': None, 'prev': None, 'age': 0,
+                                    'blend': 0}
 
         if due:
             cf, _cf_scale = self.codeformer.Run(source_faceset, target_face,
@@ -202,7 +221,9 @@ class Enhance_UltraMax:
                     else:
                         ent = {'detail': fresh, 'prev': None, 'age': 0, 'blend': 0}
 
-        if ent is None:
+        if ent is None or ent.get('detail') is None:
+            # A claimed-but-not-yet-filled slot, or no track: hand back GPEN's
+            # face rather than waiting on someone else's CodeFormer call.
             return base, scale_factor
 
         with self._lock:
@@ -241,4 +262,5 @@ class Enhance_UltraMax:
             return None
         return (f"[UltraMax] {f} faces, CodeFormer ran {c} times "
                 f"({100.0 * c / f:.1f}%, refresh every {self._REFRESH}); "
+                f"{self._no_track} faces had NO TRACK (never reusable); "
                 f"tracked residuals: {len(self._cache)}")
