@@ -678,7 +678,7 @@ def get_meta():
         "trt_precisions": ["fp32", "fp16", "mixed"],
         "enhancers": ["None", "Codeformer", "Codeformer (fp16)", "DMDNet",
                        "GFPGAN", "GPEN 256", "GPEN", "GPEN 1024", "GPEN 2048",
-                       "Restoreformer++", "KEEP (sidecar)"],
+                       "Restoreformer++", "UltraMax", "KEEP (sidecar)"],
         "swap_models": ["realswap", "inswapper", "reswapper", "hyperswap",
                          "hyperswap_1b", "hyperswap_1c", "ghost_1", "ghost_2",
                          "ghost_3", "simswap", "simswap_512", "hififace",
