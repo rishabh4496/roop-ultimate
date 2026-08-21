@@ -382,5 +382,68 @@ class TestBatchedPathsStillComposite(unittest.TestCase):
         self.assertEqual(called, [], 'a single-net model lost its batching')
 
 
+class TestBandOpacity(unittest.TestCase):
+    """The band's opacity is the lever that reaches the identity cost.
+
+    Measured on the yaw sweep at production settings: identity cost is strongly
+    CONVEX in opacity -- at alpha 0.25 identity equals hyperswap's outright
+    (0.7898 vs 0.7897) while eyelid drift still improves, and at 0.50 it costs
+    15% of the full band's identity hit for 49% of its gain. Eye gain is roughly
+    linear; ghost cost is concave (47% of the sharpness loss has arrived by
+    0.25), which is why ghost is a BLENDING problem rather than a quantity one.
+    """
+
+    def setUp(self):
+        self._alpha = FaceSwapInsightFace._EYE_ALPHA
+        FaceSwapInsightFace._EYE_MASK_CACHE.clear()
+
+    def tearDown(self):
+        FaceSwapInsightFace._EYE_ALPHA = self._alpha
+        FaceSwapInsightFace._EYE_MASK_CACHE.clear()
+
+    def test_default_is_the_shipped_full_band(self):
+        # A lever that changes the default changes the picture for everyone.
+        # Until a value is deliberately baked in, this must be the full band.
+        self.assertEqual(FaceSwapInsightFace._EYE_ALPHA, 1.0)
+
+    def test_alpha_scales_the_peak(self):
+        FaceSwapInsightFace._EYE_ALPHA = 0.5
+        m = FaceSwapInsightFace._eye_region_mask(256, 'arcface')
+        self.assertAlmostEqual(float(m.max()), 0.5, places=3)
+
+    def test_alpha_does_not_change_the_band_SHAPE(self):
+        # Opacity and area are different levers, and the whole point of this one
+        # is that it is not a smaller band: shrinking the area was measured and
+        # recovered only 29% of the identity its area predicted. So the support
+        # must be identical and only the amplitude may move.
+        full = FaceSwapInsightFace._eye_region_mask(256, 'arcface').copy()
+        FaceSwapInsightFace._EYE_MASK_CACHE.clear()
+        FaceSwapInsightFace._EYE_ALPHA = 0.25
+        part = FaceSwapInsightFace._eye_region_mask(256, 'arcface')
+        self.assertEqual(float((full > 1e-6).sum()), float((part > 1e-6).sum()),
+                         'opacity changed the band footprint; that is the AREA '
+                         'lever, which is already measured and rejected')
+        import numpy as _np
+        self.assertTrue(_np.allclose(part, full * 0.25, atol=1e-6),
+                        'the edge profile must be unchanged, only the peak')
+
+    def test_two_opacities_cannot_share_a_cache_entry(self):
+        FaceSwapInsightFace._EYE_ALPHA = 1.0
+        a = FaceSwapInsightFace._eye_region_mask(256, 'arcface')
+        FaceSwapInsightFace._EYE_ALPHA = 0.25
+        b = FaceSwapInsightFace._eye_region_mask(256, 'arcface')
+        self.assertNotAlmostEqual(float(a.max()), float(b.max()), places=3,
+                                  msg='the cache served one opacity for another')
+
+    def test_zero_alpha_is_the_base_model_alone(self):
+        FaceSwapInsightFace._EYE_ALPHA = 0.0
+        p = _proc()
+        base = np.zeros((3, 256, 256), np.float32)
+        other = np.ones((3, 256, 256), np.float32)
+        out = p._mix_outputs(base, other, 256)
+        self.assertLess(float(out.max()), 1e-6,
+                        'alpha 0 must reduce exactly to the base model')
+
+
 if __name__ == '__main__':
     unittest.main()
