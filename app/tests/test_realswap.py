@@ -195,7 +195,11 @@ class TestEyeBandComposite(unittest.TestCase):
         # anywhere else — a disc over the whole eye took 16.6% of the crop area
         # and 34% of the available identity gap.
         from roop.face_util import swap_template_points
+        # Normalised by its own peak: this test is about WHERE the band is, and
+        # the peak is a separately-measured tuning value (see TestBandOpacity).
+        # Reading raw values here silently pinned "the band is fully opaque".
         m = FaceSwapInsightFace._eye_region_mask(256, 'arcface')
+        m = m / float(m.max())
         pts = np.asarray(swap_template_points(256, 'arcface'), dtype=np.float32)
         sep = float(np.linalg.norm(pts[1] - pts[0]))
         for eye in (pts[0], pts[1]):
@@ -238,6 +242,9 @@ class TestEyeBandComposite(unittest.TestCase):
         base = np.zeros((3, 256, 256), np.float32)
         other = np.ones((3, 256, 256), np.float32)
         out = p._mix_outputs(base, other, 256)
+        # base=0 and other=1, so `out` IS the mask; normalise for the same
+        # reason as above -- the question is which model owns which pixel.
+        out = out / float(out.max())
         from roop.face_util import swap_template_points
         pts = np.asarray(swap_template_points(256, 'arcface'), dtype=np.float32)
         sep = float(np.linalg.norm(pts[1] - pts[0]))
@@ -401,10 +408,20 @@ class TestBandOpacity(unittest.TestCase):
         FaceSwapInsightFace._EYE_ALPHA = self._alpha
         FaceSwapInsightFace._EYE_MASK_CACHE.clear()
 
-    def test_default_is_the_shipped_full_band(self):
-        # A lever that changes the default changes the picture for everyone.
-        # Until a value is deliberately baked in, this must be the full band.
-        self.assertEqual(FaceSwapInsightFace._EYE_ALPHA, 1.0)
+    def test_default_is_the_measured_value(self):
+        # Set from real footage (d5, 6158 rows): 0.5308 -> 0.4804 of identity
+        # distance against the full band, better on 91.0% of frames, closing 65%
+        # of the gap to plain hyperswap. Changing it changes the picture for
+        # everyone, so it moves only on a new measurement of the same kind.
+        self.assertEqual(FaceSwapInsightFace._EYE_ALPHA, 0.5)
+
+    def test_opacity_is_not_an_env_knob(self):
+        # It was one while the curve was being measured. Leaving it there would
+        # make the shipped value a per-machine accident.
+        import inspect
+        src = inspect.getsource(FaceSwapInsightFace)
+        head = src.split('def _eye_region_mask')[0]
+        self.assertNotIn('ROOP_REALSWAP_BAND_ALPHA', head)
 
     def test_alpha_scales_the_peak(self):
         FaceSwapInsightFace._EYE_ALPHA = 0.5
@@ -416,6 +433,7 @@ class TestBandOpacity(unittest.TestCase):
         # is that it is not a smaller band: shrinking the area was measured and
         # recovered only 29% of the identity its area predicted. So the support
         # must be identical and only the amplitude may move.
+        FaceSwapInsightFace._EYE_ALPHA = 1.0
         full = FaceSwapInsightFace._eye_region_mask(256, 'arcface').copy()
         FaceSwapInsightFace._EYE_MASK_CACHE.clear()
         FaceSwapInsightFace._EYE_ALPHA = 0.25

@@ -892,10 +892,35 @@ class FaceSwapInsightFace():
     # through the ring, which area-shrinking never touched. Opacity attacks the
     # ring directly.
     #
-    # Overridable from the environment for the measurement only. If a value
-    # other than 1.0 wins, BAKE IT IN here and delete the override: a knob that
-    # defaults to the old behaviour is the old behaviour for everyone.
-    _EYE_ALPHA = float(os.environ.get('ROOP_REALSWAP_BAND_ALPHA', '1.0') or '1.0')
+    # MEASURED AND SET TO 0.5 (2026-08-21). The curve, yaw sweep at production
+    # settings, non-profile, as a fraction of the full band's effect:
+    #
+    #   alpha    id_source    eyes     ghost    id cost  eye gain  ghost cost
+    #   0.00      0.7897     0.0279   0.9514        0%        0%          0%
+    #   0.25      0.7898     0.0272   0.9338        0%       19%         47%
+    #   0.50      0.7851     0.0261   0.9213       15%       49%         80%
+    #   1.00      0.7597     0.0242   0.9139      100%      100%        100%
+    #
+    # Identity cost is strongly CONVEX in opacity -- nearly all of it lives in
+    # the top half of the range -- while eye gain is roughly linear. That is why
+    # opacity works where AREA did not: the annulus cut 61% of the band's area
+    # and recovered only 29% of the identity, because the cost is not at the
+    # aperture. It is peak secondary content, and this is the lever for it.
+    #
+    # Confirmed on real footage, which is what the value is set on: d5, 6158
+    # paired rows, identity distance to the faceset 0.5308 -> 0.4804 against the
+    # full band (t=-88.3, better on 91.0% of frames), closing 65% of the gap to
+    # plain hyperswap (+0.0776 -> +0.0272). Note the sweep predicted 85%: it
+    # over-promises, as it has every time hififace is involved, so treat its
+    # deltas as a direction and a ranking, never as the size of the effect.
+    #
+    # 0.25 was rejected despite being FREE on identity in the sweep: it keeps
+    # only 19% of the eyelid gain, and the eyelid gain is the entire reason the
+    # user chose to keep this band.
+    #
+    # Not an env knob. A knob defaulting to the old behaviour is the old
+    # behaviour for everyone.
+    _EYE_ALPHA = 0.5
 
     @classmethod
     def _eye_region_mask(cls, size, template='arcface'):
