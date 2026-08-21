@@ -463,5 +463,159 @@ class TestBandOpacity(unittest.TestCase):
                         'alpha 0 must reduce exactly to the base model')
 
 
+
+class TestFirstGenerationCrop(unittest.TestCase):
+    """The secondary net is cropped from the PLATE, not from the primary's crop.
+
+    Its pixels used to survive three resamples -- plate -> arcface crop, that
+    crop -> mtcnn_512, and back -- so the second net never saw plate detail at
+    all. Cropping from the plate removes the one upstream of the net.
+
+    The registration must not move a pixel while doing it. It provably does not:
+    the old transform is `inv(_crop_to_crop) = M_a . inv(M_b)` and the new one is
+    composed as exactly that, so this is a refactor of WHERE the pixels are
+    sampled from, not of where they land.
+    """
+
+    SIZE = 256
+
+    def _norms(self):
+        from roop.face_util import estimate_norm
+        kps = FRONTAL * (self.SIZE / 128.0)
+        return kps, (estimate_norm(kps, self.SIZE, 'arcface'),
+                     estimate_norm(kps, self.SIZE, 'mtcnn_512'))
+
+    def test_plate_path_registers_identically_to_the_derived_path(self):
+        # THE test. If these ever diverge, the eye band is landing somewhere
+        # other than where the base model's eyes are, and every measurement of
+        # the band is measuring a misregistration instead.
+        import cv2
+        kps, (M_a, M_b) = self._norms()
+        derived = cv2.invertAffineTransform(
+            FaceSwapInsightFace._crop_to_crop(kps, self.SIZE, 'arcface',
+                                              'mtcnn_512'))
+        plate = FaceSwapInsightFace._compose_affine(
+            M_a, cv2.invertAffineTransform(M_b))
+        np.testing.assert_allclose(plate, derived, atol=1e-4)
+
+    def test_compose_affine_is_inner_then_outer(self):
+        outer = np.float32([[2, 0, 5], [0, 2, -3]])
+        inner = np.float32([[0, -1, 4], [1, 0, 7]])
+        c = FaceSwapInsightFace._compose_affine(outer, inner)
+        pt = np.float32([3, 11])
+        step = inner[:, :2] @ pt + inner[:, 2]
+        both = outer[:, :2] @ step + outer[:, 2]
+        np.testing.assert_allclose(c[:, :2] @ pt + c[:, 2], both, atol=1e-4)
+
+    def test_prepare_blob_matches_the_pipeline_s_own(self):
+        # A differently-scaled input is invisible -- the net still returns a
+        # face, just a worse one -- so this is pinned against the real thing.
+        from roop.procmgr_tiling import PixelBoostMixin as _T
+        rng = np.random.default_rng(3)
+        crop = rng.integers(0, 256, (64, 64, 3), dtype=np.uint8)
+
+        class _M:
+            model_mean = [0.5, 0.5, 0.5]
+            model_standard_deviation = [0.5, 0.5, 0.5]
+        mine = FaceSwapInsightFace._prepare_blob(crop, _M)
+        theirs = _T.prepare_crop_frame(None, crop.astype(np.float64), _M)
+        np.testing.assert_allclose(mine, theirs, atol=1e-5)
+
+    def test_context_is_withheld_when_the_crop_is_not_a_plain_align(self):
+        # ProcessMgr's call, not the processor's: pixel boost and frontalization
+        # both make the primary crop something other than align_crop(plate).
+        p = _proc()
+        p.set_plate_context(np.zeros((8, 8, 3), np.uint8), np.eye(2, 3), False)
+        self.assertIsNone(p._plate_tls.ctx)
+        p.set_plate_context(np.zeros((8, 8, 3), np.uint8), np.eye(2, 3), True)
+        self.assertIsNotNone(p._plate_tls.ctx)
+
+    def test_context_is_cleared_so_it_cannot_serve_the_next_face(self):
+        p = _proc()
+        p.set_plate_context(np.zeros((8, 8, 3), np.uint8), np.eye(2, 3), True)
+        p.clear_plate_context()
+        self.assertIsNone(p._plate_tls.ctx)
+
+    def test_run_secondary_uses_the_plate_when_it_has_one(self):
+        from roop.face_util import estimate_norm
+        rng = np.random.default_rng(5)
+        plate = rng.integers(0, 256, (400, 400, 3), dtype=np.uint8)
+        kps = FRONTAL * 2.0 + 60.0
+        p = _proc()
+        p.secondary = _FakeSecondary()
+        p.model_mean = [0.5, 0.5, 0.5]
+        p.model_standard_deviation = [0.5, 0.5, 0.5]
+        p.model_denormalize = True
+        M_a = estimate_norm(kps, 256, 'arcface')
+        p.set_plate_context(plate, M_a, True)
+        out = p._run_secondary(_Face(kps=kps), _Face(kps=kps),
+                               np.zeros((1, 3, 256, 256), np.float32))
+        self.assertIsNotNone(out)
+        self.assertEqual(tuple(out.shape), (3, 256, 256))
+        self.assertEqual(p.secondary.runs, 1)
+
+    def test_without_a_plate_it_still_works(self):
+        # The fallback is the shipped path and has to keep working: pixel boost
+        # and frontalization both land here.
+        p = _proc()
+        p.secondary = _FakeSecondary()
+        p.model_mean = [0.5, 0.5, 0.5]
+        p.model_standard_deviation = [0.5, 0.5, 0.5]
+        p.model_denormalize = True
+        p.clear_plate_context()
+        out = p._run_secondary(_Face(), _Face(),
+                               np.zeros((1, 3, 256, 256), np.float32))
+        self.assertIsNotNone(out)
+        self.assertEqual(tuple(out.shape), (3, 256, 256))
+
+
+
+class TestCropSourceIsReported(unittest.TestCase):
+    """A silent fallback to the derived crop looks exactly like the fix working.
+
+    This processor has been bitten twice by exactly that: the pose router sent
+    69% of a clip's faces to the wrong net while the audit read 100%/100%, and
+    the batched paths dropped the composite entirely while mix_summary printed
+    nothing rather than "0 of N".
+    """
+
+    def _p(self):
+        p = _proc()
+        p.loaded_model_key = 'realswap'
+        p.secondary = _FakeSecondary()
+        p.model_mean = [0.5, 0.5, 0.5]
+        p.model_standard_deviation = [0.5, 0.5, 0.5]
+        p.model_denormalize = True
+        return p
+
+    def test_counts_the_plate_path(self):
+        from roop.face_util import estimate_norm
+        rng = np.random.default_rng(11)
+        plate = rng.integers(0, 256, (400, 400, 3), dtype=np.uint8)
+        kps = FRONTAL * 2.0 + 60.0
+        p = self._p()
+        p.set_plate_context(plate, estimate_norm(kps, 256, 'arcface'), True)
+        p._run_secondary(_Face(kps=kps), _Face(kps=kps),
+                         np.zeros((1, 3, 256, 256), np.float32))
+        self.assertEqual((p._plate_crops, p._derived_crops), (1, 0))
+
+    def test_counts_the_fallback_separately(self):
+        p = self._p()
+        p.clear_plate_context()
+        p._run_secondary(_Face(), _Face(), np.zeros((1, 3, 256, 256), np.float32))
+        self.assertEqual((p._plate_crops, p._derived_crops), (0, 1))
+
+    def test_summary_names_the_split_and_the_opacity(self):
+        p = self._p()
+        p.clear_plate_context()
+        p._run_secondary(_Face(), _Face(), np.zeros((1, 3, 256, 256), np.float32))
+        z = np.zeros((3, 256, 256), np.float32)
+        p._mix_outputs(z, z, 256)
+        line = p.mix_summary()
+        self.assertIn('0% cropped from the plate', line)
+        self.assertIn('fell back to the derived crop', line)
+        self.assertIn('opacity 0.5', line)
+
+
 if __name__ == '__main__':
     unittest.main()

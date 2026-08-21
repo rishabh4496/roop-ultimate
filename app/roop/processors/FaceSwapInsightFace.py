@@ -402,6 +402,15 @@ class FaceSwapInsightFace():
         # immediately after its own Run call, on the same thread.
         self.model_has_mask = False
         self._mask_tls = threading.local()
+        # The ORIGINAL frame and the primary's crop affine, published per-thread
+        # by ProcessMgr for the face about to be swapped. Only realswap reads it,
+        # to crop its secondary net straight from the plate instead of from the
+        # primary's already-resampled crop. None means "not available for this
+        # face" and the derived-crop path is taken instead.
+        self._plate_tls = threading.local()
+        # How each composited face got its secondary crop. See mix_summary.
+        self._plate_crops = 0
+        self._derived_crops = 0
         # A second swapper this one routes to (RealSwap). None for every
         # single-net model, which is every model but `realswap`.
         self.secondary = None
@@ -668,6 +677,31 @@ class FaceSwapInsightFace():
               f"(shape verification); rebuilt on CUDA/CPU for this model.")
         return True
 
+    def set_plate_context(self, plate, M, usable):
+        """Publish the plate and the primary's crop affine for the next Run.
+
+        `usable` is ProcessMgr's call, not this processor's, because ProcessMgr
+        is what knows whether the primary's crop is still a plain align_crop of
+        the plate. Two cases where it is not, and where a plate-derived
+        secondary crop would therefore sit in a different place from the base it
+        is composited onto:
+
+          * pixel boost > 1 -- the crop is imploded into INTERLEAVED SUBSAMPLE
+            tiles, and a tile has no plate-space equivalent;
+          * frontalization -- the crop has been warped to a frontal pose after
+            alignment, so it is no longer align_crop(plate, kps).
+
+        Both default off, so the shipped configuration takes the fast path.
+        """
+        self._plate_tls.ctx = (plate, M) if usable else None
+
+    def clear_plate_context(self):
+        """Drop the published plate. Not optional: left set, it would be served
+        to the NEXT face on this thread, which is the same trap the swap mask
+        has (see take_masks) -- and a stale plate would put another face's
+        eyelids on this one."""
+        self._plate_tls.ctx = None
+
     def _stash_masks(self, ort_outs, count=1):
         """Keep this call's mask output(s) for the calling thread to collect.
 
@@ -796,6 +830,27 @@ class FaceSwapInsightFace():
         out = cv2.warpAffine(img, M, (size, size), flags=cv2.INTER_LANCZOS4,
                              borderMode=cv2.BORDER_REPLICATE)
         return np.ascontiguousarray(out.transpose(2, 0, 1))
+
+    @staticmethod
+    def _prepare_blob(crop, model):
+        """A BGR uint8 crop -> the model's input blob.
+
+        Mirrors procmgr_tiling.prepare_crop_frame exactly (BGR->RGB, /255,
+        mean/std, HWC->CHW, batch axis). Duplicated rather than imported because
+        that lives on the ProcessMgr mixin and this runs inside the processor;
+        if the two ever diverge the secondary net silently receives a
+        differently-scaled image, so keep them in step.
+        """
+        x = np.asarray(crop)[:, :, ::-1] / 255.0
+        x = (x - np.asarray(model.model_mean, dtype=np.float64)) /             np.asarray(model.model_standard_deviation, dtype=np.float64)
+        return np.expand_dims(x.transpose(2, 0, 1), axis=0).astype(np.float32)
+
+    @staticmethod
+    def _compose_affine(outer, inner):
+        """The 2x3 affine equivalent to applying `inner` and then `outer`."""
+        a = np.vstack([np.asarray(outer, dtype=np.float64), [0, 0, 1]])
+        b = np.vstack([np.asarray(inner, dtype=np.float64), [0, 0, 1]])
+        return (a @ b)[:2].astype(np.float32)
 
     def _renormalize(self, blob, src, dst):
         """Re-express an input blob prepared for `src`'s mean/std in `dst`'s.
@@ -979,10 +1034,23 @@ class FaceSwapInsightFace():
             return None
         cov = float(self._eye_region_mask(self.model_output_size,
                                           self.model_template).mean())
+        # The crop-source split is reported because a two-path feature is
+        # unreadable without it. This processor has already been bitten twice:
+        # the pose router sent 69% of a clip's faces to the wrong net while the
+        # audit read 100%/100%, and the batched paths dropped the composite
+        # entirely while mix_summary printed nothing at all. A silent fallback
+        # to the derived crop would look exactly like the fix working.
+        n = self._plate_crops + self._derived_crops
+        src = ""
+        if n:
+            src = (f"; {100.0 * self._plate_crops / n:.0f}% cropped from the "
+                   f"plate ({self._derived_crops} of {n} fell back to the "
+                   f"derived crop)")
         return (f"[swap] {self.loaded_model_key}: {self._mixed_faces} of "
                 f"{self._seen_faces} faces composited with "
                 f"'{self.secondary.loaded_model_key}' over the eye band "
-                f"({100.0 * cov:.1f}% of the crop)")
+                f"({100.0 * cov:.1f}% of the crop, opacity "
+                f"{self._EYE_ALPHA:g}){src}")
 
     def _run_secondary(self, source_face: Face, target_face: Face, temp_frame):
         """The second net's swap of the same face, resampled back into the
@@ -998,12 +1066,41 @@ class FaceSwapInsightFace():
             return None
         size = int(temp_frame.shape[-1])
         try:
-            to_b = self._crop_to_crop(kps, size, self.model_template,
-                                      self.secondary_template)
-            blob = self._renormalize(temp_frame, self, sec)
-            blob_b = self._warp_chw(blob[0], to_b, size)[np.newaxis]
+            ctx = getattr(self._plate_tls, 'ctx', None)
+            with self._route_lock:
+                if ctx is not None:
+                    self._plate_crops += 1
+                else:
+                    self._derived_crops += 1
+            if ctx is not None:
+                # FIRST-GENERATION CROP. The secondary's pixels used to survive
+                # THREE resamples: plate -> the primary's arcface crop, that crop
+                # -> the secondary's template, and back again. So the second net
+                # never saw plate detail at all -- its INPUT was already a
+                # resampled image, and LANCZOS4 (9cd9263) reduced that damage
+                # without being able to undo it.
+                #
+                # Cropping from the plate makes it two, and the one removed is
+                # the one UPSTREAM of the net, which is the one that matters:
+                # hififace now gets exactly the kind of crop it was trained on.
+                from roop.face_util import align_crop
+                plate, M_a = ctx
+                crop_b, M_b = align_crop(plate, kps, size,
+                                         mode=self.secondary_template)
+                blob_b = self._prepare_blob(crop_b, sec)
+                # Secondary crop -> primary crop, composed through plate space:
+                # a point is M_a . (M_b^-1 . p). One warp on the output, same as
+                # before -- the saving is entirely on the input side.
+                back = self._compose_affine(M_a, cv2.invertAffineTransform(M_b))
+            else:
+                # Pixel boost or frontalization: the primary's crop is not a
+                # plain align_crop of the plate, so derive from it as before.
+                to_b = self._crop_to_crop(kps, size, self.model_template,
+                                          self.secondary_template)
+                blob = self._renormalize(temp_frame, self, sec)
+                blob_b = self._warp_chw(blob[0], to_b, size)[np.newaxis]
+                back = cv2.invertAffineTransform(to_b)
             out_b = sec.Run(source_face, target_face, blob_b)
-            back = cv2.invertAffineTransform(to_b)
             # Drain the secondary's mask and DISCARD it. Draining is not
             # optional: left stashed on the sub-processor it would be served to a
             # later face on the same thread. Discarding is the composite's

@@ -3560,6 +3560,19 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
         for p in self.processors:
             if p.type == 'swap':
               with _prof('swap'):
+                # A composite swapper (realswap) crops its SECOND net straight
+                # from the plate rather than from this crop, which saves the
+                # second net a resample on its input. Only safe while this crop
+                # is still a plain align_crop of the plate: pixel boost imploded
+                # into interleaved tiles has no plate-space equivalent, and a
+                # frontalized crop has been warped after alignment. Both default
+                # off. `is` and not `==`: frontalization returns a new array.
+                if hasattr(p, 'set_plate_context'):
+                    p.set_plate_context(
+                        plate, M,
+                        subsample_total == 1
+                        and subsample_size == model_output_size
+                        and aligned_for_swap is aligned_img)
                 subsample_frames = self.implode_pixel_boost(aligned_for_swap, model_output_size, subsample_total)
                 # Only skip the global GPU lock when THIS processor owns a real
                 # SessionPool (per-thread TRT contexts). Without one, concurrent
@@ -3615,6 +3628,11 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                         _tile_masks.append(_m)
                     if _tile_masks and all(m is not None for m in _tile_masks):
                         _swap_masks = _tile_masks
+                if hasattr(p, 'clear_plate_context'):
+                    # Before anything can return early below. Left set, this
+                    # thread's NEXT face would be composited against this face's
+                    # plate crop.
+                    p.clear_plate_context()
                 fake_frame = self.explode_pixel_boost(swap_result_frames, model_output_size, subsample_total, subsample_size)
                 fake_frame = fake_frame.astype(np.uint8)
 
