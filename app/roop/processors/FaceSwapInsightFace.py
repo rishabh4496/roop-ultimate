@@ -1015,6 +1015,42 @@ class FaceSwapInsightFace():
     # behaviour for everyone.
     _EYE_ALPHA = float(os.environ.get('ROOP_REALSWAP_BAND_ALPHA', '1.0') or '1.0')
 
+    # How much secondary (hififace) goes into the BASE -- every pixel, including
+    # the identity-dense skin the band deliberately avoids.
+    #
+    # This is the knob the block above says not to reach for. 0.15 was added on
+    # 2026-08-22 with no measurement, against a comment recording that hififace
+    # OUTSIDE the band cost 0.26 of faceset identity on real contact footage,
+    # and it is a geometric blend of two nets whose eyes and mouth do not sit in
+    # the same place (hififace's 3D shape branch), which is a soft double edge
+    # by construction rather than a softer version of one face.
+    #
+    # Measured 2026-08-23 and REVERTED to 0. A/B on d1 under the production
+    # stack, graded from the pipeline's own decision, identity distance of the
+    # OUTPUT to the source faceset (lower is better), paired per frame because
+    # both arms graded the same rows:
+    #
+    #     4702 paired frames
+    #     0.00 beats 0.15 on 3185 of them (67.7%)
+    #     mean delta -0.00654, median -0.00580, paired t = -30.5
+    #     person 0: better on 70.8% of frames ; person 1: 64.1%
+    #
+    # Small per frame (~1.5-2% of the distance) and overwhelmingly consistent,
+    # in exactly the direction the _EYE_ALPHA block above already recorded from
+    # d5: hififace outside the band costs faceset identity. The 0.15 was added
+    # on 2026-08-22 with no measurement against that comment.
+    #
+    # The user's brief -- "80-85% hyperswap + 15-20% hififace for eyelids,
+    # lashes, expression" -- is served by the BAND, which is untouched and still
+    # 100% hififace at _EYE_ALPHA=1.0. The ratio in the brief describes which
+    # REGION comes from which net, not a global alpha over identity-dense skin;
+    # reading it as a global blend is what produced the 0.15.
+    #
+    # NOTE this measures IDENTITY only. If a nonzero base is ever wanted for a
+    # perceived-texture reason, measure that axis explicitly -- do not restore
+    # it on the strength of this number being small.
+    _BASE_MIX = float(os.environ.get('ROOP_REALSWAP_BASE_MIX', '0.0') or '0.0')
+
     @classmethod
     def _eye_region_mask(cls, size, template='arcface'):
         """A feathered [H,W] mask over both eyelid bands, in crop space.
@@ -1062,7 +1098,13 @@ class FaceSwapInsightFace():
         return m
 
     def _mix_outputs(self, primary, secondary, size, target_face=None):
-        """hyperswap everywhere, hififace inside the eyelid band."""
+        """The base mix everywhere, hififace alone inside the eyelid band.
+
+        `_BASE_MIX` is how much secondary goes into the base -- i.e. outside the
+        eye band, over identity-dense skin. It was 0 by construction until
+        2026-08-22 (the band WAS the whole feature) and is measured, not
+        assumed: see the constant.
+        """
         m = self._eye_region_mask(size, self.model_template)
         # If extreme yaw (profile pose), attenuate far-eye eyelid mask to maintain profile silhouette integrity
         kps = getattr(target_face, 'kps', None) if target_face is not None else None
@@ -1082,9 +1124,8 @@ class FaceSwapInsightFace():
         with self._route_lock:
             self._seen_faces += 1
             self._mixed_faces += 1
-        # RealSwap composite: hyperswap 85% + hififace 15% base face,
-        # with eyelashes from hififace only (transitioning to 100% hififace on eyelash band m)
-        base = primary * 0.85 + secondary * 0.15
+        b = float(self._BASE_MIX)
+        base = primary if b <= 0.0 else primary * (1.0 - b) + secondary * b
         return base * (1.0 - m) + secondary * m
 
     def mix_summary(self):
@@ -1111,7 +1152,7 @@ class FaceSwapInsightFace():
                 f"{self._seen_faces} faces composited with "
                 f"'{self.secondary.loaded_model_key}' over the eye band "
                 f"({100.0 * cov:.1f}% of the crop, opacity "
-                f"{self._EYE_ALPHA:g}){src}")
+                f"{self._EYE_ALPHA:g}), base mix {self._BASE_MIX:g}{src}")
 
     def _run_secondary(self, source_face: Face, target_face: Face, temp_frame):
         """The second net's swap of the same face, resampled back into the

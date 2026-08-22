@@ -269,9 +269,34 @@ class TestEyeBandComposite(unittest.TestCase):
         sep = float(np.linalg.norm(pts[1] - pts[0]))
         lid = (int(pts[0][1] - 0.13 * sep), int(pts[0][0]))
         self.assertGreater(out[0, lid[0], lid[1]], 0.8, 'eyelashes come from the secondary')
-        self.assertAlmostEqual(out[0, int(pts[2][1]), int(pts[2][0])], 0.15, delta=0.05,
-                               msg='nose gets 85/15 base split')
-        self.assertAlmostEqual(out[0, 8, 8], 0.15, delta=0.02, msg='crop corners get 85/15 base split')
+        self.assertAlmostEqual(out[0, int(pts[2][1]), int(pts[2][0])], 0.0, delta=0.05,
+                               msg='the nose is identity-dense skin and stays the base model')
+        self.assertAlmostEqual(out[0, 8, 8], 0.0, delta=0.02,
+                               msg='crop corners stay the base model')
+
+    def test_base_mix_blends_everywhere_when_set(self):
+        """A nonzero _BASE_MIX puts secondary on EVERY pixel, band included.
+
+        Covered explicitly because the default is 0 and an untested branch at 0
+        is indistinguishable from a branch that does nothing. The 0.15 that
+        shipped here on 2026-08-22 cost identity on 67.7% of 4702 paired frames
+        (paired t = -30.5) and was reverted; this test is what makes a silent
+        return to it visible.
+        """
+        from roop.processors.FaceSwapInsightFace import FaceSwapInsightFace
+        p = _proc()
+        p.model_template = 'arcface'
+        base = np.zeros((3, 256, 256), np.float32)
+        other = np.ones((3, 256, 256), np.float32)
+        old = FaceSwapInsightFace._BASE_MIX
+        try:
+            FaceSwapInsightFace._BASE_MIX = 0.25
+            out = p._mix_outputs(base, other, 256)
+        finally:
+            FaceSwapInsightFace._BASE_MIX = old
+        # A crop corner is far outside the eye band, so it is base-mix only.
+        self.assertAlmostEqual(out[0, 8, 8], 0.25, delta=0.02,
+                               msg='a nonzero base mix must reach the corners')
 
     def test_counts_composited_faces(self):
         p = _proc()
@@ -474,8 +499,8 @@ class TestBandOpacity(unittest.TestCase):
         base = np.zeros((3, 256, 256), np.float32)
         other = np.ones((3, 256, 256), np.float32)
         out = p._mix_outputs(base, other, 256)
-        self.assertAlmostEqual(float(out.max()), 0.15, delta=1e-5,
-                               msg='alpha 0 must reduce to the base 85/15 blend')
+        self.assertAlmostEqual(float(out.max()), 0.0, delta=1e-5,
+                               msg='alpha 0 must reduce to the base model alone')
 
 
 
