@@ -1,22 +1,40 @@
-"""UltraMax — Neural Codebook Restoration with Landmark-Guided High-Demarcation Warping & Dermal Harmonization.
+"""UltraMax — CodeFormer-FP16 restoration plus LAB harmonization, with an
+anchor cache that mostly does not fire.
 
-1. SUPERIOR SPEED (>40-60+ FPS):
-   - Keyframes (initialization, pose turns, or every Nth frame) execute full CodeFormer-FP16 inference.
-   - Intermediate frames along a face track precision-warp the full-spectrum 512x512 sharp CodeFormer anchor
-     via landmark-guided similarity affine transformation (cv2.estimateAffinePartial2D) in <0.5ms per face.
-   - Multi-context SessionPool provides concurrent GPU execution without global lock contention.
+1. WHAT IT ACTUALLY DOES, PER FACE:
+   - Runs CodeFormer-FP16 (multi-context SessionPool, so worker threads do not
+     serialise on one TensorRT context).
+   - Harmonizes the result ONCE in LAB: micro-edge clarity on L, soft-knee
+     chrominance bounding on A/B, mid-tone dermal porosity.
+   - Caches the RAW output per track as an anchor, and on the next face for
+     that track reuses it -- warped by a landmark similarity transform -- ONLY
+     if the crop in front of it still matches the crop the anchor was built
+     from. See _CONTENT_TOL for how that is decided and measured.
 
-2. ZERO DOUBLE HALOS & RAZOR-SHARP DEMARCATION:
-   - Eliminates residual-on-blurry-base addition and edge-gradient attenuation that caused ghosting and double creases.
-   - Preserves 100% of CodeFormer's discrete codebook prior for individual eyebrow hairs, crisp iris/pupil rims,
-     eyelashes, clean eyelid creases, and distinct tooth separation.
-   - High-Demarcation Clarity engine enhances micro-edge definition without halo ringing.
+2. ON THE SPEED CLAIM (read before trusting any number in the session docs):
+   This class was written around amortising CodeFormer over a face track:
+   keyframes infer, intermediate frames warp the anchor in <0.5 ms, "4.8 ms
+   per face, 40-60+ FPS". That does not survive the app's frame dispatch.
+   ProcessMgr's reader is strict round-robin (`_thr = num_frame % num_threads`),
+   so at 20 threads no worker ever sees two adjacent frames, and this cache is
+   shared across every worker keyed by track. There are no "intermediate
+   frames along a track" in a real render, and the measured reuse rate is
+   ~0.6%. The real per-face cost is a CodeFormer call. Full numbers, and the
+   flicker this used to cause when it DID reuse, are in _CONTENT_TOL.
 
-3. ANTI-OVERSATURATION & DERMAL REALISM:
+3. ZERO DOUBLE HALOS & RAZOR-SHARP DEMARCATION:
+   - No residual-on-blurry-base addition and no edge-gradient attenuation, so
+     neither ghosting nor double creases.
+   - Keeps CodeFormer's discrete codebook prior for eyebrow hairs, iris/pupil
+     rims, eyelashes, eyelid creases and tooth separation.
+
+4. ANTI-OVERSATURATION & DERMAL REALISM:
    - LAB chrominance stabilization prevents neon orange/sunburned oversaturation.
-   - Luminance micro-contrast injection breaks flat plastic skin by restoring natural skin pores.
+   - Luminance micro-contrast injection breaks flat plastic skin by restoring
+     natural skin pores.
 """
 
+import collections
 import os
 import threading
 
@@ -35,9 +53,50 @@ class Enhance_UltraMax:
     # FFHQ-trained — see Enhance_CodeFormer.model_template.
     model_template = 'ffhq_512'
 
-    # How often CodeFormer actually runs, per track. 3 or 4 provides
-    # ultra-fast 40-60+ FPS while continuously updating facial dynamics.
+    # Ceiling on how long a cached anchor may be reused, per track. This is a
+    # BOUND, not a schedule: the content test in _run_single refreshes sooner
+    # whenever the face actually changes, so on a moving face the real rate is
+    # set by the footage rather than by this number.
     _REFRESH = 4
+    # Max per-block luminance drift (0-255) between the current crop and the
+    # one the anchor was built from, before the anchor is thrown away. See
+    # _content_sig for why this is a max over 32px blocks rather than a mean.
+    #
+    # 8 is set from a LIVE A/B, not from the offline sweep, and the difference
+    # between the two is the whole point -- read this before retuning it.
+    #
+    # tests/calibrate_ultramax_content.py replays sequential aligned crops and
+    # says a talking head sits at p50 2.0 / p90 6.0, so tol 8 should cost about
+    # +7pp of inference. A real render reports p50 152, p90 186. The offline
+    # sweep was measuring a population this gate never sees: it fed the anchor
+    # temporally ADJACENT crops, and in a render there is no such thing.
+    # ProcessMgr's reader hands worker i frames i, i+N, i+2N (`_thr =
+    # num_frame % num_threads`), so at 20 threads no thread ever sees adjacent
+    # frames, and this cache is shared across all of them keyed by track. The
+    # anchor is whatever frame for that track finished most recently -- an
+    # arbitrary one from up to ~0.67 s away. `age` counts FACES, not frames, so
+    # `_REFRESH` never meant four frames either.
+    #
+    # That is why the reuse rate is ~99% on real footage: the trigger is
+    # correctly refusing an anchor that is almost never valid. Measured on
+    # expression clip 2 (206 frames, 316 faces, 20 threads):
+    #
+    #                    | CodeFormer rate |  fps  | anchor delta p50
+    #     ---------------+-----------------+-------+------------------
+    #     trigger off    |      54.7%      |  9.28 |       154
+    #     tol 8          |      99.4%      |  7.95 |        --
+    #
+    # and on the output video, over the face region: temporal acceleration
+    # (high-frequency flicker, which real motion does not produce) -43.4%,
+    # frame-to-frame sharpness jitter -33.9%, mean sharpness -1.7%. So -14%
+    # throughput buys a large drop in flicker and costs no actual sharpness.
+    #
+    # The honest reading is that the amortisation this class is built around
+    # does not survive the app's frame dispatch, and the "4.8 ms per face /
+    # 40-60 FPS" figure in the docs was never reachable in a real render. Do
+    # not re-tune this constant to buy the rate back: that just restores
+    # painting a face from a different moment onto the current one.
+    _CONTENT_TOL = float(os.environ.get('ROOP_ULTRAMAX_CONTENT_TOL', '8.0') or '8.0')
     _HP_KERNEL = 15
     _DETAIL_GAIN = 1.00
 
@@ -49,14 +108,22 @@ class Enhance_UltraMax:
         self.pool = None  # SessionPool of CodeFormer worker slots
         self.refresh_interval = int(os.environ.get('ROOP_ULTRAMAX_REFRESH', self._REFRESH))
         self._lock = threading.Lock()
-        # track id -> {'frame': uint8 512x512x3, 'age': int, 'kps': ndarray, 'bbox': ndarray}
+        # track id -> {'frame': raw CodeFormer uint8 512x512x3 (NOT harmonized
+        # -- see the keyframe branch), 'age': int, 'kps': ndarray, 'sig': 16x16}
         self._cache = {}
         # spatial tracking fallback: id -> {'cx': float, 'cy': float, 'w': float, 'h': float, 'last_seen': int, 'delta': float}
         self._spatial_tracks = {}
         self._next_spatial_id = 0
         self._cf_calls = 0
         self._faces = 0
-        self._no_track = 0
+        # Why each refresh happened. A reuse feature is unreadable without it:
+        # "the anchor tracked the face" and "the anchor was never valid" look
+        # identical from a hit rate alone. The counter it replaces (_no_track)
+        # could never fire -- _key() returns 0 in its worst case and never
+        # None, so the `key is None` branch that incremented it was dead and
+        # the line always printed 0.
+        self._due_reason = collections.Counter()
+        self._content_deltas = []
 
     # ── lifecycle ────────────────────────────────────────────────────────────
     def Initialize(self, plugin_options: dict):
@@ -185,6 +252,20 @@ class Enhance_UltraMax:
         except Exception:
             return face_img
 
+    # Block-mean luminance signature of the crop the anchor was built from.
+    # 16x16 INTER_AREA on a 512 crop = 32px blocks, so an eye spans about two
+    # of them and a blink moves those blocks by tens of levels while leaving
+    # the rest of the face alone. The comparison below is therefore a MAX over
+    # blocks, not a mean: a mean dilutes a blink (~4% of the crop) into noise,
+    # which is exactly the change that must not be missed.
+    @staticmethod
+    def _content_sig(crop):
+        try:
+            g = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY) if crop.ndim == 3 else crop
+            return cv2.resize(g, (16, 16), interpolation=cv2.INTER_AREA).astype(np.float32)
+        except Exception:
+            return None
+
     def _match_or_create_spatial_track(self, cx, cy, w, h):
         """Assign or update a spatial track when temporal `_track_id` is absent."""
         with self._lock:
@@ -298,30 +379,62 @@ class Enhance_UltraMax:
 
         cur_yaw, cur_pitch = _pose_yaw_pitch(cur_kps)
         pose_jump = False
+        content_jump = False
+        cur_sig = self._content_sig(temp_frame)
 
         with self._lock:
             self._faces += 1
             if isinstance(key, str) and key.startswith("sp_"):
                 spatial_delta = self._spatial_tracks.get(key, {}).get('delta', 0.0)
-            elif key is None:
-                self._no_track += 1
 
-            ent = self._cache.get(key) if key is not None else None
+            ent = self._cache.get(key)
             if ent is not None and ent.get('kps') is not None:
                 prev_yaw, prev_pitch = _pose_yaw_pitch(ent.get('kps'))
                 if abs(cur_yaw - prev_yaw) > 0.28 or abs(cur_pitch - prev_pitch) > 0.28:
                     pose_jump = True
 
-            # Motion-adaptive & angle-adaptive refresh: large movement or turn triggers fresh CodeFormer
+            # Content-adaptive refresh. The pose test above reads 5 detector
+            # keypoints, which cannot see a blink, a mouth shape or a brow at
+            # all -- so without this the anchor was reused for up to
+            # `refresh_limit` frames REGARDLESS of what the face did, and the
+            # intermediate path returns a warped copy of it while ignoring
+            # `temp_frame` entirely. A blink is ~100-150 ms, i.e. 3-4 frames at
+            # 30 fps: it fitted inside the reuse window and simply never
+            # reached the output, and a talking mouth ran up to 133 ms stale.
+            #
+            # Reuse is only valid while the INPUT still looks like the one the
+            # anchor was built from, so that is what is measured -- against the
+            # keyframe's own signature, not the previous frame's, which bounds
+            # total drift across the window instead of letting it accumulate.
+            if ent is not None and cur_sig is not None and ent.get('sig') is not None:
+                _d = float(np.abs(cur_sig - ent['sig']).max())
+                # Kept so the tolerance is auditable from any run instead of
+                # from a one-off calibration: cost_summary prints the observed
+                # percentiles beside the rate, which is what says whether the
+                # threshold sits in the population it is meant to split. The
+                # first calibration of this was done on ORIGINAL crops and the
+                # enhancer sees SWAPPED ones, which move far more -- that error
+                # is only visible if the live distribution is reported.
+                if len(self._content_deltas) < 20000:
+                    self._content_deltas.append(_d)
+                if _d > self._CONTENT_TOL:
+                    content_jump = True
+
+            # Motion-adaptive, angle-adaptive and content-adaptive refresh:
+            # large movement, a turn, or the face itself changing triggers
+            # fresh CodeFormer.
             due = (ent is None
                    or ent['age'] >= refresh_limit
                    or spatial_delta > 0.22
-                   or pose_jump)
+                   or pose_jump
+                   or content_jump)
+            if due:
+                self._due_reason['stale' if ent is None or ent['age'] >= refresh_limit
+                                 else 'content' if content_jump
+                                 else 'pose' if pose_jump else 'motion'] += 1
 
             if due and ent is not None:
                 ent['age'] = 0
-            elif due and key is not None:
-                self._cache[key] = {'frame': None, 'age': 0, 'kps': None}
 
         # ── 1. KEYFRAME / REFRESH INFERENCE: RUN FULL CODEFORMER ─────────────
         if due:
@@ -329,29 +442,36 @@ class Enhance_UltraMax:
             if cf_res is None or not is_usable(cf_res):
                 return sized(temp_frame, input_size)
 
-            cf_harmonized = self._harmonize_face(cf_res, temp_frame)
-
+            # The cache holds CodeFormer's RAW output, deliberately: harmonize
+            # runs on the way OUT, once, on every path. Caching the harmonized
+            # frame instead meant the intermediate path harmonized it a second
+            # time on top -- measured on a synthetic skin patch, that second
+            # pass moves L-channel Laplacian variance 596 -> 966 (+62%) and
+            # drops LAB A/B std by 13-14%. With _REFRESH=4 that is one softer,
+            # more saturated frame in every five: a ~6 Hz sharpness-and-colour
+            # pulse, the same class of artefact d655312 was written to kill.
             kps_copy = np.asarray(cur_kps, dtype=np.float32).copy() if cur_kps is not None else None
             with self._lock:
                 self._cf_calls += 1
-                if key is not None:
-                    self._cache[key] = {
-                        'frame': cf_harmonized.copy(),
-                        'age': 0,
-                        'kps': kps_copy
-                    }
-            return sized(cf_harmonized, input_size)
+                self._cache[key] = {
+                    'frame': cf_res.copy(),
+                    'age': 0,
+                    'kps': kps_copy,
+                    'sig': cur_sig,
+                }
+            return sized(self._harmonize_face(cf_res, temp_frame), input_size)
 
         # ── 2. INTERMEDIATE FRAMES: FULL-SPECTRUM SHARP LANDMARK WARPING ─────
         if ent is None or ent.get('frame') is None:
             cf_res, scale_factor = cf_proc.Run(source_faceset, target_face, temp_frame)
+            if cf_res is None or not is_usable(cf_res):
+                return sized(temp_frame, input_size)
             return sized(self._harmonize_face(cf_res, temp_frame), input_size)
 
         with self._lock:
             cached_frame = ent['frame']
             prev_kps = ent.get('kps')
-            if key is not None:
-                ent['age'] = int(ent.get('age', 0)) + 1
+            ent['age'] = int(ent.get('age', 0)) + 1
 
         fh, fw = cached_frame.shape[:2]
 
@@ -384,15 +504,34 @@ class Enhance_UltraMax:
 
     # ── reporting ────────────────────────────────────────────────────────────
     def cost_summary(self):
-        """How often CodeFormer actually ran."""
+        """How often CodeFormer actually ran, and what asked it to.
+
+        Read the reason split, not just the rate. `content` means the face
+        changed and got real inference -- that is the trigger doing its job,
+        and a talking or blinking clip SHOULD be dominated by it. A clip that
+        is almost all `stale` is one where nothing moved, and one with no
+        `content` hits at all on moving footage means _CONTENT_TOL is too
+        loose and expressions are being held.
+        """
         with self._lock:
             f, c = self._faces, self._cf_calls
+            reasons = dict(self._due_reason)
+            tracked = len(self._cache)
+            deltas = list(self._content_deltas)
         if not f:
             return None
         refresh = getattr(self, 'refresh_interval', self._REFRESH)
+        split = ", ".join(f"{k} {v}" for k, v in sorted(reasons.items(),
+                                                        key=lambda kv: -kv[1])) or "none"
+        dist = ""
+        if deltas:
+            a = np.asarray(deltas, dtype=np.float32)
+            dist = (f"; observed content delta p50 {np.percentile(a, 50):.1f} "
+                    f"p90 {np.percentile(a, 90):.1f} p99 {np.percentile(a, 99):.1f} "
+                    f"max {a.max():.1f} over {len(a)} reuse checks")
         return (f"[UltraMax] {f} faces, CodeFormer ran {c} times "
-                f"({100.0 * c / f:.1f}%, refresh every {refresh}); "
-                f"{self._no_track} faces had NO TRACK; "
-                f"tracked residuals: {len(self._cache)}")
+                f"({100.0 * c / f:.1f}%, reuse capped at {refresh} frames, "
+                f"content tol {self._CONTENT_TOL:g}); refreshed by: {split}; "
+                f"cached anchors: {tracked}{dist}")
 
 

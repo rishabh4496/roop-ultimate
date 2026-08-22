@@ -156,6 +156,83 @@ class TestUltraMax(unittest.TestCase):
         # Should have run CodeFormer for both due to motion
         self.assertGreaterEqual(cf_calls, 2)
 
+    def test_localized_content_change_forces_refresh(self):
+        """A blink-sized change must refresh even when pose and position hold.
+
+        This is the regression the content trigger exists for. The pose test
+        reads 5 detector keypoints, which cannot see an eye close, a mouth
+        open or a brow move at all -- so with a fixed track id and a fixed
+        bbox the anchor used to be reused for the whole refresh window no
+        matter what the face did, and the intermediate path returns a warped
+        copy of that anchor while ignoring the current crop entirely. A blink
+        is 3-4 frames at 30 fps: it fitted inside the window and never reached
+        the output.
+        """
+        self._pools(0)
+        p = self._make()
+        face = {'_track_id': 'trk1', 'bbox': [100, 100, 200, 200]}
+
+        flat = np.full((512, 512, 3), 128, np.uint8)
+        p.Run(None, face, flat)
+        with p._lock:
+            after_first = p._cf_calls
+
+        # Same track, same box, same pose -- only a small dark patch appears,
+        # the way a closing eyelid darkens one part of an otherwise still face.
+        blink = flat.copy()
+        blink[180:230, 150:230] = 40
+        p.Run(None, face, blink)
+        with p._lock:
+            after_blink = p._cf_calls
+        self.assertEqual(after_blink, after_first + 1,
+                         "a localized content change must re-run CodeFormer")
+
+        # ...while an unchanged crop still reuses the anchor, or the trigger is
+        # just an expensive way of disabling the cache.
+        p.Run(None, face, blink)
+        with p._lock:
+            after_still = p._cf_calls
+        self.assertEqual(after_still, after_blink,
+                         "an unchanged crop must still reuse the cached anchor")
+
+    def test_harmonize_runs_exactly_once_per_frame(self):
+        """Once on the keyframe, once on each reused frame -- never twice.
+
+        The cache holds RAW CodeFormer output and harmonize runs on the way
+        out. Caching the harmonized frame instead meant the reuse path
+        harmonized it again on top: measured +62% L-channel Laplacian variance
+        and -13% LAB chroma std on the reused frames, i.e. one visibly sharper,
+        less saturated run of frames between every keyframe -- a ~6 Hz pulse.
+
+        Counted rather than compared, so the assertion does not depend on the
+        stub returning a textured frame (harmonize is genuinely idempotent on
+        a flat one, which would hide the bug).
+        """
+        self._pools(0)
+        p = self._make()
+        cls = type(p)
+        real, calls = cls._harmonize_face, []
+
+        def counting(img, orig=None):
+            calls.append(1)
+            return real(img, orig)
+
+        cls._harmonize_face = staticmethod(counting)
+        try:
+            face = {'_track_id': 'trk1', 'bbox': [100, 100, 200, 200]}
+            frame = np.full((512, 512, 3), 128, np.uint8)
+            p.Run(None, face, frame)                       # keyframe
+            self.assertEqual(len(calls), 1, "keyframe harmonized more than once")
+            p.Run(None, face, frame)                       # reused anchor
+            self.assertEqual(len(calls), 2, "reused frame harmonized twice")
+        finally:
+            cls._harmonize_face = real
+
+        with p._lock:
+            self.assertIsNotNone(p._cache['trk1']['frame'])
+            self.assertIsNotNone(p._cache['trk1']['sig'],
+                                 "anchor must carry the signature it was built from")
+
     def test_cost_summary_output(self):
         self._pools(0)
         p = self._make()

@@ -1,7 +1,15 @@
 // Baked-in defaults for every setting editable inside the Face Swap tab.
-// Snapshot of the user's preferred configuration (taken 2026-07-12 from
-// app/config.yaml). The "Reset defaults" button in FaceSwap.jsx merges this
-// over the live settings and persists it to the backend CFG.
+// Snapshot of the user's preferred configuration (reconciled 2026-08-22 against
+// app/config.yaml and app/settings.py). The "Reset defaults" button in
+// FaceSwap.jsx merges this over the live settings and persists it to the
+// backend CFG.
+//
+// This file is ONLY read by "Reset defaults" (useUserDefaults.js) and as a
+// lower-priority base in BatchSwap.jsx — live settings win there. It is NOT
+// what a render uses. Changing a value here alone changes nothing about what
+// runs: app/config.yaml is the live state and app/settings.py is what a fresh
+// install gets, so all three have to move together or the stack silently
+// disagrees with itself (it did, on 34 keys, until 2026-08-22).
 // Deliberately excludes global/Settings-tab keys (provider, threads, theme,
 // output codec/quality, server options, perf knobs) so a reset never touches
 // anything outside this tab.
@@ -12,8 +20,8 @@ export const FACESWAP_DEFAULTS = {
   detector_engine: 'retinaface_r50',
   face_detector_size: '640',
   default_det_size: true,
-  face_detector_threshold: 0.7,
-  face_detector_nms: 0.4,
+  face_detector_threshold: 0.5,
+  face_detector_nms: 0.3,
   refine_landmarks: true,
   // Angled-face alignment sits in the same alignment group as the two settings
   // either side of it and was the last Face Swap control missing here, so
@@ -29,11 +37,11 @@ export const FACESWAP_DEFAULTS = {
   rescue_small_faces: true,
   num_swap_steps: 1,
   selected_enhancer: 'UltraMax',
-  codeformer_fidelity: 0.5,
+  codeformer_fidelity: 0.55,
   max_face_distance: 0.75,
-  subsample_upscale: '128px',
+  subsample_upscale: '256px',
   upscale_after_swap: false,
-  upscale_model_after: 'esrganx2',
+  upscale_model_after: 'fsr_x2',
   interp_after_swap: 'off',
   color_transfer_mode: 'lct',
   blend_ratio: 1,
@@ -58,15 +66,25 @@ export const FACESWAP_DEFAULTS = {
   mouth_left_scale: 1,
   mouth_right_scale: 1,
   mouth_mask_blend: 10,
-  use_3d_recon: true,
-  use_source_bank: true,
+  // Both measured OFF, twice, and kept off deliberately — a reset must not
+  // switch them back on. use_source_bank costs 0.05-0.11 of identity at EVERY
+  // yaw (re-verified 2026-08-15 under the production swapper), and handing the
+  // swap a correctly pose-matched source plate by hand is still worse than the
+  // averaged faceset embedding, so the loss is not its pose estimate. Its
+  // partner use_3d_recon is a structural no-op for this swapper family anyway
+  // (ProcessMgr gates the 3D pose-warp to image-source swappers).
+  use_3d_recon: false,
+  use_source_bank: false,
   use_frontalization: false,
-  frontalization_threshold: 25,
+  frontalization_threshold: 15,
   jaw_reshape: false,
   jaw_reshape_strength: 0.5,
   detail_transfer_strength: 0.4,
-  // DeepFaceLab merger post-ops. All neutral by default — each is a
-  // bit-identical no-op at 0, so the defaults change nothing about a render.
+  // DeepFaceLab merger post-ops. NO LONGER neutral: hist/sharpen/grain carry
+  // real values, so a reset changes the render. Order in procmgr_merger is
+  // hist -> degrade -> sharpen -> motion -> grain, which is why degrade stays
+  // at 0 — a degrade/sharpen round trip blurs and then re-sharpens the blur,
+  // and apply_sharpen(1.0) is 2*image - 1*blur, twice a standard unsharp.
   merger_hist_match: 0.4,
   merger_sharpen: 0.35,
   merger_motion_blur: 0,
@@ -98,8 +116,8 @@ export const FACESWAP_DEFAULTS = {
   track_identities: true,
   stabilize_face: true,
   stabilize_method: 'one_euro',
-  stabilize_min_cutoff: 0.05,
-  stabilize_beta: 0.02,
+  stabilize_min_cutoff: 0.1,
+  stabilize_beta: 0.1,
   restore_original_mouth: false,
   restore_original_eyes: false,
   eyes_blend_amount: 1,

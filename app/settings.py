@@ -124,49 +124,52 @@ class Settings:
         self.launch_browser = self.default_get(data, 'launch_browser', False)
         self.max_face_distance = self.default_get(data, 'max_face_distance', 0.75)
         # Faceswap session settings
-        self.face_detection_mode = self.default_get(data, 'face_detection_mode', 'All faces')
+        self.face_detection_mode = self.default_get(data, 'face_detection_mode', 'Selected face')
         # Face-detector input resolution: True = 640x640 (accurate, default),
         # False = 320x320 (~4x faster detection, may miss small/distant faces).
         self.default_det_size = self.default_get(data, 'default_det_size', True)
         self.face_detector_size = str(self.default_get(data, 'face_detector_size', '640' if self.default_det_size else '320'))
         self.face_detector_threshold = float(self.default_get(data, 'face_detector_threshold', 0.50))
-        self.face_detector_nms = float(self.default_get(data, 'face_detector_nms', 0.40))
+        self.face_detector_nms = float(self.default_get(data, 'face_detector_nms', 0.3))
         self.sam2_model_size = self.default_get(data, 'sam2_model_size', 'tiny')
-        self.track_identities = self.default_get(data, 'track_identities', False)
+        self.track_identities = self.default_get(data, 'track_identities', True)
         self.num_swap_steps = self.default_get(data, 'num_swap_steps', 1)
-        self.selected_enhancer = self.default_get(data, 'selected_enhancer', 'GPEN')
-        self.codeformer_fidelity = float(self.default_get(data, 'codeformer_fidelity', 0.5))
+        self.selected_enhancer = self.default_get(data, 'selected_enhancer', 'UltraMax')
+        self.codeformer_fidelity = float(self.default_get(data, 'codeformer_fidelity', 0.55))
         self.subsample_upscale = self.default_get(data, 'subsample_upscale', '256px')
-        self.upscale_after_swap = self.default_get(data, 'upscale_after_swap', True)
-        self.upscale_model_after = self.default_get(data, 'upscale_model_after', 'esrganx2')
+        self.upscale_after_swap = self.default_get(data, 'upscale_after_swap', False)
+        self.upscale_model_after = self.default_get(data, 'upscale_model_after', 'fsr_x2')
         # Frame interpolation pass after the swap (and after any upscale):
         # 'off' | 'rife_2x' | 'rife_4x' | 'minterpolate_2x'
         self.interp_after_swap = self.default_get(data, 'interp_after_swap', 'off')
-        self.blend_ratio = self.default_get(data, 'blend_ratio', 0.80)
+        self.blend_ratio = self.default_get(data, 'blend_ratio', 1.0)
         self.video_swapping_method = self.default_get(data, 'video_swapping_method', 'In-Memory processing')
-        self.no_face_action = self.default_get(data, 'no_face_action', 'Retry rotated')
+        self.no_face_action = self.default_get(data, 'no_face_action', 'Use untouched original frame')
         self.vr_mode = self.default_get(data, 'vr_mode', False)
         self.autorotate_faces = self.default_get(data, 'autorotate_faces', True)
         self.skip_audio = self.default_get(data, 'skip_audio', False)
         self.keep_frames = self.default_get(data, 'keep_frames', False)
         self.wait_after_extraction = self.default_get(data, 'wait_after_extraction', False)
         self.output_method = self.default_get(data, 'output_method', 'File')
-        self.mask_engine = self.default_get(data, 'mask_engine', 'DFL XSeg')
+        self.mask_engine = self.default_get(data, 'mask_engine', 'RealityUX')
         # A second, independent occlusion engine. They compose as a union of
         # "not face", so this can only restore more of the original footage —
         # which is the answer to one engine not recognising the particular object
         # that came in front of the face. 'None' = one engine, as before.
         self.mask_engine_2 = self.default_get(data, 'mask_engine_2', 'None')
         self.mask_clip_text = self.default_get(data, 'mask_clip_text', 'cup,hands,hair,banana')
-        self.sam2_model_size = self.default_get(data, 'sam2_model_size', 'tiny')
-        self.track_identities = self.default_get(data, 'track_identities', False)
+        # `sam2_model_size` and `track_identities` were also assigned in the
+        # detection block above. Copy-paste duplicates, and not harmless: this
+        # one ran LAST, so track_identities' real default was the False here
+        # rather than the True up there, and editing the visible one changed
+        # nothing. Both now live in the detection block only.
         self.show_mask_offsets = self.default_get(data, 'show_mask_offsets', False)
         self.restore_original_mouth = self.default_get(data, 'restore_original_mouth', False)
         self.mask_top = self.default_get(data, 'mask_top', 0.0)
         self.mask_bottom = self.default_get(data, 'mask_bottom', 0.0)
         self.mask_left = self.default_get(data, 'mask_left', 0.0)
         self.mask_right = self.default_get(data, 'mask_right', 0.0)
-        self.face_mask_blend = self.default_get(data, 'face_mask_blend', 20.0)
+        self.face_mask_blend = self.default_get(data, 'face_mask_blend', 12.0)
         self.mouth_mask_blend = self.default_get(data, 'mouth_mask_blend', 10.0)
         self.mouth_top_scale = self.default_get(data, 'mouth_top_scale', 1.0)
         self.mouth_bottom_scale = self.default_get(data, 'mouth_bottom_scale', 1.0)
@@ -178,21 +181,21 @@ class Settings:
         self.use_source_bank = self.default_get(data, 'use_source_bank', False)
         # Target frontalization (Option 2)
         self.use_frontalization = self.default_get(data, 'use_frontalization', False)
-        self.frontalization_threshold = self.default_get(data, 'frontalization_threshold', 30.0)
+        self.frontalization_threshold = self.default_get(data, 'frontalization_threshold', 15.0)
         self.swap_model = self.default_get(data, 'swap_model', 'realswap')
         # One Euro temporal face stabilization (video)
-        self.stabilize_face = self.default_get(data, 'stabilize_face', False)
+        self.stabilize_face = self.default_get(data, 'stabilize_face', True)
         self.stabilize_method = self.default_get(data, 'stabilize_method', 'one_euro')
-        self.stabilize_min_cutoff = self.default_get(data, 'stabilize_min_cutoff', 0.05)
-        self.stabilize_beta = self.default_get(data, 'stabilize_beta', 0.02)
-        self.stabilize_enhancer = self.default_get(data, 'stabilize_enhancer', False)
-        self.stabilize_enhancer_strength = self.default_get(data, 'stabilize_enhancer_strength', 0.5)
-        self.stabilize_mask = self.default_get(data, 'stabilize_mask', False)
+        self.stabilize_min_cutoff = self.default_get(data, 'stabilize_min_cutoff', 0.1)
+        self.stabilize_beta = self.default_get(data, 'stabilize_beta', 0.1)
+        self.stabilize_enhancer = self.default_get(data, 'stabilize_enhancer', True)
+        self.stabilize_enhancer_strength = self.default_get(data, 'stabilize_enhancer_strength', 0.25)
+        self.stabilize_mask = self.default_get(data, 'stabilize_mask', True)
         self.stabilize_mask_strength = self.default_get(data, 'stabilize_mask_strength', 0.5)
         # Skin-tone / lighting match of swapped crop → original: none|rct|lct|mkl
-        self.color_transfer_mode = self.default_get(data, 'color_transfer_mode', 'rct')
+        self.color_transfer_mode = self.default_get(data, 'color_transfer_mode', 'lct')
         # Detection refinements
-        self.refine_landmarks = self.default_get(data, 'refine_landmarks', False)
+        self.refine_landmarks = self.default_get(data, 'refine_landmarks', True)
         # Swap-model face mask — only hififace/hyperswap emit one; the models that
         # do not are unaffected at any value.
         self.swap_model_mask_strength = self.default_get(data, 'swap_model_mask_strength', 0.0)
@@ -200,7 +203,7 @@ class Settings:
         self.jaw_reshape = self.default_get(data, 'jaw_reshape', False)
         self.jaw_reshape_strength = self.default_get(data, 'jaw_reshape_strength', 0.5)
         # Skin detail transfer strength (high-frequency texture from footage)
-        self.detail_transfer_strength = self.default_get(data, 'detail_transfer_strength', 0.0)
+        self.detail_transfer_strength = self.default_get(data, 'detail_transfer_strength', 0.4)
         # Eye restore — the counterpart to restore_original_mouth
         self.restore_original_eyes = self.default_get(data, 'restore_original_eyes', False)
         self.eyes_blend_amount = self.default_get(data, 'eyes_blend_amount', 1.0)
@@ -213,28 +216,28 @@ class Settings:
         self.parser_region_grow = self.default_get(data, 'parser_region_grow', {})
         # Enhancer alignment + a second colour pass after restoration
         self.enhancer_align = self.default_get(data, 'enhancer_align', False)
-        self.color_match_after_enhance = self.default_get(data, 'color_match_after_enhance', False)
+        self.color_match_after_enhance = self.default_get(data, 'color_match_after_enhance', True)
         # Lip-sync (MuseTalk) — see roop/globals.py. lipsync_audio_path is a
         # per-job temp upload reference, not a durable default.
         self.lipsync_enabled = self.default_get(data, 'lipsync_enabled', False)
         self.lipsync_audio_source = self.default_get(data, 'lipsync_audio_source', 'original')
         # DeepFaceLab merger post-ops — see roop/procmgr_merger.py. All neutral
         # by default; each is a bit-identical no-op at 0.
-        self.merger_hist_match = self.default_get(data, 'merger_hist_match', 0.0)
-        self.merger_sharpen = self.default_get(data, 'merger_sharpen', 0.0)
+        self.merger_hist_match = self.default_get(data, 'merger_hist_match', 0.4)
+        self.merger_sharpen = self.default_get(data, 'merger_sharpen', 0.35)
         self.merger_motion_blur = self.default_get(data, 'merger_motion_blur', 0.0)
-        self.merger_grain_match = self.default_get(data, 'merger_grain_match', 0.0)
+        self.merger_grain_match = self.default_get(data, 'merger_grain_match', 0.45)
         self.merger_degrade = self.default_get(data, 'merger_degrade', 0.0)
         # Grow/shrink the pasted face about its own centre (DFL output_face_scale)
         self.output_face_scale = self.default_get(data, 'output_face_scale', 0.0)
         # Expression restorer (LivePortrait) — see roop.globals
         self.expression_restore_strength = self.default_get(data, 'expression_restore_strength', 0.0)
         self.expression_restore_region = self.default_get(data, 'expression_restore_region', 'all')
-        self.rescue_small_faces = self.default_get(data, 'rescue_small_faces', False)
-        self.detector_engine = self.default_get(data, 'detector_engine', 'scrfd')
+        self.rescue_small_faces = self.default_get(data, 'rescue_small_faces', True)
+        self.detector_engine = self.default_get(data, 'detector_engine', 'retinaface_r50')
         # Temporal detection pre-pass (video anti-flicker): tracked detection with
         # gap-fill so the swap can't blink out on missed detections.
-        self.temporal_detection = self.default_get(data, 'temporal_detection', False)
+        self.temporal_detection = self.default_get(data, 'temporal_detection', True)
         # Advanced perf knobs (env-backed; 'auto' = leave launcher/auto-tune
         # behaviour untouched). Applied to os.environ at startup by run.py, so
         # changes take effect after an app restart.
