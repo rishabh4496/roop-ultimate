@@ -1,6 +1,23 @@
 # Roop Ultimate - Comprehensive Memory & Engineering Reference (facegemini.md)
 *Complete System Architecture, Technical Memory, Hardware Profiling, and Inverted Face Swap Reference*
-*Date: 2026-08-22 | Status: Production Live | Test Suite: 76/76 Passing (100%)*
+*Date: 2026-08-23 | Status: Production Live | Test Suite: 1023/1023 Passing (100%)*
+
+> ### ⚠ SECTIONS 1-7 BELOW ARE PARTLY SUPERSEDED — READ THE FINAL SESSION LOG FIRST
+>
+> This file is written as a top-down reference, so a reader meets the old
+> architecture before the corrections. Three things described below were
+> measured and changed on 2026-08-23; the numbered session log at the END of
+> this file has the evidence for each:
+>
+> | described below | actual state |
+> |---|---|
+> | RealSwap `base = 0.85*primary + 0.15*secondary` (§2 diagram, §3A) | **Reverted to base mix 0.** 0.15 lost identity on 67.7% of 4702 paired frames (paired t = -30.5). The eyelid BAND is unchanged and still 100% hififace — that is what the 80/20 brief actually asks for. |
+> | UltraMax = "GPEN-512 + CodeFormer residuals", ">40-60 FPS" (§3B) | **No GPEN, and 13% SLOWER than the `Codeformer (fp16)` it wraps.** Its LAB filter moved out to `MergerMixin.apply_clarity` (`merger_clarity`), where any enhancer can use it. What remains is CodeFormer plus an anchor cache that fires on 0.15% of faces. |
+> | "Duo folder: 100% swapped, zero identity flipping" (§7) | **Never computed** — that bench discarded its own `face_log`. Graded answer: wrong faceset = 10 of ~21,600 attributable swaps (0.046%). |
+>
+> Also: every benchmark number in this file predates the discovery that the
+> bench harness ran the entire DFL merger stage OFF, so absolute figures are
+> not production-identical (comparisons between arms remain valid).
 
 ---
 
@@ -190,3 +207,238 @@ The React UI (`react-ui/`) is compiled with Vite and serves as the primary multi
 5. **Test Suite Verification**:
    - **1,018 / 1,018 unit & integration tests passing (100.0% OK)** in 17.18 s.
 
+
+---
+
+## Session Log (2026-08-22 → 08-23): Audit of the Previous Session, Three Fixes, and Five Measured Results
+
+**Commits:** `74402ca`, `a0418cf`, `3c530f9`, `aa2d387`. Suite **1023 green**.
+Full working notes at the top of `G:\pinokio\roop-keep\RECODE_STATUS.md`.
+
+### 0. CORRECTIONS TO THE SESSION LOGS ABOVE — read before trusting them
+
+The logs above this one contain claims that are now measured to be wrong. They
+are left in place as history; these are the corrections.
+
+| claim above | what is actually true |
+|---|---|
+| "UltraMax: >40–60+ FPS, ~4.8 ms per face, 2.5–4× faster than CodeFormer" | **Never reachable in a real render.** Measured 13% SLOWER than the `Codeformer (fp16)` it wraps. The amortisation it relies on cannot work under this pipeline's frame dispatch (see §3). |
+| "Duo folder: 100% Swapped, zero identity flipping" | **Not computed by anything.** `process_duo_folder.py` assigned `face_log` and never read it. Real graded answer in §4. |
+| "RealSwap 85/15 base with 100% hififace eyelashes" | **Reverted.** Measured worse on 67.7% of 4702 paired frames (§7). |
+| "React UI: baked-in defaults configured" | `defaults.js` is read ONLY by the "Reset defaults" button. It never drives a render. The stack it described was not the stack that ran (§1). |
+| "1,018 / 1,018 tests passing" | True, and it proved nothing about any of the above. The suite was green through every defect listed here. |
+
+### 1. The stack in the docs was not the stack that ran — 34 keys divergent
+
+Three separate sources can express a setting and they had drifted:
+`app/config.yaml` (live), `app/settings.py` (fresh install), and
+`react-ui/.../defaults.js` (the Reset-defaults snapshot only). The previous
+session wrote to `defaults.js` alone, so **none of its realism work was active**:
+
+| key | was live | now |
+|---|---|---|
+| `face_mask_blend` | **30** — the exact halo the session claimed to fix | 12 |
+| `detail_transfer_strength` | **0** — the whole Sobel/dark-spot path was dead code | 0.4 |
+| `merger_degrade` → `merger_sharpen` | **0.2 → 1** — blur, then twice-unsharp the blur | 0 → 0.35 |
+| `stabilize_enhancer_strength` | **0.5**, stacked on UltraMax's own hold | 0.25 |
+| `blend_ratio` | **0.9**, so the double-blend guard (`>= 0.999`) never fired | 1.0 |
+| `selected_enhancer` / `mask_engine` (settings.py) | **GPEN / DFL XSeg** | UltraMax / RealityUX |
+
+All 82 Face Swap keys now agree across all three. Two traps found on the way:
+
+- **`defaults.js` was in places STALER than config.yaml.** It had
+  `use_3d_recon` / `use_source_bank` = `true`, both measured worse (source bank
+  costs 0.05–0.11 identity at every yaw, re-verified 2026-08-15). "Reset
+  defaults" was switching a measured-worse feature back on. Now false.
+- **`settings.py` assigned `track_identities` twice**, `False` last. The second
+  won, so the real default was False and editing the visible one changed
+  nothing. Removed. (`provider`, `sam2_model_size` are also duplicated but
+  harmless.)
+
+Also dropped the stale `benchmark_results.applied.pending_restart` block from
+config.yaml — it still carried `perf_trt_pool: '4'`, the value that collapses
+this GPU to 0.1 fps.
+
+### 2. UltraMax harmonized twice on every reused frame
+
+The cache stored the *harmonized* anchor and the reuse path harmonized it again.
+Measured: L Laplacian variance **596 → 966 (+62%)**, LAB A/B std **−13 / −14%**.
+One visibly different frame per refresh window — a ~6 Hz pulse, the same class of
+artefact `d655312` was written to kill. The cache now holds RAW CodeFormer
+output; harmonize ran once, on the way out. (Since superseded by §9, which moved
+the filter out of UltraMax entirely.)
+
+### 3. THE ROOT CAUSE: the anchor was never the neighbouring frame
+
+`ProcessMgr.read_frames_thread`: **`_thr = num_frame % num_threads`** — strict
+round-robin. At 20 threads **no worker ever sees two adjacent frames**, and
+UltraMax's cache is shared across all workers keyed by track. So "intermediate
+frames along a face track" **do not exist in a real render**. The anchor was an
+arbitrary frame from up to **~0.67 s** away, warped and painted over the current
+face. (`age` counts FACES, not frames, so `_REFRESH = 4` never meant 4 frames.)
+
+Measured live anchor-vs-current content delta: **p50 152 / p90 186** (0–255 per
+32px block). An offline sweep said p50 2.0 — because it fed the gate *sequential*
+crops, a population the gate never sees. Classic wrong-population calibration;
+the live distribution now prints in `cost_summary` every run.
+
+Fix = a content trigger (`_CONTENT_TOL`, default 8): reuse only while the crop
+still matches the one the anchor was built from. A/B on expression clip 2:
+
+| | CodeFormer rate | fps | face flicker | sharpness jitter |
+|---|---|---|---|---|
+| before | 54.7% | 9.28 | — | — |
+| after | 99.4% | 7.95 | **−43.4%** | **−33.9%** |
+
+Mean sharpness −1.7%, so the flicker went without costing detail. −14% throughput.
+
+**Consequence:** UltraMax's amortisation does not survive this dispatch.
+Recovering it needs contiguous per-thread chunks, already measured at 25–59% idle.
+
+### 4. Two facesets, actually graded: wrong faceset is 0.046%
+
+`process_duo_folder.py` rewritten as a thin driver over `two_face_video.py`,
+which grades from `ProcessMgr._SWAP_LOG` — the pipeline's own decision at the
+composite. This matters: re-detecting the output and comparing embeddings hits
+the same shared-recognition-crop problem the pipeline does, so on exactly the
+contact frames where a two-faceset bug lives, re-detection reports each person as
+the other regardless of what the swap did.
+
+| clip | person | detected | swapped | WRONG FACESET |
+|---|---|---|---|---|
+| d1 | harjot / gargee | 3090 / 3082 | 100% / 99.6% | 0 / 0 |
+| d2 | harjot / gargee | 1147 / 1306 | 94% / 100% | 0 / 0 |
+| d3 | harjot / gargee | 3523 / 3052 | 72% / 91% | **8 / 2** |
+| d4 | harjot / gargee | 7825 / 6350 | 100% / 97% | 0 / 0 |
+
+**10 of ~21,600 attributable swaps (0.046%)**, all on d3, all carrying the audit
+reason "crop shared with the face beside it", in 6 bursts of 1–3 frames.
+Contamination on wrong rows: median 0.353 / mean 0.415 vs 0.177 / 0.172 correct.
+
+### 5. Tightening the contamination gate — MEASURED AND REJECTED
+
+| gate | wrong caught | correct refused | net |
+|---|---|---|---|
+| 0.40 | 4/10 | 30 (0.39%) | −26 |
+| 0.35 (current) | 6/10 | 89 (1.17%) | −83 |
+| 0.30 | 10/10 | 522 (6.84%) | −512 |
+| 0.20 | 10/10 | 821 (10.75%) | −811 |
+
+Catching all 10 costs 522 correct swaps — 52:1. Gate stays at 0.35. Do not retry.
+
+### 6. The real duo limiter is PROFILE POSE — and the mitigation works
+
+d2 person 0 reads own-identity **0.952** while person 1 on the same run with the
+same two facesets reads **0.342**. Not the faceset (harjot reaches 0.446 on d1) —
+that person's bbox w/h is **0.509** against ~0.73 everywhere else: turned to
+profile for the whole clip. One cause, both symptoms: their largest track (50% of
+the clip) sits at p0=0.75 against a 0.60 assign gate and binds to no source, and
+the frames that do swap cannot carry identity.
+
+Tested the mitigation end to end (`tests/find_profile_angles.py` picks angles
+identity-checked against the seed — `capture_targets` banks extras by left-right
+POSITION, so one angle on the wrong person poisons the bank):
+
+| | seed only | + 6 profile angles |
+|---|---|---|
+| track 8 `p0` | 0.83 | **0.61** |
+| that person's coverage | 49.5% | **73.1%** |
+| attributed swaps | 723 | **1534** |
+
+**The gate change that would finish it is NOT supported.** Track 8 misses 0.60 by
+0.01 with a 0.41 margin, so a margin override is the obvious fix — but across all
+95 tracks in 6 roster logs it would fire on **exactly one track**. Every other
+refusal has a margin of 0.01–0.20, correctly refused. n=1 is not a population.
+
+The actionable gap is **intake, not the gate**: auto-angles turned away 37
+candidates for that person (19 blurred, 18 low quality) while a sweep of every
+5th frame found 69 clean, identity-ordered, zero-contamination frames.
+
+### 7. RealSwap 85/15 base — measured and reverted to 0
+
+Paired per frame (both arms graded the same rows):
+
+```
+4702 paired frames; base mix 0.00 beats 0.15 on 3185 (67.7%)
+mean delta -0.00654, median -0.00580, paired t = -30.5
+person 0 better on 70.8% of frames, person 1 on 64.1%
+own median: person 0 0.4456 -> 0.4388 ; person 1 0.3653 -> 0.3608
+```
+
+Small per frame (~1.5–2%) and overwhelmingly consistent, in the direction the
+`_EYE_ALPHA` comment already recorded from d5. **The user's brief — "80–85%
+hyperswap + 15–20% hififace for eyelids, lashes, expression" — is served by the
+BAND**, untouched and still 100% hififace. That ratio names which REGION comes
+from which net, not a global alpha over identity-dense skin. Measures IDENTITY
+only; a nonzero base for perceived TEXTURE is a different claim needing a
+different measurement.
+
+### 8. UltraMax vs CodeFormer — it is CodeFormer plus a filter, 13% slower
+
+Against `Codeformer (fp16)`, the same net it runs inside:
+
+| axis | UltraMax | Codeformer (fp16) | delta |
+|---|---|---|---|
+| wall clock (3090 frames) | 445.5 s / 6.94 fps | 394.1 s / 7.84 fps | **13% SLOWER** |
+| identity, paired n=4703 | 0.4032 | 0.4034 | **none** (t=0.4) |
+| L sharpness on the face | 112.58 | 89.45 | +25.9% |
+| chroma spread on the face | 6.04 | 6.90 | −12.5% |
+| temporal flicker | 4.588 | 4.515 | **+1.6% WORSE** |
+| CodeFormer calls | 7823 of 7835 (99.8%) | n/a | cache gave 12 faces |
+
+**Read the sharpness number with the trap in mind:** the filter IS an unsharp
+mask on L, so +25.9% Laplacian variance is the operator measuring itself. That
+instrument counts ADDED EDGE ENERGY, not recovered skin, and it has already
+endorsed one build here that was reported as plastic.
+
+### 9. The clarity filter moved into the merger chain
+
+`Enhance_UltraMax._harmonize_face` → `MergerMixin.apply_clarity`, driven by a new
+**`merger_clarity`**. It was never specific to that model — per §8 it WAS the
+entire measurable difference. Both halves scale with strength: **1.0 reproduces
+the old filter exactly, 0 is a bit-identical no-op**. Placed after `degrade`,
+before `sharpen`. Registered in settings.py / config.yaml / defaults.js /
+api.py's shared merger helper / trackerConfig.js / useRuntimeEstimate. UltraMax
+no longer post-processes its own output, so it cannot be applied twice.
+
+### 10. FOUND BY THAT VERIFICATION: the bench ran the merger stage OFF
+
+`tests/angle_bench.py` never populated **any** `merger_*` global. They live on
+`roop.globals`, only `api.py` ever set them, defaults are 0.0 — so **every arm
+ever rendered through that harness ran with hist / sharpen / grain / degrade OFF**
+while production ran 0.4 / 0.35 / 0.45 / 0. Same trap as the swap-model mask
+(every saved `yaw_*` arm ran it off while production ran 25).
+
+It stayed invisible until a feature was moved INTO that stage and measured as
+doing nothing — three arms came back byte-identical to the unfiltered control.
+
+**Does NOT invalidate this session's comparisons** (both arms of every A/B were
+equally off, so §4, §7 and §8 all stand) — but none of them included the merger
+stage, so read them as *"comparison valid, absolute value not production"*.
+
+Fixed: `init_pipeline` copies merger_* from CFG; `two_face_video.py` gained
+`--merger-clarity`; and a source-level guard asserts BOTH entry points name every
+merger key, verified to FAIL when one is removed.
+
+### 11. OPEN — start here next session
+
+1. **Close the clarity verification.** The on/off render pair was stopped twice
+   mid-run (second at 46.5%), so the moved filter is proven at UNIT level
+   (`apply_clarity(face, 1.0)` asserted pixel-identical to the old
+   `_harmonize_face`) but has no rendered A/B. Run `--merger-clarity 1.0` vs
+   `0.0` on d1, ~14 min.
+2. **Re-baseline the roster with the merger stage on.** Every pre-2026-08-23
+   bench number excluded it (§10).
+3. **Auto-angle intake for persistently-profile subjects** (§6) — the one lead
+   with a real population behind it.
+4. **Still reported but NOT changed:** RealityUX effectively silenced BiSeNet
+   (`accessory_allowed` gates subtraction on `xseg_mask > 0.05`, i.e. only where
+   XSeg already excludes — the disagreement case was the entire value; and
+   `_NONFACE_STRICT` is now dead code while the class docstring still describes
+   the old behaviour). Autorotate guards loosened: `rotation_improves_upright`
+   short-circuits on `na > nb + 2.0` (ArcFace embedding MAGNITUDE, noisy between
+   detections of the same face) and accepts rotations that made tilt WORSE; same
+   in `_upright_remeasure`. Highest-risk unmeasured change still outstanding.
+   UltraMax `_cache` is never evicted, and `_key`'s spatial fallback has no
+   per-frame claim set so two faces in one frame can bind to one anchor
+   (masked by `track_identities: true`, exposed for images/batch).
