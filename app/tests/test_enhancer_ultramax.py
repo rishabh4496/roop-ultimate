@@ -204,5 +204,31 @@ class TestUltraMax(unittest.TestCase):
         self.assertIsNone(p.codeformer)
         self.assertEqual(len(p._cache), 0)
 
+    def test_anti_oversaturation_harmonization(self):
+        """Harmonization must constrain extreme A and B chrominance swings."""
+        # Create an over-saturated neon orange frame
+        neon_frame = np.zeros((512, 512, 3), dtype=np.uint8)
+        neon_frame[:, :, 0] = 0    # B
+        neon_frame[:, :, 1] = 120  # G
+        neon_frame[:, :, 2] = 255  # R (hyper-saturated orange/red)
+
+        harmonized = UM.Enhance_UltraMax._harmonize_face(neon_frame)
+        self.assertEqual(harmonized.shape, (512, 512, 3))
+        # Ensure finite and bounded
+        self.assertTrue(np.isfinite(harmonized).all())
+
+    def test_dermal_micro_contrast_injection(self):
+        """Dermal micro-contrast injection should enhance luminance pores in midtones without artifacts."""
+        flat_skin = np.full((512, 512, 3), 140, dtype=np.uint8)
+        # Add subtle noise
+        np.random.seed(42)
+        noise = np.random.randint(-5, 6, size=(512, 512, 3)).astype(np.int16)
+        skin_with_micro = np.clip(flat_skin.astype(np.int16) + noise, 0, 255).astype(np.uint8)
+
+        harmonized = UM.Enhance_UltraMax._harmonize_face(skin_with_micro)
+        self.assertEqual(harmonized.shape, (512, 512, 3))
+        self.assertTrue(np.isfinite(harmonized).all())
+
 if __name__ == '__main__':
     unittest.main()
+

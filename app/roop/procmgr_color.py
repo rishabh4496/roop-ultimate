@@ -12,13 +12,12 @@ import roop.globals
 
 class ColorTransferMixin:
     def apply_detail_transfer(self, face_img, orig_crop, strength):
-        """Inject the original target crop's high-frequency detail and dark spots (moles,
-        freckles, beauty marks) onto the swapped/enhanced face.
+        """Inject the original target crop's high-frequency skin texture onto the swapped/enhanced face.
 
-        `face_img` = swapped or enhanced crop, `orig_crop` = original aligned
-        crop (same face-template space, possibly a different resolution). We take
-        the zero-mean high-pass of the original (orig − Gaussian-blur(orig)) and
-        add `strength`× of it to the face, plus preserve localized dark melanin spots (moles/freckles).
+        `face_img` = swapped or enhanced crop, `orig_crop` = original aligned crop.
+        Transfers genuine dermal micro-porosity (pores, subtle skin grain) strictly
+        on skin regions while suppressing structural edges (eyelids, iris, nostrils, lips)
+        with an edge-stop gate to prevent ghost double creases, halos, and blurry overlays.
         """
         s = float(strength)
         if s <= 0.0:
@@ -29,25 +28,31 @@ class ColorTransferMixin:
             orig = cv2.resize(orig, (fw, fh), interpolation=cv2.INTER_CUBIC)
         orig = orig.astype(np.float32)
         face = face_img.astype(np.float32)
-        # Blur radius scales with crop resolution so the split between "texture"
-        # and "structure" stays perceptually constant across 256 / 512 / 1024 crops.
+
         sigma = max(1.0, fw / 256.0)
         orig_blur = cv2.GaussianBlur(orig, (0, 0), sigma)
         high_freq = orig - orig_blur
-        # Soft-knee coring: suppress sharp edge transitions to prevent white lines/halos
-        core = np.exp(-((high_freq / 20.0) ** 2))
+        # Soft-knee coring: clamp high amplitude spikes
+        core = np.exp(-((high_freq / 16.0) ** 2))
 
-        # Dark spot / mole / beauty mark preservation:
-        # Moles and dark spots are localized negative luminance dips in the original plate.
-        # Preserve genuine dermal dark spots without letting enhancers airbrush them away.
+        # Structural edge-stop gate:
+        # Prevents the original target's different eyelid creases, eye folds, lip borders,
+        # and teeth edges from being projected onto the swapped face as ghost double lines/halos.
         orig_gray = cv2.cvtColor(np.clip(orig, 0.0, 255.0).astype(np.uint8), cv2.COLOR_BGR2GRAY).astype(np.float32)
-        blur_gray = cv2.cvtColor(np.clip(orig_blur, 0.0, 255.0).astype(np.uint8), cv2.COLOR_BGR2GRAY).astype(np.float32)
-        spot_diff = orig_gray - blur_gray  # negative in dark spots/moles
-        # Isolate genuine dark spots (negative delta with magnitude > 5.0)
-        dark_spots = np.clip(-spot_diff - 4.0, 0.0, 60.0)[:, :, np.newaxis]
-        dark_spot_layer = -dark_spots * min(1.0, max(0.5, s * 1.25))
+        gx = cv2.Sobel(orig_gray, cv2.CV_32F, 1, 0, ksize=3)
+        gy = cv2.Sobel(orig_gray, cv2.CV_32F, 0, 1, ksize=3)
+        edge_mag = np.hypot(gx, gy)
+        # 1.0 on smooth skin mid-tones, smoothly drops to 0.0 on eye/lip/nasolabial structural edges
+        skin_gate = (1.0 / (1.0 + (edge_mag / 14.0) ** 2))[:, :, np.newaxis]
 
-        out = face + s * high_freq * core + dark_spot_layer
+        # Localized dark spots (moles, beauty marks) strictly in smooth skin zones:
+        blur_gray = cv2.cvtColor(np.clip(orig_blur, 0.0, 255.0).astype(np.uint8), cv2.COLOR_BGR2GRAY).astype(np.float32)
+        spot_diff = orig_gray - blur_gray
+        # Only preserve spots where edge_mag is low (isolated spots, not continuous creases/folds)
+        dark_spots = np.clip(-spot_diff - 5.0, 0.0, 40.0)[:, :, np.newaxis] * skin_gate
+        dark_spot_layer = -dark_spots * min(0.8, max(0.2, s * 0.8))
+
+        out = face + s * high_freq * core * skin_gate + dark_spot_layer
         return np.clip(out, 0, 255).astype(np.uint8)
 
     def apply_color_transfer(self, source, target):
@@ -93,7 +98,15 @@ class ColorTransferMixin:
         source_std  = np.maximum(source_std.reshape(1, 1, 3), 1.0)  # guard near-zero
         target_mean = target_mean.reshape(1, 1, 3)
         target_std  = target_std.reshape(1, 1, 3)
-        source = (source - source_mean) * (target_std / source_std) + target_mean
+
+        # Scale ratios: L (channel 0) adjusts exposure/contrast freely,
+        # but chrominance (A=channel 1, B=channel 2) std ratio is softly bounded [0.80, 1.20]
+        # to prevent severe color cast explosion / neon orange/red oversaturation.
+        std_scale = target_std / source_std
+        std_scale[0, 0, 1] = np.clip(std_scale[0, 0, 1], 0.80, 1.20)
+        std_scale[0, 0, 2] = np.clip(std_scale[0, 0, 2], 0.80, 1.20)
+
+        source = (source - source_mean) * std_scale + target_mean
         return cv2.cvtColor(np.clip(source, 0, 255).astype("uint8"), cv2.COLOR_LAB2BGR)
 
     def _color_transfer_lct(self, source, target):
