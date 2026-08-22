@@ -996,9 +996,10 @@ class TrackingMixin:
         # MEAN embedding, so it is gated tighter than one-frame matching — the
         # loose per-frame threshold exists to carry a single bad frame, not to
         # hand a stretch of frames to a track that merely resembles the target.
-        # See _TRACK_ASSIGN_MAX. A refused track still swaps via per-frame
-        # matching; it just doesn't get identity locking.
-        assign_max = min(threshold, _TRACK_ASSIGN_MAX) if _TRACK_ASSIGN_MAX > 0 else threshold
+        if single_person:
+            assign_max = threshold
+        else:
+            assign_max = min(threshold, _TRACK_ASSIGN_MAX) if _TRACK_ASSIGN_MAX > 0 else threshold
 
         candidates = []
         track_map = {t['id']: t for t in tracks}

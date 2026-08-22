@@ -827,8 +827,11 @@ class FaceSwapInsightFace():
         never saw in training.
         """
         img = np.ascontiguousarray(np.asarray(chw).transpose(1, 2, 0))
+        c_min, c_max = float(np.min(chw)), float(np.max(chw))
         out = cv2.warpAffine(img, M, (size, size), flags=cv2.INTER_LANCZOS4,
                              borderMode=cv2.BORDER_REPLICATE)
+        if c_min < c_max:
+            np.clip(out, c_min, c_max, out=out)
         return np.ascontiguousarray(out.transpose(2, 0, 1))
 
     @staticmethod
@@ -1058,9 +1061,24 @@ class FaceSwapInsightFace():
         cls._EYE_MASK_CACHE[key] = m
         return m
 
-    def _mix_outputs(self, primary, secondary, size):
+    def _mix_outputs(self, primary, secondary, size, target_face=None):
         """hyperswap everywhere, hififace inside the eyelid band."""
         m = self._eye_region_mask(size, self.model_template)
+        # If extreme yaw (profile pose), attenuate far-eye eyelid mask to maintain profile silhouette integrity
+        kps = getattr(target_face, 'kps', None) if target_face is not None else None
+        if kps is not None and len(kps) >= 3:
+            try:
+                (lex, _), (rex, _), (nx, _) = kps[0], kps[1], kps[2]
+                yaw = float(np.log((abs(nx - lex) + 1e-5) / (abs(rex - nx) + 1e-5)))
+                if abs(yaw) > 0.65:
+                    m = m.copy()
+                    mid_x = int(size * 0.5)
+                    if yaw > 0.65:
+                        m[:, mid_x:] *= max(0.0, 1.0 - (yaw - 0.65) * 1.5)
+                    else:
+                        m[:, :mid_x] *= max(0.0, 1.0 - (-yaw - 0.65) * 1.5)
+            except Exception:
+                pass
         with self._route_lock:
             self._seen_faces += 1
             self._mixed_faces += 1
@@ -1107,6 +1125,9 @@ class FaceSwapInsightFace():
         size = int(temp_frame.shape[-1])
         try:
             ctx = getattr(self._plate_tls, 'ctx', None)
+            if ctx is None and target_face is not None:
+                ctx = (getattr(target_face, 'plate_ctx', None) if hasattr(target_face, 'plate_ctx')
+                       else target_face.get('plate_ctx') if isinstance(target_face, dict) else None)
             with self._route_lock:
                 if ctx is not None:
                     self._plate_crops += 1
@@ -1208,7 +1229,7 @@ class FaceSwapInsightFace():
         if getattr(self, 'secondary', None) is not None:
             other = self._run_secondary(source_face, target_face, temp_frame)
             if other is not None:
-                out = self._mix_outputs(out, other, int(temp_frame.shape[-1]))
+                out = self._mix_outputs(out, other, int(temp_frame.shape[-1]), target_face=target_face)
         return out
 
     def _sequential_fallback(self, requests: list) -> list:

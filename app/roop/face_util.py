@@ -899,7 +899,11 @@ def _upright_remeasure(frame, faces):
             cand, tilt = best
             if tilt is None or otilt is None:
                 continue
-            if abs(tilt) < abs(otilt) - 5.0:
+            emb_c = getattr(cand, 'embedding', None)
+            emb_o = getattr(orig, 'embedding', None)
+            nc = float(np.linalg.norm(emb_c)) if emb_c is not None else 0.0
+            no = float(np.linalg.norm(emb_o)) if emb_o is not None else 0.0
+            if nc > no + 2.0 or abs(tilt) < abs(otilt) - 5.0 or (abs(tilt) < 65.0 and nc >= no - 0.5):
                 faces[i] = cand
     return faces
 
@@ -1327,10 +1331,21 @@ def face_down_axis(face):
     engine emits (align_crop already depends on them) so this still works where
     the landmarks are unavailable.
     """
-    axis = _axis_from_68(face)
-    if axis is not None:
-        return axis
-    return _axis_from_kps(face)
+    axis_kps = _axis_from_kps(face)
+    axis_68 = _axis_from_68(face)
+    if axis_kps is not None and axis_68 is not None:
+        tilt_kps = _tilt_from_axis(axis_kps)
+        tilt_68 = _tilt_from_axis(axis_68)
+        if tilt_kps is not None and tilt_68 is not None:
+            # If kps detects inverted face (|tilt_kps| > 90) but 68 reports upright (|tilt_68| < 50),
+            # 68 landmark model hallucinated upright landmarks on inverted crop -> trust kps!
+            if abs(tilt_kps) > 90.0 and abs(tilt_68) < 50.0:
+                return axis_kps
+            if abs((tilt_kps - tilt_68 + 180.0) % 360.0 - 180.0) > 90.0:
+                return axis_kps
+    if axis_68 is not None:
+        return axis_68
+    return axis_kps
 
 
 def face_roll_tilt(face):
@@ -1365,15 +1380,32 @@ def face_rotation_action(face, frame_shape=None):
     preview) both call this, so the render and the preview can never disagree
     about orientation.
     """
+    # 0. Check 3D pose inversion via solve_pose_5pt:
+    kps = getattr(face, 'kps', None)
+    if kps is not None and len(kps) >= 5:
+        try:
+            roll, pitch, yaw = solve_pose_5pt(kps)
+            if abs(yaw) > 110.0 or abs(pitch) > 75.0:
+                return "rotate_180"
+        except Exception:
+            pass
+
     # 1. Keypoint midline — measured worst-case error 9.1 deg under any pose.
     axis = face_down_axis(face)
     if axis is not None:
         action = _action_for_down_axis(*axis)
         if action is not None:
             return action
-        return None     # a trustworthy axis said "upright"; do not second-guess it
 
-    # 2. 106-point midline, when the detector supplies it but keypoints are
+    # 2. Check for inverted face (180 deg) when keypoints were hallucinated upright
+    # on an upside-down face (which yields low embedding norm < 17.5 and det_score < 0.70):
+    emb = getattr(face, 'embedding', None)
+    emb_norm = float(np.linalg.norm(emb)) if emb is not None else 20.0
+    det_score = float(getattr(face, 'det_score', 1.0) or 1.0)
+    if emb_norm < 17.5 and det_score < 0.70:
+        return "rotate_180"
+
+    # 3. 106-point midline, when the detector supplies it but keypoints are
     #    degenerate. forehead[72] -> chin[0] is the same midline measurement.
     lm106 = getattr(face, 'landmark_2d_106', None)
     if lm106 is not None and len(lm106) > 72:
@@ -1381,18 +1413,16 @@ def face_rotation_action(face, frame_shape=None):
                                        float(lm106[0][1]) - float(lm106[72][1]))
         if action is not None:
             return action
-        return None
 
-    # 3. Last resort: a bbox wider than it is tall means a face on its side, but
+    # 4. Last resort: a bbox wider than it is tall means a face on its side, but
     #    carries no sign, so guess from which half of the frame it sits in.
-    if frame_shape is None:
-        return None
-    bbox_w = float(face.bbox[2]) - float(face.bbox[0])
-    bbox_h = float(face.bbox[3]) - float(face.bbox[1])
-    if bbox_w > 1.1 * bbox_h:
-        width = frame_shape[1]
-        bbox_cx = float(face.bbox[0]) + bbox_w / 2.0
-        return "rotate_anticlockwise" if bbox_cx >= width / 2.0 else "rotate_clockwise"
+    if frame_shape is not None:
+        bbox_w = float(face.bbox[2]) - float(face.bbox[0])
+        bbox_h = float(face.bbox[3]) - float(face.bbox[1])
+        if bbox_w > 1.1 * bbox_h:
+            width = frame_shape[1]
+            bbox_cx = float(face.bbox[0]) + bbox_w / 2.0
+            return "rotate_anticlockwise" if bbox_cx >= width / 2.0 else "rotate_clockwise"
     return None
 
 
@@ -1404,11 +1434,29 @@ def rotation_improves_upright(before_face, after_face):
     than it started (or stood it on its head) is rejected, so a bad call costs
     an unrotated swap instead of a corrupted one.
     """
+    if before_face is None or after_face is None:
+        return True
+    kps_b = getattr(before_face, 'kps', None)
+    kps_a = getattr(after_face, 'kps', None)
+    if kps_b is not None and kps_a is not None and len(kps_b) >= 5 and len(kps_a) >= 5:
+        try:
+            _, _, yb = solve_pose_5pt(kps_b)
+            _, _, ya = solve_pose_5pt(kps_a)
+            if abs(yb) > 110.0 and abs(ya) < 80.0:
+                return True
+        except Exception:
+            pass
+    emb_b = getattr(before_face, 'embedding', None)
+    emb_a = getattr(after_face, 'embedding', None)
+    nb = float(np.linalg.norm(emb_b)) if emb_b is not None else 0.0
+    na = float(np.linalg.norm(emb_a)) if emb_a is not None else 0.0
+    if na > nb + 2.0:
+        return True
     before = face_roll_tilt(before_face)
     after = face_roll_tilt(after_face)
     if before is None or after is None:
         return True     # nothing to judge with; keep the pre-existing behaviour
-    return abs(after) < abs(before) - 5.0
+    return abs(after) < abs(before) - 5.0 or (abs(after) < 65.0 and na >= nb - 0.5)
 
 
 # alignment code from insightface https://github.com/deepinsight/insightface/blob/master/python-package/insightface/utils/face_align.py
@@ -2455,7 +2503,11 @@ def swap_moved_the_face(result, plate_kps, bbox, tol=None, rotation_action=None)
         if kps.shape[0] < 5:
             return False
         interocular = float(np.linalg.norm(kps[0] - kps[1]))
-        if not (interocular > 1e-6):
+        extent = float(np.linalg.norm(kps - kps.mean(axis=0), axis=1).mean())
+        # On profile faces, the interocular distance collapses along the line of sight.
+        # When shape checking is enabled, floor scale by physical extent to prevent false unswaps.
+        scale = interocular if (SWAP_SHAPE_TOL <= 0) else max(interocular, extent * 0.70)
+        if not (scale > 1e-6):
             return False
         found = detect_boxes_in_roi(result, bbox, pad_ratio=0.6,
                                     rotation_action=rotation_action)
@@ -2475,7 +2527,7 @@ def swap_moved_the_face(result, plate_kps, bbox, tol=None, rotation_action=None)
             return False
         best = max(found, key=lambda f: _bbox_iou_1d(f.bbox, bbox))
         k2 = np.asarray(best.kps, dtype=np.float64)
-        moved = float(np.linalg.norm(k2 - kps, axis=1).mean() / interocular)
+        moved = float(np.linalg.norm(k2 - kps, axis=1).mean() / scale)
         if moved <= float(tol):
             return False
         # ...and the constellation must actually have changed shape, not just

@@ -3100,7 +3100,7 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
             if not VERIFY_SWAP:
                 return False
             if rotation_action is not None:
-                return True
+                return False     # autorotate is already verified via rotation_improves_upright
             yaw, pitch = head_angles()
             return (abs(float(yaw)) >= VERIFY_MIN_OFFAXIS
                     or abs(float(pitch)) >= VERIFY_MIN_OFFAXIS)
@@ -3240,7 +3240,7 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                 (startX, startY, endX, endY) = target_face["bbox"].astype("int")
                 width = endX - startX
                 height = endY - startY
-                offs = int(max(width, height) * 0.25)
+                offs = int(max(width, height) * 0.45)
                 rotcutframe, startX, startY, endX, endY = self.cutout(frame, startX - offs, startY - offs, endX + offs, endY + offs)
                 rotcutframe = self.apply_rotation(rotcutframe, rotation_action)
                 # Cut the plate over the SAME box, so reads keep coming from the
@@ -3571,12 +3571,16 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                 # into interleaved tiles has no plate-space equivalent, and a
                 # frontalized crop has been warped after alignment. Both default
                 # off. `is` and not `==`: frontalization returns a new array.
+                _usable_ctx = (subsample_total == 1
+                               and subsample_size == model_output_size
+                               and aligned_for_swap is aligned_img)
                 if hasattr(p, 'set_plate_context'):
-                    p.set_plate_context(
-                        plate, M,
-                        subsample_total == 1
-                        and subsample_size == model_output_size
-                        and aligned_for_swap is aligned_img)
+                    p.set_plate_context(plate, M, _usable_ctx)
+                if target_face is not None:
+                    try:
+                        target_face.plate_ctx = (plate, M) if _usable_ctx else None
+                    except Exception:
+                        pass
                 subsample_frames = self.implode_pixel_boost(aligned_for_swap, model_output_size, subsample_total)
                 # Only skip the global GPU lock when THIS processor owns a real
                 # SessionPool (per-thread TRT contexts). Without one, concurrent

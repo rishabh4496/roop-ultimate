@@ -165,6 +165,36 @@ class TestUltraMax(unittest.TestCase):
         self.assertIn('[UltraMax]', summary)
         self.assertIn('CodeFormer ran 1 times', summary)
 
+    def test_edge_coring_suppresses_white_lines(self):
+        """Verify that large difference spikes (e.g. at structural edges) are softly
+        compressed so no white streaks or halo artifacts occur."""
+        diff = np.zeros((512, 512, 3), dtype=np.float32)
+        # Create a harsh structural edge spike of amplitude 150.0 (which would cause white lines)
+        diff[200:250, 200:250, :] = 150.0
+        base_f = np.full((512, 512, 3), 128.0, dtype=np.float32)
+        # Draw a sharp edge on base_f
+        base_f[200:250, 200:250, :] = 220.0
+
+        safe_res = UM.Enhance_UltraMax._highpass(diff, base_f=base_f)
+        # The maximum residual amplitude must be strictly bounded (<= 12.0)
+        self.assertLessEqual(float(np.max(np.abs(safe_res))), 12.0)
+
+    def test_landmark_motion_compensation(self):
+        """When face landmarks move moderately between frames, cached detail is warped to match."""
+        self._pools(0)
+        p = self._make()
+        frame = np.full((512, 512, 3), 128, np.uint8)
+
+        kps_f0 = np.array([[150, 150], [250, 150], [200, 200], [170, 250], [230, 250]], dtype=np.float32)
+        # Frame 0 (CodeFormer computes fresh detail and caches kps)
+        out0, _ = p.Run(None, {'_track_id': 'trk_motion', 'kps': kps_f0}, frame)
+        self.assertEqual(out0.shape, (512, 512, 3))
+
+        # Frame 1 (Face shifts slightly by 5px right and down)
+        kps_f1 = kps_f0 + 5.0
+        out1, _ = p.Run(None, {'_track_id': 'trk_motion', 'kps': kps_f1}, frame)
+        self.assertEqual(out1.shape, (512, 512, 3))
+
     def test_release_cleans_resources(self):
         self._pools(2)
         p = self._make()

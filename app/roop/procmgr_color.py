@@ -38,7 +38,9 @@ class ColorTransferMixin:
         # and "structure" stays perceptually constant across 256 / 512 / 1024 crops.
         sigma = max(1.0, fw / 256.0)
         high_freq = orig - cv2.GaussianBlur(orig, (0, 0), sigma)
-        out = face + s * high_freq
+        # Soft-knee coring: suppress sharp edge transitions to prevent white lines/halos
+        core = np.exp(-((high_freq / 20.0) ** 2))
+        out = face + s * high_freq * core
         return np.clip(out, 0, 255).astype(np.uint8)
 
     def apply_color_transfer(self, source, target):

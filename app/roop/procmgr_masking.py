@@ -330,7 +330,7 @@ class MaskingMixin:
         elif mask.shape[2] == 3:
             mask = mask[:, :, :1]   # collapse to single channel
         blended_image = image1.astype(np.float32) * (1.0 - mask) + image2.astype(np.float32) * mask
-        return blended_image.astype(np.uint8)
+        return np.clip(blended_image, 0, 255).astype(np.uint8)
 
     def paste_upscale(self, fake_face, upsk_face, M, target_img, scale_factor, mask_offsets, face_landmarks=None, face_kps=None, region=None, model_mask=None, model_mask_weight=0.0):
         M_scale = M * scale_factor
@@ -415,19 +415,35 @@ class MaskingMixin:
             fake_face = cv2.warpAffine(fake_face, IM, (target_img.shape[1], target_img.shape[0]), borderMode=cv2.BORDER_REPLICATE)
             paste_face = cv2.addWeighted(paste_face, self.options.blend_ratio, fake_face, 1.0 - self.options.blend_ratio, 0)
 
-        paste_face = img_matte * paste_face
-        paste_face = paste_face + (1 - img_matte) * target_img.astype(np.float32)
+        # Bounded ROI blending: only convert the active face region to float32
+        # to avoid out-of-memory errors on 4K/8K multi-threaded rendering.
+        matte_2d = img_matte if img_matte.ndim == 2 else img_matte[:, :, 0]
+        nz_y, nz_x = np.where(matte_2d > 0.001)
+        if len(nz_y) == 0:
+            return target_img
+
+        y0, y1 = max(0, int(nz_y.min()) - 2), min(target_img.shape[0], int(nz_y.max()) + 3)
+        x0, x1 = max(0, int(nz_x.min()) - 2), min(target_img.shape[1], int(nz_x.max()) + 3)
+
+        roi_matte = img_matte[y0:y1, x0:x1]
+        if roi_matte.ndim == 2:
+            roi_matte = roi_matte[:, :, None]
+
+        roi_paste = paste_face[y0:y1, x0:x1].astype(np.float32)
+        roi_target = target_img[y0:y1, x0:x1].astype(np.float32)
+
+        blended_roi = roi_matte * roi_paste + (1.0 - roi_matte) * roi_target
+
+        out_img = target_img.copy()
+        out_img[y0:y1, x0:x1] = np.clip(blended_roi, 0, 255).astype(np.uint8)
 
         if self.options.show_face_area_overlay:
-            # Gradient overlay: green in the core (mask≈1), yellow/orange at the
-            # edge blend zone (mask≈0.5), invisible outside (mask≈0).
-            # G channel scales with mask strength; R channel peaks mid-transition.
             overlay = np.zeros_like(target_img, dtype=np.uint8)
             overlay[:, :, 1] = (mask_2d * 200).astype(np.uint8)
             overlay[:, :, 2] = np.clip((1.0 - mask_2d) * mask_2d * 4 * 255, 0, 255).astype(np.uint8)
-            paste_face = cv2.addWeighted(paste_face.astype(np.uint8), 0.6, overlay, 0.4, 0)
+            out_img = cv2.addWeighted(out_img, 0.6, overlay, 0.4, 0)
 
-        return paste_face.astype(np.uint8)
+        return out_img
 
 
     @classmethod

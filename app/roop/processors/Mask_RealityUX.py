@@ -124,17 +124,24 @@ class Mask_RealityUX():
         xseg_mask = out['xseg']
         labels = out['labels']                                   # (512,512) class ids
 
-        # 1.0 wherever BiSeNet confidently labels this pixel as one of the
-        # strict non-face classes (see _NONFACE_STRICT above). Blurred the
-        # same way Mask_FaceParser.Run() blurs its own boundary, so the edge
-        # softness matches what XSeg's output already looks like.
-        non_face = np.isin(labels, _NONFACE_STRICT).astype(np.float32)
-        non_face = cv2.GaussianBlur(non_face, (0, 0), sigmaX=3)
-        non_face = np.clip(non_face, 0.0, 1.0)
+        # Classes BiSeNet is allowed to subtract from XSeg's swap region:
+        # non-face accessories/features -- ears(7,8,9), cloth(16), hair(17), hat(18).
+        # Background class (0) is NEVER subtracted from the XSeg face region because
+        # BiSeNet's frontal priors falsely mark angled/lying-down faces as background,
+        # which causes partial/half-unswapped faces.
+        is_accessory = np.isin(labels, [7, 8, 9, 16, 17, 18]).astype(np.float32)
 
-        h, w = non_face.shape[:2]
+        # Smooth accessory mask
+        is_accessory = cv2.GaussianBlur(is_accessory, (0, 0), sigmaX=3)
+
+        h, w = labels.shape[:2]
         if xseg_mask.shape[:2] != (h, w):
             xseg_mask = cv2.resize(xseg_mask, (w, h), interpolation=cv2.INTER_LINEAR)
+
+        # Accessories are only subtracted outside the core facial structure (xseg_mask > 0.05)
+        # to ensure full face swapping without half-face cutoffs.
+        accessory_allowed = np.clip((xseg_mask - 0.05) / 0.20, 0.0, 1.0)
+        non_face = np.clip(is_accessory * accessory_allowed, 0.0, 1.0)
 
         combined = np.maximum(xseg_mask, non_face)
         return combined.astype(np.float32)

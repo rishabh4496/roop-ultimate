@@ -97,6 +97,9 @@ def roll_from_face(face):
     are degenerate (e.g. a synthetic fixture that never set them) or the model
     didn't place them usefully.
     """
+    kps = face.get("kps") if isinstance(face, dict) else getattr(face, "kps", None)
+    rk = roll_from_kps(kps)
+    r68 = None
     lm = face.get("landmark_3d_68") if isinstance(face, dict) \
         else getattr(face, "landmark_3d_68", None)
     if lm is not None:
@@ -106,16 +109,25 @@ def roll_from_face(face):
                 nasion, chin = pts[27], pts[8]
                 nc = chin - nasion
                 if float(np.hypot(nc[0], nc[1])) >= 1e-3:
-                    return float(np.degrees(np.arctan2(nc[0], nc[1])))
-                eye = (pts[36:42].mean(axis=0) + pts[42:48].mean(axis=0)) / 2.0
-                mouth = (pts[48] + pts[54]) / 2.0
-                ax = mouth - eye
-                if float(np.hypot(ax[0], ax[1])) >= 1e-3:
-                    return float(np.degrees(np.arctan2(ax[0], ax[1])))
+                    r68 = float(np.degrees(np.arctan2(nc[0], nc[1])))
+                else:
+                    eye = (pts[36:42].mean(axis=0) + pts[42:48].mean(axis=0)) / 2.0
+                    mouth = (pts[48] + pts[54]) / 2.0
+                    ax = mouth - eye
+                    if float(np.hypot(ax[0], ax[1])) >= 1e-3:
+                        r68 = float(np.degrees(np.arctan2(ax[0], ax[1])))
         except Exception:
             pass
-    kps = face.get("kps") if isinstance(face, dict) else getattr(face, "kps", None)
-    return roll_from_kps(kps)
+
+    if rk is not None and r68 is not None:
+        # If detector keypoints indicate an inverted/upside-down face (|rk| > 90) but 68 landmarks
+        # hallucinated an upright face (|r68| < 50), 3D-68 model failed on the inverted crop.
+        if abs(wrap180(rk)) > 90.0 and abs(wrap180(r68)) < 50.0:
+            return rk
+        if abs(angdiff(rk, r68)) > 90.0:
+            return rk
+
+    return r68 if r68 is not None else rk
 
 
 def roll_from_kps(kps):
