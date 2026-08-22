@@ -12,19 +12,14 @@ import roop.globals
 
 class ColorTransferMixin:
     def apply_detail_transfer(self, face_img, orig_crop, strength):
-        """Inject the original target crop's high-frequency detail onto the
-        swapped/enhanced face.
+        """Inject the original target crop's high-frequency detail and dark spots (moles,
+        freckles, beauty marks) onto the swapped/enhanced face.
 
         `face_img` = swapped or enhanced crop, `orig_crop` = original aligned
         crop (same face-template space, possibly a different resolution). We take
         the zero-mean high-pass of the original (orig − Gaussian-blur(orig)) and
-        add `strength`× of it to the face, so the face keeps its own low
-        frequencies (identity, color, lighting from the swap/enhancer) but gains
-        the REAL fine texture (pores, stubble, grain) from the footage — which
-        the generator smooths away and the enhancer only fakes. Because the
-        high-pass is zero-mean, brightness/color are unchanged.
-
-        strength<=0 returns the input untouched (bit-identical no-op)."""
+        add `strength`× of it to the face, plus preserve localized dark melanin spots (moles/freckles).
+        """
         s = float(strength)
         if s <= 0.0:
             return face_img
@@ -37,10 +32,22 @@ class ColorTransferMixin:
         # Blur radius scales with crop resolution so the split between "texture"
         # and "structure" stays perceptually constant across 256 / 512 / 1024 crops.
         sigma = max(1.0, fw / 256.0)
-        high_freq = orig - cv2.GaussianBlur(orig, (0, 0), sigma)
+        orig_blur = cv2.GaussianBlur(orig, (0, 0), sigma)
+        high_freq = orig - orig_blur
         # Soft-knee coring: suppress sharp edge transitions to prevent white lines/halos
         core = np.exp(-((high_freq / 20.0) ** 2))
-        out = face + s * high_freq * core
+
+        # Dark spot / mole / beauty mark preservation:
+        # Moles and dark spots are localized negative luminance dips in the original plate.
+        # Preserve genuine dermal dark spots without letting enhancers airbrush them away.
+        orig_gray = cv2.cvtColor(np.clip(orig, 0.0, 255.0).astype(np.uint8), cv2.COLOR_BGR2GRAY).astype(np.float32)
+        blur_gray = cv2.cvtColor(np.clip(orig_blur, 0.0, 255.0).astype(np.uint8), cv2.COLOR_BGR2GRAY).astype(np.float32)
+        spot_diff = orig_gray - blur_gray  # negative in dark spots/moles
+        # Isolate genuine dark spots (negative delta with magnitude > 5.0)
+        dark_spots = np.clip(-spot_diff - 4.0, 0.0, 60.0)[:, :, np.newaxis]
+        dark_spot_layer = -dark_spots * min(1.0, max(0.5, s * 1.25))
+
+        out = face + s * high_freq * core + dark_spot_layer
         return np.clip(out, 0, 255).astype(np.uint8)
 
     def apply_color_transfer(self, source, target):

@@ -1082,7 +1082,10 @@ class FaceSwapInsightFace():
         with self._route_lock:
             self._seen_faces += 1
             self._mixed_faces += 1
-        return primary * (1.0 - m) + secondary * m
+        # RealSwap composite: hyperswap 85% + hififace 15% base face,
+        # with eyelashes from hififace only (transitioning to 100% hififace on eyelash band m)
+        base = primary * 0.85 + secondary * 0.15
+        return base * (1.0 - m) + secondary * m
 
     def mix_summary(self):
         """One line on how many faces were composited, or None for a single-net

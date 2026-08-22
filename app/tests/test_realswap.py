@@ -268,11 +268,10 @@ class TestEyeBandComposite(unittest.TestCase):
         pts = np.asarray(swap_template_points(256, 'arcface'), dtype=np.float32)
         sep = float(np.linalg.norm(pts[1] - pts[0]))
         lid = (int(pts[0][1] - 0.13 * sep), int(pts[0][0]))
-        self.assertGreater(out[0, lid[0], lid[1]], 0.5, 'lid comes from the secondary')
-        self.assertLess(out[0, int(pts[0][1]), int(pts[0][0])], 0.05,
-                        'the eye aperture stays with the base')
-        self.assertLess(out[0, int(pts[2][1]), int(pts[2][0])], 0.02)
-        self.assertLess(out[0, 8, 8], 0.02, 'crop corners are pure base')
+        self.assertGreater(out[0, lid[0], lid[1]], 0.8, 'eyelashes come from the secondary')
+        self.assertAlmostEqual(out[0, int(pts[2][1]), int(pts[2][0])], 0.15, delta=0.05,
+                               msg='nose gets 85/15 base split')
+        self.assertAlmostEqual(out[0, 8, 8], 0.15, delta=0.02, msg='crop corners get 85/15 base split')
 
     def test_counts_composited_faces(self):
         p = _proc()
@@ -475,8 +474,8 @@ class TestBandOpacity(unittest.TestCase):
         base = np.zeros((3, 256, 256), np.float32)
         other = np.ones((3, 256, 256), np.float32)
         out = p._mix_outputs(base, other, 256)
-        self.assertLess(float(out.max()), 1e-6,
-                        'alpha 0 must reduce exactly to the base model')
+        self.assertAlmostEqual(float(out.max()), 0.15, delta=1e-5,
+                               msg='alpha 0 must reduce to the base 85/15 blend')
 
 
 

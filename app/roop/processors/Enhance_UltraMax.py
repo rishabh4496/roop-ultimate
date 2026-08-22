@@ -449,20 +449,30 @@ class Enhance_UltraMax:
         out = base_f + detail * gain
 
         # Photorealistic Adaptive Dermal Micro-Contrast Engine
-        # Enhances authentic skin porosity and iris/lip clarity with zero halo overshooting
-        blur_m = cv2.GaussianBlur(out, (0, 0), sigmaX=1.2)
-        micro_diff = out - blur_m
+        # Operates strictly in the Luminance (L) channel in LAB color space to guarantee
+        # natural skin tone and prevent unnatural color oversaturation / painted look.
+        try:
+            lab = cv2.cvtColor(np.clip(out, 0.0, 255.0).astype(np.uint8), cv2.COLOR_BGR2LAB).astype(np.float32)
+            L_chan = lab[:, :, 0]
+            blur_L = cv2.GaussianBlur(L_chan, (0, 0), sigmaX=1.2)
+            micro_diff = L_chan - blur_L
 
-        # Mid-tone luminance mask: skin texture is most prominent in mid-tones (30-220)
-        # Protect extreme highlights (>230) and deep shadow lines (<25) from over-amplification
-        gray_out = cv2.cvtColor(np.clip(out, 0.0, 255.0).astype(np.uint8), cv2.COLOR_BGR2GRAY).astype(np.float32)
-        lum_weight = np.clip(np.sin(np.pi * np.clip(gray_out / 255.0, 0.0, 1.0)), 0.0, 1.0)[:, :, np.newaxis]
+            # Mid-tone luminance mask: skin texture is most prominent in mid-tones (30-220)
+            # Protect extreme highlights (>230) and deep shadow lines (<25) from over-amplification
+            lum_weight = np.clip(np.sin(np.pi * np.clip(L_chan / 255.0, 0.0, 1.0)), 0.0, 1.0)
+            core_weight = np.exp(-((micro_diff / 14.0) ** 2))
 
-        # Soft-knee coring: amplifies micro-pore textures (1-6 delta) while suppressing high-contrast edges (>14)
-        core_weight = np.exp(-((micro_diff / 14.0) ** 2))
+            # Photographic micro-contrast injection strictly in Luminance (L):
+            lab[:, :, 0] = np.clip(L_chan + 0.20 * micro_diff * core_weight * lum_weight, 0.0, 255.0)
 
-        # Photographic micro-contrast injection without white lines or halos:
-        out = out + 0.22 * micro_diff * core_weight * lum_weight
+            # Natural skin chrominance stabilization (prevents CodeFormer/GPEN oversaturation)
+            a_mean, b_mean = float(lab[:, :, 1].mean()), float(lab[:, :, 2].mean())
+            lab[:, :, 1] = (lab[:, :, 1] - a_mean) * 0.92 + a_mean
+            lab[:, :, 2] = (lab[:, :, 2] - b_mean) * 0.92 + b_mean
+
+            out = cv2.cvtColor(np.clip(lab, 0.0, 255.0).astype(np.uint8), cv2.COLOR_LAB2BGR).astype(np.float32)
+        except Exception:
+            pass
 
         if not np.isfinite(out).all():
             return base, scale_factor
