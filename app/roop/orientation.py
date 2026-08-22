@@ -121,11 +121,13 @@ def roll_from_face(face):
 
     if rk is not None and r68 is not None:
         # If detector keypoints indicate an inverted/upside-down face (|rk| > 90) but 68 landmarks
-        # hallucinated an upright face (|r68| < 50), 3D-68 model failed on the inverted crop.
+        # hallucinated an upright face (|r68| < 50), 3D-68 model failed on the inverted crop -> trust kps.
         if abs(wrap180(rk)) > 90.0 and abs(wrap180(r68)) < 50.0:
             return rk
+        if abs(wrap180(r68)) > 90.0 and abs(wrap180(rk)) < 50.0:
+            return r68
         if abs(angdiff(rk, r68)) > 90.0:
-            return rk
+            return rk if abs(wrap180(rk)) > 90.0 else r68
 
     return r68 if r68 is not None else rk
 

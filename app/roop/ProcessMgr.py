@@ -3100,7 +3100,7 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
             if not VERIFY_SWAP:
                 return False
             if rotation_action is not None:
-                return False     # autorotate is already verified via rotation_improves_upright
+                return True
             yaw, pitch = head_angles()
             return (abs(float(yaw)) >= VERIFY_MIN_OFFAXIS
                     or abs(float(pitch)) >= VERIFY_MIN_OFFAXIS)

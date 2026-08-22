@@ -797,6 +797,12 @@ def _progress_every() -> int:
             return max(1, int(raw))
         except (TypeError, ValueError):
             pass
+    resume_chunk = os.environ.get("ROOP_RESUME_CHUNK")
+    if resume_chunk is not None:
+        try:
+            return max(1, int(resume_chunk))
+        except (TypeError, ValueError):
+            pass
     return 25
 
 

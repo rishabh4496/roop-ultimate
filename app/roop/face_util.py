@@ -1341,8 +1341,10 @@ def face_down_axis(face):
             # 68 landmark model hallucinated upright landmarks on inverted crop -> trust kps!
             if abs(tilt_kps) > 90.0 and abs(tilt_68) < 50.0:
                 return axis_kps
+            if abs(tilt_68) > 90.0 and abs(tilt_kps) < 50.0:
+                return axis_68
             if abs((tilt_kps - tilt_68 + 180.0) % 360.0 - 180.0) > 90.0:
-                return axis_kps
+                return axis_kps if abs(tilt_kps) > 90.0 else axis_68
     if axis_68 is not None:
         return axis_68
     return axis_kps
@@ -1380,32 +1382,15 @@ def face_rotation_action(face, frame_shape=None):
     preview) both call this, so the render and the preview can never disagree
     about orientation.
     """
-    # 0. Check 3D pose inversion via solve_pose_5pt:
-    kps = getattr(face, 'kps', None)
-    if kps is not None and len(kps) >= 5:
-        try:
-            roll, pitch, yaw = solve_pose_5pt(kps)
-            if abs(yaw) > 110.0 or abs(pitch) > 75.0:
-                return "rotate_180"
-        except Exception:
-            pass
-
     # 1. Keypoint midline — measured worst-case error 9.1 deg under any pose.
     axis = face_down_axis(face)
     if axis is not None:
         action = _action_for_down_axis(*axis)
         if action is not None:
             return action
+        return None     # a trustworthy axis said "upright"; do not second-guess it
 
-    # 2. Check for inverted face (180 deg) when keypoints were hallucinated upright
-    # on an upside-down face (which yields low embedding norm < 17.5 and det_score < 0.70):
-    emb = getattr(face, 'embedding', None)
-    emb_norm = float(np.linalg.norm(emb)) if emb is not None else 20.0
-    det_score = float(getattr(face, 'det_score', 1.0) or 1.0)
-    if emb_norm < 17.5 and det_score < 0.70:
-        return "rotate_180"
-
-    # 3. 106-point midline, when the detector supplies it but keypoints are
+    # 2. 106-point midline, when the detector supplies it but keypoints are
     #    degenerate. forehead[72] -> chin[0] is the same midline measurement.
     lm106 = getattr(face, 'landmark_2d_106', None)
     if lm106 is not None and len(lm106) > 72:
@@ -1413,6 +1398,7 @@ def face_rotation_action(face, frame_shape=None):
                                        float(lm106[0][1]) - float(lm106[72][1]))
         if action is not None:
             return action
+        return None
 
     # 4. Last resort: a bbox wider than it is tall means a face on its side, but
     #    carries no sign, so guess from which half of the frame it sits in.
