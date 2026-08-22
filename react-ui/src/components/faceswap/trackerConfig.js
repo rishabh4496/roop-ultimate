@@ -223,6 +223,22 @@ export const TRACKER_SLIDERS = [
     info: 'Bicubic down-and-up, to match a soft or heavily compressed plate that a '
         + 'crisp 512px swap does not belong in.',
   },
+  {
+    key: 'merger_clarity',
+    group: GROUP_MERGER,
+    label: 'Clarity',
+    min: 0,
+    max: 1,
+    step: 0.05,
+    defaultVal: 1,
+    bypassVal: 0,
+    format: (v) => Number(v ?? 0).toFixed(2),
+    info: 'LAB micro-clarity on luminance plus a soft-knee bound on chrominance: '
+        + 'crispens iris rims, lid creases and lip margins without ringing, and '
+        + 'holds skin tone back from the neon-orange drift a restorer can add. '
+        + 'Was baked into UltraMax; 1.0 is exactly what it applied, and it now '
+        + 'works with any enhancer.',
+  },
 ];
 
 export const TRACKER_DEFAULT_VALUES = Object.fromEntries(

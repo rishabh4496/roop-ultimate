@@ -2291,6 +2291,7 @@ def _apply_merger_settings(payload):
                          ("merger_motion_blur", 0.0),
                          ("merger_grain_match", 0.0),
                          ("merger_degrade", 0.0),
+                         ("merger_clarity", 0.0),
                          ("output_face_scale", 0.0)):
         fallback = getattr(roop_globals.CFG, key, default)
         try:

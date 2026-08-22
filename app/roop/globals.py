@@ -118,6 +118,7 @@ merger_sharpen = 0.0
 merger_motion_blur = 0.0
 merger_grain_match = 0.0
 merger_degrade = 0.0
+merger_clarity = 0.0
 # Grow/shrink the pasted face about its own centre (DFL's output_face_scale).
 # Identity swappers keep the TARGET's head size, so this is the only lever when
 # the source person's face is visibly narrower or broader. 0 = off (no-op).

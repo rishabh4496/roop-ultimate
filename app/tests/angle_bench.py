@@ -147,6 +147,23 @@ def init_pipeline(provider, swap_model, enhancer, mask_engine,
     # The default is kept at 0.0 so those saved arms stay comparable; pass the
     # production value explicitly to measure what the user actually renders.
     g.swap_model_mask_strength = float(swap_model_mask_strength)
+
+    # The DFL merger post-ops, from CFG, exactly the way api.py's shared merger
+    # helper does it for the real run. Same trap as the swap-model mask above
+    # and it bit again on 2026-08-23: these live on roop.globals, ONLY api.py
+    # ever populated them, and roop.globals' own defaults are 0.0 -- so every
+    # arm this harness has ever rendered ran with hist/sharpen/grain/degrade
+    # OFF while production ran 0.4 / 0.35 / 0.45 / 0. Arms remain comparable to
+    # each OTHER (both sides were equally off), but nothing measured here
+    # included the merger stage, and a feature that lives in that stage
+    # measured as doing nothing at all.
+    for _k in ("merger_hist_match", "merger_sharpen", "merger_motion_blur",
+               "merger_grain_match", "merger_degrade", "merger_clarity",
+               "output_face_scale"):
+        try:
+            setattr(g, _k, float(getattr(g.CFG, _k, 0.0) or 0.0))
+        except (TypeError, ValueError):
+            setattr(g, _k, 0.0)
     return g
 
 

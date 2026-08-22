@@ -146,7 +146,8 @@ class GroupingHoldsTogether(unittest.TestCase):
         self.assertEqual(
             merger,
             {'merger_hist_match', 'merger_sharpen', 'merger_motion_blur',
-             'merger_grain_match', 'merger_degrade', 'output_face_scale'})
+             'merger_grain_match', 'merger_degrade', 'merger_clarity',
+             'output_face_scale'})
 
     def test_the_bar_renders_by_group(self):
         """A flat TRACKER_SLIDERS.map in the render would ignore the sections

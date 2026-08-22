@@ -41,6 +41,7 @@ const sigPayload = (p) => ({
   merger_motion_blur: num(p.merger_motion_blur, 0),
   merger_grain_match: num(p.merger_grain_match, 0),
   merger_degrade: num(p.merger_degrade, 0),
+  merger_clarity: num(p.merger_clarity, 0),
 });
 
 // Rough wall-clock cost of a frame from the settings alone, used before there
@@ -94,7 +95,7 @@ export default function useRuntimeEstimate({
       p.temporal_detection, p.mask_engine, p.stabilize_face, p.stabilize_enhancer,
       p.stabilize_mask, p.expression_restore_strength, p.upscale_after_swap,
       p.merger_hist_match, p.merger_sharpen, p.merger_motion_blur,
-      p.merger_grain_match, p.merger_degrade]);
+      p.merger_grain_match, p.merger_degrade, p.merger_clarity]);
   /* eslint-enable react-hooks/exhaustive-deps */
 
   const heuristicPerFrame = heuristicMsPerFrame(p, threads);

@@ -228,6 +228,11 @@ class Settings:
         self.merger_motion_blur = self.default_get(data, 'merger_motion_blur', 0.0)
         self.merger_grain_match = self.default_get(data, 'merger_grain_match', 0.45)
         self.merger_degrade = self.default_get(data, 'merger_degrade', 0.0)
+        # 1.0 reproduces exactly what Enhance_UltraMax used to apply to its own
+        # output, so moving the filter out here is behaviour-preserving for a
+        # config already on UltraMax, and gives every other enhancer the same
+        # look for one LAB round trip.
+        self.merger_clarity = self.default_get(data, 'merger_clarity', 1.0)
         # Grow/shrink the pasted face about its own centre (DFL output_face_scale)
         self.output_face_scale = self.default_get(data, 'output_face_scale', 0.0)
         # Expression restorer (LivePortrait) — see roop.globals
@@ -417,6 +422,7 @@ class Settings:
             'merger_motion_blur': self.merger_motion_blur,
             'merger_grain_match': self.merger_grain_match,
             'merger_degrade': self.merger_degrade,
+            'merger_clarity': self.merger_clarity,
             'output_face_scale': self.output_face_scale,
             'expression_restore_strength': self.expression_restore_strength,
             'expression_restore_region': self.expression_restore_region,

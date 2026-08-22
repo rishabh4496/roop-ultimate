@@ -886,6 +886,13 @@ def main():
                          "it was not passed at all and fell through to "
                          "roop.globals' 0.0, so every two_face arm before then "
                          "ran the mask OFF while production ran 25.")
+    ap.add_argument("--merger-clarity", type=float, default=None,
+                    help="LAB micro-clarity + chroma soft-knee, 0-1. Defaults to "
+                         "config.yaml's live value. Stated explicitly for the same "
+                         "reason as --swap-model-mask-strength: it lives on "
+                         "roop.globals, and until 2026-08-23 angle_bench never "
+                         "populated ANY merger_* global, so every arm rendered "
+                         "with the whole merger stage off.")
     ap.add_argument("--out", default=os.path.join(APP, "output", "bench_two_face"))
     args = ap.parse_args()
 
@@ -899,6 +906,8 @@ def main():
     if _mm is None:
         _mm = float(getattr(g.CFG, 'swap_model_mask_strength', 0.0) or 0.0)
     g.swap_model_mask_strength = float(_mm)
+    if args.merger_clarity is not None:
+        g.merger_clarity = float(args.merger_clarity)
     g.video_encoder = "libx264"
     g.video_quality = 12
     g.execution_threads = args.threads if args.threads is not None else g.CFG.max_threads
@@ -922,7 +931,8 @@ def main():
     print(f"[bench] swap_model={args.swap_model} mask_engine={args.mask_engine} "
           f"enhancer={args.enhancer} provider={args.provider} "
           f"threads={g.execution_threads} tracking={track} "
-          f"swap_model_mask={g.swap_model_mask_strength}", flush=True)
+          f"swap_model_mask={g.swap_model_mask_strength} "
+          f"merger_clarity={getattr(g, 'merger_clarity', 0.0)}", flush=True)
 
     outdir = os.path.join(args.out, args.tag)
     work = os.path.join(outdir, "work")

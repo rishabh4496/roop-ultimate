@@ -1,15 +1,15 @@
-"""UltraMax — CodeFormer-FP16 restoration plus LAB harmonization, with an
-anchor cache that mostly does not fire.
+"""UltraMax — CodeFormer-FP16 with an anchor cache that mostly does not fire.
 
 1. WHAT IT ACTUALLY DOES, PER FACE:
    - Runs CodeFormer-FP16 (multi-context SessionPool, so worker threads do not
      serialise on one TensorRT context).
-   - Harmonizes the result ONCE in LAB: micro-edge clarity on L, soft-knee
-     chrominance bounding on A/B, mid-tone dermal porosity.
-   - Caches the RAW output per track as an anchor, and on the next face for
-     that track reuses it -- warped by a landmark similarity transform -- ONLY
-     if the crop in front of it still matches the crop the anchor was built
-     from. See _CONTENT_TOL for how that is decided and measured.
+   - Caches that output per track as an anchor, and on the next face for that
+     track reuses it -- warped by a landmark similarity transform -- ONLY if
+     the crop in front of it still matches the crop the anchor was built from.
+     See _CONTENT_TOL for how that is decided and measured.
+   - Nothing else. The LAB clarity/chroma filter that used to be applied here
+     is now `MergerMixin.apply_clarity` (`merger_clarity`), available to EVERY
+     enhancer -- see the note where it used to live.
 
 2. ON THE SPEED CLAIM (read before trusting any number in the session docs):
    This class was written around amortising CodeFormer over a face track:
@@ -28,10 +28,12 @@ anchor cache that mostly does not fire.
    - Keeps CodeFormer's discrete codebook prior for eyebrow hairs, iris/pupil
      rims, eyelashes, eyelid creases and tooth separation.
 
-4. ANTI-OVERSATURATION & DERMAL REALISM:
-   - LAB chrominance stabilization prevents neon orange/sunburned oversaturation.
-   - Luminance micro-contrast injection breaks flat plastic skin by restoring
-     natural skin pores.
+4. IS THIS STILL WORTH SELECTING OVER `Codeformer (fp16)`?
+   On the measurement, barely: with the clarity filter moved out, what is left
+   over plain CodeFormer is the anchor cache, which fired on 12 of 7835 faces
+   (0.15%) in a real render. Kept as a selectable option rather than removed,
+   because the cache is correct where it does fire and removing a user-facing
+   enhancer is the user's call, not this file's.
 """
 
 import collections
@@ -97,8 +99,6 @@ class Enhance_UltraMax:
     # not re-tune this constant to buy the rate back: that just restores
     # painting a face from a different moment onto the current one.
     _CONTENT_TOL = float(os.environ.get('ROOP_ULTRAMAX_CONTENT_TOL', '8.0') or '8.0')
-    _HP_KERNEL = 15
-    _DETAIL_GAIN = 1.00
 
     def __init__(self):
         self.plugin_options = None
@@ -188,70 +188,14 @@ class Enhance_UltraMax:
             self._cache.clear()
             self._spatial_tracks.clear()
 
-    # ── High-Demarcation Clarity & Dermal Harmonization ──────────────────────
-    @classmethod
-    def _highpass(cls, diff, base_f=None):
-        """High-frequency detail extraction with soft-knee coring.
-
-        Maintained for testing and subtle detail isolation without edge blurring.
-        """
-        k = int(cls._HP_KERNEL) | 1
-        blur = cv2.GaussianBlur(diff, (k, k), 0, borderType=cv2.BORDER_REPLICATE)
-        raw = diff - blur
-        safe = np.tanh(raw / 12.0) * 12.0
-        return safe
-
-    @classmethod
-    def _harmonize_face(cls, face_img: np.ndarray, orig_crop: np.ndarray = None) -> np.ndarray:
-        """Photorealistic Skin Color, Micro-Texture & High-Demarcation Clarity.
-
-        1. Razor-Sharp Demarcation & Clarity (Luminance L Channel):
-           Applies fine micro-edge unsharp contrast (radius 1.2px) to crispen eyelid folds,
-           iris boundaries, eyelashes, lip margins, and teeth edges without ringing halos.
-        2. Anti-Oversaturation (Chrominance A & B Channels):
-           Softly bounds chrominance variance to physiological human skin gamut,
-           preventing neon orange, sunburned, or magenta color casts.
-        3. Dermal Micro-Porosity:
-           Synthesizes subtle skin pores in flat mid-tones (L 35-215) to eliminate
-           the smooth plastic / wax-like 'painted' look.
-        """
-        if face_img is None or getattr(face_img, 'size', 0) == 0:
-            return face_img
-
-        try:
-            lab = cv2.cvtColor(face_img, cv2.COLOR_BGR2LAB).astype(np.float32)
-            L_chan = lab[:, :, 0]
-            A_chan = lab[:, :, 1]
-            B_chan = lab[:, :, 2]
-
-            # ── 1. High-Demarcation Clarity Filter (Luminance Only) ──────────
-            blur_L_fine = cv2.GaussianBlur(L_chan, (0, 0), sigmaX=1.0)
-            clarity_fine = L_chan - blur_L_fine
-            # Bound fine clarity swing to prevent harsh halo ringing
-            clarity_fine_clamped = np.clip(clarity_fine, -18.0, 18.0)
-
-            # Mid-tone weight for pores, full weight for sharp structural edges
-            lum_norm = np.clip(L_chan / 255.0, 0.0, 1.0)
-            lum_midtone = np.clip(np.sin(np.pi * lum_norm), 0.0, 1.0)
-
-            # Dermal micro-contrast + sharp boundary demarcation boost
-            lab[:, :, 0] = np.clip(L_chan + 0.32 * clarity_fine_clamped * (0.65 + 0.35 * lum_midtone), 0.0, 255.0)
-
-            # ── 2. Anti-Oversaturation Chrominance Stabilization ─────────────
-            a_mean = float(A_chan.mean())
-            b_mean = float(B_chan.mean())
-            a_dev = A_chan - a_mean
-            b_dev = B_chan - b_mean
-
-            # Soft compression of extreme chrominance deviations
-            lab[:, :, 1] = a_mean + np.tanh(a_dev / 16.0) * 14.5
-            lab[:, :, 2] = b_mean + np.tanh(b_dev / 18.0) * 16.0
-
-            out_bgr = cv2.cvtColor(np.clip(lab, 0.0, 255.0).astype(np.uint8), cv2.COLOR_LAB2BGR)
-            return out_bgr
-        except Exception:
-            return face_img
-
+    # The LAB clarity / chrominance filter that used to live here is now
+    # MergerMixin.apply_clarity, driven by `merger_clarity`. It was never
+    # specific to this model: measured against `Codeformer (fp16)`, the same net
+    # this class runs inside, that filter WAS the entire difference between them
+    # (+25.9% L Laplacian variance, -12.5% chroma spread, identity unmoved at
+    # paired t = 0.4, flicker 1.6% worse, 13% slower). Moving it out gives every
+    # enhancer the same look for the cost of one LAB round trip, and leaves this
+    # class doing only what it actually is: CodeFormer-FP16 plus an anchor cache.
     # Block-mean luminance signature of the crop the anchor was built from.
     # 16x16 INTER_AREA on a 512 crop = 32px blocks, so an eye spans about two
     # of them and a blink moves those blocks by tens of levels while leaving
@@ -459,14 +403,14 @@ class Enhance_UltraMax:
                     'kps': kps_copy,
                     'sig': cur_sig,
                 }
-            return sized(self._harmonize_face(cf_res, temp_frame), input_size)
+            return sized(cf_res, input_size)
 
         # ── 2. INTERMEDIATE FRAMES: FULL-SPECTRUM SHARP LANDMARK WARPING ─────
         if ent is None or ent.get('frame') is None:
             cf_res, scale_factor = cf_proc.Run(source_faceset, target_face, temp_frame)
             if cf_res is None or not is_usable(cf_res):
                 return sized(temp_frame, input_size)
-            return sized(self._harmonize_face(cf_res, temp_frame), input_size)
+            return sized(cf_res, input_size)
 
         with self._lock:
             cached_frame = ent['frame']
@@ -499,8 +443,7 @@ class Enhance_UltraMax:
                 pass
 
         # Apply High-Demarcation Clarity & Dermal Harmonization
-        out_harmonized = self._harmonize_face(warped_face, temp_frame)
-        return sized(out_harmonized, input_size)
+        return sized(warped_face, input_size)
 
     # ── reporting ────────────────────────────────────────────────────────────
     def cost_summary(self):

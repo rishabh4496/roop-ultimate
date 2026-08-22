@@ -12,6 +12,7 @@ import os
 import sys
 import unittest
 
+import cv2
 import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -21,7 +22,7 @@ from roop.procmgr_merger import MergerMixin            # noqa: E402
 from roop.procmgr_masking import MaskingMixin          # noqa: E402
 
 MERGER_KEYS = ("merger_hist_match", "merger_sharpen", "merger_motion_blur",
-               "merger_grain_match", "merger_degrade")
+               "merger_grain_match", "merger_degrade", "merger_clarity")
 
 
 class _Merger(MergerMixin):
@@ -62,7 +63,8 @@ class NeutralIsAFreeNoOp(unittest.TestCase):
                     m.apply_sharpen(face, 0.0),
                     m.apply_motion_blur(face, ref, 0.0),
                     m.apply_grain_match(face, ref, 0.0),
-                    m.apply_degrade(face, 0.0)):
+                    m.apply_degrade(face, 0.0),
+                    m.apply_clarity(face, 0.0)):
             np.testing.assert_array_equal(out, face)
 
     def test_one_enabled_knob_wakes_the_chain(self):
@@ -171,6 +173,93 @@ class OpsDoWhatTheyClaim(unittest.TestCase):
                     m.apply_degrade(face, 1.0)):
             self.assertEqual(out.shape, face.shape)
             self.assertEqual(out.dtype, np.uint8)
+
+
+class EveryEntryPointPopulatesTheMergerGlobals(unittest.TestCase):
+    """The merger ops read roop.globals, so anything that starts a render has to
+    populate them or the whole stage is silently off.
+
+    This is not hypothetical. `api.py` populated them and `tests/angle_bench.py`
+    did not, and roop.globals' own defaults are 0.0 -- so every arm ever
+    rendered through the bench harness ran with hist/sharpen/grain/degrade OFF
+    while production ran 0.4 / 0.35 / 0.45 / 0. It was invisible until a feature
+    was moved INTO that stage and measured as doing nothing at all. Source-level
+    so the suite stays fast; importing either module drags in the model stack.
+    """
+
+    def _src(self, rel):
+        here = os.path.dirname(os.path.abspath(__file__))
+        with open(os.path.join(os.path.dirname(here), rel), encoding='utf-8') as f:
+            return f.read()
+
+    def test_both_entry_points_name_every_merger_key(self):
+        for rel in ('api.py', 'tests/angle_bench.py'):
+            src = self._src(rel)
+            for key in MERGER_KEYS:
+                self.assertIn(key, src,
+                              f"{rel} never sets {key}, so that op is dead in "
+                              f"anything it launches")
+
+class ClarityIsTheMovedUltraMaxFilter(unittest.TestCase):
+    """`merger_clarity` at 1.0 must reproduce what UltraMax used to apply.
+
+    The filter was lifted out of Enhance_UltraMax so every enhancer can have it
+    (measured: it was the ENTIRE difference between UltraMax and the CodeFormer
+    it wraps). A move is only safe if it is a move, so the old implementation is
+    inlined here as the reference and compared pixel for pixel.
+    """
+
+    def _ultramax_original(self, face_img):
+        """Enhance_UltraMax._harmonize_face as it stood at 3c530f9."""
+        lab = cv2.cvtColor(face_img, cv2.COLOR_BGR2LAB).astype(np.float32)
+        L_chan, A_chan, B_chan = lab[:, :, 0], lab[:, :, 1], lab[:, :, 2]
+        blur_L_fine = cv2.GaussianBlur(L_chan, (0, 0), sigmaX=1.0)
+        clarity_fine_clamped = np.clip(L_chan - blur_L_fine, -18.0, 18.0)
+        lum_midtone = np.clip(np.sin(np.pi * np.clip(L_chan / 255.0, 0.0, 1.0)), 0.0, 1.0)
+        lab[:, :, 0] = np.clip(
+            L_chan + 0.32 * clarity_fine_clamped * (0.65 + 0.35 * lum_midtone), 0.0, 255.0)
+        a_mean, b_mean = float(A_chan.mean()), float(B_chan.mean())
+        lab[:, :, 1] = a_mean + np.tanh((A_chan - a_mean) / 16.0) * 14.5
+        lab[:, :, 2] = b_mean + np.tanh((B_chan - b_mean) / 18.0) * 16.0
+        return cv2.cvtColor(np.clip(lab, 0.0, 255.0).astype(np.uint8), cv2.COLOR_LAB2BGR)
+
+    def test_strength_one_matches_the_original_implementation(self):
+        m = _Merger()
+        for seed in (1, 2, 3):
+            face = _crop(seed, size=128)
+            np.testing.assert_array_equal(
+                m.apply_clarity(face, 1.0), self._ultramax_original(face),
+                "merger_clarity 1.0 no longer reproduces the filter it replaced")
+
+    def test_it_actually_sharpens_luminance(self):
+        """Guard against the op silently degrading to a no-op at 1.0."""
+        m, face = _Merger(), _crop(4, size=128)
+        before = cv2.Laplacian(cv2.cvtColor(face, cv2.COLOR_BGR2LAB)[:, :, 0].astype(np.float32),
+                               cv2.CV_32F).var()
+        after = cv2.Laplacian(cv2.cvtColor(m.apply_clarity(face, 1.0), cv2.COLOR_BGR2LAB)[:, :, 0]
+                              .astype(np.float32), cv2.CV_32F).var()
+        self.assertGreater(after, before * 1.05)
+
+    def test_it_bounds_a_neon_chrominance_excursion(self):
+        """The half of the filter that is not sharpening: pull an over-saturated
+        crop back toward the skin gamut rather than leaving it neon."""
+        m = _Merger()
+        neon = np.zeros((64, 64, 3), np.uint8)
+        neon[:, :, 1], neon[:, :, 2] = 120, 255      # hot orange/red
+        neon[::2, ::2, 2] = 180                      # some spread to compress
+        out = m.apply_clarity(neon, 1.0)
+        lab_in = cv2.cvtColor(neon, cv2.COLOR_BGR2LAB).astype(np.float32)
+        lab_out = cv2.cvtColor(out, cv2.COLOR_BGR2LAB).astype(np.float32)
+        self.assertLessEqual(lab_out[:, :, 2].std(), lab_in[:, :, 2].std() + 1e-6)
+        self.assertTrue(np.isfinite(lab_out).all())
+
+    def test_partial_strength_lands_between(self):
+        """0.5 must be a real interpolation, not a second full application."""
+        m, face = _Merger(), _crop(5, size=128)
+        half = m.apply_clarity(face, 0.5).astype(np.float32)
+        full = m.apply_clarity(face, 1.0).astype(np.float32)
+        base = face.astype(np.float32)
+        self.assertLess(np.abs(half - base).mean(), np.abs(full - base).mean())
 
 
 class OutputFaceScale(unittest.TestCase):

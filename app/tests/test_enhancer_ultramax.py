@@ -195,43 +195,26 @@ class TestUltraMax(unittest.TestCase):
         self.assertEqual(after_still, after_blink,
                          "an unchanged crop must still reuse the cached anchor")
 
-    def test_harmonize_runs_exactly_once_per_frame(self):
-        """Once on the keyframe, once on each reused frame -- never twice.
+    def test_returns_codeformer_output_untouched(self):
+        """UltraMax must not post-process its own output any more.
 
-        The cache holds RAW CodeFormer output and harmonize runs on the way
-        out. Caching the harmonized frame instead meant the reuse path
-        harmonized it again on top: measured +62% L-channel Laplacian variance
-        and -13% LAB chroma std on the reused frames, i.e. one visibly sharper,
-        less saturated run of frames between every keyframe -- a ~6 Hz pulse.
-
-        Counted rather than compared, so the assertion does not depend on the
-        stub returning a textured frame (harmonize is genuinely idempotent on
-        a flat one, which would hide the bug).
+        The LAB clarity/chroma filter moved to MergerMixin.apply_clarity, where
+        every enhancer can use it. If it came back here it would be applied
+        TWICE for anyone with merger_clarity on -- which is exactly the double
+        application that used to make one frame in every refresh window visibly
+        sharper and less saturated than its neighbours.
         """
         self._pools(0)
         p = self._make()
-        cls = type(p)
-        real, calls = cls._harmonize_face, []
-
-        def counting(img, orig=None):
-            calls.append(1)
-            return real(img, orig)
-
-        cls._harmonize_face = staticmethod(counting)
-        try:
-            face = {'_track_id': 'trk1', 'bbox': [100, 100, 200, 200]}
-            frame = np.full((512, 512, 3), 128, np.uint8)
-            p.Run(None, face, frame)                       # keyframe
-            self.assertEqual(len(calls), 1, "keyframe harmonized more than once")
-            p.Run(None, face, frame)                       # reused anchor
-            self.assertEqual(len(calls), 2, "reused frame harmonized twice")
-        finally:
-            cls._harmonize_face = real
-
+        face = {'_track_id': 'trk1', 'bbox': [100, 100, 200, 200]}
+        frame = np.full((512, 512, 3), 128, np.uint8)
+        out, _scale = p.Run(None, face, frame)
         with p._lock:
-            self.assertIsNotNone(p._cache['trk1']['frame'])
-            self.assertIsNotNone(p._cache['trk1']['sig'],
-                                 "anchor must carry the signature it was built from")
+            cached = p._cache['trk1']['frame']
+        self.assertTrue(np.array_equal(out, cached),
+                        'UltraMax must return CodeFormer output unmodified')
+        self.assertFalse(hasattr(type(p), '_harmonize_face'),
+                         'the filter belongs to the merger chain now')
 
     def test_cost_summary_output(self):
         self._pools(0)
@@ -241,20 +224,6 @@ class TestUltraMax(unittest.TestCase):
         summary = p.cost_summary()
         self.assertIn('[UltraMax]', summary)
         self.assertIn('CodeFormer ran 1 times', summary)
-
-    def test_edge_coring_suppresses_white_lines(self):
-        """Verify that large difference spikes (e.g. at structural edges) are softly
-        compressed so no white streaks or halo artifacts occur."""
-        diff = np.zeros((512, 512, 3), dtype=np.float32)
-        # Create a harsh structural edge spike of amplitude 150.0 (which would cause white lines)
-        diff[200:250, 200:250, :] = 150.0
-        base_f = np.full((512, 512, 3), 128.0, dtype=np.float32)
-        # Draw a sharp edge on base_f
-        base_f[200:250, 200:250, :] = 220.0
-
-        safe_res = UM.Enhance_UltraMax._highpass(diff, base_f=base_f)
-        # The maximum residual amplitude must be strictly bounded (<= 12.0)
-        self.assertLessEqual(float(np.max(np.abs(safe_res))), 12.0)
 
     def test_landmark_motion_compensation(self):
         """When face landmarks move moderately between frames, cached detail is warped to match."""
@@ -280,31 +249,6 @@ class TestUltraMax(unittest.TestCase):
         self.assertIsNone(p.gpen)
         self.assertIsNone(p.codeformer)
         self.assertEqual(len(p._cache), 0)
-
-    def test_anti_oversaturation_harmonization(self):
-        """Harmonization must constrain extreme A and B chrominance swings."""
-        # Create an over-saturated neon orange frame
-        neon_frame = np.zeros((512, 512, 3), dtype=np.uint8)
-        neon_frame[:, :, 0] = 0    # B
-        neon_frame[:, :, 1] = 120  # G
-        neon_frame[:, :, 2] = 255  # R (hyper-saturated orange/red)
-
-        harmonized = UM.Enhance_UltraMax._harmonize_face(neon_frame)
-        self.assertEqual(harmonized.shape, (512, 512, 3))
-        # Ensure finite and bounded
-        self.assertTrue(np.isfinite(harmonized).all())
-
-    def test_dermal_micro_contrast_injection(self):
-        """Dermal micro-contrast injection should enhance luminance pores in midtones without artifacts."""
-        flat_skin = np.full((512, 512, 3), 140, dtype=np.uint8)
-        # Add subtle noise
-        np.random.seed(42)
-        noise = np.random.randint(-5, 6, size=(512, 512, 3)).astype(np.int16)
-        skin_with_micro = np.clip(flat_skin.astype(np.int16) + noise, 0, 255).astype(np.uint8)
-
-        harmonized = UM.Enhance_UltraMax._harmonize_face(skin_with_micro)
-        self.assertEqual(harmonized.shape, (512, 512, 3))
-        self.assertTrue(np.isfinite(harmonized).all())
 
 if __name__ == '__main__':
     unittest.main()

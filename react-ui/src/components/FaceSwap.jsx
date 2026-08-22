@@ -624,6 +624,7 @@ export default function FaceSwap({
       merger_motion_blur: num(activeParams.merger_motion_blur, 0),
       merger_grain_match: num(activeParams.merger_grain_match, 0),
       merger_degrade: num(activeParams.merger_degrade, 0),
+      merger_clarity: num(activeParams.merger_clarity, 0),
       output_face_scale: num(activeParams.output_face_scale, 0),
       expression_restore_strength: num(activeParams.expression_restore_strength, 0),
       expression_restore_region: activeParams.expression_restore_region || 'all',
