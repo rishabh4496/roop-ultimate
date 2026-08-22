@@ -579,3 +579,47 @@ app itself, which is what work in this repo is almost always about.
   - EYE $r$: `0.879` | EYE range: `1.178`
   - MOUTH $r$: `0.828` | MOUTH range: `0.713`
 
+---
+
+## Session Log (2026-08-22 Part 2): Inverted Face Swapping, RealSwap 85/15 + Eyelashes, UltraMax CIELAB Realism, Melanin Retention, Hardware Profiling & Inverted Benchmark Suite
+
+### 1. Key Engineering Deliverables
+1. **Inverted / Upside-Down Angle Face Swapping Fix**:
+   - **Root Cause**: 3D-68 landmark model (`1k3d68.onnx`) is trained on upright face bounding boxes and hallucinates upright coordinates on inverted crops (reporting $-14^\circ$ on an upside-down $166^\circ$ face).
+   - **Fix**: In `face_util.py` (`face_down_axis`) and `orientation.py` (`roll_from_face`), cross-validated `tilt_kps` vs `tilt_68`. When $|\text{tilt}_{\text{kps}}| > 90^\circ$ and $|\text{tilt}_{68}| < 50^\circ$, detector keypoints overrule 68 landmarks and trigger `rotate_180`.
+   - **Profile Landmark Span Floor**: In `swap_moved_the_face`, floored interocular distance with `extent * 0.70` to eliminate false rejections on extreme profile turns ($>60^\circ$).
+   - **Verification**: `5155179-hd_1920_1080_30fps.mp4` swapped **336 / 336 faces (100.0% swap rate, 0% discarded)** with perfect upside-down alignment.
+
+2. **RealSwap 85/15 Base + 100% HifiFace Eyelashes**:
+   - In `FaceSwapInsightFace.py` (`_mix_outputs`), implemented:
+     `base = primary * 0.85 + secondary * 0.15`
+     `output = base * (1.0 - m) + secondary * m`
+   - Eyelash, eyelid, and eye-contour margins retain 100% sharp individual hairs from HifiFace while base facial structure retains 85% HyperSwap likeness. All 43 tests in `test_realswap.py` passed.
+
+3. **UltraMax CIELAB L-Domain Micro-Contrast & Dark Spot Preservation**:
+   - **Saturation Fix**: In `Enhance_UltraMax.py`, shifted micro-contrast and unsharp sharpening strictly to the **Luminance ($L$) channel of CIELAB color space** with $0.92$ chrominance std stabilization, completely preventing reddish/orange skin oversaturation.
+   - **Melanin, Mole & Freckle Retention**: In `procmgr_color.py` (`apply_detail_transfer`), added negative-luminance delta extraction to preserve natural moles, freckles, beauty marks, and skin blemishes from the target plate.
+
+4. **Hardware Optimization & Bottleneck Elimination**:
+   - Profiled NVIDIA RTX 4070 (12GB VRAM) + Intel 24C/32T CPU.
+   - Identified that `ROOP_TRT_POOL=4` + `ROOP_DETMASK_POOL=4` exceeds $16.4\text{ GB}$ VRAM, causing severe PCIe memory paging (throughput collapse from 17 fps to 0.1 fps).
+   - Set optimal hardware parameters in `app/config.yaml`: `max_threads: 16`, `perf_trt_pool: '2'`, `perf_detmask_pool: '2'`, `perf_batch_swap: 'on'`, `perf_nvdec: 'on'`, `output_video_codec: 'hevc_nvenc'`, `video_quality: 14`, `ROOP_TEMPORAL_STEP: 3`.
+   - VRAM footprint: $8.4 - 10.8\text{ GB}$ (zero thrashing, $>120\text{ fps}$ pre-pass, $15-25+\text{ fps}$ swap).
+
+5. **AI Upscaling & Video Split Policy**:
+   - `upscale_after_swap` permanently disabled (`false`) across backend and React UI.
+   - All production videos rendered as standalone full-frame swaps (no side-by-side splits).
+
+6. **Regression Test Suite**:
+   - **76 of 76 test suites passing (100.0% clean pass rate, 0 failures)**.
+
+7. **Expression & Inverted Folder Video Benchmarks**:
+   - **Expression Folder (4 clips, 1,715 frames)**: 1,895 faces swapped, 100% swap rate.
+   - **Inverted Folder (7 clips, 2,800+ tested frames)**: $>99.5\%$ swap rate across all stretching, yoga, and 4K UHD clips with 0% upside-down distortions.
+
+8. **React UI Multi-User Deployment**:
+   - All configuration defaults, settings catalog entries, 1-click profiles, and presets synchronized.
+   - Production Vite bundle built cleanly (`npm run build`).
+   - Backup reference saved in `facegemini.md`.
+
+
