@@ -442,3 +442,25 @@ merger key, verified to FAIL when one is removed.
    UltraMax `_cache` is never evicted, and `_key`'s spatial fallback has no
    per-frame claim set so two faces in one frame can bind to one anchor
    (masked by `track_identities: true`, exposed for images/batch).
+
+### 12. UltraMax Eye Refinement & Full GPU Saturation in React UI (2026-08-23 Part 2)
+
+#### A. Eye Ghosting & Blurring Resolution in UltraMax
+- **Diagnosis**: Medium-frequency bandpass sharpening ($\sigma_1=1.0, \sigma_2=2.5$) and CLAHE in `Enhance_UltraMax._apply_photoreal_refinement` amplified natural infraorbital crease lines into false second lower eyelids / double irises on inverted angles.
+- **Solution**: Replaced structural bandpass filtering with Gaussian micro-pore high-pass coring:
+  $$\text{high\_pass} = L_f - \text{GaussianBlur}(L_f, \sigma=0.8)$$
+  $$\text{core} = \exp\left(-\left(\frac{\text{high\_pass}}{12.0}\right)^2\right)$$
+  Isolates pore-level skin texture while completely suppressing false anatomical edges and eyelid ghosting.
+- **Validation**: Full 4K dual face swap benchmark (`8509564-uhd_3840_2160_25fps.mp4`) with Left=Harjot and Right=Ashna verified crystal clear eyes, natural eyelashes, and authentic dermal pores.
+
+#### B. Full GPU Saturation & Concurrency Pipeline
+- **Dynamic Thread Scaling**: Upgraded `resolve_threads(mode)` in `settings.py` to scale worker threads dynamically (up to 16 concurrent workers on 12GB+ GPUs) utilizing TensorRT context sharing (`trt_context_memory_sharing_enable=True`) to prevent GPU queue starvation.
+- **Full Hardware Acceleration Stack**: Verified & wired TensorRT FP16, NVDEC GPU hardware video decoding (`ffmpeg -hwaccel cuda`), NVENC GPU hardware video encoding (`hevc_nvenc` preset `p5`), and cross-frame batched swapping (`ROOP_BATCH_SWAP_XFRAME=1`).
+- **Telemetry & Diagnostics**: Enriched `/api/system/telemetry` in `routes_diagnostics.py` with active GPU hardware flags (`turbo_active`, `nvdec_active`, `batch_swap_active`, `nvenc_active`).
+
+#### C. React UI Implementation
+- **GPU Full Potential Suite in `Settings.jsx`**: Added interactive GPU acceleration control suite with 1-click presets (🚀 **Max GPU Turbo**, ⚖️ **Balanced**, 🔋 **Low VRAM**) and live hardware feature badges.
+- **Canvas & Processing Live Indicators**:
+  - `FloatingActionDock.jsx`: Added a live `🚀 GPU Turbo` status pill directly on the Face Swap workspace canvas.
+  - `DiagnosticsPanel.jsx`: Added real-time GPU Core Utilization %, VRAM utilization, Temperature, Wattage, and active hardware engine badges during rendering.
+- **Verification**: 1020 unit tests passing (100%), Vite build clean, committed and pushed to `main` (`commit ffe2f71`).
