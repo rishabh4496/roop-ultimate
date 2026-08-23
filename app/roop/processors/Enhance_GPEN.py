@@ -7,36 +7,18 @@ import roop.globals
 
 from roop.typing import Face, Frame, FaceSet
 from roop.utilities import resolve_relative_path, conditional_download
-from roop.processors.enhance_common import is_usable, sized
+from roop.processors.enhance_common import is_usable, sized, fp32_trt_providers
 
 
 def _fp32_trt_providers(providers):
-    """Return a copy of `providers` with the TensorRT provider forced to FP32.
-
-    GPEN at 1024/2048 has large activations that overflow in FP16 under the
-    'mixed'/'fp16' precision modes, producing NaN → a solid black face (np.clip
-    does not strip NaN, so uint8(NaN)=0). This is the same failure the swapper
-    hit — the fix mirrors FaceSwapInsightFace._swap_providers: force full
-    precision with a separate engine cache so the FP32 GPEN engine never collides
-    with the FP16 engines built for detection/other stages. The enhancer is the
-    quality stage, so the extra time is worth a correct face. ROOP_GPEN_FP16=1
-    opts back into FP16 (not recommended at >=1024)."""
+    """GPEN 1024/2048 overflow in FP16 under TensorRT and paint a solid black
+    face. Delegates to the shared helper — see enhance_common.fp32_trt_providers
+    for the two distinct FP16 failure modes and the measurements behind them.
+    ROOP_GPEN_FP16=1 opts back in (not recommended at >=1024)."""
+    import os
     if os.environ.get('ROOP_GPEN_FP16', '0') == '1':
         return providers
-    patched = []
-    for p in providers:
-        if isinstance(p, (tuple, list)) and len(p) == 2 and 'tensorrt' in str(p[0]).lower():
-            name, opts = p[0], dict(p[1])
-            opts['trt_fp16_enable'] = False
-            cache = opts.get('trt_engine_cache_path')
-            if cache:
-                fp32_cache = cache + '_gpen_fp32'
-                os.makedirs(fp32_cache, exist_ok=True)
-                opts['trt_engine_cache_path'] = fp32_cache
-            patched.append((name, opts))
-        else:
-            patched.append(p)
-    return patched
+    return fp32_trt_providers(providers, 'gpen')
 
 
 # GPEN blind face restoration at four native resolutions. 512 is the classic

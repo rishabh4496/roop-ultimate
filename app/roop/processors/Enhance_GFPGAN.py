@@ -6,7 +6,9 @@ import roop.globals
 
 from roop.typing import Face, Frame, FaceSet
 from roop.utilities import resolve_relative_path
-from roop.processors.enhance_common import is_usable, sized
+from roop.processors.enhance_common import (is_usable, sized,
+                                            fp32_trt_providers,
+                                            looks_collapsed)
 
 
 # THREAD_LOCK = threading.Lock()
@@ -21,6 +23,7 @@ class Enhance_GFPGAN():
 
     processorname = 'gfpgan'
     type = 'enhance'
+    _warned_collapse = False
     # FFHQ-trained — see Enhance_CodeFormer.model_template for the measured
     # mismatch against each swapper's crop, and ProcessMgr for the re-warp.
     model_template = 'ffhq_512'
@@ -34,7 +37,24 @@ class Enhance_GFPGAN():
         self.plugin_options = plugin_options
         if self.model_gfpgan is None:
             model_path = resolve_relative_path('../models/GFPGANv1.4.onnx')
-            self.model_gfpgan = onnxruntime.InferenceSession(model_path, None, providers=roop.globals.execution_providers)
+            # FORCED FP32 UNDER TENSORRT, and this one was silent.
+            #
+            # GFPGAN v1.4 does not survive TensorRT's FP16 kernels, but it does
+            # not overflow to NaN the way GPEN 1024/2048 does — it COLLAPSES.
+            # Measured 2026-08-24 on an RTX 4070, same input, same pre/post:
+            #
+            #   TRT fp16   raw range [-0.47, -0.14]  pixel std 16.0  detail 0.08
+            #   TRT fp32   raw range [-1.00,  1.00]  pixel std 65.2  detail 4.35
+            #   CUDA       raw range [-1.00,  1.00]  pixel std 65.2  detail 4.35
+            #
+            # fp32 matches the CUDA reference to 0.03/255; fp16 differs from it
+            # by 59/255. Every fp16 value is finite, so `is_usable` never fired
+            # and the enhancer shipped returning a uniform grey face that still
+            # looked like an image. It cost 65 s to build the FP32 engine once
+            # (cached thereafter) and runs at 93 ms against CUDA's 568 ms.
+            providers = fp32_trt_providers(roop.globals.execution_providers,
+                                           'gfpgan')
+            self.model_gfpgan = onnxruntime.InferenceSession(model_path, None, providers=providers)
             # replace Mac mps with cpu for the moment
             self.devicename = self.plugin_options["devicename"].replace('mps', 'cpu')
 
@@ -72,7 +92,22 @@ class Enhance_GFPGAN():
         result = (result + 1) / 2
         result = result.transpose(1, 2, 0) * 255.0
         result = cv2.cvtColor(result, cv2.COLOR_RGB2BGR)
-        return sized(result.astype(np.uint8), input_size)
+        result = result.astype(np.uint8)
+
+        # The guard `is_usable` cannot provide: a finite but COLLAPSED output.
+        # The FP32 provider above is the real fix; this is the net that would
+        # have caught the failure in the first place instead of letting a flat
+        # grey face render for months.
+        if looks_collapsed(result, fallback_bgr):
+            if not Enhance_GFPGAN._warned_collapse:
+                Enhance_GFPGAN._warned_collapse = True
+                print("[GFPGAN] output has collapsed to a near-uniform image "
+                      "(finite, but no dynamic range) — using the unenhanced "
+                      "frame. This is the TensorRT FP16 failure; unset "
+                      "ROOP_GFPGAN_FP16 to get the forced-FP32 engine back.")
+            return sized(fallback_bgr.astype(np.uint8), input_size)
+
+        return sized(result, input_size)
 
 
     def Release(self):
