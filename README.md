@@ -94,6 +94,20 @@ Two things worth knowing before changing settings or benchmarking:
   which is not what production runs. `tests/compare_enhancers_video.py` syncs
   from `config.yaml` and prints what it changed; prefer it over ad-hoc harnesses.
 
+## What is not in this repository
+
+`app/env` (the virtual environment), `app/models` (model weights) and
+`app/facesets` (your saved face libraries) are generated locally and are
+gitignored — together they are around 49 GB on a working install. A fresh clone
+has none of them; `install.js` creates the environment and the application
+downloads weights on first use.
+
+They must be **real local directories**, not links to another folder. Until
+2026-08-23 all three were NTFS junctions into a different working copy on the
+same machine, which meant deleting that folder would have taken this application
+down and the project could not have been moved or handed to anyone.
+`app/tests/test_standalone_install.py` fails if that ever comes back.
+
 ## Models
 
 The application downloads machine-learning models on first use. They are not
