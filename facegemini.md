@@ -878,3 +878,133 @@ It is the most expensive restorer here at 41.7 ms.
 | UltraMax | 30.6 | 512, scale 2 | 4.11 |
 | CodeFormer (fp16) | 37.9 | 512, scale 2 | 4.11 |
 | GFPGAN v1.4 (fixed) | 41.7 | 512, scale 2 | 4.35 |
+
+
+---
+
+## Session Log (2026-08-24 Part 8): The Detect Stage — One Real Bug, One Real Setting, and Three Speedups That Were Not
+
+Commits `c9d6987`, `f1e1e56`, `957a950`. Suite **1108 green**.
+
+### 0. THE LESSON THIS PART IS ACTUALLY ABOUT
+
+`ROOP_PROFILE` reported **detect = 42.4%** of a 60,460-frame render. I read that as a
+speedup budget and predicted ~10% off the wall clock from making detection cheaper.
+**Measured end to end: +1%.**
+
+That share is *wall clock SUMMED ACROSS WORKER THREADS*, not of the render. With ten
+threads overlapping on one saturated GPU, handing a stage back thread time does not
+shorten anything unless that stage is what the GPU is waiting on. **Stage share is not a
+speedup budget.** Three changes in a row now — stabilizer rounds (Part 7), temporal
+detection, det_size — measured well in isolation and neutral in a render. The pipeline is
+GPU-BOUND: the levers that move it remove GPU work rather than redistribute it.
+
+### 1. Counterbalancing earned its keep twice more
+
+    temporal_detection   off 10.88 -> on 10.84 fps    (+0%)
+    face_detector_size   640 12.56 -> 512 12.69 fps   (+1%)
+
+Read WITHOUT counterbalancing the same runs say **+21.8%** and **+9.8%**. In both, the
+FIRST arm of the process is several fps slower than every later one because it pays the
+TensorRT engine build for whatever geometry it is first to use (6.90 vs 10.9; 10.55 vs
+12.6). Swap rate was 100% in every arm, so nothing was traded away.
+
+`tests/ab_temporal_detection.py` is now general: `--vary <globals key> --a <x> --b <y>`,
+counterbalanced, reporting SWAP RATE beside fps — a setting that goes faster by finding
+fewer faces has not got faster.
+
+### 2. det_size 512 — real at the stage, free, slightly MORE accurate
+
+Production module list (landmark_2d_106 + recognition), retinaface_r50, 240 frames:
+
+| | 640 | 512 |
+|---|---|---|
+| detect stage | 14.27 ms/frame | **10.95 ms/frame** (1.30x) |
+| recall, 1200-frame sample | 99.4% | **99.8%** |
+| recall, 480-frame sample | 98.5% | **99.4%** |
+| hard angles 35-60 deg | 100% | **100%** |
+| landmark shift | — | 0.24-0.72 px (p95 1.54) |
+
+It wins on geometry, not the model: a 16:9 frame letterboxed into a square canvas leaves
+**~44% of that canvas black**, so most of 640's extra pixels are padding. Added to the
+UI dropdown (`320/512/640/960/1280`) — it had been unreachable.
+
+**Only retinaface honours this setting.** `yoloface_8n` and `det_10g` are fixed 640x640
+exports; scrfd prints a warning, yoloface used to crash. Now in the help text.
+
+### 3. ROOP_TEMPORAL_STEP=2 — measured and NOT recommended for this footage
+
+Not a detector question: the scanned frames are detected as before; the SKIPPED ones are
+**linearly interpolated**. Error against the real landmarks, as a share of interocular
+distance (the swap is aligned from those 5 points):
+
+    frontal    1.7% mean   3.3% p95
+    moderate   1.1% mean   2.8% p95
+    hard 35-60 6.3% mean  13.9% p95   <- 6x worse exactly where it matters
+
+It concentrates on turned heads, and interpolated faces bypass the identity gates. Keep
+`temporal_detection` at step 1 on yoga/stretching footage.
+
+### 4. FOUND: yoloface silently returned ZERO faces at any det_size but 640
+
+`yoloface_8n.onnx` is a fixed `[1,3,640,640]` export. Any other det_size raises
+`InvalidArgument`, and `face_util.get_all_faces` swallows detector exceptions — so it
+returned no faces for an entire render, with no error anywhere:
+
+    yoloface @ 640   95.4% recall   15.62 ms/frame
+    yoloface @ 512    0.0% recall    3.04 ms/frame   <- failing, not detecting
+
+The "329 fps" was the tell: fast because it was doing nothing. Reachable from the UI —
+pick yoloface, set 512, get a render with no swaps. Fixed: the model's own dimension is
+read at init and used regardless, warning once.
+
+### 5. Engine comparison — yoloface is NOT the answer to the 15% no-face rate
+
+Seek-free, 480 preloaded frames, hard-angle footage:
+
+| engine | det fps | ms/frame | recall |
+|---|---|---|---|
+| retinaface_r50 @ 640 | 50.9 | 19.66 | 98.5% |
+| **retinaface_r50 @ 512** | **76.5** | **13.07** | **99.4%** |
+| scrfd @ 640 | 63.6 | 15.72 | 99.6% |
+| yoloface @ 640 | 64.0 | 15.62 | **95.4%** |
+| yunet @ 640 | 48.7 | 20.54 | 100.0% |
+
+yoloface has the LOWEST recall and cannot use the 512 trick. yunet's 100% is a trap: its
+landmarks on hard poses disagree with retinaface by **mean 30 px, p95 125 px** — it finds
+a box, not the face's orientation. Also recorded: yoloface's confidence is calibrated
+lower (median 0.775, max 0.866), so the shared 0.5 threshold costs it 3.4% recall; at 0.2
+it reaches 100%. Not changed — a per-engine threshold is a separate decision.
+
+### 6. WITHDRAWN: "genderage costs 0.74 ms"
+
+It is already conditional — `ProcessMgr` appends it only for `all_female`/`all_male`. My
+figure came from a harness that never calls `ProcessMgr.initialize`, leaving
+`g_desired_face_analysis` at `None`, and **None makes insightface load EVERY module**. I
+priced a configuration production does not run. Re-measured properly it is not loaded at
+all, and forcing it in costs nothing (10.95 vs 10.82 ms/frame). The same error inflated
+the whole aux breakdown I quoted; the only per-face aux models in a real render are
+`landmark_2d_106` and `recognition`, and `landmark_3d_68` is already lazy under
+`lm68_lazy`. There is no easy aux saving left.
+
+### 7. GPEN Realistic on s1.mp4, and the enhancer landscape
+
+Same-session render, 1800 frames: **GPEN Realistic 11.65 fps vs UltraMax 10.70** (+8.9%),
+with skin texture at 100% of the footage's own level against UltraMax's 113%, edge energy
+63% vs 57%, chroma drift 2.27 vs 2.55 — sharper, more colour-faithful, faster.
+
+Researched whether anything else is worth adding: the repo already carries the entire
+ONNX face-restoration ecosystem (GFPGAN 1.4, CodeFormer x2, GPEN 256/512/1024/2048,
+RestoreFormer++, DMDNet, KEEP). Verified still downloadable and NOT present: GFPGAN
+1.2/1.3, and FaceFusion's own `gpen_bfr_512` export (a different export from the one GPEN
+Realistic uses — worth a head-to-head). Everything newer (OSDFace CVPR 2025, PMRF ICLR
+2025, DAEFR, VQFR) is PyTorch-only, and OSDFace self-reports ~0.1 s per 512 face, 3.6x
+slower than GPEN Realistic.
+
+### 8. OPEN
+
+- The **15% no-face rate** is on a private clip I do not have; s1 detects 100% of frames,
+  so there is nothing to reproduce locally. Needs the source file.
+- `stabilize_face` / `stabilize_mask` / `stabilize_enhancer` were all switched on between
+  runs and took s1 from 16.42 to ~12.6 fps. That is real GPU work and the one lever seen
+  this session that would actually move the clock. Unmeasured.
