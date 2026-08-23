@@ -78,7 +78,7 @@ export default function useProfiles({ settings, setSettings, notify }) {
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
-      link.download = 'roop_unleashed_presets.json';
+      link.download = 'roop_ultimate_presets.json';
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);

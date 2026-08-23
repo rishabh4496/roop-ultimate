@@ -1,5 +1,5 @@
 """
-face_frontalize.py — Affine-based face crop frontalization for roop-unleashed
+face_frontalize.py — Affine-based face crop frontalization
 ==============================================================================
 Warps a canonical align_crop toward a frontal pose using a global least-squares
 affine estimated from 68-point 3D landmarks.

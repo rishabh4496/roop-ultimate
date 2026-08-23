@@ -258,7 +258,7 @@ class FFMPEG_VideoWriter:
             except Exception:
                 pass
             raise IOError(
-                "roop unleashed error: the ffmpeg encoder process exited "
+                "Roop Ultimate error: the ffmpeg encoder process exited "
                 f"unexpectedly (code {rc}) before the video was finished.\n\n"
                 "On Windows this is usually Smart App Control blocking an "
                 "unsigned ffmpeg DLL (e.g. avdevice-62.dll). Re-run the job, or "
@@ -272,7 +272,7 @@ class FFMPEG_VideoWriter:
             #    self.proc.stdin.write(img_array.tostring())
         except IOError as err:
             _, ffmpeg_error = self.proc.communicate()
-            error = (str(err) + ("\n\nroop unleashed error: FFMPEG encountered "
+            error = (str(err) + ("\n\nRoop Ultimate error: FFMPEG encountered "
                                  "the following error while writing file %s:"
                                  "\n\n %s" % (self.filename, str(ffmpeg_error))))
 

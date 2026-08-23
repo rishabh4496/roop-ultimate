@@ -752,7 +752,7 @@ export default function App() {
           <MotionIcon icon={Icon.brand} size="md" variant="accent" animate="pulse" />
           <div>
             <h1 className="text-lead font-bold tracking-tight text-white/95 flex items-center gap-1.5">
-              Roop Unleashed <span className="text-white/35 font-medium">Studio</span>
+              Roop Ultimate <span className="text-white/35 font-medium">Studio</span>
             </h1>
             {meta?.git_version && (
               <span className="text-nano font-mono text-white/45 tracking-wider block mt-0.5">

@@ -1,8 +1,8 @@
 const path = require('path')
 module.exports = {
   version: "3.7",
-  title: "roop-ultimate",
-  description: "EXPERIMENTAL recode branch of roop-unleashed-wip — face detection, mask engines, and enhancers being rebuilt for robustness. Demo/test only until verified.",
+  title: "Roop Ultimate",
+  description: "Face swapping for images and video, with a React UI. Independent project; AGPL-3.0. Private — access is by invitation.",
   icon: "icon.png",
   menu: async (kernel, info) => {
     let installed = info.exists("app/env")

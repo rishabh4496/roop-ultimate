@@ -1,4 +1,4 @@
-"""Disk cleanup for the roop-unleashed launcher (driven by clean.js).
+"""Disk cleanup for the Roop Ultimate launcher (driven by clean.js).
 
 Only ever touches things the app can rebuild by itself. Everything that would
 cost you work or a re-download is off-limits and is never referenced here:

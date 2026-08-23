@@ -39,7 +39,7 @@ else
     echo "requirements.txt not found. Skipping dependency installation."
 fi
 
-# Run roop-unleashed. This can take a while - especially at first startup...
+# Run Roop Ultimate. This can take a while - especially at first startup...
 echo "Running the run.py script..."
 python run.py
 

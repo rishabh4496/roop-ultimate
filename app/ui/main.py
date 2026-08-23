@@ -80,7 +80,7 @@ def run():
     uii.ui_restart_server = False
     mycss = """
     /* ════════════════════════════════════════════════════════════════════════
-       CARBON DARK  –  roop-unleashed UI theme
+       CARBON DARK  -  legacy Gradio theme (frozen; the React UI is the default)
        Surface scale (deep → elevated):
          #0d0d0d  page / body
          #151515  app container

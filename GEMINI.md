@@ -4,8 +4,8 @@
 
 To guarantee every contribution follows this guide precisely, obey this checklist **before any edits** and **again before finalizing**. Do not skip or reorder.
 1. **AGENTS Snapshot:** Re-open this file and write down (in your working notes or response draft) the exact sections relevant to the requested task. No work begins until this snapshot exists.
-2. **Example Lock-in:** Identify the closest matching script in `C:\pinokio\prototype\system\examples`. Record its path and keep it open while editing. Every launcher change must mirror that reference unless the user explicitly instructs otherwise.
-3. **Pre-flight Checklist:** Convert the applicable rules from this document and `PINOKIO.md` at C:\pinokio\prototype\PINOKIO.md into a task-specific checklist (install/start/reset/update structure, regex patterns, menu defaults, log checks, etc.). Confirm each item is ticked **before** making changes.
+2. **Example Lock-in:** Identify the closest matching script in `G:\pinokio\prototype\system\examples`. Record its path and keep it open while editing. Every launcher change must mirror that reference unless the user explicitly instructs otherwise.
+3. **Pre-flight Checklist:** Convert the applicable rules from this document and `PINOKIO.md` at G:\pinokio\prototype\PINOKIO.md into a task-specific checklist (install/start/reset/update structure, regex patterns, menu defaults, log checks, etc.). Confirm each item is ticked **before** making changes.
 4. **Mid-task Verification:** Any time you touch a Pinokio script, cross-check the corresponding example line to ensure syntax and structure match. Document the reference (example path + line) in your reasoning.
 5. **Exit Checklist:** Before responding to the user, revisit the pre-flight checklist and explicitly confirm every item is satisfied. If anything diverges from the example or these rules, fix it first.
 
@@ -38,9 +38,9 @@ on: [{
 
 Deviation from this pattern requires written approval from the user.
 
-- Make sure to keep this entire document and `PINOKIO.md` at C:\pinokio\prototype\PINOKIO.md in memory with high priority before making any decision. Pinokio is a system that makes it easy to write launchers through scripting by providing various cross-platform APIs, so whenever possible you should prioritize using Pinokio API over lower level APIs.
-- When writing pinokio scripts, ALWAYS check the examples folder (in C:\pinokio\prototype\system\examples folder) to see if there are existing example scripts you can imitate, instead of assuming syntax.
-- When implementing pinokio script APIs and you cannot infer the syntax just based on the examples, always search the API documentation `PINOKIO.md` at C:\pinokio\prototype\PINOKIO.md to use the correct syntax instead of assuming the syntax.
+- Make sure to keep this entire document and `PINOKIO.md` at G:\pinokio\prototype\PINOKIO.md in memory with high priority before making any decision. Pinokio is a system that makes it easy to write launchers through scripting by providing various cross-platform APIs, so whenever possible you should prioritize using Pinokio API over lower level APIs.
+- When writing pinokio scripts, ALWAYS check the examples folder (in G:\pinokio\prototype\system\examples folder) to see if there are existing example scripts you can imitate, instead of assuming syntax.
+- When implementing pinokio script APIs and you cannot infer the syntax just based on the examples, always search the API documentation `PINOKIO.md` at G:\pinokio\prototype\PINOKIO.md to use the correct syntax instead of assuming the syntax.
 - When trying to fix something or figure out what's going on, ALWAYS start by checking the `logs` folder before doing anything else, as mentioned in the "Troubleshooting with Logs" section.
 - Finally, make sure to ALWAYS follow all the items in the "best practices" section below.
 
@@ -89,7 +89,7 @@ project-root/
 └── pinokio.json         # Metadata (title, description, icon)
 ```
 
-IMPORTANT: ALWAYS try to follow the best practices in the examples folder (C:\pinokio\prototype\system\examples) instead of trying to come up with your own structure. The examples have been optimized for the best user experience.
+IMPORTANT: ALWAYS try to follow the best practices in the examples folder (G:\pinokio\prototype\system\examples) instead of trying to come up with your own structure. The examples have been optimized for the best user experience.
 
 ## Launcher Project Working Directory
 
@@ -141,7 +141,7 @@ If we are starting with existing launcher script files, work with the existing f
 - **Don't touch working scripts:** Unless adding/updating specific commands
 - **Follow existing conventions:** Match the style and structure already present
 ### 3. Try to adopt from examples as much as possible
-- If starting from scratch, first determine what type of project you will be building, and then check the examples folder (C:\pinokio\prototype\system\examples) to see if you can adopt them instead of coming up everything from scratch.
+- If starting from scratch, first determine what type of project you will be building, and then check the examples folder (G:\pinokio\prototype\system\examples) to see if you can adopt them instead of coming up everything from scratch.
 - Even if there are no relevant examples, check the examples to get inspiration for how you would structure the script files even if you have to write from scratch.
 ### 4. Writing from scratch as a last resort
 If there are relevant examples to adopt from, write the scripts from scratch, but just make sure to follow the requirements in the next section.
@@ -246,8 +246,8 @@ module.exports = {
 ## API
 
 This section lists all the script APIs available on Pinokio. To learn the details of how they are used, you can:
-1. Check the examples in the C:\pinokio\prototype\system\examples folder
-2. Read the `PINOKIO.md` at C:\pinokio\prototype\PINOKIO.md further documentation on the full syntax
+1. Check the examples in the G:\pinokio\prototype\system\examples folder
+2. Read the `PINOKIO.md` at G:\pinokio\prototype\PINOKIO.md further documentation on the full syntax
 
 ### Script API
 
@@ -370,7 +370,7 @@ logs/
 - If you are starting with existing script files, before modifying, creating, or removing any script files, first look at `pinokio.js` to understand which script files are actually used in the launcher. The only script files used are the ones mentioned in the `pinokio.js` file. The `pinokio.js` file is the file that constructs the UI dynamically.
 - Do not create a redundant script file that does something that already exists. Instead modify the existing script file for the feature. For example, do not create an `install.json` file for installation if `install.js` already exists. Instead, modify the `install.js` file.
 - Pinokio accepts both JSON and JS script files, so when determining whether a script for a specific purpose already exists, check both JSON and JS files mentioned in the `pinokio.js` file. Do not create script files for rendundant purpose.
-- When building launchers for existing projects cloned from a repository, try to stay away from modifying the project folder (the `C:\pinokio\api\roop-unleashed` folder), even if installations are failing. Instead, try to work around it by creating additional files in the launcher folder, and using those files IN ADDITION to the default project.
+- When building launchers for existing projects cloned from a repository, try to stay away from modifying the project folder (the `G:\pinokio\api\roop-ultimate` folder), even if installations are failing. Instead, try to work around it by creating additional files in the launcher folder, and using those files IN ADDITION to the default project.
   - The only exception when you may need to make changes to the project folder is when the user explicitly wants to modify the existing project. Otherwise if the purpose is to simply write a launcher, the app logic folder should never be touched.
 - When running shell commands, take full advantage of the Pinokio `shell.run` API, which provides features like `env`, `venv`, `input`, `path`, `sudo`, `on`, etc. which can greatly reduce the amount of script code.
   - Python apps: Always use virtual environments via `venv` attribute. This attribute automatically creates a venv or uses if it already exists.
@@ -396,19 +396,19 @@ logs/
     - during the install process, the `install.js` menu item needs to be set as the `default`, so it automatically executes the script
     - when launching the `start.js` menu item needs to be set as the `default`, so it automatically executes the script
     - after the app has launched, the `default` needs to be set on the web UI URL, so the user is sent to the actual app automatically.
-  - Check the examples in the C:\pinokio\prototype\system\examples folder to see how these are being used.
+  - Check the examples in the G:\pinokio\prototype\system\examples folder to see how these are being used.
 ### 8. No need for stop scripts
 - `pinokio.js` does NOT need a separate `stop` script. Every script that can be started can also be natively stopped through the Pinokio UI, therefore you do not need a separate stop script for start script
 ### 9. Writing launchers for existing projects
 - When writing or modifying pinokio launcher scripts, figure out the install/launch steps by reading the project folder `app`.
-- In most cases, the `README.md` file in the `C:\pinokio\api\roop-unleashed` folder contains the instructions needed to install and run the app, but if not, figure out by scanning the rest of the project files.
+- In most cases, the `README.md` file in the `G:\pinokio\api\roop-ultimate` folder contains the instructions needed to install and run the app, but if not, figure out by scanning the rest of the project files.
 - Install scripts should work for each specific operating system, so ignore Docker related instructions. Instead use install/launch instructions for each platform.
 ### 10. Don't use Docker unless really necessary
 - Some projects suggest docker as installation options. But even in these cases, try to find "development" options to launch the app without relying on Docker, as much as possible. We do not need Docker since we can automatically install and launch apps specifically for the user's platform, since we can write scripts that run cross platform.
 ### 11. pinokio.json
 - Do not touch the `version` field since the version is the script schema version and the one pre-set in `pinokio.js` must be used.
 - `icon`: It's best if we have a user friendly icon to represent the app, so try to get an image and link it from `pinokio.json`.
-  - If the git repository for the `C:\pinokio\api\roop-unleashed` folder points to GitHub (for example https://github.com/<USERNAME>/<REPO_NAME>`, ask the user if they want to download the icon from GitHub, and if approved, get the `avatar_url` by fetching `https://api.github.com/users/<USERNAME>`, and then download the image to the root folder as `icon.png`, and set `icon.png` as the `icon` field of the `pinokio.json`. 
+  - If the git repository for the `G:\pinokio\api\roop-ultimate` folder points to GitHub (for example https://github.com/<USERNAME>/<REPO_NAME>`, ask the user if they want to download the icon from GitHub, and if approved, get the `avatar_url` by fetching `https://api.github.com/users/<USERNAME>`, and then download the image to the root folder as `icon.png`, and set `icon.png` as the `icon` field of the `pinokio.json`. 
 ### 12. Gitignore
 - When a launcher involves cloning 3rd party repositories, downloading files dynamically, or some files to be generated, these need to be included in the .gitignore file. This may include things like:
   - Cloning git repositories
@@ -458,9 +458,9 @@ The `torch.js` script also includes ways to install pytorch dependent libraries 
 
 ## Quick Reference
 ### Essential Documentation
-- **Pinokio Programming:** See `PINOKIO.md` at C:\pinokio\prototype\PINOKIO.md → "Programming Pinokio" section
-- **Dynamic Menus:** See `PINOKIO.md` at C:\pinokio\prototype\PINOKIO.md → "Dynamic menu rendering" section  
-- **CLI Commands:** See `PTERM.md` at C:\pinokio\prototype\PTERM.md
+- **Pinokio Programming:** See `PINOKIO.md` at G:\pinokio\prototype\PINOKIO.md → "Programming Pinokio" section
+- **Dynamic Menus:** See `PINOKIO.md` at G:\pinokio\prototype\PINOKIO.md → "Dynamic menu rendering" section  
+- **CLI Commands:** See `PTERM.md` at G:\pinokio\prototype\PTERM.md
 ### Common Patterns
 - **Python Virtual Env:** `shell.run` with `venv` attribute
 - **Cross-platform Commands:** Always test on multiple platforms
@@ -477,9 +477,9 @@ The `torch.js` script also includes ways to install pytorch dependent libraries 
 
 ## Roop Recode Project — key findings mirror (2026-08-16)
 
-This section is a mirror for whichever AI tool session picks this project up next (Claude's full, actively-maintained version of this log is `G:\pinokio\roop-keep\RECODE_STATUS.md` — read that first if available; this is a condensed pointer in case it isn't). This is NOT a Pinokio-launcher task — it's ongoing work on the `roop-unleashed` face-swap app's detection/tracking/identity-matching pipeline, in `app/roop/*.py` and `app/tests/*.py`.
+This section is a mirror for whichever AI tool session picks this project up next (Claude's full, actively-maintained version of this log is `G:\pinokio\roop-keep\RECODE_STATUS.md` — read that first if available; this is a condensed pointer in case it isn't). This is NOT a Pinokio-launcher task — it's ongoing work on the Roop Ultimate face-swap app's detection/tracking/identity-matching pipeline, in `app/roop/*.py` and `app/tests/*.py`.
 
-**Do not confuse this repo with `G:\pinokio\api\roop-unleashed-wip.git`.** They are two separate codebases. This project's real work happens HERE, in `roop-ultimate` (its `env`/`models`/`facesets` folders are symlinks into the wip.git repo, but `app/roop` and `app/tests` are this repo's own real files). A prior session lost real time investigating in the wrong repo — check which one you're in before trusting or editing anything.
+**This project is `roop-ultimate` and it is self-contained.** An older working copy of the same lineage exists elsewhere on this machine; do not edit it and do not read it as authoritative. A prior session lost real time investigating in the wrong folder — check which one you are in before trusting or editing anything.
 
 **Investigation thread (2026-08-16): a male bystander in a two-person clip (`d9.mp4`, a kissing couple) was getting swapped with a FEMALE captured faceset ("harjot") instead of being left alone or matched to the correct person.** Traced through several layers; two real bugs found and fixed, one attempted fix reverted, root cause narrowed but not fully closed:
 
@@ -494,9 +494,9 @@ This section is a mirror for whichever AI tool session picks this project up nex
 4. **DOUBLE ROSTER FULLY VALIDATED (2026-08-16)** — `run_all_samples.py --only double --tag-suffix _phase3`:
    - All 13 clips in `double/` (`d1`–`d12`, total 70,266 frames) rendered completely and cleanly end-to-end to `app/output/baseline_double_phase3/` with 0 crashes, 0 hangs, and 0 identity regressions.
 
-**Bench command used throughout** (run from `app/`, needs the venv python — this repo's own `env` is a symlink to `G:\pinokio\api\roop-unleashed-wip.git\app\env\Scripts\python.exe`):
+**Bench command used throughout** (run from `app/`, using this project's own venv python at `env/Scripts/python.exe`):
 ```powershell
-$env:ROOP_DEBUG_MATCH="1"; G:\pinokio\api\roop-unleashed-wip.git\app\env\Scripts\python.exe tests/two_face_video.py --tag bench_contam_fix --video "G:/pinokio/roop-keep/double/d9.mp4" --sources harjot,shambhavi --start 3600 --end 5400 --out output/bench_ab
+$env:ROOP_DEBUG_MATCH="1"; env\Scripts\python.exe tests/two_face_video.py --tag bench_contam_fix --video "G:/pinokio/roop-keep/double/d9.mp4" --sources harjot,shambhavi --start 3600 --end 5400 --out output/bench_ab
 ```
 **`--start`/`--end` are FRAME indices, not seconds** — for `d9.mp4` (60fps), frames 3600-5400 = seconds 60-90.
 

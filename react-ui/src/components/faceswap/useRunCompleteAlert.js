@@ -59,7 +59,7 @@ export default function useRunCompleteAlert({ processing, error, notify }) {
       if (failed) playFailTone(); else playChime();
       if (desktopAlerts) {
         notifyDesktop(
-          failed ? 'Roop Unleashed — run failed' : 'Roop Unleashed Render Complete!',
+          failed ? 'Roop Ultimate — run failed' : 'Roop Ultimate Render Complete!',
           failed
             // The message itself, not a generic "check the app": the whole
             // point of the notification is that you are not looking at it.

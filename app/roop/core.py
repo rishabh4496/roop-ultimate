@@ -1064,7 +1064,7 @@ def print_startup_banner() -> None:
         return
         
     print("=" * 75)
-    print("      ⚡ ROOP UNLEASHED PRO - CORE INITIALIZATION GATEWAY ⚡")
+    print("      ⚡ ROOP ULTIMATE - CORE INITIALIZATION GATEWAY ⚡")
     print("=" * 75)
     print(f"  [System Host] OS: {platform.system()} {platform.release()} ({platform.machine()})")
     print(f"  [Environment] Python: {sys.version.split()[0]} | PyTorch: {torch.__version__} | ONNX Runtime: {ort.__version__}")

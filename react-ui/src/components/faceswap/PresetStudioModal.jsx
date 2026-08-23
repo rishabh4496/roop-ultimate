@@ -3,7 +3,7 @@ import { motion } from '../../motion';
 
 /**
  * PresetStudioModal
- * Preset Studio & Recipe Manager modal for Roop Unleashed.
+ * Preset Studio & Recipe Manager modal for Roop Ultimate.
  * Includes curated 1-click quality recipes, visual parameter diffs, export/import, and recipe sharing.
  */
 export default function PresetStudioModal({

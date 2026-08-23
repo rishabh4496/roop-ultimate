@@ -1,5 +1,5 @@
 """
-face_3d_recon.py — Pose-aware source face warping for roop-unleashed
+face_3d_recon.py — Pose-aware source face warping
 =====================================================================
 Uses the 68-point 3D landmarks that insightface already provides
 (no additional model downloads required) to warp the source face crop

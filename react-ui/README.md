@@ -1,6 +1,6 @@
-# Roop Unleashed Pro — React UI
+# Roop Ultimate — React UI
 
-The **active** front-end for Roop Unleashed. All new UI work happens here.
+The **active** front-end for Roop Ultimate. All new UI work happens here.
 The Gradio UI under `app/ui/` is the **frozen legacy/backup** interface — do not add features there.
 
 This is a Vite + React 19 + Tailwind v4 single-page app that talks to the FastAPI
