@@ -1,0 +1,246 @@
+"""GPEN Realistic — GPEN-256's detail without GPEN's colour, on a pooled path.
+
+THE DIAGNOSIS, because it is not the one people expect. GPEN-256 gets called
+"plastic" or "cartoonish", which sounds like a detail problem. It is not.
+Measured on a real swapped face at 256, against the crop the restorer was handed:
+
+    cheek high-frequency std     input 5.93   GPEN 8.09   CodeFormer 6.18
+    chroma drift from the input  input 0.00   GPEN 2.96   (LAB a/b, mean abs)
+
+GPEN-256 carries MORE fine detail than CodeFormer-512 does — its structure is
+genuinely sharper, and it does it in a sixth of the time (5.97 ms against
+37.49 ms per face). What it gets wrong is COLOUR: it pushes the whole face pink,
+paints magenta onto the eyelids and flushes the cheeks. That is what reads as a
+cartoon, and no amount of sharpening or smoothing addresses it.
+
+THE FIX is therefore to keep GPEN's luminance and throw its chrominance away,
+taking the colour from the crop the swapper actually produced:
+
+    chroma drift  2.96 -> 0.30      detail  6.59 -> 6.59 (unchanged)
+    cost          0.27 ms/face at 256
+
+It is done as a signed grey delta added to all three BGR channels rather than a
+LAB channel swap, because both remove the cast (0.30 vs 0.11 residual, against a
+2.96 problem) and are visually indistinguishable, while the grey delta costs
+0.27 ms against 0.60 — and on this processor speed is the point. `_LAB_EXACT`
+switches to the LAB form if the last 0.19 of drift ever matters.
+
+THE OTHER HALF IS FREE SPEED. `Enhance_GPEN` has no SessionPool, so it runs
+behind ProcessMgr's GLOBAL GPU lock — the single most expensive stage in a
+render, serialised to one thread at a time, while every other worker waits. This
+processor owns a pool, so it is lock-free and scales with the worker count. Its
+host path is also the lean one (a 256-entry LUT gather for pre, one saturating
+C++ scale for post, an io_binding held per pool slot) rather than the five-pass
+float32 spelling, which is worth about another millisecond.
+
+So the arithmetic is: +0.27 ms for the colour fix, roughly -1 ms from the host
+path, and the enhance stage stops being serialised.
+
+Knobs, for re-measuring rather than for shipping a different default:
+    ROOP_GPENR_CHROMA   0 = the swapper's colour (default), 1 = GPEN's own
+"""
+
+import os
+import threading
+
+import cv2
+import numpy as np
+import onnxruntime
+
+import roop.globals
+from roop.typing import Face, FaceSet, Frame
+from roop.processors.enhance_common import is_usable, sized
+from roop.utilities import resolve_relative_path, conditional_download
+from roop import session_pool
+
+
+class Enhance_GPENRealistic:
+    processorname = 'gpen_realistic'
+    type = 'enhance'
+    # FFHQ-trained, like every restorer here — see
+    # Enhance_CodeFormer.model_template for what that costs against the swap
+    # crop and what `enhancer_align` does about it.
+    model_template = 'ffhq_512'
+
+    _SIZE = 256
+    _MODEL = 'gpen_bfr_256.onnx'
+    _URL = ('https://huggingface.co/facefusion/models-3.0.0/resolve/main/'
+            'gpen_bfr_256.onnx')
+
+    # The LAB channel swap is more exact (0.11 residual drift vs 0.30) and more
+    # than twice the cost. Off, because this processor exists to be fast and the
+    # two are indistinguishable on footage.
+    _LAB_EXACT = False
+
+    def __init__(self):
+        self.plugin_options = None
+        self.devicename = None
+        self.session = None
+        self.io_binding = None
+        self.pool = None          # SessionPool of (session, io_binding) slots
+        self.in_name = None
+        self.out_name = None
+        self._lut = None
+        self._faces = 0
+        self._lock = threading.Lock()
+
+    # ── lifecycle ────────────────────────────────────────────────────────────
+    def Initialize(self, plugin_options: dict):
+        if self.plugin_options is not None:
+            if self.plugin_options.get("devicename") != plugin_options.get("devicename"):
+                self.Release()
+        self.plugin_options = plugin_options
+        self.devicename = plugin_options["devicename"].replace('mps', 'cpu')
+
+        if self.session is not None:
+            return
+
+        model_dir = resolve_relative_path('../models')
+        conditional_download(model_dir, [self._URL])
+        model_path = os.path.join(model_dir, self._MODEL)
+
+        def _build(_i=0):
+            # No FP32 forcing here. That guard exists for GPEN 1024/2048, whose
+            # activations overflow in FP16 and paint a black face; 256 is a
+            # sixteenth of 1024's pixels and is stable, exactly as 512 is.
+            sess = onnxruntime.InferenceSession(
+                model_path, None, providers=roop.globals.execution_providers)
+            iob = sess.io_binding()
+            iob.bind_output(sess.get_outputs()[0].name, self.devicename)
+            return (sess, iob)
+
+        self.session, self.io_binding = _build()
+        self.in_name = self.session.get_inputs()[0].name
+        self.out_name = self.session.get_outputs()[0].name
+        # uint8 -> float32 normalised to [-1, 1], in one gather.
+        self._lut = ((np.arange(256, dtype=np.float32) / 127.5) - 1.0)
+
+        # THE POINT OF THE POOL: `_gpu_guard` only exempts a processor that owns
+        # one. Without it this stage takes the global GPU lock and the enhancer —
+        # ~36% of a render — becomes a one-thread queue no thread count can
+        # widen. GPEN-256 is small (a quarter of 512's pixels), so extra
+        # contexts are cheap; `pool_size` still caps it for a caller loading
+        # this alongside other heavy nets.
+        if session_pool.pooling_enabled():
+            n = session_pool.pool_size()
+            cap = plugin_options.get('pool_size')
+            if cap:
+                n = max(1, min(int(n), int(cap)))
+            extras = []
+            try:
+                extras = [_build(i + 1) for i in range(n - 1)]
+                primary = (self.session, self.io_binding)
+                self.pool = session_pool.SessionPool(
+                    lambda i, _e=([primary] + extras): _e[i], n)
+            except Exception as e:
+                extras.clear()
+                self.pool = None
+                print(f"[GPEN Realistic] multi-context pool unavailable ({e}); "
+                      f"falling back to one session behind the GPU lock")
+
+    def Release(self):
+        line = self.cost_summary()
+        if line:
+            print(line, flush=True)
+        if self.pool is not None:
+            self.pool.release()
+            self.pool = None
+        self.io_binding = None
+        self.session = None
+        self._lut = None
+
+    # ── colour ───────────────────────────────────────────────────────────────
+    @classmethod
+    def _keep_source_colour(cls, restored, source, chroma=0.0):
+        """GPEN's luminance, the swapper's chrominance.
+
+        A luminance-only edit is the same signed offset on every channel, so
+        adding `grey(restored) - grey(source)` to the source moves brightness
+        and leaves hue and saturation where the swapper put them. That is the
+        whole colour fix, and it is two C++ passes.
+
+        `chroma` lerps back toward GPEN's own colour for anyone who wants to
+        re-measure; 0 is the default and the reason this processor exists.
+        """
+        try:
+            g_r = cv2.cvtColor(restored, cv2.COLOR_BGR2GRAY)
+            g_s = cv2.cvtColor(source, cv2.COLOR_BGR2GRAY)
+            if cls._LAB_EXACT:
+                lab = cv2.cvtColor(source, cv2.COLOR_BGR2LAB)
+                lab[:, :, 0] = cv2.cvtColor(restored, cv2.COLOR_BGR2LAB)[:, :, 0]
+                out = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
+            else:
+                d = cv2.subtract(g_r, g_s, dtype=cv2.CV_16S)
+                out = cv2.add(source, cv2.merge((d, d, d)), dtype=cv2.CV_8U)
+            if chroma > 0.0:
+                out = cv2.addWeighted(out, 1.0 - chroma, restored, chroma, 0.0)
+            return out
+        except cv2.error:
+            return restored
+
+    # ── run ──────────────────────────────────────────────────────────────────
+    def Run(self, source_faceset: FaceSet, target_face: Face, temp_frame: Frame) -> Frame:
+        if temp_frame is None or getattr(temp_frame, 'size', 0) == 0:
+            return temp_frame, 1
+
+        input_size = temp_frame.shape[1]
+        S = self._SIZE
+        if temp_frame.shape[0] != S or temp_frame.shape[1] != S:
+            src = cv2.resize(temp_frame, (S, S), interpolation=cv2.INTER_CUBIC)
+        else:
+            src = temp_frame
+
+        # One gather: uint8 BGR HWC -> float32 RGB CHW in [-1, 1]. Fancy indexing
+        # returns a fresh C-contiguous array, so [None] after it is a free view.
+        x = self._lut[src.transpose(2, 0, 1)[::-1]][None]
+
+        def _infer(sess, iob):
+            iob.bind_cpu_input(self.in_name, x)
+            sess.run_with_iobinding(iob)
+            return iob.copy_outputs_to_cpu()
+
+        if self.pool is not None:
+            with self.pool.lease() as (sess, iob):
+                ort_outs = _infer(sess, iob)
+        else:
+            ort_outs = _infer(self.session, self.io_binding)
+
+        hwc = np.ascontiguousarray(ort_outs[0][0][::-1].transpose(1, 2, 0),
+                                   dtype=np.float32)
+        del ort_outs
+
+        # np.clip does NOT remove NaN and uint8(NaN) is 0, so one overflowed
+        # value paints a pixel black and a saturated graph paints the whole FACE
+        # black, silently. A single sum propagates NaN and +-inf for a fraction
+        # of isfinite().all()'s cost. See enhance_common.is_usable.
+        if not np.isfinite(hwc.sum()):
+            print("[GPEN Realistic] non-finite output — using unenhanced frame")
+            return sized(src, input_size)
+
+        # maximum() first so convertScaleAbs' abs() is a no-op on the low end;
+        # its saturate_cast handles the high end. Two passes, both in C++.
+        np.maximum(hwc, -1.0, out=hwc)
+        restored = cv2.convertScaleAbs(hwc, alpha=127.5, beta=127.5)
+
+        if not is_usable(restored):
+            return sized(src, input_size)
+
+        try:
+            chroma = float(os.environ.get('ROOP_GPENR_CHROMA', '') or 0.0)
+        except ValueError:
+            chroma = 0.0
+        out = self._keep_source_colour(restored, src, chroma)
+
+        with self._lock:
+            self._faces += 1
+        return sized(out, input_size)
+
+    # ── reporting ────────────────────────────────────────────────────────────
+    def cost_summary(self):
+        with self._lock:
+            f = self._faces
+        if not f:
+            return None
+        return (f"[GPEN Realistic] {f} faces at {self._SIZE} "
+                f"(GPEN luminance, swapper chrominance"
+                f"{', pooled' if self.pool is not None else ''})")

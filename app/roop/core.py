@@ -406,6 +406,12 @@ def get_processing_plugins(masking_engine, swap_model='inswapper'):
         processors.update({"dmdnet": {}})
     elif roop.globals.selected_enhancer == 'GPEN 256':
         processors.update({"gpen": {"size": 256}})
+    elif roop.globals.selected_enhancer == 'GPEN Realistic':
+        # GPEN-256's luminance with the swapper's colour, on a pooled, lean host
+        # path. See Enhance_GPENRealistic: the "cartoonish" look people report
+        # from GPEN-256 is a 2.96 chroma drift, not a detail deficit -- its
+        # detail already beats CodeFormer-512 at a sixth of the cost.
+        processors.update({"gpen_realistic": {}})
     elif roop.globals.selected_enhancer == 'GPEN':
         processors.update({"gpen": {"size": 512}})
     elif roop.globals.selected_enhancer == 'GPEN 1024':

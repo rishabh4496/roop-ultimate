@@ -99,7 +99,7 @@ import sample_bench as sb
 # silently renders with no enhancer at all — see the module docstring.
 VALID_ENHANCERS = {
     'None', 'GFPGAN', 'Codeformer', 'Codeformer (fp16)', 'DMDNet',
-    'GPEN 256', 'GPEN', 'GPEN 1024', 'GPEN 2048', 'UltraMax',
+    'GPEN 256', 'GPEN Realistic', 'GPEN', 'GPEN 1024', 'GPEN 2048', 'UltraMax',
     'Restoreformer++', 'KEEP (sidecar)',
 }
 
