@@ -54,6 +54,23 @@ class YoloFaceDetector:
         so = onnxruntime.SessionOptions()
         self.session = onnxruntime.InferenceSession(model_path, so, providers=providers)
         self.input_name = self.session.get_inputs()[0].name
+        # yoloface_8n.onnx is exported with a FIXED input of [1,3,640,640].
+        # Feeding any other det_size raises InvalidArgument — and because
+        # face_util.get_all_faces swallows detector exceptions, that surfaced as
+        # ZERO faces for an entire render, silently. Measured 2026-08-24:
+        # det_size 640 -> 95.4% recall, det_size 512 -> 0.0%, at 329 "fps"
+        # because it was failing instead of detecting.
+        #
+        # So the model's own dimension is read here and used regardless of what
+        # the caller asks for. `face_detector_size` is a global shared by every
+        # engine, and only retinaface accepts an arbitrary value; the others are
+        # fixed-shape exports that must ignore it rather than break.
+        shape = self.session.get_inputs()[0].shape
+        try:
+            h, w = int(shape[2]), int(shape[3])
+            self.fixed_size = h if h == w else None
+        except (TypeError, ValueError, IndexError):
+            self.fixed_size = None      # dynamic axes: honour the caller
         # No lock: each instance is leased to one thread for the length of a
         # call (see lease_detector). The old shared-session mutex assumed
         # detection was the cheap stage, which stopped being true for the
@@ -61,7 +78,17 @@ class YoloFaceDetector:
         # measured cost of the same pattern on retinaface was a constant 17.4ms
         # serial section at every pool width, with the GPU at ~51%.
 
+    _warned_size = False
+
     def detect(self, frame, det_size=640, det_thresh=0.5):
+        if self.fixed_size and det_size != self.fixed_size:
+            if not YoloFaceDetector._warned_size:
+                YoloFaceDetector._warned_size = True
+                print(f"[YOLOFace] this export takes a fixed {self.fixed_size}px "
+                      f"input; ignoring face_detector_size={det_size}. Detection "
+                      f"is unaffected — before this guard the mismatch raised and "
+                      f"was swallowed, giving zero faces for the whole render.")
+            det_size = self.fixed_size
         h0, w0 = frame.shape[:2]
         scale = min(det_size / w0, det_size / h0)
         rw, rh = int(round(w0 * scale)), int(round(h0 * scale))
