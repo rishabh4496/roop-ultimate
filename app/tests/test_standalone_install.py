@@ -75,6 +75,44 @@ class TestStandaloneInstall(unittest.TestCase):
             "the interpreter's sys.prefix is not this project's env/ — the "
             "virtual environment physically lives somewhere else")
 
+    def test_the_venv_agrees_with_where_it_actually_lives(self):
+        """`activate` must name the venv's real location.
+
+        A venv records its own absolute path in `Scripts/activate(.bat)`. Python
+        does NOT read that — `sys.prefix` comes from the interpreter's location —
+        so after the venv is moved, `env/Scripts/python.exe` keeps working and
+        every test here keeps passing while the LAUNCHER is broken: `activate`
+        prepends a folder that no longer exists to PATH, `python` falls through
+        to whatever else is installed, and the app dies on `import torch` with
+        the package sitting right there.
+
+        That is precisely what happened on 2026-08-23 after `app/env` was moved
+        and its old location deleted. `repair_venv_paths.py` fixes it; this is
+        the check that catches it.
+        """
+        env = os.path.join(APP, 'env')
+        if not os.path.exists(env):
+            self.skipTest('no venv installed')
+        bat = os.path.join(env, 'Scripts', 'activate.bat')
+        if not os.path.exists(bat):
+            bat = os.path.join(env, 'bin', 'activate')
+        if not os.path.exists(bat):
+            self.skipTest('no activate script')
+        recorded = None
+        with open(bat, encoding='utf-8', errors='ignore') as f:
+            for line in f:
+                if 'VIRTUAL_ENV=' in line:
+                    recorded = line.split('VIRTUAL_ENV=', 1)[1].strip().strip('"\'')
+                    break
+        self.assertIsNotNone(recorded, 'activate script names no VIRTUAL_ENV')
+        self.assertEqual(
+            os.path.normcase(os.path.normpath(recorded)),
+            os.path.normcase(os.path.normpath(env)),
+            f"the venv thinks it lives at {recorded!r} but it is at {env!r}. "
+            f"`activate` will put a wrong (possibly nonexistent) folder on PATH "
+            f"and the app will fail to import its own packages. "
+            f"Run: python repair_venv_paths.py")
+
     def test_no_runtime_dir_is_tracked_by_git(self):
         """The flip side: now that they are real directories holding ~49 GB,
         nothing may ever stage them.
