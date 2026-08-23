@@ -471,15 +471,25 @@ class Settings:
                 vram_gb = torch.cuda.get_device_properties(0).total_memory / (1024**3)
                 import psutil
                 cores = psutil.cpu_count(logical=False) or 4
-                if mode == 'heavy':
-                    return int(min(max(2, cores - 1), max(2, vram_gb / 3.0)))
-                elif mode == 'enhanced':
-                    return int(min(max(2, cores - 1), max(2, vram_gb / 2.0)))
+                logical = psutil.cpu_count(logical=True) or cores
+
+                # TensorRT context sharing (trt_context_memory_sharing_enable=True)
+                # allows worker threads to execute concurrently without duplicating weight memory.
+                if vram_gb >= 15.5:
+                    max_cap = min(logical, 16)
+                elif vram_gb >= 11.5:
+                    max_cap = min(logical, 16)
+                elif vram_gb >= 7.5:
+                    max_cap = min(logical, 12)
                 else:
-                    return int(min(max(2, cores - 1), max(2, vram_gb / 1.2)))
+                    max_cap = min(cores, 8)
+
+                if mode == 'heavy':
+                    return int(min(max_cap, max(4, int(vram_gb / 1.5))))
+                elif mode == 'enhanced':
+                    return int(min(max_cap, max(6, int(vram_gb / 1.0))))
+                else:
+                    return int(min(max_cap, max(8, int(vram_gb / 0.75))))
         except Exception:
             pass
-        return getattr(self, 'max_threads', 4)
-
-
-
+        return getattr(self, 'max_threads', 8)

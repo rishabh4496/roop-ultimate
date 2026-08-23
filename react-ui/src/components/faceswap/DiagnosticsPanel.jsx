@@ -322,6 +322,15 @@ export default function DiagnosticsPanel({ desc = '', telemetry, processing, pau
         <Meter label="CPU" value={`${telemetry?.cpu_percent ?? 0}%`} color="#fb923c"
                pct={telemetry?.cpu_percent}
                sub={`${telemetry?.threads ?? 0} python threads`} />
+        {telemetry?.turbo_active && (
+          <div className="col-span-2 lg:col-span-1 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1.5 flex items-center justify-between shadow-sm">
+            <span className="text-nano font-bold uppercase tracking-wider text-emerald-400 flex items-center gap-1">
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
+              <span>GPU Turbo Active</span>
+            </span>
+            <span className="text-nano font-mono text-emerald-300 font-semibold">TRT · NVDEC · NVENC</span>
+          </div>
+        )}
       </div>
 
       {/* ── Stage cost breakdown ─────────────────────────────────────────── */}

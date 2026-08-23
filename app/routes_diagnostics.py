@@ -377,4 +377,28 @@ def get_telemetry():
         pass
 
     telemetry["threads"] = threading.active_count()
+
+    try:
+        cfg = getattr(roop_globals, 'CFG', None)
+        provider = getattr(cfg, 'provider', 'cuda') if cfg else 'cuda'
+        trt_precision = getattr(cfg, 'trt_precision', 'mixed') if cfg else 'mixed'
+        nvdec_active = (os.environ.get("ROOP_NVDEC", "1").strip() != "0")
+        batch_swap_active = (os.environ.get("ROOP_BATCH_SWAP", "1").strip() != "0")
+        codec = getattr(cfg, 'output_video_codec', '') if cfg else ''
+        nvenc_active = codec in ('hevc_nvenc', 'h264_nvenc')
+        
+        telemetry["provider"] = provider
+        telemetry["trt_precision"] = trt_precision
+        telemetry["nvdec_active"] = nvdec_active
+        telemetry["batch_swap_active"] = batch_swap_active
+        telemetry["nvenc_active"] = nvenc_active
+        telemetry["turbo_active"] = bool(
+            provider == "tensorrt" and
+            nvdec_active and
+            batch_swap_active and
+            (nvenc_active or codec == '')
+        )
+    except Exception:
+        pass
+
     return telemetry

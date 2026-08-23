@@ -345,6 +345,145 @@ export default function Settings({ meta, settings, setSettings, notify }) {
         </FilterSection>
 
         <FilterSection title="Performance" icon={Icon.cpu} query={query} onlyModified={onlyModified} onResetKeys={resetKeys}>
+          {/* ── GPU Acceleration & Full Potential Suite ── */}
+          <div className="rounded-2xl border border-white/10 bg-gradient-to-br from-emerald-500/[0.08] via-black/40 to-cyan-500/[0.05] p-4 space-y-3 shadow-lg">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2.5">
+                <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 shadow-inner">
+                  <Icon.cpu size={18} />
+                </span>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-bold text-white">GPU Full Potential Suite</span>
+                    <span className="rounded-full px-2 py-0.5 text-nano font-bold uppercase tracking-wider bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
+                      {p.provider === 'tensorrt' && p.perf_nvdec !== 'off' && p.perf_batch_swap !== 'off' ? '🚀 Max Turbo Active' : '⚡ Hardware Acceleration'}
+                    </span>
+                  </div>
+                  <span className="text-nano text-white/50">Maximize TensorRT, NVDEC decoding, NVENC encoding & cross-frame batching</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Quick Profile Presets */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => {
+                  setMany({
+                    provider: 'tensorrt',
+                    trt_precision: 'mixed',
+                    perf_nvdec: 'on',
+                    perf_batch_swap: 'on',
+                    output_video_codec: 'hevc_nvenc',
+                    perf_encoder_preset: 'p5',
+                    perf_trt_pool: '2',
+                    perf_detmask_pool: '2',
+                    perf_detector_pool: '2',
+                    perf_expr_pool: 'auto',
+                    auto_thread_selection: true,
+                    process_priority: 'high',
+                    force_cpu: false,
+                  });
+                  notify('🚀 Full GPU Potential (Max Turbo) activated! TensorRT FP16, NVDEC, NVENC & Batch Swap enabled.', 'success');
+                }}
+                className={`flex flex-col items-start p-2.5 rounded-xl border text-left transition-all ${
+                  p.provider === 'tensorrt' && p.perf_nvdec === 'on' && p.perf_batch_swap === 'on'
+                    ? 'bg-emerald-500/20 border-emerald-500/50 shadow-md ring-1 ring-emerald-500/30'
+                    : 'bg-white/[0.03] border-white/10 hover:bg-white/[0.06] text-white/70 hover:text-white'
+                }`}
+              >
+                <div className="flex items-center gap-1.5 text-xs font-bold text-emerald-400">
+                  <span>🚀</span>
+                  <span>Max GPU Turbo</span>
+                </div>
+                <span className="text-nano text-white/50 mt-0.5">Full GPU saturation · TensorRT + NVDEC + NVENC</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setMany({
+                    provider: 'tensorrt',
+                    trt_precision: 'mixed',
+                    perf_nvdec: 'auto',
+                    perf_batch_swap: 'on',
+                    output_video_codec: 'hevc_nvenc',
+                    perf_encoder_preset: 'p5',
+                    perf_trt_pool: 'auto',
+                    perf_detmask_pool: 'auto',
+                    perf_detector_pool: 'auto',
+                    perf_expr_pool: 'auto',
+                    auto_thread_selection: true,
+                    process_priority: 'above_normal',
+                    force_cpu: false,
+                  });
+                  notify('⚖️ Balanced GPU Mode activated.', 'info');
+                }}
+                className={`flex flex-col items-start p-2.5 rounded-xl border text-left transition-all ${
+                  p.provider === 'tensorrt' && p.perf_nvdec === 'auto'
+                    ? 'bg-blue-500/20 border-blue-500/50 shadow-md ring-1 ring-blue-500/30'
+                    : 'bg-white/[0.03] border-white/10 hover:bg-white/[0.06] text-white/70 hover:text-white'
+                }`}
+              >
+                <div className="flex items-center gap-1.5 text-xs font-bold text-blue-400">
+                  <span>⚖️</span>
+                  <span>Balanced</span>
+                </div>
+                <span className="text-nano text-white/50 mt-0.5">Optimized for stability & desktop multitasking</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setMany({
+                    provider: 'cuda',
+                    perf_nvdec: 'off',
+                    perf_batch_swap: 'off',
+                    perf_trt_pool: 'auto',
+                    perf_detmask_pool: 'auto',
+                    perf_detector_pool: 'auto',
+                    perf_expr_pool: 'auto',
+                    auto_thread_selection: false,
+                    max_threads: 3,
+                    process_priority: 'normal',
+                    force_cpu: false,
+                  });
+                  notify('🔋 Low VRAM / Power Saver mode activated.', 'info');
+                }}
+                className={`flex flex-col items-start p-2.5 rounded-xl border text-left transition-all ${
+                  p.provider === 'cuda' && p.perf_nvdec === 'off'
+                    ? 'bg-amber-500/20 border-amber-500/50 shadow-md ring-1 ring-amber-500/30'
+                    : 'bg-white/[0.03] border-white/10 hover:bg-white/[0.06] text-white/70 hover:text-white'
+                }`}
+              >
+                <div className="flex items-center gap-1.5 text-xs font-bold text-amber-400">
+                  <span>🔋</span>
+                  <span>Low VRAM</span>
+                </div>
+                <span className="text-nano text-white/50 mt-0.5">Conservative memory for cards &lt;6GB</span>
+              </button>
+            </div>
+
+            {/* Hardware Pipeline Feature Badges */}
+            <div className="flex flex-wrap gap-1.5 pt-1">
+              <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-nano font-semibold border ${p.provider === 'tensorrt' ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-300' : 'bg-white/5 border-white/10 text-white/40'}`}>
+                ⚡ TensorRT {p.trt_precision || 'mixed'}
+              </span>
+              <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-nano font-semibold border ${p.perf_nvdec !== 'off' ? 'bg-cyan-500/15 border-cyan-500/30 text-cyan-300' : 'bg-white/5 border-white/10 text-white/40'}`}>
+                🎬 NVDEC GPU Decode
+              </span>
+              <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-nano font-semibold border ${(p.output_video_codec === 'hevc_nvenc' || p.output_video_codec === 'h264_nvenc') ? 'bg-purple-500/15 border-purple-500/30 text-purple-300' : 'bg-white/5 border-white/10 text-white/40'}`}>
+                🎥 NVENC GPU Encode
+              </span>
+              <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-nano font-semibold border ${p.perf_batch_swap !== 'off' ? 'bg-amber-500/15 border-amber-500/30 text-amber-300' : 'bg-white/5 border-white/10 text-white/40'}`}>
+                📦 Batched Swap (X-Frame)
+              </span>
+              <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-nano font-semibold border ${p.auto_thread_selection ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-300' : 'bg-white/5 border-white/10 text-white/40'}`}>
+                🌊 Dynamic Concurrency Scaling
+              </span>
+            </div>
+          </div>
+
           <Select label="Provider" info="Inference sessions are built at startup — provider and precision changes take effect after restarting the app." {...bind('provider')} options={meta.providers} />
           {p.provider === 'tensorrt' && (
             <Select label="Precision mode (TensorRT)" info="mixed = recommended; fp16 = fastest; fp32 = most accurate. Applies after app restart." {...bind('trt_precision', 'mixed')} options={meta.trt_precisions ?? ['fp32', 'fp16', 'mixed']} />

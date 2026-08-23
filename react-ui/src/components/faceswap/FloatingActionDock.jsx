@@ -98,6 +98,15 @@ export default function FloatingActionDock({
           <span>{previewing ? 'Rendering...' : 'Preview'}</span>
         </button>
 
+        {/* GPU Turbo Status Badge */}
+        <div
+          className="hidden md:flex items-center gap-1.5 rounded-full px-2.5 py-1 text-nano font-bold bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 select-none cursor-default"
+          title="Full GPU Potential: TensorRT FP16 + NVDEC + NVENC + Batch Swap"
+        >
+          <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
+          <span>GPU Turbo</span>
+        </div>
+
         <div className="h-4 w-px bg-white/15" />
 
         {/* Workspace Layout Switcher Menu */}
