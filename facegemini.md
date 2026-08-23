@@ -775,3 +775,106 @@ TensorRT contexts** in 8.9 s with the advisory printed once.
 unset, fallback on junk, the advisory fires once and only above the threshold and
 names the failure mode, `expression_pool_size` returns an int, and the dropdown
 reaches past the largest auto default.
+
+
+---
+
+## Session Log (2026-08-24 Part 7): Stabilizer Rounds (Negative), GPEN Realistic, and GFPGAN Was Returning a Grey Rectangle
+
+Commits `de867af`, `5411e5a`, `9166e6c`, `2ad546e`, `d495c95`, `69cb6d9`. Suite **1092 green**.
+
+### 1. fps fluctuation: mostly the meter, plus 19% real idle
+
+Reported as swinging 30+ to under 10 fps. Measured from the live render's own log,
+96 stabilization chunks of a 50,646-frame run: **true** per-chunk fps was min 11.7 /
+median 13.9 / max 52.0, while read_wait was 0 ms and write_stall 0 ms always — decode
+and encode are not the bottleneck. The bar's number is an instantaneous per-chunk rate,
+so it is noisier than the machine.
+
+The real defect: **worker imbalance, median 18.2% of every chunk idle, max 54%, 8.0 of
+42.5 minutes.** The chunk was sized to exactly one block per worker, so the shared
+work-stealing queue never had a block to hand out.
+
+**And the fix measured NEUTRAL.** Counterbalanced A/B on an 8748-frame clip:
+
+    config       forward   reversed   mean
+    1 round      15.32     15.01      15.17 fps
+    2 rounds     15.17      -         15.17
+    4 rounds     16.89     14.99      15.94
+
+The same config gave 14.99 and 16.89 depending only on position; two adjacent arms in
+the reversed pass gave 14.99 (4 rounds) and 15.01 (1 round). The +10% seen in the
+forward-only pass was ORDERING. Idle on that clip was 1.9-3.6% — nothing to recover.
+Default stayed at 1 round; `ROOP_STAB_BLOCKS_PER_WORKER` opts in. Also pinned: a
+PARTIAL extra round is **19% slower** than none (four workers take a second block while
+six idle), so the count is always a whole multiple of the worker count.
+
+### 2. GPEN Realistic — and the 256 mistake
+
+**Diagnosis:** GPEN's "cartoonish" look is COLOUR, not detail — a pink cast, magenta
+eyelids, chroma drift ~2.9 where the input is 0. Keeping GPEN's LUMINANCE and taking
+chrominance from the swapper's crop removes it (2.72 -> 0.36) with detail unchanged,
+for 0.27 ms.
+
+**The mistake:** built at 256 first. `realswap` emits a 256 crop, so a 256 restorer
+returns 256 and pastes at scale 1 while a 512 restorer returns 512 and pastes at
+**scale 2**. Detail reaching the frame:
+
+    swap input 2.67 | GPEN-256 2.82 | CodeFormer-512 4.11 | GPEN-512 5.14
+
+GPEN-256 is barely above the UNENHANCED input, so the user correctly reported the
+result as indistinguishable from plain GPEN-256. A post-filter cannot recover detail
+the network never synthesised. My earlier "GPEN-256 has more detail than CodeFormer"
+compared crops at their own native sizes, which is not what the paste sees — withdrawn.
+
+**The VRAM trap, found by rendering not reasoning:** the first 512 render came back at
+6.60 fps against UltraMax's 10.50 — slower, despite being faster per face (27.5 vs
+30.6 ms). A GPEN-512 pool of 2 costs **3123 MiB, 1.8x CodeFormer-fp16's**, which tips a
+12GB card into paging alongside realswap's two nets, RealityUX and 4/4 detector pools.
+The 512 tier now caps its pool by free VRAM. That alone: **6.60 -> 11.65 fps**.
+
+**Final, s1.mp4, 1800 frames, same session, 50 frames graded on landmark-anchored skin:**
+
+| | fps | skin texture | edge energy | chroma drift |
+|---|---|---|---|---|
+| UltraMax | 10.70 | 113% | 57% | 2.55 |
+| **GPEN Realistic** | **11.65** | **100%** | **63%** | **2.27** |
+| | +8.9% | t=-4.6 | t=+12.8 | t=-5.2 |
+
+Sharper, more colour-faithful, faster, and skin texture lands ON the footage's own level
+rather than 13% above it. Not claimed: GPEN-256 speed — 256-net speed and 512-net
+sharpness are not available together.
+
+### 3. GFPGAN was returning a flat grey face
+
+Its TensorRT FP16 engine COLLAPSES:
+
+    TRT fp16   raw [-0.47, -0.14]   pixel std 16.0   detail 0.08
+    TRT fp32   raw [-1.00,  1.00]   pixel std 65.2   detail 4.35
+    CUDA       raw [-1.00,  1.00]   pixel std 65.2   detail 4.35
+
+fp32 matches CUDA to 0.03/255; fp16 differs by 59/255. **This is not the failure
+`is_usable` was written for** — GPEN 1024/2048 overflows to NaN and paints black, which
+is loud and caught; this one keeps every value finite and just loses its dynamic range.
+It was also FAST that way (23 ms vs the fixed 41.7) because it was not doing the work,
+which is how it came to be documented in the UI as the cheapest restorer.
+
+Trap for the next one: running the ONNX directly with a minimal TRT option set did NOT
+reproduce it — that session finished in 473 ms, i.e. TensorRT never built an engine and
+silently fell back to CUDA. Only the app's real provider list shows the failure.
+
+Fixed with a shared `enhance_common.fp32_trt_providers(providers, tag)` (per-model
+engine cache; GPEN's private copy delegates to it) plus `looks_collapsed()`, the guard
+`is_usable` cannot provide. **UI corrected**: the enhancer help text listed GFPGAN at
+11.8 ms and "half the cost of RestoreFormer++" — measured on the collapsed engine.
+It is the most expensive restorer here at 41.7 ms.
+
+### Enhancer table as it now stands (RTX 4070, per face, 256 crop in)
+
+| enhancer | ms | output | detail@paste |
+|---|---|---|---|
+| GPEN 256 | 5.3 | 256, scale 1 | 2.82 |
+| **GPEN Realistic** | **27.5** | 512, scale 2 | **5.14** |
+| UltraMax | 30.6 | 512, scale 2 | 4.11 |
+| CodeFormer (fp16) | 37.9 | 512, scale 2 | 4.11 |
+| GFPGAN v1.4 (fixed) | 41.7 | 512, scale 2 | 4.35 |
