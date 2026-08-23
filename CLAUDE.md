@@ -920,7 +920,8 @@ merger key, verified to FAIL when one is removed.
 
 ## Session Log (2026-08-23 Part 3): UltraMax Rebuilt — Sharpen Removed, 1.13x Faster Than CodeFormer, and Four Benches That Compared Against Nothing
 
-Full working notes at the top of `G:\pinokiooop-keep\RECODE_STATUS.md`. Suite **1034 green**.
+Full working notes at the top of `G:\pinokio
+oop-keep\RECODE_STATUS.md`. Suite **1034 green**.
 
 ### 1. The report: "too sharp, blurry on eyes" — traced to one operator
 
@@ -964,18 +965,13 @@ same pair gave 1.13x and 1.30x — machine variance ~18%, larger than the effect
 gated to flat skin (Laplacian) and mid-tones (LUT). Eyes, lashes, brows, lip margins,
 nostrils and hairline pass through **untouched** — the gate the old filter lacked.
 
-The first attempt measured as a total no-op, and the reason generalises: the filter runs
-on the 512 template but the face pastes back at ~300 px, so a residual at sigma 1.1
-lands at sigma 0.65 and is resampled out. It ran on all 2195 faces of s1 and moved
-rendered skin texture by 0.4%. `apply_detail_transfer` already had this right
-(`sigma = max(1.0, w/256)`). At **sigma 2.5**:
-
-| vs the ORIGINAL footage, on the swapped face | Codeformer (fp16) | UltraMax |
-|---|---|---|
-| skin texture | 36% of plate | **40% of plate** |
-| edge energy where the plate has structure | 77% | **77%** |
-
-More skin, **zero** added edge energy. Costs 2.49 ms/face.
+**WITHDRAWN — see Part 4 below.** The "36% -> 40% of plate" figure came from a skin
+mask defined as "the flattest 45% of the RENDERED frame", which selects the pixels each
+treatment touched LEAST and so partly cancels the effect it is measuring. Re-measured on
+landmark-anchored skin, the restore moves texture by an amount indistinguishable from
+zero (paired t = -0.7 over 102 frames) and the swapped face is OVER-textured at ~155% of
+the footage, not under-textured. The restore is now **off by default** and UltraMax is
+**1.209x** faster rather than 1.127x.
 
 Also measured, and it settles the question at the merger level: the rendered face's edge
 energy is **77% of the plate's**, so the merger chain (clarity 1.0 + sharpen 0.35 +
@@ -1004,3 +1000,55 @@ ROOP_* list matches run.py's.
 
 - `app/output/enhancer_compare/s1__Codeformer_vs_UltraMax.mp4` — 1800 frames, side by side, fps in banner
 - `app/output/enhancer_compare/ultramax_old_vs_new_eyes.png` — the eye artefact, before/after
+
+
+---
+
+## Session Log (2026-08-23 Part 4): The Skin Gap Does Not Exist — detail_transfer Swept, UltraMax's Texture Restore Withdrawn
+
+Asked to sweep `detail_transfer_strength` to close the skin gap from Part 3. Doing it
+properly showed **the gap was a measurement artefact**.
+
+### 1. The mask was defined by the quantity being measured
+
+Skin had been masked as "the flattest 45% of the RENDERED frame" — which selects the
+pixels each treatment touched LEAST. Three definitions on the same footage:
+
+| skin mask | swapped face's skin texture vs the plate |
+|---|---|
+| edge < 45th pct of the RENDERED arm | 34% |
+| edge < 75th pct of the PLATE | 283% |
+| edge < 45th pct of the PLATE | 500% |
+| **cheeks + forehead from the plate's landmarks** | **~155%** |
+
+Only the last is independent of both images' high-frequency content and on actual skin.
+**The swapped face is OVER-textured (~155% of the footage's own skin micro-texture), not
+under-textured at 36%** — consistent with the original "too sharp" report.
+
+### 2. The sweep, paired over 106 frames of s1.mp4
+
+| dt | skin tex vs plate | flicker | identity margin |
+|---|---|---|---|
+| 0.00 | 155.0% | 8.226 | 0.4271 |
+| **0.40 (live)** | 156.1% | 8.302 | 0.4158 |
+| 1.00 | 157.1% | 8.365 | 0.4087 |
+
+    dt 0.4 vs 0:  flicker WORSE on 97.2% of frames (t +19.5)
+                  identity margin WORSE on 86.8%   (t -13.1)
+    dt 1.0 vs 0:  flicker WORSE on 99.1%           (t +24.7)
+                  identity margin WORSE on 97.2%   (t -18.7)
+
+Raising it is contraindicated on every axis. **Left at 0.4, not raised.** The case to
+LOWER it to 0 is strong on these three axes but is not taken here, because detail
+transfer also carries the dark-spot / mole preservation path that none of these metrics
+measure.
+
+### 3. UltraMax's texture restore is OFF by default
+
+Re-measured with the geometric mask, paired over 102 frames: skin texture
+156.8% -> 156.7% (t -0.7, nothing), flicker slightly worse (t +4.6), identity a hair
+better (t +2.0) — for 2.49 ms/face. Turned off. **UltraMax is now 1.209x +- 0.003
+faster than `Codeformer (fp16)` (34.68 -> 28.68 ms/face) with bit-identical output**,
+up from 1.127x. Suite 1035 green.
+
+New: `tests/sweep_detail_transfer.py`, `tests/probe_frame_space_texture.py`.

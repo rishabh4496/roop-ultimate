@@ -163,7 +163,15 @@ def sync_globals_from_config(g, verbose=True):
     return changed
 
 
-def render(clip, source_name, enhancer, out_dir, swapper, mask, threads):
+def render(clip, source_name, enhancer, out_dir, swapper, mask, threads,
+           overrides=None):
+    """One render, everything from config.yaml except what `overrides` names.
+
+    `overrides` is the sweep hook: `{'detail_transfer_strength': 0.7}` and so on,
+    applied AFTER the config sync so it wins, and printed, because a swept value
+    that silently failed to apply is the whole family of bugs this file exists
+    to avoid.
+    """
     if enhancer not in VALID_ENHANCERS:
         raise SystemExit(f"[compare] {enhancer!r} is not an enhancer name "
                          f"roop.core matches — it would render unenhanced. "
@@ -190,6 +198,13 @@ def render(clip, source_name, enhancer, out_dir, swapper, mask, threads):
     options.stabilize_enhancer = bool(getattr(g.CFG, 'stabilize_enhancer', False))
     options.stabilize_enhancer_strength = float(
         getattr(g.CFG, 'stabilize_enhancer_strength', 0.5) or 0.5)
+
+    for k, v in (overrides or {}).items():
+        if not hasattr(g, k):
+            raise SystemExit(f"[compare] roop.globals has no {k!r} — an override "
+                             f"nothing reads is a silent no-op")
+        setattr(g, k, v)
+        print(f"[compare] override {k} = {v!r}", flush=True)
 
     print(f"[compare] {enhancer}: swapper={swapper} mask={mask} "
           f"threads={threads} fidelity={g.codeformer_fidelity} "

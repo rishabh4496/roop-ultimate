@@ -1,4 +1,4 @@
-"""UltraMax — CodeFormer's restoration on a lean host path, plus texture restore.
+"""UltraMax — CodeFormer's restoration on a lean host path.
 
 WHAT THIS IS, STATED HONESTLY. UltraMax runs `codeformer.fp16.onnx` — the same
 weights as `Codeformer (fp16)`. It is not a different network and it does not
@@ -33,7 +33,38 @@ reported as "too sharp, blurry on the eyes". Both halves of that are fixed here.
    than pushed there because Enhance_CodeFormer.Run() is the reference
    implementation several saved benchmarks are calibrated against.
 
-2. TEXTURE RESTORE, NOT SHARPENING (the look).
+2. TEXTURE RESTORE — MEASURED AND TURNED OFF (default gain 0).
+
+   Read this before re-enabling it. Graded on rendered frames of s1.mp4, paired
+   over 102 frames, against the ORIGINAL footage's own skin (cheeks and forehead
+   placed from the plate's landmarks, so the measurement window cannot move with
+   the treatment):
+
+       skin texture vs the plate   156.8% -> 156.7%   paired t -0.7   (nothing)
+       temporal flicker            8.3664 -> 8.3752   paired t +4.6   (worse)
+       identity margin             0.4151 -> 0.4166   paired t +2.0   (a hair)
+
+   It costs 2.49 ms/face — 8% of this processor's budget — to move texture by an
+   amount indistinguishable from zero. So it is off, and turning it off makes
+   UltraMax bit-identical to `Codeformer (fp16)` and FASTER still: 28.71 ms
+   against 35.18, i.e. 1.23x rather than 1.127x.
+
+   THE PREMISE WAS ALSO WRONG, and that is the part worth keeping. The filter
+   was built to close a "skin gap" — an earlier measurement said the swapped
+   face carried only 36% of the footage's skin texture. That number came from a
+   mask defined as "the flattest 45% of the RENDERED frame", which selects the
+   pixels each treatment touched LEAST and so cancels the very effect it is
+   measuring. With the window anchored geometrically instead, the swapped face
+   carries **~155% of the plate's** skin micro-texture: it is OVER-textured, not
+   under-textured, which is consistent with the user's "too sharp" report and
+   leaves nothing for a restore to restore. `tests/sweep_detail_transfer.py`
+   carries the same finding for the merger's detail-transfer stage.
+
+   The implementation below is kept, unused, because it is correct code for a
+   job this pipeline does not have — and because the three mask definitions that
+   disagreed by 34% / 155% / 500% on the same footage are the actual lesson.
+
+3. WHAT THE FILTER DOES, if it is ever switched back on.
    CodeFormer's failure mode is waxy skin: the codebook prior draws clean
    structure and flattens dermal micro-texture. The OLD answer here was a
    multi-scale unsharp (0.45 of the fine detail plus 0.20 of a sigma 1.0-2.5
@@ -56,7 +87,7 @@ reported as "too sharp, blurry on the eyes". Both halves of that are fixed here.
    second (the filter above) reported as over-sharp. Grade it on the footage.
 
 Knobs, for re-measuring rather than for shipping a different default:
-    ROOP_ULTRAMAX_TEXTURE         texture-restore gain, default 0.55; 0 disables
+    ROOP_ULTRAMAX_TEXTURE         texture-restore gain, default 0 (OFF)
     ROOP_ULTRAMAX_TEXTURE_SIGMA   the band it is taken from, default 2.5 at 512
 """
 
@@ -114,9 +145,11 @@ class Enhance_UltraMax:
     # `tests/calibrate_ultramax_texture.py` is the measurement.
     _SIGMA = 2.5
 
-    # Texture-restore gain. Set from the end-to-end measurement in
-    # `tests/calibrate_ultramax_texture.py`, not by eye.
-    _TEXTURE_GAIN = 0.55
+    # Texture-restore gain. DEFAULT 0 — OFF — because measured properly it does
+    # nothing. See the "MEASURED AND TURNED OFF" section of the module
+    # docstring; this is a negative result kept as code so the next person does
+    # not rebuild it.
+    _TEXTURE_GAIN = 0.0
 
     def __init__(self):
         self.plugin_options = None

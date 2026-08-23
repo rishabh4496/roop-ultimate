@@ -1,11 +1,13 @@
 """Unit tests for the UltraMax enhancer.
 
 UltraMax runs codeformer.fp16.onnx directly (same weights as
-`Codeformer (fp16)`) on a leaner host path, then restores dermal texture that
-the restorer flattened. The tests that matter here are about the texture
-restore, because that is the part with a look to get wrong: it must leave
-everything the codebook drew as STRUCTURE alone, which is what stops it
-printing the second eyelid crease the old unsharp-based filter produced.
+`Codeformer (fp16)`) on a leaner host path. Its texture restore is present but
+DEFAULTS OFF: measured on rendered frames against the footage's own skin it
+moved texture by an amount indistinguishable from zero (paired t = -0.7 over
+102 frames) while costing 2.49 ms/face. The tests below still cover it, because
+the env knob can turn it back on and because its structure gate is the property
+that separates it from the unsharp filter it replaced — that filter is what
+printed a second eyelid crease.
 """
 
 import os
@@ -181,7 +183,6 @@ class TestUltraMaxRun(unittest.TestCase):
                             np.full((512, 512), -1.0, np.float32),   # G
                             np.full((512, 512), -1.0, np.float32)])  # B
         p = self._make(out_chw)
-        os.environ['ROOP_ULTRAMAX_TEXTURE'] = '0'
         out, _ = p.Run(None, None, np.zeros((512, 512, 3), np.uint8))
         self.assertLess(int(out[:, :, 0].mean()), 4)     # B low
         self.assertLess(int(out[:, :, 1].mean()), 4)     # G low
@@ -230,12 +231,23 @@ class TestUltraMaxRun(unittest.TestCase):
         self.assertIn("1 faces", line)
         self.assertIn("codeformer.fp16", line)
 
-    def test_texture_gain_env_disables_the_restore(self):
-        os.environ['ROOP_ULTRAMAX_TEXTURE'] = '0'
+    def test_texture_restore_is_off_by_default(self):
+        """Measured on rendered frames it moved skin texture by an amount
+        indistinguishable from zero (paired t = -0.7 over 102 frames) while
+        costing 2.49 ms/face and raising flicker. Off is the shipped default,
+        and this is what fails if someone turns it back on without a new
+        measurement."""
         p = self._make()
         p.Run(None, None, np.full((512, 512, 3), 128, np.uint8))
         self.assertEqual(p._textured, 0)
         self.assertEqual(p._faces, 1)
+        self.assertEqual(UM.Enhance_UltraMax._TEXTURE_GAIN, 0.0)
+
+    def test_texture_gain_env_re_enables_the_restore(self):
+        os.environ['ROOP_ULTRAMAX_TEXTURE'] = '0.55'
+        p = self._make()
+        p.Run(None, None, np.full((512, 512, 3), 128, np.uint8))
+        self.assertEqual(p._textured, 1)
 
 
 if __name__ == '__main__':
