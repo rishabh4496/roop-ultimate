@@ -1286,7 +1286,7 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
         # go — so the parallel/sequential choice made above gets one last look.
         self._stab_frame_bytes = int(width) * int(height) * 3
         if use_parallel_stab:
-            _wu, _blk, _width = self._stab_parallel_geometry(threads)
+            _wu, _blk, _width, _bpc = self._stab_parallel_geometry(threads)
             if _width < 2:
                 # 1-wide is single-threaded anyway, and paying the chunk
                 # buffering and block bookkeeping on top of that measured SLOWER
@@ -1597,7 +1597,37 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
             pass
         frame_mb = max(0.1, (self._stab_frame_bytes or (1920 * 1080 * 3)) / (1024.0 ** 2))
         fits = max(1, int((budget_mb / frame_mb) // block))
-        return wu, block, max(1, min(threads, fits))
+        width = max(1, min(threads, fits))
+
+        # BLOCKS PER CHUNK is a separate question from WORKERS, and conflating
+        # them cost ~19% of a real render.
+        #
+        # The chunk used to be sized `width * block` — exactly one block per
+        # worker. The dispatch below hands blocks out through a shared queue so
+        # an idle worker can take the next one, but with one block each there is
+        # never a next one, and the chunk's wall time is gated by its unluckiest
+        # block. Per-frame cost is not uniform (face count and size, masking,
+        # close-up rescue), so that gate is expensive: measured over 96 chunks of
+        # a live 50,646-frame render, the fastest worker sat idle for a median
+        # 18.2% of every chunk and up to 54%, totalling 8.0 of 42.5 minutes.
+        #
+        # The fix is to let a chunk hold every block the SAME memory budget
+        # already allows, so there is slack for the queue to redistribute. At
+        # 720p that is 14 blocks against 10 workers where it used to be 10.
+        #
+        # This does NOT make blocks smaller, which is the other way to create
+        # slack and the wrong one: a block is 4x the warm-up it discards, so
+        # halving it takes redundant priming from 25% to 50% — more than the
+        # imbalance it recovers. Block size, warm-up length and therefore the
+        # block grid over the video are all unchanged; only how many of them are
+        # decoded and dispatched together changes.
+        try:
+            per_worker = float(os.environ.get('ROOP_STAB_BLOCKS_PER_WORKER', '') or 2.0)
+        except ValueError:
+            per_worker = 2.0
+        want = int(width * max(1.0, per_worker))
+        blocks_per_chunk = max(width, min(fits, want))
+        return wu, block, width, blocks_per_chunk
 
     def _run_stab_parallel(self, source_video, awebp_frames, frame_start, frame_end,
                            frame_count, threads, progress_cb):
@@ -1615,8 +1645,8 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
         queues)."""
         # NOT `n_blocks`: the per-chunk dispatch below binds that name itself, and
         # this value has to survive the whole run.
-        WU, block, stab_width = self._stab_parallel_geometry(threads)
-        CHUNK = stab_width * block
+        WU, block, stab_width, blocks_per_chunk = self._stab_parallel_geometry(threads)
+        CHUNK = blocks_per_chunk * block
         try:
             CHUNK = int(os.environ.get('ROOP_STAB_CHUNK', '0') or '0') or CHUNK
         except ValueError:
@@ -1629,11 +1659,15 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
         elif os.environ.get('ROOP_STAB_WARMUP'):
             # Don't repeat the <=1% claim for a hand-set value: the bound comes
             # from the derivation, and an override is exactly how you break it.
-            print(f"[Stabilize] parallel: {threads} blocks x {block}f, warm-up "
+            print(f"[Stabilize] parallel: {stab_width} workers, "
+                  f"{blocks_per_chunk} blocks x {block}f per chunk, warm-up "
                   f"{WU}f (ROOP_STAB_WARMUP override — seam-freeness not guaranteed).")
         else:
-            print(f"[Stabilize] parallel: {threads} blocks x {block}f, "
-                  f"warm-up {WU}f (<=1% seed residual at boundaries).")
+            print(f"[Stabilize] parallel: {stab_width} workers, "
+                  f"{blocks_per_chunk} blocks x {block}f per chunk "
+                  f"({blocks_per_chunk / max(1, stab_width):.1f} per worker, so an "
+                  f"idle worker has one to steal), warm-up {WU}f "
+                  f"(<=1% seed residual at boundaries).")
 
         self._parallel_stab = True
         self._stab_active = True
@@ -1838,23 +1872,25 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                 # thread's range dominate the chunk's wall time while the other
                 # threads sat idle after finishing early (visible as the printed
                 # "imbalance" stat, sometimes >50% of the chunk's proc time). Splitting
-                # into more, smaller blocks and handing them out through a shared
-                # queue to a fixed pool of n workers lets idle workers pick up the
-                # next block instead of idling. Each block still gets its own
-                # WU-frame warm-up (unchanged, seam-free), so this costs more
-                # redundant warm-up compute as granularity increases — tune via
-                # ROOP_STAB_BLOCKS_PER_THREAD (default 1 = one block per thread,
-                # identical boundaries/output to the old static split).
-                try:
-                    _bpt = max(1, int(os.environ.get('ROOP_STAB_BLOCKS_PER_THREAD', '1') or '1'))
-                except ValueError:
-                    _bpt = 1
-                n_blocks = max(1, min(n * _bpt, len(chunk)))
-                bstep = len(chunk) / n_blocks
+                # queue to a fixed pool of n workers lets idle workers pick up
+                # the next block instead of idling. That only helps when a chunk
+                # holds MORE blocks than workers, which is what
+                # `blocks_per_chunk` in _stab_parallel_geometry now arranges —
+                # see the long note there. Block size is deliberately NOT reduced
+                # to create that slack: a block is 4x the warm-up it discards, so
+                # smaller blocks cost more in redundant priming than the
+                # imbalance they recover.
+                # Blocks are laid out at their FIXED size from the chunk start,
+                # not by dividing the chunk into `n` equal parts. That is what
+                # keeps the block grid over the video identical no matter how
+                # many blocks a chunk happens to hold, so enlarging the chunk
+                # changes scheduling only and never the frames a block is primed
+                # from. A short final chunk simply yields a short last block.
+                n_blocks = max(1, min(-(-len(chunk) // block), len(chunk)))
                 block_q = Queue()
                 for bi in range(n_blocks):
-                    a = int(round(bi * bstep))
-                    b = len(chunk) if bi == n_blocks - 1 else int(round((bi + 1) * bstep))
+                    a = bi * block
+                    b = min(len(chunk), a + block)
                     if b > a:
                         block_q.put((a, b))
 
