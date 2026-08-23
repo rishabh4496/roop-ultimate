@@ -8,6 +8,23 @@ wall time was gated by its unluckiest one. Measured over 96 chunks of a live
 50,646-frame render: the fastest worker idled a median 18.2% of every chunk, up
 to 54%, totalling 8.0 minutes of 42.5.
 
+MEASURED OUTCOME, READ THIS FIRST: more rounds made NO measurable difference.
+A/B on an 8748-frame 720p clip, all arms in one process, repeated with the order
+reversed to counterbalance position:
+
+    config       forward   reversed   mean
+    1 round      15.32     15.01      15.17 fps
+    2 rounds     15.17     -          15.17
+    4 rounds     16.89     14.99      15.94
+
+The SAME configuration measured 14.99 and 16.89 depending only on whether it ran
+first or last, and two adjacent arms in the reversed pass gave 14.99 (4 rounds)
+and 15.01 (1 round). The apparent +10% in the first, un-counterbalanced pass was
+ordering. Idle was 1.9-3.6% on every arm of that clip — there was no imbalance to
+redistribute, which is exactly why nothing moved. So the DEFAULT stays at one
+round and ROOP_STAB_BLOCKS_PER_WORKER opts in. The high-imbalance case that
+motivated all this (a live render at 18.2% median idle) remains unmeasured.
+
 THE FIX, AND THE TRAP IN IT. Giving the queue slack means more blocks per chunk
 — but the number must be a WHOLE MULTIPLE of the worker count. A greedy queue
 takes ceil(k/n) rounds and a final round costs as much as a full one however few
@@ -51,15 +68,15 @@ if APP not in sys.path:
     sys.path.insert(0, APP)
 
 
-def geometry(threads, wu, frame_bytes, budget_mb=1536.0, cap=None):
-    """`_stab_parallel_geometry`, as a pure function of its inputs."""
+def geometry(threads, wu, frame_bytes, budget_mb=1536.0, want=1):
+    """`_stab_parallel_geometry`, as a pure function of its inputs.
+
+    `want` is ROOP_STAB_BLOCKS_PER_WORKER: rounds per chunk, default 1."""
     block = max(4 * wu, 24)
     frame_mb = max(0.1, frame_bytes / (1024.0 ** 2))
     fits = max(1, int((budget_mb / frame_mb) // block))
     width = max(1, min(threads, fits))
-    rounds = max(1, fits // width)
-    if cap:
-        rounds = max(1, min(rounds, int(cap)))
+    rounds = max(1, min(max(1, fits // width), int(want)))
     return wu, block, width, width * rounds
 
 
@@ -91,20 +108,28 @@ def grid_over_video(total, chunk_len, block):
 
 
 class TestChunkHoldsMoreBlocksThanWorkers(unittest.TestCase):
-    def test_720p_default_budget_is_unchanged_from_today(self):
-        """1536 MB fits 14 blocks, but 14 over 10 workers is the WORST case —
-        see test_a_partial_round_is_slower_than_no_extra_round. Whole rounds
-        only, so the default stays at exactly today's 10."""
+    def test_720p_default_is_one_block_per_worker(self):
         wu, block, width, bpc = geometry(threads=10, wu=10,
                                          frame_bytes=1280 * 720 * 3)
         self.assertEqual((block, width, bpc), (40, 10, 10))
 
-    def test_a_bigger_budget_buys_whole_rounds_only(self):
+    def test_default_is_one_round_everywhere(self):
+        """More rounds measured NEUTRAL (see the module docstring), so the
+        default must not change behaviour for anyone."""
+        for w, h in ((1280, 720), (1920, 1080), (720, 1280)):
+            for wu in (6, 10, 20):
+                for budget in (1536, 3072, 8192):
+                    with self.subTest(res=(w, h), wu=wu, budget=budget):
+                        _wu, _b, width, bpc = geometry(10, wu, w * h * 3, budget)
+                        self.assertEqual(bpc, width,
+                                         "default must be one block per worker")
+
+    def test_the_knob_buys_whole_rounds_only(self):
         fb = 1280 * 720 * 3
-        for budget, expect in ((1536, 10), (2048, 10), (2560, 20),
-                               (3072, 20), (4096, 30)):
-            with self.subTest(budget=budget):
-                _wu, _b, width, bpc = geometry(10, 10, fb, budget)
+        for budget, want, expect in ((1536, 2, 20), (2048, 2, 20), (1536, 4, 20),
+                                     (3072, 4, 40), (1536, 1, 10)):
+            with self.subTest(budget=budget, want=want):
+                _wu, _b, width, bpc = geometry(10, 6, fb, budget, want)
                 self.assertEqual(bpc, expect)
                 self.assertEqual(bpc % width, 0,
                                  "a partial round is slower than none")
@@ -129,6 +154,7 @@ class TestChunkHoldsMoreBlocksThanWorkers(unittest.TestCase):
                     self.assertLessEqual(bpc, fits)
                     self.assertGreaterEqual(bpc, width)
                     self.assertEqual(bpc % width, 0, "whole rounds only")
+                    self.assertEqual(bpc, width, "default is one round")
                     if fits > 1:
                         used_mb = bpc * block * fb / 1024.0 ** 2
                         self.assertLessEqual(round(used_mb), round(budget),

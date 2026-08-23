@@ -1644,13 +1644,41 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
         # Getting to 20 needs the chunk to hold 800 frames, i.e. a larger
         # ROOP_STAB_CHUNK_MB, which is a per-machine RAM decision and so is left
         # to the operator rather than doubled silently for everyone.
+        # DEFAULT IS 1 ROUND — the old behaviour — because more rounds MEASURED
+        # NEUTRAL and a default has to be earned.
+        #
+        # A/B on an 8748-frame 720p clip, all arms in one process, then repeated
+        # with the order reversed to counterbalance position:
+        #
+        #     config          forward   reversed   mean
+        #     1 round         15.32     15.01      15.17 fps
+        #     2 rounds        15.17     -          15.17
+        #     4 rounds        16.89     14.99      15.94
+        #
+        # The SAME configuration measured 14.99 and 16.89 depending only on
+        # whether it ran first or last, and inside the reversed pass two
+        # adjacent arms gave 14.99 (4 rounds) and 15.01 (1 round). Position
+        # moves the number more than the knob does; the apparent +10% in the
+        # first, un-counterbalanced pass was ordering.
+        #
+        # The reason is visible in the same logs: idle was 1.9-3.6% on every arm
+        # of that clip. There was no imbalance to recover, so redistributing it
+        # could not help. The knob is aimed at content whose per-block cost
+        # VARIES — a live 50,646-frame render showed a median 18.2% idle, and
+        # that case is still unmeasured. So the capability stays reachable and
+        # the default does not change: raising it costs decoded-frame memory
+        # (2x per extra round) for a gain nobody has demonstrated.
+        #
+        # ROOP_STAB_BLOCKS_PER_WORKER=2 (or more) opts in, and is worth trying
+        # on footage whose [STAB CHUNK] lines report a large `imbalance`.
+        # Whatever it is set to, the count stays a WHOLE multiple of `width`:
+        # a partial round is 19% slower than none (see the table in
+        # tests/test_stab_block_dispatch.py).
         try:
-            cap = float(os.environ.get('ROOP_STAB_BLOCKS_PER_WORKER', '') or 0) or None
+            want = int(float(os.environ.get('ROOP_STAB_BLOCKS_PER_WORKER', '') or 1))
         except ValueError:
-            cap = None
-        rounds = max(1, fits // width)
-        if cap:
-            rounds = max(1, min(rounds, int(cap)))
+            want = 1
+        rounds = max(1, min(max(1, fits // width), want))
         blocks_per_chunk = width * rounds
         return wu, block, width, blocks_per_chunk
 
