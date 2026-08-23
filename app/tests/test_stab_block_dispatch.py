@@ -8,8 +8,24 @@ wall time was gated by its unluckiest one. Measured over 96 chunks of a live
 50,646-frame render: the fastest worker idled a median 18.2% of every chunk, up
 to 54%, totalling 8.0 minutes of 42.5.
 
-THE FIX. Size the chunk to hold every block the SAME memory budget already
-allows, so the queue has slack. At 720p that is 14 blocks against 10 workers.
+THE FIX, AND THE TRAP IN IT. Giving the queue slack means more blocks per chunk
+— but the number must be a WHOLE MULTIPLE of the worker count. A greedy queue
+takes ceil(k/n) rounds and a final round costs as much as a full one however few
+blocks are in it, so k slightly above n is worse than k == n. Simulated at the
+spread measured in that same log, against 10 workers:
+
+    blocks   10     11     12     14     16     18     20     30     40
+    eff.   84.7%  60.9%  62.6%  69.0%  75.9%  82.8%  88.6%  90.4%  91.6%
+
+"as many blocks as the budget allows" is 14 at 720p, which is 19% SLOWER than
+today. This was written that way first and the simulation caught it. Whole rounds
+only: with the default 1536 MB budget that leaves 720p at exactly today's 10
+blocks, and reaching 20 needs a bigger ROOP_STAB_CHUNK_MB — a per-machine RAM
+decision, not something to double silently for everyone.
+
+Note also that most of the reported 18.9% idle is NOT recoverable: it is the cost
+of the final round, which more blocks amortise but never remove. The realistic
+gain is +5% at two rounds rising to +8% at four.
 
 WHY IT CANNOT CHANGE THE OUTPUT, which is the whole point of these tests: a
 block's output depends only on the frames it processes and the WU frames
@@ -35,15 +51,25 @@ if APP not in sys.path:
     sys.path.insert(0, APP)
 
 
-def geometry(threads, wu, frame_bytes, budget_mb=1536.0, per_worker=2.0):
+def geometry(threads, wu, frame_bytes, budget_mb=1536.0, cap=None):
     """`_stab_parallel_geometry`, as a pure function of its inputs."""
     block = max(4 * wu, 24)
     frame_mb = max(0.1, frame_bytes / (1024.0 ** 2))
     fits = max(1, int((budget_mb / frame_mb) // block))
     width = max(1, min(threads, fits))
-    want = int(width * max(1.0, per_worker))
-    blocks_per_chunk = max(width, min(fits, want))
-    return wu, block, width, blocks_per_chunk
+    rounds = max(1, fits // width)
+    if cap:
+        rounds = max(1, min(rounds, int(cap)))
+    return wu, block, width, width * rounds
+
+
+def greedy_efficiency(costs, n):
+    """The shared queue's own schedule: whoever frees up takes the next block."""
+    free = [0.0] * n
+    for c in costs:
+        i = min(range(n), key=lambda j: free[j])
+        free[i] += c
+    return sum(costs) / (n * max(free))
 
 
 def blocks_of(chunk_len, block):
@@ -65,15 +91,23 @@ def grid_over_video(total, chunk_len, block):
 
 
 class TestChunkHoldsMoreBlocksThanWorkers(unittest.TestCase):
-    def test_720p_case_from_the_live_render(self):
+    def test_720p_default_budget_is_unchanged_from_today(self):
+        """1536 MB fits 14 blocks, but 14 over 10 workers is the WORST case —
+        see test_a_partial_round_is_slower_than_no_extra_round. Whole rounds
+        only, so the default stays at exactly today's 10."""
         wu, block, width, bpc = geometry(threads=10, wu=10,
                                          frame_bytes=1280 * 720 * 3)
-        self.assertEqual(block, 40)
-        self.assertEqual(width, 10)
-        self.assertGreater(bpc, width,
-                           "a chunk with one block per worker leaves the "
-                           "work-stealing queue nothing to hand out")
-        self.assertEqual(bpc, 14, "should use every block the budget allows")
+        self.assertEqual((block, width, bpc), (40, 10, 10))
+
+    def test_a_bigger_budget_buys_whole_rounds_only(self):
+        fb = 1280 * 720 * 3
+        for budget, expect in ((1536, 10), (2048, 10), (2560, 20),
+                               (3072, 20), (4096, 30)):
+            with self.subTest(budget=budget):
+                _wu, _b, width, bpc = geometry(10, 10, fb, budget)
+                self.assertEqual(bpc, expect)
+                self.assertEqual(bpc % width, 0,
+                                 "a partial round is slower than none")
 
     def test_never_exceeds_the_memory_budget(self):
         """The slack comes from the budget that was already sanctioned, not from
@@ -94,6 +128,7 @@ class TestChunkHoldsMoreBlocksThanWorkers(unittest.TestCase):
                     fits = max(1, int((budget / (fb / 1024.0 ** 2)) // block))
                     self.assertLessEqual(bpc, fits)
                     self.assertGreaterEqual(bpc, width)
+                    self.assertEqual(bpc % width, 0, "whole rounds only")
                     if fits > 1:
                         used_mb = bpc * block * fb / 1024.0 ** 2
                         self.assertLessEqual(round(used_mb), round(budget),
@@ -101,6 +136,33 @@ class TestChunkHoldsMoreBlocksThanWorkers(unittest.TestCase):
                     else:
                         # Degenerate floor: identical to what the old sizing did.
                         self.assertEqual(bpc, 1)
+
+    def test_a_partial_round_is_slower_than_no_extra_round(self):
+        """The measurement that decides the whole design.
+
+        A shared queue takes ceil(k/n) rounds and the last round costs a full
+        one however few blocks are in it, so k slightly above n is WORSE than
+        k == n. Simulated at the per-block spread seen in the live log.
+        """
+        import random
+        random.seed(11)
+        n, cv, trials = 10, 0.12, 1500
+
+        def eff(k):
+            tot = 0.0
+            for _ in range(trials):
+                cs = [max(0.05, random.gauss(1.0, cv)) for _ in range(k)]
+                tot += greedy_efficiency(cs, n)
+            return tot / trials
+
+        one_round = eff(n)
+        self.assertLess(eff(n + 4), one_round * 0.90,
+                        "a partial second round must measure clearly SLOWER — "
+                        "this is why blocks_per_chunk is a multiple of width")
+        self.assertGreater(eff(2 * n), one_round,
+                           "two whole rounds should beat one")
+        self.assertGreater(eff(4 * n), eff(2 * n),
+                           "more whole rounds keep helping, with diminishing returns")
 
     def test_falls_back_to_one_per_worker_when_memory_is_tight(self):
         """4K with a big warm-up: the budget cannot hold more, and that must

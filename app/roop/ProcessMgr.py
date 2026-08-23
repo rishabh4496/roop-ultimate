@@ -1621,12 +1621,37 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
         # imbalance it recovers. Block size, warm-up length and therefore the
         # block grid over the video are all unchanged; only how many of them are
         # decoded and dispatched together changes.
+        # IT MUST BE A WHOLE MULTIPLE OF `width`, and this is the entire subtlety.
+        #
+        # A shared queue schedules greedily, so k blocks over n workers take
+        # ceil(k/n) rounds and the last round is as long as a full one however
+        # few blocks are in it. A PARTIAL extra round is therefore the worst
+        # case, not an improvement: simulated with the per-block spread measured
+        # in the live log (fast/slow ~0.70 over 10 blocks), against 10 workers —
+        #
+        #     blocks   10     11     12     14     16     18     20     30    40
+        #     eff.   84.7%  60.9%  62.6%  69.0%  75.9%  82.8%  88.6%  90.4% 91.6%
+        #
+        # 14 blocks — "as many as the budget allows" — is 19% SLOWER than 10,
+        # because four workers run two blocks while six sit idle after one. Only
+        # multiples of the worker count beat one-per-worker, and the gain is
+        # +5% at 2 per worker rising to +8% at 4, not the 19% of idle time the
+        # imbalance stat reports: most of that idle is the cost of the final
+        # round, which more blocks cannot remove, only amortise.
+        #
+        # So: whole rounds only. With the default 1536 MB budget at 720p that is
+        # 10 blocks — exactly today's behaviour, no change and no regression.
+        # Getting to 20 needs the chunk to hold 800 frames, i.e. a larger
+        # ROOP_STAB_CHUNK_MB, which is a per-machine RAM decision and so is left
+        # to the operator rather than doubled silently for everyone.
         try:
-            per_worker = float(os.environ.get('ROOP_STAB_BLOCKS_PER_WORKER', '') or 2.0)
+            cap = float(os.environ.get('ROOP_STAB_BLOCKS_PER_WORKER', '') or 0) or None
         except ValueError:
-            per_worker = 2.0
-        want = int(width * max(1.0, per_worker))
-        blocks_per_chunk = max(width, min(fits, want))
+            cap = None
+        rounds = max(1, fits // width)
+        if cap:
+            rounds = max(1, min(rounds, int(cap)))
+        blocks_per_chunk = width * rounds
         return wu, block, width, blocks_per_chunk
 
     def _run_stab_parallel(self, source_video, awebp_frames, frame_start, frame_end,
