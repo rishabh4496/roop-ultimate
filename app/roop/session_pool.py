@@ -60,7 +60,7 @@ def _auto_pool_defaults():
     2026-08-16 correction: the 12GB tier used to return 4/4. Measured directly
     against the real pipeline (not a synthetic benchmark) on an RTX 4070: the
     detect/mask pre-pass ran at 2-2.5 fps at pool=8 (VRAM/PCIe thrashing — see
-    _pool_ceiling below) and detection specifically showed ZERO improvement
+    _advisory_pool_size below) and detection specifically showed ZERO improvement
     going 2->4 (compute/GIL-bound, not context-bound; see the
     detect-mask-deserialized project memory), while pool=2 measured 45.3 fps
     for the same stage. So 4 bought nothing over 2 on this tier and was pure
@@ -79,59 +79,69 @@ def _auto_pool_defaults():
     return 8, 8              # 16GB+ cards (e.g. RTX 3090/4080/4090): 8 swapper, 8 detmask
 
 
-def _pool_ceiling(gb: float, auto_value: int) -> int:
-    """Hard safety ceiling for a pool override, regardless of where the override
-    came from (ROOP_*_POOL env var, config.yaml's perf_*_pool setting via
-    run.py's _apply_perf_env, or the in-app auto-benchmark's "apply on restart"
-    recommendation — all three funnel through _resolve() before a single
-    SessionPool gets built).
+def _advisory_pool_size(gb: float, auto_value: int) -> int:
+    """The pool size above which an explicit override gets a WARNING — not a clamp.
 
-    _resolve() used to let an explicit override win with NO bound at all. That
-    gap is exactly how this GPU ended up running ROOP_TRT_POOL / ROOP_DETMASK_POOL
-    / ROOP_DETECTOR_POOL=8 on 2026-08-16 via a stale config.yaml value: each
-    pooled instance holds its OWN TensorRT engine + execution context, and
-    TensorRT allocates that context's device memory lazily on the FIRST
-    inference call, not at session-build time (see the
-    trt-allocates-on-first-inference project memory — the same lazy-allocation
-    behaviour also let a benchmark VRAM check on 2026-08-12 wave through an
-    8-context sweep because nothing had allocated yet when it looked). So
-    nothing observes a bad pool size until real frames are already flowing,
-    by which point the card is pinned near 100% VRAM/util and the driver pages
-    contexts over PCIe — a ~100ms frame turns into minutes, indistinguishable
-    from a hang/crash.
+    This used to be a hard ceiling that silently overrode the user. It no longer
+    is: an explicit ROOP_*_POOL / perf_*_pool value is now honoured exactly, so
+    the machine runs at whatever the operator asked for. A setting that quietly
+    does something other than what it says is worse than a fast setting and a
+    slow one — this project has been bitten repeatedly by controls that looked
+    wired and were not.
 
-    Measured directly against the real pipeline on an RTX 4070 (12GB): pool=8
-    ran the detect/mask pre-pass at 2-2.5 fps; pool=2 measured 45.3 fps for the
-    SAME stage on the SAME clip (18-20x). pool=4 measured no improvement over
-    pool=2 for detect specifically (compute/GIL-bound, not context-bound). So
-    2x the VRAM-tiered auto default is the most slack this ceiling gives —
-    enough for genuine per-machine tuning, not enough to reach the thrash
-    regime that was actually measured here. Widen a specific tier's ceiling
-    only after re-measuring on that tier's hardware, not by inference.
+    The number below is kept because the MEASUREMENT behind it is still true and
+    is the only reason anyone would want the warning:
+
+      - Each pooled instance holds its OWN TensorRT engine and execution context,
+        and TensorRT allocates that context's device memory lazily on the FIRST
+        INFERENCE, not at session-build time (see the
+        trt-allocates-on-first-inference note). So nothing observes an
+        over-large pool until real frames are already flowing.
+      - Measured on an RTX 4070 (12GB) against the real pipeline: pool=8 ran the
+        detect/mask pre-pass at 2-2.5 fps; pool=2 ran the SAME stage on the SAME
+        clip at 45.3 fps — 18-20x. pool=4 showed no gain over pool=2 for detect
+        specifically (compute/GIL-bound, not context-bound).
+      - The failure mode is the card pinned near 100% VRAM with the driver paging
+        contexts over PCIe: 100% "utilisation" at a third of the power limit,
+        which is thrashing, not compute. A ~100 ms frame becomes minutes, and it
+        is indistinguishable from a hang.
+
+    That last point is the whole reason the warning survives the clamp's removal:
+    someone who sets 8, sees 0.2 fps and concludes the app is broken deserves the
+    pointer. It prints once and then gets out of the way.
     """
     if gb <= 0:
         return max(auto_value, 1)
     return max(auto_value * 2, 1)
 
 
+_warned = set()
+
+
+def _warn_if_oversubscribed(env_name, requested, auto_value, gb):
+    """One line, once per knob, when a value is past what was measured safe."""
+    advisory = _advisory_pool_size(gb, auto_value)
+    if requested <= advisory or env_name in _warned:
+        return
+    _warned.add(env_name)
+    print(f"[SessionPool] {env_name}={requested} is above the measured-safe "
+          f"{advisory} for this GPU ({gb:.1f}GB VRAM, auto default {auto_value}). "
+          f"Honouring it. If throughput collapses (measured on a 12GB card: "
+          f"pool=8 gave 2-2.5 fps against 45.3 fps at pool=2 for the same stage), "
+          f"that is TensorRT context/VRAM thrashing, not a hang — lower this "
+          f"knob. Re-measure with roop/bench.py or tests/two_face_video.py.")
+
+
 def _resolve(env_name, auto_value, gb) -> int:
-    """Explicit env var wins (manual override) but is clamped to a hardware-aware
-    safety ceiling — see _pool_ceiling. Unset/blank falls back to the auto value."""
+    """An explicit override wins, exactly as given. Unset/blank uses the
+    VRAM-tiered auto default."""
     raw = os.environ.get(env_name)
     if raw is not None and raw != '':
         try:
             requested = max(0, int(raw))
         except ValueError:
             return auto_value
-        ceiling = _pool_ceiling(gb, auto_value)
-        if requested > ceiling:
-            print(f"[SessionPool] {env_name}={requested} exceeds the safety ceiling "
-                  f"{ceiling} for this GPU ({gb:.1f}GB VRAM, auto default {auto_value}) "
-                  f"-- clamping to {ceiling} to avoid TensorRT context/VRAM thrashing "
-                  f"(measured: pool=8 ran at 2-2.5 fps on an RTX 4070 vs 45.3 fps at "
-                  f"pool=2 for the same stage). Re-measure with tests/two_face_video.py "
-                  f"or roop/bench.py before raising this further.")
-            return ceiling
+        _warn_if_oversubscribed(env_name, requested, auto_value, gb)
         return requested
     return auto_value
 
@@ -149,7 +159,8 @@ def _resolve_pools():
         _pool_cache['detmask'] = detmask
         print(f"[SessionPool] detected {gb:.1f}GB VRAM -> "
               f"ROOP_TRT_POOL={trt}, ROOP_DETMASK_POOL={detmask} "
-              f"(env override wins if set, clamped to a safety ceiling)")
+              f"(explicit values are honoured exactly; these are the auto "
+              f"defaults where none was set)")
     return _pool_cache
 
 
@@ -219,13 +230,9 @@ def detector_pool_size() -> int:
             requested = None
         if requested is not None:
             gb = _detect_vram_gb()
-            auto_trt, auto_detmask = _auto_pool_defaults()
-            ceiling = _pool_ceiling(gb, max(auto_detmask, 1))
-            if requested > ceiling:
-                print(f"[SessionPool] ROOP_DETECTOR_POOL={requested} exceeds the safety "
-                      f"ceiling {ceiling} for this GPU ({gb:.1f}GB VRAM) -- clamping to "
-                      f"{ceiling}. See _pool_ceiling for why.")
-                return ceiling
+            _auto_trt, auto_detmask = _auto_pool_defaults()
+            _warn_if_oversubscribed('ROOP_DETECTOR_POOL', requested,
+                                    max(auto_detmask, 1), gb)
             return requested
     try:
         return max(1, detmask_pool_size())
@@ -284,7 +291,12 @@ def _auto_expression_pool() -> int:
 
 
 def expression_pool_size() -> int:
-    return _resolve('ROOP_EXPR_POOL', _auto_expression_pool())
+    # `_resolve` takes (env_name, auto_value, gb). This passed only two for as
+    # long as it has existed, so ANY call raised TypeError -- which nothing
+    # caught. It stayed hidden because the expression stage only initialises
+    # when `expression_restore_strength > 0`, i.e. exactly when a user turns the
+    # feature on. Turning it on crashed the render.
+    return _resolve('ROOP_EXPR_POOL', _auto_expression_pool(), _detect_vram_gb())
 
 
 def expression_pooling_enabled() -> bool:

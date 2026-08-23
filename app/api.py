@@ -694,7 +694,8 @@ def get_meta():
         "detector_engines": ["scrfd", "yoloface", "retinaface", "retinaface_r50", "yunet"],
         "encoder_presets": ["auto", "ultrafast", "superfast", "veryfast", "faster",
                              "fast", "medium", "slow", "slower", "veryslow"],
-        "pool_sizes": ["auto", "1", "2", "3", "4", "5", "6", "7", "8"],
+        "pool_sizes": ["auto", "1", "2", "3", "4", "5", "6", "7", "8",
+                        "10", "12", "16"],
         "tristate": ["auto", "on", "off"],
         # Identity & tracking selects. Kept here rather than hardcoded in the
         # panel for the same reason every other list is: the dropdown and the
