@@ -413,9 +413,9 @@ def get_processing_plugins(masking_engine, swap_model='inswapper'):
     elif roop.globals.selected_enhancer == 'GPEN 2048':
         processors.update({"gpen": {"size": 2048}})
     elif roop.globals.selected_enhancer == 'UltraMax':
-        # GPEN-256 on every face plus a CodeFormer detail residual refreshed
-        # every Nth face. See Enhance_UltraMax for why the brief's "GPEN speed
-        # AND CodeFormer quality" needs a mechanism rather than a wish.
+        # codeformer.fp16.onnx -- the same weights as 'Codeformer (fp16)' -- on
+        # a leaner host path, followed by a structure-gated texture restore. See
+        # Enhance_UltraMax for the per-face cost table it is built from.
         processors.update({"ultramax": {}})
     elif roop.globals.selected_enhancer == 'Restoreformer++':
         processors.update({"restoreformer++": {}})

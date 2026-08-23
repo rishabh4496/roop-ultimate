@@ -882,3 +882,93 @@ merger key, verified to FAIL when one is removed.
   - `FloatingActionDock.jsx`: Added a live `🚀 GPU Turbo` status pill directly on the Face Swap workspace canvas.
   - `DiagnosticsPanel.jsx`: Added real-time GPU Core Utilization %, VRAM utilization, Temperature, Wattage, and active hardware engine badges during rendering.
 - **Verification**: 1020 unit tests passing (100%), Vite build clean, committed and pushed to `main` (`commit ffe2f71`).
+
+
+---
+
+## Session Log (2026-08-23 Part 3): UltraMax Rebuilt — Sharpen Removed, 1.13x Faster Than CodeFormer, and Four Benches That Compared Against Nothing
+
+Full working notes at the top of `G:\pinokiooop-keep\RECODE_STATUS.md`. Suite **1034 green**.
+
+### 1. The report: "too sharp, blurry on eyes" — traced to one operator
+
+`Enhance_UltraMax._apply_photoreal_refinement` was `L + (0.45*fine + 0.20*med)*midtone`
+plus CLAHE, where `med = blur(sigma 1.0) - blur(sigma 2.5)`. That medium BAND is what
+draws a second crease under the lower lid, and the CLAHE is what crushes the eye socket
+into a dark ring. It cost **10.13 ms/face** — measured, and the entire reason the old
+build ran 13% slower than the CodeFormer it wraps.
+
+| per face, 512 crop, RTX 4070 / TensorRT | ms |
+|---|---|
+| the network alone, fresh io_binding | 24.98 |
+| the network alone, io_binding reused | 23.50 |
+| `Enhance_CodeFormer.Run()` end to end | 36.33 |
+| — host pre-processing | 3.86 |
+| — host post-processing | 5.63 |
+| **old UltraMax filter, on top** | **10.13** |
+
+Visual proof at 2.6x zoom: `app/output/enhancer_compare/ultramax_old_vs_new_eyes.png`.
+
+### 2. Rebuild, part one: the lean host path — bit-identical, 1.13x faster
+
+UltraMax now runs `codeformer.fp16.onnx` directly (same weights as
+`Codeformer (fp16)` — it never was a different network) with a 256-entry LUT gather
+for pre, one contiguous copy plus a saturating `convertScaleAbs` for post, and one
+io_binding per pool slot held for the run.
+
+**Interleaved, 5 rounds x 40 faces in one process** (`tests/bench_ultramax_vs_codeformer.py`):
+
+    Codeformer (fp16)   35.18 +- 0.18 ms/face
+    UltraMax            31.20 +- 0.07 ms/face
+    speedup             1.127x   (per-round 1.119 - 1.131)
+
+With the texture restore off the two are **bit-identical** (max |diff| 0), asserted in
+the bench. **Do not quote the end-to-end number**: two full renders of s1.mp4 with the
+same pair gave 1.13x and 1.30x — machine variance ~18%, larger than the effect.
+
+### 3. Rebuild, part two: texture restore — and the sigma trap
+
+`_restore_texture` re-injects high-frequency luminance from the restorer's own input,
+gated to flat skin (Laplacian) and mid-tones (LUT). Eyes, lashes, brows, lip margins,
+nostrils and hairline pass through **untouched** — the gate the old filter lacked.
+
+The first attempt measured as a total no-op, and the reason generalises: the filter runs
+on the 512 template but the face pastes back at ~300 px, so a residual at sigma 1.1
+lands at sigma 0.65 and is resampled out. It ran on all 2195 faces of s1 and moved
+rendered skin texture by 0.4%. `apply_detail_transfer` already had this right
+(`sigma = max(1.0, w/256)`). At **sigma 2.5**:
+
+| vs the ORIGINAL footage, on the swapped face | Codeformer (fp16) | UltraMax |
+|---|---|---|
+| skin texture | 36% of plate | **40% of plate** |
+| edge energy where the plate has structure | 77% | **77%** |
+
+More skin, **zero** added edge energy. Costs 2.49 ms/face.
+
+Also measured, and it settles the question at the merger level: the rendered face's edge
+energy is **77% of the plate's**, so the merger chain (clarity 1.0 + sharpen 0.35 +
+detail transfer 0.4) is SOFTER than the footage, not harder. The over-sharpening was the
+UltraMax filter alone — **no merger setting was changed.**
+
+### 4. FOUND ON THE WAY: four benches compared UltraMax against NO ENHANCER
+
+`get_processing_plugins` matches `selected_enhancer` against exact strings; a miss adds
+no enhancer at all, silently. Two harnesses passed `'codeformer'`, two passed
+`"CodeFormer"`; core matches `'Codeformer'` and `'Codeformer (fp16)'` and neither of
+those. **Every "2.5x faster than CodeFormer" on record was UltraMax against nothing.**
+All four fixed; `tests/test_enhancer_names.py` parses the valid set out of core.py and
+fails on any unmatched spelling — it found the fourth itself.
+
+### 5. New harness and deliverables
+
+`tests/compare_enhancers_video.py` renders a clip twice changing only the enhancer,
+times both, builds the side-by-side with fps in the banner, and grades **against the
+original footage** rather than against a filter's own output. It syncs every config.yaml
+key roop.globals also defines — which immediately exposed `detail_transfer_strength: 0`
+and `color_match_after_enhance: False` running dead in the old harnesses — while
+translating the keys whose config spelling differs (`no_face_action` is a label vs an
+int enum; `verify_swap` is tri-state vs bool). `tests/test_bench_perf_env.py` asserts its
+ROOP_* list matches run.py's.
+
+- `app/output/enhancer_compare/s1__Codeformer_vs_UltraMax.mp4` — 1800 frames, side by side, fps in banner
+- `app/output/enhancer_compare/ultramax_old_vs_new_eyes.png` — the eye artefact, before/after

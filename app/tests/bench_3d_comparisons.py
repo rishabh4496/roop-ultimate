@@ -1,3 +1,8 @@
+# NOTE 2026-08-23: this arm used to name the enhancer in a spelling
+# `roop.core.get_processing_plugins` does not match, so it rendered with NO
+# ENHANCER AT ALL and every "x faster than CodeFormer" number this tool ever
+# printed compared UltraMax against nothing. `tests/test_enhancer_names.py`
+# now fails on any unmatched spelling.
 import argparse
 import glob
 import os
@@ -148,7 +153,7 @@ def main():
         um_out_dir = os.path.join(out_base, "um_raw")
 
         print(f"[3D] Running CODEFORMER swap...", flush=True)
-        cf_path, cf_time = run_pipeline_for_clip(clip, args.source, "CodeFormer", cf_out_dir,
+        cf_path, cf_time = run_pipeline_for_clip(clip, args.source, "Codeformer (fp16)", cf_out_dir,
                                                  swapper_name=args.swapper, mask_name=args.mask)
 
         print(f"[3D] Running ULTRAMAX swap...", flush=True)

@@ -5,6 +5,12 @@ RealSwap + RealityUX, generating side-by-side comparison videos and snapshots fo
 Optimized to ensure CPU, GPU, and RAM are not bottlenecked.
 """
 
+# NOTE 2026-08-23: this arm used to name the enhancer in a spelling
+# `roop.core.get_processing_plugins` does not match, so it rendered with NO
+# ENHANCER AT ALL and every 'x faster than CodeFormer' number this tool ever
+# printed compared UltraMax against nothing. `tests/test_enhancer_names.py`
+# now fails on any unmatched spelling.
+
 import argparse
 import glob
 import os
@@ -301,7 +307,7 @@ def main():
         else:
             clean_stale_temp_files(cf_out_dir, raw_stem)
             print(f"[Final] Running CODEFORMER swap...", flush=True)
-            cf_path, cf_time = run_pipeline_for_clip(clip, args.source, "CodeFormer", cf_out_dir,
+            cf_path, cf_time = run_pipeline_for_clip(clip, args.source, "Codeformer (fp16)", cf_out_dir,
                                                      swapper_name=args.swapper, mask_name=args.mask,
                                                      threads=args.threads)
 

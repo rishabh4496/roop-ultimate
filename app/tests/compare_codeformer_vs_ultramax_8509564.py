@@ -7,6 +7,12 @@ Produces:
 4. High-resolution comparison preview PNGs for visual inspection.
 """
 
+# NOTE 2026-08-23: this arm used to name the enhancer in a spelling
+# `roop.core.get_processing_plugins` does not match, so it rendered with NO
+# ENHANCER AT ALL and every 'x faster than CodeFormer' number this tool ever
+# printed compared UltraMax against nothing. `tests/test_enhancer_names.py`
+# now fails on any unmatched spelling.
+
 import os
 import sys
 import time
@@ -167,7 +173,7 @@ def main():
     print("\n" + "=" * 80)
     print(">>> RUNNING ARM 1: CODEFORMER (FP16)")
     print("=" * 80)
-    g1 = ab.init_pipeline('tensorrt', swapper_name, 'codeformer', mask_name, 0.0)
+    g1 = ab.init_pipeline('tensorrt', swapper_name, 'Codeformer (fp16)', mask_name, 0.0)
     g1.execution_threads = 16
     g1.video_encoder = 'hevc_nvenc'
     g1.video_quality = 14
