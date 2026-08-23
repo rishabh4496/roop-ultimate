@@ -614,7 +614,8 @@ Going live privately, so this settles what the project *is*. Commits `d7d5189`
 ### 1. THE BIG ONE: env, models and facesets were junctions into another repo
 
 `app/env` (9.34 GB), `app/models` (39.33 GB) and `app/facesets` (0.07 GB) were
-NTFS **junctions** into `G:\pinokiopioop-unleashed-wip.gitpp\`. The
+NTFS **junctions** into `G:\pinokiopi
+oop-unleashed-wip.gitpp\`. The
 virtual environment, every model weight and the user's own face libraries were
 owned by a different folder. Everything ran perfectly, so nothing ever surfaced
 it — deleting or cleaning that folder would have taken the whole application
@@ -700,7 +701,8 @@ to fail.
 Before deleting: both branches confirmed fully pushed to
 `rishabh4496/roop-unleashed-wip` (`master` 792f946, `pure_safe` 5a2f945 — remote
 heads matched exactly), and the uncommitted diff archived to
-`G:\pinokiooop-keep\wip-archive\`. Of the three dirty files,
+`G:\pinokio
+oop-keep\wip-archive\`. Of the three dirty files,
 `session_pool.py` was byte-identical to this repo's and `two_face_video.py` had
 diverged entirely (861 lines there vs 1079 here).
 
@@ -716,3 +718,60 @@ Repository confirmed **PRIVATE**, 0 forks, owner the sole collaborator, no
 pending invitations; description set. No DRM added — it was offered and declined,
 and it would have been a speed bump anyway since AGPL recipients are entitled to
 remove it.
+
+
+---
+
+## Session Log (2026-08-23 Part 6): Pool Guards Removed — Explicit Values Now Run Exactly As Set
+
+Commit `0382a70`. Suite **1050 green**.
+
+### 1. The knobs were clamped, so the UI was lying
+
+`session_pool._resolve` reduced any `ROOP_TRT_POOL` / `ROOP_DETMASK_POOL` /
+`ROOP_DETECTOR_POOL` above `auto * 2` down to that ceiling. On this 12GB card
+(auto 2, ceiling 4) picking **8** in the UI silently ran **4** — a control offering
+a value the backend refused to use, the same defect class as a control bound to
+something nothing reads. **Removed.** An explicit value now passes through
+untouched at any size; unset still uses the VRAM-tiered auto default.
+
+### 2. What was kept, and why
+
+The measurement behind the ceiling is still true, and its failure mode is the
+reason it could not just be deleted:
+
+- each pooled instance owns its own TensorRT engine + execution context, and
+  TensorRT allocates that memory on the **first inference**, not at session-build
+  time — so nothing observes an over-large pool until frames are already flowing;
+- measured on an RTX 4070 12GB against the real pipeline: **pool=8 → 2-2.5 fps**
+  on the detect/mask pre-pass, **pool=2 → 45.3 fps** for the same stage on the
+  same clip;
+- it presents as a **hang, not an OOM** — the card sits near 100% "utilisation" at
+  a third of the power limit while the driver pages contexts over PCIe.
+
+So `_pool_ceiling` became `_advisory_pool_size`, driving a one-line warning
+printed **once per knob** that names the failure mode ("thrashing, not a hang")
+and says which knob to lower. Someone who sets 8, sees 0.2 fps and concludes the
+app is broken is exactly who that line is for.
+
+`api.py`'s `pool_sizes` dropdown widened past 8 (10/12/16) — with the clamp gone
+the UI list was the only remaining cap. A test fails if it stops reaching past the
+largest auto default.
+
+### 3. FOUND WHILE IN THERE: Expression Restore crashed the render
+
+`expression_pool_size()` called the **3-argument** `_resolve` with **2** arguments,
+so every call raised `TypeError`. Nothing caught it. It stayed invisible because
+the expression stage only initialises when `expression_restore_strength > 0` —
+that is, exactly when a user switches the feature on. Pre-existing, unrelated to
+this change, now fixed and covered.
+
+### 4. Verification
+
+On hardware: `ROOP_TRT_POOL=5`, previously clamped to 4, now builds **five real
+TensorRT contexts** in 8.9 s with the advisory printed once.
+
+`tests/test_pool_overrides.py` — 11 tests: pass-through at 1..64, fallback when
+unset, fallback on junk, the advisory fires once and only above the threshold and
+names the failure mode, `expression_pool_size` returns an int, and the dropdown
+reaches past the largest auto default.
