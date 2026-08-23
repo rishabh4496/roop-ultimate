@@ -1,43 +1,52 @@
-"""GPEN Realistic — GPEN-256's detail without GPEN's colour, on a pooled path.
+"""GPEN Realistic — GPEN-512's detail without GPEN's colour, pooled and lean.
 
-THE DIAGNOSIS, because it is not the one people expect. GPEN-256 gets called
-"plastic" or "cartoonish", which sounds like a detail problem. It is not.
-Measured on a real swapped face at 256, against the crop the restorer was handed:
+TWO FINDINGS, and the second corrects the first build of this file.
 
-    cheek high-frequency std     input 5.93   GPEN 8.09   CodeFormer 6.18
-    chroma drift from the input  input 0.00   GPEN 2.96   (LAB a/b, mean abs)
+1. GPEN's problem is COLOUR, not detail. It gets called "plastic" or
+   "cartoonish", which sounds like softness; it is not. GPEN pushes the whole
+   face pink, paints magenta onto the eyelids and flushes the cheeks. Measured
+   against the crop the restorer was handed, chroma drift (LAB a/b, mean abs)
+   runs 2.7-3.0 while the input is 0. Keeping GPEN's LUMINANCE and taking
+   chrominance from the swapper's own crop removes it — 2.72 -> 0.36 at 512 —
+   with detail completely unchanged, for 0.27 ms.
 
-GPEN-256 carries MORE fine detail than CodeFormer-512 does — its structure is
-genuinely sharper, and it does it in a sixth of the time (5.97 ms against
-37.49 ms per face). What it gets wrong is COLOUR: it pushes the whole face pink,
-paints magenta onto the eyelids and flushes the cheeks. That is what reads as a
-cartoon, and no amount of sharpening or smoothing addresses it.
+2. But the size that matters is 512, not 256, and the reason is the PASTE.
+   `realswap` emits a 256 crop, so a 256 restorer returns 256 and pastes at
+   scale 1, while a 512 restorer returns 512 and pastes at scale 2 — twice the
+   resolution reaches the frame. Detail carried through to the paste, measured
+   on a real crop as high-frequency std at 512:
 
-THE FIX is therefore to keep GPEN's luminance and throw its chrominance away,
-taking the colour from the crop the swapper actually produced:
+       swap input 2.67 | GPEN-256 2.82 | CodeFormer-512 4.11 | GPEN-512 5.14
 
-    chroma drift  2.96 -> 0.30      detail  6.59 -> 6.59 (unchanged)
-    cost          0.27 ms/face at 256
+   GPEN-256 sits 1.8x below GPEN-512 and barely above the UNENHANCED input. The
+   first version of this processor used 256 plus the colour fix and was reported
+   as indistinguishable from plain GPEN-256 — correctly. A post-filter cannot
+   recover detail the network never synthesised, and that was the mistake.
 
-It is done as a signed grey delta added to all three BGR channels rather than a
-LAB channel swap, because both remove the cast (0.30 vs 0.11 residual, against a
-2.96 problem) and are visually indistinguishable, while the grey delta costs
-0.27 ms against 0.60 — and on this processor speed is the point. `_LAB_EXACT`
-switches to the LAB form if the last 0.19 of drift ever matters.
+So this runs GPEN-512, which measures SHARPER THAN CODEFORMER (5.14 vs 4.11)
+and faster than it (30.9 ms vs 37.9 before optimisation). Its bad reputation is
+finding 1: the cast, which finding 1 removes.
 
-THE OTHER HALF IS FREE SPEED. `Enhance_GPEN` has no SessionPool, so it runs
-behind ProcessMgr's GLOBAL GPU lock — the single most expensive stage in a
-render, serialised to one thread at a time, while every other worker waits. This
-processor owns a pool, so it is lock-free and scales with the worker count. Its
-host path is also the lean one (a 256-entry LUT gather for pre, one saturating
-C++ scale for post, an io_binding held per pool slot) rather than the five-pass
-float32 spelling, which is worth about another millisecond.
+The colour fix is a signed grey delta added to all three BGR channels rather
+than a LAB channel swap, because both remove the cast (0.30 vs 0.11 residual
+against a ~2.9 problem), they are visually indistinguishable, and the grey delta
+costs 0.27 ms against 0.60. `_LAB_EXACT` switches forms.
 
-So the arithmetic is: +0.27 ms for the colour fix, roughly -1 ms from the host
-path, and the enhance stage stops being serialised.
+FREE SPEED ON TOP. `Enhance_GPEN` has no SessionPool, so it runs behind
+ProcessMgr's GLOBAL GPU lock — the most expensive stage in a render, serialised
+to one thread while every other worker waits. This processor owns a pool, so the
+stage is lock-free and scales with the worker count. Its host path is the lean
+one too (a 256-entry LUT gather for pre, one saturating C++ scale for post, an
+io_binding held per pool slot) instead of the five-pass float32 spelling.
+
+WHAT THIS IS NOT: it is not GPEN-256 speed. 256-net speed and 512-net sharpness
+are not available together — the detail is synthesised by the network, and the
+smaller one does not synthesise it. ROOP_GPENR_SIZE=256 gets the fast, much
+softer tier back for preview scrubbing.
 
 Knobs, for re-measuring rather than for shipping a different default:
     ROOP_GPENR_CHROMA   0 = the swapper's colour (default), 1 = GPEN's own
+    ROOP_GPENR_SIZE     512 (default) or 256 for the fast, much softer tier
 """
 
 import os
@@ -62,10 +71,34 @@ class Enhance_GPENRealistic:
     # crop and what `enhancer_align` does about it.
     model_template = 'ffhq_512'
 
-    _SIZE = 256
-    _MODEL = 'gpen_bfr_256.onnx'
-    _URL = ('https://huggingface.co/facefusion/models-3.0.0/resolve/main/'
-            'gpen_bfr_256.onnx')
+    # 512, NOT 256, and the reason is the paste rather than the network.
+    # `realswap` emits a 256 crop, so a 256 restorer returns 256 and pastes at
+    # scale 1, while a 512 restorer returns 512 and pastes at scale 2 — twice the
+    # resolution reaches the frame. Measured on a real crop, detail carried
+    # through to the paste (high-frequency std at 512):
+    #
+    #     swap input 2.67 | GPEN-256 2.82 | CodeFormer-512 4.11 | GPEN-512 5.14
+    #
+    # GPEN-256 is 1.8x short of GPEN-512 and barely above the unenhanced input;
+    # no post-filter recovers that, because the detail was never synthesised. The
+    # first build of this processor used 256 and was correctly reported as
+    # indistinguishable from plain GPEN-256.
+    #
+    # GPEN-512 is also SHARPER THAN CODEFORMER (5.14 vs 4.11) and faster than it
+    # (30.9 ms vs 37.9 unoptimised). Its reputation for looking bad is the colour
+    # cast this class removes: raw chroma drift 2.72, after the fix 0.36, with
+    # detail unchanged at 5.14.
+    #
+    # ROOP_GPENR_SIZE=256 gets the fast/soft tier back for preview scrubbing.
+    _SIZES = {
+        256: ('gpen_bfr_256.onnx',
+              'https://huggingface.co/facefusion/models-3.0.0/resolve/main/'
+              'gpen_bfr_256.onnx'),
+        512: ('GPEN-BFR-512.onnx',
+              'https://huggingface.co/countfloyd/deepfake/resolve/main/'
+              'GPEN-BFR-512.onnx'),
+    }
+    _SIZE = 512
 
     # The LAB channel swap is more exact (0.11 residual drift vs 0.30) and more
     # than twice the cost. Off, because this processor exists to be fast and the
@@ -77,6 +110,7 @@ class Enhance_GPENRealistic:
         self.devicename = None
         self.session = None
         self.io_binding = None
+        self.size = self._SIZE
         self.pool = None          # SessionPool of (session, io_binding) slots
         self.in_name = None
         self.out_name = None
@@ -95,14 +129,21 @@ class Enhance_GPENRealistic:
         if self.session is not None:
             return
 
+        try:
+            want = int(os.environ.get('ROOP_GPENR_SIZE', '') or self._SIZE)
+        except ValueError:
+            want = self._SIZE
+        self.size = want if want in self._SIZES else self._SIZE
+        fname, url = self._SIZES[self.size]
         model_dir = resolve_relative_path('../models')
-        conditional_download(model_dir, [self._URL])
-        model_path = os.path.join(model_dir, self._MODEL)
+        conditional_download(model_dir, [url])
+        model_path = os.path.join(model_dir, fname)
 
         def _build(_i=0):
             # No FP32 forcing here. That guard exists for GPEN 1024/2048, whose
-            # activations overflow in FP16 and paint a black face; 256 is a
-            # sixteenth of 1024's pixels and is stable, exactly as 512 is.
+            # activations overflow in FP16 and paint a black face. 512 is the
+            # classic weight and is FP16-stable — Enhance_GPEN says so itself and
+            # only forces FP32 at >=1024 — and 256 more so.
             sess = onnxruntime.InferenceSession(
                 model_path, None, providers=roop.globals.execution_providers)
             iob = sess.io_binding()
@@ -121,11 +162,32 @@ class Enhance_GPENRealistic:
         # widen. GPEN-256 is small (a quarter of 512's pixels), so extra
         # contexts are cheap; `pool_size` still caps it for a caller loading
         # this alongside other heavy nets.
+        # VRAM CAP, measured rather than assumed. A GPEN-512 pool of 2 costs
+        # 3123 MiB -- 1.8x CodeFormer-fp16's -- and on a 12GB card, alongside
+        # realswap's two nets, RealityUX and the detector/detmask pools, that
+        # tips the card into paging. Measured end to end on s1.mp4: UltraMax
+        # 10.50 fps against this processor's 6.60 with an uncapped pool, even
+        # though it is FASTER per face in isolation (27.5 ms vs 30.6). 100%
+        # "utilisation" at a fraction of the power limit is thrashing, not work,
+        # and it is exactly what Enhance_CodeFormer's pool comment predicted.
+        #
+        # So the 512 tier caps its pool by free VRAM. 256 is a quarter of the
+        # pixels and is left alone. ROOP_GPENR_POOL overrides for re-measuring.
         if session_pool.pooling_enabled():
             n = session_pool.pool_size()
             cap = plugin_options.get('pool_size')
             if cap:
                 n = max(1, min(int(n), int(cap)))
+            try:
+                forced = int(os.environ.get('ROOP_GPENR_POOL', '') or 0)
+            except ValueError:
+                forced = 0
+            if forced:
+                n = max(1, forced)
+            elif self.size >= 512:
+                gb = session_pool._detect_vram_gb()
+                if 0 < gb < 15.5:
+                    n = min(n, 1)
             extras = []
             try:
                 extras = [_build(i + 1) for i in range(n - 1)]
@@ -184,7 +246,7 @@ class Enhance_GPENRealistic:
             return temp_frame, 1
 
         input_size = temp_frame.shape[1]
-        S = self._SIZE
+        S = self.size
         if temp_frame.shape[0] != S or temp_frame.shape[1] != S:
             src = cv2.resize(temp_frame, (S, S), interpolation=cv2.INTER_CUBIC)
         else:
@@ -241,6 +303,6 @@ class Enhance_GPENRealistic:
             f = self._faces
         if not f:
             return None
-        return (f"[GPEN Realistic] {f} faces at {self._SIZE} "
+        return (f"[GPEN Realistic] {f} faces at {self.size} "
                 f"(GPEN luminance, swapper chrominance"
                 f"{', pooled' if self.pool is not None else ''})")

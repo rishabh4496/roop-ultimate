@@ -1,21 +1,22 @@
-"""GPEN Realistic: GPEN-256's luminance, the swapper's chrominance.
+"""GPEN Realistic: GPEN-512's luminance, the swapper's chrominance.
 
-The diagnosis these tests encode, because it is counter-intuitive: GPEN-256 is
-not short of detail. Measured on a real swapped face at 256 against the crop the
-restorer was handed —
+Two findings these tests encode, the second correcting the first build.
 
-    cheek high-frequency std     input 5.93   GPEN 8.09   CodeFormer-512 6.18
-    chroma drift from the input  input 0.00   GPEN 2.96   CodeFormer-512 1.62
+1. GPEN's problem is COLOUR, not detail. It pushes the face pink and paints
+   magenta on the eyelids — chroma drift ~2.9 against the crop it was handed,
+   where the input is 0. Keeping GPEN's LUMINANCE and taking chrominance from
+   the swapper's crop removes it with detail completely unchanged.
 
-GPEN-256 carries MORE fine detail than CodeFormer does, in a sixth of the time.
-What it gets wrong is colour: a pink cast over the whole face and magenta on the
-eyelids. That is what reads as "plastic" or "cartoonish", and sharpening or
-smoothing cannot touch it.
+2. But the size that matters is 512, because of the PASTE. `realswap` emits a
+   256 crop, so a 256 restorer returns 256 and pastes at scale 1, while a 512
+   restorer returns 512 and pastes at scale 2. Detail reaching the frame:
 
-So the processor keeps GPEN's luminance and takes chrominance from the swapper's
-own crop, which measured 2.96 -> 0.30 drift with detail unchanged at 6.59, for
-0.27 ms. The tests below pin both halves of that: the colour has to come from the
-source, and the detail has to survive.
+       swap input 2.67 | GPEN-256 2.82 | CodeFormer-512 4.11 | GPEN-512 5.14
+
+   GPEN-256 is barely above the UNENHANCED input. The first version of this
+   processor used 256 plus the colour fix and was reported as indistinguishable
+   from plain GPEN-256 — correctly, and that is what
+   `test_a_256_crop_comes_back_at_512_with_scale_2` now pins.
 """
 
 import os
@@ -139,13 +140,14 @@ class TestRunPath(unittest.TestCase):
         else:
             os.environ['ROOP_GPENR_CHROMA'] = self._saved
 
-    def _make(self, out_chw=None):
+    def _make(self, out_chw=None, size=None):
         p = CLS()
         p.plugin_options = {'devicename': 'cuda'}
         p.devicename = 'cuda'
+        p.size = size or CLS._SIZE
         p._lut = (np.arange(256, dtype=np.float32) / 127.5) - 1.0
         if out_chw is None:
-            out_chw = np.zeros((3, 256, 256), np.float32)
+            out_chw = np.zeros((3, p.size, p.size), np.float32)
         iob = MagicMock()
         iob.bound = {}
         iob.bind_cpu_input = MagicMock(side_effect=lambda n, v: iob.bound.__setitem__(n, v))
@@ -158,36 +160,46 @@ class TestRunPath(unittest.TestCase):
 
     def test_run_returns_a_valid_frame(self):
         p = self._make()
-        out, scale = p.Run(None, None, _face_like(0))
-        self.assertEqual(out.shape, (256, 256, 3))
+        out, scale = p.Run(None, None, _face_like(0, size=p.size))
+        self.assertEqual(out.shape, (p.size, p.size, 3))
         self.assertEqual(out.dtype, np.uint8)
         self.assertEqual(scale, 1)
 
     def test_input_is_normalised_rgb_chw(self):
         p = self._make()
-        frame = np.zeros((256, 256, 3), np.uint8)
+        frame = np.zeros((p.size, p.size, 3), np.uint8)
         frame[:, :, 2] = 255                     # pure red, BGR in
         p.Run(None, None, frame)
         x = p.io_binding.bound['input']
-        self.assertEqual(x.shape, (1, 3, 256, 256))
+        self.assertEqual(x.shape, (1, 3, p.size, p.size))
         self.assertEqual(x.dtype, np.float32)
         self.assertAlmostEqual(float(x[0, 0].mean()), 1.0, places=3)   # R
         self.assertAlmostEqual(float(x[0, 1].mean()), -1.0, places=3)  # G
         self.assertAlmostEqual(float(x[0, 2].mean()), -1.0, places=3)  # B
 
-    def test_a_smaller_crop_is_upsampled_back_to_the_crop_size(self):
-        """GPEN-256 output is SMALLER than a 512 swap crop; `sized` must resize
-        it back and report scale 1, or paste_upscale collapses the matrix."""
+    def test_a_256_crop_comes_back_at_512_with_scale_2(self):
+        """THE WHOLE REASON THIS RUNS AT 512. realswap emits a 256 crop; a 512
+        restorer returns 512 and `sized` reports scale 2, so paste_upscale
+        composites at twice the resolution. A 256 restorer returns 256 at scale
+        1 and that extra detail never reaches the frame — which is why the first
+        build of this processor was indistinguishable from plain GPEN-256."""
         p = self._make()
-        out, scale = p.Run(None, None, _face_like(0, size=512))
+        out, scale = p.Run(None, None, _face_like(0, size=256))
         self.assertEqual(out.shape[:2], (512, 512))
+        self.assertEqual(scale, 2)
+
+    def test_the_256_tier_still_works_and_pastes_at_scale_1(self):
+        p = self._make(size=256)
+        out, scale = p.Run(None, None, _face_like(0, size=256))
+        self.assertEqual(out.shape[:2], (256, 256))
         self.assertEqual(scale, 1)
 
     def test_non_finite_output_falls_back_to_the_unenhanced_crop(self):
-        bad = np.zeros((3, 256, 256), np.float32)
+        p0 = CLS()
+        bad = np.zeros((3, p0._SIZE, p0._SIZE), np.float32)
         bad[0, 5, 5] = np.nan
         p = self._make(bad)
-        frame = _face_like(0)
+        frame = _face_like(0, size=p.size)
         out, scale = p.Run(None, None, frame)
         self.assertTrue(np.array_equal(out, frame))
         self.assertEqual(scale, 1)
@@ -203,7 +215,7 @@ class TestRunPath(unittest.TestCase):
     def test_cost_summary_counts_faces(self):
         p = self._make()
         self.assertIsNone(p.cost_summary())
-        p.Run(None, None, _face_like(0))
+        p.Run(None, None, _face_like(0, size=p.size))
         self.assertIn('1 faces', p.cost_summary())
 
 
