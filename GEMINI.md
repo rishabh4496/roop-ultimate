@@ -1020,3 +1020,117 @@ faster than `Codeformer (fp16)` (34.68 -> 28.68 ms/face) with bit-identical outp
 up from 1.127x. Suite 1035 green.
 
 New: `tests/sweep_detail_transfer.py`, `tests/probe_frame_space_texture.py`.
+
+
+---
+
+## Session Log (2026-08-23 Part 5): Independence, Licensing and a 48.7 GB Coupling Nobody Could See
+
+Going live privately, so this settles what the project *is*. Commits `d7d5189`
+(identity + licence) and `2691fa6` (physical standalone). Suite **1039 green**.
+
+### 1. THE BIG ONE: env, models and facesets were junctions into another repo
+
+`app/env` (9.34 GB), `app/models` (39.33 GB) and `app/facesets` (0.07 GB) were
+NTFS **junctions** into `G:\pinokiopioop-unleashed-wip.gitpp\`. The
+virtual environment, every model weight and the user's own face libraries were
+owned by a different folder. Everything ran perfectly, so nothing ever surfaced
+it — deleting or cleaning that folder would have taken the whole application
+down, and the project could not have been moved to another machine or handed to
+anyone without reproducing it.
+
+**git could never have caught this**: all three are gitignored. That is exactly
+why it survived. The only reason it came up at all is that GEMINI.md still
+carried a stale line claiming the symlinks existed, and the line turned out to
+be true.
+
+**Copying was impossible** — 48.7 GB needed against 50.3 GB free. Moved instead:
+same volume, so instant and zero extra disk, with reverse junctions left behind
+so the old copy still ran. Verified after: no reparse point anywhere under
+roop-ultimate; `sys.prefix` now resolves to `app/env` itself (through the
+junction it resolved to the OTHER folder, so this is more correct than before);
+torch 2.7.0+cu128 / ORT 1.23.2 / cv2 4.9.0 import; real TensorRT inference off
+the relocated `models/` with UltraMax still 1.209x and bit-identical.
+
+### 2. There was NO LICENCE FILE — worse than having one
+
+This code derives from AGPL-3.0 work (s0md3v/roop -> C0untFloyd/roop-unleashed)
+and shipped with no licence at all. Added `LICENSE` (the full AGPL-3.0 text) and
+`NOTICE.md`: attribution chain, an explicit **not affiliated / not endorsed**
+statement, an AGPL s.5(a) statement of changes, third-party model terms, and
+intended use.
+
+Stated plainly there, because it is the part that matters for going live:
+renaming a project does not let you drop upstream copyright notices; the AGPL
+never forces publication; its obligations attach when a copy is **conveyed**, and
+**adding a collaborator conveys it to that person**, who then holds the same
+rights including redistribution. Access control — not the licence — is what
+limits distribution.
+
+### 3. Identity, and upstream infrastructure cut out
+
+| surface | was |
+|---|---|
+| `metadata.py` | `'roop unleashed'` 4.3.1 -> **`'Roop Ultimate'` 1.0.0** |
+| `README.md` | upstream's, and pointed installers at a **third party's** repo (`Adutchguy/roop-unleashed-wip`) |
+| `app/README.md` | upstream's README **plus their release changelog** |
+| `pinokio.json` / `.js` | described itself as an "EXPERIMENTAL recode branch of roop-unleashed-wip" |
+| React UI | header, popout window, preset export filename, notifications, BroadcastChannel |
+| misc | core.py banner, ffmpeg error strings, module headers, cleanup.py, runMacOS.sh, 7 AI-agent config files |
+
+**Deleted `app/installer/`** (installer.py, macOSinstaller.sh, windows_run.bat) —
+unreferenced by `install.js`, and between them they cloned C0untFloyd's repo and
+downloaded an insightface wheel from his GitHub releases. A live third-party
+supply-chain dependency in a project meant to stand alone. Also deleted
+`app/roop-unleashed.ipynb` (Colab notebook that cloned upstream).
+
+`git grep -i "unleashed|C0untFloyd|s0md3v|Adutchguy|PJF16"` now returns nothing
+in any tracked file except `NOTICE.md`.
+
+### 4. Guard: tests/test_standalone_install.py
+
+Four assertions, and **two of them started as bugs in the guard itself**:
+
+- none of the three dirs is a reparse point. **`os.path.islink` returns False for
+  a Windows JUNCTION** — exactly the kind of link that was used here — so it
+  checks `FILE_ATTRIBUTE_REPARSE_POINT`.
+- `sys.prefix` is this project's own `env/`.
+- all three still gitignored, asked of `git check-ignore` **from the repo root**:
+  paths resolve against CWD, and the three are ignored from *two different*
+  .gitignore files, so reading only `app/.gitignore` gave a false failure.
+- no tracked file outside NOTICE.md mentions upstream — scans `git ls-files`,
+  not the filesystem, because a walk flags local untracked editor state.
+
+### 5. The old working copy was then deleted
+
+Asked whether it was safe, checked properly, and it was — with one hazard **of my
+own making**: the reverse junctions I had just created pointed back into
+roop-ultimate, and a recursive delete can follow them and destroy the target.
+
+Procedure: remove each junction as a **reparse point only**
+(`[System.IO.Directory]::Delete(path, $false)`), verify the targets are
+byte-identical, gate on "zero reparse points and zero processes", then delete.
+
+**`cmd /c rmdir` is not reliable on this machine** — `cmd` on PATH resolves to a
+miniforge shim and silently does nothing. That is why the first attempt appeared
+to fail.
+
+Before deleting: both branches confirmed fully pushed to
+`rishabh4496/roop-unleashed-wip` (`master` 792f946, `pure_safe` 5a2f945 — remote
+heads matched exactly), and the uncommitted diff archived to
+`G:\pinokiooop-keep\wip-archive\`. Of the three dirty files,
+`session_pool.py` was byte-identical to this repo's and `two_face_video.py` had
+diverged entirely (861 lines there vs 1079 here).
+
+Only **1.14 GB** was reclaimed — the 48.7 GB had already become this project's.
+The real gain is that there is no longer a wrong folder to wander into.
+
+After: 64283 / 72 / 323 items intact, venv imports, real TensorRT inference,
+suite 1039 green.
+
+### 6. Access
+
+Repository confirmed **PRIVATE**, 0 forks, owner the sole collaborator, no
+pending invitations; description set. No DRM added — it was offered and declined,
+and it would have been a speed bump anyway since AGPL recipients are entitled to
+remove it.

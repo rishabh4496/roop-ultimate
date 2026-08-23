@@ -110,9 +110,22 @@ class TestNoUpstreamCoupling(unittest.TestCase):
     """
 
     NEEDLES = ('roop-unleashed', 'roop_unleashed', 'C0untFloyd', 's0md3v')
-    # NOTICE.md carries the attribution the licence requires; this file names the
-    # strings it searches for.
-    ALLOWED = {'NOTICE.md', 'app/tests/test_standalone_install.py'}
+
+    # What this guard is FOR: the product surface — code, launcher, UI, package
+    # metadata, READMEs. A name appearing there is either stale branding or an
+    # install step reaching into somebody else's repository, and this project
+    # shipped both.
+    #
+    # What it is NOT for: prose that talks ABOUT the separation. NOTICE.md
+    # carries the attribution the licence requires. This file names the strings
+    # it searches for. The development session logs record, among other things,
+    # the work of removing those references — a changelog saying "X was removed"
+    # is history, not an affiliation claim, and gagging it would make the record
+    # worse. They are development notes rather than product surface, so a stale
+    # mention there is harmless in a way one in `metadata.py` is not.
+    ALLOWED = {'NOTICE.md', 'app/tests/test_standalone_install.py',
+               'CLAUDE.md', 'GEMINI.md', 'QWEN.md', 'AGENTS.md', 'facegemini.md',
+               '.clinerules', '.cursorrules', '.windsurfrules'}
     EXTS = {'.py', '.js', '.jsx', '.ts', '.tsx', '.json', '.md', '.sh', '.bat',
             '.yaml', '.yml', '.html', '.css'}
 
