@@ -184,15 +184,81 @@ class TestUltraMaxRun(unittest.TestCase):
         self.assertAlmostEqual(float(x[0, 2].mean()), -1.0, places=2)
 
     def test_output_is_bgr_and_rescaled(self):
-        """CHW RGB in [-1,1] must come back HWC BGR in [0,255]."""
+        """CHW RGB in [-1,1] must come back HWC BGR in [0,255].
+
+        ROOP_ULTRAMAX_CHROMA=1 keeps CodeFormer's own colour, which is what this
+        assertion is about: since 2026-08-24 the DEFAULT replaces the network's
+        chrominance with the crop's, so a red network output over a black crop
+        correctly comes back grey and this test would be measuring the colour
+        fix instead of the channel order. The colour fix has its own tests below.
+        """
         out_chw = np.stack([np.full((512, 512), 1.0, np.float32),    # R
                             np.full((512, 512), -1.0, np.float32),   # G
                             np.full((512, 512), -1.0, np.float32)])  # B
         p = self._make(out_chw)
-        out, _ = p.Run(None, None, np.zeros((512, 512, 3), np.uint8))
+        os.environ['ROOP_ULTRAMAX_CHROMA'] = '1'
+        try:
+            out, _ = p.Run(None, None, np.zeros((512, 512, 3), np.uint8))
+        finally:
+            os.environ.pop('ROOP_ULTRAMAX_CHROMA', None)
         self.assertLess(int(out[:, :, 0].mean()), 4)     # B low
         self.assertLess(int(out[:, :, 1].mean()), 4)     # G low
         self.assertGreater(int(out[:, :, 2].mean()), 250)  # R high
+
+    def test_the_crops_chrominance_survives_the_restorer(self):
+        """THE PALE-SKIN FIX. CodeFormer desaturates and lifts -- measured
+        against the crop it was handed, chroma drift 2.51, LAB-a -0.96,
+        saturation x0.958, which is what the user reported as pale skin where
+        GPEN Realistic and GPEN 256 Pro (which already do this) look right.
+
+        A grey network output over a strongly coloured crop must come back
+        CARRYING THE CROP'S COLOUR, not grey.
+        """
+        rng = np.random.default_rng(2)
+        p = self._make(rng.normal(0, 0.15, (3, 512, 512)).astype(np.float32))
+        frame = np.zeros((512, 512, 3), np.uint8)
+        frame[:, :, 2] = 200                                  # a red crop, BGR
+        out, _ = p.Run(None, None, frame)
+        self.assertGreater(int(out[:, :, 2].mean()), int(out[:, :, 0].mean()) + 60,
+                           "the crop's red did not survive the restorer")
+
+    def test_the_networks_luminance_is_what_survives(self):
+        """The other half of the same operator: it is the RESTORER that decides
+        brightness. A bright network output must come back brighter than a dark
+        one over the same crop, or the fix would be discarding the restoration.
+        """
+        frame = np.full((512, 512, 3), 90, np.uint8)
+        frame[:, :, 2] = 160
+        # TEXTURED, not uniform. A flat output is what `looks_collapsed` exists
+        # to reject -- it would fall back to the unenhanced crop and both arms
+        # would come back identical, which is how this test failed when written.
+        rng = np.random.default_rng(0)
+        noise = rng.normal(0, 0.15, (3, 512, 512)).astype(np.float32)
+        dark, _ = self._make(noise - 0.5).Run(None, None, frame)
+        bright, _ = self._make(noise + 0.5).Run(None, None, frame)
+        self.assertGreater(int(bright.mean()), int(dark.mean()) + 80)
+
+    def test_the_colour_fix_can_be_turned_off_for_remeasuring(self):
+        """ROOP_ULTRAMAX_CHROMA=1 restores CodeFormer's own colour exactly --
+        `tests/bench_ultramax_vs_codeformer.py` sets it to assert the lean host
+        path is still bit-identical to the reference implementation."""
+        # Textured for the same reason as above, and textured ENOUGH: the guard
+        # is relative to the CROP's own spread, and a crop this saturated has a
+        # global std of 94, so an output below ~33 still reads as collapsed.
+        rng = np.random.default_rng(1)
+        out_chw = (rng.normal(0, 0.4, (3, 512, 512)).astype(np.float32) + 0.2)
+        frame = np.zeros((512, 512, 3), np.uint8)
+        frame[:, :, 0] = 200                                  # a blue crop
+        on, _ = self._make(out_chw).Run(None, None, frame)
+        os.environ['ROOP_ULTRAMAX_CHROMA'] = '1'
+        try:
+            off, _ = self._make(out_chw).Run(None, None, frame)
+        finally:
+            os.environ.pop('ROOP_ULTRAMAX_CHROMA', None)
+        # With the network's own colour kept, a uniform output is neutral grey.
+        self.assertLess(int(off[:, :, 0].mean()) - int(off[:, :, 2].mean()), 4)
+        # With the fix on, the crop's blue comes through.
+        self.assertGreater(int(on[:, :, 0].mean()) - int(on[:, :, 2].mean()), 60)
 
     def test_non_finite_output_falls_back_to_the_unenhanced_crop(self):
         """A half-precision graph is one overflow away from a black FACE:

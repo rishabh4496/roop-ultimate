@@ -99,6 +99,58 @@ def fp32_trt_providers(providers, tag):
     return patched
 
 
+def luma_only_recolour(restored, source, chroma=0.0, lab_exact=False):
+    """The restorer's LUMINANCE carried on the SOURCE's chrominance.
+
+    THE FAILURE THIS FIXES. Every GAN restorer here drifts in colour, and each
+    drifts its own way: GPEN pushes the whole face pink and paints magenta onto
+    the eyelids, while CodeFormer does the opposite — it desaturates and lifts.
+    Measured against the crop the restorer was handed, over 5 real frames of
+    s1.mp4 (`tests/diag_ultramax_cost_and_colour.py`):
+
+        enhancer          chroma drift   dLAB-a   dLAB-b     dL   saturation
+        UltraMax                  2.51    -0.96    +0.35   +2.22       x0.958
+        GPEN Realistic            0.31    -0.11    -0.08   +4.06       x0.966
+        GPEN 256 Pro              0.38    -0.07    -0.00   +1.54       x1.011
+
+    Less red, brighter, less saturated is exactly what "pale" looks like, and
+    the two GPEN processors do not have it for one reason only: they already
+    run this function. UltraMax did not, and the user reported the difference
+    before anything here was measured.
+
+    THE MECHANISM. A luminance-only edit is the same signed offset on all three
+    BGR channels, so adding `grey(restored) - grey(source)` to the SOURCE moves
+    brightness and leaves hue and saturation exactly where the swapper put
+    them. Two C++ passes, 0.27 ms at 512, and it cannot touch detail: the
+    restored image's every high-frequency variation survives in the grey delta.
+
+    `lab_exact` swaps in a true LAB L-channel replacement. It is more precise
+    (0.11 residual drift against the grey delta's 0.30, on a ~2.9 problem) and
+    more than twice the cost; the two are indistinguishable on footage.
+
+    `chroma` lerps back toward the restorer's own colour, for re-measuring only.
+    0 is the default and the entire point.
+
+    Raises cv2.error rather than swallowing it. A colour fix that silently
+    no-ops leaves a plausible image carrying the exact cast it exists to
+    remove, and nothing anywhere would show it — so each caller catches this
+    and says so once.
+    """
+    import numpy as np
+    if lab_exact:
+        lab = cv2.cvtColor(source, cv2.COLOR_BGR2LAB)
+        lab[:, :, 0] = cv2.cvtColor(restored, cv2.COLOR_BGR2LAB)[:, :, 0]
+        out = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
+    else:
+        d = cv2.subtract(cv2.cvtColor(restored, cv2.COLOR_BGR2GRAY),
+                         cv2.cvtColor(source, cv2.COLOR_BGR2GRAY),
+                         dtype=cv2.CV_16S)
+        out = cv2.add(source, cv2.merge((d, d, d)), dtype=cv2.CV_8U)
+    if chroma > 0.0:
+        out = cv2.addWeighted(out, 1.0 - chroma, restored, chroma, 0.0)
+    return out
+
+
 def looks_collapsed(result, source):
     """True when a restorer returned a degenerate, near-uniform image.
 
@@ -112,11 +164,42 @@ def looks_collapsed(result, source):
     relative to the input the restorer was handed, which a real restoration
     never produces: the FP16 case measured 16.0 against the input's own spread,
     a quarter of what FP32 returned.
+
+    COST, because this runs on EVERY face of EVERY restorer that has a pool.
+    The obvious spelling — `np.asarray(x, np.float32).std()` — allocates a
+    786k-element float copy of each 512 image and then makes a second pass over
+    it, and measured **3.28 ms per face** on an RTX 4070: 11.3% of UltraMax's
+    entire 33.5 ms Run(), for a guard that fires approximately never.
+    `cv2.meanStdDev` reads the uint8 directly in C++ and costs **0.318 ms**,
+    10.3x less. It is not an approximation — see `_global_std`.
     """
     try:
-        import numpy as np
-        s_std = float(np.asarray(source, dtype=np.float32).std())
-        r_std = float(np.asarray(result, dtype=np.float32).std())
-        return s_std > 8.0 and r_std < s_std * 0.35
+        s_std = _global_std(source)
+        return s_std > 8.0 and _global_std(result) < s_std * 0.35
     except Exception:
         return False
+
+
+def _global_std(img):
+    """The population std over ALL channels, via one C++ pass.
+
+    `cv2.meanStdDev` returns PER-CHANNEL mean and std, which is not what the
+    caller wants — the std of the flattened image also carries the spread
+    BETWEEN the channel means. Recombining them exactly is the parallel-axis
+    theorem: pooling equal-sized groups,
+
+        var_total = mean_c(var_c + mean_c^2) - (mean_c mean_c)^2
+
+    This is exact, not an estimate. Verified against `np.float32(img).std()` on
+    a random 512x512x3: 73.9585919644853 vs 73.95858764648438 — the whole
+    difference is float32 vs float64 accumulation inside numpy's own reduction,
+    and it is 6 orders of magnitude below the 0.35 ratio being tested.
+
+    A decimated view (`img[::4, ::4]`) is another 2.4x cheaper and was measured
+    too, but it is an APPROXIMATION (74.10 against 73.96 on the same array) and
+    there is no reason to accept one for 0.19 ms.
+    """
+    import numpy as np
+    m, sd = cv2.meanStdDev(img)
+    m, sd = m.ravel(), sd.ravel()
+    return float(np.sqrt(max(0.0, float(np.mean(sd * sd + m * m) - np.mean(m) ** 2))))

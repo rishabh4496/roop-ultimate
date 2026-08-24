@@ -475,6 +475,7 @@ class FaceSwapInsightFace():
     # (size, template) -> feathered eye-band mask. Face-independent (the crop is
     # the template), so it is built once for the whole run.
     _EYE_MASK_CACHE = {}
+    _LIP_MASK_CACHE = {}
 
     def __init__(self):
         self.plugin_options = None
@@ -1285,6 +1286,240 @@ class FaceSwapInsightFace():
         cls._EYE_MASK_CACHE[key] = m
         return m
 
+    # -- Lip colour ----------------------------------------------------------
+    # The user's report: hyperswap's lips read pale and washed out, hififace's
+    # read "beautiful and authentic" -- and the ask is that colour ALONE, no
+    # structure. Measured before building anything, on 40 frames of s1.mp4 with
+    # harjot.fsz (`tests/diag_realswap_lip_colour.py`), and the first cut of the
+    # measurement was the WRONG STATISTIC, which is the part worth recording.
+    #
+    # Asking "how far apart are the two nets on the lips" gives:
+    #
+    #     region   dL      dLAB-a   dLAB-b   |dchroma|
+    #     lips    -2.25    -0.20    +1.55       1.82
+    #     skin    -2.10    -0.91    +1.62       1.92
+    #
+    # The lips and the skin around them differ by the SAME amount, so that is a
+    # global cast between the nets and nothing to do with lips. Transferring it
+    # would have painted a whole-face colour shift onto the mouth.
+    #
+    # The statistic that actually describes "pale lips" is the lip colour
+    # RELATIVE TO THAT IMAGE'S OWN SKIN -- how far the lips sit from the face
+    # around them -- which is independent of any global cast:
+    #
+    #     image           dL      dLAB-a   dLAB-b   lip/skin chroma
+    #     target plate  -14.36    +9.27    -0.40         9.38
+    #     hyperswap     -15.91    +5.98    +0.43         6.15
+    #     hififace      -16.07    +6.69    +0.36         6.80
+    #
+    # hififace's lips stand off the skin more than hyperswap's on 77.5% of
+    # frames, mean +0.657 -- the user's observation, confirmed, and it is almost
+    # purely LAB-a (redness). It is also only a PARTIAL recovery: BOTH nets wash
+    # the lips out against the footage itself, which carries 9.27 of redness
+    # separation where hyperswap manages 5.98 and hififace 6.69. hififace closes
+    # 20% of that gap.
+    #
+    # THE AUTHENTIC LIP COLOUR IS IN THE PLATE, NOT IN HIFIFACE. That is the
+    # headroom, and it is deliberately not taken here: the plate's lips are the
+    # TARGET person's, so pulling colour from them would import their lipstick
+    # onto the source's identity, which is a different feature needing its own
+    # decision. `_LIP_COLOUR` at 1.0 does what was asked -- match hififace's
+    # lip/skin relationship exactly -- and the number above says where more lives.
+    #
+    # WHY AN OFFSET AND NOT A BLEND. What is transferred is a single per-channel
+    # MEAN offset, computed as (lips - perioral skin) in each net and differenced.
+    # A scalar per channel cannot carry structure by construction, so hififace's
+    # lip SHAPE, its lip line, its teeth and its 3D-shape-branch disagreement
+    # with hyperswap cannot leak in -- which a per-pixel blend, however feathered,
+    # would have done. The luminance component is projected out of the offset
+    # before it is applied, so the operator moves hue and saturation and provably
+    # nothing else.
+    #
+    # Free: `_run_secondary` already ran hififace on this face for the eye band.
+    _LIP_RX = 0.55            # ellipse half-width, in mouth-corner distances
+    _LIP_RY = 0.30            # lips are much wider than they are tall
+    # FEATHER SIGMA, not a kernel size, and it is sized against the sharpest
+    # thing this operator is allowed to produce. A fixed 9-tap kernel -- what
+    # this was first -- is sigma ~1.7 px at a 58 px mouth, FINER than the scale
+    # at which an edge reads, so the mask's own boundary showed up as added
+    # high-frequency energy on a filter that is supposed to add none. Swept over
+    # 40 frames, mask edge contribution against how much of the gap to hififace
+    # still closes:
+    #
+    #     mask                          |gap|   HF /255   extent px
+    #     0.58/0.32 sigma 1.7 (was)     0.063     1.328     46 x 76
+    #     0.58/0.32 sigma 2.9           0.064     0.682     52 x 82
+    #   * 0.55/0.30 sigma 4.7           0.069     0.398     58 x 84
+    #     0.52/0.28 sigma 5.8           0.077     0.378     58 x 84
+    #     0.50/0.26 sigma 7.6           0.079     0.297     64 x 90
+    #     0.48/0.24 sigma 9.3           0.082     0.252     72 x 94
+    #
+    # 0.08 is the knee: the edge stops carrying half a grey level, for 0.006 of
+    # gap. Wider buys almost nothing more and spills further onto the philtrum
+    # and chin, which the ellipse already overhangs (58 px tall against a 37 px
+    # lip) -- harmless at a sub-LAB-unit offset, but not worth widening for free.
+    _LIP_FEATHER = 0.08
+    _RING_RX = 1.15           # the perioral skin the lip colour is measured against
+    _RING_RY = 0.85
+    _LIP_COLOUR = float(os.environ.get('ROOP_REALSWAP_LIP_COLOUR', '1.0') or '1.0')
+
+    @classmethod
+    def _lip_masks(cls, size, template='arcface'):
+        """(lip mask, perioral ring, normalised apply mask), [H,W] float32 each.
+
+        Face-independent and cached for the same reason `_eye_region_mask` is:
+        the crop IS the template, so every aligned face puts its mouth corners
+        on the same two points by construction, and a mask anchored to the
+        alignment cannot wander the way a per-face landmark fit could.
+
+        The third entry is the first one rescaled so its LIP-WEIGHTED MEAN is 1,
+        which is what makes the delivered offset exactly `delta` (see
+        `_lip_colour`). It is a pure function of the other two, so it is built
+        here once rather than per face.
+        """
+        key = (int(size), str(template))
+        cached = cls._LIP_MASK_CACHE.get(key)
+        if cached is not None:
+            return cached
+        from roop.face_util import swap_template_points
+        pts = np.asarray(swap_template_points(int(size), template), dtype=np.float32)
+        mouth_l, mouth_r = pts[3], pts[4]
+        mw = float(np.linalg.norm(mouth_r - mouth_l)) or (size * 0.23)
+        c = ((mouth_l + mouth_r) / 2.0).round().astype(int)
+        centre = (int(c[0]), int(c[1]))
+
+        lip = np.zeros((int(size), int(size)), np.float32)
+        cv2.ellipse(lip, centre,
+                    (max(1, int(round(cls._LIP_RX * mw))),
+                     max(1, int(round(cls._LIP_RY * mw)))), 0, 0, 360, 1.0, -1)
+        lip = cv2.GaussianBlur(lip, (0, 0),
+                               sigmaX=max(0.8, cls._LIP_FEATHER * mw))
+
+        ring = np.zeros((int(size), int(size)), np.float32)
+        cv2.ellipse(ring, centre,
+                    (max(1, int(round(cls._RING_RX * mw))),
+                     max(1, int(round(cls._RING_RY * mw)))), 0, 0, 360, 1.0, -1)
+        # The reference is SKIN, so every pixel the lip mask touches is cut out
+        # of it -- keyed off the lip mask ITSELF rather than off a hand-picked
+        # margin. A fixed margin was here first (`_LIP_RX + 0.10`) and it did not
+        # clear the feather: the mask is still ~10% of peak out there, so the
+        # "skin" mean carried a little lip colour AND a little of the tint this
+        # function had just applied, which is a slow feedback on any caller that
+        # re-measures its own output. Deriving the cut from `lip > 0` makes the
+        # two regions provably disjoint and keeps them that way if the feather
+        # is ever widened.
+        ring = ring * (lip <= 1e-3)
+
+        lip_sum = float(lip.sum())
+        lip_sq = float((lip * lip).sum())
+        apply = lip * (lip_sum / lip_sq) if lip_sq > 0.0 else lip
+
+        out = (lip, ring, apply)
+        cls._LIP_MASK_CACHE[key] = out
+        return out
+
+    @classmethod
+    def _lip_colour(cls, base, secondary, size, template='arcface',
+                    strength=None):
+        """Give `base`'s lips the secondary net's lip-vs-skin colour.
+
+        `base` and `secondary` are [3,H,W] float32 RGB in [-1,1] -- the swap
+        models' own tensor layout -- and `_run_secondary` has already resampled
+        the secondary into the primary's crop space, so they are comparable
+        pixel for pixel.
+
+        Three lines of arithmetic, and the shape of them is the whole design:
+
+            delta = (lips - skin) in hififace  -  (lips - skin) in hyperswap
+            out   = base + delta * normalised_lip_mask
+
+        WHAT IT CANNOT DO. `delta` is three numbers. A per-channel constant
+        carries no structure by construction, so hififace's lip shape, its lip
+        line, its teeth, and its 3D-shape-branch disagreement with hyperswap
+        about where the mouth is cannot leak in -- which a per-pixel blend,
+        however feathered, would have done. And the mask is zero outside the
+        lips, so nothing else in the crop moves at all (asserted, exactly, in
+        `tests/verify_realswap_lip_colour.py`).
+
+        WHY THE MASK IS NORMALISED. It is feathered, so its edge pixels take a
+        fraction of the offset and the lip MEAN ends up short of the target.
+        Rescaling so the mask's lip-weighted mean is 1 makes the delivered
+        offset exactly `delta`. Measured over 40 frames, distance to hififace's
+        lip/skin chroma: 0.911 to start, 0.115 un-normalised, **0.063**
+        normalised.
+
+        TWO THINGS BUILT HERE AND MEASURED AWAY -- do not re-add them:
+
+        1. PROJECTING THE LUMINANCE OUT OF `delta`. It reads as obviously
+           correct for an operator that claims to change only colour, and it
+           destroys the effect. Same 40 frames, lip minus perioral skin in LAB:
+
+               variant                        dL       a       b   |gap|
+               hififace (the target)      -21.68    8.04   -0.05   0.000
+               hyperswap (start)          -20.52    7.13   -0.07   0.911
+               raw delta                  -21.61    7.99   -0.17   0.063
+               luminance projected out    -20.46    7.50   +0.31   0.910
+
+           It closes almost none of the gap AND pushes the b axis the wrong way,
+           because a luminance-free direction in gamma-encoded RGB is not a
+           constant-L direction in LAB, and removing that component rotates what
+           is left. The honest statement is therefore NOT "brightness is
+           untouched": the transfer moves the lip/skin LUMINANCE relationship by
+           ~1.1 LAB-L as well, from -20.52 to -21.61 against hififace's -21.68.
+           That is real and it is wanted -- a richer lip is slightly darker
+           against the same skin, and it is a tone property of the lips, not
+           structure taken from the other net.
+
+           (Note also `_LUMA` is a weight vector, not a unit vector: `d - (w.d)w`
+           removes only 45% of the component it names. That bug was here too,
+           and the verification caught it as a 4.8/255 brightness change.)
+
+        2. A REDNESS GATE, to spare teeth and tongue on an open mouth. Built,
+           blurred, normalised, and it moved the result by 0.005 (gap 0.068
+           against the plain mask's 0.063) while adding 1.21e-2 of
+           high-frequency energy to an operator whose claim is that it adds
+           none. It was solving a problem that is not there: the offset is under
+           one LAB unit, which is below the just-noticeable difference, so a
+           tooth inside the ellipse cannot visibly change colour.
+
+        `strength` scales `delta`. 1.0 is "match hififace's lip/skin
+        relationship exactly", which is what was asked for.
+
+        COST 0.29 ms/face at 256 -- 0.5% of the ~62 ms/call the swap stage
+        reads in a real render -- and it adds NO GPU work at all: hififace has
+        already been run on this face for the eye band, so the second net's
+        output is sitting in memory either way.
+        """
+        a = cls._LIP_COLOUR if strength is None else float(strength)
+        if a <= 0.0:
+            return base
+        lip, ring, apply = cls._lip_masks(size, template)
+        lip_w, ring_w = float(lip.sum()), float(ring.sum())
+        if lip_w <= 0.0 or ring_w <= 0.0:
+            return base
+
+        f = np.asarray(base, dtype=np.float32)
+
+        def offset(img):
+            """(lip mean - perioral skin mean) per channel, [3].
+
+            Measured per NET, then differenced, so a GLOBAL cast between the two
+            cancels. The first version of the measurement compared the nets'
+            lips directly and read 1.82 -- against 1.92 on the skin beside them,
+            i.e. the two nets differ by a whole-face colour shift that has
+            nothing to do with lips. Transferring THAT would have painted a
+            face-wide tint onto the mouth.
+            """
+            g = np.asarray(img, dtype=np.float32)
+            return ((g * lip).reshape(3, -1).sum(1) / lip_w
+                    - (g * ring).reshape(3, -1).sum(1) / ring_w)
+
+        delta = (offset(secondary) - offset(f)) * a
+        if not np.isfinite(delta).all():
+            return base
+
+        return f + delta[:, None, None] * apply
+
     def _mix_outputs(self, primary, secondary, size, target_face=None):
         """The base mix everywhere, hififace alone inside the eyelid band.
 
@@ -1314,7 +1549,12 @@ class FaceSwapInsightFace():
             self._mixed_faces += 1
         b = float(self._BASE_MIX)
         base = primary if b <= 0.0 else primary * (1.0 - b) + secondary * b
-        return base * (1.0 - m) + secondary * m
+        out = base * (1.0 - m) + secondary * m
+        # Lip colour last, and off `out` rather than `base`: the eye band does
+        # not reach the mouth, so the two are identical there, but reading the
+        # composite means this can never disagree with what is actually
+        # published. Colour only -- see `_lip_colour`.
+        return self._lip_colour(out, secondary, size, self.model_template)
 
     def mix_summary(self):
         """One line on how many faces were composited, or None for a single-net
@@ -1336,11 +1576,14 @@ class FaceSwapInsightFace():
             src = (f"; {100.0 * self._plate_crops / n:.0f}% cropped from the "
                    f"plate ({self._derived_crops} of {n} fell back to the "
                    f"derived crop)")
+        lip = (f"; lips take its lip/skin colour offset at "
+               f"{self._LIP_COLOUR:g}" if self._LIP_COLOUR > 0.0
+               else "; lip colour transfer OFF")
         return (f"[swap] {self.loaded_model_key}: {self._mixed_faces} of "
                 f"{self._seen_faces} faces composited with "
                 f"'{self.secondary.loaded_model_key}' over the eye band "
                 f"({100.0 * cov:.1f}% of the crop, opacity "
-                f"{self._EYE_ALPHA:g}), base mix {self._BASE_MIX:g}{src}")
+                f"{self._EYE_ALPHA:g}), base mix {self._BASE_MIX:g}{lip}{src}")
 
     def _run_secondary(self, source_face: Face, target_face: Face, temp_frame):
         """The second net's swap of the same face, resampled back into the

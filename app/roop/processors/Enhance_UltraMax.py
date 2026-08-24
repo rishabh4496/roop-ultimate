@@ -86,7 +86,104 @@ reported as "too sharp, blurry on the eyes". Both halves of that are fixed here.
    here (UltraMax v1, "4.39x GPEN-256") that the user reported as plastic, and a
    second (the filter above) reported as over-sharp. Grade it on the footage.
 
+4. PALE SKIN — fixed 2026-08-24 by borrowing GPEN Realistic's colour path.
+
+   Reported by the user as UltraMax's skin looking pale where GPEN Realistic
+   and GPEN 256 Pro do not. It is real, it is entirely colour, and the reason
+   those two do not have it is that they already drop the network's chrominance
+   and keep the swapper's. Measured against the crop the restorer was handed,
+   5 frames of s1.mp4, face-centre window (tests/diag_ultramax_cost_and_colour.py):
+
+       enhancer          chroma drift   dLAB-a   dLAB-b     dL   saturation
+       UltraMax (was)            2.51    -0.96    +0.35   +2.22       x0.958
+       GPEN Realistic            0.31    -0.11    -0.08   +4.06       x0.966
+       GPEN 256 Pro              0.38    -0.07    -0.00   +1.54       x1.011
+
+   Less red, brighter, less saturated — that IS pale, and it is CodeFormer's
+   own bias rather than anything this file added. `luma_only_recolour` keeps
+   the network's luminance and puts the crop's chrominance back under it, for
+   0.27 ms and with no effect on detail whatsoever, because a luminance-only
+   edit preserves every high-frequency variation the network drew.
+
+   NOTE this makes UltraMax no longer bit-identical to `Codeformer (fp16)`.
+   That equality was a property worth stating while the only difference was a
+   filter measured to do nothing; it is not worth keeping a reported defect for.
+   `ROOP_ULTRAMAX_CHROMA=1` restores CodeFormer's own colour exactly, and
+   `tests/bench_ultramax_vs_codeformer.py` sets it to assert the equality still
+   holds through the lean host path.
+
+5. SPEED — where it actually goes, and what does NOT help.
+
+   Measured per face, 256 crop in, RTX 4070 / TensorRT, idle GPU
+   (tests/diag_ultramax_cost_and_colour.py):
+
+       resize 256->512 (CUBIC)     0.31 ms    0.9%
+       pre, LUT gather             2.10 ms    6.3%
+       INFER (the network)        25.46 ms   76.0%
+       post, CHW->HWC f32          1.54 ms    4.6%
+       finite + convertScaleAbs    1.11 ms    3.3%
+       looks_collapsed             3.80 ms   11.3%   <- fixed, see below
+       sized() back to 256         0.07 ms    0.2%
+       Run() total                33.51 ms
+
+   `looks_collapsed` cost more than the rest of the host path put together, on
+   a guard that fires approximately never: it made two float32 copies of a
+   512x512x3 image per face. `cv2.meanStdDev` plus the parallel-axis theorem is
+   EXACT and 11.5x cheaper (3.75 -> 0.33 ms, verified to agree on 100 pairs
+   including degenerate ones). It applies equally to GPEN Realistic, GPEN 256
+   Pro and GFPGAN, which share it. After:
+
+       looks_collapsed             0.33 ms    1.1%   (was 3.80 / 11.3%)
+       Run() total                30.03 ms           (was 33.51, -10.4%)
+
+   AND THE STAGE IS NOW AT THE NETWORK'S OWN FLOOR. Under the production shape
+   -- 10 worker threads, pool 2 -- the same harness that measured the pool
+   curve reads 24.95 and 24.91 ms/call wall across two runs, against 38.4
+   faces/s (26.02 ms) before. 40.1 faces/s is 24.9 ms/face, and the network
+   alone is 25.5: there is no host time left to find, only the network.
+
+   NOT CLAIMED: a render-clock number. This is a STAGE measurement, and this
+   pipeline has produced three stage-level wins in a row that measured neutral
+   end to end (stabilizer rounds, temporal detection, det_size). Removing host
+   time from a GPU-bound pipeline usually does not move the clock. Anyone
+   quoting a wall-clock figure for this needs a counterbalanced A/B first.
+
+   TWO THINGS MEASURED AND REJECTED, so they are not re-attempted:
+
+     - A DEEPER TENSORRT POOL DOES NOT HELP. The live ROOP_PROFILE reads
+       enhance = 61.94 ms/call against this 33.5, and the obvious reading is
+       that 10 worker threads are queueing on a 2-deep pool. They are, and
+       widening it makes things WORSE, because the queue is not the constraint —
+       one context already saturates the card. 10 threads, 240 faces
+       (tests/diag_ultramax_pool_scaling.py):
+
+           contexts 1: 40.0 faces/s   +1136 MB VRAM
+           contexts 2: 38.4 faces/s   +1519 MB
+           contexts 3: 37.4 faces/s   +1927 MB
+           contexts 4: 36.6 faces/s   +2704 MB
+           contexts 6: 36.0 faces/s   +3748 MB
+
+       Monotonically down. 40 faces/s is 25 ms/face, i.e. exactly the network's
+       own time — the GPU is the floor and extra contexts buy only VRAM and
+       scheduling overhead. This is the same lesson as the stabilizer rounds and
+       temporal detection: the pipeline is GPU-BOUND, and a stage's share of
+       summed thread time is not a speedup budget.
+
+     - The pre and post host paths have no meaningful slack left. Four
+       alternative spellings of the pre gather (gather-then-transpose,
+       cv2.split + gather, cv2.split + cv2.LUT) all measured within 5% of the
+       current one or worse, and the fastest post variant (flat f32 cast plus
+       per-plane convertScaleAbs, bit-identical) saves 0.17 ms of 1.88. Neither
+       is worth the churn. NOTE the post path must be benched on FLOAT16 — this
+       graph's output is fp16, and an f32 test array makes cv2.merge look like a
+       win it is not.
+
+   So the enhance stage's 25.5 ms/face of GPU work is the network, and there is
+   no padding here to reclaim the way there was in the detector's 640 canvas.
+
 Knobs, for re-measuring rather than for shipping a different default:
+    ROOP_ULTRAMAX_CHROMA          0 = the swapper's colour (default),
+                                  1 = CodeFormer's own (the old pale output)
     ROOP_ULTRAMAX_TEXTURE         texture-restore gain, default 0 (OFF)
     ROOP_ULTRAMAX_TEXTURE_SIGMA   the band it is taken from, default 2.5 at 512
 """
@@ -100,7 +197,8 @@ import onnxruntime
 
 import roop.globals
 from roop.typing import Face, FaceSet, Frame
-from roop.processors.enhance_common import looks_collapsed, sized
+from roop.processors.enhance_common import (looks_collapsed, sized,
+                                            luma_only_recolour)
 from roop.utilities import resolve_relative_path
 from roop import session_pool
 
@@ -150,6 +248,16 @@ class Enhance_UltraMax:
     # docstring; this is a negative result kept as code so the next person does
     # not rebuild it.
     _TEXTURE_GAIN = 0.0
+
+    # How much of CODEFORMER'S OWN colour to keep. 0 = none of it: the network
+    # supplies luminance and the swapper's crop supplies chrominance, which is
+    # what both GPEN processors already do and what stops the skin reading pale.
+    # See the "PALE SKIN" section of the module docstring for the measurement.
+    # A knob defaulting to the old behaviour is the old behaviour for everyone,
+    # so this defaults to the fix and exists for re-measuring.
+    _CHROMA = 0.0
+
+    _warned_colour = False
 
     def __init__(self):
         self.plugin_options = None
@@ -420,6 +528,26 @@ class Enhance_UltraMax:
             print("[UltraMax] output collapsed (flat) — using unenhanced frame")
             return sized(temp_frame, input_size)
 
+        # ── PALE SKIN ───────────────────────────────────────────────────
+        # CodeFormer's own chrominance is dropped in favour of the crop's. This
+        # is the same operator GPEN Realistic and GPEN 256 Pro have always run,
+        # and its absence here is the whole of the reported difference: those
+        # two drift 0.31 and 0.38 against the input while this drifted 2.51,
+        # less red (LAB a -0.96), brighter (L +2.22) and desaturated (x0.958).
+        # It cannot cost detail — a luminance-only edit keeps every
+        # high-frequency variation the network drew — and it is measured at
+        # 0.27 ms against the 25.5 ms the network itself costs.
+        try:
+            restored = luma_only_recolour(
+                restored, src512,
+                _env_float('ROOP_ULTRAMAX_CHROMA', self._CHROMA))
+        except cv2.error as e:
+            # Say so once. A colour fix that silently no-ops leaves a plausible
+            # image carrying the exact pale cast it exists to remove.
+            if not Enhance_UltraMax._warned_colour:
+                Enhance_UltraMax._warned_colour = True
+                print(f"[UltraMax] colour fix skipped: {e}", flush=True)
+
         gain = _env_float('ROOP_ULTRAMAX_TEXTURE', self._TEXTURE_GAIN)
         if gain > 0.0:
             restored = self._restore_texture(
@@ -438,5 +566,8 @@ class Enhance_UltraMax:
             f, t = self._faces, self._textured
         if not f:
             return None
+        c = _env_float('ROOP_ULTRAMAX_CHROMA', self._CHROMA)
+        colour = ("swapper chrominance" if c <= 0.0
+                  else f"chrominance {c:g} toward CodeFormer's own")
         return (f"[UltraMax] {f} faces restored (codeformer.fp16, lean host "
-                f"path); texture restored on {t}")
+                f"path, {colour}); texture restored on {t}")

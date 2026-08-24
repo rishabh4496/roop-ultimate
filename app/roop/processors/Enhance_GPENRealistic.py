@@ -58,7 +58,8 @@ import onnxruntime
 
 import roop.globals
 from roop.typing import Face, FaceSet, Frame
-from roop.processors.enhance_common import looks_collapsed, sized
+from roop.processors.enhance_common import (looks_collapsed, sized,
+                                            luma_only_recolour)
 from roop.utilities import resolve_relative_path, conditional_download
 from roop import session_pool
 
@@ -225,20 +226,15 @@ class Enhance_GPENRealistic:
 
         `chroma` lerps back toward GPEN's own colour for anyone who wants to
         re-measure; 0 is the default and the reason this processor exists.
+
+        The body lives in `enhance_common.luma_only_recolour` because UltraMax
+        needs the identical operator — CodeFormer drifts the OTHER way, pale
+        rather than pink, and the same two passes fix both. This stays as the
+        named entry point: it carries this class's `_LAB_EXACT` and its
+        warn-once, and the GPEN Realistic tests drive it directly.
         """
         try:
-            g_r = cv2.cvtColor(restored, cv2.COLOR_BGR2GRAY)
-            g_s = cv2.cvtColor(source, cv2.COLOR_BGR2GRAY)
-            if cls._LAB_EXACT:
-                lab = cv2.cvtColor(source, cv2.COLOR_BGR2LAB)
-                lab[:, :, 0] = cv2.cvtColor(restored, cv2.COLOR_BGR2LAB)[:, :, 0]
-                out = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
-            else:
-                d = cv2.subtract(g_r, g_s, dtype=cv2.CV_16S)
-                out = cv2.add(source, cv2.merge((d, d, d)), dtype=cv2.CV_8U)
-            if chroma > 0.0:
-                out = cv2.addWeighted(out, 1.0 - chroma, restored, chroma, 0.0)
-            return out
+            return luma_only_recolour(restored, source, chroma, cls._LAB_EXACT)
         except cv2.error as e:
             # Say so once. A colour fix that silently no-ops leaves a plausible
             # image with the exact pink cast this class exists to remove, and

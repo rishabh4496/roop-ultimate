@@ -73,13 +73,21 @@ print(f"  speedup            {cf_a.mean() / um_a.mean():.3f}x  "
       f"per-round min {min(cf_ms[i] / um_ms[i] for i in range(ROUNDS)):.3f}x "
       f"max {max(cf_ms[i] / um_ms[i] for i in range(ROUNDS)):.3f}x")
 
-# With the texture restore off the two must be BIT-identical: same weights, same
-# fidelity, and a host path that only reorders arithmetic. If this ever prints a
-# nonzero max, the lean pre/post changed the picture and every claim above it is
-# about a different image.
+# With the texture restore off AND CodeFormer's own chrominance kept, the two
+# must be BIT-identical: same weights, same fidelity, and a host path that only
+# reorders arithmetic. If this ever prints a nonzero max, the lean pre/post
+# changed the picture and every claim above it is about a different image.
+#
+# ROOP_ULTRAMAX_CHROMA=1 is what makes that comparison still meaningful. Since
+# 2026-08-24 UltraMax DEFAULTS to keeping the swapper's chrominance instead of
+# CodeFormer's, which is a deliberate difference — CodeFormer's own colour is
+# what the user reported as pale skin — so bit-identity is now a property of the
+# HOST PATH only, and this asserts exactly that and nothing more.
 os.environ['ROOP_ULTRAMAX_TEXTURE'] = '0'
+os.environ['ROOP_ULTRAMAX_CHROMA'] = '1'
 bare_ms, bare = timed(um)
 os.environ.pop('ROOP_ULTRAMAX_TEXTURE')
+os.environ.pop('ROOP_ULTRAMAX_CHROMA')
 d = np.abs(bare.astype(np.int16) - cf_out.astype(np.int16))
 print()
 print(f"  lean host path vs the reference implementation: mean |diff| "
