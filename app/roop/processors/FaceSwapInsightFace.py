@@ -230,6 +230,14 @@ SWAP_MODELS = {
     #     The control lands on its own known-correct template, which is what
     #     makes the other three rows worth anything. n=3 pairs, single frames —
     #     enough to pick the template, NOT a quality claim against other models.
+    #
+    # MEASURED ON VIDEO AND IT LOSES — shared numbers in the CSCS note below.
+    # On d2, counterbalanced, InStyleSwapper A is worse than realswap on both
+    # people (paired t=+17.8 and +31.5). Note how badly the still-image probe
+    # above predicted that: 0.81-0.83 identity SIMILARITY on frontal faceset
+    # stills (~0.18 distance) became 0.4177 on real video, level with realswap's
+    # 0.4052. Stills were fine for choosing an alignment template and worthless
+    # for ranking quality.
     "instyleswapper_a": {
         "file": "InStyleSwapper256_Version_A.fp16.onnx",
         "url": _VISO + "InStyleSwapper256_Version_A.fp16.onnx",
@@ -269,6 +277,33 @@ SWAP_MODELS = {
     #
     # Costs 1.26 GB across three files, which is why it is worth knowing it is
     # opt-in: on a 6GB card that is a real fraction of the budget.
+    #
+    # ── MEASURED 2026-08-24, AND THE CLAIM DOES NOT HOLD HERE ────────────────
+    # d2.mp4 (2268 frames, harjot+gargee), counterbalanced A/B/C then C/B/A, all
+    # six arms on the live production stack (RealityUX, GPEN Realistic, tensorrt,
+    # 20 threads). `own` = cosine DISTANCE from the rendered face to the faceset
+    # that was applied, judged by buffalo_l re-detecting the output. LOWER WINS.
+    #
+    #     model              harjot    gargee      both
+    #     realswap           1.0017    0.4052    0.7896
+    #     cscs               1.0175    0.6993    0.9850
+    #     instyleswapper_a   1.0181    0.4177    0.9760
+    #
+    # Forward and reverse agreed to three decimals on every arm, so position did
+    # not move identity (the engine-build penalty is a SPEED effect). Paired per
+    # (frame, person), cscs is worse by +0.1018 on harjot (t=+38) and +0.2902 on
+    # gargee (t=+125), winning only 5.6% of gargee's rows.
+    #
+    # THE STRUCTURAL FINDING, which outlives the ranking: all three models score
+    # ~1.00 on harjot, the profile-limited person, and the swap rate was
+    # IDENTICAL at 52.1% / 94.8% across all six arms — because the assign and
+    # verify gates sit UPSTREAM of the swapper. A swap model cannot rescue a
+    # track that never bound a source, so "best for challenging angles" is not a
+    # property any swapper can deliver here. Same conclusion the 2026-08-23 duo
+    # work reached from the other direction: the limiter is intake, not the net.
+    #
+    # Kept as options, NOT defaulted. Do not re-benchmark them hoping for a
+    # different answer without first changing the intake path.
     "cscs": {
         "file": "cscs_256.onnx",
         "url": _VISO + "cscs_256.onnx",
