@@ -58,7 +58,7 @@ import onnxruntime
 
 import roop.globals
 from roop.typing import Face, FaceSet, Frame
-from roop.processors.enhance_common import (looks_collapsed, sized,
+from roop.processors.enhance_common import (looks_collapsed, sized, exclusive,
                                             luma_only_recolour)
 from roop.utilities import resolve_relative_path, conditional_download
 from roop import session_pool
@@ -66,6 +66,12 @@ from roop import session_pool
 
 class Enhance_GPENRealistic:
     processorname = 'gpen_realistic'
+    # Every session call goes through `exclusive()`, so no context of
+    # this processor's is ever entered twice at once -- the only guarantee
+    # ProcessMgr's enhance-stage lock provides. Declaring it lets that
+    # stage skip the lock, so this class's HOST work stops serialising
+    # against every other worker thread. See enhance_common.exclusive.
+    self_excluding = True
     type = 'enhance'
     # FFHQ-trained, like every restorer here — see
     # Enhance_CodeFormer.model_template for what that costs against the swap
@@ -120,6 +126,10 @@ class Enhance_GPENRealistic:
         self._lut = None
         self._faces = 0
         self._lock = threading.Lock()
+        # Guards the SINGLE shared (session, io_binding) used when there is no
+        # pool -- binding state is not thread-safe. Distinct from _lock, which
+        # only counts faces.
+        self._session_lock = threading.Lock()
 
     # ── lifecycle ────────────────────────────────────────────────────────────
     def Initialize(self, plugin_options: dict):
@@ -265,11 +275,9 @@ class Enhance_GPENRealistic:
             sess.run_with_iobinding(iob)
             return iob.copy_outputs_to_cpu()
 
-        if self.pool is not None:
-            with self.pool.lease() as (sess, iob):
-                ort_outs = _infer(sess, iob)
-        else:
-            ort_outs = _infer(self.session, self.io_binding)
+        with exclusive(self.pool, self._session_lock,
+                       (self.session, self.io_binding)) as (sess, iob):
+            ort_outs = _infer(sess, iob)
 
         hwc = np.ascontiguousarray(ort_outs[0][0][::-1].transpose(1, 2, 0),
                                    dtype=np.float32)

@@ -3898,7 +3898,23 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                         bar_write(f"[ProcessMgr] enhancer re-align failed: {e}")
                         _A, enh_input = None, fake_frame
 
-                with _prof('enhance'), _gpu_guard(pooled=getattr(p, 'pool', None) is not None, owner='enhance'):
+                # `self_excluding` means the processor routes every session
+                # call through enhance_common.exclusive -- a pool lease when it
+                # has a pool, its own lock over its single session when it does
+                # not -- so no context of its is ever entered twice at once.
+                # That is the ONLY guarantee this stage lock provides, and it
+                # was being held across the whole of Run(): for the look-filter
+                # restorers the network is a small minority of that (GPEN 256
+                # Pro measured 4.3 ms of GPU inside 39.0 ms of call), so the
+                # stage was serialising ~89% pure host work and did not scale
+                # past one face at a time. See enhance_common.exclusive.
+                #
+                # Absent the attribute, fall back to the old test so an
+                # unconverted processor keeps exactly its previous behaviour.
+                _enh_excl = getattr(p, 'self_excluding', None)
+                if _enh_excl is None:
+                    _enh_excl = getattr(p, 'pool', None) is not None
+                with _prof('enhance'), _gpu_guard(pooled=_enh_excl, owner='enhance'):
                     enhanced_frame, scale_factor = p.Run(self.input_face_datas[face_index], target_face, enh_input)
 
                 if _A is not None and enhanced_frame is not None:

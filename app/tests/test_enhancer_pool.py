@@ -216,14 +216,115 @@ class TestCodeFormerPool(EnhancerPoolCase):
 
 class TestRestoreFormerStillPools(EnhancerPoolCase):
     """The enhancer CodeFormer was compared against. If this one ever loses its
-    pool the same ceiling comes back on the default recommendation."""
+    pool the same ceiling comes back on the default recommendation.
 
-    def test_source_declares_a_pool(self):
-        import inspect
+    Asserted by RUNNING it, not by grepping for `self.pool.lease()`. That is
+    how this test was written and it broke the moment the lease moved inside
+    `enhance_common.exclusive` -- while the pool it was guarding was still
+    there, still being leased, on every call. A guard that fails on a rename
+    and passes on prose is checking the wrong thing; this file's own docstring
+    says so.
+    """
+
+    def setUp(self):
+        super().setUp()
         import roop.processors.Enhance_RestoreFormerPPlus as RF
-        src = inspect.getsource(RF)
-        self.assertIn("session_pool.SessionPool", src)
-        self.assertIn("self.pool.lease()", src)
+        self.RF = RF
+        self._rf_ort, self._rf_path = RF.onnxruntime, RF.resolve_relative_path
+        RF.onnxruntime = CF.onnxruntime
+        RF.resolve_relative_path = lambda q: q
+        RF.Enhance_RestoreFormerPPlus.model_restoreformerpplus = None
+        RF.Enhance_RestoreFormerPPlus.pool = None
+
+    def tearDown(self):
+        self.RF.onnxruntime, self.RF.resolve_relative_path = self._rf_ort, self._rf_path
+        self.RF.Enhance_RestoreFormerPPlus.model_restoreformerpplus = None
+        self.RF.Enhance_RestoreFormerPPlus.pool = None
+        super().tearDown()
+
+    def _make_rf(self):
+        p = self.RF.Enhance_RestoreFormerPPlus()
+        p.Initialize({"devicename": "cuda"})
+        return p
+
+    def test_builds_one_session_per_pool_slot(self):
+        self._pools(4)
+        p = self._make_rf()
+        self.assertIsNotNone(p.pool)
+        self.assertEqual(len(_FakeSession.registry), 4)
+
+    def test_threads_run_on_their_own_contexts(self):
+        self._pools(4)
+        self.assertEqual(
+            TestCodeFormerPool._run_threads(self._make_rf()), 4)
+
+
+class TestSelfExcluding(EnhancerPoolCase):
+    """The contract that lets ProcessMgr drop the enhance-stage lock.
+
+    The stage lock was held across the WHOLE of Run(), and for the look-filter
+    restorers the network is a small minority of that -- GPEN 256 Pro measured
+    4.3 ms of GPU inside a 39.0 ms call, so ~89% of what was serialised never
+    touched the GPU and the stage did not scale past one face at a time on any
+    card without a pool. Dropping that lock is only safe while each processor
+    excludes concurrent use of its OWN contexts, which is what
+    `enhance_common.exclusive` does and what `self_excluding` promises.
+    """
+
+    ENHANCERS = ('Enhance_GPEN256Pro', 'Enhance_GPENRealistic', 'Enhance_UltraMax',
+                 'Enhance_CodeFormer', 'Enhance_RestoreFormerPPlus',
+                 'Enhance_GPEN', 'Enhance_GFPGAN')
+
+    def test_every_converted_enhancer_declares_it(self):
+        import importlib
+        for name in self.ENHANCERS:
+            mod = importlib.import_module(f'roop.processors.{name}')
+            cls = getattr(mod, name)
+            self.assertIs(getattr(cls, 'self_excluding', None), True,
+                          f"{name} routes through exclusive() but does not "
+                          f"declare self_excluding, so ProcessMgr still wraps "
+                          f"its whole Run() in the enhance-stage lock")
+
+    def test_unpooled_threads_do_not_share_a_context(self):
+        """The guarantee the stage lock used to provide, now provided here.
+
+        With pooling off there is ONE session, and before this change four
+        worker threads entered it together -- safe only because the stage lock
+        upstream kept them apart. With the lock gone the processor's own lock
+        has to, so peak concurrency on the single context must be 1.
+        """
+        self._pools(0)
+        p = self._make()
+        self.assertIsNone(p.pool)
+        self.assertEqual(TestCodeFormerPool._run_threads(p, n=4), 1)
+
+    def test_the_stage_guard_reads_the_attribute(self):
+        """`_gpu_guard(pooled=True)` is a no-op context; that is the whole
+        mechanism. A processor declaring self_excluding must get one even with
+        no pool, and one that declares nothing must still get the lock."""
+        from roop.procmgr_runtime import _gpu_guard
+        import roop.globals as g
+        old = g.execution_providers
+        g.execution_providers = ['TensorrtExecutionProvider']
+        try:
+            class _Declared:
+                self_excluding = True
+                pool = None
+
+            class _Legacy:
+                pool = None
+
+            def guard_for(p):
+                excl = getattr(p, 'self_excluding', None)
+                if excl is None:
+                    excl = getattr(p, 'pool', None) is not None
+                return _gpu_guard(pooled=excl, owner='enhance')
+
+            import contextlib
+            self.assertIsInstance(guard_for(_Declared()), contextlib.nullcontext)
+            self.assertNotIsInstance(guard_for(_Legacy()), contextlib.nullcontext)
+        finally:
+            g.execution_providers = old
 
 
 if __name__ == "__main__":

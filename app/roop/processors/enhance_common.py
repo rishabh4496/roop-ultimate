@@ -6,6 +6,8 @@ about that ending are traps, and both were found the expensive way in GPEN
 before being written down here.
 """
 
+import contextlib
+
 import cv2
 import numpy as np
 
@@ -203,3 +205,58 @@ def _global_std(img):
     m, sd = cv2.meanStdDev(img)
     m, sd = m.ravel(), sd.ravel()
     return float(np.sqrt(max(0.0, float(np.mean(sd * sd + m * m) - np.mean(m) ** 2))))
+
+
+@contextlib.contextmanager
+def exclusive(pool, lock, fallback):
+    """Exclusive use of ONE inference context — and nothing wider than that.
+
+    THE PROBLEM THIS EXISTS FOR. ProcessMgr wraps the whole enhance stage in
+    `_gpu_guard(..., owner='enhance')`, which under TensorRT is a real mutex.
+    That guard was sized for the model call, but it is held across the entire
+    `Run()` — and for the look-filter restorers the network is a small minority
+    of that. Measured on an RTX 4070, GPEN 256 Pro, 256 crop in:
+
+        pre  (LUT gather)             0.50 ms
+        GPU  network                  4.32 ms
+        post colour + texture        34.20 ms
+        ------------------------------------
+        Run()                        39.02 ms   ->  GPU is 11% of it
+
+    So 89% of what the enhance lock serialised never touched the GPU. With N
+    worker threads that caps the stage at one face at a time. Measured, same
+    processor, faces/s against worker threads:
+
+        threads      free-running    whole Run() under a lock
+              1              24.6                       24.7
+              4              77.4                       25.0
+             10             103.5                       24.6
+
+    i.e. the stage does not scale AT ALL, and the card idles while nine threads
+    queue behind one doing NumPy. That is not a small-card problem: it is every
+    card on which the enhancer has no pool, which is every card below 7GB (see
+    `session_pool._auto_pool_defaults`) plus any install that turned pooling
+    off.
+
+    THE FIX IS NOT TO DROP THE LOCK. A TensorRT execution context is not
+    thread-safe and concurrent enqueue corrupts the CUDA context (error 999).
+    What is needed is a lock the width of the context use, which is what this
+    is: lease an independent context when the processor owns a pool, else hold
+    the processor's OWN lock over its single shared session/io_binding. Either
+    way no context is entered twice at once — the only guarantee `_gpu_guard`
+    was ever providing — and the host work falls outside it.
+
+    A processor that routes every session call through this can then declare
+    `self_excluding = True` and the stage-level guard becomes a no-op for it,
+    exactly as `Expression_LivePortrait` already does.
+
+    `fallback` is the (session, io_binding) pair — or bare session — to hand
+    back when there is no pool. It is evaluated by the caller, so a class that
+    keeps its session under a different attribute name still fits.
+    """
+    if pool is not None:
+        with pool.lease() as item:
+            yield item
+    else:
+        with lock:
+            yield fallback

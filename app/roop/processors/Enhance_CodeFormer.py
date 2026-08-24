@@ -1,4 +1,5 @@
 from typing import Any, List, Callable
+import threading
 import cv2 
 import numpy as np
 import onnxruntime
@@ -6,7 +7,7 @@ import roop.globals
 
 from roop.typing import Face, Frame, FaceSet
 from roop.utilities import resolve_relative_path
-from roop.processors.enhance_common import is_usable, sized
+from roop.processors.enhance_common import is_usable, sized, exclusive
 from roop import session_pool
 
 
@@ -20,8 +21,19 @@ class Enhance_CodeFormer():
     fp16 = False
     in_dtype = np.float32
     pool = None        # SessionPool of independent sessions for TRT multi-context
+    # Guards the SINGLE shared session used when there is no pool. This
+    # class keeps its session on the CLASS, not the instance (the fidelity
+    # weight is bound per call on a fresh io_binding), so the lock lives
+    # there too.
+    _session_lock = threading.Lock()
 
     processorname = 'codeformer'
+    # Every session call goes through `exclusive()`, so no context of
+    # this processor's is ever entered twice at once -- the only guarantee
+    # ProcessMgr's enhance-stage lock provides. Declaring it lets that
+    # stage skip the lock, so this class's HOST work stops serialising
+    # against every other worker thread. See enhance_common.exclusive.
+    self_excluding = True
     type = 'enhance'
     # The 5-point alignment this model was TRAINED on. CodeFormer, like every
     # other restorer here that declares one, learned its prior from FFHQ-
@@ -191,15 +203,14 @@ class Enhance_CodeFormer():
             sess.run_with_iobinding(iob)
             return iob.copy_outputs_to_cpu()
 
-        if self.pool is not None:
-            # Lease an independent session so this thread runs on its own
-            # TensorRT context concurrently with the other workers. Input and
-            # output NAMES are identical across sessions built from one ONNX,
-            # so the cached self.model_inputs/outputs stay valid for any lease.
-            with self.pool.lease() as sess:
-                ort_outs = _infer(sess)
-        else:
-            ort_outs = _infer(self.model_codeformer)
+        # An independent session per worker when pooled, else this class's own
+        # lock over the single shared one -- either way exclusive, and no wider
+        # than the model call. Input and output NAMES are identical across
+        # sessions built from one ONNX, so the cached self.model_inputs/outputs
+        # stay valid for any lease.
+        with exclusive(self.pool, self._session_lock,
+                       self.model_codeformer) as sess:
+            ort_outs = _infer(sess)
         # float32 regardless of the model's precision — every step below
         # (clip, rescale, cvtColor) is written for it, and cv2 rejects float16.
         result = np.asarray(ort_outs[0][0], dtype=np.float32)

@@ -197,7 +197,7 @@ import onnxruntime
 
 import roop.globals
 from roop.typing import Face, FaceSet, Frame
-from roop.processors.enhance_common import (looks_collapsed, sized,
+from roop.processors.enhance_common import (looks_collapsed, sized, exclusive,
                                             luma_only_recolour)
 from roop.utilities import resolve_relative_path
 from roop import session_pool
@@ -213,6 +213,12 @@ def _env_float(name, default):
 
 class Enhance_UltraMax:
     processorname = 'ultramax'
+    # Every session call goes through `exclusive()`, so no context of
+    # this processor's is ever entered twice at once -- the only guarantee
+    # ProcessMgr's enhance-stage lock provides. Declaring it lets that
+    # stage skip the lock, so this class's HOST work stops serialising
+    # against every other worker thread. See enhance_common.exclusive.
+    self_excluding = True
     type = 'enhance'
     # Same prior as Enhance_CodeFormer, because it is the same weights: FFHQ
     # aligned 512. ProcessMgr re-warps the swap crop into this space when
@@ -272,6 +278,10 @@ class Enhance_UltraMax:
         self._faces = 0
         self._textured = 0
         self._lock = threading.Lock()
+        # Guards the SINGLE shared (session, io_binding) used when there is no
+        # pool -- binding state is not thread-safe. Distinct from _lock, which
+        # only counts faces.
+        self._session_lock = threading.Lock()
 
     # ── lifecycle ────────────────────────────────────────────────────────────
     def Initialize(self, plugin_options: dict):
@@ -489,14 +499,13 @@ class Enhance_UltraMax:
             sess.run_with_iobinding(iob)
             return iob.copy_outputs_to_cpu()
 
-        if self.pool is not None:
-            # An independent context per worker, so this thread runs concurrently
-            # with the others. Input/output NAMES are identical across sessions
-            # built from one ONNX, so the cached lists stay valid for any lease.
-            with self.pool.lease() as (sess, iob):
-                ort_outs = _infer(sess, iob)
-        else:
-            ort_outs = _infer(self.session, self.io_binding)
+        # An independent context per worker when pooled, else this processor's
+        # own lock over its single session -- either way exclusive, and no wider
+        # than the model call. Input/output NAMES are identical across sessions
+        # built from one ONNX, so the cached lists stay valid for any lease.
+        with exclusive(self.pool, self._session_lock,
+                       (self.session, self.io_binding)) as (sess, iob):
+            ort_outs = _infer(sess, iob)
 
         # CHW RGB -> HWC BGR, contiguous and float32, in one copy.
         hwc = np.ascontiguousarray(ort_outs[0][0][::-1].transpose(1, 2, 0),

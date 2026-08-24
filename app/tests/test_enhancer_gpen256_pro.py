@@ -40,6 +40,102 @@ def _face_like(seed=0, size=256, tint=(0, 0, 0), detail=9.0):
     return np.clip(img, 0, 255).astype(np.uint8)
 
 
+def _reference_filter(cls, restored, source, input_size):
+    """The texture/sharpen filter as originally spelled, kept as the oracle.
+
+    The shipping version computes the same thing in fewer passes over the
+    512x512x3 buffers (it was 32 ms per face against the network's 4.3 ms --
+    the reason the card idled through this enhancer). Rewrites of that kind are
+    exactly where a look silently changes, so the old arithmetic stays here and
+    the new output is held against it.
+    """
+    target_size = 512 if input_size <= 256 else input_size
+    T = (target_size, target_size)
+    rest_scaled = (cv2.resize(restored, T, interpolation=cv2.INTER_LANCZOS4)
+                   if restored.shape[:2] != T else restored)
+    src_scaled = (cv2.resize(source, T, interpolation=cv2.INTER_CUBIC)
+                  if source.shape[:2] != T else source)
+    rest_f = rest_scaled.astype(np.float32)
+    src_f = src_scaled.astype(np.float32)
+    rest_gray = cv2.cvtColor(rest_scaled, cv2.COLOR_BGR2GRAY).astype(np.float32)
+    gx = cv2.Sobel(rest_gray, cv2.CV_32F, 1, 0, ksize=3)
+    gy = cv2.Sobel(rest_gray, cv2.CV_32F, 0, 1, ksize=3)
+    skin_gate = (1.0 / (1.0 + (np.hypot(gx, gy) / 14.0) ** 2))[:, :, np.newaxis]
+    feature_gate = 1.0 - skin_gate
+    exposure_gate = cls._EXPOSURE_LUT[
+        np.clip(rest_gray, 0, 255).astype(np.uint8)][:, :, np.newaxis]
+    sigma_texture = max(1.0, target_size / 256.0)
+    hf_texture = src_f - cv2.GaussianBlur(src_f, (0, 0), sigma_texture)
+    core = np.exp(-((hf_texture / 16.0) ** 2))
+    hf_std = float(np.std(hf_texture))
+    injected = 0.85 * hf_texture * core * skin_gate * exposure_gate
+    if hf_std < 3.5:
+        injected = injected + (cls._grain(target_size) * skin_gate * exposure_gate
+                               * (1.0 - min(1.0, hf_std / 3.5)))
+    sigma_sharp = 0.8 * (target_size / 256.0)
+    hf_restored = rest_f - cv2.GaussianBlur(rest_f, (0, 0), sigma_sharp)
+    sharpened = hf_restored * (0.42 * feature_gate + 0.12 * skin_gate)
+    return np.clip(rest_f + injected + sharpened, 0.0, 255.0).astype(np.uint8)
+
+
+class TestFilterMatchesTheReference(unittest.TestCase):
+    """The rewrite is a SPEED change, not a look change.
+
+    The only permitted difference is the final cast: the reference truncates
+    (np.clip + astype) and the shipping version rounds (cv2.add with
+    dtype=CV_8U), so a pixel may differ by 1/255 and never more.
+    """
+
+    def _both(self, restored, source, input_size=256):
+        cls = CLS
+        cls._warned_texture = False
+        got = cls._enhance_textures_and_sharpness(restored, source, input_size)
+        self.assertFalse(cls._warned_texture,
+                         "the filter raised and fell back to 256 -- see the "
+                         "except in _enhance_textures_and_sharpness")
+        return _reference_filter(cls, restored, source, input_size), got
+
+    def _assert_matches(self, restored, source, input_size=256):
+        want, got = self._both(restored, source, input_size)
+        self.assertEqual(want.shape, got.shape)
+        d = np.abs(want.astype(np.int16) - got.astype(np.int16))
+        self.assertEqual(int((d > 1).sum()), 0,
+                         f"max deviation {int(d.max())}/255 -- the rewrite may "
+                         f"only differ by the final rounding")
+
+    def test_matches_on_a_normally_textured_crop(self):
+        self._assert_matches(_face_like(1, detail=9.0), _face_like(2, detail=9.0))
+
+    def test_matches_on_a_512_crop(self):
+        self._assert_matches(_face_like(3, size=512), _face_like(4, size=512), 512)
+
+    def test_matches_on_the_blurry_grain_branch(self):
+        """A blurred source takes the `hf_std < 3.5` path, which adds a
+        SINGLE-CHANNEL grain field to a three-channel buffer by broadcast.
+
+        This branch is why the test exists. It fires only on degraded input, so
+        a rewrite can break it and every ordinary clip still renders -- the
+        filter's own except would swallow the error and quietly hand back a 256
+        image, i.e. plain GPEN-256 quality, which is the exact outcome the
+        class exists to avoid.
+        """
+        source = cv2.GaussianBlur(_face_like(5, detail=9.0), (0, 0), 6.0)
+        cls = CLS
+        rest_f = cv2.resize(_face_like(6), (512, 512),
+                            interpolation=cv2.INTER_CUBIC).astype(np.float32)
+        src_f = cv2.resize(source, (512, 512),
+                           interpolation=cv2.INTER_CUBIC).astype(np.float32)
+        hf = src_f - cv2.GaussianBlur(src_f, (0, 0), 2.0)
+        self.assertLess(float(np.std(hf)), 3.5,
+                        "this fixture no longer reaches the grain branch")
+        self._assert_matches(_face_like(6), source)
+
+    def test_grain_stays_monochrome(self):
+        """Broadcast, not per-channel: coloured grain would be visible noise."""
+        g = CLS._grain(512)
+        self.assertEqual(g.shape, (512, 512, 1))
+
+
 class TestColorAndChromaPreservation(unittest.TestCase):
     def test_gpen_pink_cast_is_removed(self):
         """GPEN's synthetic color cast must not reach the output."""

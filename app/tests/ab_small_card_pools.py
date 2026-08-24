@@ -76,7 +76,12 @@ _MASK = {"RealityUX": "mask_realityux", "DFL XSeg": "mask_xseg",
          "Face Parser (BiSeNet)": "mask_faceparser", "Clip2Seg": "mask_clip2seg",
          "Face Occluder": "mask_occluder", "Face Occluder v3 (XSeg-3)": "mask_xseg3"}
 mask = _MASK.get(cfg.mask_engine, cfg.mask_engine)
-g = ab.init_pipeline(cfg.provider, cfg.swap_model, cfg.selected_enhancer, mask,
+# The enhancer is the one production setting this harness is routinely asked
+# to VARY (it is the heaviest per-face stage, and the one whose host/GPU split
+# decides whether the card idles), so it is overridable. Unset = config.yaml,
+# i.e. what the user actually renders.
+enhancer = os.environ.get("ROOP_AB_ENHANCER") or cfg.selected_enhancer
+g = ab.init_pipeline(cfg.provider, cfg.swap_model, enhancer, mask,
                      float(cfg.swap_model_mask_strength))
 g.codeformer_fidelity = float(cfg.codeformer_fidelity)
 g.execution_threads = %(threads)d
@@ -108,8 +113,18 @@ t0 = time.perf_counter()
 with cf.ThreadPoolExecutor(max_workers=%(threads)d) as ex:
     list(ex.map(lambda f: pm.process_frame(f.copy()), [f for f in frames]))
 el = time.perf_counter() - t0
+# FACES, not just fps. A change that goes faster because fewer faces reached
+# the enhancer has not got faster, and fps alone cannot tell those apart -- nor
+# can GPU utilisation, which would also fall. The restorers keep their own
+# per-run counter for their cost_summary line; that is the number of network
+# calls actually made.
+enh_faces = -1
+for _p in (pm.processors or []):
+    if getattr(_p, "type", None) == "enhance":
+        enh_faces = int(getattr(_p, "_faces", -1))
 print("RESULT " + repr({"frames": len(frames), "sec": el,
                         "fps": len(frames) / el,
+                        "enh_faces": enh_faces,
                         "trt": session_pool.pool_size(),
                         "detmask": session_pool.detmask_pool_size()}))
 '''
@@ -158,7 +173,8 @@ def run_arm(name, env_extra, clip, threads):
     d['vram'] = max((s[1] for s in samples), default=0)
     d['own'] = max((s[1] for s in samples), default=0) - baseline
     d['watt'] = sum(s[2] for s in busy) / len(busy) if busy else 0.0
-    print(f"  {name:34s} {d['fps']:6.2f} fps  util {d['util']:5.1f}%  "
+    print(f"  {name:34s} {d['fps']:6.2f} fps  "
+          f"{d.get('enh_faces', -1):5d} enhanced  util {d['util']:5.1f}%  "
           f"own VRAM {d['own']:6.0f} MB (card {d['vram']:.0f}, idle {baseline:.0f})  "
           f"{d['watt']:5.1f} W  "
           f"(pools trt {d['trt']} / detmask {d['detmask']})")
@@ -173,15 +189,20 @@ def main():
     ap.add_argument('--vram', default='6',
                     help='ROOP_VRAM_GB for both arms (simulates the card)')
     ap.add_argument('--threads', type=int, default=8)
+    ap.add_argument('--enhancer', default=None,
+                    help="override config.yaml's selected_enhancer for both arms")
     args = ap.parse_args()
 
     base = {'ROOP_VRAM_GB': str(args.vram)}
+    if args.enhancer:
+        base['ROOP_AB_ENHANCER'] = args.enhancer
     arms = [
         ('A the 6GB policy (pools OFF)', dict(base)),
         ('B pools 2/2', dict(base, ROOP_TRT_POOL='2', ROOP_DETMASK_POOL='2')),
     ]
     print(f"clip={os.path.basename(args.clip)} threads={args.threads} "
-          f"simulated VRAM={args.vram}GB")
+          f"simulated VRAM={args.vram}GB "
+          f"enhancer={args.enhancer or 'config.yaml'}")
     acc = {}
     for order in (arms, list(reversed(arms))):
         print(f"\n  -- pass {'forward' if order is arms else 'reversed'} --")

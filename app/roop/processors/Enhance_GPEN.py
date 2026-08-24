@@ -1,4 +1,5 @@
 from typing import Any, List, Callable
+import threading
 import os
 import cv2
 import numpy as np
@@ -7,7 +8,7 @@ import roop.globals
 
 from roop.typing import Face, Frame, FaceSet
 from roop.utilities import resolve_relative_path, conditional_download
-from roop.processors.enhance_common import is_usable, sized, fp32_trt_providers
+from roop.processors.enhance_common import is_usable, sized, fp32_trt_providers, exclusive
 
 
 def _fp32_trt_providers(providers):
@@ -55,6 +56,16 @@ class Enhance_GPEN():
     devicename = None
 
     processorname = 'gpen'
+    # Every session call goes through `exclusive()`, so no context of
+    # this processor's is ever entered twice at once -- the only guarantee
+    # ProcessMgr's enhance-stage lock provides. Declaring it lets that
+    # stage skip the lock, so this class's HOST work stops serialising
+    # against every other worker thread. See enhance_common.exclusive.
+    self_excluding = True
+    # Guards the single shared session. These two build a fresh io_binding
+    # per call, but the SESSION (and so its TensorRT context) is shared,
+    # and that is what must not be entered twice at once.
+    _session_lock = threading.Lock()
     type = 'enhance'
     # FFHQ-trained — see Enhance_CodeFormer.model_template.
     model_template = 'ffhq_512'
@@ -111,11 +122,14 @@ class Enhance_GPEN():
         temp_frame = (temp_frame - 0.5) / 0.5
         temp_frame = np.expand_dims(temp_frame, axis=0).transpose(0, 3, 1, 2)
 
-        io_binding = self.model_gpen.io_binding()
-        io_binding.bind_cpu_input(self.name, temp_frame)
-        io_binding.bind_output(self.output_name, self.devicename)
-        self.model_gpen.run_with_iobinding(io_binding)
-        ort_outs = io_binding.copy_outputs_to_cpu()
+        # Exclusive use of the one shared session -- and nothing wider. The
+        # binding is per call; the context behind the session is not.
+        with exclusive(None, self._session_lock, self.model_gpen) as sess:
+            io_binding = sess.io_binding()
+            io_binding.bind_cpu_input(self.name, temp_frame)
+            io_binding.bind_output(self.output_name, self.devicename)
+            sess.run_with_iobinding(io_binding)
+            ort_outs = io_binding.copy_outputs_to_cpu()
         result = ort_outs[0][0]
 
         # Defense-in-depth: FP16 overflow or a torn session can yield non-finite

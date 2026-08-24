@@ -111,11 +111,26 @@ class TestAdvisoryWarning(PoolTestCase):
                          "the advisory must print once per knob, not per query")
 
     def test_silent_at_or_below_the_advisory(self):
-        self._set(ROOP_TRT_POOL=4)          # 12GB: auto 2, advisory 4
+        self._set(ROOP_TRT_POOL=2)          # 12GB: auto 2, advisory 2
         buf = io.StringIO()
         with redirect_stdout(buf):
             sp.pool_size()
         self.assertNotIn('above the measured-safe', buf.getvalue())
+
+    def test_one_step_above_auto_warns(self):
+        """The advisory used to sit at twice the auto default, which let
+        detmask=4 on a 12GB card pass in silence while measuring 15% slower
+        than the auto 2 over a whole render. Warning only once a setting is
+        catastrophic is not much of an advisory."""
+        self._set(ROOP_DETMASK_POOL=4)      # 12GB: auto 2
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            sp.detmask_pool_size()
+        out = buf.getvalue()
+        self.assertIn('above the measured-safe', out)
+        self.assertIn('Honouring it', out)
+        self.assertEqual(sp.detmask_pool_size(), 4,
+                         'the advisory must not become a clamp again')
 
     def test_the_warning_names_the_failure_mode_not_just_a_number(self):
         """Someone who sets 8, sees 0.2 fps and thinks the app hung is the

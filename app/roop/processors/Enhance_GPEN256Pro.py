@@ -1,11 +1,41 @@
 """GPEN 256 Pro — Upgraded ultra-fast, sharper, high-texture, photo-realistic face restorer.
 
-Speed Profile:
-- Operates at native 256x256 neural resolution with gpen_bfr_256.onnx.
-- Utilizes multi-context SessionPool for lock-free, multi-threaded parallel execution across workers.
-- Ultra-lean pre-processing (single-pass 256-entry LUT gather into float32 RGB) and C++ saturating post-processing.
-- Persistent IOBinding per pool slot.
-- Sub-10ms per-face execution on GPU, matching / exceeding the speed of native GPEN 256.
+Speed profile — READ THIS BEFORE ASKING WHY THE GPU IS IDLE.
+
+This processor is HOST-DOMINATED BY DESIGN, and that is the whole shape of its
+cost. It pairs a very small network with a large look filter, so most of a
+face's time is spent on the CPU and the card has little to do. Measured on an
+RTX 4070, one thread, a 256 crop in (tests are in
+tests/test_enhancer_gpen256_pro.py, the split in enhance_common.exclusive):
+
+    pre  (LUT gather)              0.49 ms
+    GPU  gpen_bfr_256.onnx         3.90 ms      <- the only GPU work
+    post cast / collapse guard     0.45 ms
+    post photoreal chrominance     0.19 ms
+    post texture + sharpen @512   19.03 ms      <- the filter
+    -----------------------------------------
+    Run()                         24.53 ms      GPU is 16% of it
+
+Nothing here is going to drive a card to 90% utilisation, and chasing that
+number is a mistake — see session_pool._advisory_pool_size, where the
+configuration reporting 94.5% utilisation was 14x SLOWER than the one reporting
+43%. What matters is that the host work does not BLOCK anything: the filter
+runs outside every lock (`self_excluding`, enhance_common.exclusive) so N
+workers run it concurrently, and it is written as few wide passes rather than
+many narrow ones.
+
+- Native 256x256 neural resolution, gpen_bfr_256.onnx.
+- Multi-context SessionPool when the card has the VRAM for it; the processor's
+  own lock over one session when it does not. Either way the GPU call is
+  exclusive and NOTHING ELSE IS.
+- Single-pass 256-entry LUT gather in, saturating C++ cast out, one io_binding
+  held per pool slot.
+
+Measured and rejected, so it is not re-attempted: capping OpenCV's internal
+thread pool (cv2.setNumThreads) to stop it oversubscribing against the worker
+threads. At 32 logical cores, 1/4/32 OpenCV threads gave 104.8 / 106.8 / 102.4
+faces per second over 8 workers — inside the noise. The oversubscription is
+real and it is not what costs anything.
 
 Visual Quality Enhancements:
 1. True Photoreal Chrominance (Zero Color Drift):
@@ -30,13 +60,20 @@ import onnxruntime
 
 import roop.globals
 from roop.typing import Face, FaceSet, Frame
-from roop.processors.enhance_common import sized, looks_collapsed
+from roop.processors.enhance_common import (sized, looks_collapsed, exclusive,
+                                            _global_std)
 from roop.utilities import resolve_relative_path, conditional_download
 from roop import session_pool
 
 
 class Enhance_GPEN256Pro:
     processorname = 'gpen_256_pro'
+    # Every session call goes through `exclusive()` below, so no context of
+    # this processor's is ever entered twice at once -- the only thing
+    # ProcessMgr's enhance-stage lock provides. Declaring that lets the stage
+    # skip the lock and stop serialising this class's 34 ms of HOST work
+    # against every other worker thread. See enhance_common.exclusive.
+    self_excluding = True
     # core.py also maps the legacy label 'GPEN 256 Ultra' here. It is not
     # offered in api.py's enhancer list any more, and is kept only so a
     # config saved under the old name still resolves.
@@ -51,6 +88,11 @@ class Enhance_GPEN256Pro:
     # skin lives, smoothly drops to zero in specular highlights or crushed shadows.
     _EXPOSURE_LUT = np.clip(
         np.sin(np.pi * (np.arange(256, dtype=np.float32) / 255.0)), 0.0, 1.0)
+
+    # The same curve with the texture strength folded in, so the injection
+    # weight is one multiply instead of two. 0.85 is the texture amount and it
+    # is a constant, so it never needed to be a separate pass over 786k floats.
+    _EXPOSURE_LUT_TEX = _EXPOSURE_LUT * 0.85
 
     # Warn ONCE per class, not per face: a look filter must never take a render
     # down, but a filter that fails silently is worse than one that fails loudly.
@@ -97,6 +139,10 @@ class Enhance_GPEN256Pro:
         self._lut = None
         self._faces = 0
         self._lock = threading.Lock()
+        # Guards the SINGLE shared (session, io_binding) used when there is no
+        # pool -- a binding's state is not thread-safe. Distinct from _lock,
+        # which only counts faces.
+        self._session_lock = threading.Lock()
 
     # ── lifecycle ────────────────────────────────────────────────────────────
     def Initialize(self, plugin_options: dict):
@@ -218,43 +264,95 @@ class Enhance_GPEN256Pro:
             rest_f = rest_scaled.astype(np.float32)
             src_f = src_scaled.astype(np.float32)
 
-            # 1. Structural Edge-Stop Gate (Sobel gradient on restored luminance)
-            rest_gray = cv2.cvtColor(rest_scaled, cv2.COLOR_BGR2GRAY).astype(np.float32)
-            gx = cv2.Sobel(rest_gray, cv2.CV_32F, 1, 0, ksize=3)
-            gy = cv2.Sobel(rest_gray, cv2.CV_32F, 0, 1, ksize=3)
-            edge_mag = np.hypot(gx, gy)
-            # skin_gate is ~1.0 on smooth skin, drops to 0.0 at sharp boundaries (eyelids, pupils, lips)
-            skin_gate = (1.0 / (1.0 + (edge_mag / 14.0) ** 2))[:, :, np.newaxis]
-            feature_gate = 1.0 - skin_gate
+            # THE SHAPE OF WHAT FOLLOWS IS THE COST, NOT THE OPERATORS.
+            # Everything here is a pass over a 512x512x3 float32 buffer (3 MB),
+            # so the only thing that moves the clock is HOW MANY passes there
+            # are and how wide each one is. Measured on an RTX 4070 (the split
+            # is in enhance_common.exclusive): this filter was 32 ms per face
+            # against the network's 4.3 ms, i.e. the enhancer was 89% host and
+            # the card idled through it. The spelling below is the same maths
+            # in fewer, wider passes -- verified against the previous one at
+            # max |diff| = 1/255 over the whole frame, which is entirely the
+            # final cast rounding instead of truncating (see the return).
+            #
+            # Three rules came out of measuring it, and they are what to keep:
+            #   * a (H,W,1) gate broadcast over (H,W,3) is a STRIDED numpy loop
+            #     at 2.47 ms; expanding the gate with cvtColor(GRAY2BGR) and
+            #     using cv2.multiply is 0.93 ms for the identical result.
+            #   * collapse 1-channel work into 1-channel arrays and fold every
+            #     constant into a LUT or a coefficient before it reaches 3
+            #     channels.
+            #   * cv2 beats numpy on the big buffers (its loops are SIMD and
+            #     threaded) and loses on small ones (per-call thread dispatch),
+            #     so the 512x512 single-channel gates stay in whichever was
+            #     measured faster rather than being made uniform.
 
-            # 2. Exposure Gate (mid-tone sine LUT)
-            gray_u8 = np.clip(rest_gray, 0, 255).astype(np.uint8)
-            exposure_gate = cls._EXPOSURE_LUT[gray_u8][:, :, np.newaxis]
+            # Gray stays uint8: Sobel reads it directly at CV_32F and the
+            # exposure LUT indexes it. The old spelling made a float copy, then
+            # clipped and cast it back to uint8 to index -- an exact round trip
+            # through two extra full-size passes.
+            gray_u8 = cv2.cvtColor(rest_scaled, cv2.COLOR_BGR2GRAY)
 
-            # 3. High-Frequency Dermal Micro-Texture Injection
+            # 1. Structural edge-stop gate.
+            #    1/(1 + (hypot(gx,gy)/14)^2) == 196/(196 + gx^2 + gy^2).
+            #    The square undoes the square root, so hypot never had to be
+            #    computed -- same value, no sqrt over 262k pixels.
+            gx = cv2.Sobel(gray_u8, cv2.CV_32F, 1, 0, ksize=3)
+            gy = cv2.Sobel(gray_u8, cv2.CV_32F, 0, 1, ksize=3)
+            m2 = cv2.add(cv2.multiply(gx, gx), cv2.multiply(gy, gy))
+            # ~1.0 on smooth skin, -> 0.0 at sharp boundaries (eyelids, pupils, lips)
+            skin_gate = cv2.divide(196.0, cv2.add(m2, 196.0))
+
+            # 2. Exposure gate, folded into the texture weight: one 1-channel
+            #    array carrying 0.85 * skin_gate * exposure_gate.
+            w_tex = cv2.multiply(skin_gate, cls._EXPOSURE_LUT_TEX[gray_u8])
+
+            # 3. High-frequency dermal micro-texture from the pre-restoration crop.
             sigma_texture = max(1.0, target_size / 256.0)
             src_blur = cv2.GaussianBlur(src_f, (0, 0), sigma_texture)
-            hf_texture = src_f - src_blur
-            core = np.exp(-((hf_texture / 16.0) ** 2))
-            
-            hf_std = float(np.std(hf_texture))
-            injected_texture = 0.85 * hf_texture * core * skin_gate * exposure_gate
+            hf_texture = cv2.subtract(src_f, src_blur)
+            # exp(-(hf/16)^2), as one scaled square and one exp.
+            core = cv2.exp(cv2.multiply(hf_texture, hf_texture, scale=-1.0 / 256.0))
 
-            # 4. Subtle Tactile Micro-Pore Sensor Grain if input was blurry / low texture
+            hf_std = _global_std(hf_texture)
+            injected_texture = cv2.multiply(
+                cv2.multiply(hf_texture, core),
+                cv2.cvtColor(w_tex, cv2.COLOR_GRAY2BGR))
+
+            # 4. Subtle tactile micro-pore sensor grain if the input was blurry.
+            #    w_tex already carries the 0.85, which this term does not want,
+            #    so it is divided back out of the scalar rather than out of a
+            #    full-size array.
             if hf_std < 3.5:
-                grain = cls._grain(target_size)
-                injected_texture += grain * skin_gate * exposure_gate * (1.0 - min(1.0, hf_std / 3.5))
+                k = (1.0 - min(1.0, hf_std / 3.5)) / 0.85
+                # numpy, not cv2.add: the grain term is single-channel and is
+                # added to ALL THREE channels by broadcast, which is what the
+                # previous `+=` did and what makes the grain monochrome rather
+                # than coloured. cv2.add does not broadcast (H,W,1) over
+                # (H,W,3) -- it raises, and the except below would have turned
+                # that into a silent drop to 256 output on exactly the blurry
+                # inputs this branch exists for.
+                injected_texture += (cls._grain(target_size)
+                                     * (w_tex[:, :, np.newaxis] * k))
 
-            # 5. Targeted Feature Micro-Sharpening (Eyes, Lashes, Lips, Contours)
+            # 5. Targeted feature micro-sharpening (eyes, lashes, lips, contours).
+            #    0.42*(1 - skin) + 0.12*skin == 0.42 - 0.30*skin, so feature_gate
+            #    never has to exist as its own array.
             sigma_sharp = 0.8 * (target_size / 256.0)
             rest_blur = cv2.GaussianBlur(rest_f, (0, 0), sigma_sharp)
-            hf_restored = rest_f - rest_blur
-            sharpness_amount = (0.42 * feature_gate + 0.12 * skin_gate)
-            sharpened_features = hf_restored * sharpness_amount
+            hf_restored = cv2.subtract(rest_f, rest_blur)
+            sharpness_amount = cv2.subtract(0.42, cv2.multiply(skin_gate, 0.30))
+            sharpened_features = cv2.multiply(
+                hf_restored,
+                cv2.cvtColor(sharpness_amount, cv2.COLOR_GRAY2BGR))
 
-            # 6. Combine all components
-            enhanced = rest_f + injected_texture + sharpened_features
-            return np.clip(enhanced, 0.0, 255.0).astype(np.uint8)
+            # 6. Combine. cv2.add with dtype=CV_8U does the clip and the cast in
+            #    one saturating pass instead of np.clip + astype over two. It
+            #    ROUNDS where astype truncated, which is the whole of the 1/255
+            #    difference from the previous spelling, and is the more correct
+            #    of the two.
+            return cv2.add(rest_f, cv2.add(injected_texture, sharpened_features),
+                           dtype=cv2.CV_8U)
         except Exception as e:
             # THIS RETURN IS NOT FREE, which is why it has to be audible. This
             # method is also what upsamples 256 -> 512, so returning `restored`
@@ -291,11 +389,9 @@ class Enhance_GPEN256Pro:
             sess.run_with_iobinding(iob)
             return iob.copy_outputs_to_cpu()
 
-        if self.pool is not None:
-            with self.pool.lease() as (sess, iob):
-                ort_outs = _infer(sess, iob)
-        else:
-            ort_outs = _infer(self.session, self.io_binding)
+        with exclusive(self.pool, self._session_lock,
+                       (self.session, self.io_binding)) as (sess, iob):
+            ort_outs = _infer(sess, iob)
 
         hwc = np.ascontiguousarray(ort_outs[0][0][::-1].transpose(1, 2, 0),
                                    dtype=np.float32)

@@ -115,6 +115,24 @@ def _advisory_pool_size(gb: float, auto_value: int) -> int:
         detect/mask pre-pass at 2-2.5 fps; pool=2 ran the SAME stage on the SAME
         clip at 45.3 fps — 18-20x. pool=4 showed no gain over pool=2 for detect
         specifically (compute/GIL-bound, not context-bound).
+      - 2026-08-25, whole-render fps on the same card, GPEN 256 Pro, 10 threads,
+        counterbalanced, identical 401 faces enhanced in every arm:
+
+            trt/detmask   2/2  21.71 fps   GPU 36.5%
+                          2/4  18.44 fps   GPU 29.1%    -15%
+                          4/4  17.69 fps   GPU 35.9%    -19%
+                          6/6   5.90 fps   GPU 62.4%    -73%
+
+        THE THRESHOLD MOVED BECAUSE OF THAT SECOND ROW. detmask=4 sits exactly
+        AT the old advisory (auto 2 x 2) and so printed nothing, while costing
+        15% — so the advisory now fires above the auto default itself rather
+        than above twice it. A number that only warns once a setting is
+        catastrophic is not much of an advisory.
+      - The 6/6 arm is also the clearest statement of what this number is NOT
+        about: one of its two runs reported 94.5% GPU UTILISATION at 1.51 fps,
+        against 43.0% at 23.44 fps for 2/2 — 14x slower at more than twice the
+        utilisation. Utilisation is time-coverage, not work completed, and
+        paging TensorRT contexts over PCIe covers a great deal of time.
       - The failure mode is the card pinned near 100% VRAM with the driver paging
         contexts over PCIe: 100% "utilisation" at a third of the power limit,
         which is thrashing, not compute. A ~100 ms frame becomes minutes, and it
@@ -126,7 +144,7 @@ def _advisory_pool_size(gb: float, auto_value: int) -> int:
     """
     if gb <= 0:
         return max(auto_value, 1)
-    return max(auto_value * 2, 1)
+    return max(auto_value, 1)
 
 
 _warned = set()

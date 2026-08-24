@@ -1,4 +1,5 @@
 from typing import Any, List, Callable
+import threading
 import cv2 
 import numpy as np
 import onnxruntime
@@ -6,7 +7,7 @@ import roop.globals
 
 from roop.typing import Face, Frame, FaceSet
 from roop.utilities import resolve_relative_path
-from roop.processors.enhance_common import is_usable, sized
+from roop.processors.enhance_common import is_usable, sized, exclusive
 from roop import session_pool
 
 class Enhance_RestoreFormerPPlus():
@@ -15,8 +16,17 @@ class Enhance_RestoreFormerPPlus():
     devicename = None
     name = None
     pool = None        # SessionPool of (session, io_binding) for TRT multi-context
+    # Guards the SINGLE shared session/binding used when there is no pool.
+    # Session state lives on the CLASS here, so the lock does too.
+    _session_lock = threading.Lock()
 
     processorname = 'restoreformer++'
+    # Every session call goes through `exclusive()`, so no context of
+    # this processor's is ever entered twice at once -- the only guarantee
+    # ProcessMgr's enhance-stage lock provides. Declaring it lets that
+    # stage skip the lock, so this class's HOST work stops serialising
+    # against every other worker thread. See enhance_common.exclusive.
+    self_excluding = True
     type = 'enhance'
     # FFHQ-trained — see Enhance_CodeFormer.model_template.
     model_template = 'ffhq_512'
@@ -64,17 +74,14 @@ class Enhance_RestoreFormerPPlus():
         temp_frame = (temp_frame - 0.5) / 0.5
         temp_frame = np.expand_dims(temp_frame, axis=0).transpose(0, 3, 1, 2)
         
-        if self.pool is not None:
-            # Lease an independent (session, io_binding) so this thread runs on
-            # its own TensorRT context concurrently with other workers.
-            with self.pool.lease() as (sess, iob):
-                iob.bind_cpu_input(self.model_inputs[0].name, temp_frame)
-                sess.run_with_iobinding(iob)
-                ort_outs = iob.copy_outputs_to_cpu()
-        else:
-            self.io_binding.bind_cpu_input(self.model_inputs[0].name, temp_frame) # .astype(np.float32)
-            self.model_restoreformerpplus.run_with_iobinding(self.io_binding)
-            ort_outs = self.io_binding.copy_outputs_to_cpu()
+        # An independent (session, io_binding) per worker when pooled, else
+        # this class's own lock over the single shared pair -- either way
+        # exclusive, and no wider than the model call.
+        with exclusive(self.pool, self._session_lock,
+                       (self.model_restoreformerpplus, self.io_binding)) as (sess, iob):
+            iob.bind_cpu_input(self.model_inputs[0].name, temp_frame)
+            sess.run_with_iobinding(iob)
+            ort_outs = iob.copy_outputs_to_cpu()
         result = ort_outs[0][0]
         del ort_outs
 
