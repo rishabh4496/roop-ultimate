@@ -72,7 +72,13 @@ class PartsRegistryTest(unittest.TestCase):
         with open(sw.manifest_path(w.target_video), encoding="utf-8") as fh:
             manifest = json.load(fh)
         for name, n in (("s0.mp4", 1000), ("s1.mp4", 1000)):
-            open(os.path.join(self.tmp, name), "wb").close()
+            # Must be NON-EMPTY. A part is only inherited if the encoder actually
+            # produced bytes — a zero-byte file is the signature of an encoder
+            # that failed to open, and resume now refuses to trust one (see
+            # tests/test_oom_guards.py::SegmentValidity). Writing a byte keeps
+            # this test about NUMBERING, which is what it is for.
+            with open(os.path.join(self.tmp, name), "wb") as fh:
+                fh.write(b"seg" * 64)
             manifest["segments"].append({"file": name, "frames": n})
         with open(sw.manifest_path(w.target_video), "w", encoding="utf-8") as fh:
             json.dump(manifest, fh)

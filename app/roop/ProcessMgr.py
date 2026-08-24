@@ -1574,6 +1574,47 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                     need = max(need, _MAX_STAB_WARMUP)
         return need
 
+    # A chunk is NOT the only copy of itself. Live at the same moment in
+    # _run_stab_parallel, every one of them chunk-sized:
+    #     the reader filling the next chunk              1
+    #     prefetch_q = Queue(2)                          2
+    #     the chunk currently being processed            1
+    #     `results`, that chunk's processed output       1
+    #     _write_q = Queue(1), the previous results      1
+    # So decoded frames alone reach SIX times the per-chunk budget. The old flat
+    # 1536 MB default therefore reserved ~9 GB, which is unremarkable on 32 GB
+    # and fatal on 16 GB — measured on a 16 GB / RTX 3060 box, a 40934-frame
+    # render died at 12% with ffmpeg's own threads failing malloc
+    # (AVERROR(ENOMEM)) and numpy unable to allocate a 1.5 MB array.
+    _STAB_LIVE_CHUNKS = 6
+
+    def _default_stab_chunk_mb(self, hard_cap=1536.0):
+        """Per-chunk budget that keeps all six live copies inside a share of the
+        RAM this machine actually has free.
+
+        Never RAISES the old default: on a machine with headroom this returns
+        exactly 1536.0 and nothing about the geometry changes. It only lowers,
+        and only where the old number could not have fitted.
+        """
+        try:
+            share = float(os.environ.get('ROOP_STAB_RAM_SHARE', '') or 0.40)
+        except ValueError:
+            share = 0.40
+        share = min(0.90, max(0.05, share))
+        try:
+            avail_mb = psutil.virtual_memory().available / (1024.0 ** 2)
+        except Exception:
+            return hard_cap
+        budget = max(96.0, min(hard_cap, (avail_mb * share) / self._STAB_LIVE_CHUNKS))
+        if budget < hard_cap and not getattr(self, '_stab_budget_notified', False):
+            self._stab_budget_notified = True
+            print(f"[Stabilize] {avail_mb / 1024.0:.1f} GB RAM free: chunk budget "
+                  f"{budget:.0f} MB instead of {hard_cap:.0f} MB, because the "
+                  f"pipeline holds {self._STAB_LIVE_CHUNKS} chunks at once "
+                  f"(~{budget * self._STAB_LIVE_CHUNKS / 1024.0:.1f} GB of frames). "
+                  f"ROOP_STAB_CHUNK_MB overrides this exactly.")
+        return budget
+
     def _stab_parallel_geometry(self, threads):
         """(warm_up, block_frames, width) for parallel stabilization.
 
@@ -1592,11 +1633,17 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
         """
         wu = self._stab_warmup or self._stab_warmup_frames()
         block = max(4 * wu, 24)
-        budget_mb = 1536.0
-        try:
-            budget_mb = float(os.environ.get('ROOP_STAB_CHUNK_MB', '') or budget_mb)
-        except ValueError:
-            pass
+        budget_mb = self._default_stab_chunk_mb()
+        _env_budget = (os.environ.get('ROOP_STAB_CHUNK_MB', '') or '').strip()
+        if _env_budget:
+            # Explicit means explicit, the same rule the pool knobs settled on:
+            # a control that silently runs a different number than the one it was
+            # given is a control that lies. The RAM-derived default applies only
+            # when nothing was asked for.
+            try:
+                budget_mb = float(_env_budget)
+            except ValueError:
+                pass
         frame_mb = max(0.1, (self._stab_frame_bytes or (1920 * 1080 * 3)) / (1024.0 ** 2))
         fits = max(1, int((budget_mb / frame_mb) // block))
         width = max(1, min(threads, fits))

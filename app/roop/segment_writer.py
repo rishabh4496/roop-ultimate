@@ -100,7 +100,17 @@ def _segments_that_exist(m: dict, seg_dir: str):
     for s in m.get("segments", []):
         fn = s.get("file", "")
         n = int(s.get("frames", 0) or 0)
-        if n <= 0 or not fn or not os.path.isfile(os.path.join(seg_dir, fn)):
+        if n <= 0 or not fn:
+            break
+        # Size, not just existence. A part can be listed with a frame count and
+        # still be EMPTY: an encoder that failed to open swallows everything sent
+        # to it ("Nothing was written into output file") while the writer counts
+        # the frames it handed over. Inheriting that as valid puts a 0-byte file
+        # into the final concat.
+        try:
+            if os.path.getsize(os.path.join(seg_dir, fn)) <= 0:
+                break
+        except OSError:
             break
         segs.append({"file": fn, "frames": n})
         done += n
@@ -235,7 +245,22 @@ class SegmentedVideoWriter:
         self._writer.close()
         self._writer = None
         _current = None
-        if self._cur_frames > 0:
+        # Committing is a claim that these frames survive a crash, so it has to be
+        # true: check the encoder actually produced bytes. A dead encoder still
+        # increments _cur_frames, and committing that is what puts an empty part
+        # in the manifest for a later resume to trust.
+        _seg_path = (os.path.join(self._dir, self._cur_seg_file)
+                     if self._cur_seg_file else "")
+        try:
+            _seg_bytes = os.path.getsize(_seg_path) if _seg_path else 0
+        except OSError:
+            _seg_bytes = 0
+        if self._cur_frames > 0 and _seg_bytes <= 0:
+            bar_write(f"[Resume] part {len(self.segments) + 1} is EMPTY after "
+                      f"{self._cur_frames} frames — the encoder produced no data, "
+                      f"so it is discarded rather than committed. Resume still "
+                      f"has parts 1-{len(self.segments)}.")
+        if self._cur_frames > 0 and _seg_bytes > 0:
             self.segments.append({"file": self._cur_seg_file, "frames": self._cur_frames})
             self._seg_index += 1
             self._register(len(self.segments), self._cur_seg_file, self._cur_frames,

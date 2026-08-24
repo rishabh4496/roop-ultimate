@@ -138,6 +138,20 @@ class FFMPEG_VideoWriter:
 
     """
 
+    # A hardware encoder fails as a CLASS on a machine that is out of memory:
+    # NVENC allocates its buffers when the encoder OPENS, so on a loaded box the
+    # open itself fails ("CreateInputBuffer failed: out of memory") and the
+    # process exits before a single packet is written. probe_encoder() cannot
+    # catch that — it runs once at frame 0 when memory is still free, while
+    # SegmentedVideoWriter opens a NEW encoder every ROOP_RESUME_CHUNK frames and
+    # any one of them can be the one that fails. Measured: a 40934-frame render
+    # on a 16 GB / RTX 3060 box died at frame 5001, the sixth segment boundary.
+    _SW_FALLBACK = {
+        'hevc_nvenc': 'libx265', 'h264_nvenc': 'libx264', 'av1_nvenc': 'libx265',
+        'hevc_qsv': 'libx265', 'h264_qsv': 'libx264',
+        'hevc_amf': 'libx265', 'h264_amf': 'libx264',
+    }
+
     def __init__(self, filename, size, fps, codec="libx265", crf=14, audiofile=None,
                  preset="faster", bitrate=None,
                  logfile=None, threads=None, ffmpeg_params=None):
@@ -148,9 +162,29 @@ class FFMPEG_VideoWriter:
         self.filename = filename
         self.codec = codec
         self.ext = self.filename.split(".")[-1]
+        # Held so _build_cmd can be re-run for a different codec: the fallback
+        # cannot just swap the codec name in the finished argv, because the
+        # rate-control flags differ (-rc/-cq/-tune for NVENC vs -crf/-preset).
+        self._size = size
+        self._fps = fps
+        self._crf = crf
+        self._audiofile = audiofile
+        self._preset = preset
+        self._bitrate = bitrate
+        self._logfile = logfile
+        self._threads = threads
+        self._ffmpeg_params = ffmpeg_params
+        self._frames_written = 0
+        self._fell_back = False
+        self._spawn(codec)
+
+    def _build_cmd(self, codec):
+        size, fps = self._size, self._fps
+        audiofile, bitrate = self._audiofile, self._bitrate
+        threads, ffmpeg_params = self._threads, self._ffmpeg_params
+        logfile = self._logfile
         w = size[0] - 1 if size[0] % 2 != 0 else size[0]
         h = size[1] - 1 if size[1] % 2 != 0 else size[1]
-
 
         # order is important
         cmd = [
@@ -165,7 +199,7 @@ class FFMPEG_VideoWriter:
             #'-pix_fmt', 'rgba' if withmask else 'rgb24',
             '-pix_fmt', 'bgr24',
             '-r', str(fps),
-            '-an', '-i', '-' 
+            '-an', '-i', '-'
         ]
 
         if audiofile is not None:
@@ -178,7 +212,7 @@ class FFMPEG_VideoWriter:
         # Out-of-range quality makes ffmpeg exit before a single frame is written,
         # so clamp to what this codec accepts rather than failing the whole render.
         from roop.util_ffmpeg import clamp_quality
-        crf = clamp_quality(codec, crf)
+        crf = clamp_quality(codec, self._crf)
         is_nvenc = codec in ('h264_nvenc', 'hevc_nvenc')
         if is_nvenc:
             # NVENC has no -crf; -cq is the constant-quality equivalent (same 0-51
@@ -202,7 +236,7 @@ class FFMPEG_VideoWriter:
         if codec in ('libx264', 'libx265'):
             _valid = {'ultrafast', 'superfast', 'veryfast', 'faster', 'fast',
                       'medium', 'slow', 'slower', 'veryslow', 'placebo'}
-            _preset = os.environ.get('ROOP_ENCODER_PRESET', preset).strip().lower()
+            _preset = os.environ.get('ROOP_ENCODER_PRESET', self._preset).strip().lower()
             if _preset not in _valid:
                 _preset = 'faster'
             cmd.extend(['-preset', _preset])
@@ -224,22 +258,67 @@ class FFMPEG_VideoWriter:
 
         ])
         cmd.extend([
-            filename
+            self.filename
         ])
+        return cmd
+
+    def _spawn(self, codec):
+        self.codec = codec
+        cmd = self._build_cmd(codec)
 
         test = str(cmd)
         print(test)
 
         popen_params = {"stdout": DEVNULL,
-                        "stderr": logfile,
+                        "stderr": self._logfile,
                         "stdin": sp.PIPE}
 
         # This was added so that no extra unwanted window opens on windows
         # when the child process is created
         if os.name == "nt":
             popen_params["creationflags"] = 0x08000000  # CREATE_NO_WINDOW
-        
+
         self.proc = sp.Popen(cmd, **popen_params)
+
+    def _retry_as_software(self):
+        """Respawn a dead HARDWARE encoder as its software equivalent.
+
+        Only while nothing has been written, and only once. Both conditions are
+        load-bearing: swapping codec mid-file would corrupt the segment, and a
+        software encoder that also dies is a real failure that must surface
+        rather than loop. Returns True if the caller should retry the write.
+        """
+        if self._fell_back or self._frames_written:
+            return False
+        sw = self._SW_FALLBACK.get(self.codec)
+        if not sw:
+            return False
+        err = b""
+        try:
+            if self.proc is not None and self.proc.stderr is not None:
+                err = self.proc.stderr.read() or b""
+        except Exception:
+            pass
+        try:
+            from roop.procmgr_runtime import bar_write as _say
+        except Exception:
+            _say = print
+        failed = self.codec
+        self._fell_back = True
+        try:
+            self._spawn(sw)
+        except Exception as exc:
+            _say(f"[Encoder] {failed} died and the {sw} fallback could not "
+                 f"launch either: {exc}")
+            return False
+        _say(f"[Encoder] {failed} failed to start — encoding this segment with "
+             f"{sw} on the CPU instead. This is almost always the machine being "
+             f"out of memory rather than a bad file; if it repeats, lower "
+             f"ROOP_STAB_CHUNK_MB or turn the stabilize_* options off.")
+        detail = err.decode('utf-8', 'replace').strip()
+        if detail:
+            _say(f"[Encoder] {failed} said: {detail.splitlines()[-1][:300]}")
+        return True
 
 
     def write_frame(self, img_array):
@@ -250,6 +329,8 @@ class FFMPEG_VideoWriter:
         # block forever and the whole render hangs silently — losing the entire
         # analysis pass with no error.
         if self.proc is None or self.proc.poll() is not None:
+            if self._retry_as_software():
+                return self.write_frame(img_array)
             rc = None if self.proc is None else self.proc.returncode
             ffmpeg_error = b""
             try:
@@ -270,7 +351,12 @@ class FFMPEG_VideoWriter:
             self.proc.stdin.write(img_array.tobytes())
             # else:
             #    self.proc.stdin.write(img_array.tostring())
+            self._frames_written += 1
         except IOError as err:
+            # Same reasoning as the poll() check above: a hardware encoder that
+            # never accepted a frame is a resource failure, not a bad file.
+            if self._retry_as_software():
+                return self.write_frame(img_array)
             _, ffmpeg_error = self.proc.communicate()
             error = (str(err) + ("\n\nRoop Ultimate error: FFMPEG encountered "
                                  "the following error while writing file %s:"
