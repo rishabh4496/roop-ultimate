@@ -406,6 +406,12 @@ def get_processing_plugins(masking_engine, swap_model='inswapper'):
         processors.update({"dmdnet": {}})
     elif roop.globals.selected_enhancer == 'GPEN 256':
         processors.update({"gpen": {"size": 256}})
+    elif roop.globals.selected_enhancer == 'GPEN 256 Pro':
+        # Upgraded GPEN 256: sharper, high dermal micro-textures, photoreal chrominance,
+        # and lock-free pooled execution matching native GPEN 256 speed.
+        processors.update({"gpen_256_pro": {}})
+    elif roop.globals.selected_enhancer == 'GPEN 256 Ultra':
+        processors.update({"gpen_256_pro": {}})
     elif roop.globals.selected_enhancer == 'GPEN Realistic':
         # GPEN-256's luminance with the swapper's colour, on a pooled, lean host
         # path. See Enhance_GPENRealistic: the "cartoonish" look people report

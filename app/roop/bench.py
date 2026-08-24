@@ -292,6 +292,8 @@ def _enhancer_model(name):
         'Codeformer': ('CodeFormer/CodeFormerv0.1.onnx', 'has a fidelity input'),
         'Codeformer (fp16)': ('CodeFormer/CodeFormerv0.1.onnx', 'fp16 variant'),
         'GPEN 256': ('gpen_bfr_256.onnx', 'FP32-forced under TRT'),
+        'GPEN 256 Pro': ('gpen_bfr_256.onnx', 'Upgraded GPEN 256 (sharper, photoreal, high-texture)'),
+        'GPEN Realistic': ('GPEN-BFR-512.onnx', 'GPEN 512 luminance with swapper chrominance'),
         'GPEN': ('GPEN-BFR-512.onnx', 'FP32-forced under TRT'),
         'GPEN 1024': ('gpen_bfr_1024.onnx', 'FP32-forced under TRT'),
         'GPEN 2048': ('gpen_bfr_2048.onnx', 'FP32-forced under TRT'),

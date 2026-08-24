@@ -677,7 +677,7 @@ def get_meta():
         "providers": providers,
         "trt_precisions": ["fp32", "fp16", "mixed"],
         "enhancers": ["None", "Codeformer", "Codeformer (fp16)", "DMDNet",
-                       "GFPGAN", "GPEN 256", "GPEN Realistic", "GPEN", "GPEN 1024",
+                       "GFPGAN", "GPEN 256", "GPEN 256 Pro", "GPEN Realistic", "GPEN", "GPEN 1024",
                        "GPEN 2048",
                        "Restoreformer++", "UltraMax", "KEEP (sidecar)"],
         "swap_models": ["realswap", "inswapper", "reswapper", "hyperswap",

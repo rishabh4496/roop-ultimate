@@ -33,6 +33,7 @@ from roop.processors.enhance_common import is_usable, sized     # noqa: E402
 
 PROC = os.path.join(APP, 'roop', 'processors')
 ENHANCERS = ('Enhance_CodeFormer', 'Enhance_GFPGAN', 'Enhance_GPEN',
+             'Enhance_GPEN256Pro', 'Enhance_GPENRealistic',
              'Enhance_RestoreFormerPPlus', 'Enhance_DMDNet')
 
 
