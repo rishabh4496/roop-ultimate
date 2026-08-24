@@ -486,12 +486,30 @@ app itself, which is what work in this repo is almost always about.
    running state of a multi-session recode. The top section is always the current one;
    older sections below it are history and go stale — when a table and a prose summary
    disagree, trust the table.
-2. **Current phase: PHASE 4 — "RealSwap"**, a hyperswap+hififace swap model against a
-   19-point quality checklist. Explicitly multi-session: update that section before
-   context runs out rather than relying on chat memory.
-3. Phases 1 (detection) and 2 (mask engines / RealityUX) are closed bar one checklist
-   cell and two accept-or-close decisions. Phase 3's headline ask (interacting faces)
-   is characterized but unsolved.
+2. **The phase numbering stopped at PHASE 5, and the work has moved past it.**
+   Phase 4 ("RealSwap", hyperswap base + a hififace eyelid/eyelash band) SHIPPED and
+   is the live default (`swap_model: realswap`). Phase 5 ("UltraMax") shipped, was
+   rebuilt lean, and had its clarity filter moved out into the merger chain; the
+   enhancer line then continued past the phase framing into **GPEN Realistic** and
+   **GPEN 256 Pro** (2026-08-24). Phases 1 (detection) and 2 (mask engines /
+   RealityUX) are closed bar one checklist cell and two accept-or-close decisions.
+   Phase 3's headline ask (interacting faces) is characterized but unsolved.
+3. **The last several sessions were not phase work** — standalone/licensing
+   (Part 5), pool guards (Part 6), stabilizer rounds + GPEN + the GFPGAN FP16
+   collapse (Part 7), the detect stage (Part 8), GPEN 256 Pro. Read the newest
+   Session Log below for the current ground.
+4. **The standing frame for all of it: the pipeline is GPU-BOUND.** Three
+   stage-level wins in a row (stabilizer round scheduling, `temporal_detection`,
+   `det_size` 640->512) each measured well in isolation and NEUTRAL end to end. A
+   change moves the render clock only if it REMOVES GPU work, not if it
+   redistributes thread time. `ROOP_PROFILE`'s per-stage % is thread time SUMMED
+   ACROSS WORKERS and is not a speedup budget.
+5. **Counterbalance every end-to-end A/B (A/B then B/A).** The first arm of a
+   process pays the TensorRT engine build and reads several fps slow; without
+   counterbalancing, two measured-neutral results read +21.8% and +9.8%. Use
+   `tests/ab_temporal_detection.py --vary <globals key> --a <x> --b <y>`, and read
+   SWAP RATE beside fps — a setting that goes faster by finding fewer faces has not
+   got faster.
 
 ## Benchmarking rules that are not optional
 
