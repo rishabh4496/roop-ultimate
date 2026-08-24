@@ -170,8 +170,29 @@ class Settings:
                     vram_gb = torch.cuda.get_device_properties(0).total_memory / (1024**3)
                     import psutil
                     cores = psutil.cpu_count(logical=False) or 4
-                    # 1 thread per 1.5GB VRAM is safe for face swapping, bounded by CPU cores
-                    default_threads = int(min(max(2, cores - 1), max(2, vram_gb / 1.5)))
+                    # THREAD COUNT DOES NOT COST VRAM. This used to read
+                    # `vram_gb / 1.5` -- one worker per 1.5GB -- and the premise
+                    # is false: the models are held in per-model SessionPools
+                    # whose size is set by session_pool, not by the number of
+                    # workers, so a worker adds only its own frame buffers.
+                    # Measured 2026-08-25 under the <7GB policy (pools 0/0),
+                    # own VRAM across a whole render:
+                    #
+                    #     threads    4      6      8     10     12
+                    #     VRAM    2317   2339   2374   2329   2369  MB
+                    #     fps    14.4   17.5   18.1   17.8   17.5
+                    #
+                    # Flat to within noise, while the old rule derived FOUR
+                    # threads on a 6GB card -- 20% below the knee at 8 -- and
+                    # seven on this 12GB/24-core one, where 10 measures 22.2 fps
+                    # against 8's 20.1. It was guarding a cost that is not there.
+                    #
+                    # So: bound by cores, capped at the measured knee for the
+                    # tier. Below 7GB the pools are off (session_pool
+                    # _auto_pool_defaults), which is where the knee sits at 8;
+                    # above it the 12GB card measured 10, with 14 buying nothing.
+                    knee = 8 if vram_gb < 7 else 10
+                    default_threads = int(min(max(2, cores - 1), knee))
         except Exception:
             pass
 

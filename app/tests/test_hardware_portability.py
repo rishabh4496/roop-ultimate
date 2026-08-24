@@ -102,7 +102,17 @@ class HardwarePortability(unittest.TestCase):
         self.assertTrue(s.auto_thread_selection)
         self.assertEqual(s.benchmark_results, {},
                          "best_threads from the other card outranks the VRAM tier")
-        self.assertNotEqual(s.max_threads, 10)
+
+        # RE-DERIVED, not merely "different from 10". `_load_on` swaps the
+        # signature, not torch's idea of the card, so the value this machine
+        # derives is whatever ITS tier gives -- which can coincide with the
+        # saved one. Asserting inequality made this test pass by arithmetic
+        # accident: it broke the moment the derivation's own knee landed on 10.
+        self._write()                       # no saved max_threads at all
+        fresh = self._load_on(OTHER).max_threads
+        self.assertEqual(s.max_threads, fresh,
+                         "the saved thread count must be replaced by this "
+                         "machine's derived default, whatever that is")
 
     def test_the_same_machine_keeps_everything(self):
         """A reset that fires on every load would be a bug, not a safeguard."""
@@ -222,6 +232,50 @@ class AutoTiersCoverBothCards(unittest.TestCase):
         finally:
             torch.cuda.get_device_properties = real
         self.assertLess(small, large, f'6GB asked for {small}, 12GB for {large}')
+
+    def test_the_derived_default_is_not_one_worker_per_1_5gb(self):
+        """The fresh-install `max_threads`, which is what a NEW card gets.
+
+        It used to be `min(cores - 1, vram_gb / 1.5)` -- one worker per 1.5GB --
+        on the premise that workers cost VRAM. They do not: the models live in
+        per-model SessionPools sized by session_pool, not by the worker count.
+        Measured under the <7GB policy (pools 0/0), own VRAM over a whole
+        render, threads 4/6/8/10/12: 2317/2339/2374/2329/2369 MB -- flat, while
+        fps went 14.4/17.5/18.1/17.8/17.5. The old rule derived FOUR on a 6GB
+        card, a fifth below the knee, and seven on a 12GB/24-core one where 10
+        measures 22.2 fps against 8's 20.1.
+
+        Asserted against the tier knees, not against the old arithmetic.
+        """
+        import psutil
+        import torch
+        if not torch.cuda.is_available():
+            self.skipTest('no CUDA device')
+        real_props = torch.cuda.get_device_properties
+        real_cores = psutil.cpu_count
+
+        class _P:
+            def __init__(self, gb):
+                self.total_memory = int(gb * 1024 ** 3)
+
+        def derive(gb, phys):
+            torch.cuda.get_device_properties = lambda i: _P(gb)
+            psutil.cpu_count = lambda logical=True: (64 if logical else phys)
+            cfg = settings_mod.Settings.__new__(settings_mod.Settings)
+            cfg.config_file = 'nonexistent-for-this-test.yaml'
+            cfg.load()
+            return cfg.max_threads
+
+        try:
+            self.assertEqual(derive(11.99, 24), 10,
+                             'a 12GB/24-core machine must derive the measured knee')
+            self.assertEqual(derive(6.0, 8), 7,
+                             'a 6GB/8-core machine must not be held at 4')
+            self.assertEqual(derive(6.0, 4), 3,
+                             'still bounded by the CPU on a small host')
+        finally:
+            torch.cuda.get_device_properties = real_props
+            psutil.cpu_count = real_cores
 
 
 if __name__ == '__main__':
