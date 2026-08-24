@@ -41,12 +41,31 @@ def run():
     if roop.globals.CFG.provider in ("cuda", "tensorrt") and util.has_cuda_device() == False:
         import onnxruntime as _ort
         _available = _ort.get_available_providers()
+        _asked = roop.globals.CFG.provider
         if 'DmlExecutionProvider' in _available:
             roop.globals.CFG.provider = "dml"
         elif 'ROCMExecutionProvider' in _available:
             roop.globals.CFG.provider = "rocm"
         else:
             roop.globals.CFG.provider = "cpu"
+        # SAY SO. This is a 10x downgrade and it used to happen in silence.
+        # Worse, it silently takes the thread count with it: batch_process
+        # forces execution_threads to 1 for dml/rocm (suggest_execution_threads),
+        # so the user's Max Threads is discarded too. The reported shape of that
+        # -- "I set 7 threads, it runs one thread at 1-2 fps" -- is impossible to
+        # diagnose from the app without this line.
+        print("=" * 75)
+        print(f"  [PROVIDER FALLBACK] '{_asked}' was requested but torch reports "
+              f"NO USABLE CUDA DEVICE.")
+        print(f"                      Falling back to "
+              f"'{roop.globals.CFG.provider}'. Expect roughly 1-2 fps.")
+        if roop.globals.CFG.provider in ("dml", "rocm"):
+            print("                      This provider is also FORCED TO ONE "
+                  "WORKER THREAD, whatever Max Threads says.")
+        print("                      Almost always a broken torch/CUDA install, "
+              "not a setting:")
+        print("                      run  env/Scripts/python.exe tests/diag_device.py")
+        print("=" * 75)
 
     # If TensorRT is selected, verify its runtime DLLs are actually loadable.
     # onnxruntime lists TensorrtExecutionProvider as "available" even when the

@@ -739,8 +739,18 @@ def batch_process(output_method, files:list[ProcessEntry], use_new_method) -> No
     keep_awake.acquire()
 
     try:
-        # limit threads for some providers
+        # limit threads for some providers. DirectML and ROCm are single-worker
+        # (see suggest_execution_threads), and this OVERRIDES whatever the user
+        # set -- so when it fires it has to say so. Silently discarding an
+        # explicit Max Threads is the same defect class as a control bound to
+        # something nothing reads: the setting looks wired and is not.
         max_threads = suggest_execution_threads()
+        if max_threads == 1 and roop.globals.execution_threads != 1:
+            print(f"[Threads] provider {roop.globals.execution_providers} runs "
+                  f"single-worker: overriding Max Threads "
+                  f"{roop.globals.execution_threads} -> 1. If you did not choose "
+                  f"this provider, see the PROVIDER FALLBACK notice at startup "
+                  f"(run tests/diag_device.py).", flush=True)
         if max_threads == 1:
             roop.globals.execution_threads = 1
 
