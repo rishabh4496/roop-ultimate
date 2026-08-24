@@ -691,7 +691,64 @@ def _audit_report():
     print("===================================================================\n", flush=True)
 
 
-def _gpu_guard(pooled=False):
+# One lock PER STAGE, not one for the whole GPU.
+#
+# THE ONLY THING THIS LOCK IS FOR is TensorRT's rule that a single execution
+# context must not be entered by two threads at once. Two threads running
+# DIFFERENT models on DIFFERENT contexts is explicitly safe — session_pool's own
+# module docstring says so. A single global lock therefore enforces far more
+# than TensorRT asks: it makes detect exclude mask, mask exclude swap, and swap
+# exclude enhance, none of which share a context with each other.
+#
+# That over-serialisation is invisible on a card big enough to run pools,
+# because `pooled=True` then bypasses the lock at every stage. It is the WHOLE
+# STORY on a small card: `_auto_pool_defaults` returns 0/0 below 7GB, so on an
+# RTX 3060 6GB every stage falls through to this lock and the entire pipeline
+# runs one thread wide. Measured on a 400-frame clip, 8 threads, pools forced
+# off (tests/ab_small_card_pools.py, counterbalanced):
+#
+#     pools OFF, one global lock     9.49 fps   31.6% util   2346 MB
+#     pools 2/2                     22.18 fps   39.3%        4100 MB
+#
+# The 2.34x is not VRAM — the small card cannot afford the extra 1.75 GB and the
+# pools must stay off there — it is threads waiting on each other instead of on
+# the GPU. Splitting the lock by stage costs NOTHING and is available to every
+# card. After, same harness, two independent runs:
+#
+#     pools OFF, per-stage locks    20.84 / 19.32 fps   44.6 / 44.3% util
+#     pools 2/2                     22.22 / 19.34 fps   40.3 / 38.9%
+#
+# i.e. the unpooled path now lands within 0-6% of the pooled one on 60% of the
+# VRAM, and the small card gets its throughput back for free. COMPARE WITHIN A
+# RUN, not across: the two runs above differ by 7% on the SAME configuration
+# (the machine's idle VRAM moved 4300 -> 4550 MB between them), which is larger
+# than the remaining gap and is why the harness counterbalances.
+#
+# KEYS ARE PER STAGE, DELIBERATELY COARSE. `'analysis'` covers every call into
+# the shared FaceAnalysis/detector instances; `'mask'` covers all mask
+# processors even when two engines are active, which over-serialises two
+# distinct models slightly and is the conservative direction. Getting this wrong
+# is a corrupted CUDA context, not a slow render, so the grouping errs toward
+# sharing a lock rather than splitting one.
+#
+# owner=None keeps the old global lock, so any site not explicitly classified
+# behaves exactly as before.
+_gpu_stage_locks = {}
+_gpu_stage_locks_guard = Lock()
+
+
+def _stage_lock(key):
+    lock = _gpu_stage_locks.get(key)
+    if lock is None:
+        with _gpu_stage_locks_guard:
+            lock = _gpu_stage_locks.get(key)
+            if lock is None:
+                lock = Lock()
+                _gpu_stage_locks[key] = lock
+    return lock
+
+
+def _gpu_guard(pooled=False, owner=None):
     """Return the GPU lock only when the active provider needs serialising
     (TensorRT); otherwise a no-op context so threads run concurrently.
 
@@ -702,8 +759,12 @@ def _gpu_guard(pooled=False):
     SessionPool): each lease hands one thread its own context. It can equally
     come from a stage holding its own private lock over a single session, which
     is how the expression restorer qualifies without a pool. Either way the work
-    is already safely exclusive and must NOT also take the global lock or it
-    would re-serialise against unrelated stages — return a no-op context instead.
+    is already safely exclusive and must NOT also take a lock here or it would
+    re-serialise against unrelated stages — return a no-op context instead.
+
+    `owner` names WHICH contexts are about to be entered, so that two stages
+    that share no context do not exclude each other. See the block above for the
+    key list and why they are coarse. Omitting it keeps the old global lock.
 
     Callers pass pooled=True only when that guarantee actually holds, so this is
     safe regardless of which knob (ROOP_TRT_POOL for the swapper,
@@ -711,7 +772,9 @@ def _gpu_guard(pooled=False):
     if pooled:
         return contextlib.nullcontext()
     needs_lock = any('tensorrt' in str(p).lower() for p in roop.globals.execution_providers)
-    return _gpu_lock if needs_lock else contextlib.nullcontext()
+    if not needs_lock:
+        return contextlib.nullcontext()
+    return _gpu_lock if owner is None else _stage_lock(owner)
 
 
 # ANSI escape codes for terminal coloring

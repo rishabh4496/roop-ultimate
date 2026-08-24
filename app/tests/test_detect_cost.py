@@ -147,10 +147,16 @@ class OutcomeGuardIsPreFiltered(unittest.TestCase):
     def test_the_guard_takes_the_gpu_guard(self):
         """A detection from a swap worker thread. Without this, a card small
         enough for the analyser pool to be disabled runs N threads through one
-        shared ORT session."""
+        shared ORT session.
+
+        `owner='analysis'` is part of that correctness, not decoration: since
+        the lock was split per stage, a detection tagged with any other owner --
+        or with none, which takes the old global lock -- would no longer exclude
+        the OTHER detections that share this same FaceAnalysis instance."""
         self.assertRegex(
             self.src,
-            r"_prof\('verify'\), _gpu_guard\(pooled=analysis_pooled\(\)\)")
+            r"_prof\('verify'\), _gpu_guard\(pooled=analysis_pooled\(\), "
+            r"owner='analysis'\)")
 
 
 class Lm68IsLazyWhenOnlyAutorotateWantsIt(unittest.TestCase):

@@ -96,7 +96,7 @@ class TrackingMixin:
                 sam2_p.precomputed = {}
                 return
 
-            with _gpu_guard(pooled=analysis_pooled()):
+            with _gpu_guard(pooled=analysis_pooled(), owner='analysis'):
                 faces = get_all_faces(first) or []
             boxes = [f.bbox.astype(np.float32) for f in faces if getattr(f, 'bbox', None) is not None]
             print(f'[SAM2] seeding tracker with {len(boxes)} face(s) over {idx} frames')
@@ -612,7 +612,7 @@ class TrackingMixin:
                         with _prof('track_consume'):
                             _consume(done_idx, result)
                 else:
-                    with _prof('track_detect'), _gpu_guard(pooled=analysis_pooled()):
+                    with _prof('track_detect'), _gpu_guard(pooled=analysis_pooled(), owner='analysis'):
                         faces = _run_detect(frame, crop_bbox, expected_count)
                     with _prof('track_consume'):
                         _consume(idx, faces)
@@ -1709,7 +1709,7 @@ class TrackingMixin:
         precomputed = {}
 
         def handle(idx, frame):
-            with _gpu_guard(pooled=analysis_pooled()):
+            with _gpu_guard(pooled=analysis_pooled(), owner='analysis'):
                 faces = get_all_faces(frame)
             if not faces:
                 return

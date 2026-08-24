@@ -401,4 +401,28 @@ def get_telemetry():
     except Exception:
         pass
 
+    # ── What the pools ACTUALLY are, not what config.yaml asks for ───────────
+    # `run.py::_apply_perf_env` copies perf_*_pool into the environment ONCE, at
+    # process start, and session_pool caches its answer on first use. So editing
+    # a pool size in Advanced Settings changes the file and nothing else until
+    # the backend is restarted — the control looks wired and does nothing, which
+    # is how a user comes to try auto/auto/auto, auto/2/auto and 2/2/2 and get
+    # three identical results.
+    #
+    # Reporting the EFFECTIVE values is what makes that visible: the UI can show
+    # the saved value against the running one instead of the user having to
+    # infer it from throughput. `vram_gb` is here for the same reason — the auto
+    # tier is a function of it, and it is the one input nobody can see.
+    try:
+        from roop import session_pool
+        telemetry["pools"] = {
+            "trt": session_pool.pool_size(),
+            "detmask": session_pool.detmask_pool_size(),
+            "detector": session_pool.detector_pool_size(),
+            "expr": session_pool.expression_pool_size(),
+            "vram_gb": round(session_pool._detect_vram_gb(), 1),
+        }
+    except Exception:
+        pass
+
     return telemetry

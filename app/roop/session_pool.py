@@ -27,7 +27,21 @@ def _detect_vram_gb() -> float:
     Used to auto-tune the pool sizes so the same install runs on cards of very
     different capacity. Detection is deferred to first use (not import time) so
     torch's CUDA context is already initialised and import-order is irrelevant.
+
+    ROOP_VRAM_GB overrides it. That exists because this project runs on two
+    cards -- a 4070 12GB and a 3060 6GB -- and every tier below is a decision
+    about the SMALLER one that could previously only be exercised by physically
+    being on it. A policy you cannot run is a policy you cannot test, and the
+    6GB tier had drifted into disabling both pools on the strength of a
+    measurement taken when the alternative was 4 or 8 contexts. Set it to
+    simulate a card and take the same code path; it changes nothing else.
     """
+    forced = os.environ.get('ROOP_VRAM_GB')
+    if forced:
+        try:
+            return float(forced)
+        except ValueError:
+            pass
     try:
         import torch
         if torch.cuda.is_available():

@@ -1540,7 +1540,7 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
         except ValueError:
             wait_ms = 2.0
         b = swap_batcher.SwapBatcher(
-            swap_p.RunBatchMulti, lambda: _gpu_guard(pooled=pooled),
+            swap_p.RunBatchMulti, lambda: _gpu_guard(pooled=pooled, owner='swap'),
             max_batch=max_b, max_wait_ms=wait_ms)
         print(f"[BatchSwap] cross-frame batching ON (max_batch={max_b}, threads={threads}, wait={wait_ms}ms).")
         return b
@@ -2327,7 +2327,7 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
             if _tfaces is not None:
                 face = min(_tfaces, key=lambda f: f.bbox[0]) if _tfaces else None
             else:
-                with _prof('detect'), _gpu_guard(pooled=analysis_pooled()):  # detect: lock-free when pooled
+                with _prof('detect'), _gpu_guard(pooled=analysis_pooled(), owner='analysis'):  # detect: lock-free when pooled
                     face = get_first_face(frame)
                     if face is None and self.last_found_bboxes is not None:
                         face = _detect_face_in_roi(frame, self.last_found_bboxes[0])
@@ -2353,7 +2353,7 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
             if _tfaces is not None:
                 faces = list(_tfaces)   # copy — faces.clear() below must not wipe the cache
             else:
-                with _prof('detect'), _gpu_guard(pooled=analysis_pooled()):  # detect: lock-free when pooled
+                with _prof('detect'), _gpu_guard(pooled=analysis_pooled(), owner='analysis'):  # detect: lock-free when pooled
                     faces = get_all_faces(frame)
                     if not faces and self.last_found_bboxes is not None:
                         recovered = []
@@ -3385,7 +3385,18 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                 # original pixels once `frame` is rebound to the rotated cut.
                 rotcutplate, _, _, _, _ = self.cutout(plate, startX, startY, endX, endY)
                 rotcutplate = self.apply_rotation(rotcutplate, rotation_action)
-                rotface = get_first_face(rotcutplate)
+                # GUARDED. This entered the SHARED FaceAnalysis instance with
+                # no guard at all, which `lease_face_analyser` documents as the
+                # caller's job ("without a pool it yields the single shared
+                # instance -- caller serialises via the global lock"). On any
+                # card big enough to pool, the lease hands each thread its own
+                # context and the omission is invisible; with pooling OFF --
+                # which `_auto_pool_defaults` does deliberately below 7GB -- two
+                # worker threads could enter one TensorRT context at once. That
+                # is the corruption the lock exists to prevent, and it was
+                # reachable ONLY on small cards.
+                with _gpu_guard(pooled=analysis_pooled(), owner='analysis'):
+                    rotface = get_first_face(rotcutplate)
                 # Only commit to the rotation if re-detection confirms it left
                 # the face MORE upright. Without this the orientation heuristic
                 # gets the last word, and a wrong call feeds the swapper an
@@ -3639,7 +3650,7 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                         except Exception:
                             pass
 
-                    with _gpu_guard(pooled=analysis_pooled()):  # re-detection on posed crop: lock-free when pooled
+                    with _gpu_guard(pooled=analysis_pooled(), owner='analysis'):  # re-detection on posed crop: lock-free when pooled
                         posed_face = _gff(posed_crop)
                     if (posed_face is not None
                             and getattr(posed_face, 'kps', None) is not None):
@@ -3748,7 +3759,7 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                     tiles = list(subsample_frames)
                     for _ in range(0, self.options.num_swap_steps):
                         prepared = [self.prepare_crop_frame(t, p) for t in tiles]   # CPU
-                        with _gpu_guard(pooled=_pooled):
+                        with _gpu_guard(pooled=_pooled, owner='swap'):
                             outs = p.RunBatch(inputface, target_face, prepared)
                         _m = p.take_masks() if hasattr(p, 'take_masks') else None
                         if _m:
@@ -3762,7 +3773,7 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                         _m = None
                         for _ in range(0, self.options.num_swap_steps):
                             sliced_frame = self.prepare_crop_frame(sliced_frame, p)   # CPU
-                            with _gpu_guard(pooled=_pooled):
+                            with _gpu_guard(pooled=_pooled, owner='swap'):
                                 sliced_frame = p.Run(inputface, target_face, sliced_frame)
                             # Collected every step, so the mask that survives is
                             # the LAST pass's — the one that made this pixel data.
@@ -3815,7 +3826,7 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                     except Exception as e:
                         bar_write(f"[ProcessMgr] Defrontalization failed: {e}")
             elif p.type == 'mask':
-                with _prof('mask'), _gpu_guard(pooled=getattr(p, 'pool', None) is not None):  # mask: lock-free when pooled
+                with _prof('mask'), _gpu_guard(pooled=getattr(p, 'pool', None) is not None, owner='mask'):  # mask: lock-free when pooled
                     fake_frame, _img_mask = self.process_mask(p, aligned_img, fake_frame, orig_frame=plate, target_face=target_face, M=M, tgt_pitch_deg=tgt_pitch_deg, rotation_action=rotation_action)
                     if enhanced_frame is not None:
                         # Same mask, different target — every input it is derived
@@ -3887,7 +3898,7 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                         bar_write(f"[ProcessMgr] enhancer re-align failed: {e}")
                         _A, enh_input = None, fake_frame
 
-                with _prof('enhance'), _gpu_guard(pooled=getattr(p, 'pool', None) is not None):
+                with _prof('enhance'), _gpu_guard(pooled=getattr(p, 'pool', None) is not None, owner='enhance'):
                     enhanced_frame, scale_factor = p.Run(self.input_face_datas[face_index], target_face, enh_input)
 
                 if _A is not None and enhanced_frame is not None:
@@ -3938,7 +3949,7 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                     # the GPU. Same split as the swap path above, which keeps
                     # prepare_crop_frame / normalize_swap_frame outside the guard.
                     _prepared = restorer.prepare(_crop, aligned_img)
-                    with _gpu_guard(pooled=restorer.self_excluding):
+                    with _gpu_guard(pooled=restorer.self_excluding, owner='expression'):
                         _raw = restorer.infer(_prepared, _ex, _region)
                     _crop = restorer.finish(_raw, _crop)
                 if enhanced_frame is not None:
@@ -4219,7 +4230,7 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                     if audio_feat is not None and mouth_cutout is not None:
                         restorer = self._lipsync_restorer()
                         prepared = restorer.prepare(result, target_face, audio_feat)
-                        with _gpu_guard(pooled=getattr(restorer, 'pool', None) is not None):
+                        with _gpu_guard(pooled=getattr(restorer, 'pool', None) is not None, owner='expression'):
                             raw = restorer.infer(prepared)
                         # raw is the whole generated 256x256 FACE crop — slice
                         # out just the region under mouth_bb before pasting, or
@@ -4272,7 +4283,7 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
             # thread, so on a card small enough for the analyser pool to be
             # disabled it would otherwise put N threads through one shared ORT
             # session with no lock — the freeze d63982d fixed everywhere else.
-            with _prof('verify'), _gpu_guard(pooled=analysis_pooled()):
+            with _prof('verify'), _gpu_guard(pooled=analysis_pooled(), owner='analysis'):
                 result = self._verify_after(
                     result, _vs, tol=_swap_verify_tol_for(swap_p),
                     rotation_action=rotation_action)

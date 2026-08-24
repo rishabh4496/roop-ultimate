@@ -331,6 +331,26 @@ export default function DiagnosticsPanel({ desc = '', telemetry, processing, pau
             <span className="text-nano font-mono text-emerald-300 font-semibold">TRT · NVDEC · NVENC</span>
           </div>
         )}
+        {/* THE POOL SIZES ACTUALLY RUNNING, not the ones saved in Settings.
+            run.py copies perf_*_pool into the environment once at process start
+            and session_pool caches its answer on first use, so editing a pool
+            size changes the file and nothing else until the backend restarts.
+            Without this row that is invisible, and the way it presents is a
+            user trying three different pool configurations and measuring three
+            identical results. `vram_gb` comes with it because the 'auto' tier is
+            a function of it and it is otherwise unknowable from the UI. */}
+        {telemetry?.pools && (
+          <div className="col-span-2 rounded-lg border border-white/[0.07] bg-black/30 px-2.5 py-1.5 flex items-center justify-between gap-3">
+            <span className="text-nano font-semibold uppercase tracking-wider text-white/45">
+              Pools running
+            </span>
+            <span className="text-nano font-mono text-white/70">
+              {`swap ${telemetry.pools.trt} · detmask ${telemetry.pools.detmask}`}
+              {` · detector ${telemetry.pools.detector} · expr ${telemetry.pools.expr}`}
+              {telemetry.pools.vram_gb ? `  (${telemetry.pools.vram_gb}GB card)` : ''}
+            </span>
+          </div>
+        )}
       </div>
 
       {/* ── Stage cost breakdown ─────────────────────────────────────────── */}
