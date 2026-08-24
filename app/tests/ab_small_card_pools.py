@@ -81,7 +81,10 @@ mask = _MASK.get(cfg.mask_engine, cfg.mask_engine)
 # decides whether the card idles), so it is overridable. Unset = config.yaml,
 # i.e. what the user actually renders.
 enhancer = os.environ.get("ROOP_AB_ENHANCER") or cfg.selected_enhancer
-g = ab.init_pipeline(cfg.provider, cfg.swap_model, enhancer, mask,
+if os.environ.get("ROOP_AB_MASK"):
+    mask = _MASK.get(os.environ["ROOP_AB_MASK"], os.environ["ROOP_AB_MASK"])
+swapper = os.environ.get("ROOP_AB_SWAP") or cfg.swap_model
+g = ab.init_pipeline(cfg.provider, swapper, enhancer, mask,
                      float(cfg.swap_model_mask_strength))
 g.codeformer_fidelity = float(cfg.codeformer_fidelity)
 g.execution_threads = %(threads)d
@@ -90,7 +93,7 @@ from roop import session_pool
 src = ab.load_faceset(os.path.join(APP, "facesets", "harjot.fsz"))
 g.INPUT_FACESETS = [src]
 g.TARGET_FACES = []
-opts = ab.build_options(g, cfg.swap_model, mask)
+opts = ab.build_options(g, swapper, mask)
 
 cap = cv2.VideoCapture(%(clip)r)
 frames = []

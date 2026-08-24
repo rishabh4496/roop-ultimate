@@ -561,6 +561,57 @@ class TestFirstGenerationCrop(unittest.TestCase):
         theirs = _T.prepare_crop_frame(None, crop.astype(np.float64), _M)
         np.testing.assert_allclose(mine, theirs, atol=1e-5)
 
+    def test_the_lut_path_is_bit_identical_to_the_arithmetic(self):
+        """The blob is built by a 256-entry gather, not by float64 arithmetic.
+
+        Every element of a blob is a function of ONE input byte -- v/255, minus
+        a per-channel mean, over a per-channel std, with no neighbourhood term --
+        so the table holds exactly the values the old spelling computed. This
+        asserts EQUALITY, not closeness: anything less would let a real drift
+        through, and a differently-scaled input is invisible (the net still
+        returns a face, just a worse one).
+        """
+        from roop.procmgr_tiling import to_blob
+        rng = np.random.default_rng(11)
+
+        def arithmetic(crop, mean, std):
+            x = np.asarray(crop)[:, :, ::-1] / 255.0
+            x = ((x - np.asarray(mean, dtype=np.float64))
+                 / np.asarray(std, dtype=np.float64))
+            return np.expand_dims(x.transpose(2, 0, 1), axis=0).astype(np.float32)
+
+        specs = [([0.0, 0.0, 0.0], [1.0, 1.0, 1.0]),
+                 ([0.5, 0.5, 0.5], [0.5, 0.5, 0.5]),
+                 ([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])]
+        # every byte value, in every channel, as well as random crops
+        ramp = np.stack([np.arange(256, dtype=np.uint8)] * 3, axis=-1).reshape(16, 16, 3)
+        for mean, std in specs:
+            for crop in (ramp, rng.integers(0, 256, (32, 32, 3), dtype=np.uint8)):
+                np.testing.assert_array_equal(to_blob(crop, mean, std),
+                                              arithmetic(crop, mean, std))
+
+    def test_a_float_crop_still_works(self):
+        """NOT a hypothetical input. `num_swap_steps > 1` feeds each pass's
+        output back into prepare_crop_frame, and normalize_swap_frame returns a
+        FLOAT array -- it rounds and clips but never casts -- so step two
+        onwards arrives as float64. A LUT cannot gather on that.
+
+        This is the case that caught the first version of the change.
+        """
+        from roop.procmgr_tiling import to_blob
+        rng = np.random.default_rng(5)
+        crop = rng.integers(0, 256, (16, 16, 3), dtype=np.uint8)
+        mean, std = [0.5, 0.5, 0.5], [0.5, 0.5, 0.5]
+        # a float crop carrying values a uint8 could not hold must not be
+        # rounded away
+        f = crop.astype(np.float64) + 0.5
+        out = to_blob(f, mean, std)
+        self.assertEqual(out.dtype, np.float32)
+        expect = ((f[:, :, ::-1] / 255.0 - 0.5) / 0.5).transpose(2, 0, 1)[None]
+        np.testing.assert_allclose(out, expect.astype(np.float32), atol=1e-6)
+        self.assertFalse(np.allclose(out, to_blob(crop, mean, std)),
+                         "the sub-byte precision must survive, not be rounded")
+
     def test_context_is_withheld_when_the_crop_is_not_a_plain_align(self):
         # ProcessMgr's call, not the processor's: pixel boost and frontalization
         # both make the primary crop something other than align_crop(plate).

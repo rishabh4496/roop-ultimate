@@ -1027,15 +1027,14 @@ class FaceSwapInsightFace():
     def _prepare_blob(crop, model):
         """A BGR uint8 crop -> the model's input blob.
 
-        Mirrors procmgr_tiling.prepare_crop_frame exactly (BGR->RGB, /255,
-        mean/std, HWC->CHW, batch axis). Duplicated rather than imported because
-        that lives on the ProcessMgr mixin and this runs inside the processor;
-        if the two ever diverge the secondary net silently receives a
-        differently-scaled image, so keep them in step.
+        Delegates to procmgr_tiling.to_blob, which is the same function
+        `prepare_crop_frame` uses. This used to be a hand-copy of it, carrying a
+        comment that the two had to be kept in step because a divergence would
+        silently feed realswap's SECOND net a differently-scaled image. Sharing
+        the definition is what actually keeps that true.
         """
-        x = np.asarray(crop)[:, :, ::-1] / 255.0
-        x = (x - np.asarray(model.model_mean, dtype=np.float64)) /             np.asarray(model.model_standard_deviation, dtype=np.float64)
-        return np.expand_dims(x.transpose(2, 0, 1), axis=0).astype(np.float32)
+        from roop.procmgr_tiling import to_blob
+        return to_blob(crop, model.model_mean, model.model_standard_deviation)
 
     @staticmethod
     def _compose_affine(outer, inner):
@@ -1670,8 +1669,38 @@ class FaceSwapInsightFace():
     def Run(self, source_face: Face, target_face: Face, temp_frame: Frame) -> Frame:
         # RealSwap runs BOTH of its nets on EVERY face and composites them by
         # region (see "The composition rule" above): hyperswap is the base, and
-        # hififace supplies only the eyelid annulus. So a face costs two nets,
-        # +4.0 ms, about +1.9% of the ~210 ms swap+mask+enhance budget.
+        # hififace supplies only the eyelid annulus. So a face costs two nets.
+        #
+        # WHAT THE SECOND NET COSTS, MEASURED (2026-08-25, RTX 4070, interleaved
+        # rounds so warm-up cannot land on one arm -- an earlier non-interleaved
+        # probe reported primary 8.76 / secondary 23.16 / whole 23.29, which
+        # cannot all be true at once):
+        #
+        #     primary   (hyperswap)   7.33 +- 0.12 ms
+        #     secondary (hififace)   13.73 +- 0.10 ms      1.87x the primary
+        #     whole Run()            22.00 +- 0.16 ms
+        #
+        # and inside the secondary only 8.12 ms is the network -- 41% is host
+        # work (blob prep, the compose, the LANCZOS4 warp back).
+        #
+        # THE STAGE IS AT THE GPU'S OWN FLOOR, so none of that is recoverable by
+        # scheduling. Isolated swap throughput against the swapper pool size:
+        #
+        #     threads      1     2     3     4     6     8    10   faces/s
+        #     pool 2      45    69    73    73    75    73    75
+        #     pool 4      43    66    77    76    78    78    73
+        #     pool 6      44    66    77    74    79    76    75
+        #
+        # ~75 faces/s from three threads on, at EVERY pool size. Widening the
+        # pool does nothing; more threads past 3 do nothing. Only removing GPU
+        # work moves it.
+        #
+        # And removing the whole second net barely moves the RENDER: end to end,
+        # counterbalanced, realswap 21.95 fps against hyperswap_1b alone 23.00 --
+        # +4.8% for deleting an entire network and the eyelid band with it. That
+        # is the ceiling on "make the swap stage faster", and it is why the 26.5%
+        # share ROOP_PROFILE prints for this stage is not a budget: it is thread
+        # time summed across workers, most of it spent queueing.
         #
         # This replaced a pose ROUTER that ran one net per face, picked by yaw.
         # The router is measured and rejected, not merely superseded: on real

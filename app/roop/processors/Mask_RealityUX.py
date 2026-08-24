@@ -140,6 +140,38 @@ class Mask_RealityUX():
 
         # Accessories are only subtracted outside the core facial structure (xseg_mask > 0.05)
         # to ensure full face swapping without half-face cutoffs.
+        #
+        # WHAT THIS COSTS, MEASURED (2026-08-25, RTX 4070, 62 real face crops
+        # off the roster). The parser half is the expensive half by a long way,
+        # and it moves very little:
+        #
+        #     XSeg alone                     3.11 ms
+        #     BiSeNet RunLabels             16.47 ms   <- 5.3x the engine it augments
+        #     RealityUX Run (both)          21.97 ms
+        #
+        #     pixels it changes by >0.02:   p50 0.61%   p90 1.29%   max 2.28%
+        #     mean |delta| over the crop:   p50 0.0010              max 0.0062
+        #
+        # End to end, counterbalanced, 401 faces enhanced in both arms:
+        # RealityUX 21.95 fps against DFL XSeg alone 24.70 -- the parser is
+        # +12.5% OF THE WHOLE RENDER. That is the largest single piece of
+        # removable GPU work found anywhere in this pipeline.
+        #
+        # AND NOTE WHAT THE GATE BELOW DOES TO IT. `accessory_allowed` rises
+        # with xseg_mask, so the parser can only add exclusion WHERE XSEG IS
+        # ALREADY EXCLUDING (zero below xseg 0.05, saturated by 0.25). Sampled
+        # on a real face: 533 pixels changed, all class 17 (hair), where XSeg
+        # already read 0.522 -- the parser took them to 0.707. ZERO pixels were
+        # removed. So it FIRMS UP a hairline XSeg has already half found, and by
+        # construction it cannot rescue one XSeg misses entirely, which is the
+        # disagreement case it was added for.
+        #
+        # Left as it is rather than changed: the gate is what stops the parser's
+        # frontal priors eating an angled face (see the class-0 note above), and
+        # loosening it is a mask-quality decision that needs footage, not a perf
+        # edit. But anyone looking for speed should read the trade honestly --
+        # 12.5% of the render for 0.6% of the mask's pixels -- and
+        # `mask_engine: DFL XSeg` is the switch.
         accessory_allowed = np.clip((xseg_mask - 0.05) / 0.20, 0.0, 1.0)
         non_face = np.clip(is_accessory * accessory_allowed, 0.0, 1.0)
 
