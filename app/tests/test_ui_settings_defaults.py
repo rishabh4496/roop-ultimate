@@ -36,7 +36,10 @@ BOUND = re.compile(r"\bbind(?:Toggle)?\(\s*'([a-z0-9_]+)'", re.I)
 # The question is only "does settings.py read this key out of the config", and
 # the assignment around it varies: some are wrapped in float(), and max_threads
 # lands in a local first so it can be reconciled with the VRAM auto-tuner.
-DECLARED = re.compile(r"default_get\(\s*data\s*,\s*'([a-z0-9_]+)'", re.I)
+# _hw_get is default_get for hardware-derived values (pool sizes, thread count):
+# same load, but it falls back to 'auto' when config.yaml was stamped on another
+# GPU. Both count as "settings.py reads this key".
+DECLARED = re.compile(r"(?:default_get|_hw_get)\(\s*data\s*,\s*'([a-z0-9_]+)'", re.I)
 SAVED = re.compile(r"'([a-z0-9_]+)'\s*:\s*self\.", re.I)
 
 

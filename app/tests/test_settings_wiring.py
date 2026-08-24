@@ -294,7 +294,11 @@ class TestPerfKnobWiring(unittest.TestCase):
         keys = self._jsx_perf_keys()
         self.assertTrue(keys, "no perf knobs found in Settings.jsx — regex stale?")
         for key in sorted(keys):
-            self.assertRegex(src, rf"self\.{key}\s*=\s*self\.default_get\(",
+            # Two readers, both of which load the key: default_get, and _hw_get
+            # for values DERIVED FROM THE GPU, which revert to their auto default
+            # when the config is opened on a different card. The question this
+            # guard asks is unchanged — is the key read at all.
+            self.assertRegex(src, rf"self\.{key}\s*=\s*self\.(?:default_get|_hw_get)\(",
                              f"{key} is in the UI but not loaded by Settings.__init__")
             self.assertIn(key, saved, f"{key} is loaded but never written by save()")
 

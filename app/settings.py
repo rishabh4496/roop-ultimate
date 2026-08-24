@@ -43,6 +43,44 @@ def _enable_tensorrt_runtime():
 _enable_tensorrt_runtime()
 
 
+def detect_hardware():
+    """What every performance default on this machine is derived from.
+
+    Returns {'gpu', 'vram_gb', 'ram_gb'}, with empty/0 values when it cannot be
+    determined — an unknown machine must fall through to the safest defaults,
+    never to another machine's.
+    """
+    hw = {'gpu': '', 'vram_gb': 0.0, 'ram_gb': 0.0}
+    try:
+        import torch
+        if torch.cuda.is_available():
+            props = torch.cuda.get_device_properties(0)
+            hw['gpu'] = str(props.name)
+            hw['vram_gb'] = round(props.total_memory / (1024 ** 3), 1)
+    except Exception:
+        pass
+    try:
+        import psutil
+        hw['ram_gb'] = round(psutil.virtual_memory().total / (1024 ** 3))
+    except Exception:
+        pass
+    return hw
+
+
+def hardware_signature(hw=None):
+    """A stable id for 'the machine the perf numbers were tuned on'.
+
+    GPU model, VRAM and system RAM — the three inputs to every auto tier here
+    and in session_pool. Deliberately NOT the driver version or CPU: those
+    change without changing a single pool size, and a signature that churns
+    would reset the user's settings for no reason.
+    """
+    hw = hw or detect_hardware()
+    if not hw.get('gpu') and not hw.get('ram_gb'):
+        return ''
+    return f"{hw.get('gpu', '')}|{hw.get('vram_gb', 0.0)}|{hw.get('ram_gb', 0)}"
+
+
 class Settings:
     def __init__(self, config_file):
         self.config_file = config_file
@@ -56,6 +94,24 @@ class Settings:
             pass
         return value
 
+    def _hw_get(self, data, name, default):
+        """default_get for values that are FACTS ABOUT THE GPU, not preferences.
+
+        A pool size, a thread count or a benchmark result describes the card it
+        was chosen on. Carrying one to a different card is how a value that is
+        merely optimal on 12 GB becomes fatal on 6 GB: the RTX 4070 tier is
+        detmask pool 2-4 and ~10 threads, and the same numbers on an RTX 3060
+        6 GB drive TensorRT context thrashing at 2 fps (see
+        session_pool._advisory_pool_size). So when the hardware signature
+        changes, these revert to 'auto' and the new machine re-derives them.
+
+        Preferences are NOT touched — theme, output template, swap model, mask
+        engine, enhancer. Those are the user's choices and travel with them.
+        """
+        if getattr(self, '_hardware_changed', False):
+            return default
+        return self.default_get(data, name, default)
+
 
     def load(self):
         try:
@@ -64,6 +120,25 @@ class Settings:
         except:
             data = None
 
+        # ── Hardware portability ─────────────────────────────────────────────
+        # config.yaml is per-install and gitignored, but it does get copied, and
+        # the same user runs this on more than one machine. Anything derived from
+        # the GPU is therefore stamped with the GPU it was derived on, and reset
+        # when that changes. Without this the FIRST render on the new machine is
+        # the thing that discovers the mismatch, and on a small card it discovers
+        # it as a thrash that looks like a hang.
+        self.hardware = detect_hardware()
+        self.hardware_signature = hardware_signature(self.hardware)
+        _saved_sig = self.default_get(data, 'hardware_signature', '')
+        self._hardware_changed = bool(_saved_sig) and bool(self.hardware_signature) \
+            and _saved_sig != self.hardware_signature
+        if self._hardware_changed:
+            print(f"[Hardware] this config was tuned on '{_saved_sig}' but this "
+                  f"machine is '{self.hardware_signature}'. Re-deriving the "
+                  f"hardware-dependent settings (thread count, pool sizes, saved "
+                  f"benchmark results) from THIS GPU; your model and output "
+                  f"choices are untouched.")
+
         self.selected_theme = self.default_get(data, 'selected_theme', "Default")
         self.server_name = self.default_get(data, 'server_name', "")
         self.server_port = self.default_get(data, 'server_port', 0)
@@ -71,6 +146,18 @@ class Settings:
         self.output_image_format = self.default_get(data, 'output_image_format', 'png')
         self.output_video_format = self.default_get(data, 'output_video_format', 'mp4')
         self.output_video_codec = self.default_get(data, 'output_video_codec', 'libx264')
+        # NVENC/QSV/AMF are vendor-specific. Only reset when the new machine
+        # cannot possibly have the encoder — an NVIDIA->NVIDIA move keeps it.
+        if self._hardware_changed and any(t in str(self.output_video_codec)
+                                          for t in ('nvenc', 'qsv', 'amf')):
+            _vendor_ok = (('nvenc' in self.output_video_codec
+                           and 'nvidia' in self.hardware.get('gpu', '').lower())
+                          or ('nvenc' not in self.output_video_codec))
+            if not _vendor_ok:
+                print(f"[Hardware] '{self.output_video_codec}' is not available on "
+                      f"'{self.hardware.get('gpu') or 'this machine'}' — falling "
+                      f"back to libx264.")
+                self.output_video_codec = 'libx264'
         self.video_quality = self.default_get(data, 'video_quality', 14)
         self.clear_output = self.default_get(data, 'clear_output', True)
         # Dynamically scale threads to saturate GPU without OOM
@@ -88,7 +175,9 @@ class Settings:
         except Exception:
             pass
 
-        saved_threads = self.default_get(data, 'max_threads', -1)
+        # _hw_get: a saved thread count is a deliberate choice ON THAT CARD.
+        # -1 on a new card means "auto-scale below", which is what we want.
+        saved_threads = self._hw_get(data, 'max_threads', -1)
         # Auto-scale only when nothing is saved. A saved value — including 2 —
         # is a deliberate user choice and must stick across restarts.
         if saved_threads == -1:
@@ -105,8 +194,10 @@ class Settings:
         except Exception:
             pass
 
-        self.auto_thread_selection = self.default_get(data, 'auto_thread_selection', True)
-        self.benchmark_results = self.default_get(data, 'benchmark_results', {})
+        self.auto_thread_selection = self._hw_get(data, 'auto_thread_selection', True)
+        # best_threads in here was measured on the OTHER machine; resolve_threads
+        # prefers it over the VRAM tier, so it has to go with the rest.
+        self.benchmark_results = self._hw_get(data, 'benchmark_results', {})
         
         self.memory_limit = self.default_get(data, 'memory_limit', 0)
         self.provider = self.default_get(data, 'provider', 'cuda')
@@ -246,11 +337,11 @@ class Settings:
         # Advanced perf knobs (env-backed; 'auto' = leave launcher/auto-tune
         # behaviour untouched). Applied to os.environ at startup by run.py, so
         # changes take effect after an app restart.
-        self.perf_trt_pool = self.default_get(data, 'perf_trt_pool', 'auto')
+        self.perf_trt_pool = self._hw_get(data, 'perf_trt_pool', 'auto')
         # NVDEC GPU video decode (ffmpeg -hwaccel cuda pipe). auto = enabled
         # behind a per-file probe with automatic cv2 fallback; off disables.
         self.perf_nvdec = self.default_get(data, 'perf_nvdec', 'auto')
-        self.perf_detmask_pool = self.default_get(data, 'perf_detmask_pool', 'auto')
+        self.perf_detmask_pool = self._hw_get(data, 'perf_detmask_pool', 'auto')
         # Instances of the standalone detector, separate from the detect/mask
         # pool because a hybrid engine (retinaface/yoloface/yunet) brings its own
         # detector and only borrows buffalo_l's aux models — widening the detmask
@@ -262,11 +353,11 @@ class Settings:
         # two separately and they do not agree: on an RTX 4070 the detector
         # scaled to 4 instances while the recognition/landmark models plateaued
         # at 2, and without this knob the only way to act on that was an env var.
-        self.perf_detector_pool = self.default_get(data, 'perf_detector_pool', 'auto')
+        self.perf_detector_pool = self._hw_get(data, 'perf_detector_pool', 'auto')
         # Expression restorer contexts. 'auto' is VRAM-tiered (0 below 11.5GB,
         # else 2). Worth raising to 3 only when the STAGE TIMING breakdown shows
         # 'expression' needing more concurrent threads than the pool has slots.
-        self.perf_expr_pool = self.default_get(data, 'perf_expr_pool', 'auto')
+        self.perf_expr_pool = self._hw_get(data, 'perf_expr_pool', 'auto')
         self.perf_encoder_preset = self.default_get(data, 'perf_encoder_preset', 'auto')
         self.perf_profile = self.default_get(data, 'perf_profile', 'auto')       # auto|on|off
         self.perf_batch_swap = self.default_get(data, 'perf_batch_swap', 'auto')  # auto|on|off
@@ -319,6 +410,9 @@ class Settings:
 
     def save(self):
         data = {
+            # Stamped so the next load can tell whether these numbers were
+            # derived on THIS machine. See _hw_get.
+            'hardware_signature': self.hardware_signature,
             'selected_theme': self.selected_theme,
             'custom_themes': self.custom_themes,
             'theme_follow_system': self.theme_follow_system,
