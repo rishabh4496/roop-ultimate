@@ -58,7 +58,7 @@ import onnxruntime
 
 import roop.globals
 from roop.typing import Face, FaceSet, Frame
-from roop.processors.enhance_common import is_usable, sized
+from roop.processors.enhance_common import looks_collapsed, sized
 from roop.utilities import resolve_relative_path, conditional_download
 from roop import session_pool
 
@@ -104,6 +104,8 @@ class Enhance_GPENRealistic:
     # than twice the cost. Off, because this processor exists to be fast and the
     # two are indistinguishable on footage.
     _LAB_EXACT = False
+
+    _warned_colour = False
 
     def __init__(self):
         self.plugin_options = None
@@ -237,7 +239,13 @@ class Enhance_GPENRealistic:
             if chroma > 0.0:
                 out = cv2.addWeighted(out, 1.0 - chroma, restored, chroma, 0.0)
             return out
-        except cv2.error:
+        except cv2.error as e:
+            # Say so once. A colour fix that silently no-ops leaves a plausible
+            # image with the exact pink cast this class exists to remove, and
+            # nothing anywhere would show it.
+            if not cls._warned_colour:
+                cls._warned_colour = True
+                print(f"[GPEN Realistic] colour fix skipped: {e}", flush=True)
             return restored
 
     # ── run ──────────────────────────────────────────────────────────────────
@@ -277,15 +285,22 @@ class Enhance_GPENRealistic:
         # of isfinite().all()'s cost. See enhance_common.is_usable.
         if not np.isfinite(hwc.sum()):
             print("[GPEN Realistic] non-finite output — using unenhanced frame")
-            return sized(src, input_size)
+            return sized(temp_frame, input_size)
 
         # maximum() first so convertScaleAbs' abs() is a no-op on the low end;
         # its saturate_cast handles the high end. Two passes, both in C++.
         np.maximum(hwc, -1.0, out=hwc)
         restored = cv2.convertScaleAbs(hwc, alpha=127.5, beta=127.5)
 
-        if not is_usable(restored):
-            return sized(src, input_size)
+        # NOT `is_usable` here: this array is uint8 and np.isfinite is always
+        # True on an integer dtype, so that call could never fire. The non-finite
+        # case is already caught by the sum() above, on the float. What CAN still
+        # go wrong after the cast is a precision COLLAPSE — every value finite,
+        # dynamic range gone, a flat grey face — which is how GFPGAN's FP16
+        # engine failed. This is a 512 FP16 graph, so it gets that check.
+        if looks_collapsed(restored, src):
+            print("[GPEN Realistic] output collapsed (flat) — using unenhanced frame")
+            return sized(temp_frame, input_size)
 
         try:
             chroma = float(os.environ.get('ROOP_GPENR_CHROMA', '') or 0.0)

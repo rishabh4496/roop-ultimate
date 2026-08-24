@@ -30,13 +30,16 @@ import onnxruntime
 
 import roop.globals
 from roop.typing import Face, FaceSet, Frame
-from roop.processors.enhance_common import is_usable, sized, looks_collapsed
+from roop.processors.enhance_common import sized, looks_collapsed
 from roop.utilities import resolve_relative_path, conditional_download
 from roop import session_pool
 
 
 class Enhance_GPEN256Pro:
     processorname = 'gpen_256_pro'
+    # core.py also maps the legacy label 'GPEN 256 Ultra' here. It is not
+    # offered in api.py's enhancer list any more, and is kept only so a
+    # config saved under the old name still resolves.
     type = 'enhance'
     model_template = 'ffhq_512'
 
@@ -48,6 +51,39 @@ class Enhance_GPEN256Pro:
     # skin lives, smoothly drops to zero in specular highlights or crushed shadows.
     _EXPOSURE_LUT = np.clip(
         np.sin(np.pi * (np.arange(256, dtype=np.float32) / 255.0)), 0.0, 1.0)
+
+    # Warn ONCE per class, not per face: a look filter must never take a render
+    # down, but a filter that fails silently is worse than one that fails loudly.
+    # See the consequence documented on _enhance_textures_and_sharpness.
+    _warned_texture = False
+    _warned_colour = False
+
+    # Synthetic micro-grain, generated ONCE per size and reused.
+    #
+    # THE FIXED PATTERN IS DELIBERATE — do not "fix" it into a per-call draw.
+    # This runs in aligned-crop space, so the field tracks the face; drawing new
+    # noise every call would make it re-randomise 25 times a second on a face
+    # that is otherwise stable, which is flicker, and flicker is the one artefact
+    # this pipeline spends the most effort removing. Deterministic here means
+    # temporally stable.
+    #
+    # The cost of the old spelling was real though: it re-seeded and re-drew a
+    # 512x512 gaussian on EVERY face to produce a bit-identical array.
+    _GRAIN = {}
+    _GRAIN_LOCK = threading.Lock()
+
+    @classmethod
+    def _grain(cls, size):
+        g = cls._GRAIN.get(size)
+        if g is None:
+            with cls._GRAIN_LOCK:
+                g = cls._GRAIN.get(size)
+                if g is None:
+                    g = np.random.default_rng(42).normal(
+                        0.0, 2.0, (size, size, 1)).astype(np.float32)
+                    g.flags.writeable = False
+                    cls._GRAIN[size] = g
+        return g
 
     def __init__(self):
         self.plugin_options = None
@@ -138,7 +174,12 @@ class Enhance_GPEN256Pro:
             g_s = cv2.cvtColor(source, cv2.COLOR_BGR2GRAY)
             d = cv2.subtract(g_r, g_s, dtype=cv2.CV_16S)
             return cv2.add(source, cv2.merge((d, d, d)), dtype=cv2.CV_8U)
-        except cv2.error:
+        except cv2.error as e:
+            # Silently returning `restored` here leaves GPEN's pink/magenta cast
+            # — the very thing this class removes — on a plausible-looking image.
+            if not cls._warned_colour:
+                cls._warned_colour = True
+                print(f"[GPEN 256 Pro] colour fix skipped: {e}", flush=True)
             return restored
 
     @classmethod
@@ -158,11 +199,20 @@ class Enhance_GPEN256Pro:
                 want = 0
             target_size = want if want in (256, 512, 1024) else (512 if input_size <= 256 else input_size)
 
-            if target_size != restored.shape[1]:
-                rest_scaled = cv2.resize(restored, (target_size, target_size), interpolation=cv2.INTER_LANCZOS4)
-                src_scaled = cv2.resize(source, (target_size, target_size), interpolation=cv2.INTER_CUBIC) if source.shape[1] != target_size else source
+            # Both are forced to the SAME square shape. The old spelling
+            # resized `source` only when its WIDTH differed, so a non-square crop
+            # (width already == target, height not) passed straight through and
+            # every later `rest_f + injected_texture` broadcast-failed into the
+            # bare except below — i.e. silently, as a resolution halving.
+            if restored.shape[:2] != (target_size, target_size):
+                rest_scaled = cv2.resize(restored, (target_size, target_size),
+                                         interpolation=cv2.INTER_LANCZOS4)
             else:
                 rest_scaled = restored
+            if source.shape[:2] != (target_size, target_size):
+                src_scaled = cv2.resize(source, (target_size, target_size),
+                                        interpolation=cv2.INTER_CUBIC)
+            else:
                 src_scaled = source
 
             rest_f = rest_scaled.astype(np.float32)
@@ -192,7 +242,7 @@ class Enhance_GPEN256Pro:
 
             # 4. Subtle Tactile Micro-Pore Sensor Grain if input was blurry / low texture
             if hf_std < 3.5:
-                grain = np.random.default_rng(42).normal(0.0, 2.0, (target_size, target_size, 1)).astype(np.float32)
+                grain = cls._grain(target_size)
                 injected_texture += grain * skin_gate * exposure_gate * (1.0 - min(1.0, hf_std / 3.5))
 
             # 5. Targeted Feature Micro-Sharpening (Eyes, Lashes, Lips, Contours)
@@ -205,7 +255,20 @@ class Enhance_GPEN256Pro:
             # 6. Combine all components
             enhanced = rest_f + injected_texture + sharpened_features
             return np.clip(enhanced, 0.0, 255.0).astype(np.uint8)
-        except Exception:
+        except Exception as e:
+            # THIS RETURN IS NOT FREE, which is why it has to be audible. This
+            # method is also what upsamples 256 -> 512, so returning `restored`
+            # hands back a 256 image and `sized()` then reports scale 1 instead
+            # of 2 — HALF the resolution reaches the frame, and the processor
+            # silently becomes plain GPEN-256, the exact outcome the class
+            # exists to avoid. Never take a render down over a look filter, but
+            # never hide this either. Same lesson as Enhance_UltraMax's
+            # `_warned_texture`.
+            if not cls._warned_texture:
+                cls._warned_texture = True
+                print(f"[GPEN 256 Pro] texture/sharpen step skipped: "
+                      f"{type(e).__name__}: {e} — output falls back to 256 "
+                      f"(scale 1), i.e. plain GPEN-256 quality", flush=True)
             return restored
 
     # ── run ──────────────────────────────────────────────────────────────────
@@ -246,7 +309,12 @@ class Enhance_GPEN256Pro:
         np.maximum(hwc, -1.0, out=hwc)
         restored_256 = cv2.convertScaleAbs(hwc, alpha=127.5, beta=127.5)
 
-        if not is_usable(restored_256) or looks_collapsed(restored_256, src_256):
+        # `is_usable` is NOT called here: restored_256 is uint8 and np.isfinite
+        # is always True on an integer dtype, so it could never fire. Non-finite
+        # is already caught by the sum() above, on the float. `looks_collapsed`
+        # is the check that can still see something after the cast.
+        if looks_collapsed(restored_256, src_256):
+            print("[GPEN 256 Pro] output collapsed (flat) — using unenhanced frame")
             return sized(temp_frame, input_size)
 
         # 1. Color correction: GPEN luminance with source chrominance

@@ -13,6 +13,13 @@ import numpy as np
 def is_usable(result):
     """False when the model returned anything non-finite.
 
+    CALL THIS ON THE FLOAT OUTPUT, BEFORE THE uint8 CAST. On an integer array
+    `np.isfinite` is always True, so a call placed after `convertScaleAbs`
+    cannot ever fire — it reads as a safety net and is not one. All three of
+    GPEN 256 Pro, GPEN Realistic and UltraMax had it on the wrong side (fixed
+    2026-08-24); they now use the cheap `np.isfinite(sum)` before the cast and
+    `looks_collapsed` after it, which is the check that CAN see a uint8 result.
+
     `np.clip` does NOT remove NaN — it propagates it — and `uint8(NaN)` is 0.
     So a single overflowed value becomes a black pixel and a saturated graph
     becomes a completely black face, with no exception, no warning, and a

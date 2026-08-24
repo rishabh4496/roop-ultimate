@@ -147,7 +147,13 @@ class TestUltraMaxRun(unittest.TestCase):
         p.in_dtype = np.float16
         p._lut = ((np.arange(256, dtype=np.float32) / 127.5) - 1.0).astype(np.float16)
         if out_chw is None:
-            out_chw = np.zeros((3, 512, 512), np.float32)
+            # Not zeros: they decode to a uniform grey, which is what
+            # `looks_collapsed` is built to reject, so the success-path tests
+            # would quietly exercise the fallback instead. See the same note in
+            # test_enhancer_gpen_realistic.
+            rng = np.random.default_rng(1)
+            out_chw = np.clip(rng.normal(0.1, 0.25, (3, 512, 512)),
+                              -1.0, 1.0).astype(np.float32)
         sess, iob = p._fake = _fake_session(out_chw)
         p.session, p.io_binding = sess, iob
         p.model_inputs = [MagicMock(name='i0'), MagicMock(name='i1')]

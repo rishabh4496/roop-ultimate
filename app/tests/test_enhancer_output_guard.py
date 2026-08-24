@@ -81,9 +81,24 @@ class TheScaleContract(unittest.TestCase):
 
 class EveryEnhancerUsesIt(unittest.TestCase):
     def test_all_of_them_guard_their_output(self):
+        """Every enhancer must reject a non-finite model output.
+
+        TWO SPELLINGS, and the difference is where the uint8 cast happens.
+        Most restorers cast at the very end, so they hand the RAW FLOAT to
+        `is_usable`. The three lean-host-path ones (GPEN 256 Pro, GPEN
+        Realistic, UltraMax) cast early with `cv2.convertScaleAbs`, so they use
+        the cheaper `np.isfinite(hwc.sum())` on the float BEFORE that cast.
+
+        Both satisfy this rule. What does NOT satisfy it — and what those three
+        actually shipped until 2026-08-24 — is `is_usable` called AFTER the
+        cast, where np.isfinite is always True on an integer dtype and the check
+        can never fire. Matching the function name alone could not tell those
+        apart, so it accepted the broken spelling and rejected the fixed one.
+        """
         for name in ENHANCERS:
-            self.assertIn(
-                'is_usable(', _src(name),
+            src = _src(name)
+            self.assertTrue(
+                'is_usable(' in src or 'np.isfinite(' in src,
                 f'{name} does not check its output for non-finite values, so a '
                 'FP16 overflow or a torn session paints a silent black face')
 

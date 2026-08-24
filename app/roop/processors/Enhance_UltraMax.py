@@ -100,7 +100,7 @@ import onnxruntime
 
 import roop.globals
 from roop.typing import Face, FaceSet, Frame
-from roop.processors.enhance_common import is_usable, sized
+from roop.processors.enhance_common import looks_collapsed, sized
 from roop.utilities import resolve_relative_path
 from roop import session_pool
 
@@ -219,7 +219,7 @@ class Enhance_UltraMax:
                 n = max(1, min(int(n), int(cap)))
             extras = []
             try:
-                extras = [_build(i) for i in range(n - 1)]
+                extras = [_build(i + 1) for i in range(n - 1)]
                 primary = (self.session, self.io_binding)
                 self.pool = session_pool.SessionPool(
                     lambda i, _e=([primary] + extras): _e[i], n)
@@ -403,15 +403,22 @@ class Enhance_UltraMax:
         if not np.isfinite(hwc.sum()):
             print("[UltraMax] non-finite output — using unenhanced frame "
                   "(FP16 overflow?)")
-            return sized(src512, input_size)
+            return sized(temp_frame, input_size)
 
         # maximum() first so convertScaleAbs' abs() is a no-op on the low end;
         # its saturate_cast handles the high end. Two passes, both in C++.
         np.maximum(hwc, -1.0, out=hwc)
         restored = cv2.convertScaleAbs(hwc, alpha=127.5, beta=127.5)
 
-        if not is_usable(restored):
-            return sized(src512, input_size)
+        # NOT `is_usable` here: this array is uint8 and np.isfinite is always
+        # True on an integer dtype, so that call could never fire. Non-finite is
+        # already caught by the sum() above, on the float. The failure that
+        # survives the cast is a precision COLLAPSE — finite values, dynamic
+        # range gone — which is how GFPGAN's FP16 engine failed, and this is a
+        # half-precision graph too.
+        if looks_collapsed(restored, src512):
+            print("[UltraMax] output collapsed (flat) — using unenhanced frame")
+            return sized(temp_frame, input_size)
 
         gain = _env_float('ROOP_ULTRAMAX_TEXTURE', self._TEXTURE_GAIN)
         if gain > 0.0:

@@ -147,7 +147,15 @@ class TestRunPath(unittest.TestCase):
         p.size = size or CLS._SIZE
         p._lut = (np.arange(256, dtype=np.float32) / 127.5) - 1.0
         if out_chw is None:
-            out_chw = np.zeros((3, p.size, p.size), np.float32)
+            # A plausible restored face, NOT zeros. Zeros decode to a uniform
+            # grey, which is the precise signature `looks_collapsed` rejects, so
+            # a zeros fixture sends every success-path test down the FALLBACK
+            # instead — silently, because the fallback also returns a valid
+            # frame. It only surfaced on cost_summary, and only when the input
+            # was not upsampled first (upsampling drops its std below the
+            # trigger). Same shape as test_enhancer_gpen256_pro's fixture.
+            face = _face_like(1, size=p.size, detail=10.0)
+            out_chw = (face.transpose(2, 0, 1)[::-1].astype(np.float32) / 127.5) - 1.0
         iob = MagicMock()
         iob.bound = {}
         iob.bind_cpu_input = MagicMock(side_effect=lambda n, v: iob.bound.__setitem__(n, v))
