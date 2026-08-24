@@ -79,6 +79,23 @@ own licence and its own restrictions, some of which prohibit commercial use.
 Obtaining and complying with those terms is the responsibility of whoever runs
 the software.
 
+### VisoMaster
+
+The `InStyleSwapper256` (Version A / B / C) and `CSCS` swap models, together with
+CSCS's `cscs_arcface_model` recognizer and `cscs_id_adapter`, are obtained from
+the VisoMaster asset release at
+<https://github.com/visomaster/visomaster-assets>. VisoMaster is licensed
+**GPL-3.0**; this project is AGPL-3.0, with which GPL-3.0 material may be
+combined. The model files themselves are downloaded at run time and are not
+redistributed here.
+
+The integration code in this repository — the registry entries, the `cscs_dual`
+identity path and the alignment/normalization values — was written for this
+project against the published models. The parameters that upstream documentation
+did not settle (InStyleSwapper's alignment template, and its input/output
+normalization) were determined by measurement here; the evidence is recorded
+beside the entries in `app/roop/processors/FaceSwapInsightFace.py`.
+
 ## Intended use
 
 This software performs face replacement in images and video. Use it only on

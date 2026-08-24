@@ -1035,8 +1035,13 @@ def _attach_source_crops(face, img):
             return
         crop112, _ = align_crop(img, kps, 112, mode='arcface_112_v2')
         crop256, _ = align_crop(img, kps, 256, mode='ffhq_512')
+        # CSCS's recognizer and id adapter both take 112 on the ffhq template.
+        # Warped straight to 112 rather than downsampled from the 256 above:
+        # one resample instead of two.
+        crop_ffhq112, _ = align_crop(img, kps, 112, mode='ffhq_512')
         face['_src_crop_arcface_112_v2'] = crop112
         face['_src_crop_ffhq_256'] = crop256
+        face['_src_crop_ffhq_112'] = crop_ffhq112
     except Exception:
         pass
 

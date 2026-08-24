@@ -26,6 +26,10 @@ from roop import session_pool
 #   normed         — normed_embedding used directly (hyperswap)
 #   converted_raw  — RAW embedding through the crossface converter, no norm (ghost)
 #   converted_norm — RAW embedding through the converter, then normalized
+#   cscs_dual      — CSCS's OWN recognizer plus its id adapter, summed. Not a
+#                    crossface conversion of buffalo_l's vector: these two nets
+#                    take an IMAGE (the ffhq-aligned source crop at 112) and
+#                    produce their own 512-d spaces, which CSCS was trained on.
 #                    (simswap / hififace)
 # "template" is the 5-point alignment the model was trained on ('arcface' =
 # the existing insightface alignment; others live in face_util.WARP_TEMPLATES).
@@ -33,6 +37,8 @@ _FF30 = "https://huggingface.co/facefusion/models-3.0.0/resolve/main/"
 _FF31 = "https://huggingface.co/facefusion/models-3.1.0/resolve/main/"
 _FF33 = "https://huggingface.co/facefusion/models-3.3.0/resolve/main/"
 _FF34 = "https://huggingface.co/facefusion/models-3.4.0/resolve/main/"
+# VisoMaster's asset release (GPL-3.0 project; see NOTICE.md).
+_VISO = "https://github.com/visomaster/visomaster-assets/releases/download/v0.1.0/"
 
 SWAP_MODELS = {
     # inswapper_128 — the original. arcface align, [0,1] input, identity =
@@ -204,6 +210,79 @@ SWAP_MODELS = {
         # outcome guard's threshold than any other model's here, so it can
         # afford a tighter one.
         "verify_tol": 0.65,
+    },
+    # InStyleSwapper256 A/B/C (VisoMaster) — inswapper architecture at 256 with
+    # its own emap, so the identity path is the plain inswapper one. Three
+    # checkpoints trained differently; offered side by side like hyperswap's.
+    #
+    # BOTH of the non-obvious values here were MEASURED, not read off a doc:
+    #   * normalization — [0,1] in / no denorm. The [-1,1] arms return NaN, so
+    #     this is not a preference, it is the only one that runs.
+    #   * template — ffhq_512, NOT the arcface the upstream docs imply. Scored by
+    #     identity transfer (cosine of the re-detected output against the source
+    #     minus against the target), which is comparable across templates where a
+    #     self-swap MAE is not: a different template is a different crop, so MAE
+    #     compares two arms against two different references.
+    #         reswapper (control, known arcface)  arcface +0.4243  ffhq +0.3819
+    #         InStyle A                           arcface +0.6309  ffhq +0.6803
+    #         InStyle B                           arcface +0.5804  ffhq +0.6522
+    #         InStyle C                           arcface +0.6008  ffhq +0.6584
+    #     The control lands on its own known-correct template, which is what
+    #     makes the other three rows worth anything. n=3 pairs, single frames —
+    #     enough to pick the template, NOT a quality claim against other models.
+    "instyleswapper_a": {
+        "file": "InStyleSwapper256_Version_A.fp16.onnx",
+        "url": _VISO + "InStyleSwapper256_Version_A.fp16.onnx",
+        "output_size": 256,
+        "mean": [0.0, 0.0, 0.0],
+        "standard_deviation": [1.0, 1.0, 1.0],
+        "denormalize": False,
+        "embedding": "normed_emap",
+        "template": "ffhq_512",
+    },
+    "instyleswapper_b": {
+        "file": "InStyleSwapper256_Version_B.fp16.onnx",
+        "url": _VISO + "InStyleSwapper256_Version_B.fp16.onnx",
+        "output_size": 256,
+        "mean": [0.0, 0.0, 0.0],
+        "standard_deviation": [1.0, 1.0, 1.0],
+        "denormalize": False,
+        "embedding": "normed_emap",
+        "template": "ffhq_512",
+    },
+    "instyleswapper_c": {
+        "file": "InStyleSwapper256_Version_C.fp16.onnx",
+        "url": _VISO + "InStyleSwapper256_Version_C.fp16.onnx",
+        "output_size": 256,
+        "mean": [0.0, 0.0, 0.0],
+        "standard_deviation": [1.0, 1.0, 1.0],
+        "denormalize": False,
+        "embedding": "normed_emap",
+        "template": "ffhq_512",
+    },
+    # CSCS (VisoMaster) — ffhq alignment, [-1,1] in/out, and the reason it is
+    # here: it does NOT reuse buffalo_l's embedding. It ships its own recognizer
+    # AND an id adapter, both taking the 112 ffhq source crop, and SUMS the two
+    # L2-normalized results. Upstream describes that as being aimed at difficult
+    # head poses, which is this project's standing open problem — but that is
+    # their claim, unmeasured here. It is offered, not defaulted.
+    #
+    # Costs 1.26 GB across three files, which is why it is worth knowing it is
+    # opt-in: on a 6GB card that is a real fraction of the budget.
+    "cscs": {
+        "file": "cscs_256.onnx",
+        "url": _VISO + "cscs_256.onnx",
+        "output_size": 256,
+        "mean": [0.5, 0.5, 0.5],
+        "standard_deviation": [0.5, 0.5, 0.5],
+        "denormalize": True,
+        "embedding": "cscs_dual",
+        "template": "ffhq_512",
+        "recognizer_file": "cscs_arcface_model.onnx",
+        "recognizer_url": _VISO + "cscs_arcface_model.onnx",
+        "id_adapter_file": "cscs_id_adapter.onnx",
+        "id_adapter_url": _VISO + "cscs_id_adapter.onnx",
+        "source_crop_key": "_src_crop_ffhq_112",
     },
     # RealSwap — hyperswap and hififace as ONE swapper. `secondary` names a
     # second model from this same table; the processor loads both and mixes
@@ -479,6 +558,24 @@ class FaceSwapInsightFace():
             else:
                 self.converter = None
 
+            # CSCS's own identity pair. Separate from `converter` on purpose:
+            # a crossface converter maps an EMBEDDING we already have, these two
+            # take an IMAGE and produce the space CSCS was trained on. CPU is
+            # plenty — the result is cached per source face, so they run once per
+            # face per model, not per frame.
+            if spec.get("recognizer_url"):
+                conditional_download(model_dir, [spec["recognizer_url"],
+                                                 spec["id_adapter_url"]])
+                self.cscs_rec = onnxruntime.InferenceSession(
+                    os.path.join(model_dir, spec["recognizer_file"]),
+                    None, providers=["CPUExecutionProvider"])
+                self.cscs_id = onnxruntime.InferenceSession(
+                    os.path.join(model_dir, spec["id_adapter_file"]),
+                    None, providers=["CPUExecutionProvider"])
+            else:
+                self.cscs_rec = None
+                self.cscs_id = None
+
             self.devicename = plugin_options["devicename"].replace('mps', 'cpu')
 
             swap_providers = _swap_providers(roop.globals.execution_providers)
@@ -548,7 +645,15 @@ class FaceSwapInsightFace():
             # Read from the GRAPH, not from the spec table: whether a net emits a
             # mask is a property of the file, and a hand-kept flag would be one
             # more thing to get wrong when a model is added.
-            self.model_has_mask = len(self.model_swap_insightface.get_outputs()) > 1
+            #
+            # COUNTING the outputs is not enough, and CSCS is why: its export
+            # leaks nine internal attribute tensors alongside the image, the
+            # first of which is (1, 1024, 2, 2). Under a count test that reads as
+            # "has a mask" and the pipeline then composites a 1024-channel
+            # feature map. A mask is a SINGLE-CHANNEL map the size of the output,
+            # so ask for that shape.
+            self.model_has_mask = self._graph_emits_mask(
+                self.model_swap_insightface, spec["output_size"])
             self.loaded_model_key = swap_model
 
             # ── RealSwap's second net ────────────────────────────────────────
@@ -573,6 +678,28 @@ class FaceSwapInsightFace():
                 # sequential path, which mixes correctly, instead of each run
                 # paying for one doomed inference to discover the same thing.
                 self._batch_unsupported = True
+
+    @staticmethod
+    def _graph_emits_mask(session, output_size):
+        """True when output[1] is a single-channel map matching the image.
+
+        Accepts (1,1,S,S) and (1,S,S), and tolerates symbolic dims — an export
+        with dynamic spatial axes still declares its CHANNEL count, which is the
+        part that separates a mask from a leaked feature tensor.
+        """
+        outs = session.get_outputs()
+        if len(outs) < 2:
+            return False
+        shape = list(outs[1].shape or [])
+        if len(shape) == 4:
+            chan, spatial = shape[1], shape[2:]
+        elif len(shape) == 3:
+            chan, spatial = 1, shape[1:]
+        else:
+            return False
+        if chan != 1:
+            return False
+        return all((not isinstance(d, int)) or d == output_size for d in spatial)
 
     @staticmethod
     def _find_emap(graph):
@@ -602,6 +729,32 @@ class FaceSwapInsightFace():
             if mode == "converted_norm":
                 converted = converted / np.linalg.norm(converted)
             latent = converted.reshape(1, -1).astype(np.float32)
+            try:
+                source_face[cache_key] = latent
+            except Exception:
+                pass
+            return latent
+        if mode == "cscs_dual":
+            cache_key = f"_latent_{self.loaded_model_key}"
+            cached = source_face.get(cache_key) if hasattr(source_face, 'get') else None
+            if cached is not None:
+                return cached
+            crop = source_face.get(self.source_crop_key) if hasattr(source_face, 'get') else None
+            if crop is None:
+                # Source ingested before the crops were attached. Falling back to
+                # buffalo_l's vector would be WORSE than useless — it is a
+                # different space, so it would produce a confident swap toward
+                # nobody. Signal "no identity" and let the caller skip.
+                return None
+            blob = (crop[:, :, ::-1].astype(np.float32) / 255.0 - 0.5) / 0.5
+            blob = blob.transpose(2, 0, 1)[None].astype(np.float32)
+            def _emb(sess):
+                v = sess.run(None, {sess.get_inputs()[0].name: blob})[0].reshape(-1)
+                return v / (np.linalg.norm(v) or 1.0)
+            # Summed, and deliberately NOT re-normalized afterwards: the sum's
+            # magnitude is what carries the appearance/identity balance CSCS was
+            # trained with, and normalizing it away measurably flattens it.
+            latent = (_emb(self.cscs_rec) + _emb(self.cscs_id)).reshape(1, -1).astype(np.float32)
             try:
                 source_face[cache_key] = latent
             except Exception:
