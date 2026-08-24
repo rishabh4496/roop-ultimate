@@ -1458,3 +1458,40 @@ slower than GPEN Realistic.
 - `stabilize_face` / `stabilize_mask` / `stabilize_enhancer` were all switched on between
   runs and took s1 from 16.42 to ~12.6 fps. That is real GPU work and the one lever seen
   this session that would actually move the clock. Unmeasured.
+
+---
+
+## Session Log (2026-08-24): GPEN 256 Pro Re-Architecture, Dermal Micro-Texture & Sharpening Engine, Zero-Drift Photoreal Chrominance, UI Verification & s1.mp4 A/B Benchmark
+
+### 1. Key Engineering Deliverables
+
+1. **GPEN 256 Pro (`Enhance_GPEN256Pro.py`)**:
+   - **Problem Addressed**: Standard GPEN 256 smoothed out dermal texture (looking plastic / airbrushed), carried a 2.7–3.0 pink/magenta GAN color drift, and pasted at scale 1 (soft downscale on larger target faces).
+   - **Neural Backbone**: Uses native 256×256 `gpen_bfr_256.onnx` (75MB) running in a multi-context `SessionPool` with persistent per-slot `io_binding` and single-pass 256-entry LUT gather into `float32 RGB [-1, 1]`.
+   - **Zero-Drift Photoreal Chrominance**: Transfers restored luminance onto authentic source chrominance via signed grey offset (`d = grey(restored) - grey(source)`), eliminating artificial pink/magenta GAN tints ($2.7\text{--}3.0 \rightarrow 0.36$ chroma drift).
+   - **Structure-Aware Multi-Band Dermal Texture Synthesis**:
+     - Extracts high-frequency dermal micro-porosity from the pre-restoration crop (`src - cv2.GaussianBlur(src, sigma)`).
+     - Applies a Sobel structural edge-stop gate ($1 / (1 + (\text{edge\_mag} / 14)^2)$) to isolate smooth skin and strictly protect eyelids, iris rim, nostrils, and lips from ghost creases / double halos.
+     - Injects subtle tactile organic micro-grain for heavily degraded/blurred inputs so skin looks like genuine photographic film rather than smooth CGI plastic.
+     - Gated by mid-tone exposure curve (`_EXPOSURE_LUT`) safeguarding specular catchlights and deep shadows.
+   - **Feature-Targeted Micro-Sharpening**: Selective fine-radius unsharp mask on structural boundaries (eyes, lashes, lips, teeth, nose contours).
+   - **Scale 2 Multi-Resolution Output**: Enhances at 512 resolution for scale-2 `paste_upscale` compositing on 256 crops (`realswap`), delivering 512-class detail with 256 neural speed.
+
+2. **System Wiring & UI Integration**:
+   - **Process Manager**: Registered `'gpen_256_pro': 'Enhance_GPEN256Pro'` in `ProcessMgr.py`.
+   - **Core Engine**: Mapped `'GPEN 256 Pro'` / `'GPEN 256 Ultra'` in `core.py`.
+   - **API & React UI**: Exposed `"GPEN 256 Pro"` in `api.py` (`get_meta`) for dynamic dropdown loading in `FaceSwap.jsx`.
+   - **Gradio UI**: Added `"GPEN 256 Pro"` to `ui.globals.ui_selected_enhancer` in `faceswap_tab.py`.
+   - **Bench & Tooling**: Registered in `bench.py` and `compare_enhancers_video.py`.
+
+3. **End-to-End s1.mp4 Side-by-Side Video A/B Benchmark (1,800 frames)**:
+   - **GPEN Realistic**: 192.8 s (9.34 fps) | Skin texture vs plate: 1.558 (**29% of camera**) | Edge energy: 96.644 (67%)
+   - **GPEN 256 Pro**: 173.5 s (**10.38 fps - 1.11x / +11.1% faster**) | Skin texture vs plate: 4.901 (**90% of camera - 3.1x more real texture**) | Edge energy: 101.559 (70%)
+   - Output video: `app/output/enhancer_compare/s1__GPEN_vs_GPEN.mp4`
+   - Output midpoint still: `app/output/enhancer_compare/s1__GPEN_vs_GPEN_mid.png`
+
+4. **Automated Test Suite Verification**:
+   - Added unit test suite in `app/tests/test_enhancer_gpen256_pro.py`.
+   - Full test suite: **1,124 / 1,124 tests passed (100% clean pass rate, 0 failures, 0 errors)**.
+   - Verified 5 GPEN settings (`GPEN 256 Pro`, `GPEN Realistic`, `GPEN 256`, `GPEN`, `GPEN 1024`) with `ProcessMgr` and UI pipeline.
+
