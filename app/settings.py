@@ -341,6 +341,20 @@ class Settings:
         # NVDEC GPU video decode (ffmpeg -hwaccel cuda pipe). auto = enabled
         # behind a per-file probe with automatic cv2 fallback; off disables.
         self.perf_nvdec = self.default_get(data, 'perf_nvdec', 'auto')
+        # LEAVE THIS ON 'auto' UNLESS A COUNTERBALANCED A/B SAYS OTHERWISE.
+        # It reads like a 'more is faster' knob and is not one. Measured
+        # 2026-08-25 on an RTX 4070, whole render, 10 threads, GPEN 256 Pro,
+        # identical 401 faces enhanced in every arm:
+        #
+        #     trt/detmask   2/2 (auto)  21.71 fps
+        #                   2/4         18.44 fps   -15%
+        #                   4/4         17.69 fps   -19%
+        #                   6/6          5.90 fps   -73%
+        #
+        # A config carrying an explicit '4' cost 15% for as long as it was
+        # set. Above the auto default session_pool now prints an advisory
+        # (it still honours the value); see _advisory_pool_size for why the
+        # failure mode is thrashing rather than an OOM or a hang.
         self.perf_detmask_pool = self._hw_get(data, 'perf_detmask_pool', 'auto')
         # Instances of the standalone detector, separate from the detect/mask
         # pool because a hybrid engine (retinaface/yoloface/yunet) brings its own
