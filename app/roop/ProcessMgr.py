@@ -1672,6 +1672,12 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                 pass
         frame_mb = max(0.1, (self._stab_frame_bytes or (1920 * 1080 * 3)) / (1024.0 ** 2))
         fits = max(1, int((budget_mb / frame_mb) // block))
+        if fits < min(threads, 2) and threads >= 2 and wu > 0:
+            adaptive_block = max(2 * wu, 16)
+            adaptive_fits = max(1, int((budget_mb / frame_mb) // adaptive_block))
+            if adaptive_fits >= 2:
+                block = adaptive_block
+                fits = adaptive_fits
         width = max(1, min(threads, fits))
 
         # BLOCKS PER CHUNK is a separate question from WORKERS, and conflating
