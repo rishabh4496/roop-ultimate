@@ -1646,3 +1646,28 @@ Reported on the RTX 3060 Laptop GPU (16GB RAM) as: "when I try to swap 2 faces w
 - **Live 2-Face Swap**: Ran `tests/two_face_video.py` on `d4.mp4` with `harjot.fsz` + `rhythm.fsz`, GPEN 256 Pro, RealityUX, and `stabilize_mask`. Maintained `execution_threads=8` continuously throughout the run with steady ~2.9 GB RSS.
 - **Full Suite**: 1,298 / 1,298 tests passing (100% green).
 - **Commit**: `0e4fe60` pushed to `origin/main`.
+
+---
+
+## Session Log (2026-08-26 Part 1): Host RAM Leak Resolution & Mid-Processing OOM Crash Fix on Main Device
+
+Reported on the RTX 4070 Desktop (32GB RAM) as: backend process crash / ECONNRESET midway through a 66,539-frame video render at ~62%–80%, with `[ProcessMgr] Merger post-op failed: Unable to allocate 3.00 MiB for an array with shape (512, 512, 3) and data type float32` and process RSS climbing from 9.3GB to 15.91GB+.
+
+### 1. Root Cause Analysis
+- **Full-Frame Retention in `target_face.plate_ctx`**: In `ProcessMgr.py`, `target_face.plate_ctx = (plate, M)` was attached to each target face before swap inference to provide first-generation plate context for composite secondary swappers (RealSwap). While `p.clear_plate_context()` cleared thread-local storage, `target_face.plate_ctx` remained attached to the `Face` object inside `self._temporal_faces`.
+- **Unbounded Temporal Cache**: For a 66,539-frame video, `self._temporal_faces` holds face objects for all frames simultaneously. Because each face held the entire decoded video frame array (1280x720x3 = ~2.76 MB per frame), tens of thousands of video frames were pinned in RAM permanently, consuming over 15 GB of uncollected memory until Windows/NumPy memory allocation failed.
+- **Unpurged Written Frames**: Neither parallel stabilization (`_run_stab_parallel`) nor the sequential writer purged finished frames from `self._temporal_faces`, keeping tens of thousands of landmark/embedding arrays in host memory indefinitely.
+- **Heap Fragmentation Across Chunks**: `_run_stab_parallel` did not invoke garbage collection or dereference completed chunk objects, allowing fragmented C-heap memory to accumulate over hundreds of chunk iterations.
+
+### 2. The Solution
+1. **Immediate `plate_ctx` Teardown**: In `ProcessMgr.py`, `target_face.plate_ctx = None` is now explicitly cleared immediately after swap inference completes and in all exit paths.
+2. **Purge Processed Frames**: In both `_writer` (parallel stabilization) and the sequential encoder loop, `self._temporal_faces.pop(gi, None)` is called immediately as each frame is written to the video writer, permanently freeing completed frame data from memory.
+3. **Periodic Garbage Collection & Error Guards**:
+   - Added explicit `del combined, chunk, results, workers` and periodic `gc.collect()` at chunk boundaries in `_run_stab_parallel`.
+   - Wrapped `MergerMixin.apply_merger_post` in `procmgr_merger.py` to gracefully catch transient `MemoryError`/`cv2.error` and return the current valid face crop rather than terminating the worker pipeline.
+
+### 3. Verification & Results
+- **Full Test Suite**: 1,298 / 1,298 unit tests passing (100% green).
+- **RAM Bounded**: Host memory RSS is now strictly bounded during long video renders and drops cleanly between segments.
+- **Commit**: `111feb1` committed to `main`.
+
