@@ -1105,6 +1105,8 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                             self.videowriter.write_frame(frame)
                         if self.output_to_cam:
                             self.streamwriter.WriteToStream(frame)
+                        if self._temporal_faces is not None:
+                            self._temporal_faces.pop(nextindex - 1, None)
                     del frame
                 elif process == False:
                     num_producers -= 1
@@ -1930,6 +1932,9 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                             self.videowriter.write_frame(fr)
                         if self.output_to_cam:
                             self.streamwriter.WriteToStream(fr)
+                        if self._temporal_faces is not None:
+                            self._temporal_faces.pop(gi, None)
+                    res.clear()
             except Exception as exc:
                 _writer_exc[0] = exc
                 # Say so HERE. This used to be recorded silently and re-raised in
@@ -2096,10 +2101,12 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                           f"imbalance={yellow}{_imbal:5.2f}s{reset} "
                           f"(slow={max(_bts) if _bts else 0:.2f}s / fast={min(_bts) if _bts else 0:.2f}s)",
                           flush=True)
-                _chunk_no += 1
-
                 carry = combined[-WU:] if WU > 0 else []
                 chunk_start += len(chunk)
+                del combined, chunk, results, workers
+                if _chunk_no % 4 == 0:
+                    import gc
+                    gc.collect()
         finally:
             # Drain _write_q before sending the sentinel when:
             #  - cancel: discard queued frames so the writer exits promptly.
@@ -3908,6 +3915,12 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                     # thread's NEXT face would be composited against this face's
                     # plate crop.
                     p.clear_plate_context()
+                if target_face is not None:
+                    try:
+                        if hasattr(target_face, 'plate_ctx'):
+                            target_face.plate_ctx = None
+                    except Exception:
+                        pass
                 fake_frame = self.explode_pixel_boost(swap_result_frames, model_output_size, subsample_total, subsample_size)
                 fake_frame = fake_frame.astype(np.uint8)
 

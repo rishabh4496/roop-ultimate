@@ -103,25 +103,25 @@ class MergerMixin:
             return face_img
 
         out = face_img
-        # Order matters and follows DFL's merger: match the plate's colour
-        # first, then its sharpness, then its motion, and add grain LAST so the
-        # blurring stages cannot smear the grain back out again.
-        if abs(hist) > _EPS:
-            out = self.apply_hist_match(out, orig_crop, hist)
-        if abs(degrade) > _EPS:
-            out = self.apply_degrade(out, degrade)
-        # After degrade so it re-establishes micro-edges the downscale removed,
-        # and before sharpen/motion/grain so the L-only work happens on real
-        # structure rather than on a global unsharp's overshoot or on grain.
-        if abs(clarity) > _EPS:
-            out = self.apply_clarity(out, clarity)
-        if abs(sharp) > _EPS:
-            out = self.apply_sharpen(out, sharp)
-        if abs(motion) > _EPS:
-            out = self.apply_motion_blur(out, orig_crop, motion)
-        if abs(grain) > _EPS:
-            out = self.apply_grain_match(out, orig_crop, grain)
-        return out
+        try:
+            if abs(hist) > _EPS:
+                out = self.apply_hist_match(out, orig_crop, hist)
+            if abs(degrade) > _EPS:
+                out = self.apply_degrade(out, degrade)
+            # After degrade so it re-establishes micro-edges the downscale removed,
+            # and before sharpen/motion/grain so the L-only work happens on real
+            # structure rather than on a global unsharp's overshoot or on grain.
+            if abs(clarity) > _EPS:
+                out = self.apply_clarity(out, clarity)
+            if abs(sharp) > _EPS:
+                out = self.apply_sharpen(out, sharp)
+            if abs(motion) > _EPS:
+                out = self.apply_motion_blur(out, orig_crop, motion)
+            if abs(grain) > _EPS:
+                out = self.apply_grain_match(out, orig_crop, grain)
+            return out
+        except (MemoryError, cv2.error):
+            return out
 
     # ── individual ops ────────────────────────────────────────────────────
     def apply_clarity(self, face_img, strength):
