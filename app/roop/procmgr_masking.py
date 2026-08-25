@@ -348,7 +348,8 @@ class MaskingMixin:
 
         w = img_matte.shape[1]
         h = img_matte.shape[0]
-
+        if mask_offsets is None:
+            mask_offsets = [0, 0, 0, 0, 20.0, 10.0]
         top = int(mask_offsets[0] * h)
         bottom = int(h - (mask_offsets[1] * h))
         left = int(mask_offsets[2] * w)

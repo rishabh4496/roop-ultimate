@@ -315,7 +315,7 @@ class SegmentedVideoWriter:
         try:
             with open(list_path, "w", encoding="utf-8") as fh:
                 for s in self.segments:
-                    p = os.path.abspath(os.path.join(self._dir, s["file"]))
+                    p = os.path.abspath(os.path.join(self._dir, s["file"])).replace("\\", "/")
                     fh.write("file '" + p.replace("'", "'\\''") + "'\n")
             cmd = [FFMPEG_BINARY, "-hide_banner", "-loglevel", "error", "-y",
                    "-f", "concat", "-safe", "0", "-i", list_path,

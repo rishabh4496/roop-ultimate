@@ -1200,7 +1200,7 @@ class TrackingMixin:
             # the second reaches the rest, and stopping at one round leaves a
             # person un-swapped for whole shots. Bounded by the track count, and
             # each round only ever adds — no assignment is revisited.
-            for _round in range(len(tracks) + 1):
+            for _round in range(min(10, len(tracks) + 1)):
                 progress = False
                 for t in tracks:
                     tid = t['id']
@@ -1706,6 +1706,10 @@ class TrackingMixin:
                       f"could not place")
         for i in out:
             out[i].sort(key=lambda f: f.bbox[0])
+        # Free track observations and temporary index to release RAM on long videos
+        for t in tracks:
+            t.pop('obs', None)
+        del other_real
         return out
 
     def _precompute_stabilized_kps(self, source_video, awebp_frames, frame_start, frame_end, frame_count):

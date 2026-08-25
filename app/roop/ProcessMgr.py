@@ -1107,6 +1107,10 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                             self.streamwriter.WriteToStream(frame)
                         if self._temporal_faces is not None:
                             self._temporal_faces.pop(nextindex - 1, None)
+                        if hasattr(self, '_track_assignments') and self._track_assignments is not None:
+                            self._track_assignments.pop(nextindex - 1, None)
+                        if hasattr(self, '_precomputed_kps') and self._precomputed_kps is not None:
+                            self._precomputed_kps.pop(nextindex - 1, None)
                     del frame
                 elif process == False:
                     num_producers -= 1
@@ -1934,6 +1938,10 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                             self.streamwriter.WriteToStream(fr)
                         if self._temporal_faces is not None:
                             self._temporal_faces.pop(gi, None)
+                        if hasattr(self, '_track_assignments') and self._track_assignments is not None:
+                            self._track_assignments.pop(gi, None)
+                        if hasattr(self, '_precomputed_kps') and self._precomputed_kps is not None:
+                            self._precomputed_kps.pop(gi, None)
                     res.clear()
             except Exception as exc:
                 _writer_exc[0] = exc
@@ -2158,18 +2166,17 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
         progress.update(1)
         if self.progress_gradio is not None:
             n = progress.n
-            total = self.total_frames
-            rate = progress.format_dict.get('rate', 0.0) if hasattr(progress, 'format_dict') else 0.0
-            fps_str = f" ({rate:.1f} FPS)" if rate and rate > 0 else ""
-            desc = f"Processing frame {n} / {total}{fps_str}"
-            # Hand the web UI the remaining time THIS bar is showing, rather
-            # than leaving it to extrapolate from the run fraction — which
-            # charges model loads and the pre-pass to the swap rate and comes
-            # out more than twice too high. Not routed through progress_gradio:
-            # that shim is gradio.Progress-compatible and the legacy Gradio UI
-            # still passes a real one, which would reject an extra kwarg.
-            _publish_eta(progress)
-            self.progress_gradio((n, total), desc=desc, total=total, unit='frames')
+            total = self.total_frames or 1
+            _now = time.perf_counter()
+            _last_g = getattr(self, '_last_gradio_t', 0.0)
+            # Throttle Gradio events to max 5/sec, every 10 frames, or at completion to prevent WebSocket/SSE buffer overflow
+            if (_now - _last_g >= 0.2) or (n >= total) or (n % 10 == 0):
+                self._last_gradio_t = _now
+                rate = progress.format_dict.get('rate', 0.0) if hasattr(progress, 'format_dict') else 0.0
+                fps_str = f" ({rate:.1f} FPS)" if rate and rate > 0 else ""
+                desc = f"Processing frame {n} / {total}{fps_str}"
+                _publish_eta(progress)
+                self.progress_gradio((n, total), desc=desc, total=total, unit='frames')
 
 
     def _publish_live(self, frame):
@@ -4046,7 +4053,8 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                 if _enh_excl is None:
                     _enh_excl = getattr(p, 'pool', None) is not None
                 with _prof('enhance'), _gpu_guard(pooled=_enh_excl, owner='enhance'):
-                    enhanced_frame, scale_factor = p.Run(self.input_face_datas[face_index], target_face, enh_input)
+                    _fs = self.input_face_datas[face_index] if (0 <= face_index < len(self.input_face_datas)) else (self.input_face_datas[0] if self.input_face_datas else None)
+                    enhanced_frame, scale_factor = p.Run(_fs, target_face, enh_input)
 
                 if _A is not None and enhanced_frame is not None:
                     # Back to swap-crop space. The enhancer may have returned a
@@ -4274,7 +4282,9 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
             # interpolation must be a keyword — positionally it lands in `dst`
             # and is silently ignored (resize falls back to INTER_LINEAR).
             fake_frame = cv2.resize(fake_frame, (upscale, upscale), interpolation=cv2.INTER_CUBIC)
-        mask_offsets = [0, 0, 0, 0, 20.0, 10.0] if inputface is None else inputface.mask_offsets
+        mask_offsets = getattr(inputface, 'mask_offsets', None) if inputface is not None else None
+        if mask_offsets is None:
+            mask_offsets = [0, 0, 0, 0, 20.0, 10.0]
 
         face_lm = target_face.landmark_2d_106 if hasattr(target_face, 'landmark_2d_106') and target_face.landmark_2d_106 is not None else None
         # kps gives create_landmark_mask the head's up-axis, so the forehead
