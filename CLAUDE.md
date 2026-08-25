@@ -486,6 +486,11 @@ app itself, which is what work in this repo is almost always about.
    running state of a multi-session recode. The top section is always the current one;
    older sections below it are history and go stale — when a table and a prose summary
    disagree, trust the table.
+   **It exists ONLY on the main device (the 4070).** On the secondary device
+   (the 3060, under `C:\pinokio\`) there is no `roop-keep` and no G: drive at
+   all, so this step silently has nothing to read and the Session Logs at the
+   bottom of this file are the whole record. Do not conclude the state is
+   unknown; scroll down.
 2. **The phase numbering stopped at PHASE 5, and the work has moved past it.**
    Phase 4 ("RealSwap", hyperswap base + a hififace eyelid/eyelash band) SHIPPED and
    is the live default (`swap_model: realswap`). Phase 5 ("UltraMax") shipped, was
@@ -1513,3 +1518,162 @@ slower than GPEN Realistic.
    - Full test suite: **1,124 / 1,124 tests passed (100% clean pass rate, 0 failures, 0 errors)**.
    - Verified 5 GPEN settings (`GPEN 256 Pro`, `GPEN Realistic`, `GPEN 256`, `GPEN`, `GPEN 1024`) with `ProcessMgr` and UI pipeline.
 
+
+
+---
+
+## Session Log (2026-08-25): Run On The 3060 — The Fix That Could Not Reach The Card It Was Written For
+
+Commits `08774a1`, `3712105`. Suite **1291 green**. Run on the SECONDARY device
+(RTX 3060 Laptop 6GB, 14 physical / 20 logical cores, 16GB RAM), which is the
+machine the previous three sessions were diagnosing remotely.
+
+### 0. READ THIS FIRST IF YOU ARE ON THE 4070
+
+`git pull`, then `grep -E "^max_threads" app/config.yaml`.
+
+| its saved value | what happens on first launch |
+|---|---|
+| `10` | nothing, silently — already that box's measured knee |
+| `7` | migrates 7 -> 10, announced once |
+| higher | left alone and pinned as yours |
+
+Nothing in these two commits changes a rendered pixel on either machine.
+
+### 1. The 3060 was running max_threads 4 against a knee of 8
+
+`tests/diag_device.py` came back CLEAN on hardware — TensorRT genuinely
+executing, 38.3 ms/face for GPEN 256 Pro, pools correctly 0/0 for the <7GB tier.
+The defect was one line of config: `max_threads: 4`, which is the exact value
+`0eda23b` was written to correct, on the exact card `0eda23b` names in its own
+commit message ("RTX 3060 6GB/8-core -> 7").
+
+**THE MECHANISM, AND IT GENERALISES BEYOND THREADS.** `Settings.save()` writes
+`max_threads` on every settings save, so the moment the app persists a value it
+DERIVED, that value is byte-identical to one the user typed. `_hw_get` only
+re-derives when the **GPU** changes — not when the **RULE** changes. So the
+improved formula shipped, sat in the source, and could not reach any install
+that had ever saved. The signature matched, so nothing fired.
+
+A derived default that outlives its own derivation rule is invisible in exactly
+the way this project keeps getting caught by: nothing errors, nothing warns, the
+config looks deliberate, and the only symptom is a machine quietly a tier below
+where the source says it should be.
+
+### 2. The fix: provenance, and the two traps in implementing it
+
+`max_threads` now carries `_threads_auto` (did the app choose it) and
+`_threads_basis` (`v<rule>|<cores>|<knee>`). Derived values re-derive when
+either moves; a user's value is never touched again. `_THREAD_RULE` is bumped
+whenever `default_threads` changes — **bump it or existing installs silently
+keep the old formula, which is the whole bug.**
+
+Two things had to be true, and both were traps:
+
+- **A CHANGE marks a choice, not a write.** The React settings panel POSTs the
+  whole object back on any unrelated save, so an untouched thread slider arrives
+  on nearly every write. Counting that as a choice would re-pin the derived
+  value and rebuild the bug exactly. Caught in `Settings.__setattr__`, so every
+  write path (React, Gradio, anything holding a CFG) is covered without each one
+  having to remember.
+- **The stamps must not round-trip through the UI.** `GET /api/settings`
+  serialised `CFG.__dict__` RAW, shipping Settings' private state to the panel as
+  though each key were a setting — it landed in the "changed vs default" markers
+  and came back on the next POST. A stale `_threads_auto: true` written back
+  AFTER `max_threads` would undo the record, and which lands last is dict
+  ordering, i.e. luck. `api._public_settings` filters underscore keys and
+  `save_settings` refuses them.
+
+### 3. Legacy configs: three cases, and the equal case is the subtle one
+
+Configs written before the stamp existed have no provenance, so the value is
+genuinely ambiguous. The split:
+
+    saved <  derived  -> migrate        (the 3060: 4 -> 8, announced, written back)
+    saved == derived  -> stays DERIVED  (the 4070: 10 -> 10, silent)
+    saved >  derived  -> user's, left alone and pinned
+
+**The equal case was wrong in the first commit and only surfaced because the
+user asked "do I need to update the 4070?".** Its config already holds 10, which
+is what a 12GB/24-core box derives — and the original split on `saved < derived`
+let it fall through to "somebody raised this on purpose" and PINNED it. Nothing
+would have looked wrong: the number is right, the render is unaffected. It would
+have surfaced one rule change from now as the main machine silently keeping an
+old knee, i.e. the same bug moved from the secondary device to the primary one.
+
+Guessing "derived" wrong costs nothing — re-deriving reproduces the number.
+Guessing "user" wrong is a permanent pin. So equality resolves to derived.
+
+Migration is ONE-DIRECTIONAL by design: only a value BELOW the derived one.
+Raising a thread count costs nothing measurable (the VRAM table in `0eda23b` is
+flat, 2317-2374 MB across 4..12 threads) while lowering one somebody raised on
+purpose is the silent downgrade this project keeps having to hunt down. The
+migration writes itself back on the load that fires it, so "runs once" is true
+rather than aspirational — guarded on the file already existing, because
+`/api/settings/defaults` builds a throwaway Settings pointed at a path that must
+not be brought into being.
+
+Also loud now: the `min(max_threads, logical_cores)` clamp — cause (c) of the
+three in `ade6e69`, and the only one of them that still printed nothing.
+
+### 4. NOT MEASURED: the knees themselves
+
+`8` for the <7GB tier was measured on a **4070 with pools forced to 0/0**, never
+on real 6GB silicon; `10` likewise came off the 4070. This session could not
+check either, because **there is no video file anywhere on the 3060** — no
+footage, no render, no A/B. The mechanism is the fix; the constant is inherited
+and still owes a measurement. `tests/ab_temporal_detection.py --vary max_threads`
+counterbalanced, once a clip exists on that machine.
+
+### 5. RealityUX documented a class set it did not use
+
+`_NONFACE_STRICT` listed seven BiSeNet classes INCLUDING background(0) and was
+cited by name from both the module comment and the class docstring; `Run()`
+applied a hardcoded six-class literal that OMITS it. The constant was dead, so
+the two could never disagree in output — only in a reader's head, and about the
+one class that matters: BiSeNet's frontal priors label the outer part of an
+angled or lying-down face as background, so subtracting it cuts real faces in
+half, which is why it was removed from the applied list in the first place.
+
+One constant now (`_NONFACE_OPAQUE`), applied by name, with the reason for the
+omission kept beside it. `tests/test_realityux_nonface_set.py` fails if a second
+literal list reappears, if background re-enters the set, or if the prose starts
+claiming background is subtracted again. Behaviour is unchanged — same six
+classes, same pixels.
+
+### 6. Confirmed CLOSED, contrary to older notes above
+
+**`UltraMax _cache` / `_key` spatial fallback is gone** — the Part 3 rebuild
+removed the cache entirely. The 2026-08-23 "OPEN" list still names it; that
+entry is stale.
+
+### 7. STILL OPEN, and deliberately not touched
+
+`rotation_improves_upright` (`roop/face_util.py`) short-circuits on
+`na > nb + 2.0` — ArcFace embedding MAGNITUDE, which is noisy between two
+detections of the same face — bypassing the tilt check entirely. Its second
+clause, `abs(after) < 65.0 and na >= nb - 0.5`, accepts a rotation that made
+tilt WORSE anywhere in the band `[FACE_ROLL_LOWER=54.5, 65)`. Still the
+highest-risk unmeasured change on record.
+
+NOT changed, on this project's own rule: it is a gate, and four gate changes
+have already been implemented and reverted here because the population was not
+in the band the change targeted. Needs inverted/yoga footage to measure the
+distribution first. There was none on this machine.
+
+### 8. The 3060's look settings are DELIBERATE — do not "realign" them
+
+Seven keys diverge from the tuned defaults on that device, and they pattern-match
+the "34 keys divergent" staleness found on the 4070 in the 2026-08-22->23
+session. **They are not that.** Confirmed with the user 2026-08-25: this card was
+tuned by eye for the 3060 + GPEN 256 Pro combination.
+
+    blend_ratio 0.85 (vs 1.0)          face_mask_blend 25 (vs 12)
+    detail_transfer_strength 0         merger_sharpen 0.55 (vs 0.35)
+    merger_grain_match 0.35            merger_hist_match 0.1 (vs 0.4)
+    stabilize_enhancer_strength 0.6 (vs 0.25)
+
+Worth knowing rather than fixing: at `blend_ratio 0.85` the guard at
+`procmgr_masking.py:409` (`< 0.999`) fires, so 15% of the UNENHANCED swap is
+blended back over the enhancer's output. That is the documented behaviour of the
+setting, and on this device it is wanted.
