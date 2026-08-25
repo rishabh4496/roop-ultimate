@@ -114,6 +114,37 @@ def main():
     head("4. threads")
     print("  config max_threads              %s" % cfg.max_threads)
     print("  auto_thread_selection           %s" % cfg.auto_thread_selection)
+    # The three ways a machine ends up running ONE worker, separated here so the
+    # next report does not need a second round trip to say which one it was:
+    #   (a) max_threads saved as 1 on THIS card;
+    #   (b) the provider fell back to dml/rocm, which forces 1 (section 3 + below);
+    #   (c) Settings.load's silent clamp `max_threads = min(max_threads,
+    #       logical_cores)` -- the only one that prints nothing anywhere.
+    # (c) is invisible without the core count, which is why it is printed even
+    # when it is not the problem.
+    try:
+        import psutil
+        _phys = psutil.cpu_count(logical=False)
+        _log = psutil.cpu_count(logical=True)
+        print("  CPU cores (physical/logical)    %s / %s" % (_phys, _log))
+        if _log and cfg.max_threads >= _log:
+            VERDICTS.append(
+                "max_threads (%s) is AT OR ABOVE this machine's logical core "
+                "count (%s), and Settings.load silently clamps it to the core "
+                "count. If you set a higher number and it did not take, that "
+                "clamp is why -- it prints nothing." % (cfg.max_threads, _log))
+    except Exception as e:
+        print("  CPU cores                       unavailable (%s)" % e)
+    if int(cfg.max_threads or 0) <= 1:
+        VERDICTS.append(
+            "MAX THREADS IS 1. Nothing in this app derives 1 -- "
+            "suggest_execution_threads floors at 2, resolve_threads at 4/6/8 -- "
+            "so it is either saved as 1 in this machine's config.yaml, a "
+            "dml/rocm provider (see section 3), or the logical-core clamp "
+            "above. Measured on an RTX 4070: one thread costs 2.1x on a "
+            "TWO-FACE render and 1.66x on a one-face render, which is why only "
+            "the two-face case gets reported as broken. Set it to 7-10 (or turn "
+            "Auto Thread Selection back on) and restart.")
     if cfg.auto_thread_selection:
         for mode in ("standard", "enhanced", "heavy"):
             print("    auto would pick (%-8s)    %s" % (mode, cfg.resolve_threads(mode)))
