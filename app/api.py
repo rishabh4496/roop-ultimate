@@ -453,9 +453,22 @@ class ApiProgress:
 
 # ── Settings ─────────────────────────────────────────────────────────────────
 @app.get("/api/settings")
+def _public_settings(cfg):
+    """`cfg.__dict__` minus Settings' internal bookkeeping.
+
+    Settings keeps private state on the instance (`_hardware_changed`,
+    `_loading`, and the `_threads_*` provenance stamps). Serialising `__dict__`
+    raw shipped all of it to the UI, where it counts as a setting: it lands in
+    the panel's "changed vs default" comparison and comes back on the next
+    POST. Filtering here is what lets `save_settings` reject the same keys
+    without the UI ever having to know they existed.
+    """
+    return {k: v for k, v in cfg.__dict__.items() if not k.startswith('_')}
+
+
 def get_settings():
     if roop_globals.CFG:
-        return roop_globals.CFG.__dict__
+        return _public_settings(roop_globals.CFG)
     return {}
 
 
@@ -474,7 +487,8 @@ def get_settings_defaults():
     """
     from settings import Settings
     try:
-        return Settings(os.path.join(os.path.dirname(__file__), '__nonexistent_defaults__.yaml')).__dict__
+        return _public_settings(
+            Settings(os.path.join(os.path.dirname(__file__), '__nonexistent_defaults__.yaml')))
     except Exception:
         return {}
 
@@ -484,8 +498,14 @@ def save_settings(settings: dict = Body(...)):
     _update_mask_offsets_from_payload(settings)
     if roop_globals.CFG:
         for k, v in settings.items():
-            if hasattr(roop_globals.CFG, k):
-                setattr(roop_globals.CFG, k, v)
+            # Underscore keys are Settings' own bookkeeping, never user
+            # settings. `_threads_auto` in particular records whether the
+            # THREAD COUNT IN THIS VERY PAYLOAD was chosen by a person; letting
+            # a stale copy of it be written back after max_threads is applied
+            # would undo that, and the ordering is dict order, i.e. luck.
+            if k.startswith('_') or not hasattr(roop_globals.CFG, k):
+                continue
+            setattr(roop_globals.CFG, k, v)
         roop_globals.CFG.save()
     return {"status": "success"}
 

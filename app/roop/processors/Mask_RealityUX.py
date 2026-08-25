@@ -9,10 +9,10 @@ from roop.processors.Mask_FaceParser import Mask_FaceParser
 from roop import session_pool
 
 # Classes BiSeNet is allowed to subtract from XSeg's swap region: only
-# unambiguous, OPAQUE non-face regions -- background(0), ears(7,8,9),
-# cloth(16), hair(17), hat(18). Deliberately narrower than "everything not in
-# _FACE_CLASSES" (the first version of this fusion): that complement also
-# included glasses(6) and neck(14,15), both measured to cause real harm --
+# unambiguous, OPAQUE non-face regions -- ears(7,8,9), cloth(16), hair(17),
+# hat(18). Deliberately narrower than "everything not in _FACE_CLASSES" (the
+# first version of this fusion): that complement also included glasses(6) and
+# neck(14,15), both measured to cause real harm --
 #   - glasses(6): BiSeNet labels the ENTIRE lens area as glasses, including
 #     the eye visible through a translucent lens, not just the frame/rim.
 #     Excluding it means the eye under the glasses never gets swapped at all,
@@ -27,7 +27,17 @@ from roop import session_pool
 #     poses (chin tucked, head tilted back) and BiSeNet mislabels real jaw/
 #     cheek skin as neck there -- confirmed via the raw label map on s4.mp4's
 #     backward-tilt pose (t~119.5s).
-_NONFACE_STRICT = np.array([0, 7, 8, 9, 16, 17, 18], dtype=np.int64)
+#   - background(0): it WAS in this set, and is deliberately not any more.
+#     BiSeNet's frontal priors label the outer part of an angled or lying-down
+#     face as background, so subtracting it cut real faces in half. See the
+#     note at the `np.isin` call, which is the one place this set is applied.
+#
+# This is the live set. It used to be duplicated -- a `_NONFACE_STRICT` naming
+# the seven classes INCLUDING background, referenced by both docstrings, beside
+# a hardcoded six-class list in Run() that was what actually executed. The
+# constant was dead, so the documented behaviour and the real behaviour
+# disagreed on the exact class the comment above is about.
+_NONFACE_OPAQUE = [7, 8, 9, 16, 17, 18]
 
 
 def _to_2d(mask):
@@ -44,11 +54,11 @@ def _to_2d(mask):
 class Mask_RealityUX():
     """DFL XSeg (mask_xseg) as the authoritative swap region, with BiSeNet
     Face Parser (mask_faceparser) allowed only to SUBTRACT pixels it is
-    confident are definitely not part of the face -- background, ears, cloth,
-    hair, hat (see `_NONFACE_STRICT`; glasses and neck are deliberately NOT
-    in this set, see below). It never expands what XSeg already swaps, and it
-    never second-guesses XSeg inside the core skin/eyes/nose/mouth
-    area.
+    confident are definitely not part of the face -- ears, cloth, hair, hat
+    (see `_NONFACE_OPAQUE`; background, glasses and neck are deliberately NOT
+    in this set, see the notes there). It never expands what XSeg already
+    swaps, and it never second-guesses XSeg inside the core skin/eyes/nose/
+    mouth area.
 
     First version of this fusion combined the two engines as a straight
     intersection of their swap regions (`np.maximum` of both "keep original"
@@ -129,7 +139,7 @@ class Mask_RealityUX():
         # Background class (0) is NEVER subtracted from the XSeg face region because
         # BiSeNet's frontal priors falsely mark angled/lying-down faces as background,
         # which causes partial/half-unswapped faces.
-        is_accessory = np.isin(labels, [7, 8, 9, 16, 17, 18]).astype(np.float32)
+        is_accessory = np.isin(labels, _NONFACE_OPAQUE).astype(np.float32)
 
         # Smooth accessory mask
         is_accessory = cv2.GaussianBlur(is_accessory, (0, 0), sigmaX=3)

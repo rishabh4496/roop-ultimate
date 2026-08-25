@@ -278,5 +278,135 @@ class AutoTiersCoverBothCards(unittest.TestCase):
             psutil.cpu_count = real_cores
 
 
+class DerivedValuesDoNotOutliveTheirRule(unittest.TestCase):
+    """A derived default must not be mistaken for a user's choice.
+
+    `save()` writes `max_threads` on every settings save, so the first save
+    freezes whatever formula was in force -- and `_hw_get` only re-derives when
+    the GPU changes, not when the RULE does. The RTX 3060 6GB that the current
+    formula was rewritten FOR (commit 0eda23b) was found on 2026-08-25 still
+    running max_threads 4, a full tier below its measured knee of 8, with the
+    new rule sitting in the source unable to reach it.
+
+    So the number now carries provenance. These tests pin both directions: a
+    stale DERIVED value gets corrected, and a value a person chose never does.
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.cfg = os.path.join(self._tmp.name, 'config.yaml')
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _write(self, **keys):
+        with open(self.cfg, 'w') as fh:
+            yaml.safe_dump(keys, fh)
+
+    def _load(self):
+        return settings_mod.Settings(self.cfg)
+
+    def _derived(self):
+        """What this machine derives with nothing saved."""
+        empty = os.path.join(self._tmp.name, 'empty.yaml')
+        return settings_mod.Settings(empty).max_threads
+
+    def test_a_fresh_derive_is_marked_as_derived(self):
+        self._write()
+        s = self._load()
+        self.assertTrue(s._threads_auto)
+        self.assertEqual(s.max_threads, self._derived())
+
+    def test_a_stale_legacy_value_below_the_knee_is_corrected(self):
+        """The 3060 case, exactly: an unstamped config carrying an old rule's
+        output, which nothing could tell apart from a choice."""
+        derived = self._derived()
+        self._write(max_threads=max(1, derived - 4))
+        self.assertEqual(self._load().max_threads, derived)
+
+    def test_a_legacy_value_ABOVE_the_derived_one_is_left_alone(self):
+        """One-directional on purpose. Raising a thread count costs nothing
+        measurable (workers hold frame buffers, not model weights), but lowering
+        one somebody raised deliberately is the silent downgrade this project
+        keeps having to hunt down."""
+        self._write(max_threads=self._derived() + 6)
+        s = self._load()
+        self.assertEqual(s.max_threads, self._derived() + 6)
+        self.assertFalse(s._threads_auto)
+
+    def test_a_users_choice_survives_a_reload(self):
+        derived = self._derived()
+        s = self._load()
+        s.max_threads = 2                    # deliberately below the knee
+        s.save()
+        again = self._load()
+        self.assertEqual(again.max_threads, 2,
+                         'a number the user set must never be re-derived')
+        self.assertFalse(again._threads_auto)
+        self.assertNotEqual(derived, 2, 'test is vacuous if these coincide')
+
+    def test_echoing_an_untouched_value_back_is_not_a_choice(self):
+        """The settings panel POSTs the WHOLE object on any unrelated save, so
+        the thread slider arrives here having not been touched. Counting that as
+        a choice would re-pin the derived value and recreate the bug."""
+        self._write()
+        s = self._load()
+        self.assertTrue(s._threads_auto)
+        s.max_threads = s.max_threads        # the echo
+        s.video_quality = 18                 # what actually changed
+        self.assertTrue(s._threads_auto)
+
+    def test_a_derived_value_is_re_derived_when_the_rule_version_moves(self):
+        derived = self._derived()
+        self._write(max_threads=max(1, derived - 3),
+                    _threads_auto=True, _threads_basis='v1|8|8')
+        self.assertEqual(self._load().max_threads, derived)
+
+    def test_a_derived_value_is_re_derived_when_the_core_count_moves(self):
+        """Same rule, different CPU. `hardware_signature` deliberately excludes
+        the CPU (it does not change a pool size) -- but since 0eda23b the thread
+        default IS derived from the core count, so the basis has to carry it."""
+        derived = self._derived()
+        self._write(max_threads=max(1, derived - 3), _threads_auto=True,
+                    _threads_basis=f'v{settings_mod._THREAD_RULE}|2|8')
+        self.assertEqual(self._load().max_threads, derived)
+
+    def test_provenance_round_trips_through_save(self):
+        self._write()
+        self._load().save()
+        with open(self.cfg) as fh:
+            saved = yaml.safe_load(fh)
+        self.assertIn('_threads_auto', saved)
+        self.assertIn('_threads_basis', saved)
+
+
+class SettingsInternalsAreNotSettings(unittest.TestCase):
+    """`GET /api/settings` serialises `CFG.__dict__`, which had been shipping
+    Settings' private bookkeeping to the UI as though each key were a setting.
+
+    That matters beyond tidiness for `_threads_auto`: it records whether the
+    thread count in the very same payload was chosen by a person, so a stale
+    copy of it POSTed back after `max_threads` would undo the record -- and
+    which of the two lands last is dict ordering, i.e. luck.
+    """
+
+    def test_private_attributes_are_filtered_out(self):
+        import api
+        cfg = settings_mod.Settings(
+            os.path.join(tempfile.gettempdir(), '__no_such_config__.yaml'))
+        public = api._public_settings(cfg)
+        self.assertIn('max_threads', public)
+        for private in ('_threads_auto', '_threads_basis', '_hardware_changed', '_loading'):
+            self.assertNotIn(private, public)
+
+    def test_save_settings_skips_private_keys(self):
+        """Source-level: the endpoint needs a live app to call."""
+        import inspect
+        import api
+        src = inspect.getsource(api.save_settings)
+        self.assertIn("startswith('_')", src,
+                      'save_settings must refuse Settings-internal keys')
+
+
 if __name__ == '__main__':
     unittest.main()

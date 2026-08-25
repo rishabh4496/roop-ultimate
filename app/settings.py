@@ -43,6 +43,25 @@ def _enable_tensorrt_runtime():
 _enable_tensorrt_runtime()
 
 
+# Bumped whenever the `default_threads` formula below changes.
+#
+# WHY A VERSION EXISTS AT ALL. `save()` writes `max_threads` on every settings
+# save, so the moment the app persists a value it derived, that value becomes
+# indistinguishable from one the user typed -- and `_hw_get` only re-derives
+# when the GPU changes, not when the RULE does. So an install keeps whatever
+# formula was in force the first time it saved, forever.
+#
+# That is not hypothetical: it is why the RTX 3060 6GB this rule was rewritten
+# FOR (see the `default_threads` comment, commit 0eda23b) was still running
+# max_threads 4 on 2026-08-25, a full tier below the measured knee of 8, with
+# the new rule in the source and unable to reach it. The card the fix was
+# written for was the card the fix could not get to.
+#
+# Rule 1: min(cores - 1, vram_gb / 1.5)   -- the "workers cost VRAM" premise
+# Rule 2: min(max(2, cores - 1), knee)    -- current; workers cost frame buffers
+_THREAD_RULE = 2
+
+
 def detect_hardware():
     """What every performance default on this machine is derived from.
 
@@ -74,6 +93,13 @@ def hardware_signature(hw=None):
     and in session_pool. Deliberately NOT the driver version or CPU: those
     change without changing a single pool size, and a signature that churns
     would reset the user's settings for no reason.
+
+    The CPU exclusion is narrower than it reads. It is true of the POOL sizes,
+    which is what this signature guards, but the thread default has been bound
+    to the core count since 0eda23b — `min(max(2, cores - 1), knee)`. Rather
+    than widen the signature (which would needlessly reset every pool whenever
+    a core count moved), the thread count carries its own basis stamp that
+    includes the cores; see `_THREAD_RULE`.
     """
     hw = hw or detect_hardware()
     if not hw.get('gpu') and not hw.get('ram_gb'):
@@ -85,6 +111,31 @@ class Settings:
     def __init__(self, config_file):
         self.config_file = config_file
         self.load()
+
+    def __setattr__(self, name, value):
+        """Record that `max_threads` was set by a person rather than derived.
+
+        Every write path — the React settings panel (`POST /api/settings`), the
+        Gradio settings tab, anything holding a CFG — assigns the attribute, so
+        catching it here catches all of them without each one having to
+        remember. `object.__setattr__` is used, so the value still lands in
+        `__dict__` and `GET /api/settings` (which serialises `__dict__`) is
+        unaffected.
+
+        Only a CHANGE counts. The settings panel POSTs the whole object back on
+        any unrelated save, so an untouched thread slider arrives here on nearly
+        every write; treating that as a choice would re-pin the derived value
+        and recreate the bug `_THREAD_RULE` exists to fix.
+        """
+        if name == 'max_threads' and not self.__dict__.get('_loading', False):
+            try:
+                new = int(value)
+            except (TypeError, ValueError):
+                new = None
+            if new is not None and new != self.__dict__.get('max_threads'):
+                object.__setattr__(self, '_threads_auto', False)
+                object.__setattr__(self, '_threads_basis', 'user')
+        object.__setattr__(self, name, value)
 
     def default_get(_, data, name, default):
         value = default
@@ -114,6 +165,29 @@ class Settings:
 
 
     def load(self):
+        # load() assigns max_threads itself; __setattr__ must not read those
+        # assignments as a user choice.
+        object.__setattr__(self, '_loading', True)
+        try:
+            self._load()
+        finally:
+            object.__setattr__(self, '_loading', False)
+
+        # Stamp a one-off thread migration back to disk straight away, so the
+        # notice it printed is true: without this the decision is recomputed
+        # from the same unstamped file on every launch and the message repeats
+        # forever. Guarded on the file already existing because
+        # `/api/settings/defaults` builds a throwaway Settings pointed at a path
+        # that deliberately does not exist, and must not bring one into being.
+        if getattr(self, '_threads_migrated', False):
+            object.__setattr__(self, '_threads_migrated', False)
+            try:
+                if os.path.isfile(self.config_file):
+                    self.save()
+            except Exception:
+                pass        # a read-only config is not worth failing startup for
+
+    def _load(self):
         try:
             with open(self.config_file, 'r') as f:
                 data = yaml.load(f, Loader=yaml.FullLoader)
@@ -162,6 +236,7 @@ class Settings:
         self.clear_output = self.default_get(data, 'clear_output', True)
         # Dynamically scale threads to saturate GPU without OOM
         default_threads = 3
+        threads_basis = f"v{_THREAD_RULE}|unknown"
         try:
             self.provider = self.default_get(data, 'provider', 'cuda')
             if self.provider in ['cuda', 'tensorrt']:
@@ -193,24 +268,68 @@ class Settings:
                     # above it the 12GB card measured 10, with 14 buying nothing.
                     knee = 8 if vram_gb < 7 else 10
                     default_threads = int(min(max(2, cores - 1), knee))
+                    threads_basis = f"v{_THREAD_RULE}|{cores}|{knee}"
         except Exception:
             pass
 
         # _hw_get: a saved thread count is a deliberate choice ON THAT CARD.
         # -1 on a new card means "auto-scale below", which is what we want.
         saved_threads = self._hw_get(data, 'max_threads', -1)
-        # Auto-scale only when nothing is saved. A saved value — including 2 —
-        # is a deliberate user choice and must stick across restarts.
+        saved_auto = self.default_get(data, '_threads_auto', None)
+        saved_basis = self.default_get(data, '_threads_basis', '')
+        self._threads_auto = True
+        self._threads_basis = threads_basis
+
         if saved_threads == -1:
+            # Nothing saved (or a new card): derive.
             self.max_threads = default_threads
+        elif saved_auto is False:
+            # The user set this number. It sticks — including a number lower
+            # than the derived one, which is the whole point of recording who
+            # chose it. See __setattr__ for how that is detected.
+            self.max_threads = saved_threads
+            self._threads_auto = False
+            self._threads_basis = saved_basis or 'user'
+        elif saved_auto is True and saved_basis == threads_basis:
+            # App-derived under the rule and hardware still in force.
+            self.max_threads = saved_threads
+        elif saved_auto is True:
+            self.max_threads = default_threads
+            if saved_threads != default_threads:
+                self._threads_migrated = True
+                print(f"[Threads] max_threads {saved_threads} -> {default_threads}: "
+                      f"that value was derived by this app under an older rule or "
+                      f"core count ('{saved_basis or 'unknown'}' -> '{threads_basis}'), "
+                      f"not chosen by you. Set it in Settings to pin it.")
+        elif saved_threads < default_threads:
+            # LEGACY config, written before provenance was recorded, carrying a
+            # value BELOW what this machine now derives. Every such value was
+            # written by save() echoing a derived default, and leaving it is the
+            # bug this stamp exists to fix. Deliberately one-directional: a
+            # saved value ABOVE the derived one is left alone, because raising
+            # a number costs nothing measurable (thread count does not cost
+            # VRAM — see above) while lowering one someone raised on purpose
+            # would be exactly the silent downgrade this project keeps finding.
+            self.max_threads = default_threads
+            self._threads_migrated = True
+            print(f"[Threads] max_threads {saved_threads} -> {default_threads}: "
+                  f"the saved value predates this machine's measured thread knee "
+                  f"and had no record of being chosen by you. Set it in Settings "
+                  f"to pin any value you prefer; this migration runs once.")
         else:
             self.max_threads = saved_threads
+            self._threads_auto = False
+            self._threads_basis = 'user'
 
         # Prevent extreme CPU oversubscription by capping max_threads to logical CPU cores
         try:
             import psutil
             logical_cores = psutil.cpu_count(logical=True) or 4
             if self.max_threads > logical_cores:
+                print(f"[Threads] max_threads {self.max_threads} -> {logical_cores}: "
+                      f"capped to this machine's logical core count. This is one of "
+                      f"the three ways a raised Max Threads can fail to take effect "
+                      f"(see tests/diag_device.py).")
                 self.max_threads = logical_cores
         except Exception:
             pass
@@ -462,6 +581,12 @@ class Settings:
             'video_quality' : self.video_quality,
             'clear_output' : self.clear_output,
             'max_threads' : self.max_threads,
+            # Provenance for the line above: did the app derive this number, and
+            # under which rule + hardware? Without it a derived default is
+            # indistinguishable from a user's choice on the next load, and an
+            # improved rule can never reach an existing install. See _THREAD_RULE.
+            '_threads_auto': getattr(self, '_threads_auto', True),
+            '_threads_basis': getattr(self, '_threads_basis', ''),
             'memory_limit' : self.memory_limit,
             'provider' : self.provider,
             'trt_precision' : self.trt_precision,
