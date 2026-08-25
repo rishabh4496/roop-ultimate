@@ -149,6 +149,50 @@ class SchedulerPrefersParallel(unittest.TestCase):
         self.assertIn('use_parallel_stab = False', m.group(1))
         self.assertIn('threads = 1', m.group(1))
 
+    def test_the_one_wide_downgrade_re_asks_the_2pass_question(self):
+        """`use_2pass` is computed as `(not use_parallel_stab) and ...` BEFORE
+        the frame size is known, so while parallel is still on it always comes
+        out False. The 1-wide downgrade then turns parallel off -- and if it
+        does not recompute `use_2pass`, a kps-only run drops to ONE worker
+        thread for the whole swap even though the 2-pass path exists precisely
+        to keep them (smooth sequentially in pass 1, swap multi-threaded in
+        pass 2).
+
+        Seen on a 16GB/RTX 3060 box: the render process holds ~9GB, the
+        RAM-derived chunk budget falls to 138MB, one 40-frame 720p block fits,
+        and the whole pipeline ran at execution_threads=1.
+        """
+        m = re.search(r'if _width < 2:(.*?)\n\s{8}\S', PM_CODE, re.S)
+        self.assertIsNotNone(m)
+        block = m.group(1)
+        self.assertRegex(
+            block, r'use_2pass\s*=',
+            'the 1-wide downgrade must recompute use_2pass -- it was decided '
+            'from a use_parallel_stab that this block has just changed')
+        # ...and the single-thread collapse must be conditional on that answer,
+        # not unconditional as it was.
+        self.assertRegex(
+            block, r'if not use_2pass:',
+            'threads = 1 must only happen when 2-pass cannot rescue the run')
+        self.assertLess(
+            block.index('use_2pass ='), block.index('threads = 1'),
+            'use_2pass must be recomputed before the thread count is dropped')
+
+    def test_the_downgrade_says_what_it_costs(self):
+        """The user-visible symptom is `execution_threads=1` in the progress
+        bar and a render at a fraction of its fps. `_warn_single_worker_on_gpu`
+        cannot explain it -- that runs in batch_process, before this drop -- so
+        this block is the only place that can, and it has to name the thread
+        count rather than only its own chunk geometry."""
+        m = re.search(r'if _width < 2:(.*?)\n\s{8}\S', PM_CODE, re.S)
+        self.assertIsNotNone(m)
+        block = m.group(1)
+        self.assertIn('ONE worker thread', block,
+                      'the downgrade must state the thread cost in words')
+        for setting in ('stabilize_enhancer', 'stabilize_mask'):
+            self.assertIn(setting, block,
+                          'the message must name the settings that force it')
+
     def test_geometry_is_shared_not_duplicated(self):
         """The scheduler's downgrade check and the run's actual chunk sizing must
         agree; two copies of the arithmetic would drift and the run would then

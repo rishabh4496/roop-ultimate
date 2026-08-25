@@ -1294,20 +1294,46 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                 # buffering and block bookkeeping on top of that measured SLOWER
                 # than the plain sequential path (2.65 vs 2.92 fps at strength
                 # 1.0, 1080p). Take the path that is actually faster.
+                #
+                # RE-ASK THE 2-PASS QUESTION. It was answered above as
+                # `(not use_parallel_stab) and ...` while parallel was still on,
+                # so it came out False for a reason that has just stopped being
+                # true. Leaving it stale is what turned a memory-tight machine
+                # into a ONE-WORKER render: the kps-only path has a way to keep
+                # every thread (smooth sequentially in pass 1, swap
+                # multi-threaded in pass 2) and it was being skipped silently.
+                use_parallel_stab = False
+                use_2pass = (_want_kps_stab and not _want_enh_stab
+                             and not _want_mask_stab and threads > 1
+                             and _two_pass_ok)
                 print(f"[Stabilize] warm-up {_wu}f needs {_blk}f blocks and only "
-                      f"one fits the memory budget — running sequentially "
+                      f"one fits the memory budget — not chunking "
                       f"(1-wide chunking is slower than the sequential path). "
                       f"Raise ROOP_STAB_CHUNK_MB to widen it.")
-                use_parallel_stab = False
-                threads = 1
-                self._stab_active = True
-                self._stab_t = 0
-                if self.kps_stabilizer is not None:
-                    self.kps_stabilizer.reset()
-                if self.enh_stabilizer is not None:
-                    self.enh_stabilizer.reset()
-                if self.mask_stabilizer is not None:
-                    self.mask_stabilizer.reset()
+                if not use_2pass:
+                    # Say what it COSTS, at the moment it is decided. This used
+                    # to report only the stabilizer's chunk geometry, while the
+                    # thing the user actually sees -- `execution_threads=1` in
+                    # the progress bar, and a render at a fraction of its fps --
+                    # went unexplained thousands of log lines later.
+                    # `_warn_single_worker_on_gpu` cannot cover this: it runs in
+                    # batch_process, BEFORE this drop happens.
+                    print(f"[Stabilize] this run gets ONE worker thread instead "
+                          f"of {threads}: temporal smoothing has to see frames "
+                          f"in order, and only the kps-only case can be split "
+                          f"into two passes (enhancer={_want_enh_stab}, "
+                          f"mask={_want_mask_stab}). Free RAM, or turn "
+                          f"stabilize_enhancer/stabilize_mask off to keep the "
+                          f"threads.")
+                    threads = 1
+                    self._stab_active = True
+                    self._stab_t = 0
+                    if self.kps_stabilizer is not None:
+                        self.kps_stabilizer.reset()
+                    if self.enh_stabilizer is not None:
+                        self.enh_stabilizer.reset()
+                    if self.mask_stabilizer is not None:
+                        self.mask_stabilizer.reset()
 
         self.output_to_file = output_method != "Virtual Camera"
         self.output_to_cam = output_method == "Virtual Camera" or output_method == "Both"

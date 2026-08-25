@@ -1737,3 +1737,74 @@ Also seen on the way, benign but confusing: **Vite binds `::1` only**, so
 Probe the dev server over `[::1]` or `localhost`, never `127.0.0.1`.
 
 Suite **1296 green**. No rendered pixel changes.
+
+---
+
+## Session Log (2026-08-25 Part 3): `execution_threads=1` On The 3060 — A RAM Budget Collapsing The Whole Pipeline
+
+Reported as "max thread = 1, 1-2 fps, 20% GPU" on the 3060 mid-render. Not a GPU
+problem and not the thread-provenance fix from Part 1: `config.yaml` held
+`max_threads: 8` with `auto_thread_selection: false`, and the startup banner
+printed 8. The 1 was introduced ~1100 lines into `run_batch_inmem`.
+
+### 1. The chain, measured on the live box
+
+    psutil available RAM          1.68 GB   (python holds 9.28 GB private of 15.8 GB)
+    -> _default_stab_chunk_mb     138 MB    (avail * 0.40 / _STAB_LIVE_CHUNKS=6)
+    -> block = max(4*warmup, 24)  40 frames @ 720p = 2.64 MB/frame = 106 MB
+    -> fits = 138/2.64 // 40      1
+    -> _width < 2                 sequential fallback, threads = 1
+
+Both log lines were already in the run's own log and say exactly this. With the
+normal 1536 MB budget the same clip fits 14 blocks and runs 8-wide, so the entire
+loss is host RAM — the GPU was never the limit.
+
+### 2. THE BUG: a decision computed from a value that later changed
+
+`use_2pass` is computed at the top as `(not use_parallel_stab) and _want_kps_stab
+and not _want_enh_stab and not _want_mask_stab and threads > 1`. At that point
+`use_parallel_stab` is still True, so **`use_2pass` is always False there**. The
+1-wide downgrade — which cannot run earlier, because it needs the frame
+dimensions — then sets `use_parallel_stab = False` and never re-asked.
+
+So the kps-only case, which HAS a way to keep every thread (smooth sequentially
+in pass 1, swap multi-threaded in pass 2), silently took one worker instead.
+Fixed: the downgrade recomputes `use_2pass`, and `threads = 1` is now conditional
+on that answer rather than unconditional.
+
+This did not rescue the reported render — that config has all three of
+`stabilize_face` / `stabilize_mask` / `stabilize_enhancer` on, and enhancer and
+mask smoothing genuinely must see frames in order — but it is what makes the
+recovery below work.
+
+### 3. The downgrade never said what it cost
+
+It reported its own chunk geometry ("Raise ROOP_STAB_CHUNK_MB to widen it") and
+nothing about the thread count, while the symptom the user sees is
+`execution_threads=1` in the progress bar. `_warn_single_worker_on_gpu` — written
+for precisely this "reads as 1-2 fps and looks like a defect in whatever you
+rendered" symptom — **cannot cover it**: that guard runs in `batch_process`,
+BEFORE `run_batch_inmem` drops the count. The message now names the thread cost
+and the two settings that force it.
+
+### 4. Recovery on a 16 GB machine, in order of value
+
+- **Turn `stabilize_enhancer` and `stabilize_mask` off, keep `stabilize_face`.**
+  With the fix above this takes the 2-pass path and all 8 threads come back, and
+  2-pass does not buffer chunks so it does not reintroduce the memory pressure.
+- **Free host RAM.** Width 2 needs ~3.2 GB available, width 8 needs ~12.7 GB —
+  unreachable on 16 GB while the render itself holds 7-9 GB, so this buys 2-3
+  workers at best.
+- **`ROOP_STAB_CHUNK_MB`** reaches width 8 but reserves 6 x the value in frame
+  buffers. On this exact box that is the OOM `_STAB_LIVE_CHUNKS` was written
+  after (a 40934-frame render died at 12% with ffmpeg ENOMEM). Not recommended.
+
+### 5. The 4070 is unaffected
+
+The changed code only runs when `_width < 2`, which needs the RAM budget to fit
+fewer than two blocks. With headroom the budget is the full 1536 MB and nothing
+about the geometry changes. Where it does fire, kps-only now keeps its threads
+instead of losing them — strictly better, never worse. A `git pull` is all the
+main device needs.
+
+Suite **1298 green**.
