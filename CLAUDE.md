@@ -1677,3 +1677,63 @@ Worth knowing rather than fixing: at `blend_ratio 0.85` the guard at
 `procmgr_masking.py:409` (`< 0.999`) fires, so 15% of the UNENHANCED swap is
 blended back over the enhancer's output. That is the documented behaviour of the
 setting, and on this device it is wanted.
+
+---
+
+## Session Log (2026-08-25 Part 2): The React UI Said The Backend Was Down. It Was Up.
+
+Follow-up to the session above, on the same 3060. One-line regression introduced
+by `08774a1` — the commit directly above it.
+
+### 1. A decorator landed on a helper, and the UI reported a dead server
+
+`GET /api/settings` answered **422 Unprocessable Entity**. `@app.get("/api/settings")`
+was sitting on `_public_settings(cfg)` — the helper `08774a1` extracted — because the
+new function was inserted directly BENEATH the existing decorator and took it over.
+The real handler, `get_settings()`, was left undecorated a few lines down. FastAPI read
+the untyped `cfg` parameter as a **required query string**, so every bare GET was
+rejected before reaching any code.
+
+The React boot fetches `/api/meta` and `/api/settings` in one `Promise.all`, so a 422
+on either lands in the same `catch` as a refused socket. The banner therefore read
+**"Cannot reach backend on 127.0.0.1:8001"** while the server was up, healthy, and
+answering `/api/meta` and `/api/progress` with 200.
+
+Both halves of that banner were also wrong on their own terms: the launcher assigns
+`ROOP_API_PORT` (42003 on the run being debugged), the fetches are same-origin through
+Vite's proxy, and 8001 is only the fallback in `vite.config.js`. It now prints the
+actual rejection reason.
+
+### 2. Why nothing caught it
+
+Every existing test calls `_public_settings` and `get_settings` as plain Python
+functions — which is exactly what they still were. The defect lived **entirely in the
+routing table**, a surface the suite never read. 1291 tests stayed green.
+
+`tests/test_api_routes.py` reads that table instead:
+
+- **no GET route may require a query parameter** — the general form of the bug, since
+  an undecorated helper's ordinary positional args silently become required query
+  params. One deliberate exception, `('/api/file', 'path')`, allowlisted by
+  (path, param) so a second required param on it still fails. The guard found that
+  exception itself on its first run.
+- `GET /api/settings` resolves to `get_settings`, `POST` to `save_settings`, and
+  `_public_settings` is bound to no route at all.
+
+Note for the next FastAPI touch: `ModelField.required` does not exist in the
+pydantic-v2 compat layer (fastapi 0.141). The answer that survives both is
+`field.field_info.is_required()`.
+
+### 3. Diagnostic order that found it, worth repeating
+
+The banner names the server, so the server is the wrong place to start. What settled
+it in three commands: nothing on 8001, but PID 9564 listening on **42003** (the port
+the launcher actually assigned) and answering `/api/meta` with 200 — so "unreachable"
+was already false. Hitting each of the three boot endpoints one at a time is what
+isolated the 422.
+
+Also seen on the way, benign but confusing: **Vite binds `::1` only**, so
+`http://127.0.0.1:<vite port>` is refused while `http://localhost:<vite port>` works.
+Probe the dev server over `[::1]` or `localhost`, never `127.0.0.1`.
+
+Suite **1296 green**. No rendered pixel changes.

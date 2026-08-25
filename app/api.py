@@ -452,7 +452,11 @@ class ApiProgress:
 
 
 # ── Settings ─────────────────────────────────────────────────────────────────
-@app.get("/api/settings")
+# NOT a route. When this helper was extracted it was inserted directly beneath
+# the `@app.get("/api/settings")` decorator and took it over, leaving the real
+# handler below undecorated. FastAPI then read the untyped `cfg` parameter as a
+# REQUIRED QUERY STRING, so every GET returned 422 — which the React boot
+# reports as "cannot reach backend", i.e. a live server looked dead.
 def _public_settings(cfg):
     """`cfg.__dict__` minus Settings' internal bookkeeping.
 
@@ -466,6 +470,7 @@ def _public_settings(cfg):
     return {k: v for k, v in cfg.__dict__.items() if not k.startswith('_')}
 
 
+@app.get("/api/settings")
 def get_settings():
     if roop_globals.CFG:
         return _public_settings(roop_globals.CFG)

@@ -644,8 +644,18 @@ export default function App() {
         setProgress(pr);
         if (pr.processing) startPolling();
       } catch { /* progress is non-critical for boot */ }
-    } catch {
-      setError('Cannot reach backend on 127.0.0.1:8001. Make sure the server (run.py) is running.');
+    } catch (e) {
+      // Say what actually failed. This used to read "Cannot reach backend on
+      // 127.0.0.1:8001" unconditionally, and both halves of that were wrong:
+      // the port is whatever ROOP_API_PORT the launcher assigned (these calls
+      // are same-origin and proxied by Vite, so the number was never even
+      // ours to state), and the catch fires for ANY rejection — including a
+      // 4xx from a server that is up and answering. A registration bug that
+      // made GET /api/settings return 422 was read as a dead server because
+      // of this line, so the message now carries the reason it was given.
+      const why = (e && e.message) ? ` (${e.message})` : '';
+      setError(`Backend request failed${why}. `
+        + 'Make sure the server (run.py) is running, and check its console for errors.');
       // 1s, 2s, 4s … capped at 8s, forever — a launcher window left open should
       // heal itself the moment the server comes up.
       const wait = Math.min(8000, 1000 * 2 ** bootAttemptRef.current++);
