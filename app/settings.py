@@ -316,7 +316,16 @@ class Settings:
                   f"the saved value predates this machine's measured thread knee "
                   f"and had no record of being chosen by you. Set it in Settings "
                   f"to pin any value you prefer; this migration runs once.")
+        elif saved_threads == default_threads:
+            # LEGACY and already exactly what this machine derives. Nothing to
+            # correct — but the branch below would file it as a user's choice
+            # and pin it, which is how the NEXT rule change would fail to reach
+            # this machine. That is the bug this whole stamp exists to fix, so
+            # a value indistinguishable from the derived one stays derived.
+            # Costs nothing if it really was typed: re-deriving reproduces it.
+            self.max_threads = saved_threads
         else:
+            # LEGACY and ABOVE the derived value: somebody raised it on purpose.
             self.max_threads = saved_threads
             self._threads_auto = False
             self._threads_basis = 'user'

@@ -334,6 +334,23 @@ class DerivedValuesDoNotOutliveTheirRule(unittest.TestCase):
         self.assertEqual(s.max_threads, self._derived() + 6)
         self.assertFalse(s._threads_auto)
 
+    def test_a_legacy_value_EQUAL_to_the_derived_one_stays_derived(self):
+        """The 4070's case, and the subtlest of the three.
+
+        Its config already carries the knee, so nothing needs correcting — but
+        filing it as "the user chose this" would pin it, and the NEXT rule
+        change would then fail to reach the main machine. That is precisely the
+        bug this stamp exists to fix, so a value indistinguishable from the
+        derived one is treated as derived. It costs nothing if it really was
+        typed: re-deriving reproduces the same number.
+        """
+        derived = self._derived()
+        self._write(max_threads=derived)
+        s = self._load()
+        self.assertEqual(s.max_threads, derived)
+        self.assertTrue(s._threads_auto,
+                        'a value equal to the derived one must not be pinned')
+
     def test_a_users_choice_survives_a_reload(self):
         derived = self._derived()
         s = self._load()
