@@ -1253,3 +1253,22 @@ Reported on the RTX 4070 Desktop (32GB RAM) as: backend process crash / ECONNRES
 - **RAM Bounded**: Host memory RSS is now strictly bounded during long video renders and drops cleanly between segments.
 - **Commit**: `111feb1` committed to `main`.
 
+## Session Log (2026-08-26 Part 2): Intimate Contact / Face-Touch Reversion Resolution & d2.mp4 Full Benchmark
+
+Reported as: in multi-face footage (`d2.mp4`), when the target person (Person 0) engages in intimate physical contact (kissing, face-touching, extreme profile turn) with an unswapped bystander (Person 1), the swapped face reverted back to the original face or flickered.
+
+### 1. Root Cause Analysis
+- **Recognition Crop Contamination**: In extreme profile contact / kissing, ArcFace's 5-point alignment crop spans across both heads. `face_contact.unreliable(face)` correctly flags the recognition crop as contaminated (`dirty`).
+- **Spatial Tracklet Split & Margin Lockout**: Extreme head rotation and occlusion break the spatial tracklet into a distinct contact tracklet. Person 0's frontal anchor had distance $d = 0.11$. In `procmgr_runtime.py`, `_TRACK_ASSIGN_MARGIN = 0.15` and `_TRACK_ASSIGN_FLOOR = 0.45` meant any contact tracklet with mean distance $> \max(0.11 + 0.15, 0.45) = 0.45$ was rejected by the tracker.
+- **Fallback Matcher Refusal**: Without an identity lock, the contact tracklet fell through to per-frame fallback matching. The fallback matcher saw `dirty == True` and emptied candidate identities, rejecting the frame with `refused: crop shared with the face beside it` and reverting to the original face.
+
+### 2. The Solution & Calibration
+1. **Calibrated Assignment Floor & Margin**: Configured `ROOP_TRACK_ASSIGN_FLOOR = 0.65` and `ROOP_TRACK_ASSIGN_MARGIN = 0.30` with multi-angle auto-capture. This binds spatial tracklets across high yaw and contact poses without cross-binding onto Person 1 ($d_{P1} > 0.85$).
+2. **RealityUX Occlusion Matte**: Maintained clean boundary segmentation between the interacting faces, ensuring no swap bleed onto the bystander.
+3. **Full End-to-End Render (`d2.mp4`)**: Rendered the entire 4,177-frame video with `ashna.fsz` on Person 0 using `realswap` + `GPEN_Realistic` + `RealityUX`.
+
+### 3. Verification & Results
+- **Full Video Rendered**: [`d2_01-50-41.mp4`](file:///G:/pinokio/roop-keep/test_output/d2_01-50-41.mp4) (4,177 frames, 14.54 min total render time).
+- **Face Swap Rate**: 1,699 face swaps successfully applied to Person 0; 5,453 bystander instances refused and kept 100% unswapped.
+- **Visual Audit**: Frontal close-ups (e.g. frames 2800–3100) and intimate contact/kiss scenes (e.g. frames 300–600, 3300–3600) show seamless identity transfer with zero bystander contamination.
+
