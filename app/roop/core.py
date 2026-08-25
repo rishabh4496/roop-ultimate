@@ -723,6 +723,52 @@ def _clear_terminal_for_new_run() -> None:
         pass
 
 
+def _warn_single_worker_on_gpu() -> None:
+    """One worker on a real GPU provider is always a misconfiguration, and it is
+    the only silent one left.
+
+    The dml/rocm override above announces itself. `CFG.max_threads == 1` with a
+    working CUDA/TensorRT provider does not — nothing derives 1 (both
+    `suggest_execution_threads` and `Settings.resolve_threads` floor at 2 and 4
+    respectively) and no UI control writes it, so it can only come from a
+    hand-edited config, and it then costs the whole pipeline its parallelism
+    without a word.
+
+    It reads to the user as a defect in whatever they happened to render when
+    they first noticed. Measured on an RTX 4070, d1.mp4, realswap + RealityUX +
+    UltraMax (tests/ab_face_count.py), the arm that gets blamed is always the
+    one with more faces in frame:
+
+                        1 thread     10 threads
+        one face         3.36 fps      5.57 fps
+        two faces        2.20 fps      4.64 fps
+
+    Doubling the swapped faces is SUB-linear at both thread counts (faces/s
+    goes UP: 3.36 -> 4.41 at one thread, 5.57 -> 9.27 at ten), so a two-face
+    render is not paying a two-face penalty. It is simply the workload heavy
+    enough to fall below usable once the threads are gone — which is why the
+    same machine reads "fine on one face, 1-2 fps on two".
+    """
+    try:
+        if int(roop.globals.execution_threads or 0) > 1:
+            return
+        names = [p[0] if isinstance(p, (list, tuple)) else p
+                 for p in (roop.globals.execution_providers or [])]
+        if not any(n in names for n in ('CUDAExecutionProvider',
+                                        'TensorrtExecutionProvider')):
+            return   # dml/rocm already said so above; CPU has its own reasons
+        print("[Threads] WARNING: running ONE worker thread on a GPU provider. "
+              "Nothing in the app derives 1 (the floors are 2 and 4) and no UI "
+              "control writes it, so this is Max Threads set to 1 in "
+              "config.yaml. Every stage loses its parallelism, and a render "
+              "with two faces in frame drops roughly 1.5x below a one-face one "
+              "-- which reads as 'two faces are broken' when it is the thread "
+              "count. Set Max Threads to 7-10 (or turn Auto Thread Selection "
+              "back on) and restart. See tests/diag_device.py.", flush=True)
+    except Exception:
+        pass
+
+
 def batch_process(output_method, files:list[ProcessEntry], use_new_method) -> None:
     global clip_text, process_mgr
 
@@ -753,6 +799,7 @@ def batch_process(output_method, files:list[ProcessEntry], use_new_method) -> No
                   f"(run tests/diag_device.py).", flush=True)
         if max_threads == 1:
             roop.globals.execution_threads = 1
+        _warn_single_worker_on_gpu()
 
         imagefiles:list[ProcessEntry] = []
         videofiles:list[ProcessEntry] = []

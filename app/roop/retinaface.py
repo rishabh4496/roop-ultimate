@@ -181,6 +181,15 @@ class RetinaFace3Output:
         # spent inside the detect call with the GPU idle, and the pre-pass runs
         # this once per frame per worker, so it is worth the reorder.
         pos_inds = np.where(scores >= self.det_thresh)[0]
+        if pos_inds.size == 0 and scores.size:
+            # Nothing cleared the gate — record how close the best anchor came,
+            # so the audit can say whether the gate is what lost this frame.
+            # Only reached on a frame that was already a miss, so it is free.
+            try:
+                from roop.procmgr_runtime import audit_detect_best_rejected
+                audit_detect_best_rejected(scores.max())
+            except Exception:
+                pass
         pos_scores = scores[pos_inds]
         pos_priors = priors[pos_inds]
 

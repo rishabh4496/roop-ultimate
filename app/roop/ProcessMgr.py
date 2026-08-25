@@ -35,7 +35,7 @@ from roop.face_overlap import build_regions as build_face_regions, FaceRegion
 from roop import face_contact
 from roop import recognizer_adaface as _ada
 from roop import live_preview as _live_preview
-from roop.procmgr_runtime import _PROFILE, _TRACK_VETO_DIST, _TRACK_VETO_MARGIN, _TRACK_VETO_SINGLE, _TRACK_EMB_MAX, _DEBUG_MATCH, COLOR_RESET, COLOR_CYAN, COLOR_YELLOW, _prof, _prof_report, _prof_reset, _gpu_guard, PROGRESS_BAR_FORMAT, wait_while_paused, ChunkedProgress, bar_write, publish_eta as _publish_eta, _audit_hit, audit_face_begin, _audit_swapped_gapfill, _audit_reset, _audit_report, VETO_SOURCE_REUSED, VETO_SINGLE_ABS, VETO_OTHER_FITS, VETO_FAR_FROM_OWN, AUDIT_SWAP_MOVED, VERIFY_MIN_OFFAXIS, VERIFY_SWAP
+from roop.procmgr_runtime import _PROFILE, _TRACK_VETO_DIST, _TRACK_VETO_MARGIN, _TRACK_VETO_SINGLE, _TRACK_EMB_MAX, _DEBUG_MATCH, COLOR_RESET, COLOR_CYAN, COLOR_YELLOW, _prof, _prof_report, _prof_reset, _gpu_guard, PROGRESS_BAR_FORMAT, wait_while_paused, ChunkedProgress, bar_write, publish_eta as _publish_eta, _audit_hit, audit_over_threshold as _audit_over_threshold, audit_frame_seen, audit_detect_frame_begin, audit_detect_miss, audit_face_begin, _audit_swapped_gapfill, _audit_reset, _audit_report, VETO_SOURCE_REUSED, VETO_SINGLE_ABS, VETO_OTHER_FITS, VETO_FAR_FROM_OWN, AUDIT_SWAP_MOVED, VERIFY_MIN_OFFAXIS, VERIFY_SWAP
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from threading import Thread, Lock, local
 
@@ -2299,6 +2299,11 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
         # up its precomputed full-frame mask for this frame from inside process_mask
         # (set here because every worker thread enters swap_faces once per frame).
         self._tls.frame_idx = frame_idx
+        # The denominator for 'frames with no face detected at all'. Ticked here,
+        # beside the only place that bucket can be hit, so both counts always
+        # describe the same population of frames.
+        audit_frame_seen()
+        audit_detect_frame_begin()
 
         # Tick once per frame if any stabilizer is active. Parallel path uses a
         # per-thread frame index (TLS) instead of this shared counter.
@@ -2392,6 +2397,7 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                 # An object crossing a turned face is exactly the case that can
                 # take the detection out for a few frames at a time.
                 _audit_hit('frames with no face detected at all')
+                audit_detect_miss(getattr(roop.globals, 'face_detector_threshold', 0.5))
                 return num_faces_found, frame
             self.last_found_bboxes = np.array([f.bbox for f in faces])   # cache for next frame
             if os.environ.get('ROOP_DEBUG_FACELIST') == '1' and frame_idx is not None:
@@ -2672,6 +2678,12 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                     src_index = None
                     veto = None
                     vetoed_track_src = None
+                    # The GATE the veto used, when it was a distance veto. The
+                    # per-frame fallback below re-tests the same distance against
+                    # the match threshold, and the two are not independent: see
+                    # where this is read for why that combination can be
+                    # incapable of ever rescuing the face.
+                    vetoed_gate = None
                     if exact is not None or best_j >= 0:
                         cand = exact[0] if exact is not None else entries[best_j][1]
                         if cand is not None and cand < len(self.input_face_datas):
@@ -2758,6 +2770,7 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                                 # still fires when somebody else fits better.
                                 veto = f'face is {d_own:.2f} from its assigned person (> {_TRACK_VETO_DIST})'
                                 veto_kind = VETO_FAR_FROM_OWN
+                                vetoed_gate = _ada.scale(_TRACK_VETO_DIST, threshold)
                             elif (not multi_person and _TRACK_VETO_SINGLE > 0
                                     and d_own is not None
                                     and d_own > _ada.scale(_TRACK_VETO_SINGLE, threshold)):
@@ -2766,6 +2779,7 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                                 veto = (f'face is {d_own:.2f} from the selected person '
                                         f'(> {_TRACK_VETO_SINGLE}, single-person veto)')
                                 veto_kind = VETO_SINGLE_ABS
+                                vetoed_gate = _ada.scale(_TRACK_VETO_SINGLE, threshold)
                             elif (d_own is not None and d_other is not None
                                     and d_other + _ada.scale(_TRACK_VETO_MARGIN, threshold) < d_own):
                                 veto = f'another person fits better ({d_other:.2f} vs {d_own:.2f})'
@@ -2854,9 +2868,20 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                                 if (self.options.selected_index if single_person
                                     else rank.get(g, 0)) == vetoed_track_src}
                         best_g, best_d = None, id_threshold
+                        # Why each candidate dropped out, because four different
+                        # failures used to arrive at the same audit bucket and it
+                        # was reported as "over match threshold" for all of them.
+                        # Only one of those is a threshold problem; the other
+                        # three cannot be fixed by moving the threshold at all,
+                        # and they were inflating the very line the report tells
+                        # the user to go and loosen.
+                        n_scored = 0                # candidates that got a distance
+                        n_src_claimed = 0           # their source was already used this frame
+                        best_any = None             # nearest candidate REGARDLESS of the gate
                         for g, tis in candidate_persons.items():
                             r_src = self.options.selected_index if single_person else rank.get(g, 0)
                             if r_src in claimed_sources_in_frame:
+                                n_src_claimed += 1
                                 continue
                             embs = [getattr(self.target_face_datas[ti], 'embedding', None) for ti in tis]
                             embs = [e for e in embs if e is not None]
@@ -2868,6 +2893,9 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                             if not _ds:
                                 continue
                             d = min(_ds)
+                            n_scored += 1
+                            if best_any is None or d < best_any:
+                                best_any = d
                             if d <= best_d:
                                 best_d, best_g = d, g
 
@@ -2895,11 +2923,69 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                                 _audit_hit('fallback missed (no source for person)')
                         elif dirty:
                             _audit_hit('refused: crop shared with the face beside it')
-                        else:
-                            # Nothing above matched within the (tighter) match
-                            # threshold. This face is now left un-swapped for this
-                            # frame — the terminal state that reads as flicker.
+                        elif n_scored and vetoed_gate is not None and vetoed_gate >= id_threshold:
+                            # NOT a threshold refusal, however it looks.
+                            #
+                            # A distance veto fired, which confined this search to
+                            # the one person the track had already chosen. That
+                            # veto's own gate is DELIBERATELY LOOSER than the match
+                            # threshold (0.85 against 0.75 by default — see
+                            # _ada.scale's docstring: "the veto is deliberately
+                            # looser so a hard frame of the right person still
+                            # swaps"). So the face arrives here already measured
+                            # ABOVE the looser gate, and is then re-tested against
+                            # the tighter one. It cannot pass. Every face that
+                            # takes this path is refused before it is measured.
+                            #
+                            # Reported separately because the line it used to land
+                            # in tells the reader to go and loosen the match
+                            # threshold, and the match threshold never had a say:
+                            # raising it to just under 0.85 changes nothing at all,
+                            # and past 0.85 it stops being the operative gate
+                            # rather than becoming a looser one. The knob that
+                            # governs this population is ROOP_TRACK_VETO.
+                            #
+                            # Measured on d3.mp4 (2 people, 3607 frames, realswap
+                            # + RealityUX + UltraMax): 166 of 166 faces in the old
+                            # 'over match threshold' bucket had fired
+                            # 'veto: far from assigned person' first — the whole
+                            # bucket, not a share of it. Their distances bunch at
+                            # 0.85-0.90, i.e. just past the veto line, exactly as
+                            # this structure predicts.
+                            #
+                            # NOT loosened here. The veto only fires when the face
+                            # is no nearer its own person than someone else's, so
+                            # the refused population is SELECTED for resembling the
+                            # neighbour — which makes any "were these correct?"
+                            # measurement on it circular. Deciding that needs
+                            # footage where the veto's precondition is not doing
+                            # the selecting.
+                            _audit_hit('refused by the track veto, before any threshold')
+                        elif n_scored:
+                            # A real threshold refusal: somebody was measured and
+                            # everybody was too far. The only one of these four
+                            # that a threshold change can address, so it is the
+                            # only one whose distance is worth collecting.
                             _audit_hit('fallback missed (over match threshold)')
+                            _audit_over_threshold(best_any, id_threshold)
+                        elif n_src_claimed:
+                            # 1:1 assignment working as designed: this person's
+                            # source is already on another face this frame. Never
+                            # a threshold problem — it means two detections are
+                            # competing for one person, so the question is which
+                            # of them is real, not how far apart they are.
+                            _audit_hit("fallback missed (this person's source already used this frame)")
+                        elif candidate_persons:
+                            # Candidates existed but none could be scored: no
+                            # usable embedding on this face or on the captured
+                            # angles. Recognition never ran, so there is no
+                            # distance to be over.
+                            _audit_hit('fallback missed (no usable embedding to compare)')
+                        else:
+                            # The veto confined the search to one person and that
+                            # person was filtered out, so nothing was even a
+                            # candidate.
+                            _audit_hit('fallback missed (no candidate person left)')
 
             elif self.options.swap_mode == "selected":
                 # Multi-angle matching: assign each captured target PERSON their

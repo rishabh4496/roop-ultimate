@@ -609,8 +609,113 @@ def _audit_swapped_gapfill(face):
         _audit_hit(AUDIT_SWAPPED_GAPFILL)
 
 
+# How far over the gate the near-misses actually were.
+#
+# "The largest refusal line is the gate to loosen" is only actionable if the
+# refused population is NEAR the gate. Four gate changes in this project have
+# been implemented and reverted because it was not, so the audit now carries
+# the distribution instead of leaving it to be guessed from the count: each
+# genuine over-threshold refusal records how far past `id_threshold` its BEST
+# candidate sat, and the report turns that into "loosening to X recovers N".
+#
+# Same racy-increment trade as _audit itself — this is a shape, not a ledger.
+# Frames that reached the matcher, counted separately from the face buckets.
+#
+# `frames with no face detected at all` is a FRAME count and every other bucket
+# is a FACE count, but the report divided all of them by `faces seen` — so a
+# real run printed "17047  23.9%" for the no-face line, which reads as a share
+# of faces and is a share of nothing. It has to be denominated in frames or it
+# cannot be compared with anything, including itself between two clips.
+_audit_frames = [0]
+
+_audit_over = []
+_AUDIT_OVER_CAP = 200000        # bounded: a 60k-frame render must not grow a list forever
+
+
+# The best evidence the detector had on a frame where it reported nothing.
+#
+# The audit's second-largest line is "frames with no face detected at all", and
+# the advice attached to it ("try a lower detector threshold") has never been
+# checked against the population it would move. A rejected anchor at 0.47
+# against a 0.50 gate is a threshold problem; one at 0.03 means the detector
+# genuinely saw nothing there and lowering the gate only buys false positives,
+# which then compete for a source and a track. Same rule as the match
+# threshold: measure the distribution the gate reads before touching the gate.
+#
+# Costs nothing on a frame that detects: the max is only taken when no anchor
+# passed, which is exactly the frame that was about to be given up on anyway.
+_audit_det_miss = []
+_det_ctx = _threading.local()
+
+
+def audit_detect_best_rejected(score):
+    """Called by the detector when NO anchor cleared the threshold."""
+    try:
+        v = float(score)
+    except (TypeError, ValueError):
+        return
+    if v != v:
+        return
+    prev = getattr(_det_ctx, 'best', None)
+    # Max across every detect attempt on this frame (full frame, then any ROI
+    # re-detects): the question is what the best evidence ANYWHERE on the frame
+    # was, not what the last call happened to see.
+    if prev is None or v > prev:
+        _det_ctx.best = v
+
+
+def audit_detect_frame_begin():
+    _det_ctx.best = None
+
+
+def audit_detect_miss(threshold):
+    """Called when the frame is given up as having no face at all."""
+    v = getattr(_det_ctx, 'best', None)
+    if v is None:
+        return
+    if len(_audit_det_miss) < _AUDIT_OVER_CAP:
+        try:
+            _audit_det_miss.append((v, float(threshold)))
+        except (TypeError, ValueError):
+            pass
+
+
+def audit_detect_miss_here(threshold):
+    """Record a miss at the DETECTOR, for callers that own the detect call.
+
+    The tracking pre-pass, not `swap_faces`, is where detection happens whenever
+    temporal_detection is on — which is the default. `swap_faces` then reads a
+    precomputed face list and its own no-face bucket fires without any detector
+    call behind it, so the deferred `audit_detect_miss` there records nothing at
+    all. Measured: a 8748-frame clip with 113 no-face frames produced ZERO
+    samples until the pre-pass called this.
+    """
+    audit_detect_miss(threshold)
+    _det_ctx.best = None
+
+
+def audit_frame_seen():
+    """One frame entered the matcher. Racy like the rest of the audit."""
+    _audit_frames[0] += 1
+
+
+def audit_over_threshold(best_d, threshold):
+    """Record one genuine over-threshold refusal. Ignores unusable inputs."""
+    try:
+        d, t = float(best_d), float(threshold)
+    except (TypeError, ValueError):
+        return
+    if d != d or t != t or t <= 0:      # NaN / meaningless gate
+        return
+    if len(_audit_over) < _AUDIT_OVER_CAP:
+        _audit_over.append((d, t))
+
+
 def _audit_reset():
     _audit.clear()
+    _audit_over.clear()
+    _audit_det_miss.clear()
+    _audit_frames[0] = 0
 
 
 # Bucket names for the four refusals swap_faces can raise. The veto MESSAGES
@@ -630,6 +735,74 @@ VETO_BUCKETS = (VETO_SOURCE_REUSED, VETO_SINGLE_ABS,
                 VETO_OTHER_FITS, VETO_FAR_FROM_OWN)
 
 
+def _report_detect_misses():
+    """Whether a lower detector threshold would actually recover those frames.
+
+    Only retinaface reports here (the production engine, and the only one whose
+    per-anchor scores this code owns), so a run on another engine simply prints
+    nothing rather than a partial number dressed up as a whole one.
+    """
+    if not _audit_det_miss:
+        # No samples: another detector engine, or a path that never called the
+        # instrumented one. Say what to try rather than nothing at all.
+        print("     (no detector scores recorded — only retinaface reports them; "
+              "on another engine, compare engines or raise the detector resolution.)",
+              flush=True)
+        return
+    rows = list(_audit_det_miss)
+    n = len(rows)
+    thr = rows[0][1]
+    scores = sorted(v for v, _ in rows)
+    print(f"     The detector returned nothing on {n} frame(s) it looked at; its own "
+          f"best REJECTED candidate there scored (threshold {thr:.2f}):", flush=True)
+    for cut in (thr * 0.9, thr * 0.8, thr * 0.6, thr * 0.4, thr * 0.2):
+        k = sum(1 for v in scores if v >= cut)
+        print(f"       would return at threshold {cut:4.2f}: {k:7d}  "
+              f"({100.0 * k / n:5.1f}% of them)", flush=True)
+    mid = scores[n // 2]
+    print(f"       median best-rejected score {mid:.3f}.", flush=True)
+    if mid < thr * 0.4:
+        print("     THE DETECTOR SAW ALMOST NOTHING on the median miss. Lowering "
+              "face_detector_threshold recovers few of these and buys false boxes "
+              "that then compete for a source and a track — the lever here is the "
+              "detector ENGINE or resolution, not the threshold.", flush=True)
+
+
+def _report_over_threshold():
+    """What loosening the match threshold would actually buy, per the run's own
+    refusals.
+
+    Prints the recovery curve rather than a mean, because the decision this
+    informs is "raise the gate to X" and a mean cannot answer it. A population
+    bunched just past the gate says the gate is the problem; one spread out to
+    1.0+ says these faces do not resemble the captured person on this frame at
+    any threshold worth having, and no amount of loosening reaches them without
+    also admitting bystanders.
+    """
+    if not _audit_over:
+        return
+    rows = list(_audit_over)            # snapshot: workers may still be appending
+    n = len(rows)
+    # Every refusal is expressed as a MULTIPLE of its own gate, so runs that
+    # used different thresholds (AdaFace rescales it) stay comparable and the
+    # curve below is readable as "raise the slider by this much".
+    ratios = sorted(d / t for d, t in rows)
+    thr = rows[0][1]
+    print(f"     Of those, {n} were refused for distance alone, and this is how far past "
+          f"the match threshold ({thr:.2f}) their BEST candidate sat:", flush=True)
+    for mult in (1.05, 1.1, 1.2, 1.5, 2.0):
+        k = sum(1 for r in ratios if r <= mult)
+        print(f"       within {mult:>4.2f}x the threshold ({thr * mult:.2f}): "
+              f"{k:7d}  ({100.0 * k / n:5.1f}% of them)", flush=True)
+    mid = ratios[n // 2]
+    print(f"       median refusal sits at {mid:.2f}x the threshold ({mid * thr:.2f}).", flush=True)
+    if ratios[n // 2] > 1.5:
+        print("     MOST OF THESE ARE NOT NEAR THE GATE. Raising the threshold recovers "
+              "few of them and admits look-alikes for the rest — this is an intake or "
+              "pose problem (capture more angles for that person), not a slider.",
+              flush=True)
+
+
 def _audit_report():
     """Print the swap-decision breakdown for the run just finished."""
     seen = _audit.get('faces seen', 0)
@@ -646,6 +819,8 @@ def _audit_report():
     # the table stops being scannable — which is the only thing it is for.
     kw = max(34, max(len(k) for k in _audit))
     for k in sorted(_audit, key=lambda x: -_audit[x]):
+        if k == 'frames with no face detected at all':
+            continue    # frame-denominated — reported below, with frames as the base
         print(f"  {k:{kw}s} {_audit[k]:8d} {100.0 * _audit[k] / seen:6.1f}%", flush=True)
     missed = seen - swapped
     if missed > 0:
@@ -666,12 +841,19 @@ def _audit_report():
               + ": the swap is not missing, "
               "it is registered from a guess, so on a moving head it shifts every other frame. "
               "Set ROOP_TEMPORAL_STEP=1 if this is high.", flush=True)
+    _report_over_threshold()
     blind = _audit.get('frames with no face detected at all', 0)
     if blind:
-        print(f"     Separately, {blind} frames had NO face detected at all — that is the "
-              "detector losing the face, not a gate refusing it, and no threshold will "
-              "bring those back. Try a lower detector threshold, another detector "
-              "engine, or temporal detection.", flush=True)
+        _fr = _audit_frames[0]
+        _of = f" of {_fr} ({100.0 * blind / _fr:.1f}% of frames)" if _fr else ""
+        # This line used to say "no threshold will bring those back" and then, in
+        # the same breath, "try a lower detector threshold". Both halves cannot
+        # be right, and which one IS right is now measured rather than asserted —
+        # so it states the fact and lets the curve below answer the question.
+        print(f"     Separately, {blind} frames{_of} had NO face detected at all — that is the "
+              "detector losing the face, not a gate refusing it, so it is a different "
+              "problem from every refusal above.", flush=True)
+        _report_detect_misses()
     # Detections that were never faces. Reported here rather than per frame
     # because it is only readable as a total: the junction between two touching
     # heads is detected on a large fraction of the frames they are in contact,

@@ -33,7 +33,7 @@ from roop import session_pool
 from roop.face_util import get_all_faces, analysis_pooled
 from roop import face_contact
 from roop.utilities import compute_cosine_distance
-from roop.procmgr_runtime import _prof, _gpu_guard, wait_while_paused, PROGRESS_BAR_FORMAT, _TRACK_OVERLAP_FRAC, ChunkedProgress, bar_write, publish_eta
+from roop.procmgr_runtime import _prof, _gpu_guard, wait_while_paused, PROGRESS_BAR_FORMAT, _TRACK_OVERLAP_FRAC, ChunkedProgress, bar_write, publish_eta, audit_detect_frame_begin, audit_detect_miss_here
 
 
 def _readahead_depth(cap, budget_mb=256.0, lo=4, hi=16):
@@ -258,6 +258,9 @@ class TrackingMixin:
                         if pool_workers > 1 else None)
 
         def _run_detect(fr, crop_bbox, expected_count=None):
+            # Fresh slate per frame: the score recorded is the best ANY attempt on
+            # this frame rejected, not a leftover from the previous one.
+            audit_detect_frame_begin()
             if crop_bbox is not None:
                 faces = get_all_faces_in_roi(fr, crop_bbox)
                 if faces:
@@ -279,6 +282,12 @@ class TrackingMixin:
                     if any(self._bbox_iou(hf.bbox, f.bbox) >= 0.3 for f in faces):
                         continue
                     faces.append(hf)
+            if not faces:
+                # Every attempt on this frame came back empty. How close the best
+                # rejected anchor came is the only thing that says whether
+                # face_detector_threshold is the lever here — see the audit.
+                audit_detect_miss_here(
+                    getattr(roop.globals, 'face_detector_threshold', 0.5))
             return faces
 
         def _detect_one(fr, crop_bbox=None, expected_count=None):
