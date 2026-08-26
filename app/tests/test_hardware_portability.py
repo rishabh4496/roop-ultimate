@@ -269,8 +269,8 @@ class AutoTiersCoverBothCards(unittest.TestCase):
         try:
             self.assertEqual(derive(11.99, 24), 10,
                              'a 12GB/24-core machine must derive the measured knee')
-            self.assertEqual(derive(6.0, 8), 7,
-                             'a 6GB/8-core machine must not be held at 4')
+            self.assertEqual(derive(6.0, 8), 8,
+                             'a 6GB/8-core machine must reach its measured knee')
             self.assertEqual(derive(6.0, 4), 3,
                              'still bounded by the CPU on a small host')
         finally:

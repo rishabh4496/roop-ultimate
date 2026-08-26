@@ -1668,10 +1668,24 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
             else:
                 hard_cap = 1536.0
 
+        # The desktop profile needs two complete 12-worker rounds before the
+        # block queue can redistribute an expensive face-heavy block.  The
+        # former 40% default left the 32 GB / 4070 machine at 17 blocks on a
+        # 720p, 12-frame-block render: enough for one round, but not the 24
+        # blocks needed for work stealing.  Its six live buffers then used only
+        # 3.3 GB with 8.3 GB free, leaving capacity that could not do useful
+        # work.  58% raises that to 4.8 GB and still leaves about 3.5 GB free.
+        #
+        # This is deliberately keyed to system RAM, not VRAM: the TensorRT pool
+        # policy already owns VRAM and stays at 2/2/2 on the 12 GB card.  Keep
+        # the 16 GB laptop at 40%, where six live chunks must stay under its
+        # tighter host-memory budget.  An explicit environment setting remains
+        # authoritative on either machine.
+        default_share = 0.58 if total_mb >= 28000.0 else 0.40
         try:
-            share = float(os.environ.get('ROOP_STAB_RAM_SHARE', '') or 0.40)
+            share = float(os.environ.get('ROOP_STAB_RAM_SHARE', '') or default_share)
         except ValueError:
-            share = 0.40
+            share = default_share
         share = min(0.90, max(0.05, share))
         budget = max(96.0, min(hard_cap, (avail_mb * share) / self._STAB_LIVE_CHUNKS))
         if not getattr(self, '_stab_budget_notified', False):
@@ -1767,13 +1781,11 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
         # imbalance stat reports: most of that idle is the cost of the final
         # round, which more blocks cannot remove, only amortise.
         #
-        # So: whole rounds only. With the default 1536 MB budget at 720p that is
-        # 10 blocks — exactly today's behaviour, no change and no regression.
-        # Getting to 20 needs the chunk to hold 800 frames, i.e. a larger
-        # ROOP_STAB_CHUNK_MB, which is a per-machine RAM decision and so is left
-        # to the operator rather than doubled silently for everyone.
-        # DEFAULT IS 1 ROUND — the old behaviour — because more rounds MEASURED
-        # NEUTRAL and a default has to be earned.
+        # So: whole rounds only. The default takes two rounds only when the
+        # current memory budget already fits them; otherwise it retains the
+        # one-round path.  The desktop's larger RAM share above is specifically
+        # sized to make two rounds available at its observed 720p workload,
+        # while the 16 GB laptop keeps its one-round, low-RSS behaviour.
         #
         # A/B on an 8748-frame 720p clip, all arms in one process, then repeated
         # with the order reversed to counterbalance position:
@@ -1791,11 +1803,9 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
         #
         # The reason is visible in the same logs: idle was 1.9-3.6% on every arm
         # of that clip. There was no imbalance to recover, so redistributing it
-        # could not help. The knob is aimed at content whose per-block cost
-        # VARIES — a live 50,646-frame render showed a median 18.2% idle, and
-        # that case is still unmeasured. So the capability stays reachable and
-        # the default does not change: raising it costs decoded-frame memory
-        # (2x per extra round) for a gain nobody has demonstrated.
+        # could not help. The automatic second round is therefore conditional on
+        # already having the host-memory headroom; the knob remains available
+        # for explicitly asking for more than two rounds.
         #
         # ROOP_STAB_BLOCKS_PER_WORKER or ROOP_STAB_BLOCKS_PER_THREAD=2 (or more)
         # opts in, and is worth trying on footage whose [STAB CHUNK] lines report

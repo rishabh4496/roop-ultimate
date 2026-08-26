@@ -58,8 +58,10 @@ _enable_tensorrt_runtime()
 # written for was the card the fix could not get to.
 #
 # Rule 1: min(cores - 1, vram_gb / 1.5)   -- the "workers cost VRAM" premise
-# Rule 2: min(max(2, cores - 1), knee)    -- current; workers cost frame buffers
-_THREAD_RULE = 2
+# Rule 2: min(max(2, cores - 1), knee)    -- left one CPU core unused
+# Rule 3: reach the measured knee when the CPU has that many physical cores;
+#         retain one core of headroom on smaller CPUs.
+_THREAD_RULE = 3
 
 
 def detect_hardware():
@@ -97,9 +99,10 @@ def hardware_signature(hw=None):
     The CPU exclusion is narrower than it reads. It is true of the POOL sizes,
     which is what this signature guards, but the thread default has been bound
     to the core count since 0eda23b — `min(max(2, cores - 1), knee)`. Rather
-    than widen the signature (which would needlessly reset every pool whenever
-    a core count moved), the thread count carries its own basis stamp that
-    includes the cores; see `_THREAD_RULE`.
+    than reusing that former formula, the current policy reaches the measured
+    GPU knee when enough physical cores exist, otherwise retaining one core of
+    host headroom. The thread count carries its own basis stamp; see
+    `_THREAD_RULE`.
     """
     hw = hw or detect_hardware()
     if not hw.get('gpu') and not hw.get('ram_gb'):
@@ -266,8 +269,17 @@ class Settings:
                     # tier. Below 7GB the pools are off (session_pool
                     # _auto_pool_defaults), which is where the knee sits at 8;
                     # above it the 12GB card measured 10, with 14 buying nothing.
+                    #
+                    # An 8-core / 6GB laptop used to get 7 workers because the
+                    # generic formula always reserved one physical core. That
+                    # leaves a measured worker unused (18.1 fps at 8 versus
+                    # 17.5 at 6; VRAM remains ~2.3 GB in either case). Use the
+                    # entire CPU only when it reaches the already-measured GPU
+                    # knee. A smaller CPU still keeps one core for decoding,
+                    # encoding and UI responsiveness.
                     knee = 8 if vram_gb < 7 else 10
-                    default_threads = int(min(max(2, cores - 1), knee))
+                    usable_cores = cores if cores >= knee else max(2, cores - 1)
+                    default_threads = int(min(usable_cores, knee))
                     threads_basis = f"v{_THREAD_RULE}|{cores}|{knee}"
         except Exception:
             pass

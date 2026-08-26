@@ -21,9 +21,11 @@ The SAME configuration measured 14.99 and 16.89 depending only on whether it ran
 first or last, and two adjacent arms in the reversed pass gave 14.99 (4 rounds)
 and 15.01 (1 round). The apparent +10% in the first, un-counterbalanced pass was
 ordering. Idle was 1.9-3.6% on every arm of that clip — there was no imbalance to
-redistribute, which is exactly why nothing moved. So the DEFAULT stays at one
-round and ROOP_STAB_BLOCKS_PER_WORKER opts in. The high-imbalance case that
-motivated all this (a live render at 18.2% median idle) remains unmeasured.
+redistribute, which is exactly why nothing moved. The automatic second round is
+therefore used only when the current RAM budget can hold two complete rounds;
+otherwise the one-round path remains. The high-imbalance case that motivated all
+this (a live render at 18.2% median idle) is the reason the desktop profile keeps
+enough memory headroom for that second round.
 
 THE FIX, AND THE TRAP IN IT. Giving the queue slack means more blocks per chunk
 — but the number must be a WHOLE MULTIPLE of the worker count. A greedy queue
@@ -68,15 +70,17 @@ if APP not in sys.path:
     sys.path.insert(0, APP)
 
 
-def geometry(threads, wu, frame_bytes, budget_mb=1536.0, want=1):
+def geometry(threads, wu, frame_bytes, budget_mb=1536.0, want=0):
     """`_stab_parallel_geometry`, as a pure function of its inputs.
 
-    `want` is ROOP_STAB_BLOCKS_PER_WORKER: rounds per chunk, default 1."""
+    `want` is ROOP_STAB_BLOCKS_PER_WORKER.  With no explicit request, the
+    production scheduler uses two rounds when the RAM budget can hold them."""
     block = max(4 * wu, 24)
     frame_mb = max(0.1, frame_bytes / (1024.0 ** 2))
     fits = max(1, int((budget_mb / frame_mb) // block))
     width = max(1, min(threads, fits))
-    rounds = max(1, min(max(1, fits // width), int(want)))
+    rounds = (max(1, min(max(1, fits // width), int(want)))
+              if want > 0 else (2 if (fits // width) >= 2 else 1))
     return wu, block, width, width * rounds
 
 
@@ -113,16 +117,15 @@ class TestChunkHoldsMoreBlocksThanWorkers(unittest.TestCase):
                                          frame_bytes=1280 * 720 * 3)
         self.assertEqual((block, width, bpc), (40, 10, 10))
 
-    def test_default_is_one_round_everywhere(self):
-        """More rounds measured NEUTRAL (see the module docstring), so the
-        default must not change behaviour for anyone."""
+    def test_default_uses_two_rounds_only_when_the_budget_fits_them(self):
+        """Automatic queue slack is desktop-only when memory permits it."""
         for w, h in ((1280, 720), (1920, 1080), (720, 1280)):
             for wu in (6, 10, 20):
                 for budget in (1536, 3072, 8192):
                     with self.subTest(res=(w, h), wu=wu, budget=budget):
                         _wu, _b, width, bpc = geometry(10, wu, w * h * 3, budget)
-                        self.assertEqual(bpc, width,
-                                         "default must be one block per worker")
+                        fits = max(1, int((budget / ((w * h * 3) / 1024.0 ** 2)) // _b))
+                        self.assertEqual(bpc, width * (2 if fits // width >= 2 else 1))
 
     def test_the_knob_buys_whole_rounds_only(self):
         fb = 1280 * 720 * 3
@@ -154,7 +157,8 @@ class TestChunkHoldsMoreBlocksThanWorkers(unittest.TestCase):
                     self.assertLessEqual(bpc, fits)
                     self.assertGreaterEqual(bpc, width)
                     self.assertEqual(bpc % width, 0, "whole rounds only")
-                    self.assertEqual(bpc, width, "default is one round")
+                    self.assertEqual(bpc, width * (2 if fits // width >= 2 else 1),
+                                     "automatic slack must use a whole second round only when it fits")
                     if fits > 1:
                         used_mb = bpc * block * fb / 1024.0 ** 2
                         self.assertLessEqual(round(used_mb), round(budget),
