@@ -201,8 +201,10 @@ class Enhance_GPENRealistic:
                 n = max(1, forced)
             elif self.size >= 512:
                 gb = session_pool._detect_vram_gb()
-                if 0 < gb < 15.5:
+                if 0 < gb < 11.5:
                     n = min(n, 1)
+                elif 11.5 <= gb < 15.5:
+                    n = min(n, 4)
             extras = []
             try:
                 extras = [_build(i + 1) for i in range(n - 1)]
