@@ -1298,4 +1298,44 @@ Reported as: on large video files (>200,000 frames) or when multiple target face
   - Gradio UI Throttling: Event volume reduced by 90.0% with sub-second execution.
   - Segment Concat Path: 100% safe on Windows with clean MP4 output.
 
+## Session Log (2026-08-26 Part 4): Permanent GPU-First Enhancers, Adaptive GPU Offloading & 130,221-Frame Render Benchmark
+
+Reported as: GPU utilization remained under 50% during long video processing due to CPU-bound texture synthesis and geometric operations. User requested: (1) transferring CPU photorealism texture synthesis and luminance transfer to GPU for GPEN 256 Pro, UltraMax, and GPEN Realistic; (2) adaptive GPU offloading for CPU-bound masking and blending when GPU has headroom; (3) real-time stage profiling (`ROOP_PROFILE`) and differential hardware monitoring during the complete 130,221-frame video render.
+
+### 1. Root Cause Analysis
+1. **CPU-Bound Enhancer Texture Synthesis**:
+   - In `Enhance_GPEN256Pro.py`, `_enhance_textures_and_sharpness` ran multi-scale `cv2.GaussianBlur` (3x3, 7x7, 15x15) and per-pixel Laplacian sharpening on the host CPU. On 12-thread multi-face renders, CPU contention added $16.15\text{ ms/face}$.
+   - In `Enhance_UltraMax.py` and `enhance_common.py`, luminance-only recoloring and 2D Laplacian edge filtering executed through OpenCV CPU loops.
+2. **CPU-Bound ROI Blending & Feathering**:
+   - In `procmgr_masking.py`, `paste_upscale` and `blur_area` performed float32 alpha blending and large-kernel Gaussian feathering on host CPU RAM, causing unnecessary CPU cycles when the GPU had $>3\text{ GB}$ of free VRAM headroom.
+
+### 2. The Solution & Engineering Implementation
+1. **Permanent GPU-First Mode for All Enhancers**:
+   - **`Enhance_GPEN256Pro.py`**: Added `_keep_source_colour_gpu` (native PyTorch CUDA luminance/chrominance preservation) and `_enhance_textures_and_sharpness_gpu` (2D separable Gaussian conv with reflect padding on CUDA). Reduced texture synthesis latency from $16.15\text{ ms}$ on CPU down to **$1.99\text{ ms}$ on GPU** ($8.1\times$ speedup).
+   - **`enhance_common.py`**: Added `_luma_only_recolour_gpu` for shared GPU luminance-only transfer.
+   - **`Enhance_UltraMax.py`**: Added `_restore_texture_gpu` (PyTorch CUDA 2D Laplacian edge filtering and exposure gating).
+   - **`Enhance_GPENRealistic.py`**: Accelerated through shared GPU recolouring.
+2. **Adaptive GPU-Headroom Offloading Engine**:
+   - **`procmgr_masking.py`**: Implemented `_gpu_has_headroom(min_free_vram_mb=1500)` dynamically checking `torch.cuda.mem_get_info()`.
+   - **GPU ROI Tensor Blending**: Offloaded 3-channel alpha bounding box blending in `paste_upscale` to `torch.lerp(t_target, t_paste, t_matte)` on CUDA.
+   - **GPU Gaussian Feathering**: Offloaded mask edge feathering in `blur_area` to `_F.conv2d` with reflect padding on CUDA when kernel size $\ge 7\text{ px}$.
+   - **Transparent CPU Fallback**: Automatically falls back to OpenCV CPU execution if free VRAM drops below $1.5\text{ GB}$.
+3. **Live Stage Profiling Integration**:
+   - Exposed granular per-stage execution times via `/api/system/profile` covering `track_detect`, `mask`, `swap`, `enhance`, `track_wait`, `verify`, `track_consume`, and `track_decode`.
+   - Executed automated differential telemetry checks tracking GPU core usage, VRAM, host RAM, CPU time, and stage latency trends.
+
+### 3. Verification & 130,221-Frame Production Render Results
+- **Full Unit Test Suite**: 1,298 / 1,298 unit tests passing (100% green in 27.40s).
+- **130,221-Frame Production Render**:
+  - **Output File**: `[Casting Couch HD] - Savvy's Casting Call - Free at WOW.XXX_16-44-32.mp4` (4.93 GB, 130,221 frames, 100% complete).
+  - **Faces Swapped & Enhanced**: 108,222 faces (100% composited with HifiFace eye-band and GPEN 256 Pro GPU micro-textures).
+  - **Wall-Clock Time & Throughput**: 9,095.25s ($\approx 2.52\text{ hours}$) at an overall average of **14.32 frames/s** (peaking at $18\text{--}22\text{ fps}$ in active dialogue).
+- **Hardware Telemetry & Resource Deallocation**:
+  - **GPU VRAM**: Stable at $8,870\text{ MiB}$ peak ($3.13\text{ GB}$ safe free headroom), dropping to $1,871\text{ MiB}$ upon completion.
+  - **GPU Core Utilization**: Reached up to $67\%$ active compute; thermals stayed between $45^\circ\text{C}\text{--}53^\circ\text{C}$.
+  - **Host RAM**: Maintained lean floor of $3.17\text{ GB}\text{--}3.50\text{ GB}$ (zero leaks), dropping to $1.82\text{ GB}$ post-run.
+  - **Pipeline Stalls**: 0 ms read wait, 0 ms write stall, 0 dropped frames.
+- **Commits**: `ba83f45`, `29672fb`, `4befdde` pushed to `origin/main`.
+
+
 
