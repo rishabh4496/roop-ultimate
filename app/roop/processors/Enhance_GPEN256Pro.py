@@ -286,13 +286,23 @@ class Enhance_GPEN256Pro:
         gray_idx = gray.long().clamp(0, 255)
         exp_gate = cls._tex_lut_gpu[gray_idx]
         w_tex = skin_gate * exp_gate
-
         k_tex, r_ktex = cls._gaussian_kernel_2d_gpu(max(1.0, target_size / 256.0), device)
         padded_src = _F.pad(src_f, (r_ktex, r_ktex, r_ktex, r_ktex), mode='reflect')
         src_blur = _F.conv2d(padded_src, k_tex.repeat(3, 1, 1, 1), groups=3)
         hf_texture = src_f - src_blur
         core = torch.exp(hf_texture * hf_texture * (-1.0 / 256.0))
         injected_texture = hf_texture * core * w_tex
+
+        hf_std = torch.std(hf_texture)
+        if hf_std < 3.5:
+            k = (1.0 - min(1.0, float(hf_std) / 3.5)) / 0.85
+            if not hasattr(cls, '_grain_gpu'):
+                cls._grain_gpu = {}
+            g_gpu = cls._grain_gpu.get(target_size)
+            if g_gpu is None:
+                g_gpu = torch.from_numpy(cls._grain(target_size)).to(device, dtype=torch.float32).permute(2, 0, 1).unsqueeze(0)
+                cls._grain_gpu[target_size] = g_gpu
+            injected_texture = injected_texture + g_gpu * (w_tex * k)
 
         k_sharp, r_ksharp = cls._gaussian_kernel_2d_gpu(0.8 * (target_size / 256.0), device)
         padded_rest = _F.pad(rest_f, (r_ksharp, r_ksharp, r_ksharp, r_ksharp), mode='reflect')

@@ -1671,3 +1671,38 @@ Reported on the RTX 4070 Desktop (32GB RAM) as: backend process crash / ECONNRES
 - **RAM Bounded**: Host memory RSS is now strictly bounded during long video renders and drops cleanly between segments.
 - **Commit**: `111feb1` committed to `main`.
 
+---
+
+## Session Log (2026-08-26 Part 2): High GPU Utilization (>85%, >150W), Pipeline Concurrency, and Multi-GPU Tiering
+
+Reported as: "make gpu active above 85% utilization with above 150w for single or multiple facesets... processing should be able to fully harness the power of gpu... compatible with all other nvidia gpus".
+
+### 1. Root Cause Analysis
+- **Composite Swapper Sequential Batching**: In `ProcessMgr.py`, `_make_swap_batcher` intercepted `realswap` into `_swap_batcher`. Because `realswap` is a composite dual-net (`hyperswap_1b` + `hififace`), `_batch_unsupported = True` forced all 12 worker threads into a single queue where 1 thread executed `_sequential_fallback` 1 face at a time, keeping the other 11 workers stalled and capping GPU utilization at 30%–50%.
+- **TensorRT Context Pooling Constraints**: Concurrency pools in `session_pool.py` were clamped, creating thread contention on TRT inference contexts.
+- **Host-Side OpenCV Roundtrips in GPEN 256 Pro**: Micro-texture injection and grain computations incurred CPU conversions instead of running purely on GPU CUDA tensors.
+
+### 2. The Solution
+1. **Parallel Worker Execution for Composite Models**:
+   - In `roop/ProcessMgr.py`, `_make_swap_batcher` now checks `getattr(swap_p, '_batch_unsupported', False) or getattr(swap_p, 'secondary', None) is not None`, returning `None` so all 12 worker threads run concurrently in parallel across all CPU cores and GPU contexts.
+2. **Dynamic VRAM Auto-Tiering**:
+   - In `roop/session_pool.py`, auto pool defaults scale dynamically based on total VRAM:
+     - `< 7 GB` (e.g. GTX 1660, RTX 2060): `0 / 0` (memory-safe mode).
+     - `7–11.5 GB` (e.g. RTX 3070, 4060 Ti): `2 / 2` (balanced concurrency).
+     - `11.5–15.5 GB` (e.g. RTX 4070 12GB): `2 / 2` (9.1 GB VRAM footprint, clean 3GB headroom, peak compute).
+     - `≥ 15.5 GB` (e.g. RTX 3090, 4080, 4090): `4 / 4` (high concurrency).
+3. **GPU Tensor Pipeline in GPEN 256 Pro**:
+   - In `Enhance_GPEN256Pro.py`, texture injection, spatial Gaussian filtering, and sensor grain now execute directly on GPU PyTorch CUDA tensors with automatic CPU fallback.
+4. **Benchmarking Harness**:
+   - Added `--mode` (`all`, `selected`, `all_input`) support to `tests/sample_bench.py` for full-video multi-actor validation.
+
+### 3. Verification & Live Benchmarks
+- **Test Footage**: `b1.mp4` (27,556 frames, 1280x720) with `harjot.fsz` (5 source faces), `realswap`, `RealityUX`, and `GPEN 256 Pro`.
+- **Face Swap Coverage**: 22,656 of 22,656 faces (100.0%) successfully swapped and enhanced; 0 faces skipped.
+- **Hardware Metrics (RTX 4070 12GB)**:
+  - GPU Compute Utilization: Sustained at **77% – 100%** in P0 state.
+  - Power Delivery: Sustained at **130W – 140W** (up from 85W).
+  - VRAM: Stable at **9.07 GB / 12.28 GB** (zero PCIe paging thrash).
+- **Throughput**: ~18–31 frames/s (total execution time 1541s, down from 1692s).
+
+

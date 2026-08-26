@@ -192,6 +192,8 @@ def main():
     ap.add_argument("--threads", type=int, default=None,
                     help="defaults to config.yaml's live 'max_threads' setting if not "
                          "given, matching what the real app actually runs with")
+    ap.add_argument("--mode", default="all", choices=["all", "selected", "all_input"],
+                    help="swap mode: 'all' (swap every detected face with source), 'selected' (track captured target person), 'all_input'")
     ap.add_argument("--out", default=os.path.join(APP, "output"))
     args = ap.parse_args()
 
@@ -213,7 +215,8 @@ def main():
     g.video_encoder = g.CFG.output_video_codec
     g.video_quality = g.CFG.video_quality
     g.execution_threads = threads
-    g.face_swap_mode = "selected"
+    mode = args.mode or "all"
+    g.face_swap_mode = mode
     # Tracking/temporal-detection ON, mirroring the live config.yaml exactly
     # (both are already true there) rather than hardcoding — this bench is
     # meant to reproduce what the user's app actually does.
@@ -225,6 +228,7 @@ def main():
     g.CFG.temporal_detection = temporal
     g.stabilize_face = bool(g.CFG.stabilize_face)
     options = ab.build_options(g, swap_model, mask_engine, bool(g.CFG.use_source_bank))
+    options.swap_mode = mode
     options.stabilize_face = g.stabilize_face
 
     names = [s.strip() for s in args.sources.split(",") if s.strip()]
@@ -233,7 +237,7 @@ def main():
     facesets = [load_library_faceset(n) for n in names]
     print(f"[bench] sources: " + ", ".join(f"{n} ({len(fs.faces)} faces)" for n, fs in zip(names, facesets)),
           flush=True)
-    print(f"[bench] pipeline: swap_model={swap_model} mask_engine={mask_engine_display} ({mask_engine}) "
+    print(f"[bench] pipeline: mode={mode} swap_model={swap_model} mask_engine={mask_engine_display} ({mask_engine}) "
           f"enhancer={enhancer} detector={g.detector_engine} det_size={g.face_detector_size} "
           f"det_thresh={g.face_detector_threshold} rescue_small_faces={g.rescue_small_faces} "
           f"track_identities={track} temporal_detection={temporal} threads={threads} "
@@ -242,19 +246,16 @@ def main():
           f"detector_pool={os.environ.get('ROOP_DETECTOR_POOL', 'unset')} "
           f"expr_pool={os.environ.get('ROOP_EXPR_POOL', 'unset')}", flush=True)
 
-    # One capture path for every clip and every bench: the app's own
-    # "Auto-capture people" button (roop/capture_seed.py + the auto_angles
-    # harvest). Single-person clips went through it too — the old
-    # first-face-in-the-clip capture is neither best-frontal nor enriched, so it
-    # measured a capture no user takes. Kept as the fallback for a clip whose
-    # faces are all below the scan's quality floors.
-    from two_face_video import auto_capture_targets
-    targets, groups = auto_capture_targets(args.video, expect=len(names),
-                                           log_prefix="[bench]", strict=False)
-    if targets is None:
-        cap_idx, _, faces = first_face_frame(args.video)
-        targets, groups = [select_primary_face(faces)], [0]
-        print(f"[bench] fell back to the first-face capture, frame {cap_idx}", flush=True)
+    if mode == "selected":
+        from two_face_video import auto_capture_targets
+        targets, groups = auto_capture_targets(args.video, expect=len(names),
+                                               log_prefix="[bench]", strict=False)
+        if targets is None:
+            cap_idx, _, faces = first_face_frame(args.video)
+            targets, groups = [select_primary_face(faces)], [0]
+            print(f"[bench] fell back to the first-face capture, frame {cap_idx}", flush=True)
+    else:
+        targets, groups = [], []
 
     stem = os.path.splitext(os.path.basename(args.video))[0]
     out_dir = os.path.join(args.out, args.tag)

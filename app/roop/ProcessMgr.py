@@ -1564,6 +1564,10 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
         swap_p = next((p for p in self.processors if getattr(p, 'type', None) == 'swap'), None)
         if swap_p is None or not hasattr(swap_p, 'RunBatchMulti'):
             return None
+        if getattr(swap_p, '_batch_unsupported', False) or getattr(swap_p, 'secondary', None) is not None:
+            # Composite swappers (like realswap) or fixed-batch models cannot batch across threads;
+            # running them through the batcher would serialize all workers into a single thread.
+            return None
         # The cross-frame batcher coalesces tiles from several worker threads
         # into one inference, so a mask cannot be attributed back to the request
         # that produced it — this path drops the swap net's own face mask (see
