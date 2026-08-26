@@ -865,11 +865,12 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
 
 
     def process_frames(self, source_files: List[str], target_files: List[str], current_files, update: Callable[[], None]) -> None:
-        for f in current_files:
+        for idx, f in enumerate(current_files):
             wait_while_paused()
             if not roop.globals.processing:
                 return
             temp_frame = cv2.imdecode(np.fromfile(f, dtype=np.uint8), cv2.IMREAD_COLOR)
+            resimg = None
             if temp_frame is not None:
                 try:
                     if self.options.frame_processing:
@@ -895,8 +896,13 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                 if resimg is not None:
                     i = source_files.index(f)
                     cv2.imwrite(target_files[i], resimg)
+                del temp_frame
+                del resimg
             if update:
                 update()
+            if (idx + 1) % 50 == 0:
+                import gc
+                gc.collect()
 
 
     def _post_sentinels(self, queues, num_threads, tag, give_up_after=300.0):
@@ -1004,6 +1010,7 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                     return
 
     def process_videoframes(self, threadindex, progress) -> None:
+        frame_counter = 0
         while True:
             # Bounded, because a sentinel is not guaranteed to arrive.
             # _post_sentinels gives up after its deadline when nothing is
@@ -1024,6 +1031,8 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                 return
             else:
                 frame_idx, frame = item
+                del item
+                resimg = None
                 try:
                     with _prof('frame_total'):
                         if self.options.frame_processing:
@@ -1073,7 +1082,12 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                         if not roop.globals.processing:
                             break
                 del frame
+                del resimg
                 progress()
+                frame_counter += 1
+                if frame_counter % 50 == 0:
+                    import gc
+                    gc.collect()
 
 
     def write_frames_thread(self):
@@ -1112,6 +1126,9 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                         if hasattr(self, '_precomputed_kps') and self._precomputed_kps is not None:
                             self._precomputed_kps.pop(nextindex - 1, None)
                     del frame
+                    if nextindex % 50 == 0:
+                        import gc
+                        gc.collect()
                 elif process == False:
                     num_producers -= 1
                     if num_producers < 1:
@@ -2010,6 +2027,7 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                         except Exception:
                             out = _combined[ci]
                         _results[gi] = out if out is not None else _combined[ci]
+                        del out
                         progress_cb()
 
                 # ── Work-stealing block dispatch ──────────────────────────────
@@ -2112,7 +2130,7 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                 carry = combined[-WU:] if WU > 0 else []
                 chunk_start += len(chunk)
                 del combined, chunk, results, workers
-                if _chunk_no % 4 == 0:
+                if _chunk_no % 2 == 0:
                     import gc
                     gc.collect()
         finally:

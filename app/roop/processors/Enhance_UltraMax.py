@@ -300,8 +300,8 @@ class Enhance_UltraMax:
         # so it would look like an enhancer that works right up until someone
         # falls back to CPU. EXTENDED builds everywhere. Same reasoning as
         # Enhance_CodeFormer; keep the two in step.
-        opts = onnxruntime.SessionOptions()
-        opts.graph_optimization_level = onnxruntime.GraphOptimizationLevel.ORT_ENABLE_EXTENDED
+        from roop.utilities import get_onnx_session_options
+        opts = get_onnx_session_options(optimization_level=onnxruntime.GraphOptimizationLevel.ORT_ENABLE_EXTENDED)
 
         def _build(_i=0):
             sess = onnxruntime.InferenceSession(

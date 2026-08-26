@@ -76,6 +76,7 @@ class Mask_Clip2Seg():
             clip_mask += torch.sigmoid(preds[i+1][0])
 
         clip_mask = clip_mask.data.cpu().numpy()   # 256×256 float
+        del preds, img
 
         # #4: Upscale CLIP output to the original crop resolution BEFORE
         # thresholding and morphological ops.  At 512×512 a 5-px dilation covers

@@ -276,9 +276,14 @@ def _upscale_video_inplace(proc, path):
 
         def _write(res):
             nonlocal done
-            writer.write_frame(res)
+            if res is not None:
+                writer.write_frame(res)
+            del res
             done += 1
             pbar.update(1)
+            if done % 50 == 0:
+                import gc
+                gc.collect()
             rate = pbar.format_dict.get('rate') or 0
             if total > 0:
                 _progress["progress"] = min(0.999, done / total)
@@ -290,6 +295,7 @@ def _upscale_video_inplace(proc, path):
                 if not ok or fr is None:
                     break
                 _write(_do(fr))
+                del fr
         else:
             executor = ThreadPoolExecutor(max_workers=n_sessions, thread_name_prefix='upscale')
             in_flight = deque()
@@ -299,6 +305,7 @@ def _upscale_video_inplace(proc, path):
                 if not ok or fr is None:
                     break
                 in_flight.append(executor.submit(_do, fr))   # submitted in order
+                del fr
                 if len(in_flight) >= max_inflight:
                     _write(in_flight.popleft().result())      # drained/written in order
             # Flush the pipeline (unless the user aborted).

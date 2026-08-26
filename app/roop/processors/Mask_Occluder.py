@@ -55,10 +55,11 @@ class Mask_Occluder():
             model_dir = resolve_relative_path('../models')
             conditional_download(model_dir, [_MODEL_URL])
             model_path = os.path.join(model_dir, 'face_occluder.onnx')
-            onnxruntime.set_default_logger_severity(3)
+            from roop.utilities import get_onnx_session_options
+            _sess_opts = get_onnx_session_options()
 
             def _build(_i=0):
-                return onnxruntime.InferenceSession(model_path, None, providers=roop.globals.execution_providers)
+                return onnxruntime.InferenceSession(model_path, _sess_opts, providers=roop.globals.execution_providers)
 
             self.model_occluder = _build()
             self.model_inputs = self.model_occluder.get_inputs()

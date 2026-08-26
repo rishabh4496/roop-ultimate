@@ -388,15 +388,22 @@ class TrackingMixin:
                             best_reid, best_reid_dist = t, dist
                             is_retired = False
 
-                    for t in retired:
-                        dist = compute_cosine_distance(t['emb_mean'], emb)
-                        if dist > REID_MAX:
-                            # Would have been claimed under the old shared bar.
-                            near_miss = near_miss or dist <= EMB_MAX
-                            continue
-                        if dist < best_reid_dist:
-                            best_reid, best_reid_dist = t, dist
+                    if retired:
+                        # Vectorized batch cosine distance over retired tracks to maintain constant speed
+                        ret_candidates = retired[-500:] if len(retired) > 500 else retired
+                        ret_embs = np.asarray([t['emb_mean'] for t in ret_candidates], dtype=np.float32)
+                        u_norm = float(np.linalg.norm(emb))
+                        v_norms = np.linalg.norm(ret_embs, axis=1)
+                        denom = np.maximum(v_norms * u_norm, 1e-7)
+                        ret_dists = 1.0 - (np.dot(ret_embs, emb) / denom)
+
+                        min_k = int(np.argmin(ret_dists))
+                        min_d = float(ret_dists[min_k])
+                        if min_d <= REID_MAX and min_d < best_reid_dist:
+                            best_reid, best_reid_dist = ret_candidates[min_k], min_d
                             is_retired = True
+                        elif min_d <= EMB_MAX:
+                            near_miss = True
 
                     if best_reid is None and near_miss:
                         # Not lost: the face starts a track of its own below,
@@ -406,7 +413,10 @@ class TrackingMixin:
                     if best_reid is not None:
                         best = best_reid
                         if is_retired:
-                            retired.remove(best)
+                            try:
+                                retired.remove(best)
+                            except ValueError:
+                                pass
                             active.append(best)
                         is_reid = True
 
@@ -620,14 +630,20 @@ class TrackingMixin:
                             result = done_fut.result()
                         with _prof('track_consume'):
                             _consume(done_idx, result)
+                        del result, done_fut
                 else:
                     with _prof('track_detect'), _gpu_guard(pooled=analysis_pooled(), owner='analysis'):
                         faces = _run_detect(frame, crop_bbox, expected_count)
                     with _prof('track_consume'):
                         _consume(idx, faces)
+                    del faces
 
+                del frame
                 idx += 1
                 pbar.update(1)   # terminal bar
+                if idx % 100 == 0:
+                    import gc
+                    gc.collect()
                 # Drive the UI progress bar so the pre-pass isn't a silent black box.
                 if self.progress_gradio is not None and (idx % 10 == 0 or idx == 1):
                     tot = frame_count or idx
@@ -642,7 +658,9 @@ class TrackingMixin:
             # Drain any detections still in flight, in submission (frame) order.
             while in_flight:
                 done_idx, done_fut = in_flight.popleft()
-                _consume(done_idx, done_fut.result())
+                res = done_fut.result()
+                _consume(done_idx, res)
+                del res, done_fut
         finally:
             pbar.close()
             if det_executor is not None:
@@ -874,6 +892,10 @@ class TrackingMixin:
         # predecessor and every candidate it could take has already been placed.
         order = sorted(tracks, key=lambda t: (int(t.get('first_seen', 0)),
                                               int(t.get('id', 0))))
+        by_last_seen = {}
+        for tr in order:
+            by_last_seen.setdefault(int(tr.get('last_seen', 0)), []).append(tr)
+
         taken_prev, taken_next = set(), set()
         link = {}                       # successor id -> predecessor id
 
@@ -885,7 +907,13 @@ class TrackingMixin:
             b_c, b_w = _centre(b_box), _width(b_box)
 
             scored = []
-            for a in order:
+            # Only inspect predecessor tracks whose last_seen falls within the stitch gap window
+            candidates = []
+            for frame_num in range(b_first - _TRACK_STITCH_GAP, b_first):
+                if frame_num in by_last_seen:
+                    candidates.extend(by_last_seen[frame_num])
+
+            for a in candidates:
                 if a is b or int(a.get('id')) in taken_next:
                     continue
                 a_last = int(a.get('last_seen', 0))

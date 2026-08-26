@@ -96,7 +96,8 @@ class Frame_Upscale():
                 model_path = resolve_relative_path('../models/Frame/real_esrgan_x2.onnx')
                 self.scale = 2
 
-            self.model_upscale = onnxruntime.InferenceSession(model_path, None, providers=_upscale_providers())
+            from roop.utilities import get_onnx_session_options
+            self.model_upscale = onnxruntime.InferenceSession(model_path, get_onnx_session_options(), providers=_upscale_providers())
             self.model_inputs = self.model_upscale.get_inputs()
             model_outputs = self.model_upscale.get_outputs()
             self.io_binding = self.model_upscale.io_binding()

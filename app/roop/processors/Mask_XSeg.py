@@ -35,10 +35,11 @@ class Mask_XSeg():
         self.plugin_options = plugin_options
         if self.model_xseg is None:
             model_path = resolve_relative_path('../models/xseg.onnx')
-            onnxruntime.set_default_logger_severity(3)
+            from roop.utilities import get_onnx_session_options
+            _sess_opts = get_onnx_session_options()
 
             def _build(_i=0):
-                return onnxruntime.InferenceSession(model_path, None, providers=roop.globals.execution_providers)
+                return onnxruntime.InferenceSession(model_path, _sess_opts, providers=roop.globals.execution_providers)
 
             self.model_xseg = _build()
             self.model_inputs = self.model_xseg.get_inputs()

@@ -585,11 +585,13 @@ class FaceSwapInsightFace():
             # space the swap net was trained with. CPU is plenty for it — the
             # result is cached per source face, so it runs once per face per
             # model, not per frame.
+            from roop.utilities import get_onnx_session_options
+            _sess_opts = get_onnx_session_options()
             if spec.get("converter_url"):
                 conditional_download(model_dir, [spec["converter_url"]])
                 self.converter = onnxruntime.InferenceSession(
                     os.path.join(model_dir, spec["converter_file"]),
-                    None, providers=["CPUExecutionProvider"])
+                    _sess_opts, providers=["CPUExecutionProvider"])
                 self.converter_input = self.converter.get_inputs()[0].name
             else:
                 self.converter = None
@@ -604,10 +606,10 @@ class FaceSwapInsightFace():
                                                  spec["id_adapter_url"]])
                 self.cscs_rec = onnxruntime.InferenceSession(
                     os.path.join(model_dir, spec["recognizer_file"]),
-                    None, providers=["CPUExecutionProvider"])
+                    _sess_opts, providers=["CPUExecutionProvider"])
                 self.cscs_id = onnxruntime.InferenceSession(
                     os.path.join(model_dir, spec["id_adapter_file"]),
-                    None, providers=["CPUExecutionProvider"])
+                    _sess_opts, providers=["CPUExecutionProvider"])
             else:
                 self.cscs_rec = None
                 self.cscs_id = None
@@ -636,10 +638,8 @@ class FaceSwapInsightFace():
             self._batch_unsupported = False
 
             def _build(_i=0):
-                sess_options = onnxruntime.SessionOptions()
-                sess_options.enable_cpu_mem_arena = False
                 return onnxruntime.InferenceSession(
-                    model_arg, sess_options, providers=swap_providers)
+                    model_arg, get_onnx_session_options(), providers=swap_providers)
 
             self.model_swap_insightface = _build()
 
@@ -851,10 +851,8 @@ class FaceSwapInsightFace():
         if len(providers) == len(self._swap_providers):
             return False   # no TRT provider to strip — can't help, re-raise
         def _build(_i=0):
-            sess_options = onnxruntime.SessionOptions()
-            sess_options.enable_cpu_mem_arena = False
             return onnxruntime.InferenceSession(
-                self._model_arg, sess_options, providers=providers)
+                self._model_arg, get_onnx_session_options(), providers=providers)
         self.model_swap_insightface = _build()
         if self.pool is not None:
             n = session_pool.pool_size()

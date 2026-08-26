@@ -36,7 +36,8 @@ class Frame_Colorizer():
                 model_path = resolve_relative_path('../models/Frame/deoldify_stable.onnx')
 
             onnxruntime.set_default_logger_severity(3)
-            self.model_colorizer = onnxruntime.InferenceSession(model_path, None, providers=roop.globals.execution_providers)
+            from roop.utilities import get_onnx_session_options
+            self.model_colorizer = onnxruntime.InferenceSession(model_path, get_onnx_session_options(), providers=roop.globals.execution_providers)
             self.model_inputs = self.model_colorizer.get_inputs()
             model_outputs = self.model_colorizer.get_outputs()
             self.io_binding = self.model_colorizer.io_binding()

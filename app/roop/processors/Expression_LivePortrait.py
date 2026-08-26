@@ -472,6 +472,9 @@ class Expression_LivePortrait:
 
         parallel = _parallel_mode()
 
+        from roop.utilities import get_onnx_session_options
+        sess_opts = get_onnx_session_options()
+
         def build_sessions(_slot=0):
             built = {}
             for key, spec in MODELS.items():
@@ -482,16 +485,16 @@ class Expression_LivePortrait:
                     ctx = contextlib.nullcontext() if is_patched else _quiet_trt_parser()
                     with ctx:
                         built[key] = onnxruntime.InferenceSession(
-                            patched_path, None, providers=warp_providers)
+                            patched_path, sess_opts, providers=warp_providers)
                 else:
                     built[key] = onnxruntime.InferenceSession(
-                        path, None, providers=providers)
+                        path, sess_opts, providers=providers)
             if parallel >= 2:
                 # A second, independent context for the same model — the two
                 # motion calls can only overlap if they stop sharing one.
                 built["motion2"] = onnxruntime.InferenceSession(
                     os.path.join(model_dir, MODELS["motion"]["file"]),
-                    None, providers=providers)
+                    sess_opts, providers=providers)
             return built
 
         # One set of sessions per pool slot. Each slot owns its own TensorRT

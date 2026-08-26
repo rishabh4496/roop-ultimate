@@ -27,7 +27,8 @@ class Frame_Masking():
             self.devicename = self.plugin_options["devicename"]
             self.devicename = self.devicename.replace('mps', 'cpu')
             model_path = resolve_relative_path('../models/Frame/isnet-general-use.onnx')
-            self.model_masking = onnxruntime.InferenceSession(model_path, None, providers=roop.globals.execution_providers)
+            from roop.utilities import get_onnx_session_options
+            self.model_masking = onnxruntime.InferenceSession(model_path, get_onnx_session_options(), providers=roop.globals.execution_providers)
             self.model_inputs = self.model_masking.get_inputs()
             model_outputs = self.model_masking.get_outputs()
             self.io_binding = self.model_masking.io_binding()

@@ -100,7 +100,8 @@ class Enhance_GPEN():
             # 512 (classic weight) is stable in FP16, so leave it fast.
             if size >= 1024:
                 providers = _fp32_trt_providers(providers)
-            session = onnxruntime.InferenceSession(model_path, None, providers=providers)
+            from roop.utilities import get_onnx_session_options
+            session = onnxruntime.InferenceSession(model_path, get_onnx_session_options(), providers=providers)
             self.sessions[size] = session
 
         # replace Mac mps with cpu for the moment
@@ -131,6 +132,7 @@ class Enhance_GPEN():
             sess.run_with_iobinding(io_binding)
             ort_outs = io_binding.copy_outputs_to_cpu()
         result = ort_outs[0][0]
+        del temp_frame, io_binding, ort_outs
 
         # Defense-in-depth: FP16 overflow or a torn session can yield non-finite
         # output; np.clip would keep the NaN and uint8(NaN)=0 paints a solid black

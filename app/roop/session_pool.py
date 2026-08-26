@@ -47,6 +47,9 @@ def _detect_vram_gb() -> float:
         if torch.cuda.is_available():
             idx = torch.cuda.current_device()
             return torch.cuda.get_device_properties(idx).total_memory / (1024 ** 3)
+        elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
+            import psutil
+            return (psutil.virtual_memory().total / (1024 ** 3)) * 0.5
     except Exception:
         pass
     return 0.0

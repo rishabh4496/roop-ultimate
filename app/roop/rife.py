@@ -43,7 +43,8 @@ class RIFE:
         model_dir = resolve_relative_path("../models/Frame")
         conditional_download(model_dir, [MODEL_URL])
         model_path = os.path.join(model_dir, MODEL_FILE)
-        self.session = onnxruntime.InferenceSession(model_path, None, providers=_providers())
+        from roop.utilities import get_onnx_session_options
+        self.session = onnxruntime.InferenceSession(model_path, get_onnx_session_options(), providers=_providers())
         self._lock = threading.Lock()
         self._pair = None      # (id0-key, prepped img0) cache: reuse across timesteps
 

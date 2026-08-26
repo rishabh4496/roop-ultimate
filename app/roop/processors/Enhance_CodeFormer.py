@@ -78,16 +78,9 @@ class Enhance_CodeFormer():
             # to be the name as published, dots and all.
             name = 'codeformer.fp16.onnx' if want_fp16 else 'CodeFormerv0.1.onnx'
             model_path = resolve_relative_path(f'../models/CodeFormer/{name}')
-            opts = None
-            if want_fp16:
-                # This export trips ORT's SimplifiedLayerNormFusion at the
-                # default ORT_ENABLE_ALL and the session then fails to build at
-                # all — but only on the CPU provider, so it would look like an
-                # enhancer that works until the day someone falls back to CPU.
-                # EXTENDED builds everywhere and was measured at the speed
-                # above; going lower would give the saving back.
-                opts = onnxruntime.SessionOptions()
-                opts.graph_optimization_level = onnxruntime.GraphOptimizationLevel.ORT_ENABLE_EXTENDED
+            from roop.utilities import get_onnx_session_options
+            opt_level = onnxruntime.GraphOptimizationLevel.ORT_ENABLE_EXTENDED if want_fp16 else None
+            opts = get_onnx_session_options(optimization_level=opt_level)
             def _build(_i=0):
                 return onnxruntime.InferenceSession(
                     model_path, opts, providers=roop.globals.execution_providers)

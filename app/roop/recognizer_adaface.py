@@ -87,8 +87,9 @@ def _get_session():
                     download()
                 if not os.path.exists(path):
                     raise FileNotFoundError(f'AdaFace model missing: {path}')
+                from roop.utilities import get_onnx_session_options
                 _session = onnxruntime.InferenceSession(
-                    path, None, providers=roop.globals.execution_providers)
+                    path, get_onnx_session_options(), providers=roop.globals.execution_providers)
     return _session
 
 

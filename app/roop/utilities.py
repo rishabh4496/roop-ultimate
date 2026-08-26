@@ -20,6 +20,7 @@ from typing import List, Any
 from tqdm import tqdm
 from scipy.spatial import distance
 from datetime import datetime
+import numpy as np
 
 import roop.template_parser as template_parser
 
@@ -653,7 +654,16 @@ gradio: {gradio.__version__}
 
 
 def compute_cosine_distance(emb1, emb2) -> float:
-    return distance.cosine(emb1, emb2)
+    if emb1 is None or emb2 is None:
+        return 1.0
+    u = np.asarray(emb1, dtype=np.float32)
+    v = np.asarray(emb2, dtype=np.float32)
+    nu = float(np.linalg.norm(u))
+    nv = float(np.linalg.norm(v))
+    if nu < 1e-7 or nv < 1e-7:
+        return 1.0
+    dot = float(np.dot(u, v))
+    return max(0.0, min(2.0, 1.0 - (dot / (nu * nv))))
 
 def has_cuda_device():
     return torch.cuda is not None and torch.cuda.is_available()
@@ -664,5 +674,48 @@ def print_cuda_info():
         print(f'Number of CUDA devices: {torch.cuda.device_count()} Currently used Id: {torch.cuda.current_device()} Device Name: {torch.cuda.get_device_name(torch.cuda.current_device())}')
     except:
        print('No CUDA device found!')
+
+
+def get_onnx_session_options(optimization_level=None):
+    """Return memory-bounded SessionOptions for ONNX Runtime.
+
+    Disables the unbounded CPU memory arena (BFCArena) and memory pattern caching
+    which cause steady RAM accumulation over long video processing runs.
+    """
+    import onnxruntime
+    try:
+        opts = onnxruntime.SessionOptions()
+        if hasattr(opts, 'enable_cpu_mem_arena'):
+            opts.enable_cpu_mem_arena = False
+        if hasattr(opts, 'enable_mem_pattern'):
+            opts.enable_mem_pattern = False
+        if hasattr(opts, 'execution_mode') and hasattr(onnxruntime, 'ExecutionMode'):
+            try:
+                opts.execution_mode = onnxruntime.ExecutionMode.ORT_SEQUENTIAL
+            except Exception:
+                pass
+        if hasattr(opts, 'intra_op_num_threads'):
+            opts.intra_op_num_threads = 1
+        if hasattr(opts, 'inter_op_num_threads'):
+            opts.inter_op_num_threads = 1
+        if hasattr(opts, 'log_severity_level'):
+            opts.log_severity_level = 3
+        if optimization_level is not None:
+            if hasattr(onnxruntime, 'GraphOptimizationLevel') and hasattr(onnxruntime.GraphOptimizationLevel, 'ORT_ENABLE_EXTENDED'):
+                if optimization_level == 1 or optimization_level == onnxruntime.GraphOptimizationLevel.ORT_ENABLE_EXTENDED:
+                    opts.graph_optimization_level = onnxruntime.GraphOptimizationLevel.ORT_ENABLE_EXTENDED
+                else:
+                    try:
+                        opts.graph_optimization_level = optimization_level
+                    except Exception:
+                        pass
+            else:
+                try:
+                    opts.graph_optimization_level = optimization_level
+                except Exception:
+                    pass
+        return opts
+    except Exception:
+        return None
 
 print_cuda_info()

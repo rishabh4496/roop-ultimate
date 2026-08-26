@@ -152,16 +152,15 @@ class Enhance_GPEN256Pro:
         self.plugin_options = plugin_options
         self.devicename = plugin_options["devicename"].replace('mps', 'cpu')
 
-        if self.session is not None:
-            return
-
         model_dir = resolve_relative_path('../models')
         conditional_download(model_dir, [self._MODEL_URL])
         model_path = os.path.join(model_dir, self._MODEL_FILE)
+        from roop.utilities import get_onnx_session_options
+        opts = get_onnx_session_options()
 
         def _build(_i=0):
             sess = onnxruntime.InferenceSession(
-                model_path, None, providers=roop.globals.execution_providers)
+                model_path, opts, providers=roop.globals.execution_providers)
             iob = sess.io_binding()
             iob.bind_output(sess.get_outputs()[0].name, self.devicename)
             return (sess, iob)

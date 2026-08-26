@@ -65,7 +65,8 @@ class Enhance_GFPGAN():
             # (cached thereafter) and runs at 93 ms against CUDA's 568 ms.
             providers = fp32_trt_providers(roop.globals.execution_providers,
                                            'gfpgan')
-            self.model_gfpgan = onnxruntime.InferenceSession(model_path, None, providers=providers)
+            from roop.utilities import get_onnx_session_options
+            self.model_gfpgan = onnxruntime.InferenceSession(model_path, get_onnx_session_options(), providers=providers)
             # replace Mac mps with cpu for the moment
             self.devicename = self.plugin_options["devicename"].replace('mps', 'cpu')
 
@@ -92,6 +93,7 @@ class Enhance_GFPGAN():
             sess.run_with_iobinding(io_binding)
             ort_outs = io_binding.copy_outputs_to_cpu()
         result = ort_outs[0][0]
+        del temp_frame, io_binding, ort_outs
 
         # np.clip does not remove NaN and uint8(NaN) is 0, so a single
         # overflowed value paints black and a saturated graph paints a black

@@ -111,6 +111,12 @@ def decode_execution_providers(execution_providers: List[str]) -> List[str]:
                     'do_copy_in_default_stream': True,
                     'arena_extend_strategy': os.environ.get('ROOP_CUDA_ARENA_STRATEGY', 'kSameAsRequested'),
                 }
+                cuda_mem_limit = os.environ.get('ROOP_CUDA_MEM_LIMIT')
+                if cuda_mem_limit:
+                    try:
+                        cuda_opts['gpu_mem_limit'] = int(cuda_mem_limit)
+                    except ValueError:
+                        pass
                 list_providers[i] = ('CUDAExecutionProvider', cuda_opts)
                 torch.cuda.set_device(roop.globals.cuda_device_id)
             elif list_providers[i] == 'TensorrtExecutionProvider':
@@ -179,9 +185,31 @@ def decode_execution_providers(execution_providers: List[str]) -> List[str]:
                     'trt_timing_cache_enable': True,
                     'trt_timing_cache_path': precision_cache,
                 }
+                builder_opt = os.environ.get('ROOP_TRT_BUILDER_OPT_LEVEL')
+                if builder_opt:
+                    try:
+                        trt_opts['trt_builder_optimization_level'] = int(builder_opt)
+                    except ValueError:
+                        pass
                 if workspace_size > 0:
                     trt_opts['trt_max_workspace_size'] = workspace_size
                 list_providers[i] = ('TensorrtExecutionProvider', trt_opts)
+            elif list_providers[i] == 'DmlExecutionProvider':
+                dml_opts = {
+                    'device_id': roop.globals.cuda_device_id,
+                }
+                list_providers[i] = ('DmlExecutionProvider', dml_opts)
+            elif list_providers[i] == 'ROCMExecutionProvider':
+                rocm_opts = {
+                    'device_id': roop.globals.cuda_device_id,
+                    'arena_extend_strategy': 'kSameAsRequested',
+                }
+                list_providers[i] = ('ROCMExecutionProvider', rocm_opts)
+            elif list_providers[i] == 'CoreMLExecutionProvider':
+                coreml_opts = {
+                    'coreml_flags': 0,
+                }
+                list_providers[i] = ('CoreMLExecutionProvider', coreml_opts)
     except:
         pass
 
@@ -192,9 +220,16 @@ def decode_execution_providers(execution_providers: List[str]) -> List[str]:
 # print("Forced execution providers:", roop.globals.execution_providers)  # Debug
 
 def suggest_max_memory() -> int:
-    if platform.system().lower() == 'darwin':
-        return 4
-    return 16
+    try:
+        import psutil
+        total_ram_gb = psutil.virtual_memory().total / (1024 ** 3)
+        if platform.system().lower() == 'darwin':
+            return max(2, int(total_ram_gb * 0.4))
+        return max(4, min(64, int(total_ram_gb * 0.7)))
+    except Exception:
+        if platform.system().lower() == 'darwin':
+            return 4
+        return 16
 
 
 def suggest_execution_providers() -> List[str]:
@@ -203,24 +238,31 @@ def suggest_execution_providers() -> List[str]:
 
 
 def suggest_execution_threads() -> int:
-    # decode_execution_providers() wraps CUDA/TensorRT entries as (name, opts)
+    # decode_execution_providers() wraps provider entries as (name, opts)
     # tuples, so compare against the extracted names, not the raw list.
     provider_names = [p[0] if isinstance(p, (list, tuple)) else p
                       for p in roop.globals.execution_providers]
-    if 'DmlExecutionProvider' in provider_names:
+    if 'DmlExecutionProvider' in provider_names or 'ROCMExecutionProvider' in provider_names:
         return 1
-    if 'ROCMExecutionProvider' in provider_names:
-        return 1
+    if 'CoreMLExecutionProvider' in provider_names:
+        try:
+            import psutil
+            cores = psutil.cpu_count(logical=False) or 4
+            return max(1, min(4, cores // 2))
+        except Exception:
+            return 2
 
     suggested = 8
     try:
+        import psutil
+        cores = psutil.cpu_count(logical=False) or 4
         if any(p in provider_names for p in ['CUDAExecutionProvider', 'TensorrtExecutionProvider']):
             import torch
             if torch.cuda.is_available():
                 vram_gb = torch.cuda.get_device_properties(roop.globals.cuda_device_id).total_memory / (1024**3)
-                import psutil
-                cores = psutil.cpu_count(logical=False) or 4
                 suggested = int(min(max(2, cores - 1), max(2, vram_gb / 1.5)))
+        elif 'CPUExecutionProvider' in provider_names:
+            suggested = max(1, cores - 1)
     except Exception:
         pass
     
@@ -246,6 +288,7 @@ def limit_resources() -> None:
 def release_resources() -> None:
     import gc
     from roop.face_util import release_face_analyser
+    from roop.capturer import clear_frame_cache, release_video
     global process_mgr, _preview_process_mgr
 
     release_face_analyser()
@@ -257,6 +300,8 @@ def release_resources() -> None:
             _preview_process_mgr.release_resources()
             _preview_process_mgr = None
 
+    clear_frame_cache()
+    release_video()
     gc.collect()
     if torch is not None:
         try:

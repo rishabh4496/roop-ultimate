@@ -43,8 +43,11 @@ class Enhance_RestoreFormerPPlus():
             self.devicename = self.plugin_options["devicename"].replace('mps', 'cpu')
             model_path = resolve_relative_path('../models/restoreformer_plus_plus.onnx')
 
+            from roop.utilities import get_onnx_session_options
+            opts = get_onnx_session_options()
+
             def _build(_i=0):
-                sess = onnxruntime.InferenceSession(model_path, None, providers=roop.globals.execution_providers)
+                sess = onnxruntime.InferenceSession(model_path, opts, providers=roop.globals.execution_providers)
                 outs = sess.get_outputs()
                 iob = sess.io_binding()
                 iob.bind_output(outs[0].name, self.devicename)

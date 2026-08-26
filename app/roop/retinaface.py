@@ -118,7 +118,8 @@ class RetinaFace3Output:
         self.input_mean = (104.0, 117.0, 123.0)
 
         if self.session is None:
-            self.session = onnxruntime.InferenceSession(self.model_file, providers=['CPUExecutionProvider'])
+            from roop.utilities import get_onnx_session_options
+            self.session = onnxruntime.InferenceSession(self.model_file, get_onnx_session_options(), providers=['CPUExecutionProvider'])
 
         input_cfg = self.session.get_inputs()[0]
         input_shape = input_cfg.shape
@@ -251,7 +252,8 @@ def _pool_size():
 def _build_one(model_type, model_path, providers, file):
     """Construct ONE independent detector (its own ORT session)."""
     if model_type == 'r50':
-        session = onnxruntime.InferenceSession(model_path, providers=providers)
+        from roop.utilities import get_onnx_session_options
+        session = onnxruntime.InferenceSession(model_path, get_onnx_session_options(), providers=providers)
         det = RetinaFace3Output(model_path, session=session)
     else:
         from insightface.model_zoo import get_model

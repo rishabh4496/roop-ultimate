@@ -61,10 +61,12 @@ class Mask_FastSAM():
             # EP (slow/fragile engine builds, shape-tensor issues) — see
             # session_pool.providers_without_tensorrt.
             providers = session_pool.providers_without_tensorrt(roop.globals.execution_providers)
+            from roop.utilities import get_onnx_session_options
+            _sess_opts = get_onnx_session_options()
 
             def _build(_i=0):
                 return onnxruntime.InferenceSession(
-                    model_path, None, providers=providers)
+                    model_path, _sess_opts, providers=providers)
 
             self.model = _build()
             self.input_name = self.model.get_inputs()[0].name
