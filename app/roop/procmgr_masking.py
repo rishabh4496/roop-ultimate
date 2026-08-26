@@ -28,15 +28,6 @@ except (ImportError, AttributeError):
     _TORCH_CUDA = False
 
 
-def _gpu_has_headroom(min_free_vram_mb=1500):
-    """Returns True only when GPU has ample free VRAM and is safe for tensor offloading."""
-    if not _TORCH_CUDA:
-        return False
-    try:
-        free_bytes, _ = torch.cuda.mem_get_info()
-        return (free_bytes / (1024 * 1024)) >= min_free_vram_mb
-    except Exception:
-        return False
 
 
 # Per-face angle/mask-routing diagnostic (ROOP_DEBUG_ANGLE=1). Prints the yaw and
@@ -448,25 +439,6 @@ class MaskingMixin:
         if roi_matte.ndim == 2:
             roi_matte = roi_matte[:, :, None]
 
-        if _gpu_has_headroom(1500):
-            try:
-                device = torch.device('cuda')
-                t_matte = torch.from_numpy(roi_matte).to(device, dtype=torch.float32)
-                t_paste = torch.from_numpy(paste_face[y0:y1, x0:x1]).to(device, dtype=torch.float32)
-                t_target = torch.from_numpy(target_img[y0:y1, x0:x1]).to(device, dtype=torch.float32)
-                t_blended = torch.lerp(t_target, t_paste, t_matte)
-                blended_roi = torch.clamp(t_blended, 0, 255).to(torch.uint8).cpu().numpy()
-                out_img = target_img.copy()
-                out_img[y0:y1, x0:x1] = blended_roi
-                if self.options.show_face_area_overlay:
-                    overlay = np.zeros_like(target_img, dtype=np.uint8)
-                    overlay[:, :, 1] = (mask_2d * 200).astype(np.uint8)
-                    overlay[:, :, 2] = np.clip((1.0 - mask_2d) * mask_2d * 4 * 255, 0, 255).astype(np.uint8)
-                    out_img = cv2.addWeighted(out_img, 0.6, overlay, 0.4, 0)
-                return out_img
-            except Exception:
-                pass
-
         roi_paste = paste_face[y0:y1, x0:x1].astype(np.float32)
         roi_target = target_img[y0:y1, x0:x1].astype(np.float32)
 
@@ -598,25 +570,6 @@ class MaskingMixin:
             face_landmarks = (np.asarray(face_landmarks, dtype=np.float32) - f_c) * s + f_c
         return IM, face_landmarks
 
-    @classmethod
-    def _gaussian_kernel_1d_gpu(cls, ksize, sigma=0.0, device=None):
-        if sigma <= 0:
-            sigma = 0.3 * ((ksize - 1) * 0.5 - 1) + 0.8
-        radius = ksize // 2
-        x = torch.arange(-radius, radius + 1, dtype=torch.float32, device=device)
-        k1d = torch.exp(-0.5 * (x / sigma) ** 2)
-        k1d = k1d / k1d.sum()
-        return k1d.view(1, 1, -1, 1), k1d.view(1, 1, 1, -1), radius
-
-    @classmethod
-    def _gpu_blur_area(cls, img_matte, blur_size):
-        device = torch.device('cuda')
-        k_v, k_h, rad = cls._gaussian_kernel_1d_gpu(blur_size, device=device)
-        t = torch.from_numpy(img_matte).to(device, dtype=torch.float32).unsqueeze(0).unsqueeze(0)
-        padded = _F.pad(t, (rad, rad, rad, rad), mode='reflect')
-        blurred = _F.conv2d(_F.conv2d(padded, k_v), k_h)
-        return torch.clamp(blurred, 0, 255).to(torch.uint8)[0, 0].cpu().numpy()
-
     def blur_area(self, img_matte, face_mask_blend):
         # Always apply minimal anti-aliasing after the affine warp
         img_matte = cv2.GaussianBlur(img_matte, (3, 3), 0)
@@ -640,12 +593,6 @@ class MaskingMixin:
         kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (erosion_px * 2 + 1, erosion_px * 2 + 1))
         img_matte = cv2.erode(img_matte, kernel, iterations=1)
 
-        if _gpu_has_headroom(1500) and blur_size >= 7:
-            try:
-                return self._gpu_blur_area(img_matte, blur_size)
-            except Exception:
-                pass
-        
         return cv2.GaussianBlur(img_matte, (blur_size, blur_size), 0)
 
     def create_landmark_mask(self, landmarks_2d, frame_shape, blend_amount, kps=None):

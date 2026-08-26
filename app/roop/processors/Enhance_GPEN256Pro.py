@@ -217,20 +217,6 @@ class Enhance_GPEN256Pro:
     @classmethod
     def _keep_source_colour(cls, restored, source):
         """Transfers GPEN's restored luminance onto the source's chrominance."""
-        if _TORCH_CUDA:
-            try:
-                device = torch.device('cuda')
-                t_r = torch.from_numpy(restored).to(device, dtype=torch.float32)
-                t_s = torch.from_numpy(source).to(device, dtype=torch.float32)
-                g_r = 0.114 * t_r[:, :, 0] + 0.587 * t_r[:, :, 1] + 0.299 * t_r[:, :, 2]
-                g_s = 0.114 * t_s[:, :, 0] + 0.587 * t_s[:, :, 1] + 0.299 * t_s[:, :, 2]
-                d = g_r - g_s
-                out = torch.clamp(t_s + d.unsqueeze(-1), 0, 255).to(torch.uint8)
-                return out.cpu().numpy()
-            except Exception as e:
-                if not cls._warned_colour:
-                    cls._warned_colour = True
-                    print(f"[GPEN 256 Pro] GPU colour fix fallback to CPU: {e}", flush=True)
         return cls._keep_source_colour_cpu(restored, source)
 
     @classmethod
@@ -246,14 +232,22 @@ class Enhance_GPEN256Pro:
                 print(f"[GPEN 256 Pro] colour fix skipped: {e}", flush=True)
             return restored
 
+    _KERNEL_CACHE = {}
+
     @classmethod
     def _gaussian_kernel_2d_gpu(cls, sigma, device):
+        key = (float(sigma), str(device))
+        cached = cls._KERNEL_CACHE.get(key)
+        if cached is not None:
+            return cached
         radius = int(round(3 * sigma))
         x = torch.arange(-radius, radius + 1, dtype=torch.float32, device=device)
         k1d = torch.exp(-0.5 * (x / sigma) ** 2)
         k1d = k1d / k1d.sum()
         k2d = k1d.view(-1, 1) @ k1d.view(1, -1)
-        return k2d.view(1, 1, k2d.shape[0], k2d.shape[1]), radius
+        res = (k2d.view(1, 1, k2d.shape[0], k2d.shape[1]), radius)
+        cls._KERNEL_CACHE[key] = res
+        return res
 
     @classmethod
     def _enhance_textures_and_sharpness_gpu(cls, restored, source, input_size):

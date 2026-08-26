@@ -124,11 +124,6 @@ def _luma_only_recolour_gpu(restored, source, chroma=0.0):
 
 def luma_only_recolour(restored, source, chroma=0.0, lab_exact=False):
     """The restorer's LUMINANCE carried on the SOURCE's chrominance."""
-    if _TORCH_CUDA and not lab_exact:
-        try:
-            return _luma_only_recolour_gpu(restored, source, chroma)
-        except Exception:
-            pass
     import numpy as np
     if lab_exact:
         lab = cv2.cvtColor(source, cv2.COLOR_BGR2LAB)

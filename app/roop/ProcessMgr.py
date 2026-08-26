@@ -1695,12 +1695,18 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                 pass
         frame_mb = max(0.1, (self._stab_frame_bytes or (1920 * 1080 * 3)) / (1024.0 ** 2))
         fits = max(1, int((budget_mb / frame_mb) // block))
-        if fits < min(threads, 2) and threads >= 2 and wu > 0:
+        if fits < threads and threads >= 2 and wu > 0:
             adaptive_block = max(2 * wu, 16)
             adaptive_fits = max(1, int((budget_mb / frame_mb) // adaptive_block))
-            if adaptive_fits >= 2:
+            if adaptive_fits > fits:
                 block = adaptive_block
                 fits = adaptive_fits
+            if fits < threads and wu > 0:
+                adaptive_block2 = max(wu, 12)
+                adaptive_fits2 = max(1, int((budget_mb / frame_mb) // adaptive_block2))
+                if adaptive_fits2 > fits:
+                    block = adaptive_block2
+                    fits = adaptive_fits2
         width = max(1, min(threads, fits))
 
         # BLOCKS PER CHUNK is a separate question from WORKERS, and conflating
@@ -1773,13 +1779,14 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
         # the default does not change: raising it costs decoded-frame memory
         # (2x per extra round) for a gain nobody has demonstrated.
         #
-        # ROOP_STAB_BLOCKS_PER_WORKER=2 (or more) opts in, and is worth trying
-        # on footage whose [STAB CHUNK] lines report a large `imbalance`.
-        # Whatever it is set to, the count stays a WHOLE multiple of `width`:
-        # a partial round is 19% slower than none (see the table in
-        # tests/test_stab_block_dispatch.py).
+        # ROOP_STAB_BLOCKS_PER_WORKER or ROOP_STAB_BLOCKS_PER_THREAD=2 (or more)
+        # opts in, and is worth trying on footage whose [STAB CHUNK] lines report
+        # a large `imbalance`. Whatever it is set to, the count stays a WHOLE
+        # multiple of `width`: a partial round is 19% slower than none (see the
+        # table in tests/test_stab_block_dispatch.py).
         try:
-            want = int(float(os.environ.get('ROOP_STAB_BLOCKS_PER_WORKER', '') or 1))
+            env_want = os.environ.get('ROOP_STAB_BLOCKS_PER_WORKER') or os.environ.get('ROOP_STAB_BLOCKS_PER_THREAD')
+            want = int(float(env_want)) if env_want else 1
         except ValueError:
             want = 1
         rounds = max(1, min(max(1, fits // width), want))
@@ -2069,7 +2076,7 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                         _pb(a, b)
                     _bt[_wi] = time.perf_counter() - _w0
 
-                workers = [Thread(target=_runner, args=(i,), name=f'stab_proc{i}') for i in range(n)]
+                workers = [Thread(target=_runner, args=(i,), name=f'stab_proc{i}') for i in range(min(n, n_blocks))]
                 _t_proc0 = time.perf_counter()
                 for w in workers:
                     w.start()
