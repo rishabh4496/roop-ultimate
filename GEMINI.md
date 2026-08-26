@@ -1705,4 +1705,29 @@ Reported as: "make gpu active above 85% utilization with above 150w for single o
   - VRAM: Stable at **9.07 GB / 12.28 GB** (zero PCIe paging thrash).
 - **Throughput**: ~18–31 frames/s (total execution time 1541s, down from 1692s).
 
+---
+
+## Session Log (2026-08-26 Part 3): Parallel Stabilization Chunk Concurrency & Work-Stealing Optimization
+
+Reported as: "currently running processing in the terminal but gpu memory usage is half and there is no fps increase in the stab chunk what is happening here? optimize it".
+
+### 1. Root Cause Analysis
+- **Fixed 1536MB RAM Budget Cap**: In `ProcessMgr.py` (`_default_stab_chunk_mb`), `hard_cap` was hardcoded to `1536.0 MB`. On high-RAM systems (32GB+), a 1536 MB budget only allowed 3–4 blocks per chunk at 1080p/720p, dropping worker concurrency from `threads=12` down to 3–4 workers while 8 cores sat idle.
+- **Barrier Idle Stalls (`w.join()`)**: When `rounds = 1`, each worker received exactly 1 block per chunk. Because face count and frame complexity varied, fast workers finished early and sat idle at 0% GPU load waiting for the slowest worker at the chunk join barrier.
+
+### 2. The Solution
+1. **Dynamic RAM Budget Scaling**:
+   - In `_default_stab_chunk_mb`, `hard_cap` now scales with total system memory:
+     - `≥ 55 GB RAM`: 8192 MB cap
+     - `≥ 28 GB RAM` (e.g. 32GB Desktop): **4096 MB cap**
+     - `< 28 GB RAM`: 1536 MB cap
+   - On 32GB machines, this provides enough decoded-frame buffer space to run all **12 worker threads** concurrently.
+2. **Auto-Enabled 2-Round Work Stealing**:
+   - In `_stab_parallel_geometry`, when `fits // width >= 2`, `rounds` automatically defaults to **2 rounds per chunk** (`blocks_per_chunk = width * 2`), allowing idle workers to steal remaining blocks from the queue and eliminating barrier stalls.
+
+### 3. Verification
+- `test_stab_block_dispatch.py`: 12 / 12 tests passing.
+- `test_hardware_portability.py`: 25 / 25 tests passing.
+
+
 

@@ -1641,29 +1641,38 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
     # (AVERROR(ENOMEM)) and numpy unable to allocate a 1.5 MB array.
     _STAB_LIVE_CHUNKS = 6
 
-    def _default_stab_chunk_mb(self, hard_cap=1536.0):
+    def _default_stab_chunk_mb(self, hard_cap=None):
         """Per-chunk budget that keeps all six live copies inside a share of the
         RAM this machine actually has free.
-
-        Never RAISES the old default: on a machine with headroom this returns
-        exactly 1536.0 and nothing about the geometry changes. It only lowers,
-        and only where the old number could not have fitted.
         """
+        try:
+            total_mb = psutil.virtual_memory().total / (1024.0 ** 2)
+            avail_mb = psutil.virtual_memory().available / (1024.0 ** 2)
+        except Exception:
+            return 1536.0
+
+        if hard_cap is None:
+            # Scale budget cap dynamically with system RAM:
+            # 64GB+ RAM: 8192 MB cap
+            # 32GB RAM:  4096 MB cap (e.g. desktop workstation)
+            # <=16GB RAM: 1536 MB cap (e.g. laptop / low-memory)
+            if total_mb >= 55000:
+                hard_cap = 8192.0
+            elif total_mb >= 28000:
+                hard_cap = 4096.0
+            else:
+                hard_cap = 1536.0
+
         try:
             share = float(os.environ.get('ROOP_STAB_RAM_SHARE', '') or 0.40)
         except ValueError:
             share = 0.40
         share = min(0.90, max(0.05, share))
-        try:
-            avail_mb = psutil.virtual_memory().available / (1024.0 ** 2)
-        except Exception:
-            return hard_cap
         budget = max(96.0, min(hard_cap, (avail_mb * share) / self._STAB_LIVE_CHUNKS))
-        if budget < hard_cap and not getattr(self, '_stab_budget_notified', False):
+        if not getattr(self, '_stab_budget_notified', False):
             self._stab_budget_notified = True
-            print(f"[Stabilize] {avail_mb / 1024.0:.1f} GB RAM free: chunk budget "
-                  f"{budget:.0f} MB instead of {hard_cap:.0f} MB, because the "
-                  f"pipeline holds {self._STAB_LIVE_CHUNKS} chunks at once "
+            print(f"[Stabilize] {avail_mb / 1024.0:.1f} GB RAM free of {total_mb / 1024.0:.1f} GB: chunk budget "
+                  f"{budget:.0f} MB (cap {hard_cap:.0f} MB), holding {self._STAB_LIVE_CHUNKS} live copies "
                   f"(~{budget * self._STAB_LIVE_CHUNKS / 1024.0:.1f} GB of frames). "
                   f"ROOP_STAB_CHUNK_MB overrides this exactly.")
         return budget
@@ -1790,10 +1799,15 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
         # table in tests/test_stab_block_dispatch.py).
         try:
             env_want = os.environ.get('ROOP_STAB_BLOCKS_PER_WORKER') or os.environ.get('ROOP_STAB_BLOCKS_PER_THREAD')
-            want = int(float(env_want)) if env_want else 1
+            want = int(float(env_want)) if env_want else 0
         except ValueError:
-            want = 1
-        rounds = max(1, min(max(1, fits // width), want))
+            want = 0
+        if want > 0:
+            rounds = max(1, min(max(1, fits // width), want))
+        else:
+            # Auto: on machines with enough RAM budget (fits // width >= 2), enable 2 rounds
+            # so work-stealing eliminates worker idle stalls and GPU utilization valleys.
+            rounds = 2 if (fits // width) >= 2 else 1
         blocks_per_chunk = width * rounds
         return wu, block, width, blocks_per_chunk
 
