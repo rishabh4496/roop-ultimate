@@ -101,43 +101,34 @@ def fp32_trt_providers(providers, tag):
     return patched
 
 
+try:
+    import torch
+    _TORCH_CUDA = torch.cuda.is_available()
+except (ImportError, AttributeError):
+    _TORCH_CUDA = False
+
+
+def _luma_only_recolour_gpu(restored, source, chroma=0.0):
+    device = torch.device('cuda')
+    t_r = torch.from_numpy(restored).to(device, dtype=torch.float32)
+    t_s = torch.from_numpy(source).to(device, dtype=torch.float32)
+    g_r = 0.114 * t_r[:, :, 0] + 0.587 * t_r[:, :, 1] + 0.299 * t_r[:, :, 2]
+    g_s = 0.114 * t_s[:, :, 0] + 0.587 * t_s[:, :, 1] + 0.299 * t_s[:, :, 2]
+    d = g_r - g_s
+    out = torch.clamp(t_s + d.unsqueeze(-1), 0, 255)
+    if chroma > 0.0:
+        out = (1.0 - chroma) * out + chroma * t_r
+        out = torch.clamp(out, 0, 255)
+    return out.to(torch.uint8).cpu().numpy()
+
+
 def luma_only_recolour(restored, source, chroma=0.0, lab_exact=False):
-    """The restorer's LUMINANCE carried on the SOURCE's chrominance.
-
-    THE FAILURE THIS FIXES. Every GAN restorer here drifts in colour, and each
-    drifts its own way: GPEN pushes the whole face pink and paints magenta onto
-    the eyelids, while CodeFormer does the opposite — it desaturates and lifts.
-    Measured against the crop the restorer was handed, over 5 real frames of
-    s1.mp4 (`tests/diag_ultramax_cost_and_colour.py`):
-
-        enhancer          chroma drift   dLAB-a   dLAB-b     dL   saturation
-        UltraMax                  2.51    -0.96    +0.35   +2.22       x0.958
-        GPEN Realistic            0.31    -0.11    -0.08   +4.06       x0.966
-        GPEN 256 Pro              0.38    -0.07    -0.00   +1.54       x1.011
-
-    Less red, brighter, less saturated is exactly what "pale" looks like, and
-    the two GPEN processors do not have it for one reason only: they already
-    run this function. UltraMax did not, and the user reported the difference
-    before anything here was measured.
-
-    THE MECHANISM. A luminance-only edit is the same signed offset on all three
-    BGR channels, so adding `grey(restored) - grey(source)` to the SOURCE moves
-    brightness and leaves hue and saturation exactly where the swapper put
-    them. Two C++ passes, 0.27 ms at 512, and it cannot touch detail: the
-    restored image's every high-frequency variation survives in the grey delta.
-
-    `lab_exact` swaps in a true LAB L-channel replacement. It is more precise
-    (0.11 residual drift against the grey delta's 0.30, on a ~2.9 problem) and
-    more than twice the cost; the two are indistinguishable on footage.
-
-    `chroma` lerps back toward the restorer's own colour, for re-measuring only.
-    0 is the default and the entire point.
-
-    Raises cv2.error rather than swallowing it. A colour fix that silently
-    no-ops leaves a plausible image carrying the exact cast it exists to
-    remove, and nothing anywhere would show it — so each caller catches this
-    and says so once.
-    """
+    """The restorer's LUMINANCE carried on the SOURCE's chrominance."""
+    if _TORCH_CUDA and not lab_exact:
+        try:
+            return _luma_only_recolour_gpu(restored, source, chroma)
+        except Exception:
+            pass
     import numpy as np
     if lab_exact:
         lab = cv2.cvtColor(source, cv2.COLOR_BGR2LAB)

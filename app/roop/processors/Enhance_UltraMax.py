@@ -202,6 +202,13 @@ from roop.processors.enhance_common import (looks_collapsed, sized, exclusive,
 from roop.utilities import resolve_relative_path
 from roop import session_pool
 
+try:
+    import torch
+    import torch.nn.functional as _F
+    _TORCH_CUDA = torch.cuda.is_available()
+except (ImportError, AttributeError):
+    _TORCH_CUDA = False
+
 
 def _env_float(name, default):
     try:
@@ -365,8 +372,8 @@ class Enhance_UltraMax:
         self._lut = None
 
     # ── texture restore ──────────────────────────────────────────────────────
-    @staticmethod
-    def _restore_texture(restored, source, gain, sigma=_SIGMA):
+    @classmethod
+    def _restore_texture(cls, restored, source, gain, sigma=_SIGMA):
         """Put back the dermal micro-texture the restorer flattened.
 
         `restored` = CodeFormer's 512 output, `source` = the crop it was handed,
@@ -410,34 +417,80 @@ class Enhance_UltraMax:
         """
         if gain <= 0.0:
             return restored
+        if _TORCH_CUDA:
+            try:
+                return cls._restore_texture_gpu(restored, source, gain, sigma)
+            except Exception as e:
+                if not Enhance_UltraMax._warned_texture:
+                    Enhance_UltraMax._warned_texture = True
+                    print(f"[UltraMax] GPU texture restore fallback to CPU: {e}", flush=True)
+        return cls._restore_texture_cpu(restored, source, gain, sigma)
+
+    @classmethod
+    def _gaussian_kernel_2d_gpu(cls, sigma, device):
+        radius = int(round(3 * sigma))
+        x = torch.arange(-radius, radius + 1, dtype=torch.float32, device=device)
+        k1d = torch.exp(-0.5 * (x / sigma) ** 2)
+        k1d = k1d / k1d.sum()
+        k2d = k1d.view(-1, 1) @ k1d.view(1, -1)
+        return k2d.view(1, 1, k2d.shape[0], k2d.shape[1]), radius
+
+    @classmethod
+    def _restore_texture_gpu(cls, restored, source, gain, sigma):
+        device = torch.device('cuda')
+        r_t = torch.from_numpy(restored).to(device, dtype=torch.float32).permute(2, 0, 1).unsqueeze(0)
+        s_t = torch.from_numpy(source).to(device, dtype=torch.float32).permute(2, 0, 1).unsqueeze(0)
+
+        g_src = 0.114 * s_t[:, 0:1] + 0.587 * s_t[:, 1:2] + 0.299 * s_t[:, 2:3]
+        g_res = 0.114 * r_t[:, 0:1] + 0.587 * r_t[:, 1:2] + 0.299 * r_t[:, 2:3]
+
+        k_sig, r_sig = cls._gaussian_kernel_2d_gpu(max(0.6, float(sigma)), device)
+        padded_src = _F.pad(g_src, (r_sig, r_sig, r_sig, r_sig), mode='reflect')
+        src_blur = _F.conv2d(padded_src, k_sig)
+        hf = g_src - src_blur
+        lim = 11.0 * max(0.6, float(sigma))
+        hf = torch.clamp(hf, -lim, lim)
+
+        small = _F.interpolate(g_res, scale_factor=0.5, mode='area')
+        if not hasattr(cls, '_laplacian_k_gpu'):
+            cls._laplacian_k_gpu = torch.tensor([[0, 1, 0], [1, -4, 1], [0, 1, 0]], dtype=torch.float32, device=device).view(1, 1, 3, 3)
+            cls._exposure_lut_gpu = torch.tensor(Enhance_UltraMax._EXPOSURE_LUT, dtype=torch.float32, device=device)
+
+        padded_small = _F.pad(small, (1, 1, 1, 1), mode='reflect')
+        lap = torch.abs(_F.conv2d(padded_small, cls._laplacian_k_gpu))
+
+        k_1, r_1 = cls._gaussian_kernel_2d_gpu(1.0, device)
+        padded_lap = _F.pad(lap, (r_1, r_1, r_1, r_1), mode='reflect')
+        edge = _F.conv2d(padded_lap, k_1)
+        edge = torch.clamp((edge - 4.0) * (1.0 / 16.0), 0.0, 1.0)
+        edge = 1.0 - edge
+
+        small_idx = small.long().clamp(0, 255)
+        exp_gate = cls._exposure_lut_gpu[small_idx]
+        edge = edge * exp_gate
+
+        gate = _F.interpolate(edge, size=g_res.shape[2:], mode='bilinear', align_corners=False)
+        delta = hf * gate * float(gain)
+
+        out = torch.clamp(r_t + delta, 0, 255).to(torch.uint8)
+        return out[0].permute(1, 2, 0).cpu().numpy()
+
+    @classmethod
+    def _restore_texture_cpu(cls, restored, source, gain, sigma):
         try:
             g_src = cv2.cvtColor(source, cv2.COLOR_BGR2GRAY)
             g_res = cv2.cvtColor(restored, cv2.COLOR_BGR2GRAY)
             h, w_px = g_res.shape[:2]
 
-            # Real high-frequency luminance from the input, at FULL resolution —
-            # this is the texture itself, so it is the one thing that cannot be
-            # approximated. The clamp scales with sigma because a wider band
-            # legitimately carries a larger swing; it is there to stop a
-            # compression block or a specular speckle punching through, not to
-            # cap the texture.
             sigma = max(0.6, float(sigma))
             hf = cv2.subtract(g_src, cv2.GaussianBlur(g_src, (0, 0), sigmaX=sigma),
                               dtype=cv2.CV_32F)
             lim = 11.0 * sigma
             np.clip(hf, -lim, lim, out=hf)
 
-            # BOTH gates are built at half resolution and upsampled once. One is
-            # a blurred edge map and the other is a smooth function of exposure,
-            # so neither has detail to lose — and the pair measured 1.6 ms at
-            # full resolution against 0.7 ms here, on a filter whose entire
-            # budget is the 6.1 ms the lean host path saves.
             small = cv2.resize(g_res, (w_px // 2, h // 2),
                                interpolation=cv2.INTER_AREA)
 
-            # Structure gate. Laplacian rather than two Sobels: one pass, and the
-            # second derivative is what "the codebook drew a line here" actually
-            # looks like.
             edge = cv2.GaussianBlur(
                 np.abs(cv2.Laplacian(small, cv2.CV_32F, ksize=3)), (0, 0),
                 sigmaX=1.0)
@@ -446,24 +499,13 @@ class Enhance_UltraMax:
             np.clip(edge, 0.0, 1.0, out=edge)
             np.subtract(1.0, edge, out=edge)
 
-            # Exposure gate, off the restored luminance, as a table lookup.
             cv2.multiply(edge, Enhance_UltraMax._EXPOSURE_LUT[small], dst=edge)
             gate = cv2.resize(edge, (w_px, h), interpolation=cv2.INTER_LINEAR)
 
-            # int16 from here on: the last three passes touch all three colour
-            # channels, so halving the element size is worth more than it looks.
             delta = cv2.multiply(hf, gate, scale=float(gain), dtype=cv2.CV_16S)
-            # A luminance-only edit is the same signed offset on every channel.
-            # `merge` and not `cvtColor(GRAY2BGR)`: cvtColor rejects CV_16S
-            # outright, and because the whole body is guarded it did so
-            # silently — the filter became a no-op that still returned a
-            # plausible image. Kept as a comment because that is exactly how it
-            # would come back.
             return cv2.add(restored, cv2.merge((delta, delta, delta)),
                            dtype=cv2.CV_8U)
         except cv2.error as e:
-            # Never take a render down over a look filter — but say so, or the
-            # failure above repeats and nothing in the output ever shows it.
             if not Enhance_UltraMax._warned_texture:
                 Enhance_UltraMax._warned_texture = True
                 print(f"[UltraMax] texture restore skipped: {e}", flush=True)
