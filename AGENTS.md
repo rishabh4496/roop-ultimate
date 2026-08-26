@@ -38,6 +38,29 @@ on: [{
 
 Deviation from this pattern requires written approval from the user.
 
+---
+
+## User Hardware Profiles (Dual-Device Environment)
+
+This codebase is actively developed and deployed across **two distinct hardware environments**. All architecture changes, memory thresholds, and concurrency configurations must strictly accommodate and preserve both profiles:
+
+### 1. Main Device (Desktop Workstation)
+- **GPU**: NVIDIA GeForce RTX 4070 Desktop (12.0 GB VRAM, 200W TDP, PCIe 4.0 x16).
+- **CPU**: 24 Physical Cores / 32 Logical Threads.
+- **System RAM**: 32 GB RAM (31.7 GB physical).
+- **VRAM Tier**: `11.5–15.5 GB` (`perf_trt_pool: 2`, `perf_detmask_pool: 2`, `perf_detector_pool: 2`).
+- **Optimal VRAM Budget**: ~9.07 GB used, ~3.0 GB unfragmented headroom (100% on-device VRAM, zero PCIe paging thrash).
+- **Parallel Stabilization**: `hard_cap: 4096 MB`, 12-thread parallel execution, automatic 2-round work stealing.
+
+### 2. Secondary Device (Laptop Workstation)
+- **GPU**: NVIDIA GeForce RTX 3060 Laptop GPU (6.0 GB VRAM, mobile TDP).
+- **System RAM**: 16 GB RAM.
+- **VRAM Tier**: `< 7 GB` (`0 / 0` single context + global GPU guard lock to prevent out-of-memory errors).
+- **Parallel Stabilization**: `hard_cap: 1536 MB` with adaptive block sizing (`adaptive_block = max(2 * wu, 16)`), keeping system RSS strictly under 2.5 GB without memory exhaustion.
+- **Look Settings**: Hand-tuned custom look settings must be preserved (e.g., `blend_ratio 0.85`, `face_mask_blend 25`, `merger_sharpen 0.55`, `stabilize_enhancer_strength 0.6`).
+
+---
+
 - Make sure to keep this entire document and `PINOKIO.md` at G:\pinokio\prototype\PINOKIO.md in memory with high priority before making any decision. Pinokio is a system that makes it easy to write launchers through scripting by providing various cross-platform APIs, so whenever possible you should prioritize using Pinokio API over lower level APIs.
 - When writing pinokio scripts, ALWAYS check the examples folder (in G:\pinokio\prototype\system\examples folder) to see if there are existing example scripts you can imitate, instead of assuming syntax.
 - When implementing pinokio script APIs and you cannot infer the syntax just based on the examples, always search the API documentation `PINOKIO.md` at G:\pinokio\prototype\PINOKIO.md to use the correct syntax instead of assuming the syntax.
