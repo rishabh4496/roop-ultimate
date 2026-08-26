@@ -544,6 +544,12 @@ class TestRotationVerificationGuard(unittest.TestCase):
         self.assertFalse(rotation_improves_upright(self._face_at(90),
                                                    self._face_at(88)))
 
+    def test_rejects_a_rotation_that_makes_a_near_threshold_face_worse(self):
+        """The old <65-degree fallback accepted 55 degrees -> 60 degrees."""
+        from roop.face_util import rotation_improves_upright
+        self.assertFalse(rotation_improves_upright(self._face_at(55),
+                                                   self._face_at(60)))
+
     def test_passes_through_when_there_is_nothing_to_judge(self):
         from insightface.app.common import Face
         from roop.face_util import rotation_improves_upright

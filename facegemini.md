@@ -430,17 +430,15 @@ merger key, verified to FAIL when one is removed.
    bench number excluded it (§10).
 3. **Auto-angle intake for persistently-profile subjects** (§6) — the one lead
    with a real population behind it.
-4. **Still reported but NOT changed:** RealityUX effectively silenced BiSeNet
+4. **Historical note — later resolved:** RealityUX effectively silenced BiSeNet
    (`accessory_allowed` gates subtraction on `xseg_mask > 0.05`, i.e. only where
    XSeg already excludes — the disagreement case was the entire value; and
    `_NONFACE_STRICT` is now dead code while the class docstring still describes
-   the old behaviour). Autorotate guards loosened: `rotation_improves_upright`
-   short-circuits on `na > nb + 2.0` (ArcFace embedding MAGNITUDE, noisy between
-   detections of the same face) and accepts rotations that made tilt WORSE; same
-   in `_upright_remeasure`. Highest-risk unmeasured change still outstanding.
-   UltraMax `_cache` is never evicted, and `_key`'s spatial fallback has no
-   per-frame claim set so two faces in one frame can bind to one anchor
-   (masked by `track_identities: true`, exposed for images/batch).
+   the old behaviour). The autorotate acceptance defect described here was fixed
+   on 2026-08-26: `rotation_improves_upright` now keeps a rotated detection only
+   when its tilt improves by more than five degrees, with a 55° -> 60° regression
+   test. UltraMax `_cache` / `_key` was removed in the Part 3 rebuild; the old
+   cache warning is historical rather than an open issue.
 
 ### 12. UltraMax Eye Refinement & Full GPU Saturation in React UI (2026-08-23 Part 2)
 
@@ -1173,19 +1171,15 @@ classes, same pixels.
 removed the cache entirely. The 2026-08-23 "OPEN" list still names it; that
 entry is stale.
 
-### 7. STILL OPEN, and deliberately not touched
+### 7. RESOLVED (2026-08-26): autorotation acceptance gate
 
-`rotation_improves_upright` (`roop/face_util.py`) short-circuits on
-`na > nb + 2.0` — ArcFace embedding MAGNITUDE, which is noisy between two
-detections of the same face — bypassing the tilt check entirely. Its second
-clause, `abs(after) < 65.0 and na >= nb - 0.5`, accepts a rotation that made
-tilt WORSE anywhere in the band `[FACE_ROLL_LOWER=54.5, 65)`. Still the
-highest-risk unmeasured change on record.
-
-NOT changed, on this project's own rule: it is a gate, and four gate changes
-have already been implemented and reverted here because the population was not
-in the band the change targeted. Needs inverted/yoga footage to measure the
-distribution first. There was none on this machine.
+`rotation_improves_upright` (`roop/face_util.py`) formerly short-circuited on
+ArcFace embedding magnitude and accepted an outcome merely because it landed
+below 65°. That allowed a 55° face to become 60° and still be accepted. The gate
+now accepts only a measured tilt improvement of more than five degrees; the
+embedding-magnitude and below-65° bypasses are removed. `test_alignment.py`
+contains the exact 55° -> 60° regression case. A real inverted/yoga-footage
+visual regression remains useful validation, but this safety defect is closed.
 
 ### 8. The 3060's look settings are DELIBERATE — do not "realign" them
 

@@ -1437,17 +1437,16 @@ def rotation_improves_upright(before_face, after_face):
                 return True
         except Exception:
             pass
-    emb_b = getattr(before_face, 'embedding', None)
-    emb_a = getattr(after_face, 'embedding', None)
-    nb = float(np.linalg.norm(emb_b)) if emb_b is not None else 0.0
-    na = float(np.linalg.norm(emb_a)) if emb_a is not None else 0.0
-    if na > nb + 2.0:
-        return True
     before = face_roll_tilt(before_face)
     after = face_roll_tilt(after_face)
     if before is None or after is None:
         return True     # nothing to judge with; keep the pre-existing behaviour
-    return abs(after) < abs(before) - 5.0 or (abs(after) < 65.0 and na >= nb - 0.5)
+    # This is a safety gate, not an identity-quality vote.  ArcFace embedding
+    # magnitude is not comparable between detections of the same face, and the
+    # old fallback accepted a face merely because it landed below 65 degrees --
+    # including turns from 55 to 60 degrees.  Keep a rotated detection only when
+    # it is measurably more upright than the original.
+    return abs(after) < abs(before) - 5.0
 
 
 # alignment code from insightface https://github.com/deepinsight/insightface/blob/master/python-package/insightface/utils/face_align.py

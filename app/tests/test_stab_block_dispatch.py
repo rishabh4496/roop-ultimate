@@ -249,8 +249,9 @@ class TestGeometrySignature(unittest.TestCase):
         """The function grew a fourth return value; a caller still unpacking
         three would raise at render time, not at import."""
         import re
-        src = open(os.path.join(APP, 'roop', 'ProcessMgr.py'),
-                   encoding='utf-8').read()
+        with open(os.path.join(APP, 'roop', 'ProcessMgr.py'),
+                  encoding='utf-8') as source_file:
+            src = source_file.read()
         calls = re.findall(r'([\w, _]+)=\s*self\._stab_parallel_geometry\(', src)
         self.assertTrue(calls, 'no calls found — the guard is dead')
         for lhs in calls:

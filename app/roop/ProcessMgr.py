@@ -1646,8 +1646,13 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
         RAM this machine actually has free.
         """
         try:
-            total_mb = psutil.virtual_memory().total / (1024.0 ** 2)
-            avail_mb = psutil.virtual_memory().available / (1024.0 ** 2)
+            memory = psutil.virtual_memory()
+            avail_mb = memory.available / (1024.0 ** 2)
+            # `available` is the safety-critical measurement.  Keep the original
+            # 1536 MB cap when a lightweight psutil implementation (or a test
+            # double) cannot report total RAM, rather than returning the cap
+            # before applying the available-memory guard.
+            total_mb = float(getattr(memory, 'total', 0) or 0) / (1024.0 ** 2)
         except Exception:
             return 1536.0
 
