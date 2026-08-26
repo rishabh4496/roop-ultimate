@@ -65,6 +65,13 @@ from roop.processors.enhance_common import (sized, looks_collapsed, exclusive,
 from roop.utilities import resolve_relative_path, conditional_download
 from roop import session_pool
 
+try:
+    import torch
+    import torch.nn.functional as _F
+    _TORCH_CUDA = torch.cuda.is_available()
+except (ImportError, AttributeError):
+    _TORCH_CUDA = False
+
 
 class Enhance_GPEN256Pro:
     processorname = 'gpen_256_pro'
@@ -209,34 +216,114 @@ class Enhance_GPEN256Pro:
     # ── colour & texture processing ──────────────────────────────────────────
     @classmethod
     def _keep_source_colour(cls, restored, source):
-        """Transfers GPEN's restored luminance onto the source's chrominance.
+        """Transfers GPEN's restored luminance onto the source's chrominance."""
+        if _TORCH_CUDA:
+            try:
+                device = torch.device('cuda')
+                t_r = torch.from_numpy(restored).to(device, dtype=torch.float32)
+                t_s = torch.from_numpy(source).to(device, dtype=torch.float32)
+                g_r = 0.114 * t_r[:, :, 0] + 0.587 * t_r[:, :, 1] + 0.299 * t_r[:, :, 2]
+                g_s = 0.114 * t_s[:, :, 0] + 0.587 * t_s[:, :, 1] + 0.299 * t_s[:, :, 2]
+                d = g_r - g_s
+                out = torch.clamp(t_s + d.unsqueeze(-1), 0, 255).to(torch.uint8)
+                return out.cpu().numpy()
+            except Exception as e:
+                if not cls._warned_colour:
+                    cls._warned_colour = True
+                    print(f"[GPEN 256 Pro] GPU colour fix fallback to CPU: {e}", flush=True)
+        return cls._keep_source_colour_cpu(restored, source)
 
-        Eliminates the pink/magenta color cast (mean chroma drift 2.7+ -> 0.3)
-        while preserving all reconstructed luminance structures in two C++ passes.
-        """
+    @classmethod
+    def _keep_source_colour_cpu(cls, restored, source):
         try:
             g_r = cv2.cvtColor(restored, cv2.COLOR_BGR2GRAY)
             g_s = cv2.cvtColor(source, cv2.COLOR_BGR2GRAY)
             d = cv2.subtract(g_r, g_s, dtype=cv2.CV_16S)
             return cv2.add(source, cv2.merge((d, d, d)), dtype=cv2.CV_8U)
         except cv2.error as e:
-            # Silently returning `restored` here leaves GPEN's pink/magenta cast
-            # — the very thing this class removes — on a plausible-looking image.
             if not cls._warned_colour:
                 cls._warned_colour = True
                 print(f"[GPEN 256 Pro] colour fix skipped: {e}", flush=True)
             return restored
 
     @classmethod
-    def _enhance_textures_and_sharpness(cls, restored, source, input_size):
-        """Applies structure-gated micro-texture injection and edge-targeted sharpening.
+    def _gaussian_kernel_2d_gpu(cls, sigma, device):
+        radius = int(round(3 * sigma))
+        x = torch.arange(-radius, radius + 1, dtype=torch.float32, device=device)
+        k1d = torch.exp(-0.5 * (x / sigma) ** 2)
+        k1d = k1d / k1d.sum()
+        k2d = k1d.view(-1, 1) @ k1d.view(1, -1)
+        return k2d.view(1, 1, k2d.shape[0], k2d.shape[1]), radius
 
-        - Extracts high-frequency dermal pores and micro-grain from the source.
-        - Suppresses edge noise using a Sobel structural edge-stop gate to avoid eyelid / lip halos.
-        - Gated by mid-tone exposure curve.
-        - Targeted unsharp sharpening on anatomical features (eyes, lashes, lips, brows).
-        - If input_size >= 512, processes at 512 for scale-2 pasteupscale crispness.
-        """
+    @classmethod
+    def _enhance_textures_and_sharpness_gpu(cls, restored, source, input_size):
+        device = torch.device('cuda')
+        try:
+            want = int(os.environ.get('ROOP_GPEN256PRO_SIZE', '') or 0)
+        except ValueError:
+            want = 0
+        target_size = want if want in (256, 512, 1024) else (512 if input_size <= 256 else input_size)
+
+        r_t = torch.from_numpy(restored).to(device, dtype=torch.float32).permute(2, 0, 1).unsqueeze(0)
+        s_t = torch.from_numpy(source).to(device, dtype=torch.float32).permute(2, 0, 1).unsqueeze(0)
+
+        if r_t.shape[2:] != (target_size, target_size):
+            rest_f = _F.interpolate(r_t, size=(target_size, target_size), mode='bicubic', align_corners=False)
+        else:
+            rest_f = r_t
+
+        if s_t.shape[2:] != (target_size, target_size):
+            src_f = _F.interpolate(s_t, size=(target_size, target_size), mode='bicubic', align_corners=False)
+        else:
+            src_f = s_t
+
+        gray = (0.114 * rest_f[:, 0:1] + 0.587 * rest_f[:, 1:2] + 0.299 * rest_f[:, 2:3])
+
+        if not hasattr(cls, '_sobel_x_gpu'):
+            cls._sobel_x_gpu = torch.tensor([[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]], dtype=torch.float32, device=device).view(1, 1, 3, 3)
+            cls._sobel_y_gpu = torch.tensor([[-1, -2, -1], [0, 0, 0], [1, 2, 1]], dtype=torch.float32, device=device).view(1, 1, 3, 3)
+            cls._tex_lut_gpu = torch.tensor(cls._EXPOSURE_LUT_TEX, dtype=torch.float32, device=device)
+
+        gx = _F.conv2d(gray, cls._sobel_x_gpu, padding=1)
+        gy = _F.conv2d(gray, cls._sobel_y_gpu, padding=1)
+        m2 = gx * gx + gy * gy
+        skin_gate = 196.0 / (m2 + 196.0)
+
+        gray_idx = gray.long().clamp(0, 255)
+        exp_gate = cls._tex_lut_gpu[gray_idx]
+        w_tex = skin_gate * exp_gate
+
+        k_tex, r_ktex = cls._gaussian_kernel_2d_gpu(max(1.0, target_size / 256.0), device)
+        padded_src = _F.pad(src_f, (r_ktex, r_ktex, r_ktex, r_ktex), mode='reflect')
+        src_blur = _F.conv2d(padded_src, k_tex.repeat(3, 1, 1, 1), groups=3)
+        hf_texture = src_f - src_blur
+        core = torch.exp(hf_texture * hf_texture * (-1.0 / 256.0))
+        injected_texture = hf_texture * core * w_tex
+
+        k_sharp, r_ksharp = cls._gaussian_kernel_2d_gpu(0.8 * (target_size / 256.0), device)
+        padded_rest = _F.pad(rest_f, (r_ksharp, r_ksharp, r_ksharp, r_ksharp), mode='reflect')
+        rest_blur = _F.conv2d(padded_rest, k_sharp.repeat(3, 1, 1, 1), groups=3)
+        hf_restored = rest_f - rest_blur
+        sharpness_amount = 0.42 - skin_gate * 0.30
+        sharpened_features = hf_restored * sharpness_amount
+
+        out = torch.clamp(rest_f + injected_texture + sharpened_features, 0, 255).to(torch.uint8)
+        return out[0].permute(1, 2, 0).cpu().numpy()
+
+    @classmethod
+    def _enhance_textures_and_sharpness(cls, restored, source, input_size):
+        """Applies structure-gated micro-texture injection and edge-targeted sharpening."""
+        if _TORCH_CUDA:
+            try:
+                return cls._enhance_textures_and_sharpness_gpu(restored, source, input_size)
+            except Exception as e:
+                if not cls._warned_texture:
+                    cls._warned_texture = True
+                    print(f"[GPEN 256 Pro] GPU texture fix fallback to CPU: {e}", flush=True)
+        return cls._enhance_textures_and_sharpness_cpu(restored, source, input_size)
+
+    @classmethod
+    def _enhance_textures_and_sharpness_cpu(cls, restored, source, input_size):
         try:
             try:
                 want = int(os.environ.get('ROOP_GPEN256PRO_SIZE', '') or 0)

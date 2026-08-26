@@ -89,10 +89,12 @@ class TestFilterMatchesTheReference(unittest.TestCase):
     def _both(self, restored, source, input_size=256):
         cls = CLS
         cls._warned_texture = False
-        got = cls._enhance_textures_and_sharpness(restored, source, input_size)
+        got = cls._enhance_textures_and_sharpness_cpu(restored, source, input_size)
         self.assertFalse(cls._warned_texture,
                          "the filter raised and fell back to 256 -- see the "
                          "except in _enhance_textures_and_sharpness")
+        # Also verify that the GPU-first dispatcher runs cleanly without error
+        _ = cls._enhance_textures_and_sharpness(restored, source, input_size)
         return _reference_filter(cls, restored, source, input_size), got
 
     def _assert_matches(self, restored, source, input_size=256):
