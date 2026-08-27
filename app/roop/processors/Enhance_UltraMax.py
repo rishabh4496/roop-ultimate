@@ -281,6 +281,8 @@ class Enhance_UltraMax:
     _PROTECT_EYE_Y = 0.30
     _PROTECT_EYE_LIFT = 0.03
     _PROTECT_EYE_FEATHER = 0.08
+    _PROTECT_EYE_SHARPEN = 0.45
+    _STRUCTURE_SHARPEN = 0.18
 
     _warned_colour = False
 
@@ -555,9 +557,17 @@ class Enhance_UltraMax:
             if k % 2 == 0:
                 k += 1
             mask = cv2.GaussianBlur(mask, (k, k), 0)
+            # Keep the swapped crop's geometry, but do not simply paste its
+            # low-resolution pixels back: that was halo-safe yet visibly soft.
+            # A small source-only high-pass lift restores lash/catchlight
+            # crispness without importing CodeFormer's competing eye edges.
+            src_f = source.astype(np.float32)
+            src_blur = cv2.GaussianBlur(src_f, (0, 0), 0.8)
+            src_sharp = np.clip(src_f + cls._PROTECT_EYE_SHARPEN * (src_f - src_blur),
+                                0.0, 255.0)
             m = mask[:, :, None]
             return np.rint(restored.astype(np.float32) * (1.0 - m) +
-                           source.astype(np.float32) * m).clip(0, 255).astype(np.uint8)
+                           src_sharp * m).clip(0, 255).astype(np.uint8)
         except (cv2.error, TypeError, ValueError, ImportError):
             return restored
 
@@ -648,6 +658,17 @@ class Enhance_UltraMax:
             if not Enhance_UltraMax._warned_colour:
                 Enhance_UltraMax._warned_colour = True
                 print(f"[UltraMax] colour fix skipped: {e}", flush=True)
+
+        # CodeFormer's mixed-precision output is numerically valid but can be
+        # slightly soft at small eye, nose, and lip contours after the 512->
+        # frame resize.  Recover a restrained structural edge response before
+        # the periocular protection pass; this is an unsharp lift, not a second
+        # generated face, and its low gain avoids recreating the old halo.
+        if self._STRUCTURE_SHARPEN > 0.0:
+            base = restored.astype(np.float32)
+            blur = cv2.GaussianBlur(base, (0, 0), 0.8)
+            restored = np.clip(base + self._STRUCTURE_SHARPEN * (base - blur),
+                               0.0, 255.0).astype(np.uint8)
 
         # Do this after the colour pass: the protected source pixels should
         # retain the same chroma as the rest of the swapped crop, while the

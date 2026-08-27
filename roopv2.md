@@ -657,5 +657,24 @@ Verification:
   `app/output/enhancer_matrix/stage4_mixed_ultramax_eyeprotect/s1_10s__rhythm.mp4`
 - Result: 240/240 frames, 238/238 detected faces swapped, valid 1280x720 MP4 at
   30 FPS, no CUDA/CPU fallback. Representative frame inspection shows the
-  periocular result without the prior visible double-eye ring; no new duplicate
-  nose, mouth, cheek, or jaw edge was observed in the inspected frame.
+periocular result without the prior visible double-eye ring; no new duplicate
+nose, mouth, cheek, or jaw edge was observed in the inspected frame.
+
+## UltraMax sharpness follow-up — 2026-08-27
+
+The first halo fix was intentionally conservative and preserved too much of the
+low-resolution swapped eye band, which made the left eye look blurry. The
+protection path now keeps the swapped geometry but applies a source-only
+high-frequency lift (`_PROTECT_EYE_SHARPEN=0.45`), so no new CodeFormer eye
+contours are introduced. A separate restrained structural sharpen
+(`_STRUCTURE_SHARPEN=0.18`) restores definition at the eyes, nose, and lips
+before the protection pass.
+
+The revised mixed-TensorRT render is:
+`app/output/enhancer_matrix/stage4_mixed_ultramax_sharp/s1_10s__rhythm.mp4`
+
+It decodes as 240 frames at 1280x720/30 FPS, with 238/238 detected faces
+swapped and no CUDA/CPU fallback. The focused UltraMax eye-protection test and
+Python compilation pass. Representative inspection shows sharper eye/lip/nose
+edges while retaining the halo suppression; no duplicate nose, mouth, cheek, or
+jaw structure was observed.
