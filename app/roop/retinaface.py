@@ -274,7 +274,8 @@ def _pool_size():
     """
     try:
         from roop import session_pool
-        return session_pool.detector_pool_size()
+        return session_pool.detector_pool_size(
+            model_key='detector:retinaface', input_shape=(1, 3, 640, 640))
     except Exception:
         return 1
 

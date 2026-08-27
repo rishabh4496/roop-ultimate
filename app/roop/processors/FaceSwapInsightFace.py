@@ -672,10 +672,14 @@ class FaceSwapInsightFace():
             # (N-1) independent extras so up to N worker threads can swap
             # concurrently instead of serialising behind the global GPU lock.
             if session_pool.pooling_enabled():
-                n = session_pool.pool_size()
+                n = session_pool.pool_size(
+                    model_key=f"swapper:{swap_model}",
+                    input_shape=(1, 3, spec["output_size"], spec["output_size"]))
                 extras = [_build(i) for i in range(n - 1)]
                 self.pool = session_pool.SessionPool(
-                    lambda i, _e=([self.model_swap_insightface] + extras): _e[i], n)
+                    lambda i, _e=([self.model_swap_insightface] + extras): _e[i], n,
+                    model_key=f"swapper:{swap_model}",
+                    input_shape=(1, 3, spec["output_size"], spec["output_size"]))
 
             # Publish the per-model contract ProcessMgr reads.
             self.model_output_size = spec["output_size"]
@@ -864,10 +868,18 @@ class FaceSwapInsightFace():
                 self._model_arg, get_onnx_session_options(), providers=providers)
         self.model_swap_insightface = _build()
         if self.pool is not None:
-            n = session_pool.pool_size()
+            old_pool = self.pool
+            self.pool = None
+            # The failed TRT pool may still have leases on other workers.  Its
+            # release waits for them instead of clearing a live context while
+            # this fallback session is being published.
+            old_pool.release()
+            n = session_pool.pool_size(
+                model_key=f"swapper:{self.loaded_model_key}")
             extras = [_build(i) for i in range(n - 1)]
             self.pool = session_pool.SessionPool(
-                lambda i, _e=([self.model_swap_insightface] + extras): _e[i], n)
+                lambda i, _e=([self.model_swap_insightface] + extras): _e[i], n,
+                model_key=f"swapper:{self.loaded_model_key}")
         self._trt_disabled = True
         print(f"[swap] '{self.loaded_model_key}' failed under TensorRT "
               f"(shape verification); rebuilt on CUDA/CPU for this model.")

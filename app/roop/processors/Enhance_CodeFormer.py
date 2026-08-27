@@ -145,7 +145,8 @@ class Enhance_CodeFormer():
             # whatever was built and carry on with the global lock. Slower,
             # never broken.
             if session_pool.pooling_enabled():
-                n = session_pool.pool_size()
+                n = session_pool.pool_size(
+                    model_key='enhancer:codeformer', input_shape=(1, 3, 512, 512))
                 # A caller that is loading this net ALONGSIDE other heavy models
                 # can cap the pool. Measured 2026-08-22: with realswap's two
                 # nets, RealityUX and the detector pools already resident, this
@@ -162,7 +163,8 @@ class Enhance_CodeFormer():
                 try:
                     extras = [_build(i) for i in range(n - 1)]
                     self.pool = session_pool.SessionPool(
-                        lambda i, _e=([self.model_codeformer] + extras): _e[i], n)
+                        lambda i, _e=([self.model_codeformer] + extras): _e[i], n,
+                        model_key='enhancer:codeformer', input_shape=(1, 3, 512, 512))
                 except Exception as e:
                     extras.clear()
                     self.pool = None

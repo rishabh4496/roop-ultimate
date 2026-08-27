@@ -139,10 +139,12 @@ class Mask_FaceParser():
             # Optional multi-session pool: up to N threads run the mask concurrently,
             # each on its own TensorRT context.
             if session_pool.detmask_pooling_enabled():
-                n = session_pool.detmask_pool_size()
+                n = session_pool.detmask_pool_size(
+                    model_key='mask:bisenet', input_shape=(1, 3, 512, 512))
                 extras = [_build(i) for i in range(n - 1)]
                 self.pool = session_pool.SessionPool(
-                    lambda i, _e=([self.model] + extras): _e[i], n)
+                    lambda i, _e=([self.model] + extras): _e[i], n,
+                    model_key='mask:bisenet', input_shape=(1, 3, 512, 512))
 
     def RunLabels(self, img1):
         """Raw (512,512) per-pixel class-id map, before any region grouping,

@@ -148,7 +148,8 @@ def _ensure_pool():
             providers = roop.globals.execution_providers
         try:
             from roop import session_pool
-            n = session_pool.detector_pool_size()
+            n = session_pool.detector_pool_size(
+                model_key='detector:yolo', input_shape=(1, 3, 640, 640))
         except Exception:
             n = 1
         items = [YoloFaceDetector(providers) for _ in range(n)]

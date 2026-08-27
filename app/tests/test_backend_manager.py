@@ -31,6 +31,9 @@ class BackendManagerTests(unittest.TestCase):
     def test_cache_namespace_contains_precision_and_runtime_identity(self):
         ns = cache_namespace('mixed')
         self.assertIn('mixed_', ns)
+        self.assertIn('_cuda', ns)
+        self.assertIn('_drv', ns)
+        self.assertIn('_trt', ns)
         self.assertIn('_ort', ns)
 
     def test_trt_tuning_namespace_separates_engine_profiles(self):

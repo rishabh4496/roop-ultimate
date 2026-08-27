@@ -183,7 +183,8 @@ class Enhance_GPEN256Pro:
 
         # Multi-context SessionPool for lock-free execution across worker threads
         if session_pool.pooling_enabled():
-            n = session_pool.pool_size()
+            n = session_pool.pool_size(
+                model_key='enhancer:gpen256pro', input_shape=(1, 3, 256, 256))
             cap = plugin_options.get('pool_size')
             if cap:
                 n = max(1, min(int(n), int(cap)))
@@ -198,7 +199,8 @@ class Enhance_GPEN256Pro:
                 extras = [_build(i + 1) for i in range(n - 1)]
                 primary = (self.session, self.io_binding)
                 self.pool = session_pool.SessionPool(
-                    lambda i, _e=([primary] + extras): _e[i], n)
+                    lambda i, _e=([primary] + extras): _e[i], n,
+                    model_key='enhancer:gpen256pro', input_shape=(1, 3, 256, 256))
             except Exception as e:
                 extras.clear()
                 self.pool = None

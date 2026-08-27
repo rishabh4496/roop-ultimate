@@ -153,7 +153,10 @@ def _ensure_face_analyser():
             _ANALYSER_LM68_LAZY = cur_lm68_lazy
             if roop.globals.CFG.force_cpu:
                 print("Forcing CPU for Face Analysis")
-            n = session_pool.detmask_pool_size() if session_pool.detmask_pooling_enabled() else 1
+            n = (session_pool.detmask_pool_size(
+                model_key='detector:face-analysis',
+                input_shape=(1, 3, _ANALYSER_DET_SIZE, _ANALYSER_DET_SIZE))
+                 if session_pool.detmask_pooling_enabled() else 1)
             FACE_ANALYSER_POOL = [_build_face_analyser() for _ in range(n)]
             FACE_ANALYSER = FACE_ANALYSER_POOL[0]
             q = Queue()

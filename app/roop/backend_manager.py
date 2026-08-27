@@ -145,6 +145,9 @@ def cache_namespace(precision: str, device_id: int = 0) -> str:
         ort_ver = str(getattr(ort, "__version__", "unknown"))
     except Exception:
         ort_ver = "unknown"
+    cuda_ver = "unknown"
+    trt_ver = "unknown"
+    driver_ver = "unknown"
     gpu = "cpu"
     sm = "na"
     try:
@@ -152,9 +155,24 @@ def cache_namespace(precision: str, device_id: int = 0) -> str:
         if torch.cuda.is_available():
             gpu = torch.cuda.get_device_name(device_id)
             sm = "sm%02d%02d" % tuple(torch.cuda.get_device_capability(device_id))
+            cuda_ver = str(getattr(torch.version, "cuda", "unknown") or "unknown")
+            # This private PyTorch probe is available on the supported CUDA
+            # builds and avoids shelling out to nvidia-smi during startup.
+            get_driver = getattr(getattr(torch, "_C", None),
+                                 "_cuda_getDriverVersion", None)
+            if get_driver is not None:
+                raw_driver = int(get_driver())
+                driver_ver = (f"{raw_driver // 1000}."
+                              f"{(raw_driver % 1000) // 10}")
     except Exception:
         pass
-    raw = f"{precision}_{gpu}_{sm}_ort{ort_ver}"
+    try:
+        import tensorrt as trt
+        trt_ver = str(getattr(trt, "__version__", "unknown"))
+    except Exception:
+        pass
+    raw = (f"{precision}_{gpu}_{sm}_cuda{cuda_ver}_drv{driver_ver}"
+           f"_trt{trt_ver}_ort{ort_ver}")
     return re.sub(r"[^A-Za-z0-9_.-]+", "_", raw)
 
 

@@ -61,11 +61,13 @@ class Enhance_RestoreFormerPPlus():
             # Each copy keeps its own io_binding (binding state is not shareable
             # across threads).
             if session_pool.pooling_enabled():
-                n = session_pool.pool_size()
+                n = session_pool.pool_size(
+                    model_key='enhancer:restoreformer', input_shape=(1, 3, 512, 512))
                 extras = [_build(i) for i in range(n - 1)]
                 primary = (self.model_restoreformerpplus, self.io_binding)
                 self.pool = session_pool.SessionPool(
-                    lambda i, _e=([primary] + extras): _e[i], n)
+                    lambda i, _e=([primary] + extras): _e[i], n,
+                    model_key='enhancer:restoreformer', input_shape=(1, 3, 512, 512))
 
     def Run(self, source_faceset: FaceSet, target_face: Face, temp_frame: Frame) -> Frame:
         # preprocess

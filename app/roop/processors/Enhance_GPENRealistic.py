@@ -189,7 +189,9 @@ class Enhance_GPENRealistic:
         # So the 512 tier caps its pool by free VRAM. 256 is a quarter of the
         # pixels and is left alone. ROOP_GPENR_POOL overrides for re-measuring.
         if session_pool.pooling_enabled():
-            n = session_pool.pool_size()
+            n = session_pool.pool_size(
+                model_key='enhancer:gpenrealistic',
+                input_shape=(1, 3, self.size, self.size))
             cap = plugin_options.get('pool_size')
             if cap:
                 n = max(1, min(int(n), int(cap)))
@@ -210,7 +212,9 @@ class Enhance_GPENRealistic:
                 extras = [_build(i + 1) for i in range(n - 1)]
                 primary = (self.session, self.io_binding)
                 self.pool = session_pool.SessionPool(
-                    lambda i, _e=([primary] + extras): _e[i], n)
+                    lambda i, _e=([primary] + extras): _e[i], n,
+                    model_key='enhancer:gpenrealistic',
+                    input_shape=(1, 3, self.size, self.size))
             except Exception as e:
                 extras.clear()
                 self.pool = None

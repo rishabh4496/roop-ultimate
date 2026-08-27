@@ -366,7 +366,8 @@ class Enhance_UltraMax:
         # two nets, RealityUX and the detector pools are already resident and a
         # fourth context collapses the render to 0.2 fps.
         if session_pool.pooling_enabled():
-            n = session_pool.pool_size()
+            n = session_pool.pool_size(
+                model_key='enhancer:ultramax', input_shape=(1, 3, 512, 512))
             cap = plugin_options.get('pool_size')
             if cap:
                 n = max(1, min(int(n), int(cap)))
@@ -375,7 +376,8 @@ class Enhance_UltraMax:
                 extras = [_build(i + 1) for i in range(n - 1)]
                 primary = (self.session, self.io_binding)
                 self.pool = session_pool.SessionPool(
-                    lambda i, _e=([primary] + extras): _e[i], n)
+                    lambda i, _e=([primary] + extras): _e[i], n,
+                    model_key='enhancer:ultramax', input_shape=(1, 3, 512, 512))
             except Exception as e:
                 extras.clear()
                 self.pool = None

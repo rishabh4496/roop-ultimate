@@ -18,7 +18,9 @@ in. VRAM cost scales ~N x per pooled model, so keep N small on limited GPUs.
 """
 import os
 import contextlib
-from queue import Queue
+import threading
+from dataclasses import dataclass
+from queue import Empty, Queue
 
 
 def _detect_vram_gb() -> float:
@@ -184,6 +186,213 @@ def _resolve(env_name, auto_value, gb) -> int:
 _pool_cache = {}
 
 
+# ---------------------------------------------------------------------------
+# TensorRT resource accounting
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class ModelResourceSpec:
+    """Conservative per-context estimate used before creating extra sessions.
+
+    ORT/TensorRT allocates engine and execution-context memory lazily, often on
+    the first inference.  The numbers here are therefore a scheduling budget,
+    not a claim about the exact CUDA allocation.  The runtime manager combines
+    them with the live free-memory reading and the measured resident state.
+    ``workspace_mb`` is deliberately bounded: TensorRT's configured workspace
+    is a build-time upper bound and charging the full value to every running
+    context would reject safe pools on otherwise healthy cards.
+    """
+
+    model_key: str
+    engine_mb: float
+    workspace_mb: float
+    context_mb: float
+    activation_mb: float
+    reference_pixels: int = 512 * 512
+    safety_mb: float = 256.0
+    max_contexts: int = 4
+
+    def slot_mb(self, input_shape=None, batch_size=1) -> float:
+        shape = tuple(input_shape or ())
+        pixels = 0
+        if len(shape) >= 2:
+            dims = [int(v) for v in shape[2:] if isinstance(v, int) and v > 0]
+            if len(dims) >= 2:
+                pixels = dims[-1] * dims[-2]
+        scale = (max(0.25, pixels / float(self.reference_pixels)) ** 0.75
+                 if pixels else 1.0)
+        batch = max(1, int(batch_size or 1))
+        return (self.engine_mb + self.workspace_mb + self.context_mb +
+                self.activation_mb * batch * scale)
+
+
+def _resource_spec(model_key, input_shape=None):
+    """Return a model-family estimate, never a VRAM/constant rule.
+
+    Model families have materially different context footprints.  These
+    defaults are intentionally modest and are corrected by benchmark data when
+    available; the live free-memory guard remains authoritative at runtime.
+    """
+    key = str(model_key or 'unknown').lower()
+    if 'ultramax' in key or 'codeformer' in key or 'restoreformer' in key:
+        values = (260.0, 384.0, 180.0, 96.0)
+        family = 'enhancer-heavy'
+    elif 'gpen' in key or 'enhancer' in key:
+        values = (220.0, 320.0, 150.0, 72.0)
+        family = 'enhancer'
+    elif 'swap' in key or 'realswap' in key or 'inswapper' in key:
+        values = (180.0, 320.0, 140.0, 64.0)
+        family = 'swapper'
+    elif 'detector' in key or 'retina' in key or 'yolo' in key or 'yunet' in key:
+        values = (120.0, 256.0, 96.0, 48.0)
+        family = 'detector'
+    elif 'mask' in key or 'xseg' in key or 'sam' in key or 'bisenet' in key:
+        values = (160.0, 256.0, 128.0, 64.0)
+        family = 'mask'
+    elif 'expr' in key or 'liveportrait' in key:
+        values = (360.0, 384.0, 220.0, 128.0)
+        family = 'expression'
+    else:
+        # Unknown models are allowed, but one conservative context is the safe
+        # automatic choice until a real benchmark supplies a measured cost.
+        values = (256.0, 512.0, 256.0, 128.0)
+        family = 'unknown'
+    return ModelResourceSpec(family, *values, max_contexts=4)
+
+
+def _live_vram_mb():
+    """Return (free, total) device memory in MiB, or (0, 0) if unavailable."""
+    try:
+        import torch
+        if torch.cuda.is_available():
+            free, total = torch.cuda.mem_get_info()
+            return free / (1024 ** 2), total / (1024 ** 2)
+    except Exception:
+        pass
+    return 0.0, 0.0
+
+
+class TensorRTResourceManager:
+    """Tracks resident pools and admits work without destroying active contexts.
+
+    ``select_pool_size`` is called before extra ORT sessions are built.  It
+    considers the model family, input shape, batch, workspace/context budget,
+    currently resident pools, live free VRAM and a safety margin.  A user-set
+    pool is returned unchanged; explicit controls remain authoritative.
+    """
+
+    SAFETY_FRACTION = 0.10
+    SAFETY_FLOOR_MB = 768.0
+
+    def __init__(self):
+        self._lock = threading.RLock()
+        self._pools = {}
+        self._baseline_free_mb = 0.0
+
+    def _safety_mb(self, total_mb):
+        return max(self.SAFETY_FLOOR_MB,
+                   total_mb * self.SAFETY_FRACTION if total_mb else 0.0)
+
+    def _resident_unobserved_mb(self, free_mb):
+        """Account for tracked engines not visible in a stale memory reading."""
+        if not self._baseline_free_mb:
+            return 0.0
+        observed = max(0.0, self._baseline_free_mb - free_mb)
+        tracked = sum(p['slot_mb'] * p['size'] for p in self._pools.values())
+        return max(0.0, tracked - observed)
+
+    def select_pool_size(self, requested, model_key, input_shape=None,
+                         batch_size=1, explicit=False):
+        requested = max(0, int(requested or 0))
+        if requested < 2 or explicit:
+            return requested
+        spec = _resource_spec(model_key, input_shape)
+        slot_mb = spec.slot_mb(input_shape, batch_size)
+        free_mb, total_mb = _live_vram_mb()
+        with self._lock:
+            if free_mb and not self._baseline_free_mb:
+                self._baseline_free_mb = free_mb
+            if not free_mb:
+                # Unknown VRAM is not permission to allocate a wide pool.
+                return 1
+            safety = max(self._safety_mb(total_mb), spec.safety_mb)
+            usable = free_mb - safety - self._resident_unobserved_mb(free_mb)
+            affordable = int(max(0.0, usable) // max(1.0, slot_mb))
+            selected = min(requested, spec.max_contexts, max(1, affordable))
+            if selected != requested:
+                print(f"[SessionPool] {model_key}: auto context budget {requested}"
+                      f" -> {selected} (slot~{slot_mb:.0f}MB, free~{free_mb:.0f}MB,"
+                      f" safety~{safety:.0f}MB, resident pools={len(self._pools)})")
+            return selected
+
+    def register(self, pool, model_key, size, input_shape=None, batch_size=1):
+        spec = _resource_spec(model_key, input_shape)
+        with self._lock:
+            free_mb, _ = _live_vram_mb()
+            if free_mb and not self._baseline_free_mb:
+                self._baseline_free_mb = free_mb
+            self._pools[id(pool)] = {
+                'pool': pool, 'model_key': str(model_key or 'unknown'),
+                'size': int(size), 'slot_mb': spec.slot_mb(input_shape, batch_size),
+                'spec': spec,
+            }
+
+    def unregister(self, pool):
+        with self._lock:
+            self._pools.pop(id(pool), None)
+
+    def pressure(self, pool):
+        with self._lock:
+            rec = self._pools.get(id(pool))
+        if not rec:
+            return False
+        free_mb, total_mb = _live_vram_mb()
+        if not free_mb:
+            return False
+        # A lazy ORT/TensorRT context may allocate on its first inference.  A
+        # free-memory value barely above the safety floor is therefore already
+        # pressure: admit no additional context until an existing lease returns.
+        return free_mb < (max(self._safety_mb(total_mb), rec['spec'].safety_mb)
+                          + rec['slot_mb'])
+
+    def admission_limit(self, pool, size, active):
+        # Existing leases are allowed to finish.  Under pressure, admission is
+        # reduced to the number already in flight (or one when idle), so no
+        # active ORT/TensorRT context is destroyed or interrupted.
+        if not self.pressure(pool):
+            return size
+        return max(1, min(int(size), int(active or 0) or 1))
+
+    def describe(self):
+        with self._lock:
+            free_mb, total_mb = _live_vram_mb()
+            return {
+                'free_vram_mb': round(free_mb, 1),
+                'total_vram_mb': round(total_mb, 1),
+                'resident_pools': len(self._pools),
+                'resident_contexts': sum(p['size'] for p in self._pools.values()),
+                'resident_budget_mb': round(sum(
+                    p['slot_mb'] * p['size'] for p in self._pools.values()), 1),
+            }
+
+
+_resource_manager = TensorRTResourceManager()
+
+
+def resource_manager():
+    """Return the process-wide TensorRT resource manager."""
+    return _resource_manager
+
+
+def _pool_explicit(kind):
+    names = {
+        'trt': 'ROOP_TRT_POOL', 'detmask': 'ROOP_DETMASK_POOL',
+        'detector': 'ROOP_DETECTOR_POOL', 'expr': 'ROOP_EXPR_POOL',
+    }
+    raw = os.environ.get(names.get(kind, ''))
+    return raw is not None and raw != ''
+
+
 def _resolve_pools():
     if not _pool_cache:
         gb = _detect_vram_gb()
@@ -192,6 +401,12 @@ def _resolve_pools():
         detmask = _resolve('ROOP_DETMASK_POOL', auto_detmask, gb)
         _pool_cache['trt'] = trt
         _pool_cache['detmask'] = detmask
+        # Tests and embedders may seed _pool_cache directly.  In that case the
+        # value is an already-resolved operator choice and model-specific
+        # admission must not silently rewrite it.  Normal resolution records
+        # provenance so only genuinely automatic values are budgeted.
+        _pool_cache['_auto_trt'] = not bool(os.environ.get('ROOP_TRT_POOL'))
+        _pool_cache['_auto_detmask'] = not bool(os.environ.get('ROOP_DETMASK_POOL'))
         print(f"[SessionPool] detected {gb:.1f}GB VRAM -> "
               f"ROOP_TRT_POOL={trt}, ROOP_DETMASK_POOL={detmask} "
               f"(explicit values are honoured exactly; these are the auto "
@@ -199,8 +414,14 @@ def _resolve_pools():
     return _pool_cache
 
 
-def pool_size() -> int:
-    return _resolve_pools()['trt']
+def pool_size(model_key=None, input_shape=None, batch_size=1) -> int:
+    requested = _resolve_pools()['trt']
+    if not model_key:
+        return requested
+    return _resource_manager.select_pool_size(
+        requested, model_key, input_shape, batch_size,
+        explicit=_pool_explicit('trt') or
+        not _pool_cache.get('_auto_trt', False))
 
 
 def providers_without_tensorrt(providers):
@@ -237,15 +458,21 @@ def pooling_enabled() -> bool:
 # scales with the pool size. The default is auto-tuned by VRAM (see
 # _auto_pool_defaults): 0 on small cards = original single-instance + global lock
 # behaviour, byte-for-byte. Set ROOP_DETMASK_POOL explicitly to override.
-def detmask_pool_size() -> int:
-    return _resolve_pools()['detmask']
+def detmask_pool_size(model_key=None, input_shape=None, batch_size=1) -> int:
+    requested = _resolve_pools()['detmask']
+    if not model_key:
+        return requested
+    return _resource_manager.select_pool_size(
+        requested, model_key, input_shape, batch_size,
+        explicit=_pool_explicit('detmask') or
+        not _pool_cache.get('_auto_detmask', False))
 
 
 def detmask_pooling_enabled() -> bool:
     return detmask_pool_size() >= 2
 
 
-def detector_pool_size() -> int:
+def detector_pool_size(model_key=None, input_shape=None, batch_size=1) -> int:
     """How many independent instances of the SELECTED detector to build.
 
     The hybrid engines (retinaface / yoloface / yunet) bring their own detector
@@ -268,9 +495,19 @@ def detector_pool_size() -> int:
             _auto_trt, auto_detmask = _auto_pool_defaults()
             _warn_if_oversubscribed('ROOP_DETECTOR_POOL', requested,
                                     max(auto_detmask, 1), gb)
-            return requested
+            if not model_key:
+                return requested
+            return _resource_manager.select_pool_size(
+                requested, model_key, input_shape, batch_size,
+                explicit=True)
     try:
-        return max(1, detmask_pool_size())
+        requested = max(1, detmask_pool_size())
+        if not model_key:
+            return requested
+        return _resource_manager.select_pool_size(
+            requested, model_key, input_shape, batch_size,
+            explicit=_pool_explicit('detmask') or
+            not _pool_cache.get('_auto_detmask', False))
     except Exception:
         return 1
 
@@ -325,13 +562,18 @@ def _auto_expression_pool() -> int:
     return 2 if _detect_vram_gb() >= 11.5 else 0
 
 
-def expression_pool_size() -> int:
+def expression_pool_size(model_key=None, input_shape=None, batch_size=1) -> int:
     # `_resolve` takes (env_name, auto_value, gb). This passed only two for as
     # long as it has existed, so ANY call raised TypeError -- which nothing
     # caught. It stayed hidden because the expression stage only initialises
     # when `expression_restore_strength > 0`, i.e. exactly when a user turns the
     # feature on. Turning it on crashed the render.
-    return _resolve('ROOP_EXPR_POOL', _auto_expression_pool(), _detect_vram_gb())
+    requested = _resolve('ROOP_EXPR_POOL', _auto_expression_pool(), _detect_vram_gb())
+    if not model_key:
+        return requested
+    return _resource_manager.select_pool_size(
+        requested, model_key, input_shape, batch_size,
+        explicit=_pool_explicit('expr'))
 
 
 def expression_pooling_enabled() -> bool:
@@ -345,25 +587,169 @@ class SessionPool:
     it to the pool, so each underlying TensorRT context is only ever touched by
     one thread at a time."""
 
-    def __init__(self, build_fn, size):
+    def __init__(self, build_fn, size, model_key=None, input_shape=None,
+                 batch_size=1, warmup_fn=None):
+        self._build_fn = build_fn
+        self._model_key = str(model_key or 'unknown')
+        self._input_shape = input_shape
+        self._batch_size = batch_size
+        self._warmup_fn = warmup_fn
+        self._cv = threading.Condition()
+        self._active = 0
+        self._closing = False
+        # Pool-wide transitions block new leases while contexts are warmed or
+        # resized. This closes the race where a lease could arrive between the
+        # idle check and the queue/resource replacement.
+        self._transition = False
+        self._admission_limit = max(1, int(size))
+        self._configured_admission_limit = self._admission_limit
         self._items = [build_fn(i) for i in range(size)]
-        self._q = Queue()
+        self._q = Queue(maxsize=max(1, int(size)))
         for it in self._items:
             self._q.put(it)
+        if self._items and self._model_key != 'unknown':
+            _resource_manager.register(self, self._model_key, len(self._items),
+                                       input_shape, batch_size)
+
+    @property
+    def size(self):
+        return len(self._items)
+
+    @property
+    def active(self):
+        with self._cv:
+            return self._active
+
+    @property
+    def admission_limit(self):
+        with self._cv:
+            return self._admission_limit
+
+    def stats(self):
+        with self._cv:
+            return {
+                'size': len(self._items), 'active': self._active,
+                'admission_limit': self._admission_limit,
+                'closing': self._closing,
+                'model_key': self._model_key,
+            }
+
+    def set_admission_limit(self, limit):
+        """Throttle new leases; never interrupts existing leases."""
+        with self._cv:
+            self._configured_admission_limit = max(
+                1, min(len(self._items), int(limit)))
+            self._admission_limit = self._configured_admission_limit
+            self._cv.notify_all()
+
+    def refresh_pressure(self):
+        with self._cv:
+            limit = _resource_manager.admission_limit(
+                self, len(self._items), self._active)
+            self._admission_limit = max(
+                1, min(self._configured_admission_limit, limit))
+            self._cv.notify_all()
+            return self._admission_limit
 
     @contextlib.contextmanager
     def lease(self):
-        item = self._q.get()
+        with self._cv:
+            while True:
+                if self._closing:
+                    raise RuntimeError('TensorRT session pool is closed')
+                if self._transition:
+                    self._cv.wait()
+                    continue
+                self.refresh_pressure()
+                if self._active < self._admission_limit:
+                    try:
+                        item = self._q.get_nowait()
+                    except Empty:
+                        self._cv.wait()
+                        continue
+                    self._active += 1
+                    break
+                self._cv.wait()
         try:
             yield item
         finally:
-            self._q.put(item)
+            with self._cv:
+                self._q.put(item)
+                self._active -= 1
+                self._cv.notify_all()
+
+    def warmup(self, warmup_fn=None):
+        """Warm every context with caller-provided real-shape inputs.
+
+        TensorRT engines are commonly built lazily by ORT on first inference,
+        so a generic fake tensor would be unsafe.  The callback receives
+        ``(item, index)`` and is responsible for using the exact production
+        input shape and precision.  Warmup is serialized per context and is
+        safe to call before workers start.
+        """
+        fn = warmup_fn or self._warmup_fn
+        if fn is None:
+            return 0
+        with self._cv:
+            if self._active or self._closing or self._transition:
+                raise RuntimeError('cannot warm an active/closed session pool')
+            self._transition = True
+            items = list(self._items)
+        try:
+            for index, item in enumerate(items):
+                fn(item, index)
+        finally:
+            with self._cv:
+                self._transition = False
+                self._cv.notify_all()
+        return len(items)
+
+    def resize(self, new_size):
+        """Resize only while idle; callers must rebuild safely around this API."""
+        new_size = max(1, int(new_size))
+        with self._cv:
+            if self._closing or self._transition:
+                raise RuntimeError('TensorRT session pool is closed')
+            if self._active:
+                raise RuntimeError('cannot resize an active TensorRT session pool')
+            self._transition = True
+            old_size = len(self._items)
+        try:
+            if new_size > old_size:
+                additions = [self._build_fn(i) for i in range(old_size, new_size)]
+                with self._cv:
+                    self._items.extend(additions)
+                    self._q = Queue(maxsize=max(1, new_size))
+                    for it in self._items:
+                        self._q.put(it)
+            elif new_size < old_size:
+                with self._cv:
+                    kept = self._items[:new_size]
+                    self._items = kept
+                    self._q = Queue(maxsize=max(1, new_size))
+                    for it in kept:
+                        self._q.put(it)
+            with self._cv:
+                self._configured_admission_limit = min(
+                    self._configured_admission_limit, new_size)
+                self._admission_limit = min(self._admission_limit, new_size)
+        finally:
+            with self._cv:
+                self._transition = False
+                self._cv.notify_all()
+        _resource_manager.unregister(self)
+        _resource_manager.register(self, self._model_key, new_size,
+                                   self._input_shape, self._batch_size)
+        return new_size
 
     def release(self):
-        items, self._items = self._items, []
-        try:
-            while True:
-                self._q.get_nowait()
-        except Exception:
-            pass
+        """Close after all leases return; active contexts are never torn down."""
+        with self._cv:
+            self._closing = True
+            while self._active or self._transition:
+                self._cv.wait()
+            items, self._items = self._items, []
+            self._q = Queue(maxsize=1)
+            self._cv.notify_all()
+        _resource_manager.unregister(self)
         items.clear()

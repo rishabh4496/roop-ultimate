@@ -101,7 +101,10 @@ PROFILES = {
         'measure_sec': 1.5,
         'warm_sec': 0.5,
         'reps': 2,
-        'pool_levels': (1, 2, 4, 8),
+        # TensorRT context count is deliberately measured one-by-one through
+        # four contexts.  The missing 3-context point was why a real knee could
+        # be hidden between 2 and 4 on cards where 4 already regressed.
+        'pool_levels': (1, 2, 3, 4),
         'sweep_pools': True,
         'provider_ab': True,
         'io': True,
@@ -122,7 +125,7 @@ PROFILES = {
         'warm_sec': 2.0,
         'reps': 2,
         'composite_reps': 3,
-        'pool_levels': (1, 2, 4, 8),
+        'pool_levels': (1, 2, 3, 4),
         'sweep_pools': True,
         'provider_ab': False,
         'io': True,
@@ -760,8 +763,8 @@ def measure_stage(stage, cfg, report, cancelled, sweep_pools, max_level):
     """Serial ms/call, then throughput at each affordable pool level.
 
     Sessions are built INCREMENTALLY and reused across levels — level 4 keeps the
-    two sessions level 2 built — so a five-level sweep costs at most `max_level`
-    session builds rather than fifteen.
+    two sessions level 2 built — so a four-point sweep costs at most
+    `max_level` session builds rather than rebuilding each candidate.
     """
     sessions = []
     feeds_list = []
@@ -818,7 +821,6 @@ def measure_stage(stage, cfg, report, cancelled, sweep_pools, max_level):
             if n == 1:
                 stage.ms_call = 1000.0 / max(1e-9, calls_s)
             base = stage.scaling[0]['calls_s'] if stage.scaling else calls_s
-            prev = stage.scaling[-1]['calls_s'] if stage.scaling else 0.0
             free_now, _ = vram_free_total_gb()
             stage.scaling.append({
                 'n': n,
@@ -834,16 +836,10 @@ def measure_stage(stage, cfg, report, cancelled, sweep_pools, max_level):
                        f'({calls_s / max(1e-9, base):.2f}x, {free_now:.1f} GB free)')
             if not sweep_pools or not stage.pooled:
                 break
-            # Early stop: a level that did not beat the one below it by the same
-            # margin the knee is chosen on is where this stage's concurrency ends,
-            # and every level past it costs a session build (8-12s on a TensorRT
-            # engine) to re-measure a plateau. Measured on an RTX 4070, both the
-            # detector and the swapper flatten at 2, so a five-level sweep spent
-            # ~80 s per stage proving it twice.
-            if prev and calls_s < prev * (1.0 + POOL_GAIN):
-                report(log=f'  {stage.label}: plateaued at {n} '
-                           f'({calls_s / max(1e-9, prev):.2f}x over {stage.scaling[-2]["n"]})')
-                break
+            # Do not stop at the first plateau.  Phase 3 needs the complete
+            # 1/2/3/4 curve because a point can recover after a noisy sample and
+            # because the selected knee is the smallest point within POOL_GAIN
+            # of the best, not simply the first local maximum.
             # Cost per EXTRA instance, not cost of the first: the first session
             # also pays for the CUDA/TensorRT context, the engine deserialisation
             # and the arena, none of which repeat. Charging that to instance two
@@ -1641,7 +1637,17 @@ def recommend(stages, device, pools, curves, provider_rows, io_res, batch_res):
     for mode in ('standard', 'enhanced', 'heavy'):
         threads.setdefault(mode, min(4, logical))
 
-    rec = {'threads': threads, 'pools': dict(pools)}
+    # Keep the model-level knees beside the shared UI knobs.  A single setting
+    # is still used for legacy callers, but runtime SessionPool sizing can use
+    # the exact stage curve when a model is loaded alongside other engines.
+    rec = {
+        'threads': threads,
+        'pools': dict(pools),
+        'context_knees': {
+            st.key: int(st.best_n) for st in stages
+            if st.pooled and not st.error and st.scaling
+        },
+    }
 
     # Rows where the CUDA EP was refused and onnxruntime silently ran the model
     # on CPU are excluded from the totals: a CPU time in the CUDA column would
@@ -1862,7 +1868,10 @@ def run_benchmark(profile='full', faces_per_frame=1.0, report=None,
                + ', '.join(s.label for s in stages))
 
     # A pool cannot be wider than the threads that would lease from it.
-    max_level = max(1, min(8, device.get('cpu_logical') or 8))
+    # Context autotuning has a bounded candidate set.  Four is enough to expose
+    # the throughput knee without turning a benchmark into an OOM experiment;
+    # the CPU bound still prevents asking more workers than the host can run.
+    max_level = max(1, min(4, device.get('cpu_logical') or 4))
 
     try:
         # ── per-stage cost + pool scaling ────────────────────────────────────
@@ -1995,6 +2004,7 @@ def run_benchmark(profile='full', faces_per_frame=1.0, report=None,
         },
         'stages': [s.as_dict() for s in stages],
         'pools': rec['pools'],
+        'context_knees': rec.get('context_knees', {}),
         'threads': rec['threads'],
         # `Settings.resolve_threads` reads these two names; keeping them means the
         # thread recommendation reaches real runs without touching that path.

@@ -53,7 +53,8 @@ def _ensure_pool():
         model_path = os.path.join(model_dir, _MODEL_FILE)
         try:
             from roop import session_pool
-            n = session_pool.detector_pool_size()
+            n = session_pool.detector_pool_size(
+                model_key='detector:yunet', input_shape=(1, 3, 320, 320))
         except Exception:
             n = 1
         items = [_build_one(model_path) for _ in range(n)]

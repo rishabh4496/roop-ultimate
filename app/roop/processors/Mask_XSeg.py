@@ -51,10 +51,12 @@ class Mask_XSeg():
             # Optional multi-session pool: primary + (N-1) extras → up to N threads
             # run the mask concurrently, each on its own TensorRT context.
             if session_pool.detmask_pooling_enabled():
-                n = session_pool.detmask_pool_size()
+                n = session_pool.detmask_pool_size(
+                    model_key='mask:xseg', input_shape=(1, 3, 512, 512))
                 extras = [_build(i) for i in range(n - 1)]
                 self.pool = session_pool.SessionPool(
-                    lambda i, _e=([self.model_xseg] + extras): _e[i], n)
+                    lambda i, _e=([self.model_xseg] + extras): _e[i], n,
+                    model_key='mask:xseg', input_shape=(1, 3, 512, 512))
 
 
     def _run_session(self, sess, temp_frame):

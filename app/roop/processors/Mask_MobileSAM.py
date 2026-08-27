@@ -88,10 +88,12 @@ class Mask_MobileSAM():
 
             # Optional multi-session pool over the encoder (the costly stage).
             if session_pool.detmask_pooling_enabled():
-                n = session_pool.detmask_pool_size()
+                n = session_pool.detmask_pool_size(
+                    model_key='mask:mobilesam', input_shape=(1, 3, 1024, 1024))
                 extras = [_build_enc(i) for i in range(n - 1)]
                 self.pool = session_pool.SessionPool(
-                    lambda i, _e=([self.encoder] + extras): _e[i], n)
+                    lambda i, _e=([self.encoder] + extras): _e[i], n,
+                    model_key='mask:mobilesam', input_shape=(1, 3, 1024, 1024))
 
     def Run(self, img1, keywords: str) -> Frame:
         # img1 is the aligned face crop (BGR uint8). Returned mask matches the

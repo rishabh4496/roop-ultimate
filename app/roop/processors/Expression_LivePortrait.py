@@ -500,11 +500,14 @@ class Expression_LivePortrait:
         # One set of sessions per pool slot. Each slot owns its own TensorRT
         # engine + execution context, which is what makes concurrent use safe —
         # the contexts themselves are not thread-safe, only distinct ones are.
-        size = expression_pool_size()
+        size = expression_pool_size(
+            model_key='expression:liveportrait', input_shape=(1, 3, 256, 256))
         if size >= 2:
             _say(f"[Expression] Session pool: {size} instances "
                   f"(~{size}x the VRAM of one restorer; ROOP_EXPR_POOL={size}).")
-            self.pool = SessionPool(build_sessions, size)
+            self.pool = SessionPool(build_sessions, size,
+                                    model_key='expression:liveportrait',
+                                    input_shape=(1, 3, 256, 256))
             self.sessions = self.pool._items[0]
         else:
             self.sessions = build_sessions()
