@@ -926,3 +926,15 @@ FPS** (single-context arm) to **29.66 FPS** (two-context arm). All arms kept
 the same 237 enhanced faces; quality guards remained passing. The existing
 adaptive pool/thread policy is therefore retained—no quality-risking default
 change was justified by these measurements.
+
+### GPEN pool isolation sweep (2026-08-27)
+
+On the same mixed-TensorRT `s1_10s` harness, forcing the swapper TRT pool to 3
+gave **29.62 FPS** versus **29.02 FPS** at pool 2, but increased card usage
+from roughly **4.5 GB to 5.5 GB**. A one-context GPEN 256 Pro run remained
+slower in the earlier counterbalanced sweep. Forcing the RetinaFace detector
+pool to 1 was effectively neutral (about **30.17 FPS** versus **30.42 FPS**
+with the default detector policy), with identical 237 enhanced faces. The
+small pool-3 speed delta is within observed run-to-run variance and conflicts
+with the existing UltraMax pool-scaling curve; the adaptive pool-2 default is
+therefore retained to protect both enhancers and the 6 GB laptop tier.
