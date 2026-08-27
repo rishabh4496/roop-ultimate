@@ -870,3 +870,14 @@ Remaining bottleneck: UltraMax's native CodeFormer restoration is still softer
 than GPEN Realistic on this low-resolution eye crop; further gains require a
 larger validated eye-detail model or source-aligned super-resolution, not a
 larger unrestricted blend (which previously recreated halos).
+
+### Halo regression correction (2026-08-27)
+
+The widened eye-core mix was found to reintroduce ghost/double-eye edges.  It
+was tightened to a smaller aperture with lower direct-mix strength, a
+restored-vs-swapped colour-agreement gate, and reduced unsharp gain.  This
+keeps eyelid/iris contours source-anchored and rejects tone-discordant
+UltraMax pixels.  The focused 69-test suite passes, and a fresh mixed-TRT
+`s1_10s.mp4` run completed in 38.4 s (23.27 s processing, 10.31 FPS) with no
+visible halo in the inspected face crop.  Output is retained under
+`app/output/enhancer_matrix/stage4_mixed_ultramax_halo_fix/`.

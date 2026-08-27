@@ -282,14 +282,14 @@ class Enhance_UltraMax:
     # base; directly mixing its eye pixels brings back the double-eye halo.
     _PROTECT_EYE_OUTER_X = 0.44
     _PROTECT_EYE_OUTER_Y = 0.30
-    _PROTECT_EYE_CORE_X = 0.17
-    _PROTECT_EYE_CORE_Y = 0.080
+    _PROTECT_EYE_CORE_X = 0.13
+    _PROTECT_EYE_CORE_Y = 0.060
     _PROTECT_EYE_LIFT = 0.03
     _PROTECT_EYE_FEATHER = 0.08
     _PROTECT_EYE_SHARPEN = 0.90
     _PROTECT_EYE_DETAIL_GAIN = 0.50
     _PROTECT_EYE_CORE_DETAIL_GAIN = 1.15
-    _PROTECT_EYE_CORE_MIX = 0.78
+    _PROTECT_EYE_CORE_MIX = 0.42
     _EYE_BALANCE_TRIGGER = 1.12
     _EYE_BALANCE_MAX = 0.55
     _STRUCTURE_SHARPEN = 0.18
@@ -615,14 +615,20 @@ class Enhance_UltraMax:
             # direct mix.  Flat/shifted generated contours therefore cannot
             # leak through the core mask and form a second eye.
             core_presence = np.clip((src_mag - 1.0) / 12.0, 0.0, 1.0)
-            core_mix = (cls._PROTECT_EYE_CORE_MIX * core * core_presence)[:, :, None]
+            # Do not mix pixels where UltraMax disagrees strongly with the
+            # swapped crop's tone; those are the usual source of a ghost iris
+            # or a bright/dark duplicate eye after paste-back.
+            colour_delta = np.mean(np.abs(restored_f - src_f), axis=2)
+            colour_agreement = np.exp(-colour_delta / 28.0)
+            core_mix = (cls._PROTECT_EYE_CORE_MIX * core * core_presence
+                        * colour_agreement)[:, :, None]
             base = base * (1.0 - core_mix) + restored_f * core_mix
             # UltraMax can leave the corneal aperture low-contrast even when
             # its pixels are geometrically correct.  Apply a restrained,
             # aperture-only unsharp lift to existing restored detail; unlike a
             # pasted eye edge this cannot invent a second lid or brow contour.
             core_sharp = np.clip(
-                restored_f + 1.0 * (restored_f - cv2.GaussianBlur(restored_f, (0, 0), 0.65)),
+                restored_f + 0.55 * (restored_f - cv2.GaussianBlur(restored_f, (0, 0), 0.65)),
                 0.0, 255.0)
             base = base * (1.0 - core_mix) + core_sharp * core_mix
             detail = (cls._PROTECT_EYE_DETAIL_GAIN * detail_gate
