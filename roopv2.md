@@ -732,3 +732,101 @@ was left active for continuation; its final MP4/frame inspection and measured
 render metrics are the first task for the next session. Resume by checking the
 process/output state, then inspect representative eye frames before declaring
 the halo fix visually complete.
+
+## Performance overhaul — Phase 1 audit and baseline — 2026-08-27
+
+The pasted execution-mode contract is active. **Phase 1 is audit/baseline only;
+no application source code was modified in this phase.** The only write is this
+checkpoint in the project memory file.
+
+### Architecture map
+
+`/api/swap` → `api._run_swap` → `core.batch_process_regular` →
+`ProcessMgr.run_batch_inmem` → sequential decode (NVDEC ffmpeg pipe when the
+file probe succeeds, otherwise OpenCV) → temporal detection/tracking and
+identity assignment → `ProcessMgr.swap_faces` → `ProcessMgr.process_face`:
+alignment/landmarks → RealSwap (HyperSwap structural base plus HifiFace
+eyelash/lip-colour overlay) → RealityUX mask/ownership → colour transfer →
+selected enhancer → stabilisation/merger/paste-back → bounded/segmented FFmpeg
+writer → optional post-swap upscale/interpolation/audio combine.
+
+The live path is confirmed from calls, not filenames. The repository contains
+29 Python files with ONNX Runtime `InferenceSession` construction, 14 provider
+configuration sites, 14 `SessionPool` construction sites, and 69 lock/queue
+references in the runtime area. Provider resolution is centralized in
+`backend_manager.py` and `core.decode_execution_providers`; model-specific
+exceptions include `fp32_trt_providers()` for accuracy-sensitive enhancers and
+TensorRT removal for mask graphs that cannot run under TRT. `roop.bench` is the
+existing benchmark facility and already measures real model calls, pool/thread
+curves, provider A/B, batched swap, and encode/decode probes.
+
+### Current hardware/runtime baseline
+
+The active machine is the documented RTX 4070 (12 GB VRAM, 24 physical / 32
+logical CPU threads, 32 GB RAM). Current configuration selects RetinaFace R50,
+RealSwap, RealityUX, TensorRT `mixed`, 12 worker threads, TRT/detection-mask/
+detector pools `2/2/2`, NVDEC `on`, NVENC HEVC `p5`, and face/mask/enhancer
+stabilisation enabled. The current live process shows TensorRT → CUDA → CPU in
+the ORT chain, `trt_fp16_enable=1`, mixed cache namespace, about 7.2 GB VRAM
+reported by `nvidia-smi` at the audit sample, 88% GPU utilisation, and 58%
+memory-controller utilisation. These are instantaneous observations, not a
+benchmark result.
+
+### Existing measured baseline evidence
+
+The repository's prior real-path measurements are retained as the baseline
+until a fresh controlled matrix is run after the active `s1.mp4` job finishes:
+
+| Workload | Backend/configuration | End-to-end result | Memory/result status |
+| --- | --- | ---: | --- |
+| `s1` full render, 19,672 frames | RealSwap pose-gated path, mixed TRT policy | 14.98 FPS | ~9.9 GB stable; 17,548 swaps; no OOM/codec failure |
+| `s1_10s`, UltraMax | TRT mixed + RetinaFace/RealSwap/RealityUX | 12.09 FPS | ~9.44 GB; 240/240 frames; 238/238 faces |
+| `s1_10s`, GPEN Realistic | TRT mixed + same path | 12.26 FPS | ~9.45 GB; 240/240 frames; 238/238 faces |
+| `s1_10s`, GPEN 256 Pro | TRT mixed + same path | 0.69 FPS | ~10.4 GB; functionally complete but host-heavy |
+| 48-frame no-enhancer probe | CUDA FP32 | 4.629 FPS | peak RSS 2.080 GB; PASS |
+| 48-frame no-enhancer probe | CUDA FP16 | 3.906 FPS | peak RSS 2.072 GB; PASS |
+| 48-frame no-enhancer probe | CPU FP32 | 0.547 FPS | peak RSS 1.647 GB; PASS |
+
+These rows are not being compared as one homogeneous benchmark: clip length,
+enhancer, and measurement harness differ. They are the available pre-change
+reference and identify the need for a fresh counterbalanced matrix.
+
+### Phase 1 findings / bottleneck candidates
+
+1. The pipeline is a multi-stage CPU/OpenCV + ORT/TRT graph; not all time is
+   GPU inference. Tracking, alignment, mask post-processing, stabilisation,
+   paste-back, and writer I/O can dominate even when GPU utilisation rises.
+2. TRT pools are already VRAM-tiered and explicit overrides are honoured. A
+   larger pool is a candidate only if a real end-to-end curve beats `2/2/2`
+   without paging or quality loss; historical evidence shows oversized pools
+   can be dramatically slower despite higher utilisation.
+3. Mixed precision is already wired and cache-separated by precision/runtime.
+   Per-model FP32 safeguards must remain in the comparison; no global precision
+   change is justified by Phase 1.
+4. GPEN 256 Pro is the clearest measured throughput outlier. Its host-heavy
+   texture/colour path is a Phase 2 candidate, but it must be benchmarked with
+   output-quality and temporal checks before any change.
+5. NVDEC/NVENC, queue depth, CPU↔GPU copies, and per-stage latency are not yet
+   captured in one reproducible full-render report. The existing harness has
+   partial probes; Phase 2 must extend/use it rather than infer from utilisation.
+6. A full `G:/pinokio/roop-keep/single/s1.mp4` mixed-TensorRT render from the
+   UltraMax halo correction is still active. Its final output and frame-level
+   quality review are pending and must not be mistaken for a completed baseline.
+
+### Phase 1 required report
+
+- **Files changed:** no source files; this memory checkpoint only.
+- **Functions changed:** none.
+- **Benchmark before/after:** no optimization applied; after is N/A.
+- **FPS / peak VRAM / CPU utilization:** historical rows above; instantaneous
+  audit sample was 88% GPU / 58% memory-controller and ~7.2 GB VRAM.
+- **Quality/regression:** existing focused tests and prior mixed renders pass;
+  the new full UltraMax visual run remains pending.
+- **Remaining bottlenecks:** per-stage telemetry, fresh counterbalanced
+  baseline matrix (enhancer/stabilisation/resolution/face-count), GPEN 256 Pro
+  host work, and validation of pool/IO overlap.
+
+Phase 2 may begin only after the active render is accounted for and the fresh
+baseline captures the required latency percentiles, CPU/RAM/VRAM peaks, provider
+resolution, context/session counts, queue depth, transfer observability, and
+quality/failure status.
