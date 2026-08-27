@@ -270,6 +270,18 @@ class Enhance_UltraMax:
     # so this defaults to the fix and exists for re-measuring.
     _CHROMA = 0.0
 
+    # UltraMax receives the already-composited RealSwap crop.  Re-restoring the
+    # periocular pixels makes CodeFormer's newly drawn lid/iris edge compete
+    # with RealSwap's hififace eyelash band, which is the visible double-eye
+    # halo reported on close faces.  Keep that registered input structure and
+    # let UltraMax work on cheeks, nose, lips and skin instead.  The mask is
+    # deliberately the same outer eye geometry as RealSwap's band, with a
+    # feathered edge so it cannot create a second boundary of its own.
+    _PROTECT_EYE_X = 0.44
+    _PROTECT_EYE_Y = 0.30
+    _PROTECT_EYE_LIFT = 0.03
+    _PROTECT_EYE_FEATHER = 0.08
+
     _warned_colour = False
 
     def __init__(self):
@@ -511,6 +523,44 @@ class Enhance_UltraMax:
                 print(f"[UltraMax] texture restore skipped: {e}", flush=True)
             return restored
 
+    @classmethod
+    def _protect_swapped_eyes(cls, restored, source):
+        """Preserve RealSwap's eye/eyelash structure after UltraMax restore.
+
+        Both arrays are in the same FFHQ-512 crop space.  A soft union of the
+        two eye ellipses replaces only the periocular region with the input
+        crop, preventing a second CodeFormer-generated lid/iris from showing
+        through the RealSwap band.  The source is the swapped crop, not the
+        original plate, so identity and gaze remain those of the swap.
+        """
+        if restored.shape != source.shape or restored.ndim != 3:
+            return restored
+        try:
+            from roop.face_util import swap_template_points
+            pts = np.asarray(swap_template_points(cls._SIZE, cls.model_template),
+                             dtype=np.float32)
+            if pts.shape[0] < 2:
+                return restored
+            sep = float(np.linalg.norm(pts[1] - pts[0]))
+            if not np.isfinite(sep) or sep < 2.0:
+                return restored
+            ox = max(1, int(round(cls._PROTECT_EYE_X * sep)))
+            oy = max(1, int(round(cls._PROTECT_EYE_Y * sep)))
+            lift = cls._PROTECT_EYE_LIFT * sep
+            mask = np.zeros(restored.shape[:2], dtype=np.float32)
+            for eye in pts[:2]:
+                center = (int(round(eye[0])), int(round(eye[1] - lift)))
+                cv2.ellipse(mask, center, (ox, oy), 0, 0, 360, 1.0, -1)
+            k = max(1, int(round(cls._PROTECT_EYE_FEATHER * sep)))
+            if k % 2 == 0:
+                k += 1
+            mask = cv2.GaussianBlur(mask, (k, k), 0)
+            m = mask[:, :, None]
+            return np.rint(restored.astype(np.float32) * (1.0 - m) +
+                           source.astype(np.float32) * m).clip(0, 255).astype(np.uint8)
+        except (cv2.error, TypeError, ValueError, ImportError):
+            return restored
+
     # ── run ──────────────────────────────────────────────────────────────────
     def Run(self, source_faceset: FaceSet, target_face: Face, temp_frame: Frame) -> Frame:
         if temp_frame is None or getattr(temp_frame, 'size', 0) == 0:
@@ -598,6 +648,11 @@ class Enhance_UltraMax:
             if not Enhance_UltraMax._warned_colour:
                 Enhance_UltraMax._warned_colour = True
                 print(f"[UltraMax] colour fix skipped: {e}", flush=True)
+
+        # Do this after the colour pass: the protected source pixels should
+        # retain the same chroma as the rest of the swapped crop, while the
+        # restored cheeks/nose keep UltraMax's luminance and detail.
+        restored = self._protect_swapped_eyes(restored, src512)
 
         gain = _env_float('ROOP_ULTRAMAX_TEXTURE', self._TEXTURE_GAIN)
         if gain > 0.0:

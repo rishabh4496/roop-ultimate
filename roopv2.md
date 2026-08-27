@@ -626,3 +626,36 @@ This closes the mixed-TensorRT enhancer verification portion of Stage 4. The
 remaining quality work is the broader angle/occlusion visual audit and any
 targeted tuning prompted by those samples; the mixed execution path itself is
 now built, selected, and verified end to end.
+
+## UltraMax double-eye/halo audit and fix — 2026-08-27
+
+The supplied frame was compared with a fresh mixed-TensorRT no-enhancer render
+of the same `s1_10s.mp4` clip. The no-enhancer output did not show the same
+double-eye halo, while UltraMax did. The RealSwap log confirmed that hififace
+was being composited over its 2.8% periocular band at opacity 0.5; UltraMax
+then restored that already-composited crop and sharpened the disagreement
+between the hififace eyelash/lid ring and the HyperSwap/CodeFormer eye
+structure. This also explains why the likely secondary symptoms were a doubled
+upper/lower lid edge, eyebrow/eye-socket ghosting, and a faint tone seam under
+the eyes. No original-eye restore was enabled, and no nonzero global secondary
+mix was present.
+
+The fix is in `app/roop/processors/Enhance_UltraMax.py`: after the colour pass,
+UltraMax now applies a soft FFHQ-512 periocular protection mask using the
+already-swapped input crop. It preserves the registered RealSwap eye,
+eyelash, brow-edge, and socket pixels while retaining UltraMax restoration on
+the cheeks, nose, lips, and remaining skin. The mask is feathered and does not
+introduce a hard boundary. A regression test was added to
+`app/tests/test_enhancer_guards.py`.
+
+Verification:
+
+- `python -m unittest app.tests.test_enhancer_guards -q`: **19 tests passed**.
+- Re-rendered `s1_10s.mp4` with RetinaFace r50 + RealSwap + RealityUX + UltraMax
+  under **TensorRT mixed precision only**.
+- Output:
+  `app/output/enhancer_matrix/stage4_mixed_ultramax_eyeprotect/s1_10s__rhythm.mp4`
+- Result: 240/240 frames, 238/238 detected faces swapped, valid 1280x720 MP4 at
+  30 FPS, no CUDA/CPU fallback. Representative frame inspection shows the
+  periocular result without the prior visible double-eye ring; no new duplicate
+  nose, mouth, cheek, or jaw edge was observed in the inspected frame.

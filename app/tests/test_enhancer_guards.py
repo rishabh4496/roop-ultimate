@@ -106,6 +106,24 @@ class CollapseDetection(unittest.TestCase):
         self.assertFalse(looks_collapsed(flat, flat))
 
 
+class UltraMaxEyeProtection(unittest.TestCase):
+    """UltraMax must not redraw a second periocular structure over RealSwap."""
+
+    def test_protects_swapped_eye_band_but_keeps_other_restoration(self):
+        from roop.processors.Enhance_UltraMax import Enhance_UltraMax
+
+        source = np.full((512, 512, 3), 32, dtype=np.uint8)
+        restored = np.full((512, 512, 3), 224, dtype=np.uint8)
+        out = Enhance_UltraMax._protect_swapped_eyes(restored, source)
+
+        self.assertEqual(out.shape, restored.shape)
+        self.assertTrue(np.isfinite(out).all())
+        # The registered eye band is taken from the swapped input.
+        self.assertLess(int(out[240, 193, 0]), 100)
+        # A distant cheek pixel remains the enhancer's restored output.
+        self.assertGreater(int(out[350, 350, 0]), 180)
+
+
 class GrainMustNotFlicker(unittest.TestCase):
     """GPEN 256 Pro's synthetic micro-grain is deterministic ON PURPOSE.
 
