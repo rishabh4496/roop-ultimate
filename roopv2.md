@@ -721,3 +721,14 @@ eye. The focused enhancer/RealSwap suite passed 67 tests after this change.
 The full `G:/pinokio/roop-keep/single/s1.mp4` mixed-TensorRT verification is
 in progress; it uses the cached RTX 4070 mixed configuration with FP16 enabled
 and FP32 layer-norm fallback, not a CUDA/CPU or pure-FP16 fallback.
+
+## Session checkpoint — 2026-08-27
+
+Implementation and regression coverage are committed and pushed as
+`142a285` (`Prevent UltraMax eye detail halos`). The focused suite is now **68
+tests passed**, including a displaced-eye-edge regression. `facesets/` remains
+intentionally untracked and excluded from the commit. The full `s1.mp4` run
+was left active for continuation; its final MP4/frame inspection and measured
+render metrics are the first task for the next session. Resume by checking the
+process/output state, then inspect representative eye frames before declaring
+the halo fix visually complete.
