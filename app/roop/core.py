@@ -136,9 +136,13 @@ def decode_execution_providers(execution_providers: List[str]) -> List[str]:
                 # Include precision, GPU compute capability and ORT ABI in the
                 # parent namespace. TensorRT's graph hash alone is not enough
                 # to safely reuse an engine after a runtime/device change.
-                precision_cache = os.path.join(
-                    trt_cache, cache_namespace(trt_precision,
-                                               roop.globals.cuda_device_id))
+                cache_label = cache_namespace(trt_precision,
+                                              roop.globals.cuda_device_id)
+                # LayerNorm fallback changes TensorRT's graph partitioning and
+                # therefore must not reuse engines built with the old setting.
+                if trt_precision == 'mixed':
+                    cache_label += '_lnfp32'
+                precision_cache = os.path.join(trt_cache, cache_label)
                 os.makedirs(precision_cache, exist_ok=True)
 
                 # ── Engine-build tuning, scaled to the GPU ──────────────────
@@ -192,6 +196,14 @@ def decode_execution_providers(execution_providers: List[str]) -> List[str]:
                 trt_opts = {
                     'device_id': roop.globals.cuda_device_id,
                     'trt_fp16_enable': fp16_enable,
+                    # CodeFormer/UltraMax contains LayerNorm + attention
+                    # reductions that can overflow when TensorRT chooses
+                    # FP16 kernels.  Keep the graph mixed, but explicitly
+                    # retain those accuracy-sensitive reductions in FP32.
+                    # This option is harmless for GPEN/RetinaFace graphs
+                    # without LayerNorm and prevents enhancer smearing/flat
+                    # output on mixed-precision builds.
+                    'trt_layer_norm_fp32_fallback': trt_precision == 'mixed',
                     'trt_engine_cache_enable': True,
                     'trt_engine_cache_path': precision_cache,
                     'trt_max_partition_iterations': partition_iters,

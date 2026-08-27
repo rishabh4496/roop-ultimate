@@ -540,3 +540,19 @@ claiming end-to-end success.
 ### Benchmark path correction — 2026-08-27
 
 The mixed TensorRT RetinaFace r50 detector was working on decoded frames, but the selected-mode benchmark falsely reported no faces because `angle_bench.init_pipeline()` changes the working directory to `app/` while `sample_bench.py` passed a relative `--video` path. The scan then looked under `app/app/output/...`. `sample_bench.py` now resolves both input and output paths before pipeline initialization. A rerun reached the full 240-frame analysis (238 frames with a tracked face) using the mixed TensorRT provider and r50 detector, confirming the detector/auto-capture path is compatible. The configured GPEN/RealityUX render was started but stopped after prolonged processing; no completed short-clip MP4 is claimed from that run. Existing full-run logs separately show successful mixed-provider compositing, but are not substituted for this short-clip verification.
+## Mixed TensorRT enhancer compatibility — 2026-08-27
+
+GPEN 256 Pro, GPEN Realistic, and UltraMax/CodeFormer already use the shared
+TensorRT session-pool and finite-output/flat-output guards. The remaining
+mixed-precision issue was TensorRT's LayerNorm/attention reduction selection:
+the runtime warned that FP16 Reduce/Pow could overflow, which can smear or
+flatten restored eyes and skin without raising an exception. Mixed mode now
+sets `trt_layer_norm_fp32_fallback=1`, preserving those accuracy-sensitive
+reductions in FP32 while leaving convolutional work eligible for FP16. The TRT
+cache namespace includes `_lnfp32`, so engines built before this correction are
+never reused. Pure FP16/FP32 modes remain unchanged.
+
+Validation: Python compilation passed and 124 enhancer/RealSwap regression
+tests passed, including non-finite and collapsed-output guards for all three
+enhancers. The next live render will rebuild the mixed engines in the new
+namespace before evaluating visual quality.
