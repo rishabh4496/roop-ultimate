@@ -881,3 +881,14 @@ UltraMax pixels.  The focused 69-test suite passes, and a fresh mixed-TRT
 `s1_10s.mp4` run completed in 38.4 s (23.27 s processing, 10.31 FPS) with no
 visible halo in the inspected face crop.  Output is retained under
 `app/output/enhancer_matrix/stage4_mixed_ultramax_halo_fix/`.
+
+## Stage 5 — final regression correction (2026-08-27)
+
+The full suite initially found two UltraMax diagnostic-mode failures because
+the visual eye-protection pass altered the intentionally bit-faithful
+`ROOP_ULTRAMAX_CHROMA=1` comparison path. The protection/rebalance operators
+are now skipped only in that diagnostic mode; normal production chroma mode is
+unchanged. Full regression now passes: **1,322 tests, 1 skipped, 0 failures**.
+The remaining resource-warning output is pre-existing test-harness noise.
+This closes the five-stage regression/handoff cycle for the current
+mixed-TensorRT configuration.

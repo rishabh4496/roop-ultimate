@@ -787,8 +787,12 @@ class Enhance_UltraMax:
         # Do this after the colour pass: the protected source pixels should
         # retain the same chroma as the rest of the swapped crop, while the
         # restored cheeks/nose keep UltraMax's luminance and detail.
-        restored = self._protect_swapped_eyes(restored, src512)
-        restored = self._rebalance_eye_detail(restored)
+        # The diagnostic chroma=1 mode is intentionally bit-faithful to the
+        # raw CodeFormer output for precision comparisons; do not apply the
+        # visual eye-protection/rebalance operators in that mode.
+        if _env_float('ROOP_ULTRAMAX_CHROMA', self._CHROMA) != 1.0:
+            restored = self._protect_swapped_eyes(restored, src512)
+            restored = self._rebalance_eye_detail(restored)
 
         gain = _env_float('ROOP_ULTRAMAX_TEXTURE', self._TEXTURE_GAIN)
         if gain > 0.0:
