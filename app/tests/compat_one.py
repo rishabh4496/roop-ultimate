@@ -27,6 +27,7 @@ import os
 import sys
 import time
 import subprocess
+import threading
 
 import cv2
 import numpy as np
@@ -41,6 +42,38 @@ if HERE not in sys.path:
 import angle_bench as ab                                    # noqa: E402
 from angle_video import ensure_ffmpeg, run_swap             # noqa: E402
 from sample_bench import map_mask_engine                    # noqa: E402
+
+
+class _GpuTelemetry:
+    """Best-effort whole-device telemetry during the timed render."""
+    def __init__(self):
+        self.samples = []
+        self.stop = threading.Event()
+        self.thread = threading.Thread(target=self._sample, daemon=True)
+
+    def _sample(self):
+        while not self.stop.is_set():
+            try:
+                raw = subprocess.check_output(
+                    ["nvidia-smi", "--query-gpu=utilization.gpu,memory.used",
+                     "--format=csv,noheader,nounits"], text=True,
+                    stderr=subprocess.DEVNULL, timeout=2).strip().splitlines()[0]
+                util, mem = [float(x.strip()) for x in raw.split(",", 1)]
+                self.samples.append((util, mem))
+            except Exception:
+                pass
+            self.stop.wait(0.25)
+
+    def start(self):
+        self.thread.start()
+
+    def finish(self):
+        self.stop.set()
+        self.thread.join(timeout=2)
+        if not self.samples:
+            return float("nan"), float("nan")
+        utils, memory = zip(*self.samples)
+        return float(max(memory) / 1024.0), float(sum(utils) / len(utils))
 
 
 def main():
@@ -100,9 +133,12 @@ def main():
         out_dir = args.out or os.path.join(
             APP, "output", "compat", args.precision,
             f"{args.mask_engine}__{args.enhancer}".replace(" ", "_"))
+        telemetry = _GpuTelemetry()
+        telemetry.start()
         t_run = time.perf_counter()
         final = run_swap(args.clip, fs, options, out_dir)
         process_seconds = time.perf_counter() - t_run
+        peak_gpu_memory_gb, mean_gpu_util = telemetry.finish()
 
         from roop.face_util import get_all_faces
         cap = cv2.VideoCapture(final)
@@ -155,13 +191,14 @@ def main():
                 peak_vram_reserved_gb = torch.cuda.max_memory_reserved() / (1024 ** 3)
         except Exception:
             pass
-        gpu_util = float("nan")
+        gpu_util = mean_gpu_util
         try:
-            raw = subprocess.check_output(
-                ["nvidia-smi", "--query-gpu=utilization.gpu",
-                 "--format=csv,noheader,nounits"], text=True,
-                stderr=subprocess.DEVNULL, timeout=2).strip().splitlines()[0]
-            gpu_util = float(raw)
+            if not np.isfinite(gpu_util):
+                raw = subprocess.check_output(
+                    ["nvidia-smi", "--query-gpu=utilization.gpu",
+                     "--format=csv,noheader,nounits"], text=True,
+                    stderr=subprocess.DEVNULL, timeout=2).strip().splitlines()[0]
+                gpu_util = float(raw)
         except Exception:
             pass
         fps = n / process_seconds if process_seconds > 0 else 0.0
@@ -173,6 +210,7 @@ def main():
               f"fps={fps:.3f} peak_rss_gb={peak_rss_gb:.3f} "
               f"peak_vram_allocated_gb={peak_vram_allocated_gb:.3f} "
               f"peak_vram_reserved_gb={peak_vram_reserved_gb:.3f} "
+              f"peak_gpu_memory_gb={peak_gpu_memory_gb:.3f} "
               f"cpu_percent={cpu_percent:.1f} gpu_util_percent={gpu_util:.1f} "
               f"transfers=unavailable", flush=True)
     except Exception as e:

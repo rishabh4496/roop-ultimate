@@ -938,3 +938,17 @@ with the default detector policy), with identical 237 enhanced faces. The
 small pool-3 speed delta is within observed run-to-run variance and conflicts
 with the existing UltraMax pool-scaling curve; the adaptive pool-2 default is
 therefore retained to protect both enhancers and the 6 GB laptop tier.
+
+## Next cycle — mixed-TensorRT benchmark telemetry (2026-08-27)
+
+Extended `app/tests/compat_one.py` with a bounded `nvidia-smi` sampler that
+records peak whole-device GPU memory and mean GPU utilization during the timed
+render. This fills the previous gap where ORT TensorRT allocations appeared as
+zero in Torch-only counters; transfer counters remain explicitly unavailable.
+The change does not alter the render path or precision selection.
+
+Verification: **63 benchmark/performance tests passed** and the module
+compiled. A real mixed-TensorRT GPEN 256 run on `s1_10s.mp4` returned PASS with
+238 detected faces: init **3.707 s**, processing **29.606 s**, **8.106 FPS**,
+peak RSS **6.526 GB**, peak whole-device GPU memory **6.015 GB**, mean GPU
+utilization **31.0%**, CPU sample **9.0%**. Quality guards remained passing.
