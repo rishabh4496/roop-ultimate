@@ -665,7 +665,7 @@ nose, mouth, cheek, or jaw edge was observed in the inspected frame.
 The first halo fix was intentionally conservative and preserved too much of the
 low-resolution swapped eye band, which made the left eye look blurry. The
 protection path now keeps the swapped geometry but applies a source-only
-high-frequency lift (`_PROTECT_EYE_SHARPEN=0.45`), so no new CodeFormer eye
+high-frequency lift (`_PROTECT_EYE_SHARPEN=0.90`), so no new CodeFormer eye
 contours are introduced. A separate restrained structural sharpen
 (`_STRUCTURE_SHARPEN=0.18`) restores definition at the eyes, nose, and lips
 before the protection pass.
@@ -678,3 +678,29 @@ swapped and no CUDA/CPU fallback. The focused UltraMax eye-protection test and
 Python compilation pass. Representative inspection shows sharper eye/lip/nose
 edges while retaining the halo suppression; no duplicate nose, mouth, cheek, or
 jaw structure was observed.
+
+## UltraMax one-eye sharpness rebalance — 2026-08-27
+
+The follow-up inspection still found an asymmetric soft eye: the earlier
+full-strength aperture protection was safe from halos, but it could preserve a
+low-detail eye from the swapped crop. The protection is now split into a
+controlled source/UltraMax aperture mix (`_PROTECT_EYE_INNER_WEIGHT=0.25`)
+and a 10%-weight outer anti-halo band. UltraMax retains
+the eyelid/eyebrow detail outside the aperture, while source-only sharpening is
+limited to the registered eye geometry. A second bounded pass measures the two
+eye apertures per crop and applies a feathered unsharp lift only to the weaker
+eye (`_EYE_BALANCE_MAX=0.55`); it never sharpens both eyes or the whole face.
+
+Focused validation passed 67 tests (enhancer guards plus RealSwap). A fresh
+`s1_10s.mp4` render completed under TensorRT mixed precision only: 240/240
+frames, 318/318 detected faces swapped, 1280x720 at 30 FPS, and peak working
+memory about 10.4 GB. The mixed runtime log records `trt_fp16_enable=1` with
+`trt_layer_norm_fp32_fallback=1`; no CUDA, CPU, or pure-FP16 fallback was used.
+
+The checked output is:
+`app/output/enhancer_matrix/stage4_mixed_ultramax_eyeprotect_v3/s1_10s__rhythm.mp4`
+
+The representative face frame keeps both eyes single (no duplicate iris/lid
+ring) and removes the broad soft source band; nose, lips, cheek, jaw, and skin
+tone remain free of a second structure. This is the current UltraMax mixed
+precision candidate for the user's single-face path.

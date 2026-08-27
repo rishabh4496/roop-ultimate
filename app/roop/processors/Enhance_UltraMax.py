@@ -277,11 +277,22 @@ class Enhance_UltraMax:
     # let UltraMax work on cheeks, nose, lips and skin instead.  The mask is
     # deliberately the same outer eye geometry as RealSwap's band, with a
     # feathered edge so it cannot create a second boundary of its own.
-    _PROTECT_EYE_X = 0.44
-    _PROTECT_EYE_Y = 0.30
+    # Keep only the actual eye aperture fully source-derived.  The previous
+    # single, full-strength ellipse also covered the eyelid/eyebrow contour;
+    # on the lower-detail eye that made the whole periocular band look soft.
+    # The outer band is now mostly UltraMax output, with a light source blend
+    # solely to suppress a competing generated edge.
+    _PROTECT_EYE_INNER_X = 0.20
+    _PROTECT_EYE_INNER_Y = 0.09
+    _PROTECT_EYE_OUTER_X = 0.44
+    _PROTECT_EYE_OUTER_Y = 0.30
+    _PROTECT_EYE_OUTER_WEIGHT = 0.10
+    _PROTECT_EYE_INNER_WEIGHT = 0.25
     _PROTECT_EYE_LIFT = 0.03
     _PROTECT_EYE_FEATHER = 0.08
-    _PROTECT_EYE_SHARPEN = 0.45
+    _PROTECT_EYE_SHARPEN = 0.90
+    _EYE_BALANCE_TRIGGER = 1.12
+    _EYE_BALANCE_MAX = 0.55
     _STRUCTURE_SHARPEN = 0.18
 
     _warned_colour = False
@@ -530,10 +541,12 @@ class Enhance_UltraMax:
         """Preserve RealSwap's eye/eyelash structure after UltraMax restore.
 
         Both arrays are in the same FFHQ-512 crop space.  A soft union of the
-        two eye ellipses replaces only the periocular region with the input
-        crop, preventing a second CodeFormer-generated lid/iris from showing
-        through the RealSwap band.  The source is the swapped crop, not the
-        original plate, so identity and gaze remain those of the swap.
+        two eye ellipses protects the actual aperture while only lightly
+        blending the surrounding periocular band.  This prevents a second
+        CodeFormer-generated lid/iris from showing through the RealSwap band
+        without replacing the full eyelid/eyebrow contour with a soft crop.
+        The source is the swapped crop, not the original plate, so identity
+        and gaze remain those of the swap.
         """
         if restored.shape != source.shape or restored.ndim != 3:
             return restored
@@ -546,17 +559,28 @@ class Enhance_UltraMax:
             sep = float(np.linalg.norm(pts[1] - pts[0]))
             if not np.isfinite(sep) or sep < 2.0:
                 return restored
-            ox = max(1, int(round(cls._PROTECT_EYE_X * sep)))
-            oy = max(1, int(round(cls._PROTECT_EYE_Y * sep)))
+            inner_x = max(1, int(round(cls._PROTECT_EYE_INNER_X * sep)))
+            inner_y = max(1, int(round(cls._PROTECT_EYE_INNER_Y * sep)))
+            outer_x = max(1, int(round(cls._PROTECT_EYE_OUTER_X * sep)))
+            outer_y = max(1, int(round(cls._PROTECT_EYE_OUTER_Y * sep)))
             lift = cls._PROTECT_EYE_LIFT * sep
-            mask = np.zeros(restored.shape[:2], dtype=np.float32)
+            inner = np.zeros(restored.shape[:2], dtype=np.float32)
+            outer = np.zeros(restored.shape[:2], dtype=np.float32)
             for eye in pts[:2]:
                 center = (int(round(eye[0])), int(round(eye[1] - lift)))
-                cv2.ellipse(mask, center, (ox, oy), 0, 0, 360, 1.0, -1)
+                cv2.ellipse(inner, center, (inner_x, inner_y), 0, 0, 360, 1.0, -1)
+                cv2.ellipse(outer, center, (outer_x, outer_y), 0, 0, 360, 1.0, -1)
             k = max(1, int(round(cls._PROTECT_EYE_FEATHER * sep)))
             if k % 2 == 0:
                 k += 1
-            mask = cv2.GaussianBlur(mask, (k, k), 0)
+            inner = cv2.GaussianBlur(inner, (k, k), 0)
+            outer = cv2.GaussianBlur(outer, (k, k), 0)
+            # Keep the aperture as a controlled source/UltraMax mix rather
+            # than a full paste: CodeFormer's recoverable iris/cornea detail
+            # must survive, while the outer band retains only a small source
+            # contribution so the generated lid/eyebrow cannot double.
+            mask = np.maximum(inner * cls._PROTECT_EYE_INNER_WEIGHT,
+                              outer * cls._PROTECT_EYE_OUTER_WEIGHT)
             # Keep the swapped crop's geometry, but do not simply paste its
             # low-resolution pixels back: that was halo-safe yet visibly soft.
             # A small source-only high-pass lift restores lash/catchlight
@@ -570,6 +594,54 @@ class Enhance_UltraMax:
                            src_sharp * m).clip(0, 255).astype(np.uint8)
         except (cv2.error, TypeError, ValueError, ImportError):
             return restored
+
+    @classmethod
+    def _rebalance_eye_detail(cls, image):
+        """Lift only the softer eye when the two apertures are imbalanced.
+
+        RealSwap can produce one eye with materially less local contrast than
+        the other (especially on a near-lateral pose).  A symmetric sharpen
+        amplifies halos, so compare the two template apertures and sharpen the
+        weaker one only, using a low-gain feathered mask.
+        """
+        if image.ndim != 3 or image.shape[0] != cls._SIZE or image.shape[1] != cls._SIZE:
+            return image
+        try:
+            from roop.face_util import swap_template_points
+            pts = np.asarray(swap_template_points(cls._SIZE, cls.model_template),
+                             dtype=np.float32)
+            if pts.shape[0] < 2:
+                return image
+            sep = float(np.linalg.norm(pts[1] - pts[0]))
+            if not np.isfinite(sep) or sep < 2.0:
+                return image
+            gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY).astype(np.float32)
+            lap = np.abs(cv2.Laplacian(gray, cv2.CV_32F, ksize=3))
+            rx = max(1, int(round(0.28 * sep)))
+            ry = max(1, int(round(0.15 * sep)))
+            scores = []
+            masks = []
+            for eye in pts[:2]:
+                m = np.zeros(gray.shape, dtype=np.float32)
+                center = (int(round(eye[0])), int(round(eye[1] - cls._PROTECT_EYE_LIFT * sep)))
+                cv2.ellipse(m, center, (rx, ry), 0, 0, 360, 1.0, -1)
+                values = lap[m > 0.5]
+                scores.append(float(values.mean()) if values.size else 0.0)
+                masks.append(cv2.GaussianBlur(m, (0, 0), max(1.0, 0.035 * sep)))
+            lo = int(np.argmin(scores))
+            hi = int(np.argmax(scores))
+            if scores[lo] <= 0.0 or scores[hi] <= scores[lo] * cls._EYE_BALANCE_TRIGGER:
+                return image
+            gain = min(cls._EYE_BALANCE_MAX,
+                       max(0.0, (scores[hi] - scores[lo]) / scores[hi]))
+            if gain <= 0.0:
+                return image
+            base = image.astype(np.float32)
+            blur = cv2.GaussianBlur(base, (0, 0), 0.75)
+            m = (masks[lo] * gain)[:, :, None]
+            return np.clip(base + m * (base - blur), 0.0, 255.0).astype(np.uint8)
+        except (cv2.error, TypeError, ValueError, ImportError):
+            return image
 
     # ── run ──────────────────────────────────────────────────────────────────
     def Run(self, source_faceset: FaceSet, target_face: Face, temp_frame: Frame) -> Frame:
@@ -674,6 +746,7 @@ class Enhance_UltraMax:
         # retain the same chroma as the rest of the swapped crop, while the
         # restored cheeks/nose keep UltraMax's luminance and detail.
         restored = self._protect_swapped_eyes(restored, src512)
+        restored = self._rebalance_eye_detail(restored)
 
         gain = _env_float('ROOP_ULTRAMAX_TEXTURE', self._TEXTURE_GAIN)
         if gain > 0.0:
