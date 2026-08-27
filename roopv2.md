@@ -563,3 +563,11 @@ LayerNorm-FP32 mixed configuration: `mixed/`, the old RTX 4070 runtime
 namespace, and its timestamped stale backup. Preserved the separate
 `mixed_*_fp32` safety caches. The next mixed run will build only the new
 `..._lnfp32` namespace.
+## Mixed enhancer cache build attempt — 2026-08-27
+
+Started a clean mixed TensorRT initialization for GPEN 256 Pro, GPEN Realistic,
+and UltraMax with the `_lnfp32` namespace. TensorRT created the namespace and
+began a fresh timing-cache build, but the first engine build remained active
+without producing an artifact after several minutes, so it was stopped to
+avoid leaving a runaway process. No enhancer build is marked complete yet; the
+directory is safe to rebuild on the next run.
