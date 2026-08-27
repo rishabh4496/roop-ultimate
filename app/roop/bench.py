@@ -221,6 +221,10 @@ def probe_device():
     info['active_providers'] = [_provider_name(p) for p in
                                 (roop.globals.execution_providers or [])]
     info['trt_tuning'] = current_trt_tuning()
+    info['cpu_tuning'] = {
+        'opencv_kernel_threads': os.environ.get('ROOP_CV_THREADS', 'auto'),
+        'ort_dynamic_block_base': os.environ.get('ROOP_ORT_DYNAMIC_BLOCK', '4'),
+    }
     return info
 
 
@@ -1984,6 +1988,10 @@ def run_benchmark(profile='full', faces_per_frame=1.0, report=None,
             'perf_detector_pool': getattr(roop.globals.CFG, 'perf_detector_pool', ''),
             'perf_batch_swap': getattr(roop.globals.CFG, 'perf_batch_swap', ''),
             'trt_tuning': current_trt_tuning(),
+            'cpu_tuning': {
+                'opencv_kernel_threads': os.environ.get('ROOP_CV_THREADS', 'auto'),
+                'ort_dynamic_block_base': os.environ.get('ROOP_ORT_DYNAMIC_BLOCK', '4'),
+            },
         },
         'stages': [s.as_dict() for s in stages],
         'pools': rec['pools'],

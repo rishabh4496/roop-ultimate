@@ -42,6 +42,7 @@ def _apply_perf_env():
         graph = cfg.get('trt_cuda_graph')
         graph_on = graph is True or str(graph).strip().lower() in ('1', 'true', 'yes', 'on')
         os.environ['ROOP_TRT_CUDA_GRAPH'] = '1' if graph_on else '0'
+    _set('ROOP_CV_THREADS', cfg.get('cpu_opencv_threads'))
     _set('ROOP_DETMASK_POOL', cfg.get('perf_detmask_pool'))
     _set('ROOP_DETECTOR_POOL', cfg.get('perf_detector_pool'))
     _set('ROOP_EXPR_POOL', cfg.get('perf_expr_pool'))

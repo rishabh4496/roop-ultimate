@@ -698,6 +698,16 @@ def get_onnx_session_options(optimization_level=None):
             opts.intra_op_num_threads = 1
         if hasattr(opts, 'inter_op_num_threads'):
             opts.inter_op_num_threads = 1
+        # ORT's constant-cost scheduler can produce high latency variance on
+        # Windows. Keep one thread per session, but distribute uneven CPU work
+        # more fairly between repeated calls.
+        if hasattr(opts, 'add_session_config_entry'):
+            try:
+                opts.add_session_config_entry(
+                    'session.dynamic_block_base',
+                    str(os.environ.get('ROOP_ORT_DYNAMIC_BLOCK', '4')))
+            except Exception:
+                pass
         if hasattr(opts, 'log_severity_level'):
             opts.log_severity_level = 3
         if optimization_level is not None:

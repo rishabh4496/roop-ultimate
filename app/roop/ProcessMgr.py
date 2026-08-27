@@ -45,6 +45,27 @@ _EXPR_BUILD_LOCK = Lock()
 _LIPSYNC_BUILD_LOCK = Lock()
 from queue import Queue, Full as _QueueFull, Empty as _QueueEmpty
 
+
+def _configure_opencv_worker_threads(workers):
+    """Avoid multiplying frame workers by OpenCV's internal thread pool."""
+    raw = os.environ.get('ROOP_CV_THREADS', 'auto').strip().lower()
+    try:
+        if raw != 'auto':
+            value = max(1, min(4, int(raw)))
+        else:
+            import psutil
+            physical = psutil.cpu_count(logical=False) or (os.cpu_count() or 4)
+            value = 2 if physical // max(1, workers) >= 2 else 1
+    except (TypeError, ValueError):
+        value = 1
+    try:
+        cv2.setNumThreads(value)
+    except Exception:
+        pass
+    print(f'[CPU] OpenCV kernel threads={value} across {max(1, workers)} frame workers',
+          flush=True)
+    return value
+
 # Above this, a stabilizer's warm-up is longer than any block we would be willing
 # to hold in memory, so parallel stabilization cannot be made seam-free and the
 # scheduler stays sequential instead. Same cap the derivation saturates at.
@@ -1415,6 +1436,7 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
         self.total_frames = frame_count
         self.num_threads = threads
         self.processing_threads = self.num_threads
+        _configure_opencv_worker_threads(self.num_threads)
         self.frames_queue = []
         self.processed_queue = []
         # A little buffering per thread smooths variable per-frame times so the

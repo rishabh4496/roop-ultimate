@@ -175,6 +175,7 @@ export default function BenchmarkPanel({ saved, currentSettings, onResult, notif
   const workload = report?.workload || {};
   const measured = report?.settings_measured || {};
   const trtTuning = measured.trt_tuning || dev.trt_tuning || {};
+  const cpuTuning = measured.cpu_tuning || dev.cpu_tuning || {};
   const current = currentSettings || {};
   const settingMismatch = report?.status === 'success' && report?.version >= 2 && [
     ['provider', current.provider],
@@ -309,6 +310,9 @@ export default function BenchmarkPanel({ saved, currentSettings, onResult, notif
             {trtTuning.builder_optimization_level != null && <Chip tone="info">
               TRT b{trtTuning.builder_optimization_level} · aux {trtTuning.auxiliary_streams}
               {trtTuning.cuda_graph ? ' · CUDA graph' : ''}
+            </Chip>}
+            {cpuTuning.opencv_kernel_threads != null && <Chip tone="info">
+              CPU OpenCV {cpuTuning.opencv_kernel_threads} · ORT block {cpuTuning.ort_dynamic_block_base}
             </Chip>}
           </div>
 
