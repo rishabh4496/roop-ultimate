@@ -736,9 +736,15 @@ class Settings:
 
         results = getattr(self, 'benchmark_results', {}) or {}
         if isinstance(results, dict) and results.get('best_threads'):
-            mode_threads = results.get('best_threads', {}).get(mode)
-            if mode_threads:
-                return int(mode_threads)
+            measured = results.get('settings_measured') or {}
+            if not measured or self._benchmark_matches_settings(measured):
+                mode_threads = results.get('best_threads', {}).get(mode)
+                if mode_threads:
+                    return int(mode_threads)
+            else:
+                print("[Auto Thread Selection] Ignoring benchmark thread result: "
+                      "measured model/provider settings do not match this run.",
+                      flush=True)
 
         try:
             import torch
@@ -768,3 +774,32 @@ class Settings:
         except Exception:
             pass
         return getattr(self, 'max_threads', 8)
+
+    def _benchmark_matches_settings(self, measured) -> bool:
+        """Return whether a benchmark was measured for the active pipeline.
+
+        Thread knees are workload-specific. Reusing a result measured with a
+        different enhancer (for example GPEN 256 Pro for an UltraMax render)
+        creates unstable or unnecessarily low throughput, especially in the
+        heavy path. Older hand-written test fixtures without provenance remain
+        accepted by ``resolve_threads``; real reports contain this map.
+        """
+        fields = (
+            ('provider', 'provider'),
+            ('swap_model', 'swap_model'),
+            ('enhancer', 'selected_enhancer'),
+            ('mask_engine', 'mask_engine'),
+            ('detector_engine', 'detector_engine'),
+            ('subsample_upscale', 'subsample_upscale'),
+            ('perf_trt_pool', 'perf_trt_pool'),
+            ('perf_detmask_pool', 'perf_detmask_pool'),
+            ('perf_detector_pool', 'perf_detector_pool'),
+            ('perf_batch_swap', 'perf_batch_swap'),
+        )
+        for measured_key, setting_key in fields:
+            measured_value = measured.get(measured_key)
+            current_value = getattr(self, setting_key, None)
+            if measured_value not in (None, '') and current_value not in (None, ''):
+                if str(measured_value).lower() != str(current_value).lower():
+                    return False
+        return True

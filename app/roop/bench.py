@@ -112,6 +112,25 @@ PROFILES = {
         # reaches 100% and keeps going reads as a hang.
         'est_sec': 450,
     },
+    # A sustained, multi-face workload for validating stability rather than
+    # finding a short peak. It keeps the active model catalogue and provider,
+    # but repeats the end-to-end composite so thermal/VRAM drift and scheduler
+    # imbalance become visible. Two faces/frame is the minimum deliberate load;
+    # the API still accepts a larger value for a heavier test.
+    'stress': {
+        'measure_sec': 12.0,
+        'warm_sec': 2.0,
+        'reps': 2,
+        'composite_reps': 3,
+        'pool_levels': (1, 2, 4, 8),
+        'sweep_pools': True,
+        'provider_ab': False,
+        'io': True,
+        'batch_swap': True,
+        'default_faces': 2.0,
+        'min_faces': 2.0,
+        'est_sec': 900,
+    },
 }
 
 # Leave this much VRAM unallocated at all times. A pool level that would eat into
@@ -287,18 +306,32 @@ def _exists(rel):
 
 def _enhancer_model(name):
     """(path, note) for the enhancer the settings name, or (None, why-not)."""
+    if name == 'GPEN Realistic':
+        # The processor supports a deliberate 256px preview tier as well as
+        # its normal 512px path. Follow the active processor knob so the
+        # benchmark measures the same graph and transfer volume.
+        try:
+            size = int(os.environ.get('ROOP_GPENR_SIZE', '512') or 512)
+        except ValueError:
+            size = 512
+        if size == 256:
+            return _exists('gpen_bfr_256.onnx'), 'GPEN Realistic 256 luminance with swapper chrominance'
+        return _exists('GPEN-BFR-512.onnx'), 'GPEN Realistic 512 luminance with swapper chrominance'
     table = {
         'GFPGAN': ('GFPGANv1.4.onnx', 'default'),
         'Codeformer': ('CodeFormer/CodeFormerv0.1.onnx', 'has a fidelity input'),
         'Codeformer (fp16)': ('CodeFormer/CodeFormerv0.1.onnx', 'fp16 variant'),
         'GPEN 256': ('gpen_bfr_256.onnx', 'FP32-forced under TRT'),
         'GPEN 256 Pro': ('gpen_bfr_256.onnx', 'Upgraded GPEN 256 (sharper, photoreal, high-texture)'),
-        'GPEN Realistic': ('GPEN-BFR-512.onnx', 'GPEN 512 luminance with swapper chrominance'),
         'GPEN': ('GPEN-BFR-512.onnx', 'FP32-forced under TRT'),
         'GPEN 1024': ('gpen_bfr_1024.onnx', 'FP32-forced under TRT'),
         'GPEN 2048': ('gpen_bfr_2048.onnx', 'FP32-forced under TRT'),
         'Restoreformer++': ('restoreformer_plus_plus.onnx', ''),
-        'UltraMax': ('GPEN-BFR-512.onnx', 'GPEN-512 base with CodeFormer texture residual'),
+        # UltraMax is a lean CodeFormer path, not a GPEN network. Keep this
+        # pointed at the model the processor actually opens so its benchmark
+        # cannot report GPEN-512 timings under the UltraMax name.
+        'UltraMax': ('CodeFormer/codeformer.fp16.onnx',
+                     'CodeFormer fp16 with UltraMax lean host path'),
     }
     if name not in table:
         return None, f'{name} is not a single-file ONNX enhancer'
@@ -320,7 +353,16 @@ def _mask_models(engine_names):
     }
     out = []
     for name in engine_names:
-        if name in table:
+        if name == 'RealityUX':
+            # RealityUX is a live composite: Mask_RealityUX runs the XSeg
+            # authoritative mask and the BiSeNet parser concurrently. Measure
+            # both selected models so the benchmark does not silently replace
+            # this user's mask pipeline with an unrelated workload.
+            out.extend([
+                ('RealityUX / DFL XSeg', 'xseg.onnx', False),
+                ('RealityUX / BiSeNet', 'resnet18.onnx', False),
+            ])
+        elif name in table:
             rel, no_trt = table[name]
             out.append((name, rel, no_trt))
     return out
@@ -418,13 +460,21 @@ def build_catalogue(faces_per_frame=1.0):
             # CodeFormer, RestoreFormer++ and UltraMax pool on ROOP_TRT_POOL; GPEN, GFPGAN
             # and DMDNet have no pool at all, so under TensorRT they hold the
             # global lock and serialise the whole pipeline behind one face.
-            pooled_enh = enh_name.startswith('Codeformer') or enh_name in ('Restoreformer++', 'UltraMax')
+            pooled_enh = (enh_name.startswith('Codeformer') or
+                          enh_name in ('Restoreformer++', 'UltraMax',
+                                       'GPEN Realistic', 'GPEN 256 Pro'))
+            # The low-VRAM tier deliberately disables pools. A stage must not
+            # be benchmarked as pooled there when the real processor will use
+            # one shared session behind the GPU guard.
+            pool_knob = ('trt_pool' if pooled_enh and
+                         session_pool.pooling_enabled() else None)
+            needs_fp32 = enh_name in ('GPEN 1024', 'GPEN 2048')
             stages.append(Stage(
                 'enhance', f'Enhancer — {enh_name}', enh_path,
-                _fp32_trt_providers(prov) if is_gpen else prov,
-                'trt_pool' if pooled_enh else None, F,
+                _fp32_trt_providers(prov) if needs_fp32 else prov,
+                pool_knob, F,
                 note=enh_note or ('no pool — takes the global GPU lock'
-                                  if not pooled_enh else ''),
+                                  if pool_knob is None else ''),
                 in_modes=('enhanced', 'heavy')))
         elif enh_note:
             warnings.append(f'enhancer not measured: {enh_note}')
@@ -459,7 +509,10 @@ def build_catalogue(faces_per_frame=1.0):
     # the raw file does not fail gracefully — it throws. The app rewrites those
     # nodes once into `warping_spade-trt.onnx` and runs that; so does this.
     warp = _exists('liveportrait/warping_spade.onnx')
-    if warp:
+    expression_strength = float(
+        getattr(cfg, 'expression_restore_strength', 0.0) or 0.0)
+    lipsync_enabled = bool(getattr(cfg, 'lipsync_enabled', False))
+    if warp and (expression_strength > 0.0 or lipsync_enabled):
         try:
             from roop.gridsample5d import ensure_patched_model
             warp = ensure_patched_model(warp, verbose=False) or warp
@@ -888,7 +941,7 @@ class _CpuFrameWork:
 
 
 def measure_composite(stages, pools, modes, thread_levels, cfg, report, cancelled,
-                      cpu_work, vram_out=None):
+                      cpu_work, vram_out=None, metrics_out=None):
     """Frames/s at each thread count, for each workload mode.
 
     Each worker executes a whole frame's GPU call sequence in pipeline order,
@@ -982,8 +1035,24 @@ def measure_composite(stages, pools, modes, thread_levels, cfg, report, cancelle
                     raise Cancelled()
                 report(status=f'{mode} composite — {t} thread(s)',
                        stage=f'{mode} frame', threads=t)
-                fps = _composite_run(active, t, cfg['measure_sec'] + 0.5,
-                                     cfg['warm_sec'], global_lock, cpu_work)
+                runs = []
+                for _ in range(max(1, int(cfg.get('composite_reps', 1)))):
+                    runs.append(_composite_run(
+                        active, t, cfg['measure_sec'] + 0.5,
+                        cfg['warm_sec'], global_lock, cpu_work))
+                # Sustained profiles use the median for recommendations. Keep
+                # the distribution in the result so a short peak cannot hide
+                # thermal throttling, VRAM paging, or scheduler variance.
+                fps = float(np.median(runs))
+                if metrics_out is not None:
+                    metrics_out.setdefault(mode, {})[str(t)] = {
+                        'runs_fps': [round(x, 2) for x in runs],
+                        'median_fps': round(fps, 2),
+                        'min_fps': round(min(runs), 2),
+                        'max_fps': round(max(runs), 2),
+                        'spread_pct': round(
+                            (max(runs) - min(runs)) / max(1e-9, fps) * 100, 1),
+                    }
                 curves[mode][str(t)] = round(fps, 2)
                 free, _ = vram_free_total_gb()
                 report(fps=round(fps, 1), vram=round(free, 2),
@@ -1810,10 +1879,12 @@ def run_benchmark(profile='full', faces_per_frame=1.0, report=None,
                          if t <= logical})
         report(phase='threads', pct=50, status='Thread sweep')
         vram_at_knee = {}
+        composite_metrics = {}
         curves = measure_composite(stages, pools,
                                    ('standard', 'enhanced', 'heavy'), levels,
                                    cfg_profile, report, cancelled, cpu_work,
-                                   vram_out=vram_at_knee)
+                                   vram_out=vram_at_knee,
+                                   metrics_out=composite_metrics)
 
         # ── does a wider pool actually help the whole frame? ─────────────────
         # The per-stage sweep above measures a stage against ITSELF, and that is
@@ -1870,13 +1941,29 @@ def run_benchmark(profile='full', faces_per_frame=1.0, report=None,
         'gpu_name': device['gpu_name'],            # kept for the old UI shape
         'total_vram_gb': device['total_vram_gb'],
         'faces_per_frame': faces_per_frame,
+        'workload': {
+            'kind': 'sustained' if cfg_profile.get('composite_reps', 1) > 1
+                    else 'calibration',
+            'faces_per_frame': faces_per_frame,
+            'measure_sec': cfg_profile['measure_sec'],
+            'warm_sec': cfg_profile['warm_sec'],
+            'composite_reps': cfg_profile.get('composite_reps', 1),
+        },
+        'composite_metrics': composite_metrics,
         'settings_measured': {
+            'provider': getattr(roop.globals.CFG, 'provider', ''),
             'swap_model': getattr(roop.globals.CFG, 'swap_model', ''),
             'enhancer': getattr(roop.globals.CFG, 'selected_enhancer', ''),
             'mask_engine': getattr(roop.globals.CFG, 'mask_engine', ''),
             'mask_engine_2': getattr(roop.globals.CFG, 'mask_engine_2', ''),
             'detector_engine': getattr(roop.globals.CFG, 'detector_engine', ''),
+            'face_detector_size': getattr(roop.globals, 'face_detector_size',
+                                          getattr(roop.globals.CFG, 'face_detector_size', '')),
             'subsample_upscale': getattr(roop.globals.CFG, 'subsample_upscale', ''),
+            'perf_trt_pool': getattr(roop.globals.CFG, 'perf_trt_pool', ''),
+            'perf_detmask_pool': getattr(roop.globals.CFG, 'perf_detmask_pool', ''),
+            'perf_detector_pool': getattr(roop.globals.CFG, 'perf_detector_pool', ''),
+            'perf_batch_swap': getattr(roop.globals.CFG, 'perf_batch_swap', ''),
         },
         'stages': [s.as_dict() for s in stages],
         'pools': rec['pools'],

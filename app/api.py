@@ -659,7 +659,10 @@ def benchmark_threads(payload: dict = Body(default=None)):
             "error": "",
         })
 
-    faces = float(payload.get("faces_per_frame", 1.0) or 1.0)
+    requested_faces = float(payload.get(
+        "faces_per_frame", bench.PROFILES[profile].get('default_faces', 1.0))
+        or 1.0)
+    faces = max(requested_faces, float(bench.PROFILES[profile].get('min_faces', 0.1)))
     threading.Thread(target=_run_benchmark_worker, args=(profile, faces),
                      daemon=True).start()
     return {"status": "started", "profile": profile,

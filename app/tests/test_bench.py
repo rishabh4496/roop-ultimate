@@ -241,6 +241,20 @@ class CatalogueFollowsTheSettings(unittest.TestCase):
         self.assertIsNone(next((s for s in stages if s.key == 'enhance'), None))
         self.assertTrue(any('DMDNet' in w for w in warnings))
 
+    def test_stress_profile_is_a_multi_face_sustained_test(self):
+        profile = bench.PROFILES['stress']
+        self.assertGreaterEqual(profile['default_faces'], 2.0)
+        self.assertGreaterEqual(profile['min_faces'], 2.0)
+        self.assertGreaterEqual(profile['measure_sec'], 10.0)
+        self.assertGreaterEqual(profile['warm_sec'], 1.0)
+        self.assertGreaterEqual(profile['composite_reps'], 3)
+
+    def test_composite_metrics_keep_repeated_run_distribution(self):
+        import inspect
+        src = inspect.getsource(bench.measure_composite)
+        self.assertIn("'runs_fps'", src)
+        self.assertIn("'spread_pct'", src)
+
 
 class StandaloneRunReadsTheRealConfig(unittest.TestCase):
     """The CLI has to measure the same configuration the UI would.
@@ -370,6 +384,24 @@ class TheResultReachesResolveThreads(unittest.TestCase):
         cfg.max_threads = 6
         cfg.benchmark_results = {'best_threads': {'standard': 16}}
         self.assertEqual(cfg.resolve_threads('standard'), 6)
+
+    def test_auto_threads_ignore_benchmark_for_different_enhancer(self):
+        from settings import Settings
+        cfg = Settings(os.path.join(HERE, 'no-such-config.yaml'))
+        cfg.auto_thread_selection = True
+        cfg.selected_enhancer = 'UltraMax'
+        cfg.benchmark_results = {
+            'best_threads': {'heavy': 6},
+            'settings_measured': {
+                'provider': cfg.provider,
+                'swap_model': cfg.swap_model,
+                'enhancer': 'GPEN 256 Pro',
+                'mask_engine': cfg.mask_engine,
+                'detector_engine': cfg.detector_engine,
+                'subsample_upscale': cfg.subsample_upscale,
+            },
+        }
+        self.assertNotEqual(cfg.resolve_threads('heavy'), 6)
 
     def test_recommend_emits_that_key(self):
         device = {'cpu_logical': 16, 'cpu_physical': 8}

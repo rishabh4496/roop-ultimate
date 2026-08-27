@@ -102,7 +102,7 @@ export default function Settings({ meta, settings, setSettings, notify }) {
   // best_threads is in there too and is a nested object, not a settings key;
   // it is filtered out rather than assigned over `benchmark_results`.
   const onBenchmarkResult = useCallback((result) => {
-    const { best_threads, ...live } = result?.applied?.applied_now || {};
+    const live = result?.applied?.applied_now || {};
     const pending = result?.applied?.pending_restart || {};
     setSettings((s) => ({ ...s, ...pending, ...live, benchmark_results: result }));
   }, [setSettings]);
@@ -515,7 +515,7 @@ export default function Settings({ meta, settings, setSettings, notify }) {
           )}
           <Slider label="Max memory (GB)" info="0 = no limit" min={0} max={128} step={1} {...bind('memory_limit', 0)} />
 
-          <BenchmarkPanel saved={p.benchmark_results} onResult={onBenchmarkResult} notify={notify} />
+          <BenchmarkPanel saved={p.benchmark_results} currentSettings={p} onResult={onBenchmarkResult} notify={notify} />
         </FilterSection>
 
         <FilterSection title="Advanced performance (restart to apply)" icon={Icon.meter} query={query} onlyModified={onlyModified} onResetKeys={resetKeys}>

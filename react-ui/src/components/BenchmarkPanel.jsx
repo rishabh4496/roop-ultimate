@@ -21,6 +21,8 @@ const PROFILES = [
 
 const num = (v, d = 1) => (typeof v === 'number' && isFinite(v) ? v.toFixed(d) : '—');
 
+const PROFILE_STRESS = { id: 'stress', label: 'Stress', hint: '15+ min · 2+ faces/frame, sustained repeated composite, stability metrics' };
+
 function Chip({ tone = 'info', children, title }) {
   return (
     <span title={title}
@@ -91,8 +93,9 @@ function Foldout({ title, count, children, defaultOpen = false }) {
   );
 }
 
-export default function BenchmarkPanel({ saved, onResult, notify }) {
+export default function BenchmarkPanel({ saved, currentSettings, onResult, notify }) {
   const [profile, setProfile] = useState('full');
+  const [faces, setFaces] = useState(2);
   const [running, setRunning] = useState(false);
   const [status, setStatus] = useState(null);
   const [report, setReport] = useState(saved || null);
@@ -139,7 +142,11 @@ export default function BenchmarkPanel({ saved, onResult, notify }) {
   const start = async () => {
     try {
       setStatus(null);
-      const res = await postJSON('/api/settings/benchmark_threads', { profile });
+      const requestedFaces = Math.max(1, Number(faces) || 1);
+      const res = await postJSON('/api/settings/benchmark_threads', {
+        profile,
+        faces_per_frame: profile === 'stress' ? Math.max(2, requestedFaces) : requestedFaces,
+      });
       if (res && res.status === 'started') {
         setRunning(true);
         if (notify) notify(`Benchmark started (${profile}, about ${Math.round((res.est_sec || 300) / 60)} min)`, 'info');
@@ -165,6 +172,21 @@ export default function BenchmarkPanel({ saved, onResult, notify }) {
   const pending = report?.applied?.pending_restart || {};
   const pendingKeys = Object.keys(pending);
   const codecChange = report?.applied?.applied_now?.output_video_codec;
+  const workload = report?.workload || {};
+  const measured = report?.settings_measured || {};
+  const current = currentSettings || {};
+  const settingMismatch = report?.status === 'success' && report?.version >= 2 && [
+    ['provider', current.provider],
+    ['swap_model', current.swap_model],
+    ['enhancer', current.selected_enhancer],
+    ['mask_engine', current.mask_engine],
+    ['detector_engine', current.detector_engine],
+    ['subsample_upscale', current.subsample_upscale],
+    ['perf_trt_pool', current.perf_trt_pool],
+    ['perf_detmask_pool', current.perf_detmask_pool],
+    ['perf_detector_pool', current.perf_detector_pool],
+    ['perf_batch_swap', current.perf_batch_swap],
+  ].some(([key, value]) => value && measured[key] && value !== measured[key]);
 
   return (
     <div className="col-span-full p-4 rounded-xl bg-white/[0.03] border border-white/10 space-y-3 mt-2">
@@ -174,15 +196,28 @@ export default function BenchmarkPanel({ saved, onResult, notify }) {
           <div className="min-w-0">
             <span className="text-xs font-bold text-white block">Hardware benchmark</span>
             <p className="text-nano text-white/50 mt-0.5">
-              Times this machine on the models your current settings actually run, then
-              picks the thread count, the pool sizes and the provider from the curves.
+              Measures the active models and provider. Stress adds a sustained multi-face
+              run so short peaks cannot hide memory or thermal instability.
             </p>
+            <div className="flex flex-wrap items-center gap-1.5 mt-1.5 text-nano text-white/40">
+              <span>Current settings:</span>
+              <Chip tone="info">{current.provider || 'provider ?'}</Chip>
+              <Chip tone="info">swap {current.swap_model || '?'}</Chip>
+              <Chip tone="info">enhancer {current.selected_enhancer || '?'}</Chip>
+              <Chip tone="info">mask {current.mask_engine || '?'}</Chip>
+            </div>
           </div>
         </div>
 
         <div className="flex items-center gap-2 shrink-0">
+          <label className="flex items-center gap-1.5 text-nano text-white/45" title="Synthetic faces per benchmark frame; stress requires at least two.">
+            <span>Faces/frame</span>
+            <input type="number" min={profile === 'stress' ? 2 : 1} max="16" step="0.5"
+              value={faces} onChange={(e) => setFaces(e.target.value)} disabled={running}
+              className="w-14 rounded-md bg-black/30 border border-white/10 px-1.5 py-1.5 text-right text-white/80 tabular-nums" />
+          </label>
           <div className="flex rounded-lg overflow-hidden border border-white/10">
-            {PROFILES.map((p) => (
+            {[...PROFILES, PROFILE_STRESS].map((p) => (
               <button key={p.id} type="button" title={p.hint}
                 onClick={() => setProfile(p.id)} disabled={running}
                 aria-pressed={profile === p.id}
@@ -263,6 +298,21 @@ export default function BenchmarkPanel({ saved, onResult, notify }) {
                 ? `${rec.encoder_fastest} is faster, not needed`
                 : 'fastest measured'} />
           </div>
+
+          <div className="flex flex-wrap items-center gap-1.5 text-nano text-white/45">
+            <span className="text-white/60 font-semibold">Measured workload:</span>
+            <Chip tone="info">{workload.kind || 'calibration'}</Chip>
+            <Chip tone="info">{num(workload.faces_per_frame, 1)} faces/frame</Chip>
+            {workload.composite_reps > 1 && <Chip tone="info">{workload.composite_reps} composite repeats</Chip>}
+            {workload.measure_sec && <Chip tone="info">{num(workload.measure_sec, 0)}s timed pass</Chip>}
+          </div>
+
+          {settingMismatch && (
+            <div className="state-warn rounded-lg px-3 py-2 text-nano font-medium flex items-start gap-2">
+              <Icon.warning size={12} className="mt-0.5 shrink-0" />
+              <span>This saved benchmark was measured with different model settings. Re-run it before applying recommendations.</span>
+            </div>
+          )}
 
           {rec.encoder_reason && (
             <p className="text-nano text-white/40 leading-relaxed">
@@ -400,6 +450,24 @@ export default function BenchmarkPanel({ saved, onResult, notify }) {
               thread curve flattens where it does; picking a pooled alternative (CodeFormer or
               RestoreFormer++ rather than GPEN/GFPGAN) is worth more than more threads.
             </p>
+          )}
+
+          {report.composite_metrics && Object.keys(report.composite_metrics).length > 0 && (
+            <Foldout title="Sustained stability" count="repeated composite runs">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                {Object.entries(report.composite_metrics).map(([mode, points]) => {
+                  const rows = Object.entries(points || {});
+                  // Prefer the recommended thread point; object order is not a
+                  // reliable indication of the selected workload.
+                  const widest = points?.[String(rec.threads?.[mode])] || rows[rows.length - 1]?.[1];
+                  return (
+                    <Tile key={mode} label={`${mode} stability`} value={widest ? `${num(widest.median_fps, 1)} f/s` : 'â€”'}
+                      sub={widest ? `${num(widest.min_fps, 1)}–${num(widest.max_fps, 1)} · spread ${num(widest.spread_pct, 0)}%` : 'No repeated runs'} />
+                  );
+                })}
+              </div>
+              <p className="text-nano text-white/35 mt-2">Thread recommendations use the median repeated run; spread exposes thermal throttling, paging, or scheduler instability.</p>
+            </Foldout>
           )}
 
           {report.warnings?.length > 0 && (

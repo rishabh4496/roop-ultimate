@@ -286,10 +286,14 @@ class Enhance_UltraMax:
     _PROTECT_EYE_CORE_Y = 0.060
     _PROTECT_EYE_LIFT = 0.03
     _PROTECT_EYE_FEATHER = 0.08
-    _PROTECT_EYE_SHARPEN = 0.90
-    _PROTECT_EYE_DETAIL_GAIN = 0.50
-    _PROTECT_EYE_CORE_DETAIL_GAIN = 1.15
-    _PROTECT_EYE_CORE_MIX = 0.42
+    # Keep the swapped crop as the geometry anchor, but let the actual
+    # UltraMax output contribute enough aligned aperture detail to remain
+    # visibly enhanced. The previous 0.42 core mix / 0.50 outer detail gain
+    # made the eye band look like an unenhanced RealSwap crop.
+    _PROTECT_EYE_SHARPEN = 0.70
+    _PROTECT_EYE_DETAIL_GAIN = 0.85
+    _PROTECT_EYE_CORE_DETAIL_GAIN = 1.50
+    _PROTECT_EYE_CORE_MIX = 0.68
     _EYE_BALANCE_TRIGGER = 1.12
     _EYE_BALANCE_MAX = 0.55
     _STRUCTURE_SHARPEN = 0.18

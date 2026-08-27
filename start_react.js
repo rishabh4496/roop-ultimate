@@ -12,8 +12,6 @@ module.exports = async (kernel) => {
           venv: "env",
           env: {
             ROOP_PROFILE: "1",
-            ROOP_TRT_POOL: "4",
-            ROOP_DETMASK_POOL: "4",
             ROOP_BATCH_SWAP_XFRAME: "1",
             ROOP_BATCH_SWAP: "1",
             ROOP_STAB_PARALLEL: "1",
