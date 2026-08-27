@@ -220,7 +220,26 @@ def probe_device():
     info['trt_precision'] = getattr(cfg, 'trt_precision', '') if cfg else ''
     info['active_providers'] = [_provider_name(p) for p in
                                 (roop.globals.execution_providers or [])]
+    info['trt_tuning'] = current_trt_tuning()
     return info
+
+
+def current_trt_tuning():
+    """Return the effective TensorRT tuning knobs used by new sessions."""
+    try:
+        builder = int(os.environ.get('ROOP_TRT_BUILDER_OPT_LEVEL', '3'))
+    except (TypeError, ValueError):
+        builder = 3
+    try:
+        aux = int(os.environ.get('ROOP_TRT_AUX_STREAMS', '-1'))
+    except (TypeError, ValueError):
+        aux = -1
+    graph = str(os.environ.get('ROOP_TRT_CUDA_GRAPH', '0')).strip().lower()
+    return {
+        'builder_optimization_level': max(0, min(5, builder)),
+        'auxiliary_streams': max(-1, min(8, aux)),
+        'cuda_graph': graph in ('1', 'true', 'yes', 'on'),
+    }
 
 
 def _provider_name(p):
@@ -1964,6 +1983,7 @@ def run_benchmark(profile='full', faces_per_frame=1.0, report=None,
             'perf_detmask_pool': getattr(roop.globals.CFG, 'perf_detmask_pool', ''),
             'perf_detector_pool': getattr(roop.globals.CFG, 'perf_detector_pool', ''),
             'perf_batch_swap': getattr(roop.globals.CFG, 'perf_batch_swap', ''),
+            'trt_tuning': current_trt_tuning(),
         },
         'stages': [s.as_dict() for s in stages],
         'pools': rec['pools'],

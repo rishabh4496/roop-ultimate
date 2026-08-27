@@ -174,6 +174,7 @@ export default function BenchmarkPanel({ saved, currentSettings, onResult, notif
   const codecChange = report?.applied?.applied_now?.output_video_codec;
   const workload = report?.workload || {};
   const measured = report?.settings_measured || {};
+  const trtTuning = measured.trt_tuning || dev.trt_tuning || {};
   const current = currentSettings || {};
   const settingMismatch = report?.status === 'success' && report?.version >= 2 && [
     ['provider', current.provider],
@@ -305,6 +306,10 @@ export default function BenchmarkPanel({ saved, currentSettings, onResult, notif
             <Chip tone="info">{num(workload.faces_per_frame, 1)} faces/frame</Chip>
             {workload.composite_reps > 1 && <Chip tone="info">{workload.composite_reps} composite repeats</Chip>}
             {workload.measure_sec && <Chip tone="info">{num(workload.measure_sec, 0)}s timed pass</Chip>}
+            {trtTuning.builder_optimization_level != null && <Chip tone="info">
+              TRT b{trtTuning.builder_optimization_level} · aux {trtTuning.auxiliary_streams}
+              {trtTuning.cuda_graph ? ' · CUDA graph' : ''}
+            </Chip>}
           </div>
 
           {settingMismatch && (

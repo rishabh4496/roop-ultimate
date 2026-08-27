@@ -2,7 +2,8 @@ import unittest
 from unittest.mock import patch
 
 from roop.backend_manager import (clear_probe_cache, provider_available,
-                                  resolve_provider_names, cache_namespace)
+                                  resolve_provider_names, cache_namespace,
+                                  trt_tuning_namespace)
 
 
 class BackendManagerTests(unittest.TestCase):
@@ -31,6 +32,15 @@ class BackendManagerTests(unittest.TestCase):
         ns = cache_namespace('mixed')
         self.assertIn('mixed_', ns)
         self.assertIn('_ort', ns)
+
+    def test_trt_tuning_namespace_separates_engine_profiles(self):
+        self.assertEqual(trt_tuning_namespace(3, -1, False), '_b3_a-1_g0')
+        self.assertNotEqual(trt_tuning_namespace(1, -1, False),
+                            trt_tuning_namespace(3, -1, False))
+        self.assertNotEqual(trt_tuning_namespace(3, 0, False),
+                            trt_tuning_namespace(3, -1, False))
+        self.assertNotEqual(trt_tuning_namespace(3, -1, True),
+                            trt_tuning_namespace(3, -1, False))
 
 
 if __name__ == '__main__':

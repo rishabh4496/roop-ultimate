@@ -364,6 +364,13 @@ class Settings:
         self.provider = self.default_get(data, 'provider', 'cuda')
         # TensorRT precision mode: 'fp32' | 'fp16' | 'mixed' (only used when provider == 'tensorrt')
         self.trt_precision = self.default_get(data, 'trt_precision', 'mixed')
+        # TensorRT tuning. Level 3 is the documented performance baseline;
+        # CUDA graphs remain opt-in because they require stable shapes.
+        self.trt_builder_optimization_level = self.default_get(
+            data, 'trt_builder_optimization_level', 3)
+        self.trt_auxiliary_streams = self.default_get(
+            data, 'trt_auxiliary_streams', -1)
+        self.trt_cuda_graph = self.default_get(data, 'trt_cuda_graph', False)
         self.force_cpu = self.default_get(data, 'force_cpu', False)
         self.output_template = self.default_get(data, 'output_template', '{file}_{time}')
         # Faceset library folder: persistent, named .fsz facesets that survive
@@ -611,6 +618,9 @@ class Settings:
             'memory_limit' : self.memory_limit,
             'provider' : self.provider,
             'trt_precision' : self.trt_precision,
+            'trt_builder_optimization_level': self.trt_builder_optimization_level,
+            'trt_auxiliary_streams': self.trt_auxiliary_streams,
+            'trt_cuda_graph': self.trt_cuda_graph,
             'force_cpu' : self.force_cpu,
             'output_template' : self.output_template,
             'faceset_library_path' : self.faceset_library_path,

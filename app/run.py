@@ -36,6 +36,12 @@ def _apply_perf_env():
             os.environ[var] = s
 
     _set('ROOP_TRT_POOL', cfg.get('perf_trt_pool'))
+    _set('ROOP_TRT_BUILDER_OPT_LEVEL', cfg.get('trt_builder_optimization_level'))
+    _set('ROOP_TRT_AUX_STREAMS', cfg.get('trt_auxiliary_streams'))
+    if cfg.get('trt_cuda_graph') is not None:
+        graph = cfg.get('trt_cuda_graph')
+        graph_on = graph is True or str(graph).strip().lower() in ('1', 'true', 'yes', 'on')
+        os.environ['ROOP_TRT_CUDA_GRAPH'] = '1' if graph_on else '0'
     _set('ROOP_DETMASK_POOL', cfg.get('perf_detmask_pool'))
     _set('ROOP_DETECTOR_POOL', cfg.get('perf_detector_pool'))
     _set('ROOP_EXPR_POOL', cfg.get('perf_expr_pool'))

@@ -37,7 +37,7 @@ from roop.ProcessMgr import ProcessMgr
 from roop.ProcessOptions import ProcessOptions
 from roop.capturer import get_video_frame_total, release_video
 from roop.backend_manager import (resolve_provider_names, diagnostic_report,
-                                  cache_namespace)
+                                  cache_namespace, trt_tuning_namespace)
 
 
 clip_text = None
@@ -136,12 +136,37 @@ def decode_execution_providers(execution_providers: List[str]) -> List[str]:
                 # Include precision, GPU compute capability and ORT ABI in the
                 # parent namespace. TensorRT's graph hash alone is not enough
                 # to safely reuse an engine after a runtime/device change.
+                # Build/runtime tuning knobs are part of the cache identity.
+                # Without this suffix, a benchmark or a changed default can
+                # silently keep loading an engine made with another schedule.
+                try:
+                    builder_opt = int(os.environ.get(
+                        'ROOP_TRT_BUILDER_OPT_LEVEL',
+                        '3'))
+                except (TypeError, ValueError):
+                    builder_opt = 3
+                builder_opt = max(0, min(5, builder_opt))
+                try:
+                    auxiliary_streams = int(os.environ.get(
+                        'ROOP_TRT_AUX_STREAMS', '-1'))
+                except (TypeError, ValueError):
+                    auxiliary_streams = -1
+                # -1 delegates to TensorRT heuristics; 0 is the memory-saving
+                # serial mode. Keep a conservative upper bound for pooled
+                # contexts on the 6GB laptop.
+                auxiliary_streams = max(-1, min(8, auxiliary_streams))
+                cuda_graph_value = os.environ.get(
+                    'ROOP_TRT_CUDA_GRAPH', '0').strip().lower()
+                cuda_graph = cuda_graph_value in ('1', 'true', 'yes', 'on')
                 cache_label = cache_namespace(trt_precision,
                                               roop.globals.cuda_device_id)
                 # LayerNorm fallback changes TensorRT's graph partitioning and
                 # therefore must not reuse engines built with the old setting.
                 if trt_precision == 'mixed':
                     cache_label += '_lnfp32_seq_heur'
+                cache_label += trt_tuning_namespace(builder_opt,
+                                                     auxiliary_streams,
+                                                     cuda_graph)
                 precision_cache = os.path.join(trt_cache, cache_label)
                 os.makedirs(precision_cache, exist_ok=True)
 
@@ -212,7 +237,16 @@ def decode_execution_providers(execution_providers: List[str]) -> List[str]:
                     # inference remains TensorRT mixed; this only changes how
                     # the first engine is searched and built.
                     'trt_build_heuristics_enable': trt_precision == 'mixed',
-                    'trt_builder_optimization_level': 1 if trt_precision == 'mixed' else 3,
+                    # ORT documents level 3 as the default-quality baseline;
+                    # level 1 can leave performance on the table on large
+                    # enhancer graphs. This is build-time only.
+                    'trt_builder_optimization_level': builder_opt,
+                    # CUDA graphs are deliberately opt-in: they require
+                    # stable shapes and context lifetimes, and UltraMax has
+                    # multiple pooled sessions on the desktop profile.
+                    'trt_cuda_graph_enable': cuda_graph,
+                    # -1 lets TensorRT choose; 0 can reduce memory pressure.
+                    'trt_auxiliary_streams': auxiliary_streams,
                     'trt_engine_cache_enable': True,
                     'trt_engine_cache_path': precision_cache,
                     'trt_max_partition_iterations': partition_iters,
@@ -220,12 +254,6 @@ def decode_execution_providers(execution_providers: List[str]) -> List[str]:
                     'trt_timing_cache_enable': True,
                     'trt_timing_cache_path': precision_cache,
                 }
-                builder_opt = os.environ.get('ROOP_TRT_BUILDER_OPT_LEVEL')
-                if builder_opt:
-                    try:
-                        trt_opts['trt_builder_optimization_level'] = int(builder_opt)
-                    except ValueError:
-                        pass
                 if workspace_size > 0:
                     trt_opts['trt_max_workspace_size'] = workspace_size
                 list_providers[i] = ('TensorrtExecutionProvider', trt_opts)

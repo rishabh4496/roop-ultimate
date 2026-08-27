@@ -156,3 +156,17 @@ def cache_namespace(precision: str, device_id: int = 0) -> str:
         pass
     raw = f"{precision}_{gpu}_{sm}_ort{ort_ver}"
     return re.sub(r"[^A-Za-z0-9_.-]+", "_", raw)
+
+
+def trt_tuning_namespace(builder_optimization_level: int = 3,
+                         auxiliary_streams: int = -1,
+                         cuda_graph: bool = False) -> str:
+    """Return the cache suffix for TensorRT build/runtime tuning knobs.
+
+    These options can change the generated engine or its execution schedule,
+    while TensorRT's graph filename does not necessarily encode all of them.
+    Keeping them in the parent directory prevents an A/B benchmark or a
+    changed default from accidentally reusing an engine built with another
+    tuning profile.
+    """
+    return f"_b{int(builder_optimization_level)}_a{int(auxiliary_streams)}_g{int(bool(cuda_graph))}"
