@@ -509,3 +509,15 @@ The first attempt also exposed that `compat_one.py` is not a valid end-to-end
 swapping verifier when it leaves `TARGET_FACES` empty: it can finish with zero
 output frames. Future mixed-only verification must use the target-binding
 sample path and must require a non-empty final MP4 before grading.
+
+## Mixed cache rebuild follow-up — 2026-08-27
+
+The previous runtime-specific mixed cache was moved intact to a timestamped
+`.stale_20260827_162020` backup and a clean cache directory was rebuilt. The
+rebuilt cache generated fresh TensorRT FP16 engine/profile artifacts and the
+provider remained TensorRT mixed (`trt_fp16_enable=1`). A second run of the
+target-binding benchmark still found no usable face with the configured
+RetinaFace r50 detector and produced no MP4. Therefore this is not merely a
+stale-cache problem; the mixed TensorRT RetinaFace r50 path remains unresolved.
+The full `s1.mp4` run is intentionally blocked until a short clip produces a
+valid swapped output, preventing hours of invalid processing.
