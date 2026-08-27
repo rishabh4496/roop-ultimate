@@ -537,3 +537,6 @@ detector smoke test on frame 100 returned one valid RetinaFace r50 box at
 then stopped after its separate target-capture path continued to fail while
 rebuilding/decoding; a complete video output still must be produced before
 claiming end-to-end success.
+### Benchmark path correction — 2026-08-27
+
+The mixed TensorRT RetinaFace r50 detector was working on decoded frames, but the selected-mode benchmark falsely reported no faces because `angle_bench.init_pipeline()` changes the working directory to `app/` while `sample_bench.py` passed a relative `--video` path. The scan then looked under `app/app/output/...`. `sample_bench.py` now resolves both input and output paths before pipeline initialization. A rerun reached the full 240-frame analysis (238 frames with a tracked face) using the mixed TensorRT provider and r50 detector, confirming the detector/auto-capture path is compatible. The subsequent GPEN/RealityUX render is still running separately; its progress is not required to validate detector compatibility.

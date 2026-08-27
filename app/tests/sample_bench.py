@@ -197,6 +197,13 @@ def main():
     ap.add_argument("--out", default=os.path.join(APP, "output"))
     args = ap.parse_args()
 
+    # ``angle_bench.init_pipeline`` changes cwd to the self-contained app
+    # directory.  Resolve the input before that happens; otherwise a relative
+    # path such as ``app/output/...`` is silently looked up as
+    # ``app/app/output/...`` and auto-capture reports no faces.
+    args.video = os.path.abspath(args.video)
+    args.out = os.path.abspath(args.out)
+
     ensure_ffmpeg()
 
     # Pull swap_model / mask_engine / enhancer straight off the live config.yaml
