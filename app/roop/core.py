@@ -141,7 +141,7 @@ def decode_execution_providers(execution_providers: List[str]) -> List[str]:
                 # LayerNorm fallback changes TensorRT's graph partitioning and
                 # therefore must not reuse engines built with the old setting.
                 if trt_precision == 'mixed':
-                    cache_label += '_lnfp32'
+                    cache_label += '_lnfp32_seq'
                 precision_cache = os.path.join(trt_cache, cache_label)
                 os.makedirs(precision_cache, exist_ok=True)
 
@@ -204,6 +204,9 @@ def decode_execution_providers(execution_providers: List[str]) -> List[str]:
                     # without LayerNorm and prevents enhancer smearing/flat
                     # output on mixed-precision builds.
                     'trt_layer_norm_fp32_fallback': trt_precision == 'mixed',
+                    # Avoid concurrent tactic compilation stalls on large
+                    # enhancer graphs during a fresh mixed-cache build.
+                    'trt_force_sequential_engine_build': trt_precision == 'mixed',
                     'trt_engine_cache_enable': True,
                     'trt_engine_cache_path': precision_cache,
                     'trt_max_partition_iterations': partition_iters,

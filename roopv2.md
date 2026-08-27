@@ -580,3 +580,11 @@ started a new timing-cache build, but no engine artifact appeared after several
 minutes. The process was stopped safely. This is an engine-build-time blocker,
 not a rendering-quality result; no enhancer is marked visually verified until
 the cache completes and a non-empty output is inspected.
+## Stage 4 build-stall mitigation — 2026-08-27
+
+Enabled TensorRT's sequential engine-build safeguard for mixed mode and
+isolated it in a new `_lnfp32_seq` cache namespace. A single GPEN 256 Pro build
+was retried; TensorRT created the namespace and timing-cache request, but still
+did not emit an engine within the bounded verification window. The process was
+stopped safely. Visual enhancer verification remains pending until a build
+finishes; no fallback to CUDA/CPU was used.
