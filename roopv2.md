@@ -588,3 +588,14 @@ was retried; TensorRT created the namespace and timing-cache request, but still
 did not emit an engine within the bounded verification window. The process was
 stopped safely. Visual enhancer verification remains pending until a build
 finishes; no fallback to CUDA/CPU was used.
+## Stage 4 completion — mixed enhancer engines built — 2026-08-27
+
+Continued autonomously with the bounded TensorRT build settings. Fresh mixed
+engines now build successfully in
+`mixed_NVIDIA_GeForce_RTX_4070_sm0809_ort1.23.2_lnfp32_seq_heur` for GPEN 256
+Pro, GPEN Realistic, and UltraMax/CodeFormer. One-crop live execution through
+each processor returned finite, non-collapsed output with the expected scales:
+GPEN 256 Pro scale 1, GPEN Realistic scale 1 (512 restoration upsampled to the
+1280 test crop), and UltraMax scale 1. The 124-test enhancer/RealSwap suite
+still passes. No CUDA/CPU fallback was used. Full short-video visual renders
+remain the next handoff step.

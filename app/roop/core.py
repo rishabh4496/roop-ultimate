@@ -141,7 +141,7 @@ def decode_execution_providers(execution_providers: List[str]) -> List[str]:
                 # LayerNorm fallback changes TensorRT's graph partitioning and
                 # therefore must not reuse engines built with the old setting.
                 if trt_precision == 'mixed':
-                    cache_label += '_lnfp32_seq'
+                    cache_label += '_lnfp32_seq_heur'
                 precision_cache = os.path.join(trt_cache, cache_label)
                 os.makedirs(precision_cache, exist_ok=True)
 
@@ -207,6 +207,12 @@ def decode_execution_providers(execution_providers: List[str]) -> List[str]:
                     # Avoid concurrent tactic compilation stalls on large
                     # enhancer graphs during a fresh mixed-cache build.
                     'trt_force_sequential_engine_build': trt_precision == 'mixed',
+                    # Heuristic tactic selection keeps cold-start builds
+                    # bounded for the large GPEN/CodeFormer graphs. Runtime
+                    # inference remains TensorRT mixed; this only changes how
+                    # the first engine is searched and built.
+                    'trt_build_heuristics_enable': trt_precision == 'mixed',
+                    'trt_builder_optimization_level': 1 if trt_precision == 'mixed' else 3,
                     'trt_engine_cache_enable': True,
                     'trt_engine_cache_path': precision_cache,
                     'trt_max_partition_iterations': partition_iters,
