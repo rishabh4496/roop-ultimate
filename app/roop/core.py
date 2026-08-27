@@ -36,7 +36,8 @@ from roop.ProcessEntry import ProcessEntry
 from roop.ProcessMgr import ProcessMgr
 from roop.ProcessOptions import ProcessOptions
 from roop.capturer import get_video_frame_total, release_video
-from roop.backend_manager import resolve_provider_names, diagnostic_report
+from roop.backend_manager import (resolve_provider_names, diagnostic_report,
+                                  cache_namespace)
 
 
 clip_text = None
@@ -132,7 +133,12 @@ def decode_execution_providers(execution_providers: List[str]) -> List[str]:
                 os.makedirs(trt_cache, exist_ok=True)
                 trt_precision = getattr(roop.globals.CFG, 'trt_precision', 'mixed') if roop.globals.CFG else 'mixed'
                 fp16_enable = trt_precision in ('fp16', 'mixed')
-                precision_cache = os.path.join(trt_cache, trt_precision)
+                # Include precision, GPU compute capability and ORT ABI in the
+                # parent namespace. TensorRT's graph hash alone is not enough
+                # to safely reuse an engine after a runtime/device change.
+                precision_cache = os.path.join(
+                    trt_cache, cache_namespace(trt_precision,
+                                               roop.globals.cuda_device_id))
                 os.makedirs(precision_cache, exist_ok=True)
 
                 # ── Engine-build tuning, scaled to the GPU ──────────────────

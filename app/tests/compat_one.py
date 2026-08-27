@@ -26,6 +26,7 @@ import argparse
 import os
 import sys
 import time
+import subprocess
 
 import cv2
 import numpy as np
@@ -84,7 +85,7 @@ def main():
         # decoded into sessions -- core.py reads CFG.trt_precision there.
         g.CFG.trt_precision = args.precision
         from roop.core import decode_execution_providers
-        g.execution_providers = decode_execution_providers(["tensorrt"])
+        g.execution_providers = decode_execution_providers([args.provider])
         g.execution_threads = 8
         g.CFG.track_identities = True
         g.temporal_detection = True
@@ -143,15 +144,37 @@ def main():
         try:
             import psutil
             peak_rss_gb = psutil.Process(os.getpid()).memory_info().rss / (1024 ** 3)
+            cpu_percent = psutil.cpu_percent(interval=0.1)
         except Exception:
-            peak_rss_gb = float("nan")
+            peak_rss_gb, cpu_percent = float("nan"), float("nan")
+        peak_vram_allocated_gb = peak_vram_reserved_gb = float("nan")
+        try:
+            import torch
+            if torch.cuda.is_available():
+                peak_vram_allocated_gb = torch.cuda.max_memory_allocated() / (1024 ** 3)
+                peak_vram_reserved_gb = torch.cuda.max_memory_reserved() / (1024 ** 3)
+        except Exception:
+            pass
+        gpu_util = float("nan")
+        try:
+            raw = subprocess.check_output(
+                ["nvidia-smi", "--query-gpu=utilization.gpu",
+                 "--format=csv,noheader,nounits"], text=True,
+                stderr=subprocess.DEVNULL, timeout=2).strip().splitlines()[0]
+            gpu_util = float(raw)
+        except Exception:
+            pass
         fps = n / process_seconds if process_seconds > 0 else 0.0
         print(f"RESULT {verdict:4s} {label:<44} frames={n} detected={det} "
               f"id={idm:.3f} texture={tex:.1f} channel={ch:.1f}{flags}",
               flush=True)
         print(f"METRICS provider={args.provider} precision={args.precision} "
               f"init_s={init_seconds:.3f} process_s={process_seconds:.3f} "
-              f"fps={fps:.3f} peak_rss_gb={peak_rss_gb:.3f}", flush=True)
+              f"fps={fps:.3f} peak_rss_gb={peak_rss_gb:.3f} "
+              f"peak_vram_allocated_gb={peak_vram_allocated_gb:.3f} "
+              f"peak_vram_reserved_gb={peak_vram_reserved_gb:.3f} "
+              f"cpu_percent={cpu_percent:.1f} gpu_util_percent={gpu_util:.1f} "
+              f"transfers=unavailable", flush=True)
     except Exception as e:
         print(f"RESULT ERROR {label:<44} {type(e).__name__}: {e}", flush=True)
         raise SystemExit(1)

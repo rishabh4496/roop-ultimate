@@ -2,7 +2,7 @@ import unittest
 from unittest.mock import patch
 
 from roop.backend_manager import (clear_probe_cache, provider_available,
-                                  resolve_provider_names)
+                                  resolve_provider_names, cache_namespace)
 
 
 class BackendManagerTests(unittest.TestCase):
@@ -26,6 +26,11 @@ class BackendManagerTests(unittest.TestCase):
     @patch('roop.backend_manager._available', return_value=['CPUExecutionProvider'])
     def test_missing_gpu_provider_is_cpu(self, _available):
         self.assertEqual(resolve_provider_names(['cuda']), ['CPUExecutionProvider'])
+
+    def test_cache_namespace_contains_precision_and_runtime_identity(self):
+        ns = cache_namespace('mixed')
+        self.assertIn('mixed_', ns)
+        self.assertIn('_ort', ns)
 
 
 if __name__ == '__main__':

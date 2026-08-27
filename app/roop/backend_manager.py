@@ -11,6 +11,7 @@ the lifetime of the process.
 from __future__ import annotations
 
 import os
+import re
 import threading
 from typing import Iterable, List, Dict, Tuple
 
@@ -129,3 +130,29 @@ def diagnostic_report(device_id: int = 0, requested: str | None = None) -> dict:
 def clear_probe_cache() -> None:
     with _lock:
         _probe_cache.clear()
+
+
+def cache_namespace(precision: str, device_id: int = 0) -> str:
+    """Build a stable TensorRT cache namespace for this runtime and GPU.
+
+    TensorRT engine filenames include a graph hash, but the parent directory
+    must still separate precision and runtime ABI.  This namespace prevents a
+    CUDA/TRT upgrade or device swap from reusing a stale engine.
+    """
+    precision = str(precision or "mixed").lower()
+    try:
+        import onnxruntime as ort
+        ort_ver = str(getattr(ort, "__version__", "unknown"))
+    except Exception:
+        ort_ver = "unknown"
+    gpu = "cpu"
+    sm = "na"
+    try:
+        import torch
+        if torch.cuda.is_available():
+            gpu = torch.cuda.get_device_name(device_id)
+            sm = "sm%02d%02d" % tuple(torch.cuda.get_device_capability(device_id))
+    except Exception:
+        pass
+    raw = f"{precision}_{gpu}_{sm}_ort{ort_ver}"
+    return re.sub(r"[^A-Za-z0-9_.-]+", "_", raw)

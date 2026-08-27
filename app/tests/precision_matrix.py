@@ -26,6 +26,8 @@ def main():
     ap.add_argument("--out", default=os.path.join(os.path.dirname(__file__),
                                                    "..", "output", "precision_matrix"))
     ap.add_argument("--report", default=None)
+    ap.add_argument("--timeout", type=float, default=240.0,
+                    help="per-arm wall-clock limit (seconds)")
     args = ap.parse_args()
     out = os.path.abspath(args.out)
     os.makedirs(out, exist_ok=True)
@@ -41,7 +43,7 @@ def main():
             started = time.perf_counter()
             try:
                 proc = subprocess.run(cmd, text=True, capture_output=True,
-                                      check=False)
+                                      check=False, timeout=args.timeout)
                 elapsed = time.perf_counter() - started
                 metrics = {"provider": provider, "precision": precision,
                            "returncode": proc.returncode,
@@ -53,6 +55,12 @@ def main():
                         metrics["metrics_line"] = line
                     if line.startswith("RESULT "):
                         metrics["result_line"] = line
+            except subprocess.TimeoutExpired as exc:
+                metrics = {"provider": provider, "precision": precision,
+                           "returncode": -2, "timed_out": True,
+                           "timeout_seconds": args.timeout,
+                           "stdout_tail": str(exc.stdout or "")[-4000:],
+                           "stderr_tail": str(exc.stderr or "")[-2000:]}
             except Exception as exc:
                 metrics = {"provider": provider, "precision": precision,
                            "returncode": -1, "error": repr(exc)}

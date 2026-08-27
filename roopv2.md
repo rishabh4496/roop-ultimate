@@ -453,3 +453,37 @@ swapped output is written separately under
 `app/output/precision_matrix/s1_10s/tensorrt_fp32/`. Matrix arms must always be
 judged from their provider/precision output directory, never from the
 `precision_matrix_input` directory.
+
+## Precision/hardware follow-up — 2026-08-27
+
+The benchmark harness had a provider-selection defect: `compat_one.py` accepted
+`--provider` but still hardcoded TensorRT when decoding providers. This was
+fixed and verified from logs. Correct short-clip results on the RTX 4070
+(48 processed frames, RealityUX, no enhancer) are:
+
+| Backend/mode | Result | Init | Process | FPS | Peak RSS |
+| --- | --- | ---: | ---: | ---: | ---: |
+| CUDA FP32 | PASS | 3.870 s | 10.370 s | 4.629 | 2.080 GB |
+| CUDA FP16 | PASS | 3.714 s | 12.289 s | 3.906 | 2.072 GB |
+| CPU FP32 | PASS | 3.803 s | 87.829 s | 0.547 | 1.647 GB |
+
+All three passed detection, identity, texture, and channel guards. The
+TensorRT FP32 and mixed arms were run with the new runtime-specific cache
+namespace (`precision + GPU + SM + ORT version`). FP32 exceeded the 180-second
+fresh-build/analysis window; mixed reached the same slow fresh-build/analysis
+behavior and was stopped after confirming `trt_fp16_enable=1` and the
+`RealSwap ... precision=mixed` log. This identifies first-build/engine-analysis
+cost as a separate stability metric; it does not prove mixed inference is
+incorrect. Existing old-cache full-run evidence remains the steady-state
+baseline until the new namespaces finish building.
+
+The harness now records timed-out arms rather than blocking the matrix, and
+the cache namespace regression test plus provider/RealSwap tests pass (**60
+focused tests**). Physical AMD/ROCm or DirectML validation is not available on
+this host; those paths remain portability-tested via simulation only.
+
+The benchmark now also emits best-effort Torch peak allocated/reserved VRAM,
+CPU utilization, NVIDIA-SMI GPU utilization, and an explicit
+`transfers=unavailable` marker when per-stage transfer counters are not exposed
+by the provider. Missing telemetry is therefore not mistaken for zero
+transfers. No AUTO precision decision is made from the short-clip data alone.
