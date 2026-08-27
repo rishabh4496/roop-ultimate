@@ -1002,3 +1002,15 @@ compiled. A real mixed-TensorRT GPEN 256 run on `s1_10s.mp4` returned PASS with
 238 detected faces: init **3.707 s**, processing **29.606 s**, **8.106 FPS**,
 peak RSS **6.526 GB**, peak whole-device GPU memory **6.015 GB**, mean GPU
 utilization **31.0%**, CPU sample **9.0%**. Quality guards remained passing.
+
+## Phase 24 — quality regression protection (2026-08-27)
+
+Added `app/tests/test_quality_regression.py` as a deterministic contract layer
+for performance changes. It covers PSNR/SSIM image comparisons, landmark and
+mask bounds, eye/mouth region signal, color transfer signal, and video frame
+count, dimensions, ordering, FPS-derived duration, and decode integrity. The
+existing model-specific identity, alignment, enhancement, stabilization, and
+mask suites remain in place; this layer does not replace them. Focused quality
+and existing eye/RealSwap regression tests pass: **74 tests, 0 failures**.
+Audio-stream preservation remains covered by existing media/FFmpeg integration
+checks rather than the silent synthetic fixture.
