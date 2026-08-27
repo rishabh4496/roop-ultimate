@@ -914,3 +914,15 @@ The requested “GPEN 356” name is not present in the repository or enhancer
 registry. Available related targets are **GPEN 256 Pro** and the generic
 **GPEN** family (512/1024/2048). No alias was added, since mapping an unknown
 name to another resolution would silently change model quality.
+
+## GPEN pool/thread sweep — mixed TensorRT (2026-08-27)
+
+Measured on `s1_10s.mp4` with RetinaFace R50, RealityUX, RealSwap, and mixed
+TensorRT. GPEN 256 Pro at 8 execution threads averaged **27.20 FPS** with the
+default two-context TRT policy; 16 threads fell to **25.17 FPS**. An explicit
+one-context GPEN 256 Pro run averaged **26.21 FPS**, so increasing or reducing
+its enhancer pool is not a win. Plain GPEN 256 at 8 threads averaged **29.07
+FPS** (single-context arm) to **29.66 FPS** (two-context arm). All arms kept
+the same 237 enhanced faces; quality guards remained passing. The existing
+adaptive pool/thread policy is therefore retained—no quality-risking default
+change was justified by these measurements.
