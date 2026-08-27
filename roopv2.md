@@ -487,3 +487,25 @@ CPU utilization, NVIDIA-SMI GPU utilization, and an explicit
 `transfers=unavailable` marker when per-stage transfer counters are not exposed
 by the provider. Missing telemetry is therefore not mistaken for zero
 transfers. No AUTO precision decision is made from the short-clip data alone.
+
+## TensorRT mixed-only validation — 2026-08-27
+
+Per the current operating rule, all new testing is restricted to TensorRT with
+the configured mixed FP16/FP32 mode. The runtime banner confirmed the expected
+chain (`TensorrtExecutionProvider -> CUDAExecutionProvider ->
+CPUExecutionProvider`), `trt_fp16_enable=1`, and RealSwap logged
+`precision=mixed; preserving configured precision`.
+
+The controlled `s1_10s.mp4` run did **not** produce a swapped output. The
+application reached `Finished`, but the detector reported no usable face during
+target capture and the output directory contained no final MP4. This is a
+failed validation, not evidence that mixed precision is correct. The new
+runtime-specific mixed cache was being built under
+`models/trt_cache/mixed_NVIDIA_GeForce_RTX_4070_sm0809_ort1.23.2`; it contains
+partially built FP16 engines, so cache/build validity and detector execution
+must be repaired before any quality or speed claim is accepted.
+
+The first attempt also exposed that `compat_one.py` is not a valid end-to-end
+swapping verifier when it leaves `TARGET_FACES` empty: it can finish with zero
+output frames. Future mixed-only verification must use the target-binding
+sample path and must require a non-empty final MP4 before grading.
