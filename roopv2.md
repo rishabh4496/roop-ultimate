@@ -939,6 +939,20 @@ small pool-3 speed delta is within observed run-to-run variance and conflicts
 with the existing UltraMax pool-scaling curve; the adaptive pool-2 default is
 therefore retained to protect both enhancers and the 6 GB laptop tier.
 
+## Next cycle — GPEN 256 Pro compatibility/telemetry coverage (2026-08-27)
+
+The benchmark harness had incorrectly rejected the supported `GPEN 256 Pro`
+label, preventing it from participating in the mixed-precision matrix. The
+allow-list is corrected without changing application code. Targeted GPEN 256
+Pro and benchmark tests pass (**24 tests**).
+
+A real mixed-TensorRT run on `s1_10s.mp4` returns PASS: 240 frames, 238
+detected, identity distance **0.413**, texture **47.6**, channel **32.6**;
+initialization **3.757 s**, processing **30.942 s**, **7.756 FPS**, peak RSS
+**7.082 GB**, peak GPU memory **6.852 GB**, Torch-reported reserved VRAM
+**0.504 GB**, mean GPU utilization **30.9%**, CPU sample **11.8%**. Transfer
+counters remain unavailable.
+
 ## Next cycle — mixed-TensorRT benchmark telemetry (2026-08-27)
 
 Extended `app/tests/compat_one.py` with a bounded `nvidia-smi` sampler that

@@ -96,7 +96,7 @@ def main():
     # (the 512 variant is plain "GPEN") and it scored exactly the no-enhancer
     # figure. Refuse unknown names rather than quietly testing nothing.
     KNOWN = {"None", "GFPGAN", "Codeformer", "Codeformer (fp16)", "DMDNet",
-             "GPEN 256", "GPEN", "GPEN 1024", "GPEN 2048", "Restoreformer++",
+             "GPEN 256", "GPEN 256 Pro", "GPEN", "GPEN 1024", "GPEN 2048", "Restoreformer++",
              "KEEP (sidecar)"}
     if args.enhancer not in KNOWN:
         raise SystemExit(
