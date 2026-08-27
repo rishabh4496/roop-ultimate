@@ -893,6 +893,18 @@ The remaining resource-warning output is pre-existing test-harness noise.
 This closes the five-stage regression/handoff cycle for the current
 mixed-TensorRT configuration.
 
+## Extended performance Stage 2 — 6 GB-tier policy validation (2026-08-27)
+
+Using `ROOP_VRAM_GB=6` on the application’s mixed-TensorRT path, both GPEN
+enhancers completed `s1_10s.mp4` successfully with 238 detected faces and
+passing identity/texture/channel guards. GPEN 256 measured **7.106 FPS**
+(33.772 s processing, peak RSS 6.531 GB); GPEN 256 Pro measured **6.593 FPS**
+(36.404 s, peak RSS 7.072 GB). The host GPU is physically an RTX 4070, so
+reported whole-device memory (6.509/7.221 GB) is not proof of fit on a real
+RTX 3060 6 GB card; it validates the tier-selection logic only. No OOM or
+provider fallback occurred. True RTX 3060 confirmation remains hardware-
+dependent and is the final open performance stage.
+
 ## Next cycle — GPEN 256 Pro mixed-TensorRT remeasurement (2026-08-27)
 
 The documented next bottleneck was remeasured before changing code. A fresh
