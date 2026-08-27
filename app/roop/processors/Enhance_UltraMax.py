@@ -282,10 +282,14 @@ class Enhance_UltraMax:
     # base; directly mixing its eye pixels brings back the double-eye halo.
     _PROTECT_EYE_OUTER_X = 0.44
     _PROTECT_EYE_OUTER_Y = 0.30
+    _PROTECT_EYE_CORE_X = 0.17
+    _PROTECT_EYE_CORE_Y = 0.080
     _PROTECT_EYE_LIFT = 0.03
     _PROTECT_EYE_FEATHER = 0.08
     _PROTECT_EYE_SHARPEN = 0.90
     _PROTECT_EYE_DETAIL_GAIN = 0.50
+    _PROTECT_EYE_CORE_DETAIL_GAIN = 1.15
+    _PROTECT_EYE_CORE_MIX = 0.78
     _EYE_BALANCE_TRIGGER = 1.12
     _EYE_BALANCE_MAX = 0.55
     _STRUCTURE_SHARPEN = 0.18
@@ -555,15 +559,20 @@ class Enhance_UltraMax:
                 return restored
             outer_x = max(1, int(round(cls._PROTECT_EYE_OUTER_X * sep)))
             outer_y = max(1, int(round(cls._PROTECT_EYE_OUTER_Y * sep)))
+            core_x = max(1, int(round(cls._PROTECT_EYE_CORE_X * sep)))
+            core_y = max(1, int(round(cls._PROTECT_EYE_CORE_Y * sep)))
             lift = cls._PROTECT_EYE_LIFT * sep
             outer = np.zeros(restored.shape[:2], dtype=np.float32)
+            core = np.zeros(restored.shape[:2], dtype=np.float32)
             for eye in pts[:2]:
                 center = (int(round(eye[0])), int(round(eye[1] - lift)))
                 cv2.ellipse(outer, center, (outer_x, outer_y), 0, 0, 360, 1.0, -1)
+                cv2.ellipse(core, center, (core_x, core_y), 0, 0, 360, 1.0, -1)
             k = max(1, int(round(cls._PROTECT_EYE_FEATHER * sep)))
             if k % 2 == 0:
                 k += 1
             outer = cv2.GaussianBlur(outer, (k, k), 0)
+            core = cv2.GaussianBlur(core, (k, k), 0)
             # Keep the swapped crop's geometry, but do not simply paste its
             # low-resolution pixels back: that was halo-safe yet visibly soft.
             # A small source-only high-pass lift restores lash/catchlight
@@ -589,11 +598,36 @@ class Enhance_UltraMax:
             np.clip((agreement - 0.35) / 0.65, 0.0, 1.0, out=agreement)
             edge = np.clip((src_mag - 8.0) / 36.0, 0.0, 1.0)
             detail_gate = outer * edge * agreement
+            # The cornea/conjunctiva live inside the aperture, not on the lid
+            # boundary.  Allow a stronger aligned high-pass transfer there so
+            # UltraMax can restore crisp catchlights and scleral texture while
+            # the surrounding generated eyelid/iris contour stays rejected.
+            core_edge = np.clip((src_mag - 2.0) / 18.0, 0.0, 1.0)
+            core_gate = core * core_edge * agreement
             restored_f = restored.astype(np.float32)
             restored_detail = restored_f - cv2.GaussianBlur(restored_f, (0, 0), 0.8)
             base = restored_f * (1.0 - outer[:, :, None]) + src_sharp * outer[:, :, None]
-            return np.rint(base + (cls._PROTECT_EYE_DETAIL_GAIN * detail_gate)[:, :, None]
-                           * restored_detail).clip(0, 255).astype(np.uint8)
+            # A small central-aperture mix restores UltraMax's cornea and
+            # conjunctiva structure.  The core is deliberately much smaller
+            # than the protected band, so it cannot carry a second lid/brow
+            # boundary; all surrounding geometry remains source-anchored.
+            # Require a real source-side aperture signal before allowing the
+            # direct mix.  Flat/shifted generated contours therefore cannot
+            # leak through the core mask and form a second eye.
+            core_presence = np.clip((src_mag - 1.0) / 12.0, 0.0, 1.0)
+            core_mix = (cls._PROTECT_EYE_CORE_MIX * core * core_presence)[:, :, None]
+            base = base * (1.0 - core_mix) + restored_f * core_mix
+            # UltraMax can leave the corneal aperture low-contrast even when
+            # its pixels are geometrically correct.  Apply a restrained,
+            # aperture-only unsharp lift to existing restored detail; unlike a
+            # pasted eye edge this cannot invent a second lid or brow contour.
+            core_sharp = np.clip(
+                restored_f + 1.0 * (restored_f - cv2.GaussianBlur(restored_f, (0, 0), 0.65)),
+                0.0, 255.0)
+            base = base * (1.0 - core_mix) + core_sharp * core_mix
+            detail = (cls._PROTECT_EYE_DETAIL_GAIN * detail_gate
+                      + cls._PROTECT_EYE_CORE_DETAIL_GAIN * core_gate)
+            return np.rint(base + detail[:, :, None] * restored_detail).clip(0, 255).astype(np.uint8)
         except (cv2.error, TypeError, ValueError, ImportError):
             return restored
 

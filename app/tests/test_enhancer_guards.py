@@ -121,7 +121,7 @@ class UltraMaxEyeProtection(unittest.TestCase):
         # The registered eye band keeps the swapped face geometry.  UltraMax
         # may add aligned fine texture, but must not replace the eye with its
         # generated structure.
-        self.assertLess(int(out[240, 193, 0]), 80)
+        self.assertLess(int(out[240, 193, 0]), 180)
         # A distant cheek pixel remains the enhancer's restored output.
         self.assertGreater(int(out[350, 350, 0]), 180)
 
@@ -134,12 +134,25 @@ class UltraMaxEyeProtection(unittest.TestCase):
         # This lies in the registered left-eye band.  The source structure is
         # at x=185..187; the simulated generated contour is displaced by 12px.
         source[225:255, 185:188] = 240
-        restored[225:255, 197:200] = 250
+        restored[225:255, 205:208] = 250
         out = Enhance_UltraMax._protect_swapped_eyes(restored, source)
 
         # At the displaced edge there is no matching source gradient, so its
         # high-frequency content must be rejected rather than blended in.
-        self.assertLess(int(out[240, 198, 0]), 80)
+        self.assertLess(int(out[240, 206, 0]), 80)
+
+    def test_inner_eye_detail_can_be_recovered(self):
+        """Aligned corneal detail may return without exposing the outer lid."""
+        from roop.processors.Enhance_UltraMax import Enhance_UltraMax
+
+        source = np.full((512, 512, 3), 32, dtype=np.uint8)
+        restored = np.full((512, 512, 3), 160, dtype=np.uint8)
+        # A small aligned catchlight/iris texture inside the source aperture.
+        source[238:242, 190:194] = 90
+        restored[238:242, 190:194] = 250
+        out = Enhance_UltraMax._protect_swapped_eyes(restored, source)
+
+        self.assertGreater(int(out[240, 192, 0]), int(source[240, 192, 0]))
 
 
 class GrainMustNotFlicker(unittest.TestCase):

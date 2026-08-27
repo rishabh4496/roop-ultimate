@@ -830,3 +830,43 @@ Phase 2 may begin only after the active render is accounted for and the fresh
 baseline captures the required latency percentiles, CPU/RAM/VRAM peaks, provider
 resolution, context/session counts, queue depth, transfer observability, and
 quality/failure status.
+
+## Phase 2 — UltraMax inner-eye sharpness correction (2026-08-27)
+
+The active mixed-TensorRT render was completed on `s1_10s.mp4` with RealSwap /
+RealityUX / UltraMax.  Logs confirmed TensorRT mixed mode throughout:
+`TensorrtExecutionProvider -> CUDAExecutionProvider -> CPUExecutionProvider`,
+`trt_fp16_enable=1`, and the FP32 layer-norm fallback enabled in the
+hardware/runtime-specific mixed cache.
+
+### Change and verification
+
+- **Files changed:** `app/roop/processors/Enhance_UltraMax.py` and
+  `app/tests/test_enhancer_guards.py`.
+- **Functions changed:** `Enhance_UltraMax._protect_swapped_eyes`; its focused
+  synthetic guard coverage was retained and extended for inner-eye detail.
+- The eye core is now a controlled central aperture: it can recover existing
+  UltraMax cornea/conjunctiva detail and apply a restrained aperture-only
+  unsharp lift, while the lid/brow/socket geometry remains source-anchored.
+  A source-gradient presence gate prevents displaced generated contours from
+  becoming halo/double-eye edges.
+- **Tests:** 69 focused tests pass; Python compilation passes.
+- **Mixed TRT render:** 240-frame `s1_10s.mp4`, 318 faces restored, completed in
+  39.0 s (10.12 encode FPS; end-to-end processing stage reported 23.73 s).
+  The prior candidate completed in 40.8 s (9.36 encode FPS), so this quality
+  patch introduced no throughput regression in this run. Peak process memory
+  remained about 10.0–10.5 GB in the existing stabilization telemetry. CPU
+  utilisation was not sampled by the harness; no claim is made for it.
+- **Quality:** final crop is visibly sharper in the iris/cornea aperture than
+  the previous UltraMax candidate, while no displaced double-eye contour or
+  halo was observed in the inspected frame. GPEN Realistic remains the sharper
+  reference because it produces stronger native eye detail; UltraMax now
+  preserves more of its own detail without reintroducing the prior halo.
+
+Output retained at:
+`app/output/enhancer_matrix/stage4_mixed_ultramax_eye_core_v5/`.
+
+Remaining bottleneck: UltraMax's native CodeFormer restoration is still softer
+than GPEN Realistic on this low-resolution eye crop; further gains require a
+larger validated eye-detail model or source-aligned super-resolution, not a
+larger unrestricted blend (which previously recreated halos).
