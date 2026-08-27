@@ -704,3 +704,20 @@ The representative face frame keeps both eyes single (no duplicate iris/lid
 ring) and removes the broad soft source band; nose, lips, cheek, jaw, and skin
 tone remain free of a second structure. This is the current UltraMax mixed
 precision candidate for the user's single-face path.
+
+## UltraMax halo recurrence correction — 2026-08-27
+
+The subsequent visual check established that the controlled direct blend of
+UltraMax eye pixels, although sharper, could reintroduce a second eyelid/iris
+contour. That blend is no longer used. The protected periocular band now takes
+the swapped crop as its complete geometry base. UltraMax may contribute only
+high-frequency detail when its Sobel gradient is aligned with the existing
+swapped-face gradient. Displaced or opposing generated contours are rejected,
+so they cannot form a parallel eyelid, iris, brow, under-eye seam, or halo.
+
+The source geometry still receives a restrained source-only high-frequency
+lift, and the existing asymmetric-eye balancing remains bounded to the weaker
+eye. The focused enhancer/RealSwap suite passed 67 tests after this change.
+The full `G:/pinokio/roop-keep/single/s1.mp4` mixed-TensorRT verification is
+in progress; it uses the cached RTX 4070 mixed configuration with FP16 enabled
+and FP32 layer-norm fallback, not a CUDA/CPU or pure-FP16 fallback.

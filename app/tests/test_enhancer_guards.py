@@ -118,12 +118,28 @@ class UltraMaxEyeProtection(unittest.TestCase):
 
         self.assertEqual(out.shape, restored.shape)
         self.assertTrue(np.isfinite(out).all())
-        # The registered eye band is taken from the swapped input.
-        # The eye aperture is intentionally a controlled source/UltraMax mix,
-        # not a full paste; the source contribution must still be observable.
-        self.assertLess(int(out[240, 193, 0]), 180)
+        # The registered eye band keeps the swapped face geometry.  UltraMax
+        # may add aligned fine texture, but must not replace the eye with its
+        # generated structure.
+        self.assertLess(int(out[240, 193, 0]), 80)
         # A distant cheek pixel remains the enhancer's restored output.
         self.assertGreater(int(out[350, 350, 0]), 180)
+
+    def test_rejects_a_displaced_generated_eye_edge(self):
+        """A shifted UltraMax lid/iris edge must not become a second contour."""
+        from roop.processors.Enhance_UltraMax import Enhance_UltraMax
+
+        source = np.full((512, 512, 3), 32, dtype=np.uint8)
+        restored = np.full((512, 512, 3), 160, dtype=np.uint8)
+        # This lies in the registered left-eye band.  The source structure is
+        # at x=185..187; the simulated generated contour is displaced by 12px.
+        source[225:255, 185:188] = 240
+        restored[225:255, 197:200] = 250
+        out = Enhance_UltraMax._protect_swapped_eyes(restored, source)
+
+        # At the displaced edge there is no matching source gradient, so its
+        # high-frequency content must be rejected rather than blended in.
+        self.assertLess(int(out[240, 198, 0]), 80)
 
 
 class GrainMustNotFlicker(unittest.TestCase):

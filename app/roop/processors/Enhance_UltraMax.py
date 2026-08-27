@@ -277,20 +277,15 @@ class Enhance_UltraMax:
     # let UltraMax work on cheeks, nose, lips and skin instead.  The mask is
     # deliberately the same outer eye geometry as RealSwap's band, with a
     # feathered edge so it cannot create a second boundary of its own.
-    # Keep only the actual eye aperture fully source-derived.  The previous
-    # single, full-strength ellipse also covered the eyelid/eyebrow contour;
-    # on the lower-detail eye that made the whole periocular band look soft.
-    # The outer band is now mostly UltraMax output, with a light source blend
-    # solely to suppress a competing generated edge.
-    _PROTECT_EYE_INNER_X = 0.20
-    _PROTECT_EYE_INNER_Y = 0.09
+    # The source crop remains the geometry base throughout the complete eye
+    # band.  UltraMax may donate only detail whose gradient agrees with that
+    # base; directly mixing its eye pixels brings back the double-eye halo.
     _PROTECT_EYE_OUTER_X = 0.44
     _PROTECT_EYE_OUTER_Y = 0.30
-    _PROTECT_EYE_OUTER_WEIGHT = 0.10
-    _PROTECT_EYE_INNER_WEIGHT = 0.25
     _PROTECT_EYE_LIFT = 0.03
     _PROTECT_EYE_FEATHER = 0.08
     _PROTECT_EYE_SHARPEN = 0.90
+    _PROTECT_EYE_DETAIL_GAIN = 0.50
     _EYE_BALANCE_TRIGGER = 1.12
     _EYE_BALANCE_MAX = 0.55
     _STRUCTURE_SHARPEN = 0.18
@@ -541,10 +536,9 @@ class Enhance_UltraMax:
         """Preserve RealSwap's eye/eyelash structure after UltraMax restore.
 
         Both arrays are in the same FFHQ-512 crop space.  A soft union of the
-        two eye ellipses protects the actual aperture while only lightly
-        blending the surrounding periocular band.  This prevents a second
-        CodeFormer-generated lid/iris from showing through the RealSwap band
-        without replacing the full eyelid/eyebrow contour with a soft crop.
+        two eye ellipses restore the swapped crop as the geometry base.  A
+        gradient-agreement gate transfers only aligned high-frequency detail
+        from UltraMax; it never directly blends competing generated eye edges.
         The source is the swapped crop, not the original plate, so identity
         and gaze remain those of the swap.
         """
@@ -559,28 +553,17 @@ class Enhance_UltraMax:
             sep = float(np.linalg.norm(pts[1] - pts[0]))
             if not np.isfinite(sep) or sep < 2.0:
                 return restored
-            inner_x = max(1, int(round(cls._PROTECT_EYE_INNER_X * sep)))
-            inner_y = max(1, int(round(cls._PROTECT_EYE_INNER_Y * sep)))
             outer_x = max(1, int(round(cls._PROTECT_EYE_OUTER_X * sep)))
             outer_y = max(1, int(round(cls._PROTECT_EYE_OUTER_Y * sep)))
             lift = cls._PROTECT_EYE_LIFT * sep
-            inner = np.zeros(restored.shape[:2], dtype=np.float32)
             outer = np.zeros(restored.shape[:2], dtype=np.float32)
             for eye in pts[:2]:
                 center = (int(round(eye[0])), int(round(eye[1] - lift)))
-                cv2.ellipse(inner, center, (inner_x, inner_y), 0, 0, 360, 1.0, -1)
                 cv2.ellipse(outer, center, (outer_x, outer_y), 0, 0, 360, 1.0, -1)
             k = max(1, int(round(cls._PROTECT_EYE_FEATHER * sep)))
             if k % 2 == 0:
                 k += 1
-            inner = cv2.GaussianBlur(inner, (k, k), 0)
             outer = cv2.GaussianBlur(outer, (k, k), 0)
-            # Keep the aperture as a controlled source/UltraMax mix rather
-            # than a full paste: CodeFormer's recoverable iris/cornea detail
-            # must survive, while the outer band retains only a small source
-            # contribution so the generated lid/eyebrow cannot double.
-            mask = np.maximum(inner * cls._PROTECT_EYE_INNER_WEIGHT,
-                              outer * cls._PROTECT_EYE_OUTER_WEIGHT)
             # Keep the swapped crop's geometry, but do not simply paste its
             # low-resolution pixels back: that was halo-safe yet visibly soft.
             # A small source-only high-pass lift restores lash/catchlight
@@ -589,9 +572,28 @@ class Enhance_UltraMax:
             src_blur = cv2.GaussianBlur(src_f, (0, 0), 0.8)
             src_sharp = np.clip(src_f + cls._PROTECT_EYE_SHARPEN * (src_f - src_blur),
                                 0.0, 255.0)
-            m = mask[:, :, None]
-            return np.rint(restored.astype(np.float32) * (1.0 - m) +
-                           src_sharp * m).clip(0, 255).astype(np.uint8)
+            # The source is the entire eye-band geometry base.  Recover only
+            # UltraMax's detail where its local edge points in the same
+            # direction as the source edge.  A second lid/iris has a displaced
+            # or opposing gradient, so its high-pass content is rejected.
+            src_gray = cv2.cvtColor(source, cv2.COLOR_BGR2GRAY).astype(np.float32)
+            out_gray = cv2.cvtColor(restored, cv2.COLOR_BGR2GRAY).astype(np.float32)
+            sx = cv2.Sobel(src_gray, cv2.CV_32F, 1, 0, ksize=3)
+            sy = cv2.Sobel(src_gray, cv2.CV_32F, 0, 1, ksize=3)
+            rx = cv2.Sobel(out_gray, cv2.CV_32F, 1, 0, ksize=3)
+            ry = cv2.Sobel(out_gray, cv2.CV_32F, 0, 1, ksize=3)
+            src_mag = cv2.magnitude(sx, sy)
+            out_mag = cv2.magnitude(rx, ry)
+            dot = sx * rx + sy * ry
+            agreement = dot / (src_mag * out_mag + 1e-4)
+            np.clip((agreement - 0.35) / 0.65, 0.0, 1.0, out=agreement)
+            edge = np.clip((src_mag - 8.0) / 36.0, 0.0, 1.0)
+            detail_gate = outer * edge * agreement
+            restored_f = restored.astype(np.float32)
+            restored_detail = restored_f - cv2.GaussianBlur(restored_f, (0, 0), 0.8)
+            base = restored_f * (1.0 - outer[:, :, None]) + src_sharp * outer[:, :, None]
+            return np.rint(base + (cls._PROTECT_EYE_DETAIL_GAIN * detail_gate)[:, :, None]
+                           * restored_detail).clip(0, 255).astype(np.uint8)
         except (cv2.error, TypeError, ValueError, ImportError):
             return restored
 
