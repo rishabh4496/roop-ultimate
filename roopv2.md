@@ -953,6 +953,19 @@ initialization **3.757 s**, processing **30.942 s**, **7.756 FPS**, peak RSS
 **0.504 GB**, mean GPU utilization **30.9%**, CPU sample **11.8%**. Transfer
 counters remain unavailable.
 
+## Extended performance Stage 1 — transfer-path audit (2026-08-27)
+
+The mixed-TensorRT path was traced without changing render behavior. ORT models
+use CPU-bound inputs (`bind_cpu_input`) and copy outputs back to NumPy; these
+transfers are internal to ORT and have no portable per-transfer counter. The
+explicit Torch crossings are GPEN 256 Pro and UltraMax texture paths:
+NumPy → CUDA tensors for post-processing and CUDA tensors → NumPy for
+paste-back. RealityUX/RetinaFace/RealSwap also return NumPy through ORT
+IOBinding. Existing telemetry now captures whole-device memory/utilization, but
+transfer counts remain unavailable. No blind pinned-memory or I/O-binding
+rewrite is justified until a counterbalanced end-to-end benchmark can measure
+it; the next extended stage is true RTX 3060 mixed-TensorRT validation.
+
 ## Next cycle — mixed-TensorRT benchmark telemetry (2026-08-27)
 
 Extended `app/tests/compat_one.py` with a bounded `nvidia-smi` sampler that
