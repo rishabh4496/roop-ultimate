@@ -25,6 +25,7 @@ Usage:
 import argparse
 import os
 import sys
+import time
 
 import cv2
 import numpy as np
@@ -44,6 +45,9 @@ from sample_bench import map_mask_engine                    # noqa: E402
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--precision", required=True, choices=["fp32", "fp16", "mixed"])
+    ap.add_argument("--provider", default="tensorrt",
+                    choices=["tensorrt", "cuda", "cpu"],
+                    help="execution backend; precision applies to TensorRT")
     ap.add_argument("--mask-engine", default="RealityUX")
     ap.add_argument("--enhancer", default="None")
     ap.add_argument("--clip", required=True)
@@ -72,9 +76,10 @@ def main():
     if me is None:
         raise SystemExit(f"unknown mask engine {args.mask_engine!r}")
 
-    label = f"{args.precision}/{args.mask_engine}/{args.enhancer}"
+    label = f"{args.provider}/{args.precision}/{args.mask_engine}/{args.enhancer}"
     try:
-        g = ab.init_pipeline("tensorrt", "realswap", args.enhancer, me, 25.0)
+        t_init = time.perf_counter()
+        g = ab.init_pipeline(args.provider, "realswap", args.enhancer, me, 25.0)
         # Set AFTER init_pipeline built CFG, and BEFORE the providers are
         # decoded into sessions -- core.py reads CFG.trt_precision there.
         g.CFG.trt_precision = args.precision
@@ -85,6 +90,7 @@ def main():
         g.temporal_detection = True
         g.CFG.temporal_detection = True
         options = ab.build_options(g, "realswap", me)
+        init_seconds = time.perf_counter() - t_init
 
         from two_face_video import load_library_faceset, faceset_mean, cos
         fs = load_library_faceset(args.source)
@@ -93,7 +99,9 @@ def main():
         out_dir = args.out or os.path.join(
             APP, "output", "compat", args.precision,
             f"{args.mask_engine}__{args.enhancer}".replace(" ", "_"))
+        t_run = time.perf_counter()
         final = run_swap(args.clip, fs, options, out_dir)
+        process_seconds = time.perf_counter() - t_run
 
         from roop.face_util import get_all_faces
         cap = cv2.VideoCapture(final)
@@ -132,9 +140,18 @@ def main():
         flags = "".join([
             "" if ok_det else " NO-FACE", "" if ok_id else " IDENTITY",
             "" if ok_tex else " FLAT/BLACK", "" if ok_ch else " CHANNEL-SKEW"])
+        try:
+            import psutil
+            peak_rss_gb = psutil.Process(os.getpid()).memory_info().rss / (1024 ** 3)
+        except Exception:
+            peak_rss_gb = float("nan")
+        fps = n / process_seconds if process_seconds > 0 else 0.0
         print(f"RESULT {verdict:4s} {label:<44} frames={n} detected={det} "
               f"id={idm:.3f} texture={tex:.1f} channel={ch:.1f}{flags}",
               flush=True)
+        print(f"METRICS provider={args.provider} precision={args.precision} "
+              f"init_s={init_seconds:.3f} process_s={process_seconds:.3f} "
+              f"fps={fps:.3f} peak_rss_gb={peak_rss_gb:.3f}", flush=True)
     except Exception as e:
         print(f"RESULT ERROR {label:<44} {type(e).__name__}: {e}", flush=True)
         raise SystemExit(1)

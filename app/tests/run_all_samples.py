@@ -242,15 +242,15 @@ def main():
     start_pause_watcher()
 
     if args.only in ("single", "both"):
-        harjot = load_library_faceset("harjot")
-        print(f"[run_all] harjot: {len(harjot.faces)} faces", flush=True)
+        rhythm = load_library_faceset("rhythm")
+        print(f"[run_all] rhythm: {len(rhythm.faces)} faces", flush=True)
         out_dir = os.path.join(OUT_ROOT, "baseline_single" + args.tag_suffix)
         videos = sorted(glob.glob(os.path.join(SINGLE_DIR, "*.mp4")))
         print(f"[run_all] {len(videos)} single/ video(s): {[os.path.basename(v) for v in videos]}",
               flush=True)
         for video in videos:
             try:
-                run_one(video, ["harjot"], [harjot], options, out_dir)
+                run_one(video, ["rhythm"], [rhythm], options, out_dir)
             except (Exception, SystemExit):
                 # SystemExit (raised by e.g. separated_frame's hard-fail path)
                 # is a BaseException, NOT an Exception — bare `except Exception`
@@ -260,9 +260,9 @@ def main():
                 traceback.print_exc()
 
     if args.only in ("double", "both"):
-        harjot = load_library_faceset("harjot")
-        shambhavi = load_library_faceset("shambhavi")
-        print(f"[run_all] harjot: {len(harjot.faces)} faces, shambhavi: {len(shambhavi.faces)} faces",
+        ashna = load_library_faceset("ashna")
+        rhythm = load_library_faceset("rhythm")
+        print(f"[run_all] ashna: {len(ashna.faces)} faces, rhythm: {len(rhythm.faces)} faces",
               flush=True)
         out_dir = os.path.join(OUT_ROOT, "baseline_double" + args.tag_suffix)
         videos = sorted(glob.glob(os.path.join(DOUBLE_DIR, "*.mp4")))
@@ -270,7 +270,7 @@ def main():
               flush=True)
         for video in videos:
             try:
-                run_one(video, ["harjot", "shambhavi"], [harjot, shambhavi], options, out_dir)
+                run_one(video, ["ashna", "rhythm"], [ashna, rhythm], options, out_dir)
             except Exception:
                 print(f"[run_all] EXCEPTION on {video}:", flush=True)
                 traceback.print_exc()

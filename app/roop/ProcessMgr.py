@@ -1287,7 +1287,10 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
             frame_count = len(awebp_frames[frame_start:frame_end]) if frame_end > frame_start else len(awebp_frames[frame_start:])
         else:
             cap = cv2.VideoCapture(source_video)
-            frame_count = (frame_end - frame_start) + 1
+            # `endframe` is exclusive throughout core.py and both readers. Keep
+            # progress, resume, and temporal-prepass accounting on that same
+            # contract: frames [start, end) contains exactly end - start frames.
+            frame_count = frame_end - frame_start
             width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
             height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
             # NVDEC: swap the cv2 reader for a GPU-decode ffmpeg pipe when the

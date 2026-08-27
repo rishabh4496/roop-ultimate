@@ -36,6 +36,7 @@ from roop.ProcessEntry import ProcessEntry
 from roop.ProcessMgr import ProcessMgr
 from roop.ProcessOptions import ProcessOptions
 from roop.capturer import get_video_frame_total, release_video
+from roop.backend_manager import resolve_provider_names, diagnostic_report
 
 
 clip_text = None
@@ -99,8 +100,15 @@ def decode_execution_providers(execution_providers: List[str]) -> List[str]:
     except Exception:
         pass
 
-    list_providers = [provider for provider, encoded_execution_provider in zip(onnxruntime.get_available_providers(), encode_execution_providers(onnxruntime.get_available_providers()))
-            if any(execution_provider in encoded_execution_provider for execution_provider in execution_providers)]
+    # Resolve through one capability-aware hierarchy.  This prevents a CUDA or
+    # TensorRT provider that is merely listed by ORT from becoming the sole
+    # backend and failing later inside a model session.  CPU remains an ordered
+    # fallback for every GPU hierarchy.
+    resolved_names = resolve_provider_names(execution_providers,
+                                            getattr(roop.globals, 'cuda_device_id', 0))
+    available = onnxruntime.get_available_providers()
+    list_providers = [provider for provider in available
+                      if provider in resolved_names]
     
     try:
         for i in range(len(list_providers)):
@@ -210,8 +218,8 @@ def decode_execution_providers(execution_providers: List[str]) -> List[str]:
                     'coreml_flags': 0,
                 }
                 list_providers[i] = ('CoreMLExecutionProvider', coreml_opts)
-    except:
-        pass
+    except Exception as exc:
+        print(f"[Backend] provider option setup warning: {exc}")
 
     return list_providers
     
@@ -233,8 +241,9 @@ def suggest_max_memory() -> int:
 
 
 def suggest_execution_providers() -> List[str]:
-    import onnxruntime
-    return encode_execution_providers(onnxruntime.get_available_providers())
+    return [p.replace('ExecutionProvider', '').lower()
+            for p in resolve_provider_names(['auto'],
+                                            getattr(roop.globals, 'cuda_device_id', 0))]
 
 
 def suggest_execution_threads() -> int:
@@ -1208,7 +1217,12 @@ def print_startup_banner() -> None:
     else:
         print("  [GPU Hardware] Active CUDA Device: None (CPU Only)")
         
-    print(f"  [ONNX Backend] Available Providers: {ort.get_available_providers()}")
+    backend = diagnostic_report(roop.globals.cuda_device_id,
+                                getattr(cfg, 'provider', None))
+    print(f"  [ONNX Backend] Available Providers: {backend['available_providers']}")
+    print(f"  [ONNX Backend] AUTO validated chain: {backend['resolved']}")
+    if backend['configured'] != 'auto':
+        print(f"  [ONNX Backend] Requested override: {backend['configured']}")
     
     # Session Configuration Settings
     print("-" * 75)

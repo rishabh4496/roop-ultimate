@@ -34,10 +34,46 @@ import numpy as np
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from roop.processors.FaceSwapInsightFace import (              # noqa: E402
-    SWAP_MODELS, FaceSwapInsightFace,
+    SWAP_MODELS, FaceSwapInsightFace, _swap_providers,
 )
+import roop.globals as _globals
 
 _API = os.path.join(os.path.dirname(__file__), '..', 'api.py')
+
+
+class TestRealSwapPrecision(unittest.TestCase):
+    def setUp(self):
+        self.old_cfg = getattr(_globals, 'CFG', None)
+        self.old_fp16 = os.environ.pop('ROOP_SWAP_FP16', None)
+        self.old_fp32 = os.environ.pop('ROOP_SWAP_FP32', None)
+
+    def tearDown(self):
+        _globals.CFG = self.old_cfg
+        for key, value in (('ROOP_SWAP_FP16', self.old_fp16),
+                           ('ROOP_SWAP_FP32', self.old_fp32)):
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+    def test_mixed_precision_reaches_realswap(self):
+        class C: trt_precision = 'mixed'
+        _globals.CFG = C()
+        providers = [('TensorrtExecutionProvider', {'trt_fp16_enable': True,
+                                                     'trt_engine_cache_path': 'mixed'})]
+        out = _swap_providers(providers)
+        self.assertTrue(out[0][1]['trt_fp16_enable'])
+        self.assertEqual(out[0][1]['trt_engine_cache_path'], 'mixed')
+
+    def test_explicit_fp32_override_isolated(self):
+        class C: trt_precision = 'mixed'
+        _globals.CFG = C()
+        os.environ['ROOP_SWAP_FP32'] = '1'
+        out = _swap_providers([('TensorrtExecutionProvider',
+                                {'trt_fp16_enable': True,
+                                 'trt_engine_cache_path': 'mixed'})])
+        self.assertFalse(out[0][1]['trt_fp16_enable'])
+        self.assertTrue(out[0][1]['trt_engine_cache_path'].endswith('_swap_fp32'))
 
 # A frontal and a profile 5-point set. Real keypoint layouts: eyes, nose, mouth
 # corners. The profile one has the nose pushed toward one eye, which is what a
@@ -222,7 +258,10 @@ class TestEyeBandComposite(unittest.TestCase):
         import cv2
         from roop.face_util import swap_template_points
         size = 256
+        old_alpha = FaceSwapInsightFace._EYE_ALPHA
+        FaceSwapInsightFace._EYE_ALPHA = 1.0
         m = FaceSwapInsightFace._eye_region_mask(size, 'arcface')
+        FaceSwapInsightFace._EYE_ALPHA = old_alpha
         pts = np.asarray(swap_template_points(size, 'arcface'), dtype=np.float32)
         sep = float(np.linalg.norm(pts[1] - pts[0]))
         eye_mid, mouth_mid = (pts[0] + pts[1]) / 2.0, (pts[3] + pts[4]) / 2.0
@@ -455,13 +494,10 @@ class TestBandOpacity(unittest.TestCase):
         FaceSwapInsightFace._EYE_ALPHA = self._alpha
         FaceSwapInsightFace._EYE_MASK_CACHE.clear()
 
-    def test_default_is_FULL_for_the_lash_band(self):
-        # Opacity 0.5 belonged to the wide LID RING, where halving it bought
-        # back most of the identity that band cost. The lash band is a different
-        # instrument: it costs little because it is tiny and avoids periocular
-        # skin, and the requirement is that the lashes ARE hififace's -- which a
-        # 50% blend does not satisfy. So full opacity over a much smaller area.
-        self.assertEqual(FaceSwapInsightFace._EYE_ALPHA, 1.0)
+    def test_default_is_half_strength_for_the_lash_band(self):
+        # A half-strength secondary band prevents doubled brows/eyelids and the
+        # visible tone seam observed on close/profile faces.
+        self.assertEqual(FaceSwapInsightFace._EYE_ALPHA, 0.5)
 
     def test_alpha_scales_the_peak(self):
         FaceSwapInsightFace._EYE_ALPHA = 0.5
@@ -705,7 +741,7 @@ class TestCropSourceIsReported(unittest.TestCase):
         line = p.mix_summary()
         self.assertIn('0% cropped from the plate', line)
         self.assertIn('fell back to the derived crop', line)
-        self.assertIn('opacity 1', line)
+        self.assertIn('opacity 0.5', line)
 
 
 
@@ -742,14 +778,13 @@ class TestLashBandTargetsOnlyTheLashLine(unittest.TestCase):
             self.assertLess(m[int(q[1]), int(q[0])], 0.02 * peak,
                             f'{name} belongs wholly to the base model')
 
-    def test_lashes_are_FULLY_the_secondary_s_not_a_blend(self):
-        # "Eyelashes must match hififace" is not satisfied by a 50% mix of two
-        # models' lashes -- that is the doubling the whole design forbids.
+    def test_lashes_use_the_safe_secondary_blend(self):
+        # The secondary eyelid/lash band is deliberately half strength: this
+        # suppresses doubled eyelids and brow ghosts on difficult poses.
         m = FaceSwapInsightFace._eye_region_mask(256, 'arcface')
-        self.assertGreater(float(m.max()), 0.99)
-        self.assertGreater(float((m > 0.95).sum()), 200,
-                           'no pixel region is fully the secondary; the lash '
-                           'line is a blend, not the secondary alone')
+        self.assertAlmostEqual(float(m.max()), 0.5, places=3)
+        self.assertGreater(float((m > 0.45).sum()), 200,
+                           'the safe secondary band is unexpectedly absent')
 
 
 if __name__ == '__main__':

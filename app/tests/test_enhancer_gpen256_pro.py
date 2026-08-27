@@ -137,6 +137,13 @@ class TestFilterMatchesTheReference(unittest.TestCase):
         g = CLS._grain(512)
         self.assertEqual(g.shape, (512, 512, 1))
 
+    def test_gpu_path_copies_the_read_only_cache_before_tensor_conversion(self):
+        """Keep the shared cache immutable without triggering PyTorch's warning."""
+        with open(os.path.join(APP, 'roop', 'processors', 'Enhance_GPEN256Pro.py'),
+                  encoding='utf-8') as fh:
+            source = fh.read()
+        self.assertIn('torch.from_numpy(cls._grain(target_size).copy())', source)
+
 
 class TestColorAndChromaPreservation(unittest.TestCase):
     def test_gpen_pink_cast_is_removed(self):

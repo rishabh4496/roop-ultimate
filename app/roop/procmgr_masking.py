@@ -586,11 +586,17 @@ class MaskingMixin:
         blend_px = max(1, int(mask_size * face_mask_blend / 200))
         blur_size = blend_px * 2 + 1
         
-        # Improved Blending: Erode the mask before blurring (inner feathering).
-        # This keeps the transition zone inside the face skin and prevents the swap
-        # from bleeding / haloing onto background regions, hair, or ears.
-        erosion_px = max(1, blend_px // 2)
-        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (erosion_px * 2 + 1, erosion_px * 2 + 1))
+        # Keep the transition mostly inside the face, but do not consume half
+        # of the feather radius.  With the old `blend_px // 2` erosion a
+        # profile face at the normal 30% setting lost roughly 15-20 frame
+        # pixels around the nose/eye contour before the swap was composited.
+        # The untouched target then showed through as a second nose, pale
+        # under-eye band, or duplicate brow.  The landmark hull and the final
+        # Gaussian feather still constrain the edge; a quarter-radius erosion
+        # supplies the anti-halo slack without carving the swapped face apart.
+        erosion_px = max(1, blend_px // 4)
+        kernel = cv2.getStructuringElement(
+            cv2.MORPH_ELLIPSE, (erosion_px * 2 + 1, erosion_px * 2 + 1))
         img_matte = cv2.erode(img_matte, kernel, iterations=1)
 
         return cv2.GaussianBlur(img_matte, (blur_size, blur_size), 0)

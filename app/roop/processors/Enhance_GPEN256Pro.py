@@ -130,6 +130,9 @@ class Enhance_GPEN256Pro:
                 if g is None:
                     g = np.random.default_rng(42).normal(
                         0.0, 2.0, (size, size, 1)).astype(np.float32)
+                    # Shared between worker threads; it must remain immutable.
+                    # The CUDA boundary takes a private copy before wrapping it
+                    # as a tensor, avoiding PyTorch's non-writeable-array warning.
                     g.flags.writeable = False
                     cls._GRAIN[size] = g
         return g
@@ -300,7 +303,7 @@ class Enhance_GPEN256Pro:
                 cls._grain_gpu = {}
             g_gpu = cls._grain_gpu.get(target_size)
             if g_gpu is None:
-                g_gpu = torch.from_numpy(cls._grain(target_size)).to(device, dtype=torch.float32).permute(2, 0, 1).unsqueeze(0)
+                g_gpu = torch.from_numpy(cls._grain(target_size).copy()).to(device, dtype=torch.float32).permute(2, 0, 1).unsqueeze(0)
                 cls._grain_gpu[target_size] = g_gpu
             injected_texture = injected_texture + g_gpu * (w_tex * k)
 

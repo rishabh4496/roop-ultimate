@@ -440,15 +440,22 @@ def _freeze_convtranspose_reshape(model):
 
 
 def _swap_providers(providers):
-    """Return a copy of `providers` with the TensorRT provider forced to FP32.
+    """Apply the configured TensorRT precision to the RealSwap session.
 
-    inswapper_128 (and the other emap swappers) have layers that overflow in
-    FP16, producing rainbow/smudge artifacts when the global precision mode is
-    'mixed'/'fp16'. The swapper is tiny (128-256px), so full precision costs
-    almost nothing while fixing the corruption; detection and enhancers stay on
-    FP16 where they're stable and fast. Opt back into an FP16 swapper with
-    ROOP_SWAP_FP16=1 (not recommended)."""
+    ``mixed`` is intentionally allowed to reach RealSwap: TensorRT may keep
+    numerically sensitive layers in FP32 while using FP16 kernels elsewhere.
+    The old unconditional FP32 override hid the configured mixed mode and made
+    it impossible to benchmark the real application.  Set ``ROOP_SWAP_FP32=1``
+    for the known overflow-safe override; ``ROOP_SWAP_FP16=1`` remains as a
+    backwards-compatible alias meaning "do not force FP32".
+    """
     if os.environ.get('ROOP_SWAP_FP16', '0') == '1':
+        return providers
+    cfg = getattr(roop.globals, 'CFG', None)
+    precision = str(getattr(cfg, 'trt_precision', 'mixed') or 'mixed').lower()
+    force_fp32 = os.environ.get('ROOP_SWAP_FP32', '0') == '1' or precision == 'fp32'
+    if not force_fp32:
+        print(f"[RealSwap] TensorRT precision={precision}; preserving configured precision", flush=True)
         return providers
     patched = []
     for p in providers:
@@ -541,6 +548,7 @@ class FaceSwapInsightFace():
         # second net never ran" look identical from the audit.
         self._mixed_faces = 0
         self._seen_faces = 0
+        self._lateral_skips = 0
 
     def Initialize(self, plugin_options: dict):
         if self.plugin_options is not None:
@@ -557,6 +565,7 @@ class FaceSwapInsightFace():
             self._route_latch.clear()
             self._mixed_faces = 0
             self._seen_faces = 0
+            self._lateral_skips = 0
 
         swap_model = plugin_options.get("swap_model", "inswapper")
         if swap_model not in SWAP_MODELS:
@@ -1199,7 +1208,10 @@ class FaceSwapInsightFace():
     #
     # Not an env knob. A knob defaulting to the old behaviour is the old
     # behaviour for everyone.
-    _EYE_ALPHA = float(os.environ.get('ROOP_REALSWAP_BAND_ALPHA', '1.0') or '1.0')
+    # The measured production setting is 0.5.  Keeping the secondary eye-band
+    # at full opacity reintroduces doubled brows/eyelids and a visible tone
+    # boundary when the two aligned nets disagree, especially on close faces.
+    _EYE_ALPHA = float(os.environ.get('ROOP_REALSWAP_BAND_ALPHA', '0.5') or '0.5')
 
     # How much secondary (hififace) goes into the BASE -- every pixel, including
     # the identity-dense skin the band deliberately avoids.
@@ -1236,6 +1248,24 @@ class FaceSwapInsightFace():
     # perceived-texture reason, measure that axis explicitly -- do not restore
     # it on the strength of this number being small.
     _BASE_MIX = float(os.environ.get('ROOP_REALSWAP_BASE_MIX', '0.0') or '0.0')
+
+    _LATERAL_FADE_DEG = float(os.environ.get('ROOP_REALSWAP_LATERAL_FADE_DEG', '35') or '35')
+    _LATERAL_SKIP_DEG = float(os.environ.get('ROOP_REALSWAP_LATERAL_SKIP_DEG', '65') or '65')
+
+    @staticmethod
+    def _target_yaw_deg(target_face):
+        """Return calibrated target yaw, or None when five-point pose is invalid."""
+        kps = getattr(target_face, 'kps', None) if target_face is not None else None
+        if kps is None and isinstance(target_face, dict):
+            kps = target_face.get('kps')
+        if kps is None:
+            return None
+        try:
+            from roop.face_util import solve_pose_jaw_5pt
+            pose = solve_pose_jaw_5pt(kps)
+            return None if pose is None else float(pose[0])
+        except Exception:
+            return None
 
     @classmethod
     def _eye_region_mask(cls, size, template='arcface'):
@@ -1526,21 +1556,19 @@ class FaceSwapInsightFace():
         assumed: see the constant.
         """
         m = self._eye_region_mask(size, self.model_template)
-        # If extreme yaw (profile pose), attenuate far-eye eyelid mask to maintain profile silhouette integrity
-        kps = getattr(target_face, 'kps', None) if target_face is not None else None
-        if kps is not None and len(kps) >= 3:
-            try:
-                (lex, _), (rex, _), (nx, _) = kps[0], kps[1], kps[2]
-                yaw = float(np.log((abs(nx - lex) + 1e-5) / (abs(rex - nx) + 1e-5)))
-                if abs(yaw) > 0.65:
-                    m = m.copy()
-                    mid_x = int(size * 0.5)
-                    if yaw > 0.65:
-                        m[:, mid_x:] *= max(0.0, 1.0 - (yaw - 0.65) * 1.5)
-                    else:
-                        m[:, :mid_x] *= max(0.0, 1.0 - (-yaw - 0.65) * 1.5)
-            except Exception:
-                pass
+        yaw = self._target_yaw_deg(target_face)
+        if yaw is not None and abs(yaw) >= self._LATERAL_FADE_DEG:
+            m = m.copy()
+            mid_x = int(size * 0.5)
+            # HifiFace supplies eyelash texture only. On a turned head its
+            # canonical far-eye ring is not a valid target feature, so fade
+            # that half while keeping HyperSwap's cornea/eye structure intact.
+            weight = max(0.0, min(1.0, (self._LATERAL_SKIP_DEG - abs(yaw)) /
+                                  max(1e-6, self._LATERAL_SKIP_DEG - self._LATERAL_FADE_DEG)))
+            if yaw > 0.0:
+                m[:, mid_x:] *= weight
+            else:
+                m[:, :mid_x] *= weight
         with self._route_lock:
             self._seen_faces += 1
             self._mixed_faces += 1
@@ -1579,8 +1607,9 @@ class FaceSwapInsightFace():
         return (f"[swap] {self.loaded_model_key}: {self._mixed_faces} of "
                 f"{self._seen_faces} faces composited with "
                 f"'{self.secondary.loaded_model_key}' over the eye band "
-                f"({100.0 * cov:.1f}% of the crop, opacity "
-                f"{self._EYE_ALPHA:g}), base mix {self._BASE_MIX:g}{lip}{src}")
+               f"({100.0 * cov:.1f}% of the crop, opacity "
+               f"{self._EYE_ALPHA:g}), base mix {self._BASE_MIX:g}{lip}{src}; "
+               f"{self._lateral_skips} lateral secondary skips")
 
     def _run_secondary(self, source_face: Face, target_face: Face, temp_frame):
         """The second net's swap of the same face, resampled back into the
@@ -1593,6 +1622,14 @@ class FaceSwapInsightFace():
         sec = self.secondary
         kps = getattr(target_face, 'kps', None)
         if sec is None or kps is None:
+            return None
+        yaw = self._target_yaw_deg(target_face)
+        if yaw is not None and abs(yaw) >= self._LATERAL_SKIP_DEG:
+            # Do not pay for HifiFace when its eyelash-only overlay is unsafe.
+            # HyperSwap has already produced the complete structural face and
+            # remains the sole contributor for this profile frame.
+            with self._route_lock:
+                self._lateral_skips += 1
             return None
         size = int(temp_frame.shape[-1])
         try:

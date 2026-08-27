@@ -13,13 +13,6 @@ if sys.platform == 'win32':
     except Exception:
         pass
 
-# Bypass Windows Certificate Store SSL parsing error
-try:
-    import ssl
-    ssl._create_default_https_context = ssl._create_unverified_context
-except Exception:
-    pass
-
 os.environ["OPENCV_LOG_LEVEL"] = "ERROR"
 os.environ["AV_LOG_LEVEL"] = "error"
 

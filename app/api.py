@@ -2728,7 +2728,10 @@ def _run_swap(payload):
             from roop import runtime_calib
             roop_globals._run_signature = runtime_calib.signature_from_payload(
                 payload, gpu=_gpu_name(),
-                threads=roop_globals.CFG.max_threads,
+                # Auto selection may intentionally choose a narrower worker
+                # count than the configured manual maximum. Calibration keys
+                # must describe the count that actually processed this render.
+                threads=roop_globals.execution_threads,
                 precision=getattr(roop_globals.CFG, 'trt_precision', 'mixed'))
         except Exception:
             roop_globals._run_signature = None
@@ -2770,6 +2773,15 @@ def _run_swap(payload):
             stabilize_mask=bool(payload.get("stabilize_mask", roop_globals.CFG.stabilize_mask)),
             stabilize_mask_strength=float(payload.get("stabilize_mask_strength", roop_globals.CFG.stabilize_mask_strength)),
             input_facesets=run_facesets)
+
+        # batch_process_regular returns normally after a deliberate stop so it
+        # can finalize any partial output safely.  Do not treat that return as
+        # a successful run: post-passes, the Done state, and completed-history
+        # telemetry must never be applied to a truncated render.
+        if _stop_requested["flag"]:
+            _progress["desc"] = "Stopped"
+            _push_log("⚠ Stopped — partial output was not recorded as completed", force=True)
+            return
 
         # ── AI upscale second pass (opt-in) ─────────────────────────────────
         # Upscale each finished output in place so the final result is a single
