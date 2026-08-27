@@ -892,3 +892,18 @@ unchanged. Full regression now passes: **1,322 tests, 1 skipped, 0 failures**.
 The remaining resource-warning output is pre-existing test-harness noise.
 This closes the five-stage regression/handoff cycle for the current
 mixed-TensorRT configuration.
+
+## Next cycle — GPEN 256 Pro mixed-TensorRT remeasurement (2026-08-27)
+
+The documented next bottleneck was remeasured before changing code. A fresh
+`compat_one.py` run on `precision_matrix_input/s1_10s.mp4` used TensorRT mixed
+precision, RetinaFace R50, RealityUX, RealSwap, and GPEN 256. It completed
+240 frames with 238 detected/swapped faces and returned `RESULT PASS`.
+
+Measured metrics: initialization **3.626 s**, processing **28.888 s**,
+**8.308 FPS**, peak RSS **6.526 GB**, CPU sample **4.9%**, GPU sample **37.0%**;
+VRAM allocation and transfer counters were unavailable to this harness. The
+earlier 0.69-FPS result was a first-build/cache-build outlier; with the mixed
+engine already built, GPEN 256 is slower than GPEN Realistic/UltraMax but no
+longer catastrophically host-bound. No speculative source optimization was
+kept because this baseline does not demonstrate a safe end-to-end win yet.
