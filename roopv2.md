@@ -556,3 +556,10 @@ Validation: Python compilation passed and 124 enhancer/RealSwap regression
 tests passed, including non-finite and collapsed-output guards for all three
 enhancers. The next live render will rebuild the mixed engines in the new
 namespace before evaluating visual quality.
+## Mixed cache cleanup — 2026-08-27
+
+Removed obsolete generic/runtime mixed TensorRT caches that predated the
+LayerNorm-FP32 mixed configuration: `mixed/`, the old RTX 4070 runtime
+namespace, and its timestamped stale backup. Preserved the separate
+`mixed_*_fp32` safety caches. The next mixed run will build only the new
+`..._lnfp32` namespace.
