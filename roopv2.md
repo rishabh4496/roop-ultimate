@@ -571,3 +571,12 @@ began a fresh timing-cache build, but the first engine build remained active
 without producing an artifact after several minutes, so it was stopped to
 avoid leaving a runaway process. No enhancer build is marked complete yet; the
 directory is safe to rebuild on the next run.
+## Stage 4 continuation — mixed enhancer rebuild — 2026-08-27
+
+The remaining Stage 4/5 work is the visual enhancer matrix and final handoff.
+A one-enhancer-at-a-time GPEN 256 Pro TensorRT mixed initialization was tried
+after the pooled build stalled. TensorRT created the `_lnfp32` namespace and
+started a new timing-cache build, but no engine artifact appeared after several
+minutes. The process was stopped safely. This is an engine-build-time blocker,
+not a rendering-quality result; no enhancer is marked visually verified until
+the cache completes and a non-empty output is inspected.
