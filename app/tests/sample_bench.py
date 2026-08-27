@@ -189,6 +189,8 @@ def main():
                          "right on screen) for double/")
     ap.add_argument("--provider", default=None,
                     help="defaults to config.yaml's live 'provider' setting if not given")
+    ap.add_argument("--enhancer", default=None,
+                    help="override the configured enhancer for this verification run")
     ap.add_argument("--threads", type=int, default=None,
                     help="defaults to config.yaml's live 'max_threads' setting if not "
                          "given, matching what the real app actually runs with")
@@ -214,7 +216,7 @@ def main():
     swap_model = cfg_probe.swap_model
     mask_engine_display = cfg_probe.mask_engine
     mask_engine = map_mask_engine(mask_engine_display)
-    enhancer = cfg_probe.selected_enhancer or "None"
+    enhancer = args.enhancer or cfg_probe.selected_enhancer or "None"
     provider = args.provider or cfg_probe.provider or "cuda"
     threads = args.threads if args.threads is not None else cfg_probe.max_threads
 

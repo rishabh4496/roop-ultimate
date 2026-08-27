@@ -599,3 +599,30 @@ GPEN 256 Pro scale 1, GPEN Realistic scale 1 (512 restoration upsampled to the
 1280 test crop), and UltraMax scale 1. The 124-test enhancer/RealSwap suite
 still passes. No CUDA/CPU fallback was used. Full short-video visual renders
 remain the next handoff step.
+
+## Stage 4 completion — mixed TensorRT enhancer video matrix — 2026-08-27
+
+Completed the requested short-video matrix on
+`app/output/precision_matrix_input/s1_10s.mp4` using **TensorRT mixed
+precision only** (RetinaFace r50 + RealSwap + RealityUX + the selected
+enhancer). The run used the new `_lnfp32_seq_heur` cache namespace and logged
+`precision=mixed`; no CUDA, CPU, or pure-FP16 fallback was used.
+
+| Enhancer | Output | Frames | Faces swapped | Render time / FPS | Peak memory |
+|---|---|---:|---:|---:|---:|
+| GPEN 256 Pro | `app/output/enhancer_matrix/stage4_mixed_gpen256/s1_10s__rhythm.mp4` | 240/240 | 238/238 | 346.50 s / 0.69 FPS | ~10.4 GB |
+| GPEN Realistic | `app/output/enhancer_matrix/stage4_mixed_gpenrealistic/s1_10s__rhythm.mp4` | 240/240 | 238/238 | 19.57 s / 12.26 FPS | ~9.45 GB |
+| UltraMax/CodeFormer | `app/output/enhancer_matrix/stage4_mixed_ultramax/s1_10s__rhythm.mp4` | 240/240 | 238/238 | 19.85 s / 12.09 FPS | ~9.44 GB |
+
+All three MP4 files are non-empty, decode as 1280x720 at 30 FPS, and contain
+the complete 240-frame output. The two detector misses are consistent across
+all runs and are logged as no-face frames rather than failed rendering. A
+representative decoded frame from each output is finite and non-collapsed;
+the three enhancer outputs render consistently. GPEN 256 Pro is functionally
+valid but remains the performance outlier because its restoration path is
+host-heavy (~0.69 FPS), while GPEN Realistic and UltraMax sustain ~12 FPS.
+
+This closes the mixed-TensorRT enhancer verification portion of Stage 4. The
+remaining quality work is the broader angle/occlusion visual audit and any
+targeted tuning prompted by those samples; the mixed execution path itself is
+now built, selected, and verified end to end.
