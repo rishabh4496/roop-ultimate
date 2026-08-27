@@ -45,6 +45,7 @@ def softmax(z):
 _R50_MIN_SIZES = ((16, 32), (64, 128), (256, 512))
 _R50_STEPS = (8, 16, 32)
 _R50_VARIANCE = (0.1, 0.2)
+_R50_DEFAULT_INPUT_SIZE = (640, 640)
 
 _prior_cache = {}
 
@@ -123,8 +124,13 @@ class RetinaFace3Output:
 
         input_cfg = self.session.get_inputs()[0]
         input_shape = input_cfg.shape
-        if isinstance(input_shape[2], str):
-            self.input_size = None
+        if isinstance(input_shape[2], str) or input_shape[2] is None:
+            # The r50 export uses dynamic h/w symbols, but its priors and
+            # TensorRT optimization profile are trained/built at 640x640.
+            # Leaving this as None made the mixed TensorRT path fail before
+            # inference (model_ratio could not be computed), and face_util
+            # swallowed that exception as a detector miss.
+            self.input_size = _R50_DEFAULT_INPUT_SIZE
         else:
             self.input_size = tuple(input_shape[2:4][::-1])
         self.input_name = input_cfg.name
@@ -142,18 +148,36 @@ class RetinaFace3Output:
 
     def detect(self, img, input_size=None, max_num=0, metric='default'):
         input_size = self.input_size if input_size is None else input_size
-        im_ratio = float(img.shape[0]) / img.shape[1]
-        model_ratio = float(input_size[1]) / input_size[0]
-        if im_ratio > model_ratio:
-            new_height = input_size[1]
-            new_width = int(new_height / im_ratio)
+        if input_size is None:
+            # Defensive fallback for callers constructing the object through a
+            # legacy path that did not populate session input metadata.
+            input_size = _R50_DEFAULT_INPUT_SIZE
+        # This ResNet50 export is trained on a square, directly-resized image.
+        # Letterboxing it (the correct SCRFD/10g geometry) suppresses r50 face
+        # scores under TensorRT, especially on 16:9 footage. Keep independent
+        # axis scales so decoded boxes map back to the source correctly.
+        direct_square = self.model_file and os.path.basename(self.model_file).lower() in {
+            'retinaface_r50.onnx', 'retinaface-resnet50.onnx',
+            'retinaface_resnet50.onnx'}
+        if direct_square:
+            det_img = cv2.resize(img, (input_size[0], input_size[1]))
+            scale_x = float(input_size[0]) / img.shape[1]
+            scale_y = float(input_size[1]) / img.shape[0]
+            det_scale = None
         else:
-            new_width = input_size[0]
-            new_height = int(new_width * im_ratio)
-        det_scale = float(new_height) / img.shape[0]
-        resized_img = cv2.resize(img, (new_width, new_height))
-        det_img = np.zeros((input_size[1], input_size[0], 3), dtype=np.uint8)
-        det_img[:new_height, :new_width, :] = resized_img
+            im_ratio = float(img.shape[0]) / img.shape[1]
+            model_ratio = float(input_size[1]) / input_size[0]
+            if im_ratio > model_ratio:
+                new_height = input_size[1]
+                new_width = int(new_height / im_ratio)
+            else:
+                new_width = input_size[0]
+                new_height = int(new_width * im_ratio)
+            det_scale = float(new_height) / img.shape[0]
+            scale_x = scale_y = det_scale
+            resized_img = cv2.resize(img, (new_width, new_height))
+            det_img = np.zeros((input_size[1], input_size[0], 3), dtype=np.uint8)
+            det_img[:new_height, :new_width, :] = resized_img
 
         blob = cv2.dnn.blobFromImage(det_img, 1.0, input_size, self.input_mean, swapRB=False)
         net_outs = self.session.run(self.output_names, {self.input_name : blob})
@@ -162,12 +186,10 @@ class RetinaFace3Output:
         conf = net_outs[1][0]
         landms = net_outs[2][0]
 
-        # The nakamura196 r50 export already applies softmax inside the graph:
-        # conf rows are probabilities summing to 1 (face score in column 1),
-        # empirically peaking at ~0.999 on a clear face. Do NOT re-softmax it —
-        # that squashes a true 0.999 down to ~0.73, which silently falls below
-        # det_thresh (e.g. 0.8) and drops every detection. Guard defensively in
-        # case a future export emits raw logits instead (rows not ~1).
+        # The nakamura196 r50 export already applies softmax inside the graph
+        # and uses the standard [background, face] class order. Do NOT
+        # re-softmax probabilities; only use softmax for a future export whose
+        # rows are not already normalized.
         if abs(float(conf[0].sum()) - 1.0) < 1e-3:
             scores = conf[:, 1]
         else:
@@ -197,12 +219,20 @@ class RetinaFace3Output:
         pos_boxes = _decode_boxes(loc[pos_inds], pos_priors)
         pos_boxes[:, 0::2] *= input_size[0]
         pos_boxes[:, 1::2] *= input_size[1]
-        pos_boxes /= det_scale
+        if det_scale is None:
+            pos_boxes[:, 0::2] /= scale_x
+            pos_boxes[:, 1::2] /= scale_y
+        else:
+            pos_boxes /= det_scale
 
         pos_kpss = _decode_landmarks(landms[pos_inds], pos_priors)
         pos_kpss[:, 0::2] *= input_size[0]
         pos_kpss[:, 1::2] *= input_size[1]
-        pos_kpss /= det_scale
+        if det_scale is None:
+            pos_kpss[:, 0::2] /= scale_x
+            pos_kpss[:, 1::2] /= scale_y
+        else:
+            pos_kpss /= det_scale
         # (-1, 5, 2), not (n, -1, 2): numpy cannot infer -1 from a zero-sized
         # array, and a frame with no face above threshold reaches here with n=0.
         pos_kpss = pos_kpss.reshape((-1, 5, 2))

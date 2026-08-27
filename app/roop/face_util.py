@@ -446,6 +446,12 @@ def _detect_faces_raw(frame, det_size=None, det_thresh=None, aux=True):
     engine = getattr(roop.globals, 'detector_engine', 'scrfd')
     nms_thresh = getattr(roop.globals, 'face_detector_nms', 0.40)
     eff_size = det_size if det_size is not None else _desired_det_size()[0]
+    # RetinaFace r50's dynamic ONNX axes are a TensorRT optimization profile,
+    # not a license to change the spatial resolution.  Its anchor priors and
+    # mixed-precision engine are calibrated at 640x640; feeding the configured
+    # 512 size produced valid-looking tensors but zero confidence scores.
+    if engine == 'retinaface_r50':
+        eff_size = 640
     eff_thresh = (det_thresh if det_thresh is not None
                   else getattr(roop.globals, 'face_detector_threshold', 0.60))
     with lease_face_analyser() as fa:

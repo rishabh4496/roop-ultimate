@@ -521,3 +521,19 @@ RetinaFace r50 detector and produced no MP4. Therefore this is not merely a
 stale-cache problem; the mixed TensorRT RetinaFace r50 path remains unresolved.
 The full `s1.mp4` run is intentionally blocked until a short clip produces a
 valid swapped output, preventing hours of invalid processing.
+
+## RetinaFace r50 mixed compatibility fix — 2026-08-27
+
+Root cause was identified in the r50 adapter. The export uses dynamic spatial
+axes but is trained for a native square 640x640 input; the adapter was
+letterboxing 16:9 frames, which collapsed the face-confidence output under
+TensorRT mixed precision. The adapter now uses direct square resizing for r50,
+maps x/y coordinates with independent scale factors, and retains the standard
+[background, face] confidence order.
+
+Regression coverage passes (**25 focused tests**). A live mixed TensorRT
+detector smoke test on frame 100 returned one valid RetinaFace r50 box at
+0.939 confidence with sane coordinates. The application benchmark helper was
+then stopped after its separate target-capture path continued to fail while
+rebuilding/decoding; a complete video output still must be produced before
+claiming end-to-end success.
