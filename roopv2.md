@@ -905,6 +905,17 @@ RTX 3060 6 GB card; it validates the tier-selection logic only. No OOM or
 provider fallback occurred. True RTX 3060 confirmation remains hardware-
 dependent and is the final open performance stage.
 
+## Extended performance Stage 3 — physical device validation (2026-08-27)
+
+The device diagnostic confirms the current host is an **RTX 4070 with 11.99 GB
+VRAM**, not the secondary RTX 3060 laptop. Mixed TensorRT is active; GPEN 256
+Pro real inference measured **11.8 ms/face** on GPU. The runtime resolves to
+12 execution threads and 2/2/2 TRT, detmask, and detector pools. The pinned
+2/2/2 settings are retained because the measured pool sweeps did not produce a
+robust quality-safe improvement. Physical RTX 3060 throughput/OOM validation
+remains the only hardware-dependent open item and must be run on that laptop;
+the 6 GB policy simulation is already recorded above.
+
 ## Next cycle — GPEN 256 Pro mixed-TensorRT remeasurement (2026-08-27)
 
 The documented next bottleneck was remeasured before changing code. A fresh
