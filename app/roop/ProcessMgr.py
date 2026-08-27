@@ -36,6 +36,7 @@ from roop import face_contact
 from roop import recognizer_adaface as _ada
 from roop import live_preview as _live_preview
 from roop.procmgr_runtime import _PROFILE, _TRACK_VETO_DIST, _TRACK_VETO_MARGIN, _TRACK_VETO_SINGLE, _TRACK_EMB_MAX, _DEBUG_MATCH, COLOR_RESET, COLOR_CYAN, COLOR_YELLOW, _prof, _prof_report, _prof_reset, _gpu_guard, PROGRESS_BAR_FORMAT, wait_while_paused, ChunkedProgress, bar_write, publish_eta as _publish_eta, _audit_hit, audit_over_threshold as _audit_over_threshold, audit_frame_seen, audit_detect_frame_begin, audit_detect_miss, audit_face_begin, _audit_swapped_gapfill, _audit_reset, _audit_report, VETO_SOURCE_REUSED, VETO_SINGLE_ABS, VETO_OTHER_FITS, VETO_FAR_FROM_OWN, AUDIT_SWAP_MOVED, VERIFY_MIN_OFFAXIS, VERIFY_SWAP
+from roop.runtime_optimizer import RuntimeOptimizer
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from threading import Thread, Lock, local
 
@@ -1329,6 +1330,37 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
             width = processed_resolution[0]
             height = processed_resolution[1]
 
+        # Workload-aware runtime profile.  This is deliberately after probing
+        # the real video dimensions and before queue/chunk geometry is chosen.
+        # It derives bounded hints and records provenance, but does not replace
+        # the caller's worker count or any explicit setting.
+        self.runtime_profile = None
+        self._runtime_stab_chunk = None
+        self._runtime_queue_depth = None
+        try:
+            _runtime_optimizer = RuntimeOptimizer(settings=getattr(roop.globals, 'CFG', None))
+            self.runtime_profile = _runtime_optimizer.profile_video(
+                source_video,
+                frame_count=frame_count,
+                resolution=(width, height),
+                output_resolution=(width, height),
+                faces_per_frame=max(1, len(getattr(self, 'target_face_datas', []) or [])),
+                save=True)
+            RuntimeOptimizer.apply_environment(
+                self.runtime_profile, getattr(roop.globals, 'CFG', None))
+            self._runtime_stab_chunk = self.runtime_profile.tuning.stabilization_chunk_size
+            self._runtime_queue_depth = self.runtime_profile.tuning.queue_depth
+            print("[RuntimeOptimizer] workload profile: "
+                  f"{self.runtime_profile.workload.input_width}x"
+                  f"{self.runtime_profile.workload.input_height}, "
+                  f"complexity={self.runtime_profile.workload.estimated_complexity:.2f}, "
+                  f"workers(recommended)={self.runtime_profile.tuning.worker_count}, "
+                  f"queue={self._runtime_queue_depth}, "
+                  f"stab_chunk={self._runtime_stab_chunk}, "
+                  f"profile={self.runtime_profile.cache_key}", flush=True)
+        except Exception as exc:
+            print(f"[RuntimeOptimizer] workload profile unavailable: {exc}", flush=True)
+
         # Parallel stabilization buffers whole chunks of DECODED frames, so its
         # memory budget is counted in frames of this size. Only now, with the
         # dimensions known, can we tell how wide a stabilized run can actually
@@ -1442,7 +1474,8 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
         # A little buffering per thread smooths variable per-frame times so the
         # reader/writer don't stall worker threads (matters now that CUDA runs
         # workers concurrently instead of serialised behind one GPU lock).
-        qdepth = 1 if threads <= 1 else 3
+        qdepth = self._runtime_queue_depth if self._runtime_queue_depth is not None else (1 if threads <= 1 else 3)
+        qdepth = max(1, min(4, int(qdepth)))
         for _ in range(threads):
             self.frames_queue.append(Queue(qdepth))
             self.processed_queue.append(Queue(qdepth))
@@ -1870,7 +1903,9 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
         WU, block, stab_width, blocks_per_chunk = self._stab_parallel_geometry(threads)
         CHUNK = blocks_per_chunk * block
         try:
-            CHUNK = int(os.environ.get('ROOP_STAB_CHUNK', '0') or '0') or CHUNK
+            explicit_chunk = int(os.environ.get('ROOP_STAB_CHUNK', '0') or '0')
+            runtime_chunk = getattr(self, '_runtime_stab_chunk', None)
+            CHUNK = explicit_chunk or (int(runtime_chunk) if runtime_chunk else CHUNK)
         except ValueError:
             pass
         if stab_width < threads:

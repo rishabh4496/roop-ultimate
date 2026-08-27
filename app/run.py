@@ -28,6 +28,27 @@ def _apply_perf_env():
     except Exception:
         return
 
+    # Build a cheap hardware-only profile before importing the model pipeline.
+    # This does not create sessions or TensorRT engines.  It only publishes a
+    # bounded, provenance-tagged runtime hint for stages that opt into the
+    # rollout; explicit config values and explicit environment values win.
+    try:
+        from roop.runtime_optimizer import RuntimeOptimizer
+        _runtime_optimizer = RuntimeOptimizer(settings=cfg)
+        _startup_profile = _runtime_optimizer.startup_profile()
+        _applied = _runtime_optimizer.apply_environment(_startup_profile, cfg)
+        print("[RuntimeOptimizer] startup profile: "
+              f"GPU={_startup_profile.hardware.gpu_name or 'none'} "
+              f"VRAM={_startup_profile.hardware.vram_total_gb:.1f}GB "
+              f"workers={_startup_profile.tuning.worker_count} "
+              f"contexts={_startup_profile.tuning.trt_context_count} "
+              f"queue={_startup_profile.tuning.queue_depth} "
+              f"applied={sorted(_applied)}", flush=True)
+    except Exception as exc:
+        # The optimizer is advisory at startup.  A missing optional probe must
+        # never prevent the established provider/fallback path from launching.
+        print(f"[RuntimeOptimizer] startup profile unavailable: {exc}", flush=True)
+
     def _set(var, val):
         if val is None:
             return
