@@ -907,3 +907,10 @@ earlier 0.69-FPS result was a first-build/cache-build outlier; with the mixed
 engine already built, GPEN 256 is slower than GPEN Realistic/UltraMax but no
 longer catastrophically host-bound. No speculative source optimization was
 kept because this baseline does not demonstrate a safe end-to-end win yet.
+
+### GPEN model-name check (2026-08-27)
+
+The requested “GPEN 356” name is not present in the repository or enhancer
+registry. Available related targets are **GPEN 256 Pro** and the generic
+**GPEN** family (512/1024/2048). No alias was added, since mapping an unknown
+name to another resolution would silently change model quality.
