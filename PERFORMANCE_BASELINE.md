@@ -1,49 +1,110 @@
-# Performance Baseline
+# ROOP-ULTIMATE PERFORMANCE BASELINE
 
-Updated: 2026-08-28. These measurements are repository benchmark evidence, not a substitute for a real-video end-to-end run.
+## IMPORTANT
 
-## Test configuration
+This file is the immutable reference for pre-optimization performance.
 
-- Device: NVIDIA GeForce RTX 4070, 11.99 GB reported VRAM.
-- Provider: TensorRT mixed precision.
-- Workload catalogue: RetinaFace R50 detector, recognition, landmarks, Realswap, UltraMax, XSeg, and BiSeNet.
-- Benchmark mode: full, `--no-apply`; current user settings were not changed.
-- Current relevant settings: `perf_trt_pool=2`, `perf_detmask_pool=2`, `perf_detector_pool=2`, `perf_expr_pool=auto`, `max_threads=12`, `output_video_codec=hevc_nvenc`, `perf_nvdec=on`.
+**Do not overwrite the original baseline.**
 
-## Before Phase 3
+If new baseline measurements are needed, append them under a dated section.
 
-The pre-change benchmark used context levels 1/2/4/8 and stopped during a cold XSeg build. Partial calls/sec results were:
+---
 
-| Stage | 1 | 2 | 4 | 8 |
-|---|---:|---:|---:|---:|
-| Detector | 318.2 | 407.6 | 450.1 | 438.9 |
-| Recognition | 843.2 | 923.4 | 757.5 | not measured |
-| Landmarks | 1452.5 | 1491.9 | not measured | not measured |
-| Realswap | 196.9 | 255.9 | 250.2 | not measured |
-| UltraMax | 36.5 | 43.2 | 40.0 | not measured |
+# HARDWARE
 
-The process was safely stopped after no output during the cold XSeg build. No complete before end-to-end FPS, latency, CPU, VRAM, RAM, or queue-depth record exists; do not compare this partial run as a complete baseline.
+- CPU: Intel Core i9-14900K
+- GPU: NVIDIA RTX 4070
+- RAM: 32 GB
 
-## After Phase 3 working-tree changes
+Optional secondary validation:
+- GPU: NVIDIA RTX 3060
 
-The complete sweep used 1/2/3/4 contexts:
+---
 
-| Stage | 1 | 2 | 3 | 4 |
-|---|---:|---:|---:|---:|
-| Detector | 336.6 | 405.4 | 423.2 | 414.1 |
-| Recognition | 807.9 | 942.5 | 836.4 | 720.6 |
-| Landmarks | 1347.2 | 1560.6 | 1420.9 | 1250.9 |
-| Realswap | 188.1 | 244.7 | 252.9 | 250.5 |
-| UltraMax | 36.3 | 41.3 | 38.6 | 39.8 |
-| XSeg | 162.4 | 422.1 | 432.3 | 402.0 |
-| BiSeNet | 76.8 | 92.4 | 90.7 | 94.1 |
+# USER-REPORTED BASELINE
 
-Knee recommendations: detector 3; recognition 2; landmarks 2; realswap 2 by the 4% knee rule (raw maximum 3); UltraMax 2; XSeg 2; BiSeNet 2. Heavy composite throughput was `21.67 FPS`; widening the TRT pool from 2 to 4 reduced it to `20.15 FPS`.
+**Maximum observed FPS:** approximately 20 FPS
 
-Thread curves were standard `1:9.70, 2:17.22, 4:33.72, 6:41.12, 8:49.97, 12:59.30, 16:66.73, 32:65.41`, enhanced `1:7.92, 2:14.64, 4:24.62, 6:27.50, 8:27.49, 12:29.12, 16:28.22, 32:30.19`, and heavy `1:7.17, 2:11.95, 4:19.21, 6:21.67, 8:21.55, 12:20.23`.
+This number must be reproduced under a controlled, documented workload before it is treated as the official benchmark.
 
-Observed stage-sweep free VRAM fell from about `10.85 GB` initially to about `8.2 GB` at the UltraMax four-context point. A separate probe during a cold mask build reported `3.13 GB` used and `8.88 GB` free; it is not a final peak measurement. Peak RAM and queue depth were not emitted by this synthetic benchmark and must be captured in the real-video validation.
+---
 
-## Interpretation
+# OFFICIAL BASELINE — TO BE FILLED IN PHASE 2
 
-The evidence supports bounded context-knee selection and rejects blindly increasing context count. It does not establish a complete end-to-end improvement because the pre-change run was incomplete and the synthetic benchmark does not measure full decode/detect/swap/enhance/stabilize/composite/encode latency as one real video pipeline.
+## Software
+
+- OS:
+- NVIDIA driver:
+- CUDA:
+- TensorRT:
+- ONNX Runtime:
+- Python:
+- FFmpeg:
+- OpenCV:
+
+## Workload
+
+- Input video:
+- Resolution:
+- Input FPS:
+- Codec:
+- Number of faces:
+- Face detector:
+- Face swap model:
+- Enhancement:
+- Stabilization:
+- Output resolution:
+- Output codec:
+- Other options:
+
+## Measurements
+
+- End-to-end FPS:
+- Average frame latency:
+- P95 latency:
+- Decode FPS:
+- Encode FPS:
+- CPU utilization:
+- P-core utilization:
+- E-core utilization:
+- GPU utilization:
+- GPU memory used:
+- GPU memory free:
+- System RAM used:
+- Peak RAM:
+- CPU↔GPU transfer time:
+- Synchronization time:
+- Queue depth:
+
+## Reproduction command
+
+```text
+TODO: record exact command/settings used for the official baseline.
+```
+
+---
+
+# BASELINE RULES
+
+Use the same representative workload when comparing optimization phases.
+
+Where possible:
+- use the same input video,
+- same models,
+- same output settings,
+- same quality settings,
+- same driver/software versions.
+
+A benchmark must be long enough to avoid measuring only startup/warmup behavior.
+
+Report both:
+- warm-up behavior
+- steady-state throughput.
+
+---
+
+# BASELINE ACCEPTANCE
+
+The official baseline becomes locked only after Phase 2 produces a reproducible benchmark.
+
+Once locked, do not edit the original values.

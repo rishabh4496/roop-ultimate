@@ -1,43 +1,133 @@
-# Session Handoff
+# ROOP-ULTIMATE SESSION HANDOFF
 
-Updated: 2026-08-28
+## PURPOSE
 
-## State
+This is the file Codex reads first when resuming work in a new session.
 
-Phase 0, Phase 1, and Phase 2 are complete in repository history. Phase 2 ends at `d298fbf`. Phase 3 implementation is committed at `c439e43`; its physical RTX 3060 validation is still outstanding. Phase 4 is implemented and validated on the physical RTX 4070, but remains open for the second hardware profile.
+The repository files and benchmark evidence are authoritative. Conversation history is not authoritative.
 
-The Phase 5 precision-optimization request was intentionally deferred. The standing phase gate requires completing Phase 4 on both hardware profiles first; no model precision policy, precision benchmark, or FP32 guard change was started.
+---
 
-The four optimization documents requested by the workflow did not exist at session start and were created during this session from the repository state. Treat the repository and these documents as the source of truth for the next session.
+# RESUME PROTOCOL
 
-## Phase 3 implementation in `c439e43`
+Before doing anything:
 
-The working tree adds model-specific TensorRT resource specifications, shape/batch-aware slot estimates, live free-VRAM checks, safety margins, resident-pool accounting, pressure-based admission limits, bounded session-pool queues/waits, active-lease tracking, race-safe release/resize/warmup transitions, and explicit-setting provenance. Model call sites pass resource keys and input shapes across swapper, enhancers, masks, detectors, expression, and face analysis. Phase 4 extends the benchmark to 1/2/3/4/6 contexts, records stability, and uses validated model-specific knees for automatic selection. The TensorRT cache namespace includes CUDA, driver, and TensorRT versions in addition to GPU/SM/ORT/precision/tuning identity.
+1. Read `OPTIMIZATION_PLAN.md`.
+2. Read `OPTIMIZATION_PROGRESS.md`.
+3. Read `PERFORMANCE_BASELINE.md`.
+4. Read this file.
+5. Run `git status`.
+6. Inspect the current diff.
+7. Identify the first incomplete phase.
+8. Continue from that exact phase.
+9. Do not redo completed phases unless regression evidence requires it.
 
-Do not reset or discard these changes. Do not touch the untracked `facesets/` user-data directory.
+---
 
-## Verification
+# CURRENT SESSION STATE
 
-- Phase 3 targeted and cache-identity suites passed; the current focused regression suite passed `152` tests plus `12` subtests.
-- Full suite: `1343` tests, `1341` passed, `2` known unrelated failures, `1` skipped; `589` subtests passed.
-- `py_compile` passed for all changed Python modules.
-- `git diff --check` passed; line-ending warnings are only Git’s LF/CRLF notices.
+**Session:** 0
 
-Known unrelated failures:
+**Current phase:** PHASE 4 — TensorRT Engine Optimization
 
-- benchmark/app direct environment flag parity;
-- four settings missing from the UI palette catalog.
+**Phase status:** RTX 4070 complete; physical RTX 3060 Laptop gate outstanding
 
-## Benchmark handoff
+**Last completed phase:** PHASE 3 implementation, checkpoint `c439e43`
 
-The RTX 4070 full TensorRT mixed benchmark measured model-specific knees: detector `6`, recognition/landmarks/masks/enhancer `2`, and swapper `3`. Curves were measured independently at contexts `1/2/3/4/6`; the aggregate heavy composite reached `20.55 FPS` at `trt_pool=3`, while widening it to `6` fell to `17.96 FPS`. The higher-utilization setting was rejected. Automatic knee reuse now validates GPU/VRAM, provider, precision, selected model, input shape, and TensorRT tuning identity; explicit numeric pool settings remain authoritative.
+**Immediate next action:**
+Validate Phases 0 through 4 on the physical RTX 3060 Laptop, including the
+Phase 4 model-specific 1/2/3/4/6 context matrix and real-video workload. Do
+not start Phase 5 until this gate is complete.
 
-The real-video RTX 4070 Phase 4 run used the available 8-second, 1280x720/30 fps, 240-frame fixture with explicit `2/2/2` detector/detmask/TRT pools. It completed in `46.9 s` (`5.12` end-to-end FPS; `195.4 ms/frame`), with `7,984 MB` peak and `4,764 MB` sampled-average whole-card VRAM, plus `28.3%` average / `55%` peak GPU utilization. CPU utilization was not captured reliably. The output composited and enhanced `238/238` face-bearing frames, but the selected source did not match the fixture, so this is throughput/resource evidence only.
+---
 
-The completed real-video RTX 4070 validation used the available 8-second, 1280x720/30 fps, 240-frame fixture and the live TensorRT mixed/UltraMax configuration. The harness measured `394.4 s` (`0.61` end-to-end fps), with ffmpeg processing at `376.41 s` (`0.64` fps). The runtime emitted `workers=12`, `queue=3`, and about `9.52 GiB` runtime memory; external monitoring saw `28.26 GiB` system-RAM peak, `8.03 GiB` whole-card VRAM peak, and `34.0%` average / `89.0%` peak GPU utilization. The output completed, but the selected source did not match the fixture (`237/238` face-bearing frames refused), so this is throughput/resource evidence only.
+# LAST SESSION SUMMARY
 
-The counterbalanced `ab_small_card_pools.py` run completed in simulated `ROOP_VRAM_GB=6` mode: pools `0/0` averaged `11.61` fps and forced `2/2` averaged `13.54` fps; all `238` faces were enhanced. Because both arms ran on the physical 4070 with only the policy tier overridden, this is not physical 3060 evidence.
+Phase 4 was implemented and validated on the physical RTX 4070. The audit
+preserved TensorRT cache/timing identity, precision namespaces, context and
+session safety, IO binding, VRAM admission, and FP32 fallbacks. The benchmark
+found model-specific knees rather than a universal context count: detector 6,
+recognition/landmarks/masks/enhancer 2, and swapper 3. Heavy composite was
+20.55 FPS at `trt_pool=3` versus 17.96 FPS at 6, so 6 was rejected.
 
-## Immediate next action
+The real-video run completed in 46.9 seconds at 5.12 end-to-end FPS and
+195.4 ms/frame, with 7,984 MB peak and 4,764 MB sampled-average VRAM. CPU
+telemetry was unavailable. This was throughput/resource evidence only because
+the selected source did not match the fixture.
 
-Run the same reproducible real-video benchmark and independent 1/2/3/4/6 model context sweep on a physical RTX 3060 Laptop profile, including decode, detection, swap, enhancement, stabilization, compositing, encoding, end-to-end FPS/latency, CPU, VRAM, RAM, queue depth, and worker counts. Keep the 6 GB policy at pools `0/0` unless measured evidence supports a safe change. Do not start Phase 5.
+No optimization session has been completed yet.
+
+---
+
+# WORK IN PROGRESS
+
+None.
+
+---
+
+# FILES CURRENTLY BEING MODIFIED
+
+None.
+
+---
+
+# TESTS CURRENTLY PASSING
+
+Not established.
+
+---
+
+# CURRENT PERFORMANCE
+
+User-reported maximum:
+**~20 FPS**
+
+Controlled baseline:
+**Not yet established**
+
+---
+
+# KNOWN BLOCKERS
+
+None yet. Phase 1 must identify the actual bottlenecks.
+
+---
+
+# NEXT SESSION INSTRUCTION
+
+Run the physical RTX 3060 Laptop validation for Phases 0 through 4. This is
+the first incomplete gate and must be completed before Phase 5 precision work.
+
+Do not start Phase 5 precision optimization, and do not change the existing
+FP32 safeguards before the RTX 3060 gate is documented.
+
+First establish:
+- execution graph,
+- exact bottleneck locations,
+- current resource usage,
+- current synchronization points,
+- current model/session lifecycle,
+- current video pipeline.
+
+Then update `OPTIMIZATION_PROGRESS.md` and this file with findings and the exact next action.
+
+---
+
+# PHASE TRANSITION RULE
+
+When a phase is complete:
+
+CURRENT PHASE → COMPLETE
+NEXT PHASE → IN PROGRESS
+
+Record:
+- files/functions changed,
+- tests,
+- benchmark,
+- before/after FPS,
+- resource metrics,
+- regressions,
+- Git checkpoint,
+- next action.
+
+Never leave the repository state ambiguous.
