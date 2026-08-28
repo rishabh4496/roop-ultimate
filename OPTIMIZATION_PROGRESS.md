@@ -17,14 +17,14 @@ Do not mark a phase complete based only on conversation history.
 
 ## CURRENT STATE
 
-**Current phase:** PHASE 7 — Dynamic Batching + Model Concurrency (RTX 3060 validation pending)
+**Current phase:** PHASE 8 — CPU↔GPU Transfer + Memory-Copy Optimization (RTX 3060 validation pending)
 
-**Status:** Phase 7 is implemented and benchmarked on the physical RTX 4070; RTX 3060 validation is PENDING. The strict Phase 4 RTX 3060 RSS gate and Phase 5 quality matrix remain unresolved.
+**Status:** Phase 8 transfer/copy implementation and physical RTX 4070 validation are recorded below; RTX 3060 validation is PENDING. The strict Phase 4 RTX 3060 RSS gate and Phase 5 quality matrix remain unresolved.
 
-**Last completed implementation phase:** PHASE 7 dynamic batching/concurrency implementation; validation checkpoint pending
+**Last completed implementation phase:** PHASE 8 CPU/GPU transfer and memory-copy implementation; RTX 3060 validation checkpoint pending
 
-**Next phase:** Run the identical Phase 7 batch/concurrency validation on the
-physical RTX 3060 Laptop; do not reuse RTX 4070 results or caches.
+**Next phase:** Run the identical Phase 8 transfer/copy harness and end-to-end
+validation on the physical RTX 3060 Laptop; do not reuse RTX 4070 results or caches.
 
 **Baseline FPS:** ~20 FPS (user-reported; must be formally measured in Phase 2)
 
@@ -40,8 +40,10 @@ two-face validation workload; the prior 5.12 FPS run remains historical.
 - NVIDIA RTX 3060 Laptop, required before Phase 5
 
 **Next-session instruction:**
-- Repeat the Phase 5 model-quality matrix and Phase 6 graph/stream checks on
+- Repeat the Phase 8 transfer/copy harness and exact end-to-end workload on
   the physical RTX 3060 Laptop when available.
+- Finish the pending Phase 5 model-quality matrix and Phase 6 graph/stream
+  checks on that same physical RTX 3060 Laptop.
 - Preserve the documented RTX 3060 Laptop RSS failure and do not reuse RTX
   4070 cache entries or benchmark results for it.
 
@@ -58,7 +60,7 @@ two-face validation workload; the prior 5.12 FPS run remains historical.
 | 5. Mixed FP16 / FP32 Precision | IMPLEMENTED; VALIDATION PENDING | — | No observed test regression | RTX 4070 policy and BF16/INT8/FP8 probes recorded; RTX 3060 and complete model-quality matrix pending |
 | 6. CUDA Streams + CUDA Graphs | RTX 4070 VALIDATED; RTX 3060 PENDING | — | No | Bounded stream policy accepted; GPEN 256 Pro graph functionally correct but slower and rejected from default runtime |
 | 7. Dynamic Batching / Concurrency | IMPLEMENTED; RTX 4070 VALIDATED; RTX 3060 PENDING | 12.61 composite / 4.09 historical real video | No observed test regression | Model-specific swap batch 8 wins isolated throughput; SPAN x4 tile batch 1 wins; runtime caps batching when contexts compete |
-| 8. CPU↔GPU Transfer + Memory-Copy Optimization | NOT STARTED | — | — | |
+| 8. CPU↔GPU Transfer + Memory-Copy Optimization | IMPLEMENTED; RTX 4070 VALIDATED; RTX 3060 PENDING | 3.82–4.24 real-video / 4.03 median | No sustained regression demonstrated | Removed redundant retry copy; guarded private-destination in-place paste; contiguous writer buffer view; ORT transfers retained at required boundaries |
 | 9. NVDEC / Video Decode | NOT STARTED | — | — | |
 | 10. CPU Threading / Detection / Tracking | NOT STARTED | — | — | |
 | 11. Enhancement Pipeline | NOT STARTED | — | — | |
@@ -500,6 +502,104 @@ remain intact.
 
 **Next phase:** Complete the pending RTX 3060 Phase 7 validation and the
 previous Phase 4/5 gates before advancing to Phase 8.
+
+---
+
+# PHASE 8 — CPU/GPU TRANSFER AND MEMORY-COPY OPTIMIZATION
+
+**Date/time:** 2026-08-28
+
+**Status:** Implemented and validated on the physical RTX 4070. RTX 3060
+Laptop validation is **PENDING**; no 4070 result is represented as a 3060
+result. The Phase 4 strict `<2.5 GB RSS` gate and Phase 5 model-quality matrix
+remain unresolved.
+
+**Implementation:**
+
+- `ProcessMgr.retry_rotated()` now rotates the input as a read-only view and
+  allocates only the writable rotated destination. The previous input copy was
+  immediately replaced by that destination copy.
+- `process_face()` passes an explicit private-destination permission to
+  `paste_upscale()`. The compositor writes in place only when the destination
+  is distinct from the original plate, C-contiguous, and the diagnostic overlay
+  is disabled. The copy-by-default contract remains for aliased, rotated, or
+  overlay paths.
+- `FFMPEG_VideoWriter.write_frame()` passes C-contiguous frames as a
+  `memoryview`, avoiding the Python `bytes` allocation. Non-contiguous frames
+  retain the old `tobytes()` fallback.
+- No safety copies were removed from decoder/cache ownership, `process_frame()`
+  plate isolation, `last_swapped_frame` reuse, autorotation restoration,
+  verification snapshots, stabilization queues, or writer ordering.
+
+**Repository-wide transfer audit decisions:**
+
+| Area | Classification and decision |
+|---|---|
+| ORT `bind_cpu_input` / `copy_outputs_to_cpu` in enhancers, masks, and `Frame_Upscale` | Required CPU input/CPU OpenCV output boundary; format conversion and ownership are explicit. Not thread-safety-only, not safely reusable across dynamic shapes, and no GPU-resident consumer follows in the current pipeline. Retained. |
+| `Expression_LivePortrait` iobinding | Accepted GPU→GPU chain: first output is synchronized as an ORTValue and bound into the second stage. The final keypoint arrays are made contiguous because non-contiguous views are rejected by the binding contract. Retained. |
+| `FaceSwapInsightFace` standard `.run()` | Retained deliberately; its tested iobinding form lacked the required TensorRT transfer path and would add an unsafe/ineffective copy change. |
+| `Mask_Clip2Seg` / `Mask_SAM2` `.cpu().numpy()` | Required by CPU mask post-processing and output format; no immediate GPU consumer. Retained. |
+| DMDNet, UltraMax, GPEN256Pro, and `enhance_common` torch GPU filters | Each is a small optional GPU filter around CPU image/model boundaries. The host→device and device→host transfers are format/ownership boundaries, not redundant GPU→CPU→GPU loops in the default chain. Pinned and asynchronous variants were benchmarked, not adopted globally. |
+| `process_frame()` / `swap_faces()` full-frame copies | The initial destination copy is required to keep the original plate immutable while faces are composited. The `last_swapped_frame` and no-face reuse copies are safety/ownership copies and remain. |
+| `process_face()` / `paste_upscale()` | One full-frame output copy was unnecessary for the normal private accumulating destination and is now guarded in place. ROI float conversions and verification/autorotation snapshots remain. |
+| `retry_rotated()` | One redundant full-frame input copy removed; writable rotated destination remains. Rotation views preserve ordering and are copied only where writes/contiguous consumers require it. |
+| Stabilization and writer handoff | Stabilization retains bounded chunk ownership and ordered result storage; writer remains the sole consumer. The writer now avoids `tobytes()` for contiguous frames while keeping a strided fallback. |
+| `cvtColor`, `resize`, `transpose`, `contiguous`, `ascontiguousarray`, `astype`, `np.array`, `np.asarray`, and `.copy()` | Each occurrence was classified as geometry/format normalization, model contract, ROI safety, cache/thread ownership, or output encoding. No broad mechanical replacement was made; full-frame safety and format copies were preserved. |
+
+**RTX 4070 transfer/copy benchmark:** Physical NVIDIA GeForce RTX 4070,
+SM 8.9, 11.99 GiB VRAM, CUDA 12.8, TensorRT 10.9.0.34, ORT 1.23.2,
+driver 610.88. Command:
+`app\\env\\Scripts\\python.exe tests\\bench_phase8_transfer.py`.
+
+| Operation | 1920×1080 | 3840×2160 |
+|---|---:|---:|
+| Frame bytes | 6,220,800 | 24,883,200 |
+| `frame.copy()` median | 1.220 ms | 3.947 ms |
+| `retry_rotated` old → new | 18.688 → 15.622 ms | 68.305 → 60.149 ms |
+| `paste_upscale` copy → guarded in-place | 14.260 → 13.076 ms | 49.698 → 50.467 ms |
+| Writer `tobytes()` → contiguous `memoryview` | 0.830 → ~0 ms | 4.730 → ~0 ms |
+
+The 4K paste result is within noisy isolated variation and is not claimed as
+an improvement; the guarded path is retained because it removes an allocation
+without changing output ownership and the end-to-end gate did not show a
+sustained regression. The retry and writer savings are reproducible in the
+operation-level harness.
+
+The same harness's float32 CUDA transfer probe used 24.88 MB / 99.53 MB
+tensors (not BGR frame bytes): H2D was 2.004 / 7.934 ms and D2H was 2.119 /
+7.084 ms. Pinned staging was 1.821 ms at the smaller size and 8.425 ms at the
+larger size, including the CPU→pinned staging copy. It is therefore not a
+universal win and remains unused in the production path. No asynchronous
+transfer was enabled because the current consumers require completion before
+CPU OpenCV reads and the ORT bindings already own their synchronization.
+
+**RTX 4070 end-to-end validation:** The exact 141-frame, 1280×720, two-face
+RealSwap + GPEN 256 Pro + RealityUX + tracking/stabilization workload was run
+twice after the change. Results were **3.82 FPS / 36.88 s** and **4.24 FPS /
+33.26 s**, with identical swap-audit counts (403 faces seen, 386 swapped, 17
+refused) and progress RSS of approximately **9.82–10.19 GB**. The two-run
+median is **4.03 FPS**, so this phase claims no sustained end-to-end regression
+against the documented 4.09 FPS historical reference, not a speedup. The
+available hardware was the same 4070 adaptive profile; no RTX 3060 metric is
+invented here. The existing baseline run's sampled 4070 VRAM/utilization
+range (3.36–3.74 GiB used, 29–75% GPU utilization, 45–111 W) remains the
+closest resource sample for this exact workload; Phase 8 did not add a
+concurrent `nvidia-smi` sampler.
+
+**RTX 3060 validation:** **PENDING.** On the physical RTX 3060 Laptop, run
+the identical `tests\\bench_phase8_transfer.py` command and the identical
+two-face command with a new output tag. Record 1080p/4K copy and transfer
+medians, pinned staging result, end-to-end FPS, latency, VRAM, GPU utilization,
+RAM/RSS, queue depth, and output/audit counts. Repeat with the sub-7 GB
+single-context/global-guard profile and enforce the strict `<2.5 GB RSS` gate.
+Do not copy 4070 timings, recommendations, caches, or resource values.
+
+**Regression review:** Focused correctness tests passed 99/99. The complete
+suite passed **1,363 tests, 1 skipped, 589 subtests**; Python compilation and
+`git diff --check` passed. No GPU-specific RTX 3060 regression can be concluded
+until the physical laptop is tested. Hardware-adaptive behavior is preserved:
+the changes are ownership/format guarded and introduce no RTX 4070-specific
+constants, context counts, stream counts, tile sizes, or batch settings.
 
 ## RTX 4070 completion audit — Phases 0–6
 

@@ -341,7 +341,7 @@ class MaskingMixin:
         blended_image = image1.astype(np.float32) * (1.0 - mask) + image2.astype(np.float32) * mask
         return np.clip(blended_image, 0, 255).astype(np.uint8)
 
-    def paste_upscale(self, fake_face, upsk_face, M, target_img, scale_factor, mask_offsets, face_landmarks=None, face_kps=None, region=None, model_mask=None, model_mask_weight=0.0):
+    def paste_upscale(self, fake_face, upsk_face, M, target_img, scale_factor, mask_offsets, face_landmarks=None, face_kps=None, region=None, model_mask=None, model_mask_weight=0.0, inplace=False):
         M_scale = M * scale_factor
         IM = cv2.invertAffineTransform(M_scale)
 
@@ -444,7 +444,18 @@ class MaskingMixin:
 
         blended_roi = roi_matte * roi_paste + (1.0 - roi_matte) * roi_target
 
-        out_img = target_img.copy()
+        # ProcessMgr supplies an accumulating destination that is already
+        # private from the original plate.  Re-copying that entire frame here
+        # costs ~6 MB at 1080p / ~24 MB at 4K for every face.  Keep the old
+        # copy-by-default contract for callers that may alias plate and frame,
+        # for non-contiguous rotated views, and for the diagnostic overlay.
+        # The hot path opts in only after it has established those ownership
+        # conditions in process_face().
+        if (inplace and not self.options.show_face_area_overlay
+                and getattr(target_img.flags, 'c_contiguous', False)):
+            out_img = target_img
+        else:
+            out_img = target_img.copy()
         out_img[y0:y1, x0:x1] = np.clip(blended_roi, 0, 255).astype(np.uint8)
 
         if self.options.show_face_area_overlay:

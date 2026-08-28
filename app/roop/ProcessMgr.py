@@ -2405,15 +2405,17 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
         return ret
 
     def retry_rotated(self, frame):
-        copyframe = frame.copy()
-        copyframe = rotate_clockwise(copyframe)
+        # rotate_* returns a read-only view; swap_faces only reads its plate and
+        # writes the separate destination below.  The old input copy was
+        # therefore immediately superseded by the destination copy, costing a
+        # full frame per retry (6 MB at 1080p / 24 MB at 4K).
+        copyframe = rotate_clockwise(frame)
         temp_frame = copyframe.copy()
         num_swapped, temp_frame = self.swap_faces(copyframe, temp_frame)
         if num_swapped > 0:
             return rotate_anticlockwise(temp_frame)
         
-        copyframe = frame.copy()
-        copyframe = rotate_anticlockwise(copyframe)
+        copyframe = rotate_anticlockwise(frame)
         temp_frame = copyframe.copy()
         num_swapped, temp_frame = self.swap_faces(copyframe, temp_frame)
         if num_swapped > 0:
@@ -3640,6 +3642,7 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
         """
         from roop.face_util import align_crop
 
+        destination_is_private = plate is not None and plate is not frame
         if plate is None:
             plate = frame
 
@@ -4507,9 +4510,9 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
 
         if enhanced_frame is None:
             scale_factor = int(upscale / orig_width)
-            result = self.paste_upscale(fake_frame, fake_frame, target_face.matrix, frame, scale_factor, mask_offsets, face_landmarks=face_lm, face_kps=face_kps, region=region, model_mask=model_mask, model_mask_weight=model_mask_weight)
+            result = self.paste_upscale(fake_frame, fake_frame, target_face.matrix, frame, scale_factor, mask_offsets, face_landmarks=face_lm, face_kps=face_kps, region=region, model_mask=model_mask, model_mask_weight=model_mask_weight, inplace=destination_is_private)
         else:
-            result = self.paste_upscale(fake_frame, enhanced_frame, target_face.matrix, frame, scale_factor, mask_offsets, face_landmarks=face_lm, face_kps=face_kps, region=region, model_mask=model_mask, model_mask_weight=model_mask_weight)
+            result = self.paste_upscale(fake_frame, enhanced_frame, target_face.matrix, frame, scale_factor, mask_offsets, face_landmarks=face_lm, face_kps=face_kps, region=region, model_mask=model_mask, model_mask_weight=model_mask_weight, inplace=destination_is_private)
         _dbg_rng = os.environ.get('ROOP_DEBUG_DUMP_RANGE')
         if _dbg_rng:
             try:

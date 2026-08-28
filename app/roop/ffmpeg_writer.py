@@ -347,10 +347,14 @@ class FFMPEG_VideoWriter:
                 "browser control.\n\nffmpeg said:\n"
                 + ffmpeg_error.decode('utf-8', 'replace'))
         try:
-            #if PY3:
-            self.proc.stdin.write(img_array.tobytes())
-            # else:
-            #    self.proc.stdin.write(img_array.tostring())
+            # A contiguous numpy frame can be handed to the pipe as a buffer
+            # view, avoiding the per-frame bytes allocation/copy.  Rotated or
+            # otherwise strided frames are deliberately kept on the safe
+            # fallback: BufferedWriter requires a contiguous buffer, and the
+            # explicit tobytes() preserves the old output ordering/format.
+            frame_view = memoryview(img_array)
+            self.proc.stdin.write(
+                frame_view if frame_view.c_contiguous else img_array.tobytes())
             self._frames_written += 1
         except IOError as err:
             # Same reasoning as the poll() check above: a hardware encoder that

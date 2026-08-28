@@ -59,14 +59,14 @@ Before doing anything:
 
 **Session:** 1
 
-**Current phase:** PHASE 7 — Dynamic Batching + Model Concurrency (RTX 3060 validation pending)
+**Current phase:** PHASE 8 — CPU↔GPU Transfer + Memory-Copy Optimization (RTX 3060 validation pending)
 
-**Phase status:** RTX 4070 Phase 7 implementation/benchmark validation is
-complete; physical RTX 3060 Laptop validation is pending. The Phase 4 RSS gate
+**Phase status:** RTX 4070 Phase 8 implementation/benchmark validation is
+complete as recorded below; physical RTX 3060 Laptop validation is pending. The Phase 4 RSS gate
 and Phase 5 quality matrix remain unresolved.
 
-**Last completed implementation:** Phase 7 dynamic batching/concurrency
-implementation; validation checkpoint pending
+**Last completed implementation:** Phase 8 CPU/GPU transfer and memory-copy
+implementation; RTX 3060 validation checkpoint pending
 
 **Immediate next action:**
 Repeat the Phase 7 batch/concurrency and Frame_Upscale tile-batch acceptance
@@ -418,3 +418,54 @@ reused.
 **1,364 passed, 1 skipped**. Python compilation and `git diff --check` pass.
 No launcher script was edited; the locked Pinokio URL capture example therefore
 required no change.
+
+---
+
+# PHASE 8 HANDOFF — CPU/GPU TRANSFER AND MEMORY-COPY OPTIMIZATION
+
+**Recorded:** 2026-08-28
+
+Phase 8 implementation is present in `app/roop/ProcessMgr.py`,
+`app/roop/procmgr_masking.py`, and `app/roop/ffmpeg_writer.py`, with the
+repeatable harness at `app/tests/bench_phase8_transfer.py`. The locked Pinokio
+launcher example was not touched.
+
+The accepted changes are ownership-guarded: `retry_rotated()` no longer makes
+an input copy before creating its writable rotated destination;
+`paste_upscale()` can update the private accumulating destination in place;
+and the writer uses a `memoryview` for contiguous frames. Safety copies remain
+for plate isolation, cache/thread ownership, last-frame reuse, autorotation
+restoration, verification snapshots, and bounded stabilization/writer queues.
+The ORT iobinding boundaries and LivePortrait GPU→GPU ORTValue chain remain
+unchanged. No pinned or asynchronous transfer path is enabled in production.
+
+RTX 4070 physical results, from the identical harness command
+`app\\env\\Scripts\\python.exe tests\\bench_phase8_transfer.py`:
+
+| Measure | RTX 4070 | RTX 3060 Laptop |
+|---|---:|---:|
+| `frame.copy()` median, 1080p / 4K | 1.220 / 3.947 ms | PENDING |
+| Retry old → new, 1080p / 4K | 18.688 → 15.622 / 68.305 → 60.149 ms | PENDING |
+| Paste legacy → in-place, 1080p / 4K | 14.260 → 13.076 / 49.698 → 50.467 ms | PENDING |
+| Writer `tobytes()` → view, 1080p / 4K | 0.830 → ~0 / 4.730 → ~0 ms | PENDING |
+| H2D / D2H float32 probe | 2.004 / 2.119 ms (24.88 MB); 7.934 / 7.084 ms (99.53 MB) | PENDING |
+| Pinned H2D including staging | 1.821 ms / 8.425 ms; not adopted globally | PENDING |
+| Exact 141-frame end-to-end run | 3.82 FPS (36.88 s), repeat 4.24 FPS (33.26 s); median 4.03 FPS; RSS ~9.82–10.19 GB | PENDING |
+
+The 4070 end-to-end runs had identical audit counts: 403 faces seen, 386
+swapped, 17 refused. This is a no-sustained-regression result against the
+4.09 FPS historical reference, not a claimed improvement. The closest existing
+same-workload resource sample remains 3.36–3.74 GiB VRAM used, 29–75% GPU
+utilization, and 45–111 W; Phase 8 did not run an `nvidia-smi` sampler during
+the new runs. No RTX 3060 value is inferred.
+
+**Required next validation:** On the physical RTX 3060 Laptop, run the same
+transfer harness and exact two-face command, recording FPS, latency, VRAM,
+GPU utilization, RAM/RSS, queue depth, output/audit counts, and the strict
+`<2.5 GB RSS` result under the sub-7 GB single-context/global-guard profile.
+Keep the two hardware result rows separate and do not reuse the 4070 cache or
+recommendation.
+
+**Checks:** Full suite **1,363 passed, 1 skipped, 589 subtests**; focused
+ownership/transfer-related suite 99 passed; Python compilation passed;
+`git diff --check` passed. RTX 3060 validation remains pending.
