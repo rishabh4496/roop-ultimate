@@ -6,6 +6,9 @@ from unittest.mock import patch
 
 from roop.runtime_optimizer import (
     AutoTuner,
+    CUDAGraphInvalidation,
+    CUDAGraphManager,
+    CUDAGraphRunner,
     HardwareProfile,
     ProfileStore,
     ResourceManager,
@@ -59,6 +62,47 @@ def _workload(faces=1, enhanced=True, stabilized=True, width=1280, height=720):
 
 
 class RuntimeOptimizerTests(unittest.TestCase):
+    def test_stream_policy_is_bounded_and_small_gpu_is_serial(self):
+        manager = CUDAGraphManager()
+        small = manager.stream_policy({}, _workload(faces=2),
+                                     _hardware(6.0, physical=8, logical=16),
+                                     independent_work=4)
+        desktop = manager.stream_policy({}, _workload(faces=2),
+                                        _hardware(12.0), independent_work=4)
+        self.assertEqual(small['stream_count'], 1)
+        self.assertEqual(small['auxiliary_streams'], 0)
+        self.assertFalse(small['safe_to_overlap'])
+        self.assertEqual(desktop['stream_count'], 2)
+        self.assertEqual(desktop['auxiliary_streams'], 1)
+        self.assertTrue(desktop['safe_to_overlap'])
+
+    def test_stream_policy_serializes_shared_mutable_buffers(self):
+        policy = CUDAGraphManager.stream_policy(
+            {}, _workload(faces=2), _hardware(12.0), independent_work=2,
+            shared_mutable_buffers=True)
+        self.assertEqual(policy['stream_count'], 1)
+        self.assertFalse(policy['safe_to_overlap'])
+
+    def test_graph_readiness_is_opt_in_and_reports_stream_policy(self):
+        manager = CUDAGraphManager()
+        workload = _workload()
+        off = manager.readiness({}, workload, _hardware(12.0))
+        on = manager.readiness({'trt_cuda_graph': True}, workload,
+                               _hardware(12.0))
+        self.assertFalse(off['requested'])
+        self.assertFalse(off['safe'])
+        self.assertTrue(on['requested'])
+        self.assertTrue(on['safe'])
+        self.assertIn('stream_policy', on)
+
+    def test_graph_replay_rejects_identity_change(self):
+        runner = CUDAGraphRunner(('model', 'shape-256'))
+        runner.captured = True
+        runner.graph = object()
+        runner.static_inputs = ()
+        with self.assertRaises(CUDAGraphInvalidation):
+            runner.replay((), key=('model', 'shape-512'))
+
     def test_both_hardware_profiles_have_bounded_different_policies(self):
         tuner = AutoTuner()
         small, *_ = tuner.tune(_hardware(6.0, physical=8, logical=16), _workload(), {})
@@ -123,6 +167,18 @@ class RuntimeOptimizerTests(unittest.TestCase):
         third = manager.cache_key(hardware, _workload(width=1280), {"swap_model": "hyperswap"}, "mixed")
         self.assertNotEqual(first, second)
         self.assertNotEqual(first, third)
+
+    def test_cache_key_changes_when_cuda_schedule_changes(self):
+        manager = TensorRTEngineManager()
+        hardware = _hardware(12.0)
+        workload = _workload()
+        serial = manager.cache_key(
+            hardware, workload,
+            {"swap_model": "realswap", "trt_auxiliary_streams": 0}, "mixed")
+        overlapped = manager.cache_key(
+            hardware, workload,
+            {"swap_model": "realswap", "trt_auxiliary_streams": 1}, "mixed")
+        self.assertNotEqual(serial, overlapped)
 
     def test_profile_store_round_trips_atomically(self):
         hardware = _hardware(6.0, physical=8, logical=16)

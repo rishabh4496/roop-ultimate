@@ -65,6 +65,7 @@ from roop.processors.enhance_common import (sized, looks_collapsed, exclusive,
 from roop.utilities import resolve_relative_path, conditional_download
 from roop import session_pool
 from roop.precision_policy import providers_for
+from roop.runtime_optimizer import CUDAGraphRunner
 
 try:
     import torch
@@ -121,6 +122,9 @@ class Enhance_GPEN256Pro:
     # 512x512 gaussian on EVERY face to produce a bit-identical array.
     _GRAIN = {}
     _GRAIN_LOCK = threading.Lock()
+    # A graph owns mutable static input/output addresses. Keep one per worker
+    # thread; sharing this across ProcessMgr workers would race the graph.
+    _GRAPH_LOCAL = threading.local()
 
     @classmethod
     def _grain(cls, size):
@@ -223,6 +227,11 @@ class Enhance_GPEN256Pro:
         self.io_binding = None
         self.session = None
         self._lut = None
+        cls = type(self)
+        runner = getattr(cls._GRAPH_LOCAL, 'runner', None)
+        if runner is not None:
+            runner.invalidate('processor released')
+            cls._GRAPH_LOCAL.runner = None
 
     # ── colour & texture processing ──────────────────────────────────────────
     @classmethod
@@ -261,17 +270,15 @@ class Enhance_GPEN256Pro:
         return res
 
     @classmethod
-    def _enhance_textures_and_sharpness_gpu(cls, restored, source, input_size):
-        device = torch.device('cuda')
-        try:
-            want = int(os.environ.get('ROOP_GPEN256PRO_SIZE', '') or 0)
-        except ValueError:
-            want = 0
-        target_size = want if want in (256, 512, 1024) else (512 if input_size <= 256 else input_size)
+    def _gpu_filter_core(cls, r_t, s_t, target_size, graph_safe=False):
+        """Run the filter from already-created NCHW CUDA tensors.
 
-        r_t = torch.from_numpy(restored).to(device, dtype=torch.float32).permute(2, 0, 1).unsqueeze(0)
-        s_t = torch.from_numpy(source).to(device, dtype=torch.float32).permute(2, 0, 1).unsqueeze(0)
-
+        ``graph_safe`` removes the only host-side branch (the low-texture grain
+        threshold) by expressing it as tensor arithmetic. That keeps the graph
+        path's execution shape and control flow fixed while preserving the
+        normal path's established FP32 implementation.
+        """
+        device = r_t.device
         if r_t.shape[2:] != (target_size, target_size):
             rest_f = _F.interpolate(r_t, size=(target_size, target_size), mode='bicubic', align_corners=False)
         else:
@@ -304,15 +311,18 @@ class Enhance_GPEN256Pro:
         core = torch.exp(hf_texture * hf_texture * (-1.0 / 256.0))
         injected_texture = hf_texture * core * w_tex
 
+        if not hasattr(cls, '_grain_gpu'):
+            cls._grain_gpu = {}
+        g_gpu = cls._grain_gpu.get(target_size)
+        if g_gpu is None:
+            g_gpu = torch.from_numpy(cls._grain(target_size).copy()).to(device, dtype=torch.float32).permute(2, 0, 1).unsqueeze(0)
+            cls._grain_gpu[target_size] = g_gpu
         hf_std = torch.std(hf_texture)
-        if hf_std < 3.5:
+        if graph_safe:
+            k = (1.0 - torch.clamp(hf_std / 3.5, 0.0, 1.0)) / 0.85
+            injected_texture = injected_texture + g_gpu * (w_tex * k)
+        elif hf_std < 3.5:
             k = (1.0 - min(1.0, float(hf_std) / 3.5)) / 0.85
-            if not hasattr(cls, '_grain_gpu'):
-                cls._grain_gpu = {}
-            g_gpu = cls._grain_gpu.get(target_size)
-            if g_gpu is None:
-                g_gpu = torch.from_numpy(cls._grain(target_size).copy()).to(device, dtype=torch.float32).permute(2, 0, 1).unsqueeze(0)
-                cls._grain_gpu[target_size] = g_gpu
             injected_texture = injected_texture + g_gpu * (w_tex * k)
 
         k_sharp, r_ksharp = cls._gaussian_kernel_2d_gpu(0.8 * (target_size / 256.0), device)
@@ -321,8 +331,60 @@ class Enhance_GPEN256Pro:
         hf_restored = rest_f - rest_blur
         sharpness_amount = 0.42 - skin_gate * 0.30
         sharpened_features = hf_restored * sharpness_amount
+        return torch.clamp(rest_f + injected_texture + sharpened_features, 0, 255).to(torch.uint8)
 
-        out = torch.clamp(rest_f + injected_texture + sharpened_features, 0, 255).to(torch.uint8)
+    @classmethod
+    def _graph_filter_enabled(cls):
+        return os.environ.get('ROOP_CUDA_GRAPH_FILTER', '0').strip().lower() in (
+            '1', 'true', 'yes', 'on') and CUDAGraphRunner.supported()
+
+    @classmethod
+    def _enhance_textures_and_sharpness_graph(cls, restored, source,
+                                               input_size, target_size, device):
+        """Replay one fixed-shape filter graph owned by the current worker."""
+        r_t = torch.from_numpy(np.ascontiguousarray(restored)).to(
+            device, dtype=torch.float32).permute(2, 0, 1).unsqueeze(0).contiguous()
+        s_t = torch.from_numpy(np.ascontiguousarray(source)).to(
+            device, dtype=torch.float32).permute(2, 0, 1).unsqueeze(0).contiguous()
+        key = (
+            'gpen_256_pro_filter_v1', 'fp32', str(device),
+            tuple(restored.shape), tuple(source.shape),
+            tuple(restored.strides), tuple(source.strides),
+            str(restored.dtype), str(source.dtype), int(input_size),
+            int(target_size), os.environ.get('ROOP_GPEN256PRO_SIZE', ''),
+            os.environ.get('ROOP_RUNTIME_PROFILE_KEY', ''),
+            os.environ.get('ROOP_TRT_CUDA_GRAPH', '0'),
+            os.environ.get('ROOP_TRT_AUX_STREAMS', '-1'))
+        state = cls._GRAPH_LOCAL
+        runner = getattr(state, 'runner', None)
+        if runner is None or runner.key != key:
+            if runner is not None:
+                runner.invalidate('shape, layout, model, configuration, or precision changed')
+            runner = CUDAGraphRunner(key)
+            runner.capture(
+                (r_t, s_t),
+                lambda r, s: cls._gpu_filter_core(
+                    r, s, target_size, graph_safe=True))
+            state.runner = runner
+        out = runner.replay((r_t, s_t), key=key)
+        return out[0].permute(1, 2, 0).cpu().numpy()
+
+    @classmethod
+    def _enhance_textures_and_sharpness_gpu(cls, restored, source, input_size):
+        device = torch.device('cuda')
+        try:
+            want = int(os.environ.get('ROOP_GPEN256PRO_SIZE', '') or 0)
+        except ValueError:
+            want = 0
+        target_size = want if want in (256, 512, 1024) else (512 if input_size <= 256 else input_size)
+
+        if cls._graph_filter_enabled():
+            return cls._enhance_textures_and_sharpness_graph(
+                restored, source, input_size, target_size, device)
+
+        r_t = torch.from_numpy(restored).to(device, dtype=torch.float32).permute(2, 0, 1).unsqueeze(0)
+        s_t = torch.from_numpy(source).to(device, dtype=torch.float32).permute(2, 0, 1).unsqueeze(0)
+        out = cls._gpu_filter_core(r_t, s_t, target_size, graph_safe=False)
         return out[0].permute(1, 2, 0).cpu().numpy()
 
     @classmethod

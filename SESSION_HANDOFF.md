@@ -59,16 +59,19 @@ Before doing anything:
 
 **Session:** 1
 
-**Current phase:** PHASE 4 — TensorRT Engine Optimization (RTX 3060 Laptop gate)
+**Current phase:** PHASE 6 — CUDA Streams + CUDA Graphs (RTX 3060 validation pending)
 
-**Phase status:** RTX 4070 complete; physical RTX 3060 Laptop gate is blocked
+**Phase status:** RTX 4070 Phase 6 validation complete; physical RTX 3060
+Laptop validation is pending. The Phase 4 RSS gate and Phase 5 quality matrix
+remain unresolved.
 
-**Last completed phase:** PHASE 3 implementation, checkpoint `c439e43`
+**Last completed implementation:** Phase 5 model-specific precision policy,
+checkpoint `07d814e`
 
 **Immediate next action:**
-Resume Phase 4 work on the physical RTX 4070 system. Preserve the documented
-RTX 3060 Laptop RSS failure; do not start Phase 5 until the outstanding strict
-laptop gate is explicitly resolved.
+Repeat the Phase 5 precision-quality and Phase 6 stream/graph acceptance runs
+on the physical RTX 3060 Laptop. Preserve the documented strict RSS failure
+and do not reuse RTX 4070 results or caches.
 
 ---
 
@@ -279,3 +282,94 @@ cache entries. Also rerun the unresolved strict `<2.5 GB RSS` Phase 4 gate.
 
 The final full-suite recheck after the BF16 policy update passed 1,353 tests,
 with 1 skipped and 589 subtests passed.
+
+## RTX 4070 completion audit — remaining Phase 0–6 validation
+
+**Recorded:** 2026-08-28 21:00:04 +05:30
+
+The current host is the physical RTX 4070 (SM 8.9, 11.99 GiB, CUDA 12.8,
+TensorRT 10.9.0.34, ORT 1.23.2, driver 610.88). The controlled reference and
+remaining available-device checks are now recorded separately from the pending
+RTX 3060 target:
+
+- Corrected real-video workload: `double/d1.mp4`, 1280×720, 25 FPS, 141
+  frames, RealSwap mixed + GPEN 256 Pro + RealityUX, stabilization/tracking,
+  six workers. It completed in 34.44 s (**4.09 FPS**). Peak progress RSS was
+  approximately 10.47 GB. Sampled `nvidia-smi` readings were 3.36–3.74 GiB
+  VRAM used, 29–75% GPU utilization, and 45–111 W. The clip’s two people
+  overlap in every scanned frame (separation 0.107); 346/359 detections were
+  swapped and 13 were explicitly refused for shared crops. This is a valid
+  resource/pipeline result but a weak identity-quality acceptance clip.
+- Stream A/B with the same 4070 model stack: aux=0 measured enhanced 32.58
+  FPS and heavy 29.11 FPS; aux=1 measured enhanced 29.57 FPS and heavy 24.08
+  FPS. Aux=1 is rejected for this workload. The DFL XSeg benchmark returned
+  invalid throughput in both arms and is not interpreted as zero throughput.
+- CUDA graph: GPEN 256 Pro replay was finite/exact (max difference 0) but
+  slower, 2.06 ms versus 1.67 ms normal, so it remains opt-in/rejected from
+  the default. Provider-level graph capture did not reach a steady-state
+  result, so it is not a claimed FPS pass.
+- Precision: the LivePortrait stitching BF16 probe was finite and exactly
+  matched the tested FP32 input, but remains an explicit candidate only.
+  Calibrated INT8 was slower on that tiny graph and has no application
+  calibration/quality workflow; FP8 is unsupported on this Ada stack. The
+  GPEN 1024/2048 and GFPGAN FP32 safeguards remain unchanged.
+- The complete model-by-model Phase 5 quality matrix is still **PENDING**.
+  The attempted GPEN 256 Pro matrix was stopped after fresh arms timed out in
+  source capture; it produced no valid precision quality pass. No candidate
+  precision is enabled on that basis.
+
+RTX 3060 Laptop status remains **PENDING**. Required follow-up is the same
+workload on the physical laptop: capability fingerprint, BF16/INT8/FP8 probes,
+model-specific output/quality gates, stream and graph A/B, end-to-end FPS,
+latency, VRAM, RAM/RSS, GPU utilization, queue/synchronization telemetry, and
+the strict `<2.5 GB RSS` Phase 4 gate. The prior ~2.82–2.83 GB RSS failure is
+preserved. No 4070 result or cache is used as a 3060 result.
+
+Post-validation repository checks: full suite 1,358 passed / 1 skipped,
+focused Phase 6 suite 30 passed, Python compilation passed, and
+`git diff --check` passed. The next session must complete the physical RTX
+3060 validation before changing the dual-GPU acceptance state.
+
+---
+
+# PHASE 6 HANDOFF — CUDA STREAMS AND CUDA GRAPHS
+
+**Recorded:** 2026-08-28
+
+Phase 6 added a bounded hardware/workload stream policy and the reusable
+one-owner `CUDAGraphRunner` in `app/roop/runtime_optimizer.py`. Detected VRAM
+below 7 GB is limited to one stream and zero auxiliary TensorRT streams;
+larger devices are limited to two streams and at most one auxiliary stream,
+only for independent work without shared mutable buffers. Runtime cache keys
+include the CUDA schedule identity.
+
+The GPEN 256 Pro GPU filter is the only new graph candidate. It is explicit
+opt-in via `ROOP_CUDA_GRAPH_FILTER=1`, uses thread-local stable addresses,
+warmup/capture/replay, and invalidates on model, shape, batch, layout,
+configuration, precision, device, and schedule changes. Release and any graph
+failure drop back to the existing FP32 GPU/CPU path.
+
+The existing LivePortrait front-half overlap remains accepted because it uses
+separate ORT contexts for independent work. Its `synchronize_outputs()` fence
+must remain before warping reads the appearance feature buffer. Session pools
+remain the safe concurrency unit. UltraMax, enhancement compositing, and
+upscaling tiles remain normal execution because their buffers/dependencies are
+dynamic.
+
+Physical RTX 4070 validation: SM 8.9, 11.99 GiB VRAM, CUDA 12.8,
+TensorRT 10.9.0.34, ORT 1.23.2, driver 610.88. Normal GPEN 256 Pro filter was
+1.67 ms; captured/replayed was 2.06 ms, with finite output and max difference
+0, including the low-texture case. The graph is rejected from the default
+runtime because it was approximately 23% slower after host copies. The
+unchanged quick benchmark measured 31.23 FPS enhanced and 23.93 FPS heavy,
+with approximately 9.8–10.3 GB free VRAM during stage samples. The global
+TensorRT graph A/B did not reach its first detector steady-state result after
+approximately two minutes during fresh graph build/capture, so no FPS or
+quality pass is claimed and it remains opt-in.
+
+Physical RTX 3060 Laptop validation: **PENDING**. Run the same capability
+probe, stream-policy report, GPEN graph warm/capture/replay correctness and
+invalidation checks, then the identical real-video A/B with FPS, latency,
+VRAM, RAM/RSS, GPU utilization, queue depth, and synchronization metrics. Also
+rerun the strict `<2.5 GB RSS` Phase 4 two-face gate; the existing 2.82–2.83 GB
+RSS result remains blocked. Do not copy the RTX 4070 graph cache or timings.

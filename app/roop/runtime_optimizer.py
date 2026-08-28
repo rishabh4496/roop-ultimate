@@ -174,6 +174,8 @@ class RuntimeTuning:
     ort_intra_threads: int = 1
     ort_inter_threads: int = 1
     opencv_threads: int = 1
+    cuda_stream_count: int = 1
+    cuda_auxiliary_streams: int = 0
     encoder: str = "libx264"
     encoder_preset: str = "medium"
 
@@ -483,6 +485,11 @@ class TensorRTEngineManager:
             },
             "enhancer": workload.enhancement_model,
             "precision": precision,
+            "cuda_execution": {
+                "stream_count": _value(settings, "cuda_stream_count", "auto"),
+                "auxiliary_streams": _value(settings, "trt_auxiliary_streams", "auto"),
+                "cuda_graph": _value(settings, "trt_cuda_graph", False),
+            },
             "input": [workload.input_width, workload.input_height],
             "output": [workload.output_width, workload.output_height],
             "faces": round(workload.faces_per_frame, 2),
@@ -499,17 +506,159 @@ class TensorRTEngineManager:
 
 
 class CUDAGraphManager:
-    """CUDA graph readiness gate; capture is deliberately not performed here."""
+    """CUDA stream/graph policy and bounded graph-capture gate.
+
+    ORT/TensorRT owns its internal execution streams.  This class therefore
+    only recommends a small number of independent streams; it never creates a
+    stream for every worker.  CUDA Graph capture is opt-in and is only safe for
+    a caller that can provide fixed shapes, fixed addresses, and one immutable
+    execution path.  The actual runner below is deliberately independent of
+    ORT so an unsupported provider can fall back without changing inference.
+    """
+
+    @staticmethod
+    def stream_policy(settings: Any, workload: WorkloadProfile,
+                      hardware: HardwareProfile,
+                      independent_work: int = 1,
+                      shared_mutable_buffers: bool = False) -> dict:
+        """Return a bounded stream recommendation without creating streams.
+
+        A sub-7GB device gets one stream.  Larger devices may use two only
+        when the caller has actually identified independent work and no shared
+        mutable buffer.  The limit is intentionally a capability tier, not a
+        GPU model name or a worker-count multiplier.
+        """
+        small = 0 < hardware.vram_total_gb < 7.0
+        max_streams = 1 if small else 2
+        requested = _value(settings, "cuda_stream_count", "auto")
+        if str(requested).strip().lower() in ("", "auto", "default", "none"):
+            count = min(max_streams, max(1, _integer(independent_work, 1)))
+            source = "hardware/workload policy"
+        else:
+            count = max(1, min(max_streams, _integer(requested, 1)))
+            source = "explicit request bounded by hardware"
+        safe = bool(hardware.cuda_available and count > 1 and
+                    _integer(independent_work, 1) > 1 and
+                    not shared_mutable_buffers)
+        if shared_mutable_buffers:
+            count = 1
+            safe = False
+        # TensorRT auxiliary streams are per-context, not application-wide.
+        # Keep the small-card setting serial and never request more than one
+        # auxiliary stream from the larger-card profile.
+        auxiliary = 0 if small else (1 if safe else 0)
+        return {
+            "stream_count": count,
+            "max_streams": max_streams,
+            "auxiliary_streams": auxiliary,
+            "safe_to_overlap": safe,
+            "source": source,
+            "reason": ("independent work has no shared mutable buffers"
+                        if safe else "serial execution preserves dependency safety"),
+        }
 
     def readiness(self, settings: Any, workload: WorkloadProfile,
                   hardware: HardwareProfile) -> dict:
         requested = _bool(_value(settings, "trt_cuda_graph", False))
         stable_shapes = workload.input_width > 0 and workload.input_height > 0
         safe = requested and hardware.cuda_available and stable_shapes
-        reason = "enabled by user" if safe else (
+        streams = self.stream_policy(settings, workload, hardware,
+                                     independent_work=2,
+                                     shared_mutable_buffers=False)
+        reason = ("enabled by user; caller still needs a candidate-specific "
+                  "stable-shape/address contract" if safe else (
             "disabled by default; stable-shape capture is not yet wired" if not requested
-            else "requested but runtime capture is not implemented")
-        return {"requested": requested, "safe": safe, "reason": reason}
+            else "requested but the workload has no stable shape"))
+        return {"requested": requested, "safe": safe, "reason": reason,
+                "stream_policy": streams}
+
+
+class CUDAGraphInvalidation(RuntimeError):
+    """Raised when replay is attempted with a different execution identity."""
+
+
+class CUDAGraphRunner:
+    """A one-owner CUDA Graph runner for fixed-shape PyTorch work.
+
+    The owner must be one worker/thread.  Sharing a runner across workers would
+    race its static input buffers, so callers should keep one runner per worker
+    (or serialize access themselves).  ``capture`` performs the required warmup
+    and one synchronization before capture.  Replay uses stream ordering and
+    does not add a device-wide synchronization; copying the output to CPU is
+    the caller's natural completion point.
+    """
+
+    def __init__(self, key: Tuple[Any, ...], warmup: int = 3):
+        self.key = tuple(key)
+        self.warmup = max(1, int(warmup))
+        self.graph = None
+        self.static_inputs = None
+        self.static_output = None
+        self.captured = False
+        self.invalidation_reason = ""
+
+    @staticmethod
+    def supported() -> bool:
+        try:
+            import torch
+            return bool(torch.cuda.is_available() and
+                        hasattr(torch.cuda, "CUDAGraph"))
+        except Exception:
+            return False
+
+    def capture(self, inputs, function):
+        """Warm and capture ``function(*static_inputs)`` for this key."""
+        if not self.supported():
+            raise RuntimeError("CUDA Graphs are unavailable on this runtime")
+        import torch
+        values = tuple(inputs)
+        if not values or any(not isinstance(value, torch.Tensor)
+                             for value in values):
+            raise TypeError("CUDA Graph inputs must be torch tensors")
+        if any(not value.is_cuda for value in values):
+            raise TypeError("CUDA Graph inputs must be on CUDA")
+        if any(not value.is_contiguous() for value in values):
+            raise TypeError("CUDA Graph inputs must be contiguous")
+        self.static_inputs = tuple(torch.empty_like(value) for value in values)
+        for static, value in zip(self.static_inputs, values):
+            static.copy_(value)
+        for _ in range(self.warmup):
+            function(*self.static_inputs)
+        torch.cuda.synchronize(device=values[0].device)
+        graph = torch.cuda.CUDAGraph()
+        with torch.cuda.graph(graph):
+            output = function(*self.static_inputs)
+        if not isinstance(output, torch.Tensor):
+            raise TypeError("CUDA Graph runner currently requires one tensor output")
+        self.graph = graph
+        self.static_output = output
+        self.captured = True
+        return self
+
+    def replay(self, inputs, key=None):
+        """Copy inputs into stable addresses, then enqueue one graph replay."""
+        if not self.captured or self.graph is None:
+            raise RuntimeError("CUDA Graph has not been captured")
+        if key is not None and tuple(key) != self.key:
+            raise CUDAGraphInvalidation(
+                "CUDA Graph key changed; capture a new graph for this workload")
+        values = tuple(inputs)
+        if len(values) != len(self.static_inputs):
+            raise CUDAGraphInvalidation("CUDA Graph input count changed")
+        for static, value in zip(self.static_inputs, values):
+            if tuple(static.shape) != tuple(value.shape) or static.dtype != value.dtype:
+                raise CUDAGraphInvalidation("CUDA Graph input shape or dtype changed")
+            static.copy_(value)
+        self.graph.replay()
+        return self.static_output
+
+    def invalidate(self, reason: str = "configuration changed") -> None:
+        """Drop graph/static-buffer references so the next call recaptures."""
+        self.graph = None
+        self.static_inputs = None
+        self.static_output = None
+        self.captured = False
+        self.invalidation_reason = str(reason)
 
 
 class AutoTuner:
@@ -548,6 +697,11 @@ class AutoTuner:
         opencv = 1 if worker >= 8 or small else 2
         encoder = "hevc_nvenc" if hardware.nvenc_available else "libx264"
         preset = "p5" if hardware.nvenc_available else "medium"
+        stream_policy = CUDAGraphManager.stream_policy(
+            settings, workload,
+            hardware,
+            independent_work=2 if workload.faces_per_frame >= 2 else 1,
+            shared_mutable_buffers=False)
         values = {
             "trt_context_count": contexts,
             "worker_count": worker,
@@ -565,6 +719,8 @@ class AutoTuner:
             "ort_intra_threads": 1,
             "ort_inter_threads": 1,
             "opencv_threads": opencv,
+            "cuda_stream_count": stream_policy["stream_count"],
+            "cuda_auxiliary_streams": stream_policy["auxiliary_streams"],
             "encoder": encoder,
             "encoder_preset": preset,
         }
@@ -763,6 +919,8 @@ class RuntimeOptimizer:
             "ROOP_RUNTIME_CV_THREADS": tuning.opencv_threads,
             "ROOP_RUNTIME_BATCH_SIZE": tuning.batch_size,
             "ROOP_RUNTIME_TILE_BATCH_SIZE": tuning.tile_batch_size,
+            "ROOP_RUNTIME_CUDA_STREAMS": tuning.cuda_stream_count,
+            "ROOP_RUNTIME_TRT_AUX_STREAMS": tuning.cuda_auxiliary_streams,
         }
         # These values are hints for the staged rollout.  Do not expose a
         # derived value where an existing user-facing setting already pins the
@@ -788,7 +946,8 @@ class RuntimeOptimizer:
 
 
 __all__ = [
-    "AutoTuner", "CUDAGraphManager", "HardwareProfile", "HardwareProfiler",
+    "AutoTuner", "CUDAGraphInvalidation", "CUDAGraphManager",
+    "CUDAGraphRunner", "HardwareProfile", "HardwareProfiler",
     "PrecisionSelector", "ProfileStore", "ResourceManager", "RuntimeMonitor",
     "RuntimeOptimizer", "RuntimeProfile", "RuntimeTuning", "TensorRTEngineManager",
     "WorkloadProfile", "WorkloadProfiler",
