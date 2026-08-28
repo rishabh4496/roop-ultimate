@@ -8,14 +8,18 @@ idle — the mirror image of the NVENC encode work already done.
 FFmpegVideoReader speaks just enough of the cv2.VideoCapture protocol
 (set(CAP_PROP_POS_FRAMES) / read() / get() / release()) to be a drop-in for the
 sequential readers in ProcessMgr. It spawns ffmpeg with `-hwaccel cuda`, which
-decodes H.264/HEVC/VP9/AV1 on NVDEC and hands bgr24 frames back over stdout;
-codecs NVDEC can't do (GIF, old formats) silently decode in software inside the
-same pipe, which still fixes cv2's known HEVC quirks. Frame seeking uses
-ffmpeg's accurate input seeking at (start-0.5)/fps so trims/resume line up with
-cv2's frame numbering. `-noautorotate` matches cv2's raw (unrotated) output, and
-`-fps_mode passthrough` keeps the pipe at one output frame per DECODED frame —
-ffmpeg's default would re-time the raw stream to the container's r_frame_rate
-and duplicate/drop frames, which breaks that same frame numbering (see _spawn).
+decodes H.264/HEVC/VP9/AV1 on NVDEC. Safe 8-bit 4:2:0 sources can be
+downloaded as NV12 and converted once to mutable BGR for an explicit quality
+experiment; the automatic path uses the lossless BGR fallback because the
+existing OpenCV/NumPy/ORT consumers are sensitive to small colour deltas.
+Codecs NVDEC can't do
+(GIF, old formats) silently decode in software inside the same pipe, which
+still fixes cv2's known HEVC quirks. Frame seeking uses ffmpeg's accurate input
+seeking at (start-0.5)/fps so trims/resume line up with cv2's frame numbering.
+`-noautorotate` matches cv2's raw (unrotated) output, and `-fps_mode
+passthrough` keeps the pipe at one output frame per DECODED frame — ffmpeg's
+default would re-time the raw stream to the container's r_frame_rate and
+duplicate/drop frames, which breaks that same frame numbering (see _spawn).
 
 Rollout: ROOP_NVDEC=0 disables, =1 or unset (auto) enables behind a one-time
 per-file probe — if `-hwaccel cuda` can't decode the first frame, the caller
@@ -23,6 +27,7 @@ keeps its cv2 reader, so this can never break a run.
 """
 
 import os
+import queue
 import subprocess
 import threading
 
@@ -33,6 +38,11 @@ from roop.ffmpeg_writer import FFMPEG_BINARY
 
 _probe_cache = {}
 _probe_lock = threading.Lock()
+_pix_fmt_cache = {}
+_pix_fmt_lock = threading.Lock()
+
+_SAFE_NV12_PIX_FMTS = {"yuv420p", "yuvj420p", "nv12"}
+_END_OF_STREAM = object()
 
 
 def _popen_kwargs():
@@ -88,11 +98,98 @@ def _probe(video_path: str) -> bool:
     return ok
 
 
+def _ffprobe_binary():
+    """Resolve ffprobe next to the ffmpeg binary when possible."""
+    binary = str(FFMPEG_BINARY)
+    directory = os.path.dirname(binary)
+    return os.path.join(directory, "ffprobe") if directory else "ffprobe"
+
+
+def _source_pix_fmt(video_path: str) -> str:
+    """Return the source stream pixel format, cached per path.
+
+    This is deliberately separate from the boolean NVDEC probe.  The latter
+    answers whether CUDA can decode a frame; this probe answers whether it is
+    safe to download the decoder's native 8-bit 4:2:0 surface as NV12.  A
+    10-bit/4:2:2/4:4:4 source stays on the lossless BGR fallback path.
+    """
+    with _pix_fmt_lock:
+        if video_path in _pix_fmt_cache:
+            return _pix_fmt_cache[video_path]
+    value = ""
+    try:
+        proc = subprocess.run(
+            [_ffprobe_binary(), "-v", "error", "-select_streams", "v:0",
+             "-show_entries", "stream=pix_fmt", "-of", "default=nw=1:nk=1",
+             video_path],
+            capture_output=True, timeout=30, **_popen_kwargs())
+        value = (proc.stdout or b"").decode("utf-8", "replace").strip().splitlines()[0].lower()
+    except (IndexError, OSError, subprocess.SubprocessError):
+        value = ""
+    with _pix_fmt_lock:
+        _pix_fmt_cache[video_path] = value
+    return value
+
+
+def _auto_pix_fmt(video_path: str, width: int, height: int) -> str:
+    """Choose the host representation for a decoded frame.
+
+    NV12 is available as an explicit experiment, but remains opt-in.  On the
+    overlap-heavy acceptance clip its small (<=6 level) colour conversion
+    delta changed detector/tracker decisions, so preserving the established
+    OpenCV BGR contract is the automatic quality-safe choice.  A future
+    quality gate can enable NV12 with ROOP_NVDEC_NV12=1 without changing the
+    source-format safety check.
+    """
+    if (os.environ.get("ROOP_NVDEC_NV12", "").strip() == "1" and
+            width > 0 and height > 0 and width % 2 == 0 and height % 2 == 0 and
+            _source_pix_fmt(video_path) in _SAFE_NV12_PIX_FMTS):
+        return "nv12"
+    return "bgr24"
+
+
+def _auto_prefetch_depth() -> int:
+    """Return a bounded decode prefetch depth from the active GPU tier.
+
+    The queue contains decoded host frames, not GPU surfaces.  One slot is the
+    conservative low-VRAM setting; two slots let the larger tier overlap a
+    pipe read/colour conversion with downstream work.  Explicit settings are
+    bounded and remain useful for A/B tests.
+    """
+    requested = os.environ.get("ROOP_NVDEC_PREFETCH", "auto").strip().lower()
+    if requested not in ("", "auto", "default"):
+        try:
+            return max(0, min(4, int(requested)))
+        except ValueError:
+            pass
+
+    # Runtime profiles may already have selected an in-flight budget.  Reuse
+    # it when present, but never let it widen the safe reader bound.
+    try:
+        inflight = int(os.environ.get("ROOP_RUNTIME_INFLIGHT_FRAMES", "0"))
+    except ValueError:
+        inflight = 0
+    if inflight > 0:
+        return max(1, min(2, inflight))
+
+    # Detect capacity rather than naming RTX 3060/4070.  CUDA_VISIBLE_DEVICES
+    # makes the active device appear as index zero inside the app process.
+    try:
+        import torch
+        if torch.cuda.is_available():
+            total = float(torch.cuda.get_device_properties(0).total_memory) / (1024 ** 3)
+            return 1 if total < 7.0 else 2
+    except Exception:
+        pass
+    return 1
+
+
 class FFmpegVideoReader:
     """Sequential ffmpeg-pipe frame reader, cv2.VideoCapture-compatible for the
     set(POS_FRAMES) → read()* → release() pattern ProcessMgr's readers use."""
 
-    def __init__(self, video_path, width, height, fps, hwaccel="cuda"):
+    def __init__(self, video_path, width, height, fps, hwaccel="cuda",
+                 pix_fmt="auto", prefetch_depth=None):
         self.path = video_path
         self.width = int(width)
         self.height = int(height)
@@ -100,7 +197,28 @@ class FFmpegVideoReader:
         self.hwaccel = hwaccel
         self.proc = None
         self._start_frame = 0
-        self._frame_bytes = self.width * self.height * 3
+        if str(pix_fmt).strip().lower() in ("", "auto", "default"):
+            pix_fmt = os.environ.get("ROOP_NVDEC_PIXFMT", "auto")
+        if str(pix_fmt).strip().lower() in ("", "auto", "default"):
+            pix_fmt = _auto_pix_fmt(video_path, self.width, self.height)
+        pix_fmt = str(pix_fmt).strip().lower()
+        if pix_fmt not in ("bgr24", "nv12") or self.width % 2 or self.height % 2:
+            pix_fmt = "bgr24"
+        elif pix_fmt == "nv12" and _source_pix_fmt(video_path) not in _SAFE_NV12_PIX_FMTS:
+            # Never turn an explicitly requested 10-bit/4:2:2/4:4:4 source
+            # into an unannounced lossy 8-bit surface.
+            pix_fmt = "bgr24"
+        self.pix_fmt = pix_fmt
+        self.prefetch_depth = (_auto_prefetch_depth() if prefetch_depth is None
+                               else max(0, min(4, int(prefetch_depth))))
+        self._frame_bytes = (self.width * self.height * 3 // 2
+                             if self.pix_fmt == "nv12"
+                             else self.width * self.height * 3)
+        self._prefetch_queue = None
+        self._prefetch_thread = None
+        self._stop_event = threading.Event()
+        self._eof = False
+        self._prefetch_error = None
 
     def set(self, prop, value):
         if prop == cv2.CAP_PROP_POS_FRAMES and self.proc is None:
@@ -112,9 +230,14 @@ class FFmpegVideoReader:
                 cv2.CAP_PROP_FPS: self.fps}.get(prop, 0.0)
 
     def _spawn(self):
+        self._stop_event.clear()
+        self._eof = False
+        self._prefetch_error = None
         cmd = [FFMPEG_BINARY, "-hide_banner", "-loglevel", "error", "-nostdin"]
         if self.hwaccel:
             cmd += ["-hwaccel", self.hwaccel]
+            if self.hwaccel == "cuda" and self.pix_fmt == "nv12":
+                cmd += ["-hwaccel_output_format", "cuda"]
         if self._start_frame > 0 and self.fps > 0:
             # Accurate input seek: lands on the first frame whose PTS >= t.
             # Aiming half a frame early makes frame numbering match cv2's
@@ -133,15 +256,78 @@ class FFmpegVideoReader:
                 # passthrough makes the pipe match cv2's decoded-frame numbering,
                 # which is what frame_start / frame_count / seeking assume.
                 *_fps_mode_args(),
-                "-f", "rawvideo", "-pix_fmt", "bgr24", "-an", "-sn", "pipe:1"]
+                "-f", "rawvideo", "-pix_fmt", self.pix_fmt, "-an", "-sn", "pipe:1"]
+        if self.hwaccel == "cuda" and self.pix_fmt == "nv12":
+            # Keep the decoded surface on CUDA until the one intentional
+            # boundary.  NV12 is the decoder-native 8-bit 4:2:0 layout; the
+            # CPU conversion below produces the mutable BGR array OpenCV and
+            # the existing model path require.
+            # Insert the filter immediately before the rawvideo output.
+            output_at = cmd.index("-f")
+            cmd[output_at:output_at] = ["-vf", "hwdownload,format=nv12"]
         self.proc = subprocess.Popen(cmd, stdout=subprocess.PIPE,
                                      stderr=subprocess.DEVNULL,
                                      bufsize=self._frame_bytes * 4,
                                      **_popen_kwargs())
 
+        if self.prefetch_depth > 0:
+            self._prefetch_queue = queue.Queue(maxsize=self.prefetch_depth)
+            self._prefetch_thread = threading.Thread(
+                target=self._prefetch_loop, name="nvdec-prefetch", daemon=True)
+            self._prefetch_thread.start()
+
+    def _decode_buffer(self, buf):
+        if self.pix_fmt == "nv12":
+            yuv = np.frombuffer(buf, np.uint8).reshape(self.height * 3 // 2, self.width)
+            # The conversion is intentionally on the CPU: downstream code
+            # mutates ordinary BGR NumPy arrays and cannot consume CUDA frames.
+            return cv2.cvtColor(yuv, cv2.COLOR_YUV2BGR_NV12)
+        return np.frombuffer(buf, np.uint8).reshape(self.height, self.width, 3)
+
+    def _put_prefetched(self, item):
+        while not self._stop_event.is_set():
+            try:
+                self._prefetch_queue.put(item, timeout=0.1)
+                return True
+            except queue.Full:
+                continue
+        return False
+
+    def _prefetch_loop(self):
+        stdout = self.proc.stdout
+        try:
+            while not self._stop_event.is_set():
+                buf = bytearray(self._frame_bytes)
+                mv = memoryview(buf)
+                n = 0
+                while n < self._frame_bytes and not self._stop_event.is_set():
+                    k = stdout.readinto(mv[n:])
+                    if not k:
+                        self._eof = True
+                        self._put_prefetched(_END_OF_STREAM)
+                        return
+                    n += k
+                if self._stop_event.is_set():
+                    return
+                if not self._put_prefetched(self._decode_buffer(buf)):
+                    return
+        except Exception as exc:
+            self._prefetch_error = exc
+            self._eof = True
+            self._put_prefetched(_END_OF_STREAM)
+
     def read(self):
         if self.proc is None:
             self._spawn()
+        if self._eof and (self._prefetch_queue is None or
+                          self._prefetch_queue.empty()):
+            return False, None
+        if self.prefetch_depth > 0:
+            item = self._prefetch_queue.get()
+            if item is _END_OF_STREAM:
+                self._eof = True
+                return False, None
+            return True, item
         want = self._frame_bytes
         stdout = self.proc.stdout
         # Fill a pre-sized buffer in place. The old path built the frame with
@@ -162,14 +348,13 @@ class FFmpegVideoReader:
         while n < want:
             k = stdout.readinto(mv[n:])
             if not k:
+                self._eof = True
                 return False, None
             n += k
-        # frombuffer over the bytearray is zero-copy AND writable (bytes would
-        # be read-only, and downstream code mutates frames in place).
-        frame = np.frombuffer(buf, np.uint8).reshape(self.height, self.width, 3)
-        return True, frame
+        return True, self._decode_buffer(buf)
 
     def release(self):
+        self._stop_event.set()
         if self.proc is not None:
             try:
                 self.proc.stdout.close()
@@ -184,6 +369,15 @@ class FFmpegVideoReader:
                 except Exception:
                     pass
             self.proc = None
+        if self._prefetch_thread is not None:
+            self._prefetch_thread.join(timeout=2)
+            self._prefetch_thread = None
+        self._prefetch_queue = None
+
+    @property
+    def buffer_count(self):
+        """Number of decoded frames allowed to wait inside this reader."""
+        return self.prefetch_depth
 
 
 def wrap_capture(cap, video_path, width, height, fps, tag="decode"):
@@ -201,5 +395,7 @@ def wrap_capture(cap, video_path, width, height, fps, tag="decode"):
         cap.release()
     except Exception:
         pass
-    print(f"[NVDEC] GPU decode active for {tag} ({os.path.basename(video_path)})")
-    return FFmpegVideoReader(video_path, width, height, fps)
+    reader = FFmpegVideoReader(video_path, width, height, fps)
+    print(f"[NVDEC] GPU decode active for {tag} ({os.path.basename(video_path)}); "
+          f"host_format={reader.pix_fmt}, prefetch_depth={reader.prefetch_depth}")
+    return reader

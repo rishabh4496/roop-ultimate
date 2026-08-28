@@ -17,19 +17,19 @@ Do not mark a phase complete based only on conversation history.
 
 ## CURRENT STATE
 
-**Current phase:** PHASE 8 — CPU↔GPU Transfer + Memory-Copy Optimization (RTX 3060 validation pending)
+**Current phase:** PHASE 9 - NVDEC / Video Decode Pipeline (RTX 3060 validation pending)
 
-**Status:** Phase 8 transfer/copy implementation and physical RTX 4070 validation are recorded below; RTX 3060 validation is PENDING. The strict Phase 4 RTX 3060 RSS gate and Phase 5 quality matrix remain unresolved.
+**Status:** Phase 9 NVDEC implementation and physical RTX 4070 validation are recorded below; RTX 3060 validation is PENDING. The strict Phase 4 RTX 3060 RSS gate and the model-quality precision matrix remain unresolved. The latest valid 4070 NVDEC run also found a small repeatable face-attribution difference, so automatic NVDEC remains subject to the documented quality gate.
 
-**Last completed implementation phase:** PHASE 8 CPU/GPU transfer and memory-copy implementation; RTX 3060 validation checkpoint pending
+**Last completed implementation phase:** PHASE 9 NVDEC implementation; RTX 3060 validation checkpoint pending
 
-**Next phase:** Run the identical Phase 8 transfer/copy harness and end-to-end
-validation on the physical RTX 3060 Laptop; do not reuse RTX 4070 results or caches.
+**Next phase:** Run the identical Phase 9 decode matrix and end-to-end validation
+on the physical RTX 3060 Laptop; do not reuse RTX 4070 results or caches.
 
 **Baseline FPS:** ~20 FPS (user-reported; must be formally measured in Phase 2)
 
-**Current FPS:** 4.09 end-to-end FPS on the corrected 141-frame RTX 4070
-two-face validation workload; the prior 5.12 FPS run remains historical.
+**Current FPS:** 2.58 processing FPS on the latest valid 141-frame RTX 4070
+NVDEC end-to-end run; 4.09 FPS remains the historical Phase 7 workload result.
 
 **Primary known hardware:**
 - CPU: Intel Core i9-14900K
@@ -40,9 +40,9 @@ two-face validation workload; the prior 5.12 FPS run remains historical.
 - NVIDIA RTX 3060 Laptop, required before Phase 5
 
 **Next-session instruction:**
-- Repeat the Phase 8 transfer/copy harness and exact end-to-end workload on
-  the physical RTX 3060 Laptop when available.
-- Finish the pending Phase 5 model-quality matrix and Phase 6 graph/stream
+- Run the Phase 9 CPU/NVDEC/adaptive-BGR/NV12 decode and exact end-to-end
+  workload on the physical RTX 3060 Laptop when available.
+- Finish the pending Phase 5-8 model, graph/stream, batching, and transfer
   checks on that same physical RTX 3060 Laptop.
 - Preserve the documented RTX 3060 Laptop RSS failure and do not reuse RTX
   4070 cache entries or benchmark results for it.
@@ -57,11 +57,11 @@ two-face validation workload; the prior 5.12 FPS run remains historical.
 | 2. Baseline Profiling + Instrumentation | COMPLETE | 5.12 | No | RTX 4070 evidence recorded; RTX 3060 instrumentation and bounded evidence collected |
 | 3. Runtime Architecture / Resource Management | IMPLEMENTED; LAPTOP GATE BLOCKED | — | No | Sub-7GB policy, single worker, 1,536 MB cap, and adaptive 16-frame floor are active |
 | 4. TensorRT Engine Optimization | RTX 4070 COMPLETE; RTX 3060 BLOCKED | 5.12 | Yes | Model/context matrix ran, but composite admission rejected all pools and real-video RSS exceeded the laptop ceiling; do not advance until rerun passes |
-| 5. Mixed FP16 / FP32 Precision | IMPLEMENTED; VALIDATION PENDING | — | No observed test regression | RTX 4070 policy and BF16/INT8/FP8 probes recorded; RTX 3060 and complete model-quality matrix pending |
+| 5. Mixed FP16 / FP32 Precision | IMPLEMENTED; VALIDATION PENDING | — | 4070 quality run incomplete | RTX 4070 policy and BF16/INT8/FP8 probes recorded; fresh GPEN matrix arms hit the bounded 180 s limit; RTX 3060 pending |
 | 6. CUDA Streams + CUDA Graphs | RTX 4070 VALIDATED; RTX 3060 PENDING | — | No | Bounded stream policy accepted; GPEN 256 Pro graph functionally correct but slower and rejected from default runtime |
 | 7. Dynamic Batching / Concurrency | IMPLEMENTED; RTX 4070 VALIDATED; RTX 3060 PENDING | 12.61 composite / 4.09 historical real video | No observed test regression | Model-specific swap batch 8 wins isolated throughput; SPAN x4 tile batch 1 wins; runtime caps batching when contexts compete |
 | 8. CPU↔GPU Transfer + Memory-Copy Optimization | IMPLEMENTED; RTX 4070 VALIDATED; RTX 3060 PENDING | 3.82–4.24 real-video / 4.03 median | No sustained regression demonstrated | Removed redundant retry copy; guarded private-destination in-place paste; contiguous writer buffer view; ORT transfers retained at required boundaries |
-| 9. NVDEC / Video Decode | NOT STARTED | — | — | |
+| 9. NVDEC / Video Decode | IMPLEMENTED; RTX 4070 VALIDATED WITH FOLLOW-UP; RTX 3060 PENDING | 2.47–2.58 processing / 651.5 decode reference | NV12 rejected; adaptive BGR showed 2 wrong-attribution swaps in repeat runs | Bounded FFmpeg/NVDEC reader, ownership-safe prefetch, live 4070 telemetry; automatic BGR path remains under quality review |
 | 10. CPU Threading / Detection / Tracking | NOT STARTED | — | — | |
 | 11. Enhancement Pipeline | NOT STARTED | — | — | |
 | 12. Stabilization / Compositing / Postprocessing | NOT STARTED | — | — | |
@@ -333,9 +333,11 @@ two-face gate. Missing validation is not fabricated here.
 be concluded for RTX 3060 until its physical Phase 5 run. Hardware-adaptive
 behavior is preserved; no RTX 4070-only constants were introduced.
 
-**Next action:** Complete warm-cache, model-by-model precision quality runs on
-the RTX 4070, then execute the identical matrix on the RTX 3060 Laptop and
-update both records before accepting Phase 5 or advancing the phase.
+**Next action:** Re-run the precision quality matrix with a correctly matched,
+bounded fixture (the GPEN full-clip arms reached 180 seconds and did not yield
+a quality result), then investigate the repeatable adaptive-NVDEC attribution
+difference. Execute the identical validated tests on the RTX 3060 Laptop when
+available; do not accept either phase on RTX 4070 evidence alone.
 
 ## Phase 5 low-precision validation follow-up
 
@@ -632,3 +634,149 @@ physical RTX 3060 Laptop, including BF16/INT8/FP8 capability probes, model
 quality gates, stream/graph A/B, resource telemetry, and the unresolved strict
 RSS gate. Do not advance the dual-GPU acceptance state on the RTX 4070 result
 alone.
+
+---
+
+# PHASE 9 - NVDEC AND VIDEO INPUT PIPELINE
+
+**Date/time:** 2026-08-28
+
+**Status:** Implemented and validated on the physical RTX 4070. RTX 3060
+Laptop validation is **PENDING**, so dual-GPU phase acceptance is not claimed
+complete. The prior strict `<2.5 GB RSS` laptop gate remains active.
+
+## Audit and implementation
+
+| Component | Verified behavior |
+|---|---|
+| `app/roop/nvdec_reader.py` | FFmpeg raw-video pipe; CUDA mode uses NVDEC internally. The decoder surface is not exposed to Python. The automatic output is a mutable host `bgr24` NumPy array. |
+| `app/roop/capturer.py` | Preview/timeline uses OpenCV first, with a persistent sequential FFmpeg fallback. Its bounded LRU stores an owned copy and returns copies so overlays cannot mutate the cache. No GPU frame is exposed. |
+| `app/roop/ProcessMgr.py` | One sequential decode producer round-robins into bounded per-worker queues. Runtime queue depth is clamped by in-flight budget. Stabilization uses bounded `Queue(2)` decoded chunks and `Queue(1)` writer handoff. `process_frame()` copies the host BGR plate because downstream code mutates and retains it. |
+
+True zero-copy is not safe in this graph: OpenCV/NumPy/CPU mask code and ORT
+bindings require ordinary host arrays at the handoff. GPU-side colour
+conversion, pinned host allocation, and application-managed asynchronous H2D
+were investigated but not forced. ORT owns its provider transfers and fences.
+A reusable buffer pool would require a release/lease API; the current reader
+returns frames that workers and pre-passes may retain after the next read, so
+aliasing a ring slot would corrupt live work.
+
+The accepted hybrid path uses NVDEC, `readinto()` into private pre-sized host
+storage, a bounded asynchronous reader queue (automatic depth 1 below 7 GB,
+2 on larger detected devices), and the existing GPU processing path. BGR
+frames are writable views over their private raw storage, avoiding a second
+full-frame BGR copy. An explicit NV12 experiment uses
+`-hwaccel_output_format cuda` and one `hwdownload,format=nv12` boundary, but
+is source-format guarded and opt-in via `ROOP_NVDEC_NV12=1`. Automatic mode
+stays BGR after the quality gate below.
+
+## RTX 4070 results
+
+Physical profile: RTX 4070, compute capability 8.9, 11.994 GB VRAM, CUDA
+12.8, TensorRT 10.9.0.34, ORT 1.23.2, driver 610.88, 24 physical / 32
+logical CPU threads, 31.691 GB RAM; NVDEC and NVENC available.
+
+Five-run decode benchmark on 1280x720 H.264 `d1.mp4` (141 frames):
+
+| Arm | Median FPS | Format / depth | Interpretation |
+|---|---:|---|---|
+| CPU / OpenCV | **651.5** | BGR / synchronous | Reference |
+| NVDEC / sync BGR | **215.8** | BGR / 0 | Valid NVDEC baseline |
+| NVDEC / adaptive buffered | **204.2** | BGR / detected depth 2 | Bounded overlap; no reliable speedup on this short clip |
+| NVDEC / explicit NV12 buffered | **260.3** | NV12 + CPU conversion / 2 | Rejected from automatic mode by quality gate |
+
+Every arm returned 141/141 frames. Automatic BGR versus OpenCV had mean
+absolute pixel difference about 1.59 levels and max 14 across the clip. The
+explicit NV12 stream was numerically closer (about 1.22 mean / max 6), but the
+overlap-heavy end-to-end
+run reported 141 swaps for one CPU arm box versus 74 in the NV12 arm. That is
+recorded as a format-specific quality regression, not hidden behind its
+higher decode-only FPS.
+
+The initial true two-face end-to-end harness used RealSwap + GPEN 256 Pro +
+RealityUX, tracking/stabilization, six requested threads, and the same 141
+frames. It predates the corrected faceset-name validation and live sampler, so
+its resource fields are retained only as historical context:
+
+| Arm | Processing result | Resource result |
+|---|---:|---|
+| CPU BGR | **3.32 FPS / 42.49 s** | PENDING concurrent sampler |
+| NVDEC adaptive BGR | **3.31 FPS / 42.58 s** | progress RSS about 9.81-10.16 GB |
+| NVDEC explicit NV12 | **3.87 FPS / 36.46 s** | quality gate rejected |
+
+The corrected, sampled result is recorded in the RTX 4070 completion
+follow-up below. It supersedes the historical FPS comparison for acceptance
+purposes because it used the valid `harjot,ashna` two-faceset workload and
+detected a repeatable adaptive-NVDEC attribution difference.
+
+## Validation and next action
+
+- **RTX 4070:** validated reader shutdown, bounded prefetch, frame ordering,
+  mutable ownership, decode matrix, and end-to-end BGR/NV12 A/B. Hardware
+  adaptation is preserved; no 4070-specific context, stream, tile, batch, or
+  memory constant was added.
+- **RTX 3060:** **PENDING**. No physical laptop was available, so no laptop
+  FPS or resource metric is inferred. The low-VRAM one-context/global-guard
+  policy remains unchanged.
+
+Focused Phase 9/optimizer tests passed **88**, and the complete suite passed
+**1,367 passed, 1 skipped, 589 subtests**; Python compilation and `git
+diff --check` passed. The exact missing-device test is to
+run the same five-run decode matrix and the same two-face CPU, NVDEC sync BGR,
+adaptive buffered BGR, and explicit NV12 quality arms on the physical RTX
+3060, while sampling `nvidia-smi`, RSS, queue depth, FPS, latency, output/audit
+counts, and the strict `<2.5 GB RSS` gate under the sub-7 GB profile. Do not
+reuse RTX 4070 results or caches. Do not advance dual-GPU acceptance until
+that row is recorded.
+
+## RTX 4070 completion follow-up — Phase 0–9 residual audit
+
+**Recorded:** 2026-08-28
+
+The physical RTX 4070 full profile was rerun after Phase 9. It detected SM
+8.9, 11.994 GB VRAM, CUDA 12.8, TensorRT 10.9.0.34, ORT 1.23.2, NVDEC/NVENC,
+24 physical / 32 logical CPU threads, and 31.691 GB RAM. The measured
+hardware-adaptive recommendations were TensorRT provider; TRT pool 4;
+detector pool 6; detector-mask pool 2; expression pool 2; and workload thread
+knees of 16 standard, 6 enhanced, and 6 heavy. DFL XSeg was valid in this run
+and measured 343.8 / 470.9 / 461.4 / 423.0 / 335.3 calls/s for pools 1 / 2 /
+3 / 4 / 6, so pool 2 is its measured knee. Tile-upscale batch 1 remained the
+winner at 14.00 frame/s; larger batches were about 9.95–10.07 frame/s. The
+measured encoder winner was HEVC NVENC p5 at 150.2 frame/s. No RTX 3060 value
+is inferred from these results.
+
+The model-quality precision rerun was intentionally bounded at 180 seconds per
+arm. TensorRT FP32 and FP16 GPEN 256 Pro arms both timed out during the full
+quality workload and produced no valid quality result; the remaining arms were
+stopped. This closes the 4070 attempt with evidence, but does not make Phase 5
+complete or enable a new precision. A correctly matched shorter quality fixture
+is still required. The earlier GFPGAN FP16 collapse evidence and all FP32 guards
+remain authoritative.
+
+The Phase 9 end-to-end harness was corrected to require two faceset names and
+now samples the child process plus descendants, `nvidia-smi` GPU utilization,
+VRAM, and power. Two valid 141-frame `harjot,ashna` runs produced:
+
+| Arm | Run 1 | Run 2 | Measured resources / audit |
+|---|---:|---:|---|
+| CPU decode + GPU pipeline | 2.47 processing FPS / 117.65 s | 2.68 FPS / 107.11 s | 100% GPU peak; 7.792 GB VRAM peak; 170.33 W peak; 4.164 GB descendant RSS peak |
+| Adaptive NVDEC BGR + GPU pipeline | 2.58 FPS / 110.10 s | 2.58 FPS / 109.51 s | 100% GPU peak; 7.771 GB VRAM peak; 160.92 W peak; 3.826 GB descendant RSS peak |
+
+The adaptive BGR run was faster than CPU decode on the first pass and tied it
+on processing FPS on the second; it is not a sustained end-to-end gain on this
+fixture. Both valid NVDEC passes reproduced two wrong-faceset applications on
+two swaps for the right-hand face, while the CPU arms recorded zero wrong
+faceset applications. This is a small but repeatable GPU-specific attribution
+regression, so it must be investigated before claiming automatic NVDEC as a
+quality-safe optimization. The existing automatic hardware-adaptive selection
+and bounded queues remain intact; no RTX 4070-only constants were introduced.
+
+**4070 residual status:** Phase 4's strict `<2.5 GB RSS` gate is a required RTX
+3060 Laptop gate and remains pending on that hardware. Phase 5's quality matrix
+and the NVDEC attribution investigation remain pending on the 4070. Phase 6's
+global graph A/B was not promoted because the prior graph candidate was slower
+and the global steady-state run did not reach a valid result. Phase 7's DFL
+throughput concern is resolved for this rerun. RTX 3060 remains **PENDING** for
+every item; run the same commands with separate caches and record its FPS,
+VRAM, RAM/RSS, utilization, power, queue depth, and attribution results before
+any dual-GPU phase is accepted.

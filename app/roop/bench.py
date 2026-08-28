@@ -1681,30 +1681,44 @@ def measure_io(report, cancelled, seconds_of_video=2.0, width=1920, height=1080,
 
         report(status='Decode — NVDEC', stage='decode')
 
-        def _nvdec_pass():
-            cmd = [ff, '-hide_banner', '-loglevel', 'error', '-hwaccel', 'cuda',
-                   '-i', raw, '-f', 'rawvideo', '-pix_fmt', 'bgr24', 'pipe:1']
-            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE,
-                                    stderr=subprocess.DEVNULL)
-            size = width * height * 3
+        def _nvdec_pass(pix_fmt, prefetch_depth):
+            from roop.nvdec_reader import FFmpegVideoReader
+            reader = FFmpegVideoReader(raw, width, height, fps,
+                                        hwaccel='cuda', pix_fmt=pix_fmt,
+                                        prefetch_depth=prefetch_depth)
             got = 0
-            while True:
-                buf = proc.stdout.read(size)
-                if not buf or len(buf) < size:
-                    break
-                got += 1
-            proc.wait(timeout=120)
+            try:
+                while True:
+                    ok, _frame = reader.read()
+                    if not ok:
+                        break
+                    got += 1
+            finally:
+                reader.release()
             return got
 
-        try:
-            nv_fps = _passes(_nvdec_pass)
-            if nv_fps:
-                out['decode'].append({'name': 'NVDEC (GPU)', 'fps': round(nv_fps, 1)})
-                report(fps=round(nv_fps, 1), log=f'  decode NVDEC: {nv_fps:.1f} fps')
-            else:
-                out['notes'].append('NVDEC produced no frames — leave perf_nvdec on auto')
-        except Exception:
-            out['notes'].append('NVDEC decode failed — leave perf_nvdec on auto')
+        # The first arm preserves the old host-BGR boundary and measures the
+        # cost of NVDEC without the reader's asynchronous buffer.  The second
+        # arm is the production adaptive path: safe 8-bit 4:2:0 input uses a
+        # smaller NV12 download plus CPU BGR conversion and a bounded prefetch
+        # queue; other source formats retain the BGR fallback.
+        for name, pix_fmt, prefetch_depth in (
+                ('NVDEC (GPU, sync BGR)', 'bgr24', 0),
+                ('NVDEC (GPU, adaptive buffered)', 'auto', None)):
+            try:
+                nv_fps = _passes(lambda: _nvdec_pass(pix_fmt, prefetch_depth))
+                if nv_fps:
+                    out['decode'].append({
+                        'name': name, 'fps': round(nv_fps, 1),
+                        'pix_fmt': pix_fmt,
+                        'prefetch_depth': prefetch_depth,
+                    })
+                    report(fps=round(nv_fps, 1),
+                           log=f'  decode {name}: {nv_fps:.1f} fps')
+                else:
+                    out['notes'].append(f'{name} produced no frames')
+            except Exception as exc:
+                out['notes'].append(f'{name} failed: {type(exc).__name__}')
 
     try:
         import shutil as _sh

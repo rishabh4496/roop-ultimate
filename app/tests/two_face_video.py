@@ -91,6 +91,14 @@ def _apply_perf_env():
 
 _apply_perf_env()
 
+# Phase 9's A/B harness needs to override the live config after the shared
+# perf-environment setup.  This is intentionally test-only: normal launches
+# continue to use config.yaml, while the benchmark can prove that the CPU and
+# NVDEC arms actually exercise different decode backends.
+_phase9_nvdec = os.environ.get('ROOP_PHASE9_NVDEC_MODE', '').strip()
+if _phase9_nvdec in ('0', '1'):
+    os.environ['ROOP_NVDEC'] = _phase9_nvdec
+
 import angle_bench as ab                     # noqa: E402
 from angle_video import ensure_ffmpeg    # noqa: E402
 
