@@ -7,6 +7,7 @@ import roop.globals
 from roop.typing import Frame
 from roop.utilities import resolve_relative_path
 from roop import session_pool
+from roop.precision_policy import providers_for
 
 THREAD_LOCK_CLIP = threading.Lock()
 
@@ -39,6 +40,7 @@ class Mask_XSeg():
                                         get_small_card_safe_providers)
             _sess_opts = get_onnx_session_options()
             providers = get_small_card_safe_providers(roop.globals.execution_providers)
+            providers, _precision = providers_for('masking:xseg', providers, model_path)
             self._cpu_only = providers == ['CPUExecutionProvider']
 
             def _build(_i=0):

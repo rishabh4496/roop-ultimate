@@ -7,6 +7,7 @@ import roop.globals
 from roop.typing import Frame
 from roop.utilities import resolve_relative_path, conditional_download
 from roop import session_pool
+from roop.precision_policy import providers_for
 
 
 # FaceFusion's third-generation XSeg occluder (added in FF 3.2). Same family and
@@ -47,9 +48,11 @@ class Mask_XSeg3():
             model_path = os.path.join(model_dir, _MODEL_FILE)
             from roop.utilities import get_onnx_session_options
             _sess_opts = get_onnx_session_options()
+            providers, _precision = providers_for(
+                'masking:xseg3', roop.globals.execution_providers, model_path)
 
             def _build(_i=0):
-                return onnxruntime.InferenceSession(model_path, _sess_opts, providers=roop.globals.execution_providers)
+                return onnxruntime.InferenceSession(model_path, _sess_opts, providers=providers)
 
             self.model_xseg3 = _build()
             self.model_inputs = self.model_xseg3.get_inputs()

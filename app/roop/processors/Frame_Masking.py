@@ -5,6 +5,7 @@ import roop.globals
 
 from roop.utilities import resolve_relative_path
 from roop.typing import Frame
+from roop.precision_policy import providers_for
 
 class Frame_Masking():
     plugin_options:dict = None
@@ -28,7 +29,10 @@ class Frame_Masking():
             self.devicename = self.devicename.replace('mps', 'cpu')
             model_path = resolve_relative_path('../models/Frame/isnet-general-use.onnx')
             from roop.utilities import get_onnx_session_options
-            self.model_masking = onnxruntime.InferenceSession(model_path, get_onnx_session_options(), providers=roop.globals.execution_providers)
+            providers, _precision = providers_for(
+                'frame_masking:isnet', roop.globals.execution_providers, model_path)
+            self.model_masking = onnxruntime.InferenceSession(
+                model_path, get_onnx_session_options(), providers=providers)
             self.model_inputs = self.model_masking.get_inputs()
             model_outputs = self.model_masking.get_outputs()
             self.io_binding = self.model_masking.io_binding()

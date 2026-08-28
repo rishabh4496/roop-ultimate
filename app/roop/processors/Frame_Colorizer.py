@@ -5,6 +5,7 @@ import roop.globals
 
 from roop.utilities import resolve_relative_path
 from roop.typing import Frame
+from roop.precision_policy import providers_for
 
 class Frame_Colorizer():
     plugin_options:dict = None
@@ -37,7 +38,11 @@ class Frame_Colorizer():
 
             onnxruntime.set_default_logger_severity(3)
             from roop.utilities import get_onnx_session_options
-            self.model_colorizer = onnxruntime.InferenceSession(model_path, get_onnx_session_options(), providers=roop.globals.execution_providers)
+            providers, _precision = providers_for(
+                f'frame_colorizer:{self.prev_type}',
+                roop.globals.execution_providers, model_path)
+            self.model_colorizer = onnxruntime.InferenceSession(
+                model_path, get_onnx_session_options(), providers=providers)
             self.model_inputs = self.model_colorizer.get_inputs()
             model_outputs = self.model_colorizer.get_outputs()
             self.io_binding = self.model_colorizer.io_binding()

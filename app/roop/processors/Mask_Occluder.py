@@ -8,6 +8,7 @@ import roop.globals
 from roop.typing import Frame
 from roop.utilities import resolve_relative_path, conditional_download
 from roop import session_pool
+from roop.precision_policy import providers_for
 
 THREAD_LOCK_OCCLUDER = threading.Lock()
 
@@ -57,9 +58,11 @@ class Mask_Occluder():
             model_path = os.path.join(model_dir, 'face_occluder.onnx')
             from roop.utilities import get_onnx_session_options
             _sess_opts = get_onnx_session_options()
+            providers, _precision = providers_for(
+                'masking:occluder', roop.globals.execution_providers, model_path)
 
             def _build(_i=0):
-                return onnxruntime.InferenceSession(model_path, _sess_opts, providers=roop.globals.execution_providers)
+                return onnxruntime.InferenceSession(model_path, _sess_opts, providers=providers)
 
             self.model_occluder = _build()
             self.model_inputs = self.model_occluder.get_inputs()

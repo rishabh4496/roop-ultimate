@@ -10,6 +10,7 @@ import onnxruntime
 from roop.typing import Face, Frame
 from roop.utilities import resolve_relative_path, conditional_download
 from roop import session_pool
+from roop.precision_policy import providers_for
 
 
 # ── Per-model swap contract ───────────────────────────────────────────────────
@@ -439,7 +440,7 @@ def _freeze_convtranspose_reshape(model):
     return changed
 
 
-def _swap_providers(providers):
+def _swap_providers(providers, model_key='face_swap', model_path=None):
     """Apply the configured TensorRT precision to the RealSwap session.
 
     ``mixed`` is intentionally allowed to reach RealSwap: TensorRT may keep
@@ -455,8 +456,11 @@ def _swap_providers(providers):
     precision = str(getattr(cfg, 'trt_precision', 'mixed') or 'mixed').lower()
     force_fp32 = os.environ.get('ROOP_SWAP_FP32', '0') == '1' or precision == 'fp32'
     if not force_fp32:
-        print(f"[RealSwap] TensorRT precision={precision}; preserving configured precision", flush=True)
-        return providers
+        selected, decision = providers_for(
+            model_key, providers, model_path, requested=precision)
+        print(f"[RealSwap] TensorRT precision={decision.effective}; "
+              f"policy={decision.model}; preserving guarded precision", flush=True)
+        return selected
     patched = []
     for p in providers:
         if isinstance(p, (tuple, list)) and len(p) == 2 and 'tensorrt' in str(p[0]).lower():
@@ -625,7 +629,9 @@ class FaceSwapInsightFace():
 
             self.devicename = plugin_options["devicename"].replace('mps', 'cpu')
 
-            swap_providers = _swap_providers(roop.globals.execution_providers)
+            swap_providers = _swap_providers(
+                roop.globals.execution_providers,
+                model_key=f'face_swap:{swap_model}', model_path=model_path)
             # Load once and apply the transforms this session needs. Freezing the
             # ConvTranspose reshape channel makes TensorRT-incompatible exports
             # (GHOST) buildable; batch relaxation is opt-in. If neither applies we

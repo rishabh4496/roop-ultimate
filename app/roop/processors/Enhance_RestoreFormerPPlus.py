@@ -8,6 +8,7 @@ import roop.globals
 from roop.typing import Face, Frame, FaceSet
 from roop.utilities import resolve_relative_path
 from roop.processors.enhance_common import is_usable, sized, exclusive
+from roop.precision_policy import providers_for
 from roop import session_pool
 
 class Enhance_RestoreFormerPPlus():
@@ -45,9 +46,11 @@ class Enhance_RestoreFormerPPlus():
 
             from roop.utilities import get_onnx_session_options
             opts = get_onnx_session_options()
+            session_providers, _precision = providers_for(
+                'restoreformer_pp', roop.globals.execution_providers, model_path)
 
             def _build(_i=0):
-                sess = onnxruntime.InferenceSession(model_path, opts, providers=roop.globals.execution_providers)
+                sess = onnxruntime.InferenceSession(model_path, opts, providers=session_providers)
                 outs = sess.get_outputs()
                 iob = sess.io_binding()
                 iob.bind_output(outs[0].name, self.devicename)

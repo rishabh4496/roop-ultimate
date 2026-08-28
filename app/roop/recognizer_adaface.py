@@ -38,6 +38,7 @@ import onnxruntime
 
 import roop.globals
 from roop.utilities import resolve_relative_path, conditional_download, compute_cosine_distance
+from roop.precision_policy import providers_for
 
 
 MODEL_FILE = 'adaface_ir101.onnx'
@@ -88,8 +89,10 @@ def _get_session():
                 if not os.path.exists(path):
                     raise FileNotFoundError(f'AdaFace model missing: {path}')
                 from roop.utilities import get_onnx_session_options
+                providers, _precision = providers_for(
+                    'recognition:adaface', roop.globals.execution_providers, path)
                 _session = onnxruntime.InferenceSession(
-                    path, get_onnx_session_options(), providers=roop.globals.execution_providers)
+                    path, get_onnx_session_options(), providers=providers)
     return _session
 
 

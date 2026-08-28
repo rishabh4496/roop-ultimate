@@ -17,6 +17,7 @@ from roop.capturer import get_video_frame
 from roop.utilities import resolve_relative_path, conditional_download, get_onnx_session_options
 from roop.nms import bind_instance_nms
 from roop import face_contact
+from roop.precision_policy import providers_for
 
 # Pool of independent insightface FaceAnalysis instances (opt-in, ROOP_DETMASK_POOL).
 #
@@ -111,6 +112,7 @@ def _build_face_analyser():
     model_path = resolve_relative_path('..')
     allowed_modules = roop.globals.g_desired_face_analysis
     providers = _face_analysis_providers()
+    providers, _precision = providers_for('recognition:buffalo_l', providers)
     fa = insightface.app.FaceAnalysis(
         name="buffalo_l", root=model_path, providers=providers, allowed_modules=allowed_modules,
         sess_options=get_onnx_session_options())

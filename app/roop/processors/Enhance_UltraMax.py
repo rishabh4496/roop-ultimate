@@ -201,6 +201,7 @@ from roop.processors.enhance_common import (looks_collapsed, sized, exclusive,
                                             luma_only_recolour)
 from roop.utilities import resolve_relative_path
 from roop import session_pool
+from roop.precision_policy import providers_for
 
 try:
     import torch
@@ -337,10 +338,12 @@ class Enhance_UltraMax:
         # Enhance_CodeFormer; keep the two in step.
         from roop.utilities import get_onnx_session_options
         opts = get_onnx_session_options(optimization_level=onnxruntime.GraphOptimizationLevel.ORT_ENABLE_EXTENDED)
+        session_providers, _precision = providers_for(
+            'ultramax', roop.globals.execution_providers, model_path)
 
         def _build(_i=0):
             sess = onnxruntime.InferenceSession(
-                model_path, opts, providers=roop.globals.execution_providers)
+                model_path, opts, providers=session_providers)
             # One io_binding per slot, held for the life of the run. A binding is
             # not shareable across threads, and rebuilding it per call measured
             # 1.5 ms of the 25 ms budget. The OUTPUT binding never changes, so it

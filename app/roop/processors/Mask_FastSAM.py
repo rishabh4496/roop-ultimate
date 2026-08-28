@@ -7,6 +7,7 @@ import roop.globals
 from roop.typing import Frame
 from roop.utilities import resolve_relative_path, conditional_download
 from roop import session_pool
+from roop.precision_policy import providers_for
 
 
 # Segment Anything (FastSAM) as a face-mask engine. FastSAM is a YOLOv8-seg model
@@ -61,6 +62,7 @@ class Mask_FastSAM():
             # EP (slow/fragile engine builds, shape-tensor issues) — see
             # session_pool.providers_without_tensorrt.
             providers = session_pool.providers_without_tensorrt(roop.globals.execution_providers)
+            providers, _precision = providers_for('masking_no_trt:fastsam', providers, model_path)
             from roop.utilities import get_onnx_session_options
             _sess_opts = get_onnx_session_options()
 

@@ -9,6 +9,7 @@ import roop.globals
 from roop.typing import Face, Frame, FaceSet
 from roop.utilities import resolve_relative_path, conditional_download
 from roop.processors.enhance_common import is_usable, sized, fp32_trt_providers, exclusive
+from roop.precision_policy import providers_for
 
 
 def _fp32_trt_providers(providers):
@@ -100,6 +101,9 @@ class Enhance_GPEN():
             # 512 (classic weight) is stable in FP16, so leave it fast.
             if size >= 1024:
                 providers = _fp32_trt_providers(providers)
+            else:
+                providers, _precision = providers_for(
+                    f'gpen_{size}', providers, model_path)
             from roop.utilities import get_onnx_session_options
             session = onnxruntime.InferenceSession(model_path, get_onnx_session_options(), providers=providers)
             self.sessions[size] = session

@@ -64,6 +64,7 @@ from roop.processors.enhance_common import (sized, looks_collapsed, exclusive,
                                             _global_std)
 from roop.utilities import resolve_relative_path, conditional_download
 from roop import session_pool
+from roop.precision_policy import providers_for
 
 try:
     import torch
@@ -170,6 +171,7 @@ class Enhance_GPEN256Pro:
                                     get_small_card_safe_providers)
         opts = get_onnx_session_options()
         providers = get_small_card_safe_providers(roop.globals.execution_providers)
+        providers, _precision = providers_for('gpen_256_pro', providers, model_path)
         self._cpu_only = providers == ['CPUExecutionProvider']
 
         def _build(_i=0):

@@ -264,3 +264,101 @@ When a phase is completed, append:
 - exact next phase.
 
 Do not overwrite prior history.
+
+---
+
+# PHASE 5 — MODEL-SPECIFIC PRECISION OPTIMIZATION
+
+**Date/time:** 2026-08-28 19:21:41 +05:30
+
+**Status:** Implementation in progress; RTX 4070 smoke/benchmark evidence
+available; model-by-model quality matrix and RTX 3060 validation remain
+PENDING. This phase was started because the user explicitly requested Phase 5;
+the unresolved Phase 4 RTX 3060 RSS gate is preserved and has not been marked
+complete.
+
+**Implementation:** Added `app/roop/precision_policy.py` and wired the
+model-specific resolver into enhancement, swap, detection, recognition,
+LivePortrait, RIFE, frame processing, and all ONNX masking paths. The resolver
+detects provider availability, preserves CUDA/CPU fallbacks, keeps GPEN
+1024/2048 and GFPGAN FP32 guards, excludes TensorRT for the known ESRGAN/RIFE/
+SAM paths, and records a cache decision keyed by model digest plus the complete
+backend/GPU/runtime fingerprint. Added the complete matrix and validation
+contract to `PRECISION_POLICY.md`.
+
+**Known safeguards retained:** GPEN 1024/2048 FP32 under TensorRT, GFPGAN
+FP32 under TensorRT, ESRGAN-family CUDA/CPU FP32, stock LivePortrait 5-D
+GridSample CPU fallback, and RealSwap raw-FP16 rejection/output validation.
+BF16 is not enabled by default; it is an explicit LivePortrait candidate only.
+INT8 and FP8 are not enabled because no production calibration/quality gate is
+present for them.
+
+**Tests:** `app\\env\\Scripts\\python.exe -m pytest -q` — 1,352 passed,
+1 skipped; 589 subtests passed. New precision-policy tests and the focused
+precision/swap/enhancer/backend tests pass. Python compile and `git diff
+--check` pass.
+
+**RTX 4070 benchmark:** `app\\env\\Scripts\\python.exe -m roop.bench
+--profile quick --no-apply`. Detected NVIDIA GeForce RTX 4070, 11.99 GB VRAM,
+24c/32t, TensorRT/CUDA/CPU providers. Measured stage rates: RetinaFace r50
+3.86 ms/call, w600k recognition 1.73 ms, 2d106 landmarks 0.83 ms, RealSwap
+6.10 ms, UltraMax 29.94 ms, RealityUX XSeg 3.20 ms, and BiSeNet 13.84 ms.
+Enhanced composite measured 27.15 FPS at 12 threads; 6 threads was the
+recommended knee. Stage samples showed approximately 9.8–10.3 GB free VRAM;
+this quick harness did not capture peak RSS or nvidia-smi utilization.
+
+**Candidate precision validation:** The fresh GFPGAN six-arm compatibility
+run recorded the first cold TensorRT FP32 arm as a real 180-second timeout
+while building the complete stack, with no quality result. It is incomplete,
+not a pass and not evidence to change the guard. Existing measured RTX 4070
+evidence remains authoritative: GFPGAN TRT FP16 finite collapse (pixel std
+16.0/detail 0.08) versus TRT FP32/CUDA (std 65.2/detail 4.35), and CodeFormer
+FP32 162.9 ms versus its FP16 graph 102.0 ms at 512. The compatibility report
+is under `app/output/phase5_4070_gfpgan/results.jsonl`.
+
+**RTX 3060 validation:** **PENDING** in this session because the physical
+RTX 3060 Laptop was unavailable. Do not reuse the RTX 4070 cache or numbers.
+Required exact follow-up: run the same per-model precision matrix and
+quality-gate workload on the RTX 3060 Laptop with the same model files,
+recording GPU/SM/CUDA/TensorRT/ORT identity, inference latency, end-to-end
+FPS, VRAM, RAM/RSS, output difference, visual quality, non-finite count, and
+collapse count; then rerun the unresolved strict `<2.5 GB RSS` Phase 4
+two-face gate. Missing validation is not fabricated here.
+
+**Regressions:** No test regression observed. No GPU-specific regression can
+be concluded for RTX 3060 until its physical Phase 5 run. Hardware-adaptive
+behavior is preserved; no RTX 4070-only constants were introduced.
+
+**Next action:** Complete warm-cache, model-by-model precision quality runs on
+the RTX 4070, then execute the identical matrix on the RTX 3060 Laptop and
+update both records before accepting Phase 5 or advancing the phase.
+
+## Phase 5 low-precision validation follow-up
+
+**Date/time:** 2026-08-28 19:34 +05:30
+
+On the physically available RTX 4070 (compute capability 8.9; CUDA 12.8;
+TensorRT 10.9.0.34; ORT 1.23.2; driver 610.88), low-precision capability was
+tested against `liveportrait/stitching.onnx`:
+
+- **BF16:** TensorRT/ORT built and ran successfully. Output was finite and
+  matched FP32 exactly for the tested input; mean measured inference was
+  0.0829 ms versus FP32 0.1062 ms. This is a LivePortrait-only candidate, not
+  blanket model validation. The policy now supports explicit BF16 selection
+  for that family but keeps mixed as the default.
+- **INT8:** ORT accepted the option but failed without calibration ranges. A
+  direct calibrated TensorRT engine built and ran finite output, with max
+  difference 1.19e-7 and RMSE 1.52e-8 versus direct FP32. It measured 0.0465
+  ms versus FP32 0.0338 ms on this tiny graph. No calibration-table workflow
+  or end-to-end model quality evidence exists, so INT8 remains disabled.
+- **FP8:** ORT 1.23.2 rejected `trt_fp8_enable`. Direct TensorRT FP8 flag
+  builds emitted unsupported FP8 tactic errors; explicit FP8 quantization
+  reported a Blackwell+ requirement on this Ada platform. FP8 remains
+  unsupported/disabled.
+
+Low-precision probe resource telemetry was not a production-run VRAM/RAM
+measurement; the host had 12,282 MiB total VRAM and approximately 9,354 MiB
+free at the probe. No RTX 3060 result is claimed. RTX 3060 BF16/INT8/FP8
+validation is **PENDING** and must repeat the capability probes plus the
+model-quality gates on the physical laptop, without copying RTX 4070 cache or
+results. The existing strict `<2.5 GB RSS` Phase 4 blocker remains active.

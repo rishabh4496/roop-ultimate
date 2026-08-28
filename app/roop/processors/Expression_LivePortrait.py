@@ -54,6 +54,7 @@ import onnxruntime
 import roop.globals
 from roop.gridsample5d import ensure_patched_model
 from roop.session_pool import SessionPool, expression_pool_size
+from roop.precision_policy import providers_for
 from roop.typing import Frame
 from roop.utilities import resolve_relative_path, conditional_download
 
@@ -483,18 +484,24 @@ class Expression_LivePortrait:
                     # The parser errors only exist on the unpatched path; keep
                     # real errors visible once the rewrite removed their cause.
                     ctx = contextlib.nullcontext() if is_patched else _quiet_trt_parser()
+                    session_providers, _precision = providers_for(
+                        f'liveportrait:{key}', warp_providers, patched_path)
                     with ctx:
                         built[key] = onnxruntime.InferenceSession(
-                            patched_path, sess_opts, providers=warp_providers)
+                            patched_path, sess_opts, providers=session_providers)
                 else:
+                    session_providers, _precision = providers_for(
+                        f'liveportrait:{key}', providers, path)
                     built[key] = onnxruntime.InferenceSession(
-                        path, sess_opts, providers=providers)
+                        path, sess_opts, providers=session_providers)
             if parallel >= 2:
                 # A second, independent context for the same model — the two
                 # motion calls can only overlap if they stop sharing one.
+                motion_path = os.path.join(model_dir, MODELS["motion"]["file"])
+                motion_providers, _precision = providers_for(
+                    'liveportrait:motion2', providers, motion_path)
                 built["motion2"] = onnxruntime.InferenceSession(
-                    os.path.join(model_dir, MODELS["motion"]["file"]),
-                    sess_opts, providers=providers)
+                    motion_path, sess_opts, providers=motion_providers)
             return built
 
         # One set of sessions per pool slot. Each slot owns its own TensorRT

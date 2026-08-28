@@ -7,6 +7,7 @@ import roop.globals
 from roop.typing import Frame
 from roop.utilities import resolve_relative_path, conditional_download
 from roop import session_pool
+from roop.precision_policy import providers_for
 
 
 # Segment Anything (MobileSAM) as a face-mask engine. MobileSAM = TinyViT image
@@ -71,16 +72,18 @@ class Mask_MobileSAM():
             # Run on CUDA, not TensorRT: the decoder's float `orig_im_size` is a
             # shape tensor TRT rejects (Error Code 4, must be Int32/Int64).
             providers = session_pool.providers_without_tensorrt(roop.globals.execution_providers)
+            enc_providers, _precision = providers_for('masking_no_trt:mobilesam', providers, enc_path)
+            dec_providers, _precision = providers_for('masking_no_trt:mobilesam', providers, dec_path)
             from roop.utilities import get_onnx_session_options
             _sess_opts = get_onnx_session_options()
 
             def _build_enc(_i=0):
                 return onnxruntime.InferenceSession(
-                    enc_path, _sess_opts, providers=providers)
+                    enc_path, _sess_opts, providers=enc_providers)
 
             self.encoder = _build_enc()
             self.decoder = onnxruntime.InferenceSession(
-                dec_path, _sess_opts, providers=providers)
+                dec_path, _sess_opts, providers=dec_providers)
             self.enc_input = self.encoder.get_inputs()[0].name
 
             # replace Mac mps with cpu for the moment

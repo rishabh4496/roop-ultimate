@@ -62,6 +62,7 @@ from roop.processors.enhance_common import (looks_collapsed, sized, exclusive,
                                             luma_only_recolour)
 from roop.utilities import resolve_relative_path, conditional_download
 from roop import session_pool
+from roop.precision_policy import providers_for
 
 
 class Enhance_GPENRealistic:
@@ -153,6 +154,8 @@ class Enhance_GPENRealistic:
         model_path = os.path.join(model_dir, fname)
         from roop.utilities import get_onnx_session_options
         opts = get_onnx_session_options()
+        session_providers, _precision = providers_for(
+            'gpen_realistic', roop.globals.execution_providers, model_path)
 
         def _build(_i=0):
             # No FP32 forcing here. That guard exists for GPEN 1024/2048, whose
@@ -160,7 +163,7 @@ class Enhance_GPENRealistic:
             # classic weight and is FP16-stable — Enhance_GPEN says so itself and
             # only forces FP32 at >=1024 — and 256 more so.
             sess = onnxruntime.InferenceSession(
-                model_path, opts, providers=roop.globals.execution_providers)
+                model_path, opts, providers=session_providers)
             iob = sess.io_binding()
             iob.bind_output(sess.get_outputs()[0].name, self.devicename)
             return (sess, iob)

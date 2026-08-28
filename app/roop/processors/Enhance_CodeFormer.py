@@ -8,6 +8,7 @@ import roop.globals
 from roop.typing import Face, Frame, FaceSet
 from roop.utilities import resolve_relative_path
 from roop.processors.enhance_common import is_usable, sized, exclusive
+from roop.precision_policy import providers_for
 from roop import session_pool
 
 
@@ -81,9 +82,12 @@ class Enhance_CodeFormer():
             from roop.utilities import get_onnx_session_options
             opt_level = onnxruntime.GraphOptimizationLevel.ORT_ENABLE_EXTENDED if want_fp16 else None
             opts = get_onnx_session_options(optimization_level=opt_level)
+            session_providers, _precision = providers_for(
+                'codeformer_fp16' if want_fp16 else 'codeformer',
+                roop.globals.execution_providers, model_path)
             def _build(_i=0):
                 return onnxruntime.InferenceSession(
-                    model_path, opts, providers=roop.globals.execution_providers)
+                    model_path, opts, providers=session_providers)
 
             self.model_codeformer = _build()
             self.model_inputs = self.model_codeformer.get_inputs()

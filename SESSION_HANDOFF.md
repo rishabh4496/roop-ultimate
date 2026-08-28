@@ -208,3 +208,74 @@ Record:
 - next action.
 
 Never leave the repository state ambiguous.
+
+---
+
+# PHASE 5 HANDOFF — MODEL-SPECIFIC PRECISION POLICY
+
+**Recorded:** 2026-08-28 19:21:41 +05:30
+
+The user explicitly authorized Phase 5 implementation even though the prior
+Phase 4 RTX 3060 strict RSS gate remains unresolved. That blocker is still
+active and must not be erased or treated as a Phase 5 validation result.
+
+Implemented `app/roop/precision_policy.py`, `PRECISION_POLICY.md`, the focused
+policy tests, and provider wiring across enhancer, swap, detector,
+recognition, LivePortrait, frame, RIFE, and mask inference paths. The policy
+is conservative and model-specific. It preserves the known GPEN 1024/2048 and
+GFPGAN FP32 safeguards, keeps ESRGAN/RIFE/SAM off TensorRT, permits only
+measured/candidate mixed paths, and isolates each decision by model digest and
+GPU/software fingerprint. BF16 is an explicit LivePortrait candidate only;
+INT8 and FP8 remain disabled.
+
+Current verification:
+
+- RTX 4070 physically present: `roop.bench --profile quick --no-apply`
+  completed. 11.99 GB VRAM, 24c/32t; enhanced composite 27.15 FPS at 12
+  threads, recommended knee 6; stage timings are recorded in
+  `OPTIMIZATION_PROGRESS.md` and `PRECISION_POLICY.md`.
+- RTX 4070 full suite: 1,352 passed, 1 skipped, 589 subtests; no test
+  regression.
+- RTX 4070 model-quality matrix: PENDING/incomplete. The fresh GFPGAN matrix
+  cold TRT FP32 arm hit its explicit 180-second timeout while building the
+  complete stack; record is `app/output/phase5_4070_gfpgan/results.jsonl`.
+  Do not call this a quality pass or use it to weaken the FP32 guard.
+- RTX 3060 Laptop: **PENDING** for Phase 5 because the physical device was
+  unavailable. No RTX 4070 benchmark/cache result may be copied to it. Run
+  the identical per-model matrix and record latency, FPS, VRAM, RAM/RSS,
+  output difference, visual quality, non-finite/collapse counts, and runtime
+  fingerprint. Rerun the strict `<2.5 GB RSS` Phase 4 two-face gate as well;
+  the existing ~2.82–2.83 GB result remains blocked.
+
+Next session should warm the already-built RTX 4070 engines and finish
+model-by-model candidate comparisons (FP32 reference versus allowed FP16 or
+mixed), then perform the exact same workload on the RTX 3060 Laptop. Update
+both `OPTIMIZATION_PROGRESS.md` and this handoff with separate hardware rows
+before marking Phase 5 complete. Do not advance to Phase 6 on the strength of
+the RTX 4070 result alone.
+
+## Low-precision validation follow-up
+
+The RTX 4070 low-precision probe used ORT 1.23.2, TensorRT 10.9.0.34, CUDA
+12.8, driver 610.88, and SM 8.9 on `liveportrait/stitching.onnx`:
+
+- BF16 built and ran through the TensorRT EP with finite output and exact
+  FP32 output match for the tested input; 0.0829 ms versus FP32 0.1062 ms.
+  It is now an explicit LivePortrait candidate only, not a default.
+- INT8 requires calibration. ORT failed without ranges, while a direct
+  calibrated TensorRT engine ran finite with max difference 1.19e-7/RMSE
+  1.52e-8, but was slower on the tiny test (0.0465 ms versus 0.0338 ms).
+  INT8 stays disabled because the application has no calibration workflow or
+  model-quality acceptance results.
+- FP8 is not usable in this stack: ORT rejects `trt_fp8_enable`, and direct
+  TensorRT reported unsupported FP8 tactics / a Blackwell+ requirement for
+  explicit FP8 quantization on this Ada target. FP8 stays disabled.
+
+RTX 3060 BF16/INT8/FP8 validation is **PENDING**. Repeat the same capability
+and calibrated-build tests on the physical RTX 3060 Laptop, then run the
+model-specific quality matrix with latency, FPS, VRAM, RAM/RSS, output diff,
+finite/collapse counts, and visual review. Do not reuse RTX 4070 decisions or
+cache entries. Also rerun the unresolved strict `<2.5 GB RSS` Phase 4 gate.
+
+The final full-suite recheck after the BF16 policy update passed 1,353 tests,
+with 1 skipped and 589 subtests passed.

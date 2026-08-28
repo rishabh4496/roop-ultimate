@@ -30,6 +30,7 @@ import onnxruntime
 import roop.globals
 from roop.utilities import resolve_relative_path, conditional_download
 from roop.nms import nms_keep, bind_instance_nms
+from roop.precision_policy import providers_for
 
 def softmax(z):
     assert len(z.shape) == 2
@@ -282,6 +283,8 @@ def _pool_size():
 
 def _build_one(model_type, model_path, providers, file):
     """Construct ONE independent detector (its own ORT session)."""
+    providers, _precision = providers_for(
+        f'face_detection:{model_type}', providers, model_path)
     if model_type == 'r50':
         from roop.utilities import get_onnx_session_options
         session = onnxruntime.InferenceSession(model_path, get_onnx_session_options(), providers=providers)

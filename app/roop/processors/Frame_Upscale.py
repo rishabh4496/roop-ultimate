@@ -7,6 +7,7 @@ import threading
 
 from roop.utilities import resolve_relative_path
 from roop.typing import Frame
+from roop.precision_policy import providers_for
 
 
 def _upscale_providers():
@@ -97,7 +98,10 @@ class Frame_Upscale():
                 self.scale = 2
 
             from roop.utilities import get_onnx_session_options
-            self.model_upscale = onnxruntime.InferenceSession(model_path, get_onnx_session_options(), providers=_upscale_providers())
+            session_providers, _precision = providers_for(
+                f'frame_upscaler:{self.prev_type}', _upscale_providers(), model_path)
+            self.model_upscale = onnxruntime.InferenceSession(
+                model_path, get_onnx_session_options(), providers=session_providers)
             self.model_inputs = self.model_upscale.get_inputs()
             model_outputs = self.model_upscale.get_outputs()
             self.io_binding = self.model_upscale.io_binding()

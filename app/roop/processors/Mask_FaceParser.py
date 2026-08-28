@@ -7,6 +7,7 @@ import roop.globals
 from roop.typing import Frame
 from roop.utilities import resolve_relative_path, conditional_download
 from roop import session_pool
+from roop.precision_policy import providers_for
 
 
 # BiSeNet (yakhyo/face-parsing, resnet18) trained on CelebAMask-HQ — 19 classes:
@@ -126,6 +127,7 @@ class Mask_FaceParser():
                                         get_small_card_safe_providers)
             _sess_opts = get_onnx_session_options()
             providers = get_small_card_safe_providers(roop.globals.execution_providers)
+            providers, _precision = providers_for('masking:bisenet', providers, model_path)
 
             def _build(_i=0):
                 return onnxruntime.InferenceSession(

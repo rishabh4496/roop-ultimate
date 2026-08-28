@@ -19,6 +19,7 @@ import numpy as np
 import onnxruntime
 
 import roop.globals
+from roop.precision_policy import providers_for
 from roop.utilities import resolve_relative_path, conditional_download
 
 MODEL_URL = "https://huggingface.co/yuvraj108c/rife-onnx/resolve/main/rife49_ensemble_True_scale_1_sim.onnx"
@@ -44,7 +45,9 @@ class RIFE:
         conditional_download(model_dir, [MODEL_URL])
         model_path = os.path.join(model_dir, MODEL_FILE)
         from roop.utilities import get_onnx_session_options
-        self.session = onnxruntime.InferenceSession(model_path, get_onnx_session_options(), providers=_providers())
+        providers, _precision = providers_for('rife', _providers(), model_path)
+        self.session = onnxruntime.InferenceSession(
+            model_path, get_onnx_session_options(), providers=providers)
         self._lock = threading.Lock()
         self._pair = None      # (id0-key, prepped img0) cache: reuse across timesteps
 
