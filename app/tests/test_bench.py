@@ -420,6 +420,31 @@ class TheResultReachesResolveThreads(unittest.TestCase):
         self.assertEqual(rec['threads']['standard'], 4)
 
 
+class PoolRecommendationsRespectExplicitOverrides(unittest.TestCase):
+    def test_numeric_pool_settings_are_not_replaced(self):
+        from settings import Settings
+        saved = g.CFG
+        try:
+            g.CFG = Settings(os.path.join(HERE, 'no-such-config.yaml'))
+            g.CFG.save = lambda: None
+            g.CFG.perf_trt_pool = '2'
+            g.CFG.perf_detmask_pool = '2'
+            g.CFG.perf_detector_pool = '2'
+            g.CFG.perf_expr_pool = '2'
+            out = bench.apply_recommendation({'recommend': {
+                'pools': {'trt_pool': 3, 'detmask_pool': 4,
+                          'detector_pool': 6, 'expr_pool': 3}}})
+            self.assertEqual(g.CFG.perf_trt_pool, '2')
+            self.assertEqual(g.CFG.perf_detmask_pool, '2')
+            self.assertEqual(g.CFG.perf_detector_pool, '2')
+            self.assertEqual(g.CFG.perf_expr_pool, '2')
+            self.assertEqual(set(out['pending_restart']['explicit_overrides']), {
+                'perf_trt_pool', 'perf_detmask_pool', 'perf_detector_pool',
+                'perf_expr_pool'})
+        finally:
+            g.CFG = saved
+
+
 class TheEncoderIsChosenToKeepUpNotToWin(unittest.TestCase):
     """Encoding streams alongside the swap, so "fastest" is the wrong question.
 

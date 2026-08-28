@@ -16,8 +16,9 @@ User-selected settings remain authoritative. Automatic tuning is allowed only fo
 | 0 | Baseline, quality guards, hardware profiles, and benchmark foundations | Complete; repository history before `1cae1de` |
 | 1 | End-to-end runtime audit and bottleneck map | Complete; recorded in repository audit commits |
 | 2 | Centralized runtime optimizer and CPU scheduling integration | Complete; `d298fbf` |
-| 3 | TensorRT engine/context resource management, reuse, warmup, pressure handling, and context-knee benchmarking | In progress in working tree |
-| 4 | Further execution-path optimizations only after Phase 3 evidence | Not started |
+| 3 | TensorRT engine/context resource management, reuse, warmup, pressure handling, and context-knee benchmarking | Implementation complete; RTX 3060 validation outstanding |
+| 4 | Further execution-path optimizations only after Phase 3 evidence | RTX 4070 complete; RTX 3060 gate outstanding |
+| 5 | Model-specific precision optimization and quality-safe precision policy | Deferred until Phase 4 is complete |
 
 ## Phase 3 acceptance criteria
 

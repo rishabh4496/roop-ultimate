@@ -102,9 +102,10 @@ PROFILES = {
         'warm_sec': 0.5,
         'reps': 2,
         # TensorRT context count is deliberately measured one-by-one through
-        # four contexts.  The missing 3-context point was why a real knee could
-        # be hidden between 2 and 4 on cards where 4 already regressed.
-        'pool_levels': (1, 2, 3, 4),
+        # six contexts. The 3-context point exposes a knee between 2 and 4;
+        # the 6-context point catches utilization rising after throughput has
+        # already collapsed from paging.
+        'pool_levels': (1, 2, 3, 4, 6),
         'sweep_pools': True,
         'provider_ab': True,
         'io': True,
@@ -125,7 +126,7 @@ PROFILES = {
         'warm_sec': 2.0,
         'reps': 2,
         'composite_reps': 3,
-        'pool_levels': (1, 2, 3, 4),
+        'pool_levels': (1, 2, 3, 4, 6),
         'sweep_pools': True,
         'provider_ab': False,
         'io': True,
@@ -145,6 +146,9 @@ VRAM_RESERVE_GB = 1.25
 # A larger pool has to beat the smaller one by this much to be worth its VRAM.
 # Below it the two are the same measurement twice.
 POOL_GAIN = 0.04
+# Two samples whose spread exceeds this are not stable enough for an automatic
+# context knee. Raw samples remain in the report for diagnosis.
+STABILITY_SPREAD_PCT = 20.0
 # Same idea for threads. Higher than the pool margin, not lower, because the
 # thread curve is the noisier of the two and its tail is nearly flat: a measured
 # heavy curve ran 9.09 f/s at 12 threads and 9.58 at 32, so a 2% bar bought a
@@ -310,6 +314,7 @@ class Stage:
             'pool_knob': self.pool_knob or 'none (global GPU lock)',
             'pooled': self.pooled,
             'calls_per_frame': round(self.calls_per_frame, 3),
+            'input_shape': list(self.shape_hint) if self.shape_hint else [],
             'ms_call': round(self.ms_call, 3),
             'ms_frame': round(self.ms_call * self.calls_per_frame, 3),
             'vram_per_instance_mb': round(self.vram_mb, 1),
@@ -721,6 +726,17 @@ def best_of(reps, fn, *args, **kw):
     return best
 
 
+def _sampled_throughput(reps, fn, *args, **kw):
+    """Return the existing best-of value plus samples for stability reporting."""
+    samples = []
+    for _ in range(max(1, int(reps))):
+        got = fn(*args, **kw)
+        if isinstance(got, tuple):
+            got = got[0]
+        samples.append(float(got))
+    return max(samples), samples
+
+
 class _StartGate:
     """Start the clock when the LAST worker has finished warming up.
 
@@ -805,9 +821,9 @@ def measure_stage(stage, cfg, report, cancelled, sweep_pools, max_level):
             report(status=f'{stage.label} — {n} instance(s)',
                    stage=stage.label, threads=n)
             try:
-                calls_s = best_of(cfg.get('reps', 1), throughput, sessions, feeds_list,
-                                  out_names, n, cfg['measure_sec'],
-                                  cfg['warm_sec'], cancelled)
+                calls_s, samples = _sampled_throughput(
+                    cfg.get('reps', 1), throughput, sessions, feeds_list,
+                    out_names, n, cfg['measure_sec'], cfg['warm_sec'], cancelled)
             except Cancelled:
                 raise
             except Exception as e:                  # noqa: BLE001
@@ -822,9 +838,14 @@ def measure_stage(stage, cfg, report, cancelled, sweep_pools, max_level):
                 stage.ms_call = 1000.0 / max(1e-9, calls_s)
             base = stage.scaling[0]['calls_s'] if stage.scaling else calls_s
             free_now, _ = vram_free_total_gb()
+            spread_pct = ((max(samples) - min(samples)) /
+                          max(1e-9, calls_s) * 100.0)
             stage.scaling.append({
                 'n': n,
                 'calls_s': round(calls_s, 2),
+                'runs_fps': [round(x, 2) for x in samples],
+                'spread_pct': round(spread_pct, 1),
+                'stable': spread_pct <= STABILITY_SPREAD_PCT,
                 # Latency per call WITH n threads in flight, not the serial cost:
                 # a pool trades latency for throughput and both belong in the row.
                 'ms_latency': round(1000.0 * n / max(1e-9, calls_s), 3),
@@ -836,8 +857,8 @@ def measure_stage(stage, cfg, report, cancelled, sweep_pools, max_level):
                        f'({calls_s / max(1e-9, base):.2f}x, {free_now:.1f} GB free)')
             if not sweep_pools or not stage.pooled:
                 break
-            # Do not stop at the first plateau.  Phase 3 needs the complete
-            # 1/2/3/4 curve because a point can recover after a noisy sample and
+            # Do not stop at the first plateau. Phase 4 needs the complete
+            # 1/2/3/4/6 curve because a point can recover after a noisy sample and
             # because the selected knee is the smallest point within POOL_GAIN
             # of the best, not simply the first local maximum.
             # Cost per EXTRA instance, not cost of the first: the first session
@@ -852,8 +873,10 @@ def measure_stage(stage, cfg, report, cancelled, sweep_pools, max_level):
                            f'{free_now:.1f} GB is free')
                 break
         stage.vram_mb = _per_instance_mb(stage.scaling) or stage.vram_mb
-        stage.best_n = _knee([s['calls_s'] for s in stage.scaling],
-                             [s['n'] for s in stage.scaling], POOL_GAIN)
+        stable = [s for s in stage.scaling if s.get('stable', True)]
+        chosen = stable or stage.scaling
+        stage.best_n = _knee([s['calls_s'] for s in chosen],
+                             [s['n'] for s in chosen], POOL_GAIN)
     finally:
         for s in sessions:
             del s
@@ -1868,10 +1891,10 @@ def run_benchmark(profile='full', faces_per_frame=1.0, report=None,
                + ', '.join(s.label for s in stages))
 
     # A pool cannot be wider than the threads that would lease from it.
-    # Context autotuning has a bounded candidate set.  Four is enough to expose
-    # the throughput knee without turning a benchmark into an OOM experiment;
-    # the CPU bound still prevents asking more workers than the host can run.
-    max_level = max(1, min(4, device.get('cpu_logical') or 4))
+    # Context autotuning has a bounded candidate set through six. The live VRAM
+    # reserve stops a candidate before allocation if it cannot fit; six is a
+    # measurement point, not a recommendation.
+    max_level = max(1, min(6, device.get('cpu_logical') or 6))
 
     try:
         # ── per-stage cost + pool scaling ────────────────────────────────────
@@ -1984,6 +2007,7 @@ def run_benchmark(profile='full', faces_per_frame=1.0, report=None,
         'composite_metrics': composite_metrics,
         'settings_measured': {
             'provider': getattr(roop.globals.CFG, 'provider', ''),
+            'trt_precision': getattr(roop.globals.CFG, 'trt_precision', ''),
             'swap_model': getattr(roop.globals.CFG, 'swap_model', ''),
             'enhancer': getattr(roop.globals.CFG, 'selected_enhancer', ''),
             'mask_engine': getattr(roop.globals.CFG, 'mask_engine', ''),
@@ -2052,7 +2076,14 @@ def apply_recommendation(result):
         val = (rec.get('pools') or {}).get(knob)
         if val is None:
             continue
-        if str(getattr(cfg, key, 'auto')) != str(val):
+        current = str(getattr(cfg, key, 'auto') or 'auto').strip().lower()
+        # Any non-auto value is an operator choice, including a value written by
+        # an earlier benchmark. Automatic tuning may report a recommendation but
+        # must not silently replace that explicit choice.
+        if current not in ('', 'auto'):
+            pending.setdefault('explicit_overrides', {})[key] = current
+            continue
+        if current != str(val).strip().lower():
             setattr(cfg, key, str(val))
             pending[key] = str(val)
     # For these two, `auto` already resolves to `on` in run.py, so writing 'on'

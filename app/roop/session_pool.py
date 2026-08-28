@@ -210,7 +210,10 @@ class ModelResourceSpec:
     activation_mb: float
     reference_pixels: int = 512 * 512
     safety_mb: float = 256.0
-    max_contexts: int = 4
+    # Six is the largest context count Phase 4 measures. This is a candidate
+    # ceiling, not a recommendation: live resident-memory admission and a
+    # matching benchmark knee can reduce it for a particular workload.
+    max_contexts: int = 6
 
     def slot_mb(self, input_shape=None, batch_size=1) -> float:
         shape = tuple(input_shape or ())
@@ -257,7 +260,140 @@ def _resource_spec(model_key, input_shape=None):
         # automatic choice until a real benchmark supplies a measured cost.
         values = (256.0, 512.0, 256.0, 128.0)
         family = 'unknown'
-    return ModelResourceSpec(family, *values, max_contexts=4)
+    return ModelResourceSpec(family, *values, max_contexts=6)
+
+
+def _benchmark_stage_aliases(model_key):
+    """Return benchmark stage keys that can describe a live model key."""
+    key = str(model_key or '').lower()
+    aliases = {key}
+    if key.startswith(('swapper:', 'swap:')):
+        aliases.add('swap')
+    if key.startswith('enhancer:'):
+        aliases.add('enhance')
+    if key.startswith('detector:'):
+        aliases.add('detect')
+    if key.startswith('mask:'):
+        aliases.add(key.split(':', 1)[1])
+    if key.startswith(('expression:', 'expr:')):
+        aliases.add('expression')
+    return aliases
+
+
+def _matching_benchmark_knee(model_key, input_shape=None):
+    """Return a validated automatic context knee, or ``None``.
+
+    Persisted benchmark output is advisory. It is accepted only for the same
+    GPU, TensorRT precision/provider, current model settings, and TensorRT
+    tuning identity. Explicit environment values are handled by
+    ``select_pool_size`` before this helper.
+    """
+    try:
+        import roop.globals as _globals
+        cfg = getattr(_globals, 'CFG', None)
+        result = getattr(cfg, 'benchmark_results', None) if cfg else None
+        if not isinstance(result, dict) or result.get('status') not in (None, 'success'):
+            return None
+        device = result.get('device') or {}
+        if not device.get('gpu_name'):
+            return None
+        import torch
+        if not torch.cuda.is_available():
+            return None
+        device_id = getattr(_globals, 'cuda_device_id', 0)
+        gpu = str(torch.cuda.get_device_name(device_id))
+        if str(device.get('gpu_name')) != gpu:
+            return None
+        total = float(torch.cuda.get_device_properties(device_id).total_memory) / (1024 ** 3)
+        measured_total = float(device.get('total_vram_gb') or 0.0)
+        if measured_total <= 0 or abs(total - measured_total) > max(0.5, total * 0.08):
+            return None
+        settings = result.get('settings_measured') or {}
+        measured_tuning = settings.get('trt_tuning') or {}
+        if measured_tuning:
+            # A context knee is coupled to builder tactics, auxiliary streams,
+            # and CUDA-graph capture. Do not reuse it after any of those knobs
+            # change; the engine cache namespace already protects engine
+            # reuse, while this check protects the advisory pool policy.
+            try:
+                current_builder = max(0, min(5, int(
+                    os.environ.get('ROOP_TRT_BUILDER_OPT_LEVEL', '3'))))
+            except (TypeError, ValueError):
+                current_builder = 3
+            try:
+                current_aux = max(-1, min(8, int(
+                    os.environ.get('ROOP_TRT_AUX_STREAMS', '-1'))))
+            except (TypeError, ValueError):
+                current_aux = -1
+            current_graph = str(os.environ.get('ROOP_TRT_CUDA_GRAPH', '0')).strip().lower() in (
+                '1', 'true', 'yes', 'on')
+            expected_tuning = {
+                'builder_optimization_level': current_builder,
+                'auxiliary_streams': current_aux,
+                'cuda_graph': current_graph,
+            }
+            for field, current in expected_tuning.items():
+                if field in measured_tuning:
+                    measured = measured_tuning[field]
+                    if field == 'cuda_graph':
+                        measured = str(measured).strip().lower() in (
+                            '1', 'true', 'yes', 'on')
+                    else:
+                        try:
+                            measured = int(measured)
+                        except (TypeError, ValueError):
+                            return None
+                    if measured != current:
+                        return None
+        if cfg is not None:
+            for field, setting in (('provider', 'provider'),
+                                   ('trt_precision', 'trt_precision')):
+                measured = settings.get(field)
+                current = getattr(cfg, setting, None)
+                if measured not in (None, '') and current not in (None, ''):
+                    if str(measured).lower() != str(current).lower():
+                        return None
+            key = str(model_key or '').lower()
+            if key.startswith(('swapper:', 'swap:')):
+                measured = str(settings.get('swap_model') or '').lower()
+                current = str(getattr(cfg, 'swap_model', '') or '').lower()
+                if measured and current and measured != current:
+                    return None
+            elif key.startswith('enhancer:'):
+                measured = str(settings.get('enhancer') or '').lower().replace(' ', '')
+                current = str(getattr(cfg, 'selected_enhancer', '') or '').lower().replace(' ', '')
+                if measured and current and measured != current:
+                    return None
+            elif key.startswith('detector:'):
+                measured = str(settings.get('detector_engine') or '').lower()
+                current = str(getattr(cfg, 'detector_engine', '') or '').lower()
+                if measured and current and measured != current:
+                    return None
+        expected_shape = tuple(input_shape or ())
+        aliases = _benchmark_stage_aliases(model_key)
+        for stage in result.get('stages') or []:
+            if not isinstance(stage, dict) or stage.get('key') not in aliases:
+                continue
+            measured_shape = tuple(stage.get('input_shape') or ())
+            if expected_shape and measured_shape and expected_shape != measured_shape:
+                continue
+            scaling = stage.get('scaling') or []
+            if not scaling:
+                continue
+            try:
+                candidates = [int(row['n']) for row in scaling
+                              if row.get('stable', True) and int(row['n']) >= 1]
+                knee = int(stage.get('best_n') or 0)
+                if knee < 1 or knee not in candidates:
+                    knee = max(candidates) if candidates else 0
+                if knee:
+                    return knee
+            except (TypeError, ValueError):
+                continue
+    except Exception:
+        # A persisted diagnostic must never make model startup fail.
+        return None
+    return None
 
 
 def _live_vram_mb():
@@ -318,11 +454,14 @@ class TensorRTResourceManager:
             safety = max(self._safety_mb(total_mb), spec.safety_mb)
             usable = free_mb - safety - self._resident_unobserved_mb(free_mb)
             affordable = int(max(0.0, usable) // max(1.0, slot_mb))
-            selected = min(requested, spec.max_contexts, max(1, affordable))
+            measured_knee = _matching_benchmark_knee(model_key, input_shape)
+            policy_cap = min(spec.max_contexts, measured_knee) if measured_knee else spec.max_contexts
+            selected = min(requested, policy_cap, max(1, affordable))
             if selected != requested:
                 print(f"[SessionPool] {model_key}: auto context budget {requested}"
                       f" -> {selected} (slot~{slot_mb:.0f}MB, free~{free_mb:.0f}MB,"
-                      f" safety~{safety:.0f}MB, resident pools={len(self._pools)})")
+                      f" safety~{safety:.0f}MB, resident pools={len(self._pools)},"
+                      f" measured knee={measured_knee or 'none'})")
             return selected
 
     def register(self, pool, model_key, size, input_shape=None, batch_size=1):

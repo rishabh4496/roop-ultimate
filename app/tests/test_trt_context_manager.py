@@ -13,9 +13,15 @@ if APP not in sys.path:
     sys.path.insert(0, APP)
 
 from roop import session_pool  # noqa: E402
+from roop import bench  # noqa: E402
 
 
 class TensorRTResourceManagerTests(unittest.TestCase):
+
+    def test_phase4_sweep_includes_six_contexts(self):
+        self.assertEqual(bench.PROFILES['full']['pool_levels'], (1, 2, 3, 4, 6))
+        self.assertEqual(bench.PROFILES['stress']['pool_levels'], (1, 2, 3, 4, 6))
+        self.assertEqual(session_pool._resource_spec('swapper:realswap').max_contexts, 6)
 
     def test_model_and_shape_are_part_of_the_budget(self):
         small = session_pool._resource_spec(
