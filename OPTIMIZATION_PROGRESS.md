@@ -17,14 +17,14 @@ Do not mark a phase complete based only on conversation history.
 
 ## CURRENT STATE
 
-**Current phase:** PHASE 6 — CUDA Streams + CUDA Graphs (RTX 3060 validation pending)
+**Current phase:** PHASE 7 — Dynamic Batching + Model Concurrency (RTX 3060 validation pending)
 
-**Status:** Phase 6 is implemented and validated on the physical RTX 4070; RTX 3060 validation is PENDING. The strict Phase 4 RTX 3060 RSS gate and Phase 5 quality matrix remain unresolved.
+**Status:** Phase 7 is implemented and benchmarked on the physical RTX 4070; RTX 3060 validation is PENDING. The strict Phase 4 RTX 3060 RSS gate and Phase 5 quality matrix remain unresolved.
 
-**Last completed implementation phase:** PHASE 5 model-specific precision policy, checkpoint `07d814e`
+**Last completed implementation phase:** PHASE 7 dynamic batching/concurrency implementation; validation checkpoint pending
 
-**Next phase:** Repeat the Phase 6 stream/graph validation on the physical RTX
-3060 Laptop; do not reuse RTX 4070 results or caches.
+**Next phase:** Run the identical Phase 7 batch/concurrency validation on the
+physical RTX 3060 Laptop; do not reuse RTX 4070 results or caches.
 
 **Baseline FPS:** ~20 FPS (user-reported; must be formally measured in Phase 2)
 
@@ -57,7 +57,7 @@ two-face validation workload; the prior 5.12 FPS run remains historical.
 | 4. TensorRT Engine Optimization | RTX 4070 COMPLETE; RTX 3060 BLOCKED | 5.12 | Yes | Model/context matrix ran, but composite admission rejected all pools and real-video RSS exceeded the laptop ceiling; do not advance until rerun passes |
 | 5. Mixed FP16 / FP32 Precision | IMPLEMENTED; VALIDATION PENDING | — | No observed test regression | RTX 4070 policy and BF16/INT8/FP8 probes recorded; RTX 3060 and complete model-quality matrix pending |
 | 6. CUDA Streams + CUDA Graphs | RTX 4070 VALIDATED; RTX 3060 PENDING | — | No | Bounded stream policy accepted; GPEN 256 Pro graph functionally correct but slower and rejected from default runtime |
-| 7. Dynamic Batching / Concurrency | NOT STARTED | — | — | |
+| 7. Dynamic Batching / Concurrency | IMPLEMENTED; RTX 4070 VALIDATED; RTX 3060 PENDING | 12.61 composite / 4.09 historical real video | No observed test regression | Model-specific swap batch 8 wins isolated throughput; SPAN x4 tile batch 1 wins; runtime caps batching when contexts compete |
 | 8. CPU↔GPU Transfer + Memory-Copy Optimization | NOT STARTED | — | — | |
 | 9. NVDEC / Video Decode | NOT STARTED | — | — | |
 | 10. CPU Threading / Detection / Tracking | NOT STARTED | — | — | |
@@ -424,6 +424,82 @@ phase checkpoint.
 
 See `CUDA_EXECUTION_POLICY.md` for the candidate matrix, benchmark details,
 accepted/rejected decisions, and the exact missing RTX 3060 test.
+
+---
+
+# PHASE 7 — DYNAMIC BATCHING AND MODEL CONCURRENCY
+
+**Date/time:** 2026-08-28
+
+**Status:** Implemented and validated on the physical RTX 4070. RTX 3060
+Laptop validation is **PENDING**; no 4070 timing, cache, or resource result is
+used as a 3060 result. The strict Phase 4 `<2.5 GB RSS` gate and Phase 5
+model-quality matrix remain unresolved.
+
+**Implementation:** Audited swap, enhancement, masks, detection, repeated
+model calls, frame upscaling, and tile merge paths. Existing swap batching was
+made workload/profile-bounded: cross-frame batching is capped by face
+concurrency, same-frame pixel-boost tiles are processed in bounded chunks, and
+the existing model-level sequential fallback remains authoritative for static
+batch exports and composite RealSwap. `Frame_Upscale._run_impl()` now batches
+contiguous prepared tiles when explicitly/profile-selected, while
+`create_tile_frames()` and `merge_tile_frames()` retain the existing overlap,
+row-major ordering, and crop geometry. A failed tile batch disables only tile
+batching for the rest of that model instance and retries safely at batch 1.
+Post-swap frame admission is bounded by the runtime in-flight-frame hint.
+
+Enhancers, masks, and detectors do not expose a safe batch contract in the
+audited pipeline, so their measured independent SessionPool concurrency is
+preserved rather than forcing an unverified batch dimension. Parallel contexts
+and batching are treated as competing budgets: the small `<7 GB` profile stays
+single-context, single-face, single-tile, and one in-flight frame; the larger
+profile uses bounded context/face concurrency and does not combine it with an
+unbounded batch.
+
+**RTX 4070 benchmark:** Physical NVIDIA GeForce RTX 4070, SM 8.9, 11.99 GiB
+VRAM, CUDA 12.8, TensorRT 10.9.0.34, ORT 1.23.2, driver 610.88, 24c/32t.
+Command: `app\\env\\Scripts\\python.exe -m roop.bench --profile full --faces 2 --no-apply`.
+The two-face heavy composite measured **12.61 FPS** with the three-context
+swapper knee; the six-context alternative regressed to 11.28 FPS. Isolated
+RealSwap batching measured 202.2, 406.8, 811.8, and 1,633.6 items/s at batch
+1/2/4/8 respectively, with 4.94/4.92/4.93/4.90 ms per batch and about 9.78
+GB free VRAM after the measurements. Batch 8 is therefore the isolated model
+throughput winner, but the runtime uses a lower bounded cap when independent
+contexts are active.
+
+Frame_Upscale SPAN x4 tile benchmark used a deterministic 256×256 frame,
+128px tiles, and 9 tiles/frame. Batch 1/2/4/8 measured **17.844/11.901/
+12.243/12.473 frame/s**, with 56.04/84.03/81.68/80.18 ms/frame. All tested
+batches preserved shape/order and stayed within max absolute output difference
+2 from batch 1; free VRAM was 10.79/10.72/10.62/10.62 GB after each arm.
+Batch 1 is the automatic winner; larger tile batches remain explicit
+candidates, not a substitute for larger tiles.
+
+The corrected historical 141-frame two-face real-video reference remains 4.09
+end-to-end FPS on the RTX 4070 (34.44 s, approximately 10.47 GB progress RSS,
+3.36–3.74 GiB sampled VRAM, 29–75% GPU utilization). No new real-video file
+was available for a Phase 7 A/B run, so 4.09 FPS is not claimed as a Phase 7
+delta; 12.61 FPS is the measured synthetic-composite workload result.
+
+**RTX 3060 validation:** **PENDING.** On the physical 6 GB laptop, run the
+same full benchmark command and the same Frame_Upscale tile benchmark. Record
+batch 1/2/4/8 only when the VRAM admission guard says the candidate is safe;
+batch 8 is expected to be rejected or skipped by the sub-7 GB guard, never
+assumed safe. Run the identical two-face real-video workload with FPS, latency,
+VRAM, GPU utilization, RAM/RSS, queue depth, and output-order/quality checks;
+enforce the existing strict `<2.5 GB RSS` gate. Do not copy the RTX 4070
+recommendation, timing, or TensorRT cache.
+
+**Regression review:** Focused Phase 7 tests passed (112 tests); the complete
+suite passed 1,364 tests with 1 skipped. No regression was observed on the
+available RTX 4070. The tile benchmark deliberately rejected wider batching
+for the measured SPAN model. No RTX 3060-specific regression can be concluded
+until physical validation. Hardware capability detection, hardware/workload
+profiles, low-VRAM guards, explicit look settings, and model fallback behavior
+remain intact.
+
+**Next phase:** Complete the pending RTX 3060 Phase 7 validation and the
+previous Phase 4/5 gates before advancing to Phase 8.
 
 ## RTX 4070 completion audit — Phases 0–6
 

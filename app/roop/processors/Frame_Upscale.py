@@ -34,6 +34,7 @@ class Frame_Upscale():
     model_upscale = None
     devicename = None
     prev_type = None
+    _tile_batch_unsupported = False
 
     processorname = 'upscale'
     type = 'frame_enhancer'
@@ -47,6 +48,7 @@ class Frame_Upscale():
                 self.Release()
 
         self.plugin_options = plugin_options
+        self._tile_batch_unsupported = False
         if self.prev_type is not None and self.prev_type != self.plugin_options["subtype"]:
             self.Release()
         self.prev_type = self.plugin_options["subtype"]
@@ -161,6 +163,66 @@ class Frame_Upscale():
         merge_frame = merge_frame[size[1] : size[1] + temp_height, size[1]: size[1] + temp_width, :]
         return merge_frame
 
+    @staticmethod
+    def _detected_vram_gb() -> float:
+        """Best-effort total VRAM for the automatic tile-batch tier."""
+        forced = os.environ.get('ROOP_VRAM_GB')
+        if forced:
+            try:
+                return float(forced)
+            except ValueError:
+                pass
+        try:
+            import torch
+            if torch.cuda.is_available():
+                return (torch.cuda.get_device_properties(
+                    torch.cuda.current_device()).total_memory / (1024 ** 3))
+        except Exception:
+            pass
+        return 0.0
+
+    def _tile_batch_size(self) -> int:
+        """Resolve a bounded tile batch without confusing it with swap batches."""
+        raw = os.environ.get('ROOP_UPSCALE_TILE_BATCH')
+        if raw is None or raw == '':
+            raw = os.environ.get('ROOP_RUNTIME_UPSCALE_TILE_BATCH')
+        if raw is None or raw == '':
+            # Unknown and sub-7GB hardware stays conservative.  Larger cards
+            # also stay at the measured batch-one baseline until this specific
+            # model/workload has a persisted benchmark result; VRAM alone does
+            # not imply that a wider batch is faster.
+            return 1
+        try:
+            return max(1, min(4, int(raw)))
+        except (TypeError, ValueError):
+            return 1
+
+    def _run_tile_single(self, tile_frame, input_name, thread_safe):
+        if thread_safe:
+            return self.model_upscale.run(None, {input_name: tile_frame})[0]
+        with self.THREAD_LOCK_UPSCALE:
+            self.io_binding.bind_cpu_input(input_name, tile_frame)
+            self.model_upscale.run_with_iobinding(self.io_binding)
+            return self.io_binding.copy_outputs_to_cpu()[0]
+
+    def _run_tile_batch(self, prepared, input_name, thread_safe):
+        """Run one bounded batch and return outputs in input order."""
+        if len(prepared) == 1:
+            return [self._run_tile_single(prepared[0], input_name, thread_safe)]
+        batch = np.ascontiguousarray(np.concatenate(prepared, axis=0))
+        if thread_safe:
+            output = self.model_upscale.run(None, {input_name: batch})[0]
+        else:
+            with self.THREAD_LOCK_UPSCALE:
+                self.io_binding.bind_cpu_input(input_name, batch)
+                self.model_upscale.run_with_iobinding(self.io_binding)
+                output = self.io_binding.copy_outputs_to_cpu()[0]
+        if not hasattr(output, 'shape') or output.shape[0] != len(prepared):
+            raise RuntimeError(
+                f'upscaler returned batch {getattr(output, "shape", None)} '
+                f'for {len(prepared)} tile inputs')
+        return [output[i:i + 1] for i in range(len(prepared))]
+
 
     def _run_impl(self, temp_frame: Frame, thread_safe: bool) -> Frame:
         # Tile canvas size. The model runs once per tile, so a small tile (the
@@ -180,20 +242,28 @@ class Frame_Upscale():
         upscale_tile_frames, pad_width, pad_height = self.create_tile_frames(temp_frame, size)
         input_name = self.model_inputs[0].name
 
-        for index, tile_frame in enumerate(upscale_tile_frames):
-            tile_frame = self.prepare_tile_frame(tile_frame)
-            if thread_safe:
-                # ORT session.run() is safe to call concurrently on one shared
-                # session; io_binding is NOT (shared per-instance state). So the
-                # parallel path uses a plain run — no io_binding, no lock — which
-                # lets N worker threads keep the GPU busy at once.
-                result = self.model_upscale.run(None, {input_name: tile_frame})[0]
-            else:
-                with self.THREAD_LOCK_UPSCALE:
-                    self.io_binding.bind_cpu_input(input_name, tile_frame)
-                    self.model_upscale.run_with_iobinding(self.io_binding)
-                    result = self.io_binding.copy_outputs_to_cpu()[0]
-            upscale_tile_frames[index] = self.normalize_tile_frame(result)
+        batch_size = (1 if self._tile_batch_unsupported
+                      else self._tile_batch_size())
+        start = 0
+        while start < len(upscale_tile_frames):
+            if self._tile_batch_unsupported:
+                batch_size = 1
+            chunk = upscale_tile_frames[start:start + batch_size]
+            prepared = [self.prepare_tile_frame(tile) for tile in chunk]
+            try:
+                results = self._run_tile_batch(prepared, input_name, thread_safe)
+            except Exception as batch_error:
+                if len(prepared) <= 1:
+                    raise
+                self._tile_batch_unsupported = True
+                print(f"[Upscale] '{self.prev_type}' rejected tile batch "
+                      f"{len(prepared)} ({batch_error!r}); falling back to "
+                      "batch 1 for the rest of this run.", flush=True)
+                results = [self._run_tile_single(tile, input_name, thread_safe)
+                           for tile in prepared]
+            for index, result in enumerate(results, start=start):
+                upscale_tile_frames[index] = self.normalize_tile_frame(result)
+            start += len(chunk)
         final_frame = self.merge_tile_frames(upscale_tile_frames, temp_width * self.scale
                                                     , temp_height * self.scale
                                                     , pad_width * self.scale, pad_height * self.scale
@@ -201,12 +271,13 @@ class Frame_Upscale():
         return final_frame.astype(np.uint8)
 
     def Run(self, temp_frame: Frame) -> Frame:
-        """Single-thread / shared-instance path (uses io_binding + lock)."""
+        """Single-thread path with bounded tile batching and io_binding."""
         return self._run_impl(temp_frame, thread_safe=False)
 
     def RunThreadSafe(self, temp_frame: Frame) -> Frame:
         """Concurrency-safe path — multiple threads may call this on ONE shared
-        session at once (plain ORT run, no io_binding, no lock)."""
+        session at once (plain ORT run, no io_binding, no lock). Tile batches
+        remain ordered within each frame."""
         return self._run_impl(temp_frame, thread_safe=True)
 
 
@@ -216,4 +287,5 @@ class Frame_Upscale():
         self.model_upscale = None
         del self.io_binding
         self.io_binding = None
+        self._tile_batch_unsupported = False
 

@@ -299,7 +299,16 @@ def _upscale_video_inplace(proc, path):
         else:
             executor = ThreadPoolExecutor(max_workers=n_sessions, thread_name_prefix='upscale')
             in_flight = deque()
-            max_inflight = n_sessions * 2
+            try:
+                runtime_inflight = max(1, int(os.environ.get(
+                    'ROOP_RUNTIME_INFLIGHT_FRAMES', n_sessions * 2)))
+            except (TypeError, ValueError):
+                runtime_inflight = n_sessions * 2
+            # The runtime profile owns the frame-buffer budget.  Keep the
+            # existing two-frames-per-session ceiling as a local upper bound,
+            # so tile batching and parallel sessions cannot multiply an
+            # unbounded post-swap queue.
+            max_inflight = max(1, min(n_sessions * 2, runtime_inflight))
             while roop_globals.processing:
                 ok, fr = cap.read()
                 if not ok or fr is None:

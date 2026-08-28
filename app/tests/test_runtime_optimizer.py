@@ -112,11 +112,38 @@ class RuntimeOptimizerTests(unittest.TestCase):
         self.assertEqual(small.swapper_pool_size, 0)
         self.assertGreaterEqual(desktop.trt_context_count, 1)
         self.assertGreater(desktop.detector_pool_size, small.detector_pool_size)
+        self.assertEqual(small.upscale_tile_batch_size, 1)
+        self.assertEqual(small.face_concurrency, 1)
+        self.assertEqual(small.in_flight_frames, 1)
+        self.assertGreaterEqual(desktop.face_concurrency, 2)
         for name, (lo, hi) in ResourceManager.BOUNDS.items():
             self.assertGreaterEqual(getattr(small, name), lo)
             self.assertLessEqual(getattr(small, name), hi)
             self.assertGreaterEqual(getattr(desktop, name), lo)
             self.assertLessEqual(getattr(desktop, name), hi)
+
+    def test_upscale_batch_hint_is_workload_specific(self):
+        tuner = AutoTuner()
+        desktop, *_ = tuner.tune(_hardware(12.0),
+                                 _workload(faces=1, enhanced=False), {})
+        upscale, *_ = tuner.tune(
+            _hardware(12.0),
+            WorkloadProfile(input_width=1280, input_height=720,
+                            output_width=2560, output_height=1440,
+                            upscaling_enabled=True), {})
+        self.assertEqual(desktop.upscale_tile_batch_size, 1)
+        self.assertEqual(upscale.upscale_tile_batch_size, 1)
+
+    def test_upscale_hint_is_not_leaked_from_face_profile(self):
+        optimizer = RuntimeOptimizer()
+        with patch.object(optimizer.hardware_profiler, "profile",
+                          return_value=_hardware(12.0)):
+            profile = optimizer.build_profile(_workload(), save=False)
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("ROOP_RUNTIME_UPSCALE_TILE_BATCH", None)
+            applied = RuntimeOptimizer.apply_environment(profile, {})
+        self.assertNotIn("ROOP_RUNTIME_UPSCALE_TILE_BATCH", applied)
+        self.assertNotIn("ROOP_RUNTIME_UPSCALE_TILE_BATCH", os.environ)
 
     def test_explicit_settings_are_reported_and_never_applied_as_auto(self):
         settings = {

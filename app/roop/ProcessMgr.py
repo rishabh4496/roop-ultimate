@@ -1340,6 +1340,10 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
         self._runtime_stab_workers = None
         self._runtime_stab_small = False
         self._runtime_queue_depth = None
+        self._runtime_swap_batch_size = 1
+        self._runtime_swap_tile_batch_size = None
+        self._runtime_face_concurrency = 1
+        self._runtime_in_flight_frames = 1
         try:
             _runtime_optimizer = RuntimeOptimizer(settings=getattr(roop.globals, 'CFG', None))
             self.runtime_profile = _runtime_optimizer.profile_video(
@@ -1355,12 +1359,20 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
             self._runtime_stab_workers = self.runtime_profile.tuning.stabilization_workers
             self._runtime_stab_small = self.runtime_profile.hardware.vram_total_gb < 7.0
             self._runtime_queue_depth = self.runtime_profile.tuning.queue_depth
+            self._runtime_swap_batch_size = self.runtime_profile.tuning.batch_size
+            self._runtime_swap_tile_batch_size = self.runtime_profile.tuning.tile_batch_size
+            self._runtime_face_concurrency = self.runtime_profile.tuning.face_concurrency
+            self._runtime_in_flight_frames = self.runtime_profile.tuning.in_flight_frames
             print("[RuntimeOptimizer] workload profile: "
                   f"{self.runtime_profile.workload.input_width}x"
                   f"{self.runtime_profile.workload.input_height}, "
                   f"complexity={self.runtime_profile.workload.estimated_complexity:.2f}, "
                   f"workers(recommended)={self.runtime_profile.tuning.worker_count}, "
                   f"queue={self._runtime_queue_depth}, "
+                  f"swap_batch={self._runtime_swap_batch_size}, "
+                  f"swap_tile_batch={self._runtime_swap_tile_batch_size}, "
+                  f"face_concurrency={self._runtime_face_concurrency}, "
+                  f"in_flight={self._runtime_in_flight_frames}, "
                   f"stab_chunk={self._runtime_stab_chunk}, "
                   f"profile={self.runtime_profile.cache_key}", flush=True)
 
@@ -1496,6 +1508,8 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
         # workers concurrently instead of serialised behind one GPU lock).
         qdepth = self._runtime_queue_depth if self._runtime_queue_depth is not None else (1 if threads <= 1 else 3)
         qdepth = max(1, min(4, int(qdepth)))
+        if self._runtime_in_flight_frames is not None:
+            qdepth = min(qdepth, max(1, int(self._runtime_in_flight_frames)))
         for _ in range(threads):
             self.frames_queue.append(Queue(qdepth))
             self.processed_queue.append(Queue(qdepth))
@@ -1663,10 +1677,21 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                   "(swap_model_mask_strength > 0).")
             return None
         pooled = getattr(swap_p, 'pool', None) is not None
+        _auto_batch_cap = max(1, int(getattr(
+            self, '_runtime_swap_batch_size', threads) or threads))
         try:
-            max_b = int(os.environ.get('ROOP_BATCH_SWAP_MAX', str(threads)))
+            max_b = int(os.environ.get(
+                'ROOP_BATCH_SWAP_MAX',
+                str(_auto_batch_cap)))
         except ValueError:
-            max_b = threads
+            max_b = _auto_batch_cap
+        if 'ROOP_BATCH_SWAP_MAX' not in os.environ:
+            # Cross-frame batching and independent contexts are alternatives
+            # for the same swap stage.  The automatic batch cap follows the
+            # measured/profiled face-concurrency budget instead of allowing
+            # both knobs to expand to the worker count.
+            max_b = min(max_b, max(2, int(
+                getattr(self, '_runtime_face_concurrency', max_b) or max_b)))
         max_b = max(2, min(max_b, threads))
         try:
             wait_ms = float(os.environ.get('ROOP_BATCH_SWAP_WAIT_MS', '2.0'))
@@ -4026,17 +4051,44 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                         tiles = [self.normalize_swap_frame(self._swap_batcher.wait(h), p)
                                  for h in handles]
                     swap_result_frames = tiles
-                elif _BATCH_SWAP and len(subsample_frames) > 1 and hasattr(p, 'RunBatch'):
-                    # Batch the pixel-boost tiles through one inference call.
+                elif (_BATCH_SWAP and len(subsample_frames) > 1
+                      and hasattr(p, 'RunBatch')
+                      and int(getattr(self, '_runtime_swap_tile_batch_size',
+                                     len(subsample_frames)) or 1) > 1):
+                    # Batch pixel-boost tiles in bounded chunks.  A single
+                    # giant batch can be slower or exceed the model's working
+                    # set, while a batch of one is the sequential fallback.
+                    # Chunking also keeps output order and mask attribution
+                    # explicit instead of relying on a model-specific batch
+                    # width.
                     tiles = list(subsample_frames)
+                    _batch_cap = max(2, min(
+                        len(tiles), int(getattr(
+                            self, '_runtime_swap_tile_batch_size', len(tiles)))))
                     for _ in range(0, self.options.num_swap_steps):
-                        prepared = [self.prepare_crop_frame(t, p) for t in tiles]   # CPU
-                        with _gpu_guard(pooled=_pooled, owner='swap'):
-                            outs = p.RunBatch(inputface, target_face, prepared)
-                        _m = p.take_masks() if hasattr(p, 'take_masks') else None
-                        if _m:
-                            _swap_masks = _m
-                        tiles = [self.normalize_swap_frame(o, p) for o in outs]      # CPU
+                        next_tiles = []
+                        collected_masks = []
+                        all_masks = True
+                        for _start in range(0, len(tiles), _batch_cap):
+                            chunk = tiles[_start:_start + _batch_cap]
+                            prepared = [self.prepare_crop_frame(t, p)
+                                        for t in chunk]  # CPU
+                            with _gpu_guard(pooled=_pooled, owner='swap'):
+                                outs = p.RunBatch(inputface, target_face,
+                                                   prepared)
+                            _m = (p.take_masks()
+                                  if hasattr(p, 'take_masks') else None)
+                            if _m is not None and len(_m) == len(outs):
+                                collected_masks.extend(_m)
+                            else:
+                                all_masks = False
+                            next_tiles.extend(
+                                self.normalize_swap_frame(o, p) for o in outs)
+                        tiles = next_tiles
+                        if all_masks and len(collected_masks) == len(tiles):
+                            _swap_masks = collected_masks
+                        else:
+                            _swap_masks = None
                     swap_result_frames = tiles
                 else:
                     swap_result_frames = []

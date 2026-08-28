@@ -59,19 +59,19 @@ Before doing anything:
 
 **Session:** 1
 
-**Current phase:** PHASE 6 — CUDA Streams + CUDA Graphs (RTX 3060 validation pending)
+**Current phase:** PHASE 7 — Dynamic Batching + Model Concurrency (RTX 3060 validation pending)
 
-**Phase status:** RTX 4070 Phase 6 validation complete; physical RTX 3060
-Laptop validation is pending. The Phase 4 RSS gate and Phase 5 quality matrix
-remain unresolved.
+**Phase status:** RTX 4070 Phase 7 implementation/benchmark validation is
+complete; physical RTX 3060 Laptop validation is pending. The Phase 4 RSS gate
+and Phase 5 quality matrix remain unresolved.
 
-**Last completed implementation:** Phase 5 model-specific precision policy,
-checkpoint `07d814e`
+**Last completed implementation:** Phase 7 dynamic batching/concurrency
+implementation; validation checkpoint pending
 
 **Immediate next action:**
-Repeat the Phase 5 precision-quality and Phase 6 stream/graph acceptance runs
-on the physical RTX 3060 Laptop. Preserve the documented strict RSS failure
-and do not reuse RTX 4070 results or caches.
+Repeat the Phase 7 batch/concurrency and Frame_Upscale tile-batch acceptance
+runs on the physical RTX 3060 Laptop. Preserve the documented strict RSS
+failure and do not reuse RTX 4070 results or caches.
 
 ---
 
@@ -373,3 +373,48 @@ invalidation checks, then the identical real-video A/B with FPS, latency,
 VRAM, RAM/RSS, GPU utilization, queue depth, and synchronization metrics. Also
 rerun the strict `<2.5 GB RSS` Phase 4 two-face gate; the existing 2.82–2.83 GB
 RSS result remains blocked. Do not copy the RTX 4070 graph cache or timings.
+
+---
+
+# PHASE 7 HANDOFF — DYNAMIC BATCHING AND MODEL CONCURRENCY
+
+**Recorded:** 2026-08-28
+
+Phase 7 implementation is present in `app/roop/ProcessMgr.py`,
+`app/roop/processors/Frame_Upscale.py`, `app/post_swap.py`,
+`app/roop/runtime_optimizer.py`, and `app/roop/bench.py`, with regression
+coverage in `app/tests/test_frame_upscale_batch.py` and
+`app/tests/test_runtime_optimizer.py`. The implementation preserves the
+two-device capability policy: RTX 3060 remains a single-context/low-VRAM path,
+while RTX 4070 receives only bounded model/workload-derived concurrency.
+
+Physical RTX 4070 results are recorded separately from the pending laptop:
+
+| Measure | RTX 4070 | RTX 3060 Laptop |
+|---|---:|---:|
+| Heavy two-face composite | 12.61 FPS; 3 swap contexts | PENDING |
+| RealSwap isolated batch 1/2/4/8 | 202.2 / 406.8 / 811.8 / 1,633.6 items/s | PENDING |
+| SPAN x4 tile batch 1/2/4/8 | 17.844 / 11.901 / 12.243 / 12.473 FPS; batch 1 selected | PENDING; sub-7 GB guard applies |
+| Sampled free VRAM | 9.78 GB after swap arms; 10.79–10.62 GB after upscale arms | PENDING |
+| CPU utilization / RAM | CPU utilization unavailable in benchmark; historical real-video peak RSS ~10.47 GB | PENDING; strict RSS `<2.5 GB` |
+
+The RealSwap isolated winner is not copied directly into runtime execution:
+independent contexts and batch width compete for the same GPU resources, so
+the automatic two-face profile caps cross-frame batch width at the bounded face
+concurrency budget. SPAN x4 tile batching is explicitly retained as a
+model-specific option, but auto mode selects batch 1 because it was faster.
+Output ordering, overlap/crop geometry, memory-bounded tile chunks, and static
+batch fallback are covered by tests.
+
+**Required exact RTX 3060 validation:** on the physical laptop, run
+`app\\env\\Scripts\\python.exe -m roop.bench --profile full --faces 2 --no-apply`,
+the same `measure_tile_upscale` benchmark with its sub-7 GB admission guard,
+and the same two-face real-video harness. Record per-candidate throughput,
+latency, VRAM, RAM/RSS, GPU utilization, end-to-end FPS, and output difference;
+then rerun the strict Phase 4 RSS gate. No RTX 4070 cache or result may be
+reused.
+
+**Verification:** focused Phase 7 suite: 112 tests passed; complete suite:
+**1,364 passed, 1 skipped**. Python compilation and `git diff --check` pass.
+No launcher script was edited; the locked Pinokio URL capture example therefore
+required no change.

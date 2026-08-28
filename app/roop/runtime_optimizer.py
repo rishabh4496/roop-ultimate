@@ -167,6 +167,9 @@ class RuntimeTuning:
     expression_pool_size: int = 0
     batch_size: int = 1
     tile_batch_size: int = 1
+    upscale_tile_batch_size: int = 1
+    face_concurrency: int = 1
+    in_flight_frames: int = 1
     detector_resolution: int = 640
     queue_depth: int = 1
     stabilization_workers: int = 1
@@ -231,6 +234,9 @@ class ResourceManager:
         "expression_pool_size": (0, 3),
         "batch_size": (1, 4),
         "tile_batch_size": (1, 4),
+        "upscale_tile_batch_size": (1, 4),
+        "face_concurrency": (1, 16),
+        "in_flight_frames": (1, 8),
         "detector_resolution": (320, 1280),
         "queue_depth": (1, 4),
         "stabilization_workers": (1, 8),
@@ -675,7 +681,12 @@ class AutoTuner:
         contexts = 1 if small else 2
         detector_pool = 0 if small else 2
         detmask_pool = 0 if small else 2
-        swapper_pool = 0 if small else 2
+        # The available 12GB profile's two-face benchmark found the swapper
+        # knee at three contexts; the sub-7GB profile remains explicitly
+        # single-context.  This is a bounded workload-aware choice, not a
+        # universal desktop default.
+        swapper_pool = (0 if small else
+                        (3 if workload.faces_per_frame >= 2 else 2))
         enhancer_pool = 0 if small else (2 if workload.enhancement_enabled else 1)
         expression_pool = 0 if small else 2
         # The 16GB laptop has only limited RSS headroom after the CUDA model
@@ -702,6 +713,22 @@ class AutoTuner:
             hardware,
             independent_work=2 if workload.faces_per_frame >= 2 else 1,
             shared_mutable_buffers=False)
+        # Batching and independent contexts compete for the same GPU memory.
+        # The small-VRAM tier therefore gets one face, one tile, and one
+        # in-flight frame.  Larger devices receive only a bounded candidate;
+        # the benchmark may later replace it with a model/workload-specific
+        # measured value.
+        face_concurrency = (1 if small else
+                            max(1, min(worker, max(1, swapper_pool))))
+        swap_batch = 1 if small else (2 if worker > 1 else 1)
+        swap_tile_batch = (2 if (not small and workload.faces_per_frame >= 2)
+                           else 1)
+        # Frame_Upscale is model-specific and its measured SPAN x4 result on
+        # the 4070 was faster at batch 1 than 2/4/8.  Keep auto mode at the
+        # safe measured baseline; an explicit benchmark result or environment
+        # override may opt a different model/workload into batching.
+        upscale_tile_batch = 1
+        in_flight_frames = 1 if small else max(1, min(4, queue_depth + 1))
         values = {
             "trt_context_count": contexts,
             "worker_count": worker,
@@ -710,8 +737,11 @@ class AutoTuner:
             "swapper_pool_size": swapper_pool,
             "enhancer_pool_size": enhancer_pool,
             "expression_pool_size": expression_pool,
-            "batch_size": 2 if (not small and workload.faces_per_frame >= 2) else 1,
-            "tile_batch_size": 2 if (not small and workload.faces_per_frame >= 2) else 1,
+            "batch_size": swap_batch,
+            "tile_batch_size": swap_tile_batch,
+            "upscale_tile_batch_size": upscale_tile_batch,
+            "face_concurrency": face_concurrency,
+            "in_flight_frames": in_flight_frames,
             "detector_resolution": 640,
             "queue_depth": queue_depth,
             "stabilization_workers": stabilization_workers,
@@ -919,9 +949,17 @@ class RuntimeOptimizer:
             "ROOP_RUNTIME_CV_THREADS": tuning.opencv_threads,
             "ROOP_RUNTIME_BATCH_SIZE": tuning.batch_size,
             "ROOP_RUNTIME_TILE_BATCH_SIZE": tuning.tile_batch_size,
+            "ROOP_RUNTIME_FACE_CONCURRENCY": tuning.face_concurrency,
+            "ROOP_RUNTIME_INFLIGHT_FRAMES": tuning.in_flight_frames,
             "ROOP_RUNTIME_CUDA_STREAMS": tuning.cuda_stream_count,
             "ROOP_RUNTIME_TRT_AUX_STREAMS": tuning.cuda_auxiliary_streams,
         }
+        # A face-processing profile must not leak its default tile decision
+        # into the later post-swap Frame_Upscale pass.  Only an explicitly
+        # upscaling workload may publish this separate hint.
+        if profile.workload.upscaling_enabled:
+            env_values["ROOP_RUNTIME_UPSCALE_TILE_BATCH"] = (
+                tuning.upscale_tile_batch_size)
         # These values are hints for the staged rollout.  Do not expose a
         # derived value where an existing user-facing setting already pins the
         # same concern; a later consumer must be able to distinguish "auto"

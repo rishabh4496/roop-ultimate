@@ -86,6 +86,7 @@ PROFILES = {
         'provider_ab': False,
         'io': False,
         'batch_swap': False,
+        'tile_upscale': False,
         'est_sec': 260,
     },
     # Everything: pool sweeps per stage plus an end-to-end check on the result,
@@ -110,6 +111,7 @@ PROFILES = {
         'provider_ab': True,
         'io': True,
         'batch_swap': True,
+        'tile_upscale': True,
         # Measured end to end on the reference machine at 350-400 s across
         # four runs. The estimate is what the progress bar counts against, so
         # it is set a little long rather than a little short — a bar that
@@ -131,6 +133,7 @@ PROFILES = {
         'provider_ab': False,
         'io': True,
         'batch_swap': True,
+        'tile_upscale': True,
         'default_faces': 2.0,
         'min_faces': 2.0,
         'est_sec': 900,
@@ -1314,14 +1317,16 @@ def measure_provider_ab(stages, cfg, report, cancelled):
     return rows
 
 
-# ── phase 5: batched swap ────────────────────────────────────────────────────
+# ── phase 7: batched swap ────────────────────────────────────────────────────
 
 def measure_batch_swap(stages, cfg, report, cancelled):
-    """Per-face cost of the swapper at batch 1 against batch 4.
+    """Measure safe swap batch candidates and return model-specific results.
 
-    ROOP_BATCH_SWAP defaults ON, so this validates a default rather than
-    proposing a change. It only runs when the batch dimension actually relaxed —
-    a model with a hard batch of 1 raises here, and that is the answer.
+    A batch dimension is not a proxy for concurrency: it competes with
+    independent TensorRT contexts for VRAM.  Candidates are therefore timed
+    one at a time on the app-shaped session, with batch 1, 2, 4, and 8 kept as
+    separate rows.  A static export records a rejected row instead of silently
+    treating it as a batch-one win.
     """
     swap = next((s for s in stages if s.key == 'swap' and not s.error), None)
     if swap is None:
@@ -1330,28 +1335,58 @@ def measure_batch_swap(stages, cfg, report, cancelled):
     try:
         sess = _build_session(swap)
         outs = [o.name for o in sess.get_outputs()]
-        f1 = [make_feeds(sess, swap.shape_hint, batch=1)]
-        c1 = best_of(cfg.get('reps', 1), throughput, [sess], f1, outs, 1,
-                     cfg['measure_sec'], cfg['warm_sec'], cancelled)
-        try:
-            f4 = [make_feeds(sess, swap.shape_hint, batch=4)]
-            c4 = best_of(cfg.get('reps', 1), throughput, [sess], f4, outs, 1,
-                         cfg['measure_sec'], cfg['warm_sec'], cancelled)
-            faces1 = c1
-            faces4 = c4 * 4
-            gain = faces4 / max(1e-9, faces1) - 1.0
+        rows = []
+        for candidate in (1, 2, 4, 8):
+            try:
+                feeds = [make_feeds(sess, swap.shape_hint,
+                                    batch=candidate)]
+                free_before, total = vram_free_total_gb()
+                calls = best_of(cfg.get('reps', 1), throughput, [sess], feeds,
+                                outs, 1, cfg['measure_sec'], cfg['warm_sec'],
+                                cancelled)
+                free_after, _ = vram_free_total_gb()
+                rows.append({
+                    'batch_size': candidate,
+                    'batches_s': round(calls, 3),
+                    'items_s': round(calls * candidate, 1),
+                    'batch_latency_ms': round(1000.0 / max(calls, 1e-9), 3),
+                    'vram_free_before_gb': round(free_before, 3),
+                    'vram_free_after_gb': round(free_after, 3),
+                    'vram_used_after_gb': round(max(0.0, total - free_after), 3)
+                    if total else None,
+                })
+                report(log=f'  swap batch {candidate}: '
+                           f'{calls * candidate:.1f} items/s, '
+                           f'{1000.0 / max(calls, 1e-9):.2f} ms/batch, '
+                           f'free VRAM {free_after:.2f} GB')
+            except Exception as e:                  # noqa: BLE001
+                rows.append({
+                    'batch_size': candidate,
+                    'error': f'{type(e).__name__}: {str(e)[:100]}',
+                })
+                report(log=f'  swap batch {candidate}: rejected '
+                           f'({type(e).__name__})')
+        valid = [row for row in rows if 'items_s' in row]
+        if valid:
+            winner = max(valid, key=lambda row: row['items_s'])
+            baseline = next(row for row in valid if row['batch_size'] == 1)
+            gain = winner['items_s'] / max(baseline['items_s'], 1e-9) - 1.0
             out = {
-                'batch1_faces_s': round(faces1, 1),
-                'batch4_faces_s': round(faces4, 1),
+                'candidates': rows,
+                'recommended_batch_size': winner['batch_size'],
+                'batch1_items_s': baseline['items_s'],
+                'recommended_items_s': winner['items_s'],
                 'gain_pct': round(gain * 100, 1),
-                'recommend': 'on' if gain > 0.03 else 'off',
+                # Kept for older UI/report consumers.
+                'batch1_faces_s': baseline['items_s'],
+                'batch4_faces_s': next((r['items_s'] for r in valid
+                                        if r['batch_size'] == 4), None),
+                'recommend': 'on' if winner['batch_size'] > 1 and gain > 0.03
+                             else 'off',
             }
-            report(log=f'  batched swap: {faces1:.0f} -> {faces4:.0f} tiles/s '
-                       f'({gain * 100:+.0f}%)')
-        except Exception as e:                      # noqa: BLE001
-            out = {'error': f'batch 4 rejected: {type(e).__name__}',
-                   'recommend': 'off'}
-            report(log='  batched swap: this model will not take a batch > 1')
+        else:
+            out = {'candidates': rows, 'recommend': 'off',
+                   'error': 'all swap batch candidates rejected'}
         del sess
         _release_vram()
         return out
@@ -1362,6 +1397,124 @@ def measure_batch_swap(stages, cfg, report, cancelled):
 
 
 # ── phase 6: encode / decode ─────────────────────────────────────────────────
+
+def measure_tile_upscale(cfg, report, cancelled):
+    """Measure bounded Frame_Upscale tile batches on the selected device.
+
+    This times the public frame path, so tile creation, overlap/crop merging,
+    host copies, and model inference are included.  The batch-one output is a
+    correctness reference for every candidate.
+    """
+    free, total = vram_free_total_gb()
+    if not total:
+        return {'status': 'skipped', 'reason': 'no CUDA device'}
+    # Eight tiles are useful on the 12GB target.  On the 6GB tier this is not a
+    # safe candidate by policy; record the guard instead of risking an OOM.
+    candidates = (1, 2, 4, 8) if total >= 7.0 else (1, 2, 4)
+    old_tile = os.environ.get('ROOP_UPSCALE_TILE')
+    old_batch = os.environ.get('ROOP_UPSCALE_TILE_BATCH')
+    old_runtime_batch = os.environ.get('ROOP_RUNTIME_UPSCALE_TILE_BATCH')
+    proc = None
+    try:
+        from roop.processors.Frame_Upscale import Frame_Upscale
+        report(status='Batched frame upscale', stage='Frame_Upscale', threads=1)
+        os.environ['ROOP_UPSCALE_TILE'] = '128'
+        os.environ.pop('ROOP_RUNTIME_UPSCALE_TILE_BATCH', None)
+        proc = Frame_Upscale()
+        proc.Initialize({'devicename': 'cuda', 'subtype': 'span_x4'})
+        frame = np.empty((256, 256, 3), dtype=np.uint8)
+        yy, xx = np.indices(frame.shape[:2])
+        frame[:, :, 0] = (xx + 3 * yy) % 256
+        frame[:, :, 1] = (2 * xx + yy) % 256
+        frame[:, :, 2] = (xx + yy) % 256
+
+        os.environ['ROOP_UPSCALE_TILE_BATCH'] = '1'
+        reference = proc.RunThreadSafe(frame)
+        rows = []
+        for candidate in candidates:
+            if cancelled():
+                raise Cancelled()
+            os.environ['ROOP_UPSCALE_TILE_BATCH'] = str(candidate)
+            proc._tile_batch_unsupported = False
+            try:
+                proc.RunThreadSafe(frame)
+                deadline = time.perf_counter() + max(0.5, cfg['measure_sec'])
+                calls = 0
+                started = time.perf_counter()
+                last = None
+                while time.perf_counter() < deadline or calls < 2:
+                    if cancelled():
+                        raise Cancelled()
+                    last = proc.RunThreadSafe(frame)
+                    calls += 1
+                elapsed = max(time.perf_counter() - started, 1e-9)
+                max_diff = int(np.max(np.abs(last.astype(np.int16) -
+                                              reference.astype(np.int16))))
+                free_after, total_after = vram_free_total_gb()
+                rows.append({
+                    'batch_size': candidate,
+                    'effective_batch_size': 1 if proc._tile_batch_unsupported
+                    else candidate,
+                    'supported': not proc._tile_batch_unsupported,
+                    'tiles_per_frame': len(proc.create_tile_frames(
+                        frame, (128, 8, 2))[0]),
+                    'fps': round(calls / elapsed, 3),
+                    'latency_ms': round(1000.0 * elapsed / calls, 3),
+                    'max_abs_diff_vs_batch1': max_diff,
+                    'vram_free_before_gb': round(free, 3),
+                    'vram_free_after_gb': round(free_after, 3),
+                    'vram_used_after_gb': round(max(0.0, total_after - free_after), 3)
+                    if total_after else None,
+                })
+                report(log=f"  upscale tile batch {candidate}: "
+                           f"{calls / elapsed:.2f} frame/s, "
+                           f"{1000.0 * elapsed / calls:.2f} ms/frame, "
+                           f"effective={rows[-1]['effective_batch_size']}, "
+                           f"max diff={max_diff}, free VRAM {free_after:.2f} GB")
+            except Exception as e:                  # noqa: BLE001
+                rows.append({'batch_size': candidate,
+                             'error': f'{type(e).__name__}: {str(e)[:120]}'})
+                report(log=f'  upscale tile batch {candidate}: rejected '
+                           f'({type(e).__name__})')
+        valid = [r for r in rows if 'fps' in r and r['supported']]
+        winner = max(valid, key=lambda r: r['fps']) if valid else None
+        result = {'model': 'span_x4', 'tile_size': 128,
+                  'candidates': rows,
+                  'candidate_8': 'not_safe_on_sub7GB' if total < 7.0 else 'tested'}
+        if winner:
+            result.update({
+                'recommended_batch_size': winner['batch_size'],
+                'recommended_fps': winner['fps'],
+                'batch1_fps': next((r['fps'] for r in valid
+                                    if r['batch_size'] == 1), None),
+            })
+        else:
+            result['error'] = 'no supported tile batch candidate'
+        return result
+    except Cancelled:
+        raise
+    except Exception as e:                          # noqa: BLE001
+        return {'error': f'{type(e).__name__}: {str(e)[:120]}'}
+    finally:
+        if proc is not None:
+            try:
+                proc.Release()
+            except Exception:
+                pass
+        _release_vram()
+        if old_tile is None:
+            os.environ.pop('ROOP_UPSCALE_TILE', None)
+        else:
+            os.environ['ROOP_UPSCALE_TILE'] = old_tile
+        if old_batch is None:
+            os.environ.pop('ROOP_UPSCALE_TILE_BATCH', None)
+        else:
+            os.environ['ROOP_UPSCALE_TILE_BATCH'] = old_batch
+        if old_runtime_batch is None:
+            os.environ.pop('ROOP_RUNTIME_UPSCALE_TILE_BATCH', None)
+        else:
+            os.environ['ROOP_RUNTIME_UPSCALE_TILE_BATCH'] = old_runtime_batch
+
 
 def _bundled_ffmpeg():
     """Pinokio's own ffmpeg, for when this is not running in a Pinokio shell.
@@ -1982,6 +2135,11 @@ def run_benchmark(profile='full', faces_per_frame=1.0, report=None,
             report(phase='batch', pct=92, status='Batched swap')
             batch_res = measure_batch_swap(stages, cfg_profile, report, cancelled)
 
+        tile_upscale_res = {}
+        if cfg_profile.get('tile_upscale'):
+            report(phase='batch', pct=93, status='Batched frame upscale')
+            tile_upscale_res = measure_tile_upscale(cfg_profile, report, cancelled)
+
         io_res = {}
         if cfg_profile['io']:
             report(phase='io', pct=94, status='Encode / decode')
@@ -2046,6 +2204,7 @@ def run_benchmark(profile='full', faces_per_frame=1.0, report=None,
         'pool_ab': pool_ab,
         'provider': rec.get('provider'),
         'batch_swap': batch_res,
+        'tile_upscale': tile_upscale_res,
         'io': io_res,
         'recommend': rec,
         'warnings': warnings,
@@ -2195,6 +2354,20 @@ def _print_report(res):
               res['pool_ab'].get('reason') or
               f"{res['pool_ab'].get('knee_fps')} -> {res['pool_ab'].get('wider_fps')} fps, "
               f"kept {res['pool_ab'].get('winner')}")
+    tile = res.get('tile_upscale') or {}
+    if tile.get('candidates'):
+        print('\nFrame_Upscale tile batches:')
+        for row in tile['candidates']:
+            if row.get('error'):
+                print(f"  batch {row['batch_size']}: rejected ({row['error']})")
+            else:
+                print(f"  batch {row['batch_size']}: {row['fps']:.2f} frame/s, "
+                      f"{row['latency_ms']:.2f} ms, "
+                      f"effective {row['effective_batch_size']}, "
+                      f"max diff {row['max_abs_diff_vs_batch1']}")
+        if tile.get('recommended_batch_size'):
+            print(f"  recommended: {tile['recommended_batch_size']} "
+                  f"({tile['recommended_fps']:.2f} frame/s)")
     for w in res.get('warnings', []):
         print('  ! ' + w)
     print('\nrecommend:', res.get('recommend'))
