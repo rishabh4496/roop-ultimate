@@ -149,6 +149,7 @@ class Enhance_GPEN256Pro:
         self._lut = None
         self._faces = 0
         self._lock = threading.Lock()
+        self._cpu_only = False
         # Guards the SINGLE shared (session, io_binding) used when there is no
         # pool -- a binding's state is not thread-safe. Distinct from _lock,
         # which only counts faces.
@@ -165,12 +166,15 @@ class Enhance_GPEN256Pro:
         model_dir = resolve_relative_path('../models')
         conditional_download(model_dir, [self._MODEL_URL])
         model_path = os.path.join(model_dir, self._MODEL_FILE)
-        from roop.utilities import get_onnx_session_options
+        from roop.utilities import (get_onnx_session_options,
+                                    get_small_card_safe_providers)
         opts = get_onnx_session_options()
+        providers = get_small_card_safe_providers(roop.globals.execution_providers)
+        self._cpu_only = providers == ['CPUExecutionProvider']
 
         def _build(_i=0):
             sess = onnxruntime.InferenceSession(
-                model_path, opts, providers=roop.globals.execution_providers)
+                model_path, opts, providers=providers)
             iob = sess.io_binding()
             iob.bind_output(sess.get_outputs()[0].name, self.devicename)
             return (sess, iob)
@@ -480,6 +484,11 @@ class Enhance_GPEN256Pro:
         x = self._lut[src_256.transpose(2, 0, 1)[::-1]][None]
 
         def _infer(sess, iob):
+            # The CPU-only low-VRAM fallback does not need an I/O binding.
+            # Reusing one binding across many CPU calls retains output buffers
+            # on this Windows/ORT build; plain Run releases each result.
+            if self._cpu_only:
+                return sess.run([self.out_name], {self.in_name: x})
             iob.bind_cpu_input(self.in_name, x)
             sess.run_with_iobinding(iob)
             return iob.copy_outputs_to_cpu()
@@ -512,7 +521,9 @@ class Enhance_GPEN256Pro:
         color_fixed_256 = self._keep_source_colour(restored_256, src_256)
 
         # 2. Multi-band texture injection, edge-gated sharpening & photo-realism
-        enhanced = self._enhance_textures_and_sharpness(color_fixed_256, temp_frame, input_size)
+        enhanced = (self._enhance_textures_and_sharpness_cpu(color_fixed_256, temp_frame, input_size)
+                    if self._cpu_only else
+                    self._enhance_textures_and_sharpness(color_fixed_256, temp_frame, input_size))
 
         with self._lock:
             self._faces += 1

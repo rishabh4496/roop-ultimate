@@ -26,18 +26,19 @@ Before doing anything:
 
 # CURRENT SESSION STATE
 
-**Session:** 0
+**Session:** 1
 
 **Current phase:** PHASE 4 — TensorRT Engine Optimization
 
-**Phase status:** RTX 4070 complete; physical RTX 3060 Laptop gate outstanding
+**Phase status:** RTX 4070 complete; physical RTX 3060 Laptop gate is blocked
 
 **Last completed phase:** PHASE 3 implementation, checkpoint `c439e43`
 
 **Immediate next action:**
-Validate Phases 0 through 4 on the physical RTX 3060 Laptop, including the
-Phase 4 model-specific 1/2/3/4/6 context matrix and real-video workload. Do
-not start Phase 5 until this gate is complete.
+Reduce or explicitly disposition the remaining two-face RealSwap RSS overhead,
+then rerun Phases 0 through 4, including the Phase 4 model-specific
+1/2/3/4/6 context matrix and real-video workload. Do not start Phase 5 until
+the strict laptop gate is complete.
 
 ---
 
@@ -55,25 +56,52 @@ The real-video run completed in 46.9 seconds at 5.12 end-to-end FPS and
 telemetry was unavailable. This was throughput/resource evidence only because
 the selected source did not match the fixture.
 
-No optimization session has been completed yet.
+The 2026-08-28 physical RTX 3060 gate was attempted and is blocked. Hardware
+was confirmed as an RTX 3060 Laptop with 6,144 MiB VRAM and 16 GB RAM. The
+fresh benchmark exercised the TensorRT/CUDA stack and model-specific context
+matrix. Auto low-VRAM policy selected `ROOP_TRT_POOL=0` and
+`ROOP_DETMASK_POOL=0`; composite benchmarking was rejected after the 1.25 GB
+VRAM reserve was no longer available. After the benchmark guard fix, DFL XSeg
+reports valid throughput at 27.0 calls/s for one context.
+
+The real d4.mp4 workload used the configured two faces, RealSwap, GPEN 256 Pro,
+RealityUX, tracking, stabilization, and six requested threads. The sub-7GB
+policy clamped execution to one worker and preserved the 1,536 MB stabilization
+cap with adaptive 16-frame chunking. The completed 200-frame RealSwap run
+reached final encoding with correct attribution, but sustained RSS was about
+2.83 GB. A bare two-face RealSwap probe remained about 2.66 GB, and the full
+GPEN/RealityUX path remained about 2.86 GB. The laptop requirement is strictly
+below 2.5 GB RSS.
+
+Full tests now run 1,346 cases with 1 skipped and all passing. The focused
+runtime/benchmark/backend/stabilization sweep passes 89 tests; Python compile,
+launcher syntax, and diff checks pass. The remaining issue is physical RSS,
+not a software-test regression. Phase 5 was not started and FP32 safeguards
+were not changed.
 
 ---
 
 # WORK IN PROGRESS
 
-None.
+Physical RTX 3060 Phase 0–4 gate is blocked only by the strict RSS ceiling. The
+DFL XSeg measurement and prior test/catalog regressions are resolved.
 
 ---
 
 # FILES CURRENTLY BEING MODIFIED
 
-None.
+Validation fixes and low-VRAM runtime safety changes are present in
+`app/roop/`, benchmark/test parity changes are in `app/tests/`, and the
+settings catalog and handoff records are updated. The pre-existing
+`.geminiignore` change is retained.
 
 ---
 
 # TESTS CURRENTLY PASSING
 
-Not established.
+Phase-focused sweep: 89/89 passed.
+
+Full suite: 1,346/1,346 passed, 1 skipped.
 
 ---
 
@@ -83,20 +111,24 @@ User-reported maximum:
 **~20 FPS**
 
 Controlled baseline:
-**Not yet established**
+**RTX 3060 gate did not complete; no valid end-to-end FPS result**
 
 ---
 
 # KNOWN BLOCKERS
 
-None yet. Phase 1 must identify the actual bottlenecks.
+- The completed two-face RealSwap path is approximately 2.66–2.83 GB RSS on
+  the 16 GB laptop, above the required 2.5 GB ceiling.
+- Composite benchmark admission rejects the measured 6 GB configuration after
+  the 1.25 GB VRAM reserve is consumed.
 
 ---
 
 # NEXT SESSION INSTRUCTION
 
-Run the physical RTX 3060 Laptop validation for Phases 0 through 4. This is
-the first incomplete gate and must be completed before Phase 5 precision work.
+Resolve the blockers above and rerun the physical RTX 3060 Laptop validation
+for Phases 0 through 4. This remains the first incomplete gate and must be
+completed before Phase 5 precision work.
 
 Do not start Phase 5 precision optimization, and do not change the existing
 FP32 safeguards before the RTX 3060 gate is documented.

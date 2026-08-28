@@ -122,12 +122,14 @@ class Mask_FaceParser():
             model_dir = resolve_relative_path('../models')
             conditional_download(model_dir, [_MODEL_URL])
             model_path = os.path.join(model_dir, _MODEL_FILE)
-            from roop.utilities import get_onnx_session_options
+            from roop.utilities import (get_onnx_session_options,
+                                        get_small_card_safe_providers)
             _sess_opts = get_onnx_session_options()
+            providers = get_small_card_safe_providers(roop.globals.execution_providers)
 
             def _build(_i=0):
                 return onnxruntime.InferenceSession(
-                    model_path, _sess_opts, providers=roop.globals.execution_providers)
+                    model_path, _sess_opts, providers=providers)
 
             self.model = _build()
             self.input_name = self.model.get_inputs()[0].name

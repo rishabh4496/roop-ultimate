@@ -1332,10 +1332,13 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
 
         # Workload-aware runtime profile.  This is deliberately after probing
         # the real video dimensions and before queue/chunk geometry is chosen.
-        # It derives bounded hints and records provenance, but does not replace
-        # the caller's worker count or any explicit setting.
+        # It derives bounded hints and records provenance.  On the sub-7GB
+        # laptop tier it may clamp the caller's worker count to one because
+        # the measured multi-worker path violates the 2.5GB RSS ceiling.
         self.runtime_profile = None
         self._runtime_stab_chunk = None
+        self._runtime_stab_workers = None
+        self._runtime_stab_small = False
         self._runtime_queue_depth = None
         try:
             _runtime_optimizer = RuntimeOptimizer(settings=getattr(roop.globals, 'CFG', None))
@@ -1349,6 +1352,8 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
             RuntimeOptimizer.apply_environment(
                 self.runtime_profile, getattr(roop.globals, 'CFG', None))
             self._runtime_stab_chunk = self.runtime_profile.tuning.stabilization_chunk_size
+            self._runtime_stab_workers = self.runtime_profile.tuning.stabilization_workers
+            self._runtime_stab_small = self.runtime_profile.hardware.vram_total_gb < 7.0
             self._runtime_queue_depth = self.runtime_profile.tuning.queue_depth
             print("[RuntimeOptimizer] workload profile: "
                   f"{self.runtime_profile.workload.input_width}x"
@@ -1358,6 +1363,21 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                   f"queue={self._runtime_queue_depth}, "
                   f"stab_chunk={self._runtime_stab_chunk}, "
                   f"profile={self.runtime_profile.cache_key}", flush=True)
+
+            # A 6 GB laptop can load the model sessions successfully, but the
+            # per-worker crop/output temporaries push process RSS above the
+            # device's 2.5 GB system-memory ceiling when the desktop thread
+            # count is carried over unchanged.  The measured safe path is one
+            # end-to-end worker; keep the user's setting visible in the notice
+            # and use the runtime profile's hardware tier to make the change
+            # before queues, stabilization, or model work are allocated.
+            if self._runtime_stab_small and threads > 1:
+                print(f"[RuntimeOptimizer] sub-7GB laptop RSS safety: "
+                      f"execution threads {threads} -> 1; "
+                      "per-frame temporaries stay within the 2.5GB RSS gate.",
+                      flush=True)
+                threads = 1
+                roop.globals.execution_threads = 1
         except Exception as exc:
             print(f"[RuntimeOptimizer] workload profile unavailable: {exc}", flush=True)
 
@@ -1535,13 +1555,15 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
         progress_bar_format = PROGRESS_BAR_FORMAT
         try:
             if use_parallel_stab:
+                stab_threads = max(1, min(
+                    threads, int(self._runtime_stab_workers or threads)))
                 _active = [n for n, w in (("kps", _want_kps_stab), ("enhancer", _want_enh_stab),
                                           ("mask", _want_mask_stab)) if w]
-                print(f"[Stabilize] parallel stabilization ON (threads={threads}, warm-up overlap) — "
+                print(f"[Stabilize] parallel stabilization ON (threads={stab_threads}, warm-up overlap) — "
                       f"{' + '.join(_active)} smoothing run{'s' if len(_active) == 1 else ''} multi-threaded.")
                 with ChunkedProgress(total=self.total_frames, desc='Processing', unit='frames', dynamic_ncols=True, bar_format=progress_bar_format) as progress:
                     self._run_stab_parallel(source_video, awebp_frames, frame_start, frame_end,
-                                            frame_count, threads, lambda: self.update_progress(progress))
+                                            frame_count, stab_threads, lambda: self.update_progress(progress))
             else:
                 if is_awebp:
                     readthread = Thread(target=self.read_frames_webp_thread, args=(awebp_frames, frame_start, frame_end, threads))
@@ -1771,7 +1793,7 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
         running sequentially (2.65 vs 2.92 fps at strength 1.0).
         """
         wu = self._stab_warmup or self._stab_warmup_frames()
-        block = max(4 * wu, 24)
+        block = max(2 * wu, 16) if self._runtime_stab_small else max(4 * wu, 24)
         budget_mb = self._default_stab_chunk_mb()
         _env_budget = (os.environ.get('ROOP_STAB_CHUNK_MB', '') or '').strip()
         if _env_budget:

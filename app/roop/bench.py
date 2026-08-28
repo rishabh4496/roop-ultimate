@@ -834,6 +834,13 @@ def measure_stage(stage, cfg, report, cancelled, sweep_pools, max_level):
                 stage.error = f'{type(e).__name__}: {str(e)[:120]}'
                 report(log=f'  ! {stage.label} did not run: {stage.error}')
                 return
+            if not np.isfinite(calls_s) or calls_s <= 0:
+                # Some providers can fail during the first inference without
+                # raising, leaving the harness with a zero throughput value.
+                # Do not turn that sentinel into a convincing 1e12 ms result.
+                stage.error = f'invalid throughput: {calls_s!r}'
+                report(log=f'  ! {stage.label} did not run: {stage.error}')
+                return
             if n == 1:
                 stage.ms_call = 1000.0 / max(1e-9, calls_s)
             base = stage.scaling[0]['calls_s'] if stage.scaling else calls_s

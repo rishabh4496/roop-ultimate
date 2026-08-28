@@ -29,6 +29,32 @@ import roop.globals
 TEMP_FILE = "temp.mp4"
 TEMP_DIRECTORY = "temp"
 
+
+def get_small_card_safe_providers(providers=None):
+    """Keep heavy enhancer/mask sessions off CUDA below the 7GB tier.
+
+    CUDA remains the provider for detection and swapping, while the repeated
+    512px mask and enhancement sessions use bounded CPU allocations. This
+    prevents their CUDA execution arenas from pushing the 16GB laptop above
+    the 2.5GB host-RSS ceiling during long stabilized renders.
+    """
+    selected = list(providers if providers is not None
+                    else getattr(roop.globals, 'execution_providers', []) or [])
+    if os.environ.get('ROOP_ALLOW_CUDA_HEAVY_STAGES_SMALL_GPU', '').strip().lower() in (
+            '1', 'true', 'yes', 'on'):
+        return selected
+    try:
+        small = (torch.cuda.is_available() and
+                 torch.cuda.get_device_properties(
+                     getattr(roop.globals, 'cuda_device_id', 0)).total_memory /
+                 (1024 ** 3) < 7.0)
+    except Exception:
+        small = False
+    if small and any('cuda' in str(p[0] if isinstance(p, (tuple, list)) else p).lower()
+                     for p in selected):
+        return ['CPUExecutionProvider']
+    return selected
+
 # monkey patch ssl for mac
 if platform.system().lower() == "darwin":
     ssl._create_default_https_context = ssl._create_unverified_context

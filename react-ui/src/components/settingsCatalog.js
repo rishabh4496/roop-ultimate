@@ -34,6 +34,10 @@ export const SETTINGS_CATALOG = [
 
   // Advanced performance
   { key: 'perf_trt_pool', label: 'Swapper TRT pool', section: 'Advanced performance' },
+  { key: 'trt_builder_optimization_level', label: 'TensorRT builder optimization', section: 'Advanced performance' },
+  { key: 'trt_auxiliary_streams', label: 'TensorRT auxiliary streams', section: 'Advanced performance' },
+  { key: 'trt_cuda_graph', label: 'TensorRT CUDA graphs (experimental)', section: 'Advanced performance' },
+  { key: 'cpu_opencv_threads', label: 'CPU OpenCV kernel threads', section: 'Advanced performance' },
   { key: 'perf_detmask_pool', label: 'Detect/Mask pool', section: 'Advanced performance' },
   { key: 'perf_detector_pool', label: 'Detector pool', section: 'Advanced performance' },
   { key: 'perf_expr_pool', label: 'Expression pool', section: 'Advanced performance' },

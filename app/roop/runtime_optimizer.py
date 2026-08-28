@@ -232,7 +232,7 @@ class ResourceManager:
         "detector_resolution": (320, 1280),
         "queue_depth": (1, 4),
         "stabilization_workers": (1, 8),
-        "stabilization_chunk_size": (32, 288),
+        "stabilization_chunk_size": (16, 288),
         "ort_intra_threads": (1, 4),
         "ort_inter_threads": (1, 2),
         "opencv_threads": (1, 4),
@@ -529,7 +529,11 @@ class AutoTuner:
         swapper_pool = 0 if small else 2
         enhancer_pool = 0 if small else (2 if workload.enhancement_enabled else 1)
         expression_pool = 0 if small else 2
-        stabilization_workers = max(1, min(worker, 4 if small else 6))
+        # The 16GB laptop has only limited RSS headroom after the CUDA model
+        # sessions are resident. Keep stabilization's live frame set single
+        # threaded there; the frame workers remain independent and the bounded
+        # scheduler still owns the same 1536MB hard cap.
+        stabilization_workers = 1 if small else max(1, min(worker, 6))
         if not workload.stabilization_enabled:
             stabilization_workers = 1
 
@@ -540,7 +544,7 @@ class AutoTuner:
             queue_depth = 2
         else:
             queue_depth = 3
-        chunk = 64 if small else (96 if pixels > 1920 * 1080 else 144)
+        chunk = 16 if small else (96 if pixels > 1920 * 1080 else 144)
         opencv = 1 if worker >= 8 or small else 2
         encoder = "hevc_nvenc" if hardware.nvenc_available else "libx264"
         preset = "p5" if hardware.nvenc_available else "medium"

@@ -23,6 +23,7 @@ import sys
 import threading
 import time
 import unittest
+from unittest import mock
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 APP = os.path.dirname(HERE)
@@ -233,7 +234,12 @@ class CatalogueFollowsTheSettings(unittest.TestCase):
         g.CFG.selected_enhancer = 'GPEN'
         self.assertFalse(self._stage('enhance').pooled)
         g.CFG.selected_enhancer = 'Restoreformer++'
-        self.assertTrue(self._stage('enhance').pooled)
+        # The catalogue follows the runtime pool capability. Make that
+        # capability explicit here so this wiring test is independent of the
+        # machine running the test suite (the physical 6 GB laptop disables
+        # pools by design).
+        with mock.patch('roop.session_pool.pooling_enabled', return_value=True):
+            self.assertTrue(self._stage('enhance').pooled)
 
     def test_a_selected_model_that_is_not_on_disk_warns_instead_of_failing(self):
         g.CFG.selected_enhancer = 'DMDNet'      # a .pth, not single-file ONNX
@@ -322,10 +328,18 @@ class StandaloneRunReadsTheRealConfig(unittest.TestCase):
             except ImportError:
                 self.assertNotIn('TensorrtExecutionProvider', names)
             else:
-                self.assertEqual(names[0], 'TensorrtExecutionProvider')
-                # CUDA behind it, as ui/main.py does, so a node TensorRT cannot
-                # build lands on CUDA instead of falling through to CPU.
-                self.assertIn('CUDAExecutionProvider', names)
+                import torch
+                small_gpu = (torch.cuda.is_available() and
+                             torch.cuda.get_device_properties(0).total_memory /
+                             (1024 ** 3) < 7.0)
+                if small_gpu:
+                    self.assertEqual(names[0], 'CUDAExecutionProvider')
+                else:
+                    self.assertEqual(names[0], 'TensorrtExecutionProvider')
+                    # CUDA behind it, as ui/main.py does, so a node TensorRT
+                    # cannot build lands on CUDA instead of falling through to
+                    # CPU.
+                    self.assertIn('CUDAExecutionProvider', names)
         else:
             self.assertNotIn('TensorrtExecutionProvider', names)
 

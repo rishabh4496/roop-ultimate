@@ -1026,10 +1026,12 @@ def _progress_style() -> str:
 
 
 def _stream_is_terminal() -> bool:
-    # tqdm defaults to stderr, so that is the stream whose behaviour decides
-    # whether an in-place rewrite means anything.
+    # Chunk lines are emitted with print(), so stdout is the stream whose
+    # behaviour decides whether an in-place rewrite means anything. Checking
+    # stderr made auto mode suppress chunks whenever a test runner or launcher
+    # attached a terminal only to stderr.
     try:
-        return bool(sys.stderr.isatty())
+        return bool(sys.stdout.isatty())
     except Exception:
         return False
 

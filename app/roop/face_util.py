@@ -14,7 +14,7 @@ import cv2
 import numpy as np
 from skimage import transform as trans
 from roop.capturer import get_video_frame
-from roop.utilities import resolve_relative_path, conditional_download
+from roop.utilities import resolve_relative_path, conditional_download, get_onnx_session_options
 from roop.nms import bind_instance_nms
 from roop import face_contact
 
@@ -64,6 +64,43 @@ def _hybrid_engine_active() -> bool:
     return _current_engine() in _HYBRID_ENGINES
 
 
+def _face_analysis_providers():
+    """Use CUDA for buffalo_l on sub-7GB cards to bound host RSS.
+
+    FaceAnalysis creates several independent ORT sessions (detector, landmark
+    and recognition models). Loading all of them through TensorRT on the 6GB
+    laptop consumes several gigabytes of host working set before the first
+    frame, even with TensorRT pools disabled. The swapper and selected frame
+    processors keep their configured provider; only this multi-session bundle
+    takes the CUDA path on small cards. An explicit opt-in preserves the old
+    all-TensorRT behaviour for diagnostics.
+    """
+    providers = list(roop.globals.execution_providers or [])
+    if roop.globals.CFG.force_cpu:
+        return ["CPUExecutionProvider"]
+    if os.environ.get('ROOP_ALLOW_TRT_SMALL_GPU', '').strip().lower() in (
+            '1', 'true', 'yes', 'on'):
+        return providers
+    names = [p[0] if isinstance(p, (tuple, list)) else str(p)
+             for p in providers]
+    if not any('tensorrt' in name.lower() for name in names):
+        return providers
+    try:
+        import torch
+        vram_gb = (torch.cuda.get_device_properties(
+            roop.globals.cuda_device_id).total_memory / (1024 ** 3)
+                   if torch.cuda.is_available() else 0.0)
+    except Exception:
+        vram_gb = 0.0
+    if 0 < vram_gb < 7.0:
+        safe = [p for p in providers if 'tensorrt' not in str(
+            p[0] if isinstance(p, (tuple, list)) else p).lower()]
+        print('[FaceAnalysis] sub-7GB GPU: using CUDA/CPU for buffalo_l '
+              'sessions to keep host RSS bounded; swapper provider unchanged.')
+        return safe or ["CPUExecutionProvider"]
+    return providers
+
+
 def analysis_pooled() -> bool:
     """True when >1 independent FaceAnalysis instance exists, i.e. detection can
     run lock-free concurrently (each worker leases its own instance)."""
@@ -73,12 +110,10 @@ def analysis_pooled() -> bool:
 def _build_face_analyser():
     model_path = resolve_relative_path('..')
     allowed_modules = roop.globals.g_desired_face_analysis
-    if roop.globals.CFG.force_cpu:
-        providers = ["CPUExecutionProvider"]
-    else:
-        providers = roop.globals.execution_providers
+    providers = _face_analysis_providers()
     fa = insightface.app.FaceAnalysis(
-        name="buffalo_l", root=model_path, providers=providers, allowed_modules=allowed_modules)
+        name="buffalo_l", root=model_path, providers=providers, allowed_modules=allowed_modules,
+        sess_options=get_onnx_session_options())
     fa.prepare(
         ctx_id=0,
         det_size=_desired_det_size(),

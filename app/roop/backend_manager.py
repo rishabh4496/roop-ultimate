@@ -72,6 +72,20 @@ def provider_usable(name: str, device_id: int = 0,
     return ok
 
 
+def _small_gpu(device_id: int) -> bool:
+    """Return whether this device is below the laptop's 7GB safety tier."""
+    if os.environ.get('ROOP_ALLOW_TRT_SMALL_GPU', '').strip().lower() in (
+            '1', 'true', 'yes', 'on'):
+        return False
+    try:
+        import torch
+        return bool(torch.cuda.is_available() and
+                    torch.cuda.get_device_properties(device_id).total_memory /
+                    (1024 ** 3) < 7.0)
+    except Exception:
+        return False
+
+
 _HIERARCHY = {
     "auto": ("TensorrtExecutionProvider", "CUDAExecutionProvider",
              "ROCMExecutionProvider", "DmlExecutionProvider", "CPUExecutionProvider"),
@@ -93,6 +107,12 @@ def resolve_provider_names(requested: Iterable[str] | None,
     # Accept both encoded names and the short names used by settings.yaml.
     short = _name(requested[0]).lower().replace("executionprovider", "")
     candidates = _HIERARCHY.get(short, tuple(_name(p) for p in requested))
+    if short in ("auto", "tensorrt") and _small_gpu(device_id):
+        # TensorRT's multi-session host footprint exceeds the 2.5GB laptop
+        # RSS ceiling even with pools disabled. CUDA remains GPU-accelerated
+        # and is the safe default for the complete small-card pipeline.
+        candidates = tuple(p for p in candidates
+                           if "tensorrt" not in p.lower())
     resolved: List[str] = []
     for candidate in candidates:
         if provider_usable(candidate, device_id, available) and candidate not in resolved:

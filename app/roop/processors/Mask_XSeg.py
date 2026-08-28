@@ -35,11 +35,14 @@ class Mask_XSeg():
         self.plugin_options = plugin_options
         if self.model_xseg is None:
             model_path = resolve_relative_path('../models/xseg.onnx')
-            from roop.utilities import get_onnx_session_options
+            from roop.utilities import (get_onnx_session_options,
+                                        get_small_card_safe_providers)
             _sess_opts = get_onnx_session_options()
+            providers = get_small_card_safe_providers(roop.globals.execution_providers)
+            self._cpu_only = providers == ['CPUExecutionProvider']
 
             def _build(_i=0):
-                return onnxruntime.InferenceSession(model_path, _sess_opts, providers=roop.globals.execution_providers)
+                return onnxruntime.InferenceSession(model_path, _sess_opts, providers=providers)
 
             self.model_xseg = _build()
             self.model_inputs = self.model_xseg.get_inputs()
@@ -60,6 +63,9 @@ class Mask_XSeg():
 
 
     def _run_session(self, sess, temp_frame):
+        if getattr(self, '_cpu_only', False):
+            return sess.run([o.name for o in self.model_outputs],
+                            {self.model_inputs[0].name: temp_frame})
         io_binding = sess.io_binding()
         io_binding.bind_cpu_input(self.model_inputs[0].name, temp_frame)
         io_binding.bind_output(self.model_outputs[0].name, self.devicename)

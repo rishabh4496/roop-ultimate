@@ -107,6 +107,12 @@ def decode_execution_providers(execution_providers: List[str]) -> List[str]:
     # fallback for every GPU hierarchy.
     resolved_names = resolve_provider_names(execution_providers,
                                             getattr(roop.globals, 'cuda_device_id', 0))
+    requested_name = str(execution_providers[0] if execution_providers else '').lower()
+    if ('tensorrt' in requested_name and
+            not any('tensorrt' in str(p).lower() for p in resolved_names)):
+        print('[Backend] sub-7GB GPU: TensorRT disabled by the laptop RSS '
+              'safety policy; using CUDA/CPU providers. Set '
+              'ROOP_ALLOW_TRT_SMALL_GPU=1 to override.')
     available = onnxruntime.get_available_providers()
     list_providers = [provider for provider in available
                       if provider in resolved_names]
