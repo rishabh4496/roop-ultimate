@@ -8,6 +8,37 @@ The repository files and benchmark evidence are authoritative. Conversation hist
 
 ---
 
+## HARDWARE VALIDATION — MANDATORY
+
+Primary validation GPUs:
+
+1. RTX 3060
+2. RTX 4070
+
+Both must remain first-class targets throughout the project.
+
+Current hardware available for validation:
+- RTX 4070: AVAILABLE (current host)
+- RTX 3060: UNAVAILABLE on current host; prior physical validation is recorded
+
+IMPORTANT:
+Do not claim RTX 3060 compatibility based solely on code inspection.
+
+When a physical RTX 3060 is unavailable, mark its benchmark as
+PENDING rather than inventing measurements.
+
+Never forget the second hardware target when implementing or reviewing
+an optimization.
+
+Before completing any performance phase, ask:
+
+"Does this change behave correctly and sensibly on BOTH RTX 3060 and
+RTX 4070?"
+
+If not, implement hardware-adaptive behavior or document the limitation.
+
+---
+
 # RESUME PROTOCOL
 
 Before doing anything:
@@ -28,7 +59,7 @@ Before doing anything:
 
 **Session:** 1
 
-**Current phase:** PHASE 4 — TensorRT Engine Optimization
+**Current phase:** PHASE 4 — TensorRT Engine Optimization (RTX 3060 Laptop gate)
 
 **Phase status:** RTX 4070 complete; physical RTX 3060 Laptop gate is blocked
 
@@ -42,6 +73,15 @@ laptop gate is explicitly resolved.
 ---
 
 # LAST SESSION SUMMARY
+
+Session 1 corrected the evidence audit. `GEMINI.md` records genuine physical
+RTX 3060 Laptop work on 2026-08-25: clean TensorRT diagnostics at 38.3 ms/face,
+0/0 pools, and a live two-face run at 8 execution threads and about 2.9 GB RSS.
+However, that record explicitly says the context knees were not measured
+because no video was available on the laptop. It predates the Phase 4 commits
+`4fc9bcb` and `5a9365d`, and no post-Phase-4 laptop matrix or real-video result
+is present in this repository. The focused Phase 4 contract suites passed: 98
+tests on the current RTX 4070 host.
 
 Phase 4 was implemented and validated on the physical RTX 4070. The audit
 preserved TensorRT cache/timing identity, precision namespaces, context and
@@ -106,6 +146,7 @@ settings catalog and handoff records are updated. The pre-existing
 Phase-focused sweep: 89/89 passed.
 
 Full suite: 1,346/1,346 passed, 1 skipped.
+`app\\env\\Scripts\\python.exe -m unittest app.tests.test_bench app.tests.test_trt_context_manager app.tests.test_hardware_portability`
 
 ---
 

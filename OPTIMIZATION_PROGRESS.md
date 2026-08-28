@@ -17,7 +17,7 @@ Do not mark a phase complete based only on conversation history.
 
 ## CURRENT STATE
 
-**Current phase:** PHASE 4 — TensorRT Engine Optimization
+**Current phase:** PHASE 4 — TensorRT Engine Optimization (RTX 3060 Laptop gate)
 
 **Status:** RTX 4070 implementation remains valid; physical RTX 3060 Laptop gate is BLOCKED by the strict RSS ceiling
 
@@ -171,6 +171,35 @@ existing FP32 safeguards before the strict <2.5 GB gate passes.
 
 # SESSION LOG
 
+## Session 1 — Physical RTX 3060 evidence correction
+**Date/time:** 2026-08-28 18:12:59 +05:30
+**Status:** Superseded by the physical gate record above; the RTX 3060 gate remains blocked by RSS
+
+The repository does contain genuine physical RTX 3060 Laptop evidence. The
+2026-08-25 secondary-device record in `GEMINI.md` reports a clean device
+diagnostic, TensorRT execution at 38.3 ms/face for GPEN 256 Pro, 0/0 pools for
+the <7 GB tier, and a live two-face `d4.mp4` run that held 8 execution threads
+with approximately 2.9 GB RSS. It also records 1,298 passing tests. This
+validates earlier 3060 portability and stabilization work.
+
+The same record explicitly says the context knees were **not measured** because
+there was no video file on the 3060. The current Phase 4 context matrix
+(1/2/3/4/6) and real-video gate belong to the implementation committed in
+`4fc9bcb`/`5a9365d` on 2026-08-28, after that laptop session. The repository
+A later post-Phase-4 physical gate record is documented above. The current host
+exposes only the RTX 4070, so the remaining RSS issue cannot be independently
+recreated here without access to the laptop.
+
+**Files changed:** no optimization implementation files; this state file and
+`SESSION_HANDOFF.md` only
+**Tests:** `app\\env\\Scripts\\python.exe -m unittest app.tests.test_bench app.tests.test_trt_context_manager app.tests.test_hardware_portability` — 98 tests passed
+**Benchmark:** not run in this session; the later physical gate record above is authoritative
+**FPS/resources:** unchanged from the documented RTX 4070 evidence; no new
+measurement claimed
+**Regression:** none observed
+**Exact next action:** reduce or explicitly disposition the remaining RSS
+overhead, then rerun the complete physical gate before starting Phase 5.
+
 ## Session 0 — Project initialization
 **Status:** PLANNED
 
@@ -207,6 +236,7 @@ settings catalog update in `react-ui/`, and the state records in this file and
 6. Mixed FP16/FP32 behavior must be preserved and validated.
 7. Hardware-specific tuning must remain adaptive.
 8. Future NVIDIA/Rubin support must depend on actual CUDA/TensorRT capability exposure.
+9. The physical RTX 3060 Phase 0–4 gate remains blocked by the strict RSS ceiling; do not start Phase 5 until it is resolved.
 
 ---
 

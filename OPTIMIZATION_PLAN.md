@@ -23,6 +23,204 @@ complete and documented.
 
 ---
 
+# MANDATORY HARDWARE VALIDATION MATRIX
+
+This project MUST be developed and validated with two primary NVIDIA GPU
+targets:
+
+TARGET GPU A:
+NVIDIA RTX 3060
+- Architecture: Ampere
+- VRAM: must be detected at runtime; do not hard-code capacity
+- Purpose: lower-VRAM / lower-tier validation target
+
+TARGET GPU B:
+NVIDIA RTX 4070
+- Architecture: Ada Lovelace
+- VRAM: must be detected at runtime
+- Purpose: higher-performance validation target
+
+IMPORTANT:
+
+The RTX 3060 and RTX 4070 are BOTH first-class validation targets.
+
+Never optimize exclusively for the RTX 4070.
+
+Never assume that a configuration optimal on the RTX 4070 is optimal on
+the RTX 3060.
+
+Never hard-code:
+
+- GPU model
+- VRAM size
+- compute capability
+- TensorRT context count
+- batch size
+- CUDA stream count
+- worker count
+- precision
+- tile size
+- queue depth
+- VRAM thresholds
+
+when those values can be detected or benchmarked dynamically.
+
+The implementation must use capability detection and hardware-adaptive
+configuration.
+
+============================================================
+HARDWARE PROFILE
+============================================================
+
+At runtime detect and record:
+
+- GPU name
+- GPU architecture
+- compute capability
+- total VRAM
+- available VRAM
+- CUDA version
+- TensorRT version
+- ONNX Runtime version
+- driver version
+- Tensor Core capabilities
+- FP16 support
+- BF16 support where available
+- INT8 support where applicable
+- FP8 support where actually exposed
+- NVDEC capability
+- NVENC capability.
+
+Do not infer capabilities from the GPU name alone.
+
+============================================================
+PROFILE ISOLATION
+============================================================
+
+Performance profiles MUST be hardware-specific.
+
+At minimum maintain separate profiles for:
+
+RTX 3060
+RTX 4070
+
+A profile key must include sufficient information to prevent accidental
+cross-GPU reuse.
+
+Recommended identity:
+
+GPU architecture
++ compute capability
++ GPU model
++ VRAM tier
++ driver
++ CUDA
++ TensorRT
++ ONNX Runtime
++ model
++ model version/hash
++ precision
++ input resolution
++ output resolution
++ enhancer
++ batch size
++ workload characteristics.
+
+An RTX 4070 TensorRT engine/profile must NEVER be silently reused as an
+RTX 3060 optimization profile.
+
+An RTX 3060 profile must NEVER be assumed optimal for RTX 4070.
+
+============================================================
+PER-PHASE REQUIREMENT
+============================================================
+
+Every performance-related phase from Phase 3 onward MUST consider both
+validation targets.
+
+For each optimization determine:
+
+RTX 3060:
+- works?
+- FPS?
+- VRAM?
+- CPU?
+- bottleneck?
+- quality?
+- stability?
+
+RTX 4070:
+- works?
+- FPS?
+- VRAM?
+- CPU?
+- bottleneck?
+- quality?
+- stability?
+
+If physical access to one GPU is unavailable, do not fabricate results.
+
+Instead:
+
+1. validate implementation logically,
+2. mark hardware validation as pending,
+3. record which GPU was unavailable,
+4. provide the exact benchmark required later.
+
+============================================================
+OPTIMIZATION ACCEPTANCE RULE
+============================================================
+
+An optimization is NOT considered universally successful merely because
+it improves RTX 4070 performance.
+
+Classify every optimization as:
+
+A. BENEFICIAL ON BOTH
+B. RTX 3060-SPECIFIC
+C. RTX 4070-SPECIFIC
+D. NEUTRAL
+E. REGRESSION ON ONE GPU
+F. UNSAFE / REJECTED
+
+If an optimization improves RTX 4070 but significantly harms RTX 3060,
+do not apply it globally.
+
+Use hardware-adaptive selection instead.
+
+============================================================
+FINAL VALIDATION
+============================================================
+
+The final benchmark MUST contain separate result tables for:
+
+RTX 3060
+RTX 4070
+
+Never combine the two into one average FPS number.
+
+Report:
+
+- baseline FPS
+- final FPS
+- percentage improvement
+- peak VRAM
+- average VRAM
+- CPU utilization
+- GPU utilization
+- decode throughput
+- inference throughput
+- enhancement throughput
+- encode throughput
+- latency
+- stability
+- output quality.
+
+The application must remain functional when moving between the RTX 3060
+and RTX 4070 without manually rewriting configuration files.
+
+---
+
 # EXECUTION RULES
 
 1. Do phases strictly in order unless the progress file explicitly records a dependency exception.
