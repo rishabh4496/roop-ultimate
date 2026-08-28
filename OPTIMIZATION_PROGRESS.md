@@ -23,7 +23,8 @@ Do not mark a phase complete based only on conversation history.
 
 **Last completed phase:** PHASE 3 implementation, checkpoint `c439e43`
 
-**Next phase:** Reduce the two-face RealSwap RSS footprint, then rerun the complete Phase 0–4 validation
+**Next phase:** Resume Phase 4 work on the physical RTX 4070 system; keep the
+RTX 3060 RSS gate unresolved until a compliant rerun is available
 
 **Baseline FPS:** ~20 FPS (user-reported; must be formally measured in Phase 2)
 
@@ -38,8 +39,9 @@ Do not mark a phase complete based only on conversation history.
 - NVIDIA RTX 3060 Laptop, required before Phase 5
 
 **Next-session instruction:**
-- When asked to “validate phases 0 to 4”, run the physical RTX 3060 Laptop
-  validation for the complete Phase 0–4 gate. Do not start Phase 5 early.
+- Continue on the physical RTX 4070 system from the current Phase 4 state.
+- Preserve the documented RTX 3060 Laptop RSS failure and do not start Phase 5
+  until the outstanding gate is explicitly resolved.
 
 ---
 
@@ -156,6 +158,11 @@ stabilization mask, tracking, six requested threads. The laptop policy clamped
 execution to one worker. The safe bounded RealSwap run covered frames 0–200
 and reached final output encoding; focused bare-RealSwap and 2 GB allocator
 probes also reached final output encoding.
+
+**Latest revalidation:** commit `8145c10` was exercised through the Pinokio
+launcher and the same bounded workload. The launcher reached `online/ready`;
+the workload produced 200/200 encoded frames and 369 audit rows. RSS remained
+approximately 2.82–2.83 GB, so the strict laptop gate remains blocked.
 
 **Exact next action:** reduce or otherwise explicitly disposition the remaining
 two-face RealSwap RSS overhead while preserving the configured look settings,

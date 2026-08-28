@@ -35,10 +35,9 @@ Before doing anything:
 **Last completed phase:** PHASE 3 implementation, checkpoint `c439e43`
 
 **Immediate next action:**
-Reduce or explicitly disposition the remaining two-face RealSwap RSS overhead,
-then rerun Phases 0 through 4, including the Phase 4 model-specific
-1/2/3/4/6 context matrix and real-video workload. Do not start Phase 5 until
-the strict laptop gate is complete.
+Resume Phase 4 work on the physical RTX 4070 system. Preserve the documented
+RTX 3060 Laptop RSS failure; do not start Phase 5 until the outstanding strict
+laptop gate is explicitly resolved.
 
 ---
 
@@ -72,6 +71,11 @@ reached final encoding with correct attribution, but sustained RSS was about
 2.83 GB. A bare two-face RealSwap probe remained about 2.66 GB, and the full
 GPEN/RealityUX path remained about 2.86 GB. The laptop requirement is strictly
 below 2.5 GB RSS.
+
+The latest revalidation used commit `8145c10`. Pinokio reached `online/ready`,
+the bounded workload encoded 200/200 frames and produced 369 audit rows, and
+RSS remained approximately 2.82–2.83 GB. The RTX 3060 gate therefore remains
+blocked; the next session continues on the RTX 4070 system.
 
 Full tests now run 1,346 cases with 1 skipped and all passing. The focused
 runtime/benchmark/backend/stabilization sweep passes 89 tests; Python compile,
@@ -126,9 +130,9 @@ Controlled baseline:
 
 # NEXT SESSION INSTRUCTION
 
-Resolve the blockers above and rerun the physical RTX 3060 Laptop validation
-for Phases 0 through 4. This remains the first incomplete gate and must be
-completed before Phase 5 precision work.
+Continue Phase 4 work on the physical RTX 4070 system using the current
+repository state. The RTX 3060 RSS gate remains the first incomplete acceptance
+gate and must be explicitly resolved before Phase 5 precision work.
 
 Do not start Phase 5 precision optimization, and do not change the existing
 FP32 safeguards before the RTX 3060 gate is documented.
