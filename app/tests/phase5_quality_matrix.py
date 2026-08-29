@@ -39,6 +39,8 @@ import os
 import re
 import subprocess
 import sys
+
+import fixtures
 import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -148,7 +150,7 @@ def run_arm(provider, precision, args, phase, timeout):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--tag", required=True)
-    ap.add_argument("--source-clip", default="G:/pinokio/roop-keep/single/s4.mp4")
+    ap.add_argument("--source-clip", default=fixtures.clip("single/s4.mp4"))
     ap.add_argument("--fixture-frames", type=int, default=24)
     ap.add_argument("--fixture-start", type=int, default=60)
     ap.add_argument("--clip", default=None, help="skip fixture generation")

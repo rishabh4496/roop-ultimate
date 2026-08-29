@@ -16,6 +16,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 APP = os.path.dirname(HERE)
 if APP not in sys.path:
     sys.path.insert(0, APP)
+import fixtures
 from hardware_probe import format_selected, query_gpus, target_on_device
 
 from roop.runtime_optimizer import RuntimeOptimizer, WorkloadProfile
@@ -96,7 +97,7 @@ def main():
     ap.add_argument("--target", required=True, choices=TARGETS)
     ap.add_argument("--device-id", type=int, default=0,
                     help="physical CUDA device index used by each child")
-    ap.add_argument("--video", default=r"G:/pinokio/roop-keep/double/d4.mp4")
+    ap.add_argument("--video", default=fixtures.clip("double/d4.mp4"))
     ap.add_argument("--sources", default="harjot,gargee")
     ap.add_argument("--start", type=int, default=0)
     ap.add_argument("--end", type=int, default=60,

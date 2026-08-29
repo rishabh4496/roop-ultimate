@@ -7,10 +7,77 @@ not used as a profile identity.
 
 ## Current validation state
 
-- RTX 4070: physically available in the current environment (`nvidia-smi`
-  reported 12,282 MiB total and driver 610.88).
-- RTX 3060: unavailable in the current environment. Its measurements remain
-  `pending`; no 4070 value is copied into this table.
+- RTX 4070: physically available in earlier sessions (`nvidia-smi` reported
+  12,282 MiB total and driver 610.88). NOT present in the 2026-08-29 (later)
+  session recorded below.
+- RTX 3060: **physically present and detected** as of 2026-08-29 (later
+  session). Its acceptance rows nevertheless remain `pending` — not for want of
+  hardware, but because the locked fixture is absent from that machine. See
+  "RTX 3060 physical session" below. No 4070 value is copied into this table.
+
+## RTX 3060 physical session — 2026-08-29 (later)
+
+The laptop was probed rather than assumed. Detected profile:
+
+| Field | Detected |
+|---|---|
+| GPU / architecture / CC | NVIDIA GeForce RTX 3060 Laptop GPU, Ampere, **8.6** |
+| VRAM total / available | 6.0 GB / 4.586 GB at probe |
+| Driver / CUDA | 616.56 / 12.8 |
+| TensorRT / ONNX Runtime | 10.9.0.34 / 1.23.2 |
+| Tensor Core modes | bf16, fp16 |
+| FP16 / BF16 | supported |
+| INT8 / FP8 | **not exposed** on this stack |
+| NVDEC / NVENC | available — `av1/h264/hevc/vp9_cuvid`, `av1/h264/hevc_nvenc` |
+| CPU | i7-12700H, 14 physical / 20 logical, 6 P + 8 E, affinity supported |
+| CPU topology source | `windows-cpu-set-efficiency-class` (a real OS report, not inferred) |
+| RAM | 15.797 GB |
+
+Note the CPU row against the 4070's: Windows exposed **no** P/E topology on the
+4070, which is why Gate D was deferred there. It *is* exposed here, so the 3060
+is the target on which Gate D's CPU-distribution matrix can actually be run.
+
+### BLOCKER: the locked fixture is not on this machine
+
+`PERFORMANCE_BASELINE.md` locks the baseline to `double/d4.mp4` at
+**1280x720**. The laptop holds a clip also named `d4.mp4` — but it is
+**854x480, 8310 frames**, i.e. the clip the session logs call `duo/d4.mp4`.
+They are different videos sharing a filename.
+
+A 40-frame smoke render on the local clip completed cleanly (rc 0, 3.36 fps,
+peak RSS 2.965 GB, peak VRAM 3336 MB, peak GPU 97%), so the pipeline and the
+whole harness path are working on this target. The number is nonetheless **not
+a Phase 2 baseline row**: a smaller frame at a different face scale is a
+different workload, and comparing it to 9.62 fps would be meaningless.
+
+`tests/fixtures.py` now fingerprints the resolved clip and
+`baseline_controlled.py` refuses to mark a mismatched run comparable
+(`comparable_to_locked_baseline: false`), so this cannot be filed by accident.
+
+**To close the row:** copy the 1280x720 `double/d4.mp4` to the laptop under
+`<PINOKIO_HOME>/roop keep/` (or set `ROOP_CLIP_ROOT`), then run
+
+```bash
+cd app
+env/Scripts/python.exe tests/baseline_controlled.py --tag phase2_3060 --target "RTX 3060"
+```
+
+### The 3060 runs a materially different stack, by design
+
+The sub-7GB policy adapts the pipeline before it starts. These are
+hardware-adaptive decisions, not defects, but they mean the two targets' rows
+are **not like-for-like** and must never be presented as one comparison:
+
+| Stage | RTX 4070 baseline | RTX 3060, automatic |
+|---|---|---|
+| Provider | TensorRT | **CUDA/CPU** (TRT disabled by the laptop RSS policy) |
+| Enhancer | GPEN 256 Pro | **None** (stripped by the RSS gate) |
+| Mask | RealityUX (XSeg + BiSeNet) | **XSeg only**, BiSeNet parser skipped |
+| Decode | — | **CPU** (NVDEC → CPU by the RSS policy) |
+| Pools | TRT 2 / detmask 2 | **0 / 0**, detector 1 |
+| Swap precision | — | guarded **FP32** |
+
+Any 3060 acceptance row must state which of these were in force.
 
 ## RTX 4070
 
@@ -36,6 +103,9 @@ The existing locked controlled baseline is recorded in
 | Output quality | 856 faces seen, 850 swapped, 0 wrong faceset applications |
 
 ## RTX 3060
+
+Hardware is present (profile above); every row below is blocked on the locked
+1280x720 fixture, not on the GPU.
 
 | Metric | Result |
 |---|---:|

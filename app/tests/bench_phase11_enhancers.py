@@ -45,6 +45,7 @@ for p in (APP, HERE):
 import numpy as np
 import cv2
 
+import fixtures
 import angle_bench as ab
 
 
@@ -220,7 +221,7 @@ def collapsed(out, src):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--clip", default=os.environ.get(
-        "PHASE11_CLIP", "G:/pinokio/roop-keep/single/s1.mp4"))
+        "PHASE11_CLIP", fixtures.clip("single/s1.mp4")))
     ap.add_argument("--frame", type=int, default=300)
     ap.add_argument("--crop", type=int, default=256,
                     help="crop size the enhancer is handed; realswap emits 256")

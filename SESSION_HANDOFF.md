@@ -65,6 +65,98 @@ Before doing anything:
 
 # CURRENT SESSION STATE
 
+## 2026-08-29 (later) — ON THE PHYSICAL RTX 3060. Two defects fixed; baseline still blocked, for a new reason.
+
+**This session ran on the laptop, not the workstation.** `nvidia-smi` reports
+NVIDIA GeForce RTX 3060 Laptop GPU, 6144 MiB, SM 8.6, driver 616.56; i7-12700H
+14c/20t, 15.8 GB RAM. There is no `G:` drive on this machine and no
+`RECODE_STATUS.md`. Suite **1428 passed, 1 skipped**.
+
+**The 3060 gate is no longer blocked by hardware availability. It is blocked by
+a missing fixture.** Read that carefully before planning the next session — the
+required action changed.
+
+### 1. The documented dual-GPU commands could not run here at all
+
+Every harness hardcoded a `G:/pinokio/roop-keep/...` fixture, which is one
+machine's drive layout. The matrix and this handoff both promise that "only the
+explicit report label changes" and "no configuration file rewrite is required"
+between targets; with a hardcoded root that promise was false, and every
+documented 3060 command would have died on a missing file before measuring
+anything.
+
+New `app/tests/fixtures.py` resolves the clip root at run time
+(`$ROOP_CLIP_ROOT`, then `PINOKIO_HOME`, then derived from the app location) and
+handles the two real spellings — the 4070 uses `roop-keep`, the 3060 uses
+**`roop keep` with a space**. That spelling difference is also why `CLAUDE.md`'s
+instruction to read `roop-keep/RECODE_STATUS.md` silently finds nothing here.
+Wired into baseline_controlled, phase12/13/14, gate_d, phase5 and both phase11
+benches.
+
+### 2. THE FIXTURE ON THIS MACHINE IS NOT THE BASELINE FIXTURE
+
+Caught by the resolver's own basename fallback on its first run, which is
+exactly the hazard its docstring warns about:
+
+    locked baseline  double/d4.mp4   1280x720
+    on this laptop   d4.mp4           854x480, 8310 frames  (= duo/d4.mp4)
+
+Two different videos sharing a filename. A 40-frame smoke render completed
+cleanly on the local clip (rc 0, 3.36 fps, peak RSS 2.965 GB, peak VRAM
+3336 MB), proving the harness path works end to end here — but it is a
+different workload and cannot be compared to 9.62 fps.
+
+`fixtures.fingerprint()` now identifies a clip by resolution/frame count, and
+`baseline_controlled.py` records `comparable_to_locked_baseline: false` and
+prints a loud FIXTURE MISMATCH banner when it disagrees with the locked
+identity. **A fixture swap is the most expensive kind of wrong here because it
+fails silently**, so it is now checked rather than trusted.
+
+**To unblock:** put the 1280x720 `double/d4.mp4` under
+`<PINOKIO_HOME>/roop keep/` on the laptop, or point `ROOP_CLIP_ROOT` at it.
+
+### 3. PRODUCTION DEFECT: NVENC and NVDEC were reported as unavailable
+
+`HardwareProfiler` resolved ffmpeg with `shutil.which` alone. Any process not
+inheriting Pinokio's PATH — venv pythons, benchmark children, ordinary
+terminals — got `None`, and `_ffmpeg_capabilities` then returned all-False
+**silently**. The 3060 profile therefore claimed no NVDEC and no NVENC while
+ffmpeg exposes `av1/h264/hevc_nvenc` and ten CUVID decoders, and while a render
+had just encoded successfully with `hevc_nvenc`.
+
+Not cosmetic. `tuning()` selects `hevc_nvenc if nvenc_available else libx264`,
+and the autotuner only offers nvenc candidates when the flag is set — so a PATH
+accident downgraded a working hardware encoder to software, on the exact codec
+Phase 13 measured at **+16.97% end-to-end**. The 1.5 s probe timeout was
+investigated and exonerated (the calls take 0.08 s); PATH was the sole cause.
+Fixed with `_resolve_ffmpeg()`, covered by three tests in
+`test_runtime_optimizer.py`.
+
+### 4. Also fixed: the documented baseline command did not reproduce the baseline
+
+`--codec` defaulted to a hardcoded `libx264`, while `PERFORMANCE_BASELINE.md`
+and the matrix table both record the locked run as `hevc_nvenc`, and the
+documented reproduction command passes no `--codec`. It now defaults to
+`config.yaml`'s `output_video_codec`, per this project's own rule that a bench
+must run the stack the user actually runs.
+
+### 5. Gate D is runnable HERE and not on the 4070
+
+Windows exposed no P/E topology on the workstation, which is why Gate D was
+deferred there. This laptop reports `windows-cpu-set-efficiency-class` with
+6 P + 8 E cores and affinity support — a real OS report. Gate D's CPU matrix is
+a within-target comparison, so it does not need the locked fixture.
+
+### NEXT ACTION
+
+Within-target matrices (Phase 12, Phase 13, Gate D) compare arms against each
+other on one machine and are therefore valid on the local clip, provided the
+clip is recorded with the result. Only the cross-target Phase 2 baseline needs
+the 1280x720 file. Decide which to spend the time on before rendering — each
+matrix is multiple 600-frame arms at ~3.4 fps.
+
+---
+
 **Session:** 1
 
 **Current phase:** Gate D CPU optimization is implemented but not performance

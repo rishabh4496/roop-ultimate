@@ -37,6 +37,7 @@ for p in (APP, HERE):
 import numpy as np
 import cv2
 
+import fixtures
 import angle_bench as ab
 
 
@@ -121,7 +122,7 @@ def check(out, src, scale):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--clip", default=os.environ.get(
-        "PHASE11_CLIP", "G:/pinokio/roop-keep/double/d4.mp4"))
+        "PHASE11_CLIP", fixtures.clip("double/d4.mp4")))
     ap.add_argument("--frame", type=int, default=300)
     ap.add_argument("--calls", type=int, default=3)
     ap.add_argument("--rounds", type=int, default=2)

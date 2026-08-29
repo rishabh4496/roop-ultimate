@@ -26,6 +26,7 @@ if APP not in sys.path:
     sys.path.insert(0, APP)
 
 from roop.hardware_validation import VALIDATION_TARGETS, target_matches_hardware
+import fixtures
 from roop.runtime_optimizer import HardwareProfiler
 
 
@@ -68,7 +69,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--target", choices=VALIDATION_TARGETS, required=True)
     parser.add_argument("--device-id", "--cuda-device-id", type=int, default=0)
-    parser.add_argument("--video", default="G:/pinokio/roop-keep/double/d4.mp4")
+    parser.add_argument("--video", default=fixtures.clip("double/d4.mp4"))
     parser.add_argument("--sources", default="harjot,gargee")
     parser.add_argument("--start", type=int, default=0)
     parser.add_argument("--end", type=int, default=120,

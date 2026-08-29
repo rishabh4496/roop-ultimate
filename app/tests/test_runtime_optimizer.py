@@ -10,6 +10,7 @@ from roop.runtime_optimizer import (
     CUDAGraphManager,
     CUDAGraphRunner,
     HardwareProfile,
+    HardwareProfiler,
     ProfileStore,
     ResourceManager,
     RuntimeOptimizer,
@@ -390,6 +391,46 @@ class RuntimeOptimizerTests(unittest.TestCase):
             self.assertTrue(path.exists())
             self.assertEqual(loaded["cache_key"], "test-key")
             self.assertEqual(json.loads(path.read_text())["schema_version"], 1)
+
+
+class FFmpegCapabilityDetectionTests(unittest.TestCase):
+    """NVDEC/NVENC must survive an unhelpful PATH.
+
+    Regression for a false negative found on the physical RTX 3060 Laptop: the
+    profiler resolved ffmpeg with `shutil.which` alone, so a process that did
+    not inherit Pinokio's PATH recorded `nvenc_available=False` on a machine
+    whose NVENC works. That silently downgrades the chosen encoder from
+    hevc_nvenc to libx264 and hides the nvenc candidates from the autotuner.
+    """
+
+    def test_resolves_ffmpeg_when_not_on_path(self):
+        with patch("roop.runtime_optimizer.shutil.which", return_value=None):
+            resolved = HardwareProfiler._resolve_ffmpeg()
+        if resolved is None:
+            self.skipTest("no bundled ffmpeg on this host to fall back to")
+        self.assertTrue(os.path.isfile(resolved), resolved)
+
+    def test_capabilities_are_not_silently_false_with_a_real_binary(self):
+        ffmpeg = HardwareProfiler._resolve_ffmpeg()
+        if not ffmpeg:
+            self.skipTest("ffmpeg unavailable on this host")
+        nvdec, nvenc, dec, enc = HardwareProfiler._ffmpeg_capabilities(
+            ffmpeg, True)
+        # Whatever this host reports, the probe must actually have run: an
+        # encoder list that parses to nothing while ffmpeg exists is the
+        # signature of the bug (an empty probe, not an absent engine).
+        self.assertTrue(
+            HardwareProfiler._command(ffmpeg, "-hide_banner", "-encoders"),
+            "the encoder probe returned nothing for a resolvable ffmpeg")
+        if enc:
+            self.assertTrue(nvenc)
+        if dec:
+            self.assertTrue(nvdec)
+
+    def test_no_cuda_means_no_hardware_video(self):
+        self.assertEqual(
+            HardwareProfiler._ffmpeg_capabilities("ffmpeg", False),
+            (False, False, (), ()))
 
 
 if __name__ == "__main__":

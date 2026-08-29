@@ -42,15 +42,31 @@ for p in (APP, HERE):
     if p not in sys.path:
         sys.path.insert(0, p)
 
+import fixtures
 import telemetry as tel
 
 
 # The controlled workload. Constants, not defaults to be casually overridden --
 # "use the same representative workload when comparing optimization phases" is
 # the baseline rule this file exists to enforce.
+#
+# `clip_id` is the workload's identity and is what makes two runs comparable; it
+# is recorded verbatim in every result. `video` is only where that same clip
+# happens to live on the machine now running, resolved at import because the two
+# validation targets do not share a drive layout (the 4070 has
+# `G:/pinokio/roop-keep/`, the 3060 has `C:\pinokio\roop keep\` and no G: at
+# all). Resolving the location does NOT license changing the clip: a different
+# fixture is a different baseline, not a 3060 result.
 WORKLOAD = {
-    "video": "G:/pinokio/roop-keep/double/d4.mp4",
+    "clip_id": "double/d4.mp4",
+    "video": fixtures.clip("double/d4.mp4"),
     "sources": "harjot,gargee",
+    # The locked 2026-08-29 RTX 4070 baseline's own fixture identity, from
+    # PERFORMANCE_BASELINE.md. Checked at run time because `double/d4.mp4` and
+    # `duo/d4.mp4` are DIFFERENT CLIPS THAT SHARE A FILENAME -- 1280x720 versus
+    # 854x480. Resolving by name alone put the wrong one into a 3060 run that
+    # otherwise looked completely valid.
+    "expect": {"width": 1280, "height": 720},
     "start": 0,
     "end": 600,
     "reason": "d4 graded 100%/97% with zero wrong-faceset applications on "
@@ -145,11 +161,10 @@ def ensure_ffmpeg(env):
     import shutil
     if shutil.which("ffmpeg", path=env.get("PATH", "")):
         return env
+    home = fixtures.pinokio_home()
     candidates = [
-        os.path.join(os.environ.get("PINOKIO_HOME", "G:/pinokio"), "bin",
-                     "miniforge", "Library", "bin"),
-        os.path.join(os.environ.get("PINOKIO_HOME", "G:/pinokio"), "bin",
-                     "miniconda", "Library", "bin"),
+        os.path.join(home, "bin", "miniforge", "Library", "bin"),
+        os.path.join(home, "bin", "miniconda", "Library", "bin"),
         os.path.join(APP, "env", "Library", "bin"),
     ]
     for cand in candidates:
@@ -219,10 +234,11 @@ def main():
     ap.add_argument("--provider", default=None,
                     help="explicit inference provider for a controlled A/B; "
                          "default uses config.yaml")
-    ap.add_argument("--codec", default="libx264",
+    ap.add_argument("--codec", default=None,
                     choices=("libx264", "libx265", "libvpx-vp9",
                              "h264_nvenc", "hevc_nvenc"),
-                    help="explicit output codec for a controlled A/B")
+                    help="explicit output codec for a controlled A/B; "
+                         "default uses config.yaml's output_video_codec")
     ap.add_argument("--stabilization-mode", choices=("auto", "off", "on"),
                     default="auto",
                     help="controlled Phase 12 override for all stabilizers")
@@ -248,6 +264,15 @@ def main():
     threads = args.threads if args.threads is not None else int(cfg.max_threads)
 
     provider = args.provider if args.provider is not None else str(cfg.provider)
+    # The codec comes from config.yaml for the same reason the provider and the
+    # stabilizers do: this harness must render the stack the user actually runs.
+    # It used to default to a hardcoded "libx264" while the locked 4070 baseline
+    # and the matrix table both record hevc_nvenc, so the documented
+    # reproduction command -- which passes no --codec -- did not reproduce the
+    # baseline it claims to. Phase 13 measured that difference at +16.97%
+    # end-to-end, which is far too large to leave to a stale default.
+    if args.codec is None:
+        args.codec = str(cfg.output_video_codec)
     cmd = [sys.executable, os.path.join(HERE, "two_face_video.py"),
            "--tag", args.tag,
            "--video", args.video,
@@ -308,6 +333,22 @@ def main():
              float(cfg.stabilize_mask_strength), bool(cfg.stabilize_enhancer),
              float(cfg.stabilize_enhancer_strength), cfg.stabilize_method))
     print("  %-14s %s" % ("fixture reason", WORKLOAD["reason"]))
+
+    fixture_fp = fixtures.fingerprint(args.video)
+    fixture_diff = fixtures.matches(fixture_fp, WORKLOAD["expect"])
+    if fixture_fp:
+        print("  %-14s %s  %sx%s, %s frames"
+              % ("fixture", fixture_fp.get("path"), fixture_fp.get("width"),
+                 fixture_fp.get("height"), fixture_fp.get("frames")))
+    if fixture_diff:
+        print()
+        print("  !! FIXTURE MISMATCH on %s -- this run is NOT the locked "
+              "baseline workload." % ", ".join(fixture_diff))
+        print("     expected %s, opened %s"
+              % (WORKLOAD["expect"],
+                 {k: fixture_fp.get(k) for k in WORKLOAD["expect"]}))
+        print("     The result is still recorded, but flagged so it cannot be "
+              "filed as a cross-target comparison against the RTX 4070 row.")
     print()
 
     started = time.perf_counter()
@@ -343,7 +384,12 @@ def main():
         "validation_target": args.target,
         "returncode": rc,
         "software": stack,
-        "workload": {"video": args.video, "sources": args.sources,
+        "workload": {"clip_id": WORKLOAD["clip_id"],
+                      "fixture": fixture_fp,
+                      "fixture_expected": WORKLOAD["expect"],
+                      "fixture_mismatch": fixture_diff,
+                      "comparable_to_locked_baseline": not fixture_diff,
+                      "video": args.video, "sources": args.sources,
                       "start": args.start, "end": args.end,
                       "enhancer": args.enhancer, "mask_engine": args.mask_engine,
                       "codec": args.codec,

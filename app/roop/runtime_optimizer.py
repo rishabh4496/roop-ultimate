@@ -742,6 +742,56 @@ class HardwareProfiler:
         return nvdec, nvenc, decoder_names, encoder_names
 
     @staticmethod
+    def _resolve_ffmpeg() -> Optional[str]:
+        """Find ffmpeg without depending on the caller's PATH.
+
+        WHY THIS IS NOT `shutil.which` ALONE. Pinokio's own shell puts ffmpeg on
+        PATH, but this app is also entered from venv pythons, benchmark child
+        processes and ordinary terminals that do not inherit it. When the lookup
+        failed, `_ffmpeg_capabilities` returned all-False and the hardware
+        profile silently recorded a machine with NO NVDEC AND NO NVENC.
+
+        That is not a cosmetic field. `tuning()` selects
+        ``hevc_nvenc if nvenc_available else libx264``, and the autotuner only
+        offers nvenc candidates when the flag is set -- so a PATH accident
+        downgraded a working hardware encoder to software encoding. Phase 13
+        measured that exact codec choice at +16.97% end-to-end on the 4070.
+
+        MEASURED ON THE PHYSICAL RTX 3060 LAPTOP: ffmpeg exposes av1/h264/
+        hevc_nvenc and ten CUVID decoders, and a render encoded with hevc_nvenc
+        successfully, while the profile reported both engines as unavailable.
+        The capability must be probed from a resolvable binary, per the
+        hardware-matrix rule that capabilities are detected rather than assumed.
+        """
+        found = shutil.which("ffmpeg")
+        if found:
+            return found
+        home = os.environ.get("PINOKIO_HOME")
+        if not home or not os.path.isdir(home):
+            try:
+                cfg = os.path.join(os.path.expanduser("~"), ".pinokio",
+                                   "config.json")
+                with open(cfg, "r", encoding="utf-8") as fh:
+                    home = json.load(fh).get("home")
+            except Exception:
+                home = None
+        # <PINOKIO_HOME>/api/<launcher>/app/roop/this_file.py
+        app_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        if not home or not os.path.isdir(home):
+            home = os.path.dirname(os.path.dirname(os.path.dirname(app_dir)))
+        candidates = (
+            os.path.join(home, "bin", "miniforge", "Library", "bin"),
+            os.path.join(home, "bin", "miniconda", "Library", "bin"),
+            os.path.join(app_dir, "env", "Library", "bin"),
+        )
+        for root in candidates:
+            for name in ("ffmpeg.exe", "ffmpeg"):
+                cand = os.path.join(root, name)
+                if os.path.isfile(cand):
+                    return cand
+        return None
+
+    @staticmethod
     def _command(*args: str, timeout: float = 1.5) -> str:
         try:
             result = subprocess.run(args, capture_output=True, text=True,
@@ -878,7 +928,7 @@ class HardwareProfiler:
             except Exception:
                 pass
 
-        ffmpeg = shutil.which("ffmpeg")
+        ffmpeg = self._resolve_ffmpeg()
         nvdec, nvenc, nvdec_codecs, nvenc_codecs = self._ffmpeg_capabilities(ffmpeg, cuda)
 
         self._profile = HardwareProfile(
