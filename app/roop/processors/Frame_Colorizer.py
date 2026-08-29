@@ -35,6 +35,16 @@ class Frame_Colorizer():
                 model_path = resolve_relative_path('../models/Frame/deoldify_artistic.onnx')
             elif self.prev_type == "deoldify_stable":
                 model_path = resolve_relative_path('../models/Frame/deoldify_stable.onnx')
+            else:
+                # No else here meant an unknown subtype fell through to
+                # `providers_for(..., model_path)` and died with
+                # "UnboundLocalError: local variable 'model_path' referenced
+                # before assignment" -- a message that names neither the setting
+                # nor the valid values. Same family as core.py's enhancer chain,
+                # which silently ran NO enhancer on an unmatched name.
+                raise ValueError(
+                    "unknown colorizer subtype %r; expected 'deoldify_artistic' "
+                    "or 'deoldify_stable'" % (self.prev_type,))
 
             onnxruntime.set_default_logger_severity(3)
             from roop.utilities import get_onnx_session_options

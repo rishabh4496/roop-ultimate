@@ -106,9 +106,13 @@ def check(out, src, scale):
     a = np.asarray(out)
     if not np.isfinite(a.astype(np.float32)).all():
         return "non-finite"
-    exp = (src.shape[0] * scale, src.shape[1] * scale)
-    if scale and a.shape[:2] != exp:
-        return "shape %s, expected %s" % (a.shape[:2], exp)
+    if scale:
+        # Computed inside the guard: the colorizers pass scale=None (they do not
+        # resize), and multiplying by None crashed the check that exists to
+        # catch a bad output.
+        exp = (src.shape[0] * scale, src.shape[1] * scale)
+        if a.shape[:2] != exp:
+            return "shape %s, expected %s" % (a.shape[:2], exp)
     if float(a.astype(np.float32).std()) < 0.5 * float(src.astype(np.float32).std()):
         return "collapsed/black (std %.1f vs %.1f)" % (a.std(), src.std())
     return ""
@@ -231,7 +235,9 @@ def main():
     grey = cv2.cvtColor(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY), cv2.COLOR_GRAY2BGR)
     for sub in COLORIZERS:
         proc = Frame_Colorizer()
-        opts = {"devicename": "cuda", "subtype": sub.replace("deoldify_", "")}
+        # The FULL registry id is the subtype the processor matches on; the
+        # stripped name matched nothing.
+        opts = {"devicename": "cuda", "subtype": sub}
         # DeOldify's input is a frame with no colour to recover; feeding it the
         # already-coloured plate would measure it doing nothing interesting.
         timed(sub, lambda _f, p=proc, gg=grey: p.Run(gg), None,

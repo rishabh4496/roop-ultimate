@@ -1110,8 +1110,17 @@ network's 37.33 ms. Six commits on 2026-08-27 (`07e6cd5`, `142a285`, `45550aa`,
 `ROOP_ULTRAMAX_CHROMA`, which splits the cost exactly:
 
     default (eye operators ON)          86.81 +- 0.56 ms
-    ROOP_ULTRAMAX_CHROMA=1.0 (skipped)  37.27 +- 0.11 ms   -> 49.5 ms for the two operators
+    ROOP_ULTRAMAX_CHROMA=1.0 (skipped)  37.27 +- 0.11 ms
     Codeformer (fp16), same run         37.33 +- 0.04 ms
+
+CORRECTION (same day, after the clock finding below): do NOT quote a fixed
+"49.5 ms for the eye operators". That difference was measured at whatever GPU
+clock each arm happened to reach and moves with it. The robust statements are
+that UltraMax with the operators OFF equals its own network to within 0.2% at
+matched clock, that with them ON it runs 2.3x-3.5x that network, and that it is
+the only path in the matrix unable to hold a GPU clock (1462-2115 MHz against
+~2820 for every GPU-bound row) -- a clock-independent signature of host
+domination.
 
 With them skipped UltraMax is the CodeFormer FP16 network almost exactly, as its
 own docstring describes. This is NOT recorded as a defect -- it is deliberate
@@ -1128,3 +1137,97 @@ to fill it is
 `env/Scripts/python.exe tests/bench_phase11_enhancers.py --json <out>.json`,
 which reads that machine's own `config.yaml` and pool tier and needs no manual
 configuration rewrite.
+
+## PHASE 11 completion: frame paths, DMDNet, and the GPU clock finding - 2026-08-29
+
+All 27 measurable matrix rows now have a physical RTX 4070 number. KEEP is
+recorded as not installed rather than pending: `sidecar_keep/.venv` is absent
+and no KEEP model is present, and creating a second virtual environment is a
+change to the machine rather than a measurement of it.
+
+### The clock finding, which conditions every per-face number in this project
+
+A per-face benchmark is a train of short GPU bursts with host work between them,
+and this RTX 4070 does not stay ramped under that pattern: **1065 MHz against a
+3135 MHz maximum, at 44 C and 55 W, with nvidia-smi reporting throttle reason
+0x1 (GpuIdle)**. Not thermal. Identical code and crop, runs an hour apart, gave
+GPEN 256 Pro 6.96 -> 12.60 ms (+81%), UltraMax 86.75 -> 132.95 (+53%) and
+GPEN 2048 250.43 -> 335.96 (+34%).
+
+`nvidia-smi -lgc` requires administrator rights and is unavailable, so
+`bench_phase11_enhancers.py` now ramps for four seconds of continuous inference
+before timing and RECORDS the achieved SM clock per row. Rows at different
+clocks are not comparable, and that is now visible instead of silent. Every
+per-face figure recorded before 2026-08-29 was taken without this control and
+should be read as +-10-80% on absolute value; orderings and order-of-magnitude
+claims are unaffected, since the gaps between these models are 2x to 50x.
+
+This applies to the RTX 3060 with at least equal force -- a 6 GB laptop part has
+less headroom and more aggressive idle behaviour -- so its rows must be taken
+with the same ramp and reported with their own clocks. Never compare a 3060 row
+to a 4070 row without both clocks in view.
+
+### RTX 4070 face paths, matched clock (~2820 MHz unless noted)
+
+| path | ms/face | SM MHz | VRAM |
+|---|---:|---:|---:|
+| GPEN 256 | 6.62 +- 1.12 | 2820 | 268 MB |
+| GPEN 256 Pro | 13.13 +- 1.46 | 2115 | 614 MB |
+| GPEN 512 | 30.95 +- 0.22 | 2820 | 1178 MB |
+| GPEN Realistic | 31.35 +- 0.94 | 2828 | 2418 MB |
+| CodeFormer FP32 | 35.87 +- 0.75 | 2820 | 1084 MB |
+| RestoreFormer++ | 36.04 +- 0.87 | 2835 | 1359 MB |
+| CodeFormer FP16 | 39.84 +- 0.30 | 2820 | 1058 MB |
+| GFPGAN | 42.42 +- 1.51 | 2801 | 825 MB |
+| GPEN 1024 | 111.61 +- 2.30 | 2812 | 1897 MB |
+| UltraMax | 130.19 +- 2.40 | **1462** | 1039 MB |
+| DMDNet | 232.97 +- 6.95 | 2828 | **3261 MB** |
+| GPEN 2048 | 335.62 +- 2.32 | 2809 | 2823 MB |
+
+**CodeFormer FP32 beats its own FP16 graph at matched clock in all three
+independent runs** (35.87/39.84, 34.50/37.33, 37.30/40.78), confirming the
+existing "FP16 not promoted" classification on stronger evidence than the
+single pass it originally rested on.
+
+### RTX 4070 frame paths
+
+Measured by the new `tests/bench_phase11_frames.py` on a REAL decoded 1280x720
+frame at native size -- what `upscale_after_swap` actually hands these models --
+rather than the first pass's 128x128 synthetic gradient. Every first-pass frame
+figure was wrong by 10x to 38x in the same direction as the face rows.
+
+| path | ms/frame | vs first pass | VRAM |
+|---|---:|---:|---:|
+| SPLINE / SINC / LANCZOS x2 | ~28 | never run | 0 |
+| FSR x2 | 37.95 | never run | 0 |
+| DeOldify artistic / stable | 70.03 / 80.56 | never run | 905 / 956 MB |
+| Clear Reality x4 | 410.70 | 16.03 | 212 MB |
+| SPAN x4 | 411.63 | 16.28 | 210 MB |
+| Compact ESRGAN x4 | 470.65 | 19.68 | **104 MB** |
+| Real-ESRGAN x2 | 997.31 | 221.42 | 460 MB |
+| Real-ESRGAN Anime x4 | 1515.16 | 89.93 | 1121 MB |
+| NOMOS 8K / LSiDIR / ESRGAN x4 | 3808 / 3814 / 4029 | ~292-301 | ~1200 MB |
+| UltraSharp x4 | **15704.18** | 415.28 | 1707 MB |
+
+Among the x4 models Clear Reality and SPAN run 38x faster than UltraSharp for
+the same scale and output size at an eighth of the VRAM, and Compact ESRGAN uses
+104 MB -- half of any other x4, which is the row that matters for the sub-7 GB
+tier. Nothing is promoted on this: these are throughput and resource figures,
+not image quality. At 15.7 s/frame UltraSharp is 151,000 frames of wall clock
+for a 100-minute render, and it is selectable from the UI; the previous 415 ms
+figure concealed that by 27x.
+
+### Two defects found by measuring
+
+**`Frame_Colorizer.Initialize` had no `else`** on its subtype chain, so an
+unrecognised subtype fell through to `providers_for(..., model_path)` and raised
+`UnboundLocalError: local variable 'model_path' referenced before assignment` --
+naming neither the setting nor the valid values. Same family as core.py's
+enhancer chain, which silently ran no enhancer at all. Now a `ValueError` naming
+both.
+
+**DMDNet was never blocked on "landmark/reference metadata"**, which the matrix
+claimed for two sessions. It needs `face.matrix`, the crop affine the pipeline
+attaches at `ProcessMgr.py:3954` from the same `align_crop` the bench already
+called; a detector-fresh `Face` carries `None`, so it died on `None * float`.
+One line. It is now the most expensive face path measured here.
