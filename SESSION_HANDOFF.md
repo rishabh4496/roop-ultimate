@@ -685,3 +685,51 @@ The RTX 4070 profile was SM 8.9, 11.994 GB VRAM, CUDA 12.8, TensorRT
 CPU threads. Windows exposed no P/E topology; Gate D remains deferred. Phase
 11 may begin on the RTX 4070. The RTX 3060 remains PENDING and must retain its
 separate caches, safety policies, exact acceptance matrix, and strict RSS gate.
+
+## Phase 11 enhancer optimization handoff - 2026-08-29
+
+Phase 11 source audit and adaptive implementation are saved in:
+
+- `docs/PHASE11_ENHANCER_INVENTORY.md` - complete repository inventory and
+  per-path lifecycle/backend/pre/inference/post/memory/quality audit.
+- `docs/PHASE11_ENHANCER_MATRIX.md` - static implementation matrix plus
+  separate RTX 4070 and RTX 3060 benchmark tables.
+- `app/roop/enhancer_inventory.py` and `app/roop/phase11_matrix.py` - registry
+  and hardware-isolated result assembly.
+
+The available physical RTX 4070 measured these short warmed full-path cases:
+CodeFormer FP32 27.53 FPS, CodeFormer FP16 25.80 FPS, GFPGAN 22.15 FPS,
+GPEN 256/512 12.27/12.65 FPS, GPEN 1024/2048 5.99/2.47 FPS, GPEN 256 Pro
+79.81 FPS, GPEN Realistic 256/512 89.00/12.93 FPS, and the selected UltraMax
+TensorRT inference stage 33.00 FPS. Frame upscalers measured 2.41-62.40 FPS
+with CUDA, tile 64, batch 1. These are not end-to-end video FPS and do not
+fill unsampled VRAM, CPU, quality, or stability fields. CodeFormer FP16 was
+slower in this pass and was not globally promoted. UltraMax remains on its
+lean texture-off path; GPEN large models retain FP32 fallback; frame TensorRT
+is not forced.
+
+The isolated GPEN 256 Pro post-stage A/B on the 4070 measured GPU 1.72 ms
+(582.67 FPS) versus CPU 15.61 ms (64.05 FPS). Synthetic gradient output
+difference was max 1/255, PSNR 51.21 dB, SSIM 0.9961. CPU texture/sharpen is
+the bottleneck when selected; repeat this A/B on the 3060 before promoting a
+global policy.
+
+RTX 3060 Phase 11 hardware validation was unavailable and is explicitly
+pending. Do not copy any 4070 result, cache, context count, tile choice, or
+precision decision to it. Repeat every matrix row on the detected 3060,
+including separate GPEN256Pro GPU/CPU postprocessing A/B, quality metrics,
+VRAM/CPU sampling, and sustained stability. The existing small-card safety
+policy and strict RSS evidence remain authoritative until then.
+
+The benchmark command remains:
+
+```powershell
+Set-Location G:\pinokio\api\roop-ultimate\app
+& env\Scripts\python.exe -m roop.bench --profile full --no-apply
+```
+
+The runtime selects hardware-specific settings automatically; no manual
+configuration rewrite is required when moving between the two GPUs.
+
+Validation completed: targeted Phase 11 tests `73 passed`; full repository
+suite `1388 passed, 1 skipped, 2 warnings, 589 subtests passed`.

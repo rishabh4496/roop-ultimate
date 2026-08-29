@@ -197,6 +197,28 @@ class Frame_Upscale():
         except (TypeError, ValueError):
             return 1
 
+    def _tile_size(self) -> int:
+        """Resolve the tile canvas from an explicit or hardware-adaptive hint.
+
+        Tile size is model/workload-specific, so it must not be copied from a
+        different GPU's benchmark.  An explicit value still wins; otherwise a
+        runtime profile may publish ``ROOP_RUNTIME_UPSCALE_TILE``.  The final
+        fallback uses detected total VRAM only to choose the conservative
+        128px canvas on sub-7GB devices and the existing 256px baseline on
+        larger/unknown-capacity devices.  This keeps RTX 3060 and RTX 4070
+        independent without pretending that VRAM alone is an optimality proof.
+        """
+        raw = os.environ.get('ROOP_UPSCALE_TILE')
+        if raw is None or raw == '':
+            raw = os.environ.get('ROOP_RUNTIME_UPSCALE_TILE')
+        if raw is None or raw == '':
+            vram = self._detected_vram_gb()
+            raw = 128 if 0 < vram < 7.0 else 256
+        try:
+            return max(64, int(raw))
+        except (TypeError, ValueError):
+            return 256
+
     def _run_tile_single(self, tile_frame, input_name, thread_safe):
         if thread_safe:
             return self.model_upscale.run(None, {input_name: tile_frame})[0]
@@ -233,10 +255,7 @@ class Frame_Upscale():
         # overlap waste, and — because each output pixel still comes from one
         # tile's interior — the result is effectively unchanged. Tune with
         # ROOP_UPSCALE_TILE (px); lower it if VRAM is tight on heavy ×4 models.
-        try:
-            tile_px = max(64, int(os.environ.get('ROOP_UPSCALE_TILE', '256')))
-        except ValueError:
-            tile_px = 256
+        tile_px = self._tile_size()
         size = (tile_px, 8, 2)
         temp_height, temp_width = temp_frame.shape[:2]
         upscale_tile_frames, pad_width, pad_height = self.create_tile_frames(temp_frame, size)

@@ -17,18 +17,19 @@ Do not mark a phase complete based only on conversation history.
 
 ## CURRENT STATE
 
-**Current phase:** PHASE 11 READY - Enhancement Pipeline (RTX 4070 gate complete; RTX 3060 validation pending)
+**Current phase:** PHASE 11 IMPLEMENTED - Enhancement Pipeline (RTX 4070 measurements recorded; RTX 3060 validation pending)
 
-**Status:** RTX 4070 candidate validation through Phase 10 is complete. The
-RTX 3060 safety-policy and continuation evidence are preserved below, but its
-strict Phase 3/4 RSS gate remains blocked. No result is promoted to dual-GPU
-acceptance until the remaining laptop gates are resolved.
+**Status:** The source inventory, hardware-isolated matrix, adaptive tile
+selection, and benchmark plumbing are implemented. Initial physical Phase 11
+measurements exist for the available RTX 4070 only. The RTX 3060 safety-policy
+and continuation evidence are preserved below, but no Phase 11 result is
+fabricated or promoted to dual-GPU acceptance without a physical 3060 rerun.
 
 **Last completed implementation phase:** PHASE 10 CPU threading/detection/tracking implementation and RTX 4070 validation closure
 
-**Next phase:** Begin Phase 11 on the RTX 4070 while retaining the exact
-Phase 0-10 laptop acceptance matrix as PENDING. Do not reuse RTX 4070 results
-or caches on the RTX 3060.
+**Next phase:** Complete the pending RTX 3060 Phase 11 matrix and missing
+4070 quality/host-utilization cells. Do not reuse RTX 4070 results or caches
+on the RTX 3060.
 
 **Baseline FPS:** ~20 FPS (user-reported; must be formally measured in Phase 2)
 
@@ -980,3 +981,67 @@ sub-7 GB safeguards; nothing above is hard-coded to the RTX 4070.
 
 **RTX 4070 result:** Phase 11 may begin on this device.
 **RTX 3060 result:** PENDING for the remaining dual-GPU acceptance matrix.
+
+## PHASE 11 - complete enhancer inventory and adaptive implementation - 2026-08-29
+
+The source tree was scanned before implementation. The inventory contains 14
+face paths, 9 frame super-resolution paths, 2 adjacent DeOldify colorizers,
+and 4 classical frame post-swap paths. It covers GPEN 256/512/1024/2048,
+GPEN 256 Pro, GPEN Realistic 256/512, UltraMax, CodeFormer FP32/FP16,
+GFPGAN, RestoreFormer++, DMDNet, KEEP, all discovered frame upscalers,
+and the existing safety/quality guards. The detailed audit is in
+`docs/PHASE11_ENHANCER_INVENTORY.md`.
+
+Implementation delivered:
+
+- `app/roop/enhancer_inventory.py` is the source-authoritative registry of
+  every discovered path and lifecycle entry point.
+- `app/roop/phase11_matrix.py` creates hardware-keyed rows. The key includes
+  device, architecture, compute capability, detected VRAM, driver, CUDA,
+  TensorRT, ONNX Runtime, and tensor precision capabilities, preventing
+  silent 3060/4070 profile reuse.
+- `roop.bench` now emits the complete matrix while leaving unmeasured
+  pre/inference/post, quality, VRAM, and CPU fields pending. Its CodeFormer
+  FP16 catalogue entry now points to the distinct FP16 ONNX graph.
+- `Frame_Upscale` selects a safe tile fallback from detected total VRAM
+  (`<7 GB` uses 128; larger/unknown uses 256), with explicit runtime/user
+  overrides and no forced TensorRT provider.
+- Existing GPEN 1024/2048 FP32 fallback, GFPGAN FP32/collapse guard,
+  UltraMax lean texture-off path, CodeFormer non-finite handling, and
+  GPEN256Pro CPU/GPU post paths remain intact.
+
+Initial physical RTX 4070 evidence (CUDA unless noted; synthetic warmed
+single-path measurements) is recorded independently in
+`docs/PHASE11_ENHANCER_MATRIX.md`:
+
+| Path | FPS | Latency | Result |
+|---|---:|---:|---|
+| CodeFormer FP32 / FP16 | 27.53 / 25.80 | 36.32 / 38.76 ms | FP16 not promoted |
+| GFPGAN | 22.15 | 45.16 ms | FP32 behavior retained |
+| GPEN 256 / 512 | 12.27 / 12.65 | 81.52 / 79.05 ms | measured |
+| GPEN 1024 / 2048 | 5.99 / 2.47 | 166.83 / 404.76 ms | FP32 fallback retained |
+| GPEN 256 Pro | 79.81 | 12.53 ms | full path; isolated 4070 GPU post 1.72 ms vs CPU post 15.61 ms |
+| GPEN Realistic 256 / 512 | 89.00 / 12.93 | 11.24 / 77.32 ms | measured |
+| UltraMax | 33.00 | 30.32 ms | selected TRT inference stage; lean path retained |
+| Frame models | 2.41 - 62.40 | 16.03 - 415.28 ms | CUDA, tile 64, batch 1 |
+
+The isolated GPEN 256 Pro post-stage A/B on the RTX 4070 measured GPU 1.72 ms
+(582.67 FPS) versus CPU 15.61 ms (64.05 FPS). GPU versus CPU output on a
+synthetic gradient differed by at most 1/255 (PSNR 51.21 dB, SSIM 0.9961).
+This identifies CPU texture/sharpen as the bottleneck when that path is
+selected, while retaining the GPU path and all guards. The result still needs
+the 3060 A/B before universal promotion.
+
+These measurements do not close the phase universally: RTX 3060 was not
+physically available for this pass, so its complete table is pending. CPU
+postprocessing A/B, sustained VRAM/CPU sampling, output quality metrics, and
+the remaining DMDNet/KEEP/RestoreFormer++ paths are also explicitly pending.
+The documented classifications therefore reject global promotion of 4070-only
+changes and retain model-specific hardware-adaptive selection.
+
+Validation: targeted Phase 11 and related enhancer tests passed (`73 passed`)
+and the full repository suite passed (`1388 passed, 1 skipped, 2 warnings,
+589 subtests`). The required
+follow-up benchmark is a warmed full `Run`/`RunThreadSafe` measurement for
+each row on the detected RTX 3060 and a second quality/host-utilization pass
+on the RTX 4070; no manual configuration rewrite is required.

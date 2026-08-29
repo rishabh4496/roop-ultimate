@@ -93,6 +93,26 @@ class FrameUpscaleBatchTests(unittest.TestCase):
         self.assertEqual(session.calls[0], 2)
         self.assertNotIn(2, session.calls[1:])
 
+    def test_tile_size_uses_detected_vram_when_no_override_exists(self):
+        proc = self._processor(_BatchSession())
+        with patch.dict(os.environ, {"ROOP_VRAM_GB": "6"}, clear=False):
+            os.environ.pop("ROOP_UPSCALE_TILE", None)
+            os.environ.pop("ROOP_RUNTIME_UPSCALE_TILE", None)
+            self.assertEqual(proc._tile_size(), 128)
+        with patch.dict(os.environ, {"ROOP_VRAM_GB": "12"}, clear=False):
+            os.environ.pop("ROOP_UPSCALE_TILE", None)
+            os.environ.pop("ROOP_RUNTIME_UPSCALE_TILE", None)
+            self.assertEqual(proc._tile_size(), 256)
+
+    def test_explicit_runtime_tile_hint_wins_over_vram_tier(self):
+        proc = self._processor(_BatchSession())
+        with patch.dict(os.environ, {
+            "ROOP_VRAM_GB": "6",
+            "ROOP_RUNTIME_UPSCALE_TILE": "192",
+        }, clear=False):
+            os.environ.pop("ROOP_UPSCALE_TILE", None)
+            self.assertEqual(proc._tile_size(), 192)
+
 
 if __name__ == "__main__":
     unittest.main()

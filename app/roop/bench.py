@@ -398,8 +398,8 @@ def _enhancer_model(name):
         return _exists('GPEN-BFR-512.onnx'), 'GPEN Realistic 512 luminance with swapper chrominance'
     table = {
         'GFPGAN': ('GFPGANv1.4.onnx', 'default'),
-        'Codeformer': ('CodeFormer/CodeFormerv0.1.onnx', 'has a fidelity input'),
-        'Codeformer (fp16)': ('CodeFormer/CodeFormerv0.1.onnx', 'fp16 variant'),
+        'Codeformer': (os.path.join('CodeFormer', 'CodeFormerv0.1.onnx'), 'has a fidelity input'),
+        'Codeformer (fp16)': (os.path.join('CodeFormer', 'codeformer.fp16.onnx'), 'distinct FP16 graph'),
         'GPEN 256': ('gpen_bfr_256.onnx', 'FP32-forced under TRT'),
         'GPEN 256 Pro': ('gpen_bfr_256.onnx', 'Upgraded GPEN 256 (sharper, photoreal, high-texture)'),
         'GPEN': ('GPEN-BFR-512.onnx', 'FP32-forced under TRT'),
@@ -409,7 +409,7 @@ def _enhancer_model(name):
         # UltraMax is a lean CodeFormer path, not a GPEN network. Keep this
         # pointed at the model the processor actually opens so its benchmark
         # cannot report GPEN-512 timings under the UltraMax name.
-        'UltraMax': ('CodeFormer/codeformer.fp16.onnx',
+        'UltraMax': (os.path.join('CodeFormer', 'codeformer.fp16.onnx'),
                      'CodeFormer fp16 with UltraMax lean host path'),
     }
     if name not in table:
@@ -2209,6 +2209,7 @@ def run_benchmark(profile='full', faces_per_frame=1.0, report=None,
 
     rec = recommend(stages, device, pools, curves, provider_rows, io_res, batch_res)
     duration = time.perf_counter() - t_start
+    from roop.phase11_matrix import create_matrix
 
     result = {
         'status': 'success',
@@ -2265,6 +2266,10 @@ def run_benchmark(profile='full', faces_per_frame=1.0, report=None,
         'batch_swap': batch_res,
         'tile_upscale': tile_upscale_res,
         'io': io_res,
+        # Phase 11 keeps one row per source-discovered enhancer/upscaler.  The
+        # selected stage can contribute measured inference timing; every other
+        # row stays explicitly pending until that exact model/path is run.
+        'enhancer_matrix': create_matrix(device, _phase11_matrix_measurements(stages)),
         'recommend': rec,
         'warnings': warnings,
     }
@@ -2448,6 +2453,43 @@ def _print_report(res):
     for w in res.get('warnings', []):
         print('  ! ' + w)
     print('\nrecommend:', res.get('recommend'))
+
+
+def _phase11_matrix_measurements(stages):
+    """Translate measured enhancer stage rows into the Phase 11 schema.
+
+    The normal benchmark measures the selected live configuration only.  Keep
+    all other inventory rows pending rather than copying a result between
+    models or hardware profiles; a Phase 11 run can fill them independently.
+    """
+    from roop.enhancer_inventory import entries
+
+    by_label = {item['label'].lower(): item['id'] for item in entries()}
+    measurements = {}
+    for stage in stages:
+        if not stage.label.startswith('Enhancer') or stage.error:
+            continue
+        label = stage.label.split('—', 1)[-1].strip()
+        key = by_label.get(label.lower())
+        if key is None and label.lower() == 'gpen realistic':
+            try:
+                size = int(os.environ.get('ROOP_GPENR_SIZE', '512') or 512)
+            except (TypeError, ValueError):
+                size = 512
+            key = by_label.get(f'gpen realistic {size}'.lower())
+        if key is None or not stage.ms_call:
+            continue
+        measurements[key] = {
+            'FPS': round(1000.0 / max(stage.ms_call, 1e-9), 3),
+            'Latency': round(stage.ms_call, 3),
+            'VRAM': round(stage.vram_mb, 1),
+            'CPU': None,
+            'status': 'measured_inference_stage',
+            'Notes': (f"selected configuration; inference-stage timing only; "
+                      f"full pre/post quality and host utilization remain in "
+                      f"the Phase 11 audit")
+        }
+    return measurements
 
 
 def bootstrap_globals():

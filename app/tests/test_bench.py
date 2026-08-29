@@ -247,6 +247,12 @@ class CatalogueFollowsTheSettings(unittest.TestCase):
         self.assertIsNone(next((s for s in stages if s.key == 'enhance'), None))
         self.assertTrue(any('DMDNet' in w for w in warnings))
 
+    def test_codeformer_fp16_catalogue_uses_the_fp16_graph(self):
+        path, note = bench._enhancer_model('Codeformer (fp16)')
+        self.assertTrue(path.endswith(os.path.join('CodeFormer',
+                                                   'codeformer.fp16.onnx')))
+        self.assertIn('distinct FP16', note)
+
     def test_stress_profile_is_a_multi_face_sustained_test(self):
         profile = bench.PROFILES['stress']
         self.assertGreaterEqual(profile['default_faces'], 2.0)
