@@ -54,6 +54,46 @@ The current implementation already records the guards and provider policy in
 `docs/PHASE11_ENHANCER_INVENTORY.md`; missing performance/quality cells are
 deliberately not filled from a different enhancer or GPU.
 
+### Which quality fields apply to which rows, and which never will
+
+Stated 2026-08-29, because leaving one permanently unfillable column marked
+"pending" on 27 rows is indistinguishable from work nobody got to, and it
+crowds out the fields that genuinely are outstanding.
+
+**Pixel difference and PSNR/SSIM need a REFERENCE — the same computation done
+another way.** They are meaningful for:
+
+* a precision variant against its own FP32 output (CodeFormer FP16 vs FP32,
+  GPEN 1024/2048 FP32 fallback, the TRT/CUDA/CPU arms of the Phase 5 matrix);
+* a GPU implementation against the CPU implementation of the same operator
+  (GPEN 256 Pro's post stage — already recorded below at max 1/255, PSNR
+  51.21 dB, SSIM 0.9961);
+* a batched path against the batch-1 path of the same model.
+
+They are **NOT APPLICABLE between different enhancers.** GPEN and CodeFormer are
+different networks that draw different faces on purpose; a PSNR between them is
+a number with no interpretation, and a table that demands one invites somebody
+to compute it and then rank models by it. Those cells are marked
+"not applicable", not "pending".
+
+**Fields recorded for every measured row** (see the tables below): output shape,
+output range, non-finite count, and collapse decision. The collapse check is not
+ceremony on this hardware — GFPGAN's TRT FP16 engine returned a finite, in-range,
+flat grey face that `is_usable` could not see, and ESRGAN x4 went black under
+TRT FP16. Both are guarded and both were re-checked in these runs.
+
+**Genuinely still outstanding, and the honest list is short:**
+
+* *Identity metric per enhancer.* Measurable (`tests/compare_enhancers_video.py`
+  grades against the original footage rather than against a filter's own
+  output), but it costs one full render per enhancer and has not been run for
+  all twelve face paths.
+* *Visible artifact review.* Requires a person to look; not something this
+  benchmark can assert.
+* *Stability over a sustained run.* The figures here are short warmed bursts.
+  The only sustained evidence is the Phase 2 controlled baseline, and that
+  exercises one enhancer (GPEN 256 Pro), not twelve.
+
 ## RTX 4070 benchmark table
 
 Re-measured 2026-08-29 by `app/tests/bench_phase11_enhancers.py`, which
@@ -363,14 +403,37 @@ gradient comparison alone.
 
 ## End-to-end acceptance summary: RTX 4070
 
-The following fields are required for the final controlled video benchmark.
-The available 4070 quick run supplies only the selected-path values shown;
-fields marked pending were not sampled in that run and are not inferred from
-enhancer-only timings.
+Filled from the Phase 2 controlled baseline (`app/tests/baseline_controlled.py`,
+2026-08-29), which is now the locked reference in `PERFORMANCE_BASELINE.md`. The
+earlier row here quoted "33.00 calls/s UltraMax selected stage" and "30.32 ms"
+from the superseded first pass and had no controlled workload behind it at all.
 
-| Baseline FPS | Final FPS | Improvement | Peak VRAM | Average VRAM | CPU utilization | GPU utilization | Decode throughput | Inference throughput | Enhancement throughput | Encode throughput | Latency | Stability | Output quality |
-|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---|
-| 73.96 standard-only (not a controlled baseline) | 31.63 enhanced quick run (not comparable) | pending controlled pair | pending | pending | pending | pending | pending Phase 11 fixture | 11.53 calls/s UltraMax selected stage | 11.53 calls/s UltraMax selected stage | pending | 86.75 +- 0.78 ms selected stage | quick run completed; sustained pending | guards passed; metric suite pending |
+Workload: `d4.mp4` frames 0..600, 1280x720 h264, two people, realswap /
+GPEN 256 Pro / RealityUX, all three stabilizers on, tracking on, 10 threads,
+TRT pool 2 / detmask pool 2.
+
+| Field | RTX 4070 |
+|---|---|
+| Baseline FPS | **9.62** end-to-end (600 frames / 62.34 s processing) |
+| Final FPS | not applicable -- **Phase 11 promoted no default**, so there is no "after" to compare. Every candidate is either rejected (TRT FP16, CUDA graph, NV12) or pending the 3060. |
+| Improvement | not applicable, for the same reason. An improvement figure requires a promoted change. |
+| Peak VRAM | 7067 MB of 12282 (5215 MB free at peak) |
+| Average VRAM | 4080 MB |
+| CPU utilization | peak 99.2%, mean 20.49% across 32 logical cores; P-cores peak 99.19%, E-cores peak 99.21% (split INFERRED from core counts, not an OS topology report) |
+| GPU utilization | peak 76.0%, mean 33.95% |
+| Decode throughput | 189.87 frames/s (1.1% of summed worker thread time) |
+| Inference throughput | swap stage 28.6 faces/s (850 calls / 29.76 s) |
+| Enhancement throughput | 60.9 faces/s (850 calls / 13.96 s), GPEN 256 Pro |
+| Masking throughput | 19.8 faces/s (850 calls / 42.84 s), RealityUX -- the most expensive per-face stage |
+| Encode throughput | 46.69 frames/s, hevc_nvenc |
+| Latency | 233.34 ms per frame of worker thread time; P95 not measured (the stage probe keeps totals and counts, not a distribution) |
+| Stability | 600/600 frames encoded, exit 0, peak process+descendants RSS 11.663 GB, peak 118 W |
+| Output quality | 856 faces seen, 850 swapped (99.3%), **0 wrong faceset applied** across 642 attributed swaps |
+
+CPU<->GPU transfer time and synchronisation time are **not measured and not
+measurable from here**: ONNX Runtime owns its provider transfers and fences them
+internally, and the application has no managed H2D/D2H to instrument. Phase 8
+recorded the same limitation independently.
 
 ## End-to-end acceptance summary: RTX 3060
 
