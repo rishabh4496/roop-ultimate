@@ -53,6 +53,31 @@ import telemetry as tel
 MATRIX = (("tensorrt", "fp32"), ("tensorrt", "fp16"), ("tensorrt", "mixed"),
           ("cuda", "fp32"), ("cuda", "fp16"), ("cpu", "fp32"))
 
+# Which (provider, precision) pairs actually SWITCH anything.
+#
+# `trt_precision` reaches ONLY the TensorRT provider options -- core.py builds
+# `cuda_opts` with device_id / cudnn_conv_algo_search / do_copy_in_default_stream
+# / arena_extend_strategy and no precision key at all, and the CPU EP has none
+# either. Both take precision from the ONNX graph's own dtypes.
+#
+# So cuda/fp16 runs EXACTLY what cuda/fp32 runs. It measured identical identity,
+# texture and channel figures to three decimals on 2026-08-29, which is what
+# first exposed this. Left in the matrix so the inertness is stated rather than
+# quietly absent, but reported as INERT: a row that cannot differ from its
+# sibling is not an independent data point, and reading one as evidence that
+# "FP16 is fine on CUDA" would be a conclusion drawn from a setting that does
+# nothing.
+PRECISION_APPLIES = {"tensorrt"}
+
+
+def precision_is_live(provider, precision):
+    """True when this arm's precision setting actually reaches the runtime."""
+    if provider in PRECISION_APPLIES:
+        return True
+    # Off TensorRT only the graph's own dtype decides, so exactly one precision
+    # per provider is real and the rest are duplicates of it.
+    return precision == "fp32"
+
 
 def make_fixture(source, frames, out_path, start=0):
     """Cut a tiny clip. Regenerated rather than committed, so the RTX 3060 host
@@ -179,6 +204,13 @@ def main():
                  cold.get("verdict", "?"), cold.get("wall_s", 0)), flush=True)
 
         warm = run_arm(provider, precision, args, "warm", args.warm_timeout)
+        live = precision_is_live(provider, precision)
+        warm["precision_live"] = live
+        if not live:
+            warm["inert_note"] = (
+                "%s ignores trt_precision; this arm ran the same configuration "
+                "as %s/fp32 and is NOT an independent measurement of %s"
+                % (provider, provider, precision))
         rows[key] = {"cold": cold, "warm": warm}
         v = warm.get("verdict", "?")
         detail = ""
@@ -190,6 +222,9 @@ def main():
                 detail += "  flags=%s" % ",".join(warm["flags"])
         elif v == "ERROR":
             detail = str(warm.get("error", ""))[:160]
+        if not live:
+            detail += "   [INERT: %s ignores trt_precision, same run as %s/fp32]" % (
+                provider, provider)
         print("  [%5.1f min] %-16s WARM %-8s %8.1fs  %s"
               % ((time.perf_counter() - started) / 60, key, v,
                  warm.get("wall_s", 0), detail), flush=True)
@@ -205,10 +240,18 @@ def main():
           % ("arm", "verdict", "cold s", "warm s", "fps", "identity", "texture"))
     for key, r in rows.items():
         w = r["warm"]
-        print("  %-16s %-8s %10.1f %10.1f %8s %9s %9s"
+        print("  %-16s %-8s %10.1f %10.1f %8s %9s %9s%s"
               % (key, w.get("verdict", "?"), r["cold"].get("wall_s", 0),
                  w.get("wall_s", 0), w.get("fps", "-"),
-                 w.get("identity", "-"), w.get("texture", "-")))
+                 w.get("identity", "-"), w.get("texture", "-"),
+                 "" if w.get("precision_live", True) else "   INERT"))
+    inert = [k for k, r in rows.items() if not r["warm"].get("precision_live", True)]
+    if inert:
+        print("")
+        print("  INERT arms (precision setting does not reach the runtime, so "
+              "these duplicate their provider's fp32 arm and are not "
+              "independent evidence): %s" % ", ".join(inert))
+
     print("\n  wrote %s" % js)
     bad = [k for k, r in rows.items()
            if r["warm"].get("verdict") not in ("PASS", "FAIL")]

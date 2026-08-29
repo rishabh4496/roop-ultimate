@@ -66,9 +66,9 @@ Before doing anything:
 
 **Session:** 1
 
-**Current phase:** PHASE 11 IN PROGRESS - Enhancement Pipeline (RTX 4070 face
-paths re-measured 2026-08-29 and the earlier table superseded; RTX 3060
-validation pending; 4070 frame super-resolution rows pending re-measurement)
+**Current phase:** RTX 4070 phases 2, 5, 9, 11 CLOSED 2026-08-29. Phase 6's
+provider CUDA-graph arm is the last open 4070 item. Every RTX 3060 row is
+PENDING and is the whole remaining acceptance gate.
 
 **Phase status:** RTX 4070 candidate validation through Phase 10 is complete.
 TRT FP16 and the CUDA Graph candidate are rejected; the final CPU/NVDEC audit
@@ -78,16 +78,32 @@ validation remains pending, and its strict Phase 3/4 RSS gate remains blocked.
 **Last completed implementation:** Phase 10 CPU threading/detection/tracking
 implementation and RTX 4070 validation closure
 
-**Immediate next action:**
-1. Re-measure the nine RTX 4070 FRAME super-resolution rows. They came from the
-   same superseded pass whose face rows were wrong by up to 14x, were never
-   committed, and are now marked pending rather than quoted.
-2. Run `tests/bench_phase11_enhancers.py` on the physical RTX 3060 to fill its
-   half of the matrix. It reads that machine's own config and pool tier; no
-   manual configuration rewrite is required.
-3. Classify UltraMax's periocular post-processing. It costs 49.5 ms/face of HOST
-   work on the 4070 (57% of the processor); the 3060 has 14 physical cores
-   against this machine's 24 and cannot inherit a D.
+**Immediate next action -- on the physical RTX 3060.** Every harness reads that
+machine's own config.yaml, pool tier and thread count, and regenerates its own
+fixtures from the same source clips, so none of this needs a configuration
+rewrite:
+
+    env/Scripts/python.exe tests/baseline_controlled.py     --tag phase2_3060
+    env/Scripts/python.exe tests/phase5_quality_matrix.py   --tag phase5_3060
+    env/Scripts/python.exe tests/bench_phase11_enhancers.py --json <out>.json
+    env/Scripts/python.exe tests/bench_phase11_frames.py    --json <out>.json
+
+THREE THINGS THAT WILL OTHERWISE COST THAT SESSION A DAY:
+
+1. **Budget for TensorRT engine builds, not for the workload.** Phase 5's arms
+   measure in under a minute but BUILD for 2-18 minutes, because TensorRT keeps
+   a cache namespace per precision. That is what defeated two previous attempts.
+   Every harness here separates a cold build pass from the warm measurement.
+2. **Never compare a 3060 ms figure to a 4070 one without both SM clocks.** This
+   4070 idles to 1065 MHz of 3135 under a per-face load, which alone moved
+   figures by 10-80%. A 6 GB laptop part has less headroom and will do this at
+   least as hard. `bench_phase11_enhancers.py` ramps and records the clock.
+3. **Classify UltraMax's periocular post-processing.** It is the one row that
+   cannot inherit a D. On the 4070 it runs 2.3-3.5x its own network and is the
+   only path unable to hold a GPU clock (1462-2115 MHz against ~2820 for every
+   GPU-bound row) -- a clock-independent signature of host domination. The 3060
+   has 14 physical cores against this machine's 24 and already runs one worker
+   under the sub-7 GB policy.
 
 Preserve the exact Phase 0-10 acceptance matrix for the physical RTX 3060
 Laptop, including its strict RSS failure; do not reuse RTX 4070 results or

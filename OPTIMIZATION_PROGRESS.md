@@ -1231,3 +1231,94 @@ claimed for two sessions. It needs `face.matrix`, the crop affine the pipeline
 attaches at `ProcessMgr.py:3954` from the same `align_crop` the bench already
 called; a detector-fresh `Face` carries `None`, so it died on `None * float`.
 One line. It is now the most expensive face path measured here.
+
+## PHASE 5 model-quality precision matrix - COMPLETE - 2026-08-29
+
+The matrix that produced no result on 2026-08-28 and again on 2026-08-29 now has
+all six arms, every one PASS. `app/tests/phase5_quality_matrix.py`, fixture 24
+frames cut from `single/s4.mp4` at frame 60, realswap / GPEN 256 Pro /
+RealityUX, source faceset `harjot`.
+
+| arm | verdict | cold (build) | warm (measured) | identity | texture | channel |
+|---|---|---:|---:|---:|---:|---:|
+| tensorrt/fp32 | PASS | 127.1 s | 55.2 s | **0.354** | 59.7 | 30.1 |
+| tensorrt/fp16 | PASS | **1090.0 s** | 53.6 s | 0.407 | 57.8 | 30.5 |
+| tensorrt/mixed | PASS | 597.7 s | 53.8 s | 0.408 | 57.8 | 30.5 |
+| cuda/fp32 | PASS | 36.2 s | 41.5 s | 0.352 | 59.6 | 30.2 |
+| cuda/fp16 | PASS | 35.7 s | 35.8 s | 0.352 | 59.6 | 30.2 |
+| cpu/fp32 | PASS | 119.3 s | 121.0 s | 0.350 | 59.7 | 30.2 |
+
+`identity` is cosine distance to the source faceset mean: LOWER is closer to the
+person being swapped in.
+
+### 1. The two-session failure was a build budget, not a model or a hardware limit
+
+Every arm MEASURES in 36-121 s. The engine builds ran 2 to 18 minutes, because
+TensorRT keeps a separate cache namespace per precision and several on this box
+were 0 bytes. Against the previous 180 s per-arm bound, only an arm whose
+namespace happened to be warm could ever have completed - which is why the
+record reads "timed out" rather than "failed".
+
+The 2026-08-29 note that TRT FP16 "remained CPU-bound with 1-3% GPU use and
+produced no quality result after five minutes" was a correct OBSERVATION read as
+the wrong conclusion. That is exactly what a TensorRT builder looks like from
+outside: a single-threaded host tactic search with the GPU near idle. The arm
+needed 1090 s. It was abandoned at 300.
+
+Each arm now runs cold (build, generous bound) then warm (measured), and the
+cold seconds are reported separately because "what does switching precision cost
+the first time" is a real question that must not be buried inside the
+measurement.
+
+Note on fixture choice: the fixture is 720x1280 portrait while every cached
+engine had been built for 1280x720 landscape, so even `mixed` - the production
+default - paid a 597.7 s rebuild. A fixture matching the orientation already
+cached would remove most of the 39 minutes this matrix took.
+
+### 2. FP16 is SAFE and NOT SLOWER. It costs IDENTITY.
+
+FP16 was never measured before, so its standing rejection rested on a timeout.
+It passes every check: a face is still findable, texture is well clear of the
+flat/black floor, and channel skew is nowhere near the rainbow threshold.
+
+The cost is identity, and the evidence is strong because FP32 was measured by
+THREE independent execution backends that agree:
+
+    FP32:   TensorRT 0.354 | CUDA 0.352 | CPU 0.350     spread 0.004
+    FP16:   TensorRT 0.407 | mixed    0.408             0.055 away
+
+The separation is thirteen times the within-group spread and reproduces on two
+configurations, so it is not a provider artefact and not a single-run accident.
+Texture moves the same way, 59.6-59.7 against 57.8.
+
+**`mixed` IS FP16** - `core.py` line 141 is `fp16_enable = trt_precision in
+('fp16', 'mixed')`, the two differing only in the LayerNorm FP32 fallback, which
+is why they measure identically. So the shipped default sits on the worse side
+of this gap: production runs 0.408 where FP32 measures 0.352.
+
+**NOT CHANGED, and the reason matters.** This fixture is 24 frames and its `fps`
+column is init-dominated, so it carries no throughput information - it cannot
+say what FP32 would cost per render. The deciding test is an end-to-end
+counterbalanced `trt_precision` A/B on the locked d4 fixture. Three stage-level
+wins in this project measured well in isolation and landed NEUTRAL end to end;
+a default every render depends on does not move on a stage measurement.
+
+### 3. One of the six arms cannot measure what it names
+
+`cuda/fp16` returned identity, texture and channel identical to `cuda/fp32` in
+every digit. `core.py` builds `cuda_opts` with `device_id`,
+`cudnn_conv_algo_search`, `do_copy_in_default_stream` and
+`arena_extend_strategy` - **no precision key at all**. `trt_precision` reaches
+only the TensorRT provider options. The CUDA and CPU EPs take precision from the
+ONNX graph's own dtypes, so `cuda/fp16` runs exactly what `cuda/fp32` runs.
+
+It is now labelled INERT by the harness rather than sitting in the table looking
+like independent evidence. Without that label the natural reading of this matrix
+is "FP16 is fine on CUDA but costs identity on TensorRT" - a conclusion drawn
+entirely from a setting that does nothing. This is the fifth silent no-op found
+in this session and the first that was designed into a measurement matrix.
+
+**RTX 3060 result:** PENDING. `phase5_quality_matrix.py --tag phase5_3060`
+regenerates the identical fixture from the same source clip and frame range and
+reads that machine's own config; budget for cold builds, which on a 6 GB card
+with zero pools will differ from these.
