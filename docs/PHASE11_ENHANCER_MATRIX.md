@@ -56,45 +56,120 @@ deliberately not filled from a different enhancer or GPU.
 
 ## RTX 4070 benchmark table
 
-This is the first physical Phase 11 pass on the available RTX 4070 (Ada,
-SM 8.9, 11.994 GB total VRAM). These are independent short warmed runs on a
-synthetic 256-gradient face/frame, so they are implementation-path evidence,
-not a claim about a complete video workload. VRAM, CPU utilization, quality
-metrics, and sustained stability remain pending where they were not sampled.
-The face runs used one context and the frame runs used CUDA, tile 64, and
-tile batch 1. TensorRT was not forced onto frame models.
+Re-measured 2026-08-29 by `app/tests/bench_phase11_enhancers.py`, which
+supersedes the first pass for every face path. Run it to reproduce:
+
+    env/Scripts/python.exe tests/bench_phase11_enhancers.py --json app/output/phase11_4070_rows.json
+
+Device: RTX 4070, Ada, SM 8.9, 12282 MiB, driver 610.88, CUDA 12.8,
+TensorRT 10.9.0.34, ONNX Runtime 1.23.2. Provider, swap model and pool size are
+read live from `config.yaml` (`tensorrt`, `realswap`, pool 2) rather than from
+CLI defaults, and the pipeline is brought up through `angle_bench.init_pipeline`
+so TensorRT's DLLs are on PATH -- without that, ONNX Runtime falls back to CPU
+without saying so. Input is a real aligned 256 face crop (s1.mp4 frame 300),
+which is what `realswap` hands the enhancer; the first pass used a synthetic
+gradient, on which every texture and clarity operator measures as doing nothing.
+Three timed rounds of 30 calls after 8 warm calls; each path is
+Initialize -> warm -> timed -> Release so peak VRAM stays bounded and rows do
+not contend.
 
 | Enhancer | Backend | Precision | Input | Output | Batch | Contexts | Streams | FPS | Latency | VRAM | CPU | Notes |
 |---|---|---|---|---|---:|---:|---|---:|---:|---:|---:|---|
-| CodeFormer | TensorRT via ONNX Runtime | FP32 | 512x512 | 512x512 | 1 | 1 | provider | 27.53 | 36.32 ms | pending | pending | 4070 full `Run`; finite guard |
-| CodeFormer FP16 | TensorRT via ONNX Runtime | FP16 graph | 512x512 | 512x512 | 1 | 1 | provider | 25.80 | 38.76 ms | pending | pending | 4070 full `Run`; slower in this pass, not promoted |
-| DMDNet | PyTorch | FP32 | 512x512 + landmarks | 512x512 | pending | 1 | torch | pending | pending | pending | pending | requires real landmark/reference metadata |
-| GFPGAN | CUDA via ONNX Runtime | FP32 | 512x512 | 512x512 | 1 | 1 | provider | 22.15 | 45.16 ms | pending | pending | forced-FP32 behavior and collapse guard retained |
-| GPEN 256 | CUDA via ONNX Runtime | FP32 | 256x256 | 256x256 | 1 | 1 | provider | 12.27 | 81.52 ms | pending | pending | 4070 full `Run` |
-| GPEN 512 | CUDA via ONNX Runtime | FP32 | 512x512 | 512x512 | 1 | 1 | provider | 12.65 | 79.05 ms | pending | pending | 4070 full `Run` |
-| GPEN 1024 | CUDA via ONNX Runtime | FP32 | 1024x1024 | 1024x1024 | 1 | 1 | provider | 5.99 | 166.83 ms | pending | pending | FP32 fallback preserved |
-| GPEN 2048 | CUDA via ONNX Runtime | FP32 | 2048x2048 | 2048x2048 | 1 | 1 | provider | 2.47 | 404.76 ms | pending | pending | FP32 fallback preserved |
-| GPEN 256 Pro | CUDA via ONNX Runtime | FP32 post | 256x256 | 512x512 | 1 | 1 | provider | 79.81 | 12.53 ms | pending | pending | full path; isolated 4070 post GPU 582.67 FPS vs CPU 64.05 FPS |
-| GPEN Realistic 256 | CUDA via ONNX Runtime | FP32 | 256x256 | 256x256 | 1 | 1 | provider | 89.00 | 11.24 ms | pending | pending | 4070 full `Run` |
-| GPEN Realistic 512 | CUDA via ONNX Runtime | FP32 | 512x512 | 512x512 | 1 | 1 | provider | 12.93 | 77.32 ms | pending | pending | 4070 full `Run` |
-| RestoreFormer++ | CUDA via ONNX Runtime | FP32 | 512x512 | 512x512 | 1 | 1 | provider | pending | pending | pending | pending | per-slot binding path; run not completed in this pass |
-| UltraMax | TensorRT via ONNX Runtime | FP16 graph / FP32 post | 512x512 | 512x512 | 1 | 1 | provider | 33.00 | 30.32 ms | pending | pending | selected inference-stage result; lean texture-off path retained |
+| CodeFormer | TensorRT via ONNX Runtime | FP32 | 256 crop -> 512 | 512x512 | 1 | 2 | provider | 28.99 | 34.50 +- 0.15 ms | 1060 MB | pending | full `Run`; finite guard |
+| CodeFormer FP16 | TensorRT via ONNX Runtime | FP16 graph | 256 crop -> 512 | 512x512 | 1 | 2 | provider | 26.79 | 37.33 +- 0.04 ms | 861 MB | pending | full `Run`; FP32 is FASTER here, so FP16 stays unpromoted |
+| DMDNet | PyTorch | FP32 | 512x512 + landmarks | 512x512 | pending | 1 | torch | pending | pending | pending | pending | requires real landmark/reference metadata; not run |
+| GFPGAN | TensorRT via ONNX Runtime | forced FP32 | 256 crop -> 512 | 512x512 | 1 | 1 | provider | 24.00 | 41.66 +- 0.56 ms | 773 MB | pending | forced-FP32 and collapse guard retained; collapse check passed |
+| GPEN 256 | TensorRT via ONNX Runtime | provider policy | 256x256 | 256x256 | 1 | 1 | provider | 210.65 | 4.75 +- 0.07 ms | 269 MB | pending | pastes at scale 1 -- cheapest, and barely above the unenhanced input |
+| GPEN 512 | TensorRT via ONNX Runtime | provider policy | 256 crop -> 512 | 512x512 | 1 | 1 | provider | 33.72 | 29.66 +- 0.32 ms | 1357 MB | pending | full `Run` |
+| GPEN 1024 | TensorRT via ONNX Runtime | forced FP32 | 256 crop -> 1024 | 1024x1024 | 1 | 1 | provider | 10.68 | 93.62 +- 0.35 ms | 1520 MB | pending | FP32 fallback preserved (FP16 overflows to black) |
+| GPEN 2048 | TensorRT via ONNX Runtime | forced FP32 | 256 crop -> 2048 | 2048x2048 | 1 | 1 | provider | 3.99 | 250.43 +- 0.55 ms | 2984 MB | pending | FP32 fallback preserved |
+| GPEN 256 Pro | TensorRT + torch CUDA post | provider policy | 256x256 | 512x512 | 1 | 2 | provider | 143.69 | 6.96 +- 0.45 ms | 738 MB | pending | **4.6x faster than the 32.2 ms recorded on this card 2026-08-25** -- the torch-CUDA post path (`_gpu_filter_core`) landed since |
+| GPEN Realistic | TensorRT via ONNX Runtime | provider policy | 256 crop -> 512 | 512x512 | 1 | 2 | provider | 36.03 | 27.75 +- 0.02 ms | 2356 MB | pending | default tier is 512 (`ROOP_GPENR_SIZE`); matches the 27.5 ms recorded 2026-08-24 |
+| RestoreFormer++ | TensorRT via ONNX Runtime | provider policy | 256 crop -> 512 | 512x512 | 1 | 2 | provider | 29.77 | 33.60 +- 0.08 ms | 1324 MB | pending | was pending in the first pass; now measured |
+| UltraMax | TensorRT + CPU post | FP16 graph / FP32 post | 256 crop -> 512 | 512x512 | 1 | 2 | provider | 11.53 | 86.75 +- 0.78 ms | 855 MB | pending | **2.9x its own recorded cost**; see the split below |
 | KEEP (sidecar) | HTTP sidecar | sidecar-defined | PNG face | sidecar image | pending | sidecar | sidecar | pending | pending | pending | pending | optional sidecar unavailable for this pass |
-| Real-ESRGAN x2 | CUDA via ONNX Runtime | FP32 | tiled 128x128 | 256x256 | 1 | 1 | provider | 4.52 | 221.42 ms | pending | pending | full `RunThreadSafe`; tile 64 |
-| Real-ESRGAN x4 | CUDA via ONNX Runtime | FP32 | tiled 128x128 | 512x512 | 1 | 1 | provider | 3.42 | 292.67 ms | pending | pending | full `RunThreadSafe`; tile 64 |
-| Real-ESRGAN Anime x4 | CUDA via ONNX Runtime | FP32 | tiled 128x128 | 512x512 | 1 | 1 | provider | 11.12 | 89.93 ms | pending | pending | full `RunThreadSafe`; tile 64 |
-| UltraSharp x4 | CUDA via ONNX Runtime | FP32 | tiled 128x128 | 512x512 | 1 | 1 | provider | 2.41 | 415.28 ms | pending | pending | TRT not forced; full `RunThreadSafe` |
-| LSiDIR x4 | CUDA via ONNX Runtime | FP32 | tiled 128x128 | 512x512 | 1 | 1 | provider | 3.43 | 291.56 ms | pending | pending | TRT not forced; full `RunThreadSafe` |
-| Clear Reality x4 | CUDA via ONNX Runtime | FP32 | tiled 128x128 | 512x512 | 1 | 1 | provider | 62.40 | 16.03 ms | pending | pending | TRT not forced; full `RunThreadSafe` |
-| SPAN x4 | CUDA via ONNX Runtime | FP32 | tiled 128x128 | 512x512 | 1 | 1 | provider | 61.42 | 16.28 ms | pending | pending | TRT not forced; full `RunThreadSafe` |
-| Compact ESRGAN x4 | CUDA via ONNX Runtime | FP32 | tiled 128x128 | 512x512 | 1 | 1 | provider | 50.81 | 19.68 ms | pending | pending | TRT not forced; full `RunThreadSafe` |
-| NOMOS 8K x4 | CUDA via ONNX Runtime | FP32 | tiled 128x128 | 512x512 | 1 | 1 | provider | 3.33 | 300.67 ms | pending | pending | TRT not forced; full `RunThreadSafe` |
-| DeOldify artistic | CUDA via ONNX Runtime | provider policy | 256x256 | source LAB merge | 1 | 1 | provider | pending | pending | pending | pending | adjacent colorizer, not run in this pass |
-| DeOldify stable | CUDA via ONNX Runtime | provider policy | 256x256 | source LAB merge | 1 | 1 | provider | pending | pending | pending | pending | adjacent colorizer, not run in this pass |
-| LANCZOS x2 | CPU/ffmpeg | uint8 | source frame | x2 | serial | none | ffmpeg | pending | pending | 0 | pending | no physical benchmark in this pass |
-| FSR x2 | CPU/ffmpeg | uint8 | source frame | x2 | serial | none | ffmpeg | pending | pending | 0 | pending | no physical benchmark in this pass |
-| SPLINE x2 | CPU/ffmpeg | uint8 | source frame | x2 | serial | none | ffmpeg | pending | pending | 0 | pending | no physical benchmark in this pass |
-| SINC x2 | CPU/ffmpeg | uint8 | source frame | x2 | serial | none | ffmpeg | pending | pending | 0 | pending | no physical benchmark in this pass |
+
+### The first pass's face rows were wrong, and how that is known
+
+Nine of the eleven paths above reproduce this repository's own independently
+recorded measurements on this same card (CLAUDE.md, 2026-08-24): GFPGAN 41.66 vs
+41.7, CodeFormer FP16 37.33 vs 37.9, GPEN Realistic 27.75 vs 27.5, GPEN 256 4.75
+vs 5.3. Against that agreement, the first pass's GPEN family is 2.6x to 14x
+pessimistic:
+
+| path | first pass | re-measured | this repo's 08-24 record |
+|---|---:|---:|---|
+| GPEN 256 | 81.52 ms | **4.75 ms** | 5.3 ms |
+| GPEN 512 | 79.05 ms | **29.66 ms** | -- |
+| GPEN Realistic 512 | 77.32 ms | **27.75 ms** | 27.5 ms |
+| GPEN 1024 | 166.83 ms | **93.62 ms** | -- |
+| GPEN 2048 | 404.76 ms | **250.43 ms** | -- |
+
+Two internal contradictions in the first pass point the same way without needing
+the outside record at all. Its GPEN 256 (81.52 ms) and its GPEN 512 (79.05 ms)
+land within 3% of each other, which a 4x change in pixels cannot do on real GPU
+execution; and its GPEN 256 (81.52 ms) and its GPEN Realistic 256 (11.24 ms) run
+the same 256 network 7x apart. Its GPEN rows are also labelled
+`CUDA via ONNX Runtime` while its CodeFormer and UltraMax rows are labelled
+`TensorRT`, so those rows did not measure the provider `config.yaml` selects.
+
+**The frame super-resolution rows from that same pass are therefore not carried
+forward as measured.** They were produced by the same harness in the same run,
+were never committed, and cannot be re-run. They are listed below as pending
+re-measurement rather than quoted, because a pass that got its face rows wrong
+by up to 14x has not earned trust on its frame rows.
+
+| Enhancer | Backend | first-pass figure (NOT carried forward) | status |
+|---|---|---:|---|
+| Real-ESRGAN x2 | CUDA via ONNX Runtime | 221.42 ms | pending re-measurement |
+| Real-ESRGAN x4 | CUDA via ONNX Runtime | 292.67 ms | pending re-measurement |
+| Real-ESRGAN Anime x4 | CUDA via ONNX Runtime | 89.93 ms | pending re-measurement |
+| UltraSharp x4 | CUDA via ONNX Runtime | 415.28 ms | pending re-measurement |
+| LSiDIR x4 | CUDA via ONNX Runtime | 291.56 ms | pending re-measurement |
+| Clear Reality x4 | CUDA via ONNX Runtime | 16.03 ms | pending re-measurement |
+| SPAN x4 | CUDA via ONNX Runtime | 16.28 ms | pending re-measurement |
+| Compact ESRGAN x4 | CUDA via ONNX Runtime | 19.68 ms | pending re-measurement |
+| NOMOS 8K x4 | CUDA via ONNX Runtime | 300.67 ms | pending re-measurement |
+| DeOldify artistic / stable | CUDA via ONNX Runtime | not run | pending |
+| LANCZOS / FSR / SPLINE / SINC x2 | CPU/ffmpeg | not run | pending |
+
+### UltraMax: 57% of its cost is CPU eye post-processing added 2026-08-27
+
+UltraMax was recorded at 28.68 ms on 2026-08-23 and 30.6 ms on 2026-08-24, and
+was then 1.21x FASTER than the `Codeformer (fp16)` network it runs inside. It now
+measures 86.75 ms, which is 2.32x SLOWER than that same network (37.33 ms).
+
+The cause is code, not measurement. Six commits on 2026-08-27 (`07e6cd5`,
+`142a285`, `45550aa`, `3965958`, `bbb8465`, `54d252b`) added
+`_protect_swapped_eyes` and `_rebalance_eye_detail`, plus an unconditional
+`_STRUCTURE_SHARPEN` unsharp -- a stack of full-frame 512 `cv2.GaussianBlur` /
+`cvtColor` / float32 work on the host, per face. The two eye operators are gated
+on `ROOP_ULTRAMAX_CHROMA`, which splits the cost exactly:
+
+| UltraMax arm | ms/face | vs the network alone |
+|---|---:|---|
+| default (eye operators ON) | 86.81 +- 0.56 | +49.5 ms |
+| `ROOP_ULTRAMAX_CHROMA=1.0` (eye operators SKIPPED) | 37.27 +- 0.11 | 37.33 ms `Codeformer (fp16)` |
+
+So `_protect_swapped_eyes` + `_rebalance_eye_detail` cost **49.5 ms/face** --
+57% of the processor's total, and 1.33x the entire neural network. With them
+skipped UltraMax returns to being the CodeFormer FP16 network almost exactly, as
+its own module docstring describes.
+
+This is not called a defect here: it is deliberate quality work, and none of the
+numbers above measure whether it improves the picture. It is called out because
+it is **host** cost, and the acceptance classification depends on a host the
+RTX 3060 does not have. This machine has 24 physical / 32 logical cores; the
+RTX 3060 Laptop target has 14 physical / 20 logical, and already runs one worker
+under the sub-7 GB policy. 49.5 ms/face of CPU work does not scale with the GPU
+and cannot be assumed neutral there.
+
+**Classification: pending.** It is not D (neutral) and it is not C
+(RTX 4070-specific) until the 3060 measures it. The candidate remedy -- porting
+the two operators to the torch-CUDA path that GPEN 256 Pro already uses, which is
+what took that processor from 32.2 ms to 6.96 ms -- is recorded as a lead, not
+applied, because it would change the rendered picture and has no quality
+evidence behind it yet.
 
 ## RTX 3060 benchmark table
 
@@ -148,6 +223,19 @@ each row. The existing 3060 memory-safety evidence remains valid and separate.
 - UltraMax texture restoration: **D. neutral/inactive**; the measured lean
   path is retained and texture restore is not re-enabled merely because code
   exists.
+- UltraMax periocular post-processing (`_protect_swapped_eyes`,
+  `_rebalance_eye_detail`, added 2026-08-27): **PENDING dual-target
+  classification, and it cannot be D.** Re-measured 2026-08-29 it costs
+  49.5 ms/face on the host -- 57% of the processor and 1.33x its own neural
+  network -- taking UltraMax from 1.21x FASTER than `Codeformer (fp16)` to
+  2.32x slower. Host cost does not scale with the GPU, and the RTX 3060 Laptop
+  target has 14 physical cores against this machine's 24 and already runs one
+  worker under the sub-7 GB policy. Lead, not applied: GPEN 256 Pro's
+  torch-CUDA post path took that processor from 32.2 ms to 6.96 ms on this
+  card, and these two operators are the same class of work.
+- GPEN 256 Pro torch-CUDA post path: **C. RTX 4070-specific until the 3060
+  repeats it**, but a large one -- 32.2 ms (2026-08-25, this card) to 6.96 ms
+  measured 2026-08-29, still pasting at 512.
 - All other changes in this phase remain **pending dual-target acceptance**;
   a 4070-only improvement is not considered universal.
 
@@ -162,8 +250,11 @@ was max absolute difference 1/255, mean absolute difference 0.492/255,
 PSNR 51.21 dB, and SSIM 0.9961. Both paths retain the existing finite,
 collapse, and fallback guards. Neural-versus-post profiling on the 4070
 indicates the CPU post-stage is the dominant bottleneck when selected; with
-GPU post enabled, the complete measured path is 12.53 ms and no quality
-promotion is made from this synthetic comparison alone.
+GPU post enabled, the complete measured path is **6.96 +- 0.45 ms**
+(re-measured 2026-08-29 on a real 256 face crop through the production
+TensorRT provider; the 12.53 ms previously recorded here came from the
+superseded first pass). No quality promotion is made from the synthetic
+gradient comparison alone.
 
 ## End-to-end acceptance summary: RTX 4070
 
@@ -174,7 +265,7 @@ enhancer-only timings.
 
 | Baseline FPS | Final FPS | Improvement | Peak VRAM | Average VRAM | CPU utilization | GPU utilization | Decode throughput | Inference throughput | Enhancement throughput | Encode throughput | Latency | Stability | Output quality |
 |---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---|
-| 73.96 standard-only (not a controlled baseline) | 31.63 enhanced quick run (not comparable) | pending controlled pair | pending | pending | pending | pending | pending Phase 11 fixture | 33.00 calls/s UltraMax selected stage | 33.00 calls/s UltraMax selected stage | pending | 30.32 ms selected stage | quick run completed; sustained pending | guards passed; metric suite pending |
+| 73.96 standard-only (not a controlled baseline) | 31.63 enhanced quick run (not comparable) | pending controlled pair | pending | pending | pending | pending | pending Phase 11 fixture | 11.53 calls/s UltraMax selected stage | 11.53 calls/s UltraMax selected stage | pending | 86.75 +- 0.78 ms selected stage | quick run completed; sustained pending | guards passed; metric suite pending |
 
 ## End-to-end acceptance summary: RTX 3060
 

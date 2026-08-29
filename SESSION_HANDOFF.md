@@ -66,7 +66,9 @@ Before doing anything:
 
 **Session:** 1
 
-**Current phase:** PHASE 11 READY - Enhancement Pipeline (RTX 4070 gate complete; RTX 3060 validation pending)
+**Current phase:** PHASE 11 IN PROGRESS - Enhancement Pipeline (RTX 4070 face
+paths re-measured 2026-08-29 and the earlier table superseded; RTX 3060
+validation pending; 4070 frame super-resolution rows pending re-measurement)
 
 **Phase status:** RTX 4070 candidate validation through Phase 10 is complete.
 TRT FP16 and the CUDA Graph candidate are rejected; the final CPU/NVDEC audit
@@ -77,9 +79,19 @@ validation remains pending, and its strict Phase 3/4 RSS gate remains blocked.
 implementation and RTX 4070 validation closure
 
 **Immediate next action:**
-Begin Phase 11 on the RTX 4070. Preserve the exact Phase 0-10 acceptance
-matrix for the physical RTX 3060 Laptop, including its strict RSS failure; do
-not reuse RTX 4070 results or caches.
+1. Re-measure the nine RTX 4070 FRAME super-resolution rows. They came from the
+   same superseded pass whose face rows were wrong by up to 14x, were never
+   committed, and are now marked pending rather than quoted.
+2. Run `tests/bench_phase11_enhancers.py` on the physical RTX 3060 to fill its
+   half of the matrix. It reads that machine's own config and pool tier; no
+   manual configuration rewrite is required.
+3. Classify UltraMax's periocular post-processing. It costs 49.5 ms/face of HOST
+   work on the 4070 (57% of the processor); the 3060 has 14 physical cores
+   against this machine's 24 and cannot inherit a D.
+
+Preserve the exact Phase 0-10 acceptance matrix for the physical RTX 3060
+Laptop, including its strict RSS failure; do not reuse RTX 4070 results or
+caches.
 
 **Latest 2026-08-29 checkpoint:** The physical 3060 now defers TensorRT
 Builder probing, releases auxiliary analysis sessions after complete temporal

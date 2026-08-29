@@ -1045,3 +1045,77 @@ and the full repository suite passed (`1388 passed, 1 skipped, 2 warnings,
 follow-up benchmark is a warmed full `Run`/`RunThreadSafe` measurement for
 each row on the detected RTX 3060 and a second quality/host-utilization pass
 on the RTX 4070; no manual configuration rewrite is required.
+
+## PHASE 11 re-measurement - the first 4070 face table was wrong - 2026-08-29
+
+The RTX 4070 enhancer table recorded earlier the same day came from an ad-hoc
+pass that was never committed and cannot be re-run. It is superseded.
+`app/tests/bench_phase11_enhancers.py` replaces it: production provider and swap
+model read live from `config.yaml`, brought up through
+`angle_bench.init_pipeline` so TensorRT's DLLs are on PATH, measured on a real
+aligned 256 face crop (what `realswap` actually hands an enhancer) rather than a
+synthetic gradient, three counterbalanced rounds of 30 calls after 8 warm calls,
+each path Initialize -> warm -> timed -> Release so peak VRAM stays bounded.
+
+RTX 4070, TensorRT, pool 2, ms/face ascending:
+
+| path | ms/face | output | first pass |
+|---|---:|---|---:|
+| GPEN 256 | 4.75 +- 0.07 | 256, scale 1 | 81.52 |
+| GPEN 256 Pro | 6.96 +- 0.45 | 512, scale 2 | 12.53 |
+| GPEN Realistic | 27.75 +- 0.02 | 512, scale 2 | 77.32 |
+| GPEN 512 | 29.66 +- 0.32 | 512, scale 2 | 79.05 |
+| RestoreFormer++ | 33.60 +- 0.08 | 512, scale 2 | pending |
+| CodeFormer FP32 | 34.50 +- 0.15 | 512, scale 2 | 36.32 |
+| CodeFormer FP16 | 37.33 +- 0.04 | 512, scale 2 | 38.76 |
+| GFPGAN | 41.66 +- 0.56 | 512, scale 2 | 45.16 |
+| UltraMax | 86.75 +- 0.78 | 512, scale 2 | 30.32 |
+| GPEN 1024 | 93.62 +- 0.35 | 1024 | 166.83 |
+| GPEN 2048 | 250.43 +- 0.55 | 2048 | 404.76 |
+
+Nine of eleven rows reproduce this repository's independently recorded 2026-08-24
+figures (GFPGAN 41.7, CodeFormer FP16 37.9, GPEN Realistic 27.5, GPEN 256 5.3),
+which is what makes the two that do not trustworthy. The first pass also
+contradicted itself twice: its GPEN 256 and GPEN 512 landed within 3% of each
+other, which 4x the pixels cannot do on real GPU execution, and its GPEN 256
+(81.52 ms) and GPEN Realistic 256 (11.24 ms) ran the same network 7x apart. Its
+GPEN rows were labelled `CUDA` while its CodeFormer rows were labelled
+`TensorRT`, so they did not measure the provider `config.yaml` selects. Its
+frame super-resolution rows are from the same run and are now marked pending
+re-measurement rather than quoted.
+
+Two findings that are about the code rather than the measurement:
+
+**GPEN 256 Pro is 4.6x faster than it was on 2026-08-25** on this same card
+(32.2 ms -> 6.96 ms) while still pasting at 512. The torch-CUDA post path
+(`_gpu_filter_core`) landed since. This is a real Phase 11 win that no document
+had recorded; it is now the cheapest 512-paste restorer here by 4x.
+
+**UltraMax costs 2.9x what it did, and 57% of it is host work.** Recorded at
+28.68 ms (2026-08-23) and 30.6 ms (2026-08-24), when it was 1.21x FASTER than the
+`Codeformer (fp16)` network it runs inside; it now measures 86.75 ms against that
+network's 37.33 ms. Six commits on 2026-08-27 (`07e6cd5`, `142a285`, `45550aa`,
+`3965958`, `bbb8465`, `54d252b`) added `_protect_swapped_eyes`,
+`_rebalance_eye_detail` and an unconditional `_STRUCTURE_SHARPEN` -- full-frame
+512 `cv2` work on the host, per face. The two eye operators are gated on
+`ROOP_ULTRAMAX_CHROMA`, which splits the cost exactly:
+
+    default (eye operators ON)          86.81 +- 0.56 ms
+    ROOP_ULTRAMAX_CHROMA=1.0 (skipped)  37.27 +- 0.11 ms   -> 49.5 ms for the two operators
+    Codeformer (fp16), same run         37.33 +- 0.04 ms
+
+With them skipped UltraMax is the CodeFormer FP16 network almost exactly, as its
+own docstring describes. This is NOT recorded as a defect -- it is deliberate
+quality work and nothing measured here says whether it improves the picture. It
+is recorded because it is HOST cost, and the acceptance class depends on a host
+the RTX 3060 does not have: 24 physical cores here against 14 there, on a target
+that already runs one worker under the sub-7 GB policy. **Classification pending;
+it cannot be D.** The candidate remedy -- porting the two operators to the same
+torch-CUDA path GPEN 256 Pro uses -- is a lead, not applied, because it would
+change the rendered picture and has no quality evidence behind it.
+
+**RTX 3060 result:** every row above is PENDING on that device. The exact command
+to fill it is
+`env/Scripts/python.exe tests/bench_phase11_enhancers.py --json <out>.json`,
+which reads that machine's own `config.yaml` and pool tier and needs no manual
+configuration rewrite.
