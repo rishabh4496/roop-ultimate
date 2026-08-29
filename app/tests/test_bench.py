@@ -888,5 +888,41 @@ class TheSyntheticWorkloadIsGone(unittest.TestCase):
         self.assertNotIn('max_memory_allocated', src)
 
 
+class DetectorSizeFollowsConfigTests(unittest.TestCase):
+    """The bench must size the detector the way the app does, not by default.
+
+    `roop/globals.py` sets `face_detector_size = '640'` as a MODULE DEFAULT, and
+    `_detector_model` reads `getattr(globals, ...) or getattr(CFG, ...)`. A
+    truthy '640' short-circuits that `or`, so the CFG arm was dead code and a
+    machine configured for 512 was benchmarked at 640 -- under a report headed
+    "from the current settings". This project measured 640 -> 512 as 1.30x at
+    the detect stage, so the detector rows described a configuration production
+    does not run.
+    """
+
+    def test_configured_size_wins_over_the_module_default(self):
+        import roop.globals
+        from roop.bench import _detector_model
+        prev = roop.globals.face_detector_size
+        try:
+            roop.globals.face_detector_size = '512'
+            self.assertEqual(_detector_model('retinaface_r50')[2], 512)
+            roop.globals.face_detector_size = '640'
+            self.assertEqual(_detector_model('retinaface_r50')[2], 640)
+        finally:
+            roop.globals.face_detector_size = prev
+
+    def test_module_default_is_truthy_so_the_or_fallback_cannot_be_relied_on(self):
+        """Pins the reason the sync is required rather than the `or` fallback."""
+        import importlib
+        mod = importlib.import_module('roop.globals')
+        default = getattr(mod, 'face_detector_size', None)
+        self.assertTrue(
+            default,
+            "globals.face_detector_size is falsy; if this ever becomes None the "
+            "`or CFG` fallback in _detector_model works and the explicit sync in "
+            "roop/bench.py could be simplified -- but until then it is required")
+
+
 if __name__ == '__main__':
     unittest.main()

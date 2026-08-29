@@ -541,6 +541,126 @@ input files and record each result under the RTX 3060 hardware profile key.
 Only after those rows pass end-to-end quality and stability checks may an arm
 be classified **beneficial on both**.
 
+## Phase 3 — runtime architecture / resource management (RTX 3060)
+
+**Status: exit criterion met for stability; the strict RSS gate FAILS.**
+
+Stability is not in doubt. Across this session the laptop completed 30+ renders
+at 120/300/600 frames plus the phase matrices, every one exit 0, every one
+encoding 100% of requested frames, with a 100% swap rate and zero wrong-faceset
+applications throughout. Bounded queues, session pools and model reuse all hold.
+
+The blocker is host memory, and it is worse on the locked fixture than the
+record suggests:
+
+| Workload | Peak descendant RSS |
+|---|---:|
+| Required ceiling | **< 2.5 GB** |
+| Previously recorded (200-frame, smaller clips) | 2.62 - 2.79 GB |
+| 120-frame, 1280x720 locked fixture | 2.80 - 3.19 GB |
+| **600-frame, 1280x720 locked fixture** | **3.73 - 4.12 GB** |
+
+The earlier 2.62-2.79 GB figures were not measured on this workload. On the
+locked fixture the gate is missed by ~1.5 GB, not ~0.3 GB. RSS also grows with
+window length (2.8 GB at 120 frames to 4.1 GB at 600), which is the behaviour
+the 2026-08-26 leak fixes bounded rather than eliminated.
+
+This remains a genuine blocked gate. Nothing in this session was allowed to
+close it.
+
+## Phase 10 — CPU threading / detection / tracking (RTX 3060)
+
+**Exit criterion — "measured CPU configuration with best end-to-end
+throughput" — is MET, and the answer is the configuration already shipped.**
+
+| Question | Measurement | Answer |
+|---|---|---|
+| Is `max_threads: 8` right for this device? | 8 vs 20 workers, counterbalanced, 120f | **-0.9%, neutral — keep 8** |
+| Does P/E-aware scheduling help? | 4 experiments at 120f (+19%), then 600f | **-0.5% at production length — no** |
+| Is the thread count oversubscribed? | mean CPU 31%, peak 97%; mean GPU 57%, peak 100% | GPU-bound, not CPU-bound |
+
+`os.cpu_count()` is explicitly not assumed: the shipped value is 8 on a
+20-logical-processor machine, and raising it to every logical core measures
+neutral. The plan's warning against assuming `os.cpu_count()` is optimal is
+satisfied by measurement in both directions.
+
+The detection side is covered by Phase 9 (decode is 0.2% of stage time) and by
+the stage table, where `track_detect` is 9.7% of thread time at 104.5 ms/call.
+
+**Open, and not a threading problem:** 22.2% of frames in the locked 600-frame
+baseline had no face detected at all (191 of 859). That is the detector losing
+the face, not a gate refusing it. It reproduces the "15% no-face rate" the
+session logs list as unreproducible for want of the source clip.
+
+## Phases 4, 7 and 11 — engine contexts, concurrency, enhancers (RTX 3060)
+
+`python -m roop.bench --profile full --no-apply`. **`--no-apply` matters here —
+see the warning below.**
+
+**Provider reality first:** TensorRT is *disabled* on this card by the sub-7GB
+RSS policy, so every row is CUDA, and `ROOP_TRT_POOL`/`ROOP_DETMASK_POOL` are
+forced to 0. Phase 4's subject — engine build, tactic selection, context count —
+is therefore **not applicable in the shipped configuration** on this target.
+What follows is the context-scaling curve of the CUDA path.
+
+| Stage | x1 | x2 | x3 | x4 | x6 | Knee |
+|---|---:|---:|---:|---:|---:|---:|
+| Detector RetinaFace r50 | 42.2 | 46.2 | 48.0 | 48.5 | 47.3 | 3 |
+| Recognition w600k_r50 | 176.6 | 207.2 | 217.3 | 221.6 | 211.8 | 3 |
+| Landmarks 2d106det | 817.4 | 857.1 | 841.7 | 847.0 | 771.4 | 2 |
+| Swapper realswap | 44.3 | 49.6 | 51.5 | 52.3 | 52.6 | 3 |
+| Enhancer GPEN 256 Pro | 38.1 | — | — | — | — | 1 |
+| Mask XSeg | 26.0 | 22.9 | 23.8 | 20.7 | **10.9** | **1** |
+| Mask BiSeNet | 51.2 | 64.4 | 65.5 | 65.6 | 63.6 | 2 |
+
+**XSeg regresses monotonically with contexts — 0.42x at x6.** That is the VRAM
+pressure signature on a 6 GB card, and it is the clearest single argument for
+the small-card single-context policy. Free VRAM falls to 1.6 GB at swapper x6.
+
+### DO NOT APPLY the bench recommendation on this card
+
+    recommend: pools {trt_pool: 3, detmask_pool: 3, detector_pool: 3}
+
+The shipped safety policy forces **0/0** here. The bench's own data contradicts
+its recommendation — XSeg at 0.42x, 1.6 GB free VRAM at x6 — and this project
+has a recorded case of an over-large pool collapsing this class of GPU to
+0.1-2.5 fps through PCIe context paging, which presents as a hang rather than
+an OOM. The recommendation is a per-stage isolated-throughput result and does
+not account for the stages running concurrently. It was generated with
+`--no-apply` and must stay that way on this target.
+
+The `threads` recommendation (4) is **not evidence** either: the thread curve
+came back empty (`standard`/`enhanced`/`heavy` all blank), which the report
+itself admits — `encoder_reason: "no thread curve to size the encoder against"`.
+The measured thread answer is Phase 10's, not this.
+
+### Encode / decode (consistent with Phases 9 and 13)
+
+| Encoder | fps | | Decoder | fps |
+|---|---:|---|---|---:|
+| hevc_nvenc p5 | **113.2** | | cv2 (CPU) | **208.0** |
+| h264_nvenc p5 | 90.0 | | NVDEC adaptive | 69.3 |
+| libx264 faster | 89.4 | | NVDEC sync BGR | 69.0 |
+| libx264 medium | 51.4 | | | |
+| libx265 faster | 42.0 | | | |
+| libx265 medium | 21.8 | | | |
+
+`hevc_nvenc` fastest and CPU decode 3x NVDEC — both independently reproduce the
+Phase 13 and Phase 9 matrices.
+
+Frame upscale tile batching: batch 1 is best (9.89 frame/s vs 7.26 at batch 2),
+with max diff 0 across batch widths. Matches the 4070's selection of batch 1.
+
+### Caveat: these rows ran the detector at 640, not the configured 512
+
+Recorded before the defect was found. `roop/globals.py` sets
+`face_detector_size = '640'` as a truthy module default which short-circuits the
+`or CFG` fallback in `_detector_model`, so the bench sized the detector itself
+while reporting "from the current settings". Fixed this session and covered by
+`tests/test_bench.py`. **The detector row above should be re-measured at 512**;
+this project measured that change as 1.30x at the detect stage. Every other row
+is unaffected, since only the detector reads that setting.
+
 ## Phase 8 — CPU/GPU transfer and memory copy (RTX 3060)
 
 `tests/bench_phase8_transfer.py`, saved at
@@ -656,6 +776,37 @@ live copies, a budget large enough to reach 28-frame blocks approaches the same
 cliff. Recorded as a lead requiring a memory-safe implementation (for example
 overlapping warm-up with the previous block's tail rather than re-rendering it),
 not as an available setting.
+
+## Phase 13 — encoder / output pipeline (RTX 3060)
+
+`tests/phase13_benchmark.py --target "RTX 3060" --end 300 --segment-sizes 300`.
+All three encoders available; every arm exit 0, 300/300 frames, rotation count
+1, **wrong faceset = 0**.
+
+| Codec | Final FPS | Frame-rate impr. | Encode s | Encode share | Encode FPS | Peak VRAM |
+|---|---:|---:|---:|---:|---:|---:|
+| libx264 | 4.94 | 0.00% | 4.45 | 2.05% | 67.4 | 4,097 MB |
+| h264_nvenc | 5.26 | +6.5% | 0.82 | 0.38% | 365.9 | 3,995 MB |
+| hevc_nvenc | **5.30** | **+7.3%** | 0.83 | 0.39% | 361.4 | 4,012 MB |
+
+**What is solid:** the encoder-stage saving is directly measured and large —
+4.45 s to 0.83 s, a **5.4x** reduction, moving encode from 2.05% of the run to
+0.38%. Hardware encoding works correctly on this target and costs no VRAM.
+
+**What is NOT established: the end-to-end +7.3%.** These are single runs, not
+counterbalanced, and this host drifts ~15% between sets. The guaranteed
+component is only the 3.6 s of encode time saved on a 217 s run, i.e. **~1.7%**;
+the remainder is plausibly real (libx264 competes for the CPU the pipeline
+needs) but is not separable from drift on this evidence. The ordering does match
+the 4070's independently.
+
+**No change required:** `config.yaml` already specifies `hevc_nvenc`, which is
+the fastest arm here. This validates the existing choice rather than proposing
+one — and it only works at all because of the NVENC detection fix in this
+session, without which the runtime selects `libx264`.
+
+Encoding is not the bottleneck on this target: even the slowest arm spends 2%
+of the run in the writer.
 
 ## Gate D — CPU optimization matrix
 

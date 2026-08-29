@@ -2567,6 +2567,25 @@ def bootstrap_globals():
     roop.globals.CFG = Settings(cfg_path if os.path.exists(cfg_path)
                                 else 'config.yaml')
 
+    # Publish the saved detector size onto roop.globals, the way api.py does
+    # when the app starts.
+    #
+    # WITHOUT THIS THE BENCH SIZES THE DETECTOR ITSELF. `roop/globals.py`
+    # defines `face_detector_size = '640'` as a module default, and
+    # `_detector_model` reads
+    #     getattr(roop.globals, 'face_detector_size', None) or CFG...
+    # -- so the truthy '640' short-circuits and the CFG fallback is dead code.
+    # A machine configured for 512 was benchmarked at 640 with the report
+    # still labelled "from the current settings".
+    #
+    # That is not cosmetic: this project measured det_size 640 -> 512 as
+    # **1.30x** at the detect stage, so the detector rows described a
+    # configuration production does not run. It is the same defect class as
+    # the four harnesses that benchmarked UltraMax against no enhancer at all.
+    _det_size = getattr(roop.globals.CFG, 'face_detector_size', None)
+    if _det_size:
+        roop.globals.face_detector_size = str(_det_size)
+
     # Provider resolution mirrors ui/main.py, including its TensorRT->CUDA
     # degrade: a report of TensorRT stage times from a machine without the
     # runtime is advice for a different machine. CUDA is appended behind
