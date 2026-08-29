@@ -122,7 +122,9 @@ class SegmentedVideoWriter:
     a resume manifest, and final lossless concatenation."""
 
     def __init__(self, target_video, size, fps, codec="libx264", crf=14,
-                 source_video="", frame_start=0, frame_end=0, signature=""):
+                 source_video="", frame_start=0, frame_end=0, signature="",
+                 preset=None, bitrate=None, threads=None,
+                 ffmpeg_params=None, colorspace=None):
         self.target_video = target_video
         self.size = size
         self.fps = float(fps)
@@ -132,10 +134,21 @@ class SegmentedVideoWriter:
         base, ext = os.path.splitext(os.path.basename(target_video))
         self._seg_prefix = f".{base}.seg"
         self._seg_ext = ext or ".mp4"
-        try:
-            self.chunk = max(50, int(os.environ.get("ROOP_RESUME_CHUNK", "1000")))
-        except ValueError:
-            self.chunk = 1000
+        raw_chunk = os.environ.get("ROOP_RESUME_CHUNK")
+        if raw_chunk is not None and str(raw_chunk).strip():
+            try:
+                self.chunk = max(50, int(raw_chunk))
+            except ValueError:
+                self.chunk = self._default_chunk()
+        else:
+            self.chunk = self._default_chunk()
+        self._writer_options = {
+            "preset": preset,
+            "bitrate": bitrate,
+            "threads": threads,
+            "ffmpeg_params": ffmpeg_params,
+            "colorspace": colorspace,
+        }
 
         # Everything a resume must match on — resuming into a run with different
         # settings/trim/dims would silently mix outputs.
@@ -214,13 +227,28 @@ class SegmentedVideoWriter:
             bar_write(f"[Resume] could not write manifest: {e}")
 
     # ── writing ──────────────────────────────────────────────────────────────
+    def _default_chunk(self):
+        """Choose a rotation interval from the detected source frame rate.
+
+        Explicit ROOP_RESUME_CHUNK remains authoritative. Automatic mode uses a
+        duration rather than a fixed frame count so 24/30/60 FPS clips get
+        comparable crash-loss windows while avoiding needless encoder lifecycle
+        work. The duration is configurable for finer-grained recovery.
+        """
+        try:
+            seconds = float(os.environ.get("ROOP_RESUME_SEGMENT_SECONDS", "120"))
+        except ValueError:
+            seconds = 120.0
+        return max(50, int(round(max(1.0, seconds) * max(1.0, self.fps))))
+
     def _open_next_segment(self):
         global _current
         self._cur_seg_file = f"{self._seg_prefix}{self._seg_index:04d}{self._seg_ext}"
         path = os.path.join(self._dir, self._cur_seg_file)
         self._writer = FFMPEG_VideoWriter(path, self.size, self.fps,
                                           codec=self.codec, crf=self.crf,
-                                          audiofile=None)
+                                          audiofile=None,
+                                          **self._writer_options)
         self._cur_frames = 0
         _current = {"index": len(self.segments) + 1, "file": self._cur_seg_file,
                     "first": self._next_first, "_written": 0, "bytes": 0,
@@ -296,7 +324,13 @@ class SegmentedVideoWriter:
         # A hard crash never reaches this code at all, so crash-resume is unaffected.
         completed = bool(roop.globals.processing)
         keep_after_stop = os.environ.get("ROOP_RESUME_KEEP", "0") == "1"
-        ok = self._concat()
+        preserve_parts = not completed and keep_after_stop
+        # A single segment is already a complete MP4. Promote it directly to
+        # avoid a second ffmpeg process and stream-copy pass on short clips;
+        # retain concat for multi-part files and ROOP_RESUME_KEEP=1.
+        ok = (self._promote_single()
+              if len(self.segments) == 1 and not preserve_parts
+              else self._concat())
         if not completed and ok:
             n = len(self.segments)
             if keep_after_stop:
@@ -309,6 +343,15 @@ class SegmentedVideoWriter:
                       f"(set ROOP_RESUME_KEEP=1 to keep them for resuming).")
         if ok and (completed or not keep_after_stop):
             self.cleanup()
+
+    def _promote_single(self) -> bool:
+        try:
+            source = os.path.join(self._dir, self.segments[0]["file"])
+            os.replace(source, self.target_video)
+            return True
+        except Exception as e:
+            bar_write(f"[Resume] single-segment finalize failed: {e}")
+            return False
 
     def _concat(self) -> bool:
         list_path = os.path.join(self._dir, f"{self._seg_prefix}list.txt")

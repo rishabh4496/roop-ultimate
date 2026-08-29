@@ -215,6 +215,13 @@ def main():
     ap.add_argument("--end", type=int, default=WORKLOAD["end"])
     ap.add_argument("--enhancer", default="GPEN 256 Pro")
     ap.add_argument("--mask-engine", default="RealityUX")
+    ap.add_argument("--provider", default=None,
+                    help="explicit inference provider for a controlled A/B; "
+                         "default uses config.yaml")
+    ap.add_argument("--codec", default="libx264",
+                    choices=("libx264", "libx265", "libvpx-vp9",
+                             "h264_nvenc", "hevc_nvenc"),
+                    help="explicit output codec for a controlled A/B")
     ap.add_argument("--stabilization-mode", choices=("auto", "off", "on"),
                     default="auto",
                     help="controlled Phase 12 override for all stabilizers")
@@ -237,16 +244,18 @@ def main():
     cfg = Settings(os.path.join(APP, "config.yaml"))
     threads = args.threads if args.threads is not None else int(cfg.max_threads)
 
+    provider = args.provider if args.provider is not None else str(cfg.provider)
     cmd = [sys.executable, os.path.join(HERE, "two_face_video.py"),
            "--tag", args.tag,
            "--video", args.video,
            "--sources", args.sources,
            "--start", str(args.start), "--end", str(args.end),
            "--capture", "-1", "--capture-budget", "30",
-           "--provider", str(cfg.provider),
+           "--provider", provider,
            "--swap-model", str(cfg.swap_model),
            "--enhancer", args.enhancer,
            "--mask-engine", args.mask_engine,
+           "--codec", args.codec,
            "--tracking", "1",
            # From config.yaml, not from the harness defaults. Production runs all
            # three stabilizers; they are the single largest GPU lever recorded in
@@ -287,8 +296,9 @@ def main():
     print("  %-14s %s frames %d..%d, sources %s"
           % ("workload", os.path.basename(args.video), args.start, args.end,
              args.sources))
-    print("  %-14s %s / %s / %s, %d threads"
-          % ("stack", cfg.swap_model, args.enhancer, args.mask_engine, threads))
+    print("  %-14s %s / %s / %s / %s, %d threads"
+          % ("stack", cfg.swap_model, args.enhancer, args.mask_engine,
+             args.codec, threads))
     print("  %-14s face=%s mask=%s(%.2f) enhancer=%s(%.2f), method %s"
           % ("stabilizers", bool(cfg.stabilize_face), bool(cfg.stabilize_mask),
              float(cfg.stabilize_mask_strength), bool(cfg.stabilize_enhancer),
@@ -328,10 +338,11 @@ def main():
         "returncode": rc,
         "software": stack,
         "workload": {"video": args.video, "sources": args.sources,
-                     "start": args.start, "end": args.end,
-                     "enhancer": args.enhancer, "mask_engine": args.mask_engine,
-                     "swap_model": str(cfg.swap_model),
-                     "provider": str(cfg.provider), "threads": threads,
+                      "start": args.start, "end": args.end,
+                      "enhancer": args.enhancer, "mask_engine": args.mask_engine,
+                      "codec": args.codec,
+                      "swap_model": str(cfg.swap_model),
+                      "provider": provider, "threads": threads,
                      "reason": WORKLOAD["reason"]},
         "extra_env": {p.split("=", 1)[0]: p.split("=", 1)[1]
                       for p in args.env if "=" in p},

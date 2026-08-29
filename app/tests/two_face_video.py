@@ -888,6 +888,10 @@ def main():
     ap.add_argument("--swap-model", default="inswapper")
     ap.add_argument("--enhancer", default="None")
     ap.add_argument("--mask-engine", default="None")
+    ap.add_argument("--codec", default="libx264",
+                    choices=("libx264", "libx265", "libvpx-vp9",
+                             "h264_nvenc", "hevc_nvenc"),
+                    help="explicit output codec; never auto-replaced by the bench")
     ap.add_argument("--color-transfer-mode", default=None,
                     choices=("none", "rct", "lct", "mkl", "idt"),
                     help="override color processing for a controlled A/B; "
@@ -940,7 +944,7 @@ def main():
     g.swap_model_mask_strength = float(_mm)
     if args.merger_clarity is not None:
         g.merger_clarity = float(args.merger_clarity)
-    g.video_encoder = "libx264"
+    g.video_encoder = args.codec
     g.video_quality = 12
     g.execution_threads = args.threads if args.threads is not None else g.CFG.max_threads
     if args.auto_threads:

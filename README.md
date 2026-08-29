@@ -203,3 +203,50 @@ wall clock for stabilization OFF/ON, mask OFF/ON, color processing OFF/ON, and a
 postprocess-heavy enhancer arm. Each report has separate target rows and records
 pending status when the requested GPU is not physically present; it never substitutes
 another GPU or fabricates results.
+
+### Phase 13 encoder and output benchmark
+
+Run the true end-to-end codec and segment-rotation matrix separately on each
+validation GPU. Codec choices passed to this harness are explicit and remain
+authoritative; unavailable encoders are reported as skipped.
+
+```text
+env/Scripts/python.exe tests/phase13_benchmark.py --target "RTX 3060"
+env/Scripts/python.exe tests/phase13_benchmark.py --target "RTX 4070"
+```
+
+The default compares `libx264`, `h264_nvenc`, and `hevc_nvenc` with automatic
+duration rotation and a 600-frame segment. Add `--codecs libx265,libvpx-vp9`
+or `--segment-sizes 100,300,600` for other supported encoder/rotation arms.
+The report includes end-to-end FPS, encoder write/finalize time, encoder share,
+throughput, rotations, VRAM, CPU/GPU utilization, latency, frame count,
+stability, and output-quality audit status. Single-segment outputs are promoted
+directly; multi-segment outputs still use lossless concat and the resume manifest.
+The acceptance record, including separate RTX 3060 pending and RTX 4070 result
+tables, is maintained in [`docs/HARDWARE_VALIDATION_MATRIX.md`](docs/HARDWARE_VALIDATION_MATRIX.md).
+
+### Phase 14 runtime autotuning
+
+Normal runs load a hardware/software/model/workload-specific cached profile.
+For a deliberate measured retune, run the bounded search on the physical GPU:
+
+```text
+env/Scripts/python.exe tests/phase14_autotune.py --target "RTX 3060" --force
+env/Scripts/python.exe tests/phase14_autotune.py --target "RTX 4070" --force
+```
+
+It evaluates at most 12 short end-to-end candidates in staged order, selects by
+end-to-end FPS after VRAM/RAM/stability/quality/startup penalties, and prints
+the selected configuration, candidates, baseline/best FPS, improvement, and
+resource usage. Explicit settings remove the corresponding autotune stage.
+
+### Phase 15 runtime monitoring
+
+Set `ROOP_RUNTIME_MONITOR=1` for lightweight rolling telemetry from the live
+pipeline. The final summary includes end-to-end and per-stage FPS/latency,
+CPU/P-core/E-core/GPU utilization, VRAM/RAM, queue depths, worker utilization,
+and a bottleneck classification. Add `ROOP_RUNTIME_DIAGNOSTICS=1` to print
+adaptive actions, and `ROOP_RUNTIME_ADAPTIVE=1` to enable the hysteretic
+safe-boundary controller. It only changes future work within profile bounds;
+active TensorRT contexts, in-flight inference, frame ordering, and explicit
+codec choices remain untouched.

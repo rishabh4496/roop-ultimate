@@ -37,6 +37,16 @@ _gpu_lock = Lock()
 
 _PROFILE = os.environ.get('ROOP_PROFILE', '0') == '1'
 
+# Phase 15 uses the existing timing context as a zero-copy observation point.
+# ``None`` is the normal state: _prof then keeps its historical no-op cost.
+_RUNTIME_MONITOR = None
+
+
+def set_runtime_monitor(monitor):
+    """Attach/detach the optional per-run monitor without an import cycle."""
+    global _RUNTIME_MONITOR
+    _RUNTIME_MONITOR = monitor
+
 
 # ── Identity-lock source veto ────────────────────────────────────────────────
 # Guards against a tracked source being applied to the wrong face (people
@@ -437,7 +447,8 @@ _prof_counts = _defaultdict(int)
 
 @contextlib.contextmanager
 def _prof(stage):
-    if not _PROFILE:
+    monitor = _RUNTIME_MONITOR
+    if not _PROFILE and monitor is None:
         yield
         return
     t0 = time.perf_counter()
@@ -446,8 +457,11 @@ def _prof(stage):
     finally:
         dt = time.perf_counter() - t0
         with _prof_lock:
-            _prof_times[stage] += dt
-            _prof_counts[stage] += 1
+            if _PROFILE:
+                _prof_times[stage] += dt
+                _prof_counts[stage] += 1
+        if monitor is not None:
+            monitor.record_stage(stage, dt)
 
 
 def _prof_reset():

@@ -114,13 +114,40 @@ thing from a terminal and prints the tables without touching the config.
 | `ROOP_NVDEC` | auto (on) | Hardware NVDEC video reader. `0` disables; `1` forces (skips the auto probe). |
 | `ROOP_NVENC_PRESET` | `p5` | NVENC encoder preset (`p1`–`p7`). |
 | `ROOP_ENCODER_PRESET` | model default | CPU x264/x265 preset (e.g. `faster`) — lossless encode speedup at fixed CRF. |
+| `ROOP_FFMPEG_COLORSPACE` | `bt709` | Keep the established BGR→BT.709 conversion, or explicitly use `off` when the producer already converted the frames. |
+| `ROOP_OUTPUT_QUEUE_DEPTH` | auto | Explicit per-worker processed-frame handoff depth, bounded to 1–4; automatic mode remains RAM/profile controlled. |
 | `ROOP_RESUME` | 1 (on) | Crash-resume: write segments every chunk + manifest so an interrupted run continues. `0` disables. |
-| `ROOP_RESUME_CHUNK` | 1000 | Frames per resume segment (min 50). Also the granularity of the console's part tabs and of the "✓ part N written" lines. |
+| `ROOP_RESUME_SEGMENT_SECONDS` | 120 | Automatic resume-segment duration; converted to frames from the detected source FPS. Explicit `ROOP_RESUME_CHUNK` overrides it. |
+| `ROOP_RESUME_CHUNK` | auto | Explicit frames per resume segment (min 50). Automatic mode uses `ROOP_RESUME_SEGMENT_SECONDS`; also controls the console part tabs and completion lines. |
 | `ROOP_LIVE_PREVIEW` | 1 (on) | Publish the most recent processed frame for the processing box's live view (`/api/live_frame`). Throttled and downscaled, so unlike the per-frame full-frame copy this replaced, the cost does not scale with frame rate — measured 3.7 ms per publish on 1080p and 5.3 ms on 4K, i.e. ~1% of one thread at the default interval. `0` disables it and the box falls back to the last rendered preview still. |
 | `ROOP_LIVE_PREVIEW_MS` | 500 | Minimum gap between published live frames. Lower is smoother and proportionally more expensive; a publish inside the gap costs one clock read. |
 | `ROOP_LIVE_PREVIEW_WIDTH` | 960 | Width the live frame is downscaled to before encoding (min 160). 960 rather than the box's ~480 CSS px because that box is 2x on a HiDPI display, where a 480px frame is visibly pixelated. |
 | `ROOP_LIVE_PREVIEW_QUALITY` | 88 | JPEG quality of the live frame (40-100). Lower shows blocking on flat skin, which makes the live view look worse than the render it reports on. |
 | `ROOP_RESUME_KEEP` | 0 (off) | Keep the segment parts + manifest after a deliberate **Stop** so that run can be resumed later. Off = Stop merges the parts into one finished output and deletes them. Crash-resume is unaffected either way. |
+
+## Runtime autotuning
+
+| Flag | Default | Effect |
+|------|---------|--------|
+| `ROOP_RUNTIME_PROFILE_DIR` | `models/runtime_profiles` | Atomic cache directory for hardware/software/model/workload-specific profiles. |
+| `ROOP_RUNTIME_PROFILE_INVALIDATE` | off | Invalidate the matching cached profile before deriving a fresh bounded policy. |
+| `ROOP_RUNTIME_MONITOR` | off | Enable lightweight rolling runtime telemetry for end-to-end/stage FPS, latency, queues, workers, CPU, GPU, VRAM, and RAM. |
+| `ROOP_RUNTIME_DIAGNOSTICS` | off | Print the final telemetry summary and every adaptive action; has no effect unless monitoring is enabled. |
+| `ROOP_RUNTIME_ADAPTIVE` | off | Enable hysteretic safe-boundary adaptation of future batch/in-flight/buffer work. Active contexts and in-flight inference are never changed. |
+| `ROOP_RUNTIME_SAMPLE_INTERVAL` | `1.0` | Minimum seconds between resource samples; stage timing remains aggregated without per-frame probes. |
+| `ROOP_RUNTIME_WINDOW` | `16` | Number of resource samples retained for rolling decisions (bounded to 4-64). |
+| `ROOP_CPU_P_INDICES` / `ROOP_CPU_E_INDICES` | unset | Optional comma-separated logical CPU indices for P-core/E-core utilization reporting when the platform exposes the topology. |
+
+The normal application path loads a matching profile and does not repeat a
+long candidate search on every launch. A manual retune uses short real
+pipeline warmups, tests at most 12 candidates in staged order, and reports
+end-to-end FPS plus VRAM/RAM/CPU/GPU, stability, quality, and startup costs.
+
+When enabled, Phase 15 samples the live pipeline at a coarse interval and
+classifies the rolling bottleneck. Adaptive changes require three consecutive
+windows and then observe a cooldown; queue geometry, encoder changes, and
+stabilization buffers are deferred to a safe next boundary/run. Normal runs
+leave this telemetry and diagnostic output disabled.
 
 ## Terminal progress output
 
@@ -130,7 +157,7 @@ UI's progress bar and ETA are fed separately and are unaffected by all of these.
 | Flag | Default | Effect |
 |------|---------|--------|
 | `ROOP_PROGRESS_STYLE` | `auto` | `auto` draws a live tqdm bar when stderr is a terminal and prints one compact line per chunk otherwise (a captured log cannot rewrite a line in place, so a redrawn bar becomes one 451-character line per frame). `bar` forces the live bar, `chunk` forces the per-chunk lines. |
-| `ROOP_PROGRESS_EVERY` | = `ROOP_RESUME_CHUNK` (1000) | Frames per reported chunk, so a line in the terminal covers the same stretch as a tab in the console's part strip. |
+| `ROOP_PROGRESS_EVERY` | 25 (or explicit `ROOP_RESUME_CHUNK`) | Frames per reported chunk. When an explicit resume chunk is configured, a line in the terminal covers the same stretch as a tab in the console's part strip. |
 | `ROOP_PROGRESS_SECS` | 15 | Longest silence allowed between lines. A chunk can take minutes on a slow model, and a console that has said nothing for that long reads as a hang — whichever comes first, frames or seconds, triggers the line. |
 
 ## Timeline / preview frame decoding

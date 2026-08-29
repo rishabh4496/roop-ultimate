@@ -154,7 +154,8 @@ class FFMPEG_VideoWriter:
 
     def __init__(self, filename, size, fps, codec="libx265", crf=14, audiofile=None,
                  preset="faster", bitrate=None,
-                 logfile=None, threads=None, ffmpeg_params=None):
+                 logfile=None, threads=None, ffmpeg_params=None,
+                 colorspace=None):
 
         if logfile is None:
             logfile = sp.PIPE
@@ -172,6 +173,10 @@ class FFMPEG_VideoWriter:
         self._preset = preset
         self._bitrate = bitrate
         self._logfile = logfile
+        # bt709 preserves the established output matrix. "off" is an explicit
+        # escape hatch for callers whose frames already have the desired
+        # display-space conversion and need no extra full-frame pass.
+        self._colorspace = colorspace
         if threads is None:
             # Explicit constructor input and explicit process environment win;
             # otherwise consume the bounded workload hint.  This keeps FFmpeg
@@ -248,7 +253,10 @@ class FFMPEG_VideoWriter:
         if codec in ('libx264', 'libx265'):
             _valid = {'ultrafast', 'superfast', 'veryfast', 'faster', 'fast',
                       'medium', 'slow', 'slower', 'veryslow', 'placebo'}
-            _preset = os.environ.get('ROOP_ENCODER_PRESET', self._preset).strip().lower()
+            _preset = os.environ.get(
+                'ROOP_ENCODER_PRESET',
+                os.environ.get('ROOP_RUNTIME_ENCODER_PRESET', self._preset or 'faster')
+            ).strip().lower()
             if _preset not in _valid:
                 _preset = 'faster'
             cmd.extend(['-preset', _preset])
@@ -259,8 +267,18 @@ class FFMPEG_VideoWriter:
                 '-b', bitrate
             ])
 
-        # scale to a resolution divisible by 2 if not even
-        cmd.extend(['-vf', f'scale={w}:{h}' if w != size[0] or h != size[1] else 'colorspace=bt709:iall=bt601-6-625:fast=1'])
+        # Scale odd dimensions when required. Keep the legacy colorspace
+        # conversion by default for quality compatibility, but permit an
+        # explicit no-conversion mode without attaching a redundant filter
+        # graph.
+        colorspace = self._colorspace
+        if colorspace is None:
+            colorspace = os.environ.get('ROOP_FFMPEG_COLORSPACE', 'bt709')
+        colorspace = str(colorspace).strip().lower()
+        if w != size[0] or h != size[1]:
+            cmd.extend(['-vf', f'scale={w}:{h}'])
+        elif colorspace not in ('off', 'none', 'passthrough', '0', 'false'):
+            cmd.extend(['-vf', 'colorspace=bt709:iall=bt601-6-625:fast=1'])
 
         if threads is not None:
             cmd.extend(["-threads", str(threads)])

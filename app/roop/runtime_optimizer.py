@@ -27,7 +27,8 @@ import subprocess
 import tempfile
 import threading
 import time
-from dataclasses import asdict, dataclass, field
+from collections import deque
+from dataclasses import asdict, dataclass, field, fields, replace
 from pathlib import Path
 from typing import Any, Dict, Mapping, Optional, Tuple
 
@@ -195,6 +196,10 @@ class WorkloadProfile:
     stabilization_enabled: bool = False
     upscaling_enabled: bool = False
     temporal_detection_enabled: bool = False
+    tracking_enabled: bool = False
+    mask_enabled: bool = False
+    enhancement_resolution: int = 0
+    output_codec: str = ""
     video_length_frames: int = 0
     fps: float = 0.0
     estimated_complexity: float = 0.0
@@ -251,6 +256,11 @@ class RuntimeTuning:
     ffmpeg_threads: int = 1
     cuda_stream_count: int = 1
     cuda_auxiliary_streams: int = 0
+    cuda_graph_enabled: bool = False
+    cpu_performance_threads: int = 0
+    cpu_efficiency_threads: int = 0
+    ram_buffer_mb: int = 512
+    backend: str = "cuda"
     encoder: str = "libx264"
     encoder_preset: str = "medium"
 
@@ -271,6 +281,7 @@ class RuntimeProfile:
     automatic_settings: Tuple[str, ...] = field(default_factory=tuple)
     reasons: Tuple[str, ...] = field(default_factory=tuple)
     cache_key: str = ""
+    autotune: dict = field(default_factory=dict)
 
     def as_dict(self) -> dict:
         return {
@@ -285,7 +296,45 @@ class RuntimeProfile:
             "automatic_settings": list(self.automatic_settings),
             "reasons": list(self.reasons),
             "cache_key": self.cache_key,
+            "autotune": self.autotune,
         }
+
+    @classmethod
+    def from_dict(cls, payload: Mapping[str, Any]) -> Optional["RuntimeProfile"]:
+        """Load a profile while tolerating fields added by newer phases."""
+        if not isinstance(payload, Mapping) or payload.get("schema_version") != SCHEMA_VERSION:
+            return None
+
+        def build(kind, value):
+            value = dict(value or {})
+            names = {item.name for item in fields(kind)}
+            value = {name: value[name] for name in names if name in value}
+            return kind(**value)
+
+        try:
+            hardware = build(HardwareProfile, payload.get("hardware"))
+            workload = build(WorkloadProfile, payload.get("workload"))
+            tuning = build(RuntimeTuning, payload.get("tuning"))
+            for name in ("nvdec_codecs", "nvenc_codecs", "tensor_core_capabilities"):
+                value = getattr(hardware, name)
+                if isinstance(value, list):
+                    hardware = replace(hardware, **{name: tuple(value)})
+            return cls(
+                schema_version=SCHEMA_VERSION,
+                created_at=_number(payload.get("created_at")),
+                hardware=hardware,
+                workload=workload,
+                tuning=tuning,
+                precision=str(payload.get("precision", "fp32")),
+                provider=str(payload.get("provider", "cuda")),
+                explicit_settings=tuple(payload.get("explicit_settings", ()) or ()),
+                automatic_settings=tuple(payload.get("automatic_settings", ()) or ()),
+                reasons=tuple(payload.get("reasons", ()) or ()),
+                cache_key=str(payload.get("cache_key", "")),
+                autotune=dict(payload.get("autotune", {}) or {}),
+            )
+        except (TypeError, ValueError):
+            return None
 
 
 class ResourceManager:
@@ -317,6 +366,9 @@ class ResourceManager:
         "ort_inter_threads": (1, 2),
         "opencv_threads": (1, 4),
         "ffmpeg_threads": (1, 4),
+        "cpu_performance_threads": (0, 16),
+        "cpu_efficiency_threads": (0, 16),
+        "ram_buffer_mb": (512, 4096),
     }
 
     @classmethod
@@ -662,13 +714,15 @@ class WorkloadProfiler:
         width = height = fps = 0.0
         if resolution:
             width, height = resolution
-        if source_video and (not width or not height):
+        if source_video:
             try:
                 import cv2
                 cap = cv2.VideoCapture(source_video)
-                width = cap.get(cv2.CAP_PROP_FRAME_WIDTH)
-                height = cap.get(cv2.CAP_PROP_FRAME_HEIGHT)
-                fps = cap.get(cv2.CAP_PROP_FPS)
+                if not width or not height:
+                    width = cap.get(cv2.CAP_PROP_FRAME_WIDTH)
+                    height = cap.get(cv2.CAP_PROP_FRAME_HEIGHT)
+                if not fps:
+                    fps = cap.get(cv2.CAP_PROP_FPS)
                 if not frame_count:
                     frame_count = _integer(cap.get(cv2.CAP_PROP_FRAME_COUNT))
                 cap.release()
@@ -681,6 +735,17 @@ class WorkloadProfiler:
         stabilization = _bool(_value(settings, "stabilize_face", False))
         upscale = _bool(_value(settings, "upscale_after_swap", False))
         temporal = _bool(_value(settings, "temporal_detection", False))
+        tracking = _bool(_value(settings, "track_identities", False))
+        mask_engine = _short(_value(settings, "mask_engine", ""))
+        mask_strength = _number(_value(settings, "swap_model_mask_strength", 0))
+        mask = bool(mask_engine and mask_engine.lower() not in ("none", "keep")) or mask_strength > 0
+        enhancement_resolution = _integer(
+            _value(settings, "enhancement_resolution",
+                   _value(settings, "enhancer_resolution", 0)), 0)
+        if not enhancement_resolution and enhancement:
+            match = re.search(r"(?:^|\s)(\d{3,4})(?:\s|$)", enhancer)
+            enhancement_resolution = _integer(match.group(1), 0) if match else 0
+        output_codec = _short(_value(settings, "output_video_codec", ""))
         fpf = max(0.0, _number(faces_per_frame, 1.0))
         pixels = max(0.0, width * height)
         resolution_factor = pixels / (1280.0 * 720.0) if pixels else 1.0
@@ -691,6 +756,8 @@ class WorkloadProfiler:
         complexity += 0.35 if stabilization else 0.0
         complexity += 0.35 if upscale else 0.0
         complexity += 0.35 if temporal else 0.0
+        complexity += 0.25 if tracking else 0.0
+        complexity += 0.25 if mask else 0.0
 
         return WorkloadProfile(
             input_width=max(0, _integer(width)),
@@ -704,6 +771,10 @@ class WorkloadProfiler:
             stabilization_enabled=stabilization,
             upscaling_enabled=upscale,
             temporal_detection_enabled=temporal,
+            tracking_enabled=tracking,
+            mask_enabled=mask,
+            enhancement_resolution=max(0, enhancement_resolution),
+            output_codec=output_codec,
             video_length_frames=max(0, _integer(frame_count)),
             fps=max(0.0, _number(fps)),
             estimated_complexity=round(complexity, 3),
@@ -774,6 +845,22 @@ class TensorRTEngineManager:
                 "stream_count": _value(settings, "cuda_stream_count", "auto"),
                 "auxiliary_streams": _value(settings, "trt_auxiliary_streams", "auto"),
                 "cuda_graph": _value(settings, "trt_cuda_graph", False),
+            },
+            # Settings that can change throughput, memory pressure, or output
+            # quality are part of the cache identity.  This prevents a tuned
+            # UltraMax/two-face profile from being reused for a different
+            # enhancer, tracking mode, or explicit codec.
+            "runtime_settings": {
+                name: _value(settings, name, "auto") for name in (
+                    "provider", "trt_precision", "perf_trt_pool",
+                    "perf_detector_pool", "perf_detmask_pool", "perf_expr_pool",
+                    "perf_batch_swap", "max_threads", "auto_thread_selection",
+                    "cpu_ort_intra_threads", "cpu_ort_inter_threads",
+                    "cpu_opencv_threads", "cpu_ffmpeg_threads",
+                    "perf_encoder_preset", "output_video_codec",
+                    "track_identities", "temporal_detection", "stabilize_face",
+                    "stabilize_mask", "stabilize_enhancer", "upscale_after_swap",
+                    "enhancement_resolution", "enhancer_resolution" )
             },
             # Workload shape and characteristics are part of profile identity;
             # these are not universal settings even on one GPU.
@@ -963,17 +1050,17 @@ class AutoTuner:
         if workload.estimated_complexity >= 3.5:
             cpu_cap = max(1, min(cpu_cap, 8 if not small else 6))
         worker = max(1, min(cpu_cap, hardware.cpu_physical_cores or cpu_cap))
-        contexts = 1 if small else 2
-        detector_pool = 0 if small else 2
-        detmask_pool = 0 if small else 2
+        contexts = 1 if small or not hardware.tensorrt_available else 2
+        detector_pool = 0 if small or not hardware.cuda_available else 2
+        detmask_pool = 0 if small or not hardware.cuda_available else 2
         # The available 12GB profile's two-face benchmark found the swapper
         # knee at three contexts; the sub-7GB profile remains explicitly
         # single-context.  This is a bounded workload-aware choice, not a
         # universal desktop default.
-        swapper_pool = (0 if small else
+        swapper_pool = (0 if small or not hardware.tensorrt_available else
                         (3 if workload.faces_per_frame >= 2 else 2))
-        enhancer_pool = 0 if small else (2 if workload.enhancement_enabled else 1)
-        expression_pool = 0 if small else 2
+        enhancer_pool = 0 if small or not hardware.cuda_available else (2 if workload.enhancement_enabled else 1)
+        expression_pool = 0 if small or not hardware.cuda_available else 2
         # Stabilization is a host-side stateful stage, not a second GPU context.
         # Do not collapse the whole pipeline to one worker on the small-VRAM
         # tier: swap/mask/enhance calls already serialize through their own
@@ -1022,6 +1109,16 @@ class AutoTuner:
             hardware,
             independent_work=2 if workload.faces_per_frame >= 2 else 1,
             shared_mutable_buffers=False)
+        graph_readiness = self._graph_readiness(settings, workload, hardware)
+        configured_provider = _short(_value(settings, "provider", "auto")).lower()
+        if configured_provider in ("cpu", "cpu only", "none"):
+            backend = "cpu"
+        elif hardware.tensorrt_available and configured_provider in ("auto", "", "cuda", "tensorrt"):
+            backend = "tensorrt"
+        elif hardware.cuda_available and configured_provider not in ("cpu", "cpu only"):
+            backend = "cuda"
+        else:
+            backend = "cpu"
         # Batching and independent contexts compete for the same GPU memory.
         # The small-VRAM tier therefore gets one face, one tile, and one
         # in-flight frame.  Larger devices receive only a bounded candidate;
@@ -1038,6 +1135,13 @@ class AutoTuner:
         # override may opt a different model/workload into batching.
         upscale_tile_batch = 1
         in_flight_frames = 1 if small else max(1, min(4, queue_depth + 1))
+        p_cores = max(0, hardware.cpu_performance_cores)
+        e_cores = max(0, hardware.cpu_efficiency_cores)
+        if p_cores or e_cores:
+            cpu_p = min(worker, p_cores)
+            cpu_e = min(max(0, worker - cpu_p), e_cores)
+        else:
+            cpu_p, cpu_e = worker, 0
         values = {
             "trt_context_count": contexts,
             "worker_count": worker,
@@ -1061,6 +1165,11 @@ class AutoTuner:
             "ffmpeg_threads": ffmpeg,
             "cuda_stream_count": stream_policy["stream_count"],
             "cuda_auxiliary_streams": stream_policy["auxiliary_streams"],
+            "cuda_graph_enabled": graph_readiness["safe"],
+            "cpu_performance_threads": cpu_p,
+            "cpu_efficiency_threads": cpu_e,
+            "ram_buffer_mb": ResourceManager.frame_budget_mb(hardware, workload),
+            "backend": backend,
             "encoder": encoder,
             "encoder_preset": preset,
         }
@@ -1082,6 +1191,11 @@ class AutoTuner:
             "ort_inter_threads": "cpu_ort_inter_threads",
             "encoder_preset": "perf_encoder_preset",
             "encoder": "output_video_codec",
+            "trt_context_count": "perf_trt_pool",
+            "cuda_stream_count": "cuda_stream_count",
+            "cuda_auxiliary_streams": "trt_auxiliary_streams",
+            "cuda_graph_enabled": "trt_cuda_graph",
+            "ffmpeg_threads": "cpu_ffmpeg_threads",
         }
         for field_name, setting_name in fields.items():
             if _is_auto(settings, setting_name):
@@ -1108,6 +1222,8 @@ class AutoTuner:
         values["detector_pool_size"] = _explicit_int("perf_detector_pool", values["detector_pool_size"])
         values["detmask_pool_size"] = _explicit_int("perf_detmask_pool", values["detmask_pool_size"])
         values["swapper_pool_size"] = _explicit_int("perf_trt_pool", values["swapper_pool_size"])
+        values["trt_context_count"] = max(
+            1, min(values["trt_context_count"], values["swapper_pool_size"] or 1))
         # Enhancers share the established TRT pool.  The expression restorer
         # has its own pool and is represented separately above.
         values["enhancer_pool_size"] = values["swapper_pool_size"]
@@ -1123,6 +1239,17 @@ class AutoTuner:
                 values["batch_size"] = values["tile_batch_size"] = 1
         if not _is_auto(settings, "cpu_opencv_threads"):
             values["opencv_threads"] = _explicit_int("cpu_opencv_threads", values["opencv_threads"])
+        if not _is_auto(settings, "cpu_ffmpeg_threads"):
+            values["ffmpeg_threads"] = ResourceManager.clamp(
+                "ffmpeg_threads", _value(settings, "cpu_ffmpeg_threads", values["ffmpeg_threads"]))
+        if not _is_auto(settings, "cuda_stream_count"):
+            values["cuda_stream_count"] = ResourceManager.clamp(
+                "cuda_stream_count", _value(settings, "cuda_stream_count", values["cuda_stream_count"]))
+        if not _is_auto(settings, "trt_auxiliary_streams"):
+            values["cuda_auxiliary_streams"] = ResourceManager.clamp(
+                "cuda_auxiliary_streams", _value(settings, "trt_auxiliary_streams", values["cuda_auxiliary_streams"]))
+        if not _is_auto(settings, "trt_cuda_graph"):
+            values["cuda_graph_enabled"] = _bool(_value(settings, "trt_cuda_graph", False)) and graph_readiness["safe"]
         if not _is_auto(settings, "perf_encoder_preset"):
             values["encoder_preset"] = _short(_value(settings, "perf_encoder_preset", values["encoder_preset"]))
         if not _is_auto(settings, "output_video_codec"):
@@ -1133,9 +1260,290 @@ class AutoTuner:
         tuning = RuntimeTuning(**values)
         return tuning, tuple(sorted(set(explicit))), tuple(sorted(set(automatic))), tuple(reasons)
 
+    @staticmethod
+    def _graph_readiness(settings: Any, workload: WorkloadProfile,
+                         hardware: HardwareProfile) -> dict:
+        """Keep graph capture opt-in until a fixed-shape runner owns buffers."""
+        return CUDAGraphManager().readiness(settings, workload, hardware)
+
+
+@dataclass(frozen=True)
+class TuneMeasurement:
+    """Normalized result returned by one short candidate run."""
+
+    end_to_end_fps: float = 0.0
+    peak_vram_gb: float = 0.0
+    peak_ram_gb: float = 0.0
+    startup_seconds: float = 0.0
+    cpu_utilization_pct: float = 0.0
+    gpu_utilization_pct: float = 0.0
+    stable: bool = True
+    quality_regression: bool = False
+    metrics: dict = field(default_factory=dict)
+
+    @classmethod
+    def from_mapping(cls, value: Any) -> "TuneMeasurement":
+        if isinstance(value, cls):
+            return value
+        data = dict(value or {})
+        peak_vram = data.get("peak_vram_gb")
+        if peak_vram is None:
+            peak_vram = _number(data.get("peak_vram_mb")) / 1024.0
+        peak_ram = data.get("peak_ram_gb")
+        if peak_ram is None:
+            peak_ram = _number(data.get("peak_rss_gb"))
+        fps = data.get("end_to_end_fps", data.get("fps", 0.0))
+        stable = data.get("stable", data.get("stability", True))
+        if isinstance(stable, str):
+            stable = stable.strip().lower() in ("1", "true", "yes", "on", "pass", "passed")
+        return cls(
+            end_to_end_fps=max(0.0, _number(fps)),
+            peak_vram_gb=max(0.0, _number(peak_vram)),
+            peak_ram_gb=max(0.0, _number(peak_ram)),
+            startup_seconds=max(0.0, _number(data.get("startup_seconds", 0.0))),
+            cpu_utilization_pct=max(0.0, _number(
+                data.get("cpu_utilization_pct", data.get("mean_cpu_pct", 0.0)))),
+            gpu_utilization_pct=max(0.0, _number(
+                data.get("gpu_utilization_pct", data.get("mean_gpu_util_pct", 0.0)))),
+            stable=bool(stable),
+            quality_regression=_bool(data.get("quality_regression", False)),
+            metrics=data,
+        )
+
+
+class RuntimeAutotuner:
+    """Bounded staged search scored by real end-to-end throughput.
+
+    The evaluator is deliberately injected.  The application can provide a
+    warmup/full-pipeline runner, while tests and offline benchmark tools can
+    provide a deterministic runner without loading models.  No combinatorial
+    grid is built: each stage changes one concern from the current best and
+    stops after two negligible stages or the candidate budget.
+    """
+
+    MAX_CANDIDATES = 12
+    DEFAULT_WARMUP_FRAMES = 24
+    MIN_IMPROVEMENT = 0.01
+
+    _SETTING_FOR_STAGE = {
+        "backend_precision": ("provider", "trt_precision"),
+        "trt_concurrency": ("perf_trt_pool",),
+        "batch_size": ("perf_batch_swap",),
+        "cpu_threading": ("max_threads", "cpu_ort_intra_threads",
+                           "cpu_ort_inter_threads", "cpu_opencv_threads"),
+        "queue_buffer": (),
+        "encoder": ("output_video_codec", "perf_encoder_preset"),
+    }
+
+    def _explicit(self, settings: Any, stage: str) -> bool:
+        if any(not _is_auto(settings, name)
+               for name in self._SETTING_FOR_STAGE.get(stage, ())):
+            return True
+        env_pins = {
+            "trt_concurrency": ("ROOP_TRT_POOL", "ROOP_DETMASK_POOL"),
+            "queue_buffer": ("ROOP_OUTPUT_QUEUE_DEPTH", "ROOP_STAB_CHUNK",
+                              "ROOP_STAB_CHUNK_MB"),
+            "encoder": ("ROOP_ENCODER_PRESET",),
+            "backend_precision": ("ROOP_TRT_AUX_STREAMS", "ROOP_TRT_CUDA_GRAPH",
+                                   "ROOP_SWAP_FP32"),
+        }
+        return any(os.environ.get(name) not in (None, "")
+                   for name in env_pins.get(stage, ()))
+
+    @staticmethod
+    def _candidate(base: Mapping[str, Any], stage: str, **changes) -> dict:
+        result = dict(base)
+        result.update(changes)
+        result["stage"] = stage
+        return result
+
+    def candidates(self, base: RuntimeTuning, hardware: HardwareProfile,
+                   workload: WorkloadProfile, settings: Any = None) -> list[dict]:
+        """Return a small ordered candidate set, excluding pinned settings."""
+        initial = dict(base.as_dict())
+        configured_precision = str(
+            _value(settings, "trt_precision", "auto") or "auto").lower()
+        initial["precision"] = (
+            configured_precision if not _is_auto(settings, "trt_precision") else
+            ("fp32" if hardware.vram_total_gb < 7.0 else "mixed"))
+        initial["stage"] = "baseline"
+        result = [initial]
+
+        def add(stage: str, **changes):
+            if self._explicit(settings, stage):
+                return
+            item = self._candidate(initial, stage, **changes)
+            # Each stage compares to the same baseline; the evaluator's staged
+            # loop applies an accepted candidate before moving to the next one.
+            item_config = {key: value for key, value in item.items()
+                           if key != "stage"}
+            if not any({key: value for key, value in existing.items()
+                        if key != "stage"} == item_config for existing in result):
+                result.append(item)
+
+        if not self._explicit(settings, "backend_precision"):
+            if hardware.tensorrt_available and hardware.fp16_supported:
+                add("backend_precision", backend="tensorrt", precision="fp16")
+            if hardware.cuda_available:
+                add("backend_precision", backend="cuda", precision="fp32")
+        if not self._explicit(settings, "trt_concurrency"):
+            for value in sorted(set((1, base.trt_context_count,
+                                     min(3, max(1, base.trt_context_count + 1))))):
+                add("trt_concurrency", trt_context_count=value,
+                    swapper_pool_size=value)
+            if hardware.vram_total_gb >= 7.0 and hardware.cuda_available:
+                # Detector/mask/enhancer pools have different model footprints;
+                # compare their shared-concurrency alternative as one bounded
+                # candidate instead of multiplying a full Cartesian grid.
+                add("trt_concurrency",
+                    detector_pool_size=max(1, min(2, base.detector_pool_size)),
+                    detmask_pool_size=max(1, min(2, base.detmask_pool_size)),
+                    enhancer_pool_size=max(1, min(2, base.enhancer_pool_size)))
+        if not self._explicit(settings, "batch_size"):
+            values = (1, 2) if workload.faces_per_frame >= 2 else (1,)
+            for value in values:
+                add("batch_size", batch_size=value, tile_batch_size=value)
+        if not self._explicit(settings, "cpu_threading"):
+            worker_values = sorted(set((max(1, base.worker_count // 2),
+                                        base.worker_count,
+                                        min(ResourceManager.BOUNDS["worker_count"][1],
+                                            base.worker_count + 2))))
+            for value in worker_values:
+                add("cpu_threading", worker_count=value,
+                    cpu_performance_threads=value,
+                    cpu_efficiency_threads=0)
+        if not self._explicit(settings, "queue_buffer"):
+            for value in sorted(set((1, base.queue_depth, min(4, base.queue_depth + 1)))):
+                add("queue_buffer", queue_depth=value,
+                    in_flight_frames=min(ResourceManager.BOUNDS["in_flight_frames"][1], value + 1),
+                    ram_buffer_mb=max(base.ram_buffer_mb, 512 * value))
+            if workload.stabilization_enabled:
+                for value in sorted(set((max(16, base.stabilization_chunk_size // 2),
+                                         base.stabilization_chunk_size,
+                                         min(288, base.stabilization_chunk_size * 2)))):
+                    add("queue_buffer", stabilization_chunk_size=value)
+        if not self._explicit(settings, "encoder"):
+            codecs = []
+            if hardware.nvenc_available:
+                codecs.extend(("h264_nvenc", "hevc_nvenc"))
+            codecs.append("libx264")
+            for codec in codecs:
+                add("encoder", encoder=codec,
+                    encoder_preset="p5" if codec.endswith("_nvenc") else "faster")
+
+        return result[:self.MAX_CANDIDATES]
+
+    @staticmethod
+    def score(measurement: TuneMeasurement, hardware: HardwareProfile) -> float:
+        """Score throughput after resource, stability, quality, and startup penalties."""
+        fps = measurement.end_to_end_fps
+        if fps <= 0.0 or not measurement.stable or measurement.quality_regression:
+            return 0.0
+        penalty = 0.0
+        if hardware.vram_total_gb and measurement.peak_vram_gb:
+            pressure = measurement.peak_vram_gb / hardware.vram_total_gb
+            penalty += min(0.45, max(0.0, pressure - 0.80) * 1.5)
+        if hardware.ram_total_gb and measurement.peak_ram_gb:
+            pressure = measurement.peak_ram_gb / hardware.ram_total_gb
+            penalty += min(0.30, max(0.0, pressure - 0.75) * 1.0)
+        # Startup is amortized over a short representative run.  It is a
+        # penalty, never a reason to prefer high GPU utilization by itself.
+        penalty += min(0.20, measurement.startup_seconds /
+                       max(1.0, measurement.startup_seconds + 60.0))
+        return max(0.0, fps * (1.0 - min(0.90, penalty)))
+
+    def tune(self, baseline: RuntimeTuning, hardware: HardwareProfile,
+              workload: WorkloadProfile, settings: Any = None,
+              measure=None, warmup_frames: int = DEFAULT_WARMUP_FRAMES,
+              max_candidates: int = MAX_CANDIDATES) -> tuple[RuntimeTuning, dict]:
+        if measure is None:
+            raise ValueError("RuntimeAutotuner requires an end-to-end measure callback")
+        candidates = self.candidates(baseline, hardware, workload, settings)
+        candidates = candidates[:max(1, min(self.MAX_CANDIDATES, int(max_candidates)))]
+        tested = []
+        def safe_measure(candidate):
+            try:
+                return TuneMeasurement.from_mapping(measure(candidate, warmup_frames))
+            except Exception as exc:
+                return TuneMeasurement(
+                    stable=False, metrics={"error": "%s: %s" %
+                                           (type(exc).__name__, exc)})
+
+        current = dict(baseline.as_dict())
+        current["precision"] = str(
+            _value(settings, "trt_precision", "auto") or "auto").lower()
+        if _is_auto(settings, "trt_precision"):
+            current["precision"] = "fp32" if hardware.vram_total_gb < 7.0 else "mixed"
+        best = current
+        best_measurement = safe_measure(current)
+        best_score = self.score(best_measurement, hardware)
+        tested.append(self._result(current, best_measurement, best_score))
+        stage_order = ("backend_precision", "trt_concurrency", "batch_size",
+                       "cpu_threading", "queue_buffer", "encoder")
+        stagnant = 0
+        for stage in stage_order:
+            if stagnant >= 2 or len(tested) >= len(candidates):
+                break
+            stage_candidates = [item for item in candidates
+                                if item.get("stage") == stage]
+            if not stage_candidates:
+                continue
+            stage_improved = False
+            for item in stage_candidates:
+                if len(tested) >= len(candidates):
+                    break
+                trial = dict(best)
+                trial["stage"] = stage
+                trial.update({key: value for key, value in item.items()
+                              if key not in ("stage", "precision")})
+                if "precision" in item:
+                    trial["precision"] = item["precision"]
+                measurement = safe_measure(trial)
+                score = self.score(measurement, hardware)
+                tested.append(self._result(trial, measurement, score))
+                if score > best_score * (1.0 + self.MIN_IMPROVEMENT):
+                    best, best_measurement, best_score = trial, measurement, score
+                    stage_improved = True
+            stagnant = 0 if stage_improved else stagnant + 1
+
+        tuning_values = {name: best[name] for name in RuntimeTuning.__dataclass_fields__
+                         if name in best}
+        tuning = RuntimeTuning(**tuning_values)
+        baseline_fps = tested[0]["measurement"]["end_to_end_fps"]
+        report = {
+            "mode": "bounded_staged_warmup",
+            "warmup_frames": max(1, int(warmup_frames)),
+            "candidate_budget": len(candidates),
+            "candidates_tested": tested,
+            "selected": dict(best),
+            "baseline_fps": baseline_fps,
+            "best_fps": best_measurement.end_to_end_fps,
+            "improvement_pct": ((best_measurement.end_to_end_fps - baseline_fps) /
+                                 baseline_fps * 100.0 if baseline_fps else 0.0),
+            "stopped_after_stagnant_stages": stagnant,
+        }
+        return tuning, report
+
+    @staticmethod
+    def _result(candidate: Mapping[str, Any], measurement: TuneMeasurement,
+                score: float) -> dict:
+        return {"stage": candidate.get("stage", "trial"),
+                "configuration": dict(candidate),
+                "measurement": {
+                    "end_to_end_fps": measurement.end_to_end_fps,
+                    "peak_vram_gb": measurement.peak_vram_gb,
+                    "peak_ram_gb": measurement.peak_ram_gb,
+                    "startup_seconds": measurement.startup_seconds,
+                    "cpu_utilization_pct": measurement.cpu_utilization_pct,
+                    "gpu_utilization_pct": measurement.gpu_utilization_pct,
+                    "stable": measurement.stable,
+                    "quality_regression": measurement.quality_regression,
+                    "score": score,
+                }}
+
 
 class ProfileStore:
-    """Small atomic JSON store for future measured profiles."""
+    """Small atomic JSON store for measured hardware/workload profiles."""
 
     def __init__(self, directory: Optional[str] = None):
         self.directory = Path(directory or os.environ.get(
@@ -1150,6 +1558,20 @@ class ProfileStore:
             return data if data.get("schema_version") == SCHEMA_VERSION else None
         except (OSError, ValueError, TypeError):
             return None
+
+    def invalidate(self, key: Optional[str] = None) -> int:
+        """Invalidate one profile or all profiles in this store."""
+        removed = 0
+        paths = [self.directory / f"{key}.json"] if key else list(self.directory.glob("*.json"))
+        for path in paths:
+            try:
+                path.unlink()
+                removed += 1
+            except FileNotFoundError:
+                pass
+            except OSError:
+                continue
+        return removed
 
     def save(self, profile: RuntimeProfile) -> Path:
         self.directory.mkdir(parents=True, exist_ok=True)
@@ -1171,29 +1593,445 @@ class ProfileStore:
 
 
 class RuntimeMonitor:
-    """Low-overhead run telemetry, ready for integration with stage counters."""
+    """Optional rolling telemetry for the real end-to-end pipeline.
 
-    def __init__(self):
+    The normal path performs only the ``enabled`` branch in ``record_frame``.
+    Resource queries and aggregation happen at a coarse interval, never per
+    frame, and use non-blocking APIs.  Stage timing is supplied by the existing
+    ``procmgr_runtime._prof`` hook, so enabling this monitor does not require a
+    second pass over frames.
+    """
+
+    STAGES = ("decode", "detect", "swap", "enhance", "stabilize", "encode")
+
+    def __init__(self, hardware: Optional[HardwareProfile] = None,
+                 tuning: Optional[RuntimeTuning] = None, settings: Any = None,
+                 enabled: Optional[bool] = None,
+                 diagnostics: Optional[bool] = None):
+        self.hardware = hardware
+        self.tuning = tuning
+        self.settings = settings
+        self.enabled = (_bool(os.environ.get("ROOP_RUNTIME_MONITOR", "0"))
+                        if enabled is None else bool(enabled))
+        self.diagnostics = (_bool(os.environ.get("ROOP_RUNTIME_DIAGNOSTICS", "0"))
+                            if diagnostics is None else bool(diagnostics))
+        self.sample_interval = max(0.25, _number(
+            os.environ.get("ROOP_RUNTIME_SAMPLE_INTERVAL", "1.0"), 1.0))
+        self.window_size = max(4, min(64, _integer(
+            os.environ.get("ROOP_RUNTIME_WINDOW", "16"), 16)))
         self.started_at = 0.0
-        self.samples = []
+        self._last_sample_at = 0.0
+        self._last_stage_at = 0.0
+        self._frames = 0
+        self._stage_seconds = {}
+        self._stage_calls = {}
+        self._last_stage_seconds = {}
+        self._last_stage_calls = {}
+        self._samples = deque(maxlen=self.window_size)
+        self._lock = threading.Lock()
+
+    @property
+    def samples(self) -> list:
+        # Retain the old public shape for diagnostics and callers that inspect
+        # the monitor, while keeping storage bounded by a deque.
+        with self._lock:
+            return list(self._samples)
 
     def start(self) -> None:
-        self.started_at = time.perf_counter()
+        now = time.perf_counter()
+        with self._lock:
+            self.started_at = now
+            self._last_sample_at = now
+            self._last_stage_at = now
+            self._frames = 0
+            self._stage_seconds.clear()
+            self._stage_calls.clear()
+            self._last_stage_seconds.clear()
+            self._last_stage_calls.clear()
+            self._samples.clear()
+
+    def record_stage(self, stage: str, elapsed: float, calls: int = 1) -> None:
+        if not self.enabled:
+            return
+        key = str(stage)
+        with self._lock:
+            self._stage_seconds[key] = self._stage_seconds.get(key, 0.0) + max(0.0, float(elapsed))
+            self._stage_calls[key] = self._stage_calls.get(key, 0) + max(0, int(calls))
 
     def observe(self, **metrics: Any) -> None:
+        """Add a caller-supplied rolling sample without probing the machine."""
+        if not self.enabled:
+            return
         sample = {"time": time.time()}
         sample.update(metrics)
-        self.samples.append(sample)
-        if len(self.samples) > 256:
-            del self.samples[:-256]
+        with self._lock:
+            self._samples.append(sample)
+
+    @staticmethod
+    def _queue_depths(queues: Any) -> dict:
+        if queues is None:
+            return {}
+        if isinstance(queues, Mapping):
+            items = queues.items()
+        else:
+            try:
+                items = enumerate(queues)
+            except TypeError:
+                return {}
+        result = {}
+        for name, queue in items:
+            try:
+                result[str(name)] = (int(queue.qsize()) if hasattr(queue, "qsize")
+                                     else int(queue))
+            except Exception:
+                continue
+        return result
+
+    @staticmethod
+    def _average(values: list) -> Optional[float]:
+        numbers = [_number(value, float("nan")) for value in values]
+        numbers = [value for value in numbers if value == value]
+        return (sum(numbers) / len(numbers)) if numbers else None
+
+    def _resource_snapshot(self) -> dict:
+        result = {}
+        try:
+            import psutil
+            process = psutil.Process(os.getpid())
+            logical = max(1, int(psutil.cpu_count(logical=True) or 1))
+            result["cpu_utilization_pct"] = min(100.0, max(0.0, float(process.cpu_percent(None)) / logical))
+            result["ram_used_gb"] = process.memory_info().rss / 2**30
+            result["ram_utilization_pct"] = float(psutil.virtual_memory().percent)
+            per_cpu = psutil.cpu_percent(interval=None, percpu=True)
+            p_indices = self._indices_from_env("ROOP_CPU_P_INDICES")
+            e_indices = self._indices_from_env("ROOP_CPU_E_INDICES")
+            if p_indices:
+                result["p_core_utilization_pct"] = self._average(
+                    [per_cpu[index] for index in p_indices if index < len(per_cpu)])
+            if e_indices:
+                result["e_core_utilization_pct"] = self._average(
+                    [per_cpu[index] for index in e_indices if index < len(per_cpu)])
+        except Exception:
+            pass
+
+        try:
+            import torch
+            device_id = int(getattr(self.hardware, "device_id", 0) or 0)
+            if torch.cuda.is_available():
+                free_b, total_b = torch.cuda.mem_get_info(device_id)
+                result["vram_free_gb"] = int(free_b) / 2**30
+                result["vram_total_gb"] = int(total_b) / 2**30
+        except Exception:
+            pass
+
+        # NVML is optional. It gives utilization without synchronizing CUDA or
+        # invoking a subprocess. If it is not installed, memory telemetry still
+        # works and GPU utilization is reported as unavailable.
+        try:
+            import pynvml
+            pynvml.nvmlInit()
+            device_id = int(getattr(self.hardware, "device_id", 0) or 0)
+            handle = pynvml.nvmlDeviceGetHandleByIndex(device_id)
+            result["gpu_utilization_pct"] = float(
+                pynvml.nvmlDeviceGetUtilizationRates(handle).gpu)
+            memory = pynvml.nvmlDeviceGetMemoryInfo(handle)
+            result.setdefault("vram_free_gb", memory.free / 2**30)
+            result.setdefault("vram_total_gb", memory.total / 2**30)
+        except Exception:
+            pass
+        if result.get("vram_total_gb"):
+            result["vram_pressure_pct"] = max(0.0, min(100.0,
+                100.0 * (1.0 - result["vram_free_gb"] / result["vram_total_gb"])))
+        return result
+
+    @staticmethod
+    def _indices_from_env(name: str) -> list:
+        values = []
+        for item in os.environ.get(name, "").replace(";", ",").split(","):
+            try:
+                if item.strip():
+                    values.append(max(0, int(item.strip())))
+            except ValueError:
+                continue
+        return values
+
+    def _stage_delta(self) -> tuple:
+        with self._lock:
+            seconds = {}
+            calls = {}
+            for name, value in self._stage_seconds.items():
+                seconds[name] = max(0.0, value - self._last_stage_seconds.get(name, 0.0))
+            for name, value in self._stage_calls.items():
+                calls[name] = max(0, value - self._last_stage_calls.get(name, 0))
+            self._last_stage_seconds = dict(self._stage_seconds)
+            self._last_stage_calls = dict(self._stage_calls)
+        return seconds, calls
+
+    def sample(self, queue_depths: Any = None,
+               worker_utilization_pct: Optional[float] = None,
+               force: bool = False) -> Optional[dict]:
+        if not self.enabled:
+            return None
+        now = time.perf_counter()
+        with self._lock:
+            if not force and now - self._last_sample_at < self.sample_interval:
+                return None
+            previous = self._last_sample_at or now
+            self._last_sample_at = now
+            frames = self._frames
+        stage_seconds, stage_calls = self._stage_delta()
+        sample = {
+            "time": time.time(),
+            "interval_sec": max(0.0, now - previous),
+            "frames": frames,
+            "queue_depths": self._queue_depths(queue_depths),
+            "worker_utilization_pct": worker_utilization_pct,
+            "stage_seconds": stage_seconds,
+            "stage_calls": stage_calls,
+        }
+        sample.update(self._resource_snapshot())
+        with self._lock:
+            self._samples.append(sample)
+        return sample
+
+    def record_frame(self, queue_depths: Any = None,
+                     worker_utilization_pct: Optional[float] = None) -> Optional[dict]:
+        if not self.enabled:
+            return None
+        with self._lock:
+            self._frames += 1
+        return self.sample(queue_depths, worker_utilization_pct)
+
+    def finish(self, queue_depths: Any = None,
+               worker_utilization_pct: Optional[float] = None) -> dict:
+        if self.enabled:
+            self.sample(queue_depths, worker_utilization_pct, force=True)
+        return self.summary()
+
+    def _rolling_metric(self, name: str) -> Optional[float]:
+        with self._lock:
+            return self._average([sample.get(name) for sample in self._samples])
 
     def summary(self) -> dict:
-        elapsed = time.perf_counter() - self.started_at if self.started_at else 0.0
-        return {"elapsed_sec": round(elapsed, 3), "samples": list(self.samples)}
+        with self._lock:
+            samples = list(self._samples)
+            started = self.started_at
+            frames = self._frames
+            stage_seconds = dict(self._stage_seconds)
+            stage_calls = dict(self._stage_calls)
+        rolling_seconds = {}
+        rolling_calls = {}
+        for sample in samples:
+            for name, value in (sample.get("stage_seconds") or {}).items():
+                rolling_seconds[name] = rolling_seconds.get(name, 0.0) + _number(value)
+            for name, value in (sample.get("stage_calls") or {}).items():
+                rolling_calls[name] = rolling_calls.get(name, 0) + _integer(value)
+        if rolling_seconds or rolling_calls:
+            stage_seconds = rolling_seconds
+            stage_calls = rolling_calls
+        elapsed = time.perf_counter() - started if started else 0.0
+        stage_fps = {name: calls / max(elapsed, 1e-9)
+                     for name, calls in stage_calls.items()}
+        stage_latency = {name: 1000.0 * stage_seconds[name] / max(stage_calls.get(name, 1), 1)
+                         for name in stage_seconds}
+        queue_averages = {}
+        for sample in samples:
+            for name, value in (sample.get("queue_depths") or {}).items():
+                queue_averages.setdefault(name, []).append(value)
+        queue_averages = {name: self._average(values)
+                          for name, values in queue_averages.items()}
+        result = {
+            "elapsed_sec": round(elapsed, 3),
+            "frames": frames,
+            "end_to_end_fps": frames / max(elapsed, 1e-9) if elapsed else 0.0,
+            "stage_fps": stage_fps,
+            "decode_fps": stage_fps.get("decode", 0.0),
+            "detection_fps": stage_fps.get("detect", 0.0),
+            "swap_fps": stage_fps.get("swap", 0.0),
+            "enhancement_fps": stage_fps.get("enhance", 0.0),
+            "stabilization_fps": stage_fps.get("stabilize", 0.0),
+            "encode_fps": stage_fps.get("encode", 0.0),
+            "stage_seconds": stage_seconds,
+            "stage_latency_ms": stage_latency,
+            "queue_depths": queue_averages,
+            "samples": samples,
+            "cpu_utilization_pct": self._rolling_metric("cpu_utilization_pct"),
+            "p_core_utilization_pct": self._rolling_metric("p_core_utilization_pct"),
+            "e_core_utilization_pct": self._rolling_metric("e_core_utilization_pct"),
+            "gpu_utilization_pct": self._rolling_metric("gpu_utilization_pct"),
+            "vram_free_gb": self._rolling_metric("vram_free_gb"),
+            "vram_total_gb": self._rolling_metric("vram_total_gb"),
+            "vram_pressure_pct": self._rolling_metric("vram_pressure_pct"),
+            "ram_used_gb": self._rolling_metric("ram_used_gb"),
+            "ram_utilization_pct": self._rolling_metric("ram_utilization_pct"),
+            "worker_utilization_pct": self._rolling_metric("worker_utilization_pct"),
+        }
+        result["bottleneck"] = self.classify_bottleneck(result)
+        return result
+
+    @staticmethod
+    def classify_bottleneck(summary: Mapping[str, Any]) -> str:
+        """Classify from the rolling aggregate, never from one frame."""
+        vram = _number(summary.get("vram_pressure_pct"), 0.0)
+        ram = _number(summary.get("ram_utilization_pct"), 0.0)
+        if vram >= 88.0:
+            return "VRAM-bound"
+        if ram >= 90.0:
+            return "RAM-bound"
+        latencies = summary.get("stage_latency_ms") or {}
+        stage_seconds = summary.get("stage_seconds") or {}
+        shares = {name: _number(value) for name, value in stage_seconds.items()}
+        if shares.get("encode", 0.0) >= max(shares.values() or [0.0]) * 0.45:
+            return "encode-bound"
+        if shares.get("decode", 0.0) >= max(shares.values() or [0.0]) * 0.45:
+            return "decode-bound"
+        gpu = summary.get("gpu_utilization_pct")
+        cpu = _number(summary.get("cpu_utilization_pct"), 0.0)
+        queues = summary.get("queue_depths") or {}
+        input_q = _number(queues.get("input", queues.get("0")), 0.0)
+        output_q = _number(queues.get("output", queues.get("1")), 0.0)
+        if input_q <= 0.0 and output_q <= 0.0 and gpu is not None and _number(gpu) < 45.0:
+            return "synchronization-bound"
+        if gpu is not None and _number(gpu) >= 80.0:
+            return "GPU-bound"
+        if cpu >= 80.0:
+            return "CPU-bound"
+        if input_q <= 0.0 and output_q <= 0.0:
+            return "I/O-bound"
+        return "synchronization-bound"
+
+
+class SafeAdaptiveController:
+    """Hysteretic, boundary-only controller for future work.
+
+    It returns a new immutable ``RuntimeTuning``. It never edits a live pool,
+    destroys a TensorRT context, or asks CUDA to synchronize. Queue geometry,
+    encoder changes, and stabilization chunk changes are marked for the next
+    safe boundary/run; batch and in-flight limits can be consumed by the next
+    work item without touching in-flight inference.
+    """
+
+    REQUIRED_WINDOWS = 3
+    COOLDOWN_WINDOWS = 8
+
+    def __init__(self, hardware: HardwareProfile, tuning: RuntimeTuning,
+                 settings: Any = None, enabled: Optional[bool] = None,
+                 log=None):
+        self.hardware = hardware
+        self.tuning = tuning
+        self.settings = settings
+        self.enabled = (_bool(os.environ.get("ROOP_RUNTIME_ADAPTIVE", "0"))
+                        if enabled is None else bool(enabled))
+        self.log = log
+        self._streak = {}
+        self._cooldown = 0
+        self.actions = []
+
+    def _eligible(self, name: str) -> bool:
+        return _is_auto(self.settings, name)
+
+    def _record(self, action: dict) -> dict:
+        self.actions.append(action)
+        self._cooldown = self.COOLDOWN_WINDOWS
+        if self.log:
+            self.log(action)
+        return action
+
+    def update(self, summary: Mapping[str, Any], safe_boundary: bool = False) -> Optional[dict]:
+        if not self.enabled or not safe_boundary:
+            return None
+        if self._cooldown:
+            self._cooldown -= 1
+            return None
+        bottleneck = str(summary.get("bottleneck", ""))
+        vram = _number(summary.get("vram_pressure_pct"), 0.0)
+        ram = _number(summary.get("ram_utilization_pct"), 0.0)
+        gpu = _number(summary.get("gpu_utilization_pct"), -1.0)
+        starvation = bottleneck in ("synchronization-bound", "I/O-bound") and gpu >= 0 and gpu < 45.0
+        condition = {
+            "vram": vram >= 88.0,
+            "ram": ram >= 90.0,
+            "gpu_starvation": starvation,
+            "encode": bottleneck == "encode-bound",
+        }
+        key = next((name for name, active in condition.items() if active), "")
+        for name in tuple(self._streak):
+            if name != key:
+                self._streak[name] = 0
+        if not key:
+            return None
+        self._streak[key] = self._streak.get(key, 0) + 1
+        if self._streak[key] < self.REQUIRED_WINDOWS:
+            return None
+
+        changes = {}
+        scope = "next_work"
+        reason = key
+        if key == "vram":
+            if self._eligible("perf_batch_swap"):
+                changes["batch_size"] = max(
+                    ResourceManager.BOUNDS["batch_size"][0], self.tuning.batch_size - 1)
+            if self._eligible("perf_tile_batch"):
+                changes["tile_batch_size"] = max(
+                    ResourceManager.BOUNDS["tile_batch_size"][0], self.tuning.tile_batch_size - 1)
+            changes["in_flight_frames"] = max(
+                ResourceManager.BOUNDS["in_flight_frames"][0], self.tuning.in_flight_frames - 1)
+        elif key == "ram":
+            changes["in_flight_frames"] = max(
+                ResourceManager.BOUNDS["in_flight_frames"][0], self.tuning.in_flight_frames - 1)
+            if self._eligible("queue_depth"):
+                changes["queue_depth"] = max(
+                    ResourceManager.BOUNDS["queue_depth"][0], self.tuning.queue_depth - 1)
+            changes["ram_buffer_mb"] = max(
+                ResourceManager.BOUNDS["ram_buffer_mb"][0], self.tuning.ram_buffer_mb - 256)
+            scope = "next_boundary"
+        elif key == "gpu_starvation":
+            changes["in_flight_frames"] = min(
+                ResourceManager.BOUNDS["in_flight_frames"][1], self.tuning.in_flight_frames + 1)
+            if self._eligible("perf_batch_swap"):
+                changes["batch_size"] = min(
+                    ResourceManager.BOUNDS["batch_size"][1], self.tuning.batch_size + 1)
+            if self._eligible("queue_depth"):
+                changes["queue_depth"] = min(
+                    ResourceManager.BOUNDS["queue_depth"][1], self.tuning.queue_depth + 1)
+            scope = "next_work"
+        elif key == "encode":
+            if not self._eligible("output_video_codec"):
+                return None
+            if self.hardware.nvenc_available and self.tuning.encoder == "libx264":
+                changes["encoder"] = "h264_nvenc"
+            elif self._eligible("perf_encoder_preset"):
+                changes["encoder_preset"] = "fast"
+            scope = "next_segment"
+        if not changes:
+            return None
+        bounded = {}
+        for name, value in changes.items():
+            if name in ResourceManager.BOUNDS:
+                bounded[name] = ResourceManager.clamp(name, value)
+            else:
+                bounded[name] = value
+        self.tuning = replace(self.tuning, **bounded)
+        return self._record({
+            "reason": reason,
+            "bottleneck": bottleneck,
+            "changes": bounded,
+            "scope": scope,
+            "safe_boundary": True,
+            "cooldown_windows": self.COOLDOWN_WINDOWS,
+        })
+
+    def snapshot(self) -> dict:
+        return {"enabled": self.enabled, "tuning": self.tuning.as_dict(),
+                "actions": list(self.actions), "cooldown_windows": self._cooldown}
+
+
+# Descriptive alias for integrations that refer to the controller by its role.
+RuntimeAdaptiveController = SafeAdaptiveController
 
 
 class RuntimeOptimizer:
-    """Facade used by startup and future workload-aware pipeline hooks."""
+    """Facade for cached profiles and explicit, bounded runtime retunes."""
 
     def __init__(self, settings: Any = None, device_id: int = 0,
                  profile_dir: Optional[str] = None):
@@ -1204,16 +2042,26 @@ class RuntimeOptimizer:
         self.engine_manager = TensorRTEngineManager()
         self.cuda_graphs = CUDAGraphManager()
         self.auto_tuner = AutoTuner()
+        self.runtime_autotuner = RuntimeAutotuner()
         self.store = ProfileStore(profile_dir)
         self.monitor = RuntimeMonitor()
 
     def build_profile(self, workload: WorkloadProfile,
-                      save: bool = False) -> RuntimeProfile:
+                      save: bool = False, use_cache: bool = True,
+                      force: bool = False) -> RuntimeProfile:
         hardware = self.hardware_profiler.profile()
         precision = self.precision_selector.select(self.settings, hardware)
+        key = self.engine_manager.cache_key(hardware, workload, self.settings, precision)
+        invalidate = os.environ.get("ROOP_RUNTIME_PROFILE_INVALIDATE", "").strip().lower()
+        force = force or invalidate in ("1", "true", "yes", "on", "all")
+        if force and invalidate in ("1", "true", "yes", "on"):
+            self.store.invalidate(key)
+        if use_cache and not force:
+            cached = RuntimeProfile.from_dict(self.store.load(key) or {})
+            if cached is not None and cached.cache_key == key:
+                return cached
         tuning, explicit, automatic, reasons = self.auto_tuner.tune(
             hardware, workload, self.settings)
-        key = self.engine_manager.cache_key(hardware, workload, self.settings, precision)
         profile = RuntimeProfile(
             schema_version=SCHEMA_VERSION,
             created_at=time.time(),
@@ -1239,13 +2087,72 @@ class RuntimeOptimizer:
                       resolution: Optional[Tuple[int, int]] = None,
                       faces_per_frame: Optional[float] = None,
                       output_resolution: Optional[Tuple[int, int]] = None,
-                      save: bool = True) -> RuntimeProfile:
+                      face_count: int = 0,
+                      estimated_face_size_px: float = 0.0,
+                      save: bool = True, force: bool = False) -> RuntimeProfile:
         workload = self.workload_profiler.profile(
             source_video=source_video, settings=self.settings,
             frame_count=frame_count, resolution=resolution,
             output_resolution=output_resolution,
-            faces_per_frame=faces_per_frame)
-        return self.build_profile(workload, save=save)
+            faces_per_frame=faces_per_frame, face_count=face_count,
+            estimated_face_size_px=estimated_face_size_px)
+        return self.build_profile(workload, save=save, force=force)
+
+    def autotune_profile(self, workload: WorkloadProfile, measure,
+                         warmup_frames: int = RuntimeAutotuner.DEFAULT_WARMUP_FRAMES,
+                         max_candidates: int = RuntimeAutotuner.MAX_CANDIDATES,
+                         save: bool = True, force: bool = False) -> RuntimeProfile:
+        """Run one bounded staged retune and persist its measured winner.
+
+        ``measure`` must execute the real workload (or a representative
+        warmup) and return end-to-end FPS plus resource/stability/quality
+        metrics.  It is intentionally required so a caller cannot mistake an
+        isolated GPU-utilization probe for a pipeline optimization.
+        """
+        base = self.build_profile(workload, save=False, use_cache=False, force=True)
+        if not force:
+            cached = RuntimeProfile.from_dict(self.store.load(base.cache_key) or {})
+            if cached is not None and cached.autotune:
+                return cached
+        tuning, report = self.runtime_autotuner.tune(
+            base.tuning, base.hardware, workload, self.settings, measure,
+            warmup_frames=warmup_frames, max_candidates=max_candidates)
+        selected = report.get("selected", {})
+        profile = replace(
+            base,
+            tuning=tuning,
+            precision=str(selected.get("precision", base.precision)),
+            provider=str(selected.get("backend", base.provider)),
+            reasons=tuple(base.reasons) + ("bounded end-to-end autotune measured and cached",),
+            autotune=report,
+        )
+        if save:
+            self.store.save(profile)
+        return profile
+
+    def autotune_profile_video(self, source_video: str, measure,
+                               frame_count: int = 0,
+                               resolution: Optional[Tuple[int, int]] = None,
+                               faces_per_frame: Optional[float] = None,
+                               output_resolution: Optional[Tuple[int, int]] = None,
+                               face_count: int = 0,
+                               estimated_face_size_px: float = 0.0,
+                               warmup_frames: int = RuntimeAutotuner.DEFAULT_WARMUP_FRAMES,
+                               max_candidates: int = RuntimeAutotuner.MAX_CANDIDATES,
+                               save: bool = True, force: bool = False) -> RuntimeProfile:
+        workload = self.workload_profiler.profile(
+            source_video=source_video, settings=self.settings,
+            frame_count=frame_count, resolution=resolution,
+            output_resolution=output_resolution,
+            faces_per_frame=faces_per_frame, face_count=face_count,
+            estimated_face_size_px=estimated_face_size_px)
+        return self.autotune_profile(
+            workload, measure, warmup_frames=warmup_frames,
+            max_candidates=max_candidates, save=save, force=force)
+
+    def invalidate_profiles(self, cache_key: Optional[str] = None) -> int:
+        """Support manual profile invalidation without touching user settings."""
+        return self.store.invalidate(cache_key)
 
 
     @staticmethod
@@ -1277,6 +2184,20 @@ class RuntimeOptimizer:
             "ROOP_RUNTIME_INFLIGHT_FRAMES": tuning.in_flight_frames,
             "ROOP_RUNTIME_CUDA_STREAMS": tuning.cuda_stream_count,
             "ROOP_RUNTIME_TRT_AUX_STREAMS": tuning.cuda_auxiliary_streams,
+            "ROOP_RUNTIME_CUDA_GRAPH": int(tuning.cuda_graph_enabled),
+            "ROOP_RUNTIME_CPU_P_THREADS": tuning.cpu_performance_threads,
+            "ROOP_RUNTIME_CPU_E_THREADS": tuning.cpu_efficiency_threads,
+            "ROOP_RUNTIME_RAM_BUFFER_MB": tuning.ram_buffer_mb,
+            "ROOP_RUNTIME_ENCODER": tuning.encoder,
+            "ROOP_RUNTIME_ENCODER_PRESET": tuning.encoder_preset,
+            "ROOP_RUNTIME_BACKEND": tuning.backend,
+            # Existing session-pool consumers use these public names. They are
+            # only published when the matching user setting is automatic.
+            "ROOP_TRT_POOL": tuning.swapper_pool_size,
+            "ROOP_DETMASK_POOL": tuning.detmask_pool_size,
+            "ROOP_EXPR_POOL": tuning.expression_pool_size,
+            "ROOP_TRT_AUX_STREAMS": tuning.cuda_auxiliary_streams,
+            "ROOP_TRT_CUDA_GRAPH": int(tuning.cuda_graph_enabled),
         }
         # A face-processing profile must not leak its default tile decision
         # into the later post-swap Frame_Upscale pass.  Only an explicitly
@@ -1299,6 +2220,13 @@ class RuntimeOptimizer:
             "ROOP_RUNTIME_DETECTOR_RESOLUTION": "face_detector_size",
             "ROOP_RUNTIME_BATCH_SIZE": "perf_batch_swap",
             "ROOP_RUNTIME_TILE_BATCH_SIZE": "perf_batch_swap",
+            "ROOP_RUNTIME_ENCODER": "output_video_codec",
+            "ROOP_RUNTIME_ENCODER_PRESET": "perf_encoder_preset",
+            "ROOP_TRT_POOL": "perf_trt_pool",
+            "ROOP_DETMASK_POOL": "perf_detmask_pool",
+            "ROOP_EXPR_POOL": "perf_expr_pool",
+            "ROOP_TRT_AUX_STREAMS": "trt_auxiliary_streams",
+            "ROOP_TRT_CUDA_GRAPH": "trt_cuda_graph",
         }
         applied = {}
         for name, value in env_values.items():
@@ -1371,6 +2299,7 @@ __all__ = [
     "AutoTuner", "CUDAGraphInvalidation", "CUDAGraphManager",
     "CUDAGraphRunner", "HardwareProfile", "HardwareProfiler",
     "PrecisionSelector", "ProfileStore", "ResourceManager", "RuntimeMonitor",
+    "SafeAdaptiveController", "RuntimeAdaptiveController",
     "RuntimeOptimizer", "RuntimeProfile", "RuntimeTuning", "TensorRTEngineManager",
     "WorkloadProfile", "WorkloadProfiler", "small_card_enhancer_policy",
     "small_card_decode_policy",

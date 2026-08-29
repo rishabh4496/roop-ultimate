@@ -19,6 +19,7 @@ import roop.globals
 from roop.typing import Frame, Face
 from roop.face_util import clamp_cut_values, kps_pose_ratios
 from roop.nonfrontal import nonfrontal_score
+from roop.procmgr_runtime import _prof
 
 try:
     import torch
@@ -957,7 +958,8 @@ class MaskingMixin:
         _ms = self._cur_mask_stab() if p_name in dense_maskers else None
         if (self._stab_active and _ms is not None and kps is not None
                 and rotation_action is None):
-            img_mask = _ms.apply(img_mask, kps, self._cur_stab_t())
+            with _prof('stabilize'):
+                img_mask = _ms.apply(img_mask, kps, self._cur_stab_t())
 
         return self._composite_mask(img_mask, frame, target), img_mask
 

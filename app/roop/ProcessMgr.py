@@ -35,8 +35,8 @@ from roop.face_overlap import build_regions as build_face_regions, FaceRegion
 from roop import face_contact
 from roop import recognizer_adaface as _ada
 from roop import live_preview as _live_preview
-from roop.procmgr_runtime import _PROFILE, _TRACK_VETO_DIST, _TRACK_VETO_MARGIN, _TRACK_VETO_SINGLE, _TRACK_EMB_MAX, _DEBUG_MATCH, COLOR_RESET, COLOR_CYAN, COLOR_YELLOW, _prof, _prof_report, _prof_reset, _gpu_guard, PROGRESS_BAR_FORMAT, wait_while_paused, ChunkedProgress, bar_write, publish_eta as _publish_eta, _audit_hit, audit_over_threshold as _audit_over_threshold, audit_frame_seen, audit_detect_frame_begin, audit_detect_miss, audit_face_begin, _audit_swapped_gapfill, _audit_reset, _audit_report, VETO_SOURCE_REUSED, VETO_SINGLE_ABS, VETO_OTHER_FITS, VETO_FAR_FROM_OWN, AUDIT_SWAP_MOVED, VERIFY_MIN_OFFAXIS, VERIFY_SWAP
-from roop.runtime_optimizer import RuntimeOptimizer
+from roop.procmgr_runtime import _PROFILE, _TRACK_VETO_DIST, _TRACK_VETO_MARGIN, _TRACK_VETO_SINGLE, _TRACK_EMB_MAX, _DEBUG_MATCH, COLOR_RESET, COLOR_CYAN, COLOR_YELLOW, _prof, _prof_report, _prof_reset, _gpu_guard, PROGRESS_BAR_FORMAT, wait_while_paused, ChunkedProgress, bar_write, publish_eta as _publish_eta, _audit_hit, audit_over_threshold as _audit_over_threshold, audit_frame_seen, audit_detect_frame_begin, audit_detect_miss, audit_face_begin, _audit_swapped_gapfill, _audit_reset, _audit_report, VETO_SOURCE_REUSED, VETO_SINGLE_ABS, VETO_OTHER_FITS, VETO_FAR_FROM_OWN, AUDIT_SWAP_MOVED, VERIFY_MIN_OFFAXIS, VERIFY_SWAP, set_runtime_monitor
+from roop.runtime_optimizer import RuntimeOptimizer, RuntimeMonitor, SafeAdaptiveController
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from threading import Thread, Lock, local
 
@@ -500,6 +500,12 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
         self.is_preview = False
         self._psutil_proc = None       # cached psutil.Process for the progress bar
         self._memory_stage_log = []    # phase 3/4 RSS + VRAM checkpoints
+        # Phase 15 is deliberately opt-in. These fields are always present so
+        # worker and writer code can keep a single cheap branch in normal runs.
+        self._runtime_monitor = None
+        self._runtime_adaptive = None
+        self._runtime_worker_busy = set()
+        self._runtime_summary = None
         self.num_frames_no_face = 0
         self.last_swapped_frame = None
         self.output_to_file = None
@@ -595,6 +601,72 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
               f"vram_free={entry['vram_free_gb'] if entry['vram_free_gb'] is not None else 'n/a'}GB "
               f"vram_total={entry['vram_total_gb'] if entry['vram_total_gb'] is not None else 'n/a'}GB",
               flush=True)
+
+    def _runtime_worker_enter(self, threadindex):
+        monitor = getattr(self, '_runtime_monitor', None)
+        if monitor is None or not monitor.enabled:
+            return
+        with self.lock:
+            self._runtime_worker_busy.add(int(threadindex))
+
+    def _runtime_worker_exit(self, threadindex):
+        monitor = getattr(self, '_runtime_monitor', None)
+        if monitor is None or not monitor.enabled:
+            return
+        with self.lock:
+            self._runtime_worker_busy.discard(int(threadindex))
+
+    def _runtime_worker_utilization(self):
+        monitor = getattr(self, '_runtime_monitor', None)
+        if monitor is None or not monitor.enabled:
+            return None
+        with self.lock:
+            active = len(self._runtime_worker_busy)
+        return 100.0 * active / max(1, int(self.num_threads or 1))
+
+    def _runtime_queue_snapshot(self):
+        def depth(queues):
+            total = 0
+            for queue in queues or ():
+                try:
+                    total += int(queue.qsize())
+                except Exception:
+                    pass
+            return total
+        return {
+            'input': depth(getattr(self, 'frames_queue', None)),
+            'output': depth(getattr(self, 'processed_queue', None)),
+        }
+
+    def _runtime_adaptive_boundary(self):
+        monitor = getattr(self, '_runtime_monitor', None)
+        controller = getattr(self, '_runtime_adaptive', None)
+        if monitor is None or controller is None or not monitor.enabled:
+            return
+        sample = monitor.record_frame(
+            queue_depths=self._runtime_queue_snapshot(),
+            worker_utilization_pct=self._runtime_worker_utilization())
+        if sample is None:
+            return
+        action = controller.update(monitor.summary(), safe_boundary=True)
+        if not action:
+            return
+        # These knobs are read for future work items. No active session/pool is
+        # rebuilt here; queue geometry and codec transitions are explicitly
+        # deferred to the next run/segment by the controller.
+        changes = action.get('changes', {})
+        if 'batch_size' in changes:
+            self._runtime_swap_batch_size = int(changes['batch_size'])
+        if 'tile_batch_size' in changes:
+            self._runtime_swap_tile_batch_size = int(changes['tile_batch_size'])
+        if 'in_flight_frames' in changes:
+            self._runtime_in_flight_frames = int(changes['in_flight_frames'])
+        if 'queue_depth' in changes:
+            self._runtime_queue_depth = int(changes['queue_depth'])
+        if 'ram_buffer_mb' in changes:
+            self._runtime_ram_buffer_mb = int(changes['ram_buffer_mb'])
+        if monitor.diagnostics:
+            print('[RuntimeAdaptive] ' + str(action), flush=True)
 
     def _release_replayed_analysis(self, frame_count):
         """Drop the analysis sessions once a complete temporal replay exists.
@@ -1174,6 +1246,7 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                 frame_idx, frame = item
                 del item
                 resimg = None
+                self._runtime_worker_enter(threadindex)
                 try:
                     with _prof('frame_total'):
                         if self.options.frame_processing:
@@ -1199,6 +1272,7 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                                 self.frames_queue[threadindex].get_nowait()
                         except Exception:
                             pass
+                        self._runtime_worker_exit(threadindex)
                         self._worker_done(threadindex)
                         roop.globals.processing = False
                         raise
@@ -1210,11 +1284,13 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                             self.frames_queue[threadindex].get_nowait()
                     except Exception:
                         pass
+                    self._runtime_worker_exit(threadindex)
                     self._worker_done(threadindex)
                     roop.globals.processing = False
                     raise
                 # Bounded: the writer is the only consumer, and if it has died
                 # this is where every worker would otherwise park forever.
+                self._runtime_worker_exit(threadindex)
                 while True:
                     try:
                         self.processed_queue[threadindex].put((True, resimg), timeout=0.5)
@@ -1266,6 +1342,7 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                             self._track_assignments.pop(nextindex - 1, None)
                         if hasattr(self, '_precomputed_kps') and self._precomputed_kps is not None:
                             self._precomputed_kps.pop(nextindex - 1, None)
+                    self._runtime_adaptive_boundary()
                     del frame
                     if nextindex % 50 == 0:
                         import gc
@@ -1481,6 +1558,12 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
         self._runtime_swap_tile_batch_size = None
         self._runtime_face_concurrency = 1
         self._runtime_in_flight_frames = 1
+        self._runtime_ram_buffer_mb = None
+        self._runtime_monitor = None
+        self._runtime_adaptive = None
+        with self.lock:
+            self._runtime_worker_busy.clear()
+        set_runtime_monitor(None)
         self._small_card_enhancer_policy = None
         self._small_card_decode_policy = None
         self._small_card_decode_env_previous = None
@@ -1494,9 +1577,17 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                 resolution=(width, height),
                 output_resolution=(width, height),
                 faces_per_frame=max(1, len(getattr(self, 'target_face_datas', []) or [])),
+                face_count=len(getattr(self, 'target_face_datas', []) or []),
                 save=True)
             RuntimeOptimizer.apply_environment(
                 self.runtime_profile, getattr(roop.globals, 'CFG', None))
+            cfg_codec = str(getattr(getattr(roop.globals, 'CFG', None),
+                                   'output_video_codec', 'auto') or 'auto').strip().lower()
+            if cfg_codec in ('', 'auto', 'default', 'none'):
+                # Automatic codec selection is applied only at runtime; the
+                # saved/user-facing setting is never rewritten. An explicit
+                # codec remains authoritative.
+                roop.globals.video_encoder = self.runtime_profile.tuning.encoder
             self._runtime_stab_chunk = self.runtime_profile.tuning.stabilization_chunk_size
             self._runtime_stab_workers = self.runtime_profile.tuning.stabilization_workers
             self._runtime_stab_small = self.runtime_profile.hardware.vram_total_gb < 7.0
@@ -1505,6 +1596,21 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
             self._runtime_swap_tile_batch_size = self.runtime_profile.tuning.tile_batch_size
             self._runtime_face_concurrency = self.runtime_profile.tuning.face_concurrency
             self._runtime_in_flight_frames = self.runtime_profile.tuning.in_flight_frames
+            self._runtime_ram_buffer_mb = self.runtime_profile.tuning.ram_buffer_mb
+            monitor_enabled = str(os.environ.get('ROOP_RUNTIME_MONITOR', '0')).strip().lower() in (
+                '1', 'true', 'yes', 'on')
+            if monitor_enabled:
+                self._runtime_monitor = RuntimeMonitor(
+                    hardware=self.runtime_profile.hardware,
+                    tuning=self.runtime_profile.tuning,
+                    settings=getattr(roop.globals, 'CFG', None))
+                self._runtime_monitor.start()
+                set_runtime_monitor(self._runtime_monitor)
+                self._runtime_adaptive = SafeAdaptiveController(
+                    self.runtime_profile.hardware, self.runtime_profile.tuning,
+                    settings=getattr(roop.globals, 'CFG', None),
+                    enabled=str(os.environ.get('ROOP_RUNTIME_ADAPTIVE', '0')).strip().lower() in (
+                        '1', 'true', 'yes', 'on'))
             cfg = getattr(roop.globals, 'CFG', None)
             auto_threads = bool(getattr(cfg, 'auto_thread_selection', False)) and bool(
                 getattr(cfg, '_threads_auto', False))
@@ -1528,6 +1634,26 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                   f"in_flight={self._runtime_in_flight_frames}, "
                   f"stab_chunk={self._runtime_stab_chunk}, "
                   f"profile={self.runtime_profile.cache_key}", flush=True)
+            autotune = getattr(self.runtime_profile, 'autotune', {}) or {}
+            if autotune:
+                selected = autotune.get('selected', {})
+                print("[RuntimeAutotune] selected="
+                      f"{selected}; candidates={len(autotune.get('candidates_tested', []))}; "
+                      f"baseline_fps={autotune.get('baseline_fps', 0):.2f}; "
+                      f"best_fps={autotune.get('best_fps', 0):.2f}; "
+                      f"improvement={autotune.get('improvement_pct', 0):.2f}%",
+                      flush=True)
+                best_trial = max(autotune.get('candidates_tested', []) or [],
+                                 key=lambda item: item.get('measurement', {}).get('score', 0))
+                best_metrics = best_trial.get('measurement', {})
+                print("[RuntimeAutotune] resources="
+                      f"VRAM={best_metrics.get('peak_vram_gb', 0):.2f}GB; "
+                      f"RAM={best_metrics.get('peak_ram_gb', 0):.2f}GB; "
+                      f"CPU={best_metrics.get('cpu_utilization_pct', 'n/a')}; "
+                      f"GPU={best_metrics.get('gpu_utilization_pct', 'n/a')}", flush=True)
+            else:
+                print("[RuntimeAutotune] heuristic profile selected; "
+                      "run the bounded manual retune to measure candidates.", flush=True)
 
             # A small-VRAM device still uses one GPU context, but that does not
             # make host-side compositing single-threaded. Keep the configured /
@@ -1644,7 +1770,8 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
 
         # The caller's explicit thread setting remains authoritative.  When the
         # setting is automatic, the runtime profile has already selected a
-        # bounded worker count above; sub-7GB devices are forced to one worker.
+        # bounded worker count above. GPU context limits do not force the host
+        # writer/compositor to collapse to one worker.
         self.total_frames = frame_count
         self.num_threads = threads
         self.processing_threads = self.num_threads
@@ -1658,6 +1785,15 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
         qdepth = max(1, min(4, int(qdepth)))
         if self._runtime_in_flight_frames is not None:
             qdepth = min(qdepth, max(1, int(self._runtime_in_flight_frames)))
+        # An explicit output-buffer choice is useful for a slow CPU encoder or
+        # a RAM-tight laptop. Keep the automatic runtime bound unless the user
+        # deliberately supplies this override.
+        try:
+            output_qdepth = int(os.environ.get('ROOP_OUTPUT_QUEUE_DEPTH', '') or '0')
+            if output_qdepth > 0:
+                qdepth = max(1, min(4, output_qdepth))
+        except ValueError:
+            pass
         for _ in range(threads):
             self.frames_queue.append(Queue(qdepth))
             self.processed_queue.append(Queue(qdepth))
@@ -1785,7 +1921,10 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
             if cap is not None:
                 cap.release()
             if self.output_to_file and self.videowriter is not None:
-                self.videowriter.close()
+                # Include encoder trailer/segment concat in the measured
+                # encode cost; write_frame alone misses the final lifecycle.
+                with _prof('encode_finalize'):
+                    self.videowriter.close()
                 self.videowriter = None
             if self.output_to_cam and self.streamwriter is not None:
                 self.streamwriter.Close()
@@ -1817,6 +1956,23 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
             gc.collect()
             self._log_memory_stage('phase3:run-cleanup-complete')
             self._psutil_proc = None
+            if self._runtime_monitor is not None:
+                self._runtime_summary = self._runtime_monitor.finish(
+                    queue_depths=self._runtime_queue_snapshot(),
+                    worker_utilization_pct=self._runtime_worker_utilization())
+                if self._runtime_monitor.diagnostics:
+                    print('[RuntimeMonitor] summary=' + str({
+                        key: self._runtime_summary.get(key) for key in (
+                            'end_to_end_fps', 'stage_fps', 'stage_latency_ms',
+                            'cpu_utilization_pct', 'p_core_utilization_pct',
+                            'e_core_utilization_pct', 'gpu_utilization_pct',
+                            'vram_pressure_pct', 'ram_utilization_pct',
+                            'queue_depths', 'worker_utilization_pct', 'bottleneck')
+                    }), flush=True)
+                # Do this in the finally block too: an exception in a worker or
+                # writer must not leave a global timing hook attached to the
+                # next video run.
+                set_runtime_monitor(None)
         _prof_report()
         _audit_report()
 
@@ -2723,7 +2879,8 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
             return
         try:
             if face is not None and getattr(face, 'kps', None) is not None:
-                face.kps = ks.apply(face.kps, self._cur_stab_t())
+                with _prof('stabilize'):
+                    face.kps = ks.apply(face.kps, self._cur_stab_t())
         except Exception:
             pass
 
@@ -4499,7 +4656,8 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
         _es = self._cur_enh_stab()
         if (self._stab_active and _es is not None
                 and enhanced_frame is not None and rotation_action is None):
-            enhanced_frame = _es.apply(enhanced_frame, target_face.kps, self._cur_stab_t())
+            with _prof('stabilize'):
+                enhanced_frame = _es.apply(enhanced_frame, target_face.kps, self._cur_stab_t())
 
         # ── Expression restore ────────────────────────────────────────────────
         # Put the target's own expression back on the swapped face. Runs AFTER
