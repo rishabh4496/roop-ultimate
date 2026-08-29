@@ -63,7 +63,15 @@ PATHS = [
     ("GPEN Realistic",    "Enhance_GPENRealistic",      "Enhance_GPENRealistic",      {}),
     ("UltraMax",          "Enhance_UltraMax",           "Enhance_UltraMax",           {}),
     ("Restoreformer++",   "Enhance_RestoreFormerPPlus", "Enhance_RestoreFormerPPlus", {}),
+    ("DMDNet",            "Enhance_DMDNet",             "Enhance_DMDNet",             {}),
 ]
+
+# DMDNet is the ONLY path here that reads its `source_faceset` and `target_face`
+# arguments; every other processor ignores both (UltraMax's periocular pass takes
+# its eye positions from the fixed FFHQ-512 template via `swap_template_points`,
+# not from the face). So real metadata is built once and handed only to DMDNet,
+# which keeps every other row byte-identical to a run without it.
+NEEDS_FACE_METADATA = {"DMDNet"}
 
 
 def real_face_crop(clip, frame_no, size):
@@ -79,7 +87,7 @@ def real_face_crop(clip, frame_no, size):
     # which frame it measured cannot be re-run.
     from roop.face_util import get_all_faces, align_crop
 
-    cap = cv2.VideoCapture(clip)
+    cap = cv2.VideoCapture(clip)  # noqa: F841 (kept for the seek note above)
     if not cap.isOpened():
         cap.release()
         raise SystemExit("could not open %s" % clip)
@@ -102,7 +110,7 @@ def real_face_crop(clip, frame_no, size):
             face = max(faces, key=lambda f: (f.bbox[2] - f.bbox[0]) * (f.bbox[3] - f.bbox[1]))
             cap.release()
             crop, _M = align_crop(frame, face.kps, size)
-            return np.ascontiguousarray(crop), scanned
+            return np.ascontiguousarray(crop), scanned, face
         ok, frame = cap.read()
         if not ok or frame is None:
             break
@@ -157,6 +165,8 @@ def main():
     ap.add_argument("--pool", type=int, default=None,
                     help="pool_size for pooled processors (default: the app's own "
                          "session_pool.pool_size(), i.e. what production resolves)")
+    ap.add_argument("--source", default="harjot",
+                    help="faceset name; only DMDNet consumes it")
     ap.add_argument("--only", default="", help="comma-separated labels to run")
     ap.add_argument("--json", default="", help="write rows here")
     args = ap.parse_args()
@@ -197,7 +207,7 @@ def main():
     for k, v in hw.items():
         print("  %-22s %s" % (k, v))
 
-    crop, used_frame = real_face_crop(args.clip, args.frame, args.crop)
+    crop, used_frame, target_face = real_face_crop(args.clip, args.frame, args.crop)
     hw["source"] = "%s frame %d" % (os.path.basename(args.clip), used_frame)
     print("  %-22s real face from %s frame %d, %s, std %.1f"
           % ("crop", os.path.basename(args.clip), used_frame, crop.shape, crop.std()))
@@ -238,10 +248,27 @@ def main():
             continue
         init_ms = (time.perf_counter() - t_init) * 1000
 
+        # Only DMDNet reads these; see NEEDS_FACE_METADATA.
+        src_fs, tgt = (None, None)
+        if label in NEEDS_FACE_METADATA:
+            try:
+                from two_face_video import load_library_faceset
+                src_fs, tgt = load_library_faceset(args.source), target_face
+            except Exception as exc:
+                print("  %-20s SKIPPED: needs a faceset and this failed: %s: %s"
+                      % (label, type(exc).__name__, exc))
+                rows[label] = {"status": "skipped",
+                               "error": "%s: %s" % (type(exc).__name__, exc)}
+                try:
+                    proc.Release()
+                except Exception:
+                    pass
+                continue
+
         out = None
         try:
             for _ in range(args.warmup):
-                out, _ = proc.Run(None, None, crop)
+                out, _ = proc.Run(src_fs, tgt, crop)
         except Exception as exc:
             print("  %-20s RUN FAILED: %s: %s" % (label, type(exc).__name__, exc))
             rows[label] = {"status": "run_failed",
@@ -257,7 +284,7 @@ def main():
         for _r in range(args.rounds):
             t0 = time.perf_counter()
             for _ in range(args.calls):
-                out, _ = proc.Run(None, None, crop)
+                out, _ = proc.Run(src_fs, tgt, crop)
             per_round.append((time.perf_counter() - t0) / args.calls * 1000)
 
         warn = collapsed(out, crop)

@@ -2178,7 +2178,13 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                     cap.set(cv2.CAP_PROP_POS_FRAMES, frame_start)
                 produced = 0
                 while produced < frame_count:
-                    ret, fr = cap.read()
+                    # Instrumented like the sequential reader at _prof('decode').
+                    # Without this the stage table has no `decode` row on the
+                    # STABILIZED path -- which is the path production takes, so
+                    # Phase 2's "decode FPS" was unmeasurable on the real
+                    # pipeline while looking fine on the path nobody runs.
+                    with _prof('decode'):
+                        ret, fr = cap.read()
                     if not ret or fr is None:
                         break
                     yield fr
@@ -2281,7 +2287,10 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                         if fr is None:
                             continue
                         if self.output_to_file:
-                            self.videowriter.write_frame(fr)
+                            # Same reason as the decode probe above: the stage
+                            # table had no `encode` row on the stabilized path.
+                            with _prof('encode'):
+                                self.videowriter.write_frame(fr)
                         if self.output_to_cam:
                             self.streamwriter.WriteToStream(fr)
                         if self._temporal_faces is not None:
@@ -2354,7 +2363,14 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                         gi = _base_global + ci
                         self._tls.t = gi
                         try:
-                            out = self.process_frame(_combined[ci], frame_idx=gi)
+                            # The counted per-frame unit on this path, matching
+                            # _prof('frame_total') in the sequential encoder loop.
+                            # The warm-up frames above are deliberately NOT
+                            # counted: they are primed twice by design, and
+                            # including them would inflate the frame count and
+                            # deflate ms/frame on exactly the path production uses.
+                            with _prof('frame_total'):
+                                out = self.process_frame(_combined[ci], frame_idx=gi)
                         except Exception:
                             out = _combined[ci]
                         _results[gi] = out if out is not None else _combined[ci]

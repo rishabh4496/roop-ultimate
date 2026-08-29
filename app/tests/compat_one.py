@@ -95,9 +95,15 @@ def main():
     # that was never exercised. That happened here: "GPEN 512" is not a name
     # (the 512 variant is plain "GPEN") and it scored exactly the no-enhancer
     # figure. Refuse unknown names rather than quietly testing nothing.
-    KNOWN = {"None", "GFPGAN", "Codeformer", "Codeformer (fp16)", "DMDNet",
-             "GPEN 256", "GPEN 256 Pro", "GPEN", "GPEN 1024", "GPEN 2048", "Restoreformer++",
-             "KEEP (sidecar)"}
+    # DERIVED from core.py, not hand-listed. A hardcoded allowlist drifts the
+    # other way from the bug it guards: this one had gone stale and would have
+    # REFUSED "GPEN Realistic", "UltraMax" and "GPEN 256 Ultra", all of which
+    # core.py matches. Same parse tests/test_enhancer_names.py uses.
+    import re as _re
+    from roop import core as _core
+    with open(_core.__file__, "r", encoding="utf-8") as _fh:
+        KNOWN = set(_re.findall(r"selected_enhancer == '([^']+)'", _fh.read()))
+    KNOWN.add("None")
     if args.enhancer not in KNOWN:
         raise SystemExit(
             f"unknown enhancer {args.enhancer!r}; core.py would silently ignore "

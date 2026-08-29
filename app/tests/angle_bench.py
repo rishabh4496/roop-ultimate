@@ -168,7 +168,9 @@ def init_pipeline(provider, swap_model, enhancer, mask_engine,
 
 
 def build_options(g, swap_model, mask_engine, source_bank=None,
-                   stabilize_mask=False, stabilize_mask_strength=0.5):
+                   stabilize_mask=False, stabilize_mask_strength=0.5,
+                   stabilize_face=False, stabilize_enhancer=False,
+                   stabilize_enhancer_strength=None):
     from roop.core import get_processing_plugins
     from roop.ProcessOptions import ProcessOptions
     # get_processing_plugins keys the processor dict by engine name, so the UI's
@@ -184,10 +186,23 @@ def build_options(g, swap_model, mask_engine, source_bank=None,
         use_frontalization=False,
         frontalization_threshold=float(g.CFG.frontalization_threshold),
         swap_model=swap_model,
-        stabilize_face=False,             # a still sweep has no temporal axis
-        stabilize_method="one_euro",
-        # Opt-in, defaults False like every other stabilizer here — callers
-        # that want to A/B mask anti-flicker pass it explicitly (two_face_video.py).
+        # All three default False -- a still sweep has no temporal axis, and
+        # every existing caller keeps exactly the behaviour it had. But they are
+        # now REACHABLE: production runs stabilize_face / _mask / _enhancer all
+        # true, `stabilize_face` was hardcoded False here and `stabilize_enhancer`
+        # was not passed at all, so no bench through this helper had ever run the
+        # stabilizers the user runs. Those three are real GPU work -- they took
+        # s1 from 16.42 to ~12.6 fps -- so a "representative" measurement that
+        # silently omits them is measuring a different pipeline. Same trap as the
+        # merger_* keys (2026-08-23) and the swap-model mask.
+        stabilize_face=bool(stabilize_face),
+        stabilize_method=str(getattr(g.CFG, "stabilize_method", "one_euro")),
+        stabilize_min_cutoff=float(getattr(g.CFG, "stabilize_min_cutoff", 0.05)),
+        stabilize_beta=float(getattr(g.CFG, "stabilize_beta", 0.02)),
+        stabilize_enhancer=bool(stabilize_enhancer),
+        stabilize_enhancer_strength=float(
+            getattr(g.CFG, "stabilize_enhancer_strength", 0.5)
+            if stabilize_enhancer_strength is None else stabilize_enhancer_strength),
         stabilize_mask=bool(stabilize_mask),
         stabilize_mask_strength=float(stabilize_mask_strength))
 

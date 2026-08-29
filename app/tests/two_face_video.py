@@ -880,6 +880,12 @@ def main():
     ap.add_argument("--swap-model", default="inswapper")
     ap.add_argument("--enhancer", default="None")
     ap.add_argument("--mask-engine", default="None")
+    ap.add_argument("--stabilize-face", default="0",
+                    help="1 = on. Production config runs this true; it is real "
+                         "GPU work, so a run that omits it is a different "
+                         "pipeline from the one the user renders.")
+    ap.add_argument("--stabilize-enhancer", default="0",
+                    help="1 = on. Production config runs this true.")
     ap.add_argument("--stabilize-mask", default="0",
                     help="1 to enable mask-edge anti-flicker smoothing")
     ap.add_argument("--stabilize-mask-strength", type=float, default=0.5)
@@ -945,7 +951,9 @@ def main():
     g.CFG.temporal_detection = track
     options = ab.build_options(g, args.swap_model, map_mask_engine(args.mask_engine), False,
                                stabilize_mask=(args.stabilize_mask == "1"),
-                               stabilize_mask_strength=args.stabilize_mask_strength)
+                               stabilize_mask_strength=args.stabilize_mask_strength,
+                               stabilize_face=(args.stabilize_face == "1"),
+                               stabilize_enhancer=(args.stabilize_enhancer == "1"))
 
     # The settings that decide what this arm measured, on the arm's own log, so
     # a later comparison does not have to guess them from the tag. Recovering

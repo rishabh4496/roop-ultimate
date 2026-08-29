@@ -862,9 +862,18 @@ regression, so it must be investigated before claiming automatic NVDEC as a
 quality-safe optimization. The existing automatic hardware-adaptive selection
 and bounded queues remain intact; no RTX 4070-only constants were introduced.
 
-**4070 residual status:** Phase 4's strict `<2.5 GB RSS` gate is a required RTX
-3060 Laptop gate and remains pending on that hardware. Phase 5's quality matrix
-and the NVDEC attribution investigation remain pending on the 4070. Phase 6's
+> **SUPERSEDED 2026-08-29 -- this attribution concern is CLOSED.** The RTX 4070
+> Phase 0-10 closure below re-ran 141-frame CPU and NVDEC arms and recorded
+> ZERO pipeline wrong-faceset events in both paths, and the same re-measurement
+> noise appeared in the CPU control (4/19 gradable frames against NVDEC's
+> 1/22), so it was never decode-specific. Read the closure table, not this
+> paragraph. NV12 remains rejected on its own separate quality gate.
+
+**4070 residual status (as recorded 2026-08-28; see the dated sections below
+for what has since closed):** Phase 4's strict `<2.5 GB RSS` gate is a required
+RTX 3060 Laptop gate and remains pending on that hardware. Phase 5's quality
+matrix remains pending on the 4070. The NVDEC attribution investigation is
+CLOSED as of 2026-08-29 (zero wrong-faceset events in both paths). Phase 6's
 global graph A/B was not promoted because the prior graph candidate was slower
 and the global steady-state run did not reach a valid result. Phase 7's DFL
 throughput concern is resolved for this rerun. RTX 3060 remains **PENDING** for

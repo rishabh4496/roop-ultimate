@@ -29,58 +29,78 @@ This number must be reproduced under a controlled, documented workload before it
 
 ---
 
-# OFFICIAL BASELINE — TO BE FILLED IN PHASE 2
+# OFFICIAL BASELINE — LOCKED 2026-08-29 (RTX 4070)
+
+Measured by `app/tests/baseline_controlled.py`. This replaces the
+Phase 2 TODO block. The immutable user-reported baseline above is
+untouched; note it has still never been reproduced under a controlled
+workload, so it is not the comparison point -- this block is.
 
 ## Software
 
-- OS:
-- NVIDIA driver:
-- CUDA:
-- TensorRT:
-- ONNX Runtime:
-- Python:
-- FFmpeg:
-- OpenCV:
+- OS: Windows 11 Pro 10.0.26200
+- NVIDIA driver: 610.88
+- CUDA: 12.8
+- TensorRT: 10.9.0.34
+- ONNX Runtime: 1.23.2
+- Python: 3.10.20
+- FFmpeg: 8.1.2
+- OpenCV: 4.9.0
 
 ## Workload
 
-- Input video:
-- Resolution:
-- Input FPS:
-- Codec:
-- Number of faces:
-- Face detector:
-- Face swap model:
-- Enhancement:
-- Stabilization:
-- Output resolution:
-- Output codec:
-- Other options:
+- Input video: `G:/pinokio/roop-keep/double/d4.mp4` frames 0..600
+- Resolution: 1280x720
+- Input FPS: 30
+- Codec: h264
+- Number of faces: 2 people, 856 faces detected across the window
+- Face detector: retinaface_r50 at det_size 512
+- Face swap model: realswap (swap-model mask strength 25)
+- Enhancement: GPEN 256 Pro
+- Mask engine: RealityUX
+- Stabilization: face + mask + enhancer all ON, one_euro (production config)
+- Tracking: on
+- Worker threads: 10; TRT pool 2, detmask pool 2
+- Output resolution: 1280x720
+- Output codec: hevc_nvenc at quality 10
+- Other options: merger clarity 0.4, upscale_after_swap off
 
 ## Measurements
 
-- End-to-end FPS:
-- Average frame latency:
-- P95 latency:
-- Decode FPS:
-- Encode FPS:
-- CPU utilization:
-- P-core utilization:
-- E-core utilization:
-- GPU utilization:
-- GPU memory used:
-- GPU memory free:
-- System RAM used:
-- Peak RAM:
-- CPU↔GPU transfer time:
-- Synchronization time:
-- Queue depth:
+- End-to-end FPS: **9.62** (600 frames in 62.34 s of processing)
+- Average frame latency: 233.34 ms per frame of worker thread time
+- P95 latency: not measured (the stage probe records totals and call counts,
+  not a per-call distribution; adding one would need a per-call histogram)
+- Decode FPS: 189.87
+- Encode FPS: 46.69
+- CPU utilization: peak 99.2%, mean 20.49% across all 32 logical cores
+- P-core utilization: peak 99.194% (8 P-cores / 16 logical, INFERRED from core
+  counts, not an OS topology report -- Windows does not expose hybrid topology
+  to psutil)
+- E-core utilization: peak 99.206% (16 E-cores)
+- GPU utilization: peak 76.0%, mean 33.952%
+- GPU memory used: peak 7067.0 MB, mean 4080.346 MB
+- GPU memory free: 5215 MB at peak (12282 MB total)
+- System RAM used: peak 27.825 GB
+- Peak RAM: process + descendants peak RSS 11.663 GB, mean 7.568 GB
+- GPU power: peak 118.09 W
+- CPU<->GPU transfer time: not measured. ORT owns its provider transfers and
+  fences them internally; the app has no application-managed H2D/D2H to time.
+  Phase 8 recorded this same limitation.
+- Synchronization time: not measured, for the same reason.
+- Queue depth: 3 (runtime default for >1 worker; clamped by the in-flight budget)
+- Swap audit: 856 faces seen, 850 swapped, **0 wrong
+  faceset applied** across 642 attributed swaps
 
 ## Reproduction command
 
 ```text
-TODO: record exact command/settings used for the official baseline.
+app\env\Scripts\python.exe app\tests\baseline_controlled.py --tag phase2_4070
 ```
+
+Everything else -- provider, swap model, thread count, pool sizes, stabilizer
+settings -- is read from that machine's own `config.yaml`, so the identical
+command produces the RTX 3060 row without editing anything.
 
 ---
 
