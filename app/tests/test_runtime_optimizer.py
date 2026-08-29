@@ -393,6 +393,69 @@ class RuntimeOptimizerTests(unittest.TestCase):
             self.assertEqual(json.loads(path.read_text())["schema_version"], 1)
 
 
+class AutoCpuDistributionTests(unittest.TestCase):
+    """`auto` must use P/E scheduling when -- and only when -- topology is known.
+
+    Measured on the physical RTX 3060 Laptop (i7-12700H, 6P+8E): `p_plus_e`
+    beat `auto` by +19.6% with worker count and thread caps held fixed, and by
+    +18.9% against the shipped default, both counterbalanced with no overlap
+    between arms. Worker count alone is neutral (8 vs 20 is -0.9%), so the gain
+    is the distribution. `auto` previously skipped the P/E path entirely.
+    """
+
+    def test_real_topology_sources_are_the_gate(self):
+        from roop.runtime_optimizer import _REAL_CPU_TOPOLOGY_SOURCES
+        self.assertIn("windows-cpu-set-efficiency-class",
+                      _REAL_CPU_TOPOLOGY_SOURCES)
+        # "could not tell" sources must never enable core pinning.
+        for bad in ("not-windows", "windows-cpu-set-unavailable",
+                    "windows-cpu-set-empty", "windows-cpu-set-uniform",
+                    "unknown", ""):
+            self.assertNotIn(bad, _REAL_CPU_TOPOLOGY_SOURCES)
+
+    def _tune(self, source, p_idx, e_idx):
+        """The 3060's real shape: 6 P-cores (12 logical) + 8 E-cores."""
+        hardware = HardwareProfile(
+            **{**_hardware(6.0).__dict__,
+               "cpu_physical_cores": 14,
+               "cpu_logical_cores": 20,
+               "cpu_performance_indices": p_idx,
+               "cpu_efficiency_indices": e_idx,
+               "cpu_performance_cores": 6 if p_idx else 0,
+               "cpu_efficiency_cores": 8 if e_idx else 0,
+               "cpu_topology_source": source,
+               "os_affinity_supported": True})
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("ROOP_CPU_DISTRIBUTION", None)
+            tuning, *_ = AutoTuner().tune(hardware, _workload(faces=2), {})
+        return tuning
+
+    def test_hybrid_topology_selects_p_plus_e(self):
+        t = self._tune("windows-cpu-set-efficiency-class",
+                       tuple(range(12)), tuple(range(12, 20)))
+        self.assertEqual(t.cpu_distribution, "p_plus_e")
+        self.assertEqual(t.cpu_efficiency_threads, 8)
+
+    def test_unknown_topology_stays_auto(self):
+        """The RTX 4070 exposes no hybrid topology; it must be unaffected."""
+        t = self._tune("windows-cpu-set-uniform", (), ())
+        self.assertEqual(t.cpu_distribution, "auto")
+
+    def test_explicit_setting_still_wins(self):
+        with patch.dict(os.environ, {"ROOP_CPU_DISTRIBUTION": "p_only"},
+                        clear=False):
+            hardware = HardwareProfile(
+                **{**_hardware(6.0).__dict__,
+                   "cpu_physical_cores": 14, "cpu_logical_cores": 20,
+                   "cpu_performance_indices": tuple(range(12)),
+                   "cpu_efficiency_indices": tuple(range(12, 20)),
+                   "cpu_performance_cores": 6, "cpu_efficiency_cores": 8,
+                   "cpu_topology_source": "windows-cpu-set-efficiency-class",
+                   "os_affinity_supported": True})
+            tuning, *_ = AutoTuner().tune(hardware, _workload(faces=2), {})
+        self.assertEqual(tuning.cpu_distribution, "p_only")
+
+
 class FFmpegCapabilityDetectionTests(unittest.TestCase):
     """NVDEC/NVENC must survive an unhelpful PATH.
 

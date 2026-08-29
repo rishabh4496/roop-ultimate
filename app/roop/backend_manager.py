@@ -191,6 +191,33 @@ def clear_probe_cache() -> None:
         _probe_cache.clear()
 
 
+_DRIVER_SMI_CACHE: Dict[int, str] = {}
+
+
+def _driver_from_smi(device_id: int = 0) -> str:
+    """Driver version from nvidia-smi, cached for the process.
+
+    The fallback for `cache_namespace` when torch exposes no driver probe.
+    Kept cheap: one short subprocess per device, memoised, and any failure
+    degrades to "" so the caller records "unknown" rather than raising during
+    startup.
+    """
+    if device_id in _DRIVER_SMI_CACHE:
+        return _DRIVER_SMI_CACHE[device_id]
+    value = ""
+    try:
+        import subprocess
+        out = subprocess.check_output(
+            ["nvidia-smi", "--query-gpu=driver_version", "--format=csv,noheader",
+             "--id=%d" % int(device_id)],
+            text=True, timeout=10, stderr=subprocess.DEVNULL)
+        value = out.strip().splitlines()[0].strip() if out.strip() else ""
+    except Exception:
+        value = ""
+    _DRIVER_SMI_CACHE[device_id] = value
+    return value
+
+
 def cache_namespace(precision: str, device_id: int = 0) -> str:
     """Build a stable TensorRT cache namespace for this runtime and GPU.
 
@@ -215,14 +242,31 @@ def cache_namespace(precision: str, device_id: int = 0) -> str:
             gpu = torch.cuda.get_device_name(device_id)
             sm = "sm%02d%02d" % tuple(torch.cuda.get_device_capability(device_id))
             cuda_ver = str(getattr(torch.version, "cuda", "unknown") or "unknown")
-            # This private PyTorch probe is available on the supported CUDA
-            # builds and avoids shelling out to nvidia-smi during startup.
+            # DRIVER IDENTITY IS PART OF THIS CACHE KEY AND MUST ACTUALLY
+            # RESOLVE. This used to rely solely on the private
+            # `torch._C._cuda_getDriverVersion` probe, with a comment claiming
+            # it "is available on the supported CUDA builds". It is not: on
+            # torch 2.7.0+cu128 the attribute is absent, so `driver_ver` stayed
+            # "unknown" and every engine directory was named `drvunknown`.
+            #
+            # That silently removed driver isolation from the TensorRT engine
+            # cache. TensorRT engines are driver-sensitive and are not
+            # guaranteed portable across driver upgrades, so a stale engine
+            # could be reused after a driver change -- exactly the cache
+            # invalidation error Gate C exists to prevent. Found on the
+            # physical RTX 3060 Laptop, whose profile reports driver 616.56
+            # while its engine cache directory said `drvunknown`.
             get_driver = getattr(getattr(torch, "_C", None),
                                  "_cuda_getDriverVersion", None)
             if get_driver is not None:
-                raw_driver = int(get_driver())
-                driver_ver = (f"{raw_driver // 1000}."
-                              f"{(raw_driver % 1000) // 10}")
+                try:
+                    raw_driver = int(get_driver())
+                    driver_ver = (f"{raw_driver // 1000}."
+                                  f"{(raw_driver % 1000) // 10}")
+                except Exception:
+                    driver_ver = "unknown"
+            if driver_ver == "unknown":
+                driver_ver = _driver_from_smi(device_id) or "unknown"
     except Exception:
         pass
     try:

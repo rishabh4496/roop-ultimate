@@ -533,6 +533,183 @@ input files and record each result under the RTX 3060 hardware profile key.
 Only after those rows pass end-to-end quality and stability checks may an arm
 be classified **beneficial on both**.
 
+## Gate D — CPU optimization matrix
+
+**This gate is measurable on the RTX 3060 host and was not on the 4070.**
+Windows exposed no P/E topology on the workstation, so Gate D was deferred
+there. The laptop reports `windows-cpu-set-efficiency-class` — a real OS
+report — with 6 P-cores (12 logical) and 8 E-cores on an i7-12700H. Running it
+here also satisfies the plan's own requirement not to hardcode i9-14900K
+behaviour: this is a different hybrid CPU.
+
+Measured 2026-08-30, `d4.mp4` frames 0..120, 4 candidates:
+
+| Candidate | Worker threads | FPS | Peak VRAM | Mean CPU | Mean GPU |
+|---|---:|---:|---:|---:|---:|
+| auto | 8 | 3.24 | 4,617 MB | 38.44% | 50.67% |
+| p_only | 12 | 3.82 | 5,433 MB | 38.71% | 47.91% |
+| p_priority_e (E limit 2) | 14 | 3.82 | 5,186 MB | 37.38% | 46.44% |
+| p_plus_e | 20 | **3.96** | 5,297 MB | 37.87% | 46.26% |
+
+### The matrix does NOT show that P/E distribution is worth 22%
+
+**The arms vary two things at once.** Each distribution policy also selects its
+own worker count — 8, 12, 14, 20 — and the FPS ordering tracks the thread count
+monotonically. "p_plus_e is fastest" is therefore not separable from "20 workers
+beats 8 workers" on this evidence, and the two middle arms are *identical* at
+3.82 despite differing worker counts, which looks like saturation rather than a
+distribution effect.
+
+`p_only` -> `p_plus_e` is **+3.7%**, which is exactly this project's documented
+run-to-run variance on identical settings. Single, non-counterbalanced arms
+cannot resolve a difference that size. **No distribution policy is promoted on
+this result.**
+
+### What the gate DID establish: the automatic thread count is too low
+
+`auto` is the only arm that used the machine's saved `max_threads: 8`, and it
+is the slowest by 18-22%. That constant was never measured on this hardware:
+`_threads_basis` records `v3|14|8`, and the session log for 2026-08-25 states
+plainly that the `<7GB` tier knee of 8 "was measured on a **4070 with pools
+forced to 0/0**, never on real 6GB silicon" and still "owes a measurement".
+
+### The owed thread-knee measurement, counterbalanced — the knee of 8 is VINDICATED
+
+Run 8 / 20 / 20 / 8 on `d4.mp4` frames 0..120 so the first-arm effect cancels.
+Worker count is the ONLY variable; no CPU-distribution or thread-pinning
+environment was set.
+
+| Worker threads | rep a | rep b | mean | peak RSS |
+|---|---:|---:|---:|---:|
+| 8 (the saved `auto` value) | 3.41 | 3.43 | **3.42** | 2.818 GB |
+| 20 (every logical core) | 3.40 | 3.38 | **3.39** | 2.823 GB |
+
+**-0.9%: neutral**, far inside the 3.7% run-to-run floor, and the direction even
+favours 8. Raising the worker count on this 6 GB / 14-core laptop buys nothing.
+
+This closes the measurement the 2026-08-25 session recorded as owed. The `<7GB`
+tier knee of **8 is correct on real 6 GB silicon**, not merely inherited from
+the 4070 — and `max_threads: 8` should stay. It also means the Gate D spread
+above is NOT explained by worker count, because the two hypotheses were tested
+independently and both failed:
+
+| Hypothesis for Gate D's 3.24 -> 3.96 | Verdict |
+|---|---|
+| P/E distribution policy | not separable — each arm also changed the thread count |
+| Worker thread count | **rejected**: 8 vs 20 counterbalanced is -0.9% |
+
+### Isolating the distribution policy — the effect is REAL, +19.6%
+
+Worker count fixed at 20 and `ROOP_RUNTIME_{ORT_INTRA,ORT_INTER,CV,FFMPEG}_THREADS=1`
+applied to both arms, so the CPU distribution policy is the only variable.
+Counterbalanced auto / p_plus_e / p_plus_e / auto.
+
+| Distribution | rep a | rep b | mean | mean GPU |
+|---|---:|---:|---:|---:|
+| auto | 3.15 | 3.13 | **3.14** | 45.7% |
+| p_plus_e | 3.81 | 3.70 | **3.76** | 44.5% |
+
+**+19.6%**, with no overlap between the arms — both `p_plus_e` runs beat both
+`auto` runs. This is well outside the 3.7% floor and is a genuine Gate D win.
+
+Note also that `auto` **with** pinning (3.14) is slower than `auto` **without**
+it (3.39 from the thread A/B): the thread pinning is not free on its own, and
+only pays off in combination with the P/E-aware distribution. This is why the
+original 4-arm matrix could not be read — it moved three things at once.
+
+### Acceptance: the candidate against what the user actually runs
+
+Counterbalanced prod / cand / cand / prod, `d4.mp4` frames 0..120.
+
+| Configuration | rep a | rep b | mean |
+|---|---:|---:|---:|
+| production default (auto, 8 workers, no pinning) | 2.97 | 3.17 | **3.07** |
+| Gate D candidate (p_plus_e, 20 workers, pinned) | 3.63 | 3.67 | **3.65** |
+
+**+18.9%**, no overlap, reproducing the isolation run's +19.6% in an independent
+experiment.
+
+### METHODOLOGICAL WARNING for this target: ~15% cross-run drift
+
+The same configuration (auto / 8 / unpinned) measured **3.41, 3.43, 2.97, 3.17**
+across experiment sets — a 15% spread, four times the 4070's documented 3.7%.
+This is a thermally-constrained laptop and its absolute numbers wander between
+sets.
+
+**Only counterbalanced comparisons within a single set are trustworthy here.**
+Two arms from different sets must never be compared, and any 3060 claim under
+~15% that is not counterbalanced is noise. The +19% survives because both
+experiments were internally counterbalanced with no overlap between arms.
+
+### Gate D disposition: SHIPPED, hardware-adaptive
+
+Per the project rule "ship the fix, not the flag", the win is now the automatic
+default rather than an env var. `auto` previously skipped the P/E branch
+entirely, so **no hybrid CPU ever got P/E-aware scheduling by default**.
+
+`auto` now resolves to `p_plus_e` when — and only when — the OS actually
+reports which logical processors are efficiency cores.
+`_REAL_CPU_TOPOLOGY_SOURCES` allowlists `windows-cpu-set-efficiency-class`,
+`linux-cpu-capacity-logical` and the explicit `environment-indices` override.
+Every "could not tell" source is excluded, because guessing which indices are
+E-cores would pin workers to the wrong processors — worse than not pinning.
+
+An explicit `ROOP_CPU_DISTRIBUTION` or setting still wins outright.
+
+**Classification: B — RTX 3060-SPECIFIC.** The RTX 4070 workstation reports no
+hybrid topology at all (Gate D was deferred there for exactly that reason), so
+its behaviour is provably unchanged; a regression test asserts `auto` stays
+`auto` on a non-hybrid report. This must be re-validated on the 4070 only if
+Windows begins exposing hybrid topology on that host.
+
+Confirmed on the shipped path: at startup `run.py` now prints
+`[CPU] affinity distribution=p_plus_e logical=20
+source=windows-cpu-set-efficiency-class` and publishes
+`ROOP_CPU_DISTRIBUTION=p_plus_e` with affinity applied, before the model
+pipeline loads.
+
+The final measurement, counterbalanced at the shipped worker count with no
+thread pinning, is the acceptance evidence for the change:
+
+| Distribution @ 8 workers | rep a | rep b | mean |
+|---|---:|---:|---:|
+| auto (old behaviour) | 3.15 | 3.23 | **3.19** |
+| p_plus_e (now automatic) | 3.81 | 3.77 | **3.79** |
+
+**+18.8%.** Worker count is unchanged at 8, so `max_threads` and its
+`_threads_auto` provenance are untouched.
+
+### GATE A FINDING: the bench harness measured a different program than production
+
+Verifying the shipped default exposed benchmark contamination that predates
+this session and affects **every** number produced by these harnesses.
+
+`run.py` builds a hardware-only profile at startup and calls
+`RuntimeOptimizer.apply_environment`, publishing worker / queue / pool hints
+and applying CPU affinity *before any thread pool exists*. `two_face_video.py`
+— which every phase harness shells out to — never did this. `ProcessMgr`
+re-applies the environment much later, at which point the CPU-affinity decision
+no longer changes the run.
+
+The symptom was precise: the shipped default benched at **3.19 fps, exactly the
+`auto` mean**, while the identical configuration supplied through the process
+environment benched at **3.79**. The harness was under-reporting the shipped
+product by 18.8% because the setting arrived too late to take effect.
+
+Fixed by `_apply_startup_runtime_environment()` in `two_face_video.py`, which
+reproduces `run.py`'s startup pass. Explicit caller environment still wins —
+`apply_environment` only fills variables that are absent — so counterbalanced
+A/Bs keep control of the key under test.
+
+**Consequence for the record: the RTX 3060 Phase 2 baseline of 4.33 fps was
+measured with the uncorrected harness and under-reports production.** It is
+re-run below rather than adjusted.
+
+**Caveat on absolute values:** these 120-frame arms run ~3.4 fps against the
+600-frame locked baseline's 4.33 fps. Processing FPS excludes startup (it is
+parsed from the encoder's own line), but a short window amortises in-render
+warm-up less. 120-frame arms are comparable to each other, not to the baseline.
+
 ## Gate C: future-architecture readiness
 
 The runtime profiler is capability-driven. It records the detected GPU name,
@@ -557,6 +734,34 @@ graph hash remains responsible for the model graph and concrete shapes; the
 profile cache independently records those shapes and workload characteristics.
 This prevents an RTX 4070 result from becoming a generic RTX 3060 or future
 architecture result.
+
+### Gate C defect found on the RTX 3060: the engine cache had no driver identity
+
+The claim above that engine caches "distinguish ... driver ..." was **false in
+the built artifact**. The live cache directory on this machine read:
+
+    mixed_NVIDIA_GeForce_RTX_3060_Laptop_GPU_sm0806_cuda12.8_drvunknown_trt10.9.0.34_ort1.23.2_lnfp32_seq_heur_b3_a-1_g0
+
+`drvunknown`. `backend_manager.cache_namespace` resolved the driver solely
+through `torch._C._cuda_getDriverVersion`, above a comment asserting that probe
+"is available on the supported CUDA builds". It is not present on torch
+2.7.0+cu128, so the value silently stayed `"unknown"` on every machine using
+this build — including the 4070.
+
+TensorRT engines are driver-sensitive and are not guaranteed portable across
+driver upgrades, so this is a genuine **cache invalidation error**: a stale
+engine could be reused after a driver change with nothing to detect it. Gate A
+lists "cache invalidation errors" as a class to hunt; this is one, and it was
+inside the mechanism Gate C relies on.
+
+Fixed by falling back to `nvidia-smi` when the torch probe is absent; the key
+now records `drv616.56` on this host. Note this changes the namespace, so the
+first run after the fix rebuilds engines once per precision — correct, since
+engines built under an unidentified driver were never safe to reuse.
+
+The pre-existing test asserted only `'_drv' in ns`, which passes for the literal
+string `drvunknown`, so it had been providing false assurance. It now asserts
+the driver actually resolves.
 
 ### Tested versus future-ready
 

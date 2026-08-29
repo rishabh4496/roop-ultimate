@@ -857,6 +857,44 @@ def face_reasons(entries):
     return lookup
 
 
+def _apply_startup_runtime_environment():
+    """Reproduce `run.py`'s startup optimizer pass before models load.
+
+    WITHOUT THIS, EVERY BENCH MEASURED A DIFFERENT PROGRAM THAN PRODUCTION.
+    `run.py` builds a cheap hardware-only profile at startup and calls
+    `RuntimeOptimizer.apply_environment`, which publishes worker/queue/pool
+    hints AND applies CPU affinity before any thread pool exists. This harness
+    never did, so it inherited none of them; `ProcessMgr` re-applies the
+    environment much later, by which point the CPU-affinity decision no longer
+    changes the run.
+
+    Measured on the physical RTX 3060 Laptop, `d4.mp4` frames 0..120,
+    counterbalanced: the P/E-aware distribution that production selects at
+    startup is worth **+18.8%** (3.19 -> 3.79 fps), and the harness reported the
+    3.19 figure because the setting arrived too late to matter. That is
+    benchmark contamination in the direction that under-reports the shipped
+    product.
+
+    Explicit caller environment still wins: `apply_environment` only fills a
+    variable that is absent, so a counterbalanced A/B that sets
+    `ROOP_CPU_DISTRIBUTION` (or any other `ROOP_*` key) keeps control of it.
+    Advisory by design -- any failure leaves the previous behaviour.
+    """
+    try:
+        import yaml
+        with open(os.path.join(APP, 'config.yaml'), 'r') as fh:
+            cfg = yaml.safe_load(fh) or {}
+        from roop.runtime_optimizer import RuntimeOptimizer
+        opt = RuntimeOptimizer(settings=cfg)
+        applied = opt.apply_environment(opt.startup_profile(), cfg)
+        if applied:
+            print("[bench] startup runtime environment applied: %s"
+                  % sorted(applied), flush=True)
+    except Exception as exc:                                  # pragma: no cover
+        print("[bench] startup runtime environment unavailable: %s" % exc,
+              flush=True)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--tag", required=True)
@@ -932,6 +970,7 @@ def main():
     args = ap.parse_args()
 
     ensure_ffmpeg()
+    _apply_startup_runtime_environment()
     _mm = args.swap_model_mask_strength
     g = ab.init_pipeline(args.provider, args.swap_model, args.enhancer,
                          args.mask_engine, cuda_device_id=args.cuda_device_id)
