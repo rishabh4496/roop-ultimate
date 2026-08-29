@@ -17,19 +17,22 @@ Do not mark a phase complete based only on conversation history.
 
 ## CURRENT STATE
 
-**Current phase:** PHASE 11 IMPLEMENTED - Enhancement Pipeline (RTX 4070 measurements recorded; RTX 3060 validation pending)
+**Current phase:** GATE D IMPLEMENTED - CPU optimization (dual-target E2E validation pending)
 
-**Status:** The source inventory, hardware-isolated matrix, adaptive tile
-selection, and benchmark plumbing are implemented. Initial physical Phase 11
-measurements exist for the available RTX 4070 only. The RTX 3060 safety-policy
-and continuation evidence are preserved below, but no Phase 11 result is
-fabricated or promoted to dual-GPU acceptance without a physical 3060 rerun.
+**Status:** Gate D now has runtime CPU identity/topology/frequency/SIMD/affinity
+detection, explicit auto/P-only/P-priority+limited-E/P+E policies, bounded
+OpenCV/ORT/FFmpeg pools, and a reproducible end-to-end candidate harness.
+Target-specific performance acceptance is pending: the RTX 3060 is not
+physically available in this session, and the first cold RTX 4070 candidate
+timed out before producing a valid FPS result. No CPU policy is promoted as a
+measured optimization.
 
-**Last completed implementation phase:** PHASE 10 CPU threading/detection/tracking implementation and RTX 4070 validation closure
+**Last completed implementation phase:** PHASE 11 Enhancement Pipeline; Gate D implementation is present but not performance-closed
 
-**Next phase:** Complete the pending RTX 3060 Phase 11 matrix and missing
-4070 quality/host-utilization cells. Do not reuse RTX 4070 results or caches
-on the RTX 3060.
+**Next phase:** Complete separate Gate D matrices on physical RTX 3060 and RTX
+4070 hardware, then classify each CPU policy from end-to-end FPS and
+resource/quality evidence. Do not reuse RTX 4070 results or caches on the RTX
+3060.
 
 **Baseline FPS:** ~20 FPS (user-reported; must be formally measured in Phase 2)
 
@@ -74,7 +77,7 @@ NVDEC end-to-end run; 4.09 FPS remains the historical Phase 7 workload result.
 | A. Independent Adversarial Review | NOT STARTED | — | — | |
 | B. Performance Target Analysis | NOT STARTED | — | — | |
 | C. Rubin / Next-Generation Tensor Cores | NOT STARTED | — | — | |
-| D. Intel i9-14900K CPU Optimization | NOT STARTED | — | — | |
+| D. Intel i9-14900K CPU Optimization | IMPLEMENTED; E2E VALIDATION PENDING | — | — | Runtime CPU capability detection, P/E policies, bounded nested-thread pools, OpenCV SIMD dispatch, and Gate D harness; RTX 3060 unavailable and RTX 4070 cold candidate timed out |
 | E. Unified CPU + RAM + GPU Runtime Scheduler | NOT STARTED | — | — | |
 
 ---

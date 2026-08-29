@@ -17,10 +17,11 @@ Primary validation GPUs:
 
 Both must remain first-class targets throughout the project.
 
-Current hardware available for validation:
-- RTX 3060 Laptop: AVAILABLE (current host; continuation audit 2026-08-29)
-- RTX 4070: not physically present on the current host; prior physical results
-  remain recorded separately
+Current hardware available for validation in the latest Gate D session:
+- RTX 3060 Laptop: UNAVAILABLE; Gate D benchmark remains PENDING
+- RTX 4070: AVAILABLE and detected at runtime; Gate D cold candidate timed out
+  before a valid FPS result. Prior physical 3060 continuation measurements
+  remain historical and are not reused for Gate D.
 
 The user authorized a continuation exception for the physical RTX 3060 Phase 3
 RSS failure. This permits Phases 5–9 to be exercised and documented, but does
@@ -66,9 +67,31 @@ Before doing anything:
 
 **Session:** 1
 
-**Current phase:** RTX 4070 phases 2, 5, 6, 9, 11 ALL CLOSED 2026-08-29. There
-is no open RTX 4070 item in phases 0-11. **PHASE 12 is next.** Every RTX 3060
-row is PENDING and remains the dual-GPU acceptance gate, independent of Phase 12.
+**Current phase:** Gate D CPU optimization is implemented but not performance
+closed. Both GPU targets remain first-class: RTX 3060 is PENDING because it is
+not available in this session; the RTX 4070 candidate matrix is PENDING because
+the first cold controlled run timed out before producing valid FPS. Phase 12
+must not be treated as a reason to remove the Gate D dual-target requirement.
+
+## GATE D CPU OPTIMIZATION CHECKPOINT
+
+`docs/CPU_GATE_D.md` is the authoritative Gate D report. The runtime detects
+CPU physical/logical counts, Windows CPU-set P/E logical indices, CPU name and
+frequency, NumPy SIMD features, and process-affinity support. It supports
+`ROOP_CPU_DISTRIBUTION=auto|p_only|p_priority_e|p_plus_e`, with
+`ROOP_CPU_E_LIMIT` for the limited-E candidate. OpenCV optimized dispatch is
+enabled while OpenCV, ORT, and FFmpeg pools remain bounded independently.
+
+On the current host the measured topology is 24 physical / 32 logical, 8 P
+physical / 16 P logical, and 16 E logical processors. The controlled benchmark
+harness is:
+
+    env\\Scripts\\python.exe tests\\gate_d_cpu_benchmark.py --target "RTX 4070" --end 120 --timeout 1800
+    env\\Scripts\\python.exe tests\\gate_d_cpu_benchmark.py --target "RTX 3060" --end 120 --timeout 1800
+
+The first 4070 run reached provider/model preparation but timed out in the
+long cold render and was stopped; no FPS or policy winner was recorded. The
+3060 command is the exact pending validation required on physical hardware.
 
 ---
 

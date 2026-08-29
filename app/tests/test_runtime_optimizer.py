@@ -18,6 +18,7 @@ from roop.runtime_optimizer import (
     PrecisionSelector,
     TensorRTEngineManager,
     WorkloadProfile,
+    apply_cpu_affinity,
     small_card_decode_policy,
     small_card_enhancer_policy,
 )
@@ -66,6 +67,43 @@ def _workload(faces=1, enhanced=True, stabilized=True, width=1280, height=720):
 
 
 class RuntimeOptimizerTests(unittest.TestCase):
+    def _hybrid_hardware(self):
+        return HardwareProfile(
+            **{**_hardware(12.0).__dict__,
+               "cpu_performance_indices": tuple(range(16)),
+               "cpu_efficiency_indices": tuple(range(16, 32)),
+               "cpu_performance_cores": 8,
+               "cpu_efficiency_cores": 16,
+               "cpu_topology_source": "test-cpu-set",
+               "os_affinity_supported": True})
+
+    def test_cpu_distribution_candidates_use_measured_logical_topology(self):
+        tuner = AutoTuner()
+        hardware = self._hybrid_hardware()
+        with patch.dict(os.environ, {"ROOP_CPU_DISTRIBUTION": "p_only"}, clear=False):
+            p_only, *_ = tuner.tune(hardware, _workload(), {})
+        with patch.dict(os.environ, {"ROOP_CPU_DISTRIBUTION": "p_priority_e",
+                                     "ROOP_CPU_E_LIMIT": "2"}, clear=False):
+            p_priority, *_ = tuner.tune(hardware, _workload(), {})
+        with patch.dict(os.environ, {"ROOP_CPU_DISTRIBUTION": "p_plus_e"}, clear=False):
+            p_plus_e, *_ = tuner.tune(hardware, _workload(), {})
+        self.assertEqual((p_only.worker_count, p_only.cpu_performance_threads,
+                          p_only.cpu_efficiency_threads), (16, 16, 0))
+        self.assertEqual((p_priority.worker_count, p_priority.cpu_performance_threads,
+                          p_priority.cpu_efficiency_threads), (18, 16, 2))
+        self.assertEqual((p_plus_e.worker_count, p_plus_e.cpu_performance_threads,
+                          p_plus_e.cpu_efficiency_threads), (32, 16, 16))
+
+    def test_cpu_affinity_uses_measured_indices_and_limited_efficiency_cores(self):
+        hardware = self._hybrid_hardware()
+        with patch.dict(os.environ, {"ROOP_CPU_DISTRIBUTION": "p_priority_e",
+                                     "ROOP_CPU_E_LIMIT": "2"}, clear=False), \
+                patch("psutil.Process") as process:
+            result = apply_cpu_affinity(hardware)
+        self.assertTrue(result["applied"])
+        self.assertEqual(result["indices"], tuple(range(18)))
+        process.return_value.cpu_affinity.assert_called_once_with(list(range(18)))
+
     def test_small_card_precision_is_reported_as_effective_fp32(self):
         selector = PrecisionSelector()
         self.assertEqual(selector.select({"trt_precision": "mixed"},
@@ -276,6 +314,16 @@ class RuntimeOptimizerTests(unittest.TestCase):
             hardware, workload,
             {"swap_model": "realswap", "trt_auxiliary_streams": 1}, "mixed")
         self.assertNotEqual(serial, overlapped)
+
+    def test_cache_key_isolates_cpu_distribution_ab_candidates(self):
+        manager = TensorRTEngineManager()
+        hardware = self._hybrid_hardware()
+        workload = _workload()
+        with patch.dict(os.environ, {"ROOP_CPU_DISTRIBUTION": "p_only"}, clear=False):
+            p_only = manager.cache_key(hardware, workload, {}, "mixed")
+        with patch.dict(os.environ, {"ROOP_CPU_DISTRIBUTION": "p_plus_e"}, clear=False):
+            p_plus_e = manager.cache_key(hardware, workload, {}, "mixed")
+        self.assertNotEqual(p_only, p_plus_e)
 
     def test_cache_key_isolated_by_architecture_and_vram(self):
         manager = TensorRTEngineManager()

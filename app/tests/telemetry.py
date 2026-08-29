@@ -20,14 +20,7 @@ _SMI_FIELDS = ("utilization.gpu", "memory.used", "power.draw",
 
 
 def cpu_topology():
-    """Best-effort P-core / E-core split.
-
-    Windows does not report hybrid topology through anything psutil exposes, so
-    this is INFERRED from the CPU brand string plus the logical core count and
-    is labelled as such wherever it is printed. It is never presented as an OS
-    topology report -- the plan says "P/E-core utilization where available",
-    and an inferred split announced as measured would be worse than a blank.
-    """
+    """Return the same measured CPU topology used by the runtime optimizer."""
     info = {"source": "unavailable", "p_logical": None, "e_logical": None}
     try:
         import psutil
@@ -37,35 +30,24 @@ def cpu_topology():
         return info
     info["logical"] = logical
     info["physical"] = physical
-    if not logical or not physical:
-        return info
-
-    brand = ""
     try:
         import platform
-        brand = platform.processor() or ""
-        if os.name == "nt" and not brand.strip():
-            out = subprocess.check_output(
-                ["wmic", "cpu", "get", "name"], text=True,
-                stderr=subprocess.DEVNULL, timeout=5)
-            brand = " ".join(out.split("\n")[1:]).strip()
+        info["brand"] = (platform.processor() or
+                          platform.uname().processor or "").strip()
     except Exception:
         pass
-    info["brand"] = brand.strip()
-
-    # A hybrid Intel part has MORE logical than 2x physical is false; the tell is
-    # physical > logical/2, i.e. some cores are single-threaded E-cores.
-    if physical > logical / 2:
-        e_cores = 2 * physical - logical      # single-threaded cores
-        p_cores = physical - e_cores          # SMT cores
-        if e_cores > 0 and p_cores > 0:
-            info.update({
-                "source": "inferred from core counts (NOT an OS topology report)",
-                "p_cores": p_cores, "e_cores": e_cores,
-                # Intel enumerates P-core threads first on Windows.
-                "p_logical": list(range(0, p_cores * 2)),
-                "e_logical": list(range(p_cores * 2, logical)),
-            })
+    try:
+        from roop.runtime_optimizer import detect_cpu_topology
+        detected = detect_cpu_topology(int(physical or 0), int(logical or 0))
+        info.update({
+            "source": detected.get("source", "unknown"),
+            "p_cores": int(detected.get("p_cores", 0) or 0),
+            "e_cores": int(detected.get("e_cores", 0) or 0),
+            "p_logical": list(detected.get("p_indices", ()) or ()) or None,
+            "e_logical": list(detected.get("e_indices", ()) or ()) or None,
+        })
+    except Exception:
+        pass
     return info
 
 
@@ -120,6 +102,21 @@ def sample_loop(pid, stop, samples, topo, interval=0.5, device_id=0):
                         s["cpu_p_pct"] = sum(per[i] for i in p_idx if i < len(per)) / len(p_idx)
                         s["cpu_e_pct"] = sum(per[i] for i in e_idx if i < len(per)) / len(e_idx)
                 s["ram_used_gb"] = psutil.virtual_memory().used / (1024 ** 3)
+                frequency = psutil.cpu_freq()
+                if frequency is not None:
+                    s["cpu_frequency_mhz"] = float(getattr(frequency, "current", 0.0) or 0.0)
+                    s["cpu_max_frequency_mhz"] = float(getattr(frequency, "max", 0.0) or 0.0)
+                temperatures = getattr(psutil, "sensors_temperatures", lambda: {})()
+                cpu_temps = []
+                for entries in (temperatures or {}).values():
+                    for entry in entries:
+                        label = str(getattr(entry, "label", "") or "").lower()
+                        if any(token in label for token in ("cpu", "package", "core", "tctl", "tdie")):
+                            current = float(getattr(entry, "current", 0.0) or 0.0)
+                            if current > 0:
+                                cpu_temps.append(current)
+                if cpu_temps:
+                    s["cpu_temperature_c"] = max(cpu_temps)
             except Exception:
                 pass
         s.update(_smi(device_id))

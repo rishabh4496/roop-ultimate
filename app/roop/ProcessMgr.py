@@ -63,10 +63,20 @@ def _configure_opencv_worker_threads(workers):
     except (TypeError, ValueError):
         value = 1
     try:
+        # Keep OpenCV's dispatched kernels enabled while bounding its internal
+        # pool.  Frame workers, ORT and FFmpeg are configured separately, so
+        # this prevents nested oversubscription without disabling SIMD paths.
+        if hasattr(cv2, 'setUseOptimized'):
+            cv2.setUseOptimized(True)
         cv2.setNumThreads(value)
     except Exception:
         pass
-    print(f'[CPU] OpenCV kernel threads={value} across {max(1, workers)} frame workers',
+    try:
+        optimized = bool(cv2.useOptimized()) if hasattr(cv2, 'useOptimized') else None
+    except Exception:
+        optimized = None
+    print(f'[CPU] OpenCV kernel threads={value} optimized={optimized} '
+          f'across {max(1, workers)} frame workers',
           flush=True)
     return value
 

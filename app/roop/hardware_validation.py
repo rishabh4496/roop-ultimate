@@ -31,6 +31,10 @@ _HARDWARE_FIELDS = (
     "tensor_core_capabilities", "fp16_supported", "bf16_supported",
     "int8_supported", "fp8_supported", "nvdec_available", "nvdec_codecs",
     "nvenc_available", "nvenc_codecs", "ram_total_gb", "platform",
+    "cpu_name", "cpu_physical_cores", "cpu_logical_cores",
+    "cpu_max_frequency_mhz", "cpu_simd_capabilities",
+    "cpu_performance_cores", "cpu_efficiency_cores", "cpu_topology_source",
+    "os_affinity_supported",
 )
 
 _TARGET_GPU_PATTERNS = {

@@ -386,7 +386,9 @@ def main():
     for key in ("peak_rss_gb", "mean_rss_gb", "peak_gpu_memory_mb",
                 "mean_gpu_memory_mb", "peak_gpu_util_pct", "mean_gpu_util_pct",
                 "peak_cpu_pct", "mean_cpu_pct", "peak_cpu_p_pct",
-                "peak_cpu_e_pct", "peak_power_w", "peak_ram_used_gb"):
+                "peak_cpu_e_pct", "peak_cpu_frequency_mhz",
+                "mean_cpu_frequency_mhz", "peak_cpu_temperature_c",
+                "mean_cpu_temperature_c", "peak_power_w", "peak_ram_used_gb"):
         if key in telem:
             print("  %-17s %s" % (key, telem[key]))
     print("  cpu topology      %s" % telem.get("cpu_topology", {}).get("source"))

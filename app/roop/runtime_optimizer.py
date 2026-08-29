@@ -170,6 +170,13 @@ class HardwareProfile:
     fp8_supported: bool = False
     cpu_physical_cores: int = 1
     cpu_logical_cores: int = 1
+    cpu_name: str = ""
+    cpu_frequency_mhz: float = 0.0
+    cpu_max_frequency_mhz: float = 0.0
+    cpu_simd_capabilities: Tuple[str, ...] = field(default_factory=tuple)
+    os_affinity_supported: bool = False
+    cpu_performance_indices: Tuple[int, ...] = field(default_factory=tuple)
+    cpu_efficiency_indices: Tuple[int, ...] = field(default_factory=tuple)
     ram_total_gb: float = 0.0
     ram_available_gb: float = 0.0
     platform: str = ""
@@ -287,6 +294,7 @@ class RuntimeTuning:
     cuda_graph_enabled: bool = False
     cpu_performance_threads: int = 0
     cpu_efficiency_threads: int = 0
+    cpu_distribution: str = "auto"
     ram_buffer_mb: int = 512
     backend: str = "cuda"
     encoder: str = "libx264"
@@ -343,7 +351,9 @@ class RuntimeProfile:
             hardware = build(HardwareProfile, payload.get("hardware"))
             workload = build(WorkloadProfile, payload.get("workload"))
             tuning = build(RuntimeTuning, payload.get("tuning"))
-            for name in ("nvdec_codecs", "nvenc_codecs", "tensor_core_capabilities"):
+            for name in ("nvdec_codecs", "nvenc_codecs", "tensor_core_capabilities",
+                         "cpu_simd_capabilities", "cpu_performance_indices",
+                         "cpu_efficiency_indices"):
                 value = getattr(hardware, name)
                 if isinstance(value, list):
                     hardware = replace(hardware, **{name: tuple(value)})
@@ -402,8 +412,17 @@ class ResourceManager:
     }
 
     @classmethod
-    def clamp(cls, name: str, value: Any) -> int:
+    def clamp(cls, name: str, value: Any,
+              hardware: Optional[HardwareProfile] = None) -> int:
         lo, hi = cls.BOUNDS[name]
+        # The static bounds are a safety floor for unprofiled callers.  A
+        # profiled machine may expose more logical CPUs (for example a hybrid
+        # desktop); do not silently turn a P+E candidate into a 16-thread
+        # candidate merely because the test harness predates that topology.
+        if hardware is not None and name in (
+                "worker_count", "cpu_performance_threads",
+                "cpu_efficiency_threads"):
+            hi = max(hi, int(hardware.cpu_logical_cores or hi))
         return max(lo, min(hi, _integer(value, lo)))
 
     @staticmethod
@@ -442,14 +461,117 @@ def _cpu_topology(physical: int, logical: int) -> Tuple[int, int, str]:
     harnesses that know the topology but do not expose it through psutil.
     Phase 10 records the information only; it does not bind threads to cores.
     """
-    env_p = _positive_int(os.environ.get("ROOP_CPU_P_CORES"))
-    env_e = _positive_int(os.environ.get("ROOP_CPU_E_CORES"))
-    if env_p or env_e:
-        if not env_p:
-            env_p = max(0, physical - env_e)
-        if not env_e:
-            env_e = max(0, physical - env_p)
-        return env_p, env_e, "environment"
+    detected = detect_cpu_topology(physical, logical)
+    return (int(detected["p_cores"]), int(detected["e_cores"]),
+            str(detected["source"]))
+
+
+def _parse_cpu_indices(value: Any) -> Tuple[int, ...]:
+    """Parse an explicit affinity list without accepting a broad mask."""
+    values = []
+    for item in str(value or "").split(","):
+        item = item.strip()
+        if not item:
+            continue
+        try:
+            index = int(item)
+        except (TypeError, ValueError):
+            continue
+        if index >= 0:
+            values.append(index)
+    return tuple(sorted(set(values)))
+
+
+def _windows_cpu_set_topology() -> dict:
+    """Read Windows hybrid CPU sets and their efficiency classes.
+
+    ``SYSTEM_CPU_SET_INFORMATION`` is a variable-sized Windows structure.
+    Its efficiency class is a runtime OS fact: higher values are faster and
+    less power-efficient, so the highest class is treated as P-core class.
+    Unknown record types are skipped for forward compatibility.
+    """
+    if os.name != "nt":
+        return {"p_indices": (), "e_indices": (), "p_cores": 0,
+                "e_cores": 0, "source": "not-windows"}
+    try:
+        import ctypes
+        import struct
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        query = kernel32.GetSystemCpuSetInformation
+        query.argtypes = [ctypes.c_void_p, ctypes.c_ulong,
+                          ctypes.POINTER(ctypes.c_ulong), ctypes.c_void_p,
+                          ctypes.c_ulong]
+        query.restype = ctypes.c_bool
+        required = ctypes.c_ulong()
+        query(None, 0, ctypes.byref(required), None, 0)
+        if required.value < 32:
+            return {"p_indices": (), "e_indices": (), "p_cores": 0,
+                    "e_cores": 0, "source": "windows-cpu-set-unavailable"}
+        buffer = ctypes.create_string_buffer(required.value)
+        if not query(buffer, required.value, ctypes.byref(required), None, 0):
+            return {"p_indices": (), "e_indices": (), "p_cores": 0,
+                    "e_cores": 0, "source": "windows-cpu-set-unavailable"}
+
+        records = []
+        offset = 0
+        while offset + 8 <= required.value:
+            size, record_type = struct.unpack_from("<II", buffer, offset)
+            if size < 8 or offset + size > required.value:
+                break
+            # Type 0 is CpuSetInformation. Fields after the union begin at
+            # offset 8: Id (DWORD), Group (WORD), logical/core indices, then
+            # EfficiencyClass (BYTE at offset 18).
+            if record_type == 0 and size >= 32:
+                ident, group, logical_index, core_index, _llc, _numa, efficiency = struct.unpack_from(
+                    "<I H B B B B B", buffer, offset + 8)
+                records.append((ident, group, logical_index, core_index,
+                                efficiency))
+            offset += size
+        if not records:
+            return {"p_indices": (), "e_indices": (), "p_cores": 0,
+                    "e_cores": 0, "source": "windows-cpu-set-empty"}
+
+        classes = {row[4] for row in records}
+        if len(classes) < 2:
+            return {"p_indices": (), "e_indices": (), "p_cores": 0,
+                    "e_cores": 0, "source": "windows-cpu-set-uniform"}
+        p_class = max(classes)
+        p = [group * 64 + logical_index for _id, group, logical_index,
+             _core, efficiency in records if efficiency == p_class]
+        e = [group * 64 + logical_index for _id, group, logical_index,
+             _core, efficiency in records if efficiency != p_class]
+        p_core_set = {(group, core) for _id, group, _logical, core, efficiency
+                      in records if efficiency == p_class}
+        e_core_set = {(group, core) for _id, group, _logical, core, efficiency
+                      in records if efficiency != p_class}
+        return {
+            "p_indices": tuple(sorted(set(p))),
+            "e_indices": tuple(sorted(set(e))),
+            "p_cores": len(p_core_set),
+            "e_cores": len(e_core_set),
+            "source": "windows-cpu-set-efficiency-class",
+        }
+    except (AttributeError, OSError, TypeError, ValueError, struct.error):
+        return {"p_indices": (), "e_indices": (), "p_cores": 0,
+                "e_cores": 0, "source": "windows-cpu-set-unavailable"}
+
+
+def detect_cpu_topology(physical: int, logical: int) -> dict:
+    """Return measured P/E logical indices and physical-core counts."""
+    explicit_p = _parse_cpu_indices(os.environ.get("ROOP_CPU_P_INDICES"))
+    explicit_e = _parse_cpu_indices(os.environ.get("ROOP_CPU_E_INDICES"))
+    if explicit_p or explicit_e:
+        return {
+            "p_indices": explicit_p,
+            "e_indices": explicit_e,
+            "p_cores": _positive_int(os.environ.get("ROOP_CPU_P_CORES")) or len(explicit_p),
+            "e_cores": _positive_int(os.environ.get("ROOP_CPU_E_CORES")) or len(explicit_e),
+            "source": "environment-indices",
+        }
+
+    windows = _windows_cpu_set_topology()
+    if windows["p_indices"] and windows["e_indices"]:
+        return windows
 
     capacities = []
     try:
@@ -461,11 +583,52 @@ def _cpu_topology(physical: int, logical: int) -> Tuple[int, int, str]:
         capacities = []
     if len(capacities) >= 2 and max(capacities) > min(capacities):
         peak = max(capacities)
-        performance = sum(1 for capacity in capacities if capacity >= peak * 0.8)
-        efficiency = len(capacities) - performance
-        if performance and efficiency:
-            return performance, efficiency, "linux-cpu-capacity"
-    return 0, 0, "unknown"
+        p_indices = tuple(index for index, capacity in enumerate(capacities)
+                          if capacity >= peak * 0.8)
+        e_indices = tuple(index for index, capacity in enumerate(capacities)
+                          if capacity < peak * 0.8)
+        if p_indices and e_indices:
+            # Linux exposes logical CPUs here; retain that fact in the fields
+            # while avoiding a guessed physical-core mapping.
+            return {"p_indices": p_indices, "e_indices": e_indices,
+                    "p_cores": len(p_indices), "e_cores": len(e_indices),
+                    "source": "linux-cpu-capacity-logical"}
+    return {"p_indices": (), "e_indices": (), "p_cores": 0,
+            "e_cores": 0, "source": "unknown"}
+
+
+def _cpu_simd_capabilities() -> Tuple[str, ...]:
+    """Report SIMD features exposed by the active NumPy dispatch runtime."""
+    try:
+        import numpy as np
+        features = getattr(getattr(np, "core", None), "_multiarray_umath", None)
+        features = getattr(features, "__cpu_features__", {}) or {}
+        return tuple(sorted(str(name) for name, enabled in features.items()
+                            if enabled))
+    except Exception:
+        return ()
+
+
+def _cpu_frequency() -> Tuple[float, float]:
+    try:
+        import psutil
+        frequency = psutil.cpu_freq()
+        if frequency is not None:
+            return (_number(getattr(frequency, "current", 0.0)),
+                    _number(getattr(frequency, "max", 0.0)))
+    except Exception:
+        pass
+    return 0.0, 0.0
+
+
+def _cpu_affinity_info() -> Tuple[bool, Tuple[int, ...]]:
+    try:
+        import psutil
+        process = psutil.Process()
+        indices = tuple(int(index) for index in process.cpu_affinity())
+        return True, indices
+    except Exception:
+        return False, ()
 
 
 class HardwareProfiler:
@@ -677,7 +840,13 @@ class HardwareProfiler:
             physical = max(1, logical // 2)
             ram_total = ram_available = 0.0
 
-        p_cores, e_cores, topology_source = _cpu_topology(physical, logical)
+        topology = detect_cpu_topology(physical, logical)
+        p_cores = int(topology["p_cores"])
+        e_cores = int(topology["e_cores"])
+        topology_source = str(topology["source"])
+        cpu_frequency_mhz, cpu_max_frequency_mhz = _cpu_frequency()
+        cpu_name = str(platform.processor() or platform.uname().processor or "")
+        affinity_supported, _affinity_indices = _cpu_affinity_info()
 
         nvidia_smi = self._command(
             "nvidia-smi", f"--id={self.device_id}",
@@ -737,6 +906,13 @@ class HardwareProfiler:
             fp8_supported=fp8,
             cpu_physical_cores=max(1, physical),
             cpu_logical_cores=max(1, logical),
+            cpu_name=cpu_name,
+            cpu_frequency_mhz=round(cpu_frequency_mhz, 3),
+            cpu_max_frequency_mhz=round(cpu_max_frequency_mhz, 3),
+            cpu_simd_capabilities=_cpu_simd_capabilities(),
+            os_affinity_supported=affinity_supported,
+            cpu_performance_indices=tuple(topology["p_indices"]),
+            cpu_efficiency_indices=tuple(topology["e_indices"]),
             ram_total_gb=round(ram_total, 3),
             ram_available_gb=round(ram_available, 3),
             platform=f"{platform.system()}-{platform.release()}",
@@ -907,6 +1083,15 @@ class TensorRTEngineManager:
                 "fp8": hardware.fp8_supported,
                 "nvdec": hardware.nvdec_codecs,
                 "nvenc": hardware.nvenc_codecs,
+                "cpu_name": hardware.cpu_name,
+                "cpu_physical": hardware.cpu_physical_cores,
+                "cpu_logical": hardware.cpu_logical_cores,
+                "cpu_frequency_max_mhz": hardware.cpu_max_frequency_mhz,
+                "cpu_simd": hardware.cpu_simd_capabilities,
+                "cpu_p_cores": hardware.cpu_performance_cores,
+                "cpu_e_cores": hardware.cpu_efficiency_cores,
+                "cpu_topology_source": hardware.cpu_topology_source,
+                "os_affinity": hardware.os_affinity_supported,
             },
             "model": {
                 "swap": _value(settings, "swap_model", "") or "",
@@ -936,6 +1121,7 @@ class TensorRTEngineManager:
                     "perf_batch_swap", "max_threads", "auto_thread_selection",
                     "cpu_ort_intra_threads", "cpu_ort_inter_threads",
                     "cpu_opencv_threads", "cpu_ffmpeg_threads",
+                    "cpu_distribution", "cpu_e_limit",
                     "perf_encoder_preset", "output_video_codec",
                     "track_identities", "temporal_detection", "stabilize_face",
                     "stabilize_mask", "stabilize_enhancer", "upscale_after_swap",
@@ -945,6 +1131,15 @@ class TensorRTEngineManager:
             # these are not universal settings even on one GPU.
             "workload": workload.as_dict(),
         }
+        # Controlled CPU-policy A/B runs arrive through the environment so a
+        # benchmark need not rewrite the user's config. Include those values
+        # in the profile namespace; otherwise a cached auto profile could
+        # silently erase a requested P-only or P+E candidate.
+        identity["runtime_settings"]["cpu_distribution"] = os.environ.get(
+            "ROOP_CPU_DISTRIBUTION",
+            _value(settings, "cpu_distribution", "auto"))
+        identity["runtime_settings"]["cpu_e_limit"] = os.environ.get(
+            "ROOP_CPU_E_LIMIT", _value(settings, "cpu_e_limit", "auto"))
         raw = json.dumps(identity, sort_keys=True, separators=(",", ":")).encode()
         return hashlib.sha256(raw).hexdigest()[:24]
 
@@ -1126,9 +1321,39 @@ class AutoTuner:
         small = hardware.vram_total_gb > 0 and hardware.vram_total_gb < 7.0
         gpu_cap = 8 if small else 10
         cpu_cap = max(1, min(hardware.cpu_logical_cores, gpu_cap))
-        if workload.estimated_complexity >= 3.5:
-            cpu_cap = max(1, min(cpu_cap, 8 if not small else 6))
         worker = max(1, min(cpu_cap, hardware.cpu_physical_cores or cpu_cap))
+        distribution = str(os.environ.get(
+            "ROOP_CPU_DISTRIBUTION",
+            _value(settings, "cpu_distribution", "auto")) or "auto").strip().lower()
+        if distribution in ("p+e", "p_e", "p-plus-e", "pplus_e"):
+            distribution = "p_plus_e"
+        elif distribution in ("p-priority-e", "p_priority_e_limited",
+                              "p+e-limited", "p_plus_e_limited"):
+            distribution = "p_priority_e"
+        elif distribution not in ("auto", "p_only", "p_plus_e", "p_priority_e"):
+            distribution = "auto"
+        p_available = (len(hardware.cpu_performance_indices) or
+                       hardware.cpu_performance_cores)
+        e_available = (len(hardware.cpu_efficiency_indices) or
+                       hardware.cpu_efficiency_cores)
+        if distribution != "auto" and p_available and e_available:
+            if distribution == "p_only":
+                worker = max(1, min(hardware.cpu_logical_cores, p_available))
+            elif distribution == "p_plus_e":
+                worker = max(1, min(hardware.cpu_logical_cores,
+                                    p_available + e_available))
+            else:
+                try:
+                    e_limit = int(os.environ.get(
+                        "ROOP_CPU_E_LIMIT", max(1, e_available // 4)))
+                except (TypeError, ValueError):
+                    e_limit = max(1, e_available // 4)
+                e_limit = max(1, min(e_available, e_limit))
+                worker = max(1, min(hardware.cpu_logical_cores,
+                                    p_available + e_limit))
+        if workload.estimated_complexity >= 3.5 and distribution == "auto":
+            cpu_cap = max(1, min(cpu_cap, 8 if not small else 6))
+            worker = max(1, min(worker, cpu_cap))
         contexts = 1 if small or not hardware.tensorrt_available else 2
         detector_pool = 0 if small or not hardware.cuda_available else 2
         detmask_pool = 0 if small or not hardware.cuda_available else 2
@@ -1216,7 +1441,12 @@ class AutoTuner:
         in_flight_frames = 1 if small else max(1, min(4, queue_depth + 1))
         p_cores = max(0, hardware.cpu_performance_cores)
         e_cores = max(0, hardware.cpu_efficiency_cores)
-        if p_cores or e_cores:
+        if hardware.cpu_performance_indices or hardware.cpu_efficiency_indices:
+            p_capacity = len(hardware.cpu_performance_indices)
+            e_capacity = len(hardware.cpu_efficiency_indices)
+            cpu_p = min(worker, p_capacity)
+            cpu_e = min(max(0, worker - cpu_p), e_capacity)
+        elif p_cores or e_cores:
             cpu_p = min(worker, p_cores)
             cpu_e = min(max(0, worker - cpu_p), e_cores)
         else:
@@ -1247,6 +1477,7 @@ class AutoTuner:
             "cuda_graph_enabled": graph_readiness["safe"],
             "cpu_performance_threads": cpu_p,
             "cpu_efficiency_threads": cpu_e,
+            "cpu_distribution": distribution,
             "ram_buffer_mb": ResourceManager.frame_budget_mb(hardware, workload),
             "backend": backend,
             "encoder": encoder,
@@ -1275,6 +1506,7 @@ class AutoTuner:
             "cuda_auxiliary_streams": "trt_auxiliary_streams",
             "cuda_graph_enabled": "trt_cuda_graph",
             "ffmpeg_threads": "cpu_ffmpeg_threads",
+            "cpu_distribution": "cpu_distribution",
         }
         for field_name, setting_name in fields.items():
             if _is_auto(settings, setting_name):
@@ -1295,7 +1527,7 @@ class AutoTuner:
                 raw = 0
             return ResourceManager.clamp(
                 next(name for name, setting in fields.items() if setting == setting_name),
-                raw)
+                raw, hardware)
 
         values["worker_count"] = _explicit_int("max_threads", values["worker_count"])
         values["detector_pool_size"] = _explicit_int("perf_detector_pool", values["detector_pool_size"])
@@ -1335,7 +1567,7 @@ class AutoTuner:
             values["encoder"] = _short(_value(settings, "output_video_codec", values["encoder"]))
 
         for name in ResourceManager.BOUNDS:
-            values[name] = ResourceManager.clamp(name, values[name])
+            values[name] = ResourceManager.clamp(name, values[name], hardware)
         tuning = RuntimeTuning(**values)
         return tuning, tuple(sorted(set(explicit))), tuple(sorted(set(automatic))), tuple(reasons)
 
@@ -1409,7 +1641,8 @@ class RuntimeAutotuner:
         "trt_concurrency": ("perf_trt_pool",),
         "batch_size": ("perf_batch_swap",),
         "cpu_threading": ("max_threads", "cpu_ort_intra_threads",
-                           "cpu_ort_inter_threads", "cpu_opencv_threads"),
+                           "cpu_ort_inter_threads", "cpu_opencv_threads",
+                           "cpu_distribution"),
         "queue_buffer": (),
         "encoder": ("output_video_codec", "perf_encoder_preset"),
     }
@@ -1485,12 +1718,28 @@ class RuntimeAutotuner:
         if not self._explicit(settings, "cpu_threading"):
             worker_values = sorted(set((max(1, base.worker_count // 2),
                                         base.worker_count,
-                                        min(ResourceManager.BOUNDS["worker_count"][1],
+                                        min(hardware.cpu_logical_cores,
                                             base.worker_count + 2))))
             for value in worker_values:
                 add("cpu_threading", worker_count=value,
                     cpu_performance_threads=value,
                     cpu_efficiency_threads=0)
+            p_capacity = len(hardware.cpu_performance_indices)
+            e_capacity = len(hardware.cpu_efficiency_indices)
+            if p_capacity and e_capacity:
+                e_limit = max(1, e_capacity // 4)
+                add("cpu_threading", cpu_distribution="p_only",
+                    worker_count=p_capacity,
+                    cpu_performance_threads=p_capacity,
+                    cpu_efficiency_threads=0)
+                add("cpu_threading", cpu_distribution="p_priority_e",
+                    worker_count=p_capacity + e_limit,
+                    cpu_performance_threads=p_capacity,
+                    cpu_efficiency_threads=e_limit)
+                add("cpu_threading", cpu_distribution="p_plus_e",
+                    worker_count=p_capacity + e_capacity,
+                    cpu_performance_threads=p_capacity,
+                    cpu_efficiency_threads=e_capacity)
         if not self._explicit(settings, "queue_buffer"):
             for value in sorted(set((1, base.queue_depth, min(4, base.queue_depth + 1)))):
                 add("queue_buffer", queue_depth=value,
@@ -1782,14 +2031,33 @@ class RuntimeMonitor:
             result["ram_used_gb"] = process.memory_info().rss / 2**30
             result["ram_utilization_pct"] = float(psutil.virtual_memory().percent)
             per_cpu = psutil.cpu_percent(interval=None, percpu=True)
-            p_indices = self._indices_from_env("ROOP_CPU_P_INDICES")
-            e_indices = self._indices_from_env("ROOP_CPU_E_INDICES")
+            p_indices = list(getattr(self.hardware,
+                                     "cpu_performance_indices", ()) or
+                             self._indices_from_env("ROOP_CPU_P_INDICES"))
+            e_indices = list(getattr(self.hardware,
+                                     "cpu_efficiency_indices", ()) or
+                             self._indices_from_env("ROOP_CPU_E_INDICES"))
             if p_indices:
                 result["p_core_utilization_pct"] = self._average(
                     [per_cpu[index] for index in p_indices if index < len(per_cpu)])
             if e_indices:
                 result["e_core_utilization_pct"] = self._average(
                     [per_cpu[index] for index in e_indices if index < len(per_cpu)])
+            frequency = psutil.cpu_freq()
+            if frequency is not None:
+                result["cpu_frequency_mhz"] = float(getattr(frequency, "current", 0.0) or 0.0)
+                result["cpu_max_frequency_mhz"] = float(getattr(frequency, "max", 0.0) or 0.0)
+            temperatures = getattr(psutil, "sensors_temperatures", lambda: {})()
+            cpu_temps = []
+            for entries in (temperatures or {}).values():
+                for entry in entries:
+                    label = str(getattr(entry, "label", "") or "").lower()
+                    if any(token in label for token in ("cpu", "package", "core", "tctl", "tdie")):
+                        current = _number(getattr(entry, "current", 0.0))
+                        if current > 0:
+                            cpu_temps.append(current)
+            if cpu_temps:
+                result["cpu_temperature_c"] = max(cpu_temps)
         except Exception:
             pass
 
@@ -2269,6 +2537,7 @@ class RuntimeOptimizer:
             "ROOP_RUNTIME_CUDA_GRAPH": int(tuning.cuda_graph_enabled),
             "ROOP_RUNTIME_CPU_P_THREADS": tuning.cpu_performance_threads,
             "ROOP_RUNTIME_CPU_E_THREADS": tuning.cpu_efficiency_threads,
+            "ROOP_CPU_DISTRIBUTION": tuning.cpu_distribution,
             "ROOP_RUNTIME_RAM_BUFFER_MB": tuning.ram_buffer_mb,
             "ROOP_RUNTIME_ENCODER": tuning.encoder,
             "ROOP_RUNTIME_ENCODER_PRESET": tuning.encoder_preset,
@@ -2321,7 +2590,66 @@ class RuntimeOptimizer:
         os.environ["ROOP_RUNTIME_PROFILE_KEY"] = profile.cache_key
         os.environ["ROOP_RUNTIME_PROFILE_JSON"] = json.dumps(profile.as_dict(), separators=(",", ":"))
         os.environ["ROOP_RUNTIME_PROFILE_ORIGIN"] = "optimizer"
+        affinity = apply_cpu_affinity(profile.hardware, tuning.cpu_distribution)
+        if affinity.get("applied"):
+            applied["ROOP_CPU_AFFINITY"] = affinity["indices"]
         return applied
+
+
+def _normalise_cpu_distribution(value: Any) -> str:
+    mode = str(value or "auto").strip().lower()
+    if mode in ("p+e", "p_e", "p-plus-e", "pplus_e"):
+        return "p_plus_e"
+    if mode in ("p-priority-e", "p_priority_e_limited",
+                "p+e-limited", "p_plus_e_limited"):
+        return "p_priority_e"
+    if mode not in ("auto", "p_only", "p_plus_e", "p_priority_e"):
+        return "auto"
+    return mode
+
+
+def apply_cpu_affinity(hardware: HardwareProfile, distribution: Any = "auto") -> dict:
+    """Apply an explicit, measured P/E policy to this process.
+
+    Automatic mode deliberately leaves the OS scheduler free.  The explicit
+    modes are for controlled A/B runs and an operator who has chosen a
+    validated policy; affinity is never inferred from a GPU model or guessed
+    from the CPU brand string.
+    """
+    mode = _normalise_cpu_distribution(
+        os.environ.get("ROOP_CPU_DISTRIBUTION", distribution))
+    p_indices = tuple(int(index) for index in hardware.cpu_performance_indices)
+    e_indices = tuple(int(index) for index in hardware.cpu_efficiency_indices)
+    if mode == "auto" or not hardware.os_affinity_supported:
+        return {"applied": False, "mode": mode, "indices": (),
+                "reason": ("automatic scheduling" if mode == "auto"
+                           else "OS affinity unavailable")}
+    if mode == "p_only":
+        selected = p_indices
+    elif mode == "p_plus_e":
+        selected = p_indices + e_indices
+    else:
+        try:
+            limit = int(os.environ.get("ROOP_CPU_E_LIMIT", ""))
+        except (TypeError, ValueError):
+            limit = 0
+        if limit <= 0:
+            limit = max(1, len(e_indices) // 4)
+        selected = p_indices + e_indices[:max(1, min(len(e_indices), limit))]
+    selected = tuple(sorted(set(selected)))
+    if not selected:
+        return {"applied": False, "mode": mode, "indices": (),
+                "reason": "measured P/E indices unavailable"}
+    try:
+        import psutil
+        psutil.Process(os.getpid()).cpu_affinity(list(selected))
+    except Exception as exc:
+        return {"applied": False, "mode": mode, "indices": selected,
+                "reason": "%s: %s" % (type(exc).__name__, exc)}
+    print("[CPU] affinity distribution=%s logical=%d source=%s" %
+          (mode, len(selected), hardware.cpu_topology_source), flush=True)
+    return {"applied": True, "mode": mode, "indices": selected,
+            "reason": "measured OS CPU-set affinity"}
 
 
 def small_card_enhancer_policy(hardware: HardwareProfile,
@@ -2383,6 +2711,7 @@ __all__ = [
     "PrecisionSelector", "ProfileStore", "ResourceManager", "RuntimeMonitor",
     "SafeAdaptiveController", "RuntimeAdaptiveController",
     "RuntimeOptimizer", "RuntimeProfile", "RuntimeTuning", "TensorRTEngineManager",
-    "WorkloadProfile", "WorkloadProfiler", "small_card_enhancer_policy",
+    "WorkloadProfile", "WorkloadProfiler", "apply_cpu_affinity",
+    "detect_cpu_topology", "small_card_enhancer_policy",
     "small_card_decode_policy",
 ]
