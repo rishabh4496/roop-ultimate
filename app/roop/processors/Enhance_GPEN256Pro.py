@@ -174,7 +174,10 @@ class Enhance_GPEN256Pro:
         from roop.utilities import (get_onnx_session_options,
                                     get_small_card_safe_providers)
         opts = get_onnx_session_options()
-        providers = get_small_card_safe_providers(roop.globals.execution_providers)
+        providers = get_small_card_safe_providers(
+            roop.globals.execution_providers,
+            model_path=model_path,
+            stage='enhancer:gpen256pro')
         providers, _precision = providers_for('gpen_256_pro', providers, model_path)
         self._cpu_only = providers == ['CPUExecutionProvider']
 

@@ -15,8 +15,11 @@ from roop.runtime_optimizer import (
     RuntimeOptimizer,
     RuntimeProfile,
     RuntimeTuning,
+    PrecisionSelector,
     TensorRTEngineManager,
     WorkloadProfile,
+    small_card_decode_policy,
+    small_card_enhancer_policy,
 )
 
 
@@ -62,6 +65,62 @@ def _workload(faces=1, enhanced=True, stabilized=True, width=1280, height=720):
 
 
 class RuntimeOptimizerTests(unittest.TestCase):
+    def test_small_card_precision_is_reported_as_effective_fp32(self):
+        selector = PrecisionSelector()
+        self.assertEqual(selector.select({"trt_precision": "mixed"},
+                                         _hardware(6.0)), "fp32")
+        self.assertEqual(selector.select({"trt_precision": "fp16"},
+                                         _hardware(6.0)), "fp32")
+        self.assertEqual(selector.select({"trt_precision": "mixed"},
+                                         _hardware(12.0)), "mixed")
+
+    def test_small_card_graph_is_explicitly_not_admitted(self):
+        manager = CUDAGraphManager()
+        result = manager.readiness(
+            {"trt_cuda_graph": True}, _workload(), _hardware(6.0))
+        self.assertTrue(result["requested"])
+        self.assertFalse(result["safe"])
+        self.assertIn("sub-7GB", result["reason"])
+
+    def test_small_card_enhancer_policy_is_hardware_adaptive(self):
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("ROOP_SMALL_CARD_ENHANCER", None)
+            small = small_card_enhancer_policy(_hardware(6.0), "GPEN 256 Pro")
+            desktop = small_card_enhancer_policy(_hardware(12.0), "GPEN 256 Pro")
+        self.assertTrue(small["changed"])
+        self.assertEqual(small["effective"], "None")
+        self.assertFalse(desktop["changed"])
+        self.assertEqual(desktop["effective"], "GPEN 256 Pro")
+
+    def test_small_card_enhancer_keep_override_is_explicit(self):
+        with patch.dict(os.environ, {"ROOP_SMALL_CARD_ENHANCER": "keep"}):
+            result = small_card_enhancer_policy(_hardware(6.0), "GPEN 256 Pro")
+        self.assertFalse(result["changed"])
+        self.assertEqual(result["effective"], "GPEN 256 Pro")
+
+    def test_small_card_auto_decode_prefers_lower_rss_cpu_path(self):
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("ROOP_NVDEC", None)
+            os.environ.pop("ROOP_SMALL_CARD_NVDEC", None)
+            result = small_card_decode_policy(_hardware(6.0))
+        self.assertTrue(result["changed"])
+        self.assertEqual(result["effective"], "0")
+        self.assertIn("RSS", result["reason"])
+
+    def test_small_card_decode_explicit_nvdec_is_not_overridden(self):
+        with patch.dict(os.environ, {"ROOP_NVDEC": "1"}):
+            result = small_card_decode_policy(_hardware(6.0))
+        self.assertFalse(result["changed"])
+        self.assertEqual(result["effective"], "1")
+
+    def test_desktop_auto_decode_is_unchanged(self):
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("ROOP_NVDEC", None)
+            os.environ.pop("ROOP_SMALL_CARD_NVDEC", None)
+            result = small_card_decode_policy(_hardware(12.0))
+        self.assertFalse(result["changed"])
+        self.assertEqual(result["effective"], "auto")
+
     def test_stream_policy_is_bounded_and_small_gpu_is_serial(self):
         manager = CUDAGraphManager()
         small = manager.stream_policy({}, _workload(faces=2),
@@ -206,6 +265,51 @@ class RuntimeOptimizerTests(unittest.TestCase):
             hardware, workload,
             {"swap_model": "realswap", "trt_auxiliary_streams": 1}, "mixed")
         self.assertNotEqual(serial, overlapped)
+
+    def test_cache_key_isolated_by_architecture_and_vram(self):
+        manager = TensorRTEngineManager()
+        workload = _workload()
+        ampere = HardwareProfile(
+            gpu_name="same graph device", gpu_vendor="nvidia",
+            architecture="Ampere", compute_capability="8.6",
+            vram_total_gb=6.0, cuda_available=True,
+            cuda_version="12.8", driver_version="616.56",
+            tensorrt_available=True, tensorrt_version="10.9",
+            onnxruntime_version="1.23.2")
+        ada = HardwareProfile(
+            gpu_name="same graph device", gpu_vendor="nvidia",
+            architecture="Ada Lovelace", compute_capability="8.9",
+            vram_total_gb=12.0, cuda_available=True,
+            cuda_version="12.8", driver_version="616.56",
+            tensorrt_available=True, tensorrt_version="10.9",
+            onnxruntime_version="1.23.2")
+        self.assertNotEqual(manager.cache_key(ampere, workload, {}, "mixed"),
+                            manager.cache_key(ada, workload, {}, "mixed"))
+
+    def test_cache_key_changes_for_model_revision(self):
+        manager = TensorRTEngineManager()
+        hardware = _hardware(12.0)
+        workload = _workload()
+        first = manager.cache_key(
+            hardware, workload, {"swap_model": "realswap", "model_hash": "a"}, "mixed")
+        second = manager.cache_key(
+            hardware, workload, {"swap_model": "realswap", "model_hash": "b"}, "mixed")
+        self.assertNotEqual(first, second)
+
+    def test_architecture_mapping_uses_compute_capability_not_model_name(self):
+        from roop.runtime_optimizer import HardwareProfiler
+        self.assertEqual(HardwareProfiler._architecture((8, 6)), "Ampere")
+        self.assertEqual(HardwareProfiler._architecture((8, 9)), "Ada Lovelace")
+        self.assertEqual(HardwareProfiler._architecture((9, 0)), "Hopper")
+        self.assertEqual(HardwareProfiler._architecture((12, 0)), "SM 12.0")
+
+    def test_profile_serializes_capabilities_without_claiming_unknown_modes(self):
+        hardware = _hardware(6.0)
+        payload = hardware.as_dict()
+        self.assertIn("capabilities", payload)
+        self.assertFalse(payload["capabilities"]["bf16"])
+        self.assertFalse(payload["capabilities"]["fp8"])
+        self.assertEqual(payload["vram_tier"], "small")
 
     def test_profile_store_round_trips_atomically(self):
         hardware = _hardware(6.0, physical=8, logical=16)

@@ -125,6 +125,42 @@ def resolve_provider_names(requested: Iterable[str] | None,
     return resolved
 
 
+def provider_admission(requested: str | None = None, device_id: int = 0) -> dict:
+    """Explain the runtime admission decision for the requested backend.
+
+    This is deliberately separate from provider resolution so diagnostics can
+    distinguish "TensorRT is not installed" from "TensorRT was intentionally
+    rejected for this hardware tier".  The latter is the expected Phase 4
+    behavior on a sub-7GB device unless the user explicitly opts into the
+    experimental override.
+    """
+    configured = str(requested or os.environ.get("ROOP_EXECUTION_PROVIDER", "auto"))
+    small = _small_gpu(device_id)
+    allow_small_trt = os.environ.get("ROOP_ALLOW_TRT_SMALL_GPU", "").strip().lower() in (
+        "1", "true", "yes", "on")
+    short = _name(configured).lower().replace("executionprovider", "")
+    if small and short in ("auto", "tensorrt") and not allow_small_trt:
+        return {
+            "requested": configured,
+            "admitted": False,
+            "reason": "sub-7GB safety policy rejects TensorRT; use CUDA/CPU fallback",
+            "override": False,
+        }
+    if small and short in ("auto", "tensorrt") and allow_small_trt:
+        return {
+            "requested": configured,
+            "admitted": True,
+            "reason": "explicit ROOP_ALLOW_TRT_SMALL_GPU override",
+            "override": True,
+        }
+    return {
+        "requested": configured,
+        "admitted": True,
+        "reason": "hardware tier permits requested backend; availability is checked separately",
+        "override": False,
+    }
+
+
 def diagnostic_report(device_id: int = 0, requested: str | None = None) -> dict:
     """Return JSON-safe diagnostics for logs and the diagnostics panel."""
     available = _available()
@@ -143,6 +179,7 @@ def diagnostic_report(device_id: int = 0, requested: str | None = None) -> dict:
         "cuda_visible": cuda,
         "gpu": gpu,
         "vram_gb": round(vram_gb, 2),
+        "admission": provider_admission(configured, device_id),
         "resolved": resolve_provider_names([configured], device_id),
     }
 

@@ -18,8 +18,15 @@ Primary validation GPUs:
 Both must remain first-class targets throughout the project.
 
 Current hardware available for validation:
-- RTX 4070: AVAILABLE (current host)
-- RTX 3060: UNAVAILABLE on current host; prior physical validation is recorded
+- RTX 3060 Laptop: AVAILABLE (current host; continuation audit 2026-08-29)
+- RTX 4070: not physically present on the current host; prior physical results
+  remain recorded separately
+
+The user authorized a continuation exception for the physical RTX 3060 Phase 3
+RSS failure. This permits Phases 5–9 to be exercised and documented, but does
+not waive the strict `<2.5 GB` RSS acceptance requirement and does not make the
+3060 or the project dual-GPU accepted. See the dated continuation section in
+`OPTIMIZATION_PROGRESS.md` for the separate 3060 results and exact residuals.
 
 IMPORTANT:
 Do not claim RTX 3060 compatibility based solely on code inspection.
@@ -59,21 +66,30 @@ Before doing anything:
 
 **Session:** 1
 
-**Current phase:** PHASE 9 - NVDEC / Video Decode Pipeline (RTX 3060 validation pending)
+**Current phase:** PHASE 9 - NVDEC / Video Decode Pipeline (RTX 3060 validation active)
 
 **Phase status:** RTX 4070 Phase 9 implementation/benchmark validation is
-complete as recorded below; physical RTX 3060 Laptop validation is pending. The Phase 4 RSS gate,
-Phase 5 quality matrix, and the repeatable adaptive-NVDEC attribution
-investigation remain unresolved.
+complete as recorded below; physical RTX 3060 Phases 0–9 have been exercised.
+The strict Phase 3/4 RSS gate remains unresolved, while the Phase 5 low-
+precision matrix and Phase 6 TRT graph A/B are not admitted under the safe
+small-card policy.
 
-**Last completed implementation:** Phase 9 NVDEC implementation; RTX 3060
-validation checkpoint pending
+**Last completed implementation:** Phase 9 NVDEC implementation and physical
+RTX 3060 correctness audit
 
 **Immediate next action:**
-Investigate the repeatable adaptive-NVDEC face-attribution difference and
-complete the bounded Phase 5 quality fixture on the RTX 4070; then run the same
-Phase 0–9 acceptance workload on the physical RTX 3060 Laptop. Preserve the
-documented strict RSS failure and do not reuse RTX 4070 results or caches.
+Resolve or explicitly disposition the remaining strict RSS gate on the
+physical RTX 3060. The full auto-capture quality gate has now been repeated;
+preserve the strict `<2.5 GB` requirement and do not reuse RTX 4070 cache
+entries or benchmark results.
+
+**Latest 2026-08-29 checkpoint:** The physical 3060 now defers TensorRT
+Builder probing, releases auxiliary analysis sessions after complete temporal
+replay, and selects XSeg-only RealityUX by default on the detected sub-7 GiB
+CUDA tier. Fresh 200-frame CPU and adaptive-NVDEC runs completed without
+application errors and recorded zero wrong-faceset applications; peak RSS was
+2.622 GB / 2.786 GB, so Phase 3/4 remains blocked by the strict gate. RTX 4070
+behavior remains separately profiled and unmodified.
 
 ---
 
@@ -562,3 +578,63 @@ required follow-up is the same precision, graph/stream, batching, transfer,
 NVDEC, resource, attribution, and strict `<2.5 GB RSS` tests on the physical
 6 GB laptop with separate caches. Do not advance dual-GPU acceptance on the
 4070 evidence alone.
+
+## Latest physical RTX 3060 audit — 2026-08-29
+
+The previous statement above is historical. The physical laptop was exercised
+through Phases 0–9 in the continuation audit. Pinokio is online and ready;
+the live profile reports Ampere/SM 8.6, 6.0 GB VRAM, CUDA 12.8, driver 616.56,
+TensorRT 10.9.0.34, ONNX Runtime 1.23.2, FP16/BF16 Tensor Cores, no exposed
+INT8/FP8, and working NVDEC/NVENC capability. The profile key is hardware
+specific and no RTX 4070 profile/cache was reused.
+
+The safe 3060 runtime is verified as single-context/single-worker: TRT,
+detmask, and expression pools are zero, detector pool is one, and stream policy
+is one stream with no overlap. The full benchmark, transfer benchmark, decode
+matrix, precision/quality unit contracts, and two fresh 200-frame end-to-end
+runs all completed without application errors. Phase 9 CPU and adaptive-NVDEC
+repeat runs both returned code 0 and recorded zero wrong-faceset applications.
+
+The remaining strict acceptance blocker is Phase 3/4 descendant RSS: the
+configured GPEN 256 Pro + RealityUX run measured 2.622 GB peak on CPU decode
+and 2.786 GB with adaptive NVDEC, above the required `<2.5 GB`. This remains a
+real blocked gate, not a fabricated pass. The low-precision TensorRT and TRT
+graph A/B matrices are not admitted on this sub-7 GB fallback, so they remain
+not-applicable until a safe, bounded admission path exists. The RTX 4070 is not
+physically present on the current host; its validation remains a separate
+record and is not used to close the 3060 gate.
+
+Final verification: full suite `1377` tests, `1` skipped, all passing;
+launcher syntax, Python compilation, and `git diff --check` pass. Primary
+evidence is recorded in the latest dated section of
+`OPTIMIZATION_PROGRESS.md` and in `app/output/phase6_policy_3060.json`,
+`app/output/phase8_transfer_3060.json`, `app/output/phase9_decode_3060.json`,
+and `app/output/phase3_9_repeat_3060/`.
+
+## RTX 3060 limitation fixes — 2026-08-29
+
+The physical 6 GB laptop now has hardware-adaptive small-card admission:
+
+- non-`None` enhancers are disabled before processor construction in automatic
+  mode when the detected GPU is below 7 GB; use
+  `ROOP_SMALL_CARD_ENHANCER=keep` only for an explicit experimental run;
+- automatic decode selects CPU on this tier because the measured NVDEC arm
+  used more host RSS without improving end-to-end FPS; use `ROOP_NVDEC=1` or
+  `ROOP_SMALL_CARD_NVDEC=keep` only for an explicit A/B;
+- TRT/detmask/expression pools remain `0`, detector pool remains `1`, and the
+  effective swap precision is guarded FP32;
+- CUDA-graph readiness is rejected on the small-card fallback, while the 4070
+  graph/provider policy remains independent.
+
+Physical 200-frame validation: automatic CPU decode returned code 0 at 1.82
+FPS and 2.254 GB peak descendant RSS; explicit adaptive NVDEC returned code 0
+at 1.82 FPS but reached 3.113 GB, so it is not the 3060 default. A 20-frame
+automatic smoke run also exited cleanly and showed the fallback before model
+processor loading. The pipeline reported zero wrong-faceset decisions, but the
+benchmark's independent output re-measurement still reported 18/200 CPU and
+19/200 NVDEC other-faceset matches; keep that quality issue separate from the
+now-passing automatic memory/stability path.
+
+Focused optimizer/GPU safety tests: `104 OK`. Do not claim low-precision TRT
+or CUDA-graph E2E success: those paths remain safely rejected/not applicable
+on the 6 GB profile.

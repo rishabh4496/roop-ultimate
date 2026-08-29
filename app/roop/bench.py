@@ -197,6 +197,13 @@ def vram_free_total_gb():
 
 
 def probe_device():
+    """Collect the same runtime identity used by profile/cache selection.
+
+    Keeping this probe shared with ``RuntimeOptimizer`` is important: a
+    benchmark result must be attributable to the exact GPU/software stack that
+    will consume it.  Missing optional probes stay explicit rather than being
+    filled with an assumed RTX 3060/4070 value.
+    """
     info = {
         'gpu_name': '', 'total_vram_gb': 0.0, 'free_vram_gb': 0.0,
         'cpu_physical': 0, 'cpu_logical': 0, 'platform': platform.platform(),
@@ -204,23 +211,61 @@ def probe_device():
         'active_providers': [], 'cuda_ok': False,
     }
     try:
+        from roop.runtime_optimizer import HardwareProfiler
+        hardware = HardwareProfiler().profile()
+        info.update({
+            'device_id': hardware.device_id,
+            'gpu_name': hardware.gpu_name,
+            'architecture': hardware.architecture,
+            'compute_capability': hardware.compute_capability,
+            'vram_tier': hardware.vram_tier,
+            'total_vram_gb': round(hardware.vram_total_gb, 2),
+            'free_vram_gb': round(hardware.vram_available_gb, 2),
+            'available_vram_gb': round(hardware.vram_available_gb, 2),
+            'cuda_ok': hardware.cuda_available,
+            'cuda_version': hardware.cuda_version,
+            'driver_version': hardware.driver_version,
+            'tensorrt_version': hardware.tensorrt_version,
+            'onnxruntime_version': hardware.onnxruntime_version,
+            'tensor_core_capabilities': list(hardware.tensor_core_capabilities),
+            'fp16_supported': hardware.fp16_supported,
+            'bf16_supported': hardware.bf16_supported,
+            'int8_supported': hardware.int8_supported,
+            'fp8_supported': hardware.fp8_supported,
+            'nvdec_available': hardware.nvdec_available,
+            'nvdec_codecs': list(hardware.nvdec_codecs),
+            'nvenc_available': hardware.nvenc_available,
+            'nvenc_codecs': list(hardware.nvenc_codecs),
+            'cpu_physical': hardware.cpu_physical_cores,
+            'cpu_logical': hardware.cpu_logical_cores,
+            'ram_total_gb': hardware.ram_total_gb,
+            'ram_available_gb': hardware.ram_available_gb,
+            'platform': hardware.platform or info['platform'],
+        })
+    except Exception:
+        # Keep the legacy lightweight probe as a fallback for partial installs.
+        # It still reports unknown fields as unknown; it never substitutes a
+        # result from another GPU.
+        pass
+    try:
         import psutil
-        info['cpu_physical'] = psutil.cpu_count(logical=False) or 0
-        info['cpu_logical'] = psutil.cpu_count(logical=True) or 0
+        info['cpu_physical'] = info['cpu_physical'] or psutil.cpu_count(logical=False) or 0
+        info['cpu_logical'] = info['cpu_logical'] or psutil.cpu_count(logical=True) or 0
     except Exception:
         info['cpu_logical'] = os.cpu_count() or 4
         info['cpu_physical'] = max(1, info['cpu_logical'] // 2)
     try:
         torch = _torch()
-        if torch.cuda.is_available():
+        if torch.cuda.is_available() and not info['gpu_name']:
             props = torch.cuda.get_device_properties(0)
             info['gpu_name'] = props.name
             info['cuda_ok'] = True
     except Exception:
         pass
     free, total = vram_free_total_gb()
-    info['free_vram_gb'] = round(free, 2)
-    info['total_vram_gb'] = round(total, 2)
+    info['free_vram_gb'] = info['free_vram_gb'] or round(free, 2)
+    info['total_vram_gb'] = info['total_vram_gb'] or round(total, 2)
+    info['available_vram_gb'] = info['free_vram_gb']
     try:
         info['ort_providers'] = list(onnxruntime.get_available_providers())
     except Exception:
@@ -2252,11 +2297,29 @@ def apply_recommendation(result):
         'detector_pool': 'perf_detector_pool',
         'expr_pool': 'perf_expr_pool',
     }
+    # A calibration run may measure wider candidate pools, but those
+    # candidates are not an admission decision.  On a detected sub-7GB GPU,
+    # persist the tier's auto policy (0/0 pooled contexts and one detector)
+    # rather than turning a benchmark result into a restart-time OOM risk.
+    small_gpu = False
+    try:
+        import torch
+        small_gpu = bool(torch.cuda.is_available() and
+                         torch.cuda.get_device_properties(0).total_memory /
+                         (1024 ** 3) < 7.0)
+    except Exception:
+        pass
     for knob, key in pool_keys.items():
         val = (rec.get('pools') or {}).get(knob)
         if val is None:
             continue
         current = str(getattr(cfg, key, 'auto') or 'auto').strip().lower()
+        if small_gpu:
+            if current not in ('', 'auto'):
+                setattr(cfg, key, 'auto')
+                pending.setdefault('safety_resets', {})[key] = {
+                    'from': current, 'to': 'auto'}
+            continue
         # Any non-auto value is an operator choice, including a value written by
         # an earlier benchmark. Automatic tuning may report a recommendation but
         # must not silently replace that explicit choice.

@@ -435,6 +435,31 @@ class TheResultReachesResolveThreads(unittest.TestCase):
 
 
 class PoolRecommendationsRespectExplicitOverrides(unittest.TestCase):
+    def test_small_card_benchmark_does_not_persist_wide_pools(self):
+        from settings import Settings
+        saved = g.CFG
+        try:
+            g.CFG = Settings(os.path.join(HERE, 'no-such-config.yaml'))
+            g.CFG.save = lambda: None
+            g.CFG.perf_trt_pool = 'auto'
+            g.CFG.perf_detmask_pool = 'auto'
+            g.CFG.perf_detector_pool = 'auto'
+            g.CFG.perf_expr_pool = 'auto'
+            fake_props = type('Props', (), {'total_memory': 6 * 1024 ** 3})()
+            with mock.patch('torch.cuda.is_available', return_value=True), \
+                    mock.patch('torch.cuda.get_device_properties',
+                               return_value=fake_props):
+                out = bench.apply_recommendation({'recommend': {
+                    'pools': {'trt_pool': 3, 'detmask_pool': 3,
+                              'detector_pool': 2, 'expr_pool': 1}}})
+            self.assertEqual(g.CFG.perf_trt_pool, 'auto')
+            self.assertEqual(g.CFG.perf_detmask_pool, 'auto')
+            self.assertEqual(g.CFG.perf_detector_pool, 'auto')
+            self.assertEqual(g.CFG.perf_expr_pool, 'auto')
+            self.assertNotIn('safety_resets', out['pending_restart'])
+        finally:
+            g.CFG = saved
+
     def test_numeric_pool_settings_are_not_replaced(self):
         from settings import Settings
         saved = g.CFG
@@ -445,9 +470,13 @@ class PoolRecommendationsRespectExplicitOverrides(unittest.TestCase):
             g.CFG.perf_detmask_pool = '2'
             g.CFG.perf_detector_pool = '2'
             g.CFG.perf_expr_pool = '2'
-            out = bench.apply_recommendation({'recommend': {
-                'pools': {'trt_pool': 3, 'detmask_pool': 4,
-                          'detector_pool': 6, 'expr_pool': 3}}})
+            fake_props = type('Props', (), {'total_memory': 12 * 1024 ** 3})()
+            with mock.patch('torch.cuda.is_available', return_value=True), \
+                    mock.patch('torch.cuda.get_device_properties',
+                               return_value=fake_props):
+                out = bench.apply_recommendation({'recommend': {
+                    'pools': {'trt_pool': 3, 'detmask_pool': 4,
+                              'detector_pool': 6, 'expr_pool': 3}}})
             self.assertEqual(g.CFG.perf_trt_pool, '2')
             self.assertEqual(g.CFG.perf_detmask_pool, '2')
             self.assertEqual(g.CFG.perf_detector_pool, '2')

@@ -171,13 +171,23 @@ def _warn_if_oversubscribed(env_name, requested, auto_value, gb):
 
 def _resolve(env_name, auto_value, gb) -> int:
     """An explicit override wins, exactly as given. Unset/blank uses the
-    VRAM-tiered auto default."""
+    VRAM-tiered auto default. The sub-7GB safety tier is an exception: its
+    single-context/global-lock contract is a hard admission boundary, so a
+    stale benchmark recommendation cannot turn into an OOM-prone pool after a
+    restart."""
     raw = os.environ.get(env_name)
     if raw is not None and raw != '':
         try:
             requested = max(0, int(raw))
         except ValueError:
             return auto_value
+        if gb > 0 and gb < 7.0 and env_name in (
+                'ROOP_TRT_POOL', 'ROOP_DETMASK_POOL', 'ROOP_EXPR_POOL'):
+            if requested:
+                print(f"[SessionPool] {env_name}={requested} rejected by the "
+                      f"sub-7GB single-context safety guard ({gb:.1f}GB VRAM); "
+                      "using 0", flush=True)
+            return 0
         _warn_if_oversubscribed(env_name, requested, auto_value, gb)
         return requested
     return auto_value
@@ -634,6 +644,11 @@ def detector_pool_size(model_key=None, input_shape=None, batch_size=1) -> int:
             _auto_trt, auto_detmask = _auto_pool_defaults()
             _warn_if_oversubscribed('ROOP_DETECTOR_POOL', requested,
                                     max(auto_detmask, 1), gb)
+            if gb > 0 and gb < 7.0 and requested > 1:
+                print(f"[SessionPool] ROOP_DETECTOR_POOL={requested} "
+                      f"clamped to 1 by the sub-7GB safety guard "
+                      f"({gb:.1f}GB VRAM)", flush=True)
+                requested = 1
             if not model_key:
                 return requested
             return _resource_manager.select_pool_size(

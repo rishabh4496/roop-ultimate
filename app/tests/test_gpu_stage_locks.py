@@ -117,7 +117,7 @@ class EveryAnalyserCallSharesOneLock(unittest.TestCase):
         when there is no pool, so with pooling off -- which is the default below
         7GB -- two workers could enter one TensorRT context at once. Invisible on
         a big card, because the lease hands each thread its own instance there."""
-        i = self.pm.index('rotface = get_first_face(rotcutplate)')
+        i = self.pm.index('rotface = face_util.get_first_face_detector_only(rotcutplate)')
         window = self.pm[max(0, i - 400):i]
         self.assertIn("_gpu_guard(pooled=analysis_pooled(), owner='analysis')",
                       window)
@@ -165,9 +165,7 @@ class TheSmallCardPolicy(unittest.TestCase):
         nearly free to leave them off -- 20.84 fps against the pooled 22.22."""
         from roop import session_pool
         # The EXPLICIT overrides have to be cleared, not just the VRAM set. This
-        # asserts the AUTO tier, and an explicit ROOP_TRT_POOL beats it by
-        # design -- which is correct backend behaviour and exactly what a user
-        # needs when they type a value into Advanced Settings. Several other
+        # asserts the AUTO tier. Several other
         # test modules set it at import time in this shared process, so without
         # this the test reads their value and fails on a policy that is fine.
         saved = {k: os.environ.pop(k, None) for k in
@@ -184,10 +182,9 @@ class TheSmallCardPolicy(unittest.TestCase):
                     os.environ[k] = v
             session_pool._pool_cache.clear()
 
-    def test_an_explicit_override_still_beats_the_small_card_tier(self):
-        """The tier is a DEFAULT, not a clamp. A user who types 2 on a 6GB card
-        gets 2 -- the guard was turned from a silent ceiling into an advisory on
-        2026-08-23 and must stay that way."""
+    def test_an_explicit_override_is_clamped_on_the_small_card_tier(self):
+        """A stale or benchmark-written pool value cannot bypass the 6GB
+        single-context safety boundary after restart."""
         from roop import session_pool
         saved = {k: os.environ.pop(k, None) for k in
                  ('ROOP_TRT_POOL', 'ROOP_DETMASK_POOL')}
@@ -195,8 +192,8 @@ class TheSmallCardPolicy(unittest.TestCase):
         os.environ['ROOP_TRT_POOL'] = '2'
         try:
             session_pool._pool_cache.clear()
-            self.assertEqual(session_pool.pool_size(), 2)
-            self.assertTrue(session_pool.pooling_enabled())
+            self.assertEqual(session_pool.pool_size(), 0)
+            self.assertFalse(session_pool.pooling_enabled())
         finally:
             for k in ('ROOP_VRAM_GB', 'ROOP_TRT_POOL'):
                 os.environ.pop(k, None)

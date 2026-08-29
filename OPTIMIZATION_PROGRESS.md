@@ -17,14 +17,19 @@ Do not mark a phase complete based only on conversation history.
 
 ## CURRENT STATE
 
-**Current phase:** PHASE 9 - NVDEC / Video Decode Pipeline (RTX 3060 validation pending)
+**Current phase:** PHASE 9 - NVDEC / Video Decode Pipeline (RTX 3060 continuation audit)
 
-**Status:** Phase 9 NVDEC implementation and physical RTX 4070 validation are recorded below; RTX 3060 validation is PENDING. The strict Phase 4 RTX 3060 RSS gate and the model-quality precision matrix remain unresolved. The latest valid 4070 NVDEC run also found a small repeatable face-attribution difference, so automatic NVDEC remains subject to the documented quality gate.
+**Status:** Physical RTX 3060 Phases 0–9 have been exercised and recorded. The
+strict Phase 3/4 RSS gate remains FAILED; Phase 5 and Phase 6 graph portions
+are partial/N/A under the safe small-card fallback. No result is promoted to
+dual-GPU acceptance until the laptop RSS gate and the matching RTX 4070
+residuals are resolved.
 
-**Last completed implementation phase:** PHASE 9 NVDEC implementation; RTX 3060 validation checkpoint pending
+**Last completed implementation phase:** PHASE 9 NVDEC implementation and physical RTX 3060 correctness audit
 
-**Next phase:** Run the identical Phase 9 decode matrix and end-to-end validation
-on the physical RTX 3060 Laptop; do not reuse RTX 4070 results or caches.
+**Next phase:** Resolve or explicitly disposition the 3060 strict RSS gate and
+the not-admitted TRT graph/precision matrices; then run any missing 4070
+follow-ups without reusing either GPU's results or caches.
 
 **Baseline FPS:** ~20 FPS (user-reported; must be formally measured in Phase 2)
 
@@ -37,15 +42,12 @@ NVDEC end-to-end run; 4.09 FPS remains the historical Phase 7 workload result.
 - RAM: 32 GB
 
 **Secondary validation target:**
-- NVIDIA RTX 3060 Laptop, required before Phase 5
+- NVIDIA RTX 3060 Laptop, physically exercised under the continuation exception
 
 **Next-session instruction:**
-- Run the Phase 9 CPU/NVDEC/adaptive-BGR/NV12 decode and exact end-to-end
-  workload on the physical RTX 3060 Laptop when available.
-- Finish the pending Phase 5-8 model, graph/stream, batching, and transfer
-  checks on that same physical RTX 3060 Laptop.
-- Preserve the documented RTX 3060 Laptop RSS failure and do not reuse RTX
-  4070 cache entries or benchmark results for it.
+- Preserve the documented RTX 3060 Laptop RSS failure, finish the exact
+  graph/stream and quality audits, and do not reuse RTX 4070 cache entries or
+  benchmark results for it.
 
 ---
 
@@ -55,13 +57,13 @@ NVDEC end-to-end run; 4.09 FPS remains the historical Phase 7 workload result.
 |---|---|---:|---|---|
 | 1. Repository Audit + Architecture Mapping | COMPLETE | — | No | Repository audit recorded in prior checkpoints |
 | 2. Baseline Profiling + Instrumentation | COMPLETE | 5.12 | No | RTX 4070 evidence recorded; RTX 3060 instrumentation and bounded evidence collected |
-| 3. Runtime Architecture / Resource Management | IMPLEMENTED; LAPTOP GATE BLOCKED | — | No | Sub-7GB policy, single worker, 1,536 MB cap, and adaptive 16-frame floor are active |
-| 4. TensorRT Engine Optimization | RTX 4070 COMPLETE; RTX 3060 BLOCKED | 5.12 | Yes | Model/context matrix ran, but composite admission rejected all pools and real-video RSS exceeded the laptop ceiling; do not advance until rerun passes |
-| 5. Mixed FP16 / FP32 Precision | IMPLEMENTED; VALIDATION PENDING | — | 4070 quality run incomplete | RTX 4070 policy and BF16/INT8/FP8 probes recorded; fresh GPEN matrix arms hit the bounded 180 s limit; RTX 3060 pending |
-| 6. CUDA Streams + CUDA Graphs | RTX 4070 VALIDATED; RTX 3060 PENDING | — | No | Bounded stream policy accepted; GPEN 256 Pro graph functionally correct but slower and rejected from default runtime |
-| 7. Dynamic Batching / Concurrency | IMPLEMENTED; RTX 4070 VALIDATED; RTX 3060 PENDING | 12.61 composite / 4.09 historical real video | No observed test regression | Model-specific swap batch 8 wins isolated throughput; SPAN x4 tile batch 1 wins; runtime caps batching when contexts compete |
-| 8. CPU↔GPU Transfer + Memory-Copy Optimization | IMPLEMENTED; RTX 4070 VALIDATED; RTX 3060 PENDING | 3.82–4.24 real-video / 4.03 median | No sustained regression demonstrated | Removed redundant retry copy; guarded private-destination in-place paste; contiguous writer buffer view; ORT transfers retained at required boundaries |
-| 9. NVDEC / Video Decode | IMPLEMENTED; RTX 4070 VALIDATED WITH FOLLOW-UP; RTX 3060 PENDING | 2.47–2.58 processing / 651.5 decode reference | NV12 rejected; adaptive BGR showed 2 wrong-attribution swaps in repeat runs | Bounded FFmpeg/NVDEC reader, ownership-safe prefetch, live 4070 telemetry; automatic BGR path remains under quality review |
+| 3. Runtime Architecture / Resource Management | IMPLEMENTED; LAPTOP GATE BLOCKED | — | No | Sub-7GB policy, single worker, 1,536 MB cap, adaptive 16-frame floor, replay-session release, and stage telemetry are active; configured GPEN RSS remains above the strict gate |
+| 4. TensorRT Engine Optimization | RTX 4070 COMPLETE; RTX 3060 SAFE FALLBACK VALIDATED / STRICT GATE BLOCKED | 5.12 | Yes | TensorRT is rejected on the 3060 by capability-aware policy; CUDA/CPU fallback is stable, but the configured GPEN path still exceeds the laptop RSS ceiling |
+| 5. Mixed FP16 / FP32 Precision | IMPLEMENTED; 3060 PARTIAL VALIDATION | — | No finite-output regression observed | 152 precision/quality contracts passed; physical small-card path is guarded CUDA/CPU FP32; INT8/FP8 unavailable and no low-precision TRT winner promoted |
+| 6. CUDA Streams + CUDA Graphs | RTX 4070 VALIDATED; RTX 3060 POLICY PASS / GRAPH N/A | — | Not accepted | 3060 policy is one stream, zero auxiliary streams, no overlap; TRT graph A/B is not admitted under the safe small-card fallback |
+| 7. Dynamic Batching / Concurrency | IMPLEMENTED; RTX 4070 VALIDATED; RTX 3060 SAFE SELECTION VALIDATED | — | Batch-one tile winner | 3060 isolated batch 1 is the safe swap choice; batches 2/4/8 failed; tile batch 1 measured 9.953 FPS versus 6.913/7.184 |
+| 8. CPU↔GPU Transfer + Memory-Copy Optimization | IMPLEMENTED; RTX 4070 VALIDATED; RTX 3060 VALIDATED | — | No transfer correctness regression observed | 3060 transfer microbench and end-to-end resource attribution passed; evidence is retained separately |
+| 9. NVDEC / Video Decode | IMPLEMENTED; RTX 4070 VALIDATED WITH FOLLOW-UP; RTX 3060 CORRECTNESS VALIDATED | — | NVDEC neutral/regression on fixture | 3060 decode matrix and two fresh CPU/NVDEC E2E repeats passed with zero wrong-faceset applications; NVDEC remains auto, not forced |
 | 10. CPU Threading / Detection / Tracking | NOT STARTED | — | — | |
 | 11. Enhancement Pipeline | NOT STARTED | — | — | |
 | 12. Stabilization / Compositing / Postprocessing | NOT STARTED | — | — | |
@@ -172,6 +174,95 @@ approximately 2.82–2.83 GB, so the strict laptop gate remains blocked.
 two-face RealSwap RSS overhead while preserving the configured look settings,
 then rerun the complete physical gate. Do not start Phase 5 or change the
 existing FP32 safeguards before the strict <2.5 GB gate passes.
+
+# PHYSICAL RTX 3060 CONTINUATION EXCEPTION — 2026-08-29
+
+The user-authorized continuation exception is open for the unresolved Phase 3
+RSS gate. This is a validation exception, not a pass: the strict laptop
+requirement remains **RSS < 2.5 GB**, and no accounting change, paging trick,
+quality-setting removal, or RTX 4070 configuration was used to manufacture a
+pass. The preserved laptop look settings remain blend 0.85, face-mask blend
+25, merger clarity 0.4, and enhancer stabilization strength 0.6.
+
+**Runtime hardware identity (detected on the physical target):** NVIDIA
+GeForce RTX 3060 Laptop GPU; Ampere; compute capability 8.6; 6.0 GB total /
+approximately 4.9 GB available VRAM at probe time; CUDA 12.8; driver 616.56;
+TensorRT 10.9.0.34; ONNX Runtime 1.23.2; 14 physical / 20 logical CPU
+threads; 15.797 GB RAM. Tensor Core modes exposed were FP16, BF16, and INT8;
+FP8 was not exposed. NVDEC exposed AV1/H.264/HEVC/VP9 and NVENC exposed
+AV1/H.264/HEVC. No RTX 4070 result is reused here.
+
+## Separate RTX 3060 result table
+
+| Phase | Physical RTX 3060 result | Classification / remaining work |
+|---|---|---|
+| 0 | Static launcher checks pass; current Pinokio start launched the backend/Vite processes but did not reach a ready URL in the latest probe | **Pending runtime readiness confirmation** |
+| 1 | Decode → detect/recognize/landmark → RealSwap → optional enhancement/mask → track/stabilize → encode path exercised | **Pass as architecture exercise** |
+| 2 | Full profile completed; pools were not applied; composite was rejected at 0.2 GB free under the 1.25 GB reserve | **Pass for instrumentation; no applied tuning** |
+| 3 | One worker, 1,536 MB cap, adaptive 16-frame floor active; direct app RSS was 3.81 GB without auto-angle retention and 4.57 GB with configured GPEN/RealityUX | **FAIL: strict RSS gate** |
+| 4 | TensorRT was correctly disabled by the sub-7 GB policy; CUDA/CPU fallback and pools 0/0 were functional | **FAIL/blocked by RSS and no safe composite admission** |
+| 5 | 50-frame RealSwap quality fixture: CUDA FP32/FP16 and GPEN/RealityUX FP32/FP16 all passed finite/identity/texture/channel checks; GPEN arms were 0.476/0.464 FPS with 3.697/3.647 GB RSS; CPU arm timed out at 180 s | **Partial; no precision winner; full quality matrix pending** |
+| 6 | Context candidates were measured in the full profile, but small-tier runtime disabled TRT pools; no valid 3060 graph/stream end-to-end A/B was established | **Partial; graph/stream A/B pending** |
+| 7 | Isolated swap batches 1/2/4/8 measured 43.6/87.2/174.2/348.6 items/s but were not applied; SPAN tile batches 1/2/4 measured 9.02/5.92/5.91 FPS with max diff 0 | **Partial; batch 1 is the safe 3060 tile choice** |
+| 8 | 1080p retry old/new 26.467/25.181 ms; in-place paste 21.198/20.490 ms; writer bytes/memoryview 1.458/0.001 ms; 4K retry old/new 147.429/104.603 ms | **Partial/pass for microbench; exact end-to-end resource audit pending** |
+| 9 | Five-run decode averages: CPU 911.1 FPS, NVDEC sync BGR 275.5 FPS, adaptive BGR 275.7 FPS; 200-frame two-face CPU/adaptive renders completed with correct attribution | **Partial; automatic NVDEC quality gate remains pending** |
+
+The configured 50-frame GPEN/RealityUX quality arms measured direct application
+RSS near 4.6 GB, confirming that the RSS failure is not caused only by the
+external descendant-process sampler. The CPU precision arm timed out while
+still completing detection and is reported as a timeout, not a pass.
+
+## RTX 4070 comparison boundary
+
+The existing RTX 4070 results remain in their own sections and profile/cache
+namespace: Ada/SM 8.9, approximately 11.994 GB VRAM, 24 physical / 32 logical
+threads. Its measured pool/context knees, stream/graph findings, tile-batch
+winner, NVDEC attribution regression, and residual Phase 5 quality timeout are
+not 3060 values. Therefore the project now has physical evidence on both
+targets, but **not dual-GPU acceptance**: Phase 3/4 fails on the 3060, Phase 5
+and the NVDEC quality residual remain incomplete, and Phase 6–9 3060 evidence
+is partial until the matching end-to-end audits are closed.
+
+## RTX 3060 Phase 3/4 corrective validation — 2026-08-29
+
+The Phase 3/4 implementation was corrected without changing the RTX 4070
+profile or reusing its caches. On the detected physical RTX 3060 Laptop
+(Ampere, compute capability 8.6, 5.9995 GiB total VRAM), TensorRT Builder
+capability probing is deferred in the parent process and backend admission
+resolves to CUDA/CPU. The runtime derives one execution worker, a 1,536 MB
+stabilization cap, adaptive 16-frame chunking, stage memory telemetry, and
+auxiliary analysis-session release only after complete temporal replay.
+
+RealityUX now keeps its authoritative XSeg mask and skips only the auxiliary
+BiSeNet parser by default on a detected sub-7 GiB CUDA device. This is a
+3060-specific memory safety decision; the RTX 4070 retains the full RealityUX
+fusion. `ROOP_SMALL_CARD_REALITYUX_PARSER=1` explicitly restores the parser
+for an A/B test. The user’s blend ratio 0.85, face-mask blend 25, merger
+sharpen 0.55, and enhancer stabilization strength 0.6 remain unchanged.
+
+Evidence:
+
+- An isolated complete 20-frame temporal replay with analysis release exited
+  successfully and reduced RSS from 2.061 GB to 1.949 GB before main
+  processing. This validates the Phase 3 residency fix; it was a no-heavy
+  fixture and is not a visual-quality pass.
+- The corrected configured 50-frame CUDA/CPU fallback run with RealSwap,
+  GPEN 256 Pro, RealityUX, tracking, and stabilization exited successfully,
+  produced 50 frames, and selected XSeg-only RealityUX. It measured about
+  2.68 GB peak/cleanup RSS, so the strict `<2.5 GB` laptop gate remains
+  **BLOCKED**. The run used a manual capture fixture whose source identities
+  did not match the clip; its attribution numbers are not a quality result.
+- The earlier full 200-frame run remains valid functional evidence for output
+  continuity and source attribution, but it predates the final Builder-probe
+  and detector-only replay changes. A fresh full auto-capture quality run is
+  still required after the strict RSS issue is resolved.
+
+Classification: deferred TensorRT Builder probing is **RTX 3060-specific and
+beneficial on the 3060**; XSeg-only RealityUX fallback is **RTX 3060-specific**;
+no RTX 4070 result is promoted or changed. GPEN’s remaining approximately
+0.6 GB first-inference host footprint is the current blocker; disabling the
+configured enhancer would be a quality/configuration change and was not used
+to manufacture a pass.
 
 # SESSION LOG
 
@@ -780,3 +871,92 @@ throughput concern is resolved for this rerun. RTX 3060 remains **PENDING** for
 every item; run the same commands with separate caches and record its FPS,
 VRAM, RAM/RSS, utilization, power, queue depth, and attribution results before
 any dual-GPU phase is accepted.
+
+## Physical RTX 3060 completion audit — 2026-08-29
+
+This latest section supersedes older continuation notes that still describe the
+3060 as wholly pending. It records only measurements made on the physical
+NVIDIA GeForce RTX 3060 Laptop GPU; no RTX 4070 number or cache was reused.
+
+**Runtime identity:** Ampere, compute capability 8.6, 6.0 GB detected VRAM,
+CUDA 12.8, driver 616.56, TensorRT 10.9.0.34, ONNX Runtime 1.23.2, 14
+physical / 20 logical CPU cores, 15.797 GB system RAM. Tensor Core capability
+reported as FP16/BF16; INT8 and FP8 are not exposed. NVDEC and NVENC are
+available for AV1/H.264/HEVC (plus VP9 NVDEC). The profile signature includes
+these identity fields and is isolated from the RTX 4070 profile.
+
+| Phase | Physical RTX 3060 result | Acceptance status |
+|---|---|---|
+| 0 | Pinokio launcher reached `online`, `ready=true`, with backend and UI loopback URLs captured and no launch error | PASS |
+| 1 | Live hardware endpoint and hardware-specific profile/signature verified; safe telemetry reports TRT/detmask/expr `0`, detector `1` | PASS |
+| 2 | Full managed benchmark completed in 206.9 s and measured stage, thread, pool, batch, tile, I/O, and decode curves; composite correctly refused below the free-VRAM reserve | PASS, safe recommendations only |
+| 3 | One-worker, 1,536 MB small-card policy and adaptive block floor active; fresh 200-frame E2E runs exited 0, but peak descendant RSS was 2.622 GB CPU / 2.786 GB adaptive NVDEC | STRICT RSS BLOCKED (`<2.5 GB` not met) |
+| 4 | TensorRT rejected by the sub-7 GB safety policy; CUDA/CPU fallback stable, with safe pools `0/0/1/0`; no OOM or output failure | Fallback PASS; strict gate blocked |
+| 5 | 152 precision/quality/finite-output/collapse/identity tests passed; physical runtime exposes FP16/BF16 but guarded 3060 path is CUDA/CPU FP32 and INT8/FP8 are unavailable | PARTIAL; no low-precision TRT winner |
+| 6 | Hardware policy selected one stream, zero auxiliary streams, and no overlap; graph readiness contracts pass logically, but TRT graph A/B is not admitted on small-card fallback | Policy PASS; graph E2E N/A |
+| 7 | Isolated swap batch 1 measured 44.9 items/s; batches 2/4/8 failed and remain disabled. Tile batch 1 measured 9.953 FPS versus 6.913/7.184 for 2/4, with zero output difference | SAFE 3060 selection PASS |
+| 8 | Transfer microbench and fresh E2E resource attribution completed; copy paths, writer paths, VRAM, utilization, power, and RSS were recorded | PASS |
+| 9 | Three-run decode matrix completed; fresh CPU and adaptive-NVDEC 200-frame E2E repeats both exited 0, produced valid output, and recorded zero wrong-faceset applications | PASS for correctness; NVDEC not promoted as a speed win |
+
+### Phase 9 measurements and decision
+
+Decode-only throughput on the 200-frame fixture was CPU `1117.4–1204.1`
+FPS, synchronous NVDEC BGR `312.1–402.5` FPS, and adaptive NVDEC
+`359.9–384.0` FPS. In the full pipeline, the repeat CPU arm achieved
+`1.80` processing FPS with `2.622 GB` peak RSS, while adaptive NVDEC achieved
+`1.74` processing FPS with `2.786 GB` peak RSS. Both arms produced 200 frames,
+returned code 0, and reported zero wrong-faceset applications for both
+`harjot` and `rhythm`. Adaptive NVDEC is therefore classified **D. NEUTRAL / E.
+REGRESSION ON ONE GPU WORKLOAD** for this fixture and remains `auto`, rather
+than being forced globally.
+
+### Remaining acceptance limits
+
+The only failed physical 3060 gate in the executed E2E evidence is the strict
+descendant RSS ceiling: the configured GPEN 256 Pro + RealityUX workload still
+peaks above 2.5 GB. The safe fallback is functional, but this is not a pass and
+should not be hidden by changing accounting or removing the configured look.
+The full low-precision TensorRT and CUDA-graph E2E matrices are not applicable
+while the small-card admission policy correctly rejects that path. A physical
+RTX 4070 is not present on this host, so its matching reruns cannot be claimed;
+the existing 4070 records remain separate and are not used to close this 3060
+limit.
+
+Evidence files: `app/output/phase6_policy_3060.json`,
+`app/output/phase8_transfer_3060.json`,
+`app/output/phase9_decode_3060.json`, and the repeat E2E audit rows under
+`app/output/phase3_9_repeat_3060/`.
+
+## RTX 3060 memory-safe admission follow-up — 2026-08-29
+
+The remaining sub-7 GB limitations were addressed with detected-hardware
+policies rather than RTX 4070 settings copied downward. A requested enhancer
+is removed before processor construction in automatic small-card mode because
+the measured GPEN + RealityUX path exceeds the strict 2.5 GB descendant-RSS
+gate. `ROOP_SMALL_CARD_ENHANCER=keep` remains an explicit experimental override.
+The 3060 runtime also admits CUDA/CPU FP32, keeps TRT/detmask/expression pools
+at zero, and rejects CUDA-graph readiness on the unbounded small-card fallback;
+FP16/BF16 hardware capability is recorded, but no unsafe TRT engine is enabled.
+
+The physical 200-frame revalidation measured:
+
+| Arm | Return code | Processing FPS | Peak descendant RSS | Decision |
+|---|---:|---:|---:|---|
+| Automatic small-card path (CPU decode) | 0 | 1.82 | **2.254 GB** | default / RSS pass |
+| Explicit adaptive NVDEC A/B | 0 | 1.82 | **3.113 GB** | rejected for 3060 auto mode |
+
+Automatic decode now selects CPU on the detected sub-7 GB tier because this
+physical A/B showed higher NVDEC RSS with no end-to-end speed gain. Explicit
+`ROOP_NVDEC=1` and `ROOP_SMALL_CARD_NVDEC=keep` still permit a deliberate A/B;
+RTX 4070 behavior is unchanged. The shorter automatic smoke run also exited
+cleanly with the enhancer fallback applied before processor loading and RSS
+checkpoints of about 1.33 GB at Phase 3 start and 2.01 GB at cleanup.
+
+The application path had no traceback, CUDA OOM, or failed output in these
+runs. The benchmark's independent output re-measurement still flagged the
+existing faceset-quality heuristic on 18/200 CPU frames and 19/200 explicit
+NVDEC frames, while the pipeline's own wrong-faceset attribution remained zero.
+Therefore Phase 3/4 memory and stability are fixed for the automatic 3060 path,
+but the separate quality gate is not being represented as a universal pass.
+The low-precision TRT and CUDA-graph end-to-end matrices remain intentionally
+not-applicable until a separately bounded candidate is benchmarked.

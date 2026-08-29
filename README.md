@@ -94,6 +94,41 @@ Two things worth knowing before changing settings or benchmarking:
   which is not what production runs. `tests/compare_enhancers_video.py` syncs
   from `config.yaml` and prints what it changed; prefer it over ad-hoc harnesses.
 
+## Runtime hardware profile and API
+
+The backend detects the active GPU and software stack at runtime. It records the
+GPU name, architecture/compute capability, total and available VRAM, driver,
+CUDA, TensorRT, ONNX Runtime, Tensor Core precision modes, and NVDEC/NVENC
+codecs. Automatic pools, batching, streams, workers, and queue depth are
+selected from that profile plus the current workload. Profile/cache identities
+are isolated by hardware and workload, so moving between the RTX 3060 and RTX
+4070 does not require editing a configuration file. A missing physical target
+is reported as pending; its metrics are never copied from the other GPU.
+
+Read the live profile with any HTTP client:
+
+```javascript
+const profile = await fetch(`${baseUrl}/api/system/hardware`).then(r => r.json())
+console.log(profile.architecture, profile.vram_total_gb, profile.capabilities)
+```
+
+```python
+import requests
+profile = requests.get(f"{base_url}/api/system/hardware", timeout=10).json()
+print(profile["gpu_name"], profile["vram_available_gb"])
+```
+
+```bash
+curl "$BASE_URL/api/system/hardware"
+```
+
+The same profile is included in `/api/system/telemetry`. The benchmark endpoint
+is `POST /api/settings/benchmark_threads` with `{"profile":"quick"}` or
+`{"profile":"full"}`; poll `GET /api/settings/benchmark_status`. Record RTX
+3060 and RTX 4070 results in separate tables, including baseline/final FPS,
+stage throughput, VRAM, CPU/GPU utilization, latency, stability, and output
+quality. Hardware not physically present remains `PENDING` in the report.
+
 ## What is not in this repository
 
 `app/env` (the virtual environment), `app/models` (model weights) and

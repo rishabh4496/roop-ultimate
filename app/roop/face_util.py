@@ -228,6 +228,26 @@ def release_face_analyser():
         pass
 
 
+def release_face_analyser_aux():
+    """Release auxiliary analysis sessions while retaining the detector.
+
+    A complete temporal replay already contains embeddings and landmarks for
+    every frame.  The main pass may still need detector-only ROI checks for
+    autorotation or swap verification, so dropping the whole FaceAnalysis
+    object would be unsafe.  Removing only the auxiliary models preserves
+    those detector-only calls and lets the 6GB tier reclaim their host RSS.
+    """
+    with THREAD_LOCK_ANALYSER:
+        for fa in list(FACE_ANALYSER_POOL):
+            models = getattr(fa, 'models', None)
+            if isinstance(models, dict):
+                for name in ('recognition', 'landmark_2d_106',
+                             'landmark_3d_68', 'genderage'):
+                    models.pop(name, None)
+            if hasattr(fa, 'lm68_model'):
+                fa.lm68_model = None
+
+
 def get_face_analyser() -> Any:
     return _ensure_face_analyser()
 
@@ -1025,6 +1045,17 @@ def _detect_faces(frame):
 def get_first_face(frame: Frame) -> Any:
     try:
         faces = get_all_faces(frame)
+        if faces:
+            return min(faces, key=lambda x: x.bbox[0])
+    except Exception:
+        pass
+    return None
+
+
+def get_first_face_detector_only(frame: Frame) -> Any:
+    """Return the leftmost detector result without auxiliary model inference."""
+    try:
+        faces = _detect_faces_raw(frame, aux=False)
         if faces:
             return min(faces, key=lambda x: x.bbox[0])
     except Exception:

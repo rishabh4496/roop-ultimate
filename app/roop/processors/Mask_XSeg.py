@@ -39,7 +39,10 @@ class Mask_XSeg():
             from roop.utilities import (get_onnx_session_options,
                                         get_small_card_safe_providers)
             _sess_opts = get_onnx_session_options()
-            providers = get_small_card_safe_providers(roop.globals.execution_providers)
+            providers = get_small_card_safe_providers(
+                roop.globals.execution_providers,
+                model_path=model_path,
+                stage='mask:xseg')
             providers, _precision = providers_for('masking:xseg', providers, model_path)
             self._cpu_only = providers == ['CPUExecutionProvider']
 
