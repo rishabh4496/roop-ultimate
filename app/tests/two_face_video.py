@@ -887,6 +887,10 @@ def main():
     ap.add_argument("--threads", type=int, default=None,
                     help="defaults to config.yaml's live 'max_threads' setting if not "
                          "given, matching what the real app actually runs with")
+    ap.add_argument("--auto-threads", action="store_true",
+                    help="test the runtime worker policy without changing saved settings")
+    ap.add_argument("--auto-detector-resolution", action="store_true",
+                    help="test the runtime detector-resolution policy without changing saved settings")
     ap.add_argument("--swap-model-mask-strength", type=float, default=None,
                     help="the swap net's own face mask, 0-100. Defaults to "
                          "config.yaml's live value, like --threads above, because "
@@ -919,6 +923,16 @@ def main():
     g.video_encoder = "libx264"
     g.video_quality = 12
     g.execution_threads = args.threads if args.threads is not None else g.CFG.max_threads
+    if args.auto_threads:
+        # This is a benchmark-only override.  Production preserves a user's
+        # saved max_threads and its _threads_auto provenance exactly.
+        g.CFG.auto_thread_selection = True
+        g.CFG._threads_auto = True
+    if args.auto_detector_resolution:
+        # Let RuntimeOptimizer.apply_environment publish the workload-derived
+        # hint.  Do not persist or otherwise alter the user's detector size.
+        g.CFG.face_detector_size = "auto"
+        g.face_detector_size = "auto"
     g.face_swap_mode = "selected"
     track = args.tracking != "0"
     # BOTH names. `_track_mode` (ProcessMgr) reads roop.globals.track_identities,

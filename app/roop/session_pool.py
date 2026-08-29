@@ -173,6 +173,11 @@ def _resolve(env_name, auto_value, gb) -> int:
     """An explicit override wins, exactly as given. Unset/blank uses the
     VRAM-tiered auto default."""
     raw = os.environ.get(env_name)
+    if raw is None or raw == '':
+        # RuntimeOptimizer publishes workload-derived values separately from
+        # user-facing environment overrides.  They are still only hints: the
+        # resource manager applies its normal model/VRAM admission below.
+        raw = os.environ.get('ROOP_RUNTIME_' + env_name[5:])
     if raw is not None and raw != '':
         try:
             requested = max(0, int(raw))
@@ -624,6 +629,9 @@ def detector_pool_size(model_key=None, input_shape=None, batch_size=1) -> int:
     yunet ~350KB, so those are close to free).
     """
     raw = os.environ.get('ROOP_DETECTOR_POOL')
+    runtime_raw = raw is None or raw == ''
+    if runtime_raw:
+        raw = os.environ.get('ROOP_RUNTIME_DETECTOR_POOL')
     if raw:
         try:
             requested = max(1, int(raw))
@@ -638,7 +646,7 @@ def detector_pool_size(model_key=None, input_shape=None, batch_size=1) -> int:
                 return requested
             return _resource_manager.select_pool_size(
                 requested, model_key, input_shape, batch_size,
-                explicit=True)
+                explicit=not runtime_raw)
     try:
         requested = max(1, detmask_pool_size())
         if not model_key:

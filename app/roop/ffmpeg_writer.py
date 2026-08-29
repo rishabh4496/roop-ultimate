@@ -172,6 +172,18 @@ class FFMPEG_VideoWriter:
         self._preset = preset
         self._bitrate = bitrate
         self._logfile = logfile
+        if threads is None:
+            # Explicit constructor input and explicit process environment win;
+            # otherwise consume the bounded workload hint.  This keeps FFmpeg
+            # from creating an unbounded CPU pool beside Python workers, ORT,
+            # and OpenCV.
+            threads = os.environ.get('ROOP_FFMPEG_THREADS')
+            if threads is None or str(threads).strip().lower() in ('', 'auto', 'default'):
+                threads = os.environ.get('ROOP_RUNTIME_FFMPEG_THREADS')
+            try:
+                threads = max(1, min(4, int(threads)))
+            except (TypeError, ValueError):
+                threads = None
         self._threads = threads
         self._ffmpeg_params = ffmpeg_params
         self._frames_written = 0

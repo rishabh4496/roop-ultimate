@@ -709,6 +709,20 @@ def get_onnx_session_options(optimization_level=None):
     which cause steady RAM accumulation over long video processing runs.
     """
     import onnxruntime
+
+    def _session_threads(name, default, upper):
+        # An explicit process environment value wins over the optimizer hint.
+        # The defaults are intentionally serial per session: Python workers
+        # provide the outer parallelism, so ORT must not create a hidden pool
+        # for every worker.
+        raw = os.environ.get(name)
+        if raw is None or str(raw).strip().lower() in ('', 'auto', 'default'):
+            raw = os.environ.get('ROOP_RUNTIME_' + name[5:])
+        try:
+            return max(1, min(upper, int(raw)))
+        except (TypeError, ValueError):
+            return default
+
     try:
         opts = onnxruntime.SessionOptions()
         if hasattr(opts, 'enable_cpu_mem_arena'):
@@ -721,9 +735,11 @@ def get_onnx_session_options(optimization_level=None):
             except Exception:
                 pass
         if hasattr(opts, 'intra_op_num_threads'):
-            opts.intra_op_num_threads = 1
+            opts.intra_op_num_threads = _session_threads(
+                'ROOP_ORT_INTRA_THREADS', 1, 4)
         if hasattr(opts, 'inter_op_num_threads'):
-            opts.inter_op_num_threads = 1
+            opts.inter_op_num_threads = _session_threads(
+                'ROOP_ORT_INTER_THREADS', 1, 2)
         # ORT's constant-cost scheduler can produce high latency variance on
         # Windows. Keep one thread per session, but distribute uneven CPU work
         # more fairly between repeated calls.

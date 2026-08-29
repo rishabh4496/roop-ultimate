@@ -49,13 +49,16 @@ from queue import Queue, Full as _QueueFull, Empty as _QueueEmpty
 
 def _configure_opencv_worker_threads(workers):
     """Avoid multiplying frame workers by OpenCV's internal thread pool."""
-    raw = os.environ.get('ROOP_CV_THREADS', 'auto').strip().lower()
+    raw = os.environ.get('ROOP_CV_THREADS')
+    if raw is None or str(raw).strip().lower() in ('', 'auto', 'default'):
+        raw = os.environ.get('ROOP_RUNTIME_CV_THREADS', 'auto')
+    raw = str(raw).strip().lower()
     try:
         if raw != 'auto':
             value = max(1, min(4, int(raw)))
         else:
             import psutil
-            physical = psutil.cpu_count(logical=False) or (os.cpu_count() or 4)
+            physical = psutil.cpu_count(logical=False) or max(1, int(workers))
             value = 2 if physical // max(1, workers) >= 2 else 1
     except (TypeError, ValueError):
         value = 1
@@ -1363,6 +1366,17 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
             self._runtime_swap_tile_batch_size = self.runtime_profile.tuning.tile_batch_size
             self._runtime_face_concurrency = self.runtime_profile.tuning.face_concurrency
             self._runtime_in_flight_frames = self.runtime_profile.tuning.in_flight_frames
+            cfg = getattr(roop.globals, 'CFG', None)
+            auto_threads = bool(getattr(cfg, 'auto_thread_selection', False)) and bool(
+                getattr(cfg, '_threads_auto', False))
+            if (auto_threads and not self._runtime_stab_small and threads > 1
+                    and self.runtime_profile.tuning.worker_count != threads):
+                print(f"[RuntimeOptimizer] workload worker policy: execution threads "
+                      f"{threads} -> {self.runtime_profile.tuning.worker_count}; "
+                      "bounded by CPU topology, workload complexity, and GPU tier.",
+                      flush=True)
+                threads = self.runtime_profile.tuning.worker_count
+                roop.globals.execution_threads = threads
             print("[RuntimeOptimizer] workload profile: "
                   f"{self.runtime_profile.workload.input_width}x"
                   f"{self.runtime_profile.workload.input_height}, "
@@ -1495,8 +1509,9 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
             print(f"[Stabilize] 2-pass: precomputed smoothed kps for "
                   f"{len(self._precomputed_kps)} frames; pass 2 runs multi-threaded.")
 
-        # Worker thread count is exactly the user's "Max. Number of Threads"
-        # setting (no auto-tuning).
+        # The caller's explicit thread setting remains authoritative.  When the
+        # setting is automatic, the runtime profile has already selected a
+        # bounded worker count above; sub-7GB devices are forced to one worker.
         self.total_frames = frame_count
         self.num_threads = threads
         self.processing_threads = self.num_threads

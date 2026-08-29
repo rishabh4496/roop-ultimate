@@ -43,10 +43,14 @@ FACE_SWAPPER = None
 
 def _desired_det_size():
     val = getattr(roop.globals, 'face_detector_size', '640')
+    if val is None or str(val).strip().lower() in ('', 'auto', 'default'):
+        # RuntimeOptimizer publishes this only for an automatic setting.  An
+        # explicit face_detector_size is never replaced by a workload hint.
+        val = os.environ.get('ROOP_RUNTIME_DETECTOR_RESOLUTION', '640')
     if isinstance(val, bool):
         return (640, 640) if val else (320, 320)
     try:
-        sz = int(val)
+        sz = max(320, min(1280, int(val)))
         return (sz, sz)
     except Exception:
         return (640, 640)

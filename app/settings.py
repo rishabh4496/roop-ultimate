@@ -372,6 +372,15 @@ class Settings:
             data, 'trt_auxiliary_streams', -1)
         self.trt_cuda_graph = self.default_get(data, 'trt_cuda_graph', False)
         self.cpu_opencv_threads = self.default_get(data, 'cpu_opencv_threads', 'auto')
+        # Optional ORT knobs.  Automatic mode stays one thread per active
+        # worker/session so the Python, ORT, OpenCV, and FFmpeg budgets do not
+        # multiply accidentally.
+        self.cpu_ort_intra_threads = self.default_get(
+            data, 'cpu_ort_intra_threads', 'auto')
+        self.cpu_ort_inter_threads = self.default_get(
+            data, 'cpu_ort_inter_threads', 'auto')
+        self.cpu_ffmpeg_threads = self.default_get(
+            data, 'cpu_ffmpeg_threads', 'auto')
         self.force_cpu = self.default_get(data, 'force_cpu', False)
         self.output_template = self.default_get(data, 'output_template', '{file}_{time}')
         # Faceset library folder: persistent, named .fsz facesets that survive
@@ -623,6 +632,9 @@ class Settings:
             'trt_auxiliary_streams': self.trt_auxiliary_streams,
             'trt_cuda_graph': self.trt_cuda_graph,
             'cpu_opencv_threads': self.cpu_opencv_threads,
+            'cpu_ort_intra_threads': self.cpu_ort_intra_threads,
+            'cpu_ort_inter_threads': self.cpu_ort_inter_threads,
+            'cpu_ffmpeg_threads': self.cpu_ffmpeg_threads,
             'force_cpu' : self.force_cpu,
             'output_template' : self.output_template,
             'faceset_library_path' : self.faceset_library_path,

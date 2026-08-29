@@ -200,6 +200,10 @@ def run_end_to_end(args):
                "--swap-model-mask-strength", str(args.swap_model_mask_strength),
                "--merger-clarity", str(args.merger_clarity),
                "--threads", str(args.threads), "--out", args.out]
+        if args.auto_threads:
+            cmd.append("--auto-threads")
+        if args.auto_detector_resolution:
+            cmd.append("--auto-detector-resolution")
         started = time.perf_counter()
         returncode, stdout, stderr, telemetry = _run_with_telemetry(
             cmd, child_env)
@@ -209,6 +213,14 @@ def run_end_to_end(args):
             stdout or "")
         progress_rss = [float(value) for value in re.findall(
             r"memory_usage=([0-9.]+)GB", stdout or "")]
+        worker_policy = re.findall(
+            r"\[RuntimeOptimizer\] workload worker policy: (.*)",
+            stdout or "")
+        workload_profile = re.findall(
+            r"\[RuntimeOptimizer\] workload profile: (.*)",
+            stdout or "")
+        detector_sizes = re.findall(
+            r"set det-size: \((\d+), (\d+)\)", stdout or "")
         frame_span = max(0, args.end - args.start) if args.end else 0
         item = {
             "mode": mode, "seconds": round(elapsed, 3),
@@ -224,6 +236,12 @@ def run_end_to_end(args):
             item["processing_fps"] = float(processing[-1][1])
         if progress_rss:
             item["peak_progress_rss_gb"] = max(progress_rss)
+        if worker_policy:
+            item["runtime_worker_policy"] = worker_policy[-1]
+        if workload_profile:
+            item["runtime_workload_profile"] = workload_profile[-1]
+        if detector_sizes:
+            item["detector_size"] = [int(value) for value in detector_sizes[-1]]
         result["runs"].append({
             **item,
         })
@@ -245,6 +263,10 @@ def main():
     ap.add_argument("--enhancer", default="None")
     ap.add_argument("--mask-engine", default="None")
     ap.add_argument("--threads", type=int, default=1)
+    ap.add_argument("--auto-threads", action="store_true",
+                    help="exercise the workload-derived worker policy")
+    ap.add_argument("--auto-detector-resolution", action="store_true",
+                    help="exercise the workload-derived detector policy")
     ap.add_argument("--capture-budget", type=float, default=30.0)
     ap.add_argument("--stabilize-mask", default="1")
     ap.add_argument("--stabilize-mask-strength", type=float, default=0.6)
@@ -253,7 +275,13 @@ def main():
     ap.add_argument("--out", default=os.path.join(APP, "output", "bench_phase9"))
     args = ap.parse_args()
     result = run_end_to_end(args) if args.end_to_end else run_decode(args)
-    print(json.dumps(result, indent=2))
+    rendered = json.dumps(result, indent=2)
+    if args.end_to_end:
+        os.makedirs(args.out, exist_ok=True)
+        with open(os.path.join(args.out, "benchmark.json"), "w",
+                  encoding="utf-8") as handle:
+            handle.write(rendered + "\n")
+    print(rendered)
 
 
 if __name__ == "__main__":

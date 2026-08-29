@@ -98,6 +98,11 @@ class HardwareProfile:
     ram_total_gb: float = 0.0
     ram_available_gb: float = 0.0
     platform: str = ""
+    # Optional heterogeneous-CPU topology.  These stay descriptive in Phase 10;
+    # Gate D owns any i9-specific affinity or P/E scheduling policy.
+    cpu_performance_cores: int = 0
+    cpu_efficiency_cores: int = 0
+    cpu_topology_source: str = "unknown"
 
     @property
     def vram_tier(self) -> str:
@@ -131,6 +136,10 @@ class WorkloadProfile:
     video_length_frames: int = 0
     fps: float = 0.0
     estimated_complexity: float = 0.0
+    # Optional measured face height in input pixels.  Unknown is deliberately
+    # quality-safe: the automatic detector policy keeps the 640 canvas unless
+    # workload evidence proves a lower or higher canvas is appropriate.
+    estimated_face_size_px: float = 0.0
 
     @property
     def pixels_per_frame(self) -> int:
@@ -177,6 +186,7 @@ class RuntimeTuning:
     ort_intra_threads: int = 1
     ort_inter_threads: int = 1
     opencv_threads: int = 1
+    ffmpeg_threads: int = 1
     cuda_stream_count: int = 1
     cuda_auxiliary_streams: int = 0
     encoder: str = "libx264"
@@ -244,6 +254,7 @@ class ResourceManager:
         "ort_intra_threads": (1, 4),
         "ort_inter_threads": (1, 2),
         "opencv_threads": (1, 4),
+        "ffmpeg_threads": (1, 4),
     }
 
     @classmethod
@@ -269,6 +280,48 @@ class ResourceManager:
         if free_vram and free_vram < 1.5:
             cap = min(cap, 1024)
         return max(512, cap)
+
+
+def _positive_int(value: Any) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return 0
+    return max(0, parsed)
+
+
+def _cpu_topology(physical: int, logical: int) -> Tuple[int, int, str]:
+    """Best-effort P/E topology probe without imposing a platform policy.
+
+    Linux exposes per-CPU capacity in sysfs on many hybrid systems.  The
+    environment override is useful for Windows telemetry providers and test
+    harnesses that know the topology but do not expose it through psutil.
+    Phase 10 records the information only; it does not bind threads to cores.
+    """
+    env_p = _positive_int(os.environ.get("ROOP_CPU_P_CORES"))
+    env_e = _positive_int(os.environ.get("ROOP_CPU_E_CORES"))
+    if env_p or env_e:
+        if not env_p:
+            env_p = max(0, physical - env_e)
+        if not env_e:
+            env_e = max(0, physical - env_p)
+        return env_p, env_e, "environment"
+
+    capacities = []
+    try:
+        if platform.system().lower() == "linux":
+            for path in sorted(Path("/sys/devices/system/cpu").glob(
+                    "cpu[0-9]*/cpu_capacity")):
+                capacities.append(_positive_int(path.read_text().strip()))
+    except (OSError, ValueError):
+        capacities = []
+    if len(capacities) >= 2 and max(capacities) > min(capacities):
+        peak = max(capacities)
+        performance = sum(1 for capacity in capacities if capacity >= peak * 0.8)
+        efficiency = len(capacities) - performance
+        if performance and efficiency:
+            return performance, efficiency, "linux-cpu-capacity"
+    return 0, 0, "unknown"
 
 
 class HardwareProfiler:
@@ -352,9 +405,14 @@ class HardwareProfiler:
             ram_total = _number(memory.total) / (1024 ** 3)
             ram_available = _number(memory.available) / (1024 ** 3)
         except Exception:
-            physical = max(1, (os.cpu_count() or 1) // 2)
-            logical = max(1, os.cpu_count() or physical)
+            # psutil is the normal source.  The fallback is intentionally
+            # conservative and is only used when that optional dependency is
+            # unavailable; it is never the worker-count policy.
+            logical = max(1, _positive_int(os.environ.get("NUMBER_OF_PROCESSORS")) or 1)
+            physical = max(1, logical // 2)
             ram_total = ram_available = 0.0
+
+        p_cores, e_cores, topology_source = _cpu_topology(physical, logical)
 
         nvidia_smi = self._command(
             "nvidia-smi", f"--id={self.device_id}",
@@ -396,6 +454,9 @@ class HardwareProfiler:
             ram_total_gb=round(ram_total, 3),
             ram_available_gb=round(ram_available, 3),
             platform=f"{platform.system()}-{platform.release()}",
+            cpu_performance_cores=p_cores,
+            cpu_efficiency_cores=e_cores,
+            cpu_topology_source=topology_source,
         )
         return self._profile
 
@@ -408,7 +469,8 @@ class WorkloadProfiler:
                 resolution: Optional[Tuple[int, int]] = None,
                 output_resolution: Optional[Tuple[int, int]] = None,
                 faces_per_frame: Optional[float] = None,
-                face_count: int = 0) -> WorkloadProfile:
+                face_count: int = 0,
+                estimated_face_size_px: float = 0.0) -> WorkloadProfile:
         width = height = fps = 0.0
         if resolution:
             width, height = resolution
@@ -457,6 +519,7 @@ class WorkloadProfiler:
             video_length_frames=max(0, _integer(frame_count)),
             fps=max(0.0, _number(fps)),
             estimated_complexity=round(complexity, 3),
+            estimated_face_size_px=max(0.0, _number(estimated_face_size_px)),
         )
 
 
@@ -706,6 +769,28 @@ class AutoTuner:
             queue_depth = 3
         chunk = 16 if small else (96 if pixels > 1920 * 1080 else 144)
         opencv = 1 if worker >= 8 or small else 2
+        # Keep the encoder's CPU pool separate from the frame-worker pool.  The
+        # encoder is already offloaded to NVENC where available; software
+        # encoding gets only a small bounded pool so it cannot multiply the
+        # Python/ORT/OpenCV budget.
+        ffmpeg = 1 if small or worker >= 8 else 2
+
+        # Detector canvas is a quality/latency trade-off, not a GPU-name
+        # switch.  Keep unknown face size at the calibrated 640 baseline.  A
+        # measured large face can use 512 on 720p-class input; higher-resolution
+        # input gets a larger canvas so small faces are not silently discarded.
+        if small or not pixels:
+            detector_resolution = 640
+        elif pixels > 3840 * 2160:
+            detector_resolution = 960
+        elif pixels > 1920 * 1080:
+            detector_resolution = 768
+        elif (pixels <= 1280 * 720 and
+              workload.estimated_face_size_px >= 160):
+            detector_resolution = 512
+        else:
+            detector_resolution = 640
+
         encoder = "hevc_nvenc" if hardware.nvenc_available else "libx264"
         preset = "p5" if hardware.nvenc_available else "medium"
         stream_policy = CUDAGraphManager.stream_policy(
@@ -742,13 +827,14 @@ class AutoTuner:
             "upscale_tile_batch_size": upscale_tile_batch,
             "face_concurrency": face_concurrency,
             "in_flight_frames": in_flight_frames,
-            "detector_resolution": 640,
+            "detector_resolution": detector_resolution,
             "queue_depth": queue_depth,
             "stabilization_workers": stabilization_workers,
             "stabilization_chunk_size": chunk,
             "ort_intra_threads": 1,
             "ort_inter_threads": 1,
             "opencv_threads": opencv,
+            "ffmpeg_threads": ffmpeg,
             "cuda_stream_count": stream_policy["stream_count"],
             "cuda_auxiliary_streams": stream_policy["auxiliary_streams"],
             "encoder": encoder,
@@ -768,6 +854,8 @@ class AutoTuner:
             "tile_batch_size": "perf_batch_swap",
             "detector_resolution": "face_detector_size",
             "opencv_threads": "cpu_opencv_threads",
+            "ort_intra_threads": "cpu_ort_intra_threads",
+            "ort_inter_threads": "cpu_ort_inter_threads",
             "encoder_preset": "perf_encoder_preset",
             "encoder": "output_video_codec",
         }
@@ -801,6 +889,10 @@ class AutoTuner:
         values["enhancer_pool_size"] = values["swapper_pool_size"]
         values["expression_pool_size"] = _explicit_int("perf_expr_pool", values["expression_pool_size"])
         values["detector_resolution"] = _explicit_int("face_detector_size", values["detector_resolution"])
+        values["ort_intra_threads"] = _explicit_int(
+            "cpu_ort_intra_threads", values["ort_intra_threads"])
+        values["ort_inter_threads"] = _explicit_int(
+            "cpu_ort_inter_threads", values["ort_inter_threads"])
         if not _is_auto(settings, "perf_batch_swap"):
             batch_setting = str(_value(settings, "perf_batch_swap", "on")).strip().lower()
             if batch_setting in ("off", "0", "false", "no"):
@@ -941,12 +1033,19 @@ class RuntimeOptimizer:
         """
         tuning = profile.tuning
         env_values = {
+            # These are consumed by ProcessMgr/session_pool/face_util during
+            # this run.  They are runtime hints, not user-setting rewrites.
+            "ROOP_RUNTIME_WORKER_COUNT": tuning.worker_count,
+            "ROOP_RUNTIME_DETECTOR_POOL": tuning.detector_pool_size,
+            "ROOP_RUNTIME_DETMASK_POOL": tuning.detmask_pool_size,
             "ROOP_RUNTIME_QUEUE_DEPTH": tuning.queue_depth,
             "ROOP_RUNTIME_STABILIZATION_WORKERS": tuning.stabilization_workers,
             "ROOP_RUNTIME_STAB_CHUNK": tuning.stabilization_chunk_size,
             "ROOP_RUNTIME_ORT_INTRA_THREADS": tuning.ort_intra_threads,
             "ROOP_RUNTIME_ORT_INTER_THREADS": tuning.ort_inter_threads,
             "ROOP_RUNTIME_CV_THREADS": tuning.opencv_threads,
+            "ROOP_RUNTIME_FFMPEG_THREADS": tuning.ffmpeg_threads,
+            "ROOP_RUNTIME_DETECTOR_RESOLUTION": tuning.detector_resolution,
             "ROOP_RUNTIME_BATCH_SIZE": tuning.batch_size,
             "ROOP_RUNTIME_TILE_BATCH_SIZE": tuning.tile_batch_size,
             "ROOP_RUNTIME_FACE_CONCURRENCY": tuning.face_concurrency,
@@ -965,7 +1064,14 @@ class RuntimeOptimizer:
         # same concern; a later consumer must be able to distinguish "auto"
         # from "the user chose this".
         setting_for_hint = {
+            "ROOP_RUNTIME_WORKER_COUNT": "max_threads",
+            "ROOP_RUNTIME_DETECTOR_POOL": "perf_detector_pool",
+            "ROOP_RUNTIME_DETMASK_POOL": "perf_detmask_pool",
             "ROOP_RUNTIME_CV_THREADS": "cpu_opencv_threads",
+            "ROOP_RUNTIME_FFMPEG_THREADS": "cpu_ffmpeg_threads",
+            "ROOP_RUNTIME_ORT_INTRA_THREADS": "cpu_ort_intra_threads",
+            "ROOP_RUNTIME_ORT_INTER_THREADS": "cpu_ort_inter_threads",
+            "ROOP_RUNTIME_DETECTOR_RESOLUTION": "face_detector_size",
             "ROOP_RUNTIME_BATCH_SIZE": "perf_batch_swap",
             "ROOP_RUNTIME_TILE_BATCH_SIZE": "perf_batch_swap",
         }
