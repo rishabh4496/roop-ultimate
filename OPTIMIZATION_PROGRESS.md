@@ -48,9 +48,12 @@ NVDEC end-to-end run; 4.09 FPS remains the historical Phase 7 workload result.
 - NVIDIA RTX 3060 Laptop, physically exercised under the continuation exception
 
 **Next-session instruction:**
-- Preserve the documented RTX 3060 Laptop RSS failure, finish the exact
-  graph/stream and quality audits, and do not reuse RTX 4070 cache entries or
-  benchmark results for it.
+- Begin with physical RTX 3060 detection, then validate every remaining phase
+  and gate (Phases 0–16, Gates A–E, Rubin/future-NVIDIA, i9 CPU, unified
+  scheduler, and final validation). Keep separate RTX 3060/RTX 4070 tables,
+  preserve the documented laptop RSS failure and look settings, and never
+  reuse RTX 4070 engines, profiles, measurements, or quality results on the
+  RTX 3060. Missing measurements remain PENDING.
 
 ---
 

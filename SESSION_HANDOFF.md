@@ -93,6 +93,57 @@ The first 4070 run reached provider/model preparation but timed out in the
 long cold render and was stopped; no FPS or policy winner was recorded. The
 3060 command is the exact pending validation required on physical hardware.
 
+## NEXT SESSION — MANDATORY PHYSICAL RTX 3060 VALIDATION
+
+The next session must begin only after the runtime profiler physically detects
+the NVIDIA RTX 3060 Laptop GPU. Do not treat code inspection, a 4070 result,
+or a cached profile as 3060 validation. Record the detected RTX 3060 name,
+architecture, compute capability, total/available VRAM, driver, CUDA,
+TensorRT, ONNX Runtime, Tensor Core modes, FP16/BF16/INT8/FP8 exposure,
+NVDEC, NVENC, CPU topology, RAM, and affinity support before running gates.
+
+Run the physical RTX 3060 acceptance pass for every remaining phase and gate:
+
+- Phase 0 launcher/install/readiness and Phase 1 architecture/instrumentation;
+- Phases 2–16, including the full end-to-end baseline and each phase-specific
+  benchmark or quality matrix;
+- Gate A independent adversarial performance review;
+- Gate B final measured performance-target analysis;
+- Gate C future-architecture capability/engine-cache audit (document future
+  readiness separately from hardware tested);
+- Gate D CPU matrix: auto, P-only, P-priority+limited-E, and P+E;
+- Gate E / unified CPU+RAM+GPU scheduler and final integrated validation;
+- the Rubin/future-NVIDIA gate and i9-14900K gate wherever the plan requires
+  them.
+
+For every performance phase, compare the physical RTX 3060 against the
+separate RTX 4070 record without averaging them. Record FPS, peak/average
+VRAM, CPU/GPU utilization, RAM, decode/inference/enhancement/encode
+throughput, latency, stability, quality, bottleneck, and any regression.
+Classify each optimization as beneficial on both, 3060-specific, 4070-specific,
+neutral, regression on one GPU, or unsafe/rejected. Update
+`OPTIMIZATION_PROGRESS.md` and this handoff after each phase.
+
+Preserve the RTX 3060 laptop look settings: blend ratio `0.85`, face-mask
+blend `25`, merger sharpen `0.55` (plus the recorded configured clarity
+setting), and stabilization enhancer strength `0.6`. Keep the sub-7GB safety policy,
+single-context/single-GPU guard, adaptive stabilization memory cap, and all
+existing RSS failure evidence until a fresh physical measurement proves
+otherwise. Do not copy RTX 4070 engines, tuning profiles, FPS, or quality
+results into the RTX 3060 namespace.
+
+Required starting commands on the physical 3060 include:
+
+    env\\Scripts\\python.exe tests\\baseline_controlled.py --tag phase2_3060 --target "RTX 3060"
+    env\\Scripts\\python.exe tests\\gate_d_cpu_benchmark.py --target "RTX 3060" --end 120 --timeout 1800
+
+Then execute each phase/gate harness named by `OPTIMIZATION_PLAN.md` and the
+phase sections below. If a harness or dependency is unavailable, document the
+exact command and mark that result **PENDING** rather than substituting the
+RTX 4070 or estimating performance. The final handoff must contain separate
+complete RTX 3060 and RTX 4070 tables before the project can claim dual-GPU
+completion.
+
 ---
 
 # PHASE 12 ENTRY POINT — Stabilization / Compositing / Postprocessing
