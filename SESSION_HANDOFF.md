@@ -638,3 +638,29 @@ now-passing automatic memory/stability path.
 Focused optimizer/GPU safety tests: `104 OK`. Do not claim low-precision TRT
 or CUDA-graph E2E success: those paths remain safely rejected/not applicable
 on the 6 GB profile.
+
+## Cross-device session save — 2026-08-29
+
+This handoff is the durable session record for the RTX 4070 workstation. The
+repository source of truth is the commit containing this section on
+`origin/main`. On the RTX 4070, resume with:
+
+1. `git pull --ff-only origin main`
+2. start the app through Pinokio and read the live `/api/system/hardware`
+   profile;
+3. let the hardware signature select the RTX 4070 profile and rerun only the
+   4070 measurements whose environment or model identity has changed.
+
+The 3060 and 4070 profiles, TensorRT caches, benchmark knees, precision
+decisions, stream policy, and runtime calibration remain hardware/workload
+isolated. Do not copy `app/config.yaml`, `app/profiles.json`,
+`app/runtime_calibration.json`, or local browser storage between devices as a
+4070 tuning result. User preferences and this tracked handoff are portable;
+models, facesets, outputs, run history, and other generated runtime state stay
+local unless separately transferred by the operator.
+
+The RTX 3060 continuation is saved above with its exact evidence and residuals:
+automatic CPU decode is the safe default, the strict descendant RSS gate is
+still above `<2.5 GB`, and low-precision TensorRT/CUDA-graph E2E remains
+unadmitted. The RTX 4070 must preserve its separate validation record and must
+not use the 3060 result to close or alter its own acceptance gates.
