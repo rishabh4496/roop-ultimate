@@ -56,17 +56,17 @@ NVDEC end-to-end run; 4.09 FPS remains the historical Phase 7 workload result.
 | Phase | Status | FPS after | Regression? | Notes |
 |---|---|---:|---|---|
 | 1. Repository Audit + Architecture Mapping | COMPLETE | — | No | Repository audit recorded in prior checkpoints |
-| 2. Baseline Profiling + Instrumentation | COMPLETE | 5.12 | No | RTX 4070 evidence recorded; RTX 3060 instrumentation and bounded evidence collected |
+| 2. Baseline Profiling + Instrumentation | **RTX 4070 CLOSED 08-29** | 9.62 | No | Baseline LOCKED in PERFORMANCE_BASELINE.md (d4 600f, 0 wrong faceset). decode/encode/frame_total probes added to the stabilized path -- the profiler had been blind where production runs. RTX 3060 PENDING |
 | 3. Runtime Architecture / Resource Management | IMPLEMENTED; LAPTOP GATE BLOCKED | — | No | Sub-7GB policy, single worker, 1,536 MB cap, adaptive 16-frame floor, replay-session release, and stage telemetry are active; configured GPEN RSS remains above the strict gate |
 | 4. TensorRT Engine Optimization | RTX 4070 COMPLETE; RTX 3060 SAFE FALLBACK VALIDATED / STRICT GATE BLOCKED | 5.12 | Yes | TensorRT is rejected on the 3060 by capability-aware policy; CUDA/CPU fallback is stable, but the configured GPEN path still exceeds the laptop RSS ceiling |
-| 5. Mixed FP16 / FP32 Precision | IMPLEMENTED; 3060 PARTIAL VALIDATION | — | No finite-output regression observed | 152 precision/quality contracts passed; physical small-card path is guarded CUDA/CPU FP32; INT8/FP8 unavailable and no low-precision TRT winner promoted |
-| 6. CUDA Streams + CUDA Graphs | RTX 4070 VALIDATED; RTX 3060 POLICY PASS / GRAPH N/A | — | Not accepted | 3060 policy is one stream, zero auxiliary streams, no overlap; TRT graph A/B is not admitted under the safe small-card fallback |
+| 5. Mixed FP16 / FP32 Precision | **RTX 4070 CLOSED 08-29** | — | No | Quality matrix COMPLETE, 6/6 arms PASS after two sessions of nothing -- the failure was a TRT build budget, not the models. FP16 is safe and not slower; it costs identity (0.407 vs FP32 0.352, three backends agreeing). `mixed` IS fp16, so production sits on the worse side. NOT changed pending an end-to-end A/B. RTX 3060 PENDING |
+| 6. CUDA Streams + CUDA Graphs | **RTX 4070 CLOSED 08-29** | — | Rejected on correctness | Provider CUDA graph REJECTED: it silently loses detections (0 faces on inputs that give 2 with it off), 4/4 runs, not pooling/ordering/shapes; mechanism undetermined. Streams unchanged (aux=1 rejected). RTX 3060 PENDING |
 | 7. Dynamic Batching / Concurrency | IMPLEMENTED; RTX 4070 VALIDATED; RTX 3060 SAFE SELECTION VALIDATED | — | Batch-one tile winner | 3060 isolated batch 1 is the safe swap choice; batches 2/4/8 failed; tile batch 1 measured 9.953 FPS versus 6.913/7.184 |
 | 8. CPU↔GPU Transfer + Memory-Copy Optimization | IMPLEMENTED; RTX 4070 VALIDATED; RTX 3060 VALIDATED | — | No transfer correctness regression observed | 3060 transfer microbench and end-to-end resource attribution passed; evidence is retained separately |
 | 9. NVDEC / Video Decode | IMPLEMENTED; RTX 4070 VALIDATED WITH FOLLOW-UP; RTX 3060 CORRECTNESS VALIDATED | — | NVDEC neutral/regression on fixture | 3060 decode matrix and two fresh CPU/NVDEC E2E repeats passed with zero wrong-faceset applications; NVDEC remains auto, not forced |
 | 10. CPU Threading / Detection / Tracking | IMPLEMENTED; RTX 4070 VALIDATED; RTX 3060 PENDING | 4.54–4.88 explicit / 2.95–3.05 auto real-video | Auto 8-worker/640 profile not promoted over explicit 6-worker profile | Hardware-adaptive worker, pool, queue, detector, ORT/OpenCV/FFmpeg policy is exercised without hard-coded 4070 settings |
-| 11. Enhancement Pipeline | NOT STARTED | — | — | |
-| 12. Stabilization / Compositing / Postprocessing | NOT STARTED | — | — | |
+| 11. Enhancement Pipeline | **RTX 4070 CLOSED 08-29** | — | No | All 27 measurable rows measured at recorded SM clocks; the earlier 4070 table was wrong by up to 38x. GPU idles to 34% clock under per-face load, so every row carries its clock. DMDNet measured, KEEP not installed. RTX 3060 PENDING |
+| 12. Stabilization / Compositing / Postprocessing | **NEXT** | — | — | Starting point is already measured: see the Phase 12 entry point in SESSION_HANDOFF.md |
 | 13. NVENC / FFmpeg / Output | NOT STARTED | — | — | |
 | 14. Full Runtime Autotuner | NOT STARTED | — | — | |
 | 15. Runtime Monitoring + Adaptive Control | NOT STARTED | — | — | |

@@ -40,6 +40,10 @@ app/profiles.json
 # Persisted batch queue (per-machine; jobs reference locally loaded targets)
 app/queue.json
 app/facesets/
+# Root-level copy too. This holds .fsz face libraries and preview PNGs for real,
+# named people -- biometric data. `app/facesets/` was ignored and this one was
+# not, so a single `git add -A` at the repo root would have published it.
+/facesets/
 # KEEP sidecar local state (venv, cloned repo, weights)
 app/sidecar_keep/.venv/
 app/sidecar_keep/KEEP/

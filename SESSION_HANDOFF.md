@@ -67,8 +67,63 @@ Before doing anything:
 **Session:** 1
 
 **Current phase:** RTX 4070 phases 2, 5, 6, 9, 11 ALL CLOSED 2026-08-29. There
-is no open RTX 4070 item in phases 0-11. Every RTX 3060 row is PENDING and is
-the whole remaining acceptance gate.
+is no open RTX 4070 item in phases 0-11. **PHASE 12 is next.** Every RTX 3060
+row is PENDING and remains the dual-GPU acceptance gate, independent of Phase 12.
+
+---
+
+# PHASE 12 ENTRY POINT — Stabilization / Compositing / Postprocessing
+
+The plan's Phase 12 asks for stabilization, frame transforms, compositing,
+blending, resizing, colour conversion and temporary allocations, vectorising CPU
+work where appropriate. Exit criterion: "postprocessing no longer contains
+avoidable hot-path bottlenecks."
+
+**Do not start by profiling. This session already measured the candidates.**
+From the locked Phase 2 baseline (d4, 600 frames, production stack, ROOP_PROFILE
+on, thread time summed across workers):
+
+| stage | total | share | calls | ms/call |
+|---|---:|---:|---:|---:|
+| frame_total | 140.01 s | 47.2% | 600 | 233.34 |
+| mask | 42.84 s | 14.5% | 850 | **50.40** |
+| track_detect | 35.13 s | 11.9% | 600 | 58.54 |
+| swap | 29.76 s | 10.0% | 850 | 35.02 |
+| track_wait | 16.49 s | 5.6% | 597 | 27.62 |
+| enhance | 13.96 s | 4.7% | 850 | 16.43 |
+| encode | 12.85 s | 4.3% | 600 | 21.41 |
+| decode | 3.16 s | 1.1% | 600 | 5.26 |
+
+**Four leads, in the order the evidence supports:**
+
+1. **The three stabilizers cost 24% of the render.** Measured directly this
+   session on the locked fixture: 12.20 fps with them off, 9.62 with
+   `stabilize_face` + `stabilize_mask` + `stabilize_enhancer` on, which is what
+   production runs. That is the single largest postprocessing cost and it is
+   squarely Phase 12's subject. Nothing has been tried yet.
+2. **UltraMax's periocular pass is 2.3-3.5x its own neural network**, all of it
+   host-side cv2 on full 512 frames, and it is the ONLY path in the enhancer
+   matrix that cannot hold a GPU clock (1462-2115 MHz against ~2820). The
+   candidate remedy is the torch-CUDA path GPEN 256 Pro already uses. It would
+   change the rendered picture, so it needs a quality measurement, not just a
+   timing.
+3. **`mask` is the most expensive per-face stage at 50.40 ms/call**, above
+   `swap` at 35.02. RealityUX is XSeg + BiSeNet; the older note that BiSeNet
+   costs 12% for 0.6% benefit is worth re-testing against this baseline.
+4. **The merger post-op chain** (clarity 0.4, sharpen 0.35, grain 0.45, hist 0.4)
+   is compositing work inside `frame_total` and is not separately profiled. It
+   would need its own `_prof` probe before it can be reasoned about.
+
+**Rules that apply to every one of those, learned the hard way here:**
+
+* Counterbalance every end-to-end A/B. Run-to-run variance on this box is 3.7%
+  on identical settings (9.28 vs 9.62), so anything under ~4% from a single pair
+  of runs is noise.
+* Stage share is NOT a speedup budget -- it is thread time summed across
+  workers. Three stage-level wins in this project measured well in isolation and
+  landed NEUTRAL end to end. Only removing GPU work moves the clock.
+* Before tuning a gate, measure the distribution it reads.
+* A negative result is a deliverable. Record it with numbers.
 
 **Phase status:** RTX 4070 candidate validation through Phase 10 is complete.
 TRT FP16 and the CUDA Graph candidate are rejected; the final CPU/NVDEC audit
@@ -120,6 +175,67 @@ behavior remains separately profiled and unmodified.
 ---
 
 # LAST SESSION SUMMARY
+
+## 2026-08-29 — every RTX 4070 pending item in phases 0-11 closed
+
+Commits `57a4ad3`, `7ffe954`, `20dc3e2`, `362b578`, `9b06075`, `1f6c358`,
+`1d2a1de`. Suite 1392 passed, 1 skipped.
+
+| Phase | Was | Now |
+|---|---|---|
+| 2 | official baseline block blank in every field, TODO command | LOCKED: 9.62 fps, 856 faces / 850 swapped / **0 wrong faceset** |
+| 5 | quality matrix produced no result in two sessions | 6/6 arms PASS |
+| 6 | "global steady-state run did not reach a valid result" | REJECTED on a reproducible correctness failure |
+| 9 | two records contradicting each other | resolved |
+| 11 | 27 rows pending or wrong by up to 38x | all measured, at recorded SM clocks |
+
+**Nine defects found by measuring, not by reading.** Nearly all are one pattern:
+a control that looks wired and is not.
+
+1. `angle_bench.build_options` hardcoded `stabilize_face=False` and never passed
+   `stabilize_enhancer` — no bench had ever run the stabilizers production runs,
+   worth **24%** of the render.
+2. `decode` / `encode` / `frame_total` were uninstrumented in
+   `_run_stab_parallel`, so the profiler was blind exactly where production
+   runs — which is why Phase 2's decode/encode FPS could never be filled.
+3. `compat_one`'s hand-maintained enhancer allowlist had gone stale and would
+   have **refused UltraMax**, the app's own configured enhancer.
+4. `Frame_Colorizer.Initialize` had no `else`: an unknown subtype died with
+   `UnboundLocalError` naming neither the setting nor the valid values.
+5. DMDNet's "requires landmark/reference metadata" was wrong for two sessions —
+   it needs `face.matrix`, one line.
+6. `two_face_video._apply_perf_env()` overwrote caller-supplied env, so a
+   pool-1 isolation run silently ran at pool 2 and isolated nothing.
+7. The Phase 6 A/B harness filed a reproducible failure as "unmeasured".
+8. My own fps parser read the **source clip's frame rate** (30.0) as the
+   processing rate (12.20), heading for the locked baseline.
+9. That parser's cross-check was computed and never compared — decoration.
+   Now enforced, with a test asserting it fires.
+
+**Three facts that condition all future measurement here:**
+
+* **The GPU idles to 1065 MHz of 3135 under a per-face bench** (throttle reason
+  `0x1`, GpuIdle — not thermal). Worth 10-80% on absolute figures. The enhancer
+  bench now ramps and records SM clock per row; rows at different clocks are not
+  comparable. `nvidia-smi -lgc` needs admin and is unavailable.
+* **TensorRT keeps a cache namespace per precision and per tuning flag.** Arms
+  measure in under a minute and BUILD for 2-18 minutes. That, not the models,
+  is what defeated Phase 5 twice. "CPU-bound at 1-3% GPU" is what a builder
+  looks like from outside, not a provider fallback.
+* **Run-to-run variance is 3.7%** on identical settings end to end (9.28 vs
+  9.62), which sets the floor for any honest A/B claim.
+
+**Two claims corrected mid-session**, both propagated into the documents: the
+"49.5 ms for the eye operators" constant (it moves with clock, so the robust
+form is 2.3-3.5x its own network), and false precision on absolute ms/face.
+
+**Also fixed:** the root-level `facesets/` was NOT gitignored while
+`app/facesets/` was. It holds .fsz libraries and preview PNGs for ~36 named
+people; a single `git add -A` at the repo root would have published real
+biometric data. Now ignored.
+
+## Earlier sessions
+
 
 Session 1 corrected the evidence audit. `GEMINI.md` records genuine physical
 RTX 3060 Laptop work on 2026-08-25: clean TensorRT diagnostics at 38.3 ms/face,
@@ -174,36 +290,63 @@ were not changed.
 
 # WORK IN PROGRESS
 
-Physical RTX 3060 Phase 0–4 gate is blocked only by the strict RSS ceiling. The
-DFL XSeg measurement and prior test/catalog regressions are resolved.
+Nothing in flight. The working tree is clean and every commit is pushed.
+
+Physical RTX 3060 Phase 0-4 gate is still blocked only by the strict RSS
+ceiling, unchanged by this session. Every RTX 3060 row of phases 2, 5, 6, 11 is
+PENDING and is the whole remaining dual-GPU acceptance gate; the four commands
+that fill it are in the "Immediate next action" section above.
 
 ---
 
 # FILES CURRENTLY BEING MODIFIED
 
-Validation fixes and low-VRAM runtime safety changes are present in
-`app/roop/`, benchmark/test parity changes are in `app/tests/`, and the
-settings catalog and handoff records are updated. The pre-existing
-`.geminiignore` change is retained.
+None -- clean tree, all pushed through `1d2a1de`.
+
+New harnesses added 2026-08-29, all reading the host's own config so neither
+GPU needs a configuration rewrite:
+
+    app/tests/telemetry.py                  host+device sampling, P/E-core split
+    app/tests/baseline_controlled.py        Phase 2 locked baseline
+    app/tests/phase5_quality_matrix.py      cold-build then warm-measure
+    app/tests/phase6_cuda_graph_ab.py       counterbalanced, reads swap rate
+    app/tests/bench_phase11_enhancers.py    12 face paths, ramps + records SM clock
+    app/tests/bench_phase11_frames.py       15 frame paths on a real frame
+    app/tests/test_baseline_controlled.py   guards the fps cross-check
+
+Production code touched: `roop/ProcessMgr.py` (three `_prof` probes on the
+stabilized path, no-ops when `ROOP_PROFILE=0`) and
+`roop/processors/Frame_Colorizer.py` (unknown subtype now raises a named error).
 
 ---
 
 # TESTS CURRENTLY PASSING
 
-Phase-focused sweep: 89/89 passed.
+Full suite: **1,392 passed, 1 skipped** (2026-08-29).
 
-Full suite: 1,346/1,346 passed, 1 skipped.
-`app\\env\\Scripts\\python.exe -m unittest app.tests.test_bench app.tests.test_trt_context_manager app.tests.test_hardware_portability`
+    cd app && env/Scripts/python.exe -m unittest discover -s tests -t . -p "test_*.py"
+
+NOTE: run it with ffmpeg on PATH, or `tests/test_nvdec_reader.py` errors for an
+environmental reason that reads like a real failure:
+
+    PATH="/g/pinokio/bin/miniforge/Library/bin:$PATH"
 
 ---
 
 # CURRENT PERFORMANCE
 
 User-reported maximum:
-**~20 FPS**
+**~20 FPS** -- still never reproduced under a controlled workload, so it is NOT
+the comparison point.
 
-Controlled baseline:
-**RTX 3060 gate did not complete; no valid end-to-end FPS result**
+Controlled RTX 4070 baseline, LOCKED 2026-08-29 in `PERFORMANCE_BASELINE.md`:
+**9.62 FPS** -- d4.mp4 frames 0..600, realswap / GPEN 256 Pro / RealityUX, all
+three stabilizers on, 10 threads, pools 2/2. 856 faces seen, 850 swapped,
+0 wrong faceset. Peak 7067 MB VRAM, peak 11.66 GB RSS, 118 W.
+Reproduce: `app/env/Scripts/python.exe app/tests/baseline_controlled.py --tag phase2_4070`
+
+Controlled RTX 3060 baseline:
+**PENDING** -- the same command with a different `--tag`.
 
 ---
 
