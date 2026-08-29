@@ -66,9 +66,9 @@ Before doing anything:
 
 **Session:** 1
 
-**Current phase:** RTX 4070 phases 2, 5, 9, 11 CLOSED 2026-08-29. Phase 6's
-provider CUDA-graph arm is the last open 4070 item. Every RTX 3060 row is
-PENDING and is the whole remaining acceptance gate.
+**Current phase:** RTX 4070 phases 2, 5, 6, 9, 11 ALL CLOSED 2026-08-29. There
+is no open RTX 4070 item in phases 0-11. Every RTX 3060 row is PENDING and is
+the whole remaining acceptance gate.
 
 **Phase status:** RTX 4070 candidate validation through Phase 10 is complete.
 TRT FP16 and the CUDA Graph candidate are rejected; the final CPU/NVDEC audit

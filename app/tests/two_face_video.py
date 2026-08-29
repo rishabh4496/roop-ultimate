@@ -65,6 +65,14 @@ def _apply_perf_env():
         return
 
     def _set(var, val):
+        # An env var the CALLER already set wins over config.yaml. This used to
+        # overwrite unconditionally, so `--env ROOP_TRT_POOL=1` from
+        # baseline_controlled.py was silently replaced by the config's '2' and
+        # the run reported pool 2 while claiming to test pool 1 -- an isolation
+        # experiment that isolated nothing. Same family as every other control
+        # in this repo that looked wired and was not.
+        if os.environ.get(var):
+            return
         if val is None:
             return
         s = str(val).strip()

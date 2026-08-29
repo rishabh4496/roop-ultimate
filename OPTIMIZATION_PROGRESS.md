@@ -1322,3 +1322,73 @@ in this session and the first that was designed into a measurement matrix.
 regenerates the identical fixture from the same source clip and frame range and
 reads that machine's own config; budget for cold builds, which on a 6 GB card
 with zero pools will differ from these.
+
+## PHASE 6 provider CUDA graph - REJECTED ON CORRECTNESS - 2026-08-29
+
+The open Phase 6 item was the provider-level graph: the record said the "global
+steady-state run did not reach a valid result", which reads as a performance
+question a later session could reasonably reopen. It is not one.
+
+`app/tests/phase6_cuda_graph_ab.py`, d4.mp4 frames 0..300, production stack,
+each arm cold (build) then warm, counterbalanced off/on/on/off:
+
+| arm | runs | result |
+|---|---|---|
+| `ROOP_TRT_CUDA_GRAPH=0` | 3 (cold + pos 0 + pos 3) | ok -- 6.98 / 6.96 / 7.01 fps, **100% swap rate** |
+| `ROOP_TRT_CUDA_GRAPH=1` | 4 (cold, pos 1, pos 2, pool-1 isolation) | **FAILED every time** -- `no faces found in gargee.fsz` |
+
+The off arm read 6.96 at position 0 and 7.01 at position 3 -- 0.7% across early
+and late positions, so there is no order effect confounding this.
+
+**The flag is verifiably live.** `trt_cuda_graph_enable: '1'` appears in the
+provider options and the run builds its own `..._g1` TensorRT cache namespace
+(57 MB and growing against the `_g0` namespace's 3.5 GB). This is not another
+inert setting like `cuda/fp16`.
+
+### What actually happens: the detector silently loses faces
+
+Isolated with two frames through one process (scratch harness, not committed):
+
+    graph off:   A(1st) 2 faces | B(2nd) 1 face | A(3rd) 2 faces
+    graph on:    A(1st) 0 faces | B(2nd) 1 face | A(3rd) 0 faces
+
+B is detected **exactly correctly** under the graph -- same bounding box as the
+off run. A returns nothing, as the first inference and again as the third. So:
+
+* not an ordering or first-capture effect -- A fails 1st AND 3rd, B works 2nd;
+* not pooled contexts -- it still fails with `ROOP_TRT_POOL=1`,
+  `ROOP_DETMASK_POOL=1`, `ROOP_DETECTOR_POOL=1` verified in the log as pool 1;
+* not varying input shapes -- both facesets in the render case are uniformly
+  512x512, and the detector letterboxes to a fixed 512x512 network input either
+  way.
+
+Neither precondition named in `core.py`'s own comment ("they require stable
+shapes and context lifetimes") explains it. **The mechanism was not determined**
+and is deliberately not guessed at here. What is established is that some inputs
+silently produce zero detections and others are exactly right, deterministically,
+with no exception and no warning.
+
+**Disposition: REJECTED, on correctness rather than throughput.** Enabling this
+flag produces renders with missing faces, not slow renders. It stays opt-in and
+off, and the reason on file is now a reproducible symptom instead of an absent
+measurement. The separate torch-level CUDA graph inside GPEN 256 Pro was
+rejected earlier on a real timing (2.06 ms against 1.67 ms) and is unaffected.
+
+### Two harness defects found doing this
+
+**`two_face_video._apply_perf_env()` overwrote caller-supplied environment.** It
+unconditionally wrote `ROOP_TRT_POOL` and friends from config.yaml, so the first
+pool-1 isolation run reported pool 2 and isolated nothing -- an experiment that
+silently tested the thing it was controlling for. The caller's value now wins.
+Same family as every other control in this repo that looked wired and was not.
+
+**The A/B harness filed a reproducible failure as "unmeasured".** Its guard said
+"at least one arm produced no fps -- record it as unmeasured, not as a
+rejection", which is right for a flaky or absent arm and exactly wrong for an arm
+that failed identically four times. It now separates the two cases, because
+filing a correctness defect as "nobody got round to it" is how the 4070 list
+reached the state this session found it in.
+
+**RTX 3060 result:** PENDING, and the 4070 correctness failure does not transfer
+-- it must be reproduced there before the flag is described as broken on that
+device.

@@ -154,8 +154,23 @@ def main():
               % (results["cold"]["graph_off"]["seconds"],
                  results["cold"]["graph_on"]["seconds"]))
     else:
-        print("  NOT A VALID A/B -- at least one arm produced no fps. "
-              "Record it as unmeasured, not as a rejection.")
+        # An arm with no fps is NOT automatically "unmeasured". Distinguish:
+        #   * every attempt errored the same way  -> a REPRODUCIBLE FAILURE, which
+        #     is a finding and a legitimate basis for rejection;
+        #   * mixed or absent results             -> genuinely unmeasured.
+        # Phase 6 hit the first case on 2026-08-29 and the original wording would
+        # have filed a correctness defect as "we did not get round to it".
+        for tag, _v in ARMS:
+            attempts = [r for r in results["warm"] if r["arm"] == tag]
+            statuses = {r["status"] for r in attempts}
+            if attempts and statuses == {"failed"}:
+                print("  %s FAILED on all %d attempts -- this is a REPRODUCIBLE "
+                      "FAILURE, not an unmeasured arm. Read the per-run logs for "
+                      "the error and record the failure as the result."
+                      % (tag, len(attempts)))
+            elif tag not in means:
+                print("  %s produced no fps and no consistent error -- genuinely "
+                      "unmeasured; do not record it as a rejection." % tag)
     print("\n  wrote %s" % js)
 
 
