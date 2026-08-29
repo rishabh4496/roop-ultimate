@@ -1,4 +1,5 @@
 import os
+import subprocess
 import yaml
 
 # --- Make the TensorRT execution provider actually loadable on Windows ---
@@ -62,6 +63,7 @@ _enable_tensorrt_runtime()
 # Rule 3: reach the measured knee when the CPU has that many physical cores;
 #         retain one core of headroom on smaller CPUs.
 _THREAD_RULE = 3
+_HARDWARE_CACHE = None
 
 
 def detect_hardware():
@@ -71,13 +73,41 @@ def detect_hardware():
     determined — an unknown machine must fall through to the safest defaults,
     never to another machine's.
     """
-    hw = {'gpu': '', 'vram_gb': 0.0, 'ram_gb': 0.0}
+    global _HARDWARE_CACHE
+    if _HARDWARE_CACHE is not None:
+        return dict(_HARDWARE_CACHE)
+    hw = {
+        'gpu': '', 'architecture': '', 'compute_capability': '',
+        'vram_gb': 0.0, 'vram_tier': '', 'driver': '', 'cuda': '',
+        'tensorrt': '', 'onnxruntime': '', 'ram_gb': 0.0,
+    }
+    # Settings is imported while the app is bootstrapping. Keep this identity
+    # probe cheap; the full HardwareProfiler (including ffmpeg codec probes) is
+    # used by runtime startup, diagnostics, and benchmarks.
     try:
         import torch
         if torch.cuda.is_available():
             props = torch.cuda.get_device_properties(0)
             hw['gpu'] = str(props.name)
             hw['vram_gb'] = round(props.total_memory / (1024 ** 3), 1)
+            major, minor = torch.cuda.get_device_capability(0)
+            hw['compute_capability'] = f'{major}.{minor}'
+            from roop.runtime_optimizer import HardwareProfiler
+            hw['architecture'] = HardwareProfiler._architecture((int(major), int(minor)))
+            hw['cuda'] = str(getattr(torch.version, 'cuda', '') or '')
+    except Exception:
+        pass
+    try:
+        import torch
+        if hw['vram_gb'] > 0:
+            if hw['vram_gb'] < 7:
+                hw['vram_tier'] = 'small'
+            elif hw['vram_gb'] < 11.5:
+                hw['vram_tier'] = 'medium'
+            elif hw['vram_gb'] < 15.5:
+                hw['vram_tier'] = 'desktop'
+            else:
+                hw['vram_tier'] = 'large'
     except Exception:
         pass
     try:
@@ -85,29 +115,68 @@ def detect_hardware():
         hw['ram_gb'] = round(psutil.virtual_memory().total / (1024 ** 3))
     except Exception:
         pass
-    return hw
+    try:
+        result = subprocess.run(
+            ['nvidia-smi', '--query-gpu=driver_version',
+             '--format=csv,noheader,nounits'],
+            capture_output=True, text=True, timeout=1, check=False)
+        hw['driver'] = (result.stdout or '').strip().splitlines()[0]
+    except Exception:
+        pass
+    try:
+        from importlib.metadata import version
+        for key, package in (('tensorrt', 'tensorrt'), ('onnxruntime', 'onnxruntime')):
+            try:
+                hw[key] = version(package)
+            except Exception:
+                pass
+    except Exception:
+        pass
+    # Some CUDA wheels expose only vendor-suffixed distribution metadata
+    # (for example tensorrt_cu12), while the imported modules still publish
+    # their canonical runtime versions.  Keep the settings signature aligned
+    # with HardwareProfiler instead of silently dropping these identity fields.
+    try:
+        if not hw['tensorrt']:
+            import tensorrt
+            hw['tensorrt'] = str(getattr(tensorrt, '__version__', '') or '')
+    except Exception:
+        pass
+    try:
+        if not hw['onnxruntime']:
+            import onnxruntime
+            hw['onnxruntime'] = str(getattr(onnxruntime, '__version__', '') or '')
+    except Exception:
+        pass
+    _HARDWARE_CACHE = dict(hw)
+    return dict(hw)
 
 
 def hardware_signature(hw=None):
     """A stable id for 'the machine the perf numbers were tuned on'.
 
-    GPU model, VRAM and system RAM — the three inputs to every auto tier here
-    and in session_pool. Deliberately NOT the driver version or CPU: those
-    change without changing a single pool size, and a signature that churns
-    would reset the user's settings for no reason.
-
-    The CPU exclusion is narrower than it reads. It is true of the POOL sizes,
-    which is what this signature guards, but the thread default has been bound
-    to the core count since 0eda23b — `min(max(2, cores - 1), knee)`. Rather
-    than reusing that former formula, the current policy reaches the measured
-    GPU knee when enough physical cores exist, otherwise retaining one core of
-    host headroom. The thread count carries its own basis stamp; see
-    `_THREAD_RULE`.
+    GPU model, architecture/compute capability, VRAM tier, driver/runtime
+    versions, and system RAM are included. Available VRAM is intentionally not
+    included because it changes during a run. The thread count carries its own
+    CPU/rule basis stamp; see `_THREAD_RULE`.
     """
     hw = hw or detect_hardware()
     if not hw.get('gpu') and not hw.get('ram_gb'):
         return ''
-    return f"{hw.get('gpu', '')}|{hw.get('vram_gb', 0.0)}|{hw.get('ram_gb', 0)}"
+    # Do not let a profile tuned under a different driver/runtime or compute
+    # capability follow config.yaml to another GPU.  Available VRAM is omitted
+    # because it changes during a run; total VRAM/tier and software identities
+    # are stable profile dimensions.
+    fields = (
+        hw.get('gpu', ''), hw.get('architecture', ''),
+        hw.get('compute_capability', ''), hw.get('vram_gb', 0.0),
+        hw.get('vram_tier', ''), hw.get('driver', hw.get('driver_version', '')),
+        hw.get('cuda', hw.get('cuda_version', '')),
+        hw.get('tensorrt', hw.get('tensorrt_version', '')),
+        hw.get('onnxruntime', hw.get('onnxruntime_version', '')),
+        hw.get('ram_gb', 0),
+    )
+    return '|'.join(str(value) for value in fields)
 
 
 class Settings:

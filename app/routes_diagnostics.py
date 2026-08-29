@@ -36,6 +36,24 @@ list_files_process = None
 
 
 _GPU_NAME_CACHE = None
+_HARDWARE_PROFILER = None
+
+
+def _hardware_profile(refresh=False):
+    """Return the canonical runtime hardware profile used by the tuner.
+
+    The profiler is lazy and cached so diagnostics do not repeatedly invoke
+    ffmpeg/nvidia-smi.  ``refresh`` is reserved for an explicit diagnostics
+    request after a driver/device change.
+    """
+    global _HARDWARE_PROFILER
+    try:
+        from roop.runtime_optimizer import HardwareProfiler
+        if _HARDWARE_PROFILER is None:
+            _HARDWARE_PROFILER = HardwareProfiler()
+        return _HARDWARE_PROFILER.profile(refresh=refresh)
+    except Exception:
+        return None
 
 def _gpu_name():
     """Device name for the runtime-estimate signature (cached — it never changes
@@ -340,6 +358,17 @@ def get_stage_profile():
     except Exception as e:
         return {"enabled": False, "stages": [], "message": str(e)}
 
+
+@router.get("/api/system/hardware")
+def get_hardware_profile(refresh: bool = False):
+    """Return the complete detected hardware/software capability profile."""
+    profile = _hardware_profile(refresh=refresh)
+    if profile is None:
+        return {"available": False, "message": "hardware probe unavailable"}
+    result = profile.as_dict()
+    result["available"] = bool(profile.cuda_available or profile.gpu_name)
+    return result
+
 @router.get("/api/system/telemetry")
 def get_telemetry():
     telemetry = {
@@ -363,6 +392,10 @@ def get_telemetry():
         pass
 
     telemetry.update(_vram_stats())
+
+    profile = _hardware_profile()
+    if profile is not None:
+        telemetry["hardware_profile"] = profile.as_dict()
 
     # Free space on the output drive. A long render writes tens of GB of frames
     # and the failure mode when it runs out is losing the whole run at the encode

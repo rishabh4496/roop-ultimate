@@ -152,4 +152,9 @@ if __name__ == '__main__':
     import threading
     from api import run_api
     threading.Thread(target=run_api, daemon=True).start()
+    # Pinokio's launcher waits for a concrete loopback URL before advancing
+    # to the React shell.  The API owns the port, so publish the detected
+    # address here instead of making the launcher guess or hard-code it.
+    api_port = int(os.environ.get("ROOP_API_PORT", "8001"))
+    print(f"[Backend] listening on http://127.0.0.1:{api_port}", flush=True)
     core.run()

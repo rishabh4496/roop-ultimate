@@ -8,6 +8,41 @@ from roop.processors.Mask_XSeg import Mask_XSeg
 from roop.processors.Mask_FaceParser import Mask_FaceParser
 from roop import session_pool
 
+
+def _small_card_parser_enabled():
+    """Return whether RealityUX may retain its auxiliary parser on this GPU.
+
+    XSeg is RealityUX's authoritative face/occluder mask. BiSeNet only
+    subtracts a small accessory region, but its resident session is a large
+    second 512px graph on the 6GB laptop tier. Keep the fusion on larger
+    devices and make the low-VRAM choice from runtime device properties;
+    never infer it from a model name or a fixed machine configuration.
+
+    The override is intentionally explicit because enabling the parser is a
+    memory-risk decision on a small card. CPU-only runs retain the historical
+    full fusion because the sub-7GB CUDA residency constraint does not apply.
+    """
+    import os
+    override = str(os.environ.get(
+        'ROOP_SMALL_CARD_REALITYUX_PARSER', 'auto')).strip().lower()
+    if override in ('1', 'true', 'yes', 'on'):
+        return True
+    if override in ('0', 'false', 'no', 'off'):
+        return False
+    try:
+        import torch
+        if not torch.cuda.is_available():
+            return True
+        from roop import globals as _globals
+        device_id = int(getattr(_globals, 'cuda_device_id', 0) or 0)
+        total_gb = (torch.cuda.get_device_properties(device_id).total_memory
+                    / (1024 ** 3))
+        return total_gb >= 7.0
+    except Exception:
+        # An unreadable capability probe must not disable a requested quality
+        # component on an unknown/non-CUDA device.
+        return True
+
 # Classes BiSeNet is allowed to subtract from XSeg's swap region: only
 # unambiguous, OPAQUE non-face regions -- ears(7,8,9), cloth(16), hair(17),
 # hat(18). Deliberately narrower than "everything not in _FACE_CLASSES" (the
@@ -88,6 +123,7 @@ class Mask_RealityUX():
     def __init__(self):
         self._xseg = Mask_XSeg()
         self._parser = Mask_FaceParser()
+        self._parser_enabled = True
         # Non-None here (not a real SessionPool) purely to satisfy the
         # ProcessMgr call site's `getattr(p, 'pool', None) is not None` check
         # (procmgr.py mask stage, `_gpu_guard(pooled=...)`) -- that check only
@@ -103,11 +139,20 @@ class Mask_RealityUX():
     def Initialize(self, plugin_options: dict):
         self.plugin_options = plugin_options
         self._xseg.Initialize(plugin_options)
-        self._parser.Initialize(plugin_options)
+        self._parser_enabled = _small_card_parser_enabled()
+        if self._parser_enabled:
+            self._parser.Initialize(plugin_options)
+        else:
+            print('[Mask_RealityUX] sub-7GB CUDA profile: retaining the '
+                  'authoritative XSeg mask and skipping the auxiliary BiSeNet '
+                  'parser to stay within the laptop RSS budget. Set '
+                  'ROOP_SMALL_CARD_REALITYUX_PARSER=1 to opt in.', flush=True)
         if session_pool.detmask_pooling_enabled():
             self.pool = True
 
     def Run(self, img1, keywords: str) -> Frame:
+        if not self._parser_enabled:
+            return _to_2d(self._xseg.Run(img1, keywords)).astype(np.float32)
         # XSeg and BiSeNet's raw label inference are independent, stateless
         # calls into separate ONNX sessions (each with its own pool when
         # pooling is on) -- run them concurrently instead of paying for both
@@ -190,5 +235,6 @@ class Mask_RealityUX():
 
     def Release(self):
         self._xseg.Release()
-        self._parser.Release()
+        if self._parser_enabled:
+            self._parser.Release()
         self.pool = None

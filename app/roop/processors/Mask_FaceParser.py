@@ -126,7 +126,10 @@ class Mask_FaceParser():
             from roop.utilities import (get_onnx_session_options,
                                         get_small_card_safe_providers)
             _sess_opts = get_onnx_session_options()
-            providers = get_small_card_safe_providers(roop.globals.execution_providers)
+            providers = get_small_card_safe_providers(
+                roop.globals.execution_providers,
+                model_path=model_path,
+                stage='mask:bisenet')
             providers, _precision = providers_for('masking:bisenet', providers, model_path)
 
             def _build(_i=0):

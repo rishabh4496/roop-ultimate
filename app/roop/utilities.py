@@ -30,29 +30,84 @@ TEMP_FILE = "temp.mp4"
 TEMP_DIRECTORY = "temp"
 
 
-def get_small_card_safe_providers(providers=None):
-    """Keep heavy enhancer/mask sessions off CUDA below the 7GB tier.
+def get_small_card_safe_providers(providers=None, model_path=None, stage=None):
+    """Choose a safe provider for one heavy mask/enhancer session.
 
-    CUDA remains the provider for detection and swapping, while the repeated
-    512px mask and enhancement sessions use bounded CPU allocations. This
-    prevents their CUDA execution arenas from pushing the 16GB laptop above
-    the 2.5GB host-RSS ceiling during long stabilized renders.
+    On the sub-7GB tier the decision is made from the *current* CUDA free
+    memory and the model's on-disk size. A small model is admitted to CUDA
+    when there is enough measured headroom; an unknown or inadequately sized
+    model stays on CPU. This keeps the RTX 3060 path adaptive without
+    assuming that every heavy model has the same activation footprint.
+
+    ``ROOP_ALLOW_CUDA_HEAVY_STAGES_SMALL_GPU=1`` remains an explicit diagnostic
+    override. ``ROOP_SMALL_CARD_HEAVY_PROVIDER=cpu`` can reproduce the
+    conservative baseline; the default is ``auto``.
     """
     selected = list(providers if providers is not None
                     else getattr(roop.globals, 'execution_providers', []) or [])
     if os.environ.get('ROOP_ALLOW_CUDA_HEAVY_STAGES_SMALL_GPU', '').strip().lower() in (
             '1', 'true', 'yes', 'on'):
         return selected
+    has_cuda = any('cuda' in str(p[0] if isinstance(p, (tuple, list)) else p).lower()
+                   for p in selected)
+    if not has_cuda:
+        return selected
     try:
+        device_id = getattr(roop.globals, 'cuda_device_id', 0)
+        props = torch.cuda.get_device_properties(device_id)
+        total_bytes = int(getattr(props, 'total_memory', 0) or 0)
         small = (torch.cuda.is_available() and
-                 torch.cuda.get_device_properties(
-                     getattr(roop.globals, 'cuda_device_id', 0)).total_memory /
-                 (1024 ** 3) < 7.0)
+                 total_bytes > 0 and total_bytes / (1024 ** 3) < 7.0)
     except Exception:
         small = False
-    if small and any('cuda' in str(p[0] if isinstance(p, (tuple, list)) else p).lower()
-                     for p in selected):
+    if not small:
+        return selected
+
+    policy = os.environ.get('ROOP_SMALL_CARD_HEAVY_PROVIDER', 'auto').strip().lower()
+    if policy == 'cpu':
         return ['CPUExecutionProvider']
+    if policy not in ('', 'auto', 'cuda'):
+        print(f"[Runtime] unknown ROOP_SMALL_CARD_HEAVY_PROVIDER={policy!r}; "
+              "using CPU for safety", flush=True)
+        return ['CPUExecutionProvider']
+
+    model_bytes = 0
+    try:
+        if model_path:
+            model_bytes = int(os.path.getsize(model_path))
+    except (OSError, TypeError, ValueError):
+        model_bytes = 0
+    if model_bytes <= 0:
+        print(f"[Runtime] small-card admission: {stage or 'heavy stage'} "
+              "has no measurable model size; using CPU", flush=True)
+        return ['CPUExecutionProvider']
+
+    try:
+        free_bytes, live_total_bytes = torch.cuda.mem_get_info(device_id)
+        free_bytes = int(free_bytes)
+        live_total_bytes = int(live_total_bytes or total_bytes)
+    except Exception:
+        print(f"[Runtime] small-card admission: live VRAM unavailable for "
+              f"{stage or 'heavy stage'}; using CPU", flush=True)
+        return ['CPUExecutionProvider']
+
+    # ORT may hold graph, allocator, and activation memory in addition to the
+    # file mapping. The multiplier is a model-footprint safety factor, not a
+    # GPU-specific capacity assumption. Requiring more free memory than the
+    # estimate leaves the already-running swap/detection sessions untouched.
+    estimated_bytes = model_bytes * 6
+    if free_bytes <= estimated_bytes:
+        print(f"[Runtime] small-card admission: {stage or 'heavy stage'} "
+              f"CUDA rejected (free={free_bytes / 2**20:.0f}MB, "
+              f"estimate={estimated_bytes / 2**20:.0f}MB, "
+              f"total={live_total_bytes / 2**30:.2f}GB); using CPU", flush=True)
+        return ['CPUExecutionProvider']
+
+    print(f"[Runtime] small-card admission: {stage or 'heavy stage'} "
+          f"CUDA admitted (free={free_bytes / 2**20:.0f}MB, "
+          f"model={model_bytes / 2**20:.1f}MB, "
+          f"estimate={estimated_bytes / 2**20:.0f}MB, "
+          f"total={live_total_bytes / 2**30:.2f}GB)", flush=True)
     return selected
 
 # monkey patch ssl for mac

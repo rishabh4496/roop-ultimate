@@ -21,6 +21,7 @@ import hashlib
 import json
 import os
 import platform
+import re
 import shutil
 import subprocess
 import tempfile
@@ -78,10 +79,48 @@ def _short(value: Any) -> str:
     return str(value or "unknown").strip()
 
 
+def _file_digest(path: Any) -> str:
+    """Return a cheap content identity when a caller supplies a model path."""
+    try:
+        candidate = Path(str(path)).expanduser()
+        if not candidate.is_file():
+            return ""
+        digest = hashlib.sha256()
+        with candidate.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
+    except (OSError, TypeError, ValueError):
+        return ""
+
+
+def _model_identity(settings: Any) -> dict:
+    """Collect explicit model revision data without guessing model locations."""
+    fields = (
+        "model_version", "model_hash", "swap_model_hash",
+        "detector_model_hash", "enhancer_model_hash", "mask_model_hash",
+    )
+    identity = {name: _value(settings, name, "") or "" for name in fields}
+    identity["environment_version"] = os.environ.get("ROOP_MODEL_VERSION", "")
+    identity["environment_hash"] = os.environ.get("ROOP_MODEL_HASH", "")
+    for setting_name in (
+            "model_path", "swap_model_path", "detector_model_path",
+            "enhancer_model_path", "mask_model_path"):
+        path = _value(settings, setting_name, "")
+        if path:
+            identity[setting_name] = str(path)
+            digest = _file_digest(path)
+            if digest:
+                identity[setting_name + "_sha256"] = digest
+    return identity
+
+
 @dataclass(frozen=True)
 class HardwareProfile:
+    device_id: int = 0
     gpu_name: str = ""
     gpu_vendor: str = "unknown"
+    architecture: str = ""
     compute_capability: str = ""
     vram_total_gb: float = 0.0
     vram_available_gb: float = 0.0
@@ -93,6 +132,13 @@ class HardwareProfile:
     onnxruntime_version: str = ""
     nvdec_available: bool = False
     nvenc_available: bool = False
+    nvdec_codecs: Tuple[str, ...] = field(default_factory=tuple)
+    nvenc_codecs: Tuple[str, ...] = field(default_factory=tuple)
+    tensor_core_capabilities: Tuple[str, ...] = field(default_factory=tuple)
+    fp16_supported: bool = False
+    bf16_supported: bool = False
+    int8_supported: bool = False
+    fp8_supported: bool = False
     cpu_physical_cores: int = 1
     cpu_logical_cores: int = 1
     ram_total_gb: float = 0.0
@@ -117,6 +163,15 @@ class HardwareProfile:
     def as_dict(self) -> dict:
         result = asdict(self)
         result["vram_tier"] = self.vram_tier
+        result["capabilities"] = {
+            "tensor_cores": list(self.tensor_core_capabilities),
+            "fp16": self.fp16_supported,
+            "bf16": self.bf16_supported,
+            "int8": self.int8_supported,
+            "fp8": self.fp8_supported,
+            "nvdec": list(self.nvdec_codecs),
+            "nvenc": list(self.nvenc_codecs),
+        }
         return result
 
 
@@ -343,6 +398,98 @@ class HardwareProfiler:
         return "unknown"
 
     @staticmethod
+    def _architecture(compute_capability: Tuple[int, int]) -> str:
+        """Map the runtime-reported SM version to a CUDA architecture family.
+
+        This intentionally uses compute capability, not the marketing name.  An
+        unknown future device remains usable and is recorded as its SM family
+        instead of being silently treated as an RTX 4070 or RTX 3060.
+        """
+        families = {
+            (5, 2): "Maxwell",
+            (6, 0): "Pascal",
+            (6, 1): "Pascal",
+            (6, 2): "Pascal",
+            (7, 0): "Volta",
+            (7, 2): "Xavier",
+            (7, 5): "Turing",
+            (8, 0): "Ampere",
+            (8, 6): "Ampere",
+            (8, 7): "Ampere",
+            (8, 9): "Ada Lovelace",
+            (9, 0): "Hopper",
+        }
+        if compute_capability in families:
+            return families[compute_capability]
+        if compute_capability and all(isinstance(v, int) for v in compute_capability):
+            return "SM %d.%d" % compute_capability
+        return ""
+
+    @staticmethod
+    def _precision_capabilities(torch_module, device_id: int,
+                                compute: Tuple[int, int], trt_available: bool):
+        """Probe exposed math modes without building an engine.
+
+        ``is_bf16_supported`` and TensorRT's builder feature flags are runtime
+        capability checks.  They are deliberately kept separate from GPU name
+        matching so the same code handles a future NVIDIA device safely.
+        """
+        fp16 = bool(compute >= (5, 3) and hasattr(torch_module, "float16"))
+        bf16 = False
+        try:
+            probe = getattr(torch_module.cuda, "is_bf16_supported", None)
+            if probe is not None:
+                try:
+                    bf16 = bool(probe(including_emulation=False))
+                except TypeError:
+                    bf16 = bool(probe())
+        except Exception:
+            pass
+
+        int8 = fp8 = False
+        trt_flags = set()
+        if trt_available:
+            try:
+                import tensorrt as trt
+                builder = trt.Builder(trt.Logger(trt.Logger.ERROR))
+                int8 = bool(getattr(builder, "platform_has_fast_int8", False))
+                fp8 = bool(getattr(builder, "platform_has_fast_fp8", False))
+                if bool(getattr(builder, "platform_has_fast_fp16", False)):
+                    trt_flags.add("fp16")
+                if int8:
+                    trt_flags.add("int8")
+                if fp8:
+                    trt_flags.add("fp8")
+            except Exception:
+                pass
+
+        # Tensor Core availability is reported as a capability only when the
+        # runtime exposes at least one Tensor Core math mode.  SM version is a
+        # hardware fact, while these flags describe what this software stack can
+        # actually use.
+        tensor_cores = set(trt_flags)
+        if fp16 and compute >= (7, 0):
+            tensor_cores.add("fp16")
+        if bf16 and compute >= (8, 0):
+            tensor_cores.add("bf16")
+        return fp16, bf16, int8, fp8, tuple(sorted(tensor_cores))
+
+    @staticmethod
+    def _ffmpeg_capabilities(ffmpeg: Optional[str], cuda: bool):
+        if not ffmpeg or not cuda:
+            return False, False, (), ()
+        hwaccels = HardwareProfiler._command(ffmpeg, "-hide_banner", "-hwaccels")
+        decoders = HardwareProfiler._command(ffmpeg, "-hide_banner", "-decoders")
+        encoders = HardwareProfiler._command(ffmpeg, "-hide_banner", "-encoders")
+        decoder_names = tuple(sorted(set(re.findall(
+            r"\b((?:h264|hevc|av1|vp9)_cuvid)\b", decoders.lower()))))
+        encoder_names = tuple(sorted(set(re.findall(
+            r"\b((?:h264|hevc|av1)_nvenc)\b", encoders.lower()))))
+        nvdec = bool("cuda" in hwaccels.lower() and (decoder_names or "cuda" in decoders.lower()))
+        nvenc = bool(encoder_names)
+        return nvdec, nvenc, decoder_names, encoder_names
+
+    @staticmethod
     def _command(*args: str, timeout: float = 1.5) -> str:
         try:
             result = subprocess.run(args, capture_output=True, text=True,
@@ -356,6 +503,8 @@ class HardwareProfiler:
             return self._profile
 
         gpu_name = ""
+        architecture = ""
+        compute_tuple = (0, 0)
         compute = ""
         vram_total = vram_free = 0.0
         cuda = False
@@ -363,6 +512,8 @@ class HardwareProfiler:
         trt = False
         trt_version = ""
         ort_version = ""
+        fp16 = bf16 = int8 = fp8 = False
+        tensor_cores = ()
         try:
             import torch
             cuda = bool(torch.cuda.is_available())
@@ -372,7 +523,9 @@ class HardwareProfiler:
                 props = torch.cuda.get_device_properties(self.device_id)
                 vram_total = _number(props.total_memory) / (1024 ** 3)
                 major, minor = torch.cuda.get_device_capability(self.device_id)
+                compute_tuple = (int(major), int(minor))
                 compute = f"{major}.{minor}"
+                architecture = self._architecture(compute_tuple)
                 try:
                     free, total = torch.cuda.mem_get_info(self.device_id)
                     vram_free = _number(free) / (1024 ** 3)
@@ -396,6 +549,28 @@ class HardwareProfiler:
             trt_version = str(getattr(_trt, "__version__", ""))
         except Exception:
             pass
+        # TensorRT's Builder is a heavyweight host allocation.  On the
+        # sub-7GB tier the backend admission policy rejects TensorRT before any
+        # production engine is built, so constructing a Builder here would
+        # consume the very RSS budget this profiler is meant to protect.  The
+        # installed/provider capability and version are still recorded above;
+        # only the optional Builder feature probe is deferred on that tier.
+        trt_builder_probe = trt
+        if cuda and vram_total and vram_total < 7.0:
+            allow_small_trt = os.environ.get(
+                "ROOP_ALLOW_TRT_SMALL_GPU", "").strip().lower() in (
+                    "1", "true", "yes", "on")
+            trt_builder_probe = bool(allow_small_trt)
+            if not trt_builder_probe:
+                print("[Hardware] sub-7GB GPU: TensorRT Builder capability probe "
+                      "deferred; backend admission remains CUDA/CPU", flush=True)
+        if cuda:
+            try:
+                import torch as _torch
+                fp16, bf16, int8, fp8, tensor_cores = self._precision_capabilities(
+                    _torch, self.device_id, compute_tuple, trt_builder_probe)
+            except Exception:
+                pass
 
         try:
             import psutil
@@ -430,14 +605,13 @@ class HardwareProfiler:
                 vram_free = _number(parts[2], vram_free) / (1024 if _number(parts[2]) > 100 else 1)
 
         ffmpeg = shutil.which("ffmpeg")
-        hwaccels = self._command(ffmpeg, "-hide_banner", "-hwaccels") if ffmpeg else ""
-        encoders = self._command(ffmpeg, "-hide_banner", "-encoders") if ffmpeg else ""
-        nvdec = "cuda" in hwaccels.lower() and cuda
-        nvenc = ("h264_nvenc" in encoders.lower() or "hevc_nvenc" in encoders.lower()) and cuda
+        nvdec, nvenc, nvdec_codecs, nvenc_codecs = self._ffmpeg_capabilities(ffmpeg, cuda)
 
         self._profile = HardwareProfile(
+            device_id=self.device_id,
             gpu_name=gpu_name,
             gpu_vendor=self._vendor(gpu_name),
+            architecture=architecture,
             compute_capability=compute,
             vram_total_gb=round(vram_total, 3),
             vram_available_gb=round(vram_free, 3),
@@ -449,6 +623,13 @@ class HardwareProfiler:
             onnxruntime_version=ort_version,
             nvdec_available=nvdec,
             nvenc_available=nvenc,
+            nvdec_codecs=nvdec_codecs,
+            nvenc_codecs=nvenc_codecs,
+            tensor_core_capabilities=tensor_cores,
+            fp16_supported=fp16,
+            bf16_supported=bf16,
+            int8_supported=int8,
+            fp8_supported=fp8,
             cpu_physical_cores=max(1, physical),
             cpu_logical_cores=max(1, logical),
             ram_total_gb=round(ram_total, 3),
@@ -528,6 +709,12 @@ class PrecisionSelector:
 
     def select(self, settings: Any, hardware: HardwareProfile) -> str:
         configured = str(_value(settings, "trt_precision", "mixed") or "mixed").lower()
+        # The sub-7GB profile intentionally does not admit TensorRT. Reporting
+        # the effective precision as FP32 keeps diagnostics/profile identity
+        # honest; the configured UI value remains available for an explicit,
+        # separately audited override.
+        if 0 < hardware.vram_total_gb < 7.0 and configured != "fp32":
+            return "fp32"
         if configured in ("fp16", "fp32", "mixed"):
             return configured
         if hardware.tensorrt_available:
@@ -541,16 +728,38 @@ class TensorRTEngineManager:
     def cache_key(self, hardware: HardwareProfile, workload: WorkloadProfile,
                   settings: Any, precision: str) -> str:
         identity = {
-            "gpu": hardware.gpu_name,
-            "compute": hardware.compute_capability,
-            "driver": hardware.driver_version,
-            "cuda": hardware.cuda_version,
-            "tensorrt": hardware.tensorrt_version,
-            "ort": hardware.onnxruntime_version,
+            # Keep the complete runtime identity in the key.  In particular,
+            # total VRAM and architecture are required: the same model graph
+            # must not inherit a tuning profile from a different card merely
+            # because both cards expose CUDA and TensorRT.
+            "hardware": {
+                "device_id": hardware.device_id,
+                "gpu": hardware.gpu_name,
+                "vendor": hardware.gpu_vendor,
+                "architecture": hardware.architecture,
+                "compute": hardware.compute_capability,
+                "vram_total_gb": hardware.vram_total_gb,
+                "vram_tier": hardware.vram_tier,
+                "driver": hardware.driver_version,
+                "cuda": hardware.cuda_version,
+                "tensorrt": hardware.tensorrt_version,
+                "ort": hardware.onnxruntime_version,
+                "tensor_cores": hardware.tensor_core_capabilities,
+                "fp16": hardware.fp16_supported,
+                "bf16": hardware.bf16_supported,
+                "int8": hardware.int8_supported,
+                "fp8": hardware.fp8_supported,
+                "nvdec": hardware.nvdec_codecs,
+                "nvenc": hardware.nvenc_codecs,
+            },
             "model": {
                 "swap": _value(settings, "swap_model", "") or "",
                 "detector": _value(settings, "detector_engine", "") or "",
                 "mask": _value(settings, "mask_engine", "") or "",
+                # Callers that load a locally revised model can provide a
+                # version/hash or an explicit path.  The latter is hashed when
+                # available; unknown locations are never guessed.
+                **_model_identity(settings),
             },
             "enhancer": workload.enhancement_model,
             "precision": precision,
@@ -559,11 +768,9 @@ class TensorRTEngineManager:
                 "auxiliary_streams": _value(settings, "trt_auxiliary_streams", "auto"),
                 "cuda_graph": _value(settings, "trt_cuda_graph", False),
             },
-            "input": [workload.input_width, workload.input_height],
-            "output": [workload.output_width, workload.output_height],
-            "faces": round(workload.faces_per_frame, 2),
-            "stabilization": workload.stabilization_enabled,
-            "upscaling": workload.upscaling_enabled,
+            # Workload shape and characteristics are part of profile identity;
+            # these are not universal settings even on one GPU.
+            "workload": workload.as_dict(),
         }
         raw = json.dumps(identity, sort_keys=True, separators=(",", ":")).encode()
         return hashlib.sha256(raw).hexdigest()[:24]
@@ -630,14 +837,22 @@ class CUDAGraphManager:
                   hardware: HardwareProfile) -> dict:
         requested = _bool(_value(settings, "trt_cuda_graph", False))
         stable_shapes = workload.input_width > 0 and workload.input_height > 0
-        safe = requested and hardware.cuda_available and stable_shapes
+        small = 0 < hardware.vram_total_gb < 7.0
+        safe = (requested and hardware.cuda_available and stable_shapes and
+                not small)
         streams = self.stream_policy(settings, workload, hardware,
                                      independent_work=2,
                                      shared_mutable_buffers=False)
-        reason = ("enabled by user; caller still needs a candidate-specific "
-                  "stable-shape/address contract" if safe else (
-            "disabled by default; stable-shape capture is not yet wired" if not requested
-            else "requested but the workload has no stable shape"))
+        if small and requested:
+            reason = ("not admitted on the sub-7GB tier; TensorRT/CUDA graph "
+                      "capture requires a separately bounded candidate")
+        elif safe:
+            reason = ("enabled by user; caller still needs a candidate-specific "
+                      "stable-shape/address contract")
+        elif not requested:
+            reason = "disabled by default; stable-shape capture is not yet wired"
+        else:
+            reason = "requested but the workload has no stable shape"
         return {"requested": requested, "safe": safe, "reason": reason,
                 "stream_policy": streams}
 
@@ -1023,6 +1238,7 @@ class RuntimeOptimizer:
             faces_per_frame=faces_per_frame)
         return self.build_profile(workload, save=save)
 
+
     @staticmethod
     def apply_environment(profile: RuntimeProfile, settings: Any = None) -> dict:
         """Apply only non-import-time, safe runtime hints for automatic fields.
@@ -1089,10 +1305,64 @@ class RuntimeOptimizer:
         return applied
 
 
+def small_card_enhancer_policy(hardware: HardwareProfile,
+                               requested: str | None) -> dict:
+    """Resolve the host-RSS-safe enhancer policy for a detected small GPU.
+
+    The default ``auto`` behavior is a measured quality/safety tradeoff: the
+    6GB end-to-end path exceeds the strict 2.5GB RSS ceiling with an enhancer,
+    while the unenhanced adaptive-NVDEC path stays below it. ``keep`` remains
+    available for an operator who accepts that measured gate failure for a
+    quality experiment. This is based on detected VRAM, never a model name,
+    and does not affect larger cards.
+    """
+    value = str(requested or "None")
+    if not (0 < float(hardware.vram_total_gb or 0) < 7.0):
+        return {"requested": value, "effective": value, "changed": False,
+                "reason": "not a sub-7GB hardware profile"}
+    mode = os.environ.get("ROOP_SMALL_CARD_ENHANCER", "auto").strip().lower()
+    if mode in ("keep", "on", "force", "1", "true", "yes"):
+        return {"requested": value, "effective": value, "changed": False,
+                "reason": "explicit small-card enhancer override"}
+    if value.strip().lower() in ("", "none", "keep"):
+        return {"requested": value, "effective": value, "changed": False,
+                "reason": "enhancer was already disabled"}
+    return {"requested": value, "effective": "None", "changed": True,
+            "reason": "measured enhancer path exceeds the strict 2.5GB RSS gate"}
+
+
+def small_card_decode_policy(hardware: HardwareProfile) -> dict:
+    """Choose the small-card default decode path from the measured A/B.
+
+    On the physical 6GB laptop, adaptive NVDEC added host RSS without
+    improving end-to-end throughput on the acceptance fixture. Automatic mode
+    therefore selects the lower-RSS CPU reader on the sub-7GB tier. An explicit
+    ``ROOP_NVDEC=1`` remains an intentional experiment and is never silently
+    overridden; larger cards are unchanged.
+    """
+    requested = os.environ.get("ROOP_NVDEC", "auto").strip().lower()
+    if requested in ("1", "true", "yes", "on"):
+        return {"requested": requested, "effective": "1", "changed": False,
+                "reason": "explicit NVDEC request"}
+    if requested in ("0", "false", "no", "off"):
+        return {"requested": requested, "effective": "0", "changed": False,
+                "reason": "explicit CPU decode request"}
+    if not (0 < float(hardware.vram_total_gb or 0) < 7.0):
+        return {"requested": requested or "auto", "effective": requested or "auto",
+                "changed": False, "reason": "not a sub-7GB hardware profile"}
+    mode = os.environ.get("ROOP_SMALL_CARD_NVDEC", "auto").strip().lower()
+    if mode in ("keep", "on", "force", "1", "true", "yes"):
+        return {"requested": requested or "auto", "effective": "1", "changed": False,
+                "reason": "explicit small-card NVDEC override"}
+    return {"requested": requested or "auto", "effective": "0", "changed": True,
+            "reason": "measured NVDEC path increases RSS without an end-to-end speed win"}
+
+
 __all__ = [
     "AutoTuner", "CUDAGraphInvalidation", "CUDAGraphManager",
     "CUDAGraphRunner", "HardwareProfile", "HardwareProfiler",
     "PrecisionSelector", "ProfileStore", "ResourceManager", "RuntimeMonitor",
     "RuntimeOptimizer", "RuntimeProfile", "RuntimeTuning", "TensorRTEngineManager",
-    "WorkloadProfile", "WorkloadProfiler",
+    "WorkloadProfile", "WorkloadProfiler", "small_card_enhancer_policy",
+    "small_card_decode_policy",
 ]

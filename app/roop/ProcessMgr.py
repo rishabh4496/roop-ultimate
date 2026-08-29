@@ -499,6 +499,7 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
         # renders must not be published to the batch live-view frame.
         self.is_preview = False
         self._psutil_proc = None       # cached psutil.Process for the progress bar
+        self._memory_stage_log = []    # phase 3/4 RSS + VRAM checkpoints
         self.num_frames_no_face = 0
         self.last_swapped_frame = None
         self.output_to_file = None
@@ -553,6 +554,88 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
         if progress is not None:
             self.progress_gradio = progress
 
+    def _log_memory_stage(self, stage):
+        """Record the live residency at a phase boundary.
+
+        RSS is measured in this process (the same quantity shown by the
+        progress UI), while CUDA free/total memory comes from the active
+        device.  Keeping both values together makes the RTX 3060 gate
+        actionable: a host-RSS failure can be separated from a VRAM admission
+        failure without borrowing a result from the RTX 4070 profile.
+        """
+        enabled = os.environ.get('ROOP_MEMORY_TELEMETRY', '1').strip().lower()
+        if enabled in ('0', 'false', 'no', 'off'):
+            return
+        try:
+            process = self._psutil_proc or psutil.Process(os.getpid())
+            self._psutil_proc = process
+            rss_gb = process.memory_info().rss / 2**30
+        except Exception:
+            rss_gb = None
+        vram_free_gb = vram_total_gb = None
+        try:
+            import torch
+            device_id = int(getattr(roop.globals, 'cuda_device_id', 0) or 0)
+            if torch.cuda.is_available():
+                free_b, total_b = torch.cuda.mem_get_info(device_id)
+                vram_free_gb = int(free_b) / 2**30
+                vram_total_gb = int(total_b) / 2**30
+        except Exception:
+            pass
+        entry = {
+            'stage': str(stage),
+            'rss_gb': round(rss_gb, 4) if rss_gb is not None else None,
+            'vram_free_gb': round(vram_free_gb, 4) if vram_free_gb is not None else None,
+            'vram_total_gb': round(vram_total_gb, 4) if vram_total_gb is not None else None,
+            'timestamp': time.time(),
+        }
+        self._memory_stage_log.append(entry)
+        print(f"[Memory] stage={entry['stage']} "
+              f"rss={entry['rss_gb'] if entry['rss_gb'] is not None else 'n/a'}GB "
+              f"vram_free={entry['vram_free_gb'] if entry['vram_free_gb'] is not None else 'n/a'}GB "
+              f"vram_total={entry['vram_total_gb'] if entry['vram_total_gb'] is not None else 'n/a'}GB",
+              flush=True)
+
+    def _release_replayed_analysis(self, frame_count):
+        """Drop the analysis sessions once a complete temporal replay exists.
+
+        The temporal pre-pass has already materialized the detector,
+        recognition, and landmark results that the swap pass consumes.  On a
+        small device, retaining those sessions while also loading the mask and
+        enhancer sessions is enough to cross the host-RSS gate.  Release is
+        allowed only when the replay covers the whole clip and 3D or
+        frontalization work is not active. Verification and autorotation keep
+        the detector-only portion of the analyser, while recognition and
+        landmark sessions are released.
+        """
+        if not getattr(self, '_runtime_stab_small', False):
+            return False
+        if not getattr(self, '_temporal_mode', False) or self._temporal_faces is None:
+            return False
+        if int(getattr(self, '_temporal_covered', 0) or 0) < int(frame_count or 0):
+            return False
+        if (getattr(self.options, 'use_3d_recon', False)
+                or getattr(self.options, 'use_frontalization', False)):
+            return False
+        try:
+            # The main pass consumes the replayed Face objects. Keep the
+            # detector-only portion needed by autorotation/verification, while
+            # dropping recognition and landmark sessions beside the swap/mask
+            # processors. Do not change g_desired_face_analysis here: doing so
+            # would rebuild the analyser without its landmark contract during
+            # the main pass and can alter autorotation quality.
+            face_util.release_face_analyser_aux()
+            _released = 'auxiliary analysis sessions'
+            self._replay_analysis_released = True
+            import gc
+            gc.collect()
+            self._log_memory_stage(
+                f'phase3:{_released.replace(" ", "-")}-for-replay')
+            return True
+        except Exception as exc:
+            print(f'[Runtime] analysis replay release skipped: {exc}', flush=True)
+            return False
+
     def reuseOldProcessor(self, name:str):
         for p in self.processors:
             if p.processorname == name:
@@ -583,6 +666,37 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
         self.last_found_bboxes = None
         self.options = options
         devicename = get_device()
+
+        # A measured 6GB end-to-end run with an enhancer exceeds the strict
+        # 2.5GB descendant-RSS gate even with one worker and all model pools
+        # disabled.  Resolve this from detected VRAM before loading processors;
+        # never load GPEN and then hope a late guard can reclaim its footprint.
+        # Operators can set ROOP_SMALL_CARD_ENHANCER=keep for an explicitly
+        # accepted quality experiment. Larger cards are untouched.
+        try:
+            from roop.runtime_optimizer import (HardwareProfiler,
+                                                 small_card_enhancer_policy)
+            _small_hw = HardwareProfiler().profile()
+            _requested_enhancer = getattr(roop.globals, 'selected_enhancer', None)
+            _policy = small_card_enhancer_policy(_small_hw, _requested_enhancer)
+            self._small_card_enhancer_policy = _policy
+            if _policy.get('changed'):
+                _enhancer_keys = {
+                    'codeformer', 'gfpgan', 'dmdnet', 'gpen', 'gpen_256_pro',
+                    'gpen_realistic', 'ultramax', 'restoreformer++', 'keep',
+                }
+                options.processors = {
+                    key: value for key, value in options.processors.items()
+                    if key not in _enhancer_keys
+                }
+                roop.globals.selected_enhancer = 'None'
+                print('[RuntimeOptimizer] sub-7GB RSS safety: '
+                      f"enhancer '{_policy['requested']}' -> 'None'; "
+                      f"{_policy['reason']}. Set ROOP_SMALL_CARD_ENHANCER=keep "
+                      'to run the measured experimental path.', flush=True)
+        except Exception as _exc:
+            print(f'[RuntimeOptimizer] small-card enhancer policy unavailable: {_exc}',
+                  flush=True)
 
         # Build the One Euro stabilizers when requested. They only take effect in
         # the sequential video path (run_batch_inmem sets _stab_active).
@@ -712,6 +826,7 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
             else:
                 print(f"Not using {module}")
         self.processors = newprocessors
+        self._log_memory_stage('phase4:processors-ready')
 
         # ── Parse manual mask JSON (written by the canvas masking modal) ──────
         # New format: {"0": {"exclude": "data:...", "canonical": true}, "1": {...}}
@@ -871,6 +986,7 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                           f"poses: {[(f'{y:.1f}°', f'{p:.1f}°') for y,p in valid]}")
             except Exception as e:
                 print(f"[ProcessMgr] Source bank pose precomputation failed: {e}")
+        self._log_memory_stage('phase3:initialize-complete')
 
 
     def run_batch(self, source_files, target_files, threads:int = 1):
@@ -1207,6 +1323,8 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
         self._lipsync_fps = fps
         self._lipsync_frame_start = frame_start
         self._lipsync_audio = None
+        self._memory_stage_log = []
+        self._log_memory_stage('phase3:run-start')
         if getattr(roop.globals, 'lipsync_enabled', False):
             try:
                 source_mode = getattr(roop.globals, 'lipsync_audio_source', 'original')
@@ -1321,6 +1439,22 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
             # NVDEC: swap the cv2 reader for a GPU-decode ffmpeg pipe when the
             # file probes OK (no-op otherwise; ROOP_NVDEC=0 disables). Must use
             # the SOURCE dims, before any processed_resolution override.
+            try:
+                from roop.runtime_optimizer import (HardwareProfiler,
+                                                     small_card_decode_policy)
+                self._small_card_decode_env_previous = os.environ.get('ROOP_NVDEC')
+                self._small_card_decode_env_present = 'ROOP_NVDEC' in os.environ
+                _decode_policy = small_card_decode_policy(
+                    HardwareProfiler().profile())
+                self._small_card_decode_policy = _decode_policy
+                if _decode_policy.get('changed'):
+                    os.environ['ROOP_NVDEC'] = '0'
+                    print('[RuntimeOptimizer] sub-7GB decode safety: NVDEC -> CPU; '
+                          f"{_decode_policy['reason']}. Set ROOP_SMALL_CARD_NVDEC=keep "
+                          'or ROOP_NVDEC=1 for an explicit A/B.', flush=True)
+            except Exception as _exc:
+                print(f'[RuntimeOptimizer] small-card decode policy unavailable: {_exc}',
+                      flush=True)
             from roop.nvdec_reader import wrap_capture
             cap = wrap_capture(cap, source_video, width, height, fps, tag='swap decode')
 
@@ -1347,6 +1481,11 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
         self._runtime_swap_tile_batch_size = None
         self._runtime_face_concurrency = 1
         self._runtime_in_flight_frames = 1
+        self._small_card_enhancer_policy = None
+        self._small_card_decode_policy = None
+        self._small_card_decode_env_previous = None
+        self._small_card_decode_env_present = False
+        self._replay_analysis_released = False
         try:
             _runtime_optimizer = RuntimeOptimizer(settings=getattr(roop.globals, 'CFG', None))
             self.runtime_profile = _runtime_optimizer.profile_video(
@@ -1404,6 +1543,7 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                       flush=True)
                 threads = 1
                 roop.globals.execution_threads = 1
+            self._log_memory_stage('phase3:runtime-profiled')
         except Exception as exc:
             print(f"[RuntimeOptimizer] workload profile unavailable: {exc}", flush=True)
 
@@ -1508,6 +1648,7 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
             self._precomputed_mode = True
             print(f"[Stabilize] 2-pass: precomputed smoothed kps for "
                   f"{len(self._precomputed_kps)} frames; pass 2 runs multi-threaded.")
+            self._log_memory_stage('phase3:stabilization-prepass-complete')
 
         # The caller's explicit thread setting remains authoritative.  When the
         # setting is automatic, the runtime profile has already selected a
@@ -1556,6 +1697,7 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
         # so no separate tracking pass is needed when both are enabled.
         if self._temporal_mode:
             try:
+                self._log_memory_stage('phase3:temporal-prepass-start')
                 self._precompute_temporal(source_video, awebp_frames, frame_start, frame_end, frame_count)
                 # `and self._temporal_mode`: the pre-pass turns itself off when it
                 # found nothing usable, and then its identity assignments are empty
@@ -1565,11 +1707,14 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                                     and roop.globals.track_identities
                                     and self.options.swap_mode == "selected"
                                     and len(self.target_face_datas) > 0)
+                self._log_memory_stage('phase3:temporal-prepass-complete')
+                self._release_replayed_analysis(frame_count)
             except Exception as e:
                 print(f'[Temporal] detection pre-pass failed ({e}); using per-frame detection')
                 self._temporal_mode = False
                 self._temporal_faces = None
                 self._temporal_covered = 0
+                self._log_memory_stage('phase3:temporal-prepass-fallback')
 
         if (not self._temporal_mode and roop.globals.track_identities and not is_awebp
                 and self.options.swap_mode == "selected"
@@ -1577,9 +1722,13 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
             try:
                 self._precompute_tracks(source_video, frame_start, frame_end, frame_count)
                 self._track_mode = True
+                self._log_memory_stage('phase3:tracking-prepass-complete')
             except Exception as e:
                 print(f'[Track] identity pre-pass failed ({e}); using per-frame matching')
                 self._track_mode = False
+                self._log_memory_stage('phase3:tracking-prepass-fallback')
+
+        self._log_memory_stage('phase4:before-main-processing')
 
         progress_bar_format = PROGRESS_BAR_FORMAT
         try:
@@ -1656,6 +1805,26 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
             self._temporal_mode = False
             self._temporal_faces = None
             self._temporal_covered = 0
+            self._track_assignments = None
+            self._track_source_map = None
+            self._lipsync_audio = None
+            # release_face_analyser_aux() intentionally leaves a detector-only
+            # object for the main pass. Do not let that reduced object escape
+            # into post-run callers: clear the pool so the next analysis call
+            # rebuilds the normal recognition/landmark contract lazily.
+            if getattr(self, '_replay_analysis_released', False):
+                face_util.release_face_analyser()
+                self._replay_analysis_released = False
+            if (getattr(self, '_small_card_decode_policy', None) or {}).get('changed'):
+                if self._small_card_decode_env_present:
+                    os.environ['ROOP_NVDEC'] = self._small_card_decode_env_previous
+                else:
+                    os.environ.pop('ROOP_NVDEC', None)
+                self._small_card_decode_policy = None
+            import gc
+            gc.collect()
+            self._log_memory_stage('phase3:run-cleanup-complete')
+            self._psutil_proc = None
         _prof_report()
         _audit_report()
 
@@ -3711,7 +3880,7 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                 # is the corruption the lock exists to prevent, and it was
                 # reachable ONLY on small cards.
                 with _gpu_guard(pooled=analysis_pooled(), owner='analysis'):
-                    rotface = get_first_face(rotcutplate)
+                    rotface = face_util.get_first_face_detector_only(rotcutplate)
                 # Only commit to the rotation if re-detection confirms it left
                 # the face MORE upright. Without this the orientation heuristic
                 # gets the last word, and a wrong call feeds the swapper an
@@ -4705,3 +4874,13 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
         self.target_face_datas = []
         self.target_face_groups = []
         self.last_swapped_frame = None
+        self.face_masks = {}
+        self._temporal_faces = None
+        self._track_assignments = None
+        self._track_source_map = None
+        self._precomputed_kps = None
+        self._lipsync_audio = None
+        self._memory_stage_log = []
+        self._psutil_proc = None
+        import gc
+        gc.collect()

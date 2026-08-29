@@ -18,8 +18,15 @@ Primary validation GPUs:
 Both must remain first-class targets throughout the project.
 
 Current hardware available for validation:
-- RTX 4070: AVAILABLE (current host)
-- RTX 3060: UNAVAILABLE on current host; prior physical validation is recorded
+- RTX 3060 Laptop: AVAILABLE (current host; continuation audit 2026-08-29)
+- RTX 4070: not physically present on the current host; prior physical results
+  remain recorded separately
+
+The user authorized a continuation exception for the physical RTX 3060 Phase 3
+RSS failure. This permits Phases 5–9 to be exercised and documented, but does
+not waive the strict `<2.5 GB` RSS acceptance requirement and does not make the
+3060 or the project dual-GPU accepted. See the dated continuation section in
+`OPTIMIZATION_PROGRESS.md` for the separate 3060 results and exact residuals.
 
 IMPORTANT:
 Do not claim RTX 3060 compatibility based solely on code inspection.
@@ -64,7 +71,7 @@ Before doing anything:
 **Phase status:** RTX 4070 candidate validation through Phase 10 is complete.
 TRT FP16 and the CUDA Graph candidate are rejected; the final CPU/NVDEC audit
 has zero pipeline wrong-faceset events in both paths. Physical RTX 3060 Laptop
-validation remains pending, and its Phase 4 RSS gate remains blocked.
+validation remains pending, and its strict Phase 3/4 RSS gate remains blocked.
 
 **Last completed implementation:** Phase 10 CPU threading/detection/tracking
 implementation and RTX 4070 validation closure
@@ -73,6 +80,14 @@ implementation and RTX 4070 validation closure
 Begin Phase 11 on the RTX 4070. Preserve the exact Phase 0-10 acceptance
 matrix for the physical RTX 3060 Laptop, including its strict RSS failure; do
 not reuse RTX 4070 results or caches.
+
+**Latest 2026-08-29 checkpoint:** The physical 3060 now defers TensorRT
+Builder probing, releases auxiliary analysis sessions after complete temporal
+replay, and selects XSeg-only RealityUX by default on the detected sub-7 GiB
+CUDA tier. Fresh 200-frame CPU and adaptive-NVDEC runs completed without
+application errors and recorded zero wrong-faceset applications; peak RSS was
+2.622 GB / 2.786 GB, so Phase 3/4 remains blocked by the strict gate. RTX 4070
+behavior remains separately profiled and unmodified.
 
 ---
 
@@ -562,153 +577,111 @@ NVDEC, resource, attribution, and strict `<2.5 GB RSS` tests on the physical
 6 GB laptop with separate caches. Do not advance dual-GPU acceptance on the
 4070 evidence alone.
 
-# PHASE 10 HANDOFF - CPU THREADING, DETECTION, AND TRACKING
+## Latest physical RTX 3060 audit — 2026-08-29
 
-**Recorded:** 2026-08-29
+The previous statement above is historical. The physical laptop was exercised
+through Phases 0–9 in the continuation audit. Pinokio is online and ready;
+the live profile reports Ampere/SM 8.6, 6.0 GB VRAM, CUDA 12.8, driver 616.56,
+TensorRT 10.9.0.34, ONNX Runtime 1.23.2, FP16/BF16 Tensor Cores, no exposed
+INT8/FP8, and working NVDEC/NVENC capability. The profile key is hardware
+specific and no RTX 4070 profile/cache was reused.
 
-Phase 10 implementation is present in `app/roop/ProcessMgr.py`,
-`app/roop/face_util.py`, `app/roop/runtime_optimizer.py`,
-`app/roop/utilities.py`, `app/roop/session_pool.py`, `app/settings.py`, and
-`app/run.py`. The runtime now consumes workload-derived worker, ORT, OpenCV,
-detector-pool, detmask-pool, and detector-resolution hints while preserving
-explicit settings. CPU P/E topology is recorded when available; no final
-i9-14900K affinity policy is implemented before Gate D.
+The safe 3060 runtime is verified as single-context/single-worker: TRT,
+detmask, and expression pools are zero, detector pool is one, and stream policy
+is one stream with no overlap. The full benchmark, transfer benchmark, decode
+matrix, precision/quality unit contracts, and two fresh 200-frame end-to-end
+runs all completed without application errors. Phase 9 CPU and adaptive-NVDEC
+repeat runs both returned code 0 and recorded zero wrong-faceset applications.
 
-The automatic budget is intentionally layered: Python frame workers are the
-outer concurrency, ORT is serial per session by default, OpenCV is bounded,
-and FFmpeg writers now receive a separate bounded CPU thread hint. Explicit
-values remain authoritative.
-The RTX 3060 sub-7GB policy remains one worker, 0/0 detector pools, a global
-GPU guard, and the existing 1,536 MB stabilization cap. The RTX 4070 receives
-only bounded model/workload-derived concurrency.
+The remaining strict acceptance blocker is Phase 3/4 descendant RSS: the
+configured GPEN 256 Pro + RealityUX run measured 2.622 GB peak on CPU decode
+and 2.786 GB with adaptive NVDEC, above the required `<2.5 GB`. This remains a
+real blocked gate, not a fabricated pass. The low-precision TensorRT and TRT
+graph A/B matrices are not admitted on this sub-7 GB fallback, so they remain
+not-applicable until a safe, bounded admission path exists. The RTX 4070 is not
+physically present on the current host; its validation remains a separate
+record and is not used to close the 3060 gate.
 
-## Physical RTX 4070 Phase 10 validation
+Final verification: full suite `1377` tests, `1` skipped, all passing;
+launcher syntax, Python compilation, and `git diff --check` pass. Primary
+evidence is recorded in the latest dated section of
+`OPTIMIZATION_PROGRESS.md` and in `app/output/phase6_policy_3060.json`,
+`app/output/phase8_transfer_3060.json`, `app/output/phase9_decode_3060.json`,
+and `app/output/phase3_9_repeat_3060/`.
 
-Hardware was RTX 4070, 11.99 GB VRAM, 24 physical / 32 logical CPU threads,
-TensorRT/ORT/CUDA/NVDEC/NVENC available. Automatic 1280x720 enhanced/
-stabilized policy: 10 workers, detector pool 2, detmask pool 2, ORT 1/1,
-OpenCV 1, FFmpeg 1, detector resolution 640 with unknown face-size evidence.
+## RTX 3060 limitation fixes — 2026-08-29
 
-The exact two-face 141-frame workload was run with explicit `--threads 6`,
-which remained authoritative. It completed 141/141 frames in 30.67 seconds
-(4.60 processing FPS), with about 10.18 GB peak progress RSS. The swap audit
-was 346/359 (96.4%) and introduced no new regression on this fixture. The
-telemetry-backed follow-up measured the current 12-worker arm at 4.59 FPS
-(CPU decode) and 4.54 FPS (adaptive NVDEC), with peak RSS 10.261/10.203 GB and
-peak VRAM 7.150/7.061 GB. The bounded 2-thread ORT/OpenCV/FFmpeg arm measured
-4.75/4.88 FPS, with peak RSS 10.288/10.242 GB and peak VRAM 7.113/7.091 GB.
-These one-run differences do not justify changing the automatic 1/1/1/1 CPU
-knob policy or promoting 12 workers over the explicit six-worker reference.
-The quick sweep separately measured standard/enhanced/heavy knees of 16/8/8
-threads at 73.87/31.39/25.91 synthetic frames/s.
+The physical 6 GB laptop now has hardware-adaptive small-card admission:
 
-Detector policy: automatic mode preserves 640 when face size is unknown, can
-select 512 only with measured large faces on 720p-class input, and uses 768
-above 1080p (960 above 4K); 320 is not an automatic choice. Runtime probes
-confirmed this mapping on the 4070. Temporal detection stays at step 1 by
-default. ROI/high-resolution miss retries and step >1 interpolation remain
-opt-in because earlier touching-face quality runs regressed;
-scene/confidence-triggered cadence is still a follow-up. P/E topology was
-unavailable on this Windows host, so no Gate D i9-specific policy was applied.
+- non-`None` enhancers are disabled before processor construction in automatic
+  mode when the detected GPU is below 7 GB; use
+  `ROOP_SMALL_CARD_ENHANCER=keep` only for an explicit experimental run;
+- automatic decode selects CPU on this tier because the measured NVDEC arm
+  used more host RSS without improving end-to-end FPS; use `ROOP_NVDEC=1` or
+  `ROOP_SMALL_CARD_NVDEC=keep` only for an explicit A/B;
+- TRT/detmask/expression pools remain `0`, detector pool remains `1`, and the
+  effective swap precision is guarded FP32;
+- CUDA-graph readiness is rejected on the small-card fallback, while the 4070
+  graph/provider policy remains independent.
 
-## RTX 3060 Laptop status: PENDING
+Physical 200-frame validation: automatic CPU decode returned code 0 at 1.82
+FPS and 2.254 GB peak descendant RSS; explicit adaptive NVDEC returned code 0
+at 1.82 FPS but reached 3.113 GB, so it is not the 3060 default. A 20-frame
+automatic smoke run also exited cleanly and showed the fallback before model
+processor loading. The pipeline reported zero wrong-faceset decisions, but the
+benchmark's independent output re-measurement still reported 18/200 CPU and
+19/200 NVDEC other-faceset matches; keep that quality issue separate from the
+now-passing automatic memory/stability path.
 
-The RTX 3060 was not physically available in this session. Required exact
-follow-up: on the 6GB laptop, use separate TensorRT/runtime caches and run the
-same 141-frame workload at worker counts 1/2/4/6; ORT intra/inter 1/1 and
-2/1; OpenCV 1/2; detector sizes 320/640; and temporal off/on at step 1.
-Record FPS, detector-call count, tracking and wrong-faceset attribution,
-peak descendant RSS, VRAM, utilization, power, queue depth, and the strict
-`<2.5 GB` RSS result. Required sub-7GB behavior is 0/0 detector pools,
-single-context/global-guard execution, and preserved look settings. Do not
-reuse any RTX 4070 result or cache.
+Focused optimizer/GPU safety tests: `104 OK`. Do not claim low-precision TRT
+or CUDA-graph E2E success: those paths remain safely rejected/not applicable
+on the 6 GB profile.
 
-**Checks:** The focused runtime/portability/detector suite passed 86 tests;
-the full suite passed 1,368 tests with 1 skipped. Python compilation passed.
-`tests/compare_enhancers_video.py` was synchronized with the app's ORT and
-FFmpeg environment mappings after the parity test caught the omission.
-`git diff --check` remains required. Pinokio launcher scripts were not
-changed; the locked URL-capture example remains
-`G:\\pinokio\\prototype\\system\\examples\\mochi\\start.js`.
+## Cross-device session save — 2026-08-29
 
-## RTX 4070 validation addendum — 2026-08-29
+This handoff is the durable session record for the RTX 4070 workstation. The
+repository source of truth is the commit containing this section on
+`origin/main`. On the RTX 4070, resume with:
 
-The remaining available-device checks were run without changing the RTX 3060
-status. Phase 5's bounded `GPEN 256 Pro`/RealityUX matrix is at
-`app/output/phase5_4070_full_20260829_121859/results.jsonl`: TRT FP32 and
-mixed, CUDA FP32/FP16, and CPU FP32 passed face/identity/texture/channel
-guards; TRT FP16 timed out during its isolated build/init and remains
-unvalidated. No precision was promoted from the timeout.
+1. `git pull --ff-only origin main`
+2. start the app through Pinokio and read the live `/api/system/hardware`
+   profile;
+3. let the hardware signature select the RTX 4070 profile and rerun only the
+   4070 measurements whose environment or model identity has changed.
 
-Phase 9's two-run decode sweep returned all 141 frames for every arm: CPU
-decode 740.7–753.6 FPS, synchronous NVDEC BGR 291.9–329.3 FPS, adaptive BGR
-313.6–338.1 FPS. The telemetry-backed end-to-end run at
-`app/output/phase9_4070_e2e_20260829_122724` measured CPU/NVDEC processing at
-4.57/4.64 FPS, peak RSS 10.239/10.225 GB, peak GPU utilization 87%/72%, peak
-VRAM 7.106/7.161 GB, and peak power 98.56/100.54 W. One output-level adaptive
-NVDEC identity mismatch remains, so automatic BGR is still under review and
-NV12 remains rejected.
+The 3060 and 4070 profiles, TensorRT caches, benchmark knees, precision
+decisions, stream policy, and runtime calibration remain hardware/workload
+isolated. Do not copy `app/config.yaml`, `app/profiles.json`,
+`app/runtime_calibration.json`, or local browser storage between devices as a
+4070 tuning result. User preferences and this tracked handoff are portable;
+models, facesets, outputs, run history, and other generated runtime state stay
+local unless separately transferred by the operator.
 
-Phase 10's additional worker/CPU-knob runs are at
-`app/output/phase10_4070_workers12_20260829_123121` and
-`app/output/phase10_4070_cpu_knobs_20260829_123455`. Twelve workers measured
-4.59/4.54 FPS for CPU/NVDEC; explicit 2-thread ORT/OpenCV/FFmpeg with six
-workers measured 4.75/4.88 FPS. The differences do not justify changing the
-automatic 1/1/1/1 CPU-knob policy or selecting 12 workers over the six-worker
-reference. The automatic policy probe confirmed 640/512/768/960 detector
-resolution selection for unknown 720p/large-face 720p/1080p+/4K+ cases,
-respectively. Windows exposed no P/E topology, so Gate D policy remains
-unimplemented.
+The RTX 3060 continuation is saved above with its exact evidence and residuals:
+automatic CPU decode is the safe default, the strict descendant RSS gate is
+still above `<2.5 GB`, and low-precision TensorRT/CUDA-graph E2E remains
+unadmitted. The RTX 4070 must preserve its separate validation record and must
+not use the 3060 result to close or alter its own acceptance gates.
 
-The available counterbalanced temporal A/B on `d1.mp4` kept the swap count at
-103/347 (29.7%) in every arm. OFF/ON pairs were 4.24/4.18 FPS and 2.60/4.09
-FPS, so warm-up/order noise prevents claiming a speedup. The detector-size A/B
-also kept 103/347 in every arm: 640 averaged 2.65 FPS versus 512 at 2.61 FPS;
-640 remains the automatic unknown-face-size choice. The required harder
-`roop-keep/inverted` pose-difficulty fixture was absent and was not fabricated.
+## RTX 4070 Phase 0-10 closure - 2026-08-29
 
-The physical RTX 3060 Laptop remains unavailable. Its exact pending matrix is
-unchanged: separate caches; workers 1/2/4/6; ORT 1/1 and 2/1; OpenCV 1/2;
-detector 320/640; temporal off/on; full FPS, detector-call, attribution,
-RSS/VRAM/utilization/power/queue telemetry; and the strict `<2.5 GB` RSS gate
-under 0/0 pools, one context, and the global GPU guard.
+The outstanding 4070 work is closed without changing the RTX 3060 status.
+TensorRT FP16 was rejected after a warmed five-minute no-result retry with
+near-idle GPU use. CUDA Graph was rejected as the default because exact graph
+timing was 2.06 ms versus 1.67 ms normally and the provider-level attempt did
+not stabilize. NVDEC BGR was quality-validated with zero pipeline
+wrong-faceset events in both 141-frame CPU and adaptive-NVDEC runs; it was not
+speed-promoted, and NV12 remains rejected.
 
-## RTX 4070 closure - 2026-08-29
+The persisted policy probe is
+`app/output/phase10_4070_auto_policy_persist_20260829_132400/benchmark.json`.
+It selected 8 effective workers from 12 requested, queue depth 3, 2-way pools,
+and 640px detection on both decode paths, with zero pipeline wrong-faceset
+events. The full automatic 141-frame profile was 2.95/3.05 FPS CPU/NVDEC,
+below the explicit six-worker profile, so saved settings were unchanged.
 
-The outstanding 4070 work is closed, without changing the RTX 3060 status.
-
-- `GPEN 256 Pro` TensorRT FP16: rejected. A warmed retry made no quality
-  result in five minutes while GPU utilization stayed at 1-3%; it remains
-  disabled. The completed matrix arms were TRT FP32 1.130 FPS/8.283 GB,
-  TRT mixed 1.227/7.104 GB, CUDA FP32 2.731/7.737 GB, CUDA FP16
-  2.679/7.913 GB, and CPU FP32 0.432/2.822 GB.
-- CUDA Graph: rejected as the default. Exact graph execution was 2.06 ms,
-  slower than the 1.67 ms normal path; provider-level capture did not stabilize.
-- NVDEC BGR: quality-validated, not speed-promoted. The 141-frame CPU and
-  adaptive-BGR runs had zero pipeline wrong-faceset events. Output
-  re-measurement noise was 4/19 CPU and 1/22 NVDEC gradable frames, so it is
-  not a decode-specific attribution regression. NV12 remains rejected.
-- Automatic Phase 10 policy: functional, not throughput-promoted. The persisted
-  probe at `app/output/phase10_4070_auto_policy_persist_20260829_132400/benchmark.json`
-  applied 12 requested to 8 effective workers, queue depth 3, 2-way pools and
-  640px detection, with zero pipeline wrong-faceset events in either decode
-  arm. Its 15-frame 0.63 FPS is startup-dominated. The full automatic
-  141-frame profile was 2.95/3.05 FPS CPU/NVDEC, below the explicit 6-worker
-  profile, so saved settings were not changed.
-
-4070 hardware recorded: SM 8.9, 11.994 GB VRAM, CUDA 12.8, TensorRT
-10.9.0.34, ONNX Runtime 1.23.2, NVDEC/NVENC, and 24 physical / 32 logical CPU
-threads. Windows did not expose P/E topology; Gate D policy remains deferred.
-The policy stays hardware-adaptive and retains separate sub-7 GB safeguards.
-
-**Phase 11 may now begin on the RTX 4070.** The RTX 3060 remains PENDING and
-must run the exact laptop matrix above, using separate caches and recording
-end-to-end FPS, GPU/RSS/VRAM/power, queue depth, detector/tracker audit, and
-the strict RSS result before any phase is called dual-GPU complete.
-
-Final checks for this closure: the focused Phase 5/6/9/10 suite passed 53
-tests; the final optimizer/precision/NVDEC/detector suite passed 32; the full
-suite was run after the harness update; Python compilation, persisted-policy
-artifact assertions, and `git diff --check` passed. Existing unrelated
-`ResourceWarning` messages did not fail the test run. No launcher script was
-changed.
+The RTX 4070 profile was SM 8.9, 11.994 GB VRAM, CUDA 12.8, TensorRT
+10.9.0.34, ONNX Runtime 1.23.2, NVDEC/NVENC, and 24 physical / 32 logical
+CPU threads. Windows exposed no P/E topology; Gate D remains deferred. Phase
+11 may begin on the RTX 4070. The RTX 3060 remains PENDING and must retain its
+separate caches, safety policies, exact acceptance matrix, and strict RSS gate.
