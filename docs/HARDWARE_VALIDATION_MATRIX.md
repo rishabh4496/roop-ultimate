@@ -541,6 +541,122 @@ input files and record each result under the RTX 3060 hardware profile key.
 Only after those rows pass end-to-end quality and stability checks may an arm
 be classified **beneficial on both**.
 
+## Phase 8 — CPU/GPU transfer and memory copy (RTX 3060)
+
+`tests/bench_phase8_transfer.py`, saved at
+`app/output/phase_matrix_3060/phase8_3060.json`.
+
+| Measure | RTX 3060, 1080p / 4K | RTX 4070, 1080p / 4K |
+|---|---:|---:|
+| `frame.copy()` median | 1.50 / 4.87 ms | 1.220 / 3.947 ms |
+| Retry old -> new | 21.25 -> 17.34 / 85.26 -> 72.78 ms | 18.688 -> 15.622 / 68.305 -> 60.149 ms |
+| Paste legacy -> in-place | 17.38 -> 18.09 / 65.36 -> 64.52 ms | 14.260 -> 13.076 / 49.698 -> 50.467 ms |
+| Writer `tobytes()` -> view | 1.24 -> 0.001 / 5.91 -> 0.001 ms | 0.830 -> ~0 / 4.730 -> ~0 ms |
+| H2D / D2H | 4.17 / 3.80 ms (24.9 MB); 10.01 / 12.23 ms (99.5 MB) | 2.004 / 2.119; 7.934 / 7.084 ms |
+| Pinned H2D incl. staging | 3.32 ms (1080p, faster) / 13.10 ms (4K, **slower**) | 1.821 / 8.425 ms |
+
+**Only the writer change is unambiguous** — `tobytes()` to `memoryview` is a
+~1000x reduction at both resolutions and reproduced in every run. The retry and
+paste deltas are inside this host's run-to-run noise: across two consecutive
+runs `retry_new` measured **21.75 ms and then 17.34 ms**, a 20% swing on an
+identical CPU-bound microbenchmark, so single-run medians cannot confirm or
+refute them here. They are recorded, not claimed.
+
+Pinned H2D helps at 1080p and **hurts at 4K** on this device, matching the 4070's
+finding that it is not worth adopting globally. No pinned/async path is enabled.
+
+None of this is on the critical path: transfer and writer time together are
+under 0.5% of stage time in the locked baseline.
+
+## Phase 9 — NVDEC and video input pipeline (RTX 3060)
+
+`tests/bench_phase9_nvdec.py`, `d1.mp4`, 3 runs, medians. Every arm returned
+141/141 frames. Saved at `app/output/phase_matrix_3060/phase9_3060.json`.
+
+| Arm | RTX 3060 | RTX 4070 |
+|---|---:|---:|
+| CPU decode / OpenCV | **556.6 fps** | 651.5 fps |
+| NVDEC / adaptive buffered | 178.8 fps | 204.2 fps |
+| NVDEC / sync BGR | 174.8 fps | 215.8 fps |
+
+**CPU decode is 3.2x faster than NVDEC on this target**, the same ordering the
+4070 measured. This independently confirms the existing sub-7GB
+`NVDEC -> CPU` policy on its own hardware, which previously rested on an RSS
+argument alone.
+
+It is also moot for throughput: the locked baseline decodes at 451-476 fps
+against a 4.5 fps render, and `decode` is 0.2% of stage time. Decode is not a
+lever on this target in either direction.
+
+**Note:** NVDEC/NVENC are genuinely available here — `av1/h264/hevc/vp9_cuvid`
+and `av1/h264/hevc_nvenc`. The profiler previously reported both as unavailable
+because of the ffmpeg PATH defect fixed this session; that fix is what lets the
+encoder be selected at all (`hevc_nvenc` at 314 fps in the baseline).
+
+## Phase 12 — stabilization / compositing / postprocessing (RTX 3060)
+
+`tests/phase12_benchmark.py --target "RTX 3060" --end 300`. Every arm: exit 0,
+300/300 frames, 100% swap rate, **zero wrong-faceset applications**.
+
+| Configuration | Baseline FPS | Final FPS | Frame-rate impr. | Peak VRAM | GPU % | Latency ms |
+|---|---:|---:|---:|---:|---:|---:|
+| baseline | 5.34 | 5.34 | 0.00% | 4,298 MB | 53.7 | 463.9 |
+| stabilization ON | 5.34 | 4.46 | **-16.5%** | 3,682 MB | 52.3 | 322.9 |
+| mask ON | 5.34 | 4.74 | -11.2% | 4,884 MB | 51.9 | 635.5 |
+| color ON | 5.34 | 5.31 | -0.6% | 4,042 MB | 53.2 | 467.8 |
+| postprocess heavy | 5.34 | 3.65 | -31.6% | 4,226 MB | 50.9 | 497.7 |
+
+Ordering matches the 4070 (-13.6 / -7.2 / -0.6 / -53.0%). Colour processing is
+essentially free on both targets.
+
+### The arms do not all process the same amount of work
+
+`improvement_pct` is frame-rate only, and two arms swap **566 faces where the
+baseline swaps 412** — 37% more. Normalising:
+
+| Configuration | Faces seen | Faces/s | vs baseline |
+|---|---:|---:|---:|
+| baseline | 412 | 7.33 | 0.0% |
+| stabilization ON | 566 | 8.41 | +14.7% |
+| mask ON | 412 | 6.51 | -11.2% |
+| color ON | 412 | 7.29 | -0.6% |
+| postprocess heavy | 566 | 6.89 | -6.1% |
+
+**But the extra faces are not extra coverage.** Both arms report the identical
+detection line — `2 track(s); faces on 206 frames (412 total, 0 gap-filled)` —
+so stabilization finds nothing new. The extra 154 are **re-processed warm-up
+frames**, and the arithmetic is exact:
+
+    [Stabilize] parallel: 6 workers, 6 blocks x 16f per chunk, warm-up 7f
+
+Each 16-frame block is preceded by 7 warm-up frames to seed the smoother, so
+23 frames are processed per 16 emitted: **+43.75%**. And
+412 x 1.4375 = 566.5 -> **566 observed**.
+
+So the honest reading of the -16.5% is: stabilization on this target costs
+almost exactly its warm-up re-processing overhead, and the "+14.7% faces/s"
+above is redundant work, not efficiency. Do not quote it as a gain.
+
+### LEAD (not tested here): the overhead is a low-RAM artefact
+
+Block size is 16 only because the adaptive small-block path fired:
+
+    [Stabilize] 5.9 GB RAM free of 15.8 GB: chunk budget 403 MB (cap 1536 MB),
+                holding 6 live copies (~2.4 GB of frames)
+
+With headroom the block would be `4 x warm-up = 28`, giving 7/28 = **25%**
+overhead instead of 43.75%. Freeing host RAM, or raising
+`ROOP_STAB_CHUNK_MB`, should therefore cut a large part of stabilization's cost
+on this machine.
+
+**Deliberately not measured.** The 2026-08-25 session log records raising that
+knob on this exact box as the cause of an ffmpeg ENOMEM at 12% of a
+40,934-frame render, and marks it "not recommended" — with 5.9 GB free and six
+live copies, a budget large enough to reach 28-frame blocks approaches the same
+cliff. Recorded as a lead requiring a memory-safe implementation (for example
+overlapping warm-up with the previous block's tail rather than re-rendering it),
+not as an available setting.
+
 ## Gate D — CPU optimization matrix
 
 **This gate is measurable on the RTX 3060 host and was not on the 4070.**
