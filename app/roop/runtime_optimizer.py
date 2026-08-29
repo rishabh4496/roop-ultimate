@@ -453,22 +453,6 @@ def _positive_int(value: Any) -> int:
     return max(0, parsed)
 
 
-# Topology sources that represent a genuine determination of which logical
-# processors are P and which are E -- an OS report or an explicit operator
-# override. Every other source (`not-windows`, `windows-cpu-set-unavailable`,
-# `windows-cpu-set-empty`, `windows-cpu-set-uniform`) means "we could not tell",
-# and reports zero E-cores accordingly.
-#
-# `auto` may only choose a P/E-aware distribution when the topology is on this
-# list. Guessing which indices are E-cores would pin worker threads to the wrong
-# processors, which is worse than not pinning at all.
-_REAL_CPU_TOPOLOGY_SOURCES = frozenset((
-    "windows-cpu-set-efficiency-class",
-    "linux-cpu-capacity-logical",
-    "environment-indices",
-))
-
-
 def _cpu_topology(physical: int, logical: int) -> Tuple[int, int, str]:
     """Best-effort P/E topology probe without imposing a platform policy.
 
@@ -1402,29 +1386,37 @@ class AutoTuner:
                        hardware.cpu_performance_cores)
         e_available = (len(hardware.cpu_efficiency_indices) or
                        hardware.cpu_efficiency_cores)
-        if (distribution == "auto" and p_available and e_available
-                and hardware.cpu_topology_source in _REAL_CPU_TOPOLOGY_SOURCES):
-            # MEASURED, NOT ASSUMED. `auto` used to skip the P/E path entirely,
-            # so on a hybrid CPU the automatic default never used P/E-aware
-            # scheduling at all. On the physical RTX 3060 Laptop (i7-12700H,
-            # 6 P + 8 E, topology reported by Windows as
-            # `windows-cpu-set-efficiency-class`) two independent
-            # counterbalanced A/Bs measured `p_plus_e` against `auto`:
-            #
-            #     worker count and thread caps held fixed   +19.6%
-            #     against the shipped production default    +18.9%
-            #
-            # No overlap between arms in either experiment, against a
-            # laptop run-to-run spread of ~15%, so this is not noise. Worker
-            # count alone was tested separately and is NEUTRAL (8 vs 20 is
-            # -0.9%), so the gain is the distribution, not more threads.
-            #
-            # Gated on a REAL topology report: when the OS does not expose
-            # hybrid topology the profiler marks the source "inferred", and a
-            # guess about which logical indices are E-cores would pin threads
-            # to the wrong ones. The RTX 4070 workstation reports no hybrid
-            # topology at all, so its behaviour is unchanged.
-            distribution = "p_plus_e"
+        # MEASURED AND REJECTED (2026-08-30, physical RTX 3060 Laptop,
+        # i7-12700H, 6 P + 8 E, `windows-cpu-set-efficiency-class`).
+        # DO NOT RE-ADD an automatic `auto` -> `p_plus_e` promotion here without
+        # a 600-frame counterbalanced measurement; three attempts' worth of
+        # short-window evidence says it works and it does not.
+        #
+        # `auto` deliberately does NOT select a P/E-aware distribution. The
+        # obvious change -- promote it whenever the OS reports a real hybrid
+        # topology -- was implemented, verified on hardware, and then reverted.
+        #
+        #   d4.mp4, 120-frame window, counterbalanced, four experiments:
+        #       distribution at fixed workers + pinning        +19.6%
+        #       candidate vs shipped production default        +18.9%
+        #       distribution at 8 workers, no pinning          +18.8%
+        #       shipped default through the fixed harness      +19%
+        #   d4.mp4, 600-frame window, counterbalanced:
+        #       auto      4.55 / 4.52   mean 4.535
+        #       p_plus_e  4.52 / 4.50   mean 4.51      -0.5%  NEUTRAL
+        #
+        # The gain is entirely a short-window artefact. It is coherent with
+        # this pipeline being GPU-bound in steady state (mean GPU utilisation
+        # ~57% with peaks at 100% while CPU sits near 31% mean): CPU scheduling
+        # only helps the CPU-bound warm-up, which a 120-frame window
+        # over-weights and a production-length render amortises away.
+        #
+        # Worker count was tested separately over the same windows and is also
+        # neutral (8 vs 20 is -0.9%), which is what vindicates `max_threads: 8`
+        # on real 6 GB silicon.
+        #
+        # An explicit `ROOP_CPU_DISTRIBUTION` / `cpu_distribution` setting still
+        # selects a policy below; only the automatic promotion is refused.
         if distribution != "auto" and p_available and e_available:
             if distribution == "p_only":
                 worker = max(1, min(hardware.cpu_logical_cores, p_available))

@@ -394,24 +394,20 @@ class RuntimeOptimizerTests(unittest.TestCase):
 
 
 class AutoCpuDistributionTests(unittest.TestCase):
-    """`auto` must use P/E scheduling when -- and only when -- topology is known.
+    """`auto` must NOT silently adopt a P/E distribution. Measured and rejected.
 
-    Measured on the physical RTX 3060 Laptop (i7-12700H, 6P+8E): `p_plus_e`
-    beat `auto` by +19.6% with worker count and thread caps held fixed, and by
-    +18.9% against the shipped default, both counterbalanced with no overlap
-    between arms. Worker count alone is neutral (8 vs 20 is -0.9%), so the gain
-    is the distribution. `auto` previously skipped the P/E path entirely.
+    Promoting `auto` to `p_plus_e` on a real hybrid topology looked like a
+    large win and is not one. On the physical RTX 3060 Laptop (i7-12700H,
+    6P+8E) four counterbalanced 120-frame experiments each measured about
+    +19%, and the 600-frame counterbalanced check measured **-0.5%**:
+
+        auto      4.55 / 4.52   mean 4.535
+        p_plus_e  4.52 / 4.50   mean 4.51
+
+    The pipeline is GPU-bound in steady state, so CPU scheduling only helps
+    the CPU-bound warm-up that a short window over-weights. These tests exist
+    to stop the promotion being re-added on short-window evidence.
     """
-
-    def test_real_topology_sources_are_the_gate(self):
-        from roop.runtime_optimizer import _REAL_CPU_TOPOLOGY_SOURCES
-        self.assertIn("windows-cpu-set-efficiency-class",
-                      _REAL_CPU_TOPOLOGY_SOURCES)
-        # "could not tell" sources must never enable core pinning.
-        for bad in ("not-windows", "windows-cpu-set-unavailable",
-                    "windows-cpu-set-empty", "windows-cpu-set-uniform",
-                    "unknown", ""):
-            self.assertNotIn(bad, _REAL_CPU_TOPOLOGY_SOURCES)
 
     def _tune(self, source, p_idx, e_idx):
         """The 3060's real shape: 6 P-cores (12 logical) + 8 E-cores."""
@@ -430,11 +426,13 @@ class AutoCpuDistributionTests(unittest.TestCase):
             tuning, *_ = AutoTuner().tune(hardware, _workload(faces=2), {})
         return tuning
 
-    def test_hybrid_topology_selects_p_plus_e(self):
+    def test_real_hybrid_topology_does_not_auto_promote(self):
+        """The measured-and-rejected case: a genuine OS report is not enough."""
         t = self._tune("windows-cpu-set-efficiency-class",
                        tuple(range(12)), tuple(range(12, 20)))
-        self.assertEqual(t.cpu_distribution, "p_plus_e")
-        self.assertEqual(t.cpu_efficiency_threads, 8)
+        self.assertEqual(t.cpu_distribution, "auto",
+                         "auto must not adopt a P/E distribution: measured "
+                         "-0.5% over 600 frames, counterbalanced")
 
     def test_unknown_topology_stays_auto(self):
         """The RTX 4070 exposes no hybrid topology; it must be unaffected."""

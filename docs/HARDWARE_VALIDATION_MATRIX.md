@@ -155,13 +155,21 @@ The existing locked controlled baseline is recorded in
 
 ## RTX 3060
 
-Measured 2026-08-29 on the physical laptop against the locked fixture. Read
-with the adaptive-downgrade table below: this row is the machine's real
-automatic behaviour, not the 4070's stack running slower.
+Measured on the physical laptop against the locked fixture. Read with the
+adaptive-downgrade table below: this row is the machine's real automatic
+behaviour, not the 4070's stack running slower.
+
+**Baseline FPS is 4.53**, the mean of two counterbalanced 600-frame runs
+(4.55 / 4.52) on current code with the corrected harness. The first
+measurement of 4.33 is superseded: it was taken before the bench was fixed to
+reproduce `run.py`'s startup pass, so it under-reported the shipped product.
+The n=2 mean is used rather than a single run because this target drifts ~15%
+between sets. Resource figures below are from the 600-frame runs and vary by a
+few percent between them.
 
 | Metric | Result |
 |---|---:|
-| Baseline FPS | **4.33** |
+| Baseline FPS | **4.53** (superseded: 4.33 pre-harness-fix) |
 | Final FPS | not applicable; no new default was promoted |
 | Improvement | not applicable |
 | Peak VRAM | 4,685 MB |
@@ -641,43 +649,98 @@ Two arms from different sets must never be compared, and any 3060 claim under
 ~15% that is not counterbalanced is noise. The +19% survives because both
 experiments were internally counterbalanced with no overlap between arms.
 
-### Gate D disposition: SHIPPED, hardware-adaptive
+### Gate D disposition: IMPLEMENTED, MEASURED, REVERTED
 
-Per the project rule "ship the fix, not the flag", the win is now the automatic
-default rather than an env var. `auto` previously skipped the P/E branch
+> **The block immediately below is SUPERSEDED.** It records the change that was
+> written and the 120-frame evidence it rested on, because the reasoning is what
+> the 600-frame check then overturned. The current behaviour is in
+> "REJECTED at production length" further down: `auto` does **not** adopt a P/E
+> distribution.
+
+Per the project rule "ship the fix, not the flag", the win was made the
+automatic default rather than an env var. `auto` skipped the P/E branch
 entirely, so **no hybrid CPU ever got P/E-aware scheduling by default**.
 
-`auto` now resolves to `p_plus_e` when — and only when — the OS actually
-reports which logical processors are efficiency cores.
-`_REAL_CPU_TOPOLOGY_SOURCES` allowlists `windows-cpu-set-efficiency-class`,
-`linux-cpu-capacity-logical` and the explicit `environment-indices` override.
-Every "could not tell" source is excluded, because guessing which indices are
-E-cores would pin workers to the wrong processors — worse than not pinning.
+`auto` was made to resolve to `p_plus_e` when — and only when — the OS actually
+reports which logical processors are efficiency cores, excluding every
+"could not tell" source, because guessing which indices are E-cores would pin
+workers to the wrong processors.
 
 An explicit `ROOP_CPU_DISTRIBUTION` or setting still wins outright.
 
-**Classification: B — RTX 3060-SPECIFIC.** The RTX 4070 workstation reports no
-hybrid topology at all (Gate D was deferred there for exactly that reason), so
-its behaviour is provably unchanged; a regression test asserts `auto` stays
-`auto` on a non-hybrid report. This must be re-validated on the 4070 only if
-Windows begins exposing hybrid topology on that host.
-
-Confirmed on the shipped path: at startup `run.py` now prints
+Confirmed on the (since-reverted) path: at startup `run.py` printed
 `[CPU] affinity distribution=p_plus_e logical=20
 source=windows-cpu-set-efficiency-class` and publishes
 `ROOP_CPU_DISTRIBUTION=p_plus_e` with affinity applied, before the model
 pipeline loads.
 
-The final measurement, counterbalanced at the shipped worker count with no
-thread pinning, is the acceptance evidence for the change:
+The measurement believed at the time to be acceptance evidence, counterbalanced
+at the shipped worker count with no thread pinning:
 
 | Distribution @ 8 workers | rep a | rep b | mean |
 |---|---:|---:|---:|
 | auto (old behaviour) | 3.15 | 3.23 | **3.19** |
-| p_plus_e (now automatic) | 3.81 | 3.77 | **3.79** |
+| p_plus_e (was made automatic) | 3.81 | 3.77 | **3.79** |
 
-**+18.8%.** Worker count is unchanged at 8, so `max_threads` and its
+**+18.8%** — the figure that was believed at the time. Worker count unchanged at 8, so `max_threads` and its
 `_threads_auto` provenance are untouched.
+
+#### RESULT: REJECTED at production length — the +18.8% is a short-window artefact
+
+Every arm above uses a 120-frame window. The plan requires a benchmark "long
+enough to avoid measuring only startup/warmup behavior", and that requirement
+turned out to be the whole story. Counterbalanced at 600 frames:
+
+| 600 frames, `d4.mp4`, 8 workers | rep a | rep b | mean |
+|---|---:|---:|---:|
+| auto | 4.55 | 4.52 | **4.535** |
+| p_plus_e | 4.52 | 4.50 | **4.51** |
+
+**-0.5%. NEUTRAL.** Four independent 120-frame experiments each measured about
++19%; none of it survives to production length.
+
+**Why:** this pipeline is GPU-bound in steady state — mean GPU utilisation
+~57% with peaks at 100% against ~31% mean CPU. CPU scheduling only helps the
+CPU-bound warm-up, which a 120-frame window over-weights and a production
+render amortises away. This is the same lesson recorded three times already in
+`CLAUDE.md`: a change moves the render clock only if it REMOVES GPU work, and
+stage-level or short-window wins repeatedly land neutral end to end. This is
+the fourth instance.
+
+**Disposition: the automatic promotion was implemented, verified on hardware,
+and then REVERTED.** `auto` does not adopt a P/E distribution. The rejection is
+recorded at the code site with the numbers, guarded by a test asserting `auto`
+stays `auto` even on a genuine hybrid topology report, so it is not re-added on
+short-window evidence. An explicit `ROOP_CPU_DISTRIBUTION` still selects a
+policy for anyone who wants one — that path is unchanged.
+
+**Classification: D — NEUTRAL** (not "beneficial on 3060" as the 120-frame
+arms suggested).
+
+#### What Gate D did deliver
+
+1. **`max_threads: 8` is vindicated on real 6 GB silicon** — 8 vs 20 workers is
+   -0.9%, closing the measurement the 2026-08-25 session recorded as owed.
+2. **The harness startup-contamination fix** (below), a correctness fix
+   independent of any performance claim.
+3. **A calibrated warning about window length on this target**, now the
+   controlling methodological fact for every remaining 3060 measurement.
+
+#### Superseded reasoning, retained deliberately
+
+The plan requires that "a benchmark must be long enough to avoid measuring only
+startup/warmup behavior", and **all four Gate D experiments used a 120-frame
+window**. That is a real risk here rather than a formality: this project has
+three recorded cases of a stage-level win measuring well in isolation and
+landing NEUTRAL end to end, and on a thermally-constrained laptop a CPU
+scheduling gain can evaporate once the chassis heat-soaks. The 600-frame
+baseline re-run drew 115.85 W peak against the 120-frame arms' 125.07 W, and
+its mean frame latency was higher (473 vs 413 ms) even as fps rose — the
+signature of a power ceiling arriving.
+
+This was written before the 600-frame check and is kept as the reasoning that
+led to it. The verification came back neutral and the default was reverted, as
+stated above.
 
 ### GATE A FINDING: the bench harness measured a different program than production
 
