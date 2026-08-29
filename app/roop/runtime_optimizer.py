@@ -73,6 +73,11 @@ def _is_auto(settings: Any, name: str) -> bool:
             return False
         return bool(_value(settings, "_threads_auto", True))
     value = _value(settings, name, "auto")
+    # TensorRT uses -1 to mean "let the runtime choose" for auxiliary
+    # streams.  Treat the config-file sentinel as automatic here too; it must
+    # not enter the explicit-value clamp path below.
+    if name == "trt_auxiliary_streams" and _integer(value, 0) == -1:
+        return True
     return value is None or str(value).strip().lower() in ("", "auto", "default")
 
 
@@ -366,6 +371,8 @@ class ResourceManager:
         "ort_inter_threads": (1, 2),
         "opencv_threads": (1, 4),
         "ffmpeg_threads": (1, 4),
+        "cuda_stream_count": (1, 4),
+        "cuda_auxiliary_streams": (-1, 3),
         "cpu_performance_threads": (0, 16),
         "cpu_efficiency_threads": (0, 16),
         "ram_buffer_mb": (512, 4096),

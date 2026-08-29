@@ -91,7 +91,13 @@ def run_swap(clip_path, src_fs, options, out_dir):
     g.output_path = out_dir
     os.makedirs(out_dir, exist_ok=True)
 
-    entry = ProcessEntry(clip_path, 0, 0, 30.0)
+    # Preserve the source cadence in the validation path.  A fixed 30 FPS
+    # entry makes a 24/25 FPS clip appear shorter even when every frame was
+    # processed, which turns a harness error into a false duration regression.
+    cap = cv2.VideoCapture(clip_path)
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    cap.release()
+    entry = ProcessEntry(clip_path, 0, 0, fps if fps and fps > 0 else 30.0)
     before = set(os.listdir(out_dir))
     batch_process_with_options([entry], options, None)
 

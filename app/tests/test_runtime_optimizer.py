@@ -245,6 +245,16 @@ class RuntimeOptimizerTests(unittest.TestCase):
             self.assertNotIn("ROOP_RUNTIME_QUEUE_DEPTH", applied)
             self.assertEqual(os.environ["ROOP_RUNTIME_QUEUE_DEPTH"], "99")
 
+    def test_trt_auxiliary_stream_auto_sentinel_does_not_break_profile(self):
+        settings = {"trt_auxiliary_streams": -1, "provider": "tensorrt",
+                    "trt_precision": "mixed"}
+        optimizer = RuntimeOptimizer(settings=settings)
+        with patch.object(optimizer.hardware_profiler, "profile",
+                          return_value=_hardware(12.0)):
+            profile = optimizer.build_profile(_workload(), save=False)
+        self.assertEqual(profile.tuning.cuda_auxiliary_streams, 0)
+        self.assertIn("trt_auxiliary_streams", profile.automatic_settings)
+
     def test_cache_key_contains_runtime_and_workload_identity(self):
         manager = TensorRTEngineManager()
         hardware = _hardware(12.0)

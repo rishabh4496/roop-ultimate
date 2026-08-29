@@ -270,3 +270,137 @@ the same representative end-to-end workload separately on each target with
 
 Use separate reports and profile keys for the two GPUs; do not combine their
 FPS or resource values into an average.
+
+## Phase 16 final integrated validation
+
+Phase 16 is a regression/acceptance pass over the integrated runtime. It uses
+the immutable controlled workload definition from
+`app/tests/baseline_controlled.py`, and accepts an optimization only from
+end-to-end render results. Component or per-face measurements are not used as
+success claims. The RTX 4070 was physically present for this pass; the RTX
+3060 was not physically available and has no substituted values below.
+The immutable official reference remains the 600-frame RTX 4070 result in
+`PERFORMANCE_BASELINE.md` (9.62 FPS, GPEN 256 Pro, RealityUX, stabilization
+ON, HEVC NVENC). The shorter Phase 16 rows below are paired before/after
+acceptance arms with their own same-workload baseline; they do not overwrite
+or silently re-label that official reference.
+
+The detected RTX 4070 profile was: NVIDIA GeForce RTX 4070, Ada Lovelace,
+compute capability 8.9, 11.994 GB total VRAM, 9.527 GB available at probe,
+driver 610.88, CUDA 12.8, TensorRT 10.9.0.34, ONNX Runtime 1.23.2, FP16/
+BF16/INT8 available, FP8 not exposed, NVDEC and NVENC available. The host
+reported 24 physical / 32 logical CPU threads and 31.691 GB RAM. P/E rows in
+the telemetry are explicitly marked as inferred from logical indices, not an
+OS topology report.
+
+### RTX 4070: final before/after matrix
+
+The primary 720p multi-face matrix used `d4.mp4`, frames 0–119, TensorRT,
+`realswap`, tracking and the detected runtime settings. Baseline is the
+same-run `None` enhancer / `None` mask / stabilization OFF arm at 8.50 FPS.
+Stage FPS is frames per second for decode/encode and faces per second for
+swap/enhancement. Every arm completed 120/120 frames with zero wrong-faceset
+applications and exit code 0.
+
+| Arm | Baseline FPS | Final FPS | Improvement | Peak/avg VRAM MB | Peak RAM GB | CPU mean % | GPU mean % | Decode FPS | Swap/inference FPS | Enhance FPS | Encode FPS | Latency ms | Stability | Quality |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---|
+| baseline | 8.50 | 8.50 | 0.00% | 4923 / 3029 | 24.589 | 25.952 | 28.536 | 64.86 | 15.75 | — | 631.58 | 445.69 | pass | 120/120; 0 wrong faceset; spot-check pass |
+| stabilization ON | 8.50 | 7.06 | -16.94% | 5178 / 3258 | 24.668 | 27.759 | 30.225 | 292.68 | 15.75 | — | 428.57 | 223.52 | pass | 120/120; 0 wrong faceset; visual review pending |
+| mask ON | 8.50 | 7.01 | -17.53% | 6001 / 3410 | 24.441 | 28.023 | 32.714 | 59.11 | 12.51 | — | 571.43 | 670.79 | pass | 120/120; 0 wrong faceset; visual review pending |
+| color ON | 8.50 | 8.23 | -3.18% | 5266 / 3361 | 24.221 | 27.960 | 31.949 | 66.30 | 12.58 | — | 631.58 | 486.52 | pass | 120/120; 0 wrong faceset; visual review pending |
+| postprocess heavy (UltraMax + RealityUX + stabilization + RCT) | 8.50 | 3.58 | -57.88% | 6765 / 3772 | 25.237 | 27.257 | 34.726 | 285.71 | 17.06 | 6.74 | 400.00 | 723.56 | pass | 120/120; 0 wrong faceset; visual review pending |
+
+The Phase 12 acceptance classification on this target is: stabilization,
+mask, color, and heavy postprocessing are **regressions on this workload**
+when enabled globally; heavy postprocessing is not accepted as a speed
+optimization. The 4070 is CPU/stage limited for the baseline (GPU mean
+28.536%, frame-total 57.2% of measured stage time), not encode limited.
+
+After the runtime-policy fix, a 30-frame integrated guard arm completed with
+the live monitor enabled: the profile selected 8 workers, queue depth 3, swap
+and tile batches 2, face concurrency 3, four in-flight frames, and a 144-frame
+stabilization chunk. The monitor reported 3.233 end-to-end FPS, input/output
+queue averages of 9/2, 50% worker utilization, 30.86% VRAM pressure, 68.75%
+RAM utilization, and `synchronization-bound`. This was diagnostics-only (no
+adaptive changes were enabled); the external sampler supplied 27.932% mean
+GPU utilization and 24.590% mean CPU utilization for the corresponding run.
+The monitor's own CPU/GPU fields were unavailable on this host, so they are
+not substituted with estimates.
+
+### RTX 4070: enhancer and feature-toggle coverage
+
+The final integrated render arms directly exercised no enhancer and UltraMax
+(the postprocess-heavy arm). The other discovered enhancers have existing
+compatibility/per-face evidence, but that is not an end-to-end acceptance
+claim. Their final integrated status is:
+
+| Coverage | Status |
+|---|---|
+| None | completed above |
+| UltraMax | completed above; 3.58 FPS in the heavy postprocess arm |
+| GPEN, GPEN 256, GPEN 256 Pro, GPEN Realistic, CodeFormer, GFPGAN, RestoreFormer++, frame upscalers, other discovered enhancers | pending dedicated end-to-end render on this target |
+| temporal detection OFF/ON, tracking OFF/ON, NVDEC OFF/ON, FP32/FP16/mixed paired on one workload | partial: tracking/temporal ON and FP32/mixed/FP16 coverage completed; OFF/ON feature pairs pending dedicated rerun |
+
+### RTX 4070: codec/output before/after matrix
+
+This paired matrix uses the same 120-frame workload and a 120-frame segment.
+The explicit codec remains authoritative. The libx264 row is the codec-matrix
+baseline; encoding itself is not the end-to-end bottleneck here.
+
+| Codec | Baseline FPS | Final FPS | Improvement | Peak/avg VRAM MB | CPU mean % | GPU mean % | Decode FPS | Swap FPS | Encode FPS | Encode time s | Latency ms | Stability | Quality |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---|
+| libx264 | 8.26 | 8.26 | 0.00% | 5139 / 3293 | 27.754 | 32.561 | 65.22 | 14.79 | 413.79 | 0.29 | 479.37 | pass | 120/120; 0 wrong faceset; visual review pending |
+| h264_nvenc | 8.26 | 8.27 | +0.12% | 5561 / 3401 | 28.568 | 32.111 | 59.11 | 14.79 | 315.79 | 0.38 | 472.61 | pass | 120/120; 0 wrong faceset; visual review pending |
+| hevc_nvenc | 8.26 | 8.42 | +1.94% | 5591 / 3314 | 27.915 | 32.653 | 68.18 | 13.90 | 324.32 | 0.37 | 462.09 | pass | 120/120; 0 wrong faceset; visual review pending |
+
+The result is classified **beneficial on the RTX 4070 only so far** for the
+HEVC encoder arm; no universal encoder claim is made until the RTX 3060 runs
+the same matrix. Segment rotation count was one for each 120-frame arm.
+
+### RTX 4070: resolution and precision acceptance
+
+These are true end-to-end compatibility runs with cadence taken from the
+input. The 1080p source is 25 FPS with AAC; the 4K smoke source is 24 FPS and
+has no audio stream. They are not cross-resolution FPS comparisons.
+
+| Input / faces | Precision | Frames | Final FPS | Peak VRAM GB | CPU % | GPU % | Duration / resolution / audio | Identity / texture / channel | Status |
+|---|---|---:|---:|---:|---:|---:|---|---|---|
+| 1920x1080 / one source | FP32 | 418 | 6.326 | 6.021 | 4.7 | 40.0 | 16.720 s / 1920x1080 / AAC retained | pass / pass / pass | pass |
+| 1920x1080 / one source | mixed | 418 | 7.588 | 4.975 | 6.0 | 30.2 | 16.720 s / 1920x1080 / AAC retained | pass / pass / pass | pass |
+| 4096x2160 / one source smoke | FP16 | 60 | 0.713 | 5.953 | 8.0 | 20.2 | 2.500 s / 4096x2160 / source has no audio | pass / pass / pass | pass |
+
+The harness cadence fix used by these runs is in
+`app/tests/angle_video.py`; it prevents a fixed 30 FPS test entry from
+creating false duration failures on 24/25 FPS inputs.
+
+### RTX 3060: final integrated validation
+
+The RTX 3060 was unavailable in this environment. No result, FPS, VRAM,
+quality, or stability value is inferred from the RTX 4070. The complete
+Phase 16 target remains **pending physical validation**:
+
+| Matrix | Status |
+|---|---|
+| 720p multi-face baseline / stabilization / mask / color / heavy | pending physical validation |
+| Codec: libx264 / h264_nvenc / hevc_nvenc, 120-frame segment | pending physical validation |
+| 1080p FP32 / mixed and 4K FP16 smoke | pending physical validation |
+| Enhancer matrix: none, GPEN variants, UltraMax, CodeFormer, GFPGAN, RestoreFormer++, frame upscalers, other discovered enhancers | pending end-to-end physical validation |
+| temporal detection / tracking / NVDEC OFF-ON / NVENC OFF-ON | pending physical validation |
+| CPU/P/E/GPU/VRAM/RAM/queues/transfers/synchronization | pending physical validation |
+| frame order, duration, audio, masks, stabilization, black/NaN/dropped/duplicate/deadlock/leak/corruption checks | pending physical validation |
+
+Run on the physical RTX 3060 without rewriting configuration, using the
+isolated application environment:
+
+```bash
+cd app
+env/Scripts/python.exe tests/phase12_benchmark.py --target "RTX 3060" --video <720p-d4> --start 0 --end 120 --out output/phase16_validation/phase12_3060
+env/Scripts/python.exe tests/phase13_benchmark.py --target "RTX 3060" --video <720p-d4> --start 0 --end 120 --codecs libx264,h264_nvenc,hevc_nvenc --segment-sizes 120 --out output/phase16_validation/phase13_3060
+env/Scripts/python.exe tests/compat_one.py --precision fp32 --provider tensorrt --mask-engine None --enhancer None --clip <1080p> --source harjot --out output/phase16_validation/resolution_3060/1080_fp32
+env/Scripts/python.exe tests/compat_one.py --precision mixed --provider tensorrt --mask-engine None --enhancer None --clip <1080p> --source harjot --out output/phase16_validation/resolution_3060/1080_mixed
+```
+
+Repeat the accepted enhancer, feature-toggle, and codec arms with the same
+input files and record each result under the RTX 3060 hardware profile key.
+Only after those rows pass end-to-end quality and stability checks may an arm
+be classified **beneficial on both**.

@@ -225,6 +225,18 @@ directly; multi-segment outputs still use lossless concat and the resume manifes
 The acceptance record, including separate RTX 3060 pending and RTX 4070 result
 tables, is maintained in [`docs/HARDWARE_VALIDATION_MATRIX.md`](docs/HARDWARE_VALIDATION_MATRIX.md).
 
+### Phase 16 final integrated validation
+
+Phase 16 is the final end-to-end regression pass. It validates the integrated
+stack by resolution, face load, postprocessing, precision, codec, and runtime
+quality checks. Acceptance is based on end-to-end FPS and stable resource use;
+per-face or isolated stage improvements do not count. The maintained result
+tables are in [`docs/HARDWARE_VALIDATION_MATRIX.md`](docs/HARDWARE_VALIDATION_MATRIX.md).
+
+The RTX 4070 result rows are recorded separately. The RTX 3060 was unavailable
+for this pass and remains explicitly pending; its values must be measured on
+the physical device and must not be copied from the 4070.
+
 ### Phase 14 runtime autotuning
 
 Normal runs load a hardware/software/model/workload-specific cached profile.
