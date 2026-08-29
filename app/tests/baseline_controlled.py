@@ -96,8 +96,25 @@ def parse_run(text):
     if m:
         out["frames"] = int(m.group(1))
     if out.get("frames") and out.get("processing_seconds"):
-        # Recompute rather than trust the printed rate; they must agree.
+        # Recompute rather than trust the printed rate, and ENFORCE the
+        # agreement. A cross-check that is computed and never compared is
+        # decoration -- this file's first version reported the SOURCE CLIP's
+        # 30.0 fps for a render that ran at 12.20, because a loose
+        # `([\d.]+)\s*fps` search matched the video geometry line. That number
+        # was heading for the LOCKED baseline, where a 3x inflation would have
+        # made every later optimisation on both cards read as a regression.
+        # 30 fps is a plausible render rate; nothing about it invites a second
+        # look. Only the arithmetic does.
         out["fps_check"] = round(out["frames"] / out["processing_seconds"], 2)
+        printed = out.get("fps")
+        if printed and abs(printed - out["fps_check"]) > max(0.05, 0.02 * printed):
+            out["fps_mismatch"] = True
+            raise SystemExit(
+                "fps disagreement: the run printed %.2f fps but %d frames in "
+                "%.2f s is %.2f fps. One of the two is being read from the "
+                "wrong line -- refusing to record either."
+                % (printed, out["frames"], out["processing_seconds"],
+                   out["fps_check"]))
     m = re.search(r"faces seen\s+(\d+)", text, re.I)
     if m:
         out["faces_seen"] = int(m.group(1))
