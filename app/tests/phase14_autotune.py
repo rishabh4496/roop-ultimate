@@ -16,6 +16,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 APP = os.path.dirname(HERE)
 if APP not in sys.path:
     sys.path.insert(0, APP)
+from hardware_probe import format_selected, query_gpus, target_on_device
 
 from roop.runtime_optimizer import RuntimeOptimizer, WorkloadProfile
 
@@ -23,15 +24,9 @@ from roop.runtime_optimizer import RuntimeOptimizer, WorkloadProfile
 TARGETS = ("RTX 3060", "RTX 4070")
 
 
-def _detected_target(target):
-    try:
-        out = subprocess.check_output(
-            ["nvidia-smi", "--query-gpu=name,memory.total,driver_version",
-             "--format=csv,noheader"], text=True, timeout=10)
-    except Exception as exc:
-        return False, "unavailable: %s" % exc
-    needle = "3060" if target == "RTX 3060" else "4070"
-    return needle in out.lower(), out.strip()
+def _detected_target(target, device_id=0):
+    rows, raw = query_gpus()
+    return target_on_device(target, rows, device_id)[0], format_selected(rows, raw, device_id)
 
 
 def _result_metrics(path, returncode, elapsed):
@@ -57,9 +52,50 @@ def _result_metrics(path, returncode, elapsed):
     }
 
 
+def _apply_candidate_environment(candidate, env, codec):
+    """Export every candidate control to the variable the child consumes."""
+    env["ROOP_RUNTIME_QUEUE_DEPTH"] = str(candidate.get("queue_depth", 1))
+    env["ROOP_RUNTIME_INFLIGHT_FRAMES"] = str(candidate.get("in_flight_frames", 1))
+    env["ROOP_RUNTIME_BATCH_SIZE"] = str(candidate.get("batch_size", 1))
+    env["ROOP_RUNTIME_TILE_BATCH_SIZE"] = str(candidate.get("tile_batch_size", 1))
+    env["ROOP_RUNTIME_CV_THREADS"] = str(candidate.get("opencv_threads", 1))
+    env["ROOP_RUNTIME_ORT_INTRA_THREADS"] = str(candidate.get("ort_intra_threads", 1))
+    env["ROOP_RUNTIME_ORT_INTER_THREADS"] = str(candidate.get("ort_inter_threads", 1))
+    env["ROOP_RUNTIME_FFMPEG_THREADS"] = str(candidate.get("ffmpeg_threads", 1))
+    env["ROOP_RUNTIME_CUDA_STREAMS"] = str(candidate.get("cuda_stream_count", 1))
+    env["ROOP_RUNTIME_TRT_AUX_STREAMS"] = str(candidate.get("cuda_auxiliary_streams", 0))
+
+    # These are the import-time session-pool names.  RuntimeOptimizer emits
+    # the same mapping; omitting them here makes the autotuner benchmark a
+    # different pool than the candidate it later persists.
+    env["ROOP_TRT_POOL"] = str(candidate.get("swapper_pool_size", 0))
+    env["ROOP_DETECTOR_POOL"] = str(candidate.get("detector_pool_size", 0))
+    env["ROOP_DETMASK_POOL"] = str(candidate.get("detmask_pool_size", 0))
+    env["ROOP_EXPR_POOL"] = str(candidate.get("expression_pool_size", 0))
+
+    # The enhancer pool shares the TRT session pool in the current runtime;
+    # there is no independent public enhancer-pool environment variable.
+    env["ROOP_TRT_POOL"] = str(candidate.get("swapper_pool_size", 0))
+
+    precision = str(candidate.get("precision", "")).lower()
+    if precision == "fp32":
+        env["ROOP_SWAP_FP32"] = "1"
+    elif precision in ("fp16", "mixed"):
+        env.pop("ROOP_SWAP_FP32", None)
+
+    preset = str(candidate.get("encoder_preset", "faster"))
+    if str(codec).lower().endswith("_nvenc"):
+        env["ROOP_NVENC_PRESET"] = preset
+    else:
+        env["ROOP_ENCODER_PRESET"] = preset
+    return env
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--target", required=True, choices=TARGETS)
+    ap.add_argument("--device-id", type=int, default=0,
+                    help="physical CUDA device index used by each child")
     ap.add_argument("--video", default=r"G:/pinokio/roop-keep/double/d4.mp4")
     ap.add_argument("--sources", default="harjot,gargee")
     ap.add_argument("--start", type=int, default=0)
@@ -79,13 +115,14 @@ def main():
     args.out = os.path.abspath(args.out)
     os.makedirs(args.out, exist_ok=True)
 
-    present, detected = _detected_target(args.target)
+    present, detected = _detected_target(args.target, args.device_id)
     report_path = os.path.join(args.out, "%s.json" % args.target.replace(" ", "_"))
     if not present:
         report = {
             "status": "pending", "target": args.target,
             "detected_hardware": detected,
-            "required_command": "python tests/phase14_autotune.py --target %r" % args.target,
+            "required_command": "python tests/phase14_autotune.py --target %r --device-id %d" %
+            (args.target, args.device_id),
         }
         with open(report_path, "w", encoding="utf-8") as fh:
             json.dump(report, fh, indent=2)
@@ -129,23 +166,10 @@ def main():
                "--stabilization-mode", args.stabilization,
                "--threads", str(max(1, int(candidate.get("worker_count", 1)))),
                "--out", args.out]
+        cmd.extend(["--cuda-device-id", str(args.device_id)])
         env = dict(os.environ)
         env["ROOP_PROFILE"] = "1"
-        env["ROOP_RUNTIME_QUEUE_DEPTH"] = str(candidate.get("queue_depth", 1))
-        env["ROOP_RUNTIME_INFLIGHT_FRAMES"] = str(candidate.get("in_flight_frames", 1))
-        env["ROOP_RUNTIME_BATCH_SIZE"] = str(candidate.get("batch_size", 1))
-        env["ROOP_RUNTIME_TILE_BATCH_SIZE"] = str(candidate.get("tile_batch_size", 1))
-        env["ROOP_RUNTIME_CV_THREADS"] = str(candidate.get("opencv_threads", 1))
-        env["ROOP_RUNTIME_ORT_INTRA_THREADS"] = str(candidate.get("ort_intra_threads", 1))
-        env["ROOP_RUNTIME_ORT_INTER_THREADS"] = str(candidate.get("ort_inter_threads", 1))
-        env["ROOP_RUNTIME_FFMPEG_THREADS"] = str(candidate.get("ffmpeg_threads", 1))
-        env["ROOP_RUNTIME_CUDA_STREAMS"] = str(candidate.get("cuda_stream_count", 1))
-        env["ROOP_RUNTIME_TRT_AUX_STREAMS"] = str(candidate.get("cuda_auxiliary_streams", 0))
-        if str(candidate.get("precision", "")).lower() == "fp32":
-            env["ROOP_SWAP_FP32"] = "1"
-        elif str(candidate.get("precision", "")).lower() in ("fp16", "mixed"):
-            env.pop("ROOP_SWAP_FP32", None)
-        env["ROOP_ENCODER_PRESET"] = str(candidate.get("encoder_preset", "faster"))
+        _apply_candidate_environment(candidate, env, codec)
         started = time.perf_counter()
         proc = subprocess.run(cmd, cwd=APP, env=env)
         elapsed = time.perf_counter() - started

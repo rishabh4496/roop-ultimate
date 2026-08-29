@@ -22,22 +22,20 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 APP = os.path.dirname(HERE)
+if APP not in sys.path:
+    sys.path.insert(0, APP)
+from hardware_probe import format_selected, query_gpus, target_on_device
 TARGETS = ("RTX 3060", "RTX 4070")
 
 
-def _detected_gpu():
-    try:
-        out = subprocess.check_output(
-            ["nvidia-smi", "--query-gpu=name,memory.total,driver_version",
-             "--format=csv,noheader"], text=True, timeout=10)
-        return out.strip() or "unknown"
-    except Exception as exc:
-        return "unavailable: %s" % exc
+def _detected_gpu(device_id=0):
+    rows, raw = query_gpus()
+    return format_selected(rows, raw, device_id)
 
 
-def _target_present(target, detected):
-    needle = "3060" if target == "RTX 3060" else "4070"
-    return needle in detected.lower()
+def _target_present(target, device_id=0):
+    rows, _raw = query_gpus()
+    return target_on_device(target, rows, device_id)[0]
 
 
 def _matrix(mask_engine):
@@ -63,7 +61,7 @@ def _run_arm(args, target, arm):
            "--end", str(args.end), "--enhancer", arm["enhancer"],
            "--mask-engine", arm["mask"], "--stabilization-mode",
            arm["stabilization"], "--color-transfer-mode", arm["color"],
-           "--out", args.out]
+           "--out", args.out, "--cuda-device-id", str(args.device_id)]
     result_path = os.path.join(args.out, tag + ".json")
     existing = result_path
     if not os.path.isfile(existing) and getattr(args, "legacy_out", None):
@@ -120,6 +118,8 @@ def _table(results):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--target", required=True, choices=TARGETS)
+    ap.add_argument("--device-id", type=int, default=0,
+                    help="physical CUDA device index used by the child")
     ap.add_argument("--video", default=r"G:/pinokio/roop-keep/double/d4.mp4")
     ap.add_argument("--sources", default="harjot,gargee")
     ap.add_argument("--start", type=int, default=0)
@@ -138,11 +138,11 @@ def main():
         args.legacy_out = os.path.abspath(os.path.join(APP, raw_out))
     os.makedirs(args.out, exist_ok=True)
 
-    detected = _detected_gpu()
+    detected = _detected_gpu(args.device_id)
     report = {"target": args.target, "detected_hardware": detected,
               "results": [], "table": []}
-    if not _target_present(args.target, detected):
-        command = "python tests/phase12_benchmark.py --target %r" % args.target
+    if not _target_present(args.target, args.device_id):
+        command = "python tests/phase12_benchmark.py --target %r --device-id %d" % (args.target, args.device_id)
         report["status"] = "pending"
         report["pending_reason"] = "requested GPU is unavailable; detected %s" % detected
         report["required_command"] = command

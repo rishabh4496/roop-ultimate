@@ -38,6 +38,7 @@ def _hardware(vram, physical=24, logical=32, nvenc=True):
         onnxruntime_version="1.23.2",
         nvdec_available=nvenc,
         nvenc_available=nvenc,
+        fp16_supported=True,
         cpu_physical_cores=physical,
         cpu_logical_cores=logical,
         ram_total_gb=32.0,

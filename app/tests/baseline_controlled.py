@@ -163,7 +163,7 @@ def ensure_ffmpeg(env):
         % candidates)
 
 
-def software_stack():
+def software_stack(device_id=0):
     info = {"python": sys.version.split()[0]}
     try:
         import torch
@@ -190,7 +190,8 @@ def software_stack():
     try:
         out = subprocess.check_output(
             ["nvidia-smi", "--query-gpu=name,memory.total,driver_version,compute_cap",
-             "--format=csv,noheader"], text=True, timeout=10).strip()
+             "--format=csv,noheader", "--id=%d" % int(device_id)],
+            text=True, timeout=10).strip()
         info["gpu"] = out
     except Exception:
         info["gpu"] = "unknown"
@@ -230,6 +231,8 @@ def main():
                     help="controlled Phase 12 color-processing override")
     ap.add_argument("--target", choices=("RTX 3060", "RTX 4070"),
                     default=None, help="validation target label for the record")
+    ap.add_argument("--cuda-device-id", type=int, default=0,
+                    help="physical CUDA device index used by the child")
     ap.add_argument("--threads", type=int, default=None,
                     help="default: the device's own resolved thread count")
     ap.add_argument("--out", default=os.path.join(APP, "output", "phase2_baseline"))
@@ -267,6 +270,7 @@ def main():
            "--stabilize-mask-strength", str(cfg.stabilize_mask_strength),
            "--stabilize-enhancer", "1" if bool(cfg.stabilize_enhancer) else "0",
            "--threads", str(threads),
+           "--cuda-device-id", str(args.cuda_device_id),
            "--swap-model-mask-strength", str(cfg.swap_model_mask_strength),
            "--merger-clarity", str(getattr(cfg, "merger_clarity", 0.0)),
            "--out", os.path.join(args.out, args.tag)]
@@ -289,7 +293,7 @@ def main():
     env = ensure_ffmpeg(env)
     os.environ["PATH"] = env["PATH"]   # so software_stack() can read its version
 
-    stack = software_stack()
+    stack = software_stack(args.cuda_device_id)
     print("Phase 2 controlled baseline")
     for k, v in stack.items():
         print("  %-14s %s" % (k, v))
@@ -321,7 +325,9 @@ def main():
         elif re.search(r"error|traceback|refus|warn", line, re.I):
             print("  ! %s" % line.strip()[:150], flush=True)
 
-    rc, out, telem = tel.run_sampled(cmd, env=env, cwd=APP, on_line=progress)
+    rc, out, telem = tel.run_sampled(
+        cmd, env=env, cwd=APP, on_line=progress,
+        device_id=args.cuda_device_id)
     elapsed = time.perf_counter() - started
 
     log = os.path.join(args.out, args.tag + ".log")

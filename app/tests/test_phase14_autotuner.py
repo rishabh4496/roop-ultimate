@@ -1,7 +1,10 @@
 import os
+import sys
 import tempfile
 import unittest
 
+sys.path.insert(0, os.path.dirname(__file__))
+from phase14_autotune import _apply_candidate_environment
 from roop.runtime_optimizer import (
     HardwareProfile,
     ProfileStore,
@@ -25,6 +28,31 @@ def _hardware(vram=12.0):
 
 
 class Phase14AutotunerTests(unittest.TestCase):
+    def test_candidate_controls_reach_the_actual_child_environment(self):
+        candidate = {
+            "queue_depth": 3, "in_flight_frames": 4, "batch_size": 2,
+            "tile_batch_size": 2, "opencv_threads": 5,
+            "ort_intra_threads": 6, "ort_inter_threads": 7,
+            "ffmpeg_threads": 8, "cuda_stream_count": 2,
+            "cuda_auxiliary_streams": 1, "swapper_pool_size": 2,
+            "detector_pool_size": 2, "detmask_pool_size": 2,
+            "enhancer_pool_size": 2, "expression_pool_size": 2,
+            "precision": "fp16", "encoder_preset": "p4",
+        }
+        env = _apply_candidate_environment(candidate, {}, "hevc_nvenc")
+        self.assertEqual(env["ROOP_TRT_POOL"], "2")
+        self.assertEqual(env["ROOP_DETECTOR_POOL"], "2")
+        self.assertEqual(env["ROOP_DETMASK_POOL"], "2")
+        self.assertEqual(env["ROOP_EXPR_POOL"], "2")
+        self.assertEqual(env["ROOP_NVENC_PRESET"], "p4")
+        self.assertNotIn("ROOP_ENCODER_PRESET", env)
+
+    def test_software_encoder_uses_software_preset_variable(self):
+        env = _apply_candidate_environment(
+            {"encoder_preset": "fast", "precision": "fp32"}, {}, "libx264")
+        self.assertEqual(env["ROOP_ENCODER_PRESET"], "fast")
+        self.assertNotIn("ROOP_NVENC_PRESET", env)
+
     def test_staged_search_is_bounded_and_uses_end_to_end_score(self):
         tuner = RuntimeAutotuner()
         base = RuntimeTuning(worker_count=4, queue_depth=2, ram_buffer_mb=1024)

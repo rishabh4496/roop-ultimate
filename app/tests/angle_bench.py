@@ -93,7 +93,7 @@ YAW_LABEL = {0: -90, 1: -45, 2: 0, 3: 45, 4: 90}   # plate index -> real yaw
 # ── pipeline setup ───────────────────────────────────────────────────────────
 
 def init_pipeline(provider, swap_model, enhancer, mask_engine,
-                  swap_model_mask_strength=0.0):
+                  swap_model_mask_strength=0.0, cuda_device_id=0):
     """Bring roop up headlessly, with every angle-relevant setting stated here
     rather than inherited from config.yaml.
 
@@ -107,7 +107,7 @@ def init_pipeline(provider, swap_model, enhancer, mask_engine,
     g.CFG = Settings("config.yaml")
     g.CFG.provider = provider
     g.execution_threads = 1               # bench determinism over speed
-    g.cuda_device_id = 0
+    g.cuda_device_id = int(cuda_device_id)
     g.video_encoder = g.CFG.output_video_codec
     g.video_quality = g.CFG.video_quality
     g.max_memory = None

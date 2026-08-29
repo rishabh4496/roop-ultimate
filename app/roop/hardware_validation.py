@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
+import re
 from typing import Any, Mapping
 
 
@@ -30,6 +32,36 @@ _HARDWARE_FIELDS = (
     "int8_supported", "fp8_supported", "nvdec_available", "nvdec_codecs",
     "nvenc_available", "nvenc_codecs", "ram_total_gb", "platform",
 )
+
+_TARGET_GPU_PATTERNS = {
+    # Validation labels are deliberately stricter than the runtime policy.  A
+    # GPU name is used only to verify that a submitted result belongs to the
+    # named target; architecture and capabilities still come from runtime
+    # probes in HardwareProfiler.
+    "RTX 3060": re.compile(
+        r"\brtx\s+3060\b(?!\s*(?:ti|super)\b)", re.IGNORECASE),
+    "RTX 4070": re.compile(
+        r"\brtx\s+4070\b(?!\s*(?:ti|super)\b)", re.IGNORECASE),
+}
+
+def target_matches_hardware(target: str, hardware: Mapping[str, Any]) -> bool:
+    """Return whether detected NVIDIA identity matches a validation target.
+
+    This is an audit guard, not a capability detector.  It prevents a result
+    recorded under one target label from being accepted for another target,
+    while all runtime choices continue to use the probed architecture,
+    compute capability, memory, and exposed software capabilities.
+    """
+    pattern = _TARGET_GPU_PATTERNS.get(str(target))
+    if pattern is None or not isinstance(hardware, Mapping):
+        return False
+    vendor = str(hardware.get("gpu_vendor", "")).strip().lower()
+    name = str(hardware.get("gpu_name", "")).strip()
+    return bool(
+        name and
+        (vendor in ("", "unknown", "nvidia") or "nvidia" in name.lower()) and
+        pattern.search(name)
+    )
 
 
 def hardware_profile_key(hardware: Mapping[str, Any], workload: Mapping[str, Any] | None = None) -> str:
@@ -52,6 +84,7 @@ def _pending(target: str, reason: str = "no physical measurement recorded") -> d
         "status": "pending",
         "hardware_profile_key": None,
         "metrics": {name: None for name in REQUIRED_METRICS},
+        "missing_metrics": list(REQUIRED_METRICS),
         "notes": reason,
     }
 
@@ -59,16 +92,28 @@ def _pending(target: str, reason: str = "no physical measurement recorded") -> d
 def _measurement(target: str, record: Mapping[str, Any]) -> dict | None:
     hardware = record.get("hardware")
     supplied_key = record.get("hardware_profile_key")
-    if isinstance(hardware, Mapping):
-        expected_key = hardware_profile_key(hardware, record.get("workload"))
-        if not supplied_key or supplied_key != expected_key:
-            return None
+    if not isinstance(hardware, Mapping):
+        return None
+    if not target_matches_hardware(target, hardware):
+        return None
+    expected_key = hardware_profile_key(hardware, record.get("workload"))
+    if not supplied_key or supplied_key != expected_key:
+        return None
     metrics = {name: record.get(name) for name in REQUIRED_METRICS}
+    missing = [name for name, value in metrics.items() if value is None]
+    status = record.get("status", "measured")
+    # A partial stage/calibration record remains useful evidence, but it must
+    # never look like a complete final validation row.  Complete acceptance
+    # requires every metric in REQUIRED_METRICS to be present.
+    if status == "measured" and missing:
+        status = "measured_partial"
     return {
         "target": target,
-        "status": record.get("status", "measured"),
+        "status": status,
         "hardware_profile_key": record.get("hardware_profile_key"),
         "metrics": metrics,
+        "missing_metrics": missing,
+        "hardware": dict(hardware),
         "notes": record.get("notes", ""),
     }
 
@@ -115,15 +160,24 @@ def classify_optimization(
     """
     a = rtx3060 or {}
     b = rtx4070 or {}
-    if not a or not b or a.get("status") == "pending" or b.get("status") == "pending":
+    complete_statuses = {"measured", "validated", "complete"}
+    if (not a or not b or a.get("status") not in complete_statuses or
+            b.get("status") not in complete_statuses):
         return "PENDING"
     a_change = a.get("improvement_pct")
     b_change = b.get("improvement_pct")
-    if not isinstance(a_change, (int, float)) or not isinstance(b_change, (int, float)):
+    if (not isinstance(a_change, (int, float)) or
+            not isinstance(b_change, (int, float)) or
+            not math.isfinite(float(a_change)) or
+            not math.isfinite(float(b_change))):
         return "F. UNSAFE / REJECTED"
     tolerance = abs(float(improvement_tolerance_pct))
     a_good = a_change > tolerance
     b_good = b_change > tolerance
+    a_regression = a_change < -tolerance
+    b_regression = b_change < -tolerance
+    if a_regression or b_regression:
+        return "E. REGRESSION ON ONE GPU"
     if a_good and b_good:
         return "A. BENEFICIAL ON BOTH"
     if a_good and not b_good:
@@ -137,5 +191,5 @@ def classify_optimization(
 
 __all__ = [
     "REQUIRED_METRICS", "VALIDATION_TARGETS", "build_dual_target_report",
-    "classify_optimization", "hardware_profile_key",
+    "classify_optimization", "hardware_profile_key", "target_matches_hardware",
 ]

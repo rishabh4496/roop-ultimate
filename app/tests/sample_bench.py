@@ -53,6 +53,8 @@ def _apply_perf_env():
         return
 
     def _set(var, val):
+        if var in os.environ:
+            return
         if val is None:
             return
         s = str(val).strip()
@@ -66,14 +68,16 @@ def _apply_perf_env():
     _set('ROOP_ENCODER_PRESET', cfg.get('perf_encoder_preset'))
     for var, key in (('ROOP_PROFILE', 'perf_profile'), ('ROOP_BATCH_SWAP', 'perf_batch_swap'),
                      ('ROOP_NVDEC', 'perf_nvdec')):
+        if var in os.environ:
+            continue
         v = str(cfg.get(key, 'auto')).strip().lower()
         if v == 'on' or (v == 'auto' and var == 'ROOP_BATCH_SWAP'):
             os.environ[var] = '1'
-            if var == 'ROOP_BATCH_SWAP':
+            if var == 'ROOP_BATCH_SWAP' and 'ROOP_BATCH_SWAP_XFRAME' not in os.environ:
                 os.environ['ROOP_BATCH_SWAP_XFRAME'] = '1'
         elif v == 'off':
             os.environ[var] = '0'
-            if var == 'ROOP_BATCH_SWAP':
+            if var == 'ROOP_BATCH_SWAP' and 'ROOP_BATCH_SWAP_XFRAME' not in os.environ:
                 os.environ['ROOP_BATCH_SWAP_XFRAME'] = '0'
 
 

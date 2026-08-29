@@ -170,12 +170,6 @@ def decode_execution_providers(execution_providers: List[str]) -> List[str]:
                 # therefore must not reuse engines built with the old setting.
                 if trt_precision == 'mixed':
                     cache_label += '_lnfp32_seq_heur'
-                cache_label += trt_tuning_namespace(builder_opt,
-                                                     auxiliary_streams,
-                                                     cuda_graph)
-                precision_cache = os.path.join(trt_cache, cache_label)
-                os.makedirs(precision_cache, exist_ok=True)
-
                 # ── Engine-build tuning, scaled to the GPU ──────────────────
                 try:
                     total_vram = torch.cuda.get_device_properties(roop.globals.cuda_device_id).total_memory
@@ -223,6 +217,30 @@ def decode_execution_providers(execution_providers: List[str]) -> List[str]:
                     partition_iters = int(os.environ.get('ROOP_TRT_PARTITION_ITERATIONS', '2000'))
                 except ValueError:
                     partition_iters = 2000
+                partition_iters = max(1, partition_iters)
+
+                # TensorRT's internal graph hash distinguishes the model and
+                # concrete graph shapes. This parent namespace additionally
+                # separates the effective builder/runtime configuration so a
+                # changed workspace, partition budget, or execution schedule
+                # cannot silently reuse an engine built under another policy.
+                builder_config = {
+                    'workspace_bytes': workspace_size,
+                    'partition_iterations': partition_iters,
+                    'context_memory_sharing': True,
+                    'layer_norm_fp32_fallback': trt_precision == 'mixed',
+                    'force_sequential_engine_build': trt_precision == 'mixed',
+                    'build_heuristics': trt_precision == 'mixed',
+                    'builder_optimization_level': builder_opt,
+                    'cuda_graph': cuda_graph,
+                    'auxiliary_streams': auxiliary_streams,
+                    'precision': trt_precision,
+                }
+                cache_label += trt_tuning_namespace(
+                    builder_opt, auxiliary_streams, cuda_graph,
+                    builder_config=builder_config)
+                precision_cache = os.path.join(trt_cache, cache_label)
+                os.makedirs(precision_cache, exist_ok=True)
 
                 trt_opts = {
                     'device_id': roop.globals.cuda_device_id,

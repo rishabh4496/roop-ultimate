@@ -35,6 +35,11 @@ from roop.backend_manager import cache_namespace
 
 PRECISIONS = ("fp32", "fp16", "mixed", "bf16", "int8", "fp8")
 
+# BF16 has a real provider option in this project. INT8/FP8 are represented in
+# the policy matrix so future calibrated implementations can be recorded, but
+# a TensorRT feature flag alone does not enable either mode here.
+_IMPLEMENTED_PROVIDER_PRECISIONS = frozenset(("bf16",))
+
 
 @dataclass(frozen=True)
 class ModelPrecisionPolicy:
@@ -284,8 +289,45 @@ def decision_cache_key(model_key: str, model_path: str | None, requested: str,
     return hashlib.sha256(raw).hexdigest()[:24]
 
 
+def _runtime_hardware(hardware=None):
+    """Return the startup profile when the application has already probed it.
+
+    Direct policy callers may omit this optional argument and use synthetic
+    provider lists. Production startup publishes the single hardware profile
+    used by the workload, avoiding a second ad-hoc GPU probe.
+    """
+    if hardware is not None:
+        return hardware
+    try:
+        import roop.globals
+        return getattr(roop.globals, "runtime_hardware_profile", None)
+    except Exception:
+        return None
+
+
+def _hardware_allows(precision: str, hardware) -> bool:
+    if hardware is None:
+        # Compatibility for direct unit/integration callers that do not own a
+        # profiler. RuntimeOptimizer and production startup perform the gate.
+        return True
+    if not bool(getattr(hardware, "cuda_available", False)):
+        return False
+    if not bool(getattr(hardware, "tensorrt_available", False)):
+        return False
+    if precision in ("fp16", "mixed"):
+        return bool(getattr(hardware, "fp16_supported", False))
+    if precision == "bf16":
+        return bool(getattr(hardware, "bf16_supported", False))
+    if precision == "int8":
+        return bool(getattr(hardware, "int8_supported", False))
+    if precision == "fp8":
+        return bool(getattr(hardware, "fp8_supported", False))
+    return True
+
+
 def resolve(model_key: str, requested: str = "mixed", providers=None,
-            model_path: str | None = None, device_id: int = 0) -> PrecisionDecision:
+            model_path: str | None = None, device_id: int = 0,
+            hardware=None) -> PrecisionDecision:
     """Resolve one model request without mutating the caller's providers."""
     requested = str(requested or "mixed").lower()
     if requested not in PRECISIONS:
@@ -305,6 +347,18 @@ def resolve(model_key: str, requested: str = "mixed", providers=None,
         if requested in ("fp16", "mixed", "bf16", "int8", "fp8") and evidence not in (_SAFE, _CANDIDATE):
             effective = "fp32"
             fallback = True
+        # A model label is not a hardware probe. Require the detected stack to
+        # expose the requested mode too. INT8/FP8 additionally require a real
+        # provider implementation; feature flags alone are insufficient.
+        detected = _runtime_hardware(hardware)
+        if (effective in ("fp16", "mixed", "bf16", "int8", "fp8") and
+                not _hardware_allows(effective, detected)):
+            effective = "fp32"
+            fallback = True
+        if (effective in ("int8", "fp8") and
+                effective not in _IMPLEMENTED_PROVIDER_PRECISIONS):
+            effective = "fp32"
+            fallback = True
         if policy.trt_supported == "no":
             # The caller supplied TRT, but this model family deliberately
             # removes it (ESRGAN/RIFE/SAM). Report the backend that will really
@@ -318,7 +372,8 @@ def resolve(model_key: str, requested: str = "mixed", providers=None,
 
 
 def providers_for(model_key: str, providers, model_path: str | None = None,
-                  requested: str | None = None, device_id: int = 0):
+                  requested: str | None = None, device_id: int = 0,
+                  hardware=None):
     """Return provider options for one model under the active precision policy."""
     if requested is None:
         try:
@@ -326,7 +381,8 @@ def providers_for(model_key: str, providers, model_path: str | None = None,
             requested = getattr(getattr(roop.globals, "CFG", None), "trt_precision", "mixed")
         except Exception:
             requested = "mixed"
-    decision = resolve(model_key, requested, providers, model_path, device_id)
+    decision = resolve(model_key, requested, providers, model_path, device_id,
+                       hardware=hardware)
     if model_path:
         # Persist the resolved decision at session-construction time.  The key
         # contains the model digest and backend_manager's GPU/runtime

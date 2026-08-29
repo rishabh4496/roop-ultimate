@@ -11,9 +11,11 @@ the lifetime of the process.
 from __future__ import annotations
 
 import os
+import hashlib
+import json
 import re
 import threading
-from typing import Iterable, List, Dict, Tuple
+from typing import Iterable, List, Dict, Mapping, Tuple
 
 
 _lock = threading.Lock()
@@ -235,7 +237,8 @@ def cache_namespace(precision: str, device_id: int = 0) -> str:
 
 def trt_tuning_namespace(builder_optimization_level: int = 3,
                          auxiliary_streams: int = -1,
-                         cuda_graph: bool = False) -> str:
+                         cuda_graph: bool = False,
+                         builder_config: Mapping | None = None) -> str:
     """Return the cache suffix for TensorRT build/runtime tuning knobs.
 
     These options can change the generated engine or its execution schedule,
@@ -244,4 +247,14 @@ def trt_tuning_namespace(builder_optimization_level: int = 3,
     changed default from accidentally reusing an engine built with another
     tuning profile.
     """
-    return f"_b{int(builder_optimization_level)}_a{int(auxiliary_streams)}_g{int(bool(cuda_graph))}"
+    namespace = (f"_b{int(builder_optimization_level)}"
+                 f"_a{int(auxiliary_streams)}"
+                 f"_g{int(bool(cuda_graph))}")
+    if builder_config is not None:
+        # Keep the readable legacy knobs above, then add every effective
+        # builder option in a canonical digest. ORT/TensorRT may add options
+        # in future releases; a mapping keeps this identity extensible.
+        canonical = json.dumps(dict(builder_config), sort_keys=True,
+                               separators=(",", ":"), default=str).encode()
+        namespace += "_c" + hashlib.sha256(canonical).hexdigest()[:16]
+    return namespace

@@ -69,11 +69,11 @@ def cpu_topology():
     return info
 
 
-def _smi():
+def _smi(device_id=0):
     try:
         out = subprocess.run(
             ["nvidia-smi", "--query-gpu=" + ",".join(_SMI_FIELDS),
-             "--format=csv,noheader,nounits"],
+             "--format=csv,noheader,nounits", "--id=%d" % int(device_id)],
             capture_output=True, text=True, check=False, timeout=3)
         line = next((l.strip() for l in out.stdout.splitlines() if l.strip()), "")
         parts = [p.strip() for p in line.split(",")]
@@ -91,7 +91,7 @@ def _smi():
         return {}
 
 
-def sample_loop(pid, stop, samples, topo, interval=0.5):
+def sample_loop(pid, stop, samples, topo, interval=0.5, device_id=0):
     """Append one dict per tick until `stop` is set."""
     try:
         import psutil
@@ -122,7 +122,7 @@ def sample_loop(pid, stop, samples, topo, interval=0.5):
                 s["ram_used_gb"] = psutil.virtual_memory().used / (1024 ** 3)
             except Exception:
                 pass
-        s.update(_smi())
+        s.update(_smi(device_id))
         if s:
             samples.append(s)
 
@@ -144,7 +144,7 @@ def summarise(samples):
     return out
 
 
-def run_sampled(cmd, env=None, cwd=None, on_line=None):
+def run_sampled(cmd, env=None, cwd=None, on_line=None, device_id=0):
     """Run `cmd`, sampling host+device while it runs.
 
     Returns (returncode, stdout, telemetry). stderr is merged into stdout so a
@@ -157,7 +157,8 @@ def run_sampled(cmd, env=None, cwd=None, on_line=None):
                             stderr=subprocess.STDOUT, text=True,
                             encoding="utf-8", errors="replace", bufsize=1)
     sampler = threading.Thread(target=sample_loop,
-                               args=(proc.pid, stop, samples, topo), daemon=True)
+                               args=(proc.pid, stop, samples, topo),
+                               kwargs={"device_id": device_id}, daemon=True)
     sampler.start()
     lines = []
     try:

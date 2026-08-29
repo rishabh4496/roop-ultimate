@@ -125,6 +125,14 @@ class SwapBatcher:
             with self._guard_fn():
                 t0 = time.perf_counter()
                 outs = self._run_fn([(r.src, r.tgt, r.blob) for r in batch])
+                # A short result is a failed batch contract.  Treat it like
+                # any other batch failure so every waiter is released; using
+                # zip() directly would strand the unmatched workers forever.
+                outs = list(outs)
+                if len(outs) != len(batch):
+                    raise RuntimeError(
+                        'swap batch returned %d outputs for %d requests' %
+                        (len(outs), len(batch)))
                 self._record(len(batch), time.perf_counter() - t0)
             for r, o in zip(batch, outs):
                 r.out = o

@@ -71,7 +71,7 @@ def _apply_perf_env():
         # the run reported pool 2 while claiming to test pool 1 -- an isolation
         # experiment that isolated nothing. Same family as every other control
         # in this repo that looked wired and was not.
-        if os.environ.get(var):
+        if var in os.environ:
             return
         if val is None:
             return
@@ -885,6 +885,7 @@ def main():
                          "failure apart from a face simply being at a pose the "
                          "single capture does not cover.")
     ap.add_argument("--provider", default="cuda")
+    ap.add_argument("--cuda-device-id", type=int, default=0)
     ap.add_argument("--swap-model", default="inswapper")
     ap.add_argument("--enhancer", default="None")
     ap.add_argument("--mask-engine", default="None")
@@ -933,7 +934,7 @@ def main():
     ensure_ffmpeg()
     _mm = args.swap_model_mask_strength
     g = ab.init_pipeline(args.provider, args.swap_model, args.enhancer,
-                         args.mask_engine)
+                         args.mask_engine, cuda_device_id=args.cuda_device_id)
     if args.color_transfer_mode is not None:
         g.color_transfer_mode = args.color_transfer_mode
     # After init_pipeline, which has already built CFG from config.yaml -- so a

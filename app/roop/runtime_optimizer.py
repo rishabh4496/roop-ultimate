@@ -121,6 +121,29 @@ def _model_identity(settings: Any) -> dict:
     return identity
 
 
+def _trt_builder_identity(precision: str) -> dict:
+    """Capture builder inputs that can alter an engine or timing cache.
+
+    Keep this as an open mapping of environment-backed settings. New
+    TensorRT/ORT options can be added without changing GPU-family logic, and
+    an unset value remains distinct from an explicit override.
+    """
+    names = (
+        "ROOP_TRT_WORKSPACE_MB", "ROOP_TRT_WORKSPACE_FRACTION",
+        "ROOP_TRT_MAX_WORKSPACE_BYTES", "ROOP_TRT_PARTITION_ITERATIONS",
+        "ROOP_TRT_BUILDER_OPT_LEVEL", "ROOP_TRT_AUX_STREAMS",
+        "ROOP_TRT_CUDA_GRAPH",
+    )
+    return {
+        "precision": str(precision or "mixed").lower(),
+        "options": {name: os.environ.get(name, "<unset>") for name in names},
+        "context_memory_sharing": True,
+        "layer_norm_fp32_fallback": str(precision).lower() == "mixed",
+        "force_sequential_engine_build": str(precision).lower() == "mixed",
+        "build_heuristics": str(precision).lower() == "mixed",
+    }
+
+
 @dataclass(frozen=True)
 class HardwareProfile:
     device_id: int = 0
@@ -605,13 +628,14 @@ class HardwareProfiler:
             import onnxruntime as ort
             ort_version = str(getattr(ort, "__version__", ""))
             available = set(ort.get_available_providers())
-            trt = "TensorrtExecutionProvider" in available and cuda
+            trt = bool(cuda and any(
+                str(provider).lower() == "tensorrtexecutionprovider"
+                for provider in available))
         except Exception:
             available = set()
 
         try:
             import tensorrt as _trt
-            trt = trt or bool(cuda)
             trt_version = str(getattr(_trt, "__version__", ""))
         except Exception:
             pass
@@ -669,6 +693,21 @@ class HardwareProfiler:
             if len(parts) >= 3:
                 vram_total = _number(parts[1], vram_total) / (1024 if _number(parts[1]) > 100 else 1)
                 vram_free = _number(parts[2], vram_free) / (1024 if _number(parts[2]) > 100 else 1)
+        if not driver and cuda:
+            # nvidia-smi is the preferred source, but a container or minimal
+            # Windows install may expose CUDA without the CLI.  Use the
+            # runtime's driver probe as a fallback so profile identity does not
+            # silently lose a required software-stack dimension.
+            try:
+                import torch as _torch
+                get_driver = getattr(getattr(_torch, "_C", None),
+                                     "_cuda_getDriverVersion", None)
+                if get_driver is not None:
+                    raw_driver = int(get_driver())
+                    driver = (f"{raw_driver // 1000}."
+                              f"{(raw_driver % 1000) // 10}")
+            except Exception:
+                pass
 
         ffmpeg = shutil.which("ffmpeg")
         nvdec, nvenc, nvdec_codecs, nvenc_codecs = self._ffmpeg_capabilities(ffmpeg, cuda)
@@ -792,7 +831,8 @@ class WorkloadProfiler:
 class PrecisionSelector:
     """Preserve configured precision; automatic mode stays quality-safe."""
 
-    def select(self, settings: Any, hardware: HardwareProfile) -> str:
+    def select(self, settings: Any, hardware: HardwareProfile,
+               model_key: str = "") -> str:
         configured = str(_value(settings, "trt_precision", "mixed") or "mixed").lower()
         # The sub-7GB profile intentionally does not admit TensorRT. Reporting
         # the effective precision as FP32 keeps diagnostics/profile identity
@@ -800,7 +840,38 @@ class PrecisionSelector:
         # separately audited override.
         if 0 < hardware.vram_total_gb < 7.0 and configured != "fp32":
             return "fp32"
-        if configured in ("fp16", "fp32", "mixed"):
+        if configured == "fp32":
+            return configured
+        if configured in ("fp16", "mixed"):
+            if not (hardware.cuda_available and hardware.tensorrt_available and
+                    hardware.fp16_supported):
+                return "fp32"
+            if model_key:
+                try:
+                    from roop.precision_policy import get_policy
+                    evidence = getattr(get_policy(model_key), configured,
+                                       "not-validated")
+                    if evidence not in ("safe", "candidate"):
+                        return "fp32"
+                except Exception:
+                    return "fp32"
+            return configured
+        if configured in ("bf16", "int8", "fp8"):
+            # Novel modes are never selected from a capability flag alone.
+            # They need a hardware probe, TensorRT, model evidence, and a
+            # real provider implementation with quality validation.
+            if not (hardware.cuda_available and hardware.tensorrt_available):
+                return "fp32"
+            if not bool(getattr(hardware, f"{configured}_supported", False)):
+                return "fp32"
+            try:
+                from roop.precision_policy import get_policy
+                evidence = getattr(get_policy(model_key), configured,
+                                   "not-validated")
+                if evidence != "safe" or configured != "bf16":
+                    return "fp32"
+            except Exception:
+                return "fp32"
             return configured
         if hardware.tensorrt_available:
             return "mixed"
@@ -853,6 +924,7 @@ class TensorRTEngineManager:
                 "auxiliary_streams": _value(settings, "trt_auxiliary_streams", "auto"),
                 "cuda_graph": _value(settings, "trt_cuda_graph", False),
             },
+            "tensorrt_builder": _trt_builder_identity(precision),
             # Settings that can change throughput, memory pressure, or output
             # quality are part of the cache identity.  This prevents a tuned
             # UltraMax/two-face profile from being reused for a different
@@ -2057,7 +2129,10 @@ class RuntimeOptimizer:
                       save: bool = False, use_cache: bool = True,
                       force: bool = False) -> RuntimeProfile:
         hardware = self.hardware_profiler.profile()
-        precision = self.precision_selector.select(self.settings, hardware)
+        model_key = (workload.enhancement_model or
+                     _value(self.settings, "swap_model", "") or "")
+        precision = self.precision_selector.select(self.settings, hardware,
+                                                   model_key=model_key)
         key = self.engine_manager.cache_key(hardware, workload, self.settings, precision)
         invalidate = os.environ.get("ROOP_RUNTIME_PROFILE_INVALIDATE", "").strip().lower()
         force = force or invalidate in ("1", "true", "yes", "on", "all")

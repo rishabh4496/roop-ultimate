@@ -50,6 +50,11 @@ def _apply_perf_env():
         print(f"[RuntimeOptimizer] startup profile unavailable: {exc}", flush=True)
 
     def _set(var, val):
+        # A caller (including a controlled benchmark) owns an explicit
+        # process environment value.  Config is only the fallback; otherwise
+        # an A/B arm can be silently replaced before modules import it.
+        if var in os.environ:
+            return
         if val is None:
             return
         s = str(val).strip()
@@ -59,7 +64,7 @@ def _apply_perf_env():
     _set('ROOP_TRT_POOL', cfg.get('perf_trt_pool'))
     _set('ROOP_TRT_BUILDER_OPT_LEVEL', cfg.get('trt_builder_optimization_level'))
     _set('ROOP_TRT_AUX_STREAMS', cfg.get('trt_auxiliary_streams'))
-    if cfg.get('trt_cuda_graph') is not None:
+    if cfg.get('trt_cuda_graph') is not None and 'ROOP_TRT_CUDA_GRAPH' not in os.environ:
         graph = cfg.get('trt_cuda_graph')
         graph_on = graph is True or str(graph).strip().lower() in ('1', 'true', 'yes', 'on')
         os.environ['ROOP_TRT_CUDA_GRAPH'] = '1' if graph_on else '0'
@@ -81,27 +86,29 @@ def _apply_perf_env():
                      ('ROOP_TRACK_STITCH', 'track_stitch'),
                      ('ROOP_VERIFY_SWAP', 'verify_swap'),
                      ('ROOP_UPRIGHT_REMEASURE', 'upright_remeasure')):
+        if var in os.environ:
+            continue
         v = str(cfg.get(key, 'auto')).strip().lower()
         if v == 'on' or (v == 'auto' and var == 'ROOP_BATCH_SWAP'):
             os.environ[var] = '1'
-            if var == 'ROOP_BATCH_SWAP':
+            if var == 'ROOP_BATCH_SWAP' and 'ROOP_BATCH_SWAP_XFRAME' not in os.environ:
                 os.environ['ROOP_BATCH_SWAP_XFRAME'] = '1'
         elif v == 'off':
             os.environ[var] = '0'
-            if var == 'ROOP_BATCH_SWAP':
+            if var == 'ROOP_BATCH_SWAP' and 'ROOP_BATCH_SWAP_XFRAME' not in os.environ:
                 os.environ['ROOP_BATCH_SWAP_XFRAME'] = '0'
 
     # Not tri-state: a model choice and a priority class.
     _rec = str(cfg.get('recognizer', 'default')).strip().lower()
-    if _rec == 'adaface':
+    if _rec == 'adaface' and 'ROOP_ADAFACE' not in os.environ:
         os.environ['ROOP_ADAFACE'] = '1'
-    elif _rec == 'default':
+    elif _rec == 'default' and 'ROOP_ADAFACE' not in os.environ:
         os.environ['ROOP_ADAFACE'] = '0'
     # Only the names keep_awake._PRIORITY_CLASSES accepts; it falls back to
     # 'high' for anything else, so passing a value it does not know through
     # would present as a working setting that does nothing.
     _pri = str(cfg.get('process_priority', 'auto')).strip().lower()
-    if _pri in ('high', 'above_normal', 'normal'):
+    if _pri in ('high', 'above_normal', 'normal') and 'ROOP_PRIORITY' not in os.environ:
         os.environ['ROOP_PRIORITY'] = _pri
 
 _apply_perf_env()

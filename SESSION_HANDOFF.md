@@ -904,3 +904,57 @@ configuration rewrite is required when moving between the two GPUs.
 
 Validation completed: targeted Phase 11 tests `73 passed`; full repository
 suite `1388 passed, 1 skipped, 2 warnings, 589 subtests passed`.
+
+## Gate A independent adversarial review - 2026-08-29
+
+The hostile review and ranked P0-P3 disposition are recorded in
+[`docs/GATE_A_ADVERSARIAL_REVIEW.md`](docs/GATE_A_ADVERSARIAL_REVIEW.md).
+No P0 was confirmed. The controlled follow-up fixed four confirmed classes:
+short cross-frame swap results now release every waiter with an error;
+explicit caller `ROOP_*` environment values now remain authoritative across
+the app and duplicated benchmark entry points; Phase 14 exports the actual
+pool controls and uses `ROOP_NVENC_PRESET` for NVENC candidates; and benchmark
+target discovery/telemetry/child execution now use the same explicit CUDA
+device index.
+
+The post-fix RTX 4070 smoke E2E completed 60 frames at 2.93 FPS with zero
+wrong-faceset events, 6074 MB peak VRAM, 9.748 GB peak descendant RSS,
+24.132% mean CPU, 27.814% mean GPU, 230.77 decode FPS, 260.87 encode FPS,
+and 388.63 ms mean frame latency. This is startup-dominated stability
+evidence, not a claimed improvement over the immutable 600-frame 9.62 FPS
+baseline.
+
+The RTX 3060 is unavailable in the current session. Its Gate A measurements
+remain **PENDING**; run the fixed Phase 12/13/14 commands with
+`--target "RTX 3060" --device-id <physical-index>` on the 6 GB laptop. Do not
+copy the 4070 result, cache, pool, stream, batch, precision, tile, queue, or
+worker selection to that profile.
+
+Validation after the fixes: full suite `1426 passed, 1 skipped, 3 warnings,
+589 subtests passed`; targeted Gate A tests `51 passed`; Python compilation,
+launcher syntax, and `git diff --check` are required before handoff.
+
+## Gate C future NVIDIA architecture handoff - 2026-08-29
+
+Gate C is implemented in `runtime_optimizer.py`, `precision_policy.py`,
+`backend_manager.py`, and the TensorRT provider setup. Hardware identity is
+derived from runtime probes rather than GPU-name assumptions. Unknown future
+SM identities are preserved and isolated; no Rubin-specific instruction,
+Tensor Core emulation, or Rubin optimization claim exists.
+
+Precision selection now requires detected capability, TensorRT/provider
+availability, model policy evidence, and a supported provider path. New
+precisions are not auto-selected from feature flags. BF16 is the only novel
+provider path currently implemented; INT8/FP8 stay rejected pending real
+calibration and quality/performance validation.
+
+Profile and engine caches distinguish architecture, compute capability, VRAM
+tier, driver, CUDA, TensorRT, ORT, model revision, precision, workload shape,
+and effective builder configuration. Future TensorRT builder fields can be
+fingerprinted without a GPU-family allowlist.
+
+Current validation: RTX 4070 physically available and tested; RTX 3060
+physical validation remains **PENDING**; Rubin hardware/software is not
+available and is explicitly untested. Gate C evidence and the tested-versus-
+future-ready table are in `docs/HARDWARE_VALIDATION_MATRIX.md`. Focused tests
+passed: `37`.

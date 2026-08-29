@@ -83,6 +83,11 @@ globally only after both target rows have measured work/quality/stability
 results; otherwise it is target-specific, neutral, regression, unsafe, or
 pending.
 
+The report assembler verifies that the target label matches the detected GPU
+identity and marks rows with missing final metrics as `measured_partial`.
+Therefore a mislabeled run or a stage-only measurement cannot become a complete
+RTX 3060/RTX 4070 acceptance result.
+
 ## Phase 12 end-to-end matrix state
 
 The reproducible post-inference matrix is implemented at
@@ -404,3 +409,45 @@ Repeat the accepted enhancer, feature-toggle, and codec arms with the same
 input files and record each result under the RTX 3060 hardware profile key.
 Only after those rows pass end-to-end quality and stability checks may an arm
 be classified **beneficial on both**.
+
+## Gate C: future-architecture readiness
+
+The runtime profiler is capability-driven. It records the detected GPU name,
+architecture, compute capability, total and available VRAM, driver, CUDA,
+TensorRT, ONNX Runtime, Tensor Core math modes, FP16, BF16, INT8, FP8, NVDEC,
+and NVENC capabilities. Unknown compute capabilities remain usable as an
+explicit `SM major.minor` architecture identity; they are not classified as
+Ada, Ampere, Rubin, or any other family by name.
+
+Precision selection requires the detected hardware capability, a usable
+TensorRT/provider path, model-specific policy evidence, and quality validation.
+BF16 is currently an explicit provider path; INT8 and FP8 are recorded when
+the installed TensorRT builder exposes them but remain rejected until a real
+calibrated provider path and measured quality/throughput result are added.
+No precision is selected merely because a future GPU exposes a feature.
+
+The runtime profile key includes hardware/software identity, model revision,
+precision, workload shape, and runtime schedule. TensorRT engine parents also
+include a canonical fingerprint of effective workspace, partition, context,
+builder, auxiliary-stream, CUDA-Graph, and precision settings. TensorRT's
+graph hash remains responsible for the model graph and concrete shapes; the
+profile cache independently records those shapes and workload characteristics.
+This prevents an RTX 4070 result from becoming a generic RTX 3060 or future
+architecture result.
+
+### Tested versus future-ready
+
+| Capability/target | Status |
+|---|---|
+| RTX 4070 Ada, SM 8.9, CUDA 12.8, TensorRT 10.9.0.34, ORT 1.23.2 | detected and physically tested in the separate 4070 rows above |
+| RTX 3060 Ampere | mandatory physical validation remains pending in this session; no values are inferred |
+| Unknown/future compute capability identity and cache isolation | logically covered by runtime tests; no future GPU benchmark claimed |
+| Rubin-class hardware | not available and not tested; no Rubin optimization or compatibility claim |
+| FP16/BF16/INT8/FP8 selection | capability and policy gates implemented; only modes with a validated provider/model result may be promoted |
+| NVDEC/NVENC | detected from the installed FFmpeg stack; target-specific throughput remains the measured matrix above or pending |
+
+Future TensorRT versions may add fields to the builder configuration mapping.
+The cache fingerprint accepts those fields without a GPU-family allowlist, so
+new runtime options are isolated rather than silently inheriting a legacy
+engine. Adding a new precision still requires an actual provider path and
+quality/performance validation.

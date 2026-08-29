@@ -51,6 +51,8 @@ def _apply_perf_env():
         return
 
     def _set(var, val):
+        if var in os.environ:
+            return
         if val is None:
             return
         s = str(val).strip()
@@ -60,7 +62,7 @@ def _apply_perf_env():
     _set('ROOP_TRT_POOL', cfg.get('perf_trt_pool'))
     _set('ROOP_TRT_BUILDER_OPT_LEVEL', cfg.get('trt_builder_optimization_level'))
     _set('ROOP_TRT_AUX_STREAMS', cfg.get('trt_auxiliary_streams'))
-    if cfg.get('trt_cuda_graph') is not None:
+    if cfg.get('trt_cuda_graph') is not None and 'ROOP_TRT_CUDA_GRAPH' not in os.environ:
         graph = cfg.get('trt_cuda_graph')
         graph_on = graph is True or str(graph).strip().lower() in ('1', 'true', 'yes', 'on')
         os.environ['ROOP_TRT_CUDA_GRAPH'] = '1' if graph_on else '0'
@@ -83,14 +85,16 @@ def _apply_perf_env():
                      ('ROOP_TRACK_STITCH', 'track_stitch'),
                      ('ROOP_VERIFY_SWAP', 'verify_swap'),
                      ('ROOP_UPRIGHT_REMEASURE', 'upright_remeasure')):
+        if var in os.environ:
+            continue
         v = str(cfg.get(key, 'auto')).strip().lower()
         if v == 'on' or (v == 'auto' and var == 'ROOP_BATCH_SWAP'):
             os.environ[var] = '1'
-            if var == 'ROOP_BATCH_SWAP':
+            if var == 'ROOP_BATCH_SWAP' and 'ROOP_BATCH_SWAP_XFRAME' not in os.environ:
                 os.environ['ROOP_BATCH_SWAP_XFRAME'] = '1'
         elif v == 'off':
             os.environ[var] = '0'
-            if var == 'ROOP_BATCH_SWAP':
+            if var == 'ROOP_BATCH_SWAP' and 'ROOP_BATCH_SWAP_XFRAME' not in os.environ:
                 os.environ['ROOP_BATCH_SWAP_XFRAME'] = '0'
 
 

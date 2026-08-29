@@ -25,23 +25,21 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 APP = os.path.dirname(HERE)
+if APP not in sys.path:
+    sys.path.insert(0, APP)
+from hardware_probe import format_selected, query_gpus, target_on_device
 TARGETS = ("RTX 3060", "RTX 4070")
 DEFAULT_CODECS = ("libx264", "h264_nvenc", "hevc_nvenc")
 
 
-def _detected_gpu():
-    try:
-        out = subprocess.check_output(
-            ["nvidia-smi", "--query-gpu=name,memory.total,driver_version",
-             "--format=csv,noheader"], text=True, timeout=10)
-        return out.strip() or "unknown"
-    except Exception as exc:
-        return "unavailable: %s" % exc
+def _detected_gpu(device_id=0):
+    rows, raw = query_gpus()
+    return format_selected(rows, raw, device_id)
 
 
-def _target_present(target, detected):
-    needle = "3060" if target == "RTX 3060" else "4070"
-    return needle in detected.lower()
+def _target_present(target, device_id=0):
+    rows, _raw = query_gpus()
+    return target_on_device(target, rows, device_id)[0]
 
 
 def _available_encoders():
@@ -88,6 +86,7 @@ def _run_arm(args, target, codec, segment_size):
            "--mask-engine", args.mask_engine, "--codec", codec,
            "--stabilization-mode", args.stabilization,
            "--color-transfer-mode", args.color, "--out", args.out]
+    cmd.extend(["--cuda-device-id", str(args.device_id)])
     env_args = ["ROOP_RESUME=1",
                 "ROOP_FFMPEG_COLORSPACE=%s" % args.colorspace]
     if segment_size != "auto":
@@ -180,6 +179,8 @@ def _table(results):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--target", required=True, choices=TARGETS)
+    ap.add_argument("--device-id", type=int, default=0,
+                    help="physical CUDA device index used by the child")
     ap.add_argument("--video", default=r"G:/pinokio/roop-keep/double/d4.mp4")
     ap.add_argument("--sources", default="harjot,gargee")
     ap.add_argument("--start", type=int, default=0)
@@ -200,15 +201,16 @@ def main():
     args.out = os.path.abspath(args.out)
     os.makedirs(args.out, exist_ok=True)
 
-    detected = _detected_gpu()
+    detected = _detected_gpu(args.device_id)
     report = {"target": args.target, "detected_hardware": detected,
               "results": [], "table": []}
-    if not _target_present(args.target, detected):
+    if not _target_present(args.target, args.device_id):
         report["status"] = "pending"
         report["pending_reason"] = (
             "requested GPU is unavailable; detected %s" % detected)
         report["required_command"] = (
-            'python tests/phase13_benchmark.py --target %r' % args.target)
+            'python tests/phase13_benchmark.py --target %r --device-id %d' %
+            (args.target, args.device_id))
     else:
         available, note = _available_encoders()
         requested = [c.strip() for c in args.codecs.split(",") if c.strip()]

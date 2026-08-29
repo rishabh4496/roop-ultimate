@@ -1579,6 +1579,10 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                 faces_per_frame=max(1, len(getattr(self, 'target_face_datas', []) or [])),
                 face_count=len(getattr(self, 'target_face_datas', []) or []),
                 save=True)
+            # Publish the one profiled device to model-session policy. Every
+            # provider decision in this workload now uses the same detected
+            # architecture, VRAM, software stack, and precision capabilities.
+            roop.globals.runtime_hardware_profile = self.runtime_profile.hardware
             RuntimeOptimizer.apply_environment(
                 self.runtime_profile, getattr(roop.globals, 'CFG', None))
             cfg_codec = str(getattr(getattr(roop.globals, 'CFG', None),

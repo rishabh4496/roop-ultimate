@@ -9,6 +9,7 @@ import os
 import sys
 import tempfile
 import unittest
+from types import SimpleNamespace
 from unittest import mock
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
@@ -30,6 +31,19 @@ TRT = [('TensorrtExecutionProvider', {
 
 
 class TestPrecisionPolicy(unittest.TestCase):
+    @staticmethod
+    def _hardware(**overrides):
+        values = {
+            'cuda_available': True,
+            'tensorrt_available': True,
+            'fp16_supported': True,
+            'bf16_supported': False,
+            'int8_supported': True,
+            'fp8_supported': True,
+        }
+        values.update(overrides)
+        return SimpleNamespace(**values)
+
     def test_matrix_has_all_precision_and_fallback_columns(self):
         required = {
             'model', 'backend', 'fp32', 'fp16', 'mixed', 'bf16', 'int8',
@@ -89,6 +103,29 @@ class TestPrecisionPolicy(unittest.TestCase):
         self.assertTrue(out[0][1]['trt_bf16_enable'])
         self.assertFalse(out[0][1]['trt_fp16_enable'])
         self.assertTrue(out[0][1]['trt_engine_cache_path'].endswith('_liveportrait_bf16'))
+
+    def test_hardware_gate_rejects_exposed_but_unvalidated_modes(self):
+        unsupported = self._hardware()
+        decision = resolve('liveportrait:stitching', 'bf16', TRT,
+                           hardware=unsupported)
+        self.assertEqual(decision.effective, 'fp32')
+        self.assertTrue(decision.fallback)
+
+        # INT8/FP8 exposure is not enough: this project has no calibrated,
+        # quality-validated provider implementation for either mode.
+        for precision in ('int8', 'fp8'):
+            decision = resolve('liveportrait:stitching', precision, TRT,
+                               hardware=self._hardware(bf16_supported=True))
+            self.assertEqual(decision.effective, 'fp32', precision)
+
+    def test_hardware_gate_allows_only_the_real_bf16_provider_path(self):
+        decision = resolve('liveportrait:stitching', 'bf16', TRT,
+                           hardware=self._hardware(bf16_supported=True))
+        self.assertEqual(decision.effective, 'bf16')
+        out, _ = providers_for('liveportrait:stitching', TRT,
+                                requested='bf16', hardware=self._hardware(
+                                    bf16_supported=True))
+        self.assertTrue(out[0][1]['trt_bf16_enable'])
 
     def test_frame_and_sam_paths_remove_trt(self):
         for model in ('frame_upscaler:real_esrgan_x4', 'rife', 'masking_no_trt:mobilesam'):

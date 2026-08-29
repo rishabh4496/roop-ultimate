@@ -1392,3 +1392,69 @@ reached the state this session found it in.
 **RTX 3060 result:** PENDING, and the 4070 correctness failure does not transfer
 -- it must be reproduced there before the flag is described as broken on that
 device.
+
+## GATE A independent adversarial review and controlled fixes - 2026-08-29
+
+The hostile review is recorded in
+[`docs/GATE_A_ADVERSARIAL_REVIEW.md`](docs/GATE_A_ADVERSARIAL_REVIEW.md).
+No P0 defect was confirmed. Confirmed high-severity defects were: a short
+cross-frame swap batch could strand unmatched waiters; `run.py` and duplicated
+benchmark entry points could overwrite explicit `ROOP_*` controls; Phase 14
+could benchmark/persist pool values without exporting them to the child and
+used the software preset variable for NVENC; and the phase harnesses could
+accept one adapter while sampling another on a multi-GPU host.
+
+Fixes now validate the batch-result length before releasing waiters, preserve
+caller environment precedence, map every Phase 14 pool and encoder control to
+the variable the child consumes, and bind target discovery, child CUDA device,
+software stack, and `nvidia-smi` telemetry to one explicit device index.
+Existing hardware-adaptive selection and separate profile/cache identity were
+preserved.
+
+### RTX 4070 — available in this session
+
+| run | FPS | peak VRAM | peak RSS | mean CPU | mean GPU | decode FPS | encode FPS | latency | stability | quality |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---|---|
+| Gate A fixed-path smoke, 60 frames | 2.93 | 6074 MB | 9.748 GB | 24.132% | 27.814% | 230.77 | 260.87 | 388.63 ms | pass | 0 wrong-faceset |
+
+This short run includes startup/model work and is not claimed as an
+improvement over the immutable 600-frame 9.62 FPS E2E baseline. It proves the
+fixed path completed on the live RTX 4070 with separate telemetry and no
+quality event.
+
+### RTX 3060 — unavailable in this session
+
+All new Gate A hardware measurements are **PENDING**. Run the same fixed
+matrix on the physical laptop, selecting its device index if needed:
+
+```text
+env/Scripts/python.exe tests/phase12_benchmark.py --target "RTX 3060" --device-id 0
+env/Scripts/python.exe tests/phase13_benchmark.py --target "RTX 3060" --device-id 0
+env/Scripts/python.exe tests/phase14_autotune.py --target "RTX 3060" --device-id 0
+```
+
+The 4070 result does not close the 3060 gate and no 4070 setting is copied to
+the 3060 profile.
+
+Validation: targeted Gate A regression tests `51 passed`, full repository
+suite `1426 passed, 1 skipped, 3 warnings, 589 subtests passed`; Python
+compilation and launcher syntax checks passed.
+
+## Gate C future NVIDIA architecture readiness - 2026-08-29
+
+Implemented capability-gated precision selection and cache isolation. The
+profiler records runtime architecture/SM identity, VRAM, CUDA, driver,
+TensorRT, ONNX Runtime, Tensor Core modes, FP16/BF16/INT8/FP8 exposure, and
+NVDEC/NVENC. Unknown future SM values remain distinct identities; Rubin is not
+claimed or tested.
+
+The runtime profile key isolates GPU/software/model/precision/workload shape.
+It now also includes TensorRT builder inputs, while the live TensorRT parent
+cache adds a canonical builder fingerprint for workspace, partition, context,
+tactic, stream, graph, and precision settings. BF16 remains an explicit
+validated-provider path; INT8/FP8 remain rejected until a real calibrated
+provider path and quality/performance evidence exist.
+
+Validation: focused Gate C/runtime policy tests `37 passed`; RTX 4070 remains
+the only physically available target in this session. RTX 3060 validation is
+PENDING and Rubin validation is unavailable.

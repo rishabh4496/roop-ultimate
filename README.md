@@ -137,8 +137,10 @@ and the effective precision. Available VRAM is telemetry, not an identity
 field, so a profile cannot change keys merely because model memory was loaded.
 The result also carries `hardware_profile_key` and an optional
 `ROOP_VALIDATION_TARGET` label for assembling the two independent target
-tables. The label is for report organization only; runtime capabilities are
-always detected from the active software/hardware stack.
+tables. The label is checked against the detected GPU identity when a report is
+assembled; it cannot turn a run on one target into evidence for the other.
+Runtime capabilities are always detected from the active software/hardware
+stack.
 
 For physical validation, run the same workload once on each target and label
 the report without editing `config.yaml`:
@@ -236,6 +238,23 @@ tables are in [`docs/HARDWARE_VALIDATION_MATRIX.md`](docs/HARDWARE_VALIDATION_MA
 The RTX 4070 result rows are recorded separately. The RTX 3060 was unavailable
 for this pass and remains explicitly pending; its values must be measured on
 the physical device and must not be copied from the 4070.
+
+### Future NVIDIA architecture readiness
+
+The runtime profiles the installed device and software stack at startup,
+including architecture/compute capability, VRAM, CUDA, driver, TensorRT, ONNX
+Runtime, Tensor Core modes, FP16/BF16/INT8/FP8 exposure, NVDEC, and NVENC.
+Unknown future devices remain separate `SM major.minor` identities; Rubin is
+not hard-coded, emulated, or claimed as tested.
+
+Precision is selected only when hardware capability, TensorRT/provider
+support, model policy, and quality validation agree. INT8 and FP8 are not
+enabled merely because a builder exposes flags. Engine/profile caches include
+hardware/software identity, model revision, precision, workload shape, and
+builder configuration, so 3060, 4070, and future-device results cannot be
+silently reused across one another. See
+[`docs/HARDWARE_VALIDATION_MATRIX.md`](docs/HARDWARE_VALIDATION_MATRIX.md) for
+the tested-versus-future-ready status.
 
 ### Phase 14 runtime autotuning
 
