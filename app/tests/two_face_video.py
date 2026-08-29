@@ -888,6 +888,10 @@ def main():
     ap.add_argument("--swap-model", default="inswapper")
     ap.add_argument("--enhancer", default="None")
     ap.add_argument("--mask-engine", default="None")
+    ap.add_argument("--color-transfer-mode", default=None,
+                    choices=("none", "rct", "lct", "mkl", "idt"),
+                    help="override color processing for a controlled A/B; "
+                         "default uses config.yaml")
     ap.add_argument("--stabilize-face", default="0",
                     help="1 = on. Production config runs this true; it is real "
                          "GPU work, so a run that omits it is a different "
@@ -926,6 +930,8 @@ def main():
     _mm = args.swap_model_mask_strength
     g = ab.init_pipeline(args.provider, args.swap_model, args.enhancer,
                          args.mask_engine)
+    if args.color_transfer_mode is not None:
+        g.color_transfer_mode = args.color_transfer_mode
     # After init_pipeline, which has already built CFG from config.yaml -- so a
     # None here can resolve to the live production value rather than to a
     # hardcoded one, the same way --threads does.
@@ -968,6 +974,7 @@ def main():
     # them by hash-matching a re-render is possible but costs a full arm.
     print(f"[bench] swap_model={args.swap_model} mask_engine={args.mask_engine} "
           f"enhancer={args.enhancer} provider={args.provider} "
+          f"color_transfer={g.color_transfer_mode} "
           f"threads={g.execution_threads} tracking={track} "
           f"swap_model_mask={g.swap_model_mask_strength} "
           f"merger_clarity={getattr(g, 'merger_clarity', 0.0)}", flush=True)

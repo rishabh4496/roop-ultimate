@@ -128,6 +128,36 @@ is `POST /api/settings/benchmark_threads` with `{"profile":"quick"}` or
 3060 and RTX 4070 results in separate tables, including baseline/final FPS,
 stage throughput, VRAM, CPU/GPU utilization, latency, stability, and output
 quality. Hardware not physically present remains `PENDING` in the report.
+The maintained acceptance record is [`docs/HARDWARE_VALIDATION_MATRIX.md`](docs/HARDWARE_VALIDATION_MATRIX.md).
+
+Benchmark identity is runtime-derived and includes the detected GPU, compute
+capability, total/available VRAM, driver, CUDA, TensorRT, ONNX Runtime, Tensor
+Core/precision capabilities, NVDEC/NVENC capabilities, model/workload facts,
+and the effective precision. Available VRAM is telemetry, not an identity
+field, so a profile cannot change keys merely because model memory was loaded.
+The result also carries `hardware_profile_key` and an optional
+`ROOP_VALIDATION_TARGET` label for assembling the two independent target
+tables. The label is for report organization only; runtime capabilities are
+always detected from the active software/hardware stack.
+
+For physical validation, run the same workload once on each target and label
+the report without editing `config.yaml`:
+
+```bash
+python -m roop.bench --profile full --target "RTX 3060" --no-apply
+python -m roop.bench --profile full --target "RTX 4070" --no-apply
+```
+
+If one GPU is unavailable, run the available target and leave the other table
+pending. Do not copy numbers between the two commands.
+
+Required target report fields are: baseline FPS, final FPS, improvement
+percentage, peak/average VRAM, CPU/GPU utilization, decode/inference/
+enhancement/encode throughput, latency, stability, and output quality. A
+missing physical run stays `pending`; RTX 4070 measurements are never copied
+into the RTX 3060 table or vice versa. Optimization verdicts are classified as
+beneficial on both, target-specific, neutral, regression on one GPU, or unsafe/
+rejected.
 
 ## What is not in this repository
 
@@ -158,3 +188,18 @@ people you share it with.
 Use this only on material you have the right to use, and only with the informed
 consent of the people whose likenesses are involved. See the intended-use
 section of [`NOTICE.md`](NOTICE.md).
+
+### Phase 12 end-to-end benchmark
+
+Run the controlled post-inference matrix separately on each validation GPU:
+
+```text
+env/Scripts/python.exe tests/phase12_benchmark.py --target "RTX 3060"
+env/Scripts/python.exe tests/phase12_benchmark.py --target "RTX 4070"
+```
+
+The matrix measures the real decode → inference → mask/enhance/composite → encode
+wall clock for stabilization OFF/ON, mask OFF/ON, color processing OFF/ON, and a
+postprocess-heavy enhancer arm. Each report has separate target rows and records
+pending status when the requested GPU is not physically present; it never substitutes
+another GPU or fabricates results.

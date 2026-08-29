@@ -77,10 +77,15 @@ class ColorTransferMixin:
 
         # If source is effectively grayscale (B&W media), skip color transfer.
         # Chrominance std ≈ 0 causes division explosion → blue artifact.
-        src_f = source.astype(np.float32)
-        if (np.mean(np.abs(src_f[:, :, 0] - src_f[:, :, 1])) < 5 and
-                np.mean(np.abs(src_f[:, :, 1] - src_f[:, :, 2])) < 5):
-            return source
+        # This guard runs for every face, including the common rct path. Keep
+        # the scan in uint8/OpenCV rather than making a full float32 copy of
+        # the crop and two temporary float difference arrays.
+        if source.ndim == 3 and source.shape[2] >= 3:
+            bg = cv2.absdiff(source[:, :, 0], source[:, :, 1])
+            gr = cv2.absdiff(source[:, :, 1], source[:, :, 2])
+            if (float(cv2.mean(bg)[0]) < 5.0 and
+                    float(cv2.mean(gr)[0]) < 5.0):
+                return source
 
         if mode == 'lct':
             return self._color_transfer_lct(source, target)

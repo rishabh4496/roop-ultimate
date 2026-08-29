@@ -215,6 +215,14 @@ def main():
     ap.add_argument("--end", type=int, default=WORKLOAD["end"])
     ap.add_argument("--enhancer", default="GPEN 256 Pro")
     ap.add_argument("--mask-engine", default="RealityUX")
+    ap.add_argument("--stabilization-mode", choices=("auto", "off", "on"),
+                    default="auto",
+                    help="controlled Phase 12 override for all stabilizers")
+    ap.add_argument("--color-transfer-mode", default=None,
+                    choices=("none", "rct", "lct", "mkl", "idt"),
+                    help="controlled Phase 12 color-processing override")
+    ap.add_argument("--target", choices=("RTX 3060", "RTX 4070"),
+                    default=None, help="validation target label for the record")
     ap.add_argument("--threads", type=int, default=None,
                     help="default: the device's own resolved thread count")
     ap.add_argument("--out", default=os.path.join(APP, "output", "phase2_baseline"))
@@ -253,6 +261,14 @@ def main():
            "--swap-model-mask-strength", str(cfg.swap_model_mask_strength),
            "--merger-clarity", str(getattr(cfg, "merger_clarity", 0.0)),
            "--out", os.path.join(args.out, args.tag)]
+
+    if args.stabilization_mode != "auto":
+        enabled = "1" if args.stabilization_mode == "on" else "0"
+        cmd.extend(["--stabilize-face", enabled,
+                    "--stabilize-mask", enabled,
+                    "--stabilize-enhancer", enabled])
+    if args.color_transfer_mode is not None:
+        cmd.extend(["--color-transfer-mode", args.color_transfer_mode])
 
     env = dict(os.environ)
     env["ROOP_PROFILE"] = "1"          # per-stage latency, decode and encode
@@ -308,6 +324,7 @@ def main():
 
     result = {
         "tag": args.tag,
+        "validation_target": args.target,
         "returncode": rc,
         "software": stack,
         "workload": {"video": args.video, "sources": args.sources,

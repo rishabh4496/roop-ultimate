@@ -44,6 +44,8 @@ app/facesets/
 # named people -- biometric data. `app/facesets/` was ignored and this one was
 # not, so a single `git add -A` at the repo root would have published it.
 /facesets/
+# Root-level benchmark/render outputs (generated, machine-local)
+/output/
 # KEEP sidecar local state (venv, cloned repo, weights)
 app/sidecar_keep/.venv/
 app/sidecar_keep/KEEP/

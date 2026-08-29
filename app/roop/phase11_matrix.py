@@ -1,9 +1,7 @@
 """Hardware-isolated Phase 11 matrix schema and report assembly."""
 
-import hashlib
-import json
-
 from roop.enhancer_inventory import entries
+from roop.hardware_validation import hardware_profile_key
 
 
 MATRIX_FIELDS = (
@@ -13,25 +11,15 @@ MATRIX_FIELDS = (
 
 
 def hardware_key(hardware: dict, workload=None) -> str:
-    """Create a stable hardware/workload key for a benchmark profile."""
-    identity = {
-        key: hardware.get(key) for key in (
-            "device_id", "gpu_name", "architecture", "compute_capability",
-            "vram_total_gb", "vram_available_gb", "driver_version", "cuda_version",
-            "tensorrt_version", "onnxruntime_version", "tensor_core_capabilities",
-            "fp16_supported", "bf16_supported", "int8_supported", "fp8_supported",
-            "nvdec_available", "nvdec_codecs", "nvenc_available", "nvenc_codecs",
-        )
-    }
-    if workload:
-        identity["workload"] = {
-            key: workload.get(key) for key in (
-                "enhancer", "model", "model_hash", "precision", "input",
-                "output", "batch", "workload_characteristics",
-            ) if key in workload
-        }
-    raw = json.dumps(identity, sort_keys=True, separators=(",", ":"))
-    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:24]
+    """Create a stable hardware/workload key for a benchmark profile.
+
+    Available VRAM is deliberately excluded.  It is a live measurement that
+    changes as models, pools, and other applications allocate memory; using it
+    as an identity field made the same GPU produce a different profile key
+    during one benchmark.  Total VRAM and all runtime capability fields remain
+    part of the key, so profiles cannot cross GPU/runtime boundaries.
+    """
+    return hardware_profile_key(hardware, workload)
 
 
 def _row(entry, profile_key):
@@ -69,7 +57,7 @@ def create_matrix(hardware: dict, measurements=None, include_adjacent=True):
     actually observed on the supplied hardware.  Missing values stay pending;
     this is intentional for unavailable RTX 3060/RTX 4070 validation targets.
     """
-    hardware_profile_key = hardware_key(hardware)
+    base_hardware_key = hardware_key(hardware)
     measured = measurements or {}
     result = []
     for entry in entries(include_adjacent=include_adjacent):
@@ -83,7 +71,7 @@ def create_matrix(hardware: dict, measurements=None, include_adjacent=True):
         }
         profile_key = hardware_key(hardware, workload)
         row = _row(entry, profile_key)
-        row["hardware_key"] = hardware_profile_key
+        row["hardware_key"] = base_hardware_key
         values = measured.get(entry["id"])
         if values:
             for key in ("FPS", "Latency", "VRAM", "CPU", "Notes"):

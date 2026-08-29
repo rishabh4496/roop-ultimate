@@ -1529,20 +1529,12 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                   f"stab_chunk={self._runtime_stab_chunk}, "
                   f"profile={self.runtime_profile.cache_key}", flush=True)
 
-            # A 6 GB laptop can load the model sessions successfully, but the
-            # per-worker crop/output temporaries push process RSS above the
-            # device's 2.5 GB system-memory ceiling when the desktop thread
-            # count is carried over unchanged.  The measured safe path is one
-            # end-to-end worker; keep the user's setting visible in the notice
-            # and use the runtime profile's hardware tier to make the change
-            # before queues, stabilization, or model work are allocated.
-            if self._runtime_stab_small and threads > 1:
-                print(f"[RuntimeOptimizer] sub-7GB laptop RSS safety: "
-                      f"execution threads {threads} -> 1; "
-                      "per-frame temporaries stay within the 2.5GB RSS gate.",
-                      flush=True)
-                threads = 1
-                roop.globals.execution_threads = 1
+            # A small-VRAM device still uses one GPU context, but that does not
+            # make host-side compositing single-threaded. Keep the configured /
+            # runtime-selected worker count here; stabilization's RAM-derived
+            # geometry below decides how many frame blocks can run concurrently.
+            # This prevents a GPU memory policy from unnecessarily collapsing
+            # the entire post-inference pipeline to one worker.
             self._log_memory_stage('phase3:runtime-profiled')
         except Exception as exc:
             print(f"[RuntimeOptimizer] workload profile unavailable: {exc}", flush=True)
@@ -2135,8 +2127,15 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
         CHUNK = blocks_per_chunk * block
         try:
             explicit_chunk = int(os.environ.get('ROOP_STAB_CHUNK', '0') or '0')
-            runtime_chunk = getattr(self, '_runtime_stab_chunk', None)
-            CHUNK = explicit_chunk or (int(runtime_chunk) if runtime_chunk else CHUNK)
+            # The runtime profile's chunk value is a bounded recommendation for
+            # generic queue sizing. Stabilization has a stricter invariant: the
+            # chunk must be a whole number of warm-up-amortising blocks derived
+            # from the current frame bytes and available RAM. Only the explicit
+            # stabilization override may replace that geometry, and it is
+            # rounded down to a whole block so a manual chunk value cannot move
+            # the block grid (which would change the warm-up frames and output).
+            if explicit_chunk > 0:
+                CHUNK = max(block, (explicit_chunk // block) * block)
         except ValueError:
             pass
         if stab_width < threads:
@@ -2575,7 +2574,13 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                 if len(self.input_face_datas) > num_swapped:
                     return None
             self.num_frames_no_face = 0
-            self.last_swapped_frame = temp_frame.copy()
+            # A last-frame copy is only observable for USE_LAST_SWAPPED. Avoid
+            # retaining and copying a full-resolution frame for the other
+            # no-face policies; the returned composite already owns its buffer.
+            if roop.globals.no_face_action == eNoFaceAction.USE_LAST_SWAPPED:
+                self.last_swapped_frame = temp_frame.copy()
+            else:
+                self.last_swapped_frame = None
             self._publish_live(temp_frame)
             return temp_frame
         if roop.globals.no_face_action == eNoFaceAction.USE_LAST_SWAPPED:
@@ -2605,6 +2610,22 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
         return ret
 
     def retry_rotated(self, frame):
+        # `swap_faces` records the faces found by the initial detector pass in
+        # TLS. A rotated retry cannot improve an already-upright detection and
+        # costs two more full detection/swap passes, so use the detector's own
+        # roll trigger as a conservative admission test. An empty detection is
+        # deliberately NOT filtered: it is the one case where rotation may be
+        # the only way to recover a face, and correctness wins over saved work.
+        detected = getattr(self._tls, 'retry_detected_faces', None)
+        if detected:
+            try:
+                if not any(face_rotation_action(face, frame.shape[:2]) is not None
+                           for face in detected):
+                    return frame
+            except Exception:
+                # An incomplete detector object must not suppress recovery.
+                pass
+
         # rotate_* returns a read-only view; swap_faces only reads its plate and
         # writes the separate destination below.  The old input copy was
         # therefore immediately superseded by the destination copy, costing a
@@ -2614,7 +2635,8 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
         num_swapped, temp_frame = self.swap_faces(copyframe, temp_frame)
         if num_swapped > 0:
             return rotate_anticlockwise(temp_frame)
-        
+
+        del temp_frame, copyframe
         copyframe = rotate_anticlockwise(frame)
         temp_frame = copyframe.copy()
         num_swapped, temp_frame = self.swap_faces(copyframe, temp_frame)
@@ -2707,6 +2729,10 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
 
     def swap_faces(self, frame, temp_frame, stabilize=False, frame_idx=None):
         num_faces_found = 0
+        # Used only by retry_rotated() as a conservative admission hint. None
+        # means the detector did not provide a usable list; that case must keep
+        # the recovery path available rather than being treated as upright.
+        self._tls.retry_detected_faces = None
 
         # Stash the current frame index per-thread so the SAM2 mask engine can look
         # up its precomputed full-frame mask for this frame from inside process_mask
@@ -2749,6 +2775,7 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                     face = get_first_face(frame)
                     if face is None and self.last_found_bboxes is not None:
                         face = _detect_face_in_roi(frame, self.last_found_bboxes[0])
+            self._tls.retry_detected_faces = [face] if face is not None else None
             if face is None:
                 return num_faces_found, frame
             self.last_found_bboxes = np.array([face.bbox])   # cache for next frame
@@ -2803,6 +2830,7 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                                 continue
                             faces.append(f)
                             _audit_hit('recovered via ROI redetect (partial miss)')
+            self._tls.retry_detected_faces = list(faces) if faces else None
             if not faces:
                 # Counted, because a frame where the detector found NOTHING is
                 # the other half of the flicker and is invisible from the

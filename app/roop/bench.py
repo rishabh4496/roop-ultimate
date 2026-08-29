@@ -216,6 +216,7 @@ def probe_device():
         info.update({
             'device_id': hardware.device_id,
             'gpu_name': hardware.gpu_name,
+            'gpu_vendor': hardware.gpu_vendor,
             'architecture': hardware.architecture,
             'compute_capability': hardware.compute_capability,
             'vram_tier': hardware.vram_tier,
@@ -241,6 +242,7 @@ def probe_device():
             'ram_total_gb': hardware.ram_total_gb,
             'ram_available_gb': hardware.ram_available_gb,
             'platform': hardware.platform or info['platform'],
+            'hardware_profile_key': hardware.as_dict().get('hardware_profile_key'),
         })
     except Exception:
         # Keep the legacy lightweight probe as a fallback for partial installs.
@@ -266,6 +268,15 @@ def probe_device():
     info['free_vram_gb'] = info['free_vram_gb'] or round(free, 2)
     info['total_vram_gb'] = info['total_vram_gb'] or round(total, 2)
     info['available_vram_gb'] = info['free_vram_gb']
+    # Stable identity for persisted benchmark/profile isolation.  Free VRAM is
+    # retained for telemetry, but the key intentionally excludes it because it
+    # changes during model loading and cannot identify a hardware target.
+    if not info.get('hardware_profile_key'):
+        try:
+            from roop.hardware_validation import hardware_profile_key
+            info['hardware_profile_key'] = hardware_profile_key(info)
+        except Exception:
+            info['hardware_profile_key'] = None
     try:
         info['ort_providers'] = list(onnxruntime.get_available_providers())
     except Exception:
@@ -2218,6 +2229,8 @@ def run_benchmark(profile='full', faces_per_frame=1.0, report=None,
         'ran_at': time.strftime('%Y-%m-%d %H:%M:%S'),
         'duration_sec': round(duration, 1),
         'device': device,
+        'hardware_profile_key': device.get('hardware_profile_key'),
+        'validation_target': os.environ.get('ROOP_VALIDATION_TARGET', 'detected'),
         'gpu_name': device['gpu_name'],            # kept for the old UI shape
         'total_vram_gb': device['total_vram_gb'],
         'faces_per_frame': faces_per_frame,
@@ -2273,6 +2286,25 @@ def run_benchmark(profile='full', faces_per_frame=1.0, report=None,
         'recommend': rec,
         'warnings': warnings,
     }
+    # Keep the final report shape dual-target even when only one physical GPU
+    # is attached. The caller may set ROOP_VALIDATION_TARGET to the target
+    # being measured; no target is inferred for runtime configuration and an
+    # unlabelled run leaves both target tables pending.
+    from roop.hardware_validation import build_dual_target_report
+    validation_target = result['validation_target']
+    validation_records = {}
+    if validation_target in ('RTX 3060', 'RTX 4070'):
+        validation_records[validation_target] = {
+            'status': 'measured_partial',
+            'hardware': device,
+            'hardware_profile_key': device.get('hardware_profile_key'),
+            'notes': (
+                'This benchmark records the detected device and stage/composite '
+                'measurements. Supply a controlled baseline/final run before '
+                'claiming a complete acceptance result.'
+            ),
+        }
+    result['dual_target_validation'] = build_dual_target_report(validation_records)
     result['summary'] = _summary(device, rec, stages)
 
     if apply_to_config and roop.globals.CFG:
@@ -2567,7 +2599,11 @@ def main(argv=None):
                     help='faces per frame the composite assumes')
     ap.add_argument('--no-apply', action='store_true',
                     help='measure without writing config.yaml')
+    ap.add_argument('--target', choices=('RTX 3060', 'RTX 4070'),
+                    help='physical validation target label for the report')
     args = ap.parse_args(argv)
+    if args.target:
+        os.environ['ROOP_VALIDATION_TARGET'] = args.target
     bootstrap_globals()
 
     def report(**kw):

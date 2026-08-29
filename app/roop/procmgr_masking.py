@@ -338,7 +338,13 @@ class MaskingMixin:
             mask = mask[:, :, np.newaxis]
         elif mask.shape[2] == 3:
             mask = mask[:, :, :1]   # collapse to single channel
-        blended_image = image1.astype(np.float32) * (1.0 - mask) + image2.astype(np.float32) * mask
+        # Keep one float destination and one float overlay. The chained
+        # expression allocated both products and their sum at full-frame size.
+        blended_image = image1.astype(np.float32)
+        np.multiply(blended_image, 1.0 - mask, out=blended_image)
+        overlay = image2.astype(np.float32)
+        np.multiply(overlay, mask, out=overlay)
+        blended_image += overlay
         return np.clip(blended_image, 0, 255).astype(np.uint8)
 
     def paste_upscale(self, fake_face, upsk_face, M, target_img, scale_factor, mask_offsets, face_landmarks=None, face_kps=None, region=None, model_mask=None, model_mask_weight=0.0, inplace=False):
@@ -966,7 +972,11 @@ class MaskingMixin:
         precisely so one mask can serve targets of different sizes (the swapped
         crop is 256, the enhanced one 512).
         """
-        img_mask = cv2.resize(img_mask, (target.shape[1], target.shape[0]))
+        if img_mask.shape[:2] != target.shape[:2]:
+            img_mask = cv2.resize(img_mask, (target.shape[1], target.shape[0]),
+                                  interpolation=cv2.INTER_LINEAR)
+        # reshape is a view for the normal 2-D mask; do not allocate a 3-channel
+        # copy merely to make NumPy broadcasting explicit.
         img_mask = np.reshape(img_mask, [img_mask.shape[0], img_mask.shape[1], 1])
 
         if frame.shape[:2] != target.shape[:2]:
@@ -974,13 +984,19 @@ class MaskingMixin:
         else:
             frame_resized = frame
 
+        inv_mask = 1.0 - img_mask
         if self.options.show_face_masking:
-            result = (1 - img_mask) * frame_resized.astype(np.float32)
+            result = frame_resized.astype(np.float32)
+            np.multiply(result, inv_mask, out=result)
             return np.uint8(result)
 
-        target = target.astype(np.float32)
-        result = (1 - img_mask) * target
-        result += img_mask * frame_resized.astype(np.float32)
+        # One destination buffer and two in-place multiplies instead of three
+        # full-crop temporaries from chained broadcasting expressions.
+        result = target.astype(np.float32)
+        np.multiply(result, inv_mask, out=result)
+        overlay = frame_resized.astype(np.float32)
+        np.multiply(overlay, img_mask, out=overlay)
+        result += overlay
         return np.uint8(result)
 
     def create_mouth_mask(self, face:Face, frame:Frame, mask_offsets=None):

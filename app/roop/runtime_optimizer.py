@@ -172,6 +172,13 @@ class HardwareProfile:
             "nvdec": list(self.nvdec_codecs),
             "nvenc": list(self.nvenc_codecs),
         }
+        # One stable identity is shared by diagnostics, benchmark reports, and
+        # persisted profile consumers. The helper excludes transient free VRAM.
+        try:
+            from roop.hardware_validation import hardware_profile_key
+            result["hardware_profile_key"] = hardware_profile_key(result)
+        except Exception:
+            result["hardware_profile_key"] = None
         return result
 
 
@@ -967,11 +974,13 @@ class AutoTuner:
                         (3 if workload.faces_per_frame >= 2 else 2))
         enhancer_pool = 0 if small else (2 if workload.enhancement_enabled else 1)
         expression_pool = 0 if small else 2
-        # The 16GB laptop has only limited RSS headroom after the CUDA model
-        # sessions are resident. Keep stabilization's live frame set single
-        # threaded there; the frame workers remain independent and the bounded
-        # scheduler still owns the same 1536MB hard cap.
-        stabilization_workers = 1 if small else max(1, min(worker, 6))
+        # Stabilization is a host-side stateful stage, not a second GPU context.
+        # Do not collapse the whole pipeline to one worker on the small-VRAM
+        # tier: swap/mask/enhance calls already serialize through their own
+        # single-context guards, while CPU compositing can overlap that work.
+        # ProcessMgr limits the actual stabilization width again from the
+        # measured RAM/frame budget, so this is only the available worker cap.
+        stabilization_workers = worker if workload.stabilization_enabled else 1
         if not workload.stabilization_enabled:
             stabilization_workers = 1
 
