@@ -95,6 +95,35 @@ def parse_stage_timing(text):
     return stages
 
 
+def parse_adaptive_downgrades(text):
+    """What the sub-7GB policy actually changed before the render started.
+
+    WHY THIS IS NOT OPTIONAL. The result record used to store `provider` from
+    config.yaml -- the REQUEST -- while the laptop's safety policy had already
+    disabled TensorRT, dropped the enhancer to None, skipped RealityUX's BiSeNet
+    parser and forced CPU decode. So a 3060 row read `provider: tensorrt,
+    enhancer: GPEN 256 Pro` for a run that used neither: a record describing a
+    stack that did not exist, which is the same "looks wired, is not" defect
+    this project keeps finding.
+
+    It also makes the fixture check insufficient on its own. Matching the locked
+    clip is necessary for comparability but not sufficient -- an arm that
+    silently dropped the enhancer is doing less work, so a slower number does
+    not mean a slower machine.
+    """
+    found = {}
+    if re.search(r"sub-7GB GPU: TensorRT disabled", text):
+        found["provider"] = "TensorRT disabled by the sub-7GB RSS policy; CUDA/CPU used"
+    m = re.search(r"RSS safety: enhancer '([^']+)' -> '([^']+)'", text)
+    if m:
+        found["enhancer"] = "%s -> %s (sub-7GB RSS gate)" % (m.group(1), m.group(2))
+    if re.search(r"skipping the auxiliary BiSeNet parser", text):
+        found["mask_engine"] = "RealityUX degraded to XSeg only; BiSeNet parser skipped"
+    if re.search(r"decode safety: NVDEC -> CPU", text):
+        found["decode"] = "NVDEC -> CPU (sub-7GB RSS policy)"
+    return found
+
+
 def parse_run(text):
     """Frames, seconds, fps and the swap audit, from the pipeline's own output.
 
@@ -377,6 +406,14 @@ def main():
 
     stages = parse_stage_timing(out)
     run = parse_run(out)
+    downgrades = parse_adaptive_downgrades(out)
+    if downgrades:
+        print()
+        print("  !! ADAPTIVE DOWNGRADES -- the requested stack is NOT what ran:")
+        for key in sorted(downgrades):
+            print("       %-12s %s" % (key, downgrades[key]))
+        print("     Recorded as adaptive_downgrades; this run is marked NOT "
+              "comparable to the locked baseline, which ran the full stack.")
     frames = run.get("frames") or (args.end - args.start)
 
     result = {
@@ -388,7 +425,12 @@ def main():
                       "fixture": fixture_fp,
                       "fixture_expected": WORKLOAD["expect"],
                       "fixture_mismatch": fixture_diff,
-                      "comparable_to_locked_baseline": not fixture_diff,
+                      # Comparability needs BOTH the locked clip and an
+                      # undowngraded stack. A run that dropped the enhancer is
+                      # doing less work, so its fps is not this machine's answer
+                      # to the 4070's number.
+                      "adaptive_downgrades": downgrades,
+                      "comparable_to_locked_baseline": not fixture_diff and not downgrades,
                       "video": args.video, "sources": args.sources,
                       "start": args.start, "end": args.end,
                       "enhancer": args.enhancer, "mask_engine": args.mask_engine,

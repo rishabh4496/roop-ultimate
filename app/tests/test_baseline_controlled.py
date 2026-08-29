@@ -71,5 +71,45 @@ class ParseRunFpsTest(unittest.TestCase):
         self.assertEqual(r["attributed_swaps"], 642)
 
 
+class AdaptiveDowngradeTests(unittest.TestCase):
+    """A run that quietly dropped half its stack must not read as comparable.
+
+    The first RTX 3060 baseline recorded `provider: tensorrt` and
+    `enhancer: GPEN 256 Pro` -- the values it REQUESTED from config.yaml --
+    while the sub-7GB policy had already disabled TensorRT, dropped the enhancer
+    to None, degraded RealityUX and forced CPU decode. Matching the locked
+    fixture is necessary for comparability but not sufficient: an arm doing less
+    work is not this machine's answer to the 4070's number.
+    """
+
+    LOG = (
+        "[Backend] sub-7GB GPU: TensorRT disabled by the laptop RSS safety "
+        "policy; using CUDA/CPU providers.\n"
+        "[RuntimeOptimizer] sub-7GB RSS safety: enhancer 'GPEN 256 Pro' -> "
+        "'None'; measured enhancer path exceeds the strict 2.5GB RSS gate.\n"
+        "[Mask_RealityUX] sub-7GB CUDA profile: retaining the authoritative "
+        "XSeg mask and skipping the auxiliary BiSeNet parser.\n"
+        "[RuntimeOptimizer] sub-7GB decode safety: NVDEC -> CPU; measured "
+        "NVDEC path increases RSS without an end-to-end speed win.\n")
+
+    def test_detects_every_downgrade(self):
+        found = bc.parse_adaptive_downgrades(self.LOG)
+        self.assertEqual(sorted(found),
+                         ["decode", "enhancer", "mask_engine", "provider"])
+        self.assertIn("GPEN 256 Pro", found["enhancer"])
+        self.assertIn("None", found["enhancer"])
+
+    def test_clean_log_reports_nothing(self):
+        self.assertEqual(
+            bc.parse_adaptive_downgrades(
+                "[Runtime] all good\n[Track] 4 tracks over 600 frames\n"),
+            {})
+
+    def test_enhancer_name_is_read_not_assumed(self):
+        found = bc.parse_adaptive_downgrades(
+            "sub-7GB RSS safety: enhancer 'UltraMax' -> 'None';")
+        self.assertIn("UltraMax", found["enhancer"])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -37,7 +37,58 @@ Note the CPU row against the 4070's: Windows exposed **no** P/E topology on the
 4070, which is why Gate D was deferred there. It *is* exposed here, so the 3060
 is the target on which Gate D's CPU-distribution matrix can actually be run.
 
-### BLOCKER: the locked fixture is not on this machine
+### RESOLVED: the fixture was replicated, and the baseline is MEASURED
+
+The operator replicated the clip tree to `C:\pinokio\roop-keep\` mid-session.
+`double/d4.mp4` fingerprints as **1280x720, 13305 frames**, matching the locked
+identity exactly, so the run below is on the real Phase 2 workload. The
+resolver prefers the hyphen root, so no flag or config edit was needed.
+
+Command actually run, exactly as documented:
+
+```bash
+cd app
+env/Scripts/python.exe tests/baseline_controlled.py --tag phase2_3060 --target "RTX 3060"
+```
+
+| Metric | RTX 3060 (measured) | RTX 4070 (locked) |
+|---|---:|---:|
+| End-to-end FPS | **4.33** | 9.62 |
+| Frames / wall clock | 600 / 345.81 s | 600 / — |
+| Mean frame latency | 413.16 ms | 233.34 ms |
+| Decode FPS | 451.13 | 189.87 |
+| Encode FPS | 314.14 (`hevc_nvenc`) | 46.69 (`hevc_nvenc`) |
+| Peak / mean VRAM | 4,685 MB / 2,816 MB | 7,067 MB / 4,080 MB |
+| Peak / mean RSS | **3.734 GB** / 2.164 GB | 11.663 GB / 7.568 GB |
+| Peak / mean GPU util | 99.0% / 57.56% | 76.0% / 33.95% |
+| Peak / mean CPU util | 97.21% / 31.12% | 99.2% / 20.49% |
+| Peak P-core / E-core | 97.40% / 97.73% | 99.19% / 99.21% (inferred) |
+| Peak power | 125.07 W | 118.09 W |
+| Faces seen / swapped | 951 / 946 | 856 / 850 |
+| **Wrong faceset** | **0** (644 attributed) | **0** (642 attributed) |
+| Stability | 600/600, exit 0 | 600/600, exit 0 |
+
+**This pair is NOT a like-for-like speed comparison, and the record now says so
+in the artifact itself** (`comparable_to_locked_baseline: false`). See the stack
+table below: the 3060 ran with no enhancer, no TensorRT, a degraded mask and CPU
+decode — it is doing materially *less* work and is still 2.2x slower. Its GPU
+sat at 99% peak / 57.6% mean against the 4070's 76% / 34%, so this target is
+genuinely GPU-bound where the workstation was stage/CPU-bound.
+
+Quality is not degraded by any of that: **zero wrong-faceset applications**
+across 644 attributed swaps, matching the 4070.
+
+Two observations worth carrying forward:
+
+- **The strict `<2.5 GB` RSS gate still fails: peak 3.734 GB.** That is on the
+  720p locked fixture and is *higher* than the 2.62–2.79 GB previously recorded
+  on smaller clips, so the gate remains blocked and the earlier figures were not
+  measured on this workload.
+- **22.2% of frames (191 of 859) had no face detected at all.** The session logs
+  list a "15% no-face rate" as an open item that could not be reproduced for
+  want of the source clip. It reproduces here, on d4, at 22.2%.
+
+### PREVIOUS BLOCKER (resolved above): the locked fixture was not on this machine
 
 `PERFORMANCE_BASELINE.md` locks the baseline to `double/d4.mp4` at
 **1280x720**. The laptop holds a clip also named `d4.mp4` — but it is
@@ -104,25 +155,27 @@ The existing locked controlled baseline is recorded in
 
 ## RTX 3060
 
-Hardware is present (profile above); every row below is blocked on the locked
-1280x720 fixture, not on the GPU.
+Measured 2026-08-29 on the physical laptop against the locked fixture. Read
+with the adaptive-downgrade table below: this row is the machine's real
+automatic behaviour, not the 4070's stack running slower.
 
 | Metric | Result |
 |---|---:|
-| Baseline FPS | pending physical fixture |
-| Final FPS | pending |
-| Improvement | pending |
-| Peak VRAM | pending |
-| Average VRAM | pending |
-| CPU utilization | pending |
-| GPU utilization | pending |
-| Decode throughput | pending |
-| Inference throughput | pending |
-| Enhancement throughput | pending |
-| Encode throughput | pending |
-| Latency | pending |
-| Stability | pending |
-| Output quality | pending |
+| Baseline FPS | **4.33** |
+| Final FPS | not applicable; no new default was promoted |
+| Improvement | not applicable |
+| Peak VRAM | 4,685 MB |
+| Average VRAM | 2,816 MB |
+| CPU utilization | 97.21% peak / 31.12% mean |
+| GPU utilization | 99.0% peak / 57.56% mean |
+| Decode throughput | 451.13 frames/s (CPU decode) |
+| Inference throughput | 947 swap calls at 127.56 ms/call |
+| Enhancement throughput | not applicable — enhancer disabled by the RSS gate |
+| Encode throughput | 314.14 frames/s, `hevc_nvenc` |
+| Latency | 413.16 ms/frame worker time |
+| Stability | 600/600 frames encoded, exit 0 |
+| Output quality | 951 faces seen, 946 swapped, **0 wrong faceset** |
+| Peak RSS | 3.734 GB — **strict `<2.5 GB` gate still FAILS** |
 
 ## Exact follow-up benchmark
 
