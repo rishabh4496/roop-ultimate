@@ -2001,3 +2001,150 @@ a per-phase state table at the top.
    here, so the 4070's segment-size finding can stop being 4070-only.
 4. **Mask/stabilization visual review and a deadlock/leak soak** — the last
    Phase 16 rows still pending.
+
+
+---
+
+## Session Log (2026-08-30 Part 2): Every 4070 Gate Closed Through E — And Three Of Them Closed As NEUTRAL
+
+Run on the MAIN device (RTX 4070, driver 616.56). Commits `d5f15c1`, `5090045`,
+`3280dee`. Suite **1470 green**, 1 skipped. Full report:
+`docs/GATE_ABE_4070.md`.
+
+**Nothing in this session made anything faster.** Gate D, Phase 14 and Gate E
+all measured NEUTRAL at production length. The deliverables are the
+corrections, and the biggest of them is that several things which reported
+"neutral" or "unsupported" were never actually running.
+
+### 0. THE RULE THIS SESSION ADDS: 120 frames measures warm-up
+
+A 120-frame benchmark on this pipeline does not measure steady state. Proven
+independently on both GPUs, **in opposite directions**:
+
+| | 120 frames | 600 frames |
+|---|---|---|
+| 3060, `p_plus_e` vs `auto` | **+19.6%** | **-0.5%** |
+| 4070, `p_only` vs `auto` | **-10.7%** | **+1.4%** |
+
+Absolute throughput is also ~2.5x higher at 600 frames on the 4070
+(4.5 -> 11.6 fps). My first Gate D table was a 120-frame table and I published
+it as a production result; it was wrong, and I only caught it because the 3060
+session had already proved the point. **Use `--end 600` for any acceptance
+claim, counterbalanced, and discard or re-measure the first arm** — the first
+arm of a pass absorbs a cold TensorRT engine build (seen twice: 0.18 fps
+against a warm 5.10, and 0.47 against a warm 11.46).
+
+### 1. Gate D: NEUTRAL on both targets, `auto` confirmed
+
+600-frame counterbalanced auto/p_only/p_only/auto: `auto` 11.46,
+`p_only` 11.62 (**+1.4%**). The 120-frame matrix (11 runs) that showed `auto`
+fastest and `p_only` at -10.7% does not survive. Both GPUs now agree: forcing
+a CPU distribution is neutral at length, and the shipped `auto` default is
+correct on both. Nothing promoted. Caveat recorded: thread count moves with
+the policy (10/16/20/32), so this compares whole CPU policies, not affinity in
+isolation.
+
+### 2. Phase 14: 0.0%, and two latent defects that make that lucky
+
+6.13 -> 6.13, stopped after two stagnant stages. Matches the 3060. But
+**`MIN_IMPROVEMENT` is 1% while the noise floor is 3.7% here and ~15% on the
+3060**, so the search can promote noise — it rejected a 6.19 candidate against
+a 6.13 baseline by 0.02%. And every candidate is a **single uncounterbalanced
+60-frame run**, the exact window §0 invalidates. **Still OPEN.**
+
+### 3. Phase 15: five defects, each hiding the next
+
+All the same failure class as the phantom probes — **a default standing in for
+a measurement that was never taken** — and none had test coverage.
+
+1. `classify_bottleneck` fell through to `"I/O-bound"` whenever queue and
+   utilization signals were absent. Both GPUs reported I/O-bound on runs whose
+   decode cost **3.3 ms of a 244.8 ms frame**.
+2. `0.0 >= max([0.0]) * 0.45` is True, so an empty stage table produced a
+   confident `"encode-bound"`. Found by its own new test.
+3. `psutil.Process` was rebuilt every snapshot, so `cpu_percent(None)` had no
+   delta baseline and always returned **0.0**. (The module-level percpu call
+   keeps global state, which is why P/E figures worked and process CPU did not.)
+4. `pynvml` is absent here, so GPU utilization was permanently `None` — which
+   silently disabled the GPU-bound *and* synchronization-bound branches of the
+   classifier. nvidia-smi fallback added, rate-limited.
+5. **ROOT CAUSE: the adaptive controller was UNREACHABLE.**
+   `_runtime_adaptive_boundary` — the only caller of `record_frame` and the
+   only place `SafeAdaptiveController` is consulted — was wired into the
+   **sequential encoder loop**, while production renders through
+   `_run_stab_parallel`'s own `_writer`. It was never declining to act on
+   either GPU. Also: sampling happened only inside `record_frame`, so a run
+   took ONE sample at `finish()` and the three-consecutive-window requirement
+   could never be met.
+
+After the fixes, verified at 600 frames with adaptive on: **12.43 fps, no
+regression**, 847/853 faces, and the monitor reports `end_to_end_fps` 12.55
+(was 0.0), CPU 9.6% (was 0.0), GPU 38.1% (was None), and
+**`synchronization-bound`** (was "I/O-bound").
+
+**The rule:** when a feature reports "no effect", first prove the code path
+executes. A flag that is read, a controller that is constructed, and a hook
+that is defined are all consistent with never running.
+
+### 4. Gate B: +29.2%, and the gap is concurrency
+
+Baseline 9.62 -> **12.43 fps** on the same locked fixture, both end-to-end.
+
+    single-worker critical path   245.54 ms  = 4.07 fps
+    frame_total thread-seconds    147.3 s in 48.3 s wall = 3.05x concurrency
+    ceiling if concurrency scaled 10 x 4.07 = 40.7 fps
+
+Decode sustains **303 fps** and encode **652 fps** against a 12.4 demand, so
+I/O is not limiting. The gap between 12.43 and 40.7 is entirely concurrency,
+not stage cost. Remaining bottleneck is host-side per-face work: `mask`
+50.8 ms, `track_detect` 54.5 ms, `swap` 38.6 ms.
+
+### 5. Gate E: closed by proof, not by a change
+
+Counterbalanced thread sweep, 600 frames, order 4/10/20/20/10/4:
+
+| threads | mean fps | GPU | CPU | peak VRAM | faces |
+|---:|---:|---:|---:|---:|---|
+| 4 | **12.41** | 28.4% | 17.6% | 6.4 GB | 847/853 |
+| 10 | **12.35** | 28.5% | 17.6% | 6.4 GB | 847/853 |
+| 20 | **12.32** | 28.4% | 17.7% | 6.4 GB | 847/853 |
+
+**0.7% across a 5x range of workers, trending slightly DOWN.** Nothing is
+saturated (GPU 28%, VRAM 52%, CPU 17.6% of 32 logical) and nothing scales.
+Contexts were not re-tested — pools 2->4 on this tier are already recorded as
+zero improvement and pool 8 as a 2-2.5 fps collapse. Gate E's exit criterion is
+satisfied by its second branch: a documented proof that the workload is already
+limited by an unavoidable stage.
+
+**Threads, contexts, queues and affinity are each now measured as dead ends.
+The only productive direction left is REMOVING WORK PER FACE.**
+
+### 6. Reconciled with the 3060 session mid-flight
+
+Its 10 commits landed while my benchmarks were running. It had found the **same
+phantom driver probe** (`torch._C._cuda_getDriverVersion`, absent from torch
+2.7, so the engine cache read the literal `drvunknown`) and fixed it the
+**opposite way** — keeping driver identity *in* the cache key, arguing engines
+are not guaranteed portable across driver upgrades. I had removed it from the
+key per a decision taken earlier in my session. **I deferred to the committed
+3060 design** and dropped my competing change, because theirs was already
+pushed and argued. Worth knowing: the auto-merge would otherwise have silently
+neutered their guard (their test asserts `drvunknown` is absent, which passes
+trivially if the token is gone entirely).
+
+My unique surviving fix there: **FP8 was reported unsupported on every GPU**
+because `builder.platform_has_fast_fp8` is not defined by TensorRT 10.9. Now
+probed via `BuilderFlag.FP8` + `DataType.FP8` + compute capability >= 8.9; this
+4070 correctly reports FP8 **exposed**. It records exposure only —
+`precision_policy` still refuses to select it.
+
+### 7. OPEN
+
+1. **Phase 14's noise-floor defect** (§2) — the autotuner can promote noise.
+2. **Gate E on the 3060** — the one remaining cross-target item; commands in
+   `docs/GATE_ABE_4070.md`. Its ~15% cross-run drift means only counterbalanced
+   comparisons inside one set are readable there.
+3. **The driver-in-cache-key decision** is currently the 3060 session's, not
+   the one taken earlier in this session. One line to flip if wanted.
+4. Inherited and untouched: DMDNet still broken, Phase 3's RSS gate still fails
+   at 3.73 GB, mask/stabilization visual review and the deadlock/leak soak.
