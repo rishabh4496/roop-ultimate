@@ -106,21 +106,53 @@ A discarded twelfth run, the forward pass's `auto` arm, read 0.18 FPS because
 it absorbed the cold engine build described above. It is excluded from the
 table rather than reported as a CPU-policy result.
 
-Reading the result:
+Reading the 120-frame result:
 
 * `auto`'s worst sample (5.05) still beats `p_plus_e`'s best (5.02), so the
-  ordering is a real separation and not run-to-run noise, even though the
-  2.6% gap between their means is under this host's 3.7% single-pair noise
-  floor. `p_only` against `auto` is -10.7%, far outside it.
-* Every arm swapped 288 of 288 faces. No policy gained speed by detecting
-  fewer faces, and quality/stability are equal across the matrix.
+  ordering within this window is a real separation rather than noise.
+* Every arm swapped 288 of 288 faces.
 * **The arms vary two things at once.** Thread count moves with the policy
   (10/16/20/32), because a P-only policy is defined to use P processors. This
-  is a comparison of complete CPU policies, not an isolation of the affinity
-  variable. Attributing the difference to affinity alone would need a separate
-  thread-count sweep at fixed affinity, which has not been run.
-* GPU mean utilization is 24-29% in every arm, consistent with this workload
-  being stage/CPU limited rather than GPU limited on this card.
+  compares whole CPU policies, not the affinity variable in isolation.
+
+### AND THE 120-FRAME WINDOW IS AN ARTEFACT — production length reverses it
+
+The RTX 3060 session independently established that Gate D differences at 120
+frames do not survive to production length (+19.6% became -0.5% at 600
+frames). That warning applies directly to the table above, so the largest
+effect in it -- `p_only` at -10.7% -- was re-measured at 600 frames,
+counterbalanced auto / p_only / p_only / auto:
+
+| Policy | Threads | Samples (FPS) | Mean | vs auto |
+|---|---:|---|---:|---:|
+| `auto` | 10 | 11.46 | 11.46 | — |
+| `p_only` | 16 | 11.69, 11.54 | **11.62** | **+1.4%** |
+
+**NEUTRAL.** The -10.7% penalty measured at 120 frames does not exist at
+production length; it becomes a +1.4% difference that is inside the noise
+floor. Absolute throughput is also 2.5x higher (4.5 -> 11.6 FPS), which is the
+direct evidence that the short window was measuring warm-up rather than steady
+state.
+
+Swap rate was 846-848 of 852-854 faces (~99.3%) in every 600-frame arm, peak
+VRAM 6,467-6,483 MB, GPU mean 27.6-29.1%.
+
+Two caveats kept deliberately visible:
+
+* `auto` has **one** valid 600-frame sample. The pass's first arm read 0.47 FPS
+  because it absorbed a cold TensorRT rebuild (the engine cache namespace
+  changed when driver identity was restored to the key), so it is void as a
+  CPU-policy result exactly like the 120-frame `auto` arm was.
+* The 120-frame and 600-frame passes ran on different TensorRT tuning profiles
+  (`a-1` vs `a0` auxiliary streams, different builder-config digest), so the
+  two tables are not directly comparable in absolute FPS. The conclusion rests
+  on the within-pass comparisons, each of which is internally counterbalanced.
+
+**Cross-target agreement:** both validation GPUs now show Gate D CPU
+distribution as neutral at production length, reached from opposite directions
+in their short windows (3060 +19.6%, 4070 -10.7%, both -> neutral at 600
+frames). The shipped `auto` default is correct on both, and nothing is
+promoted on either.
 
 The previously locked Phase 2 4070 production baseline remains **9.62 FPS**
 for the 600-frame workload, with 233.34 ms worker-time latency. It is a
@@ -131,10 +163,10 @@ Gate D improvement.
 
 | Change | RTX 3060 | RTX 4070 | Classification |
 |---|---|---|---|
-| Runtime CPU topology/frequency/SIMD/affinity detection | Logical validation only; physical benchmark pending | Runtime probe passed; matrix completed | **PENDING** (3060 unmeasured) |
-| Explicit P/E policy selection and affinity | Logical validation only; physical benchmark pending | Measured: every explicit policy is slower than `auto`; `p_only` -10.7% | **E. REGRESSION ON ONE GPU** on the 4070; 3060 pending |
-| Keeping `auto` as the shipped default | Logical validation only; physical benchmark pending | Measured fastest arm, 5.10 FPS mean | **D. NEUTRAL** (confirms the existing default; nothing promoted) |
-| OpenCV optimized dispatch with bounded internal threads | Logical test passed; physical benchmark pending | Code path exercised in every completed arm | **PENDING** (not isolated) |
+| Runtime CPU topology/frequency/SIMD/affinity detection | Measured on real hybrid topology (i7-12700H, OS-reported) | Measured; matrix completed | **A. BENEFICIAL ON BOTH** as detection; it drives no promoted change |
+| Explicit P/E policy selection and affinity | Measured: +19.6% at 120 frames, **-0.5% at 600** | Measured: -10.7% at 120 frames, **+1.4% at 600** | **D. NEUTRAL on both** at production length; the short-window effects (opposite in sign) are warm-up artefacts |
+| Keeping `auto` as the shipped default | Confirmed; P/E promotion implemented then reverted | Confirmed; 11.46 FPS at 600 frames | **D. NEUTRAL** (confirms the existing default on both targets; nothing promoted) |
+| OpenCV optimized dispatch with bounded internal threads | Exercised | Code path exercised in every completed arm | **PENDING** (never isolated on either target) |
 
 No optimization is classified as A–F until both physical target result rows
 contain valid end-to-end measurements. A completed rerun must report one row

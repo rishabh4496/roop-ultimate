@@ -643,10 +643,23 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                 except Exception:
                     pass
             return total
-        return {
+        def one(queue):
+            try:
+                return int(queue.qsize()) if queue is not None else 0
+            except Exception:
+                return 0
+        # `frames_queue`/`processed_queue` belong to the SEQUENTIAL path. On
+        # the parallel stabilization path they do not exist, so both depths
+        # read a structural 0 -- which the bottleneck classifier could not
+        # distinguish from genuinely idle queues. Report the parallel writer's
+        # own queue when that is the path in use.
+        snapshot = {
             'input': depth(getattr(self, 'frames_queue', None)),
             'output': depth(getattr(self, 'processed_queue', None)),
         }
+        if not snapshot['output']:
+            snapshot['output'] = one(getattr(self, '_runtime_write_queue', None))
+        return snapshot
 
     def _runtime_adaptive_boundary(self):
         monitor = getattr(self, '_runtime_monitor', None)
@@ -2439,6 +2452,9 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
         # Queue(1): one chunk can be in-flight; main blocks only when write is
         # slower than processing (correct back-pressure; prevents unbounded RAM).
         _write_q = Queue(1)
+        # Expose it so runtime telemetry can report a real output-queue depth
+        # on this path instead of the sequential path's absent queues.
+        self._runtime_write_queue = _write_q
 
         _writer_exc = [None]  # propagate write errors back to the main thread
 
@@ -2468,6 +2484,14 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                             self._track_assignments.pop(gi, None)
                         if hasattr(self, '_precomputed_kps') and self._precomputed_kps is not None:
                             self._precomputed_kps.pop(gi, None)
+                        # The frame/queue hook lived ONLY in the sequential
+                        # encoder loop, while production runs this parallel
+                        # stabilization writer. That left the monitor with
+                        # frames=0 and no queue/worker telemetry, and made the
+                        # adaptive controller unreachable on the path the user
+                        # actually renders with. Same call, same safe boundary
+                        # (immediately after a frame is written).
+                        self._runtime_adaptive_boundary()
                     res.clear()
             except Exception as exc:
                 _writer_exc[0] = exc

@@ -2064,6 +2064,53 @@ class RuntimeMonitor:
             self._last_stage_seconds.clear()
             self._last_stage_calls.clear()
             self._samples.clear()
+        self._start_sampler()
+
+    def _start_sampler(self) -> None:
+        """Sample on our own timer instead of relying on the pipeline.
+
+        Periodic sampling used to happen only inside ``record_frame``, which
+        the render path never calls.  A run therefore produced ONE sample,
+        taken by ``finish(force=True)``, and that single sample is why:
+
+        * ``cpu_utilization_pct`` read 0.0 -- a process CPU delta needs two
+          reads separated in time, and there was only ever one;
+        * the rolling window never filled, so ``SafeAdaptiveController``'s
+          three-consecutive-window requirement could not be met and the
+          adaptive controller was inert on BOTH validation GPUs.
+
+        The thread is a daemon, holds no GPU resource, and only reads
+        counters, so it cannot interfere with in-flight inference.
+        """
+        if not self.enabled:
+            return
+        if getattr(self, "_sampler_thread", None) is not None:
+            return
+        self._sampler_stop = threading.Event()
+
+        def _loop():
+            # Prime the process CPU delta before the first real reading.
+            self._resource_snapshot()
+            while not self._sampler_stop.wait(self.sample_interval):
+                try:
+                    self.sample(force=True)
+                except Exception:
+                    # Telemetry must never take down a render.
+                    pass
+
+        thread = threading.Thread(target=_loop, name="roop-runtime-monitor",
+                                  daemon=True)
+        self._sampler_thread = thread
+        thread.start()
+
+    def _stop_sampler(self) -> None:
+        stop = getattr(self, "_sampler_stop", None)
+        thread = getattr(self, "_sampler_thread", None)
+        if stop is not None:
+            stop.set()
+        if thread is not None:
+            thread.join(timeout=2.0)
+        self._sampler_thread = None
 
     def record_stage(self, stage: str, elapsed: float, calls: int = 1) -> None:
         if not self.enabled:
@@ -2112,9 +2159,20 @@ class RuntimeMonitor:
         result = {}
         try:
             import psutil
-            process = psutil.Process(os.getpid())
+            # The Process handle MUST persist across snapshots.  psutil
+            # computes cpu_percent(None) as a delta against that object's own
+            # previous call, so a freshly constructed Process always returns
+            # 0.0 -- which is why this field read a measured-looking 0.0% on
+            # both validation GPUs while the module-level percpu call (which
+            # keeps its own global state) correctly reported P/E utilization.
+            process = getattr(self, "_psutil_process", None)
+            if process is None or process.pid != os.getpid():
+                process = psutil.Process(os.getpid())
+                self._psutil_process = process
+                process.cpu_percent(None)  # prime the delta baseline
             logical = max(1, int(psutil.cpu_count(logical=True) or 1))
-            result["cpu_utilization_pct"] = min(100.0, max(0.0, float(process.cpu_percent(None)) / logical))
+            cpu_pct = float(process.cpu_percent(None)) / logical
+            result["cpu_utilization_pct"] = min(100.0, max(0.0, cpu_pct))
             result["ram_used_gb"] = process.memory_info().rss / 2**30
             result["ram_utilization_pct"] = float(psutil.virtual_memory().percent)
             per_cpu = psutil.cpu_percent(interval=None, percpu=True)
@@ -2173,10 +2231,48 @@ class RuntimeMonitor:
             result.setdefault("vram_total_gb", memory.total / 2**30)
         except Exception:
             pass
+        if result.get("gpu_utilization_pct") is None:
+            # pynvml is genuinely optional and is absent on this stack, which
+            # left GPU utilization permanently None -- and a None GPU reading
+            # silently disabled the GPU-bound and synchronization-bound
+            # branches of the bottleneck classifier.  nvidia-smi answers the
+            # same question without a new dependency.  It is a subprocess, so
+            # it is rate-limited well below the sampling interval and never
+            # runs per frame.
+            value = self._gpu_utilization_from_smi()
+            if value is not None:
+                result["gpu_utilization_pct"] = value
         if result.get("vram_total_gb"):
             result["vram_pressure_pct"] = max(0.0, min(100.0,
                 100.0 * (1.0 - result["vram_free_gb"] / result["vram_total_gb"])))
         return result
+
+    _SMI_MIN_INTERVAL = 2.0
+
+    def _gpu_utilization_from_smi(self) -> Optional[float]:
+        """GPU utilization via nvidia-smi, rate-limited and never fatal."""
+        now = time.perf_counter()
+        last = getattr(self, "_smi_last_time", 0.0)
+        if last and (now - last) < self._SMI_MIN_INTERVAL:
+            return getattr(self, "_smi_last_value", None)
+        self._smi_last_time = now
+        try:
+            import subprocess
+            device_id = int(getattr(self.hardware, "device_id", 0) or 0)
+            out = subprocess.run(
+                ["nvidia-smi", f"--id={device_id}",
+                 "--query-gpu=utilization.gpu",
+                 "--format=csv,noheader,nounits"],
+                capture_output=True, text=True, timeout=5, check=False).stdout
+            for line in (out or "").splitlines():
+                line = line.strip()
+                if line and line[0].isdigit():
+                    self._smi_last_value = float(line)
+                    return self._smi_last_value
+        except Exception:
+            pass
+        self._smi_last_value = None
+        return None
 
     @staticmethod
     def _indices_from_env(name: str) -> list:
@@ -2240,6 +2336,7 @@ class RuntimeMonitor:
                worker_utilization_pct: Optional[float] = None) -> dict:
         if self.enabled:
             self.sample(queue_depths, worker_utilization_pct, force=True)
+        self._stop_sampler()
         return self.summary()
 
     def _rolling_metric(self, name: str) -> Optional[float]:
@@ -2277,7 +2374,13 @@ class RuntimeMonitor:
         result = {
             "elapsed_sec": round(elapsed, 3),
             "frames": frames,
-            "end_to_end_fps": frames / max(elapsed, 1e-9) if elapsed else 0.0,
+            # ``frames`` is only non-zero when the pipeline calls
+            # ``record_frame``. When it does not, ``frames/elapsed`` is 0.0 --
+            # a number that reads as a measured throughput of zero. Fall back
+            # to the frame_total stage, which counts the same frames and is
+            # populated, and report None rather than 0.0 when neither exists.
+            "end_to_end_fps": (frames / max(elapsed, 1e-9) if (elapsed and frames)
+                               else (stage_fps.get("frame_total") or None)),
             "stage_fps": stage_fps,
             "decode_fps": stage_fps.get("decode", 0.0),
             "detection_fps": stage_fps.get("detect", 0.0),
@@ -2304,8 +2407,47 @@ class RuntimeMonitor:
         return result
 
     @staticmethod
+    def _has_telemetry(summary: Mapping[str, Any]) -> bool:
+        """Whether the queue/utilization signals were actually reported.
+
+        The pipeline supplies queue depths, worker utilization and CPU/GPU
+        utilization only when it is instrumented to.  When it is not, those
+        fields arrive as 0.0/None -- which is indistinguishable from a real
+        measurement of "idle" unless it is checked explicitly.
+        """
+        if summary.get("gpu_utilization_pct") is not None:
+            return True
+        if summary.get("cpu_utilization_pct") is not None:
+            return True
+        if summary.get("worker_utilization_pct") is not None:
+            return True
+        return bool(summary.get("queue_depths"))
+
+    @staticmethod
+    def _dominant_stage(summary: Mapping[str, Any]) -> Optional[str]:
+        """Return the costliest non-aggregate stage, or None."""
+        stage_seconds = summary.get("stage_seconds") or {}
+        # ``frame_total`` is the sum of the others; ranking against it would
+        # always name the aggregate.
+        aggregates = {"frame_total"}
+        ranked = sorted(((_number(value), name)
+                         for name, value in stage_seconds.items()
+                         if name not in aggregates),
+                        reverse=True)
+        return ranked[0][1] if ranked else None
+
+    @staticmethod
     def classify_bottleneck(summary: Mapping[str, Any]) -> str:
-        """Classify from the rolling aggregate, never from one frame."""
+        """Classify from the rolling aggregate, never from one frame.
+
+        Returns an explicit ``unknown``/``stage-bound`` answer when the
+        signals a verdict would need were never reported.  The previous
+        implementation fell through to ``"I/O-bound"`` whenever both queue
+        depths were 0.0, which is also what an UNINSTRUMENTED run looks like:
+        measured on both validation GPUs, every run reported "I/O-bound" while
+        decode cost 3.3 ms of a 244.8 ms frame.  Absence of evidence must not
+        be rendered as a confident diagnosis.
+        """
         vram = _number(summary.get("vram_pressure_pct"), 0.0)
         ram = _number(summary.get("ram_utilization_pct"), 0.0)
         if vram >= 88.0:
@@ -2315,10 +2457,14 @@ class RuntimeMonitor:
         latencies = summary.get("stage_latency_ms") or {}
         stage_seconds = summary.get("stage_seconds") or {}
         shares = {name: _number(value) for name, value in stage_seconds.items()}
-        if shares.get("encode", 0.0) >= max(shares.values() or [0.0]) * 0.45:
-            return "encode-bound"
-        if shares.get("decode", 0.0) >= max(shares.values() or [0.0]) * 0.45:
-            return "decode-bound"
+        # ``0.0 >= 0.0 * 0.45`` is True, so without this guard an empty or
+        # all-zero stage table reported a confident "encode-bound".
+        peak = max(shares.values()) if shares else 0.0
+        if peak > 0.0:
+            if shares.get("encode", 0.0) >= peak * 0.45:
+                return "encode-bound"
+            if shares.get("decode", 0.0) >= peak * 0.45:
+                return "decode-bound"
         gpu = summary.get("gpu_utilization_pct")
         cpu = _number(summary.get("cpu_utilization_pct"), 0.0)
         queues = summary.get("queue_depths") or {}
@@ -2330,6 +2476,14 @@ class RuntimeMonitor:
             return "GPU-bound"
         if cpu >= 80.0:
             return "CPU-bound"
+        if not RuntimeMonitor._has_telemetry(summary):
+            # No queue, worker or CPU/GPU utilization was ever reported. The
+            # per-stage timings are still trustworthy, so name the stage that
+            # dominates instead of inventing a system-level verdict.
+            stage = RuntimeMonitor._dominant_stage(summary)
+            if stage:
+                return "stage-bound:%s (no queue/utilization telemetry)" % stage
+            return "unknown (insufficient telemetry)"
         if input_q <= 0.0 and output_q <= 0.0:
             return "I/O-bound"
         return "synchronization-bound"
