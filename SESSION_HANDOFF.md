@@ -1156,3 +1156,54 @@ physical validation remains **PENDING**; Rubin hardware/software is not
 available and is explicitly untested. Gate C evidence and the tested-versus-
 future-ready table are in `docs/HARDWARE_VALIDATION_MATRIX.md`. Focused tests
 passed: `37`.
+
+## Gate E unified scheduler handoff - 2026-08-30
+
+Gate E is implemented and integrated. `app/roop/runtime_scheduler.py` provides
+the unified runtime coordinator; `ProcessMgr` uses it for an asynchronous
+bounded decode/process/encode pipeline when frame-level work is safe, and for
+resource/admission control around the ordered chunked stabilizer when temporal
+state must remain ordered. `/api/system/telemetry` exposes the last scheduler
+snapshot, including the hardware profile key, queue limits, estimated host
+memory, resource samples, bottleneck classification, and safe-boundary actions.
+
+The scheduler derives frame memory, worker buffers, stabilization chunk
+reservation, queue capacity, and in-flight work from detected hardware and
+workload. It uses hysteresis and changes only future admission under pressure.
+It does not close active TensorRT contexts, destroy CUDA resources, or claim
+pinned memory for mutable OpenCV-owned buffers without a safe ownership model.
+
+### Current physical validation matrix
+
+| Target | Availability | Gate E status | Result |
+|---|---|---|---|
+| RTX 4070 | available | validated | 11.00 -> 11.11 FPS (+1.0%) on matched 600-frame production runs; peak VRAM 6548 -> 6581 MB; peak RSS 11.738 -> 11.790 GB; wrong-faceset 0 -> 0 |
+| RTX 3060 | unavailable | **PENDING** | No measurements claimed; run the exact commands below on the 6 GB laptop |
+
+The 4070 profile recorded Ada Lovelace / SM 8.9, 11.994 GB VRAM, driver
+616.56, CUDA 12.8, TensorRT 10.9.0.34, ONNX Runtime 1.23.2, and NVDEC/NVENC
+availability. The scheduler selected ordered-chunk mode for the production
+run because stabilizers were enabled; a separate 60-frame no-stabilizer smoke
+selected frame mode with bounded queues (3) and 4 in-flight frames. The short
+smoke is not used as the production FPS comparison.
+
+The 3060 gate remains open and is not inferred from code inspection. On that
+machine, use the detected CUDA device index and run both arms against the same
+locked d4 workload:
+
+```powershell
+Set-Location G:\pinokio\api\roop-ultimate\app
+& env\Scripts\python.exe tests\baseline_controlled.py --tag gatee_pre_scheduler_3060 --target "RTX 3060" --cuda-device-id <physical-index> --start 0 --end 600 --env ROOP_UNIFIED_SCHEDULER=0
+& env\Scripts\python.exe tests\baseline_controlled.py --tag gatee_scheduler_3060 --target "RTX 3060" --cuda-device-id <physical-index> --start 0 --end 600 --env ROOP_UNIFIED_SCHEDULER=1
+```
+
+Record separate 3060 baseline/final rows for FPS, improvement, VRAM, RSS,
+CPU/GPU, decode, inference, enhancement, encode, latency, stability, and
+quality. Also verify the existing sub-7 GB single-context policy and strict
+RSS requirement. Do not advance Gate E's dual-target acceptance until this is
+done.
+
+Validation: focused scheduler/runtime tests `50 passed`; matched 4070 Gate E
+control and scheduler runs completed with zero wrong-faceset events; the
+immutable baseline remains unchanged. Run the full repository suite before
+the final release handoff.

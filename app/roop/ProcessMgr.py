@@ -37,8 +37,9 @@ from roop import recognizer_adaface as _ada
 from roop import live_preview as _live_preview
 from roop.procmgr_runtime import _PROFILE, _TRACK_VETO_DIST, _TRACK_VETO_MARGIN, _TRACK_VETO_SINGLE, _TRACK_EMB_MAX, _DEBUG_MATCH, COLOR_RESET, COLOR_CYAN, COLOR_YELLOW, _prof, _prof_report, _prof_reset, _gpu_guard, PROGRESS_BAR_FORMAT, wait_while_paused, ChunkedProgress, bar_write, publish_eta as _publish_eta, _audit_hit, audit_over_threshold as _audit_over_threshold, audit_frame_seen, audit_detect_frame_begin, audit_detect_miss, audit_face_begin, _audit_swapped_gapfill, _audit_reset, _audit_report, VETO_SOURCE_REUSED, VETO_SINGLE_ABS, VETO_OTHER_FITS, VETO_FAR_FROM_OWN, AUDIT_SWAP_MOVED, VERIFY_MIN_OFFAXIS, VERIFY_SWAP, set_runtime_monitor
 from roop.runtime_optimizer import RuntimeOptimizer, RuntimeMonitor, SafeAdaptiveController
+from roop.runtime_scheduler import UnifiedRuntimeScheduler
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from threading import Thread, Lock, local
+from threading import Thread, Lock, local, get_ident
 
 # Guards the one-time build of the expression restorer (see _expression_restorer).
 _EXPR_BUILD_LOCK = Lock()
@@ -514,6 +515,10 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
         # worker and writer code can keep a single cheap branch in normal runs.
         self._runtime_monitor = None
         self._runtime_adaptive = None
+        self._runtime_scheduler = None
+        self._runtime_scheduler_summary = None
+        self._runtime_read_queue = None
+        self._runtime_write_queue = None
         self._runtime_worker_busy = set()
         self._runtime_summary = None
         self.num_frames_no_face = 0
@@ -657,6 +662,8 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
             'input': depth(getattr(self, 'frames_queue', None)),
             'output': depth(getattr(self, 'processed_queue', None)),
         }
+        if not snapshot['input']:
+            snapshot['input'] = one(getattr(self, '_runtime_read_queue', None))
         if not snapshot['output']:
             snapshot['output'] = one(getattr(self, '_runtime_write_queue', None))
         return snapshot
@@ -664,6 +671,14 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
     def _runtime_adaptive_boundary(self):
         monitor = getattr(self, '_runtime_monitor', None)
         controller = getattr(self, '_runtime_adaptive', None)
+        scheduler = getattr(self, '_runtime_scheduler', None)
+        if scheduler is not None:
+            try:
+                scheduler.safe_boundary(self._runtime_queue_snapshot())
+            except Exception:
+                # Scheduler telemetry/admission is advisory; it must never
+                # change the established frame result or stop a render.
+                pass
         if monitor is None or controller is None or not monitor.enabled:
             return
         sample = monitor.record_frame(
@@ -1401,6 +1416,93 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                 pass
 
 
+    def _run_unified_scheduler(self, cap, awebp_frames, frame_start, frame_end,
+                               frame_count, progress_cb, threads):
+        """Run the safe frame-level decode/process/encode pipeline.
+
+        ``process_frame`` already contains the ordered preprocess, detection,
+        tracking, swap, enhancement, stabilization, and compositing work.  The
+        scheduler owns the boundaries around that operation and keeps decode
+        and encode asynchronous without splitting stateful model operations.
+        """
+        scheduler = self._runtime_scheduler
+        if scheduler is None:
+            raise RuntimeError('unified runtime scheduler is not initialized')
+        state = {'remaining': max(0, int(frame_count or 0)), 'next': 0}
+        state_lock = Lock()
+
+        if awebp_frames is not None:
+            frames = iter(awebp_frames[
+                frame_start:frame_end] if frame_end > frame_start
+                else awebp_frames[frame_start:])
+
+            def decode():
+                try:
+                    with state_lock:
+                        if state['remaining'] <= 0:
+                            return None
+                        state['remaining'] -= 1
+                    return next(frames)
+                except StopIteration:
+                    return None
+        else:
+            if frame_start > 0:
+                cap.set(cv2.CAP_PROP_POS_FRAMES, frame_start)
+
+            def decode():
+                with state_lock:
+                    if state['remaining'] <= 0:
+                        return None
+                    state['remaining'] -= 1
+                ret, frame = cap.read()
+                return frame if ret else None
+
+        def process(frame, frame_idx):
+            worker_id = get_ident()
+            self._runtime_worker_enter(worker_id)
+            try:
+                with _prof('frame_total'):
+                    if self.options.frame_processing:
+                        with _gpu_guard():
+                            result = frame
+                            for processor in self.processors:
+                                result = processor.Run(result)
+                            return result
+                    return self.process_frame(frame, frame_idx=frame_idx)
+            except RuntimeError as exc:
+                message = str(exc)
+                if 'CUDA' in message or 'cuda' in message or 'onnxruntime' in message.lower():
+                    bar_write('[ProcessMgr] scheduler GPU error on frame %s — '
+                              'writing original: %s' % (frame_idx, message[:200]))
+                    return frame
+                raise
+            finally:
+                self._runtime_worker_exit(worker_id)
+
+        def encode(frame, frame_idx):
+            if self.output_to_file:
+                self.videowriter.write_frame(frame)
+            if self.output_to_cam:
+                self.streamwriter.WriteToStream(frame)
+            # These caches are frame-lifetime resources.  Release each entry at
+            # the encode boundary so queue depth cannot retain the whole clip.
+            if self._temporal_faces is not None:
+                self._temporal_faces.pop(frame_idx, None)
+            if getattr(self, '_track_assignments', None) is not None:
+                self._track_assignments.pop(frame_idx, None)
+            if getattr(self, '_precomputed_kps', None) is not None:
+                self._precomputed_kps.pop(frame_idx, None)
+
+        def on_frame(_frame_idx):
+            self._runtime_adaptive_boundary()
+            if progress_cb:
+                progress_cb()
+
+        scheduler.run(decode, process, encode,
+                      should_continue=lambda: bool(roop.globals.processing),
+                      on_frame=on_frame, workers=threads)
+
+
     def run_batch_inmem(self, output_method, source_video, target_video, frame_start, frame_end, fps, threads:int = 1, skip_audio=False):
         # Stabilization scheduling (temporal smoothing needs frames in order; the
         # multithreaded reader strides them out-of-order):
@@ -1624,6 +1726,17 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
             self._runtime_face_concurrency = self.runtime_profile.tuning.face_concurrency
             self._runtime_in_flight_frames = self.runtime_profile.tuning.in_flight_frames
             self._runtime_ram_buffer_mb = self.runtime_profile.tuning.ram_buffer_mb
+            _scheduler_enabled = str(os.environ.get(
+                'ROOP_UNIFIED_SCHEDULER', '1')).strip().lower() not in (
+                    '0', 'false', 'no', 'off')
+            if _scheduler_enabled:
+                self._runtime_scheduler = UnifiedRuntimeScheduler(
+                    self.runtime_profile.hardware,
+                    self.runtime_profile.workload,
+                    self.runtime_profile.tuning,
+                    settings=getattr(roop.globals, 'CFG', None),
+                    monitor=None,
+                    adaptive=None)
             monitor_enabled = str(os.environ.get('ROOP_RUNTIME_MONITOR', '0')).strip().lower() in (
                 '1', 'true', 'yes', 'on')
             if monitor_enabled:
@@ -1633,6 +1746,11 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                     settings=getattr(roop.globals, 'CFG', None))
                 self._runtime_monitor.start()
                 set_runtime_monitor(self._runtime_monitor)
+                if self._runtime_scheduler is not None:
+                    # Keep the scheduler's optional rolling bottleneck
+                    # classifier connected to the same monitor that owns the
+                    # application's stage telemetry.
+                    self._runtime_scheduler.monitor = self._runtime_monitor
                 self._runtime_adaptive = SafeAdaptiveController(
                     self.runtime_profile.hardware, self.runtime_profile.tuning,
                     settings=getattr(roop.globals, 'CFG', None),
@@ -1887,7 +2005,34 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
 
         progress_bar_format = PROGRESS_BAR_FORMAT
         try:
-            if use_parallel_stab:
+            scheduler_enabled = str(os.environ.get(
+                'ROOP_UNIFIED_SCHEDULER', '1')).strip().lower() not in (
+                    '0', 'false', 'no', 'off')
+            use_unified_scheduler = bool(
+                scheduler_enabled and self._runtime_scheduler is not None and
+                self._runtime_scheduler.frame_pipeline_allowed(
+                    stateful_stabilization=use_parallel_stab) and
+                not use_parallel_stab)
+            if scheduler_enabled and self._runtime_scheduler is not None:
+                print('[RuntimeScheduler] unified coordinator ON: '
+                      f"mode={'frame' if use_unified_scheduler else 'ordered-chunk'}, "
+                      f"workers={threads}, queue={self._runtime_scheduler.queue_capacity}, "
+                      f"in_flight={self._runtime_scheduler.effective_inflight}", flush=True)
+            if use_unified_scheduler:
+                print('[RuntimeScheduler] unified frame pipeline ON: '
+                      f"workers={self._runtime_scheduler.worker_count}, "
+                      f"queue={self._runtime_scheduler.queue_capacity}, "
+                      f"in_flight={self._runtime_scheduler.effective_inflight}, "
+                      f"ram_budget={self._runtime_scheduler.budget.ram_budget_bytes // 2**20}MB",
+                      flush=True)
+                with ChunkedProgress(total=self.total_frames, desc='Processing',
+                                     unit='frames', dynamic_ncols=True,
+                                     bar_format=progress_bar_format) as progress:
+                    self._run_unified_scheduler(
+                        cap, awebp_frames, frame_start, frame_end, frame_count,
+                        progress_cb=lambda: self.update_progress(progress),
+                        threads=threads)
+            elif use_parallel_stab:
                 stab_threads = max(1, min(
                     threads, int(self._runtime_stab_workers or threads)))
                 _active = [n for n, w in (("kps", _want_kps_stab), ("enhancer", _want_enh_stab),
@@ -2000,6 +2145,16 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                 # writer must not leave a global timing hook attached to the
                 # next video run.
                 set_runtime_monitor(None)
+            if self._runtime_scheduler is not None:
+                self._runtime_scheduler_summary = self._runtime_scheduler.snapshot()
+                if self._runtime_monitor is not None and self._runtime_monitor.diagnostics:
+                    print('[RuntimeScheduler] summary=' + str({
+                        key: self._runtime_scheduler_summary.get(key) for key in (
+                            'decoded', 'processed', 'encoded', 'queue_capacity',
+                            'effective_inflight', 'max_queue_depths', 'bottleneck',
+                            'actions', 'errors')
+                    }), flush=True)
+                self._runtime_scheduler = None
         _prof_report()
         _audit_report()
 
@@ -2378,7 +2533,13 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
         # Queue(2): reader can pre-fill one extra chunk so GPU never waits.
         # Using 2 (not 1) also avoids deadlock on cancel — reader won't block
         # on put() if the consumer has stopped and we drain below before join().
-        prefetch_q = Queue(2)
+        # The unified scheduler owns this capacity from detected hardware and
+        # workload memory. The fallback only applies if profiling failed.
+        # Historical reference retained for the live-chunk contract:
+        # prefetch_q = Queue(2)
+        _scheduler_capacity = getattr(self._runtime_scheduler, 'queue_capacity', 2)
+        prefetch_q = Queue(max(1, int(_scheduler_capacity)))
+        self._runtime_read_queue = prefetch_q
 
         def _reader():
             # Everything below is wrapped so the sentinel in the finally is sent
@@ -2451,7 +2612,9 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
         # processing chunk N+1 instead of stalling between chunks.
         # Queue(1): one chunk can be in-flight; main blocks only when write is
         # slower than processing (correct back-pressure; prevents unbounded RAM).
-        _write_q = Queue(1)
+        _write_q = Queue(max(1, int(_scheduler_capacity)))
+        # Historical reference retained for the live-chunk contract:
+        # _write_q = Queue(1)
         # Expose it so runtime telemetry can report a real output-queue depth
         # on this path instead of the sequential path's absent queues.
         self._runtime_write_queue = _write_q
@@ -2696,6 +2859,8 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                 pass
             rt.join(timeout=5)
             self._parallel_stab = False
+            self._runtime_read_queue = None
+            self._runtime_write_queue = None
             for _a in ('kps', 'enh', 't'):
                 if hasattr(self._tls, _a):
                     delattr(self._tls, _a)

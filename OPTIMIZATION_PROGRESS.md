@@ -1531,3 +1531,84 @@ probed attributes EXIST so a renamed upstream API fails loudly instead of
 degrading to a negative. Full suite **1,440 tests, 1 skipped**, with 2
 pre-existing `test_nvdec_reader` ffmpeg-spawn environment errors that
 reproduce identically with these changes stashed.
+
+## Gate E unified CPU + RAM + GPU runtime scheduler - 2026-08-30
+
+Gate E is implemented in `app/roop/runtime_scheduler.py` and integrated at
+the `ProcessMgr` frame boundary. The coordinator owns bounded decode and
+encode queues, ordered output, worker admission, rolling CPU/RAM/VRAM/GPU
+signals, hysteretic future-work throttling, and safe-boundary control. It
+supports an asynchronous decode/process/encode frame pipeline for stateless
+work and an ordered-chunk control plane for temporal stabilization. Stateful
+stabilizers remain ordered for quality and use the scheduler's derived queue
+capacity and pressure controls.
+
+The memory estimate derives from resolution, three BGR channels, two host
+copies per frame, worker destinations, queue slots, in-flight frames, and the
+configured stabilization chunk. VRAM pressure only reduces future admission;
+active TensorRT/CUDA resources are never destroyed. Mutable OpenCV-owned
+frames are not copied into a pinned allocator without a safe ownership model,
+so pinned memory is explicitly reported as not used rather than assumed useful.
+
+### RTX 4070 physical result
+
+Both arms used `double/d4.mp4`, 1280x720, frames 0-600, RealSwap, GPEN 256
+Pro, RealityUX, all stabilizers and tracking, 10 requested threads, TensorRT,
+and `hevc_nvenc`. The control used `ROOP_UNIFIED_SCHEDULER=0`; the scheduler
+used `ROOP_UNIFIED_SCHEDULER=1` and selected ordered-chunk mode because temporal
+stabilizers were enabled.
+
+| Metric | Pre-scheduler control | Unified scheduler | Change |
+|---|---:|---:|---:|
+| End-to-end FPS | 11.00 | 11.11 | +1.0% |
+| Wall time (s) | 203.187 | 202.346 | -0.4% |
+| Peak / average VRAM (MB) | 6548 / 3640.584 | 6581 / 3637.348 | stable |
+| Peak / average RSS (GB) | 11.738 / 7.411 | 11.790 / 7.399 | stable |
+| Average CPU / peak (%) | 21.675 / 100.0 | 21.546 / 97.091 | stable |
+| Average GPU / peak (%) | 33.067 / 75.0 | 33.292 / 65.0 | stable |
+| Decode / swap / enhance / encode (FPS) | 260.87 / 22.12 / 41.58 / 618.56 | 301.51 / 22.92 / 42.06 / 576.92 | stage measurements |
+| Mean frame latency (ms) | 295.50 | 282.33 | -4.5% |
+| Wrong-faceset events | 0 | 0 | no regression |
+
+The live profile was NVIDIA GeForce RTX 4070, Ada Lovelace, SM 8.9,
+11.994 GB total VRAM, driver 616.56, CUDA 12.8, TensorRT 10.9.0.34, and
+ONNX Runtime 1.23.2, with NVDEC/NVENC available. This change is classified
+**D. NEUTRAL / modestly beneficial on RTX 4070**: it improves end-to-end
+throughput by 1.0% with stable resource and quality metrics, but it is not
+accepted as universal until the second target is physically measured.
+
+A separate 60-frame no-stabilizer run exercised the actual frame pipeline; the
+log selected `mode=frame`, with 8 workers, queue capacity 3, and 4 in-flight
+frames. It completed at 3.93 FPS with zero wrong-faceset events. This is branch
+and stability evidence, not a replacement for the 600-frame comparison.
+
+### RTX 3060 physical result: PENDING
+
+No physical RTX 3060 was available in this session. No RTX 3060 FPS, VRAM,
+CPU, GPU, quality, or stability result is fabricated, and no RTX 4070 queue,
+worker, context, stream, batch, precision, or cache result is copied to it.
+The runtime remains hardware-adaptive: profile keys include architecture,
+compute capability, model, VRAM tier, driver, CUDA, TensorRT, ONNX Runtime,
+precision, workload shape, and schedule inputs; the detected sub-7 GB policy
+continues to control single-context/safety behavior.
+
+Required physical validation on the RTX 3060 laptop, using its detected CUDA
+device index, is:
+
+```powershell
+Set-Location G:\pinokio\api\roop-ultimate\app
+& env\Scripts\python.exe tests\baseline_controlled.py --tag gatee_pre_scheduler_3060 --target "RTX 3060" --cuda-device-id <physical-index> --start 0 --end 600 --env ROOP_UNIFIED_SCHEDULER=0
+& env\Scripts\python.exe tests\baseline_controlled.py --tag gatee_scheduler_3060 --target "RTX 3060" --cuda-device-id <physical-index> --start 0 --end 600 --env ROOP_UNIFIED_SCHEDULER=1
+```
+
+Compare separate 3060 baseline/final FPS, improvement, peak/average VRAM,
+peak/average RSS, CPU/GPU utilization, decode, swap inference, enhancement,
+encode, latency, stability, output quality, and the strict sub-7 GB RSS gate.
+The frame-pipeline smoke uses the same pair with `--start 0 --end 60
+--stabilization-mode off`. Gate E cannot be marked beneficial on both targets
+until those measurements exist.
+
+Validation this session: focused scheduler/runtime tests `50 passed`; Python
+compilation passed; physical RTX 4070 control and scheduler comparison
+completed with zero wrong-faceset events. The immutable Phase 2 baseline is
+unchanged.

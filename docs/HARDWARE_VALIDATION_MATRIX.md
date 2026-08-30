@@ -1650,3 +1650,24 @@ The cache fingerprint accepts those fields without a GPU-family allowlist, so
 new runtime options are isolated rather than silently inheriting a legacy
 engine. Adding a new precision still requires an actual provider path and
 quality/performance validation.
+
+## Gate E unified scheduler - 2026-08-30
+
+The unified scheduler is hardware-profile driven and keeps independent runtime
+state for each GPU identity. It coordinates bounded queues, frame memory
+estimates, worker admission, VRAM/RAM pressure, CPU/GPU telemetry, and safe
+reconfiguration boundaries. Temporal stabilization uses ordered chunks when
+frame-level concurrency would change output ordering; stateless work can use
+the asynchronous decode/process/encode pipeline.
+
+| Target | Physical Gate E validation | Measured result | Acceptance |
+|---|---|---|---|
+| RTX 4070 | complete | 11.00 -> 11.11 FPS on matched 600-frame production A/B; peak VRAM 6548 -> 6581 MB; 0 wrong-faceset events in both | modestly beneficial on this target |
+| RTX 3060 | unavailable this session | **PENDING**; no FPS/resource/quality result fabricated | must be run independently |
+
+The 4070 hardware identity was Ada Lovelace / SM 8.9 / 11.994 GB, driver
+616.56, CUDA 12.8, TensorRT 10.9.0.34, and ONNX Runtime 1.23.2. The 3060
+profile remains separately keyed and its existing sub-7 GB safety/RSS rules
+remain in force. Required validation is the same `baseline_controlled.py`
+600-frame pre/post pair recorded in `OPTIMIZATION_PROGRESS.md`; no 4070
+configuration is silently reused on the 3060.

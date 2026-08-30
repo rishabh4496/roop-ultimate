@@ -397,6 +397,23 @@ def get_telemetry():
     if profile is not None:
         telemetry["hardware_profile"] = profile.as_dict()
 
+    # The unified scheduler is intentionally exposed as a snapshot rather than
+    # a second set of resource probes.  During a render this reports its
+    # bounded queues/admission and rolling actions; after cleanup it retains
+    # the last run summary for diagnosis without keeping runtime resources
+    # alive.
+    try:
+        from roop import core
+        manager = getattr(core, "process_mgr", None)
+        scheduler = getattr(manager, "_runtime_scheduler", None)
+        scheduler_summary = getattr(manager, "_runtime_scheduler_summary", None)
+        if scheduler is not None:
+            telemetry["runtime_scheduler"] = scheduler.snapshot()
+        elif scheduler_summary is not None:
+            telemetry["runtime_scheduler"] = dict(scheduler_summary)
+    except Exception:
+        pass
+
     # Free space on the output drive. A long render writes tens of GB of frames
     # and the failure mode when it runs out is losing the whole run at the encode
     # step, so it belongs next to the other run-limiting resources.

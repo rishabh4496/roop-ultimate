@@ -183,3 +183,19 @@ app\\env\\Scripts\\python.exe app\\tests\\two_face_video.py --tag phase4_correct
 The RTX 3060 Laptop row remains **PENDING**. Its prior strict Phase 4
 measurement was approximately 2.82–2.83 GB RSS and failed the required
 `<2.5 GB` gate; no RTX 4070 result is copied to that target.
+
+## Gate E supplemental 4070 comparison - 2026-08-30
+
+This is a supplemental scheduler A/B and does not alter the immutable locked
+baseline above. Both arms used the locked d4 1280x720 workload, frames 0-600,
+the production models/settings, and the same detected RTX 4070 software stack.
+
+| Target / arm | FPS | Peak / avg VRAM (MB) | Peak / avg RSS (GB) | Avg CPU / GPU (%) | Decode / swap / enhance / encode (FPS) | Latency (ms) | Quality |
+|---|---:|---:|---:|---:|---:|---:|---|
+| RTX 4070 pre-scheduler | 11.00 | 6548 / 3640.584 | 11.738 / 7.411 | 21.675 / 33.067 | 260.87 / 22.12 / 41.58 / 618.56 | 295.50 | 0 wrong-faceset |
+| RTX 4070 unified scheduler | 11.11 | 6581 / 3637.348 | 11.790 / 7.399 | 21.546 / 33.292 | 301.51 / 22.92 / 42.06 / 576.92 | 282.33 | 0 wrong-faceset |
+| RTX 3060 | **PENDING** | **PENDING** | **PENDING** | **PENDING** | **PENDING** | **PENDING** | physical validation unavailable |
+
+The measured 4070 change is +1.0% end-to-end FPS with stable resource use and
+no quality regression. It is not a universal dual-GPU acceptance until the
+physical RTX 3060 pair is run; the 3060 row remains independently pending.
