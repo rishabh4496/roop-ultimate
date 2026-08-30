@@ -1437,25 +1437,31 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                 else awebp_frames[frame_start:])
 
             def decode():
-                try:
-                    with state_lock:
-                        if state['remaining'] <= 0:
-                            return None
-                        state['remaining'] -= 1
-                    return next(frames)
-                except StopIteration:
-                    return None
+                # Instrumented like the sequential reader at _prof('decode') and
+                # the stabilization reader at the same name. Without this the
+                # scheduler's frame pipeline reports no decode stage at all, and
+                # Phase 13 reads the absence as "decode costs nothing".
+                with _prof('decode'):
+                    try:
+                        with state_lock:
+                            if state['remaining'] <= 0:
+                                return None
+                            state['remaining'] -= 1
+                        return next(frames)
+                    except StopIteration:
+                        return None
         else:
             if frame_start > 0:
                 cap.set(cv2.CAP_PROP_POS_FRAMES, frame_start)
 
             def decode():
-                with state_lock:
-                    if state['remaining'] <= 0:
-                        return None
-                    state['remaining'] -= 1
-                ret, frame = cap.read()
-                return frame if ret else None
+                with _prof('decode'):
+                    with state_lock:
+                        if state['remaining'] <= 0:
+                            return None
+                        state['remaining'] -= 1
+                    ret, frame = cap.read()
+                    return frame if ret else None
 
         def process(frame, frame_idx):
             worker_id = get_ident()
@@ -1480,10 +1486,17 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                 self._runtime_worker_exit(worker_id)
 
         def encode(frame, frame_idx):
-            if self.output_to_file:
-                self.videowriter.write_frame(frame)
-            if self.output_to_cam:
-                self.streamwriter.WriteToStream(frame)
+            # The encode stage MUST be timed here as well as in the scheduler's
+            # own record_stage(): that one feeds the runtime monitor, while
+            # ROOP_PROFILE -- which Phase 13's encoder table reads -- is fed only
+            # by _prof. With the scheduler defaulted on, every encoder metric in
+            # that table read 0.0/None while the sequential path reported 0.79s
+            # and 759 fps for the identical arm.
+            with _prof('encode'):
+                if self.output_to_file:
+                    self.videowriter.write_frame(frame)
+                if self.output_to_cam:
+                    self.streamwriter.WriteToStream(frame)
             # These caches are frame-lifetime resources.  Release each entry at
             # the encode boundary so queue depth cannot retain the whole clip.
             if self._temporal_faces is not None:

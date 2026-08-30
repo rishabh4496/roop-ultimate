@@ -214,6 +214,51 @@ def hardware_signature(hw=None):
     return ''
 
 
+def same_machine_signature(saved, current):
+    """Is `saved` this machine, written by an OLDER signature FORMAT?
+
+    WHY. `hardware_signature` gained fields over time (architecture, compute
+    capability, VRAM tier, driver, CUDA, TensorRT, ONNX Runtime). A config
+    written before that carries the short form, so a byte comparison against
+    the long form reports "different hardware" on the SAME GPU, every launch,
+    forever -- config.yaml is only rewritten on an explicit save, so it never
+    settles. Measured on the RTX 4070, 2026-08-31: the stored value was
+    `NVIDIA GeForce RTX 4070|12.0|32` against a computed `NVIDIA GeForce RTX
+    4070|Ada Lovelace|8.9|12.0|desktop|616.56|12.8|10.9.0.34|1.23.2|32`, so
+    every run re-derived the thread count and pool sizes and printed a hardware
+    change warning.
+
+    That is worse than noise. This alarm exists to catch a config COPIED TO
+    ANOTHER GPU -- the failure that shows up on a small card as a thrash which
+    looks like a hang. An alarm that is always on cannot report the event it
+    was written for.
+
+    The comparison is therefore made on what BOTH formats carry: the GPU model
+    (first field in every version) and system RAM (last field in every
+    version), plus the requirement that every field of the SHORTER signature
+    still appears in the longer one. Position is not assumed -- the current
+    format's second-to-last field is the ONNX Runtime version, not VRAM, so a
+    rule written as "the two trailing fields" is wrong on the very case this
+    function exists for.
+
+    Only a LENGTH difference takes this path. Two signatures of the same length
+    are compared strictly, so a driver or runtime change on one GPU still
+    reports as a change exactly as before.
+    """
+    saved_parts = [part for part in str(saved).split('|') if part != '']
+    current_parts = [part for part in str(current).split('|') if part != '']
+    if len(saved_parts) < 2 or len(current_parts) < 2:
+        return False
+    if len(saved_parts) == len(current_parts):
+        # Same format: any difference is a real difference.
+        return saved_parts == current_parts
+    if len(saved_parts) > len(current_parts):
+        saved_parts, current_parts = current_parts, saved_parts
+    return (saved_parts[0] == current_parts[0]
+            and saved_parts[-1] == current_parts[-1]
+            and set(saved_parts) <= set(current_parts))
+
+
 class Settings:
     def __init__(self, config_file):
         self.config_file = config_file
@@ -313,6 +358,15 @@ class Settings:
         _saved_sig = self.default_get(data, 'hardware_signature', '')
         self._hardware_changed = bool(_saved_sig) and bool(self.hardware_signature) \
             and _saved_sig != self.hardware_signature
+        # A config written by an OLDER SIGNATURE FORMAT is the same machine,
+        # not a new GPU. Without this the warning below fires on every launch
+        # and the re-derive never settles, so the alarm can no longer report
+        # the config-moved-to-another-GPU case it exists for.
+        self._hardware_signature_migrated = False
+        if self._hardware_changed and same_machine_signature(
+                _saved_sig, self.hardware_signature):
+            self._hardware_changed = False
+            self._hardware_signature_migrated = True
         if self._hardware_changed:
             print(f"[Hardware] this config was tuned on '{_saved_sig}' but this "
                   f"machine is '{self.hardware_signature}'. Re-deriving the "

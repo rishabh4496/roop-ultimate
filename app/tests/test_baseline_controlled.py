@@ -113,3 +113,37 @@ class AdaptiveDowngradeTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FixtureDeterminismTest(unittest.TestCase):
+    """The locked baseline's capture must not depend on machine speed.
+
+    The auto-capture scan used to be bounded by wall clock. On 2026-08-31 an
+    RTX 4070 counterbalanced set scanned 646/629/598/409 frames in the same
+    30-second box, and the short arm therefore selected seed frame 2930 with
+    separation 0.990 where every other arm selected 4930/1.039 -- a different
+    pair of source captures under the same fixture name. Across targets it is
+    worse: the 3060 is about half the speed, so it buys about half the scan.
+    """
+
+    def test_capture_frame_is_pinned_in_the_workload(self):
+        self.assertIn("capture_frame", bc.WORKLOAD)
+        self.assertIsInstance(bc.WORKLOAD["capture_frame"], int)
+        self.assertGreater(bc.WORKLOAD["capture_frame"], 0)
+
+    def test_harness_passes_an_explicit_capture_frame(self):
+        """Never `--capture -1`, and never a wall-clock budget beside it.
+
+        Asserted against the QUOTED CLI forms, so that prose explaining the
+        defect does not itself trip the guard -- the first version of this test
+        failed on its own comment.
+        """
+        with open(bc.__file__, encoding="utf-8") as fh:
+            source = fh.read()
+        self.assertNotIn('"--capture", "-1"', source)
+        self.assertNotIn('"--capture-budget"', source)
+        self.assertIn('"--capture", str(WORKLOAD["capture_frame"])', source)
+
+
+if __name__ == "__main__":
+    unittest.main()

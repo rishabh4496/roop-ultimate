@@ -69,6 +69,27 @@ WORKLOAD = {
     "expect": {"width": 1280, "height": 720},
     "start": 0,
     "end": 600,
+    # PINNED, and it must stay pinned. The auto-capture scan used to be bounded
+    # by WALL CLOCK (`--capture-budget 30`), so the fixture it produced was a
+    # function of how fast the machine happened to be at that moment:
+    #
+    #   arm 1  646 frames scanned in 30.0s -> seed 4930, separation 1.039
+    #   arm 2  629 frames scanned in 30.1s -> seed 4930, separation 1.039
+    #   arm 3  598 frames scanned in 30.1s -> seed 4930, separation 1.039
+    #   arm 4  409 frames scanned in 30.1s -> seed 2930, separation 0.990  <-- !
+    #
+    # (RTX 4070, 2026-08-31, four arms of one counterbalanced set.) A transient
+    # slowdown cut the scan short and silently changed WHICH SOURCE CAPTURES the
+    # baseline ran with, so that arm was not the same experiment as the other
+    # three -- a benchmark feeding back into its own fixture.
+    #
+    # It is worse across targets than within one: the 3060 is roughly 2x slower,
+    # so the same 30-second box buys it about half the scan, and the two GPUs
+    # could compare different captures while both reported the locked fixture.
+    #
+    # 6 of 7 arms chose 4930 whenever they were allowed to finish, so that is
+    # the scan's own answer, recorded rather than re-derived under a stopwatch.
+    "capture_frame": 4930,
     "reason": "d4 graded 100%/97% with zero wrong-faceset applications on "
               "2026-08-23; d1 (the previous fixture) is 0% gradeable for "
               "identity because both people overlap in every frame",
@@ -307,7 +328,7 @@ def main():
            "--video", args.video,
            "--sources", args.sources,
            "--start", str(args.start), "--end", str(args.end),
-           "--capture", "-1", "--capture-budget", "30",
+           "--capture", str(WORKLOAD["capture_frame"]),
            "--provider", provider,
            "--swap-model", str(cfg.swap_model),
            "--enhancer", args.enhancer,

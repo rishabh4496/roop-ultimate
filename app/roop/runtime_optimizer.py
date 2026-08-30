@@ -1747,7 +1747,24 @@ class RuntimeAutotuner:
 
     MAX_CANDIDATES = 12
     DEFAULT_WARMUP_FRAMES = 24
+    # Floor only. The ACCEPTANCE threshold is measured on the live machine at
+    # the start of every search -- see BASELINE_REPLICATES below -- because this
+    # constant alone cannot be right on two different targets.
+    #
+    # WHY, measured 2026-08-31 on the RTX 4070: two runs of this same
+    # deterministic search on the same machine four days apart returned
+    # "0.0%, promote nothing" and "+3.59%, promote trt_context_count=1". The
+    # twelve candidates of the second run spanned 5.45-5.77 fps, so its winner
+    # sat inside the run-to-run band and the promotion was noise. Worse, the
+    # setting it proposed halves a TensorRT context pool this project measured
+    # as worth +46% at 2. A fixed 1% cannot separate signal from noise on a rig
+    # whose spread is 1.6% at 60 frames, ~8% at 600, and ~15% on the 3060.
     MIN_IMPROVEMENT = 0.01
+    # How many times the unchanged baseline is re-measured before any candidate
+    # is tried. The observed spread across these becomes the acceptance
+    # threshold, so the search adapts to the noise of the machine it is on
+    # rather than to a constant chosen on one GPU.
+    BASELINE_REPLICATES = 3
 
     _SETTING_FOR_STAGE = {
         "backend_precision": ("provider", "trt_precision"),
@@ -1921,11 +1938,40 @@ class RuntimeAutotuner:
         best_measurement = safe_measure(current)
         best_score = self.score(best_measurement, hardware)
         tested.append(self._result(current, best_measurement, best_score))
+
+        # Measure THIS machine's run-to-run spread on the unchanged baseline,
+        # and require a candidate to beat it. Without this the search promotes
+        # whichever arm the noise favoured; see the MIN_IMPROVEMENT comment.
+        replicates = [(best_score, best_measurement)] if best_score > 0 else []
+        extra_replicates = 0
+        for _ in range(max(0, int(self.BASELINE_REPLICATES) - 1)):
+            extra_replicates += 1
+            replicate_measurement = safe_measure(current)
+            replicate_score = self.score(replicate_measurement, hardware)
+            tested.append(self._result(current, replicate_measurement,
+                                       replicate_score))
+            if replicate_score > 0:
+                replicates.append((replicate_score, replicate_measurement))
+        replicate_scores = [score for score, _ in replicates]
+        if len(replicate_scores) >= 2:
+            spread = (max(replicate_scores) - min(replicate_scores)) /                 max(1e-9, sum(replicate_scores) / len(replicate_scores))
+            # A candidate must beat the baseline's BEST showing, not its median:
+            # the baseline is what already ships, so any doubt resolves in its
+            # favour. The reported figures below use the median instead, so a
+            # search that promotes nothing reports no improvement.
+            replicates.sort(key=lambda item: item[0])
+            best_score = replicate_scores and max(replicate_scores) or best_score
+            baseline_score, baseline_measurement = replicates[len(replicates) // 2]
+        else:
+            spread = 0.0
+            baseline_score, baseline_measurement = best_score, best_measurement
+        min_improvement = max(float(self.MIN_IMPROVEMENT), float(spread))
+        best_measurement = baseline_measurement
         stage_order = ("backend_precision", "trt_concurrency", "batch_size",
                        "cpu_threading", "queue_buffer", "encoder")
         stagnant = 0
         for stage in stage_order:
-            if stagnant >= 2 or len(tested) >= len(candidates):
+            if stagnant >= 2 or len(tested) - extra_replicates >= len(candidates):
                 break
             stage_candidates = [item for item in candidates
                                 if item.get("stage") == stage]
@@ -1933,7 +1979,7 @@ class RuntimeAutotuner:
                 continue
             stage_improved = False
             for item in stage_candidates:
-                if len(tested) >= len(candidates):
+                if len(tested) - extra_replicates >= len(candidates):
                     break
                 trial = dict(best)
                 trial["stage"] = stage
@@ -1944,17 +1990,47 @@ class RuntimeAutotuner:
                 measurement = safe_measure(trial)
                 score = self.score(measurement, hardware)
                 tested.append(self._result(trial, measurement, score))
-                if score > best_score * (1.0 + self.MIN_IMPROVEMENT):
+                if score > best_score * (1.0 + min_improvement):
                     best, best_measurement, best_score = trial, measurement, score
                     stage_improved = True
             stagnant = 0 if stage_improved else stagnant + 1
 
+        # CONFIRMATION RUN. A three-sample spread under-estimates the real one
+        # (measured 2026-08-31 on the RTX 4070: replicates spanned 1.64% while
+        # the candidate population spanned 5.11-5.67 fps), so the winner is
+        # re-measured and must clear the bar a SECOND time. One extra run per
+        # search is the cheapest thing that separates "faster" from "was lucky",
+        # and it is what stopped this search promoting trt_context_count=1 --
+        # halving a pool this project measured as worth +46% at 2.
+        confirmation = None
+        if best is not current and best != current:
+            confirmation_measurement = safe_measure(best)
+            confirmation_score = self.score(confirmation_measurement, hardware)
+            tested.append(self._result(best, confirmation_measurement,
+                                       confirmation_score))
+            confirmed = confirmation_score > baseline_score * (1.0 + min_improvement)
+            confirmation = {
+                "fps": confirmation_measurement.end_to_end_fps,
+                "score": round(confirmation_score, 6),
+                "confirmed": bool(confirmed),
+            }
+            if not confirmed:
+                best, best_measurement = current, baseline_measurement
+                best_score = baseline_score
+
         tuning_values = {name: best[name] for name in RuntimeTuning.__dataclass_fields__
                          if name in best}
         tuning = RuntimeTuning(**tuning_values)
-        baseline_fps = tested[0]["measurement"]["end_to_end_fps"]
+        # The median of the baseline replicates, not the first one: with three
+        # runs of the same configuration the first is as likely as any other to
+        # be the slow one, and dividing by it manufactures an improvement.
+        baseline_fps = baseline_measurement.end_to_end_fps
         report = {
             "mode": "bounded_staged_warmup",
+            "baseline_replicates": len(replicate_scores),
+            "confirmation": confirmation,
+            "measured_noise_spread": round(spread, 6),
+            "min_improvement_used": round(min_improvement, 6),
             "warmup_frames": max(1, int(warmup_frames)),
             "candidate_budget": len(candidates),
             "candidates_tested": tested,
