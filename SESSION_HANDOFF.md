@@ -160,14 +160,33 @@ matrix is multiple 600-frame arms at ~3.4 fps.
 
 **Session:** 1
 
-**Current phase:** Gate D is **closed on the RTX 4070** and **pending on the
-RTX 3060**. Both GPU targets remain first-class. Nothing was promoted from
-Gate D: the measured outcome is that the shipped `auto` CPU policy is already
-the fastest of the four candidates on the 4070.
+**Current phase:** ALL PHASES AND GATES ARE NOW CLOSED ON THE RTX 4070.
+Gate E — the last gate — is closed by documented proof rather than by a
+promoted change. The RTX 3060 was validated in its own session (see
+`HARDWARE_VALIDATION_MATRIX.md`); its Gate E sweep is the one remaining
+cross-target item.
 
-Also closed this session: two capability probes that could never return a
-positive answer (display driver, FP8 exposure). See the dated section at the
-end of `OPTIMIZATION_PROGRESS.md`.
+**Nothing was promoted by Gate D, Phase 14 or Gate E.** All three measured
+NEUTRAL at production length, on both targets where both were run. The
+deliverables this session are the corrections, not a speedup:
+
+* Gate D: 120-frame CPU-policy results are warm-up artefacts. `p_only` reads
+  -10.7% at 120 frames and +1.4% at 600. The 3060 reached the same neutral
+  from +19.6%. The shipped `auto` default is confirmed on both.
+* Phase 14: 6.13 -> 6.13, 0.0%. OPEN defect: `MIN_IMPROVEMENT` is 1% against a
+  3.7%/~15% noise floor, and candidates are single uncounterbalanced 60-frame
+  runs.
+* Phase 15: five defects, each hiding the next, ending in the adaptive
+  controller being **unreachable on the production render path**. All fixed
+  and verified at 12.43 FPS with no regression.
+* Gate A: 12 findings, 9 fixed. Gate B: 9.62 -> 12.43 FPS (+29.2%), ceiling
+  40.7 FPS, synchronization-bound.
+* Gate E: 4/10/20 threads give 12.41/12.35/12.32 FPS — 0.7% across a 5x
+  range, with GPU flat at 28%. Nothing saturated, nothing scales.
+
+**The productive direction from here is removing work per face** (`mask`
+50.8 ms, `track_detect` 54.5 ms, `swap` 38.6 ms), not scheduling, contexts,
+threads or affinity — each of those is now measured as exhausted.
 
 ## GATE D CPU OPTIMIZATION CHECKPOINT
 

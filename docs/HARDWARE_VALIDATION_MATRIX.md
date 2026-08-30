@@ -1558,6 +1558,29 @@ re-run below rather than adjusted.
 parsed from the encoder's own line), but a short window amortises in-render
 warm-up less. 120-frame arms are comparable to each other, not to the baseline.
 
+## Gates A, B, E and Phase 14/15 — RTX 4070, 2026-08-30
+
+Full report: [`GATE_ABE_4070.md`](GATE_ABE_4070.md).
+
+| Gate / phase | RTX 3060 | RTX 4070 | Classification |
+|---|---|---|---|
+| Phase 14 autotuner | measured, 0.0% NEUTRAL | measured, 6.13 -> 6.13, **0.0% NEUTRAL** | **D. NEUTRAL on both**; nothing promoted |
+| Phase 15 monitoring | measured; aggregates dead, classifier wrong, adaptive inert | same defects reproduced and **FIXED**; verified 12.43 FPS with no regression | defects were **code**, not hardware — confirmed on both |
+| Gate A adversarial review | — | 12 findings; 9 capability/telemetry defects fixed, 2 method issues corrected, 1 open | see report |
+| Gate B ceiling analysis | pending | baseline 9.62 -> **12.43 FPS (+29.2%)**; ceiling 40.7 FPS; **synchronization-bound** | measured |
+| Gate E unified scheduler | pending the same sweep | **0.7% across a 5x worker range** (4/10/20 threads) | **D. NEUTRAL**; documented ceiling, nothing promoted |
+
+Gate E's headline: 4, 10 and 20 worker threads produce 12.41 / 12.35 / 12.32
+FPS with GPU flat at ~28%, CPU ~17.6%, VRAM ~6.4 GB of 12 GB and identical
+output (847/853 faces). Nothing is saturated and nothing scales, so the limit
+is a serialized per-face section that no scheduling arrangement widens.
+
+Phase 15's root cause is worth carrying forward: `_runtime_adaptive_boundary`,
+the only place the adaptive controller is consulted, existed only on the
+sequential encoder path while production renders through the parallel
+stabilization writer. The controller was never declining to act on either
+GPU — it was unreachable.
+
 ## Gate C: future-architecture readiness
 
 The runtime profiler is capability-driven. It records the detected GPU name,
