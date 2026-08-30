@@ -31,7 +31,7 @@ Per-phase state on the physically-present RTX 3060:
 | 13 — encoder / output | measured (300-frame segment arm only) |
 | 14 — runtime autotuner | measured, **0.0% improvement (NEUTRAL)**; search plan is not hardware-adaptive and the cached profile names an inadmissible backend — still pending on the 4070 |
 | 15 — runtime monitoring / adaptive control | measured; overhead NEUTRAL, per-stage telemetry good, but aggregate fields read 0/None and the bottleneck classifier is **wrong**; adaptive controller never acted so its safety is **untested** — still pending on the 4070 |
-| 16 — final integrated validation | largely measured: feature/codec/resolution/precision matrices, **all 14 enhancers**, toggles, and a 21-file integrity sweep. **4 enhancers FAIL and DMDNet errors** on this target. Remaining: mask/stabilization visual review, deadlock/leak soak |
+| 16 — final integrated validation | largely measured: feature/codec/resolution/precision matrices, **all 14 enhancers**, toggles, 21-file integrity sweep. The 4 CodeFormer-family failures are **FIXED**; DMDNet still errors. Remaining: mask/stabilization visual review, deadlock/leak soak |
 | Gate C — future-architecture readiness | measured; driver-identity cache defect found and fixed here |
 | Gate D — CPU optimization matrix | measured; promoted then reverted as neutral at production length |
 
@@ -731,7 +731,13 @@ command run in the foreground completes with exit 0 and the PASS above. The
 terminations were an artefact of the background-task invocation, not of the
 application. No 4K defect exists on this target.
 
-#### ENHANCER MATRIX (RTX 3060) — the CodeFormer family is BROKEN on this card
+#### ENHANCER MATRIX (RTX 3060) — the CodeFormer family WAS broken; FIXED 2026-08-30
+
+> **STATUS: RESOLVED.** The four failures below were root-caused to ORT's
+> `cudnn_conv_algo_search=HEURISTIC` and fixed by `roop/cudnn_algo.py`. All four
+> now PASS with zero GPU errors — see "The fix" at the end of this section. The
+> failing table is kept because the *reason* it was invisible is the reusable
+> lesson.
 
 `tests/compat_one.py`, 60-frame 1080p fixture, fp16, no mask, one source.
 **`ROOP_SMALL_CARD_ENHANCER=keep` was required**, because the sub-7GB RSS gate
@@ -798,9 +804,74 @@ VQGAN-style conv block family. The GPEN line and GFPGAN are unaffected.
 3. **It is target-specific.** The 4070 ran UltraMax end to end in its Phase 16
    postprocess-heavy arm at 3.58 fps with 0 wrong-faceset applications.
 
-**Classification: E — REGRESSION ON ONE GPU.** The CodeFormer family must not be
-offered as a working option on this target, and no cross-target enhancer claim
-may be made from the 4070's UltraMax rows.
+**Classification at discovery: E — REGRESSION ON ONE GPU.** Now resolved; see
+below.
+
+#### THE FIX: `cudnn_conv_algo_search`, probed per model on the live device
+
+**Root cause.** The render log only ever showed `GRAPH_EXECUTION_FAILED`
+(conv.cc:485). Reproducing the model standalone surfaced the *primary* error
+one line earlier:
+
+    CUDNN_FE failure 8: HEURISTIC_QUERY_FAILED
+      conv.cc:225  expr = s_.cudnn_fe_graph->create_execution_plans({heur_mode})
+
+It is a conv **planning** failure, not an execution fault. `heur_mode` comes
+from `cudnn_conv_algo_search`, which `core.py` sets globally to `HEURISTIC`.
+`EXHAUSTIVE` fails identically (also a cuDNN frontend path);
+`cudnn_conv_use_max_workspace=0` does **not** help, so it was never a workspace
+or VRAM-size problem. Only `DEFAULT` (the legacy non-frontend path) works.
+
+**Why the fix is per-model and probed, not global.** `HEURISTIC` is much faster
+for every model that can use it, so switching globally would have been a severe
+regression:
+
+| Model | HEURISTIC | DEFAULT | Delta |
+|---|---:|---:|---:|
+| hyperswap_1a_256 (the swapper) | 24.1 ms | 82.2 ms | **+241%** |
+| GFPGANv1.4 | 83.6 ms | 175.1 ms | +110% |
+| GPEN-BFR-512 | 185.5 ms | 387.4 ms | +109% |
+| gpen_bfr_256 | 25.3 ms | 49.4 ms | +96% |
+| retinaface_r50 | 7.5 ms | 12.1 ms | +61% |
+| xseg | 23.6 ms | 36.7 ms | +55% |
+| **codeformer.fp16** | **RUN-FAIL** | 316.6 ms | only working mode |
+| **restoreformer++** | 1815.3 ms | 346.0 ms | **-81%, also faster** |
+
+`roop/cudnn_algo.py` therefore probes only the four suspect model keys **once on
+the live device**, caches the verdict under the same GPU/driver/CUDA/ORT
+identity as the engine cache, and lowers only those models to `DEFAULT`.
+A device where `HEURISTIC` works keeps it and is untouched — so **the RTX 4070,
+which runs UltraMax today, cannot be regressed by this change.** Applied
+centrally in `precision_policy.providers_for`, so all processors are covered
+without touching 31 session-construction sites.
+
+**Verified on hardware, 60-frame 1080p fixture, `ROOP_SMALL_CARD_ENHANCER=keep`:**
+
+| Enhancer | Before | After |
+|---|---|---|
+| Codeformer | 60/60 GPU errors, FAIL, id 0.961 | **0 errors, PASS, id 0.464** |
+| Codeformer (fp16) | 60/60 GPU errors, FAIL, id 0.961 | **0 errors, PASS, id 0.460** |
+| UltraMax | 60/60 GPU errors, FAIL, id 0.961 | **0 errors, PASS, id 0.454** |
+| Restoreformer++ | 60/60 GPU errors, FAIL, id 0.961 | **0 errors, PASS, id 0.413** |
+
+Identity moves from 0.961 (the untouched original frame) into the healthy
+0.41-0.46 band, i.e. the faces are actually being swapped and enhanced.
+
+**No regression.** GPEN 256 Pro / GPEN Realistic / GPEN 1024 / GFPGAN all still
+PASS with 0 errors, and the locked-fixture end-to-end baseline reads **3.22 fps
+against this session's earlier same-config arms at 3.24 / 3.20 / 3.14 / 3.26**,
+with an unchanged 326/326 faces and 0 wrong-faceset.
+
+**A trap worth keeping:** the first version of the probe recorded nothing,
+because ORT *automatically re-initialises a failing CUDA EP on the CPU EP*, and
+the exception that finally surfaces is whatever the CPU path then hits — for
+`codeformer.fp16`, an unrelated `SimplifiedLayerNormFusion` graph error. The
+cuDNN signature never reached the matcher. The probe now calls
+`disable_fallback()` so the original EP error propagates.
+
+**Still open and NOT fixed here:** `DMDNet` remains broken with a different
+defect (`TypeError: 'NoneType' object is not subscriptable`, 17 GPU errors). It
+is not a cuDNN frontend failure and the probe deliberately does not claim it.
 
 **Coverage is complete — 14 of 14 known enhancer names.** Nine pass, four fail
 with the shared CUDNN signature, and DMDNet raises an unhandled `TypeError`.
@@ -818,7 +889,7 @@ prevented a false PASS of the precise kind that invalidated four earlier benches
 | 720p multi-face baseline / stabilization / mask / color / heavy | **measured above** |
 | Codec: libx264 / h264_nvenc / hevc_nvenc, 120-frame segment | **measured above** |
 | 1080p FP32 / mixed and 4K FP16 smoke | **measured below** |
-| Enhancer matrix: GPEN variants, UltraMax, CodeFormer, GFPGAN, Restoreformer++ | **measured below — 4 of 9 are BROKEN on this target** |
+| Enhancer matrix: all 14 names | **measured below**; 4 CodeFormer-family failures **root-caused and FIXED** 2026-08-30, DMDNet still broken (different defect) |
 | temporal detection / NVDEC OFF-ON | **measured below** |
 | NVENC OFF-ON | covered by the codec matrix above (libx264 vs the two NVENC encoders) |
 | CPU/P/E/GPU/VRAM/RAM/queues/transfers/synchronization | partial — Phase 15 showed the monitor's queue/worker/GPU aggregates read 0/None on this target |

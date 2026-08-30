@@ -390,14 +390,38 @@ def providers_for(model_key: str, providers, model_path: str | None = None,
         # revisions.
         write_decision_cache(decision)
     if not decision.trt_enabled:
-        return list(providers or ()), decision
+        return _cudnn_algo(model_key, model_path, providers, device_id), decision
     if decision.policy.trt_supported == "no":
-        return _without_trt(providers), decision
+        return _cudnn_algo(model_key, model_path, _without_trt(providers),
+                           device_id), decision
     if decision.effective == "fp32":
-        return _force_fp32(providers, decision.model), decision
+        return _cudnn_algo(model_key, model_path,
+                           _force_fp32(providers, decision.model),
+                           device_id), decision
     if decision.effective == "bf16":
-        return _enable_bf16(providers, decision.model), decision
-    return list(providers or ()), decision
+        return _cudnn_algo(model_key, model_path,
+                           _enable_bf16(providers, decision.model),
+                           device_id), decision
+    return _cudnn_algo(model_key, model_path, providers, device_id), decision
+
+
+def _cudnn_algo(model_key, model_path, providers, device_id=0):
+    """Apply the device-verified per-model cuDNN conv algo policy.
+
+    Only models in `cudnn_algo.SUSPECT_MODEL_KEYS` are ever probed, and the
+    probe only *lowers* a model to DEFAULT when the cuDNN frontend genuinely
+    fails on this device. Everything else keeps core.py's global HEURISTIC
+    untouched, which matters because HEURISTIC is 1.5-3.4x faster for every
+    model that can use it. See roop/cudnn_algo.py for the measurements.
+    """
+    try:
+        from roop import cudnn_algo
+        algo = cudnn_algo.probe(model_key, model_path, providers,
+                                device_id=device_id)
+        return cudnn_algo.apply_algo(providers, algo)
+    except Exception:
+        # The policy is an optimisation guard, never a reason to fail a build.
+        return list(providers or ())
 
 
 def write_decision_cache(decision: PrecisionDecision, directory: str | None = None) -> str:
