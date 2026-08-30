@@ -7,13 +7,42 @@ not used as a profile identity.
 
 ## Current validation state
 
-- RTX 4070: physically available in earlier sessions (`nvidia-smi` reported
-  12,282 MiB total and driver 610.88). NOT present in the 2026-08-29 or later
-  sessions recorded below.
+- RTX 4070: **physically present and detected** in the 2026-08-30 and
+  2026-08-31 sessions (`nvidia-smi` reports 12,282 MiB total and driver
+  616.56). Its per-phase state is the table below; the "not present in
+  2026-08-29 or later sessions" note that used to stand here was already
+  false when Gates A, B and E were measured on it.
 - RTX 3060: **physically present and detected** since 2026-08-29 (`nvidia-smi`
   reports 6,144 MiB total and driver 616.56). The locked fixture was replicated
   to this machine mid-session, so its acceptance rows are now **measured**, not
   pending. No 4070 value is copied into any 3060 table.
+
+Per-phase state on the physically-present RTX 4070 (2026-08-31):
+
+| Phase / gate | 4070 state |
+|---|---|
+| 2 — controlled baseline | measured; locked at 9.62 FPS, re-confirmed across 22 arms |
+| 3-11 | measured 2026-08-29 (Phases 0-10 closure, Phase 11 re-measurement) |
+| 12 — stabilization / compositing | **re-measured 2026-08-31 at 600 frames.** The large effect reproduces (postprocess-heavy -51.4% vs -53.0%); the three small rows do NOT reproduce and are below this rig's resolution |
+| 13 — encoder / output | **re-measured 2026-08-31, 600 frames, both codec orders.** hevc_nvenc > h264_nvenc > libx264 in BOTH directions, +15.1% / +11.8% over libx264. The old 120-frame table is withdrawn: its rows were monotonic in run order |
+| 14 — runtime autotuner | **measured; the open defect is FIXED.** The threshold is now derived from baseline replicates on the live machine, plus a confirmation run. Post-fix: 5.42 -> 5.42, 0.0%, nothing promoted |
+| 15 — runtime monitoring | measured 2026-08-30; five defects found and fixed, verified 12.43 FPS with no regression |
+| 16 — final integrated validation | codec and feature matrices superseded by the 600-frame Phases 12/13 above; enhancer acceptance sweep 2026-08-31; visual review and soak still open |
+| Gate A | 12 findings; **finding 12, the last open one, is now closed** |
+| Gate B — ceiling analysis | measured; 9.62 -> 12.43 FPS, ceiling 40.7, synchronization-bound |
+| Gate C — future-architecture readiness | measured; FP8 exposure probe corrected |
+| Gate D — CPU optimization matrix | measured at 600 frames, counterbalanced; NEUTRAL, `auto` retained |
+| Gate E — worker sweep | measured; 0.7% across a 5x worker range |
+| Gate E — unified scheduler | **measured 2026-08-31, order-balanced over 22 arms: NEUTRAL at best (-3.7%, p~0.16).** The recorded +1.0% does not reproduce |
+
+**This machine's measurement resolution, established 2026-08-31.** Three
+identical arms early in a session agree to 4%, but a 20-minute set spreads
+~8% and one disturbed arm reached -34%. Effects below roughly 10% are
+therefore NOT resolvable here by single arms, in either direction. Anything
+smaller needs order-balanced pairs repeated across sets; a 1% effect would
+need about 25 arms per side, roughly three hours per arm. Read every recorded
+sub-10% number on this target as "not separated from noise" unless it was
+measured that way.
 
 Per-phase state on the physically-present RTX 3060:
 
@@ -252,7 +281,31 @@ RTX 3060 matrix was **subsequently measured on the physical laptop** — see
 below, which is the authoritative 3060 table. No 3060 value is inferred from
 the 4070.
 
-### RTX 4070 Phase 12 results
+### RTX 4070 Phase 12 results — REPRODUCED 2026-08-31
+
+Re-run at the same 600 frames with the profiling fix in place. **The one
+large effect reproduces; none of the three small ones do.**
+
+| configuration | recorded | 2026-08-31 | agreement |
+|---|---:|---:|---|
+| baseline | 16.06 | 17.39 | +8.3% |
+| stabilization ON | 13.88 (-13.57%) | 16.78 (**-3.51%**) | ✗ 10 points apart |
+| mask ON | 14.90 (-7.22%) | 15.24 (**-12.36%**) | ✗ 5 points apart |
+| color ON | 15.96 (-0.62%) | 17.53 (**+0.81%**) | ✗ sign flip |
+| postprocess heavy | 7.55 (-52.99%) | 8.46 (**-51.35%**) | ✓ reproduces |
+
+Zero wrong-faceset in every arm, both times. Stabilization and mask
+effectively swapped places and colour flipped sign, all within this rig's
+~8% spread, so those three rows must not be quoted as percentages to two
+decimals. The postprocess-heavy row is real and large.
+
+Decode throughput on the frame-pipeline arms now reads 1,093-1,307 FPS where
+the pre-scheduler record had 184-230: the scheduler's asynchronous decode
+genuinely is several times faster in isolation, and end-to-end throughput
+still does not move, because decode is 0.4% of the run. A clean confirmation
+that removing work from a stage that is not the constraint buys nothing.
+
+### RTX 4070 Phase 12 results (original)
 
 All rows use the same 600-frame `d4.mp4` fixture, TensorRT, and detected
 hardware profile. Inference/enhancement throughput is faces per second;
@@ -305,7 +358,51 @@ available. Automated identity checks found zero wrong-face applications and
 all outputs had 120/120 frames; visual quality still requires manual review.
 The baseline FPS is the same 7.72 FPS render arm for each row.
 
-### RTX 4070 Phase 13 results
+### RTX 4070 Phase 13 results — RE-MEASURED 2026-08-31 at 600 frames
+
+**The 120-frame table below is WITHDRAWN.** Two things were wrong with it.
+Its absolute values were roughly half the production-length ones (7.72-9.03
+against 15.14-18.24), which is Gate A finding 10 reproducing on a third
+phase. And its six rows were **monotonically increasing in run order**
+(7.72, 7.96, 8.08, 8.16, 8.35, 9.03) -- the signature of warm-up, not of a
+codec ranking, because the codecs were tried worst-to-best in that same order.
+
+Re-measured as twelve arms: every codec at both segment sizes, once with the
+codecs in forward order and once reversed.
+
+| codec | FWD auto | FWD seg600 | REV auto | REV seg600 | mean | vs libx264 |
+|---|---:|---:|---:|---:|---:|---:|
+| libx264 | 15.35 | 15.45 | 15.14 | 15.38 | **15.33** | — |
+| h264_nvenc | 17.29 | 17.69 | 16.77 | 16.82 | **17.14** | **+11.8%** |
+| hevc_nvenc | 18.16 | 18.24 | 17.06 | 17.14 | **17.65** | **+15.1%** |
+
+**The ranking is identical in both directions**, and the decisive comparison
+is inside the reversed pass: `hevc_nvenc` ran FIRST there -- the
+position-penalised slot -- and still beat `libx264` running last by 13%. So
+unlike Gate E, this effect is larger than the position noise on this rig.
+`config.yaml` already specifies `hevc_nvenc`; this validates that choice
+rather than proposing one.
+
+Segment size is a much smaller effect than the old table implied: seg600 beat
+`auto` in 6 of 6 comparisons but by only **+1.0%** on average, against the
+16.97% the withdrawn table attributed to the 120-frame rotation arm.
+
+**A defect found by re-running this phase.** Every encoder metric in the
+twelve arms read `encode_write_seconds: 0.0`, `encode_throughput_fps: None`,
+`rotation_count: None`. Phase 13's own subject was unmeasured. The unified
+runtime scheduler, defaulted on in `6f29c1d`, takes over the frame pipeline
+when stabilizers are off -- which is Phase 13's configuration -- and its
+frame path had neither `_prof('decode')` nor `_prof('encode')`, both of which
+the sequential and parallel-stabilization paths carry. One arm each way, same
+codec and frame count, settles it:
+
+| `ROOP_UNIFIED_SCHEDULER` | fps | encode_write | encode_share | encode_throughput | rotations |
+|---|---:|---:|---:|---:|---:|
+| 0 (off) | 17.51 | 0.79 s | 0.47% | 759.5 fps | 1 |
+| 1 (default, before the fix) | 17.06-18.16 | 0.0 | 0.0 | None | None |
+| 1 (default, after the fix) | 16.87 | 0.60 s | 0.37% | 1000.0 fps | 1 |
+
+### RTX 4070 Phase 13 results (WITHDRAWN 120-frame table, kept for the record)
 
 | Codec | Segment frames | Final FPS | Improvement | Encode write/finalize s | Encode share | Encode FPS | Rotations | Peak/avg VRAM MB | CPU mean % | GPU mean % | Latency ms | Stability | Quality |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---|
@@ -434,13 +531,38 @@ precision/context candidates on that tier so its bounded search reaches the
 workload, CPU, queue, and encoder dimensions that can actually execute. A new
 physical RTX 3060 run is still required before claiming a Phase 14 result.
 
-### RTX 4070 Phase 14
+### RTX 4070 Phase 14 — MEASURED 2026-08-31, and the search was riding noise
 
 | Result | Status |
 |---|---|
-| Runtime profile / candidate search | pending physical autotune run |
-| Selected configuration / best FPS / baseline FPS | pending |
-| VRAM / RAM / CPU / GPU | pending |
+| Runtime profile / candidate search | measured; bounded staged warm-up, 12 candidates |
+| Selected configuration | **nothing promoted** after the fix; `trt_context_count` stays at 2 |
+| Best / baseline FPS | 5.42 / 5.42 -> **0.0%** |
+| VRAM / RAM / CPU / GPU | peak 6,500 MB / 24.64 GB / 20.6% mean / 19.9% mean |
+
+**Before the fix the same search promoted noise.** Two runs of this
+deterministic search on this GPU returned "0.0%, promote nothing"
+(2026-08-30) and "+3.59%, promote `trt_context_count: 1`" (2026-08-31).
+The twelve candidates of the second run spanned 5.45-5.77 FPS, so its
+winner sat inside the run-to-run band -- and the setting it proposed halves
+a TensorRT context pool this project measured as worth +46% at 2.
+
+`RuntimeAutotuner.MIN_IMPROVEMENT` was a fixed 1% against a spread of 1.6%
+at 60 frames, ~8% at 600 here, and ~15% on the 3060 (Gate A finding 12,
+previously OPEN). Three changes close it:
+
+* the acceptance threshold is **measured on the live machine** from
+  `BASELINE_REPLICATES = 3` runs of the unchanged baseline, so it adapts to
+  the target rather than to a constant chosen on one GPU;
+* a candidate must beat the baseline's **best** replicate, so the shipping
+  configuration wins ties;
+* the winner is **re-measured once** and must clear the bar again. The
+  replicate spread is itself noisy -- it read 1.64% on one run and 3.92% on
+  the next -- so the confirmation run, not the spread, is the second gate.
+
+`improvement_pct` also used to divide by the FIRST baseline run, which
+manufactures an improvement whenever that run happens to be the slow one; it
+now uses the median replicate. Guarded by `tests/test_autotuner_noise_floor.py`.
 
 Run the exact bounded retune on each available target; these commands do not
 rewrite the saved configuration, and the 3060 command must not be run against
@@ -549,14 +671,22 @@ before these code-level corrections are accepted as a measured Phase 15 result.
 | Bottleneck classification | **WRONG** (`I/O-bound` on a GPU-bound pipeline) |
 | Adaptive control stability | **UNTESTED** — controller never acted |
 
-### RTX 4070 Phase 15
+### RTX 4070 Phase 15 — MEASURED 2026-08-30
 
-| Metric | Status |
+Five defects were found and fixed on this target; see
+[`GATE_ABE_4070.md`](GATE_ABE_4070.md) for the full account. The root cause
+was that `_runtime_adaptive_boundary` -- the only place the adaptive
+controller is consulted -- was wired into the sequential encoder loop while
+production renders through the parallel stabilization writer, so the
+controller was unreachable rather than declining to act.
+
+| Metric | Result after the fixes |
 |---|---|
-| End-to-end/stage FPS and latency | pending physical validation |
-| CPU/P-core/E-core/GPU utilization | pending physical validation |
-| VRAM/RAM, queues, worker utilization | pending physical validation |
-| Bottleneck classification and adaptive stability | pending physical validation |
+| End-to-end/stage FPS and latency | 12.43 FPS at 600 frames, no regression; monitor reports 12.55 |
+| CPU / GPU utilization | 9.6% (was a dead 0.0) / 38.1% (was a permanent None) |
+| VRAM / RAM, queues, worker utilization | live; queue depths now read the parallel writer's queues |
+| Bottleneck classification | **synchronization-bound** (was a defaulted "I/O-bound") |
+| Adaptive stability | 847/853 faces, no regression |
 
 Use separate reports and profile keys for the two GPUs; do not combine their
 FPS or resource values into an average.
@@ -617,7 +747,94 @@ GPU utilization and 24.590% mean CPU utilization for the corresponding run.
 The monitor's own CPU/GPU fields were unavailable on this host, so they are
 not substituted with estimates.
 
-### RTX 4070: enhancer and feature-toggle coverage
+### RTX 4070: enhancer acceptance — ALL 13 MEASURED 2026-08-31
+
+Every enhancer the app offers, rendered end to end on the locked 600-frame
+fixture with nothing changed but the enhancer. All exited 0 with **zero
+wrong-faceset**, and each one is confirmed to have actually EXECUTED -- the
+`enhance` stage shows one call per swapped face, and `None` correctly has no
+such stage. That check matters here: the 2026-08-30 3060 session found four
+enhancers failing on every frame while the swap audit still read 100%,
+because the audit counts intent, not outcome.
+
+| enhancer | fps | ms/face | peak VRAM | swapped / seen |
+|---|---:|---:|---:|---|
+| None | 13.08 | — | 6,269 MB | 824 / 841 |
+| GPEN 256 | 11.00 | 14.3 | 6,624 MB | 822 / 839 |
+| GPEN 256 Pro | 9.59 | 27.4 | 7,317 MB | 820 / 837 |
+| GPEN | 9.20 | 51.7 | 7,435 MB | 820 / 837 |
+| Codeformer (fp16) | 8.76 | 74.7 | 7,331 MB | 820 / 837 |
+| Codeformer | 8.76 | 63.2 | 7,353 MB | 820 / 837 |
+| Restoreformer++ | 8.73 | 66.0 | 7,728 MB | 820 / 837 |
+| GPEN Realistic | 8.67 | 51.5 | 8,752 MB | 820 / 837 |
+| GFPGAN | 8.39 | 73.3 | 7,128 MB | 820 / 837 |
+| UltraMax | 7.33 | 172.6 | 7,280 MB | 819 / 836 |
+| GPEN 1024 | 5.08 | 171.6 | 8,490 MB | 819 / 836 |
+| DMDNet | 3.94 | 919.8 | 9,448 MB | 819 / 836 |
+| GPEN 2048 | 2.27 | 438.2 | 9,126 MB | 819 / 836 |
+
+Peak VRAM stayed between 6.3 and 9.4 GB of 12 GB for every enhancer, so none
+of them reaches the thrash regime on this card.
+
+**DMDNet is NOT broken on this target.** It ran clean -- rc 0, 819/836
+swapped, no `TypeError`, no GPU errors -- at 919.8 ms/face. The open item
+inherited from 2026-08-30 is **RTX 3060-specific** and must be recorded as
+such rather than as a project-wide defect. There is no enhancer compatibility
+gap at all on the 4070.
+
+**UltraMax costs about twice the network it wraps, end to end.** Confirmed
+order-balanced against GPEN 256 Pro:
+
+| pair | order | UltraMax | GPEN 256 Pro | GPEN advantage |
+|---|---|---:|---:|---:|
+| 1 | UltraMax first | 8.73 | 12.26 | +40.4% |
+| 2 | GPEN first | 8.51 | 11.73 | +37.8% |
+
+Both orders agree, far outside this rig's ~8% spread. Per face it is 146.6 -
+149.3 ms against GPEN 256 Pro's 19.6 - 20.3 ms, and against the 74.7 ms of
+the `Codeformer (fp16)` it runs internally. The recorded "1.209x faster than
+Codeformer, 28.68 ms/face" came from an ISOLATED per-face bench; in the
+pipeline UltraMax additionally runs `_protect_swapped_eyes` and the
+chrominance transfer, host work previously measured at ~49.5 ms and recorded
+as "57% of the processor". This is the first end-to-end confirmation of that
+cost. `config.yaml` on this machine still selects UltraMax.
+
+### RTX 4070: deadlock / leak soak — 2026-08-31
+
+A single 3,000-frame render, five times the acceptance window.
+
+| Metric | 600 frames | 3,000 frames |
+|---|---:|---:|
+| Return code | 0 | **0** |
+| Processing FPS | 10.46 | **11.99** |
+| Peak / mean host RSS | 11.629 / 7.397 GB | **13.056 / 9.253 GB** |
+| Peak VRAM | 7,410 MB | **7,744 MB** |
+| Output integrity | PASS | **PASS**, 3000/3000 frames |
+
+**No deadlock and no stall**: the run completed cleanly, and throughput was
+HIGHER over the longer window (11.99 vs 10.46) because start-up amortises --
+the same effect that makes 120-frame arms unusable.
+
+**Memory growth is sublinear but not zero.** Five times the frames cost +1.43
+GB peak RSS and +334 MB VRAM, so nothing grows per-frame the way the
+2026-08-26 leak did (9.3 -> 15.9 GB on one render). That is consistent with
+the leak being closed, but it is NOT proof at production length: the renders
+that originally exposed it were 40,000-66,000 frames. **The soak row is
+recorded as PASS at 3,000 frames and still owed at production length.**
+
+Also observed on this longer window: 239 of 3,744 frames (6.4%) had no face
+detected at all -- the detector losing the face rather than a gate refusing
+it. The long-standing "15% no-face rate" item, reproducing here at 6.4% on
+this clip against 22.2% recorded on the 3060.
+
+### RTX 4070: output integrity — 44 of 44 PASS
+
+Every video rendered in the 2026-08-31 session, checked with
+`tests/phase16_integrity.py`: **zero black frames, zero uniform frames, zero
+NaN, zero duplicated frames**, cadence intact, across all 13 enhancers, the
+enhancer confirmation pairs and every scheduler arm.
+
+### RTX 4070: feature-toggle coverage (superseded rows)
 
 The final integrated render arms directly exercised no enhancer and UltraMax
 (the postprocess-heavy arm). The other discovered enhancers have existing

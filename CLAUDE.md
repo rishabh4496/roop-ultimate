@@ -2148,3 +2148,187 @@ probed via `BuilderFlag.FP8` + `DataType.FP8` + compute capability >= 8.9; this
    the one taken earlier in this session. One line to flip if wanted.
 4. Inherited and untouched: DMDNet still broken, Phase 3's RSS gate still fails
    at 3.73 GB, mask/stabilization visual review and the deadlock/leak soak.
+
+---
+
+## Session Log (2026-08-31): Everything Measured On The 4070 Was Re-Measured, And The Rig's Own Resolution Turned Out To Be The Finding
+
+Run on the MAIN device (RTX 4070, driver 616.56, 32 GB RAM). Commit `83a0359`
+and the follow-up. Suite **1490 green**, 1 skipped, plus the 2 pre-existing
+`test_nvdec_reader` ffmpeg-spawn environment errors. 40+ renders of the locked
+600-frame fixture. Full tables in `docs/HARDWARE_VALIDATION_MATRIX.md`;
+second-GPU instructions in `docs/SECOND_GPU_VALIDATION.md`.
+
+### 0. THE RULE THIS SESSION ADDS: measure the rig before believing the result
+
+**This machine resolves ~50% effects reliably and ~5% effects not at all.**
+Three identical arms early in a session agree to 4% (10.46 / 10.06 / 10.46),
+a 20-minute set spreads ~8%, and one disturbed arm fell 34%. That is not the
+3.7% the project had been assuming.
+
+So the FIRST thing any A/B on this box needs is a null control -- the same
+configuration two or three times -- because a spread you have not measured is
+a spread you will attribute to your change. Doing that once invalidated my own
+first explanation and stopped a wrong cause being published.
+
+A 1% effect would need ~25 arms per side here, roughly three hours per arm.
+**Effects that small are not measurable on this hardware.** Say so, rather
+than reporting the number the noise produced.
+
+### 1. Gate E's unified scheduler: the +1.0% does not reproduce
+
+The recorded result was a single forward pair -- control at 18:03, scheduler
+at 18:07 -- with no counterbalancing. Re-measured over 22 arms:
+
+| set | order | pair 1 | pair 2 | pair 3 | mean |
+|---|---|---:|---:|---:|---:|
+| interleaved | OFF then ON | -11.8% | +1.6% | +1.9% | -2.8% |
+| mirrored | ON then OFF | -7.2% | -6.1% | -0.7% | -4.7% |
+
+**Order-corrected: -3.7%** (paired t = -1.65, df 5, p ~ 0.16). The second arm
+of a pair was faster in **5 of 6 pairs regardless of which treatment it
+carried**, which is exactly why the mirrored half is not optional -- my own
+first ABBA had ON in the favoured middle positions and read +8.5%.
+
+Gate E is **NEUTRAL at best on this target**. Quality was identical in every
+arm (831/837, 0 wrong faceset). It still defaults ON: it has never been
+measured on the 3060, and its RAM-aware admission was written for exactly that
+card's problem, so it was NOT flipped off on 4070 evidence alone.
+
+### 2. FOUND BY RE-RUNNING PHASE 13: the scheduler had blinded the encoder
+
+Every one of twelve Phase 13 arms reported `encode_write_seconds: 0.0`,
+`encode_throughput_fps: None`, `rotation_count: None`. The phase whose entire
+subject is the encoder was measuring nothing, while printing
+`status: complete` and a table of zeros that reads as "encoding costs 0%".
+
+`_run_unified_scheduler`'s frame path had neither `_prof('decode')` nor
+`_prof('encode')`, both of which the sequential loop (`ProcessMgr.py:1206`,
+`:1372`) and the parallel-stabilization writer (`:2523`, `:2640`) carry. The
+scheduler's own `record_stage()` feeds the runtime monitor, NOT `ROOP_PROFILE`,
+which is what Phase 13 reads. One arm each way settles it:
+
+    scheduler OFF   17.51 fps   0.79 s   0.47%   759.5 fps   1 rotation
+    scheduler ON    17.06+      0.0      0.0     None        None
+    ON, after fix   16.87       0.60 s   0.37%   1000.0 fps  1 rotation
+
+Same class as Gate A findings 3-9, introduced by the newest commit. **When a
+new execution path is added, the profiling hooks are part of the path** --
+they are not inherited.
+
+### 3. Phase 13 re-measured: the codec ranking was confounded with run order
+
+The recorded 4070 table's six rows were **monotonically increasing in run
+order** (7.72 -> 9.03) at 120 frames, with the codecs tried worst-to-best in
+that same order. Re-run at 600 frames in both directions:
+
+| codec | mean of 4 arms | vs libx264 |
+|---|---:|---:|
+| libx264 | 15.33 | -- |
+| h264_nvenc | 17.14 | +11.8% |
+| hevc_nvenc | 17.65 | +15.1% |
+
+Identical ranking both ways, and in the reversed pass `hevc_nvenc` ran FIRST
+(penalised) and still beat `libx264` running last by 13%. This one IS bigger
+than the position noise. `config.yaml` already specifies `hevc_nvenc`, so this
+validates the shipped choice. Segment size is only +1.0% (6 of 6), not the
+16.97% the withdrawn table implied. Absolute throughput was again ~2x higher
+at 600 frames than at 120 -- Gate A finding 10, third phase to reproduce it.
+
+### 4. Phase 14: the search was riding noise, and it is now fixed
+
+Two runs of the same deterministic search on this GPU returned "0.0%, promote
+nothing" and "**+3.59%, promote `trt_context_count: 1`**" -- halving a pool
+this project measured as worth +46% at 2. The twelve candidates spanned
+5.45-5.77, so the winner sat inside the band. Gate A finding 12, previously
+OPEN, confirmed on hardware.
+
+`MIN_IMPROVEMENT` was a fixed 1%. It is now **measured on the live machine**
+from `BASELINE_REPLICATES = 3` runs of the unchanged baseline, a candidate
+must beat the baseline's BEST replicate, and **the winner is re-measured once
+and must clear the bar again**. The confirmation run is the load-bearing part:
+the replicate spread is itself noisy, reading 1.64% on one run and 3.92% on
+the next, and the 1.64% run still let the noisy winner through.
+
+Two bugs in my own first attempt, both worth remembering:
+
+* `improvement_pct` divided by the FIRST baseline run, so a search that
+  promoted nothing still reported +3.59% whenever that run was the slow one.
+  It now uses the median replicate. My unit test reproduced the real
+  3.590664272890472 exactly, which is how it was caught.
+* the replicates consumed the candidate budget and truncated the search.
+
+Post-fix on hardware: **5.42 -> 5.42, 0.0%, nothing promoted.**
+
+### 5. Two silent defects that had nothing to do with benchmarking
+
+**The locked fixture was a function of machine speed.** `baseline_controlled`
+hardcoded `--capture-budget 30` -- a WALL-CLOCK box on the capture scan:
+
+    646 / 629 / 598 frames scanned -> seed 4930, separation 1.039
+    409 frames scanned             -> seed 2930, separation 0.990   <-- !
+
+A transient slowdown changed which source captures the "locked" baseline ran
+with. Worse across targets: the 3060 is ~2x slower and buys ~half the scan in
+the same box, so the two GPUs could compare different captures while both
+reported the locked fixture. The capture frame is now pinned in `WORKLOAD`.
+
+**The hardware-change alarm fired on every launch.** The signature FORMAT was
+widened (architecture, CC, tier, driver, CUDA, TRT, ORT), so a config written
+by an older build reported "different hardware" on the SAME GPU forever --
+config.yaml is only rewritten on an explicit save, so it never settled. An
+always-on alarm cannot report the config-copied-to-another-GPU case it exists
+for, which on a small card presents as a thrash that looks like a hang.
+Legacy formats now migrate; same-length signatures stay strict. Position is
+not assumed: the current format's second-to-last field is the ORT version,
+not VRAM, and a rule written as "compare the two trailing fields" passes every
+other test and fails the one case the function exists for.
+
+### 6. Phase 16 enhancers: 13 of 13 pass, and DMDNet is a 3060 problem only
+
+All 13 rendered end to end, rc 0, zero wrong-faceset, each confirmed to have
+actually EXECUTED (one `enhance` call per swapped face; `None` correctly has
+no stage). That check is not ceremony -- the 3060 session found four enhancers
+failing on every frame while the audit read 100%, because the audit counts
+intent, not outcome.
+
+**`DMDNet` runs clean here** at 919.8 ms/face. The inherited "DMDNet still
+broken" is RTX 3060-specific, not project-wide. The 4070 has no enhancer
+compatibility gap at all.
+
+**UltraMax -- the configured default -- is the slowest mainstream restorer**,
+7.33 fps against GPEN 256 Pro's 9.59 and `Codeformer (fp16)`'s 8.76. Confirmed
+order-balanced: GPEN 256 Pro is **+40.4% / +37.8%** in the two orders, 19.6 ms
+vs 146.6 ms per face. The recorded "1.209x faster than Codeformer, 28.68
+ms/face" came from an ISOLATED bench; in the pipeline UltraMax also runs
+`_protect_swapped_eyes` and the chrominance transfer, host work already
+measured at ~49.5 ms. First end-to-end confirmation of that cost. Left as the
+user's aesthetic choice, not silently changed.
+
+### 7. Also done
+
+* **Phase 12 reproduced** at 600 frames: the one large effect holds
+  (-51.4% vs -53.0%); the three small rows do not, and must stop being quoted
+  to two decimals.
+* **Output integrity 44 of 44 PASS** -- zero black, uniform, NaN or duplicate
+  frames across every render of the session.
+* **The app was verified booting on this 4070** (backend on 127.0.0.1:8001,
+  TensorRT selected, correct engine-cache namespace, and the spurious hardware
+  warning gone).
+* Matrix reconciled: its header claimed the 4070 was absent from every session
+  after 2026-08-29, and its Phase 14/15 4070 tables read "pending", while
+  `GATE_ABE_4070.md` recorded both as measured.
+
+### 8. OPEN
+
+1. **Everything in sections 1-5 needs the 3060.** Exact commands are in
+   `docs/SECOND_GPU_VALIDATION.md`, including the null control that must be
+   run BEFORE any A/B on that target.
+2. **Phase 3's RSS gate still FAILS on the 3060** at 3.73 GB against `<2.5 GB`.
+   The project's one hard acceptance failure; not closeable from the 4070.
+3. **Every recorded sub-10% number on the 4070** is now suspect by section 0.
+   None is proven wrong; none is supported either.
+4. **Should the scheduler default to off?** -3.7% here, unmeasured on the 3060,
+   and its RAM-aware admission targets that card's known problem. One line.
+5. Inherited and untouched: interacting faces (Phase 3's headline ask) remains
+   characterized but unsolved.
