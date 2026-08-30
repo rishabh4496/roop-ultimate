@@ -31,7 +31,7 @@ Per-phase state on the physically-present RTX 3060:
 | 13 — encoder / output | measured (300-frame segment arm only) |
 | 14 — runtime autotuner | measured, **0.0% improvement (NEUTRAL)**; search plan is not hardware-adaptive and the cached profile names an inadmissible backend — still pending on the 4070 |
 | 15 — runtime monitoring / adaptive control | measured; overhead NEUTRAL, per-stage telemetry good, but aggregate fields read 0/None and the bottleneck classifier is **wrong**; adaptive controller never acted so its safety is **untested** — still pending on the 4070 |
-| 16 — final integrated validation | **pending** |
+| 16 — final integrated validation | largely measured: feature/codec/resolution/precision matrices, **all 14 enhancers**, toggles, and a 21-file integrity sweep. **4 enhancers FAIL and DMDNet errors** on this target. Remaining: mask/stabilization visual review, deadlock/leak soak |
 | Gate C — future-architecture readiness | measured; driver-identity cache defect found and fixed here |
 | Gate D — CPU optimization matrix | measured; promoted then reverted as neutral at production length |
 
@@ -742,17 +742,34 @@ un-enhanced run wearing an enhancer's name.
 6 GB** with a single enhancer loaded, which would confound "this enhancer is
 broken" with "4K plus any enhancer exhausts the card".
 
+**Coverage is COMPLETE: all 14 enhancer names known to `core.py` were run.**
+
 | Enhancer | Frames with GPU error | Result | Identity | Texture | Channel |
 |---|---:|---|---:|---:|---:|
 | GPEN | 0 | **PASS** | 0.427 | 69.8 | 27.3 |
 | GPEN 256 | 0 | **PASS** | 0.417 | 69.0 | 29.5 |
 | GPEN 256 Pro *(production default)* | 0 | **PASS** | 0.414 | 68.9 | 28.2 |
+| GPEN 256 Ultra | 0 | **PASS** | 0.411 | 69.0 | 28.2 |
 | GPEN Realistic | 0 | **PASS** | 0.424 | 69.8 | 27.6 |
+| GPEN 1024 | 0 | **PASS** | 0.416 | 69.3 | 28.1 |
+| GPEN 2048 | 0 | **PASS** | 0.428 | 69.7 | 28.8 |
 | GFPGAN | 0 | **PASS** | 0.449 | 68.2 | 27.3 |
+| KEEP (sidecar) | 0 | **PASS** | 0.413 | 69.6 | 27.5 |
 | Codeformer | **60 of 60** | **FAIL (IDENTITY)** | 0.961 | 69.8 | 30.0 |
 | Codeformer (fp16) | **60 of 60** | **FAIL (IDENTITY)** | 0.961 | 69.8 | 30.0 |
 | UltraMax | **60 of 60** | **FAIL (IDENTITY)** | 0.961 | 69.8 | 30.0 |
 | Restoreformer++ | **60 of 60** | **FAIL (IDENTITY)** | 0.961 | 69.8 | 30.0 |
+| DMDNet | 17 | **ERROR** — `TypeError: 'NoneType' object is not subscriptable` | — | — | — |
+
+**DMDNet is a separate defect from the CodeFormer four.** It does not fail
+cleanly per frame; it raises an unhandled `TypeError` and aborts the run, after
+17 GPU errors rather than 60. Recorded as a distinct crash, not folded into the
+CUDNN group.
+
+**GPEN 1024 and GPEN 2048 both PASS here.** The 2026-08-24 session log describes
+GPEN 1024/2048 as overflowing to NaN and painting black; **that does not
+reproduce on this target** at 1080p/fp16. The older note is not contradicted for
+its own hardware, but it must not be carried over to the 3060 as fact.
 
 Every failing frame emits:
 
@@ -785,8 +802,8 @@ VQGAN-style conv block family. The GPEN line and GFPGAN are unaffected.
 offered as a working option on this target, and no cross-target enhancer claim
 may be made from the 4070's UltraMax rows.
 
-**Coverage is 9 of the 14 known enhancer names.** Still untested here: `DMDNet`,
-`GPEN 1024`, `GPEN 2048`, `GPEN 256 Ultra`, `KEEP (sidecar)`.
+**Coverage is complete — 14 of 14 known enhancer names.** Nine pass, four fail
+with the shared CUDNN signature, and DMDNet raises an unhandled `TypeError`.
 
 Method note: `Restoreformer++` was first attempted as `RestoreFormer++` and the
 harness **refused it** — "unknown enhancer ...; core.py would silently ignore it
@@ -805,7 +822,40 @@ prevented a false PASS of the precise kind that invalidated four earlier benches
 | temporal detection / NVDEC OFF-ON | **measured below** |
 | NVENC OFF-ON | covered by the codec matrix above (libx264 vs the two NVENC encoders) |
 | CPU/P/E/GPU/VRAM/RAM/queues/transfers/synchronization | partial — Phase 15 showed the monitor's queue/worker/GPU aggregates read 0/None on this target |
-| frame order, duration, audio, masks, black/NaN/dropped/duplicate/deadlock/leak/corruption checks | **pending** |
+| frame order, duration, audio, black/NaN/dropped/duplicate/corruption checks | **measured below — 21 of 21 outputs PASS** |
+
+#### OUTPUT INTEGRITY SWEEP (RTX 3060) — 21 of 21 files PASS
+
+New harness `app/tests/phase16_integrity.py`. Every other Phase 16 harness
+grades the *render*; none opened the finished file. This decodes each shipped
+output and reports frame count, duration vs frames/fps, audio survival, black
+frames, near-zero-variance (flat/corrupt) frames, non-finite pixels, and
+bit-identical consecutive frames (a stalled writer).
+
+Run over all 21 rendered artifacts from this session's enhancer, resolution and
+precision arms:
+
+    21 of 21 files PASS
+    black 0 | uniform 0 | NaN 0 | duplicate 0   in every file
+    frame counts exact (60 or 418) in every file
+
+| Output | Resolution | Duration | Cadence check | Audio |
+|---|---|---:|---|---|
+| 1080p FP32 | 1920x1080 | 16.72 s | 418 / 25 fps = 16.72 ✓ | AAC **retained** |
+| 1080p mixed | 1920x1080 | 16.72 s | 418 / 25 fps = 16.72 ✓ | AAC **retained** |
+| 4K FP16 smoke | 4096x2160 | 2.50 s | 60 / 24 fps = 2.50 ✓ | none — source has none ✓ |
+
+Frame order, duration, cadence, resolution and audio are all preserved; no
+dropped, duplicated, black, flat or NaN frames anywhere.
+
+**READ THIS TOGETHER WITH THE ENHANCER MATRIX — the two are complementary and
+neither is sufficient.** The Codeformer, UltraMax and Restoreformer++ outputs
+**PASS every integrity check above**, because the frames they contain are
+perfectly valid pictures — they are just the ORIGINAL, unswapped frames the
+error handler substituted. Integrity says "the file is intact"; only the
+identity check says "the file contains the work you asked for". A validation
+pass that ran either alone would have shipped a clean bill of health for four
+broken enhancers.
 
 #### Feature toggles (RTX 3060), 120 frames, locked fixture
 
