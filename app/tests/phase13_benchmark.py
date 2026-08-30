@@ -44,7 +44,18 @@ def _target_present(target, device_id=0):
 
 
 def _available_encoders():
+    # `shutil.which` alone is not enough: Pinokio's own shell exports ffmpeg,
+    # but this harness is also driven from venv pythons and ordinary terminals
+    # that do not inherit that PATH. When the lookup failed here the probe
+    # returned an EMPTY encoder set, every codec arm was skipped, and the whole
+    # matrix reported status=failed -- while the render path itself resolved
+    # ffmpeg fine and encoded with hevc_nvenc. Fall back to the same resolver
+    # the hardware profiler uses, which derives PINOKIO_HOME rather than
+    # hardcoding a drive.
     ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        from roop.runtime_optimizer import HardwareProfiler
+        ffmpeg = HardwareProfiler._resolve_ffmpeg()
     if not ffmpeg:
         return set(), "ffmpeg not found on PATH"
     try:

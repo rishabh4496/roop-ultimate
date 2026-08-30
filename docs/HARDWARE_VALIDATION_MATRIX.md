@@ -8,12 +8,32 @@ not used as a profile identity.
 ## Current validation state
 
 - RTX 4070: physically available in earlier sessions (`nvidia-smi` reported
-  12,282 MiB total and driver 610.88). NOT present in the 2026-08-29 (later)
-  session recorded below.
-- RTX 3060: **physically present and detected** as of 2026-08-29 (later
-  session). Its acceptance rows nevertheless remain `pending` — not for want of
-  hardware, but because the locked fixture is absent from that machine. See
-  "RTX 3060 physical session" below. No 4070 value is copied into this table.
+  12,282 MiB total and driver 610.88). NOT present in the 2026-08-29 or later
+  sessions recorded below.
+- RTX 3060: **physically present and detected** since 2026-08-29 (`nvidia-smi`
+  reports 6,144 MiB total and driver 616.56). The locked fixture was replicated
+  to this machine mid-session, so its acceptance rows are now **measured**, not
+  pending. No 4070 value is copied into any 3060 table.
+
+Per-phase state on the physically-present RTX 3060:
+
+| Phase / gate | 3060 state |
+|---|---|
+| 2 — controlled baseline | measured, 4.53 FPS |
+| 3 — runtime architecture / resource management | measured; strict `<2.5 GB` RSS gate **FAILS** at 3.73 GB |
+| 4, 7, 11 — engine contexts, concurrency, enhancers | measured (CUDA path; TensorRT disabled by the sub-7GB policy) |
+| 5 — quality matrix | run, all 6 arms PASS; **precision selection not exercisable** here (backend admission is CUDA/CPU), so the precision question stays open |
+| 6 — CUDA streams / graphs | measured, neutral |
+| 8 — CPU/GPU transfer | measured |
+| 9 — NVDEC / video input | measured |
+| 10 — CPU threading / detection / tracking | measured |
+| 12 — stabilization / compositing / postprocessing | measured |
+| 13 — encoder / output | measured (300-frame segment arm only) |
+| 14 — runtime autotuner | measured, **0.0% improvement (NEUTRAL)**; search plan is not hardware-adaptive and the cached profile names an inadmissible backend — still pending on the 4070 |
+| 15 — runtime monitoring / adaptive control | measured; overhead NEUTRAL, per-stage telemetry good, but aggregate fields read 0/None and the bottleneck classifier is **wrong**; adaptive controller never acted so its safety is **untested** — still pending on the 4070 |
+| 16 — final integrated validation | **pending** |
+| Gate C — future-architecture readiness | measured; driver-identity cache defect found and fixed here |
+| Gate D — CPU optimization matrix | measured; promoted then reverted as neutral at production length |
 
 ## RTX 3060 physical session — 2026-08-29 (later)
 
@@ -226,9 +246,11 @@ The reproducible post-inference matrix is implemented at
 OFF/ON, color processing OFF/ON, and a postprocess-heavy enhancer using the
 real decode-to-encode wall clock. It writes separate tables for each target.
 
-The current environment has completed the RTX 4070 render matrix in the
-application environment. The RTX 3060 is physically unavailable here, so its
-rows remain pending rather than being inferred from the 4070.
+The RTX 4070 render matrix was completed when that machine was available. The
+RTX 3060 matrix was **subsequently measured on the physical laptop** — see
+"[Phase 12 — stabilization / compositing / postprocessing (RTX 3060)](#phase-12--stabilization--compositing--postprocessing-rtx-3060)"
+below, which is the authoritative 3060 table. No 3060 value is inferred from
+the 4070.
 
 ### RTX 4070 Phase 12 results
 
@@ -247,18 +269,16 @@ manual review, while the automated identity checks passed for every row.
 
 ### RTX 3060 Phase 12 results
 
-| Configuration | Baseline FPS | Final FPS | Improvement | Peak/avg VRAM | CPU | GPU | Decode | Inference | Enhance | Encode | Latency | Stability | Quality |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| stabilization OFF / mask OFF / color OFF | pending physical validation | pending | pending | pending | pending | pending | pending | pending | pending | pending | pending | pending | pending |
-| stabilization ON | pending physical validation | pending | pending | pending | pending | pending | pending | pending | pending | pending | pending | pending | pending |
-| mask ON | pending physical validation | pending | pending | pending | pending | pending | pending | pending | pending | pending | pending | pending | pending |
-| color ON | pending physical validation | pending | pending | pending | pending | pending | pending | pending | pending | pending | pending | pending | pending |
-| postprocess heavy | pending physical validation | pending | pending | pending | pending | pending | pending | pending | pending | pending | pending | pending | pending |
+**MEASURED.** The table is not duplicated here; the authoritative rows, the
+faces/second normalisation, and the warm-up-overhead analysis are in
+"[Phase 12 — stabilization / compositing / postprocessing (RTX 3060)](#phase-12--stabilization--compositing--postprocessing-rtx-3060)".
 
-The Phase 12 changes are therefore not classified as universally successful
-yet: cross-target acceptance is **pending** until the RTX 3060 table is
-measured. The heavy postprocess configuration is a measured RTX 4070
-regression, not a global optimization claim.
+Cross-target acceptance for Phase 12 is therefore **resolved**: stabilization,
+mask and heavy postprocessing are regressions on **both** targets when enabled
+globally, and colour processing is near-free on both (-0.6% on each). The
+heavy postprocess configuration is a measured regression on both targets, not
+a global optimization claim, and the per-target magnitudes differ (4070 -53.0%
+vs 3060 -31.6%) so the rows are never averaged.
 
 Run these exact commands in the app environment when each machine is available:
 
@@ -311,23 +331,21 @@ need a smaller crash-loss window.
 
 ### RTX 3060 Phase 13 results
 
-The RTX 3060 is unavailable in the current environment. No 4070 values are
-copied into this table.
+**MEASURED**, at 300 frames with a single 300-frame segment rather than the
+4070's 50/120 arms. The authoritative rows are in
+"[Phase 13 — encoder / output pipeline (RTX 3060)](#phase-13--encoder--output-pipeline-rtx-3060)".
+No 4070 value is copied into that table.
 
-| Codec / segment arm | Baseline FPS | Final FPS | Improvement | Peak/avg VRAM | CPU | GPU | Decode | Inference | Enhancement | Encode | Latency | Stability | Quality |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| libx264 / 50 | pending physical validation | pending | pending | pending | pending | pending | pending | pending | pending | pending | pending | pending | pending |
-| libx264 / 120 | pending physical validation | pending | pending | pending | pending | pending | pending | pending | pending | pending | pending | pending | pending |
-| h264_nvenc / 50 | pending physical validation | pending | pending | pending | pending | pending | pending | pending | pending | pending | pending | pending | pending |
-| h264_nvenc / 120 | pending physical validation | pending | pending | pending | pending | pending | pending | pending | pending | pending | pending | pending | pending |
-| hevc_nvenc / 50 | pending physical validation | pending | pending | pending | pending | pending | pending | pending | pending | pending | pending | pending | pending |
-| hevc_nvenc / 120 | pending physical validation | pending | pending | pending | pending | pending | pending | pending | pending | pending | pending | pending | pending |
-
-Run the exact pending-target benchmark when the laptop is available:
+Codec ordering reproduces independently on both targets (`hevc_nvenc` fastest,
+`libx264` slowest), so the encoder choice already in `config.yaml` is validated
+rather than changed. The **segment-size** arm is not cross-target complete: the
+3060 ran only a 300-frame segment, so the 4070's "larger segment reduces
+rotation overhead" finding stays classified **RTX 4070 only** until the 3060
+runs the 50-frame arm:
 
 ```bash
 cd app
-python tests/phase13_benchmark.py --target "RTX 3060" --codecs libx264,h264_nvenc,hevc_nvenc --segment-sizes 50,120
+env/Scripts/python.exe tests/phase13_benchmark.py --target "RTX 3060" --end 300 --codecs hevc_nvenc --segment-sizes 50,300
 ```
 
 ## Phase 14 runtime autotuner state
@@ -345,13 +363,71 @@ either target yet; the existing Phase 13 4070 codec results remain evidence
 for the encoder stage only. Unit coverage exercises both hardware tiers and
 rejects faster-but-unstable or quality-regressing candidates.
 
-### RTX 3060 Phase 14
+### RTX 3060 Phase 14 — MEASURED: no improvement found, and the search looked in the wrong place
 
-| Result | Status |
-|---|---|
-| Runtime profile / candidate search | pending physical validation |
-| Selected configuration / best FPS / baseline FPS | pending |
-| VRAM / RAM / CPU / GPU | pending |
+Run 2026-08-30 on the physical laptop with the **production stack requested**
+(`--enhancer "GPEN 256 Pro" --mask-engine RealityUX --stabilization on
+--end 120 --force`), locked fixture `double/d4.mp4` 1280x720.
+
+    baseline_fps 3.47   best_fps 3.47   improvement_pct 0.0
+    candidates_tested 5 of 12          stopped_after_stagnant_stages 2
+
+| Stage | FPS | Peak VRAM GB | Peak RAM GB | GPU % | Changed vs trial |
+|---|---:|---:|---:|---:|---|
+| trial (baseline) | 3.47 | 4.78 | 2.837 | 47.6 | — |
+| backend_precision | 3.44 | 4.79 | 2.806 | 46.1 | `precision: fp16` |
+| backend_precision | 3.40 | 4.82 | — | 48.1 | `backend: cuda` |
+| trt_concurrency | 3.46 | 4.79 | — | 45.1 | `swapper_pool_size: 1` |
+| trt_concurrency | 3.45 | 4.78 | — | 46.2 | `trt_context_count: 2, swapper_pool_size: 2` |
+
+Total spread **2.0%**, against this target's documented ~15% cross-run drift.
+Every arm is stable with no quality regression. **Classification: D — NEUTRAL.**
+No profile is promoted.
+
+### THE FINDING: the candidate plan is not hardware-adaptive
+
+The requested stack was overridden before the first frame. The report's own
+`workload.adaptive_downgrades`:
+
+    provider     TensorRT disabled by the sub-7GB RSS policy; CUDA/CPU used
+    enhancer     GPEN 256 Pro -> None (sub-7GB RSS gate)
+    mask_engine  RealityUX degraded to XSeg only; BiSeNet parser skipped
+    decode       NVDEC -> CPU (sub-7GB RSS policy)
+
+**All four non-baseline candidates varied TensorRT-specific parameters on a
+card where TensorRT is not admitted**, so none of them could move anything:
+
+- `precision: fp16` — inert; Phase 5 established precision does not reach a
+  runtime here, and CUDA ignores `trt_precision` outright.
+- `backend: cuda` — a no-op *relabelling*. CUDA was already what executed, so
+  this arm changed the requested value and not the running program. Its 3.40
+  is the low arm of the set, which is noise, not a CUDA penalty.
+- `swapper_pool_size: 1` and `trt_context_count: 2 / swapper_pool_size: 2` —
+  tuning TensorRT contexts and pools that the sub-7GB policy forces to 0.
+
+The search then declared stagnation after two stages and stopped at 5 of 12
+candidates, **never reaching the CPU-threading, queue/buffer or encoder
+stages** — the only dimensions with any headroom on this target. "No
+improvement found" is the right answer reached for the wrong reason: it
+searched a dimension this hardware does not have.
+
+This is the mandate's own failure mode — a profile plan assumed from the GPU
+rather than from detected capability. A 6 GB card whose admission is CUDA/CPU
+should not spend a bounded budget on TensorRT knobs.
+
+### SECOND DEFECT: the cached profile advertises a backend this card refuses
+
+The `selected` block records `"backend": "tensorrt"` and `"precision": "fp32"`
+— a configuration the runtime immediately downgrades to CUDA/CPU on the very
+hardware it was tuned for. A cached profile is supposed to be what a later
+launch loads and trusts; this one names an inadmissible backend.
+
+It also records `"detector_resolution": 640` while live `config.yaml` sets
+`face_detector_size: '512'`, which this project measured at **1.30x** on the
+detect stage and slightly *better* recall. The autotuner never varied that
+field, so 640 is an unmeasured default carried into a saved profile.
+
+Neither is a performance claim; both are recorded as defects, not fixed here.
 
 ### RTX 4070 Phase 14
 
@@ -386,14 +462,80 @@ the same representative end-to-end workload separately on each target with
 `ROOP_RUNTIME_MONITOR=1 ROOP_RUNTIME_DIAGNOSTICS=1`, and may add
 `ROOP_RUNTIME_ADAPTIVE=1` only for the adaptive arm.
 
-### RTX 3060 Phase 15
+### RTX 3060 Phase 15 — MEASURED: monitor runs, aggregate fields are dead, classifier is wrong
 
-| Metric | Status |
+Run 2026-08-30 on the locked 600-frame fixture at **production length**, four
+counterbalanced arms via `tests/baseline_controlled.py --env
+ROOP_RUNTIME_MONITOR=1 --env ROOP_RUNTIME_DIAGNOSTICS=1`, with
+`ROOP_RUNTIME_ADAPTIVE=1` on the adaptive pair.
+
+| Arm | rep a | rep b | mean |
+|---|---:|---:|---:|
+| diagnostics only | 4.65 | **4.80** | 4.725 |
+| + adaptive | 4.79 | 4.76 | 4.775 |
+
+**+1.06% — NEUTRAL.** Counterbalancing was load-bearing: read forward-only,
+`diag_a` 4.65 -> `adap_a` 4.79 says "adaptive gains 3.0%", but `diag_b` at 4.80
+is the **highest arm of all four** and beats both adaptive runs. The apparent
+gain was ordering. This is the fifth time on this project that a forward-only
+short read produced a positive that counterbalancing erased.
+
+Monitoring overhead is therefore not measurable at production length, which is
+the useful acceptance answer: **enabling the monitor costs nothing detectable.**
+
+#### The adaptive arm was NEUTRAL because it never acted
+
+Zero controller actions in all four arm logs, including both
+`ROOP_RUNTIME_ADAPTIVE=1` runs. The honest statement is **"adaptive control is
+inert on this target at 600 frames"**, not "adaptive control is performance
+neutral" — those are different claims and only the first is evidenced. Its
+three-consecutive-window requirement plus cooldown was never satisfied, or it
+declined every window. **Its safety properties are therefore UNTESTED here:**
+nothing exercised the "never destroy live TensorRT contexts / never interrupt
+in-flight inference" guarantees, because no adjustment was attempted.
+
+#### What the monitor reported, and why most of it is unusable
+
+Per-stage telemetry works and is credible — `frame_total` 4.679 fps matches the
+run's measured 4.65, and the latency split is plausible:
+
+    swap 155.96 ms | mask 138.20 ms | track_detect 96.62 ms | verify 84.61 ms
+    decode 1.92 ms | encode 2.81 ms | frame_total 456.36 ms
+
+The **aggregate** fields are dead, identically in all four arms:
+
+| Field | Reported | Reality |
+|---|---|---|
+| `end_to_end_fps` | **0.0** | 4.65-4.80 measured |
+| `cpu_utilization_pct` | **0.0** | external sampler: 28.99% mean P-core, 90.75% peak |
+| `gpu_utilization_pct` | **None** | 57.56% mean / 99.0% peak in the locked baseline |
+| `worker_utilization_pct` | **0.0** | 8 workers active |
+| `queue_depths` | **input 0.0 / output 0.0** | 4070 reported 9 / 2 on the same code |
+| `bottleneck` | **`I/O-bound`** | contradicted below |
+
+**The bottleneck classifier emits a confident verdict computed from zeros.**
+`I/O-bound` is not merely unsupported, it is contradicted by this document's own
+measurements on this exact target: decode runs at **451-631 fps against a 4.5
+fps render** and is **0.2% of stage time** (Phase 9), while the GPU sits at
+57.56% mean / 99.0% peak (Phase 2). This pipeline is GPU-bound here. A
+classifier that reads I/O-bound off an all-zero input set would, if the adaptive
+controller ever did act, steer it using a false premise.
+
+Note the contrast with the 4070, which reported queues 9/2 and 50% worker
+utilization on the same code and classified `synchronization-bound`. So this is
+a target-specific instrumentation gap, plausibly because the sub-7GB policy
+routes through a different execution path than the one the queue counters
+instrument — **not diagnosed here, recorded as open.**
+
+#### Classification
+
+| Axis | Verdict |
 |---|---|
-| End-to-end/stage FPS and latency | pending physical validation |
-| CPU/P-core/E-core/GPU utilization | pending physical validation |
-| VRAM/RAM, queues, worker utilization | pending physical validation |
-| Bottleneck classification and adaptive stability | pending physical validation |
+| Monitoring overhead | **D — NEUTRAL**, accepted; costs nothing measurable |
+| Per-stage FPS/latency telemetry | **works**, values credible |
+| Aggregate fps/CPU/GPU/queue/worker fields | **BROKEN on this target** |
+| Bottleneck classification | **WRONG** (`I/O-bound` on a GPU-bound pipeline) |
+| Adaptive control stability | **UNTESTED** — controller never acted |
 
 ### RTX 4070 Phase 15
 
@@ -509,21 +651,185 @@ The harness cadence fix used by these runs is in
 `app/tests/angle_video.py`; it prevents a fixed 30 FPS test entry from
 creating false duration failures on 24/25 FPS inputs.
 
-### RTX 3060: final integrated validation
+### RTX 3060: final integrated validation — PARTIALLY MEASURED 2026-08-30
 
-The RTX 3060 was unavailable in this environment. No result, FPS, VRAM,
-quality, or stability value is inferred from the RTX 4070. The complete
-Phase 16 target remains **pending physical validation**:
+Run on the physical laptop against the locked `d4.mp4` fixture, frames 0..119,
+same harnesses as the 4070. No 4070 value is copied into any row.
+
+**Every arm below completed with `wrong_faceset = 0` and `stability = pass`.**
+Every arm also ran under the sub-7GB `adaptive_downgrades` (TensorRT -> CUDA/CPU,
+enhancer stripped where requested, RealityUX -> XSeg only, NVDEC -> CPU), so
+these are this machine's real automatic behaviour and are **not like-for-like
+with the 4070's rows.**
+
+#### 720p multi-face feature matrix (120 frames)
+
+| Configuration | Baseline FPS | Final FPS | Improvement | Stability | Wrong faceset |
+|---|---:|---:|---:|---|---:|
+| baseline | 6.21 | 6.21 | 0.00% | pass | 0 |
+| color ON (RCT) | 6.21 | 6.09 | -1.93% | pass | 0 |
+| mask ON | 6.21 | 5.25 | -15.46% | pass | 0 |
+| stabilization ON | 6.21 | 4.51 | -27.38% | pass | 0 |
+| postprocess heavy | 6.21 | 3.47 | -44.12% | pass | 0 |
+
+Ordering reproduces both the 300-frame 3060 matrix and the 4070 independently.
+**Magnitudes differ from the 300-frame 3060 rows** (-0.6 / -11.2 / -16.5 /
+-31.6) because a 120-frame window amortises stabilization's warm-up
+re-processing over fewer emitted frames and so penalises it harder. Both
+windows are kept; neither overwrites the other.
+
+#### Codec matrix (120 frames, 120-frame segment)
+
+Detected encoders: `av1_nvenc, h264_nvenc, hevc_nvenc, libx264, libx265`.
+
+| Codec | Baseline FPS | Final FPS | Improvement | Stability | Wrong faceset |
+|---|---:|---:|---:|---|---:|
+| libx264 | 5.75 | 5.75 | 0.00% | pass | 0 |
+| h264_nvenc | 5.75 | 6.19 | **+7.65%** | pass | 0 |
+| hevc_nvenc | 5.75 | 6.11 | **+6.26%** | pass | 0 |
+
+**Hardware encoding beats software x264 by 6-8% on this target** — consistent
+with the 300-frame run (+6.5 / +7.3%) and with the 4070's ordering.
+
+**No ranking is claimed between the two NVENC encoders.** They differ by 1.3%
+here with h264 ahead, while the 300-frame run put hevc ahead by 0.8%. Both gaps
+are far inside this target's noise. `config.yaml`'s existing `hevc_nvenc` is
+validated as *a* correct choice, not as the fastest one.
+
+#### Resolution and precision acceptance (RTX 3060)
+
+True end-to-end compatibility runs, cadence taken from the input, `tests/compat_one.py`.
+The 4K arm uses a **60-frame** fixture cut from `final/5704536-uhd_4096_2160_24fps.mp4`
+so it pairs with the 4070's 60-frame smoke rather than being a different workload
+under the same row name. All three PASS on face-findability, identity, texture and
+channel skew, with **100% of detected faces swapped**.
+
+| Input / precision | Frames | Final FPS | Identity | Texture | Channel | Peak RSS | Peak GPU mem | CPU % | GPU % | Status |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|
+| 1920x1080 / FP32 | 418 | 4.462 | 0.456 | 72.1 | 26.7 | 1.922 GB | 3.798 GB | 34.1 | 57.3 | **PASS** |
+| 1920x1080 / mixed | 418 | 4.575 | 0.461 | 72.0 | 26.7 | 1.923 GB | 3.831 GB | 7.3 | 53.6 | **PASS** |
+| 4096x2160 / FP16 smoke | 60 | 0.628 | 0.477 | 38.7 | 27.9 | 1.930 GB | 4.454 GB | 4.8 | 23.9 | **PASS** |
+
+**Cross-target classification — mixed precision is RTX 4070-specific (category C).**
+On the 4070, FP32 -> mixed at 1080p is 6.326 -> 7.588 fps, **+20%**. On the 3060 the
+same change is 4.462 -> 4.575, **+2.5% — inside this target's noise floor**. The
+mechanism is already established in Phase 5: precision selection cannot reach a
+TensorRT engine here because backend admission is CUDA/CPU, so there is nothing for
+`mixed` to change. It must not be promoted as a global default on the strength of
+the 4070 row.
+
+Note also that the METRICS line records `provider=tensorrt` on every arm while
+ORT's own applied-provider list in the same logs reads
+`['CUDAExecutionProvider', 'CPUExecutionProvider']`. That is the third harness
+today found reporting a requested value as though it were the executed one.
+
+**Recorded so a later reader does not re-derive it:** three attempts to run the 4K
+arm as a *backgrounded* task terminated at `phase4:before-main-processing` with no
+traceback, at both 374 and 60 frames, with 1.38 GB RSS and 4.1 GB VRAM free. This
+looked like a reproducible 4K stability failure and **is not one** — the identical
+command run in the foreground completes with exit 0 and the PASS above. The
+terminations were an artefact of the background-task invocation, not of the
+application. No 4K defect exists on this target.
+
+#### ENHANCER MATRIX (RTX 3060) — the CodeFormer family is BROKEN on this card
+
+`tests/compat_one.py`, 60-frame 1080p fixture, fp16, no mask, one source.
+**`ROOP_SMALL_CARD_ENHANCER=keep` was required**, because the sub-7GB RSS gate
+otherwise strips the enhancer and every row would have been an identical
+un-enhanced run wearing an enhancer's name.
+
+1080p was chosen over 4K deliberately: at 4K this card peaks at **5.046 GB of
+6 GB** with a single enhancer loaded, which would confound "this enhancer is
+broken" with "4K plus any enhancer exhausts the card".
+
+| Enhancer | Frames with GPU error | Result | Identity | Texture | Channel |
+|---|---:|---|---:|---:|---:|
+| GPEN | 0 | **PASS** | 0.427 | 69.8 | 27.3 |
+| GPEN 256 | 0 | **PASS** | 0.417 | 69.0 | 29.5 |
+| GPEN 256 Pro *(production default)* | 0 | **PASS** | 0.414 | 68.9 | 28.2 |
+| GPEN Realistic | 0 | **PASS** | 0.424 | 69.8 | 27.6 |
+| GFPGAN | 0 | **PASS** | 0.449 | 68.2 | 27.3 |
+| Codeformer | **60 of 60** | **FAIL (IDENTITY)** | 0.961 | 69.8 | 30.0 |
+| Codeformer (fp16) | **60 of 60** | **FAIL (IDENTITY)** | 0.961 | 69.8 | 30.0 |
+| UltraMax | **60 of 60** | **FAIL (IDENTITY)** | 0.961 | 69.8 | 30.0 |
+| Restoreformer++ | **60 of 60** | **FAIL (IDENTITY)** | 0.961 | 69.8 | 30.0 |
+
+Every failing frame emits:
+
+    Non-zero status code returned while running Conv node '/blocks.3/conv/Conv'
+    Status Message: CUDNN_FE failure 7: GRAPH_EXECUTION_FAILED
+    [ProcessMgr] GPU error on video frame N - writing original
+
+**All four failures are one root cause, not four.** They share an identical
+fingerprint — id 0.961, texture 69.8, channel 30.0, the same node — and
+UltraMax is not an independent case at all: it runs `codeformer.fp16.onnx`
+directly (see the 2026-08-23 Part 3 rebuild). Restoreformer++ shares the same
+VQGAN-style conv block family. The GPEN line and GFPGAN are unaffected.
+
+#### Why this was invisible, and why it matters
+
+1. **Production masks it.** The sub-7GB gate strips the enhancer before it can
+   fail, so no 3060 user meets this. **That gate is therefore doing double duty
+   as a correctness guard, not merely an RSS optimisation** — a fact worth
+   knowing before anyone "fixes" it to keep enhancers on small cards.
+2. **The failure is silent and the audit endorses it.** The pipeline catches the
+   GPU error and writes the ORIGINAL frame, while the swap audit still prints
+   `swapped (every face) 60 100.0%`. The audit counts intent, not outcome. Only
+   the independent identity check caught it — 0.961 against a good swap's
+   0.41-0.45. **A throughput-only bench would have reported these arms as fast
+   and fine**, since not enhancing is cheap.
+3. **It is target-specific.** The 4070 ran UltraMax end to end in its Phase 16
+   postprocess-heavy arm at 3.58 fps with 0 wrong-faceset applications.
+
+**Classification: E — REGRESSION ON ONE GPU.** The CodeFormer family must not be
+offered as a working option on this target, and no cross-target enhancer claim
+may be made from the 4070's UltraMax rows.
+
+**Coverage is 9 of the 14 known enhancer names.** Still untested here: `DMDNet`,
+`GPEN 1024`, `GPEN 2048`, `GPEN 256 Ultra`, `KEEP (sidecar)`.
+
+Method note: `Restoreformer++` was first attempted as `RestoreFormer++` and the
+harness **refused it** — "unknown enhancer ...; core.py would silently ignore it
+and this run would report PASS for an un-enhanced pipeline". That is
+`tests/test_enhancer_names.py`'s guard working exactly as designed, and it
+prevented a false PASS of the precise kind that invalidated four earlier benches.
+
+#### Remaining Phase 16 coverage on this target
 
 | Matrix | Status |
 |---|---|
-| 720p multi-face baseline / stabilization / mask / color / heavy | pending physical validation |
-| Codec: libx264 / h264_nvenc / hevc_nvenc, 120-frame segment | pending physical validation |
-| 1080p FP32 / mixed and 4K FP16 smoke | pending physical validation |
-| Enhancer matrix: none, GPEN variants, UltraMax, CodeFormer, GFPGAN, RestoreFormer++, frame upscalers, other discovered enhancers | pending end-to-end physical validation |
-| temporal detection / tracking / NVDEC OFF-ON / NVENC OFF-ON | pending physical validation |
-| CPU/P/E/GPU/VRAM/RAM/queues/transfers/synchronization | pending physical validation |
-| frame order, duration, audio, masks, stabilization, black/NaN/dropped/duplicate/deadlock/leak/corruption checks | pending physical validation |
+| 720p multi-face baseline / stabilization / mask / color / heavy | **measured above** |
+| Codec: libx264 / h264_nvenc / hevc_nvenc, 120-frame segment | **measured above** |
+| 1080p FP32 / mixed and 4K FP16 smoke | **measured below** |
+| Enhancer matrix: GPEN variants, UltraMax, CodeFormer, GFPGAN, Restoreformer++ | **measured below — 4 of 9 are BROKEN on this target** |
+| temporal detection / NVDEC OFF-ON | **measured below** |
+| NVENC OFF-ON | covered by the codec matrix above (libx264 vs the two NVENC encoders) |
+| CPU/P/E/GPU/VRAM/RAM/queues/transfers/synchronization | partial — Phase 15 showed the monitor's queue/worker/GPU aggregates read 0/None on this target |
+| frame order, duration, audio, masks, black/NaN/dropped/duplicate/deadlock/leak/corruption checks | **pending** |
+
+#### Feature toggles (RTX 3060), 120 frames, locked fixture
+
+| Arm | FPS | Frames | Faces seen | Faces swapped | Wrong faceset | Exit |
+|---|---:|---:|---:|---:|---:|---:|
+| temporal detection OFF | 3.24 | 120/120 | 326 | 326 (100%) | 0 | 0 |
+| temporal detection ON | 3.20 | 120/120 | 326 | 326 (100%) | 0 | 0 |
+| NVDEC kept ON | 3.14 | 120/120 | 326 | 326 (100%) | 0 | 0 |
+| NVDEC OFF (CPU decode) | 3.26 | 120/120 | 326 | 326 (100%) | 0 | 0 |
+
+**All four are NEUTRAL and none is claimed.** The full spread is 3.8%, below
+this target's ~15% drift floor, and these are single non-counterbalanced arms —
+which by this document's own standing rule cannot resolve a difference that
+size. They are recorded as compatibility and integrity evidence, not as
+performance results.
+
+What they *do* establish is integrity: **every arm swapped 326 of 326 faces with
+zero wrong-faceset applications and exit 0**, and the face count is identical
+across all four, so no arm bought speed by finding fewer faces.
+
+The NVDEC direction (3.14 ON vs 3.26 OFF) is consistent in sign with Phase 9's
+measured 3.2x CPU-decode advantage, but the end-to-end gap here is noise — as
+expected, since decode is 0.2% of stage time on this target. The existing
+sub-7GB `NVDEC -> CPU` policy is not contradicted.
 
 Run on the physical RTX 3060 without rewriting configuration, using the
 isolated application environment:
@@ -660,6 +966,97 @@ while reporting "from the current settings". Fixed this session and covered by
 `tests/test_bench.py`. **The detector row above should be re-measured at 512**;
 this project measured that change as 1.30x at the detect stage. Every other row
 is unaffected, since only the detector reads that setting.
+
+## Phase 5 — model quality / precision matrix (RTX 3060)
+
+`tests/phase5_quality_matrix.py --tag phase5_3060`, production stack
+(GPEN 256 Pro, RealityUX, `realswap`), 24-frame fixture from `single/s4.mp4`.
+All six arms returned **PASS**; saved at
+`app/output/phase5_quality/phase5_3060.json`.
+
+| Arm | Verdict | Cold s | Warm s | Identity | Texture | Channel |
+|---|---|---:|---:|---:|---:|---:|
+| tensorrt/fp32 | PASS | 28.0 | 22.6 | 0.347 | 56.1 | 27.9 |
+| tensorrt/fp16 | PASS | 22.3 | 22.8 | 0.345 | 56.1 | 27.9 |
+| tensorrt/mixed | PASS | 23.5 | 22.7 | 0.346 | 56.1 | 27.9 |
+| cuda/fp32 | PASS | 22.4 | 22.3 | 0.347 | 56.0 | 28.0 |
+| cuda/fp16 *(INERT)* | PASS | 23.1 | 23.1 | 0.346 | 56.1 | 27.9 |
+| cpu/fp32 | PASS | 142.5 | 142.4 | 0.345 | 56.1 | 27.9 |
+
+**Do not read this as "six precisions validated". It is two executed
+configurations wearing six labels.**
+
+The harness already flags one: it marks `cuda/fp16` **INERT** because the CUDA
+provider ignores `trt_precision`, so that arm re-ran `cuda/fp32`'s exact
+configuration. That pair is the calibration this table needs — two runs of one
+identical configuration returned texture 56.0 vs 56.1 and channel 28.0 vs 27.9.
+**So ±0.1 on texture/channel is this fixture's own nondeterminism**, and every
+difference in the table is inside it. No arm shows a quality difference.
+
+### The three `tensorrt/*` arms did not run TensorRT
+
+Established three independent ways, not inferred from the labels:
+
+1. **The app says so.** Probing the profiler on this host prints
+   `[Hardware] sub-7GB GPU: TensorRT Builder capability probe deferred;
+   backend admission remains CUDA/CPU`. `tensorrt_available` reports `True`
+   while admission is CUDA/CPU — the two are not the same field.
+2. **No engine was built or read.** `find models/trt_cache -mmin -30` returned
+   nothing after a run that had finished minutes earlier. The cache holds only
+   `_fp16_sm86` engines dated 2026-08-24 and **no fp32 namespace at all**, so a
+   genuine `tensorrt/fp32` arm had engines to build and did not build them.
+3. **The cold pass was free.** 22–28 s for every GPU arm, against 142.5 s for
+   the CPU arm. A real cold TensorRT build of this stack is measured in
+   hundreds of seconds — the harness docstring records 346 s for GPEN-512 alone.
+
+The harness's own `precision_live: true` on those rows is therefore
+**misleading**: it records that the requested precision reached the
+configuration, not that an engine executed at it. This is the same defect class
+as the four benches that "compared UltraMax against no enhancer" and the saved
+`yaw_*` arms that ran the merger stage off — a label asserting work that never
+happened.
+
+### Verdict for this target
+
+| Question | Answer |
+|---|---|
+| Does any precision degrade quality on the 3060? | **Not answerable here.** No precision arm executed distinctly. |
+| Does the shipped configuration produce a valid face? | **Yes** — identity 0.345–0.347, all four checks pass on every arm. |
+| Is CPU fallback quality-equivalent? | **Yes**, and 7.7x slower (0.300 vs 2.32–2.51 fps on the tiny fixture). |
+
+**Classification: pending — not "beneficial on both".** Precision selection is
+**not exercisable in the shipped 3060 configuration**, because the sub-7GB
+policy admits only CUDA/CPU. Closing Phase 5 on this target requires either the
+4070 (where TensorRT is admitted) or an explicit override that forces TRT
+admission on 6 GB — which the pool evidence in Phases 4/7/11 argues against.
+
+The FPS column is on a deliberately tiny 24-frame fixture and is
+startup-dominated; it is a validity check, not a throughput result, and must
+not be quoted as one.
+
+## Phase 6 — CUDA streams and CUDA graphs (RTX 3060)
+
+`tests/phase6_cuda_graph_ab.py --frames 300`, counterbalanced
+off / on / on / off with a cold build pass per arm.
+
+| Arm | runs | mean | swap rate | peak VRAM |
+|---|---|---:|---:|---:|
+| `ROOP_TRT_CUDA_GRAPH=0` | 3.60, 3.63 | **3.62 fps** | 100.0% | 4,180-4,255 MB |
+| `ROOP_TRT_CUDA_GRAPH=1` | 3.60, 3.59 | **3.59 fps** | 100.0% | 4,439-4,475 MB |
+
+**-0.6%: NEUTRAL.** Cold build cost was also identical (262.3 s vs 264.3 s).
+Swap rate was 100% in all four runs, so nothing was traded away.
+
+This is the expected result rather than a surprise: TensorRT is disabled on this
+card by the sub-7GB policy, so the provider-level graph flag has no engine to
+capture. The result confirms two existing decisions on their own hardware —
+the 4070's rejection of CUDA graphs as a default (2.06 ms captured vs 1.67 ms
+normal), and the small-card policy's refusal to admit graph readiness at all.
+
+Note the graph arms did hold ~250 MB more VRAM while delivering nothing, which
+on a 6 GB card is a further argument for the existing refusal.
+
+**Classification: D — NEUTRAL.** No change.
 
 ## Phase 8 — CPU/GPU transfer and memory copy (RTX 3060)
 
@@ -1098,7 +1495,7 @@ the driver actually resolves.
 | Capability/target | Status |
 |---|---|
 | RTX 4070 Ada, SM 8.9, CUDA 12.8, TensorRT 10.9.0.34, ORT 1.23.2 | detected and physically tested in the separate 4070 rows above |
-| RTX 3060 Ampere | mandatory physical validation remains pending in this session; no values are inferred |
+| RTX 3060 Laptop GPU Ampere, SM 8.6, CUDA 12.8, TensorRT 10.9.0.34, ORT 1.23.2 | detected and physically tested in the separate 3060 rows above; Phases 5, 14, 15, 16 still pending there |
 | Unknown/future compute capability identity and cache isolation | logically covered by runtime tests; no future GPU benchmark claimed |
 | Rubin-class hardware | not available and not tested; no Rubin optimization or compatibility claim |
 | FP16/BF16/INT8/FP8 selection | capability and policy gates implemented; only modes with a validated provider/model result may be promoted |

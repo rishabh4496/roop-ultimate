@@ -166,15 +166,23 @@ def main():
     os.makedirs(args.out, exist_ok=True)
 
     # ffmpeg both makes the fixture and runs inside the render.
+    #
+    # DO NOT reintroduce a hardcoded drive here. This block previously probed
+    # "G:/pinokio/bin/{miniforge,miniconda}/Library/bin" literally, which is the
+    # main workstation's PINOKIO_HOME. On the RTX 3060 laptop -- where
+    # PINOKIO_HOME is C:\pinokio -- both candidates missed and the harness died
+    # on its first line with "ffmpeg not found", so Phase 5 could never run on
+    # the second mandatory validation target at all. Reuse the resolver that
+    # already derives PINOKIO_HOME from the environment, ~/.pinokio/config.json
+    # or this file's own location.
     import shutil
     if not shutil.which("ffmpeg"):
-        for cand in (os.path.join("G:/pinokio", "bin", "miniforge", "Library", "bin"),
-                     os.path.join("G:/pinokio", "bin", "miniconda", "Library", "bin")):
-            if os.path.isfile(os.path.join(cand, "ffmpeg.exe")):
-                os.environ["PATH"] = cand + os.pathsep + os.environ.get("PATH", "")
-                break
-        else:
+        from roop.runtime_optimizer import HardwareProfiler
+        found = HardwareProfiler._resolve_ffmpeg()
+        if not found:
             raise SystemExit("ffmpeg not found; needed for the fixture and the render")
+        os.environ["PATH"] = (os.path.dirname(found) + os.pathsep
+                              + os.environ.get("PATH", ""))
 
     if args.clip is None:
         args.clip = make_fixture(

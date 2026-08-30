@@ -41,14 +41,21 @@ YAWS = ab.YAW_LABEL
 # aborts every clip. Put the bundled binary in front rather than requiring the
 # caller to remember, and leave any existing ffmpeg ahead of it untouched.
 def ensure_ffmpeg():
+    # DO NOT reintroduce a hardcoded drive here. This probed
+    # "G:/pinokio/bin/ffmpeg-env/Library/bin" literally -- the main
+    # workstation's PINOKIO_HOME -- so on the RTX 3060 laptop (C:\pinokio) the
+    # candidate missed and every clip aborted before encoding. Reuse the
+    # resolver that derives PINOKIO_HOME from the environment,
+    # ~/.pinokio/config.json, or this file's own location.
     import shutil as _sh
     if _sh.which("ffmpeg"):
         return
-    for cand in (r"G:/pinokio/bin/ffmpeg-env/Library/bin",):
-        if os.path.exists(os.path.join(cand, "ffmpeg.exe")):
-            os.environ["PATH"] = cand + os.pathsep + os.environ.get("PATH", "")
-            return
-    raise RuntimeError("ffmpeg not found; the video path cannot encode without it")
+    from roop.runtime_optimizer import HardwareProfiler
+    found = HardwareProfiler._resolve_ffmpeg()
+    if not found:
+        raise RuntimeError("ffmpeg not found; the video path cannot encode without it")
+    os.environ["PATH"] = (os.path.dirname(found) + os.pathsep
+                          + os.environ.get("PATH", ""))
 
 
 def render_clip(square, bg, path, roll_end=260.0, step=2.0, fps=30):
