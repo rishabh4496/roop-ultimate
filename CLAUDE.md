@@ -1851,3 +1851,153 @@ Reported on the RTX 4070 Desktop (32GB RAM) as: backend process crash / ECONNRES
 - **RAM Bounded**: Host memory RSS is now strictly bounded during long video renders and drops cleanly between segments.
 - **Commit**: `111feb1` committed to `main`.
 
+
+---
+
+## Session Log (2026-08-30): Phases 5/14/15/16 On The 3060, And The Enhancer Family That Failed Every Frame While Reporting 100% Success
+
+Run on the SECONDARY device (RTX 3060 Laptop 6GB, driver 616.56, sm86). Commits
+`77c46f2`, `df548d5`, `3e3cb74`. Suite **1452 green**. Full per-phase evidence is
+in `docs/HARDWARE_VALIDATION_MATRIX.md`; this is the narrative.
+
+### 0. THE HEADLINE: five enhancers were broken on this card, and every gate said fine
+
+`Codeformer`, `Codeformer (fp16)`, `UltraMax` and `Restoreformer++` failed on
+**60 of 60 frames** with `CUDNN_FE failure 7` at Conv `/blocks.3/conv/Conv`.
+`DMDNet` fails separately with an unhandled `TypeError`.
+
+**Why nothing caught it, which is the reusable part.** `ProcessMgr` catches the
+per-frame GPU error and writes the ORIGINAL frame. The swap audit then prints
+`swapped (every face) 60 100.0%` — it counts INTENT, not OUTCOME. So:
+
+- a throughput bench calls these arms fast and fine (not enhancing is cheap);
+- the output-integrity sweep passes them (unswapped originals are valid pictures);
+- only the independent identity check caught it, at **0.961** against a good
+  swap's 0.41-0.45.
+
+Integrity says "the file is intact". Identity says "the file contains the work
+you asked for". **Either check alone would have shipped a clean bill of health
+for four broken enhancers.** Neither is sufficient; run both.
+
+Production masks this entirely, because the sub-7GB RSS gate strips the enhancer
+before it can fail. **That gate is doing double duty as a correctness guard**,
+which matters before anyone "fixes" it to keep enhancers on small cards.
+
+### 1. The fix: it was conv PLANNING, and it is per-model
+
+The render log only ever showed `GRAPH_EXECUTION_FAILED` (conv.cc:485).
+Reproducing the model standalone surfaced the primary error one line earlier:
+
+    CUDNN_FE failure 8: HEURISTIC_QUERY_FAILED
+      conv.cc:225  create_execution_plans({heur_mode})
+
+`heur_mode` is `cudnn_conv_algo_search`, which `core.py` sets globally to
+`HEURISTIC`. `EXHAUSTIVE` fails identically (also a cuDNN frontend path).
+**`cudnn_conv_use_max_workspace=0` does NOT help** — it was never a workspace or
+VRAM-size problem, which was the first hypothesis and is now measured out.
+
+A global switch to `DEFAULT` was NOT available — `HEURISTIC` is 1.5-3.4x faster
+wherever it works:
+
+    hyperswap_1a_256  24.1 -> 82.2 ms (+241%)   GFPGAN     83.6 -> 175.1 (+110%)
+    GPEN-BFR-512     185.5 -> 387.4  (+109%)    retinaface  7.5 ->  12.1 ( +61%)
+    codeformer.fp16  RUN-FAIL -> 316.6 ms       restoreformer++ 1815 -> 346 (-81%)
+
+`roop/cudnn_algo.py` probes only the four suspect keys, **once, on the live
+device**, caches the verdict under the engine cache's GPU/driver/CUDA/ORT
+identity, and lowers only those models. A device where `HEURISTIC` works keeps
+it, so **the 4070 cannot be regressed**. Hooked into
+`precision_policy.providers_for`, covering every processor without touching 31
+session-construction sites. All four now PASS, identity 0.413-0.464, zero GPU
+errors, and the locked-fixture baseline is unchanged (3.22 fps against earlier
+same-config arms at 3.24/3.20/3.14/3.26).
+
+**Trap that nearly made the fix a no-op:** the first probe recorded nothing,
+because ORT *automatically re-initialises a failing CUDA EP on the CPU EP* and
+the surfaced exception becomes whatever the CPU path then hits — for
+codeformer.fp16 an unrelated `SimplifiedLayerNormFusion` graph error. The cuDNN
+signature never reached the matcher. The probe now calls `disable_fallback()`.
+
+### 2. Three harnesses hardcoded the OTHER machine's PINOKIO_HOME
+
+`phase5_quality_matrix.py` and `angle_video.py` probed `G:/pinokio/...` as a
+literal string, so Phase 5 died on its first line here and every `compat_one`
+clip would have aborted before encoding. `phase13_benchmark.py` was worse: a
+bare `shutil.which('ffmpeg')` miss returned an **empty encoder set**, skipping
+all three codecs and reporting `status: failed`, while the render path resolved
+ffmpeg fine and encoded with `hevc_nvenc` throughout. All three now use
+`HardwareProfiler._resolve_ffmpeg()`.
+
+**A launcher-adjacent lesson that keeps recurring here: never write a drive
+letter into a tool. Resolve `PINOKIO_HOME`.**
+
+### 3. Three phases returned negative results, each for a reason worth keeping
+
+**Phase 5 — precision is not exercisable on this card.** Six arms PASS, but they
+are two executed configurations wearing six labels. The `tensorrt/*` arms never
+ran TensorRT: the profiler prints `backend admission remains CUDA/CPU`, **no
+engine cache file was touched during the run**, and the cold pass cost 22-28s
+where a real build runs into the hundreds. The harness's own `INERT` flag on
+`cuda/fp16` re-ran `cuda/fp32` and returned *different* numbers, which
+calibrates +-0.1 as fixture noise and puts every arm inside it.
+
+**Phase 14 — 0.0% improvement, and the search looked in the wrong place.** All
+four non-baseline candidates varied TensorRT parameters on a card that does not
+admit TensorRT; `backend: cuda` was a pure relabelling of what already ran. It
+stopped on stagnation at 5 of 12, never reaching CPU threading, queue or
+encoder. Its cached profile also records `backend=tensorrt` and
+`detector_resolution=640` against a live config of 512.
+
+**Phase 15 — the monitor's aggregates are dead and its classifier is wrong.**
+Per-stage telemetry is good (`frame_total` 4.679 matches the measured 4.65), but
+`end_to_end_fps 0.0`, `cpu 0.0`, `gpu None`, `queues 0/0`, `worker_util 0.0` —
+and from those zeros it emits `bottleneck: I/O-bound`, contradicted by decode
+being 0.2% of stage time against a GPU at 57.56% mean / 99.0% peak. The adaptive
+controller **never acted**, so its safety guarantees are UNTESTED, not
+validated — a distinction the phase would otherwise have recorded as a pass.
+
+### 4. Counterbalancing paid off twice more, and I got one thing wrong
+
+Phase 15 read **+3.0%** forward-only (`diag_a` 4.65 -> `adap_a` 4.79) and
+**+1.06%** once reversed — `diag_b` at 4.80 is the highest arm of all four. That
+is now the fifth recorded instance on this project.
+
+**Correction made mid-session:** I reported the 4K arm as a "3/3 reproducible
+termination" and was about to record a 4K stability failure. It was an artefact
+of my own *backgrounded* invocation — the identical command completes with exit
+0 in the foreground. I had also been sizing the 4K arm at 374 frames when the
+4070's row is a **60-frame** smoke, which would have paired two different
+workloads under one row name.
+
+### 5. Also measured, all with 100% swap rate and zero wrong-faceset
+
+720p feature matrix; 3-codec matrix (**NVENC +6-8% over libx264**, and *no*
+ranking claimed between h264 and hevc — they differ by 1.3% here and swapped
+order at 300 frames); 1080p FP32/mixed; 60-frame 4K FP16 smoke; temporal and
+NVDEC toggles (all within 3.8%, below this box's ~15% drift floor, so none is
+claimed); and a new **21-file output-integrity sweep**
+(`tests/phase16_integrity.py`) — frame counts exact, cadence exact, AAC
+retained, zero black/NaN/uniform/duplicate frames.
+
+**Cross-target classification:** mixed precision is **RTX 4070-specific**. It is
++20% there and +2.5% (noise) here, because precision cannot reach an engine
+without TensorRT admission. It must not be promoted globally on the 4070 row.
+
+### 6. Record hygiene
+
+Three sections of `HARDWARE_VALIDATION_MATRIX.md` still declared the 3060
+"physically unavailable" with all-`pending` Phase 12/13 tables while measured
+3060 results sat further down the same file. Replaced with cross-references and
+a per-phase state table at the top.
+
+### 7. OPEN
+
+1. **`DMDNet` is still broken** — `TypeError: 'NoneType' object is not
+   subscriptable`, 17 GPU errors. A different defect; the cuDNN probe
+   deliberately does not claim it.
+2. **Phase 3's RSS gate still FAILS** — 3.73 GB peak against a `<2.5 GB`
+   ceiling. Not closed, not closeable by anything in this session.
+3. **Phases 14 and 15 on the 4070**, plus the Phase 13 50-frame segment arm
+   here, so the 4070's segment-size finding can stop being 4070-only.
+4. **Mask/stabilization visual review and a deadlock/leak soak** — the last
+   Phase 16 rows still pending.
