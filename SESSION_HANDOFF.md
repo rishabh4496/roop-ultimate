@@ -17,12 +17,15 @@ Primary validation GPUs:
 
 Both must remain first-class targets throughout the project.
 
-Current hardware available for validation (2026-08-30 session):
-- RTX 3060 Laptop: UNAVAILABLE; Gate D benchmark remains PENDING
-- RTX 4070: AVAILABLE and detected at runtime (driver 616.56, CUDA 12.8,
-  TensorRT 10.9.0.34, ORT 1.23.2). Gate D is COMPLETE on this target; the
-  earlier cold-candidate timeout is explained and resolved. Prior physical
-  3060 continuation measurements remain historical and are not reused.
+Current hardware available across the latest validation sessions:
+- RTX 3060 Laptop: AVAILABLE and detected in the Gate F session; its current
+  constrained 120-frame run completed, but the strict RSS gate remains blocked.
+- RTX 4070: AVAILABLE and detected in the later Gate E session; Gate E passed
+  its workstation comparison, but it is not a Gate F regression measurement.
+
+The current Gate F checkpoint is authoritative for the 3060 telemetry result;
+the later Gate E checkpoint remains authoritative for the separate 4070
+scheduler result. Measurements are never substituted across targets.
 
 The user authorized a continuation exception for the physical RTX 3060 Phase 3
 RSS failure. This permits Phases 5–9 to be exercised and documented, but does
@@ -65,6 +68,46 @@ Before doing anything:
 ---
 
 # CURRENT SESSION STATE
+
+## 2026-08-30 — Gate F constrained RTX 3060 checkpoint
+
+The live host is the required NVIDIA RTX 3060 Laptop + Intel i7-12700H
+platform. Runtime discovery recorded NVIDIA/Ampere/SM 8.6, 6.0 GB detected
+VRAM, CUDA 12.8, driver 616.56, TensorRT 10.9.0.34, ONNX Runtime 1.23.2,
+FP16/BF16 Tensor Core exposure, NVDEC AV1/H.264/HEVC/VP9, and NVENC
+AV1/H.264/HEVC. Windows registry discovery recorded the exact CPU brand;
+Windows CPU-set telemetry recorded 14 physical/20 logical processors with
+6 P-cores and 8 E-cores.
+
+The implementation added runtime memory-pressure telemetry to the monitor and
+diagnostics endpoint: process RSS, total/available/system RAM, swap/pagefile,
+and a labelled portable commit estimate/limit. Existing adaptive controls
+remain capability/profile-based and bounded: small-tier one context/worker/
+stream/batch/in-flight frame, 1,536 MB frame budget, no TRT pool, and bounded
+queues with backpressure. No RTX 4070 configuration was changed or copied.
+
+Current physical measurement:
+
+| Target | Status | Result |
+|---|---|---|
+| RTX 3060 Laptop | measured | 120 frames, 3.09 FPS, peak RSS 2.844 GB, peak VRAM 4,637 MB, mean CPU/GPU 33.241%/47.457%, 0 wrong faceset |
+| RTX 4070 | **PENDING** | Not physically present; run the exact command below on the workstation |
+
+The 3060 run is not comparable to the full-stack locked baseline because the
+sub-7-GB safety policy downgraded NVDEC to CPU, disabled GPEN, and degraded
+RealityUX to XSeg-only. It is valid constrained-path evidence only. The strict
+historical `<2.5 GB` RSS gate remains blocked; no fabricated improvement or
+4070 result is recorded.
+
+Required workstation benchmark:
+
+```text
+app\env\Scripts\python.exe app\tests\baseline_controlled.py --tag gate_f_4070 --target "RTX 4070" --video G:\pinokio\roop-keep\double\d4.mp4 --sources harjot,gargee --start 0 --end 600 --enhancer "GPEN 256 Pro" --mask-engine RealityUX --provider tensorrt --codec hevc_nvenc --stabilization-mode on --color-transfer-mode none --out app\output\gate_f_4070
+```
+
+Artifact: `app/output/gate_f_3060_20260830/gate_f_3060_20260830_120f.json`.
+The 3060 result has no baseline-to-final percentage improvement because this
+was a constrained post-change validation run, not a paired baseline arm.
 
 ## 2026-08-29 (later) — ON THE PHYSICAL RTX 3060. Two defects fixed; baseline still blocked, for a new reason.
 

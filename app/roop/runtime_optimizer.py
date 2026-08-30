@@ -621,6 +621,31 @@ def _cpu_frequency() -> Tuple[float, float]:
     return 0.0, 0.0
 
 
+def _cpu_name() -> str:
+    """Return the best available CPU brand string without assuming a model.
+
+    On Windows, ``platform.processor()`` is commonly only the generic
+    ``Intel64 Family ...`` identifier.  The registry value is the OS-reported
+    brand string (for example an i7-12700H), so use it when available and keep
+    the portable platform fallbacks for systems where it is not.
+    """
+    candidates = []
+    try:
+        if platform.system().lower() == "windows":
+            import winreg
+            key_path = r"HARDWARE\DESCRIPTION\System\CentralProcessor\0"
+            with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, key_path) as key:
+                candidates.append(winreg.QueryValueEx(key, "ProcessorNameString")[0])
+    except (ImportError, OSError, TypeError):
+        pass
+    try:
+        candidates.extend((platform.processor(), platform.uname().processor))
+    except (AttributeError, OSError):
+        pass
+    return next((str(value).strip() for value in candidates
+                 if str(value or "").strip()), "")
+
+
 def _cpu_affinity_info() -> Tuple[bool, Tuple[int, ...]]:
     try:
         import psutil
@@ -908,7 +933,7 @@ class HardwareProfiler:
         e_cores = int(topology["e_cores"])
         topology_source = str(topology["source"])
         cpu_frequency_mhz, cpu_max_frequency_mhz = _cpu_frequency()
-        cpu_name = str(platform.processor() or platform.uname().processor or "")
+        cpu_name = _cpu_name()
         affinity_supported, _affinity_indices = _cpu_affinity_info()
 
         nvidia_smi = self._command(
@@ -1504,7 +1529,8 @@ class AutoTuner:
         configured_provider = _short(_value(settings, "provider", "auto")).lower()
         if configured_provider in ("cpu", "cpu only", "none"):
             backend = "cpu"
-        elif hardware.tensorrt_available and configured_provider in ("auto", "", "cuda", "tensorrt"):
+        elif (hardware.tensorrt_available and not small and
+              configured_provider in ("auto", "", "cuda", "tensorrt")):
             backend = "tensorrt"
         elif hardware.cuda_available and configured_provider not in ("cpu", "cpu only"):
             backend = "cuda"
@@ -1780,12 +1806,14 @@ class RuntimeAutotuner:
                         if key != "stage"} == item_config for existing in result):
                 result.append(item)
 
+        small = hardware.vram_total_gb > 0 and hardware.vram_total_gb < 7.0
         if not self._explicit(settings, "backend_precision"):
-            if hardware.tensorrt_available and hardware.fp16_supported:
+            if (hardware.tensorrt_available and not small and
+                    hardware.fp16_supported):
                 add("backend_precision", backend="tensorrt", precision="fp16")
             if hardware.cuda_available:
                 add("backend_precision", backend="cuda", precision="fp32")
-        if not self._explicit(settings, "trt_concurrency"):
+        if not small and not self._explicit(settings, "trt_concurrency"):
             for value in sorted(set((1, base.trt_context_count,
                                      min(3, max(1, base.trt_context_count + 1))))):
                 add("trt_concurrency", trt_context_count=value,
@@ -2173,8 +2201,29 @@ class RuntimeMonitor:
             logical = max(1, int(psutil.cpu_count(logical=True) or 1))
             cpu_pct = float(process.cpu_percent(None)) / logical
             result["cpu_utilization_pct"] = min(100.0, max(0.0, cpu_pct))
-            result["ram_used_gb"] = process.memory_info().rss / 2**30
-            result["ram_utilization_pct"] = float(psutil.virtual_memory().percent)
+            process_memory = process.memory_info()
+            result["ram_used_gb"] = process_memory.rss / 2**30
+            result["process_rss_gb"] = process_memory.rss / 2**30
+            memory = psutil.virtual_memory()
+            result["ram_total_gb"] = memory.total / 2**30
+            result["ram_available_gb"] = memory.available / 2**30
+            result["ram_used_system_gb"] = memory.used / 2**30
+            result["ram_utilization_pct"] = float(memory.percent)
+            # psutil does not expose Windows' exact committed-private counter
+            # portably.  This is the useful cross-platform estimate: resident
+            # system use plus committed swap/pagefile use.  Keep the source in
+            # the report so a platform-specific provider can replace it later
+            # without presenting an inferred value as an exact counter.
+            swap = psutil.swap_memory()
+            commit_limit = memory.total + swap.total
+            committed = memory.used + swap.used
+            result["ram_committed_gb"] = committed / 2**30
+            result["ram_commit_limit_gb"] = commit_limit / 2**30
+            result["ram_commit_source"] = "physical_used_plus_swap_used"
+            result["swap_used_gb"] = swap.used / 2**30
+            result["swap_total_gb"] = swap.total / 2**30
+            result["swap_utilization_pct"] = (
+                100.0 * swap.used / swap.total if swap.total else 0.0)
             per_cpu = psutil.cpu_percent(interval=None, percpu=True)
             p_indices = list(getattr(self.hardware,
                                      "cpu_performance_indices", ()) or
@@ -2350,16 +2399,12 @@ class RuntimeMonitor:
             frames = self._frames
             stage_seconds = dict(self._stage_seconds)
             stage_calls = dict(self._stage_calls)
-        rolling_seconds = {}
-        rolling_calls = {}
-        for sample in samples:
-            for name, value in (sample.get("stage_seconds") or {}).items():
-                rolling_seconds[name] = rolling_seconds.get(name, 0.0) + _number(value)
-            for name, value in (sample.get("stage_calls") or {}).items():
-                rolling_calls[name] = rolling_calls.get(name, 0) + _integer(value)
-        if rolling_seconds or rolling_calls:
-            stage_seconds = rolling_seconds
-            stage_calls = rolling_calls
+        # ``samples`` is intentionally a bounded rolling diagnostics window,
+        # not the source of truth for totals. Summing it made long renders
+        # report only the last N sampling intervals, producing misleading
+        # stage FPS/latency and occasionally zero totals after sparse sampling.
+        # The cumulative counters cover the complete run; the samples remain
+        # available for recent resource/bottleneck inspection.
         elapsed = time.perf_counter() - started if started else 0.0
         stage_fps = {name: calls / max(elapsed, 1e-9)
                      for name, calls in stage_calls.items()}
@@ -2371,6 +2416,8 @@ class RuntimeMonitor:
                 queue_averages.setdefault(name, []).append(value)
         queue_averages = {name: self._average(values)
                           for name, values in queue_averages.items()}
+        commit_sources = [sample.get("ram_commit_source") for sample in samples
+                          if sample.get("ram_commit_source")]
         result = {
             "elapsed_sec": round(elapsed, 3),
             "frames": frames,
@@ -2400,7 +2447,17 @@ class RuntimeMonitor:
             "vram_total_gb": self._rolling_metric("vram_total_gb"),
             "vram_pressure_pct": self._rolling_metric("vram_pressure_pct"),
             "ram_used_gb": self._rolling_metric("ram_used_gb"),
+            "process_rss_gb": self._rolling_metric("process_rss_gb"),
+            "ram_total_gb": self._rolling_metric("ram_total_gb"),
+            "ram_available_gb": self._rolling_metric("ram_available_gb"),
+            "ram_used_system_gb": self._rolling_metric("ram_used_system_gb"),
             "ram_utilization_pct": self._rolling_metric("ram_utilization_pct"),
+            "ram_committed_gb": self._rolling_metric("ram_committed_gb"),
+            "ram_commit_limit_gb": self._rolling_metric("ram_commit_limit_gb"),
+            "ram_commit_source": commit_sources[-1] if commit_sources else None,
+            "swap_used_gb": self._rolling_metric("swap_used_gb"),
+            "swap_total_gb": self._rolling_metric("swap_total_gb"),
+            "swap_utilization_pct": self._rolling_metric("swap_utilization_pct"),
             "worker_utilization_pct": self._rolling_metric("worker_utilization_pct"),
         }
         result["bottleneck"] = self.classify_bottleneck(result)
@@ -2454,7 +2511,6 @@ class RuntimeMonitor:
             return "VRAM-bound"
         if ram >= 90.0:
             return "RAM-bound"
-        latencies = summary.get("stage_latency_ms") or {}
         stage_seconds = summary.get("stage_seconds") or {}
         shares = {name: _number(value) for name, value in stage_seconds.items()}
         # ``0.0 >= 0.0 * 0.45`` is True, so without this guard an empty or

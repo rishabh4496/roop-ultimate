@@ -363,7 +363,7 @@ either target yet; the existing Phase 13 4070 codec results remain evidence
 for the encoder stage only. Unit coverage exercises both hardware tiers and
 rejects faster-but-unstable or quality-regressing candidates.
 
-### RTX 3060 Phase 14 — MEASURED: no improvement found, and the search looked in the wrong place
+### RTX 3060 Phase 14 — historical pre-fix run: search looked in the wrong place
 
 Run 2026-08-30 on the physical laptop with the **production stack requested**
 (`--enhancer "GPEN 256 Pro" --mask-engine RealityUX --stabilization on
@@ -427,7 +427,12 @@ It also records `"detector_resolution": 640` while live `config.yaml` sets
 detect stage and slightly *better* recall. The autotuner never varied that
 field, so 640 is an unmeasured default carried into a saved profile.
 
-Neither is a performance claim; both are recorded as defects, not fixed here.
+That run is retained as historical evidence and is not used as a promoted
+profile. The implementation now fixes both defects: sub-7GB profiles select
+the admitted CUDA/CPU backend, and the staged autotuner excludes TensorRT
+precision/context candidates on that tier so its bounded search reaches the
+workload, CPU, queue, and encoder dimensions that can actually execute. A new
+physical RTX 3060 run is still required before claiming a Phase 14 result.
 
 ### RTX 4070 Phase 14
 
@@ -462,7 +467,7 @@ the same representative end-to-end workload separately on each target with
 `ROOP_RUNTIME_MONITOR=1 ROOP_RUNTIME_DIAGNOSTICS=1`, and may add
 `ROOP_RUNTIME_ADAPTIVE=1` only for the adaptive arm.
 
-### RTX 3060 Phase 15 — MEASURED: monitor runs, aggregate fields are dead, classifier is wrong
+### RTX 3060 Phase 15 — historical pre-fix run: monitor aggregates were incomplete
 
 Run 2026-08-30 on the locked 600-frame fixture at **production length**, four
 counterbalanced arms via `tests/baseline_controlled.py --env
@@ -527,7 +532,14 @@ a target-specific instrumentation gap, plausibly because the sub-7GB policy
 routes through a different execution path than the one the queue counters
 instrument — **not diagnosed here, recorded as open.**
 
-#### Classification
+The monitor implementation now aggregates cumulative stage counters for the
+whole run (while retaining the bounded rolling sample window for diagnostics),
+and bottleneck stage shares are compared with total stage time rather than the
+largest stage alone. This corrects the zero/rolling-window and over-eager
+classification failure described above. The physical target must be rerun
+before these code-level corrections are accepted as a measured Phase 15 result.
+
+#### Historical classification
 
 | Axis | Verdict |
 |---|---|

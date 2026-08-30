@@ -17,22 +17,24 @@ Do not mark a phase complete based only on conversation history.
 
 ## CURRENT STATE
 
-**Current phase:** GATE D IMPLEMENTED - CPU optimization (dual-target E2E validation pending)
+**Current phase:** GATE F IMPLEMENTED - constrained RTX 3060 runtime audit
+ (dual-target performance validation pending)
 
-**Status:** Gate D now has runtime CPU identity/topology/frequency/SIMD/affinity
-detection, explicit auto/P-only/P-priority+limited-E/P+E policies, bounded
-OpenCV/ORT/FFmpeg pools, and a reproducible end-to-end candidate harness.
-Target-specific performance acceptance is pending: the RTX 3060 is not
-physically available in this session, and the first cold RTX 4070 candidate
-timed out before producing a valid FPS result. No CPU policy is promoted as a
-measured optimization.
+**Status:** Gate F now records the exact Windows CPU brand, hybrid topology,
+runtime GPU capabilities, bounded memory telemetry, and separate hardware
+profile identity. The live host is an RTX 3060 Laptop with 6 GB detected VRAM,
+6 P-cores/8 E-cores, and 15.8 GB RAM. A current 120-frame constrained
+end-to-end run completed, but the strict laptop RSS gate remains blocked and
+the run is not comparable to the full-stack locked baseline because the
+documented safety downgrades were active. The RTX 4070 is not present on this
+host, so Gate F regression validation there remains PENDING. No 4070 result is
+copied to the 3060.
 
 **Last completed implementation phase:** PHASE 11 Enhancement Pipeline; Gate D implementation is present but not performance-closed
 
-**Next phase:** Complete separate Gate D matrices on physical RTX 3060 and RTX
-4070 hardware, then classify each CPU policy from end-to-end FPS and
-resource/quality evidence. Do not reuse RTX 4070 results or caches on the RTX
-3060.
+**Next phase:** Resolve the remaining 3060 RSS/full-stack disposition, then run
+the same Gate F benchmark on physical RTX 4070 hardware and classify every
+change separately. Do not reuse RTX 4070 results or caches on the RTX 3060.
 
 **Baseline FPS:** ~20 FPS (user-reported; must be formally measured in Phase 2)
 
@@ -40,20 +42,19 @@ resource/quality evidence. Do not reuse RTX 4070 results or caches on the RTX
 NVDEC end-to-end run; 4.09 FPS remains the historical Phase 7 workload result.
 
 **Primary known hardware:**
-- CPU: Intel Core i9-14900K
-- GPU: NVIDIA RTX 4070
-- RAM: 32 GB
+- Current live validation host: Intel Core i7-12700H, NVIDIA RTX 3060 Laptop
+  GPU, 15.8 GB detected RAM
+- Historical workstation target: Intel Core i9-14900K, NVIDIA RTX 4070, 32 GB
+  RAM (not present for this Gate F run)
 
 **Secondary validation target:**
-- NVIDIA RTX 3060 Laptop, physically exercised under the continuation exception
+- NVIDIA RTX 4070 (must be validated separately; pending on this host)
 
 **Next-session instruction:**
-- Begin with physical RTX 3060 detection, then validate every remaining phase
-  and gate (Phases 0–16, Gates A–E, Rubin/future-NVIDIA, i9 CPU, unified
-  scheduler, and final validation). Keep separate RTX 3060/RTX 4070 tables,
-  preserve the documented laptop RSS failure and look settings, and never
-  reuse RTX 4070 engines, profiles, measurements, or quality results on the
-  RTX 3060. Missing measurements remain PENDING.
+- Begin with physical RTX 4070 detection and repeat the Gate F workload. Keep
+  separate RTX 3060/RTX 4070 tables, preserve the documented laptop RSS
+  failure and look settings, and never reuse engines, profiles, measurements,
+  or quality results across GPUs. Missing measurements remain PENDING.
 
 ---
 
@@ -1465,7 +1466,6 @@ Validation: focused Gate C/runtime policy tests `37 passed`; RTX 4070 remains
 the only physically available target in this session. RTX 3060 validation is
 PENDING and Rubin validation is unavailable.
 
-
 ## Gate D RTX 4070 closure and two corrected capability probes - 2026-08-30
 
 ### Gate D: measured, and the default wins
@@ -1612,3 +1612,74 @@ Validation this session: focused scheduler/runtime tests `50 passed`; Python
 compilation passed; physical RTX 4070 control and scheduler comparison
 completed with zero wrong-faceset events. The immutable Phase 2 baseline is
 unchanged.
+## Gate F constrained RTX 3060 runtime audit - 2026-08-30
+
+### Implementation
+
+- Hardware discovery now prefers the Windows OS-reported processor brand, so
+  the live host records `12th Gen Intel(R) Core(TM) i7-12700H` rather than the
+  generic `Intel64 Family` fallback. P/E topology remains independently
+  detected: 14 physical / 20 logical processors, 6 P-cores, 8 E-cores,
+  `windows-cpu-set-efficiency-class`, affinity supported.
+- Runtime diagnostics and `RuntimeMonitor` now record total/available/system
+  RAM, process RSS, swap/pagefile use, commit estimate/limit, and the source of
+  the portable commit estimate. The estimate is explicitly
+  `physical_used_plus_swap_used`; it is not presented as an exact Windows
+  committed-private counter.
+- Existing capability-based 3060 safeguards remain active: detected 6.0 GB
+  VRAM is in the small tier, the default policy selects one context/worker/
+  stream/batch/in-flight frame, 1,536 MB frame budget, and no TensorRT pool.
+  These are capability/profile decisions, not RTX 4070 settings copied to the
+  laptop. Queue geometry remains bounded with backpressure.
+
+### Current physical RTX 3060 validation
+
+Runtime detection (not a benchmark): NVIDIA GeForce RTX 3060 Laptop GPU,
+Ampere, SM 8.6, 6.0 GB total / 4.551 GB available at profile time, CUDA 12.8,
+driver 616.56, TensorRT 10.9.0.34, ONNX Runtime 1.23.2, Tensor Core modes
+FP16/BF16, FP16/BF16 exposed, INT8/FP8 not exposed by the probed path, NVDEC
+AV1/H.264/HEVC/VP9, NVENC AV1/H.264/HEVC. The exact detected profile key was
+`6876812bbf3ee49c764a6448`.
+
+The post-change bounded run used the locked 1280x720 `double/d4.mp4` fixture,
+frames 0..120, RealSwap, requested GPEN 256 Pro/RealityUX, CUDA, HEVC NVENC,
+and stabilization. It completed 120/120 frames with 0 wrong-faceset
+applications:
+
+| Metric | RTX 3060 Laptop current run |
+|---|---:|
+| End-to-end processing FPS | 3.09 |
+| Decode throughput | 545.45 FPS |
+| Inference/swap throughput | 6.83 calls/s |
+| Enhancement throughput | not run (safety downgrade) |
+| Encode throughput | 244.90 FPS |
+| Peak / mean process RSS | 2.844 / 1.837 GB |
+| Peak / mean VRAM | 4,637 / 2,656.534 MB |
+| Mean CPU / GPU utilization | 33.241% / 47.457% |
+| Mean frame latency | 726.92 ms |
+| Peak temperature / power | 77 C / 87.48 W |
+| Stability / correctness | pass / 0 wrong faceset |
+| Output quality | visual review pending |
+
+This is a constrained-path measurement, not a full-stack baseline: the
+runtime recorded NVDEC -> CPU, GPEN -> None, and RealityUX -> XSeg-only
+downgrades. The strict historical `<2.5 GB` RSS gate therefore remains
+**BLOCKED**, and no baseline-to-final percentage improvement is claimed.
+The run is stored at
+`app/output/gate_f_3060_20260830/gate_f_3060_20260830_120f.json`.
+
+### RTX 4070 regression status
+
+RTX 4070 was not physically present for this Gate F session. Its Gate F
+benchmark is **PENDING**, not inferred from the RTX 3060 run. Required command
+on the workstation, using the same locked fixture and workload, is:
+
+```text
+app\env\Scripts\python.exe app\tests\baseline_controlled.py --tag gate_f_4070 --target "RTX 4070" --video G:\pinokio\roop-keep\double\d4.mp4 --sources harjot,gargee --start 0 --end 600 --enhancer "GPEN 256 Pro" --mask-engine RealityUX --provider tensorrt --codec hevc_nvenc --stabilization-mode on --color-transfer-mode none --out app\output\gate_f_4070
+```
+
+Acceptance classification for this Gate F change: **D. NEUTRAL** for the
+telemetry additions; existing constrained-runtime policy remains **3060-
+specific/adaptive** and has no 4070 performance claim until measured. The
+4070 row must report its own baseline/final FPS, VRAM, RAM, CPU/GPU, stage
+throughput, latency, stability, and visual-quality review.

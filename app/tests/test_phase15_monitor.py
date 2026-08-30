@@ -41,6 +41,24 @@ class Phase15MonitorTests(unittest.TestCase):
         self.assertEqual(result["bottleneck"], "decode-bound")
         self.assertEqual(result["queue_depths"]["input"], 0.0)
 
+    def test_summary_exposes_memory_pressure_dimensions(self):
+        monitor = RuntimeMonitor(enabled=True, diagnostics=False)
+        monitor._resource_snapshot = lambda: {
+            "process_rss_gb": 1.25,
+            "ram_total_gb": 15.8,
+            "ram_available_gb": 5.6,
+            "ram_committed_gb": 10.4,
+            "ram_commit_limit_gb": 23.8,
+            "swap_used_gb": 0.1,
+            "swap_utilization_pct": 0.4,
+        }
+        monitor.start()
+        result = monitor.finish()
+        self.assertEqual(result["process_rss_gb"], 1.25)
+        self.assertEqual(result["ram_available_gb"], 5.6)
+        self.assertEqual(result["ram_committed_gb"], 10.4)
+        self.assertEqual(result["swap_utilization_pct"], 0.4)
+
     def test_adaptation_requires_hysteresis_and_changes_future_work_only(self):
         tuning = RuntimeTuning(batch_size=3, tile_batch_size=2,
                                in_flight_frames=2, queue_depth=2)

@@ -378,6 +378,13 @@ def get_telemetry():
         "cpu_percent": 0.0,
         "ram_total": 0.0,
         "ram_used": 0.0,
+        "ram_available": 0.0,
+        "ram_committed": 0.0,
+        "ram_commit_limit": 0.0,
+        "swap_used": 0.0,
+        "swap_total": 0.0,
+        "swap_percent": 0.0,
+        "process_rss": 0.0,
         "threads": 0
     }
     telemetry.update(_nvidia_smi_stats())
@@ -388,6 +395,22 @@ def get_telemetry():
         telemetry["cpu_percent"] = cpu_percent
         telemetry["ram_total"] = round(ram.total / (1024 ** 3), 2)
         telemetry["ram_used"] = round(ram.used / (1024 ** 3), 2)
+        telemetry["ram_available"] = round(ram.available / (1024 ** 3), 2)
+        process = psutil.Process(os.getpid())
+        telemetry["process_rss"] = round(process.memory_info().rss / (1024 ** 3), 3)
+        swap = psutil.swap_memory()
+        telemetry["swap_used"] = round(swap.used / (1024 ** 3), 2)
+        telemetry["swap_total"] = round(swap.total / (1024 ** 3), 2)
+        telemetry["swap_percent"] = round(
+            100.0 * swap.used / swap.total if swap.total else 0.0, 2)
+        # psutil has no portable exact Windows commit counter. This estimate
+        # is intentionally labelled by its source and is also emitted by the
+        # runtime monitor, keeping the diagnostics endpoint consistent.
+        telemetry["ram_committed"] = round(
+            (ram.used + swap.used) / (1024 ** 3), 2)
+        telemetry["ram_commit_limit"] = round(
+            (ram.total + swap.total) / (1024 ** 3), 2)
+        telemetry["ram_commit_source"] = "physical_used_plus_swap_used"
     except Exception:
         pass
 

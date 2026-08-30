@@ -312,6 +312,29 @@ def _matching_benchmark_knee(model_key, input_shape=None):
         device = result.get('device') or {}
         if not device.get('gpu_name'):
             return None
+        # The GPU name/VRAM checks below are useful diagnostics, but they are
+        # not a sufficient cache boundary: driver, CUDA/ORT/TensorRT versions,
+        # exposed precision modes, and encoder/decoder capabilities can all
+        # change the measured context knee. Real benchmark output therefore
+        # has to carry the canonical profile key and match this runtime before
+        # it can influence automatic pool sizing.
+        recorded_key = result.get('hardware_profile_key')
+        if not recorded_key:
+            return None
+        current_key = None
+        if cfg is not None:
+            current_hardware = getattr(cfg, 'hardware', None) or {}
+            current_key = current_hardware.get('hardware_profile_key') \
+                if isinstance(current_hardware, dict) else None
+        if not current_key:
+            try:
+                from roop.runtime_optimizer import HardwareProfiler
+                current_key = HardwareProfiler().profile().as_dict().get(
+                    'hardware_profile_key')
+            except Exception:
+                current_key = None
+        if not current_key or str(recorded_key) != str(current_key):
+            return None
         import torch
         if not torch.cuda.is_available():
             return None

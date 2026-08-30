@@ -14,11 +14,13 @@ from roop.runtime_optimizer import (
     ProfileStore,
     ResourceManager,
     RuntimeOptimizer,
+    RuntimeAutotuner,
     RuntimeProfile,
     RuntimeTuning,
     PrecisionSelector,
     TensorRTEngineManager,
     WorkloadProfile,
+    _cpu_name,
     apply_cpu_affinity,
     small_card_decode_policy,
     small_card_enhancer_policy,
@@ -68,6 +70,11 @@ def _workload(faces=1, enhanced=True, stabilized=True, width=1280, height=720):
 
 
 class RuntimeOptimizerTests(unittest.TestCase):
+    def test_cpu_name_uses_available_os_brand_string(self):
+        with patch("roop.runtime_optimizer.platform.system", return_value="Linux"), \
+                patch("roop.runtime_optimizer.platform.processor", return_value="Intel test CPU"):
+            self.assertEqual(_cpu_name(), "Intel test CPU")
+
     def _hybrid_hardware(self):
         return HardwareProfile(
             **{**_hardware(12.0).__dict__,
@@ -206,6 +213,8 @@ class RuntimeOptimizerTests(unittest.TestCase):
         tuner = AutoTuner()
         small, *_ = tuner.tune(_hardware(6.0, physical=8, logical=16), _workload(), {})
         desktop, *_ = tuner.tune(_hardware(12.0), _workload(faces=2), {})
+        self.assertEqual(small.backend, "cuda",
+                         "a sub-7GB profile must not advertise inadmissible TRT")
         self.assertEqual(small.trt_context_count, 1)
         self.assertEqual(small.detector_pool_size, 0)
         self.assertEqual(small.swapper_pool_size, 0)
@@ -220,6 +229,16 @@ class RuntimeOptimizerTests(unittest.TestCase):
             self.assertLessEqual(getattr(small, name), hi)
             self.assertGreaterEqual(getattr(desktop, name), lo)
             self.assertLessEqual(getattr(desktop, name), hi)
+
+    def test_small_card_autotune_skips_inadmissible_trt_candidates(self):
+        tuner = RuntimeAutotuner()
+        hardware = _hardware(6.0, physical=8, logical=16)
+        base, *_ = AutoTuner().tune(hardware, _workload(faces=2), {})
+        candidates = tuner.candidates(base, hardware, _workload(faces=2), {})
+        self.assertFalse(any(item.get("stage") == "trt_concurrency"
+                             for item in candidates))
+        self.assertFalse(any(item.get("backend") == "tensorrt"
+                             for item in candidates))
 
     def test_upscale_batch_hint_is_workload_specific(self):
         tuner = AutoTuner()

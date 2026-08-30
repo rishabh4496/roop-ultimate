@@ -81,6 +81,34 @@ def detect_hardware():
         'vram_gb': 0.0, 'vram_tier': '', 'driver': '', 'cuda': '',
         'tensorrt': '', 'onnxruntime': '', 'ram_gb': 0.0,
     }
+    # Use the same complete probe as diagnostics, startup, and benchmarks.
+    # Keeping this identity canonical is what prevents a benchmark saved by
+    # one card from becoming an automatic recommendation on the other card.
+    # The legacy aliases below are retained because the settings layer and
+    # older config files still use their shorter names.
+    try:
+        from roop.runtime_optimizer import HardwareProfiler
+        profile = HardwareProfiler().profile()
+        complete = profile.as_dict()
+        hw.update(complete)
+        hw.update({
+            'gpu': profile.gpu_name,
+            'vram_gb': profile.vram_total_gb,
+            'driver': profile.driver_version,
+            'cuda': profile.cuda_version,
+            'tensorrt': profile.tensorrt_version,
+            'onnxruntime': profile.onnxruntime_version,
+            'ram_gb': profile.ram_total_gb,
+        })
+        if complete.get('hardware_profile_key'):
+            hw['hardware_profile_key'] = complete['hardware_profile_key']
+        _HARDWARE_CACHE = dict(hw)
+        return dict(hw)
+    except Exception:
+        # Partial installs and the settings portability tests may not expose
+        # the full runtime probe. Fall through to the lightweight collection,
+        # preserving unknown capability fields as unknown.
+        pass
     # Settings is imported while the app is bootstrapping. Keep this identity
     # probe cheap; the full HardwareProfiler (including ffmpeg codec probes) is
     # used by runtime startup, diagnostics, and benchmarks.
@@ -163,20 +191,27 @@ def hardware_signature(hw=None):
     hw = hw or detect_hardware()
     if not hw.get('gpu') and not hw.get('ram_gb'):
         return ''
-    # Do not let a profile tuned under a different driver/runtime or compute
-    # capability follow config.yaml to another GPU.  Available VRAM is omitted
-    # because it changes during a run; total VRAM/tier and software identities
-    # are stable profile dimensions.
-    fields = (
-        hw.get('gpu', ''), hw.get('architecture', ''),
-        hw.get('compute_capability', ''), hw.get('vram_gb', 0.0),
-        hw.get('vram_tier', ''), hw.get('driver', hw.get('driver_version', '')),
-        hw.get('cuda', hw.get('cuda_version', '')),
-        hw.get('tensorrt', hw.get('tensorrt_version', '')),
-        hw.get('onnxruntime', hw.get('onnxruntime_version', '')),
-        hw.get('ram_gb', 0),
-    )
-    return '|'.join(str(value) for value in fields)
+    # Reuse the same complete identity as runtime profiles. Available VRAM is
+    # intentionally absent from that key because it changes while models are
+    # loaded; total VRAM, software versions, capabilities, and CPU topology
+    # remain part of the stable machine identity.
+    try:
+        from roop.hardware_validation import hardware_profile_key
+        identity = dict(hw)
+        identity.setdefault('gpu_name', hw.get('gpu', ''))
+        identity.setdefault('gpu_vendor', (
+            'nvidia' if 'nvidia' in str(hw.get('gpu', '')).lower() else 'unknown'))
+        identity.setdefault('vram_total_gb', hw.get('vram_gb', 0.0))
+        identity.setdefault('driver_version', hw.get('driver', ''))
+        identity.setdefault('cuda_version', hw.get('cuda', ''))
+        identity.setdefault('tensorrt_version', hw.get('tensorrt', ''))
+        identity.setdefault('onnxruntime_version', hw.get('onnxruntime', ''))
+        identity.setdefault('ram_total_gb', hw.get('ram_gb', 0.0))
+        if identity.get('gpu_name') or identity.get('ram_total_gb'):
+            return 'v2|' + hardware_profile_key(identity)
+    except Exception:
+        pass
+    return ''
 
 
 class Settings:
@@ -830,10 +865,15 @@ class Settings:
         results = getattr(self, 'benchmark_results', {}) or {}
         if isinstance(results, dict) and results.get('best_threads'):
             measured = results.get('settings_measured') or {}
-            if not measured or self._benchmark_matches_settings(measured):
+            if (self._benchmark_matches_hardware(results) and
+                    (not measured or self._benchmark_matches_settings(measured))):
                 mode_threads = results.get('best_threads', {}).get(mode)
                 if mode_threads:
                     return int(mode_threads)
+            elif not self._benchmark_matches_hardware(results):
+                print("[Auto Thread Selection] Ignoring benchmark thread result: "
+                      "measured hardware profile does not match this runtime.",
+                      flush=True)
             else:
                 print("[Auto Thread Selection] Ignoring benchmark thread result: "
                       "measured model/provider settings do not match this run.",
@@ -867,6 +907,28 @@ class Settings:
         except Exception:
             pass
         return getattr(self, 'max_threads', 8)
+
+    def _benchmark_matches_hardware(self, result) -> bool:
+        """Reject persisted measurements from another runtime identity.
+
+        Reports produced by the current benchmark always include ``device``
+        and ``hardware_profile_key``. A missing key is therefore unsafe for a
+        real report. The narrow legacy exception keeps old in-memory callers
+        that supplied only ``best_threads`` working during migration.
+        """
+        if not isinstance(result, dict):
+            return False
+        recorded = result.get('hardware_profile_key')
+        if not recorded:
+            return not result.get('device')
+        current = getattr(self, 'hardware', {}) or {}
+        current_key = current.get('hardware_profile_key')
+        if not current_key:
+            try:
+                current_key = hardware_signature(current).split('|', 1)[-1]
+            except Exception:
+                current_key = ''
+        return bool(current_key and str(recorded) == str(current_key))
 
     def _benchmark_matches_settings(self, measured) -> bool:
         """Return whether a benchmark was measured for the active pipeline.
