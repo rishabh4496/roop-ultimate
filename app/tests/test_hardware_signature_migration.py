@@ -62,5 +62,49 @@ class SameMachineSignatureTest(unittest.TestCase):
         self.assertTrue(same_machine_signature(LEGACY_SAME, CURRENT))
 
 
+class SignatureFormatVersionTest(unittest.TestCase):
+    """A version-prefix change is a format change, not a new GPU.
+
+    The signature later became `v2|<sha256[:24]>` (an opaque digest), which no
+    field-by-field rule can compare against the older pipe-separated forms. If
+    that reads as "different hardware" the alarm fires forever again, which is
+    the defect this module exists to close -- so the two Gate F/2026-08-31
+    changes do not silently undo each other.
+    """
+
+    V2 = "v2|685ec07a5d37e3619d9f103f"
+
+    def test_legacy_to_v2_is_a_migration(self):
+        self.assertTrue(same_machine_signature(LEGACY_SAME, self.V2))
+
+    def test_long_form_to_v2_is_a_migration(self):
+        self.assertTrue(same_machine_signature(CURRENT, self.V2))
+
+    def test_two_different_v2_digests_are_a_real_change(self):
+        self.assertFalse(same_machine_signature(
+            "v2|aaaaaaaaaaaaaaaaaaaaaaaa", self.V2))
+
+    def test_identical_v2_is_unchanged(self):
+        self.assertTrue(same_machine_signature(self.V2, self.V2))
+
+    def test_a_future_v3_is_also_treated_as_a_format_change(self):
+        self.assertTrue(same_machine_signature(self.V2, "v3|deadbeefdeadbeefdeadbeef"))
+
+
+class MigrationPersistsTest(unittest.TestCase):
+    """The migration must WRITE BACK, or the notice it suppresses is a lie.
+
+    Same reasoning as the thread-rule migration: without a write-back the
+    decision is recomputed from the same unstamped file on every launch.
+    """
+
+    def test_settings_persists_a_migrated_signature(self):
+        import inspect
+        import settings as settings_mod
+        source = inspect.getsource(settings_mod.Settings.load)
+        self.assertIn("_hardware_signature_migrated", source)
+        self.assertIn("self.save()", source)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -249,6 +249,20 @@ def same_machine_signature(saved, current):
     current_parts = [part for part in str(current).split('|') if part != '']
     if len(saved_parts) < 2 or len(current_parts) < 2:
         return False
+    # A VERSION-PREFIX change is a format change, and the newer format is an
+    # opaque digest -- `v2|<sha256[:24]>` -- so there is nothing left to
+    # compare field by field. Treat it as the same machine so the alarm does
+    # not fire forever on a config the app itself wrote. The protective action
+    # is not lost: the caller still stamps this as a migration, re-derives the
+    # hardware-dependent settings from THIS GPU, and writes the new signature
+    # back, so a genuine move is caught on the launch after the migration
+    # rather than never being distinguishable from it.
+    saved_v = saved_parts[0].startswith('v') and saved_parts[0][1:].isdigit()
+    current_v = current_parts[0].startswith('v') and current_parts[0][1:].isdigit()
+    if saved_v != current_v:
+        return True
+    if saved_v and current_v and saved_parts[0] != current_parts[0]:
+        return True
     if len(saved_parts) == len(current_parts):
         # Same format: any difference is a real difference.
         return saved_parts == current_parts
@@ -331,8 +345,9 @@ class Settings:
         # forever. Guarded on the file already existing because
         # `/api/settings/defaults` builds a throwaway Settings pointed at a path
         # that deliberately does not exist, and must not bring one into being.
-        if getattr(self, '_threads_migrated', False):
+        if getattr(self, '_threads_migrated', False) or                 getattr(self, '_hardware_signature_migrated', False):
             object.__setattr__(self, '_threads_migrated', False)
+            object.__setattr__(self, '_hardware_signature_migrated', False)
             try:
                 if os.path.isfile(self.config_file):
                     self.save()
