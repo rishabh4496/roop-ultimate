@@ -80,7 +80,7 @@ NVDEC end-to-end run; 4.09 FPS remains the historical Phase 7 workload result.
 | A. Independent Adversarial Review | NOT STARTED | — | — | |
 | B. Performance Target Analysis | NOT STARTED | — | — | |
 | C. Rubin / Next-Generation Tensor Cores | NOT STARTED | — | — | |
-| D. Intel i9-14900K CPU Optimization | IMPLEMENTED; E2E VALIDATION PENDING | — | — | Runtime CPU capability detection, P/E policies, bounded nested-thread pools, OpenCV SIMD dispatch, and Gate D harness; RTX 3060 unavailable and RTX 4070 cold candidate timed out |
+| D. Intel i9-14900K CPU Optimization | 4070 MEASURED; 3060 PENDING | auto 5.10 FPS (4070, Gate D fixture) | none promoted | Counterbalanced 11-run matrix: `auto` is fastest; `p_only` -10.7%, `p_priority_e` -8.1%, `p_plus_e` -2.6%. Forcing a CPU distribution is a 4070 regression, so the existing default stands. 288/288 faces swapped in every arm. RTX 3060 pending |
 | E. Unified CPU + RAM + GPU Runtime Scheduler | NOT STARTED | — | — | |
 
 ---
@@ -1464,3 +1464,70 @@ provider path and quality/performance evidence exist.
 Validation: focused Gate C/runtime policy tests `37 passed`; RTX 4070 remains
 the only physically available target in this session. RTX 3060 validation is
 PENDING and Rubin validation is unavailable.
+
+
+## Gate D RTX 4070 closure and two corrected capability probes - 2026-08-30
+
+### Gate D: measured, and the default wins
+
+The RTX 4070 Gate D matrix is complete. Eleven counterbalanced end-to-end runs
+(forward pass, reversed pass, interleaved tiebreak) on `d4.mp4` frames 0-120
+with the production stack:
+
+| Policy | Threads | Samples (FPS) | Mean | vs auto |
+|---|---:|---|---:|---:|
+| `auto` | 10 | 5.13, 5.12, 5.05 | **5.10** | — |
+| `p_plus_e` | 32 | 4.96, 4.94, 5.02, 4.97 | 4.97 | -2.6% |
+| `p_priority_e` | 20 | 4.79, 4.58 | 4.69 | -8.1% |
+| `p_only` | 16 | 4.55, 4.56 | 4.56 | -10.7% |
+
+`auto`'s worst sample beats `p_plus_e`'s best, so the ordering is real despite
+the 2.6% gap sitting under this host's 3.7% single-pair noise floor. Every arm
+swapped 288/288 faces. **Nothing was promoted**: the measured outcome is that
+the shipped automatic policy is already the best of the four, and every
+explicit policy is a regression on this GPU. The 3060 arm remains pending.
+
+Caveat recorded in `docs/CPU_GATE_D.md`: thread count moves with the policy
+(10/16/20/32), so this compares whole CPU policies rather than isolating
+affinity.
+
+### The previous session's "timeout" was an orphaned engine cache
+
+Not a code defect. Production runs the `mixed` precision namespace, and the
+builder-config fingerprint added by Gate C had orphaned that namespace's 30
+built engines. The first candidate paid a full cold build inside its render
+clock and read 0.18 FPS against a warm 5.10 - at process level this is
+indistinguishable from a hang. Any change to a builder option carries this
+cost; the first arm of a pass must be discarded or re-measured warm.
+
+### Two capability probes could never return a positive answer
+
+Both were `getattr(..., default)` calls against attributes that do not exist,
+so each produced a plausible negative on every machine, and neither had test
+coverage. This is the same failure class as a control bound to a value nothing
+reads: everything looks measured, nothing is.
+
+| Probe | Was | Now |
+|---|---|---|
+| Display driver | `torch._C._cuda_getDriverVersion`, absent from every supported torch build; the TensorRT cache namespace read the literal `drvunknown` and the profiler's "fallback" was dead code | `nvidia-smi` through the shared `backend_manager.display_driver_version`; resolves 616.56 here |
+| FP8 exposure | `builder.platform_has_fast_fp8`; TensorRT 10.9 defines only `platform_has_fast_fp16` and `platform_has_fast_int8`, so FP8 read False on every GPU including Ada parts that have FP8 tensor cores | `BuilderFlag.FP8` + `DataType.FP8` + compute capability >= 8.9; this 4070 now correctly reports FP8 exposed |
+
+Evidence the driver gap was live: the driver moved 610.88 -> 616.56 between
+sessions while the cache directory still read `drvunknown`.
+
+Per an explicit decision this session, the driver is recorded and warned on but
+is **not** part of the engine cache key - engine identity is TensorRT version
+plus compute capability, and including the driver would discard every engine on
+each driver update. `check_driver_change` announces a change once per cache
+directory. Removing the inert token renames the directories, so
+`migrate_legacy_cache_dir` carries an existing one across the rename; verified
+on this host, 11 engines retained, nothing rebuilt.
+
+FP8 exposure is recorded only. `precision_policy` still refuses to select it
+until a calibrated provider path and measured quality exist.
+
+Validation: `app/tests/test_capability_probes.py`, 15 tests, asserting the
+probed attributes EXIST so a renamed upstream API fails loudly instead of
+degrading to a negative. Full suite **1,440 tests, 1 skipped**, with 2
+pre-existing `test_nvdec_reader` ffmpeg-spawn environment errors that
+reproduce identically with these changes stashed.

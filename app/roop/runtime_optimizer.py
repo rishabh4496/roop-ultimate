@@ -705,7 +705,20 @@ class HardwareProfiler:
                 import tensorrt as trt
                 builder = trt.Builder(trt.Logger(trt.Logger.ERROR))
                 int8 = bool(getattr(builder, "platform_has_fast_int8", False))
-                fp8 = bool(getattr(builder, "platform_has_fast_fp8", False))
+                # TensorRT exposes no ``platform_has_fast_fp8``.  Asking for
+                # one returned False on every GPU -- including Ada and Hopper
+                # parts that do have FP8 tensor cores -- so "FP8 unsupported"
+                # was indistinguishable from "we asked a question TensorRT
+                # cannot answer".  Ask what this builder can answer instead:
+                # whether it exposes the FP8 build flag and datatype, gated on
+                # the first SM version with FP8 tensor cores.  This records
+                # *exposure* only; precision_policy still refuses to select
+                # FP8 until a calibrated provider path and measured quality
+                # exist, so a future device cannot silently opt into it.
+                fp8 = bool(
+                    hasattr(getattr(trt, "BuilderFlag", None), "FP8")
+                    and hasattr(getattr(trt, "DataType", None), "FP8")
+                    and compute >= (8, 9))
                 if bool(getattr(builder, "platform_has_fast_fp16", False)):
                     trt_flags.add("fp16")
                 if int8:
@@ -913,20 +926,13 @@ class HardwareProfiler:
                 vram_total = _number(parts[1], vram_total) / (1024 if _number(parts[1]) > 100 else 1)
                 vram_free = _number(parts[2], vram_free) / (1024 if _number(parts[2]) > 100 else 1)
         if not driver and cuda:
-            # nvidia-smi is the preferred source, but a container or minimal
-            # Windows install may expose CUDA without the CLI.  Use the
-            # runtime's driver probe as a fallback so profile identity does not
-            # silently lose a required software-stack dimension.
-            try:
-                import torch as _torch
-                get_driver = getattr(getattr(_torch, "_C", None),
-                                     "_cuda_getDriverVersion", None)
-                if get_driver is not None:
-                    raw_driver = int(get_driver())
-                    driver = (f"{raw_driver // 1000}."
-                              f"{(raw_driver % 1000) // 10}")
-            except Exception:
-                pass
+            # Single shared resolver.  The previous fallback here called
+            # ``torch._C._cuda_getDriverVersion``, which does not exist in any
+            # supported build: it never ran, so the "fallback" was dead code
+            # and a machine without nvidia-smi silently lost this dimension of
+            # profile identity rather than reporting that it was unavailable.
+            from roop.backend_manager import _driver_from_smi
+            driver = _driver_from_smi(self.device_id)
 
         ffmpeg = self._resolve_ffmpeg()
         nvdec, nvenc, nvdec_codecs, nvenc_codecs = self._ffmpeg_capabilities(ffmpeg, cuda)

@@ -17,11 +17,12 @@ Primary validation GPUs:
 
 Both must remain first-class targets throughout the project.
 
-Current hardware available for validation in the latest Gate D session:
+Current hardware available for validation (2026-08-30 session):
 - RTX 3060 Laptop: UNAVAILABLE; Gate D benchmark remains PENDING
-- RTX 4070: AVAILABLE and detected at runtime; Gate D cold candidate timed out
-  before a valid FPS result. Prior physical 3060 continuation measurements
-  remain historical and are not reused for Gate D.
+- RTX 4070: AVAILABLE and detected at runtime (driver 616.56, CUDA 12.8,
+  TensorRT 10.9.0.34, ORT 1.23.2). Gate D is COMPLETE on this target; the
+  earlier cold-candidate timeout is explained and resolved. Prior physical
+  3060 continuation measurements remain historical and are not reused.
 
 The user authorized a continuation exception for the physical RTX 3060 Phase 3
 RSS failure. This permits Phases 5–9 to be exercised and documented, but does
@@ -159,11 +160,14 @@ matrix is multiple 600-frame arms at ~3.4 fps.
 
 **Session:** 1
 
-**Current phase:** Gate D CPU optimization is implemented but not performance
-closed. Both GPU targets remain first-class: RTX 3060 is PENDING because it is
-not available in this session; the RTX 4070 candidate matrix is PENDING because
-the first cold controlled run timed out before producing valid FPS. Phase 12
-must not be treated as a reason to remove the Gate D dual-target requirement.
+**Current phase:** Gate D is **closed on the RTX 4070** and **pending on the
+RTX 3060**. Both GPU targets remain first-class. Nothing was promoted from
+Gate D: the measured outcome is that the shipped `auto` CPU policy is already
+the fastest of the four candidates on the 4070.
+
+Also closed this session: two capability probes that could never return a
+positive answer (display driver, FP8 exposure). See the dated section at the
+end of `OPTIMIZATION_PROGRESS.md`.
 
 ## GATE D CPU OPTIMIZATION CHECKPOINT
 
@@ -178,12 +182,21 @@ On the current host the measured topology is 24 physical / 32 logical, 8 P
 physical / 16 P logical, and 16 E logical processors. The controlled benchmark
 harness is:
 
-    env\\Scripts\\python.exe tests\\gate_d_cpu_benchmark.py --target "RTX 4070" --end 120 --timeout 1800
-    env\\Scripts\\python.exe tests\\gate_d_cpu_benchmark.py --target "RTX 3060" --end 120 --timeout 1800
+    env\\Scripts\\python.exe tests\\gate_d_cpu_benchmark.py --target "RTX 4070" --end 120 --timeout 2400
+    env\\Scripts\\python.exe tests\\gate_d_cpu_benchmark.py --target "RTX 3060" --end 120 --timeout 2400
 
-The first 4070 run reached provider/model preparation but timed out in the
-long cold render and was stopped; no FPS or policy winner was recorded. The
-3060 command is the exact pending validation required on physical hardware.
+The 4070 matrix is COMPLETE (2026-08-30): eleven counterbalanced runs, with
+`auto` fastest at 5.10 FPS mean and every explicit policy slower
+(`p_only` -10.7%, `p_priority_e` -8.1%, `p_plus_e` -2.6%); 288/288 faces
+swapped in every arm. Full table in `docs/CPU_GATE_D.md`.
+
+The earlier "timeout" is explained and will recur on any builder-option
+change: the first candidate of a pass absorbs a cold TensorRT engine build. On
+this host that arm read 0.18 FPS against a warm 5.10. **Discard or re-measure
+the first arm of any Gate D pass.** Use `--timeout 2400`.
+
+The 3060 command remains the exact pending validation required on physical
+hardware.
 
 ## NEXT SESSION — MANDATORY PHYSICAL RTX 3060 VALIDATION
 
@@ -227,7 +240,7 @@ results into the RTX 3060 namespace.
 Required starting commands on the physical 3060 include:
 
     env\\Scripts\\python.exe tests\\baseline_controlled.py --tag phase2_3060 --target "RTX 3060"
-    env\\Scripts\\python.exe tests\\gate_d_cpu_benchmark.py --target "RTX 3060" --end 120 --timeout 1800
+    env\\Scripts\\python.exe tests\\gate_d_cpu_benchmark.py --target "RTX 3060" --end 120 --timeout 2400
 
 Then execute each phase/gate harness named by `OPTIMIZATION_PLAN.md` and the
 phase sections below. If a harness or dependency is unavailable, document the
