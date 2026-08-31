@@ -1979,10 +1979,6 @@ class TrackingMixin:
                         # never make the established temporal replay fail if a
                         # malformed optional landmark set reaches this branch.
                         pass
-            if (pose_source_fs is not None and previous_source_index is not None
-                    and hasattr(self, '_track_pose_source_map')):
-                self._track_pose_source_map[t['id']] = int(previous_source_index)
-            if pose_annotation_enabled or temporal_enabled:
                 # Stamp the owning track's id on every face this track hands
                 # out (real observation or gap-filled) so swap_faces can bind
                 # it to its source by exact lookup (self._track_source_map)
@@ -1992,14 +1988,30 @@ class TrackingMixin:
                 # strictly more evidence than a single frame's nearest-centroid
                 # search has, which is what let two people standing/leaning
                 # close together get their entries crossed at swap time.
+                #
+                # Unconditional, as it was before the Phase 5-8 work. The
+                # binding is not a pose or temporal feature; gating it on those
+                # opt-in flags left the swap phase re-deriving the association
+                # from a single frame's centroids whenever they were off.
                 try:
                     f['_track_id'] = t['id']
                 except Exception:
                     pass
-            # This append is intentionally outside the V2 source-bank branch:
-            # temporal replay must also work with source-bank disabled and with
-            # legacy V1 source sets.
-            out.setdefault(i, []).append(f)
+                # Inside the per-frame loop, and outside the V2 source-bank
+                # branch: temporal replay must also work with the source bank
+                # disabled and with legacy V1 source sets.
+                #
+                # This append was dedented out of the loop, so it ran once per
+                # TRACK on whichever frame index the loop variable last held.
+                # A two-track clip handed the swap phase two faces on ONE frame
+                # (`[Temporal] faces on 1 frames`) while the whole-clip builder
+                # above had 147 observations per track. Nothing failed: the
+                # render returned 0, the suite stayed green, and the reported
+                # fps went UP because almost no face was being swapped.
+                out.setdefault(i, []).append(f)
+            if (pose_source_fs is not None and previous_source_index is not None
+                    and hasattr(self, '_track_pose_source_map')):
+                self._track_pose_source_map[t['id']] = int(previous_source_index)
 
         # Phase 7 interaction metadata is deliberately geometry-only and
         # computed after all tracks have been merged/gap-filled. It tells the

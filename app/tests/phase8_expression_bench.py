@@ -93,6 +93,26 @@ def _face(faces, reference=None):
     return best or max(faces, key=lambda face: 0.0)
 
 
+def _init_detector(provider, cuda_device_id=0):
+    """Bring roop up before asking `get_all_faces` for anything.
+
+    Without this the analyser is never constructed, and `face_util.get_all_faces`
+    SWALLOWS detector exceptions -- it returns `[]` rather than raising. So this
+    harness graded 0 of 600 frames on perfectly good, face-full video and
+    reported `insufficient_detections`, which reads as "your clips are hard"
+    rather than "the detector was never started". The same silent-empty path
+    once hid a whole render's worth of missing detections (2026-08-24: yoloface
+    at a det_size it cannot accept returned zero faces for an entire clip and
+    looked like a 329 fps speedup).
+
+    Settings come from the live `config.yaml` for the detector-relevant keys, so
+    the bench grades with the detector the user actually runs.
+    """
+    import angle_bench
+    return angle_bench.init_pipeline(provider, "realswap", "None", "None",
+                                     cuda_device_id=cuda_device_id)
+
+
 def grade(target_video, output_video, max_frames=0):
     from roop.face_util import get_all_faces
 
@@ -159,12 +179,21 @@ def main():
     parser.add_argument("--scenario", choices=("all",) + CASES, default="all")
     parser.add_argument("--max-frames", type=int, default=0)
     parser.add_argument("--json", dest="json_path", default="")
+    parser.add_argument("--provider", default=None,
+                        help="detector provider; defaults to config.yaml's")
+    parser.add_argument("--cuda-device-id", type=int, default=0)
     args = parser.parse_args()
     if not args.target_video or not args.output_video:
         result = {"status": "pending", "reason": "real_target_and_output_required",
                   "cases": list(CASES)}
     else:
+        provider = args.provider
+        if provider is None:
+            from settings import Settings
+            provider = str(Settings(os.path.join(APP, "config.yaml")).provider)
+        _init_detector(provider, args.cuda_device_id)
         result = {"scenario": args.scenario,
+                  "provider": provider,
                   "target_video": os.path.abspath(args.target_video),
                   "output_video": os.path.abspath(args.output_video),
                   "metrics": grade(args.target_video, args.output_video,

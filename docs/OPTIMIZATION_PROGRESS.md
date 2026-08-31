@@ -950,3 +950,204 @@ record per-eye/mouth correlation, MAE, range retention, temporal-delta
 agreement, expression detection coverage, end-to-end FPS, VRAM, RSS, CPU/GPU
 utilization, and visual findings before changing the default or adding a
 heavier expression model.
+
+## PHASE 9 - REAL-VIDEO VALIDATION OF THE OPT-IN TEMPORAL STACK - MEASURED (2026-08-31)
+
+### Status and scope
+
+Phase 9 is the validation every one of Phases 6, 6B, 7 and 8 named as its own
+"next recommended phase" and none of them performed: render real footage with
+`ROOP_TEMPORAL_IDENTITY`, `ROOP_TEMPORAL_OCCLUSION` and
+`ROOP_TEMPORAL_EXPRESSION` off and on, measure cost and quality, and decide the
+defaults. Run on the physical RTX 4070 (driver 616.56) against the locked
+600-frame fixture (`double/d4.mp4`, 1280x720, frames 0..600, capture frame
+4930, sources `harjot,gargee`), stack as `config.yaml` ships it: realswap /
+GPEN 256 Pro / RealityUX / hevc_nvenc / tensorrt / 12 threads.
+
+Two corrections to the record before the results. First, the Phase 6/6B/7/8
+sections above each state "no new commit was created in this session ... remains
+uncommitted"; that is **stale**. All of it is committed in `1c0efd7` and pushed.
+Second, they each record their benchmarks as `pending` because "this checkout
+contains no supplied real video fixtures". Fixtures were present the whole time
+(`G:\pinokio\roop-keep\` holds `double/d1..d6.mp4`, four `expression/` clips,
+ten HD/4K `final/` clips, and 20+ `.fsz` facesets). The benches were simply
+never given `--video`.
+
+### THE HEADLINE: the shipped default path was swapping almost nothing
+
+The first null-control arm of this phase returned **5 faces seen, 3 swapped**
+over 600 frames. The locked 4070 baseline for the identical command is 847/853.
+
+Root cause, `app/roop/procmgr_tracking.py` in `_build_temporal_faces`: the
+per-frame `out.setdefault(i, []).append(f)` and the `f['_track_id'] = t['id']`
+stamp were **dedented out of their `for i, f in merged.items()` loop** in
+`1c0efd7`. The append therefore ran once per TRACK, on whichever frame index the
+loop variable last held. The whole-clip track builder above it was perfectly
+correct and said so in the log; everything downstream received nothing:
+
+    [Track]    2 tracks over 150 frames, 2 matched to a source (gate 0.60)
+    [Temporal] 2 track(s); faces on 1 frames (2 total, 2 gap-filled)
+
+`temporal_detection: true` is the shipped default, so this disabled the swap for
+essentially every render made from that commit.
+
+**Why nothing caught it, which is the part worth keeping.** Four independent
+checks all read clean at once:
+
+- the render returned 0 - a frame with no face is written through unchanged,
+  which is a valid picture, so an output-integrity sweep passes it;
+- the swap audit read `swapped (identity lock) 100.0%` - it counts INTENT over
+  the faces it was HANDED, never outcome over the faces in the clip. This is the
+  same instrument that read 100% while four enhancers failed on 60 of 60 frames
+  on the 3060;
+- throughput went **UP**, 12.9 -> 19.0 fps (+47%), because not swapping is
+  cheap. Read on its own that is an optimization;
+- all 1575 unit tests stayed green. Nothing covered `_build_temporal_faces` at
+  all.
+
+The one signal that was truthful was the detector-miss line the audit already
+prints - "890 frames of 894 (99.6%) had NO face detected at all".
+
+Fixed by restoring both statements to the loop body. The `_track_id` stamp is
+also restored to **unconditional**: `1c0efd7` had gated it behind
+`pose_annotation_enabled or temporal_enabled`, which silently returned the
+source binding to the single-frame centroid fallback for every default render.
+That binding is what stops two people standing close together getting their
+entries crossed; it is not a pose or temporal feature.
+
+### Files changed
+
+- `app/roop/procmgr_tracking.py` - the dedent fix and the unconditional stamp.
+- `app/tests/test_temporal_faces_replay.py` - new, 5 contracts.
+- `app/tests/phase8_expression_bench.py` - detector initialization.
+
+### The guard, and proof it is a guard
+
+`tests/test_temporal_faces_replay.py` asserts **coverage** - how many frames
+carry a face, and how many faces per frame - rather than any per-face property.
+A property test on one face passes just as happily when there is one face in the
+entire clip, which is precisely how this survived.
+
+Verified by re-introducing only the dedent: **4 of the 5 tests fail**, and all 5
+pass with the fix. A regression test that has not been shown to fail on the
+broken code is not evidence.
+
+### Null control
+
+Two identical arms of the fixed code, before any A/B:
+
+| arm | fps | faces seen | swapped | wrong faceset | peak RSS | peak VRAM |
+|---|---:|---:|---:|---:|---:|---:|
+| null n1 | 12.91 | 819 | 809 | 0 | 11.59 GB | 7027 MB |
+| null n2 | 12.87 | 819 | 809 | 0 | 11.59 GB | 6944 MB |
+
+**0.3% spread.** This was a quiet session by this machine's standards (the
+2026-08-31 session measured 4-8% across a comparable set); two arms is not a
+distribution, so the operating assumption used below is that effects above
+about 2% are readable today and smaller ones are not.
+
+### ROOP_TEMPORAL_EXPRESSION - measured, and it is the only one that can ship
+
+Counterbalanced ABBA, four arms in one contiguous set (ON, OFF, OFF, ON).
+
+| arm | fps | faces seen / swapped / wrong |
+|---|---:|---|
+| ON | 12.76 | 819 / 809 / 0 |
+| OFF | 12.94 | 819 / 809 / 0 |
+| OFF | 12.90 | 819 / 809 / 0 |
+| ON | 12.88 | 819 / 809 / 0 |
+
+Order-corrected: ON 12.82, OFF 12.92, **-0.77%** - inside the set's own 1.4%
+spread, so **not resolvable**. Face counts are identical in all four arms, so
+nothing was traded away.
+
+Quality, from `tests/phase8_expression_bench.py` on the rendered pairs, 477 of
+600 frames graded per arm (79.5% coverage):
+
+| channel | statistic | ON | OFF | delta |
+|---|---|---:|---:|---:|
+| mouth | correlation | **0.9085** | 0.8547 | **+0.0538** |
+| mouth | MAE | **0.1342** | 0.1671 | **-0.0329 (-19.7%)** |
+| left eye | correlation | 0.3626 | 0.3944 | -0.0318 |
+| right eye | correlation | 0.5234 | 0.5520 | -0.0286 |
+
+**The mouth result is real and the eye result is not.** On the mouth the two ON
+arms agree to 0.001 and the two OFF arms agree to 0.001, and the conditions
+separate completely - every ON arm beats every OFF arm on both statistics. On
+the eyes the within-condition spread (left 0.411 vs 0.314) is roughly **three
+times** the between-condition delta and the ON arms straddle the OFF arms; that
+is noise, and its negative direction must not be reported as a regression any
+more than it may be reported as neutral.
+
+This also settles "did the code path execute" without needing a counter: an
+inert flag cannot move a metric by 19.7% with perfect separation. Worth stating
+because before the dedent fix the expression engine was **structurally unable to
+work** - `TemporalExpressionEngine.update()` is called from inside the loop that
+had lost its body, so it saw one frame per track. The four arms above are the
+first valid measurement of Phase 8 that has ever been taken.
+
+Recorded so it is not re-derived: `mouth_aspect_ratio` is deliberately the same
+value as `mouth_openness` (`temporal_expression.py:84-86`). The bench prints
+four channels and measures three.
+
+### ROOP_TEMPORAL_IDENTITY and ROOP_TEMPORAL_OCCLUSION - the cost is the thread forcing
+
+`ProcessMgr.py:1671-1682` sets `threads = 1` whenever either flag is on, and
+disables both parallel stabilization and the 2-pass path with it.
+
+| arm | fps | vs 12-thread baseline | faces seen / swapped |
+|---|---:|---:|---|
+| baseline (12 threads) | 12.90 | - | 819 / 809 |
+| **threads=1 control, no flag** | **4.79** | **-62.9%** | **679 / 670** |
+| identity ON | 4.34 | -66.4% | 679 / 670 |
+| occlusion ON | 5.18 | -59.8% | 679 / 670 |
+
+The control is what makes this readable. Both features produce **exactly the
+same face counts as plain `threads=1`**, and their throughput straddles it
+(-9.4% and +8.1%, single arms) - so the features' own cost is not separable from
+noise. **The entire measured cost of both features is the forced single-worker
+downgrade: a 2.7x collapse.** Neither is usable in production as built, and
+tuning either one is pointless until the ordered-output requirement is met
+without giving up every worker.
+
+Recorded separately because it is not a temporal-stack property: **`threads=1`
+loses 17% of the faces** (819 -> 679) on this fixture with no flag set at all.
+That is a latent defect in the single-worker path, found here and not
+investigated.
+
+### Bench defect found and fixed
+
+`tests/phase8_expression_bench.py` called `roop.face_util.get_all_faces` without
+ever bringing roop up. That function **swallows detector exceptions and returns
+an empty list**, so the harness graded **0 of 600 frames** on valid, face-full
+video and reported `insufficient_detections` - which reads as "your clips are
+hard", not "the detector was never started". Had the Phase 8 session run it with
+real input, this is the answer it would have received. Same silent-empty path as
+the 2026-08-24 yoloface finding. Now initializes through
+`angle_bench.init_pipeline` with the live `config.yaml` provider, and records the
+provider in its report.
+
+### Tests
+
+- `tests.test_temporal_faces_replay` - 5 passed; 4 fail on the reverted code.
+- Full suite: **1580 tests, 1 skipped, 0 new failures** in 43.1 s. The 2
+  `test_nvdec_reader` errors are the pre-existing ffmpeg-spawn environment
+  failures recorded in earlier sessions.
+
+### Disposition and next recommended phase
+
+- **The dedent fix ships.** It restores the shipped default path.
+- **`ROOP_TEMPORAL_EXPRESSION` stays off by default, and is recommended for
+  promotion.** It is free (-0.77%, unresolvable), costs no faces, and improves
+  mouth-expression fidelity by 19.7% MAE with clean separation. It is held only
+  because "prove no regression" cannot be satisfied for the eye channels on one
+  clip: the direction there is negative and the sample cannot resolve it. What
+  closes it: the same ABBA design on two or three further clips - the four
+  `expression/` clips are the right material - reporting the eye channels; if
+  they stay inside the noise across clips while the mouth effect reproduces,
+  default it on.
+- **`ROOP_TEMPORAL_IDENTITY` and `ROOP_TEMPORAL_OCCLUSION` must not be promoted
+  in their current form.** The next work on them is not tuning; it is removing
+  the `threads = 1` forcing at `ProcessMgr.py:1671`, by giving the ordered
+  output history a single ordered writer while the swap workers stay parallel -
+  the shape `_run_stab_parallel` already uses. Until then they cost 2.7x.
