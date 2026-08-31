@@ -2567,3 +2567,189 @@ also using; NVENC frees contended CPU. Far smaller than the 4070's
    is CUDA/CPU, so no precision arm is real.
 5. Inherited and untouched: interacting faces (Phase 3's headline ask) remains
    characterized but unsolved.
+
+---
+
+## Session Log (2026-08-31 Part 3): The Default Path Had Stopped Swapping, And The Fix For It Reported +47% Faster
+
+Run on the MAIN device (RTX 4070, driver 616.56). Commits `da30500`, `4dff48c`.
+Suite **1596**, 1 skipped, plus the 2 pre-existing `test_nvdec_reader`
+ffmpeg-spawn environment errors. Tables in `docs/OPTIMIZATION_PROGRESS.md`
+(Phases 9 and 10); next steps in `docs/PHASE_HANDOFF.md`.
+
+### 0. THE HEADLINE: `1c0efd7` had disabled the swap on the shipped default path
+
+The first null-control arm of the session returned **5 faces seen, 3 swapped**
+over 600 frames against a baseline of ~819/809.
+
+`procmgr_tracking._build_temporal_faces` is the only thing that turns whole-clip
+tracks into the per-frame face map the swap phase consumes when
+`temporal_detection` is on — which is the shipped default. Its per-frame
+`out.setdefault(i, []).append(f)` and its `f['_track_id'] = t['id']` stamp had
+been **dedented out of the `for i, f in merged.items()` loop**, so the append ran
+once per TRACK, on whichever frame index the loop variable last held. The
+whole-clip builder above it was correct and said so:
+
+    [Track]    2 tracks over 150 frames, 2 matched to a source (gate 0.60)
+    [Temporal] 2 track(s); faces on 1 frames (2 total, 2 gap-filled)
+
+**Four checks read clean simultaneously**, which is the part worth keeping:
+
+- the render returned 0 — an unswapped frame is written through unchanged and is
+  a valid picture, so an output-integrity sweep passes it;
+- the swap audit read `swapped 100.0%` — it counts INTENT over the faces it was
+  HANDED, never outcome over the faces in the clip. Same instrument that read
+  100% while four enhancers failed on 60 of 60 frames on the 3060;
+- throughput went **UP, 12.9 → 19.0 fps (+47%)**, because not swapping is cheap.
+  Read alone that is an optimization;
+- all 1575 tests passed. Nothing covered `_build_temporal_faces` at all.
+
+The only truthful signal was the audit's own detector-miss line, "890 of 894
+frames (99.6%) had NO face detected".
+
+The `_track_id` stamp is also restored to **unconditional**. It had been gated
+behind `pose_annotation_enabled or temporal_enabled`, which silently returned the
+source binding to the single-frame centroid fallback on every default render —
+that binding is what stops two people standing close together getting their
+entries crossed, and it is not a pose or temporal feature.
+
+`tests/test_temporal_faces_replay.py` asserts **coverage** (frames carrying a
+face, faces per frame) rather than any per-face property, because a property test
+passes just as happily when there is one face in the whole clip. Verified to fail
+4 of its 5 contracts on the reverted code.
+
+### 1. The opt-in temporal stack, measured for the first time
+
+Every one of Phases 6/6B/7/8 recorded its benchmarks as `pending` for want of
+video fixtures. The fixtures were there the whole time (`G:\pinokio\roop-keep\`
+holds `double/d1..d6`, four `expression/` clips, ten HD/4K `final/` clips); the
+benches were simply never given `--video`.
+
+**`ROOP_TEMPORAL_EXPRESSION`** — counterbalanced ABBA, −0.77% throughput (inside
+the set's 1.4% spread, not resolvable), identical face counts in all four arms,
+and mouth MAE **0.1342 vs 0.1671 (−19.7%)** with complete separation between
+conditions. The eye channels are **not resolvable** — within-condition spread is
+~3x the delta — so their negative direction is not reported as a regression.
+Recommended for promotion, still default off, because "prove no regression"
+cannot be satisfied for the eyes on one clip.
+
+That also settles "did it execute" without a counter: an inert flag cannot move a
+metric 19.7% with perfect separation. Worth stating, because before the dedent
+fix the expression engine was **structurally unable to work** — its `update()` is
+called from inside the loop that had lost its body.
+
+**`ROOP_TEMPORAL_IDENTITY` / `ROOP_TEMPORAL_OCCLUSION`** — 4.34 and 5.18 fps
+against a **`threads=1` no-flag control at 4.79**. All three at identical face
+counts. So the entire cost was the `threads = 1` pinning at `ProcessMgr.py:1671`,
+and none of it was the features.
+
+Also found and fixed: `phase8_expression_bench.py` called `get_all_faces` without
+bringing roop up, and that function **swallows detector exceptions**, so it
+graded **0 of 600 frames** on valid footage and reported
+`insufficient_detections` — "your clips are hard" rather than "the detector was
+never started". Same silent-empty path as the 2026-08-24 yoloface finding.
+
+### 2. Removing the pinning: ordered is not the same as serial
+
+`_run_stab_parallel` already hands each worker a CONTIGUOUS block, runs it in
+frame order with its own filter instances, and primes it with warm-up frames it
+discards. Its block worker even said the identity-track caches were meant to stay
+usable there. Three things were missing:
+
+- **`warmup_frames(eps)`** on both engines, solved from their own recurrences
+  rather than guessed — identity **15** frames (`stabilize_mask` admits
+  `mask_strength * (0.60 + 0.40*(1-conf))`, and confidence only raises it, so a
+  confident track is the slow case), occlusion **44** (`enter_alpha` 0.90).
+- **`clone_for_block()`**. The split is load-bearing: `propose_identity` /
+  `update_geometry` / `update_pose` / `propose_source` run in the SEQUENTIAL
+  pre-pass and are read-only during the swap, so they are carried in; only the
+  three fields the swap phase mutates are cleared and re-primed. Occlusion
+  carries nothing.
+- **`ProcessMgr._temporal_engine()`** — every mutating site reads through it.
+
+`set_ordered` was wrong too: derived as `not _parallel_stab`, it made
+`TemporalOcclusionEngine.prepare()` return `"disabled"` for every frame of a
+parallel run — correct only because the run was pinned and never took that path.
+
+### 3. AND PARALLEL IS NOT ALWAYS THE BETTER TRADE
+
+First measurement of the naive change, same machine window:
+
+| engine | pinned to one worker | parallel blocks | |
+|---|---:|---:|---|
+| identity | 4.34 fps | **5.89** | **+35.7%** |
+| occlusion | 5.18 fps | **3.75** | **−27.6%** |
+
+A block pays `warm_up` frames of work it discards, and the geometry's adaptive
+fallbacks step the block down `4*wu → 2*wu → wu` to buy width on memory-tight
+machines. Good for a 6-frame filter; at occlusion's 44 it means a block that
+**discards as many frames as it produces**. `_stab_min_block_multiple` now floors
+the block at 3x the warm-up for these engines (1x elsewhere — a no-op, since every
+block expression is already ≥ wu). Identity gets a 45-frame block at width 5;
+occlusion cannot fund one, so width comes out 1 and it falls back to sequential,
+which is the faster of its two measured options. Held on the instance, not passed,
+so the site that DECIDES to go parallel and the site that EXECUTES cannot be given
+different values.
+
+**Counterbalanced ABBA, every arm's path verified, zero wrong-faceset:**
+
+| arm | pos | fps | path |
+|---|---:|---:|---|
+| NEW | 1 | 8.55 | parallel |
+| OLD | 2 | 4.41 | sequential |
+| OLD | 3 | 4.43 | sequential |
+| NEW | 4 | 7.07 | parallel |
+
+**+76.7%.** OLD arms agree to 0.5%; the worst NEW arm beats the best OLD arm by
+60%. Output equivalence, sequential vs parallel over 600 frames: mean absolute
+difference **0.35% of full scale**, and at the 45-frame block boundaries
+**0.857 against 0.883 elsewhere, ratio 0.97** — boundary frames are not worse
+than the rest, so the warm-up holds. Seam-freeness measured, not asserted.
+
+### 4. THE MEASUREMENT HAZARD: free RAM decides which code path an arm takes
+
+**The machine drifted 2.9x mid-session on the unchanged default configuration,
+no flags set** — the null control read **12.91 → 4.5 → 8.58 fps** as available
+host RAM moved 14.1 → 4.5 → 15.0 GB. `_default_stab_chunk_mb` is
+`available * 0.40 / 6`, so free memory at start decides the block geometry and
+therefore *which path a run even takes*.
+
+Two arms were misread before the cause was found. A floored identity arm at
+**2.44** looked like a catastrophic regression — the concurrent null was 4.5 and
+the arm had fallen back to sequential. A "mirrored pair" of **2.43 vs 2.57**
+looked like a null result — both arms were sequential, so it had compared one
+code path against itself.
+
+Three rules, and the third is new:
+
+- the null control is not a once-per-session ritual — this session needed one per
+  window;
+- **`faces_seen` is a free path discriminator** on this fixture: **679 = one
+  sequential pass, >750 = parallel** (a block re-processes its warm-up frames).
+  Record it beside fps on any run whose geometry can change, or a fallback is
+  indistinguishable from a regression;
+- a RAM-derived setting makes the benchmark a function of machine state. The
+  capture frame was pinned in August for the same class of reason
+  (`--capture-budget` was wall-clock); this is that trap one level down, and it
+  is NOT fixed.
+
+No cross-window delta is quoted anywhere in the Phase 9/10 records.
+
+### 5. OPEN
+
+1. **Identity's own per-face cost is now the limiter** — with warm-up pinned to
+   the baseline's 6 frames to isolate scheduling, identity ran **8.34 against a
+   12.90 baseline, −35% that is the engine itself**. `blend_output` runs two
+   full-crop `GaussianBlur(0,0,4.0)` passes plus a resize per face per frame.
+   That is per-face work reduction, the only direction Gate E left open.
+2. **Occlusion still effectively runs sequential** — a 44-frame warm-up cannot be
+   given a 3x block in a 661 MB budget. `ROOP_OCCLUSION_ENTER_ALPHA` 0.90 → 0.75
+   takes it to 17 frames, but that alpha controls how fast an occluder releases,
+   so measure quality before speed.
+3. **The 3x floor is a judgement, not a measured optimum** — 2x and 4x unswept.
+4. **Nothing here is measured on the 3060.** Less RAM means the sequential
+   fallback fires more often, which is the safe direction but is unverified.
+5. **Expression's promotion needs the eye channels on 2-3 more clips** — the four
+   `expression/` clips are the right material.
+6. Inherited and untouched: Phase 3's RSS gate still fails on the 3060 at
+   3.73 GB; interacting faces remains characterized but unsolved.
