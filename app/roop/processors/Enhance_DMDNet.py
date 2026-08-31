@@ -18,6 +18,23 @@ from roop.processors.enhance_common import is_usable, sized
 
 THREAD_LOCK_DMDNET = threading.Lock()
 
+# insightface's Face.__getattr__ returns None for a key the analyser never
+# wrote, so `face.landmark_2d_106` is None -- not a KeyError -- whenever the
+# 106-point model did not run on that face (an `aux=False` detection, or a
+# rescued/synthesised observation). Indexing that None is
+# `TypeError: 'NoneType' object is not subscriptable`, which took DMDNet down
+# mid-render on the RTX 3060. Every other consumer of this attribute already
+# guards it -- see procmgr_masking.restore_original_mouth and face_util:694 --
+# and apply_eyes_area's docstring is explicit that lm106 'is optional (it is
+# absent unless the 106 model ran)'. DMDNet was the one that did not.
+#
+# The counters exist because a silent fallback is the worse failure: the
+# 2026-08-30 session found four enhancers failing on EVERY frame while the
+# swap audit reported 100% success, because that audit counts intent, not
+# outcome. Release() reports the tally so 'DMDNet ran' and 'DMDNet actually
+# enhanced' can never be confused again.
+_LM_MISS = {'target': 0, 'ref': 0, 'ok': 0}
+
 
 class Enhance_DMDNet():
     # FIX: processorname and type are intentionally class-level (read-only identity constants)
@@ -44,6 +61,7 @@ class Enhance_DMDNet():
     def Run(self, source_faceset: FaceSet, target_face: Face, temp_frame: Frame) -> Frame:
         input_size = temp_frame.shape[1]
 
+        _skipped_before = _LM_MISS['target']
         result = self.enhance_face(source_faceset, temp_frame, target_face)
         # uint8(NaN) is 0, so a non-finite result here is a silent black face —
         # see enhance_common.is_usable. DMDNet runs in torch rather than ORT,
@@ -51,10 +69,25 @@ class Enhance_DMDNet():
         if not is_usable(result):
             print("[DMDNet] non-finite output — using unenhanced frame")
             return sized(temp_frame.astype(np.uint8), input_size)
+        # Counted by the skip counter's delta, not by object identity: the
+        # model-error path also returns a frame, and identity would have
+        # reported that as a successful enhance.
+        if _LM_MISS['target'] == _skipped_before:
+            _LM_MISS['ok'] += 1
         return sized(result.astype(np.uint8), input_size)
 
 
     def Release(self):
+        # Say out loud how much of the run this enhancer actually enhanced. A
+        # restorer that skipped every face still produces a valid video, and
+        # both the swap audit and the integrity sweep pass it — see the
+        # 2026-08-30 cuDNN finding. Only a tally distinguishes the two.
+        if _LM_MISS['target'] or _LM_MISS['ref']:
+            total = _LM_MISS['ok'] + _LM_MISS['target']
+            pct = (100.0 * _LM_MISS['target'] / total) if total else 0.0
+            print(f"[DMDNet] {_LM_MISS['ok']} faces enhanced; "
+                  f"{_LM_MISS['target']} skipped for missing landmark_2d_106 "
+                  f"({pct:.1f}%); {_LM_MISS['ref']} reference images skipped")
         del self.model_dmdnet
         self.model_dmdnet = None
 
@@ -106,7 +139,14 @@ class Enhance_DMDNet():
     def enhance_face(self, ref_faceset: FaceSet, temp_frame, face: Face):
         # preprocess
         start_x, start_y, end_x, end_y = map(int, face['bbox'])
-        lm106 = face.landmark_2d_106
+        lm106 = getattr(face, 'landmark_2d_106', None)
+        if lm106 is None:
+            # No 106 landmarks means no component locations, and DMDNet is
+            # driven entirely by those. Hand back the un-enhanced crop rather
+            # than indexing None. Returned BEFORE the 512 resize below so the
+            # caller's `sized(..., input_size)` is a no-op round trip.
+            _LM_MISS['target'] += 1
+            return temp_frame
         lq_landmarks = np.asarray(self.landmarks106_to_68(lm106))
 
         if temp_frame.shape[0] != 512 or temp_frame.shape[1] != 512:
@@ -132,15 +172,26 @@ class Enhance_DMDNet():
         if len(ref_faceset.faces) > 1:
             SpecificImgs = []
             SpecificLocs = []
-            for i,face in enumerate(ref_faceset.faces):
-                lm106 = face.landmark_2d_106
-                lq_landmarks = np.asarray(self.landmarks106_to_68(lm106))
-                ref_image = ref_faceset.ref_images[i]
+            # `face` is NOT reused as the loop variable: it is this method's
+            # target-face parameter, and shadowing it here made the reference
+            # loop's `face.matrix` read the wrong face's matrix to anyone
+            # reading the code.
+            ref_images = getattr(ref_faceset, 'ref_images', None) or []
+            for i, ref_face in enumerate(ref_faceset.faces):
+                ref_lm106 = getattr(ref_face, 'landmark_2d_106', None)
+                if ref_lm106 is None or i >= len(ref_images):
+                    # Skip this reference rather than abandoning the whole
+                    # specific dictionary; the ones that do carry landmarks
+                    # still build a usable one.
+                    _LM_MISS['ref'] += 1
+                    continue
+                lq_landmarks = np.asarray(self.landmarks106_to_68(ref_lm106))
+                ref_image = ref_images[i]
                 if ref_image.shape[0] != 512 or ref_image.shape[1] != 512:
                     # scale to 512x512
                     scale_factor = 512 / ref_image.shape[1]
 
-                    M = face.matrix * scale_factor
+                    M = ref_face.matrix * scale_factor
 
                     lq_landmarks = self.trans_points2d(lq_landmarks, M)
                     ref_image = cv2.resize(ref_image, (512,512), interpolation = cv2.INTER_AREA)
@@ -157,19 +208,27 @@ class Enhance_DMDNet():
                 SpecificImgs.append(ref_tensor)
                 SpecificLocs.append(ref_locs.unsqueeze(0))
 
-            SpecificImgs = torch.cat(SpecificImgs, dim=0)
-            SpecificLocs = torch.cat(SpecificLocs, dim=0)
-            # check_bbox(SpecificImgs, SpecificLocs)
-            SpMem256, SpMem128, SpMem64 = self.model_dmdnet.generate_specific_dictionary(sp_imgs = SpecificImgs.to(self.torchdevice), sp_locs = SpecificLocs)
-            SpMem256Para = {}
-            SpMem128Para = {}
-            SpMem64Para = {}
-            for k, v in SpMem256.items():
-                SpMem256Para[k] = v
-            for k, v in SpMem128.items():
-                SpMem128Para[k] = v
-            for k, v in SpMem64.items():
-                SpMem64Para[k] = v
+            if len(SpecificImgs) < 2:
+                # torch.cat() on an empty list raises, and a one-entry
+                # dictionary is not what the specific branch is for. Fall
+                # through to the generic path, which needs no landmarks.
+                SpecificImgs = SpecificLocs = None
+            if SpecificImgs is None:
+                SpMem256Para = SpMem128Para = SpMem64Para = None
+            else:
+                SpecificImgs = torch.cat(SpecificImgs, dim=0)
+                SpecificLocs = torch.cat(SpecificLocs, dim=0)
+                # check_bbox(SpecificImgs, SpecificLocs)
+                SpMem256, SpMem128, SpMem64 = self.model_dmdnet.generate_specific_dictionary(sp_imgs = SpecificImgs.to(self.torchdevice), sp_locs = SpecificLocs)
+                SpMem256Para = {}
+                SpMem128Para = {}
+                SpMem64Para = {}
+                for k, v in SpMem256.items():
+                    SpMem256Para[k] = v
+                for k, v in SpMem128.items():
+                    SpMem128Para[k] = v
+                for k, v in SpMem64.items():
+                    SpMem64Para[k] = v
         else:
             # generic
             SpMem256Para, SpMem128Para, SpMem64Para = None, None, None
