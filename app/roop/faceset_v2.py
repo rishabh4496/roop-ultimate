@@ -25,6 +25,9 @@ import zipfile
 import cv2
 import numpy as np
 
+from roop.identity_detail import (aggregate_detail_representations,
+                                   build_detail_representation)
+
 
 FORMAT_NAME = "roop.fsz"
 FORMAT_VERSION = 2
@@ -314,7 +317,21 @@ def _expression(lm68, bbox):
         return {}
 
 
-def _identity_details(crop, sharp_score):
+def _identity_detail_crop(image, face, fallback):
+    """Return a canonical source crop for V2 detail extraction when possible."""
+    kps = _array(_get(face, "kps"))
+    if image is not None and kps is not None and kps.shape == (5, 2):
+        try:
+            from roop.face_util import align_crop
+            aligned, _ = align_crop(image, kps, 128, mode="arcface")
+            if aligned is not None and aligned.size:
+                return aligned
+        except Exception:
+            pass
+    return fallback
+
+
+def _identity_details(crop, sharp_score, image=None, face=None):
     """Cache a compact high-frequency map and candidate detail masks.
 
     These are deliberately candidates, never definitive mole/scar labels. A
@@ -324,7 +341,8 @@ def _identity_details(crop, sharp_score):
     if crop is None or crop.size == 0:
         return {"descriptor_shape": [16, 16], "descriptor": [], "mask": [], "candidates": []}
     try:
-        gray = cv2.cvtColor(cv2.resize(crop, (64, 64), interpolation=cv2.INTER_AREA), cv2.COLOR_BGR2GRAY).astype(np.float32)
+        detail_crop = _identity_detail_crop(image, face, crop)
+        gray = cv2.cvtColor(cv2.resize(detail_crop, (64, 64), interpolation=cv2.INTER_AREA), cv2.COLOR_BGR2GRAY).astype(np.float32)
         base = cv2.GaussianBlur(gray, (0, 0), 2.0)
         residual = gray - base
         magnitude = np.abs(residual)
@@ -350,12 +368,14 @@ def _identity_details(crop, sharp_score):
                 "mask": (np.abs(patch) >= max(3.0, value * 0.35)).astype(np.uint8).tolist(),
             })
             work[max(0, y - 5):min(64, y + 6), max(0, x - 5):min(64, x + 6)] = 0
+        representation = build_detail_representation(detail_crop, sharp_score)
         return {
             "descriptor_shape": [16, 16],
             "descriptor": np.round(descriptor, 5).tolist(),
             "mask_shape": [64, 64],
             "mask": mask.tolist(),
             "candidates": candidates,
+            "high_frequency": representation,
         }
     except Exception:
         return {"descriptor_shape": [16, 16], "descriptor": [], "mask": [], "candidates": []}
@@ -434,7 +454,7 @@ def _entry(face, image, source_index):
                     "score": round(float(quality), 6)},
         "appearance": appearance,
         "expression": _expression(lm68, bbox),
-        "identity_details": _identity_details(crop, sharp_score),
+        "identity_details": _identity_details(crop, sharp_score, image=image, face=face),
         "pose_bin": _pose_bin(pose),
     }
 
@@ -539,10 +559,16 @@ def prepare_faceset_v2(faces, images, source_name="", min_quality=None,
     for i, entry in enumerate(selected_entries):
         pose_bank.setdefault(entry.get("pose_bin", "frontal"), []).append(i)
     descriptor_vectors = []
-    for entry, weight in zip(selected_entries, weights or [1.0] * len(selected_entries)):
+    detail_vectors = []
+    entry_weights = [max(0.01, float((entry.get("quality") or {}).get("score", 0.0)))
+                     for entry in selected_entries]
+    for entry, weight in zip(selected_entries, entry_weights):
         desc = (entry.get("identity_details") or {}).get("descriptor")
         if desc:
             descriptor_vectors.append((np.asarray(desc, dtype=np.float32), weight))
+        detail = (entry.get("identity_details") or {}).get("high_frequency")
+        if detail:
+            detail_vectors.append((detail, weight))
     global_details = {}
     if descriptor_vectors:
         total_weight = sum(w for _, w in descriptor_vectors)
@@ -553,6 +579,11 @@ def prepare_faceset_v2(faces, images, source_name="", min_quality=None,
             "support": len(descriptor_vectors),
             "confidence": round(min(1.0, total_weight / max(1.0, len(selected_entries))), 6),
         }
+
+    persistent_detail = aggregate_detail_representations(
+        [item for item, _ in detail_vectors],
+        [weight for _, weight in detail_vectors]) if detail_vectors else {}
+    global_details["high_frequency"] = persistent_detail
 
     metadata = {
         "schema": FORMAT_NAME,
@@ -675,6 +706,24 @@ def validate_metadata(metadata):
         for key in ("yaw", "pitch", "roll"):
             if geometry.get(key) is not None and _json_float(geometry.get(key)) is None:
                 raise ValueError(f"FaceSet source {key} is invalid")
+        detail = (source.get("identity_details") or {}).get("high_frequency")
+        if detail:
+            shape = detail.get("shape")
+            if detail.get("schema") != "roop.identity_detail.v1" or shape != [64, 64]:
+                raise ValueError("FaceSet identity detail representation is invalid")
+            expected = 64 * 64
+            for key in ("residual_q", "confidence_q", "mask_q"):
+                values = detail.get(key)
+                if not isinstance(values, list) or len(values) != expected:
+                    raise ValueError("FaceSet identity detail channel is invalid")
+    global_detail = (metadata.get("identity_details") or {}).get("high_frequency")
+    if global_detail:
+        if global_detail.get("schema") != "roop.identity_detail.v1" or global_detail.get("shape") != [64, 64]:
+            raise ValueError("FaceSet global identity detail representation is invalid")
+        for key in ("residual_q", "confidence_q", "mask_q"):
+            values = global_detail.get(key)
+            if not isinstance(values, list) or len(values) != 64 * 64:
+                raise ValueError("FaceSet global identity detail channel is invalid")
     pose_bank = metadata.get("pose_bank") or {}
     if not isinstance(pose_bank, dict):
         raise ValueError("FaceSet pose bank is not an object")

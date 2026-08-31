@@ -8,6 +8,7 @@ import cv2
 import numpy as np
 
 import roop.globals
+from roop.appearance_conditioning import VERY_DARK, _soft_mask
 
 
 class ColorTransferMixin:
@@ -55,7 +56,8 @@ class ColorTransferMixin:
         out = face + s * high_freq * core * skin_gate + dark_spot_layer
         return np.clip(out, 0, 255).astype(np.uint8)
 
-    def apply_color_transfer(self, source, target):
+    def apply_color_transfer(self, source, target, appearance=None,
+                             conditioned_strength=None):
         """Match the swapped crop's color/lighting to the original target crop.
 
         `source` = swapped face crop, `target` = original aligned crop (the
@@ -84,17 +86,33 @@ class ColorTransferMixin:
             bg = cv2.absdiff(source[:, :, 0], source[:, :, 1])
             gr = cv2.absdiff(source[:, :, 1], source[:, :, 2])
             if (float(cv2.mean(bg)[0]) < 5.0 and
-                    float(cv2.mean(gr)[0]) < 5.0):
+                    float(cv2.mean(gr)[0]) < 5.0 and
+                    not (getattr(roop.globals, 'target_conditioned_appearance', False)
+                         and appearance is not None)):
                 return source
 
         if mode == 'lct':
-            return self._color_transfer_lct(source, target)
-        if mode == 'mkl':
-            return self._color_transfer_mkl(source, target)
-        if mode == 'idt':
-            return self._color_transfer_idt(source, target)
+            out = self._color_transfer_lct(source, target)
+        elif mode == 'mkl':
+            out = self._color_transfer_mkl(source, target)
+        elif mode == 'idt':
+            out = self._color_transfer_idt(source, target)
+        else:
+            # Default: rct (LAB mean/std).
+            out = self._color_transfer_rct(source, target)
 
-        # Default: rct (LAB mean/std).
+        if (getattr(roop.globals, 'target_conditioned_appearance', False)
+                and appearance is not None):
+            strength = (getattr(roop.globals,
+                                 'target_conditioned_appearance_strength', 0.75)
+                        if conditioned_strength is None else conditioned_strength)
+            out = self._apply_target_conditioned_appearance(
+                out, target, appearance, strength)
+        return out
+
+    def _color_transfer_rct(self, source, target):
+        """Legacy LAB mean/std transfer kept as a named internal path."""
+
         source = cv2.cvtColor(source, cv2.COLOR_BGR2LAB).astype("float32")
         target = cv2.cvtColor(target, cv2.COLOR_BGR2LAB).astype("float32")
         source_mean, source_std = cv2.meanStdDev(source)
@@ -113,6 +131,81 @@ class ColorTransferMixin:
 
         source = (source - source_mean) * std_scale + target_mean
         return cv2.cvtColor(np.clip(source, 0, 255).astype("uint8"), cv2.COLOR_LAB2BGR)
+
+    def _apply_target_conditioned_appearance(self, source, target,
+                                              appearance, strength):
+        """Apply low-frequency target illumination and bounded target chroma.
+
+        The target supplies only low-frequency lighting and robust skin-region
+        statistics.  Source detail/high-frequency texture remains in ``source``;
+        no target texture patch is copied.  Quantile anchors preserve target
+        highlight rolloff and shadows without an independent brighten/whiten
+        operation.
+        """
+        try:
+            s_lab = cv2.cvtColor(source, cv2.COLOR_BGR2LAB).astype(np.float32)
+            t_lab = cv2.cvtColor(target, cv2.COLOR_BGR2LAB).astype(np.float32)
+            h, w = s_lab.shape[:2]
+            if t_lab.shape[:2] != (h, w):
+                t_lab = cv2.resize(t_lab, (w, h), interpolation=cv2.INTER_AREA)
+            mask = _soft_mask((h, w))
+            sample = mask > 0.35
+            if int(sample.sum()) < 64:
+                sample = np.ones((h, w), dtype=bool)
+            s_l = s_lab[:, :, 0]
+            t_l = t_lab[:, :, 0]
+            s_vals = s_l[sample]
+            t_vals = t_l[sample]
+            s_q = np.percentile(s_vals, [10, 50, 90, 99]).astype(np.float32)
+            t_q = np.percentile(t_vals, [10, 50, 90, 99]).astype(np.float32)
+            # The stabilizer supplies robust target values when available.  The
+            # actual target field remains current, so spatial shadows follow the
+            # frame while scalar exposure/color changes do not flicker.
+            lum = (appearance or {}).get('luminance') or {}
+            for i, key in enumerate(('p10', 'p50', 'p90', 'p99')):
+                value = lum.get(key)
+                if value is not None:
+                    # Appearance luminance is normalized; LAB L is 0..255.
+                    t_q[i] = float(np.clip(float(value) * 255.0, 0.0, 255.0))
+            s_q = np.maximum.accumulate(s_q)
+            t_q = np.maximum.accumulate(t_q)
+            anchors_s = np.array([0.0, s_q[0], s_q[1], s_q[2], s_q[3], 255.0], np.float32)
+            anchors_t = np.array([0.0, t_q[0], t_q[1], t_q[2], t_q[3], 255.0], np.float32)
+            # Avoid repeated equal anchors making np.interp unstable.
+            anchors_s = np.maximum.accumulate(anchors_s + np.arange(6, dtype=np.float32) * 1e-3)
+            global_l = np.interp(s_l.reshape(-1), anchors_s, anchors_t).reshape((h, w))
+
+            sigma = max(1.5, min(h, w) / 30.0)
+            source_low = cv2.GaussianBlur(s_l, (0, 0), sigmaX=sigma, sigmaY=sigma)
+            target_low = cv2.GaussianBlur(t_l, (0, 0), sigmaX=sigma, sigmaY=sigma)
+            source_residual = s_l - source_low
+            target_residual = t_l - target_low
+            src_contrast = float(np.std(source_residual[sample]))
+            tgt_contrast = float(np.std(target_residual[sample]))
+            contrast_ratio = np.clip(tgt_contrast / max(src_contrast, 1.0), 0.65, 1.35)
+            spatial_l = target_low + source_residual * contrast_ratio
+            # Global tone anchors handle exposure/rolloff; spatial low-pass carries
+            # the target's left/right/top/bottom shadow pattern.
+            desired_l = 0.40 * global_l + 0.60 * spatial_l
+            tier = (appearance or {}).get('tier')
+            if tier == VERY_DARK:
+                # Very dark footage is not an invitation to hallucinate exposure.
+                # Stay close to the target low-pass field and avoid lifting the
+                # source's low end above what the target actually contains.
+                desired_l = 0.30 * global_l + 0.70 * spatial_l
+            strength = float(np.clip(float(strength), 0.0, 1.0))
+            out_l = s_l + (desired_l - s_l) * strength * mask
+            s_ab = s_lab[:, :, 1:3]
+            t_ab = t_lab[:, :, 1:3]
+            delta = t_ab[sample].mean(axis=0) - s_ab[sample].mean(axis=0)
+            delta = np.clip(delta, -24.0, 24.0)
+            # Chroma follows the target cast, but the bounded blend prevents a
+            # warm/cool scene estimate from becoming neon skin.
+            out_ab = s_ab + delta.reshape(1, 1, 2) * (strength * 0.65) * mask[:, :, None]
+            out = np.dstack((out_l, out_ab))
+            return cv2.cvtColor(np.clip(out, 0, 255).astype(np.uint8), cv2.COLOR_LAB2BGR)
+        except (cv2.error, TypeError, ValueError, FloatingPointError):
+            return source
 
     def _color_transfer_lct(self, source, target):
         """Linear (covariance-whitening) color transfer in LAB. Whitens the

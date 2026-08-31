@@ -82,6 +82,10 @@ class FaceSetV2Test(unittest.TestCase):
         self.assertIn("profile_left", metadata["pose_bank"])
         self.assertEqual(metadata["pose_bank"]["strong_left"], [0])
         self.assertIsNotNone(metadata["identity"]["normalized_embedding"])
+        detail = entry["identity_details"]["high_frequency"]
+        self.assertEqual(detail["shape"], [64, 64])
+        self.assertEqual(len(detail["residual_q"]), 64 * 64)
+        self.assertEqual(metadata["identity_details"]["high_frequency"]["source_count"], 1)
 
     def test_pose_specific_embeddings_are_not_replaced_by_global_average(self):
         faces = [_face(70, identity=0), _face(70, pose=(0, 60, 0), identity=1)]

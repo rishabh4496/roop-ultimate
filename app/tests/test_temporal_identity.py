@@ -92,6 +92,54 @@ class TemporalIdentityTest(unittest.TestCase):
         self.assertTrue(np.all(result > 0.0))
         self.assertTrue(np.all(result < 1.0))
 
+    def test_lowpass_identity_keeps_current_detail_and_is_bounded(self):
+        exact = TemporalIdentityStabilizer(
+            enabled=True, output_strength=0.6, lowpass_size=0)
+        reduced = TemporalIdentityStabilizer(
+            enabled=True, output_strength=0.6, lowpass_size=64)
+        rng = np.random.default_rng(14)
+        first = rng.integers(20, 220, (256, 256, 3), dtype=np.uint8)
+        current = rng.integers(20, 220, (256, 256, 3), dtype=np.uint8)
+        exact.blend_output(3, first, confidence=0.2)
+        reduced.blend_output(3, first, confidence=0.2)
+        exact_result = exact.blend_output(3, current, confidence=0.2,
+                                           motion=0.05)
+        reduced_result = reduced.blend_output(3, current, confidence=0.2,
+                                              motion=0.05)
+        self.assertEqual(reduced_result.shape, current.shape)
+        self.assertEqual(reduced_result.dtype, np.uint8)
+        self.assertTrue(np.all(np.isfinite(reduced_result)))
+        # This is a low-frequency approximation, not a byte-equivalence claim;
+        # bound the change well below a visible full-frame replacement.
+        mae = float(np.mean(np.abs(
+            reduced_result.astype(np.float32) - exact_result.astype(np.float32))))
+        self.assertLess(mae, 3.0)
+        self.assertGreater(float(np.std(reduced_result)), 20.0)
+
+    def test_zero_lowpass_size_retains_reference_output(self):
+        rng = np.random.default_rng(15)
+        first = rng.integers(0, 256, (96, 96, 3), dtype=np.uint8)
+        current = rng.integers(0, 256, (96, 96, 3), dtype=np.uint8)
+        reference = TemporalIdentityStabilizer(enabled=True, lowpass_size=0)
+        explicit = TemporalIdentityStabilizer(enabled=True, lowpass_size=-1)
+        reference.blend_output(9, first, confidence=0.8)
+        explicit.blend_output(9, first, confidence=0.8)
+        expected = reference.blend_output(9, current, confidence=0.8)
+        actual = explicit.blend_output(9, current, confidence=0.8)
+        self.assertTrue(np.array_equal(expected, actual))
+
+    def test_lowpass_size_is_read_from_environment(self):
+        previous = os.environ.get("ROOP_TEMPORAL_IDENTITY_LOWPASS_SIZE")
+        try:
+            os.environ["ROOP_TEMPORAL_IDENTITY_LOWPASS_SIZE"] = "96"
+            layer = TemporalIdentityStabilizer.from_env()
+            self.assertEqual(layer.lowpass_size, 96)
+        finally:
+            if previous is None:
+                os.environ.pop("ROOP_TEMPORAL_IDENTITY_LOWPASS_SIZE", None)
+            else:
+                os.environ["ROOP_TEMPORAL_IDENTITY_LOWPASS_SIZE"] = previous
+
     def test_state_contains_requested_temporal_fields(self):
         self.layer.update_geometry(8, 0, self.landmarks,
                                    target_embedding=np.ones(4), confidence=0.8,

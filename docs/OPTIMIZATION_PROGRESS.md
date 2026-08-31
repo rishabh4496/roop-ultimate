@@ -1326,3 +1326,276 @@ cross-window number is quoted.
    fallback more often, which is the safe direction but is unverified.
 5. Neither flag's QUALITY has been validated on real footage; Phase 9's
    disposition stands. This phase makes identity affordable enough to test.
+
+## PHASE 11 - TEMPORAL IDENTITY PER-FACE COST - OPEN / INCOMPLETE (2026-09-01)
+
+### Status and scope
+
+Phase 10's parallel-block work removed the whole-render thread pinning, but its
+remaining identity cost was still per-face work: two full-crop Gaussian blurs
+in `blend_output`, repeated resizing of the canonical history, and redundant
+array copies in `stabilize_mask`. This phase reduces that opt-in temporal
+identity cost only. The shipped default remains unchanged because
+`ROOP_TEMPORAL_IDENTITY` is still off unless explicitly enabled.
+
+No TensorRT/CUDA/provider/precision/pool/worker policy, FaceSet format, source
+bank, detector, enhancer, occlusion policy, expression engine, or custom RTX
+3060 look setting was changed. The implementation is CPU-side and bounded by
+the same crop/state limits on both hardware profiles.
+
+### Files changed
+
+- `app/roop/temporal_identity.py`
+- `app/tests/test_temporal_identity.py`
+- `app/tests/bench_temporal_identity_cost.py`
+- `docs/ENV_FLAGS.md`
+- `docs/OPTIMIZATION_PROGRESS.md`
+- `docs/PHASE_HANDOFF.md`
+
+### Implementation
+
+`blend_output` now computes its explicitly low-frequency correction on a
+128px working crop by default (`ROOP_TEMPORAL_IDENTITY_LOWPASS_SIZE=128`),
+scales the Gaussian sigma with the reduction, and upsamples only the correction
+before restoring it onto the current frame. The current high-frequency crop is
+still the base image, so eyes, mouth, expression, and fine texture remain from
+the current frame. `0` selects the old full-resolution path for diagnostics and
+byte-level reference comparisons.
+
+`stabilize_mask` now consumes the current mask and owned previous history
+without making the redundant validation copies that existed on every call. It
+still keeps an owned state buffer and returns an independent result buffer, so
+callers cannot mutate temporal history accidentally.
+
+### Tests and benchmark evidence
+
+- Targeted temporal/regression set: **38 passed, 1 warning**.
+- Full suite: **1605 passed, 1 skipped, 595 subtests passed**, with the two
+  existing warnings only.
+- Python compilation and `git diff --check`: passed.
+- Reproducible command: `app/env/Scripts/python.exe
+  app/tests/bench_temporal_identity_cost.py`.
+- Three counterbalanced 1200-call pairs at 256x256 on the available host:
+  full-resolution reference mode averaged **747.9 blend calls/s** and the
+  128px mode averaged **1277.4 blend calls/s** (**+70.8%**). The same pairs
+  measured **1283.6 mask calls/s** versus **1290.6 mask calls/s** (**+0.5%**);
+  the mask change is therefore recorded as an allocation reduction, not a
+  claimed throughput win.
+- Synthetic output guard: reduced mode remained finite, uint8, dimensionally
+  valid, retained high-frequency detail, and stayed below the test's MAE bound
+  against the full-resolution reference. This is not a real-footage quality
+  score.
+
+### Feature-level real-footage benchmark audit
+
+The locked fixture was subsequently found at
+`G:/pinokio/roop-keep/double/d4.mp4` and three controlled 600-frame RTX 4070
+renders were completed. All used the expected 1280x720 fixture, full requested
+stack, TensorRT→CUDA→CPU provider chain, and returned 600/600 frames with
+`wrong_faceset=0`:
+
+| arm | FPS | peak RSS GB | peak VRAM MB | faces seen / swapped | disposition |
+|---|---:|---:|---:|---:|---|
+| identity off | 9.76 | 10.627 | 7409 | 977 / 962 | control |
+| identity on, lowpass 0 | 6.28 | 11.234 | 6750 | 773 / 764 | full-resolution reference |
+| identity on, lowpass 128 | 9.90 | 11.516 | 6840 | 876 / 866 | candidate |
+
+These are valid individual 4070 runs, but not a clean speedup claim: the
+adaptive path produced different `faces_seen`/swap counts (977, 773, 876), so
+the raw FPS values are not directly attributable across arms. The benchmark
+also did not retain output videos for manual visual review. A dual-target
+feature conclusion and visual regression conclusion therefore remain open.
+
+### Complete-phase checklist audit
+
+| Requirement | Evidence | Status | Missing before completion |
+|---|---|---|---|
+| IMPLEMENT | 128px bounded low-pass path and mask-copy reduction are present | PASS | None for the scoped code change |
+| TEST | Targeted temporal tests and full pytest suite pass | PASS | None for the scoped unit contracts |
+| BENCHMARK | Component A/B plus three locked-fixture 4070 renders | PARTIAL | Physical RTX 3060 feature run and comparable cross-arm attribution |
+| REGRESSION TEST | Full suite: 1605 passed, 1 skipped, 595 subtests; all three renders had 0 wrong FaceSets | PARTIAL | Retained-output manual visual review |
+| DOCUMENT | `ENV_FLAGS.md` and this progress record updated | PASS | None for documentation of current evidence |
+| HANDOFF | `PHASE_HANDOFF.md` contains next commands and constraints | PASS | Handoff remains open until missing evidence is collected |
+
+The phase is **not complete** because the benchmark is complete only for the
+4070 and the feature has no retained-output visual review or physical RTX 3060
+run. The synthetic MAE bound and automated wrong-FaceSet check cannot
+substitute for those checks.
+
+### Disposition and unresolved work
+
+The reduced low-frequency path is retained as an **opt-in experimental
+optimization**, not promoted as universal quality acceptance. The RTX 4070 has
+now completed feature-level runs, but the varying face counts prevent a clean
+cross-arm performance claim and the output videos were not retained for manual
+review. RTX 3060 validation and visual quality review remain pending.
+
+Remaining work is to validate the identity output on annotated real footage,
+run the same opt-in path physically on the RTX 3060 while preserving
+`blend_ratio=0.85`, `face_mask_blend=25`, `merger_sharpen=0.55`, and
+`stabilize_enhancer_strength=0.6`, then return to Phase 10's occlusion warm-up
+quality test and 2x/3x/4x block-floor sweep. The temporal flags remain off by
+default until those checks pass.
+
+## REQUESTED PHASE 9 - IDENTITY-SPECIFIC DETAIL PRESERVATION - OPEN / INCOMPLETE (2026-09-01)
+
+This is the user-requested identity-detail Phase 9. The historical Phase 9
+section above remains the temporal validation phase; the numbering collision is
+intentional and called out rather than rewriting prior records.
+
+### Implementation
+
+The existing V2 `identity_details` candidate descriptor was extended rather
+than replaced. During V2 faceset creation, each source now produces a compact
+signed luminance high-frequency residual in canonical `arcface_128` space. The
+selected source observations are aggregated with a median and agreement mask,
+so independent camera noise/JPEG/sharpening is suppressed and only persistent
+detail receives useful confidence. The archive stores residual, confidence, and
+soft mask channels; V1 archives remain compatible and return no identity-detail
+map.
+
+During processing, after the normal swap, enhancer, enhancer stabilizer,
+post-enhance colour match, merger operations, manual mask, and temporal
+low-frequency blend, the persistent V2 map is warped into the active swap
+template and composited at low strength. Target local contrast/exposure sets
+the amplitude; structural eye/nose/mouth areas are protected; the generated-
+face visibility mask prevents known occlusions/exclusions from receiving source
+marks; residual smoothing and tanh capping prevent artificial sharp points. The
+existing temporal identity state also smooths the detail residual per track and
+resets it on source changes, so a source switch cannot ghost prior marks.
+
+The existing `detail_transfer_strength` path remains separate: it transfers
+target footage texture and is not used as a substitute for source identity
+detail. `identity_detail_strength` is exposed through settings and both preview
+and swap API paths, defaulting to 0 for backwards-compatible output.
+
+### Files changed for this requested phase
+
+- `app/roop/identity_detail.py`
+- `app/roop/faceset_v2.py`
+- `app/roop/FaceSet.py`
+- `app/roop/ProcessMgr.py`
+- `app/roop/temporal_identity.py`
+- `app/roop/globals.py`
+- `app/settings.py`
+- `app/api.py`
+- `app/tests/test_identity_detail.py`
+- `app/tests/test_faceset_v2.py`
+- `app/tests/bench_identity_detail.py`
+- `app/tests/two_face_video.py`
+- `app/tests/baseline_controlled.py`
+- `docs/ENV_FLAGS.md`
+- `docs/OPTIMIZATION_PROGRESS.md`
+- `docs/PHASE_HANDOFF.md`
+
+### Tests and benchmark evidence
+
+- Focused V2/detail/temporal tests: **28 passed, 1 warning**.
+- Synthetic benchmark: **0.839016** detail-retention correlation,
+  **43.3257%** reduction in alternating-detail temporal delta, and **290.71
+  restorations/s** on the available host.
+- Covered feature contracts: mole/beauty mark, freckles, scar, wrinkle,
+  microtexture, multi-reference consensus/noise rejection, template/pose warp,
+  low resolution, motion blur, dark scenes, visibility/occlusion masking,
+  confidence weighting, source-switch reset, and enhancer/merger ordering by
+  placing restoration after those operations.
+- Controlled 4070 pipeline smoke with GPEN 256 Pro, RealityUX, TensorRT,
+  RealSwap, temporal stabilizers, and the locked `double/d4.mp4` fixture:
+  **120/120 frames**, return code 0, and no runtime identity-detail errors.
+  That locked run used legacy V1 `harjot/gargee` archives, so it validates
+  pipeline safety and API plumbing, not V2 detail quality.
+
+### Complete-phase checklist audit
+
+| Requirement | Evidence | Status | Still missing |
+|---|---|---|---|
+| IMPLEMENT | V2 residual/confidence consensus plus post-enhancer restoration and temporal detail state | PASS | None in the implemented code path |
+| TEST | 28 focused tests covering all listed synthetic conditions and source-switch/visibility guards | PASS | None in the automated synthetic contracts |
+| BENCHMARK | Reproducible component benchmark and 4070 pipeline smoke | PARTIAL | A V2-backed real-footage benchmark, physical RTX 3060 run, and comparable retention/temporal measurements |
+| REGRESSION TEST | V1/V2 archive tests, full pipeline smoke 120/120, zero runtime detail errors | PARTIAL | Retained V2 output visual review on poses, occlusions, blur, dark scenes, and each enhancer family |
+| DOCUMENT | This record and `ENV_FLAGS.md` updated | PASS | None for current evidence |
+| HANDOFF | Exact next starting point recorded in `PHASE_HANDOFF.md` | PASS | Phase remains open until partial benchmark/regression items close |
+
+The feature is **not marked complete**. Code existence is not being counted as
+real-footage quality completion; V2-backed annotated output review and
+secondary-device validation remain explicit gates.
+
+## REQUESTED PHASE 10 - TARGET-CONDITIONED LIGHTING AND COLOR REALISM - OPEN / INCOMPLETE (2026-09-01)
+
+This is the user-requested Phase 10 appearance phase. The repository already
+contains a historical Phase 10 title for parallel temporal execution; that
+numbering collision is intentional and both records are retained.
+
+### Implementation
+
+The existing `ColorTransferMixin.apply_color_transfer` path was extended. It
+now accepts robust aligned-target appearance statistics and applies a bounded
+LAB tone/chroma adjustment: target low-frequency luminance carries spatial
+shadows/highlights, quantile anchors preserve exposure and highlight rolloff,
+target skin-region chroma carries warm/cool scene casts, and source
+high-frequency structure remains untouched. The feature does not paste target
+texture or independently brighten/whiten the source identity.
+
+`app/roop/appearance_conditioning.py` provides the shared analyzer,
+`NORMAL`/`DARK`/`VERY_DARK` detector, per-track EMA stabilizer, restorer guard,
+and sharpening factors. The same analysis is passed through both color passes,
+the GPEN/UltraMax/other-restorer output guard, and merger clarity/sharpening;
+there is no parallel appearance subsystem that can disagree with the existing
+color/merger path. Appearance state participates in the existing ordered
+contiguous-block clone/warm-up lifecycle, and is reset per clip.
+
+The UI/API/config path is wired through `target_conditioned_appearance`,
+`target_conditioned_appearance_strength`, and
+`target_conditioned_appearance_temporal_alpha`. Defaults remain opt-in for
+backward compatibility and to preserve the RTX 4070/RTX 3060 custom looks.
+
+### Files changed for this requested phase
+
+- `app/roop/appearance_conditioning.py`
+- `app/roop/procmgr_color.py`
+- `app/roop/procmgr_merger.py`
+- `app/roop/ProcessMgr.py`
+- `app/roop/globals.py`
+- `app/settings.py`
+- `app/api.py`
+- `app/tests/test_target_appearance.py`
+- `app/tests/bench_target_appearance.py`
+- `app/tests/two_face_video.py`
+- `react-ui/src/components/FaceSwap.jsx`
+- `react-ui/src/components/faceswap/defaults.js`
+- `react-ui/src/components/settingsDiff.js`
+- `docs/ENV_FLAGS.md`
+- `docs/OPTIMIZATION_PROGRESS.md`
+- `docs/PHASE_HANDOFF.md`
+
+### Tests and benchmark evidence
+
+- Focused appearance, merger, API/UI wiring tests: **49 passed, 1 warning**.
+- Full regression suite: **1618 passed, 1 skipped, 598 subtests passed, 2
+  warnings**.
+- Compileall and `git diff --check`: passed. The diff-check output contains only
+  existing Windows LF/CRLF conversion warnings.
+- Synthetic appearance benchmark: **23.3602 ms/call**; alternating stable-light
+  colour delta **0.02481532 -> 0.00440974**, **82.2298% reduction**.
+- Real RTX 4070 integration smoke: locked `double/d4.mp4`, 120 frames,
+  RealSwap + RealityUX + GPEN 256 Pro + TensorRT, 12 requested workers,
+  target-conditioned appearance enabled at strength 0.75 / alpha 0.30;
+  **120/120 output frames**, **294/294 faces composited**, **0 wrong FaceSets**,
+  **3.67 fps**, peak observed RSS approximately **10.01 GB**. The run completed
+  without target-appearance runtime errors. Its source archives are legacy V1,
+  so it validates integration and safety, not V2 identity detail.
+
+### Complete-phase checklist audit
+
+| Requirement | Evidence | Status | Missing before completion |
+|---|---|---|---|
+| IMPLEMENT | Shared target analyzer; robust luminance/chroma/contrast; spatial low-pass lighting; low-light tiers; restorer guard; merger sharpening guard; temporal block-aware EMA; UI/API/config wiring | PASS | None in the implemented code path |
+| TEST | Automated fixtures for normal/dark/very-dark, spatial shadow direction, warm/blue casts, low resolution, motion blur, disabled-path identity, restorer guard, temporal EMA, merger attenuation | PASS | None in the automated synthetic contracts |
+| BENCHMARK | Reproducible 11-scene component benchmark plus real 4070 integration smoke | PARTIAL | Physical RTX 3060 component/real-video result and lighting-controlled real-footage measurements |
+| REGRESSION TEST | Full suite; legacy disabled path bit-identical; real smoke 120/120 and 0 wrong FaceSets | PARTIAL | Retained-output visual review across requested real scene/lighting conditions and every restorer family |
+| DOCUMENT | `ENV_FLAGS.md`, this progress record, UI help text, and harness flags updated | PASS | None for recorded evidence |
+| HANDOFF | Exact next starting point and hardware/visual gates recorded below | PASS | Handoff remains open until benchmark/regression partials close |
+
+The phase is **not complete**. The code, synthetic tests, and 4070 integration
+smoke are real evidence, but they do not replace physical RTX 3060 validation,
+controlled real lighting measurements, or retained-output visual review.

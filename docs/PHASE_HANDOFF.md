@@ -1,11 +1,11 @@
-# Phase Handoff - Phase 10 Temporal Engines On The Parallel-Block Path
+# Phase Handoff - Phase 11 Temporal Identity Per-Face Cost
 
-Date: 2026-08-31
+Date: 2026-09-01
 Device: physical RTX 4070, driver 616.56, TensorRT 10.9.0.34, ORT 1.23.2
 
 ## Read this first
 
-Two things from this session change how you should read any benchmark here.
+Three things from this session change how you should read any benchmark here.
 
 1. **A regression in `1c0efd7` had disabled the swap on the shipped default
    path** (Phase 9). Fixed in `da30500`. Any render made between those two
@@ -19,6 +19,11 @@ Two things from this session change how you should read any benchmark here.
    **Run a null control per measurement window, not per session, and record
    `faces_seen` beside fps.**
 
+3. **The locked 1280x720 `double/d4.mp4` fixture is outside this repository.**
+   It is available at `G:/pinokio/roop-keep/double/d4.mp4` on the 4070 host and
+   was used for three Phase 11 feature-level renders. The 3060 still has no
+   Phase 11 run.
+
 ## Current state
 
 | item | state |
@@ -29,7 +34,8 @@ Two things from this session change how you should read any benchmark here.
 | Phase 7 `ROOP_TEMPORAL_OCCLUSION` | opt-in; falls back to sequential by design, quality unvalidated |
 | Phase 8 `ROOP_TEMPORAL_EXPRESSION` | opt-in; measured, recommended for promotion, still default off |
 | Phase 9 | the dedent fix + first real temporal measurements |
-| Phase 10 | this document |
+| Phase 10 | parallel-block execution for identity/occlusion; measured |
+| Phase 11 | identity per-face cost reduction; **OPEN / INCOMPLETE** |
 
 All three temporal flags remain **disabled by default**. No saved user
 configuration, `.fsz` format, model, provider policy, pool setting or look value
@@ -89,30 +95,199 @@ Suite: **1596 tests, 1 skipped, 0 new failures**; 16 new contracts in
 Not claimed: any 3060 number, any quality validation of either flag, any
 cross-window fps comparison, and any optimality for the 3x floor.
 
+## Phase 11 implementation and evidence
+
+`blend_output` now uses a 128px working crop for its low-frequency correction,
+controlled by `ROOP_TEMPORAL_IDENTITY_LOWPASS_SIZE`. `0` is the old
+full-resolution reference path. `stabilize_mask` avoids redundant validation
+copies while retaining state ownership and an independent return buffer.
+
+Files changed:
+
+- `app/roop/temporal_identity.py`
+- `app/tests/test_temporal_identity.py`
+- `app/tests/bench_temporal_identity_cost.py`
+- `docs/ENV_FLAGS.md`
+- `docs/OPTIMIZATION_PROGRESS.md`
+- `docs/PHASE_HANDOFF.md`
+
+Three counterbalanced 1200-call pairs at 256x256 measured:
+
+| path | blend calls/s | mask calls/s |
+|---|---:|---:|
+| full-resolution reference (`0`) | 747.9 | 1283.6 |
+| reduced working crop (`128`) | 1277.4 | 1290.6 |
+| change | +70.8% | +0.5% |
+
+The mask result is neutral within host noise and is recorded as an allocation
+reduction, not a speed promotion. The reduced identity path remained finite,
+uint8, dimensionally valid, detail-preserving, and under the synthetic MAE
+bound against the reference. This is not real-footage quality validation.
+
+Validation: targeted temporal set **38 passed, 1 warning**; full suite **1605
+passed, 1 skipped, 595 subtests passed, 2 existing warnings**; Python
+compilation and `git diff --check` passed. Three physical RTX 4070
+feature-level renders also completed 600/600 with zero wrong FaceSets; the RTX
+3060 feature run and retained-output visual review remain pending.
+
+The 128px path remains **opt-in experimental**. The approximation is not
+byte-identical to the reference; `lowpass_size=0` remains available for
+diagnostics. No temporal flag is promoted to default.
+
+## Complete-phase checklist audit — NOT COMPLETE
+
+| Requirement | Evidence | Status | Missing |
+|---|---|---|---|
+| IMPLEMENT | Bounded low-pass identity path and mask allocation reduction | PASS | None in scoped implementation |
+| TEST | 38 targeted passes; full suite passes | PASS | None in unit coverage |
+| BENCHMARK | Reproducible component A/B plus three locked-fixture 4070 renders | PARTIAL | Physical RTX 3060 run and comparable cross-arm attribution |
+| REGRESSION TEST | 1605 passed, 1 skipped, 595 subtests; all 4070 arms had 0 wrong FaceSets | PARTIAL | Retained-output manual visual regression review |
+| DOCUMENT | `ENV_FLAGS.md` and `OPTIMIZATION_PROGRESS.md` updated | PASS | None |
+| HANDOFF | This file records commands, constraints, and next starting point | PASS | It intentionally hands off the missing validation |
+
+Phase 11 must not be marked complete until the partial benchmark and regression
+items are closed with a physical RTX 3060 feature run, comparable attribution,
+and retained-output visual review. The current synthetic benchmark and the
+automated wrong-FaceSet check are not substitutes.
+
+## Requested Phase 9 handoff — identity-specific detail preservation
+
+Status: **OPEN / INCOMPLETE**.
+
+Implemented starting point:
+
+- `app/roop/faceset_v2.py` creates and aggregates signed canonical
+  high-frequency residuals with persistence confidence.
+- `app/roop/identity_detail.py` decodes, template-warps, exposure-scales,
+  masks, smooths, and composites the representation.
+- `app/roop/ProcessMgr.py` invokes it after enhancer, post-enhance colour,
+  merger, manual mask, and temporal low-band stages.
+- `app/roop/temporal_identity.py` owns bounded per-track detail history and
+  clears it on source changes.
+- `identity_detail_strength` is 0 by default and is available through config,
+  preview, and swap API payloads. Existing target-texture
+  `detail_transfer_strength` is intentionally separate.
+
+Validation already completed:
+
+- Focused command → **28 passed, 1 warning**:
+  `app/env/Scripts/python.exe -m pytest app/tests/test_identity_detail.py app/tests/test_faceset_v2.py app/tests/test_temporal_identity.py -q`.
+- Component benchmark → 0.839016 synthetic retention correlation; 43.3257%
+  temporal-delta reduction; 290.71 restorations/s.
+- 4070 controlled V1-backed smoke, GPEN 256 Pro / RealityUX / TensorRT /
+  RealSwap, locked `double/d4.mp4`, strength 0.35 → **120/120**, return code
+  0, no identity-detail runtime errors. It did not exercise V2 metadata because
+  the locked `harjot/gargee` archives are legacy V1.
+
+Exact next-phase starting point:
+
+1. Create or obtain a V2 copy of the locked source archives without changing
+   source identities or the target fixture; confirm `FaceSet.format_version ==
+   2` and `identity_detail_for()` returns a valid residual for every selected
+   source.
+2. Extend the retained-output harness so the V2-backed run keeps its output
+   video and records per-frame detail metrics. Run off / strength 0.35 / a
+   confidence-reduced arm on the 4070 with identical capture, enhancer, mask,
+   provider, codec, stabilizers, and frame range. Compare retention, temporal
+   delta, wrong FaceSets, FPS, RSS, and VRAM only when paths are comparable.
+3. Manually review mole, freckles, scar, wrinkle, and microtexture regions over
+   frontal, turned, low-resolution, motion-blurred, and dark frames, including
+   occluders and expression changes. Confirm omission beats flicker when
+   confidence drops.
+4. Run the same V2-backed component and real-footage matrix on the physical
+   RTX 3060 while preserving `blend_ratio=0.85`, `face_mask_blend=25`,
+   `merger_sharpen=0.55`, and `stabilize_enhancer_strength=0.6`; keep its
+   single-context/global GPU guard and 1536 MB hard cap.
+5. Test GPEN, UltraMax, and at least one additional restorer with identity
+   detail enabled; verify post-restorer ordering and visual retention. Do not
+   promote the feature or change its default until these checks pass.
+
+Do not restart Phase 11 temporal optimization from scratch. Its 4070 evidence,
+open 3060 validation, and retained-output visual-review requirements remain
+unchanged below.
+
 ## Next session: exact starting point
 
-1. **Cut identity's per-face cost.** This is now the limiter and it is the only
-   direction Gate E left open (remove work per face, not redistribute it). With
-   the warm-up pinned to the baseline's 6 frames to isolate scheduling, identity
-   ran **8.34 fps against a 12.90 baseline -- -35% that is the engine itself**.
-   `blend_output` does two full-crop `GaussianBlur(0, 0, 4.0)` passes plus a
-   resize per face per frame; `stabilize_mask` runs per face per frame. Profile
-   those two first.
-2. **Shorten occlusion's warm-up so it can go parallel at all.**
-   `ROOP_OCCLUSION_ENTER_ALPHA` 0.90 -> 0.75 takes the warm-up from 44 to 17
-   frames, which fits a 3x block in this budget. Measure the QUALITY cost of the
-   faster object-matte release first -- that alpha exists to stop an occluder
-   popping back in.
-3. **Sweep the 3x floor.** It caps overhead at 33% and produced the better
-   outcome in both measured cases, but 2x and 4x were not tried.
-4. **Validate the quality of both flags on real footage.** Phase 9's disposition
-   stands and is untouched by this phase; identity is now cheap enough to test
-   properly.
-5. **Cross-target: the 3060.** Less RAM means the sequential fallback fires more
-   often -- the safe direction, but unverified. Run the null control there first;
-   that card's noise floor is ~3.3% at 600 frames and ~6% at 60.
-6. Inherited: Phase 3's RSS gate still fails on the 3060 at 3.73 GB; interacting
-   faces remains characterized but unsolved.
+1. On the 4070, rerun an order-balanced off/reference (`0`)/128px set with
+   retained output videos or a quality-review harness. Record FPS,
+   `faces_seen`, wrong FaceSets, output finiteness/order, peak RSS, and peak
+   VRAM; do not attribute raw FPS when face counts diverge.
+2. Manually review annotated occluder, eyes, mouth, hair, and difficult-pose
+   frames from those retained outputs; synthetic MAE is not enough for
+   promotion.
+3. Run the component and real-video checks on the physical RTX 3060 while
+   preserving `blend_ratio=0.85`, `face_mask_blend=25`,
+   `merger_sharpen=0.55`, and `stabilize_enhancer_strength=0.6`. Do not copy
+   4070 results or caches.
+4. Resume the Phase 10 follow-up: measure the quality cost of lowering
+   `ROOP_OCCLUSION_ENTER_ALPHA` from 0.90 toward 0.75 before considering its
+   3x warm-up block, then sweep the 2x/3x/4x minimum block floor in one stable
+   measurement window.
+5. Decide whether the identity experiment can be promoted or must remain
+   opt-in only after those results. Interacting-face behavior and the inherited
+   3060 RSS gate remain open.
+
+## Requested Phase 10 handoff - target-conditioned lighting and color realism
+
+Status: **OPEN / INCOMPLETE**.
+
+Implemented starting point:
+
+- `app/roop/appearance_conditioning.py` owns robust target illumination/chroma
+  analysis, NORMAL/DARK/VERY_DARK classification, low-light restoration and
+  sharpening factors, restorer protection, and the bounded per-track EMA.
+- `app/roop/procmgr_color.py` extends the existing color-transfer path with
+  target-conditioned low-frequency spatial illumination, exposure/highlight
+  quantile anchors, local contrast, and bounded skin-region chroma. It does not
+  create a wholesale texture paste.
+- `app/roop/ProcessMgr.py` analyzes the aligned target crop once per face,
+  reuses its stabilized result for both color passes, protects dark output from
+  GPEN/UltraMax/other restorers, and passes the tier into merger sharpening and
+  clarity. The appearance engine is cloned/reset with the existing ordered
+  contiguous-block stabilizer lifecycle.
+- `app/settings.py`, `app/api.py`, and the React Face Swap controls expose the
+  feature. It is opt-in and leaves the existing custom 4070/3060 look defaults
+  unchanged when off.
+
+Validation already completed:
+
+- Focused tests: **49 passed, 1 warning**.
+- Full suite: **1618 passed, 1 skipped, 598 subtests passed, 2 warnings**.
+- Component benchmark: **23.3602 ms/call** analysis; stable-light temporal
+  colour delta reduction **82.2298%** (0.02481532 to 0.00440974) over the
+  daylight/indoor/tungsten/fluorescent/sunset/blue/mixed/night/street/low-
+  exposure/backlighting fixture set.
+- 4070 real integration smoke: **120/120 frames**, **294/294 faces**,
+  **0 wrong FaceSets**, **3.67 fps**, approximately **10.01 GB peak RSS**,
+  target appearance enabled with RealSwap/RealityUX/GPEN 256 Pro/TensorRT.
+  Legacy V1 sources mean this does not assess V2 identity detail.
+
+Exact next-phase starting point:
+
+1. Keep the current code and run the component benchmark on the physical RTX
+   3060 laptop with its single-context/global GPU guard, 1536 MB stabilization
+   cap, adaptive block sizing, and preserved look values:
+   `blend_ratio=0.85`, `face_mask_blend=25`, `merger_sharpen=0.55`,
+   `stabilize_enhancer_strength=0.6`. Record analysis cost, RSS, VRAM, and any
+   runtime fallback; do not copy 4070 results or caches.
+2. Prepare or obtain a locked V2 source archive and verify
+   `FaceSet.format_version == 2` and `identity_detail_for()` before combining
+   this phase with requested Phase 9 detail preservation.
+3. Run retained-output real-footage arms for daylight, indoor/tungsten,
+   fluorescent, sunset, blue/mixed, night/street-light, low exposure, and
+   backlighting. Compare feature off/on with identical source, target, face
+   detections, enhancer, mask, codec, and frame range; measure luminance/chroma
+   error, spatial shadow retention, frame-to-frame color delta, wrong FaceSets,
+   output finiteness/order, FPS, RSS, and VRAM.
+4. Manually review retained frames for partial shadows, colored night casts,
+   highlight rolloff, low-resolution/motion-blurred faces, occlusions, and
+   expression changes. Include GPEN 256 Pro, GPEN Realistic, UltraMax, and at
+   least one additional restorer; confirm none lifts VERY_DARK faces or destroys
+   target-conditioned lighting.
+5. If any real scene changes tier within a shot, verify the tier-change
+   hysteresis/EMA admits the transition without warm-neutral-blue oscillation.
+   Only after this matrix passes should the default be reconsidered; until then
+   keep `target_conditioned_appearance` opt-in.
 
 ## Standing rules that earned their keep this session
 

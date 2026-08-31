@@ -636,6 +636,13 @@ class Settings:
         self.stabilize_mask_strength = self.default_get(data, 'stabilize_mask_strength', 0.5)
         # Skin-tone / lighting match of swapped crop → original: none|rct|lct|mkl
         self.color_transfer_mode = self.default_get(data, 'color_transfer_mode', 'lct')
+        # Target-conditioned appearance is opt-in; it extends the existing
+        # target-referenced colour path with spatial illumination and dark-scene
+        # restoration safeguards.
+        self.target_conditioned_appearance = self.default_get(data, 'target_conditioned_appearance', False)
+        self.target_conditioned_appearance_strength = self.default_get(data, 'target_conditioned_appearance_strength', 0.75)
+        self.target_conditioned_appearance_temporal_alpha = self.default_get(data, 'target_conditioned_appearance_temporal_alpha', 0.30)
+        self.target_conditioned_appearance_cache_size = self.default_get(data, 'target_conditioned_appearance_cache_size', 256)
         # Detection refinements
         self.refine_landmarks = self.default_get(data, 'refine_landmarks', True)
         # Swap-model face mask — only hififace/hyperswap emit one; the models that
@@ -646,6 +653,9 @@ class Settings:
         self.jaw_reshape_strength = self.default_get(data, 'jaw_reshape_strength', 0.5)
         # Skin detail transfer strength (high-frequency texture from footage)
         self.detail_transfer_strength = self.default_get(data, 'detail_transfer_strength', 0.4)
+        # FaceSet V2 persistent source identity detail restoration. Opt-in to
+        # keep V1 archives and existing looks unchanged.
+        self.identity_detail_strength = self.default_get(data, 'identity_detail_strength', 0.0)
         # Eye restore — the counterpart to restore_original_mouth
         self.restore_original_eyes = self.default_get(data, 'restore_original_eyes', False)
         self.eyes_blend_amount = self.default_get(data, 'eyes_blend_amount', 1.0)
@@ -872,11 +882,16 @@ class Settings:
             'stabilize_mask': self.stabilize_mask,
             'stabilize_mask_strength': self.stabilize_mask_strength,
             'color_transfer_mode': self.color_transfer_mode,
+            'target_conditioned_appearance': self.target_conditioned_appearance,
+            'target_conditioned_appearance_strength': self.target_conditioned_appearance_strength,
+            'target_conditioned_appearance_temporal_alpha': self.target_conditioned_appearance_temporal_alpha,
+            'target_conditioned_appearance_cache_size': self.target_conditioned_appearance_cache_size,
             'refine_landmarks': self.refine_landmarks,
             'swap_model_mask_strength': self.swap_model_mask_strength,
             'jaw_reshape': self.jaw_reshape,
             'jaw_reshape_strength': self.jaw_reshape_strength,
             'detail_transfer_strength': self.detail_transfer_strength,
+            'identity_detail_strength': self.identity_detail_strength,
             'restore_original_eyes': self.restore_original_eyes,
             'eyes_blend_amount': self.eyes_blend_amount,
             'eyes_feather_blend': self.eyes_feather_blend,

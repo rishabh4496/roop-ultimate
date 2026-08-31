@@ -764,6 +764,18 @@ not by tightening these absolute cutoffs.
 | `ROOP_TRACK_ASSIGN_MARGIN` | 0.15 | How much further than a person's **closest** track a later track of theirs may sit and still be bound to the same source. A person legitimately owns several tracklets (tracking fragments constantly — 60–130 tracks on a 23k-frame clip), and `ROOP_TRACK_OVERLAP_FRAC` refuses only the ones running *concurrently* with a track they already own. The converse does not hold: a bystander's fragment lying entirely inside a stretch where the target is **off screen** is concurrent with nothing, so that guard never examines it, and it inherited the target's source for exactly those frames — "when the target isn't in the frame, the other face gets swapped". An absolute gate cannot separate that from a bad stretch of the real target; the distance to the person's own best track can (their fragments cluster near it at ~0.36, a stranger scraping under `ROOP_TRACK_ASSIGN_MAX` sits at 0.5–0.6). A refused track is not dropped — it loses identity *locking* and falls through to per-frame matching at the full threshold, so a genuine target fragment still swaps. Raise it if a target stops locking after re-entering a shot; `0` disables. Reported by `[Track] … N refused as too far from their person's closest track`. |
 | `ROOP_TRACK_TRUEMEAN` | 1 (on) | Identity-lock matches on the true mean embedding. `0` restores the old recency-biased EMA (the "only the first faceset swaps" behaviour). |
 
+## Temporal identity output cost
+
+The temporal identity layer remains opt-in through `ROOP_TEMPORAL_IDENTITY=1`.
+Its output correction is low-frequency, so the default experimental path works
+on a bounded crop before restoring the correction to the current frame. The
+current frame remains the base image; expression and fine texture are not
+replaced by history.
+
+| Flag | Default | Effect |
+|------|---------|--------|
+| `ROOP_TEMPORAL_IDENTITY_LOWPASS_SIZE` | 128 | Working-crop maximum for the two Gaussian low-pass passes. Smaller values reduce CPU work but increase the approximation; `0` retains the full-resolution reference path for diagnostics. |
+
 ## Multi-angle target bank
 
 | Flag | Default | Effect |
@@ -1057,7 +1069,63 @@ At the 256px default:
 `inswapper` is 128px: second-cheapest per call, **most expensive per face**, and
 it is the original project default. Everything else is 1 tile at 256.
 
+## Identity-specific detail restoration
+
+FaceSet V2 archives cache a signed canonical high-frequency residual with
+per-pixel persistence confidence. The video path uses the cross-reference
+consensus map, adapts amplitude to target exposure/local contrast, excludes
+structural eye/nose/mouth regions, and gates the result with the generated-face
+visibility mask. It does not paste a source crop or read target texture for
+this feature. Restoration runs after enhancers, post-enhance colour matching,
+merger operations, and temporal low-band blending.
+
+| Setting | Default | Meaning |
+|---|---:|---|
+| `identity_detail_strength` | 0.0 | API/config setting, 0..1. Opt-in source identity-detail restoration. V1 archives and strength 0 are no-ops. |
+
+Benchmark: `app/env/Scripts/python.exe app/tests/bench_identity_detail.py`.
+Current synthetic result: 0.839016 detail-retention correlation and 43.3257%
+reduction in alternating-detail temporal delta; this is not a real-footage
+acceptance score.
+
 The spread is ~17 ms against a swap stage reporting ~46 ms/face, so — as with
 masking — the model is the minority of the cost and this is a quality choice
 rather than a speed one. The enhancer is the only stage where the model itself
 dominates (see the enhancer table above).
+
+## Target-conditioned lighting and colour realism
+
+The requested Phase 10 appearance path extends the existing target-referenced
+colour transfer; it does not create a second texture-transfer implementation.
+The source still determines identity. The aligned target crop supplies robust
+exposure, white balance/scene cast, spatial low-frequency illumination,
+shadow/highlight rolloff, local contrast, and skin-region chroma. No target
+high-frequency texture is copied by this feature.
+
+| Setting | Default | Meaning |
+|---|---:|---|
+| `target_conditioned_appearance` | `false` | Opt-in target-conditioned appearance matching. |
+| `target_conditioned_appearance_strength` | `0.75` | Bounded low-frequency lighting/chroma blend, 0..1. |
+| `target_conditioned_appearance_temporal_alpha` | `0.30` | Per-track EMA admission for stable lighting; higher follows changes faster. |
+| `target_conditioned_appearance_cache_size` | `256` | Bounded per-track appearance-state cache. |
+
+The detector classifies each aligned target as `NORMAL`, `DARK`, or
+`VERY_DARK`. DARK blends restorers back toward the target-conditioned input and
+halves merger clarity/sharpening. VERY_DARK uses a stronger input guard and
+lower sharpening, so GPEN/UltraMax/other restorers cannot turn a dark face into
+a bright clean face or hallucinate exposure. The stabilizer is cloned for the
+existing contiguous block path and primed with its derived warm-up; it does
+not disable the 4070 pools or the 3060 single-context/RSS safety policy.
+
+The React control sends these settings through both preview and swap payloads.
+The reproducible component benchmark is:
+
+```text
+app/env/Scripts/python.exe app/tests/bench_target_appearance.py
+```
+
+The 2026-09-01 host result covered daylight, indoor, tungsten, fluorescent,
+sunset, blue, mixed, night, street-light, low-exposure, and backlighting
+fixtures. Appearance analysis averaged **23.3602 ms/call**; the stable-light
+colour temporal delta fell from **0.02481532** to **0.00440974** (**82.2298%**
+reduction). This is component evidence, not a visual acceptance score.

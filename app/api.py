@@ -2368,6 +2368,25 @@ def _apply_enhancer_settings(payload):
         setattr(roop_globals, key, bool(payload.get(key, fallback)))
 
 
+def _apply_target_appearance_settings(payload):
+    """Apply target-conditioned lighting controls consistently to preview/run."""
+    cfg = roop_globals.CFG
+    roop_globals.target_conditioned_appearance = bool(payload.get(
+        "target_conditioned_appearance",
+        getattr(cfg, "target_conditioned_appearance", False)))
+    for key, default in (("target_conditioned_appearance_strength", 0.75),
+                         ("target_conditioned_appearance_temporal_alpha", 0.30),
+                         ("target_conditioned_appearance_cache_size", 256)):
+        fallback = getattr(cfg, key, default)
+        try:
+            value = float(payload.get(key, fallback))
+            if key.endswith("cache_size"):
+                value = int(value)
+        except (TypeError, ValueError):
+            value = default
+        setattr(roop_globals, key, value)
+
+
 def _apply_lipsync_settings(payload):
     """Lip-sync (MuseTalk) toggle + audio source, onto roop.globals.
 
@@ -2428,6 +2447,7 @@ def preview(payload: dict = Body(...)):
     roop_globals.jaw_reshape = bool(payload.get("jaw_reshape", getattr(roop_globals.CFG, "jaw_reshape", False)))
     roop_globals.jaw_reshape_strength = float(payload.get("jaw_reshape_strength", getattr(roop_globals.CFG, "jaw_reshape_strength", 0.5)))
     roop_globals.detail_transfer_strength = float(payload.get("detail_transfer_strength", getattr(roop_globals.CFG, "detail_transfer_strength", 0.0)))
+    roop_globals.identity_detail_strength = float(payload.get("identity_detail_strength", getattr(roop_globals.CFG, "identity_detail_strength", 0.0)))
     roop_globals.expression_restore_strength = float(payload.get("expression_restore_strength", getattr(roop_globals.CFG, "expression_restore_strength", 0.0)))
     roop_globals.expression_restore_region = payload.get("expression_restore_region", getattr(roop_globals.CFG, "expression_restore_region", "all"))
     roop_globals.rescue_small_faces = bool(payload.get("rescue_small_faces", getattr(roop_globals.CFG, "rescue_small_faces", False)))
@@ -2436,6 +2456,7 @@ def preview(payload: dict = Body(...)):
     _apply_eye_restore_settings(payload)
     _apply_parser_region_settings(payload)
     _apply_enhancer_settings(payload)
+    _apply_target_appearance_settings(payload)
     _apply_lipsync_settings(payload)
 
     faces_list = []
@@ -2675,11 +2696,13 @@ def _run_swap(payload):
         else:
             roop_globals.execution_threads = roop_globals.CFG.max_threads
         roop_globals.color_transfer_mode = payload.get("color_transfer_mode", roop_globals.CFG.color_transfer_mode)
+        _apply_target_appearance_settings(payload)
         roop_globals.refine_landmarks = bool(payload.get("refine_landmarks", roop_globals.CFG.refine_landmarks))
         roop_globals.swap_model_mask_strength = float(payload.get("swap_model_mask_strength", getattr(roop_globals.CFG, "swap_model_mask_strength", 0.0)))
         roop_globals.jaw_reshape = bool(payload.get("jaw_reshape", getattr(roop_globals.CFG, "jaw_reshape", False)))
         roop_globals.jaw_reshape_strength = float(payload.get("jaw_reshape_strength", getattr(roop_globals.CFG, "jaw_reshape_strength", 0.5)))
         roop_globals.detail_transfer_strength = float(payload.get("detail_transfer_strength", getattr(roop_globals.CFG, "detail_transfer_strength", 0.0)))
+        roop_globals.identity_detail_strength = float(payload.get("identity_detail_strength", getattr(roop_globals.CFG, "identity_detail_strength", 0.0)))
         roop_globals.expression_restore_strength = float(payload.get("expression_restore_strength", getattr(roop_globals.CFG, "expression_restore_strength", 0.0)))
         roop_globals.expression_restore_region = payload.get("expression_restore_region", getattr(roop_globals.CFG, "expression_restore_region", "all"))
         roop_globals.rescue_small_faces = bool(payload.get("rescue_small_faces", roop_globals.CFG.rescue_small_faces))

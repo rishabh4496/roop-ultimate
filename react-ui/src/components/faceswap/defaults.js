@@ -44,6 +44,10 @@ export const FACESWAP_DEFAULTS = {
   upscale_model_after: 'fsr_x2',
   interp_after_swap: 'off',
   color_transfer_mode: 'lct',
+  // Target-conditioned appearance is opt-in and preserves source identity.
+  target_conditioned_appearance: false,
+  target_conditioned_appearance_strength: 0.75,
+  target_conditioned_appearance_temporal_alpha: 0.30,
   blend_ratio: 1,
 
   // Masking parameters

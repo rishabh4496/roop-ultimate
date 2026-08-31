@@ -97,6 +97,8 @@ class TemporalIdentityState:
     output_face_confidence: float = 0.0
     previous_output: object = None
     previous_mask: object = None
+    previous_detail: object = None
+    previous_detail_source: object = None
     previous_lighting: object = None
     last_frame_index: int = -1
     motion: float = 0.0
@@ -123,6 +125,8 @@ class TemporalIdentityState:
             "output_face_confidence": float(self.output_face_confidence),
             "previous_output": _copy(self.previous_output),
             "previous_mask": _copy(self.previous_mask),
+            "previous_detail": _copy(self.previous_detail),
+            "previous_detail_source": self.previous_detail_source,
             "previous_lighting": _copy(self.previous_lighting),
             "last_frame_index": int(self.last_frame_index),
             "motion": float(self.motion),
@@ -143,7 +147,7 @@ class TemporalIdentityStabilizer:
     def __init__(self, enabled=False, switch_frames=3, transition_frames=4,
                  geometry_alpha=0.35, output_strength=0.35, mask_strength=0.45,
                  major_yaw=32.0, major_pitch=24.0, major_roll=30.0,
-                 cache_size=256):
+                 cache_size=256, lowpass_size=128):
         self.enabled = bool(enabled)
         self.switch_frames = max(1, int(switch_frames))
         self.transition_frames = max(1, int(transition_frames))
@@ -154,6 +158,12 @@ class TemporalIdentityStabilizer:
         self.major_pitch = abs(float(major_pitch))
         self.major_roll = abs(float(major_roll))
         self.cache_size = max(64, int(cache_size))
+        # The identity correction is deliberately low-frequency.  Keep the
+        # expensive Gaussian work bounded to a smaller working crop while
+        # restoring the correction at the original crop size.  ``0`` is the
+        # full-resolution reference path used by the equivalence tests and
+        # remains available for diagnostics.
+        self.lowpass_size = max(0, int(lowpass_size))
         self.states = {}
         self.ordered = True
         self._lock = RLock()
@@ -187,6 +197,7 @@ class TemporalIdentityStabilizer:
             major_pitch=_float("ROOP_TEMPORAL_IDENTITY_MAJOR_PITCH", 24.0),
             major_roll=_float("ROOP_TEMPORAL_IDENTITY_MAJOR_ROLL", 30.0),
             cache_size=_int("ROOP_TEMPORAL_IDENTITY_CACHE_SIZE", 256),
+            lowpass_size=_int("ROOP_TEMPORAL_IDENTITY_LOWPASS_SIZE", 128),
         )
 
     def set_ordered(self, ordered):
@@ -247,6 +258,8 @@ class TemporalIdentityStabilizer:
             fresh = _copy_module.copy(state)
             fresh.previous_output = None
             fresh.previous_mask = None
+            fresh.previous_detail = None
+            fresh.previous_detail_source = None
             fresh.swap_confidence = 0.0
             clone.states[track_id] = fresh
         return clone
@@ -502,13 +515,27 @@ class TemporalIdentityStabilizer:
             return mask
         with self._lock:
             state = self._state(track_id)
-            current = _array(mask)
+            # ``mask`` is consumed read-only below.  _array() always copies,
+            # which made this hot path copy both the input and the already
+            # owned history on every face/frame.
+            try:
+                current = np.asarray(mask, dtype=np.float32)
+            except (TypeError, ValueError):
+                current = None
+            if (current is not None and
+                    (current.size == 0 or not np.all(np.isfinite(current)))):
+                current = None
             if state is None or current is None:
                 return mask
-            previous = _array(state.previous_mask)
+            previous = state.previous_mask
+            if previous is not None:
+                try:
+                    previous = np.asarray(previous, dtype=np.float32)
+                except (TypeError, ValueError):
+                    previous = None
             if previous is None or previous.shape != current.shape:
                 state.previous_mask = current.copy()
-                return current.astype(np.float32)
+                return current.copy()
             alpha = self.mask_strength * (0.60 + 0.40 * (1.0 - self._confidence(confidence)))
             # Mask convention: 1 restores the original. Let an entering
             # occluder reveal quickly, but keep the return path smooth.
@@ -532,17 +559,38 @@ class TemporalIdentityStabilizer:
 
     def blend_output(self, track_id, output, confidence=0.0,
                      transition_alpha=1.0, motion=None):
-        """Blend only aligned low-frequency output components, never whole detail."""
+        """Blend only aligned low-frequency output components, never whole detail.
+
+        The correction is intentionally computed on a reduced working crop by
+        default.  This preserves the current frame's high-frequency residual
+        while avoiding two full-resolution Gaussian passes per face/frame.
+        Set ``lowpass_size=0`` for the old full-resolution reference path.
+        """
         if not self.enabled or output is None:
             return output
         with self._lock:
             state = self._state(track_id)
-            current = _array(output)
+            try:
+                current = np.asarray(output, dtype=np.float32)
+            except (TypeError, ValueError):
+                current = None
+            if (current is not None and
+                    (current.size == 0 or not np.all(np.isfinite(current)))):
+                current = None
             if state is None or current is None or current.ndim != 3:
                 return output
-            current = current.astype(np.float32)
-            previous = self._resize_like(state.previous_output, current.shape)
+            previous = state.previous_output
             if previous is None or previous.shape != current.shape:
+                previous_for_blend = None
+            else:
+                previous_for_blend = previous
+            if previous_for_blend is None and state.previous_output is not None:
+                try:
+                    previous_for_blend = np.asarray(state.previous_output,
+                                                    dtype=np.float32)
+                except (TypeError, ValueError):
+                    previous_for_blend = None
+            if previous_for_blend is None:
                 result = current
             else:
                 motion_value = state.motion if motion is None else float(motion)
@@ -554,9 +602,30 @@ class TemporalIdentityStabilizer:
                 prior_weight = max(base, transition_weight)
                 # Low-pass only: eyes, mouth, pores, and expression live in the
                 # residual and are taken from the current crop unchanged.
-                previous_low = cv2.GaussianBlur(previous, (0, 0), 4.0)
-                current_low = cv2.GaussianBlur(current, (0, 0), 4.0)
-                result = current + prior_weight * (previous_low - current_low)
+                work_h, work_w = current.shape[:2]
+                work_scale = 1.0
+                if self.lowpass_size > 0 and max(work_h, work_w) > self.lowpass_size:
+                    work_scale = float(self.lowpass_size) / float(max(work_h, work_w))
+                    work_w = max(1, int(round(work_w * work_scale)))
+                    work_h = max(1, int(round(work_h * work_scale)))
+                    current_work = cv2.resize(
+                        current, (work_w, work_h), interpolation=cv2.INTER_AREA)
+                    previous_work = cv2.resize(
+                        previous_for_blend, (work_w, work_h),
+                        interpolation=cv2.INTER_LINEAR)
+                else:
+                    current_work = current
+                    previous_work = self._resize_like(
+                        previous_for_blend, current.shape)
+                sigma = max(0.5, 4.0 * work_scale)
+                previous_low = cv2.GaussianBlur(previous_work, (0, 0), sigma)
+                current_low = cv2.GaussianBlur(current_work, (0, 0), sigma)
+                correction = previous_low - current_low
+                if correction.shape[:2] != current.shape[:2]:
+                    correction = cv2.resize(
+                        correction, (current.shape[1], current.shape[0]),
+                        interpolation=cv2.INTER_LINEAR)
+                result = current + prior_weight * correction
             result = np.clip(result, 0.0, 255.0).astype(np.uint8)
             if result.shape[:2] != (self.cache_size, self.cache_size):
                 state.previous_output = cv2.resize(
@@ -575,6 +644,62 @@ class TemporalIdentityStabilizer:
             if state is not None:
                 state.swap_confidence = self._confidence(confidence)
             return state
+
+    def blend_detail(self, track_id, detail, confidence=0.0, motion=0.0,
+                     source_index=None, transition_alpha=1.0):
+        """Temporally damp the canonical identity-detail residual.
+
+        This is intentionally separate from ``blend_output``: the latter
+        preserves only low-frequency colour/identity fields, while this state
+        smooths the small source-detail residual after enhancers and merger
+        operations have finished. A source switch never ghosts the old person's
+        marks into the new source; the transition alpha gates the old history.
+        """
+        if not self.enabled or detail is None:
+            return detail
+        with self._lock:
+            state = self._state(track_id)
+            try:
+                current = np.asarray(detail, dtype=np.float32)
+            except (TypeError, ValueError):
+                current = None
+            if (state is None or current is None or current.size == 0
+                    or not np.isfinite(current).all() or current.ndim != 2):
+                return detail
+            previous = state.previous_detail
+            same_source = (source_index is None
+                            or state.previous_detail_source is None
+                            or int(source_index) == int(state.previous_detail_source))
+            if previous is None or not same_source:
+                result = current
+            else:
+                try:
+                    previous = np.asarray(previous, dtype=np.float32)
+                except (TypeError, ValueError):
+                    previous = None
+                if previous is None:
+                    result = current
+                else:
+                    if previous.shape != current.shape:
+                        previous = cv2.resize(
+                            previous, (current.shape[1], current.shape[0]),
+                            interpolation=cv2.INTER_LINEAR)
+                    motion_value = min(1.0, max(0.0, float(motion)))
+                    conf = self._confidence(confidence)
+                    prior = self.output_strength * (1.0 - motion_value)
+                    prior *= 0.25 + 0.50 * (1.0 - conf)
+                    prior *= min(1.0, max(0.0, float(transition_alpha)))
+                    result = (1.0 - prior) * current + prior * previous
+            # Detail is always a bounded small map in the caller, but retaining
+            # a downsampled copy keeps this state safe if a custom caller sends
+            # a larger crop.
+            if max(result.shape) > 64:
+                state.previous_detail = cv2.resize(
+                    result, (64, 64), interpolation=cv2.INTER_AREA)
+            else:
+                state.previous_detail = result.copy()
+            state.previous_detail_source = source_index
+            return result.astype(np.float32)
 
     def snapshot(self, track_id):
         with self._lock:

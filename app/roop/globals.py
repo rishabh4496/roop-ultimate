@@ -49,6 +49,13 @@ track_identities = False   # video: lock each tracked person to one source (anti
 # whitening (handles color casts RCT can't), 'mkl' = Monge-Kantorovitch linear
 # (fuller distribution match), 'none' = off.
 color_transfer_mode = 'rct'
+# Target-conditioned appearance: the target crop supplies low-frequency
+# illumination, scene cast, shadows, highlights, and skin chroma. Disabled by
+# default so existing renders/custom looks remain bit-identical until enabled.
+target_conditioned_appearance = False
+target_conditioned_appearance_strength = 0.75
+target_conditioned_appearance_temporal_alpha = 0.30
+target_conditioned_appearance_cache_size = 256
 # Alignment refinement: derive the 5 arcface keypoints from the 68-point
 # landmarks (more stable at angles than the detector's raw 5 kps).
 refine_landmarks = False
@@ -78,6 +85,10 @@ jaw_reshape_strength = 0.5
 # Skin detail transfer: inject the original footage's high-frequency texture
 # (pores, grain) onto the swapped/enhanced face. 0 = off (no-op), 0..1 = amount.
 detail_transfer_strength = 0.0
+# Persistent source identity detail from FaceSet V2. Unlike the setting above,
+# this never reads the target crop's texture and is confidence/visibility gated.
+# 0 = off (bit-identical legacy path), 0..1 = controlled restoration strength.
+identity_detail_strength = 0.0
 # Eye restore: composite the TARGET's own eyes back over the swapped result.
 # See ProcessMgr.apply_eyes_area. Radii are fractions of interocular distance;
 # feather is a percentage of the eye radius, so none of these need a per-clip
@@ -197,5 +208,3 @@ BATCH_IMAGE_CHAIN_PROCESSOR = None
 CFG: Settings = None
 
 use_3d_recon = False
-
-

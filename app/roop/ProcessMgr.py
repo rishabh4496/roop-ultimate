@@ -29,6 +29,10 @@ from roop.procmgr_masking import (MaskingMixin, nonfrontal_routing_enabled,
                                   _DEBUG_ANGLE)
 from roop.procmgr_color import ColorTransferMixin
 from roop.procmgr_merger import MergerMixin
+from roop.identity_detail import restore_identity_detail
+from roop.appearance_conditioning import (TargetAppearanceStabilizer,
+                                           analyze_target_appearance,
+                                           protect_restorer_output)
 from roop.procmgr_tiling import PixelBoostMixin
 from roop.procmgr_tracking import TrackingMixin
 from roop.face_overlap import build_regions as build_face_regions, FaceRegion
@@ -575,6 +579,19 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
         self._temporal_occlusion = TemporalOcclusionEngine.from_env()
         from roop.temporal_expression import TemporalExpressionEngine
         self._temporal_expression = TemporalExpressionEngine.from_env()
+        # Target-conditioned appearance is a separate, lightweight ordered
+        # recurrence. It shares the existing contiguous-block lifecycle, but it
+        # never enables temporal identity output or changes the user's custom
+        # look settings by itself.
+        self._target_appearance = TargetAppearanceStabilizer(
+            enabled=bool(getattr(roop.globals,
+                                 'target_conditioned_appearance', False)),
+            alpha=float(getattr(roop.globals,
+                                'target_conditioned_appearance_temporal_alpha',
+                                0.30) or 0.30),
+            cache_size=int(getattr(roop.globals,
+                                   'target_conditioned_appearance_cache_size',
+                                   256) or 256))
         # Temporal detection (anti-flicker): when active, swap_faces consumes
         # the pre-pass faces per frame instead of re-detecting.
         # _temporal_faces: {frame_idx (0-based within trim): [Face, ...]}
@@ -1635,6 +1652,8 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
             self._temporal_occlusion.reset()
         if getattr(self, '_temporal_expression', None) is not None:
             self._temporal_expression.reset()
+        if getattr(self, '_target_appearance', None) is not None:
+            self._target_appearance.reset()
         # Swap-audit counters. Reset HERE, not in initialize(): core.py calls
         # initialize() once and then hands batch_process a whole LIST of files,
         # while the audit is reported at the end of each one — so resetting there
@@ -1658,6 +1677,8 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
             getattr(getattr(self, '_temporal_occlusion', None), 'enabled', False))
         _temporal_expression_enabled = bool(
             getattr(getattr(self, '_temporal_expression', None), 'enabled', False))
+        _target_appearance_enabled = bool(
+            getattr(getattr(self, '_target_appearance', None), 'enabled', False))
         _temporal_state_enabled = (_temporal_identity_enabled
                                    or _temporal_occlusion_enabled
                                    or _temporal_expression_enabled)
@@ -1707,7 +1728,8 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
         # been safe at full width.
         _want_temporal_identity = _temporal_identity_enabled
         _want_temporal_occlusion = _temporal_occlusion_enabled
-        _want_temporal_ordered = _want_temporal_identity or _want_temporal_occlusion
+        _want_temporal_ordered = (_want_temporal_identity or _want_temporal_occlusion
+                                  or _target_appearance_enabled)
         # 3x, i.e. warm-up overhead capped at 33%. Below that the priming costs
         # more than the extra workers return, measured both ways on this fixture.
         self._stab_min_block_multiple = 3 if _want_temporal_ordered else 1
@@ -2385,7 +2407,8 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
         # absent -- its `plan()` is read-only and its state is written by the
         # sequential tracking pre-pass, so worker order cannot reach it.
         _temporal = [engine for engine in (getattr(self, '_temporal_identity', None),
-                                           getattr(self, '_temporal_occlusion', None))
+                                           getattr(self, '_temporal_occlusion', None),
+                                           getattr(self, '_target_appearance', None))
                      if engine is not None and getattr(engine, 'enabled', False)]
         for stab in (self.kps_stabilizer, self.enh_stabilizer,
                      self.mask_stabilizer, *_temporal):
@@ -2872,7 +2895,8 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                     # advances in frame order within the block and cannot be
                     # interleaved with another block's. Read back through
                     # `_temporal_engine`, never off `self` directly.
-                    for _tname in ('temporal_identity', 'temporal_occlusion'):
+                    for _tname in ('temporal_identity', 'temporal_occlusion',
+                                   'target_appearance'):
                         _shared = getattr(self, '_' + _tname, None)
                         setattr(self._tls, _tname,
                                 _shared.clone_for_block()
@@ -3116,7 +3140,7 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
         _ordered = (not getattr(self, '_parallel_stab', False)) or bool(
             getattr(self._tls, 'temporal_block', False))
         for _tname in ('temporal_identity', 'temporal_occlusion',
-                       'temporal_expression'):
+                       'temporal_expression', 'target_appearance'):
             _engine = self._temporal_engine(_tname)
             if _engine is not None:
                 _engine.set_ordered(_ordered)
@@ -4459,6 +4483,10 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
         orig_fh, orig_fw = frame.shape[:2]
 
         enhanced_frame = None
+        # Mask output is 1 = restore target / 0 = generated face.  Keep the
+        # observation so the later identity-detail pass cannot write source
+        # marks through an occluder or a manually excluded region.
+        _img_mask = None
         # inputface is assigned after pose computation below (supports source bank)
         inputface = None
         # Cleared per face: the swap net's mask is stashed per THREAD, so without
@@ -4553,6 +4581,18 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
         if (_temporal_mgr is not None and _temporal_mgr.enabled
                 and _temporal_tid is not None):
             _temporal_mgr.update_alignment(_temporal_tid, M)
+        _target_appearance = None
+        _appearance_engine = self._temporal_engine('target_appearance')
+        if (_appearance_engine is not None and _appearance_engine.enabled):
+            try:
+                _raw_appearance = analyze_target_appearance(aligned_img)
+                _target_appearance = _appearance_engine.update(
+                    _temporal_tid, _raw_appearance,
+                    confidence=getattr(target_face, 'det_score', 1.0),
+                    motion=0.0)
+            except Exception as e:
+                bar_write(f"[ProcessMgr] target appearance analysis failed: {e}")
+                _target_appearance = None
         # Stash the crop affine per-thread so the SAM2 mask engine can warp its
         # precomputed full-frame mask into this exact crop space (see process_mask).
         self._tls.cur_M = M
@@ -5011,7 +5051,8 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                 # Dynamic color tone correction: transfer target crop's skin tone
                 # and lighting highlights/shadows to the swapped face.
                 try:
-                    fake_frame = self.apply_color_transfer(fake_frame, aligned_img)
+                    fake_frame = self.apply_color_transfer(
+                        fake_frame, aligned_img, appearance=_target_appearance)
                 except Exception as e:
                     bar_write(f"[ProcessMgr] Face color transfer failed: {e}")
                 
@@ -5127,6 +5168,14 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                         enhanced_frame, _B,
                         (enhanced_frame.shape[1], enhanced_frame.shape[0]),
                         borderMode=cv2.BORDER_REPLICATE)
+                if (_target_appearance is not None and enhanced_frame is not None):
+                    # This guard runs for every restorer, including GPEN and
+                    # UltraMax, after any template round-trip has returned to
+                    # swap-crop space. Dark targets therefore cannot be lifted
+                    # into a bright, unnaturally clean face by a GAN prior.
+                    enhanced_frame = protect_restorer_output(
+                        enhanced_frame, fake_frame,
+                        _target_appearance.get('tier'))
 
         # ── Anti-flicker: temporally smooth the enhanced aligned crop ─────────
         # enhanced_frame is registered to the canonical face template, so a
@@ -5209,7 +5258,11 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                 if ref.shape[:2] != enhanced_frame.shape[:2]:
                     ref = cv2.resize(ref, (enhanced_frame.shape[1], enhanced_frame.shape[0]),
                                      interpolation=cv2.INTER_AREA)
-                enhanced_frame = self.apply_color_transfer(enhanced_frame, ref)
+                enhanced_frame = self.apply_color_transfer(
+                    enhanced_frame, ref, appearance=_target_appearance,
+                    conditioned_strength=(float(getattr(
+                        roop.globals, 'target_conditioned_appearance_strength',
+                        0.75) or 0.75) * 0.50))
             except Exception as e:
                 bar_write(f"[ProcessMgr] Post-enhance color match failed: {e}")
 
@@ -5223,9 +5276,11 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
         # histogram, blur axis and noise floor rather than asking for them.
         try:
             if enhanced_frame is not None:
-                enhanced_frame = self.apply_merger_post(enhanced_frame, aligned_img)
+                enhanced_frame = self.apply_merger_post(
+                    enhanced_frame, aligned_img, appearance=_target_appearance)
             else:
-                fake_frame = self.apply_merger_post(fake_frame, aligned_img)
+                fake_frame = self.apply_merger_post(
+                    fake_frame, aligned_img, appearance=_target_appearance)
         except Exception as e:
             bar_write(f"[ProcessMgr] Merger post-op failed: {e}")
 
@@ -5367,6 +5422,55 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                     _temporal_tid, _confidence)
             except Exception as e:
                 bar_write(f"[ProcessMgr] temporal identity blend failed: {e}")
+
+        # Phase 9: source identity-specific detail. This is deliberately the
+        # last crop-space operation: GPEN/UltraMax/other restorers, post-enhance
+        # colour matching, merger sharpening/blur/grain, and temporal low-band
+        # blending have all finished. The detail source is the persistent V2
+        # consensus map, never aligned target texture. The final paste mask and
+        # ownership region still remain downstream, while the mask observation
+        # below prevents the crop-space pass from writing through known
+        # occlusion/exclusion pixels.
+        _ids = float(getattr(roop.globals, 'identity_detail_strength', 0.0) or 0.0)
+        if _ids > 0.0 and rotation_action is None:
+            try:
+                _detail_fs = (self.input_face_datas[face_index]
+                              if 0 <= face_index < len(self.input_face_datas)
+                              else None)
+                _detail = (_detail_fs.identity_detail_for(selected_src_idx)
+                           if _detail_fs is not None
+                           and hasattr(_detail_fs, 'identity_detail_for') else None)
+                if _detail is not None:
+                    try:
+                        _detail_conf = float(target_face.get(
+                            '_temporal_confidence', self._temporal_confidence(target_face)))
+                        _detail_motion = float(target_face.get('_temporal_motion', 0.0))
+                    except Exception:
+                        _detail_conf = self._temporal_confidence(target_face)
+                        _detail_motion = 0.0
+                    _visible = None
+                    if _img_mask is not None:
+                        _visible = 1.0 - np.asarray(_img_mask, dtype=np.float32)
+                    _detail_target = enhanced_frame if enhanced_frame is not None else fake_frame
+                    with _prof('identity_detail'):
+                        _detail_target, _detail_metrics = restore_identity_detail(
+                            _detail_target, _detail, target_face=target_face, matrix=M,
+                            matrix_shape=(subsample_size, subsample_size), strength=_ids,
+                            visibility_mask=_visible, target_template=swap_template,
+                            temporal_manager=_temporal_mgr if _temporal_mgr is not None
+                            and _temporal_mgr.enabled and _temporal_tid is not None else None,
+                            track_id=_temporal_tid, motion=_detail_motion,
+                            source_index=selected_src_idx,
+                            transition_alpha=float(target_face.get(
+                                '_temporal_source_transition_alpha', 1.0)),
+                        )
+                    if enhanced_frame is not None:
+                        enhanced_frame = _detail_target
+                    else:
+                        fake_frame = _detail_target
+                    self._tls.identity_detail_metrics = _detail_metrics
+            except Exception as e:
+                bar_write(f"[ProcessMgr] Identity detail restoration failed: {e}")
 
         upscale = 512
         orig_width = fake_frame.shape[1]
@@ -5635,6 +5739,8 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
             self._temporal_occlusion.reset()
         if getattr(self, '_temporal_expression', None) is not None:
             self._temporal_expression.reset()
+        if getattr(self, '_target_appearance', None) is not None:
+            self._target_appearance.reset()
         self._track_assignments = None
         self._track_source_map = None
         self._precomputed_kps = None

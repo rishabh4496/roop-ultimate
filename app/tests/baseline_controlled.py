@@ -295,6 +295,9 @@ def main():
     ap.add_argument("--color-transfer-mode", default=None,
                     choices=("none", "rct", "lct", "mkl", "idt"),
                     help="controlled Phase 12 color-processing override")
+    ap.add_argument("--identity-detail-strength", type=float, default=None,
+                    help="FaceSet V2 persistent source-detail restoration; "
+                         "default uses config.yaml")
     ap.add_argument("--target", choices=("RTX 3060", "RTX 4070"),
                     default=None, help="validation target label for the record")
     ap.add_argument("--cuda-device-id", type=int, default=0,
@@ -348,6 +351,10 @@ def main():
            "--cuda-device-id", str(args.cuda_device_id),
            "--swap-model-mask-strength", str(cfg.swap_model_mask_strength),
            "--merger-clarity", str(getattr(cfg, "merger_clarity", 0.0)),
+           "--identity-detail-strength", str(
+               getattr(cfg, "identity_detail_strength", 0.0)
+               if args.identity_detail_strength is None
+               else args.identity_detail_strength),
            "--out", os.path.join(args.out, args.tag)]
 
     if args.stabilization_mode != "auto":
@@ -458,7 +465,11 @@ def main():
                       "codec": args.codec,
                       "swap_model": str(cfg.swap_model),
                       "provider": provider, "threads": threads,
-                     "reason": WORKLOAD["reason"]},
+                      "identity_detail_strength": (
+                          getattr(cfg, "identity_detail_strength", 0.0)
+                          if args.identity_detail_strength is None
+                          else args.identity_detail_strength),
+                      "reason": WORKLOAD["reason"]},
         "extra_env": {p.split("=", 1)[0]: p.split("=", 1)[1]
                       for p in args.env if "=" in p},
         "wall_seconds": round(elapsed, 3),

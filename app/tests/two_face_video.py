@@ -155,6 +155,7 @@ def load_library_faceset(name):
     """
     from roop.FaceSet import FaceSet
     from roop.face_util import extract_face_images
+    from roop.faceset_v2 import read_faceset_archive
 
     path = os.path.join(LIB, name if name.endswith(".fsz") else name + ".fsz")
     if not os.path.exists(path):
@@ -178,7 +179,13 @@ def load_library_faceset(name):
             fs.ref_images.append(frame)
     if not fs.faces:
         raise SystemExit(f"no faces found in {path}")
-    if len(fs.faces) > 1:
+    metadata = read_faceset_archive(path)
+    if metadata is not None:
+        # Keep the benchmark's loader honest: a V2 archive's precomputed
+        # identity-detail/pose metadata must reach the same runtime FaceSet
+        # object that source_gallery uses in the application.
+        fs.attach_v2_metadata(metadata)
+    elif len(fs.faces) > 1:
         fs.AverageEmbeddings()
     return fs
 
@@ -966,6 +973,16 @@ def main():
                          "roop.globals, and until 2026-08-23 angle_bench never "
                          "populated ANY merger_* global, so every arm rendered "
                          "with the whole merger stage off.")
+    ap.add_argument("--identity-detail-strength", type=float, default=None,
+                    help="FaceSet V2 persistent source-detail restoration; "
+                         "defaults to config.yaml and remains opt-in")
+    ap.add_argument("--target-conditioned-appearance", action="store_true",
+                    default=None, help="enable Phase 10 target-conditioned "
+                         "lighting/color matching for this controlled run")
+    ap.add_argument("--target-conditioned-strength", type=float, default=None,
+                    help="Phase 10 target appearance strength; defaults to config")
+    ap.add_argument("--target-conditioned-alpha", type=float, default=None,
+                    help="Phase 10 target appearance EMA alpha; defaults to config")
     ap.add_argument("--out", default=os.path.join(APP, "output", "bench_two_face"))
     args = ap.parse_args()
 
@@ -984,6 +1001,16 @@ def main():
     g.swap_model_mask_strength = float(_mm)
     if args.merger_clarity is not None:
         g.merger_clarity = float(args.merger_clarity)
+    if args.identity_detail_strength is None:
+        args.identity_detail_strength = float(
+            getattr(g.CFG, 'identity_detail_strength', 0.0) or 0.0)
+    g.identity_detail_strength = float(args.identity_detail_strength)
+    if args.target_conditioned_appearance is not None:
+        g.target_conditioned_appearance = bool(args.target_conditioned_appearance)
+    if args.target_conditioned_strength is not None:
+        g.target_conditioned_appearance_strength = float(args.target_conditioned_strength)
+    if args.target_conditioned_alpha is not None:
+        g.target_conditioned_appearance_temporal_alpha = float(args.target_conditioned_alpha)
     g.video_encoder = args.codec
     g.video_quality = 12
     g.execution_threads = args.threads if args.threads is not None else g.CFG.max_threads
@@ -1021,7 +1048,12 @@ def main():
           f"color_transfer={g.color_transfer_mode} "
           f"threads={g.execution_threads} tracking={track} "
           f"swap_model_mask={g.swap_model_mask_strength} "
-          f"merger_clarity={getattr(g, 'merger_clarity', 0.0)}", flush=True)
+          f"merger_clarity={getattr(g, 'merger_clarity', 0.0)} "
+          f"identity_detail={g.identity_detail_strength} "
+          f"target_appearance={getattr(g, 'target_conditioned_appearance', False)} "
+          f"target_strength={getattr(g, 'target_conditioned_appearance_strength', 0.75)} "
+          f"target_alpha={getattr(g, 'target_conditioned_appearance_temporal_alpha', 0.30)}",
+          flush=True)
 
     outdir = os.path.join(args.out, args.tag)
     work = os.path.join(outdir, "work")

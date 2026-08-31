@@ -108,6 +108,23 @@ class FaceSet:
             self.faceset_metadata, target_pose, appearance=appearance,
             expression=expression, previous_index=previous_index)
 
+    def identity_detail_for(self, source_index=0):
+        """Return the persistent V2 detail map, or a safe per-source fallback."""
+        if self.format_version < 2 or not self.faceset_metadata:
+            return None
+        details = self.faceset_metadata.get('identity_details') or {}
+        persistent = details.get('high_frequency')
+        if isinstance(persistent, dict) and persistent.get('residual_q'):
+            return persistent
+        try:
+            index = int(source_index)
+        except (TypeError, ValueError):
+            index = 0
+        if 0 <= index < len(self.face_metadata):
+            return ((self.face_metadata[index].get('identity_details') or {})
+                    .get('high_frequency'))
+        return None
+
     @staticmethod
     def lighting_for_frame(image, bbox=None):
         return measure_lighting(image, bbox)

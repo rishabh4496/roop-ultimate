@@ -22,6 +22,7 @@ export const LABELS = {
   max_face_distance: 'Face distance',
   detector_engine: 'Detector',
   color_transfer_mode: 'Color transfer',
+  target_conditioned_appearance: 'Target-conditioned lighting',
   codeformer_fidelity: 'CodeFormer fidelity',
   face_detector_size: 'Detector size',
   face_detector_threshold: 'Detector threshold',

@@ -61,6 +61,7 @@ import cv2
 import numpy as np
 
 import roop.globals
+from roop.appearance_conditioning import sharpen_factor
 
 
 # Grain is meant to be temporally independent — real sensor noise does not
@@ -80,7 +81,7 @@ def _cfg(name, default=0.0):
 
 class MergerMixin:
     # ── the chain ─────────────────────────────────────────────────────────
-    def apply_merger_post(self, face_img, orig_crop):
+    def apply_merger_post(self, face_img, orig_crop, appearance=None):
         """Run the enabled merger ops, in DFL's order, on the merged crop.
 
         `face_img` = swapped (and possibly enhanced) crop, `orig_crop` = the
@@ -96,6 +97,13 @@ class MergerMixin:
         grain = _cfg('merger_grain_match')
         degrade = _cfg('merger_degrade')
         clarity = _cfg('merger_clarity')
+        if appearance is not None:
+            # Dark footage already has a narrow, noisy signal.  Aggressive
+            # clarity/unsharp after restoration turns it into bright clean
+            # facial points, so both controls follow the target tier.
+            factor = sharpen_factor((appearance or {}).get('tier'))
+            sharp *= factor
+            clarity *= factor
 
         if (abs(hist) < _EPS and abs(sharp) < _EPS and abs(motion) < _EPS
                 and abs(grain) < _EPS and abs(degrade) < _EPS
