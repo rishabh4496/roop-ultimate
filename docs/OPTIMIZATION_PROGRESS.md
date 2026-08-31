@@ -1910,3 +1910,115 @@ feature-enabled measurements for detail restoration, expression analysis, and
 occlusion analysis; per-provider transfer attribution; repeated paired arms to
 separate ROI benefit from run noise; retained-frame identity/detail/temporal
 review; and the physical RTX 3060 run under its 1536 MB / 2.5 GB constraints.
+
+## Requested Phase 15 — cross-hardware and regression validation — OPEN / INCOMPLETE (2026-09-01)
+
+### Explicit phase state
+
+- **Current phase:** requested Phase 15 cross-hardware and regression validation.
+- **Previous completed phase:** historical Phase 10 parallel-block temporal execution. Phases 11–14 have code and partial evidence in this repository, but their documented physical/visual gates remain open; they were not redone or reverted here.
+- **Current objective:** provide a non-destructive, reproducible audit that distinguishes runtime availability from executed validation, covers every requested workflow/lifecycle transition, and detects TensorRT/runtime cache artifacts that cannot safely be reused after a device, driver, provider, or precision change.
+- **Dependencies:** existing `backend_manager` provider admission/fallback, `HardwareProfiler`, `cache_namespace`/precision policy, source-derived enhancer selector, faceset V2 loader, preview/batch entry points, the existing precision/video/integrity harnesses, and the two hardware profiles.
+
+### Implementation
+
+`app/roop/regression_audit.py` defines the complete backend/precision matrix: CUDA and TensorRT on NVIDIA (FP32/FP16/mixed), ROCm on AMD (FP32/FP16/mixed), DirectML, CoreML, and CPU fallback. It also defines every requested workflow, all startup/shutdown/reuse/switch lifecycle checks, all user-visible enhancer labels plus the legacy `GPEN 256 Ultra` selector branch, and all four adaptive quality modes.
+
+`runtime_capabilities()` reports providers actually exposed by ONNX Runtime and torch CUDA/HIP facts. A listed provider is `available_not_validated`, never `PASS`; an absent backend is `unavailable`, never a fabricated pass. `inspect_cache_roots()` reports driverless (`drvunknown`) and legacy/unscoped TensorRT/runtime-profile directories without deleting or rewriting them. `app/tests/phase15_regression_audit.py` writes the machine-readable report; it is observational and does not build engines or mutate production settings.
+
+### Files changed for this requested phase
+
+- `app/roop/regression_audit.py`
+- `app/tests/phase15_regression_audit.py`
+- `app/tests/test_phase15_regression_audit.py`
+- `app/tests/hardware_probe.py` (standalone import-path portability fix)
+- `docs/OPTIMIZATION_PROGRESS.md`
+- `docs/PHASE_HANDOFF.md`
+
+Generated report (ignored output, not a source change): `app/output/phase15_validation/audit.json`.
+
+### Current-host audit and validation evidence
+
+Command:
+
+`app/env/Scripts/python.exe app/tests/phase15_regression_audit.py --cache-root app/models/trt_cache --cache-root app/models/runtime_profiles --out app/output/phase15_validation/audit.json`
+
+Observed on the current Windows host:
+
+- NVIDIA GeForce RTX 4070, 11.994 GB, driver 616.56, CUDA 12.8, TensorRT 10.9.0.34, ONNX Runtime 1.23.2, torch 2.7.0+cu128.
+- Exposed providers: TensorRT, CUDA, CPU. These six NVIDIA precision rows and CPU are **available_not_validated**, not passing workload results.
+- ROCm, DirectML, and CoreML are **unavailable** in this environment. No result was copied from another hardware target.
+- Coverage matrix: **190 rows, 190 `not_run`** (14 backend/precision rows × 13 workflows plus 8 lifecycle checks). Enhancer and quality-mode execution evidence is also `not_run`.
+- Cache scan: **19 stale candidates** and **9 unscoped candidates**. This includes old RTX 4070 `drvunknown` TensorRT/runtime-profile namespaces and the legacy precision-only `fp16` tree. They remain untouched; the active namespace includes `drv616.56` and must be used for future builds.
+
+Focused Phase 15 plus provider, precision, hardware, inventory, and Phase 14 regression contracts: **64 passed, 1 warning**. The warning is the existing Albumentations update notice. The audit unit tests additionally prove that missing providers cannot become passes, all coverage slots start as incomplete, the source selector is checked for enhancer drift, and cache findings are non-destructive.
+
+The retained-output integrity sweep (`app/tests/phase16_integrity.py`) over ten existing Phase 12/13 videos also passed: **10/10 files**, **600 frames each**, zero black, uniform, NaN, or duplicate frames. This is an output-corruption regression gate only; it is not a claim that the unexecuted cross-hardware quality matrix passed.
+
+Existing benchmark evidence remains historical evidence from earlier phases, not Phase 15 cross-hardware validation: the Phase 14 paired RTX 4070 ROI arms were 86.35 s / 2.75 FPS versus 82.07 s / 2.87 FPS, with 6,559 versus 6,485 MB sampled peak VRAM and zero wrong-FaceSet applications. It does not satisfy the missing provider/workflow/lifecycle rows here.
+
+### Complete-phase checklist audit — line by line
+
+| Requirement | Evidence | Status | Still missing |
+|---|---|---|---|
+| IMPLEMENT audit coverage for NVIDIA CUDA/TRT, AMD ROCm/DirectML, Apple CoreML, and CPU | Explicit 14-row backend/precision matrix and portable capability classifier | PASS | Real execution evidence for every available row |
+| IMPLEMENT image/video/multi-face/faceset old/new/preview/batch/long-video coverage | 13 workflow slots per backend row | PASS | No slot has been promoted from `not_run` |
+| IMPLEMENT every enhancer and quality mode coverage | Source-derived selector check; 15 enhancer labels and FAST/BALANCED/REALISTIC/MAX QUALITY manifest | PASS | Real run evidence for every enhancer/profile |
+| IMPLEMENT startup/shutdown/release/repeated/switching lifecycle coverage | 8 explicit lifecycle slots | PASS | No lifecycle soak or provider/GPU/precision switching run |
+| TEST capability/fallback/cache contracts | 64 focused tests; current provider/capability probe and JSON report | PASS | Full post-edit repository test still needs recording |
+| BENCHMARK exact same clips across supported paths | Existing precision/video benches are documented and reusable | PARTIAL | Phase 15 provider matrix, all enhancers/modes, long video, and cross-hardware benchmark results |
+| REGRESSION TEST no provider/device/cache/state/race regressions | Existing backend/precision/lock/queue/release tests remain selected; cache audit catches known stale artifacts | PARTIAL | Full suite, repeated jobs, GPU/provider/precision switches, preview/batch, memory release, and physical AMD/Apple runs |
+| DOCUMENT coverage and unavailable hardware honestly | This record plus generated JSON records statuses and limitations | PASS | Add physical-run evidence when available |
+| HANDOFF exact continuation point | Phase handoff records commands and gates | PASS | Phase remains open until the partial rows close |
+
+Phase 15 is **not marked complete**. Availability and unit contracts are validated, but the actual cross-hardware workload matrix, long-run lifecycle soaks, retained-output integrity/quality checks, and non-NVIDIA physical targets remain open.
+
+## Requested Phase 16 — final production quality gate — OPEN / INCOMPLETE (2026-09-01)
+
+### Explicit phase state
+
+- **Current phase:** requested Phase 16 final production quality gate.
+- **Previous phase state:** Phase 15 audit infrastructure is implemented and documented, but its physical cross-hardware/workload evidence remains incomplete. Earlier Phases 1–14 retain their code-level tests and documented partial benchmark gates; no prior optimization was reverted.
+- **Current objective:** audit the complete program with one standardized scene/configuration/metric contract and refuse production completion until real benchmark evidence, quality review, faceset compatibility, and previous-phase regression checks are recorded.
+- **Constraint:** no major runtime feature was added. This phase adds only an observational benchmark manifest, evidence gate, report generator, regression contracts, and architecture documentation.
+
+### Standardized benchmark suite
+
+`app/roop/final_quality_gate.py` defines the suite. Its 17 required clip categories are: frontal face, mild angle, extreme lateral angle, inverted/steep pose, fast movement, blinking, speaking, dark scene, night scene, foreign-object occlusion, hand occlusion, glasses/hair interaction, two interacting faces, two crossing faces, mixed lighting, low resolution, and motion blur.
+
+For each clip it creates rows for FAST, BALANCED, REALISTIC, and MAX QUALITY; RealityUX; RealSwap; GPEN 256 Pro; GPEN Realistic; UltraMax; and every registered enhancer path, including legacy/config names. The resulting manifest contains **425 rows** (17 × (4 quality modes + 5 headline arms + 16 registered enhancer labels)). Missing clip paths remain `missing`; rows remain `not_run` until evidence is supplied.
+
+Every row requires total time, FPS equivalent, average frame time, peak VRAM, CPU/GPU utilization, detection/swap/enhancer/blending time, dropped/fallback frames, identity consistency, temporal flicker, expression/eye/pose consistency, occlusion correctness, boundary quality, color consistency, low-light realism, and identity-detail retention. Incomplete evidence cannot produce fastest, balanced, quality, night, difficult-angle, or multi-face winners.
+
+`app/tests/phase16_final_quality_gate.py` writes the report. `audit_faceset()` checks legacy root-PNG `.fsz` archives separately from V2 archives and requires V2 schema/version, sources, identity, identity-detail, pose-bank, and integrity metadata. Existing `faceset_v2` tests remain the behavioral compatibility gate.
+
+### Current report and validation evidence
+
+Command:
+
+`app/env/Scripts/python.exe app/tests/phase16_final_quality_gate.py --out app/output/phase16_validation/final_report.json`
+
+Current report: **17 categories, 0 ready clips, 425 rows, 0 complete runs, no winners, program gate `OPEN_INCOMPLETE`**. This is the honest result because the repository does not contain the complete 17-clip annotated suite and no fabricated clips or measurements were added.
+
+Phase 16 focused contracts: **6 passed**. The previous Phase 15/Phase 16/FaceSet/enhancer/quality focused set was **47 passed, 1 warning** before the final missing-clip guard. The final post-change repository suite was **1,676 passed, 1 skipped, 599 subtests passed, 2 warnings**; the warnings are the existing Albumentations update notice and the existing NaN-to-uint8 enhancer-guard fixture warning.
+
+The retained-output integrity benchmark remains useful but limited: the existing Phase 12/13 sweep passed **10/10 videos**, 600 frames each, with zero black, uniform, NaN, or duplicate frames. It does not measure identity, expression, lighting, boundaries, or detail retention.
+
+### Complete-phase checklist audit — line by line
+
+| Requirement | Evidence | Status | Still missing |
+|---|---|---|---|
+| Verify all previous phases | Final report lists Phases 1–15; existing regression suites and prior phase documents/harnesses are preserved | PARTIAL | Physical benchmark replay and retained visual review for every prior-phase gate |
+| Create 17 standardized clips | Explicit manifest with all 17 named categories and path validation | PASS | Supply real annotated clips; current ready count is 0 |
+| Test FAST/BALANCED/REALISTIC/MAX QUALITY | Four rows per clip and evidence schema | PASS | 68 real quality-mode runs |
+| Benchmark RealityUX, RealSwap, GPEN 256 Pro, GPEN Realistic, UltraMax | Five explicit component arms per clip | PASS | 85 real component-arm runs |
+| Test every important enhancer/configuration | All 16 registered enhancer labels are explicit per clip | PASS | 272 real enhancer runs |
+| Measure runtime/resource metrics | Required performance metric schema includes all requested timings and utilization | PASS | Real measured evidence for every row |
+| Measure quality metrics | Required identity/temporal/expression/eye/pose/occlusion/boundary/color/low-light/detail fields | PASS | Independent retained-frame/annotated quality review |
+| Build regression report and identify winners | JSON report and winner selectors refuse incomplete rows | PASS | Winners remain unavailable until evidence is complete |
+| Preserve enhancers and quality options | Source selector drift test and existing manual-path tests pass | PASS | Re-run every manual path on the standardized suite |
+| Validate old/new `.fsz` | Separate legacy/V2 audit plus existing serialization/migration tests | PASS | Run against representative production archives |
+| Final documentation/architecture | `FINAL_ARCHITECTURE.md`, progress, and handoff updated | PASS | Update with real benchmark results |
+| IMPLEMENT / TEST / BENCHMARK / REGRESSION TEST / DOCUMENT / HANDOFF | Infrastructure implemented, focused tests pass, benchmark gate is incomplete, docs/handoff recorded | PARTIAL | Real suite execution and all physical/provider/lifecycle evidence |
+
+Phase 16 is **not marked complete**. The program cannot be called production-complete while the 17 real clips, 425 run rows, physical provider coverage, previous-phase visual gates, and final winner evidence are absent.

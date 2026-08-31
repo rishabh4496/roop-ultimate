@@ -553,3 +553,68 @@ Do not change concurrency, TensorRT session ownership, provider transfer
 policy, or enhancer defaults from the current evidence alone. Do not start
 Phase 15 until these Phase 14 gaps are closed and the line-by-line checklist
 in OPTIMIZATION_PROGRESS.md is updated from PARTIAL to PASS.
+
+## Requested Phase 15 handoff — cross-hardware and regression validation
+
+Status: **OPEN / INCOMPLETE**.
+
+The audit implementation is intentionally observational:
+
+- `app/roop/regression_audit.py` owns the backend/precision/workflow/lifecycle manifest and provider/cache classification.
+- `app/tests/phase15_regression_audit.py` generates the report without building, deleting, or reusing TensorRT engines.
+- `app/tests/test_phase15_regression_audit.py` protects unavailable-provider, enhancer-selector, coverage, and stale-cache behavior.
+
+The current report is at `app/output/phase15_validation/audit.json`. It records the RTX 4070 host's TensorRT/CUDA/CPU providers as `available_not_validated`, ROCm/DirectML/CoreML as `unavailable`, 190 `not_run` workload/lifecycle rows, 19 stale-driver candidates, and 9 unscoped cache candidates. Do not delete those cache directories as part of this phase; review/rebuild them under the active driver-qualified namespace instead.
+
+Validation already completed for this implementation:
+
+- `app/env/Scripts/python.exe -m pytest -q app/tests/test_phase15_regression_audit.py` — **6 passed**.
+- Combined focused provider/precision/hardware/inventory/Phase 14 set — **64 passed, 1 warning**.
+- The CLI audit completed successfully and wrote the JSON report above.
+- The retained-output integrity sweep over ten existing Phase 12/13 videos
+  passed **10/10** (600 frames each; zero black, uniform, NaN, or duplicate
+  frames). This catches encoder/output corruption only and does not replace
+  the missing cross-hardware workload evidence.
+
+Required gates before marking Phase 15 complete:
+
+1. Run the full repository suite from the repository root and record its exact count after the final Phase 15 edits: `app/env/Scripts/python.exe -m pytest -q`.
+2. On the RTX 4070, run fresh-process precision arms using the same locked clip/source/models/codec and record PASS/FAIL plus identity, detail, finiteness, FPS, VRAM, RSS, provider, and precision: `app/env/Scripts/python.exe app/tests/precision_matrix.py --clip G:/pinokio/roop-keep/double/d4.mp4 --source harjot --out app/output/phase15_validation/rtx4070_precision`. Use fresh processes for every provider/precision; never switch precision in a live ORT/TensorRT process.
+3. Run the complete enhancer/profile video matrix on the same locked inputs with `bench_adaptive_enhancer_video.py`, including every label accepted by `compare_enhancers_video.VALID_ENHANCERS` and FAST, BALANCED, REALISTIC, and MAX QUALITY. Grade outputs independently with `app/tests/phase16_integrity.py`; a successful process is not sufficient.
+4. Exercise image swap, multi-face swap, new and legacy faceset loading, faceset creation, preview, batch, and a long-video run. Record startup, shutdown, model release, memory release, repeated jobs, provider changes, precision changes, output ordering/finiteness, and anomaly logs. Re-run the audit report after each provider/device switch so cache namespaces are compared to the active runtime.
+5. Repeat the supported provider rows on the physical RTX 3060 laptop with the single-context/global GPU guard, 1536 MB stabilization cap, RSS under 2.5 GB, and preserved look values: `blend_ratio=0.85`, `face_mask_blend=25`, `merger_sharpen=0.55`, `stabilize_enhancer_strength=0.6`. Do not transfer RTX 4070 engines or results. A missing physical device remains `pending`, not pass.
+6. Run the AMD ROCm/DirectML and Apple CoreML subsets on their real supported hosts. If a provider is not applicable or cannot be installed, record `unavailable` with the host/runtime reason; do not mark it passed by CPU fallback. Verify CPU fallback separately.
+7. Inspect regressions for stale engine reuse, provider/device mismatch, corrupted state, ONNX/TensorRT context races, memory leaks, preview/batch interference, identity/detail loss, brightness/color jumps, and temporal artifacts. Add a failing fixture for each defect found, then rerun the full suite and relevant benchmark.
+
+Exact next-phase starting point: remain in Phase 15 and run the full suite (step 1), then the fresh-process RTX 4070 precision matrix (step 2). After all Phase 15 rows are evidenced and the checklist in `docs/OPTIMIZATION_PROGRESS.md` is PASS, the next phase may start with an output-integrity review using `app/tests/phase16_integrity.py` on retained artifacts. No Phase 16 completion or default change should be inferred from this audit-only implementation.
+## Requested Phase 16 handoff — final production quality gate
+
+Status: **OPEN / INCOMPLETE**. This is the final gate, so there is no later optimization phase to infer or start from an incomplete report.
+
+Added without changing runtime processing behavior:
+
+- `app/roop/final_quality_gate.py` — standardized 17-category clip manifest, four quality modes, five named component arms, every registered enhancer, metric schema, `.fsz` checks, and evidence-only winner selection.
+- `app/tests/phase16_final_quality_gate.py` — report generator.
+- `app/tests/test_phase16_final_quality_gate.py` — manifest, evidence, enhancer-preservation, winner, and legacy/V2 compatibility contracts.
+- `docs/FINAL_ARCHITECTURE.md` — complete pipeline/resource-ownership architecture.
+
+Generate the current report with:
+
+`app/env/Scripts/python.exe app/tests/phase16_final_quality_gate.py --out app/output/phase16_validation/final_report.json`
+
+Current report state: 17 categories, 0 ready clips, 425 benchmark rows, 0 complete runs, no selected winners, and `OPEN_INCOMPLETE`. The report also lists the Phase 1–15 audit status. The 425 rows are 17 clips × (FAST/BALANCED/REALISTIC/MAX QUALITY + RealityUX + RealSwap + GPEN 256 Pro + GPEN Realistic + UltraMax + 16 registered enhancer labels).
+
+Final post-edit validation: **1,676 passed, 1 skipped, 599 subtests passed, 2 warnings**. The warnings are the existing Albumentations update notice and the existing NaN-to-uint8 enhancer-guard fixture warning. `git diff --check` passed.
+
+Required final-production gates:
+
+1. Supply real annotated clips for all 17 categories. Do not use a filename or process return code as quality evidence.
+2. Run every row with fresh processes where provider or precision changes are involved. Record total time, FPS, frame latency, peak VRAM, CPU/GPU utilization, detection, swap, enhancer, blending, dropped, and fallback frames.
+3. Record identity, temporal flicker, expression, eye state, pose, occlusion, boundaries, color, low-light realism, and identity-detail retention from retained output and annotations.
+4. Independently inspect steep/inverted, lateral, fast motion, blinking/speaking, dark/night/mixed lighting, foreign-object, hands, glasses/hair, crossing faces, low resolution, and motion blur.
+5. Run old and new `.fsz` archives through the compatibility check and existing FaceSet tests. Confirm V2 metadata/checksums and legacy PNG loading on representative production files.
+6. Re-run all previous-phase tests and physical gates: RTX 4070/3060 constraints, CPU fallback, AMD ROCm/DirectML where supported, Apple CoreML where supported, every enhancer/mode, provider fallback, preview, batch, long video, startup/shutdown, release, repeated jobs, switching providers/GPUs/precision, and cache namespace validation.
+7. Use `app/tests/phase16_integrity.py` on every retained output and investigate black, uniform, NaN, duplicate, unreadable, frame-count, duration, or audio regressions.
+8. Populate evidence JSON and rerun the report. Only when every required row is complete and independently reviewed may the winner fields be used: fastest, best balanced, best quality, best night, best difficult angle, and best multi-face.
+
+Exact continuation point: collect and register the 17 annotated clips, then execute the 425-row matrix through the existing render/benchmark harnesses and feed complete evidence into `phase16_final_quality_gate.py`. Until the report shows all rows complete and the progress checklist is PASS, the optimization program remains open and no defaults should be promoted.

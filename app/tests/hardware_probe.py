@@ -1,7 +1,17 @@
 """Target-bound NVIDIA discovery shared by the performance harnesses."""
 import csv
 import io
+import os
 import subprocess
+import sys
+
+# Keep this reusable probe executable both from ``app`` and from the repository
+# root, like the other Phase 15 command-line harnesses.  Pytest supplies the
+# path itself, but a physical validation run should not depend on pytest's
+# import setup.
+APP = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if APP not in sys.path:
+    sys.path.insert(0, APP)
 
 from roop.hardware_validation import target_matches_hardware
 
