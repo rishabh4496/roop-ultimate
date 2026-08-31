@@ -4,14 +4,14 @@ Date: 2026-08-31
 
 ## Current state
 
-Phase 4 is implemented and regression validated. The changes are uncommitted;
-base commit: `f8d2e2f`. FaceSet V2 adds deterministic `metadata.json` to the
+Phase 4 is implemented and regression validated in commit `9d9bb8d` (base
+commit: `f8d2e2f`). FaceSet V2 adds deterministic `metadata.json` to the
 existing root-PNG `.fsz` archive, while preserving the current FaceSet fields,
-legacy loading, and source-bank behavior. Phase 3 temporal tracking remains in
-the working tree and is not to be reverted.
+legacy loading, and source-bank behavior. Phase 3 temporal tracking is included
+in the same implementation commit and remains part of the validated baseline.
 
-Do not revert the unrelated `.geminiignore` working-tree edit or the earlier
-Phase 2 occlusion-response files. No launcher file was changed.
+The unrelated `.geminiignore` edit and the earlier Phase 2 occlusion-response
+files were preserved in the implementation commit. No launcher file was changed.
 
 ## Implementation
 

@@ -293,8 +293,8 @@ evidence.
 ## PHASE 3 - TEMPORAL DETECTION AND PERSISTENT FACE TRACKING - IMPLEMENTED / VALIDATED (2026-08-31)
 
 Status: the bounded temporal tracker is integrated into the existing temporal
-pre-pass and passed targeted and full regression validation. The phase changes
-are currently uncommitted; the base commit is `f8d2e2f`. Existing launcher
+pre-pass and passed targeted and full regression validation. The implementation
+is included in commit `9d9bb8d`; the base commit was `f8d2e2f`. Existing launcher
 files, provider selection, precision policies, pools, FaceSet/source-bank,
 3D reconstruction, detector alternatives, enhancers, and the RTX 3060 custom
 look settings were preserved.
@@ -308,9 +308,10 @@ look settings were preserved.
 - `docs/OPTIMIZATION_PROGRESS.md`
 - `docs/PHASE_HANDOFF.md`
 
-The earlier Phase 2 files remain in the working tree. The unrelated pre-existing
-`.geminiignore` edit was preserved. The historical filename wording cleanup in
-`docs/PERFORMANCE_OPTIMIZATION_HANDOFF.md` remains documented under Phase 2.
+The earlier Phase 2 files are included in implementation commit `9d9bb8d`. The
+unrelated pre-existing `.geminiignore` edit was preserved in that commit. The
+historical filename wording cleanup in `docs/PERFORMANCE_OPTIMIZATION_HANDOFF.md`
+remains documented under Phase 2.
 
 ### Features implemented
 
@@ -425,8 +426,9 @@ canvas/batching changes or promoting additional defaults.
 
 Status: FaceSet V2 is implemented as a backward-compatible metadata/index layer
 around the existing PNG-based `.fsz` format. Targeted, compatibility, and full
-regression tests pass. The phase changes are uncommitted; base commit:
-`f8d2e2f`. No existing `.fsz` files or user configuration were rewritten.
+regression tests pass. The implementation is included in commit `9d9bb8d`,
+whose base commit was `f8d2e2f`. No existing `.fsz` files or user configuration
+were rewritten.
 
 ### Files changed
 
@@ -441,8 +443,9 @@ regression tests pass. The phase changes are uncommitted; base commit:
 - `docs/OPTIMIZATION_PROGRESS.md`
 - `docs/PHASE_HANDOFF.md`
 
-The earlier Phase 2 and Phase 3 files remain in the working tree and were not
-reverted. The unrelated `.geminiignore` edit was preserved.
+The earlier Phase 2 and Phase 3 files are included in implementation commit
+`9d9bb8d` and were not reverted. The unrelated `.geminiignore` edit was
+preserved.
 
 ### Format and compatibility
 
