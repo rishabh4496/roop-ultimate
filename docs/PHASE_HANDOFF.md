@@ -1,55 +1,89 @@
-# Phase Handoff — Phase 1 Verified
+# Phase Handoff - Phase 4 FaceSet V2 Multi-Angle Identity Bank
 
 Date: 2026-08-31
 
 ## Current state
 
-Phase 0 baseline verification and Phase 1 hardware/inference backend audit are
-**COMPLETE / VERIFIED for the physically tested RTX 4070 path**. No application
-code was changed in this session. The stable performance implementation is
-`677385e49dddd9889be780d11fae52d8a07857fd`; the documentation checkpoint before
-this update was `c2ba7224ab4be7edccaef0f09bd2f3dbb7140cca`.
+Phase 4 is implemented and regression validated. The changes are uncommitted;
+base commit: `f8d2e2f`. FaceSet V2 adds deterministic `metadata.json` to the
+existing root-PNG `.fsz` archive, while preserving the current FaceSet fields,
+legacy loading, and source-bank behavior. Phase 3 temporal tracking remains in
+the working tree and is not to be reverted.
 
-The exact controlled baseline is 9.62 FPS on the RTX 4070 and 4.53 FPS mean on
-the RTX 3060 automatic profile. Both recorded 600/600 output frames and zero
-wrong-FaceSet applications, but the 3060 profile intentionally disables
-TensorRT/enhancement and degrades masking to stay within its lower-VRAM policy.
-The strict 3060 RSS target remains unmet at 3.734 GB.
+Do not revert the unrelated `.geminiignore` working-tree edit or the earlier
+Phase 2 occlusion-response files. No launcher file was changed.
 
-## Safe next phase
+## Implementation
 
-Proceed to the realism/temporal-quality architecture and implementation phase.
-Use the existing FaceSet, detector, landmark, 3D, tracking, swap, enhancer,
-mask, compositor, scheduler, and I/O contracts. Do not reopen the performance
-foundation or implement unrelated backend changes without new evidence.
+- `app/roop/faceset_v2.py` defines the versioned deterministic archive metadata,
+  quality scoring/filtering, pose bins, global/per-pose identity vectors,
+  appearance/detail caches, validation, migration, and lookup.
+- `app/roop/FaceSet.py` keeps the old fields and adds optional V2 metadata,
+  selection, and lighting helpers. V2 `AverageEmbeddings()` is a no-op so
+  pose-specific vectors are not destroyed.
+- `app/source_gallery.py` validates V2 archives and matches metadata entries to
+  individual detections, including repeated full-frame references containing
+  multiple faces.
+- `app/routes_faceset.py` writes V2 on library save and rejects corrupt imports.
+- `app/roop/ProcessMgr.py` uses the V2 cached selector only under the existing
+  `use_source_bank` opt-in; legacy pose selection remains intact.
+- `docs/FACESET_V2.md` is the schema and migration reference.
 
-## Preserve
+## Configuration
 
-Preserve the two-device capability policy, TRT/CUDA/FP16/FP32/mixed precision
-fallbacks, detector alternatives and pooling, FaceSet/source-bank behavior,
-3D reconstruction and landmark APIs, temporal tracking and frame ordering,
-RealityUX, RealSwap, GPEN 256 Pro, GPEN Realistic, UltraMax, all enhancers,
-finite/wrong-FaceSet/output-integrity guards, and the custom 3060 look values
-documented in the performance handoff.
+V2 creation controls do not change existing configuration files or old `.fsz`
+files:
 
-Any change affecting GPU execution, precision, memory, concurrency, batching,
-provider configuration, enhancer execution, or buffers requires separate RTX
-3060 and RTX 4070 validation. Current session status: current GPU RTX 4070;
-other GPU RTX 3060; GPU-sensitive change NO; current GPU test PASS; other GPU
-test NOT TESTED.
+```text
+ROOP_FACESET_V2_MIN_QUALITY=0.35
+ROOP_FACESET_V2_MAX_ENTRIES=32
+ROOP_FACESET_V2_MAX_PER_BIN=6
+```
 
-Phase 1 live 4070 evidence: warm quick benchmark exit 0 in 177.7 s; detector
-397.2 calls/s, RealSwap 205.5 calls/s, UltraMax 35.9 calls/s, XSeg 227.9
-calls/s, and BiSeNet 55.9 calls/s. Cold build evidence was 199 s for the
-swapper and 179 s for BiSeNet. The first cold pass had an XSeg invalid-
-throughput harness anomaly; the cached pass succeeded. The cache-key probe
-confirmed separate identities for workspace, partition, builder, auxiliary
-stream, and CUDA-graph settings.
+Phase 3 temporal controls remain documented in the Phase 3 section of the
+progress log.
 
-## Open evidence
+Keep TensorRT/CUDA, FP16/FP32/mixed precision, detector alternatives/pooling,
+FaceSet/source-bank, 3D reconstruction, RealityUX, RealSwap, GPEN 256 Pro,
+GPEN Realistic, UltraMax, all enhancer paths, CPU/DirectML/Apple/AMD fallback
+contracts, and the RTX 3060 custom look values unchanged.
 
-P95 latency, application-managed transfer/synchronization timing, full manual
-visual quality review, production-length leak soak, 3060 RSS reduction, 3060
-DMDNet compatibility, and difficult-pose/occlusion/no-face recovery remain
-open. These are explicitly follow-up items and are not reasons to alter the
-frozen performance foundation during the Phase 1 audit.
+## Evidence
+
+- V2 suite: **9 passed**.
+- V2 plus existing compatibility set: **117 passed**.
+- Full suite: **1523 passed, 1 skipped, 0 failures** in **43.039 s**.
+- 24-reference deterministic benchmark: **4,449,161 bytes**, prepare **48.306
+  ms**, write **248.907 ms**, read **24.918 ms**, **43,431.75 lookups/s**.
+- Python compilation, static undefined-name checks, tracked JavaScript syntax
+  checks, and `git diff --check` passed.
+- Regressions discovered: one missing `numpy` import in the new loader path was
+  caught by the full suite and fixed; no remaining regressions.
+- No physical GPU FaceSet build or visual identity-quality measurement was run.
+
+## Next session instructions
+
+1. Start with `git status`, recent commits, `logs` (latest first), this file,
+   `docs/OPTIMIZATION_PROGRESS.md`, and `docs/PERFORMANCE_OPTIMIZATION_HANDOFF.md`.
+2. Keep `G:\pinokio\prototype\system\examples\mochi\start.js` as the
+   launcher reference. No launcher changes are needed for Phase 3; if one is
+   proposed, reread `PINOKIO.md` and reapply the captured `input.event[1]`
+   `local.set` URL pattern.
+3. Build a real-photo multi-angle bank with frontal, mild, medium, strong, and
+   profile examples where available, without requiring exact user angles.
+4. Measure source-selection accuracy and identity/detail/expression/lighting
+   quality with V2 source-bank and 3D paths separately on RTX 4070 and RTX 3060.
+   Record archive bytes, creation/load time, FPS, VRAM, and RSS.
+5. Verify that low-quality and near-duplicate references are filtered without
+   losing complementary pose coverage. Do not promote new defaults from the
+   synthetic benchmark alone.
+6. Before finalizing the next phase, rerun targeted/full tests, available real
+   benchmarks, Python/launcher syntax checks, `git diff --check`, and rewrite
+   both state documents with exact evidence and next action.
+
+## Do not break
+
+Preserve output order, audio/segment behavior, `.fsz` compatibility,
+wrong-FaceSet/finite/output-integrity guards, the existing detector pool and
+ROI helper, and all provider/hardware fallback paths. Do not enable unrelated
+expensive models by default.

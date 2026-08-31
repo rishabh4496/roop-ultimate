@@ -1,5 +1,7 @@
 import numpy as np
 
+from roop.faceset_v2 import FORMAT_NAME, FORMAT_VERSION, measure_lighting, select_reference_index
+
 class FaceSet:
     faces = []
     ref_images = []
@@ -18,8 +20,25 @@ class FaceSet:
         # Multi-angle source bank: list of (yaw_deg, pitch_deg) or None per face in self.faces
         # Populated by ProcessMgr.initialize() when use_source_bank is enabled.
         self.face_poses = None  # type: list[tuple[float, float] | None] | None
+        # V2 is an additive metadata/index layer.  These fields are optional so
+        # old in-memory FaceSets and old .fsz archives retain their exact shape.
+        self.format_name = FORMAT_NAME
+        self.format_version = 1
+        self.faceset_metadata = None
+        self.face_metadata = []
+        self.pose_bank = None
+        self.identity_embedding = None
+        self.normalized_embedding = None
+        self.faceset_valid = True
+        self.faceset_migration = None
 
     def AverageEmbeddings(self):
+        # V2 deliberately keeps each pose-specific face embedding intact.  The
+        # global identity vector is stored separately in metadata and exposed as
+        # `identity_embedding`; callers that need legacy behaviour still get the
+        # original averaging path for V1 FaceSets.
+        if self.format_version >= 2:
+            return
         if len(self.faces) > 1 and self.embeddings_backup is None:
             first_face = self.faces[0]
             if hasattr(first_face, 'embedding'):
@@ -30,3 +49,50 @@ class FaceSet:
                 self.embeddings_backup = first_face['embedding']
                 embeddings = [face['embedding'] for face in self.faces]
                 first_face['embedding'] = np.mean(embeddings, axis=0)
+
+    def attach_v2_metadata(self, metadata):
+        """Attach validated V2 metadata without replacing detector Face objects."""
+        self.faceset_metadata = metadata
+        self.format_name = metadata.get('schema', FORMAT_NAME)
+        self.format_version = int(metadata.get('version', FORMAT_VERSION))
+        self.face_metadata = list(metadata.get('sources') or [])
+        self.pose_bank = metadata.get('pose_bank') or {}
+        identity = metadata.get('identity') or {}
+        value = identity.get('embedding') or identity.get('normalized_embedding')
+        if value is not None:
+            arr = np.asarray(value, dtype=np.float32).reshape(-1)
+            norm = float(np.linalg.norm(arr))
+            if norm > 1e-8 and np.isfinite(arr).all():
+                self.identity_embedding = (arr / norm).astype(np.float32)
+                self.normalized_embedding = self.identity_embedding.copy()
+        poses = []
+        for entry in self.face_metadata:
+            geo = entry.get('geometry') or {}
+            poses.append((geo.get('yaw'), geo.get('pitch')))
+        self.face_poses = poses if poses else None
+        for index, face in enumerate(self.faces):
+            try:
+                face['faceset_v2_index'] = index
+            except Exception:
+                try:
+                    setattr(face, 'faceset_v2_index', index)
+                except Exception:
+                    pass
+
+    def select_reference_index(self, pose=None, appearance=None, embedding=None):
+        """Fast V2 lookup with legacy pose-bank fallback."""
+        if self.format_version >= 2 and self.faceset_metadata:
+            index = select_reference_index(self.faceset_metadata, pose=pose,
+                                           appearance=appearance, embedding=embedding)
+            return max(0, min(int(index), max(0, len(self.faces) - 1)))
+        if pose is not None and self.face_poses:
+            yaw, pitch = float(pose[0]), float(pose[1])
+            valid = [(i, (yaw - float(y or 0.0)) ** 2 + (pitch - float(p or 0.0)) ** 2)
+                     for i, (y, p) in enumerate(self.face_poses) if y is not None]
+            if valid:
+                return min(valid, key=lambda item: item[1])[0]
+        return 0
+
+    @staticmethod
+    def lighting_for_frame(image, bbox=None):
+        return measure_lighting(image, bbox)

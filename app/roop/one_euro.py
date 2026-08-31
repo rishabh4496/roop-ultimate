@@ -266,7 +266,23 @@ class MaskStabilizer(EnhancerStabilizer):
     that edge. Smoothing the mask temporally, the same way the enhancer output
     already is, damps that without touching identity or swap correctness (the
     mask only controls the blend edge, never which source face gets used).
+
+    `fast_restore_alpha` is an opt-in occlusion policy. In this mask convention
+    1.0 means "restore the original plate", so a positive transition is an
+    occluder entering the face. That transition is allowed to use a larger EMA
+    factor while the reverse transition keeps the normal smoothing factor. This
+    prevents a hand/hair edge from being painted over for several frames, while
+    still fading the mask out gently when the occluder leaves. It is deliberately
+    disabled by default: an aggressive response can expose a one-frame false
+    positive from a noisy segmenter, and existing renders must remain unchanged.
     """
+
+    def __init__(self, *args, fast_restore_alpha=0.0, **kwargs):
+        super().__init__(*args, **kwargs)
+        try:
+            self.fast_restore_alpha = min(1.0, max(0.0, float(fast_restore_alpha)))
+        except (TypeError, ValueError):
+            self.fast_restore_alpha = 0.0
 
     def apply(self, mask, kps, t):
         if mask is None:
@@ -292,7 +308,24 @@ class MaskStabilizer(EnhancerStabilizer):
             motion = (best_d / t_e) / size
             cutoff = self.base_cutoff + self.motion_beta * motion
             a = _alpha(t_e, cutoff)
-            out = a * mask.astype(np.float32) + (1.0 - a) * tr['prev']
+            current = mask.astype(np.float32)
+            previous = tr['prev']
+            if self.fast_restore_alpha > 0.0:
+                # Positive delta means more of the original should be restored.
+                # Apply the larger factor only to those pixels. The reverse
+                # transition remains the ordinary low-pass path, which avoids
+                # reintroducing boundary flicker when an occluder disappears.
+                delta = current - previous
+                out = previous + a * delta
+                if float(delta.max()) > 0.0:
+                    entering = delta > 0.0
+                    restore_a = max(a, self.fast_restore_alpha)
+                    out[entering] = (restore_a * current[entering]
+                                     + (1.0 - restore_a) * previous[entering])
+            else:
+                # Keep the legacy arithmetic untouched when the experiment is
+                # disabled; this is the default and the compatibility path.
+                out = a * current + (1.0 - a) * previous
             tr['prev'] = out
             tr['centroid'] = centroid
             tr['last_t'] = t

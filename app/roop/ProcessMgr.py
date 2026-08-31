@@ -854,7 +854,23 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
             # as "moving fast, back off" and mostly passed the raw mask
             # through. motion_beta=0 uses a constant cutoff derived from
             # strength alone, unaffected by head speed.
-            self._mask_stab_factory = lambda: MaskStabilizer(strength=_mst, motion_beta=0.0)
+            # Experimental occlusion response. A value in (0, 1] makes the
+            # mask reveal the original plate faster when an occluder enters,
+            # while leaving the normal smoothing on the way back to the swap.
+            # It is opt-in so existing output and the 3060/4070 defaults remain
+            # bit-for-bit unchanged. See MaskStabilizer for the directionality.
+            try:
+                _fast_restore = float(os.environ.get(
+                    'ROOP_MASK_OCCLUSION_FAST_RESTORE', '0') or 0.0)
+            except (TypeError, ValueError):
+                _fast_restore = 0.0
+            _fast_restore = min(1.0, max(0.0, _fast_restore))
+            if _fast_restore > 0.0:
+                print('[Stabilize] occlusion fast-restore enabled: '
+                      f'alpha={_fast_restore:.2f}', flush=True)
+            self._mask_stab_factory = lambda: MaskStabilizer(
+                strength=_mst, motion_beta=0.0,
+                fast_restore_alpha=_fast_restore)
             self.mask_stabilizer = self._mask_stab_factory()
         else:
             self.mask_stabilizer = None
@@ -4476,17 +4492,30 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
             if (getattr(self.options, 'use_source_bank', False)
                     and len(fs.faces) > 1
                     and fs.face_poses is not None):
-                best_idx  = 0
-                best_dist = float('inf')
-                for i, (yaw_d, pitch_d) in enumerate(fs.face_poses):
-                    if yaw_d is None:
-                        continue
-                    # bank_*, not tgt_* — see the pose block above for why these
-                    # two comparands have to stay in the same convention.
-                    dist = (bank_yaw_deg - yaw_d) ** 2 + (bank_pitch_deg - pitch_d) ** 2
-                    if dist < best_dist:
-                        best_dist = dist
-                        best_idx  = i
+                if getattr(fs, 'format_version', 1) >= 2 and getattr(fs, 'faceset_metadata', None):
+                    # V2 keeps the pose-specific embeddings and quality /
+                    # lighting vectors in a compact index. The target lighting
+                    # measurement is a crop and a few reductions only; no
+                    # detector or neural inference is added to the video path.
+                    try:
+                        target_lighting = fs.lighting_for_frame(plate, target_face['bbox'])
+                    except Exception:
+                        target_lighting = None
+                    best_idx = fs.select_reference_index(
+                        pose=(bank_yaw_deg, bank_pitch_deg),
+                        appearance=target_lighting)
+                else:
+                    best_idx  = 0
+                    best_dist = float('inf')
+                    for i, (yaw_d, pitch_d) in enumerate(fs.face_poses):
+                        if yaw_d is None:
+                            continue
+                        # bank_*, not tgt_* — see the pose block above for why these
+                        # two comparands have to stay in the same convention.
+                        dist = (bank_yaw_deg - yaw_d) ** 2 + (bank_pitch_deg - pitch_d) ** 2
+                        if dist < best_dist:
+                            best_dist = dist
+                            best_idx  = i
                 selected_src_idx = best_idx
                 inputface = fs.faces[best_idx]
 

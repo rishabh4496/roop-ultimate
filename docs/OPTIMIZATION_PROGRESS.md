@@ -207,3 +207,319 @@ Open work is validation and quality work, not a reason to reopen the performance
 foundation: production-length leak soak, manual visual review, 3060 RSS/DMDNet
 follow-up, detector no-face recovery, and difficult-pose/occlusion quality
 improvements.
+
+## PHASE 2 — REALISM/TEMPORAL QUALITY: OCCLUSION-AWARE MASK RESPONSE — EXPERIMENTAL (2026-08-31)
+
+Status: implemented and validated as an opt-in experiment; not promoted to a
+default and not yet production-ready for both GPUs. Base commit before this
+phase: `f8d2e2f`. No phase commit was created because the feature remains
+experimental and the existing `.geminiignore` working-tree edit is preserved.
+
+### Files changed
+
+- `app/roop/one_euro.py`
+- `app/roop/ProcessMgr.py`
+- `app/tests/test_mask_occlusion.py`
+- `app/tests/bench_mask_occlusion.py`
+- `docs/PERFORMANCE_OPTIMIZATION_HANDOFF.md` (removed a stale upstream-name
+  token from its historical file inventory so the standalone-install guard
+  passes)
+- `docs/OPTIMIZATION_PROGRESS.md`
+- `docs/PHASE_HANDOFF.md`
+
+### Feature implemented
+
+`MaskStabilizer` now accepts an optional `fast_restore_alpha`. When enabled,
+positive mask transitions are treated as an occluder entering the face because
+the mask convention is `1.0 = restore original plate`, `0.0 = show swap`.
+Those pixels use the larger alpha while the reverse transition retains the
+normal smoothing alpha. This reduces the risk of a hand/hair edge being
+painted over for multiple frames without adding a model or GPU work.
+
+The production factory reads `ROOP_MASK_OCCLUSION_FAST_RESTORE`; unset, `0`,
+invalid, and negative values disable it. The default is therefore unchanged,
+including the custom RTX 3060 look settings. TensorRT/CUDA, precision, pool,
+worker, buffer, FaceSet, detector, 3D, enhancer, RealityUX, RealSwap, and
+output-order behavior were not changed.
+
+### Tests and measurements
+
+- Pre-change targeted regression: 93 passed.
+- Post-change targeted/regression set: **97 passed** across mask occlusion,
+  stabilization warm-up, face overlap/contact, and non-frontal mask routing.
+- Full regression suite: **1503 passed, 1 skipped, 0 failures** in 43.644 s;
+  the pre-existing standalone-install guard was first reproduced, then passed
+  after the minimal historical-inventory wording cleanup above.
+- Standalone-install guard rerun: **5 passed**.
+- Python compilation and `git diff --check`: passed.
+- CPU microbenchmark, 512×512 masks, 4,000 calls: normal **577.51
+  calls/s**, opt-in fast-restore **447.12 calls/s**; first entering-mask
+  restore mean **0.580238** vs **0.850000**. The opt-in branch costs CPU time,
+  so it is not a performance promotion.
+- Real RTX 4070 short A/B on locked `double/d4.mp4`, frames 0–120, RealSwap +
+  RealityUX + GPEN 256 Pro + HEVC NVENC, 12 workers: control **3.19 FPS**,
+  candidate **3.35 FPS**, both **120/120 frames** and **0 wrong FaceSets**.
+  These short runs are startup/prepass dominated and the FPS difference is
+  not claimed as a speedup. Peak VRAM was **6663 MB / 6705 MB** and peak RSS
+  **7.322 GB / 10.134 GB** (control/candidate); this variance is not attributed
+  to the mask feature.
+- Framewise output comparison: mean MAE **0.730447**, mean MSE **1.613900**,
+  mean fraction of pixels differing by more than two levels **13.551392%**;
+  12-frame sampled SSIM mean **0.991943**, minimum **0.989922**. One
+  largest-difference frame was spot-checked visually; no obvious new boundary
+  failure was observed. This is not a full manual quality review or a ground
+  truth score.
+
+### Quality/performance disposition
+
+The asymmetric response is logically covered and real-footage output remained
+finite, ordered, dimensionally valid, and identity-safe in the short 4070 run.
+The feature remains **experimental/opt-in** because the microbenchmark shows a
+CPU cost, the real A/B is short and warm-up dominated, no objective occlusion
+ground truth was available, and no physical RTX 3060 run was performed.
+There is no claim of universal quality improvement or dual-GPU acceptance.
+
+### Unresolved issues and next phase
+
+Required follow-up is an order-balanced long real-footage A/B with annotated
+occluder-entry/exit clips, manual review of eyes/mouth/hair/foreign objects,
+and a physical RTX 3060 constrained-path run preserving its 0.85 blend ratio,
+25 mask blend, 0.55 merger sharpen, and 0.6 enhancer stabilization strength.
+The next recommended phase is detector/no-face recovery and difficult-pose
+quality, unless that evidence instead shows the mask policy should be refined
+first. Do not enable `ROOP_MASK_OCCLUSION_FAST_RESTORE` by default without that
+evidence.
+
+## PHASE 3 - TEMPORAL DETECTION AND PERSISTENT FACE TRACKING - IMPLEMENTED / VALIDATED (2026-08-31)
+
+Status: the bounded temporal tracker is integrated into the existing temporal
+pre-pass and passed targeted and full regression validation. The phase changes
+are currently uncommitted; the base commit is `f8d2e2f`. Existing launcher
+files, provider selection, precision policies, pools, FaceSet/source-bank,
+3D reconstruction, detector alternatives, enhancers, and the RTX 3060 custom
+look settings were preserved.
+
+### Files changed
+
+- `app/roop/temporal_tracker.py`
+- `app/roop/procmgr_tracking.py`
+- `app/tests/test_temporal_tracker.py`
+- `app/tests/bench_temporal_tracker.py`
+- `docs/OPTIMIZATION_PROGRESS.md`
+- `docs/PHASE_HANDOFF.md`
+
+The earlier Phase 2 files remain in the working tree. The unrelated pre-existing
+`.geminiignore` edit was preserved. The historical filename wording cleanup in
+`docs/PERFORMANCE_OPTIMIZATION_HANDOFF.md` remains documented under Phase 2.
+
+### Features implemented
+
+`TemporalFaceTracker` now maintains persistent IDs and detached state for bbox,
+landmarks, pose, identity embedding, confidence, velocity, previous mask, and
+previous/last frame indices. It also records predicted geometry, hit/miss
+counts, lifecycle status, and appeared/left/recovered events.
+
+Detection scheduling is confidence-aware: an initial full-frame detection seeds
+tracks, stable tracks use a union ROI, uncertain tracks expand that ROI, full
+recovery runs every `ROOP_TEMPORAL_FULL_DETECT_INTERVAL` frames (default 8),
+and lost-track recovery uses a full frame followed by bounded coasting while
+the result is pending. The existing ROI detector and detector pool remain the
+execution path; a failed ROI falls back to full-frame detection. Pool-aware
+reservation prevents several queued futures from scheduling the same recovery.
+
+Association is one-to-one and global for normal face counts. Appearance is the
+dominant signal, with predicted motion, IoU, scale, rejection gates, and an
+ambiguity margin protecting crossing/touching faces. Lost tracks use a tight
+appearance-only re-entry gate. Geometry, landmarks, pose, velocity, embedding,
+confidence, and mask history are updated with adaptive smoothing: genuine fast
+motion and recovery use a faster release while ordinary jitter remains
+low-pass filtered. Existing whole-clip source assignment remains authoritative;
+the new state machine supplies temporal detection policy and diagnostics.
+
+Optional policy controls are environment variables and do not alter existing
+configuration files or `.fsz` files:
+
+```text
+ROOP_TEMPORAL_FULL_DETECT_INTERVAL=8
+ROOP_TEMPORAL_STABLE_HITS=2
+ROOP_TEMPORAL_MAX_MISSES=3
+ROOP_TEMPORAL_REID_AGE=45
+ROOP_TEMPORAL_STABLE_ROI_PAD=0.55
+ROOP_TEMPORAL_UNCERTAIN_ROI_PAD=1.35
+ROOP_TEMPORAL_MIN_ROI=160
+```
+
+### Tests and benchmark evidence
+
+- Phase 3 behavioral suite: **11 passed**. It covers stationary, fast motion,
+  head rotation, crossing faces, touching faces, temporary occlusion, leaving
+  and re-entry, new faces, mask carry, policy recovery, and detection reduction.
+- Existing tracking regression command:
+  `python -m unittest tests.test_temporal_tracker tests.test_track_reid tests.test_track_stitch tests.test_track_assignment tests.test_track_gapfill`
+  passed **71 tests**.
+- Full regression command:
+  `python -m unittest discover -s tests -t . -p "test_*.py"`
+  passed **1514 tests, 1 skipped, 0 failures** in **42.718 s**.
+- Python compilation passed for the Phase 3 modules/tests. JavaScript syntax
+  checks passed for the repository launcher scripts, and `git diff --check`
+  passed.
+- Synthetic policy benchmark, `python tests/bench_temporal_tracker.py
+  --frames 400 --full-interval 8`: **50 full**, **350 ROI**, **87.50% fewer
+  full-frame calls**, tracker policy throughput **4185.44 FPS**, mean ROI area
+  fraction **0.1355**. This is not detector or end-to-end throughput.
+- Real decoded-frame integration over 40 frames: **5 full**, **32 ROI**, and
+  **3 bounded coast** decisions, with the existing detector stub and ndarray
+  path. Symbolic unit-test frames intentionally retain the legacy full-frame
+  contract.
+
+### RTX 4070 controlled benchmark
+
+Workload: `double/d4.mp4`, frames 0-120, two sources, TensorRT, RealSwap,
+RealityUX, GPEN 256 Pro, HEVC NVENC, 12 workers, RTX 4070. All completed with
+120/120 frames, 288/288 faces swapped, 0 wrong-FaceSet applications, and 227
+attributed swaps.
+
+| Run | Full / ROI / coast | Processing FPS | Track-detect stage | Peak VRAM | Peak RSS |
+|---|---:|---:|---:|---:|---:|
+| Control, full every frame, first order | 120 / 0 / 0 | 3.33 | 22.74 s / 120 | 6885 MB | 10.132 GB |
+| Control, full every frame, reverse order | 120 / 0 / 0 | 4.98 | 15.69 s / 120 | 6641 MB | 10.176 GB |
+| Phase 3, interval 8, reserved recovery | 15 / 102 / 3 | 3.65 | 12.74 s / 117 | 6399 MB | 10.076 GB |
+
+The corrected Phase 3 run reduced full-frame calls by **87.5%** over 120
+frames. It also skipped three detector calls while a pooled recovery result was
+pending, so the measured detector-stage invocation count was 117 rather than
+120. The short runs are startup/pre-pass and pool-order sensitive; the FPS
+values are recorded measurements, not a causal speedup claim. A framewise
+candidate/control comparison had mean MAE **0.734004**, mean MSE **1.6427988**,
+and mean fraction of pixels changing by more than two levels **13.5695%**; this
+has no ground-truth quality interpretation.
+
+### Quality, compatibility, and unresolved issues
+
+All eight requested synthetic behavior classes pass, including stable IDs
+through crossing/touching and temporary loss/re-entry. The real 4070 run
+preserved output ordering, frame count, FaceSet integrity, and configured
+enhancer/mask/provider paths. No physical RTX 3060 run was performed for this
+phase, so the dual-device requirement remains open; the existing 3060
+single-context/1536 MB guard and custom look settings were not changed.
+
+Regressions discovered: none in the targeted or full regression suites. The
+short real runs also produced no wrong-FaceSet or output-integrity regression;
+they are not sufficient to close the difficult-scene quality risks below.
+
+The ROI helper currently reuses the configured detector/canvas, so fewer
+full-frame calls do not automatically mean the same percentage reduction in
+neural inference time. Long clips with faces entering outside the predicted
+union rely on periodic recovery. Difficult real occlusions, annotated crossing
+clips, manual visual review, and physical 3060 measurements remain unresolved.
+
+### Next recommended phase
+
+Run order-balanced long-footage evaluation with annotated occlusion, crossing,
+touching, extreme-pose, leave/re-entry, and new-face segments on both mandatory
+GPU profiles. Measure ID switches, missed/recovered frames, landmark/pose
+stability, output quality, FPS, VRAM, and RSS before considering detector
+canvas/batching changes or promoting additional defaults.
+
+## PHASE 4 - FACESET V2: MULTI-ANGLE IDENTITY BANK - IMPLEMENTED / VALIDATED (2026-08-31)
+
+Status: FaceSet V2 is implemented as a backward-compatible metadata/index layer
+around the existing PNG-based `.fsz` format. Targeted, compatibility, and full
+regression tests pass. The phase changes are uncommitted; base commit:
+`f8d2e2f`. No existing `.fsz` files or user configuration were rewritten.
+
+### Files changed
+
+- `app/roop/faceset_v2.py`
+- `app/roop/FaceSet.py`
+- `app/source_gallery.py`
+- `app/routes_faceset.py`
+- `app/roop/ProcessMgr.py`
+- `app/tests/test_faceset_v2.py`
+- `app/tests/bench_faceset_v2.py`
+- `docs/FACESET_V2.md`
+- `docs/OPTIMIZATION_PROGRESS.md`
+- `docs/PHASE_HANDOFF.md`
+
+The earlier Phase 2 and Phase 3 files remain in the working tree and were not
+reverted. The unrelated `.geminiignore` edit was preserved.
+
+### Format and compatibility
+
+V2 archives retain root-level `0.png`, `1.png`, ... reference members and add a
+versioned deterministic `metadata.json` member (`schema="roop.fsz"`,
+`version=2`). Metadata contains per-reference ArcFace/raw and normalized
+embeddings, quality confidence, geometry/68-point/2D/3D landmarks, yaw/pitch/
+roll, scale/proportions, sharpness/blur/exposure/saturation/occlusion/detector/
+landmark quality, luminance/skin color/contrast/temperature/shadow/highlight
+statistics, expression descriptors, candidate high-frequency detail maps and
+masks, and automatic frontal/mild/medium/strong/profile pose bins.
+
+The global identity embedding is a quality-weighted normalized summary only;
+pose-specific embeddings remain separate. `pose_bank` and normalized embedding
+arrays support fast lookup. `FaceSet` keeps all prior fields (`faces`,
+`ref_images`, `embedding_average`, `embeddings_backup`, `face_3d`,
+`face_3d_bank`, and `face_poses`). V1 loading retains legacy averaging behavior.
+Saving a loaded V1 FaceSet creates V2 and recovers the original first embedding
+from `embeddings_backup` when available.
+
+V2 loading validates ZIP CRCs, JSON/schema/version, safe members, geometry,
+pose-bank indices, and per-image SHA-256 checksums. Corrupt V2 archives fail
+loudly rather than silently falling back to V1. `migrate_legacy_fsz()` supports
+explicit migration; passing a loaded FaceSet gives full cached analysis, while
+raw-PNG migration is lossless and metadata-only until normal detection enriches
+the in-memory object.
+
+### Creation, filtering, and runtime use
+
+The library save route now performs creation-time analysis using classical
+OpenCV operations only. Low-quality entries below
+`ROOP_FACESET_V2_MIN_QUALITY` (default `0.35`) or below 32 face pixels are
+excluded. Selection covers represented pose bins first, then fills by quality
+while suppressing near-duplicate embeddings per bin; defaults cap the bank at 32
+entries and 6 per pose bin. The source images and analysis are therefore cached
+at `.fsz` creation instead of recomputed in every video frame.
+
+When the existing `use_source_bank` option is enabled, `ProcessMgr` uses the V2
+cached pose/quality/lighting selector. Target lighting is a crop/statistics
+measurement only; no detector or neural model is added to the video path. V1
+source-bank selection remains the fallback, and 3D source crop caching remains
+unchanged.
+
+### Tests and measurements
+
+- V2 unit/round-trip/migration/corruption/filtering/lookup suite:
+  **9 passed**.
+- V2 plus existing auto-angle, source-pose, contact/overlap, and AdaFace
+  compatibility set: **117 passed**.
+- Full regression command:
+  `python -m unittest discover -s tests -t . -p "test_*.py"`
+  passed **1523 tests, 1 skipped, 0 failures** in **43.039 s**.
+- Python compilation and the repository’s static undefined-name checks passed.
+  Tracked JavaScript syntax checks and `git diff --check` were rerun for the
+  final repository state.
+- FaceSet V2 benchmark, `python tests/bench_faceset_v2.py`: 24 synthetic
+  references, **4,449,161 bytes** archive, prepare **48.306 ms**, write
+  **248.907 ms**, metadata read **24.918 ms**, and **43,431.75 cached lookups/s**.
+  This is a deterministic creation/index benchmark, not neural throughput.
+
+### Quality, regressions, and remaining risks
+
+The V2 tests prove field preservation, per-pose embedding preservation, quality
+filtering, redundancy reduction, deterministic byte-identical round trips,
+legacy migration, checksum/corruption rejection, V1 behavior, V2 lookup, and
+source-bank pose selection. No regressions remain in the full suite. No physical
+RTX 4070 or RTX 3060 FaceSet build from user-provided photographs was run in
+this phase, so visual identity/detail quality and dual-device memory impact are
+not claimed. Candidate high-frequency details are intentionally unlabeled and
+must be cross-reference validated before any future detail-preservation
+consumer treats them as moles, freckles, scars, or wrinkles.
+
+### Next recommended phase
+
+Build a real-photo multi-angle evaluation set on both hardware profiles. Measure
+identity distance by pose bin, source-selection accuracy, detail retention,
+expression/lighting compatibility, archive size, creation time, load time, and
+video quality/FPS with source-bank and 3D paths separately enabled. Only then
+consider adding more expensive detail descriptors or changing source-bank
+defaults.

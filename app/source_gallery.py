@@ -12,6 +12,7 @@ import os
 import shutil
 
 import cv2
+import numpy as np
 
 import roop.globals as roop_globals
 import ui.globals as ui_globals
@@ -20,6 +21,7 @@ from roop.FaceSet import FaceSet
 from roop.face_util import extract_face_images
 from roop.capturer import get_image_frame
 from api_media import _rgb_to_dataurl
+from roop.faceset_v2 import read_faceset_archive
 
 
 # ── Injected by api.py at import time ────────────────────────────────────
@@ -142,6 +144,11 @@ def _source_faces_payload():
     return payload
 
 def _ingest_faceset(path):
+    # Validate V2 before touching the shared extraction directory. A corrupt
+    # metadata member or checksum must fail loudly instead of silently loading
+    # a partially valid source bank. Legacy PNG-only archives return None and
+    # follow the unchanged V1 path below.
+    faceset_metadata = read_faceset_archive(path)
     unzipfolder = os.path.join(os.environ.get("TEMP", API_TEMP), "faceset")
     if os.path.isdir(unzipfolder):
         shutil.rmtree(unzipfolder, ignore_errors=True)
@@ -150,25 +157,75 @@ def _ingest_faceset(path):
     face_set = FaceSet()
     best_crop = None
     best_score = None
-    for file in sorted(os.listdir(unzipfolder)):
-        if file.endswith(".png"):
-            filename = os.path.join(unzipfolder, file)
-            frame = get_image_frame(filename)
-            for fd in extract_face_images(filename, (False, 0)):
-                face = fd[0]
-                face.mask_offsets = _mask_offsets_from_cfg()
-                face_set.faces.append(face)
-                face_set.ref_images.append(frame)
-                # Use the most frontal face as the gallery thumbnail, not just
-                # the first one (which is often a profile in a multi-angle set).
-                kps = getattr(face, "kps", None)
-                if kps is None and isinstance(face, dict):
-                    kps = face.get("kps")
-                score = _frontality(kps) if kps is not None else 999.0
-                if best_score is None or score < best_score:
-                    best_score, best_crop = score, fd[1]
+    def append_face(fd, frame):
+        nonlocal best_score, best_crop
+        face = fd[0]
+        face.mask_offsets = _mask_offsets_from_cfg()
+        face_set.faces.append(face)
+        face_set.ref_images.append(frame)
+        # Use the most frontal face as the gallery thumbnail, not just the first
+        # one (which is often a profile in a multi-angle set).
+        kps = getattr(face, "kps", None)
+        if kps is None and isinstance(face, dict):
+            kps = face.get("kps")
+        score = _frontality(kps) if kps is not None else 999.0
+        if best_score is None or score < best_score:
+            best_score, best_crop = score, fd[1]
+
+    if faceset_metadata is not None:
+        # A V2 archive can contain the same full reference frame more than once
+        # when a source image held multiple faces. Match each cached metadata
+        # entry to one detected face by bbox so loading never duplicates all
+        # detections for every metadata row or changes source-bank ordering.
+        detected = {}
+        used = {}
+        members = ((faceset_metadata.get("index") or {}).get("reference_members")
+                   or [entry.get("reference_member")
+                       for entry in faceset_metadata.get("sources", [])])
+        for member in members:
+            filename = os.path.join(unzipfolder, member)
+            detected[member] = (get_image_frame(filename),
+                                extract_face_images(filename, (False, 0)))
+            used[member] = set()
+        for entry in faceset_metadata.get("sources", []):
+            member = entry.get("reference_member")
+            frame, candidates = detected.get(member, (None, []))
+            if not candidates:
+                continue
+            target = ((entry.get("geometry") or {}).get("bbox"))
+            target = np.asarray(target, dtype=np.float32).reshape(4) if target is not None else None
+            best_i, best_value = None, -1.0
+            for i, fd in enumerate(candidates):
+                if i in used[member]:
+                    continue
+                box = getattr(fd[0], "bbox", None)
+                if box is None and isinstance(fd[0], dict):
+                    box = fd[0].get("bbox")
+                if target is None or box is None:
+                    value = 0.0 if best_i is not None else 1.0
+                else:
+                    box = np.asarray(box, dtype=np.float32).reshape(4)
+                    ix0, iy0 = max(target[0], box[0]), max(target[1], box[1])
+                    ix1, iy1 = min(target[2], box[2]), min(target[3], box[3])
+                    inter = max(0.0, float(ix1 - ix0)) * max(0.0, float(iy1 - iy0))
+                    area = max(1.0, float((target[2] - target[0]) * (target[3] - target[1])))
+                    value = inter / area
+                if value > best_value:
+                    best_i, best_value = i, value
+            if best_i is not None:
+                used[member].add(best_i)
+                append_face(candidates[best_i], frame)
+    else:
+        for file in sorted(os.listdir(unzipfolder)):
+            if file.endswith(".png"):
+                filename = os.path.join(unzipfolder, file)
+                frame = get_image_frame(filename)
+                for fd in extract_face_images(filename, (False, 0)):
+                    append_face(fd, frame)
     if len(face_set.faces) > 0:
-        if len(face_set.faces) > 1:
+        if faceset_metadata is not None:
+            face_set.attach_v2_metadata(faceset_metadata)
+        elif len(face_set.faces) > 1:
             face_set.AverageEmbeddings()
         # A faceset with no usable crop still gets a (blank) gallery slot: the
         # two lists are positional, so skipping the thumbnail would shift every

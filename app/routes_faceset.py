@@ -27,6 +27,7 @@ import api_state as state
 from api_media import _bgr_to_jpg_dataurl
 from source_gallery import (_frontality, _ingest_faceset,
                             _shrink_for_thumb, _source_faces_payload)
+from roop.faceset_v2 import read_faceset_archive, write_faceset_v2
 
 
 router = APIRouter()
@@ -222,19 +223,19 @@ def faceset_library_save(payload: dict = Body(...)):
     if not imgs:
         return JSONResponse(status_code=400, content={"message": "nothing to save for this faceset"})
 
-    # Write member PNGs into an ASCII temp dir, then zip into the (possibly
-    # unicode) library path — zipfile handles the unicode zipname fine.
-    tmpdir = os.path.join(API_TEMP, "_libsave")
-    shutil.rmtree(tmpdir, ignore_errors=True)
-    os.makedirs(tmpdir, exist_ok=True)
-    imgnames = []
-    for j, img in enumerate(imgs):
-        fn = os.path.join(tmpdir, f"{j}.png")
-        _imwrite_unicode(fn, img)
-        imgnames.append(fn)
-
     fsz_path = _unique_fsz_path(payload.get("name", ""))
-    util.zip(imgnames, fsz_path)
+    try:
+        # V2 keeps the root PNG members used by legacy loaders and adds a
+        # deterministic metadata/index member. The currently loaded FaceSet is
+        # passed so all detector-derived geometry and embeddings are cached at
+        # creation time rather than recomputed during video processing.
+        write_faceset_v2(fsz_path, roop_globals.INPUT_FACESETS[idx], imgs,
+                         source_name=payload.get("name", ""))
+    except ValueError as exc:
+        return JSONResponse(status_code=400, content={"message": str(exc)})
+    except Exception:
+        traceback.print_exc()
+        return JSONResponse(status_code=500, content={"message": "failed to build FaceSet V2"})
 
     # Thumbnail sidecar: pick the most frontal face in the set (fall back to the
     # source panel's crop) so the preview is never a side profile.
@@ -245,7 +246,6 @@ def faceset_library_save(payload: dict = Body(...)):
         _imwrite_unicode(thumb_sidecar,
                          _shrink_for_thumb(cv2.cvtColor(ui_globals.ui_input_thumbs[idx], cv2.COLOR_RGB2BGR)))
 
-    shutil.rmtree(tmpdir, ignore_errors=True)
     return _faceset_library_payload({"saved": os.path.splitext(os.path.basename(fsz_path))[0]})
 
 @router.post("/api/faceset/library/load")
@@ -306,6 +306,16 @@ def faceset_library_import(file: UploadFile = File(...)):
     dest = _unique_fsz_path(os.path.splitext(base)[0])
     with open(dest, "wb") as buf:
         shutil.copyfileobj(file.file, buf)
+    try:
+        # Accept legacy PNG-only archives, but reject malformed V2 metadata or
+        # a corrupt ZIP before exposing the file in the library listing.
+        read_faceset_archive(dest)
+    except ValueError as exc:
+        try:
+            os.remove(dest)
+        except OSError:
+            pass
+        return JSONResponse(status_code=400, content={"message": str(exc)})
     _write_library_thumb(dest)
     return _faceset_library_payload({"imported": os.path.splitext(os.path.basename(dest))[0]})
 

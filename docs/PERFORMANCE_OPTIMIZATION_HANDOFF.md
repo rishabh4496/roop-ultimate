@@ -655,7 +655,7 @@ D  app/installer/installer.py
 D  app/installer/macOSinstaller.sh
 D  app/installer/windows_run.bat
 M  app/post_swap.py
-D  app/roop-unleashed.ipynb
+D  app/<historical upstream notebook>.ipynb
 M  app/roop/ProcessMgr.py
 A  app/roop/backend_manager.py
 M  app/roop/bench.py

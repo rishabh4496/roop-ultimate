@@ -34,6 +34,15 @@ from roop.face_util import get_all_faces, analysis_pooled
 from roop import face_contact
 from roop.utilities import compute_cosine_distance
 from roop.procmgr_runtime import _prof, _gpu_guard, wait_while_paused, PROGRESS_BAR_FORMAT, _TRACK_OVERLAP_FRAC, ChunkedProgress, bar_write, publish_eta, audit_detect_frame_begin, audit_detect_miss_here
+from roop.temporal_tracker import TemporalFaceTracker
+
+
+class _DetectionResult(list):
+    """List-compatible detector result carrying the actual path used."""
+
+    def __init__(self, faces=(), mode='full'):
+        super().__init__(faces or [])
+        self.mode = mode
 
 
 def _readahead_depth(cap, budget_mb=256.0, lo=4, hi=16):
@@ -211,6 +220,12 @@ class TrackingMixin:
         active, retired = [], []
         next_id = 0
         per_frame = {}       # frame_idx -> [(centroid(2,), track_id)]
+        # The existing whole-clip track builder remains the source-assignment
+        # authority. In temporal mode, this companion state machine decides
+        # whether the next detector call can use an ROI and records explicit
+        # confidence/lifecycle state without replacing that established logic.
+        temporal_tracker = TemporalFaceTracker.from_env() if collect_obs else None
+        self._temporal_tracker = temporal_tracker
         # Detections the appearance-only fallback was not allowed to claim.
         reid_refused = 0
         # Observations whose embedding was disbelieved because the recognition
@@ -264,7 +279,7 @@ class TrackingMixin:
             if crop_bbox is not None:
                 faces = get_all_faces_in_roi(fr, crop_bbox)
                 if faces:
-                    return faces
+                    return _DetectionResult(faces, mode='roi')
             faces = get_all_faces(fr) or []
             if HIRES_MISS and expected_count and len(faces) < expected_count:
                 hi_faces = get_all_faces_hires(fr, HIRES_DET_SIZE)
@@ -288,14 +303,17 @@ class TrackingMixin:
                 # face_detector_threshold is the lever here — see the audit.
                 audit_detect_miss_here(
                     getattr(roop.globals, 'face_detector_threshold', 0.5))
-            return faces
+            return _DetectionResult(faces, mode=('roi_fallback_full'
+                                                 if crop_bbox is not None else 'full'))
 
-        def _detect_one(fr, crop_bbox=None, expected_count=None):
+        def _detect_one(fr, crop_bbox=None, expected_count=None, skip_detection=False):
             # Runs inside a pool worker, one at a time per worker (ThreadPoolExecutor
             # caps concurrency at pool_workers == the analyser pool size), so this is
             # real GPU/model time, not queue-wait — lease_face_analyser() should never
             # actually block here. Tagged 'track_detect' (not 'detect') so it shows up
             # as its own STAGE TIMING line, separate from the swap phase's detect stage.
+            if skip_detection:
+                return _DetectionResult([], mode='skip')
             with _prof('track_detect'), _gpu_guard(pooled=True):
                 return _run_detect(fr, crop_bbox, expected_count)
 
@@ -421,6 +439,11 @@ class TrackingMixin:
                         is_reid = True
 
                 if best is None:
+                    _lm = getattr(face, 'landmark_2d_106', None)
+                    if _lm is None:
+                        _lm = getattr(face, 'kps', None)
+                    _pose = getattr(face, 'pose', None)
+                    _mask = getattr(face, 'mask', None)
                     best = {
                         'id': next_id,
                         'bbox': bbox,
@@ -435,6 +458,17 @@ class TrackingMixin:
                         'emb_sum': emb.astype(np.float64).copy(),
                         'emb_n': 1,
                         'emb_mean': emb.copy(),
+                        # Explicit temporal state fields. The companion
+                        # TemporalFaceTracker owns scheduling/lifecycle state;
+                        # these copies keep the established whole-clip track
+                        # artefact self-describing for diagnostics and callers.
+                        'identity_embedding': emb.copy(),
+                        'landmarks': (None if _lm is None else np.asarray(_lm).copy()),
+                        'pose': (None if _pose is None else np.asarray(_pose).copy()),
+                        'confidence': float(getattr(face, 'det_score', 0.0) or 0.0),
+                        'previous_mask': None,
+                        'mask': (None if _mask is None else np.asarray(_mask).copy()),
+                        'previous_frame_index': -1,
                         # True while every observation this track has ever had
                         # was contaminated. The seed still has to be SOMETHING
                         # (association needs a mean to compare against), so it
@@ -450,6 +484,8 @@ class TrackingMixin:
                     next_id += 1
                     active.append(best)
                 else:
+                    best['previous_frame_index'] = best.get('last_seen', -1)
+                    best['previous_mask'] = best.get('mask')
                     dt = f_idx - best['last_seen']
                     if dt > 0 and not is_reid:
                         best['vel'] = (bbox - best['bbox']) / dt
@@ -459,6 +495,19 @@ class TrackingMixin:
                         best['prev_bbox'] = None
                     best['bbox'] = bbox
                     best['last_seen'] = f_idx
+                    _lm = getattr(face, 'landmark_2d_106', None)
+                    if _lm is None:
+                        _lm = getattr(face, 'kps', None)
+                    if _lm is not None:
+                        best['landmarks'] = np.asarray(_lm).copy()
+                    _pose = getattr(face, 'pose', None)
+                    if _pose is not None:
+                        best['pose'] = np.asarray(_pose).copy()
+                    _mask = getattr(face, 'mask', None)
+                    if _mask is not None:
+                        best['mask'] = np.asarray(_mask).copy()
+                    best['confidence'] = float(getattr(face, 'det_score',
+                                                       best.get('confidence', 0.0)) or 0.0)
 
                     # A contaminated observation contributes position and
                     # nothing else. The existing 0.5 outlier filter does not
@@ -483,6 +532,8 @@ class TrackingMixin:
                                 best['emb_mean'] = ((1.0 - alpha) * best['emb_mean'] + alpha * emb).astype(np.float32)
                                 best['emb_sum'] += emb
                                 best['emb_n'] += 1
+                    best['identity_embedding'] = np.asarray(
+                        best.get('emb_mean', emb), dtype=np.float32).copy()
 
                 used.add(best['id'])
                 if collect_obs:
@@ -614,11 +665,26 @@ class TrackingMixin:
                     pbar.update(1)
                     continue
 
-                crop_bbox = _predict_bbox(active[0], idx) if ROI_CROP and len(active) == 1 else None
+                detect_plan = None
+                if temporal_tracker is not None and isinstance(frame, np.ndarray):
+                    # The temporal tracker is deliberately used only for real
+                    # decoded frames. Several existing unit tests feed symbolic
+                    # frame tokens to this pre-pass and must retain their exact
+                    # full-frame detector contract.
+                    detect_plan = temporal_tracker.plan(idx, frame.shape)
+                    crop_bbox = (detect_plan.roi if detect_plan.mode == 'roi'
+                                 else None)
+                    skip_detection = detect_plan.mode == 'coast'
+                else:
+                    detect_plan = None
+                    crop_bbox = (_predict_bbox(active[0], idx)
+                                 if ROI_CROP and len(active) == 1 else None)
+                    skip_detection = False
                 expected_count = len(active) if HIRES_MISS and len(active) > 1 else None
 
                 if det_executor is not None:
-                    in_flight.append((idx, det_executor.submit(_detect_one, frame, crop_bbox, expected_count)))
+                    in_flight.append((idx, det_executor.submit(
+                        _detect_one, frame, crop_bbox, expected_count, skip_detection)))
                     max_in_flight = pool_workers + 2
                     if len(in_flight) >= max_in_flight:
                         done_idx, done_fut = in_flight.popleft()
@@ -630,12 +696,23 @@ class TrackingMixin:
                             result = done_fut.result()
                         with _prof('track_consume'):
                             _consume(done_idx, result)
+                        if temporal_tracker is not None and isinstance(frame, np.ndarray):
+                            temporal_tracker.update(
+                                result, done_idx, frame.shape,
+                                detection_mode=getattr(result, 'mode', 'full'))
                         del result, done_fut
                 else:
-                    with _prof('track_detect'), _gpu_guard(pooled=analysis_pooled(), owner='analysis'):
-                        faces = _run_detect(frame, crop_bbox, expected_count)
+                    if skip_detection:
+                        faces = _DetectionResult([], mode='skip')
+                    else:
+                        with _prof('track_detect'), _gpu_guard(pooled=analysis_pooled(), owner='analysis'):
+                            faces = _run_detect(frame, crop_bbox, expected_count)
                     with _prof('track_consume'):
                         _consume(idx, faces)
+                    if temporal_tracker is not None and isinstance(frame, np.ndarray):
+                        temporal_tracker.update(
+                            faces, idx, frame.shape,
+                            detection_mode=getattr(faces, 'mode', 'full'))
                     del faces
 
                 del frame
@@ -660,6 +737,14 @@ class TrackingMixin:
                 done_idx, done_fut = in_flight.popleft()
                 res = done_fut.result()
                 _consume(done_idx, res)
+                # The frame array is no longer available here, but this drain
+                # only occurs after the loop's final submitted frame. The
+                # detector result still carries the actual path, and tracker
+                # state update does not need pixels for lifecycle accounting.
+                if temporal_tracker is not None:
+                    temporal_tracker.update(
+                        res, done_idx, None,
+                        detection_mode=getattr(res, 'mode', 'full'))
                 del res, done_fut
         finally:
             pbar.close()
@@ -688,6 +773,17 @@ class TrackingMixin:
         # "no entry for this frame" is otherwise indistinguishable from "scanned it,
         # nobody was there".
         self._track_scanned = idx
+        if temporal_tracker is not None:
+            self._temporal_tracker_state = temporal_tracker.export()
+            _ts = self._temporal_tracker_state.get('stats', {})
+            print('[TemporalTracker] full=%d roi=%d roi-fallback-full=%d; '
+                  'new=%d lost=%d recovered=%d' % (
+                      _ts.get('full_detections', 0),
+                      _ts.get('roi_detections', 0),
+                      _ts.get('roi_fallback_full', 0),
+                      _ts.get('new_tracks', 0),
+                      _ts.get('lost_tracks', 0),
+                      _ts.get('recovered_tracks', 0)), flush=True)
 
         tracks = active + retired
         # Chain fragments that are one person interrupted, BEFORE any identity
