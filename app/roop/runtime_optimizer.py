@@ -3029,12 +3029,37 @@ def small_card_enhancer_policy(hardware: HardwareProfile,
                                requested: str | None) -> dict:
     """Resolve the host-RSS-safe enhancer policy for a detected small GPU.
 
-    The default ``auto`` behavior is a measured quality/safety tradeoff: the
-    6GB end-to-end path exceeds the strict 2.5GB RSS ceiling with an enhancer,
-    while the unenhanced adaptive-NVDEC path stays below it. ``keep`` remains
-    available for an operator who accepts that measured gate failure for a
-    quality experiment. This is based on detected VRAM, never a model name,
-    and does not affect larger cards.
+    The default ``auto`` drops the enhancer on a sub-7GB card. ``keep``
+    overrides that. This is based on detected VRAM, never a model name, and
+    does not affect larger cards.
+
+    WHAT THIS ACTUALLY BUYS, measured 2026-08-31 on the RTX 3060 Laptop 6GB
+    over the 600-frame locked fixture (double/d4.mp4, 1280x720), four
+    counterbalanced arms, enhancer execution confirmed at stage level:
+
+        stripped   4.46 fps   3.475 GB host RSS   5002 MB VRAM
+        keep       3.69 fps   3.902 GB host RSS   5677 MB VRAM
+        delta     -17.3%          +428 MB            +675 MB
+
+    Read the VRAM column first: the keep arms peak at 91-94% of this card's
+    6144 MB, so the headroom this policy protects is mostly VRAM, and only
+    then host RSS -- where 428 MB is real cover against the
+    execution_threads=1 collapse of 2026-08-25 Part 3, which fired when
+    available RAM reached 1.68 GB.
+
+    CORRECTED: this docstring used to say the enhanced path "exceeds the
+    strict 2.5GB RSS ceiling ... while the unenhanced adaptive-NVDEC path
+    stays below it". The second half is false on this workload. The unenhanced
+    path measures 3.475 GB and the gate FAILS in BOTH configurations; the
+    earlier claim came from the shorter, smaller clips the validation matrix
+    already flags at 2.62-2.79 GB. Stripping the enhancer does not achieve the
+    2.5 GB gate and never did -- it buys VRAM and RSS headroom, which is a
+    good reason, just not the one that was written here.
+
+    The enhancer is not unusable on this tier: with ``keep`` it enhanced every
+    swapped face (936 calls / 935 swaps), zero wrong-faceset, both arms within
+    0.3% of each other, no thrashing. See
+    docs/HARDWARE_VALIDATION_MATRIX.md.
     """
     value = str(requested or "None")
     if not (0 < float(hardware.vram_total_gb or 0) < 7.0):

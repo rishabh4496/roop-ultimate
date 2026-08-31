@@ -35,21 +35,35 @@ Per-phase state on the physically-present RTX 4070 (2026-08-31):
 | Gate E — worker sweep | measured; 0.7% across a 5x worker range |
 | Gate E — unified scheduler | **measured 2026-08-31, order-balanced over 22 arms: NEUTRAL at best (-3.7%, p~0.16).** The recorded +1.0% does not reproduce |
 
-**This machine's measurement resolution, established 2026-08-31.** Three
+**The RTX 4070's measurement resolution, established 2026-08-31.** Three
 identical arms early in a session agree to 4%, but a 20-minute set spreads
 ~8% and one disturbed arm reached -34%. Effects below roughly 10% are
-therefore NOT resolvable here by single arms, in either direction. Anything
+therefore NOT resolvable there by single arms, in either direction. Anything
 smaller needs order-balanced pairs repeated across sets; a 1% effect would
 need about 25 arms per side, roughly three hours per arm. Read every recorded
-sub-10% number on this target as "not separated from noise" unless it was
+sub-10% number on that target as "not separated from noise" unless it was
 measured that way.
+
+**The RTX 3060's measurement resolution, established 2026-08-31 — and it is
+BETTER than the 4070's, not worse.** Three identical 600-frame arms of the
+locked fixture returned 4.31 / 4.23 / 4.37 FPS: a **3.3%** spread. Peak host
+RSS over the same three arms was 3.463 / 3.466 / 3.474 GB (**0.3%**), and
+face counts were identical (935/951, zero wrong-faceset) in all three.
+
+This supersedes the "~15% cross-run drift" this document previously attributed
+to the 3060, which came from 120-frame arms. Measured at production length on
+this card, an effect of ~4% is resolvable and an effect of 1% is not. The
+practical consequence is that the short-window and long-window noise floors
+differ by 2x on the SAME machine in the SAME session: the Phase 14 autotuner's
+60-frame arms measured 6.0%, against 3.3% at 600 frames. Short windows measure
+warm-up. Size the claim to the window.
 
 Per-phase state on the physically-present RTX 3060:
 
 | Phase / gate | 3060 state |
 |---|---|
 | 2 — controlled baseline | measured, 4.53 FPS |
-| 3 — runtime architecture / resource management | measured; strict `<2.5 GB` RSS gate **FAILS** at 3.73 GB |
+| 3 — runtime architecture / resource management | measured; strict `<2.5 GB` RSS gate **FAILS**, and 2026-08-31 **DECOMPOSED** it: floor 2.3-2.5 GB, stabilization+temporal **+886 MB**, enhancer +428 MB, mask engine ~0. Not a leak; the gate is unreachable without giving up 27% of the swaps |
 | 4, 7, 11 — engine contexts, concurrency, enhancers | measured (CUDA path; TensorRT disabled by the sub-7GB policy) |
 | 5 — quality matrix | run, all 6 arms PASS; **precision selection not exercisable** here (backend admission is CUDA/CPU), so the precision question stays open |
 | 6 — CUDA streams / graphs | measured, neutral |
@@ -57,12 +71,13 @@ Per-phase state on the physically-present RTX 3060:
 | 9 — NVDEC / video input | measured |
 | 10 — CPU threading / detection / tracking | measured |
 | 12 — stabilization / compositing / postprocessing | measured |
-| 13 — encoder / output | measured (300-frame segment arm only) |
-| 14 — runtime autotuner | measured, **0.0% improvement (NEUTRAL)**; search plan is not hardware-adaptive and the cached profile names an inadmissible backend — still pending on the 4070 |
+| 13 — encoder / output | **re-measured 2026-08-31, 600 frames, BOTH codec orders (12 arms).** NVENC > libx264 by +3.3-4.1%; the two NVENC codecs are NOT separable here. Segment size +0.8% = no effect |
+| 14 — runtime autotuner | **re-measured 2026-08-31 after the noise-floor fix: WORKS.** `measured_noise_spread` 6.01%, `min_improvement_used` 6.01% (was a fixed 1%), 0.0%, nothing promoted, 9 candidates all inside the band. The inadmissible-backend defect is **RESOLVED** (`backend: cuda`); `detector_resolution: 640` vs a live 512 is still wrong |
 | 15 — runtime monitoring / adaptive control | measured; overhead NEUTRAL, per-stage telemetry good, but aggregate fields read 0/None and the bottleneck classifier is **wrong**; adaptive controller never acted so its safety is **untested** — still pending on the 4070 |
 | 16 — final integrated validation | largely measured: feature/codec/resolution/precision matrices, **all 14 enhancers**, toggles, 21-file integrity sweep. The 4 CodeFormer-family failures are **FIXED**; DMDNet still errors. Remaining: mask/stabilization visual review, deadlock/leak soak |
 | Gate C — future-architecture readiness | measured; driver-identity cache defect found and fixed here |
 | Gate D — CPU optimization matrix | measured; promoted then reverted as neutral at production length |
+| Gate E — unified scheduler | **measured 2026-08-31, 12 arms order-balanced: throughput NEUTRAL (+0.6%), host RSS -296 MB (-7.9%) in 6 of 6 pairs.** Classification B, 3060-specific benefit. Default stays ON |
 
 ## RTX 3060 physical session — 2026-08-29 (later)
 
@@ -1900,3 +1915,191 @@ profile remains separately keyed and its existing sub-7 GB safety/RSS rules
 remain in force. Required validation is the same `baseline_controlled.py`
 600-frame pre/post pair recorded in `OPTIMIZATION_PROGRESS.md`; no 4070
 configuration is silently reused on the 3060.
+
+## RTX 3060 physical session — 2026-08-31 (Gate E, enhancer policy, Phase 3 decomposition)
+
+Run on the RTX 3060 Laptop 6GB, driver 616.56, compute 8.6, i7-12700H
+(14 physical / 20 logical), 15.8 GB RAM. Locked fixture verified on this
+machine as `C:\pinokio\roop-keep\double\d4.mp4`, **1280x720, 13305 frames** —
+the correct clip, not the 854x480 impostor that shares the filename. 40 renders
+of the 600-frame fixture. Suite 1506 tests, 1 skipped, 2 pre-existing
+`test_nvdec_reader` ffmpeg-spawn environment errors.
+
+### 0. This card resolves BETTER than the record claimed
+
+Null control, three identical 600-frame arms: **4.31 / 4.23 / 4.37 FPS, a 3.3%
+spread.** The "~15% cross-run drift" previously attributed to this target came
+from 120-frame arms and does not describe it at production length.
+
+Peak host RSS across the same three arms was **3.463 / 3.466 / 3.474 GB — a
+0.3% spread.** RSS on this pipeline is deterministic, not noisy, which is what
+makes the Phase 3 decomposition below trustworthy from single arms.
+
+The same session measured the 60-frame autotuner window at **6.0%**, nearly
+double the 600-frame 3.3%, on the same machine minutes apart. Independent
+confirmation of the 4070 session's rule that short windows measure warm-up.
+
+### 1. Gate E — unified scheduler: NEUTRAL on throughput, real on memory
+
+Twelve arms, order-balanced (three OFF-first pairs, three ON-first pairs).
+
+| metric | OFF | ON | delta |
+|---|---:|---:|---:|
+| fps | 4.517 | 4.545 | +0.6% (stdev 0.83%, n=6) |
+| **peak host RSS** | 3.718 GB | 3.423 GB | **-296 MB (-7.9%), ON lower in 6 of 6** |
+| mean host RSS | 2.207 GB | 2.148 GB | -2.7% |
+| peak VRAM | 5020 MB | 5028 MB | none |
+| faces swapped | 935/951 | 935/951 | identical, wrong-faceset 0 |
+
+Per-pair fps deltas: +2.0, +1.1, +0.0, +0.2, +0.7, -0.2.
+Position control: the second arm of a pair was faster in **3 of 6** — no order
+bias on this card, unlike the 4070's 5 of 6 that forced its +1.0% to be
+withdrawn.
+
+    peak RSS OFF: 3.715 3.721 3.700 3.724 3.724 3.725   (spread 0.7%)
+    peak RSS ON : 3.465 3.475 3.437 3.464 3.228 3.467
+
+**+0.6% against a 3.3% resolution is not a throughput effect.** The memory
+result is: -296 MB, every pair, stdev 98 MB, against OFF arms clustered inside
+0.7%. Host RAM is the constrained resource on this box — Session Log
+2026-08-25 Part 3 records this exact machine collapsing to
+`execution_threads=1` because the stabilizer budget saw 1.68 GB available and
+fitted fewer than two blocks. 296 MB is real cover against that failure, for
+no throughput cost.
+
+**Classification B (RTX 3060-specific benefit). The default stays ON.** The
+4070 measured -3.7%, neutral at best, so there is no cross-target conflict.
+This closes the 2026-08-31 open question "should the scheduler default to
+off?" — no, measured on the card whose problem it was written for.
+
+### 2. Phase 3 — the `<2.5 GB` RSS gate, decomposed
+
+Phase 12's arms vary one component at a time, so they decompose the budget.
+Enhancer execution was confirmed at stage level in every arm, never from the
+swap audit.
+
+| arm | mask | enhancer | fps | peak RSS | peak VRAM | faces swapped |
+|---|---|---|---:|---:|---:|---:|
+| baseline (stab OFF) | None | None | 4.07 | **2.478 GB** | 3173 MB | 683 |
+| color_on (stab OFF) | None | None | 4.09 | **2.298 GB** | 3172 MB | 683 |
+| mask_on (stab OFF) | RealityUX | None | 3.23 | **2.345 GB** | 3269 MB | 683 |
+| stabilization_on | None | None | 5.40 | 3.364 GB | 4426 MB | **937** |
+| postprocess_heavy | RealityUX | (stripped) | 4.58 | 3.457 GB | 5017 MB | 935 |
+| production (null control) | RealityUX | (stripped) | 4.30 | 3.468 GB | 5033 MB | 935 |
+| production + enhancer kept | RealityUX | GPEN 256 Pro | 3.69 | 3.902 GB | 5677 MB | 935 |
+
+Contribution to host RSS:
+
+    floor, no stab / mask / enhancer   2.3-2.5 GB
+    RealityUX mask engine              ~0 MB   (2.478 -> 2.345: NOT a contributor)
+    stabilization + temporal          +886 MB  (2.478 -> 3.364)
+    GPEN 256 Pro enhancer             +428 MB  (3.475 -> 3.902)
+
+**The gate IS reachable on this card — but only with stabilization and
+temporal detection off, and that costs 254 of 937 swapped faces (-27%)**,
+because the gap-filling those features provide is what finds them.
+
+So 3.46 GB is not a leak and not a defect. It is the measured, bounded,
+reproducible cost of temporal gap-filling on a ~2.4 GB floor, on a card where
+RSS varies by 0.3% run to run. The gate as written is incompatible with the
+shipped feature set on a 6GB laptop. The honest resolutions are to re-scope
+the ceiling for this tier or to keep recording it as an explained permanent
+failure. What must **not** happen is "closing" it by disabling stabilization
+and silently losing a quarter of the swaps.
+
+Also found: Phase 12's `postprocess_heavy` arm **does not exercise an
+enhancer** on this card. Its config asks for UltraMax, the sub-7GB policy
+strips it to None, and the arm has no `enhance` stage at all.
+`adaptive_downgrades` records this honestly so the data is not corrupt, but
+the arm name implies a heavier postprocess path than was run.
+
+### 3. The small-card enhancer policy was justified by a false premise
+
+Four counterbalanced 600-frame arms, `ROOP_SMALL_CARD_ENHANCER=auto` vs `keep`,
+execution confirmed at stage level (936 enhance calls = one per swapped face in
+the keep arms; no `enhance` stage at all in the stripped arms).
+
+| | fps | peak RSS | peak VRAM |
+|---|---:|---:|---:|
+| stripped (`auto`, shipped default) | 4.46 | 3.475 GB | 5002 MB |
+| keep | 3.69 | 3.902 GB | 5677 MB |
+| delta | **-17.3%** | **+428 MB** | **+675 MB** |
+
+`small_card_enhancer_policy`'s docstring justified the default by claiming the
+enhanced path "exceeds the strict 2.5GB RSS ceiling ... while the unenhanced
+adaptive-NVDEC path stays below it". **The unenhanced path measures 3.475 GB.
+The gate fails in BOTH configurations.** That premise came from the shorter,
+smaller clips this document already flags at 2.62-2.79 GB — the same
+wrong-workload trap as the withdrawn codec table.
+
+The policy still stands, for better reasons that were never written down: it
+saves 675 MB of VRAM on a card where the keep arms peak at **91-94% of 6144
+MB**, and 428 MB of host RSS. The docstring has been corrected in place with
+these numbers.
+
+**The enhancer is not unusable on this tier.** With `keep` it enhanced every
+swapped face, zero wrong-faceset, both arms within 0.3% of each other, no
+thrashing. It is a supported quality/speed choice at -17.3%.
+
+### 4. Phase 13 — encoder, both orders (12 arms, 600 frames)
+
+| codec | mean of 4 arms | vs libx264 |
+|---|---:|---:|
+| libx264 | 4.005 | — |
+| hevc_nvenc | 4.138 | +3.3% |
+| h264_nvenc | 4.170 | +4.1% |
+
+Segment size 600 vs auto: **+0.82% over 6 pairs, stdev 2.52 — not an effect.**
+
+Encoder stage cost: libx264 3.40-3.95 s (152-177 fps, 1.38% of wall); NVENC
+0.47-0.56 s (1072-1277 fps, 0.19% of wall). `rotation_count` = 1 in all 12.
+
+Read with care. NVENC beating libx264 is supported (same sign in both orders)
+but at +3.3-4.1% it sits at this card's 3.3% resolution, so the magnitude is
+not precise. **The two NVENC codecs are NOT separable here** (0.8% apart) —
+the 4070's hevc-ahead ordering does not reproduce and must not be carried
+across.
+
+The mechanism is not purely the encode stage: that stage differs by only ~2.9 s
+of ~245 s wall (~1.2%), yet fps moves ~4%. libx264 encodes on the CPU while
+detection runs on the same CPU, so moving encode to the NVENC ASIC frees
+contended CPU. The effect is far smaller than the 4070's +11.8/+15.1% because
+this card is detect-bound at ~4 FPS, where encode is 0.2-1.4% of wall.
+
+`config.yaml` already specifies `hevc_nvenc` — **validated on this target.**
+
+### 5. Phase 14 — the autotuner's noise-floor fix works here
+
+    measured_noise_spread   6.01%    measured on this machine, 3 replicates
+    min_improvement_used    6.01%    was a FIXED 1% before the 4070 fix
+    improvement_pct         0.0      nothing promoted
+    confirmation            None     no winner, so nothing to confirm
+    candidates tested       9 of an 11 budget
+    fps observed   2.43 2.48 2.58 | 2.51 2.52 2.59 2.50 2.60 2.53
+
+Every candidate landed inside the noise band. The best (2.60) beat the best
+baseline replicate (2.58) by 0.8% and was correctly rejected; under the old
+fixed 1% threshold that was one coin-flip from promoting noise.
+
+**RESOLVED:** the cached profile now names `backend: cuda`, which matches this
+card's actual admission. The recorded complaint that it advertises an
+inadmissible backend is closed.
+
+**STILL OPEN:** every candidate carries `detector_resolution: 640` while the
+live config is 512 — the search neither varies detector resolution nor
+reflects the configured value, and it never reaches the queue or encoder
+stages.
+
+### 6. Cross-target validation owed by the 2026-08-31 4070 fixes
+
+1. **`_prof('decode')` / `_prof('encode')` in the scheduler** — **CONFIRMED.**
+   `encode_write_seconds` is non-zero in all 12 Phase 13 arms (0.47-3.95 s),
+   `encode_throughput_fps` 152-1277, `rotation_count` 1. (These fields live in
+   `report['table']`, not in `result['phase13']`; reading the wrong key makes
+   them all look like `None`.)
+2. **The autotuner's measured noise floor** — **CONFIRMED**, section 5 above.
+3. **The pinned capture frame** — the fixture fingerprints correctly on this
+   machine and every arm ran the same 1280x720 / 13305-frame clip.
+4. **The hardware-signature migration** — the stored signature
+   `v2|d6817308051ef25f0914ef5d` matches this card and no spurious
+   `[Hardware] this config was tuned on ...` line appeared on any of 40 runs.

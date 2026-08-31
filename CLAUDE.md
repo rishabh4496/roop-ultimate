@@ -2332,3 +2332,238 @@ user's aesthetic choice, not silently changed.
    and its RAM-aware admission targets that card's known problem. One line.
 5. Inherited and untouched: interacting faces (Phase 3's headline ask) remains
    characterized but unsolved.
+
+---
+
+## Session Log (2026-08-31 Part 2): The 3060 Validation Closed — Gate E Answered On Memory, Not Speed, And Two Policies Justified By Measurements That Never Held
+
+Run on the SECONDARY device (RTX 3060 Laptop 6GB, driver 616.56, compute 8.6,
+i7-12700H 14P/20L, 15.8 GB RAM). ~40 renders of the 600-frame locked fixture.
+Suite **1506 tests**, 1 skipped, plus the 2 pre-existing `test_nvdec_reader`
+ffmpeg-spawn environment errors. Full tables in
+`docs/HARDWARE_VALIDATION_MATRIX.md`.
+
+### 0. THE RULE THIS SESSION ADDS: measure the resolution ON THE WINDOW YOU USE
+
+This card was recorded as drifting **~15%**, which would have made every open
+question on it unmeasurable. Measured properly — three identical 600-frame arms
+of the locked fixture — it returns **4.31 / 4.23 / 4.37 FPS, a 3.3% spread**,
+and peak host RSS **3.463 / 3.466 / 3.474 GB, a 0.3% spread**. The 3060 is the
+*quieter* of the two machines at production length, not the noisier one.
+
+But in the same session, minutes apart, the Phase 14 autotuner's **60-frame**
+window measured **6.0%** — nearly double. Same machine, same fixture, same
+config. **Short windows measure warm-up.** The noise floor is a property of the
+window, not of the box, and a number quoted from one window does not license a
+claim at another. The old "~15%" was a 120-frame figure applied to 600-frame
+conclusions.
+
+Practical consequence: on this card a ~4% effect is resolvable at 600 frames
+and a 1% effect is not. Run the null control first, every session.
+
+### 1. Gate E — the answer is memory, and the throughput question was the wrong one
+
+Twelve arms, order-balanced. The 4070 had measured -3.7% (neutral at best) and
+this card had never been measured, which is exactly backwards: the scheduler's
+RAM-aware admission was written for a small card's problem.
+
+| metric | OFF | ON | delta |
+|---|---:|---:|---:|
+| fps | 4.517 | 4.545 | +0.6% (stdev 0.83%, n=6) |
+| **peak host RSS** | 3.718 GB | 3.423 GB | **-296 MB (-7.9%), ON lower in 6 of 6** |
+| peak VRAM | 5020 MB | 5028 MB | none |
+| faces | 935/951 | 935/951 | identical, 0 wrong-faceset |
+
+    peak RSS OFF: 3.715 3.721 3.700 3.724 3.724 3.725   (spread 0.7%)
+    peak RSS ON : 3.465 3.475 3.437 3.464 3.228 3.467
+
++0.6% against a 3.3% resolution is **not** a throughput effect and is not
+claimed as one. The memory result is unambiguous: every pair, stdev 98 MB,
+against OFF arms clustered inside 0.7%.
+
+**That is the number that matters on this box.** Host RAM, not VRAM, is the
+constrained resource here — Session Log 2026-08-25 Part 3 records this exact
+machine collapsing to `execution_threads=1` because the stabilizer budget saw
+1.68 GB available and fitted fewer than two blocks. 296 MB is real cover
+against that failure mode, bought for nothing.
+
+**Classification B (3060-specific benefit). Default stays ON.** Closes the
+2026-08-31 open item "should the scheduler default to off?" — no.
+
+Also worth keeping: the position control came out **3 of 6** here (second arm
+faster regardless of treatment), against the 4070's 5 of 6. The order bias that
+forced the 4070's +1.0% to be withdrawn is a property of that machine, not of
+the method.
+
+### 2. Phase 3's RSS gate is not a leak — it is the price of gap-filling
+
+Phase 12's arms vary one component at a time, so they decompose the budget.
+Enhancer execution confirmed at STAGE level in every arm, never from the swap
+audit.
+
+    floor, no stab / mask / enhancer   2.3-2.5 GB
+    RealityUX mask engine              ~0 MB   (2.478 -> 2.345: NOT a contributor)
+    stabilization + temporal          +886 MB  (2.478 -> 3.364)
+    GPEN 256 Pro enhancer             +428 MB  (3.475 -> 3.902)
+
+The `<2.5 GB` gate **is** reachable — but only with stabilization and temporal
+detection off, and that costs **254 of 937 swapped faces (-27%)**, because the
+gap-filling those features provide is what finds them.
+
+So 3.46 GB is the measured, bounded, reproducible cost of temporal gap-filling
+on a ~2.4 GB floor, on a card whose RSS varies 0.3% run to run. The gate as
+written is incompatible with the shipped feature set on a 6GB laptop. Re-scope
+it for this tier or keep recording it as an explained permanent failure — but
+do NOT "close" it by turning stabilization off and quietly losing a quarter of
+the swaps.
+
+I got this wrong once mid-session and corrected it: seeing RSS and face count
+move together, I inferred the mask engine was implicated. It is not —
+`mask_on` at 2.345 GB is BELOW the maskless baseline. Stabilization was the
+whole effect.
+
+### 3. TWO POLICIES RESTING ON MEASUREMENTS THAT DO NOT HOLD ON THIS WORKLOAD
+
+**`small_card_enhancer_policy`** disables the enhancer on every sub-7GB card,
+justified in its own docstring because the enhanced path "exceeds the strict
+2.5GB RSS ceiling ... **while the unenhanced adaptive-NVDEC path stays below
+it**".
+
+Measured, four counterbalanced arms:
+
+| | fps | peak RSS | peak VRAM |
+|---|---:|---:|---:|
+| stripped (shipped default) | 4.46 | 3.475 GB | 5002 MB |
+| keep | 3.69 | 3.902 GB | 5677 MB |
+| delta | -17.3% | +428 MB | +675 MB |
+
+**The unenhanced path is 3.475 GB. The gate fails in BOTH configurations.**
+The premise came from the 200-frame smaller clips the matrix already flags at
+2.62-2.79 GB — the same wrong-workload trap as the withdrawn codec table.
+
+The policy survives on better grounds that were never written down: **675 MB of
+VRAM** on a card where the keep arms peak at **91-94% of 6144 MB**, and 428 MB
+of host RSS. Docstring corrected in place with the measured numbers. The
+operator-facing message was left alone: it says the *enhancer* path exceeds the
+gate, which is true; only the docstring claimed the alternative passes.
+
+**And the enhancer is fully viable here** — 936 enhance calls for 935 swaps,
+0 wrong-faceset, both arms within 0.3%, no thrashing.
+`ROOP_SMALL_CARD_ENHANCER=keep` is a real quality/speed choice at -17.3%, not
+a broken experiment.
+
+Related, found on the way: Phase 12's **`postprocess_heavy` arm does not
+exercise an enhancer** on this card. It asks for UltraMax, the policy strips it
+to None, and the arm has no `enhance` stage. `adaptive_downgrades` records it
+honestly, so the data is sound — but the arm name implies a heavier path than
+ran.
+
+### 4. DMDNet: the crash is an unguarded landmark read; guarded, and the surrounding path verified on hardware
+
+`Enhance_DMDNet.enhance_face` read `face.landmark_2d_106` as a bare attribute.
+insightface's `Face.__getattr__` returns **None** for a key the analyser never
+wrote, so this does not raise — it fails later at `pt106[index]` inside
+`landmarks106_to_68`, which is exactly the reported
+`TypeError: 'NoneType' object is not subscriptable`.
+
+Every other consumer in the app already guards this (`procmgr_masking`,
+`face_util:694`, `face_overlap:212`, `ProcessMgr:5086`), and `apply_eyes_area`
+states outright that lm106 "is optional (it is absent unless the 106 model
+ran)". DMDNet was the only consumer that assumed otherwise.
+
+Fixed: both call sites guarded (target face, and each reference face);
+`torch.cat` can no longer be handed an empty list, falling through to the
+generic dictionary which needs no landmarks; and the reference loop no longer
+rebinds `face`, which is this method's **target-face parameter** — shadowing it
+made `face.matrix` read a reference face while reading as the target.
+
+The skip is **counted and reported on Release**, deliberately: a silent
+fallback is the worse failure here. That is the 2026-08-30 lesson — four
+enhancers failed on 60 of 60 frames while the swap audit read 100%, because
+that audit counts INTENT, not OUTCOME.
+
+`tests/test_enhancer_dmdnet_landmarks.py` (7 tests) covers the guard, the
+shadowing, the empty-cat path, and the counters.
+
+**Verified on hardware, and READ THE LIMIT OF IT.** A 60-frame render with
+`--enhancer DMDNet --env ROOP_SMALL_CARD_ENHANCER=keep` came back rc 0, the
+enhancer NOT downgraded, **162 enhance calls for 162 swapped faces**, zero
+TypeError, zero traceback, zero "component locations" model errors.
+
+But the skip tally **never fired**, which means no face in that window was
+missing `landmark_2d_106` -- so that window would not have crashed without the
+guard either. The render proves DMDNet is functional end to end on this card
+and that the change causes no regression; it does NOT reproduce the original
+failing population. The guard itself is proven by the unit test, which drives
+the None path directly. Do not upgrade this to "the crash is reproduced and
+fixed".
+
+**Separately, DMDNet is not practical on this card at any correctness level:**
+**9965 ms/face**, 0.09 FPS, **7.684 GB peak host RSS** (double any other
+configuration measured this session) and 5975 MB VRAM -- **97% of 6144**.
+That is ~50x slower than the stripped baseline. The 4070 measures it at 919.8
+ms/face, so this is a ~10x per-face penalty on top.
+
+### 5. Cross-target validation owed by the 2026-08-31 4070 fixes
+
+1. **`_prof('decode')` / `_prof('encode')` in the scheduler** — **CONFIRMED.**
+   `encode_write_seconds` non-zero in all 12 Phase 13 arms (0.47-3.95 s),
+   `encode_throughput_fps` 152-1277, `rotation_count` 1.
+   Trap: these live in `report['table']`, NOT `result['phase13']`. Reading the
+   wrong key makes them all look like `None` — I briefly reported this as a
+   cross-target FAILURE before checking the right key.
+2. **The autotuner's measured noise floor** — **CONFIRMED and it works.**
+   `measured_noise_spread` 6.01%, `min_improvement_used` 6.01% (was a fixed
+   1%), nothing promoted, 9 candidates all inside the band. The best candidate
+   beat the best baseline replicate by 0.8% — one coin-flip from promotion
+   under the old threshold.
+3. **The pinned capture frame** — fixture fingerprints correctly here
+   (1280x720, 13305 frames), not the 854x480 clip of the same name.
+4. **The hardware-signature migration** — signature
+   `v2|d6817308051ef25f0914ef5d` matches this card; no spurious
+   `[Hardware] this config was tuned on ...` on any of ~40 runs.
+
+### 6. Phase 13 — encoder, both orders
+
+| codec | mean of 4 arms | vs libx264 |
+|---|---:|---:|
+| libx264 | 4.005 | — |
+| hevc_nvenc | 4.138 | +3.3% |
+| h264_nvenc | 4.170 | +4.1% |
+
+Segment size: +0.8%, not an effect. **The two NVENC codecs are NOT separable
+here** (0.8% apart) — the 4070's hevc-ahead ordering does not reproduce and
+must not be carried across. `config.yaml` already specifies `hevc_nvenc`,
+validated.
+
+The mechanism is not purely the encode stage: it differs by ~2.9 s of ~245 s
+wall (~1.2%) yet fps moves ~4%. libx264 encodes on the CPU that detection is
+also using; NVENC frees contended CPU. Far smaller than the 4070's
++11.8/+15.1% because this card is detect-bound at ~4 FPS.
+
+### 7. Confirmed about this device, for the next session
+
+- `roop-keep` **DOES exist here** (`C:\pinokio\roop-keep`) with the clip
+  folders and the correct locked fixture. CLAUDE.md's claim that it is
+  4070-only is stale — though it still holds no `RECODE_STATUS.md`, so these
+  Session Logs remain the whole record on this device.
+- The shipped adaptive downgrades on this card: TensorRT -> CUDA/CPU, enhancer
+  -> None, RealityUX -> XSeg only, NVDEC -> CPU, scheduler ON at 8 workers.
+- `benchmark_results.applied.pending_restart` in `config.yaml` still records
+  pool 3/3/2/1, but the LIVE keys are all `auto` (-> 0/0). Historical record,
+  not a live hazard.
+
+### 8. OPEN
+
+1. **Phase 3's gate needs a decision, not a measurement** — re-scope for the
+   sub-7GB tier or record permanently. The measurement is done (section 2).
+2. **Phase 14's `detector_resolution: 640`** while the live config is 512. The
+   search neither varies it nor reflects it, and never reaches the queue or
+   encoder stages.
+3. **18.7% of frames on this fixture detect no face** (`[Temporal] faces on 488
+   of 600 frames`). The long-standing "15% no-face rate" reproduces here and is
+   still uncharacterized.
+4. **Phase 5 precision remains unexercisable** on this card — backend admission
+   is CUDA/CPU, so no precision arm is real.
+5. Inherited and untouched: interacting faces (Phase 3's headline ask) remains
+   characterized but unsolved.
