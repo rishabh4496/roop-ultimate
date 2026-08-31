@@ -1151,3 +1151,178 @@ provider in its report.
   the `threads = 1` forcing at `ProcessMgr.py:1671`, by giving the ordered
   output history a single ordered writer while the swap workers stay parallel -
   the shape `_run_stab_parallel` already uses. Until then they cost 2.7x.
+
+## PHASE 10 - THE TEMPORAL ENGINES RUN AT WIDTH AGAIN - IMPLEMENTED / MEASURED (2026-08-31)
+
+### Status and scope
+
+Phase 9 closed with one item above all others: `ProcessMgr.py:1671` pinned the
+whole render to a single worker whenever `ROOP_TEMPORAL_IDENTITY` or
+`ROOP_TEMPORAL_OCCLUSION` was set, and the `threads=1` control proved that the
+pinning -- not the features -- was the entire 2.7x cost. This phase removes it.
+
+Run on the physical RTX 4070 against the locked 600-frame fixture
+(`double/d4.mp4`, 1280x720, frames 0..600, capture frame 4930, sources
+`harjot,gargee`), stack from `config.yaml`. Both flags remain **off by default**;
+nothing about the shipped default path changes.
+
+### The design: ordered is not the same as serial
+
+The requirement was real. Both engines keep a per-track recurrence over frames --
+identity's `previous_mask` / `previous_output`, occlusion's event state -- so
+round-robin workers would advance one track's history out of order and race on
+one shared dict.
+
+But the pipeline already solves exactly this problem for the kps / mask /
+enhancer stabilizers, in `_run_stab_parallel`: each worker gets a CONTIGUOUS
+block, runs it in frame order on one thread, with **its own filter instances**,
+primed by warm-up frames it then discards. The intent was even already recorded
+at the block worker -- *"Pass the real frame index so the temporal-detection /
+SAM2 / identity-track caches stay usable in this path."* Three things were
+missing, and each is now supplied:
+
+1. **A derived warm-up.** `warmup_frames(eps)` on both engines, solved from their
+   own recurrences rather than guessed, so `_stab_warmup_frames` picks them up
+   through the interface it already uses. Identity comes out at **15 frames**
+   (`stabilize_mask` admits `mask_strength * (0.60 + 0.40*(1-conf))`, and
+   confidence only ever raises it, so a confident track is the slow case);
+   occlusion at **44** (`enter_alpha` 0.90 decays slowest).
+2. **Per-block state.** `clone_for_block()` on both. The split is the load-bearing
+   part: `propose_identity` / `update_geometry` / `update_pose` /
+   `propose_source` are called from the SEQUENTIAL tracking pre-pass and are
+   finished before any block starts, so what they wrote is read-only here and is
+   carried into the clone. Only the three fields the swap phase mutates
+   (`previous_output`, `previous_mask`, `swap_confidence`) are cleared and
+   re-primed. Occlusion carries nothing -- every writer of its state runs in the
+   swap phase. `copy.copy` rather than a re-listed constructor, so a parameter
+   added later cannot be silently dropped by a copy that drifted from `__init__`.
+3. **An accessor.** Every site that mutates temporal state now reads through
+   `ProcessMgr._temporal_engine(name)`, which returns the block-local clone when
+   there is one and the shared instance otherwise.
+
+`set_ordered` was also wrong for this path. It was derived as
+`not self._parallel_stab`, which made `TemporalOcclusionEngine.prepare()` return
+`"disabled"` for every frame of a parallel run -- correct only because the run
+was pinned to one worker and therefore never took that path. It now asks the
+real question, "is this worker seeing frames in order", which is true on the
+sequential loop AND inside a contiguous block.
+
+### THE PART THAT WAS NOT OBVIOUS: parallel is not always the better trade
+
+The first measurement of the naive change, in the same machine window as the
+Phase 9 baseline:
+
+| engine | pinned to one worker | parallel blocks | |
+|---|---:|---:|---|
+| identity | 4.34 fps | **5.89** | **+35.7%** |
+| occlusion | 5.18 fps | **3.75** | **-27.6%** |
+
+Occlusion got *slower*. A block pays `warm_up` frames of full-pipeline work it
+discards, and the geometry's adaptive fallbacks step the block size down
+`4*wu -> 2*wu -> wu` to buy width on memory-tight machines. For a 4-6 frame
+filter warm-up that is a good deal. At occlusion's 44 frames the last step means
+a block that **discards as many frames as it produces** -- 100% redundant work --
+and the extra workers do not repay it.
+
+`_stab_parallel_geometry` gained a floor: `_stab_min_block_multiple`, 1 by
+default (a no-op, since every block expression is already at least `wu`) and 3
+for these engines, capping warm-up overhead at 33%. Identity then gets a 45-frame
+block at width 5; occlusion cannot fund a 132-frame block inside the budget, so
+width comes out 1 and the run falls back to sequential -- which is the faster of
+its two measured options and is exactly the old behaviour. Held on the instance,
+not passed as an argument, so the site that DECIDES to go parallel and the site
+that EXECUTES the blocks cannot be handed different values.
+
+### Result, counterbalanced
+
+ABBA, four arms, every arm's path verified from `faces_seen` (679 = one pass,
+>750 = parallel, because a block re-processes its warm-up frames):
+
+| arm | position | fps | path | wrong faceset |
+|---|---:|---:|---|---:|
+| NEW | 1 | 8.55 | parallel | 0 |
+| OLD | 2 | 4.41 | sequential | 0 |
+| OLD | 3 | 4.43 | sequential | 0 |
+| NEW | 4 | 7.07 | parallel | 0 |
+
+**NEW 7.81, OLD 4.42, +76.7%.** The OLD arms agree to 0.5% and sit in the two
+middle positions; the worst NEW arm still beats the best OLD arm by 60%.
+
+**And the output is the same picture.** Sequential vs parallel render, 600 frames:
+mean absolute difference **0.35% of full scale**, p95 1.25/255, max 1.40/255 --
+and at the 45-frame block boundaries the difference is **0.857 against 0.883
+elsewhere, a ratio of 0.97**. If the warm-up were short, boundary frames would be
+the worst in the clip; they are marginally the best, which is noise. That is the
+seam-free property measured rather than asserted.
+
+### THE MEASUREMENT HAZARD THIS PHASE RAN INTO
+
+**The machine drifted 2.9x mid-session, on the unchanged default configuration.**
+The null control read 12.91 / 12.87 fps early, **4.5** in the middle, and 8.58
+later, with nothing changed and no flag set. Host RAM available fell from 14.1 GB
+to 4.5 GB and recovered to 15.0 GB; `_default_stab_chunk_mb` is derived as
+`available * 0.40 / 6`, so the block geometry -- and therefore which path a run
+even takes -- is a function of free memory at the moment it starts.
+
+Two arms were misread because of it before the cause was found. A floored
+identity arm at 2.44 fps looked like a catastrophic regression; the concurrent
+null was 4.5, and the arm had fallen back to sequential. A "mirrored pair" of
+2.43 vs 2.57 looked like a null result; `faces_seen` showed both arms were
+**sequential**, so it had compared one code path against itself.
+
+Three rules come out of it, and the third is new:
+
+* the null control is not a once-per-session ritual -- this session needed one
+  per window;
+* **`faces_seen` is a free path discriminator on this fixture** (679 vs >750).
+  Record it beside fps on any run whose geometry can change, or a fallback is
+  indistinguishable from a regression;
+* a RAM-derived setting makes the benchmark a function of machine state. The
+  fixture was pinned in August for the same class of reason (`--capture-budget`
+  was wall-clock); this is the same trap one level down, and it is not fixed.
+
+The +35.7% / -27.6% pair in the table above was taken in one early window and the
++76.7% in one late window; neither is a cross-window comparison, and no
+cross-window number is quoted.
+
+### Files changed
+
+- `app/roop/ProcessMgr.py` - the gate, the block-size floor, per-block clones,
+  `_temporal_engine`, the `set_ordered` semantics, warm-up participation.
+- `app/roop/temporal_identity.py` - `warmup_frames`, `clone_for_block`.
+- `app/roop/temporal_occlusion.py` - `warmup_frames`, `clone_for_block`.
+- `app/roop/procmgr_masking.py` - two act sites routed through the accessor.
+- `app/tests/test_temporal_parallel_blocks.py` - new, 16 contracts.
+
+### Tests
+
+- `tests.test_temporal_parallel_blocks` - 16 passed. Covers the warm-up
+  derivations against their stated recurrences, clone isolation in both
+  directions, the floor being a no-op at 1x across the real warm-up range, the
+  occlusion case falling back to sequential, the 1:1 geometry that measured
+  slower being reachable without the floor, and the accessor's precedence.
+- Full suite: **1596 tests, 1 skipped, 0 new failures**. The 2
+  `test_nvdec_reader` errors are the pre-existing ffmpeg-spawn environment
+  failures.
+
+### Unresolved
+
+1. **Identity's own per-face cost is now the limiter, and it is large.** With the
+   warm-up pinned to the baseline's 6 frames to isolate it, identity ran 8.34 fps
+   against a 12.90 baseline -- **-35% that is the engine itself**, not the
+   scheduling. `blend_output` runs two full-crop `GaussianBlur(0,0,4.0)` passes
+   per face per frame plus a resize; `stabilize_mask` runs per face per frame.
+   That is the next lead on this feature, and it is a per-face-work reduction,
+   which is the only direction Gate E left open.
+2. **Occlusion still effectively runs sequential** on this fixture, because a
+   44-frame warm-up cannot be given a 3x block inside a 661 MB chunk budget. It
+   is no longer a regression, but it is not a win either. Lowering
+   `ROOP_OCCLUSION_ENTER_ALPHA` would shorten the warm-up directly (0.90 -> 0.75
+   takes it from 44 to 17) and should be measured for quality before speed.
+3. **The 3x floor is a judgement, not a measured optimum.** It was chosen because
+   it caps overhead at 33% and produces the better outcome in both measured
+   cases; 2x and 4x were not swept.
+4. **No 3060 measurement.** That card has less RAM and will hit the sequential
+   fallback more often, which is the safe direction but is unverified.
+5. Neither flag's QUALITY has been validated on real footage; Phase 9's
+   disposition stands. This phase makes identity affordable enough to test.

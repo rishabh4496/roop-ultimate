@@ -12,6 +12,7 @@ frame's high-frequency texture, eyes, mouth, and expression remain current.
 The feature is disabled unless ``ROOP_TEMPORAL_IDENTITY=1``.
 """
 
+import copy as _copy_module
 from dataclasses import dataclass
 import math
 import os
@@ -190,6 +191,65 @@ class TemporalIdentityStabilizer:
 
     def set_ordered(self, ordered):
         self.ordered = bool(ordered)
+
+    def warmup_frames(self, eps=0.01):
+        """Frames a fresh block must discard before its output history is sound.
+
+        Asked of the recurrences rather than hardcoded, so the parallel-block
+        geometry tracks the user's strength settings the way every other
+        stabilizer here already does.
+
+        Two recurrences carry a seed across frames, and the SLOWEST to forget
+        sets the boundary:
+
+        * `stabilize_mask` is `out = (1-a)*previous + a*current` with
+          `a = mask_strength * (0.60 + 0.40*(1-confidence))`. Confidence only
+          ever RAISES `a`, so a fully-confident track -- `mask_strength * 0.60`
+          -- is the worst case. The `entering` branch doubles `a`, which is
+          faster still and therefore not binding.
+        * `blend_output` retains `prior_weight` of the previous low band, and
+          `prior_weight` is bounded above by `output_strength` once a source
+          transition has finished. (During a transition it reaches 1.0 for at
+          most `transition_frames`, which is a bounded event, not a sustained
+          filter, and no finite warm-up can cover a factor of 1.0 anyway.)
+        """
+        from roop.one_euro import ema_warmup_frames
+        mask_alpha = max(0.0, min(1.0, self.mask_strength * 0.60))
+        # `output_strength` is the RETAINED weight, so the EMA factor -- the
+        # fraction of the current frame admitted -- is its complement.
+        output_alpha = max(0.0, min(1.0, 1.0 - self.output_strength))
+        return max(ema_warmup_frames(mask_alpha, eps),
+                   ema_warmup_frames(output_alpha, eps))
+
+    def clone_for_block(self):
+        """An instance for one contiguous parallel block: same configuration and
+        the same prepass-derived identity, with its own OUTPUT HISTORY.
+
+        The split matters and is not arbitrary. `update_geometry`, `update_pose`,
+        `propose_identity` and `propose_source` are called from the tracking
+        pre-pass, which runs sequentially over the whole clip and is finished
+        before any block starts; everything they wrote is read-only here, so it
+        is carried in. The swap phase mutates exactly three fields --
+        `previous_output`, `previous_mask` and `swap_confidence` -- and those are
+        per-frame history, so they are cleared and re-primed from the block's own
+        warm-up frames. Sharing them would let two blocks advance one track's
+        history out of order, which is the whole reason this path used to be
+        pinned to a single worker.
+
+        `copy.copy` rather than a re-listed constructor call on purpose: a
+        parameter added later is carried automatically instead of being silently
+        dropped by a copy that drifted from `__init__`.
+        """
+        clone = _copy_module.copy(self)
+        clone._lock = RLock()
+        clone.states = {}
+        for track_id, state in self.states.items():
+            fresh = _copy_module.copy(state)
+            fresh.previous_output = None
+            fresh.previous_mask = None
+            fresh.swap_confidence = 0.0
+            clone.states[track_id] = fresh
+        return clone
 
     def reset(self):
         with self._lock:

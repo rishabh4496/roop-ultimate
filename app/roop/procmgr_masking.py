@@ -799,7 +799,7 @@ class MaskingMixin:
         # Phase 7 is intentionally causal and opt-in. The support is derived
         # from this track's own landmarks, while the ownership field comes
         # from face_overlap; neither can borrow another track's identity.
-        _occlusion_mgr = getattr(self, '_temporal_occlusion', None)
+        _occlusion_mgr = self._temporal_engine('temporal_occlusion')
         _occlusion_tid = None
         _occlusion_decision = None
         _occlusion_support = None
@@ -1050,7 +1050,7 @@ class MaskingMixin:
         # layer is enabled. Skip SAM2, which already carries its own temporal
         # full-frame mask, and skip the enhanced-frame reuse call so one mask
         # observation is recorded per face/frame.
-        _temporal_mgr = getattr(self, '_temporal_identity', None)
+        _temporal_mgr = self._temporal_engine('temporal_identity')
         _temporal_tid = None
         try:
             _temporal_tid = target_face.get('_track_id') if isinstance(target_face, dict) else None

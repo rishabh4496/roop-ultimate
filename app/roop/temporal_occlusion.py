@@ -7,6 +7,7 @@ stable occlusion frames propagate the last trusted mask, and a change in the
 occlusion evidence re-enters the configured engine.
 """
 
+import copy as _copy_module
 from dataclasses import dataclass
 import os
 from threading import RLock
@@ -201,6 +202,43 @@ class TemporalOcclusionEngine:
 
     def set_ordered(self, ordered):
         self.ordered = bool(ordered)
+
+    def warmup_frames(self, eps=0.01):
+        """Frames a fresh block must discard before its occlusion state is sound.
+
+        Three recurrences carry a seed, and the slowest sets the boundary:
+
+        * confidence, `0.75*previous + 0.25*current`;
+        * the `leaving` propagation, `max(current, previous*(1-leave_alpha))`;
+        * the `entering` propagation, `max(current, previous*enter_alpha)`.
+
+        `enter_alpha` defaults to 0.90 and is therefore normally the binding one
+        at roughly 44 frames. It is included even though `entering` is a
+        transient event rather than a sustained state, because a block boundary
+        can land inside one, and that is exactly the case a warm-up exists to
+        cover. The `max()` makes these floors rather than plain EMAs, so this is
+        the honest upper bound on how long a stale object matte can persist.
+        """
+        from roop.one_euro import ema_warmup_frames
+        return max(ema_warmup_frames(0.25, eps),
+                   ema_warmup_frames(max(0.0, 1.0 - self.leave_alpha), eps),
+                   ema_warmup_frames(max(0.0, 1.0 - self.enter_alpha), eps))
+
+    def clone_for_block(self):
+        """An instance for one contiguous parallel block: same configuration,
+        empty state.
+
+        Unlike the identity engine there is nothing to carry: every writer of
+        `self.states` here (`prepare`, and the propagation it drives) runs in the
+        swap phase. The tracking pre-pass only reads `interaction_threshold` off
+        this object. So a block starts from nothing and re-primes from its own
+        warm-up frames, and two blocks can never advance one track's occlusion
+        event state out of order.
+        """
+        clone = _copy_module.copy(self)
+        clone._lock = RLock()
+        clone.states = {}
+        return clone
 
     def reset(self):
         with self._lock:

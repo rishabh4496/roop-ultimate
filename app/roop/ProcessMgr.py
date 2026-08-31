@@ -550,6 +550,13 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
         self._kps_stab_factory = None
         self._enh_stab_factory = None
         self._mask_stab_factory = None
+        # Smallest block a parallel run may use, as a multiple of the warm-up it
+        # discards. 1 is the historical behaviour and keeps the shipped geometry
+        # bit-identical; the opt-in temporal engines raise it (see
+        # _stab_parallel_geometry). Held on the instance rather than passed, so
+        # the site that DECIDES to go parallel and the site that EXECUTES the
+        # blocks cannot be given different values -- they read the same field.
+        self._stab_min_block_multiple = 1
         # Latches the non-frontal mask-routing verdict per face across frames so
         # it cannot chatter on detector noise. Unlike the stabilizers above this
         # is NOT opt-in and NOT per-thread: the routing decision has to agree
@@ -1272,6 +1279,24 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
         self._post_sentinels(queues, num_threads, 'ProcessMgr/webp')
 
 
+    def _temporal_engine(self, name):
+        """The temporal engine this worker must use for `name`.
+
+        In the parallel-stabilization path each contiguous block runs its own
+        clone, so a per-track output history advances in order inside the block
+        and never across blocks. Everywhere else -- the sequential encoder loop,
+        the tracking pre-pass -- this is the single shared instance.
+
+        Every site that MUTATES temporal state has to come through here. Reading
+        `self._temporal_identity` directly inside a block would advance the
+        shared history from several workers at once, which is the race the old
+        `threads = 1` was avoiding by brute force.
+        """
+        local = getattr(self._tls, name, None)
+        if local is not None:
+            return local
+        return getattr(self, '_' + name, None)
+
     def _worker_done(self, threadindex):
         """Retire this worker: tell the writer, and never block doing it.
 
@@ -1662,26 +1687,57 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
             print(f"[Stabilize] smoothing too slow to parallelise safely "
                   f"(needs >{_MAX_STAB_WARMUP} warm-up frames) — staying sequential.")
             _parallel_ok = False
-        use_parallel_stab = (_want_kps_stab or _want_enh_stab or _want_mask_stab) and threads > 1 and _parallel_ok
-        _two_pass_ok = os.environ.get('ROOP_STAB_2PASS', '1') != '0'
-        use_2pass = ((not use_parallel_stab) and _want_kps_stab and not _want_enh_stab
-                     and not _want_mask_stab and threads > 1 and _two_pass_ok)
+        # The opt-in identity and occlusion engines keep a per-track output
+        # history, so they need frames IN ORDER. That used to be satisfied by
+        # pinning the whole run to one worker, which cost 2.7x measured
+        # (12.90 -> 4.79 fps on the locked fixture, 2026-08-31) -- and the
+        # measurement that matters is that a plain `threads=1` control with no
+        # flag set was 4.79 too, so the entire cost was the pinning and none of
+        # it was the features.
+        #
+        # Ordered does not mean serial. The parallel-stabilization path already
+        # hands each worker a CONTIGUOUS block, runs it in frame order, gives it
+        # its own filter instances, and primes it with warm-up frames it then
+        # discards -- which is the same problem and the same solution. So these
+        # engines now ride that path (`clone_for_block` per block, warm-up from
+        # their own recurrences) instead of collapsing it.
+        #
+        # Expression is not here on purpose: its state is written by the
+        # sequential tracking pre-pass and `plan()` only reads, so it has always
+        # been safe at full width.
         _want_temporal_identity = _temporal_identity_enabled
         _want_temporal_occlusion = _temporal_occlusion_enabled
-        if _want_temporal_identity or _want_temporal_occlusion:
-            # The ordered tracking replay remains multi-frame, but output history
-            # cannot be advanced by round-robin workers without ghosting. The
-            # default is untouched because this branch is opt-in only.
-            if threads != 1:
-                _label = ('TemporalIdentity' if _want_temporal_identity
-                           else ('TemporalOcclusion' if _want_temporal_occlusion
-                                 else 'TemporalExpression'))
-                print(f'[{_label}] ordered output history: using one worker '
-                      'for this opt-in run.', flush=True)
-            use_parallel_stab = False
-            use_2pass = False
+        _want_temporal_ordered = _want_temporal_identity or _want_temporal_occlusion
+        # 3x, i.e. warm-up overhead capped at 33%. Below that the priming costs
+        # more than the extra workers return, measured both ways on this fixture.
+        self._stab_min_block_multiple = 3 if _want_temporal_ordered else 1
+        use_parallel_stab = ((_want_kps_stab or _want_enh_stab or _want_mask_stab
+                              or _want_temporal_ordered)
+                             and threads > 1 and _parallel_ok)
+        _two_pass_ok = os.environ.get('ROOP_STAB_2PASS', '1') != '0'
+        # 2-pass smooths sequentially in pass 1 and then swaps ROUND-ROBIN in
+        # pass 2. That is fine for a kps filter, whose work is finished before
+        # pass 2 begins, and useless here: the output history advances during the
+        # swap. So it is never an option for the temporal engines.
+        use_2pass = ((not use_parallel_stab) and _want_kps_stab and not _want_enh_stab
+                     and not _want_mask_stab and not _want_temporal_ordered
+                     and threads > 1 and _two_pass_ok)
+        if _want_temporal_ordered and not use_parallel_stab and threads != 1:
+            # Only reached when the parallel path is unavailable outright
+            # (ROOP_STAB_PARALLEL=0, or a filter too slow to prime inside
+            # _MAX_STAB_WARMUP). Round-robin workers would advance one track's
+            # history out of order, so correctness still wins -- but say what it
+            # costs, because the symptom the user sees is `execution_threads=1`
+            # and a render at a third of its fps.
+            _label = ('TemporalIdentity' if _want_temporal_identity
+                      else 'TemporalOcclusion')
+            print(f'[{_label}] ordered output history and no parallel-block '
+                  f'path available: this run gets ONE worker instead of '
+                  f'{threads}.', flush=True)
             threads = 1
-        if (_want_kps_stab or _want_enh_stab or _want_mask_stab) and not use_2pass and not use_parallel_stab:
+        if ((_want_kps_stab or _want_enh_stab or _want_mask_stab
+             or _want_temporal_ordered)
+                and not use_2pass and not use_parallel_stab):
             if threads != 1:
                 print("[Stabilize] Forcing single thread for temporal smoothing.")
             threads = 1
@@ -1910,9 +1966,14 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                 # every thread (smooth sequentially in pass 1, swap
                 # multi-threaded in pass 2) and it was being skipped silently.
                 use_parallel_stab = False
+                # `not _want_temporal_ordered` for the same reason it is excluded
+                # above: pass 2 swaps round-robin, and the output history the
+                # identity/occlusion engines keep advances during the swap.
                 use_2pass = (_want_kps_stab and not _want_enh_stab
-                             and not _want_mask_stab and threads > 1
-                             and _two_pass_ok)
+                             and not _want_mask_stab and not _want_temporal_ordered
+                             and threads > 1 and _two_pass_ok)
+                if _want_temporal_ordered:
+                    threads = 1
                 print(f"[Stabilize] warm-up {_wu}f needs {_blk}f blocks and only "
                       f"one fits the memory budget — not chunking "
                       f"(1-wide chunking is slower than the sequential path). "
@@ -2316,7 +2377,18 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
             except ValueError:
                 pass
         need = 0
-        for stab in (self.kps_stabilizer, self.enh_stabilizer, self.mask_stabilizer):
+        # The opt-in temporal engines are stabilizers in every sense that matters
+        # here: each keeps a per-track recurrence over frames, so a block that
+        # starts mid-clip is primed from the wrong seed exactly as the kps/mask/
+        # enhancer filters are. They therefore answer the same question and take
+        # part in the same worst-case. The expression engine is deliberately
+        # absent -- its `plan()` is read-only and its state is written by the
+        # sequential tracking pre-pass, so worker order cannot reach it.
+        _temporal = [engine for engine in (getattr(self, '_temporal_identity', None),
+                                           getattr(self, '_temporal_occlusion', None))
+                     if engine is not None and getattr(engine, 'enabled', False)]
+        for stab in (self.kps_stabilizer, self.enh_stabilizer,
+                     self.mask_stabilizer, *_temporal):
             fn = getattr(stab, 'warmup_frames', None)
             if fn is not None:
                 try:
@@ -2411,7 +2483,21 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
         running sequentially (2.65 vs 2.92 fps at strength 1.0).
         """
         wu = self._stab_warmup or self._stab_warmup_frames()
-        block = max(2 * wu, 16) if self._runtime_stab_small else max(4 * wu, 24)
+        # The adaptive shrinks below trade warm-up overhead for width, stepping
+        # 4*wu -> 2*wu -> wu. For a 4-6 frame filter warm-up that is a good deal:
+        # the alternative on a memory-tight machine is width 1, i.e. no
+        # parallelism at all. For the opt-in temporal engines, whose warm-ups are
+        # 15 and 44 frames, the last step means a block that discards as many
+        # frames as it produces -- 100% redundant full-pipeline work. Measured on
+        # the locked fixture, that made the occlusion engine SLOWER in parallel
+        # (3.75 fps) than pinned to one worker (5.18), while identity still won
+        # (5.89 vs 4.34). So those runs set a floor instead, and fall back to
+        # sequential when the budget cannot fund it.
+        #
+        # A multiple of 1 is a no-op: every expression below is already >= wu.
+        _floor = max(1, int(getattr(self, '_stab_min_block_multiple', 1) or 1)) * wu
+        block = max(_floor,
+                    max(2 * wu, 16) if self._runtime_stab_small else max(4 * wu, 24))
         budget_mb = self._default_stab_chunk_mb()
         _env_budget = (os.environ.get('ROOP_STAB_CHUNK_MB', '') or '').strip()
         if _env_budget:
@@ -2426,13 +2512,13 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
         frame_mb = max(0.1, (self._stab_frame_bytes or (1920 * 1080 * 3)) / (1024.0 ** 2))
         fits = max(1, int((budget_mb / frame_mb) // block))
         if fits < threads and threads >= 2 and wu > 0:
-            adaptive_block = max(2 * wu, 16)
+            adaptive_block = max(_floor, max(2 * wu, 16))
             adaptive_fits = max(1, int((budget_mb / frame_mb) // adaptive_block))
             if adaptive_fits > fits:
                 block = adaptive_block
                 fits = adaptive_fits
             if fits < threads and wu > 0:
-                adaptive_block2 = max(wu, 12)
+                adaptive_block2 = max(_floor, max(wu, 12))
                 adaptive_fits2 = max(1, int((budget_mb / frame_mb) // adaptive_block2))
                 if adaptive_fits2 > fits:
                     block = adaptive_block2
@@ -2781,6 +2867,17 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                     self._tls.kps = self._kps_stab_factory() if self._kps_stab_factory else None
                     self._tls.enh = self._enh_stab_factory() if self._enh_stab_factory else None
                     self._tls.mask = self._mask_stab_factory() if self._mask_stab_factory else None
+                    # Same contract as the three filters above, for the same
+                    # reason: this block owns its per-track output history, so it
+                    # advances in frame order within the block and cannot be
+                    # interleaved with another block's. Read back through
+                    # `_temporal_engine`, never off `self` directly.
+                    for _tname in ('temporal_identity', 'temporal_occlusion'):
+                        _shared = getattr(self, '_' + _tname, None)
+                        setattr(self._tls, _tname,
+                                _shared.clone_for_block()
+                                if _shared is not None and _shared.enabled else None)
+                    self._tls.temporal_block = True
                     ca = _base + a
                     for ci in range(max(0, ca - WU), ca):   # warm-up: prime filter, discard
                         if not roop.globals.processing:
@@ -3005,17 +3102,24 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
 
         if len(self.input_face_datas) < 1 and not self.options.show_face_masking:
             return frame
-        temporal_identity = getattr(self, '_temporal_identity', None)
-        if temporal_identity is not None:
-            # Previous-output state requires frame order. Precomputed geometry
-            # remains safe in the parallel path, but crop blending is bypassed.
-            temporal_identity.set_ordered(not getattr(self, '_parallel_stab', False))
-        temporal_occlusion = getattr(self, '_temporal_occlusion', None)
-        if temporal_occlusion is not None:
-            temporal_occlusion.set_ordered(not getattr(self, '_parallel_stab', False))
-        temporal_expression = getattr(self, '_temporal_expression', None)
-        if temporal_expression is not None:
-            temporal_expression.set_ordered(not getattr(self, '_parallel_stab', False))
+        # `ordered` asks "is this worker seeing frames in order", and the answer
+        # is yes on BOTH ordered paths: the sequential encoder loop, and a
+        # contiguous parallel block, which runs its frames in order on one thread
+        # with its own cloned engine. It used to be derived as
+        # `not self._parallel_stab`, which made the occlusion engine return
+        # `disabled` for every frame of a parallel run -- correct only because
+        # the run was pinned to one worker and so never took that path.
+        #
+        # The unordered case is plain round-robin dispatch, which the gate in
+        # run_batch_inmem now prevents outright for these engines rather than
+        # silently degrading them here.
+        _ordered = (not getattr(self, '_parallel_stab', False)) or bool(
+            getattr(self._tls, 'temporal_block', False))
+        for _tname in ('temporal_identity', 'temporal_occlusion',
+                       'temporal_expression'):
+            _engine = self._temporal_engine(_tname)
+            if _engine is not None:
+                _engine.set_ordered(_ordered)
         temp_frame = frame.copy()
         num_swapped, temp_frame = self.swap_faces(frame, temp_frame, stabilize=True, frame_idx=frame_idx)
         if num_swapped > 0:
@@ -4444,7 +4548,7 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
         aligned_img, M = align_crop(plate, target_face.kps, subsample_size, mode=swap_template)
         fake_frame = aligned_img
         target_face.matrix = M
-        _temporal_mgr = getattr(self, '_temporal_identity', None)
+        _temporal_mgr = self._temporal_engine('temporal_identity')
         _temporal_tid = self._temporal_track_id(target_face)
         if (_temporal_mgr is not None and _temporal_mgr.enabled
                 and _temporal_tid is not None):
@@ -5330,11 +5434,11 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
         lipsync_wins = (getattr(roop.globals, 'lipsync_enabled', False)
                         and getattr(self, '_lipsync_audio', None) is not None)
         _expression_plan = None
-        _expression_enabled = bool(
-            getattr(getattr(self, '_temporal_expression', None), 'enabled', False))
+        _expression_engine = self._temporal_engine('temporal_expression')
+        _expression_enabled = bool(getattr(_expression_engine, 'enabled', False))
         if _expression_enabled:
             try:
-                _expression_plan = self._temporal_expression.plan(
+                _expression_plan = _expression_engine.plan(
                     getattr(target_face, '_track_id', None))
             except Exception:
                 _expression_plan = None
