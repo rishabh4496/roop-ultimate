@@ -67,6 +67,32 @@ def nonfrontal_routing_enabled():
     return nonfrontal_mask_mode() == 'auto'
 
 
+def _region_owner_in_crop(region, orig_frame, matrix, shape):
+    """Warp face-overlap ownership from full-frame coordinates into crop space."""
+    if region is None or orig_frame is None or matrix is None or shape is None:
+        return None
+    try:
+        h, w = int(orig_frame.shape[0]), int(orig_frame.shape[1])
+        owner = np.ones((h, w), dtype=np.float32)
+        x0, y0 = max(0, int(region.x0)), max(0, int(region.y0))
+        x1, y1 = min(w, int(region.x1)), min(h, int(region.y1))
+        if x1 <= x0 or y1 <= y0:
+            return None
+        own = np.asarray(region.own, dtype=np.float32)
+        expected = (int(region.y1 - region.y0), int(region.x1 - region.x0))
+        if own.shape[:2] != expected:
+            own = cv2.resize(own, (expected[1], expected[0]),
+                             interpolation=cv2.INTER_LINEAR)
+        sx0, sy0 = x0 - int(region.x0), y0 - int(region.y0)
+        owner[y0:y1, x0:x1] = own[sy0:sy0 + (y1 - y0), sx0:sx0 + (x1 - x0)]
+        ch, cw = int(shape[0]), int(shape[1])
+        return cv2.warpAffine(owner, np.asarray(matrix, dtype=np.float32),
+                              (cw, ch), flags=cv2.INTER_LINEAR,
+                              borderMode=cv2.BORDER_CONSTANT, borderValue=1.0)
+    except Exception:
+        return None
+
+
 # Extra context around the aligned crop's footprint in the unwarped mask box, as
 # a fraction of its size per side. Enough that a hand or a microphone entering
 # from outside the crop is visible to the segmenter — it has to see the object to
@@ -743,7 +769,7 @@ class MaskingMixin:
             return None
         return x0, y0, x1, y1, crop_x0, crop_y0, crop_x1, crop_y1
 
-    def process_mask(self, processor, frame:Frame, target:Frame, orig_frame:Frame=None, target_face:Face=None, M=None, tgt_pitch_deg:float=0.0, reuse_mask=None, rotation_action=None):
+    def process_mask(self, processor, frame:Frame, target:Frame, orig_frame:Frame=None, target_face:Face=None, M=None, tgt_pitch_deg:float=0.0, reuse_mask=None, rotation_action=None, region=None):
         """Mask `target` back toward `frame`. Returns (result, img_mask).
 
         `reuse_mask` skips straight to compositing with an already-computed mask.
@@ -769,6 +795,65 @@ class MaskingMixin:
                 kps = target_face.kps
 
         dense_maskers = ['mask_occluder', 'mask_xseg3', 'mask_faceparser', 'mask_xseg', 'mask_clip2seg', 'mask_realityux']
+
+        # Phase 7 is intentionally causal and opt-in. The support is derived
+        # from this track's own landmarks, while the ownership field comes
+        # from face_overlap; neither can borrow another track's identity.
+        _occlusion_mgr = getattr(self, '_temporal_occlusion', None)
+        _occlusion_tid = None
+        _occlusion_decision = None
+        _occlusion_support = None
+        if (_occlusion_mgr is not None and _occlusion_mgr.enabled
+                and target_face is not None and M is not None
+                and rotation_action is None):
+            try:
+                from roop.temporal_occlusion import build_face_support
+                _occlusion_tid = (target_face.get('_track_id')
+                                  if isinstance(target_face, dict)
+                                  else getattr(target_face, '_track_id', None))
+                _lm106 = getattr(target_face, 'landmark_2d_106', None)
+                _occlusion_support = build_face_support(
+                    landmarks=_lm106,
+                    kps=kps,
+                    matrix=M,
+                    shape=frame.shape)
+                if _occlusion_tid is not None and _occlusion_support is not None:
+                    _face_conf = (target_face.get('_temporal_confidence',
+                                                  target_face.get('det_score', 0.0))
+                                  if isinstance(target_face, dict)
+                                  else getattr(target_face, '_temporal_confidence',
+                                               getattr(target_face, 'det_score', 0.0)))
+                    _motion = (target_face.get('_temporal_motion', 0.0)
+                               if isinstance(target_face, dict)
+                               else getattr(target_face, '_temporal_motion', 0.0))
+                    _interaction = (target_face.get('_temporal_interaction_score', 0.0)
+                                    if isinstance(target_face, dict)
+                                    else getattr(target_face, '_temporal_interaction_score', 0.0))
+                    _others = (target_face.get('_temporal_other_track_ids', [])
+                               if isinstance(target_face, dict)
+                               else getattr(target_face, '_temporal_other_track_ids', []))
+                    _frame_index = getattr(self._tls, 'frame_idx', 0)
+                    _occlusion_decision = _occlusion_mgr.prepare(
+                        _occlusion_tid, 0 if _frame_index is None else _frame_index,
+                        _occlusion_support, observation=frame,
+                        confidence=_face_conf, motion=_motion,
+                        interaction_score=_interaction, other_track_ids=_others)
+                    if _occlusion_decision.mode == 'propagate':
+                        _propagated = _occlusion_mgr.propagate(
+                            _occlusion_tid,
+                            0 if _frame_index is None else _frame_index,
+                            _occlusion_decision, confidence=_face_conf)
+                        if _propagated is not None:
+                            _owner = _region_owner_in_crop(
+                                region, orig_frame, M, frame.shape)
+                            if _owner is not None:
+                                _propagated = np.maximum(_propagated, 1.0 - _owner)
+                            return self._composite_mask(
+                                _propagated, frame, target), _propagated
+            except Exception:
+                # Temporal occlusion is a quality layer. A malformed optional
+                # landmark/track field must fall back to the established mask.
+                _occlusion_decision = None
 
         # ── Should this face be masked on an UNWARPED crop instead? ───────────
         # Default: no. This used to route by pose, and the reason it gave was
@@ -961,6 +1046,67 @@ class MaskingMixin:
             with _prof('stabilize'):
                 img_mask = _ms.apply(img_mask, kps, self._cur_stab_t())
 
+        # Phase 6 keeps a second, per-track mask history when the new identity
+        # layer is enabled. Skip SAM2, which already carries its own temporal
+        # full-frame mask, and skip the enhanced-frame reuse call so one mask
+        # observation is recorded per face/frame.
+        _temporal_mgr = getattr(self, '_temporal_identity', None)
+        _temporal_tid = None
+        try:
+            _temporal_tid = target_face.get('_track_id') if isinstance(target_face, dict) else None
+        except Exception:
+            pass
+        if (_temporal_mgr is not None and _temporal_mgr.enabled
+                and reuse_mask is None and p_name != 'mask_sam2'
+                and _temporal_tid is not None and rotation_action is None):
+            try:
+                img_mask = _temporal_mgr.stabilize_mask(
+                    _temporal_tid, img_mask,
+                    confidence=getattr(target_face, '_temporal_confidence',
+                                       getattr(target_face, 'det_score', 0.0)))
+            except Exception:
+                pass
+
+        # Enforce per-face ownership before temporal observation. A neighboring
+        # face therefore becomes an explicit restore region for this face's
+        # mask, preventing mask leakage and cross-face blending at the source.
+        _owner = _region_owner_in_crop(region, orig_frame, M, img_mask.shape)
+        if _owner is not None:
+            img_mask = np.maximum(np.asarray(img_mask, dtype=np.float32),
+                                  1.0 - _owner)
+
+        # Consume exactly one analyzed mask per face/frame. Enhanced output
+        # reuses this mask through the early `reuse_mask` return above, so it
+        # cannot advance the causal state twice.
+        if (_occlusion_mgr is not None and _occlusion_mgr.enabled
+                and _occlusion_tid is not None and _occlusion_support is not None
+                and _occlusion_decision is not None):
+            try:
+                _face_conf = (target_face.get('_temporal_confidence',
+                                              target_face.get('det_score', 0.0))
+                              if isinstance(target_face, dict)
+                              else getattr(target_face, '_temporal_confidence',
+                                           getattr(target_face, 'det_score', 0.0)))
+                _motion = (target_face.get('_temporal_motion', 0.0)
+                           if isinstance(target_face, dict)
+                           else getattr(target_face, '_temporal_motion', 0.0))
+                _interaction = (target_face.get('_temporal_interaction_score', 0.0)
+                                if isinstance(target_face, dict)
+                                else getattr(target_face, '_temporal_interaction_score', 0.0))
+                _others = (target_face.get('_temporal_other_track_ids', [])
+                           if isinstance(target_face, dict)
+                           else getattr(target_face, '_temporal_other_track_ids', []))
+                _frame_index = getattr(self._tls, 'frame_idx', 0)
+                img_mask = _occlusion_mgr.observe(
+                    _occlusion_tid, 0 if _frame_index is None else _frame_index,
+                    _occlusion_support, img_mask, confidence=_face_conf,
+                    motion=_motion, interaction_score=_interaction,
+                    other_track_ids=_others,
+                    analysis_mode=('enhanced' if _occlusion_decision.reason ==
+                                   'occlusion_event_reanalysis' else 'normal'))
+            except Exception:
+                pass
+
         return self._composite_mask(img_mask, frame, target), img_mask
 
     def _composite_mask(self, img_mask, frame: Frame, target: Frame):
@@ -1033,7 +1179,8 @@ class MaskingMixin:
         return mouth_cutout, (min_x, min_y, max_x, max_y), mouth_mask_points
 
     def apply_eyes_area(self, frame, original, face, strength=1.0, feather=25.0,
-                        size=1.0, rx=1.0, ry=1.0, yaw=0.0, pitch=0.0, region=None):
+                        size=1.0, rx=1.0, ry=1.0, yaw=0.0, pitch=0.0, region=None,
+                        eye_strengths=None):
         """Composite the TARGET's own eyes back over the swapped result.
 
         The counterpart to `restore_original_mouth`, and arguably the more
@@ -1086,9 +1233,19 @@ class MaskingMixin:
                 return frame
 
             mask = np.zeros((max_y - min_y, max_x - min_x), dtype=np.float32)
-            for (ex, ey) in eyes:
+            if eye_strengths is None:
+                per_eye_strengths = (1.0, 1.0)
+            else:
+                try:
+                    per_eye_strengths = tuple(float(value) for value in eye_strengths[:2])
+                    if len(per_eye_strengths) != 2:
+                        per_eye_strengths = (1.0, 1.0)
+                except (TypeError, ValueError):
+                    per_eye_strengths = (1.0, 1.0)
+            for eye_index, (ex, ey) in enumerate(eyes):
                 cv2.ellipse(mask, (int(ex - min_x), int(ey - min_y)),
-                            (int(base_x), int(base_y)), 0, 0, 360, 1.0, -1)
+                            (int(base_x), int(base_y)), 0, 0, 360,
+                            max(0.0, min(1.0, per_eye_strengths[eye_index])), -1)
 
             # Feather is given as a fraction of the eye radius, not in pixels:
             # a 15px softening is most of a distant face's eye and a hairline on
@@ -1104,7 +1261,10 @@ class MaskingMixin:
             if max_angle > 25.0:
                 mask *= max(0.0, min(1.0, (38.0 - max_angle) / 13.0))
 
-            mask *= float(strength)
+            if eye_strengths is None:
+                mask *= float(strength)
+            else:
+                mask *= max(0.0, min(1.0, float(strength)))
             # Don't restore this person's eyes over the face next to them: the
             # ellipse is a rectangle's worth of plate, and on interacting faces
             # its feather reaches the neighbour.
@@ -1147,7 +1307,7 @@ class MaskingMixin:
         max_val = np.max(mask)
         return mask / max_val if max_val > 0 else mask
 
-    def apply_mouth_area(self, frame:np.ndarray, mouth_cutout:np.ndarray, mouth_box:tuple, mouth_polygon=None, mouth_blend:float=10.0, yaw:float=0.0, pitch:float=0.0, region=None) -> np.ndarray:
+    def apply_mouth_area(self, frame:np.ndarray, mouth_cutout:np.ndarray, mouth_box:tuple, mouth_polygon=None, mouth_blend:float=10.0, yaw:float=0.0, pitch:float=0.0, region=None, strength:float=1.0) -> np.ndarray:
         min_x, min_y, max_x, max_y = mouth_box
         box_width = max_x - min_x
         box_height = max_y - min_y
@@ -1203,6 +1363,8 @@ class MaskingMixin:
                 own = region.crop(min_x, min_y, max_x, max_y)
                 if own is not None:
                     mask = mask * own
+
+            mask *= max(0.0, min(1.0, float(strength)))
 
             mask = mask[:, :, np.newaxis]
             blended = (color_corrected_mouth * mask + roi * (1 - mask)).astype(np.uint8)

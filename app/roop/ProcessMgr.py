@@ -559,6 +559,15 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
         # what clears it between clips.
         from roop.nonfrontal import NonFrontalRouter
         self._nonfrontal_router = NonFrontalRouter()
+        # Opt-in per-track identity/pose/output state. The existing temporal
+        # tracker and One Euro filters remain the default authorities when this
+        # feature is disabled.
+        from roop.temporal_identity import TemporalIdentityStabilizer
+        self._temporal_identity = TemporalIdentityStabilizer.from_env()
+        from roop.temporal_occlusion import TemporalOcclusionEngine
+        self._temporal_occlusion = TemporalOcclusionEngine.from_env()
+        from roop.temporal_expression import TemporalExpressionEngine
+        self._temporal_expression = TemporalExpressionEngine.from_env()
         # Temporal detection (anti-flicker): when active, swap_faces consumes
         # the pre-pass faces per frame instead of re-detecting.
         # _temporal_faces: {frame_idx (0-based within trim): [Face, ...]}
@@ -775,6 +784,12 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
         self.last_swapped_frame = None
         self.last_found_bboxes = None
         self.options = options
+        from roop.temporal_identity import TemporalIdentityStabilizer
+        self._temporal_identity = TemporalIdentityStabilizer.from_env()
+        from roop.temporal_occlusion import TemporalOcclusionEngine
+        self._temporal_occlusion = TemporalOcclusionEngine.from_env()
+        from roop.temporal_expression import TemporalExpressionEngine
+        self._temporal_expression = TemporalExpressionEngine.from_env()
         devicename = get_device()
 
         # A measured 6GB end-to-end run with an enhancer exceeds the strict
@@ -1586,6 +1601,15 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
         # Frame indices restart per clip, so a latch carried over from the last
         # one would match a new face by position and hand it a stale verdict.
         self._nonfrontal_router.reset()
+        # The temporal identity output history is causal: a frame must consume
+        # the previous frame's canonical crop before it can publish its own.
+        # Do not send this opt-in path through the out-of-order stabilizer.
+        if getattr(self, '_temporal_identity', None) is not None:
+            self._temporal_identity.reset()
+        if getattr(self, '_temporal_occlusion', None) is not None:
+            self._temporal_occlusion.reset()
+        if getattr(self, '_temporal_expression', None) is not None:
+            self._temporal_expression.reset()
         # Swap-audit counters. Reset HERE, not in initialize(): core.py calls
         # initialize() once and then hands batch_process a whole LIST of files,
         # while the audit is reported at the end of each one — so resetting there
@@ -1603,7 +1627,18 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
         # kps stabilizer and the kps-only 2-pass become redundant — disable
         # them here so nothing double-smooths. (Enhancer flicker smoothing is
         # output-based and unaffected.)
-        self._temporal_mode = bool(getattr(roop.globals, 'temporal_detection', False))
+        _temporal_identity_enabled = bool(
+            getattr(getattr(self, '_temporal_identity', None), 'enabled', False))
+        _temporal_occlusion_enabled = bool(
+            getattr(getattr(self, '_temporal_occlusion', None), 'enabled', False))
+        _temporal_expression_enabled = bool(
+            getattr(getattr(self, '_temporal_expression', None), 'enabled', False))
+        _temporal_state_enabled = (_temporal_identity_enabled
+                                   or _temporal_occlusion_enabled
+                                   or _temporal_expression_enabled)
+        self._temporal_mode = bool(
+            getattr(roop.globals, 'temporal_detection', False)
+            or _temporal_state_enabled)
         self._temporal_faces = None
         self._temporal_covered = 0
         if self._temporal_mode:
@@ -1631,6 +1666,21 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
         _two_pass_ok = os.environ.get('ROOP_STAB_2PASS', '1') != '0'
         use_2pass = ((not use_parallel_stab) and _want_kps_stab and not _want_enh_stab
                      and not _want_mask_stab and threads > 1 and _two_pass_ok)
+        _want_temporal_identity = _temporal_identity_enabled
+        _want_temporal_occlusion = _temporal_occlusion_enabled
+        if _want_temporal_identity or _want_temporal_occlusion:
+            # The ordered tracking replay remains multi-frame, but output history
+            # cannot be advanced by round-robin workers without ghosting. The
+            # default is untouched because this branch is opt-in only.
+            if threads != 1:
+                _label = ('TemporalIdentity' if _want_temporal_identity
+                           else ('TemporalOcclusion' if _want_temporal_occlusion
+                                 else 'TemporalExpression'))
+                print(f'[{_label}] ordered output history: using one worker '
+                      'for this opt-in run.', flush=True)
+            use_parallel_stab = False
+            use_2pass = False
+            threads = 1
         if (_want_kps_stab or _want_enh_stab or _want_mask_stab) and not use_2pass and not use_parallel_stab:
             if threads != 1:
                 print("[Stabilize] Forcing single thread for temporal smoothing.")
@@ -2955,6 +3005,17 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
 
         if len(self.input_face_datas) < 1 and not self.options.show_face_masking:
             return frame
+        temporal_identity = getattr(self, '_temporal_identity', None)
+        if temporal_identity is not None:
+            # Previous-output state requires frame order. Precomputed geometry
+            # remains safe in the parallel path, but crop blending is bypassed.
+            temporal_identity.set_ordered(not getattr(self, '_parallel_stab', False))
+        temporal_occlusion = getattr(self, '_temporal_occlusion', None)
+        if temporal_occlusion is not None:
+            temporal_occlusion.set_ordered(not getattr(self, '_parallel_stab', False))
+        temporal_expression = getattr(self, '_temporal_expression', None)
+        if temporal_expression is not None:
+            temporal_expression.set_ordered(not getattr(self, '_parallel_stab', False))
         temp_frame = frame.copy()
         num_swapped, temp_frame = self.swap_faces(frame, temp_frame, stabilize=True, frame_idx=frame_idx)
         if num_swapped > 0:
@@ -3103,6 +3164,20 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
 
     def _cur_stab_t(self):
         return getattr(self._tls, 't', 0) if self._parallel_stab else self._stab_t
+
+    @staticmethod
+    def _temporal_track_id(face):
+        try:
+            return face.get('_track_id') if isinstance(face, dict) else None
+        except Exception:
+            return None
+
+    @staticmethod
+    def _temporal_confidence(face):
+        try:
+            return float(getattr(face, 'det_score', 0.0) or 0.0)
+        except (TypeError, ValueError):
+            return 0.0
 
     def _apply_stab(self, face):
         """Replace a face's 5-point kps with the temporally smoothed version."""
@@ -4369,6 +4444,11 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
         aligned_img, M = align_crop(plate, target_face.kps, subsample_size, mode=swap_template)
         fake_frame = aligned_img
         target_face.matrix = M
+        _temporal_mgr = getattr(self, '_temporal_identity', None)
+        _temporal_tid = self._temporal_track_id(target_face)
+        if (_temporal_mgr is not None and _temporal_mgr.enabled
+                and _temporal_tid is not None):
+            _temporal_mgr.update_alignment(_temporal_tid, M)
         # Stash the crop affine per-thread so the SAM2 mask engine can warp its
         # precomputed full-frame mask into this exact crop space (see process_mask).
         self._tls.cur_M = M
@@ -4518,6 +4598,9 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                         target_lighting = fs.lighting_for_frame(plate, target_face['bbox'])
                     except Exception:
                         target_lighting = None
+                    if (_temporal_mgr is not None and _temporal_mgr.enabled
+                            and _temporal_tid is not None):
+                        _temporal_mgr.update_lighting(_temporal_tid, target_lighting)
                     if target_pose_v5 is not None:
                         try:
                             previous_idx = target_face.get('_pose_v5_source_index')
@@ -4547,6 +4630,16 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                         if dist < best_dist:
                             best_dist = dist
                             best_idx  = i
+                # Phase 6 has already committed the source-bank transition in
+                # the ordered replay. Reuse that decision in the swap worker;
+                # never let this second selector call undo temporal hysteresis.
+                try:
+                    temporal_index = target_face.get('_temporal_source_index')
+                except Exception:
+                    temporal_index = None
+                if (temporal_index is not None
+                        and 0 <= int(temporal_index) < len(fs.faces)):
+                    best_idx = int(temporal_index)
                 selected_src_idx = best_idx
                 inputface = fs.faces[best_idx]
 
@@ -4828,12 +4921,12 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                         bar_write(f"[ProcessMgr] Defrontalization failed: {e}")
             elif p.type == 'mask':
                 with _prof('mask'), _gpu_guard(pooled=getattr(p, 'pool', None) is not None, owner='mask'):  # mask: lock-free when pooled
-                    fake_frame, _img_mask = self.process_mask(p, aligned_img, fake_frame, orig_frame=plate, target_face=target_face, M=M, tgt_pitch_deg=tgt_pitch_deg, rotation_action=rotation_action)
+                    fake_frame, _img_mask = self.process_mask(p, aligned_img, fake_frame, orig_frame=plate, target_face=target_face, M=M, tgt_pitch_deg=tgt_pitch_deg, rotation_action=rotation_action, region=region)
                     if enhanced_frame is not None:
                         # Same mask, different target — every input it is derived
                         # from is identical here, so recomputing it (engine call,
                         # landmark hull, mouth mask, blurs) would be pure waste.
-                        enhanced_frame, _ = self.process_mask(p, aligned_img, enhanced_frame, orig_frame=plate, target_face=target_face, M=M, tgt_pitch_deg=tgt_pitch_deg, reuse_mask=_img_mask)
+                        enhanced_frame, _ = self.process_mask(p, aligned_img, enhanced_frame, orig_frame=plate, target_face=target_face, M=M, tgt_pitch_deg=tgt_pitch_deg, reuse_mask=_img_mask, region=region)
             else:
                 # Pooled (no global lock) ONLY when this enhancer built its own
                 # SessionPool (e.g. RestoreFormer++). Enhancers without a pool
@@ -5140,6 +5233,37 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                 except Exception as e:
                     bar_write(f"[ProcessMgr] Warp-based mask application failed: {e}")
 
+        # Phase 6 temporal identity output stabilization. Blend only the aligned
+        # low-frequency identity/illumination field; current high-frequency
+        # texture, eyes, mouth, and expression remain from this frame. The
+        # ordered replay stores a transition alpha when a bank representation
+        # changes, so the source hand-off is gradual without freezing motion.
+        if (_temporal_mgr is not None and _temporal_mgr.enabled
+                and _temporal_mgr.ordered and _temporal_tid is not None
+                and rotation_action is None):
+            try:
+                try:
+                    _confidence = float(target_face.get(
+                        '_temporal_confidence', self._temporal_confidence(target_face)))
+                    _motion = float(target_face.get('_temporal_motion', 0.0))
+                except Exception:
+                    _confidence = self._temporal_confidence(target_face)
+                    _motion = 0.0
+                _transition_alpha = float(target_face.get(
+                    '_temporal_source_transition_alpha', 1.0))
+                if enhanced_frame is not None:
+                    enhanced_frame = _temporal_mgr.blend_output(
+                        _temporal_tid, enhanced_frame, confidence=_confidence,
+                        transition_alpha=_transition_alpha, motion=_motion)
+                else:
+                    fake_frame = _temporal_mgr.blend_output(
+                        _temporal_tid, fake_frame, confidence=_confidence,
+                        transition_alpha=_transition_alpha, motion=_motion)
+                _temporal_mgr.record_output_confidence(
+                    _temporal_tid, _confidence)
+            except Exception as e:
+                bar_write(f"[ProcessMgr] temporal identity blend failed: {e}")
+
         upscale = 512
         orig_width = fake_frame.shape[1]
         if orig_width != upscale:
@@ -5205,6 +5329,15 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
         # mouth back to restore_original_mouth instead of disabling both.
         lipsync_wins = (getattr(roop.globals, 'lipsync_enabled', False)
                         and getattr(self, '_lipsync_audio', None) is not None)
+        _expression_plan = None
+        _expression_enabled = bool(
+            getattr(getattr(self, '_temporal_expression', None), 'enabled', False))
+        if _expression_enabled:
+            try:
+                _expression_plan = self._temporal_expression.plan(
+                    getattr(target_face, '_track_id', None))
+            except Exception:
+                _expression_plan = None
 
         if self.options.restore_original_mouth and not lipsync_wins:
             mouth_cutout, mouth_bb, mouth_polygon = self.create_mouth_mask(target_face, plate, mask_offsets)
@@ -5233,6 +5366,37 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                 # this one mattered: fed the jaw-blind pitch, opening the MOUTH
                 # faded the EYE restore.
                 yaw=_hy, pitch=_hp, region=region)
+
+        # Phase 8: restore only the target regions during an expression event.
+        # This is intentionally separate from whole-face temporal blending:
+        # the current target's eyelids/mouth carry motion while the swapped
+        # cheeks, skin texture and identity remain owned by the active source.
+        # Existing manual restore toggles retain precedence, and lip-sync keeps
+        # ownership of the mouth whenever it has usable audio.
+        if _expression_plan is not None:
+            _eye_strengths = _expression_plan.get('eye_strengths')
+            if (not getattr(roop.globals, 'restore_original_eyes', False)
+                    and _eye_strengths is not None
+                    and max(_eye_strengths) > 0.0):
+                _hy, _hp = _head_angles()
+                result = self.apply_eyes_area(
+                    result, plate, target_face, strength=1.0,
+                    feather=float(getattr(roop.globals, 'eyes_feather_blend', 25.0) or 0.0),
+                    size=float(getattr(roop.globals, 'eyes_size_factor', 1.0) or 1.0),
+                    rx=float(getattr(roop.globals, 'eyes_radius_x', 1.0) or 1.0),
+                    ry=float(getattr(roop.globals, 'eyes_radius_y', 1.0) or 1.0),
+                    yaw=_hy, pitch=_hp, region=region,
+                    eye_strengths=_eye_strengths)
+            _mouth_strength = float(_expression_plan.get('mouth_strength', 0.0) or 0.0)
+            if (not self.options.restore_original_mouth and not lipsync_wins
+                    and _mouth_strength > 0.0):
+                mouth_cutout, mouth_bb, mouth_polygon = self.create_mouth_mask(
+                    target_face, plate, mask_offsets)
+                _hy, _hp = _head_angles()
+                result = self.apply_mouth_area(
+                    result, mouth_cutout, mouth_bb, mouth_polygon,
+                    mask_offsets[5], yaw=_hy, pitch=_hp, region=region,
+                    strength=_mouth_strength)
 
         # ── Lip-sync (post-composite) ──────────────────────────────────────────
         # Same slot as restore_original_mouth/apply_eyes_area: full-frame space,
@@ -5361,6 +5525,12 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
         self.last_swapped_frame = None
         self.face_masks = {}
         self._temporal_faces = None
+        if getattr(self, '_temporal_identity', None) is not None:
+            self._temporal_identity.reset()
+        if getattr(self, '_temporal_occlusion', None) is not None:
+            self._temporal_occlusion.reset()
+        if getattr(self, '_temporal_expression', None) is not None:
+            self._temporal_expression.reset()
         self._track_assignments = None
         self._track_source_map = None
         self._precomputed_kps = None

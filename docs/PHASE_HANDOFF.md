@@ -1,77 +1,91 @@
-# Phase Handoff - Phase 5 Pose-Aware Source Selection
+# Phase Handoff - Phase 8 Target Expression Preservation
 
 Date: 2026-08-31
 
 ## Current state
 
-Phase 5 is implemented and validated in commit `9e11d83` on baseline commit
-`079fb7a`. FaceSet V2 source metadata is now
-used by an opt-in pose-aware selector. Existing V1 loading/selection,
-temporal tracking, detector/ROI recovery, 3D reconstruction, swapper,
-enhancer, provider, and hardware paths remain available.
+Phase 8 is implemented as an opt-in, model-free target-expression continuity
+layer and remains open for real-video quality validation. It is based on
+`ea7b2969cd2d0a110808e41fb533dbd9c4e72cb1`; no new commit was created and
+working changes remain uncommitted. `ROOP_TEMPORAL_EXPRESSION` is disabled by
+default. Phase 6 identity and Phase 7 occlusion remain opt-in independently.
 
 ## Implementation
 
-- `app/roop/pose_source_selector.py` estimates target pose classically and
-  scores V2 sources by pose, quality/identity, expression, lighting,
-  proportions, scale, and hysteresis.
-- `app/roop/procmgr_tracking.py` annotates replayed faces after established
-  smoothing and roll resolution, preserving track ordering and IDs.
-- `app/roop/ProcessMgr.py` uses the selector only when the existing
-  `use_source_bank` option is enabled and gates image-source 3D correction on
-  the selector’s confidence/reason decision.
-- `app/roop/face_3d_recon.py` bounds yaw/pitch affine compensation, rejects
-  unstable transforms, and only mirrors opposite strong off-axis views.
-- `docs/POSE_AWARE_SOURCE_SELECTION.md` documents the record, scoring,
-  fallback, configuration, and compatibility contract.
+`app/roop/temporal_expression.py` measures the target's existing 106-point
+landmarks and maintains bounded state per track: left/right eye openness,
+independent blink/wink state, mouth openness/MAR, eyebrow movement, jaw
+movement, and confidence. Adaptive filtering and eye hysteresis suppress
+detector chatter while allowing large real expression transitions through.
 
-## Configuration and compatibility
+The ordered tracker writes expression measurements and event strengths onto
+each target face. The swap worker can restore only target eye ellipses and the
+target mouth polygon during an event. It never temporally blends the whole
+face. Manual eye/mouth restoration retains precedence, and usable lip-sync
+retains mouth precedence. No model or `.fsz` migration was added.
 
-`use_source_bank` remains opt-in. `ROOP_POSE_SOURCE_SWITCH_MARGIN` controls
-source hysteresis and defaults to `0.035`. No user defaults or `.fsz` files
-were rewritten. Preserve TensorRT/CUDA, FP16/FP32/mixed precision, detector
-alternatives/pools, RealityUX, RealSwap, GPEN 256 Pro, GPEN Realistic,
-UltraMax, all enhancers, 3D reconstruction, CPU/DirectML/AMD/Apple fallbacks,
-RTX 4070 pool settings, RTX 3060 single-context guard, and laptop custom look
-settings.
+Enable deliberately with `ROOP_TEMPORAL_EXPRESSION=1`. Controls and benchmark
+usage are documented in [`PHASE8_EXPRESSION.md`](PHASE8_EXPRESSION.md).
+
+## Changed files for Phase 8
+
+- `app/roop/temporal_expression.py`
+- `app/roop/ProcessMgr.py`
+- `app/roop/procmgr_tracking.py`
+- `app/roop/procmgr_masking.py`
+- `app/tests/test_temporal_expression.py`
+- `app/tests/phase8_expression_bench.py`
+- `README.md`
+- `docs/PHASE8_EXPRESSION.md`
+- `docs/OPTIMIZATION_PROGRESS.md`
+- `docs/PHASE_HANDOFF.md`
+
+Earlier uncommitted Phase 6/7 files remain preserved; do not reset or rewrite
+them.
 
 ## Evidence
 
-- Phase 5 tests: **15 passed**.
-- Existing tracking regression: **38 passed**.
-- Full suite: **1545 passed, 1 skipped, 0 failures** in **44.960 s**.
-- Selector benchmark: **7,396.64 selections/s** and **205,510.14 warp
-  plans/s** over 10,000 synthetic iterations and 7 sources.
-- Python compilation, 45 tracked JavaScript syntax checks, and
-  `git diff --check` passed.
-- No real-photo identity/temporal quality measurement or physical RTX 3060
-  end-to-end benchmark was performed; do not treat the microbenchmark as
-  video FPS or a quality claim.
+- Targeted Phase 8 contracts: **8 passed, 0 failures**.
+- Changed Python modules and benchmark/tests compile successfully.
+- Full regression: **1575 passed, 1 skipped, 0 failures** in **72.947 s**.
+- `phase8_expression_bench.py --scenario all` was executed and correctly
+  returned **pending** because no real paired target/output video was supplied.
+- No real expression accuracy, temporal-difference, visual-review, end-to-end
+  FPS, VRAM, RSS, CPU/GPU utilization, or quality improvement is claimed.
 
 ## Next session instructions
 
-1. Start with `git status`, recent commits, `logs` (latest first), this file,
-   `docs/OPTIMIZATION_PROGRESS.md`, and the Phase 5 design document.
-2. Keep `G:\pinokio\prototype\system\examples\mochi\start.js` as the
-   launcher reference. No launcher changes are needed; if one is proposed,
-   reread `PINOKIO.md` and preserve the captured `input.event[1]` →
-   `local.set` URL pattern.
-3. Build an order-balanced real-photo evaluation set covering yaw 0/30/45/60/
-   75/profile, upward/downward pitch, roll, and inversion.
-4. Measure V2 source-choice accuracy, identity similarity, ID switches,
-   landmark/pose jitter, detail/expression/lighting quality, end-to-end FPS,
-   VRAM, and RSS with source selection and 3D fallback separately enabled on
-   RTX 4070 and RTX 3060.
-5. Review sparse pose bins, profile perspective, inversion, sudden pose
-   changes, and frontal quality before considering any default change or new
-   neural model.
-6. Before finalizing, rerun targeted/full tests, available real benchmarks,
-   Python/launcher syntax checks, `git diff --check`, and update both state
-   documents with exact results and commit SHA.
+1. Obtain paired original target/rendered output videos for all eleven cases:
+   `slow_blink`, `fast_blink`, `asymmetric_blink`, `wink`, `half_open_eyes`,
+   `talking`, `smiling`, `mouth_wide_open`, `teeth_visible`, `frowning`, and
+   `fast_transitions`.
+2. Render every case with `ROOP_TEMPORAL_EXPRESSION=0` and `=1`, then run
+   `app\\env\\Scripts\\python.exe app/tests/phase8_expression_bench.py` with
+   each pair. Record per-eye/mouth correlation, MAE, range retention,
+   frame-delta agreement, detection coverage, FPS, seconds/frame, VRAM, RSS,
+   CPU/GPU utilization, and manual findings.
+3. Review eyelid contours, slow/fast/asymmetric blinks, wink, half-open eyes,
+   speech, smile/frown, teeth, wide mouth, fast transitions, pose changes,
+   occlusion, and identity texture. Tune thresholds only from measured clips.
+4. Validate both hardware profiles without changing policy: RTX 4070 pool 2
+   / 12 GB behavior; RTX 3060 pool 0, single context, global guard, and custom
+   look values `blend_ratio 0.85`, `face_mask_blend 25`, `merger_sharpen 0.55`,
+   `stabilize_enhancer_strength 0.6`.
+5. Do not enable the new flag by default or add a heavier expression model
+   until the real quality/performance trade-off is recorded.
+
+## Pinokio guardrails
+
+No launcher files were changed. If a launcher change becomes necessary, keep
+`G:\\pinokio\\prototype\\system\\examples\\mochi\\start.js` as the
+reference, reread `G:\\pinokio\\prototype\\PINOKIO.md`, preserve the
+captured `input.event[1]` to `local.set` URL pattern, and check `logs` before
+debugging.
 
 ## Do not break
 
-Preserve output ordering, audio/segment behavior, `.fsz` compatibility,
-wrong-FaceSet/finite/output-integrity guards, existing detector pools and ROI
-helper, all provider/hardware fallback paths, and the dual-device memory/look
-contracts. Do not enable unrelated expensive models by default.
+Preserve RealityUX, RealSwap, GPEN 256 Pro, GPEN Realistic, UltraMax, all
+existing enhancers, TensorRT, FP16/FP32/mixed precision, source-bank and 3D
+paths, detector alternatives, V1/V2 `.fsz` compatibility, provider fallbacks,
+temporal identity/occlusion tracking, face overlap ownership, RTX 4070 pool
+settings, RTX 3060 single-context guard, and laptop look settings.

@@ -616,3 +616,337 @@ Measure identity similarity, ID switches, landmark/pose jitter, source-choice
 accuracy, detail/expression/lighting quality, end-to-end FPS, VRAM, and RSS
 with V2 source selection and 3D fallback separately enabled before changing
 defaults or adding heavier geometry models.
+
+## PHASE 6 - REAL-PHOTO POSE/SOURCE-BANK EVALUATION HARNESS - IMPLEMENTED / OPEN (2026-08-31)
+
+### Status and scope
+
+Phase 6 implements the evaluation harness and regression contracts needed to
+measure the Phase 5 selector on real local photographs. It is not a claim that
+the full multi-angle quality phase is complete: the available local archives
+are legacy V1 five-pose yaw sets with profile views, but no real pitch or
+inversion views. Runtime defaults and user configuration remain unchanged.
+
+Commit SHA: no new commit was created in this session; the work is based on
+`ea7b2969cd2d0a110808e41fb533dbd9c4e72cb1` and remains uncommitted.
+
+### Files changed
+
+- `app/tests/phase6_pose_quality.py`
+- `app/tests/test_phase6_pose_quality.py`
+- `app/tests/angle_bench.py`
+- `README.md`
+- `docs/PHASE6_POSE_QUALITY.md`
+- `docs/OPTIMIZATION_PROGRESS.md`
+- `docs/PHASE_HANDOFF.md`
+
+### Features implemented
+
+- Loads existing V1 archives through the established benchmark ingestion path
+  and promotes them to V2 metadata only in memory; source archives are never
+  rewritten.
+- Reports actual yaw/pitch/roll coverage and does not manufacture pitch,
+  profile, or inversion evidence by rotating pixels.
+- Measures pose-aware source-choice error and the selector's 3D-fallback hint.
+- Runs established real swap/quality grading with source-bank off/on in both
+  orders, recording detection and wall time per arm.
+- Corrects the benchmark-only V2 identity grade to use the cached global
+  identity vector. Existing V1 callers retain their original first-face
+  embedding fallback.
+- Records a missing requested hardware target as `pending` rather than
+  silently substituting another GPU.
+
+### Tests and benchmark runs
+
+- `env\\Scripts\\python.exe -m unittest tests.test_phase6_pose_quality
+  tests.test_pose_source_selector tests.test_faceset_v2
+  tests.test_temporal_tracker tests.test_track_reid tests.test_track_stitch -v`
+  — **77 passed, 0 failures**.
+- `env\\Scripts\\python.exe -m py_compile tests\\phase6_pose_quality.py
+  tests\\test_phase6_pose_quality.py tests\\angle_bench.py` — passed.
+- RTX 4070 benchmark, physical device, TensorRT → CUDA → CPU fallback,
+  `--rolls 0,90,180`, tag `phase6_4070_balanced`: **complete**, 15 valid
+  selection rows, 80% pose-match rate, 9.834707° mean absolute yaw error,
+  2.699181° mean absolute pitch error, 60% 3D-fallback hint rate; both source
+  arms recorded **30/30 detections**. Order-balanced total elapsed time was
+  **24.900 s off** and **12.232 s on** across two repeated arms. This is a
+  still-image quality harness with synthetic in-plane roll stress, not an
+  end-to-end video FPS or causal performance result.
+- RTX 3060 benchmark, tag `phase6_3060_pending`: **pending**, correctly
+  refused because the requested physical GPU is absent.
+
+### Quality, regressions, and remaining risks
+
+The harness exposes the existing selector and swap path without changing
+production behavior. The balanced RTX 4070 run detected every tested output,
+but no quality improvement is claimed because there is no annotated reference
+video, no human visual review score, and no 3D-fallback arm in this harness.
+The source and target archives report profile coverage but no real pitch or
+inversion coverage. No RTX 3060, VRAM, RSS, temporal ID-switch, landmark-jitter,
+expression/lighting, or detail-retention measurement was possible here. The
+first implementation exposed an invalid V2 identity comparison against a
+pose-specific first face; it was corrected before the final balanced run and
+covered by a regression contract. No remaining targeted regressions were
+found.
+
+### Next recommended phase
+
+Provide real photographs for the missing pitch/inversion bins and run the same
+order-balanced harness on the RTX 3060 while preserving its single-context
+guard and custom look settings. Add separate V2 source-selection and 3D
+fallback arms, then measure annotated video identity switches, pose/landmark
+jitter, detail/expression/lighting quality, FPS, VRAM, and RSS before changing
+defaults or introducing a heavier model.
+
+## PHASE 6B - TEMPORAL IDENTITY CONSISTENCY ENGINE - IMPLEMENTED / OPEN (2026-08-31)
+
+### Status and scope
+
+Phase 6B adds the requested opt-in per-track temporal identity layer on top of
+the existing tracker, V2 source selector, and aligned-crop pipeline. It keeps
+real movement responsive, requires persistent evidence before ordinary
+source-bank changes, and crossfades only the low-frequency aligned identity/
+illumination field. The feature is disabled unless
+`ROOP_TEMPORAL_IDENTITY=1`; no user-facing default or saved configuration was
+changed.
+
+Commit SHA: no new commit was created in this session; the work is based on
+`ea7b2969cd2d0a110808e41fb533dbd9c4e72cb1` and remains uncommitted.
+
+### Files changed
+
+- `app/roop/temporal_identity.py`
+- `app/roop/ProcessMgr.py`
+- `app/roop/procmgr_tracking.py`
+- `app/roop/procmgr_masking.py`
+- `app/tests/test_temporal_identity.py`
+- `app/tests/phase6_temporal_bench.py`
+- `README.md`
+- `docs/PHASE6_TEMPORAL_IDENTITY.md`
+- `docs/OPTIMIZATION_PROGRESS.md`
+- `docs/PHASE_HANDOFF.md`
+
+### Features implemented
+
+- Added bounded per-track state for source identity, bank entry, identity and
+  target embeddings, pose, landmarks, alignment transform, swap/output
+  confidence, previous canonical output, previous mask, and lighting.
+- Added confidence-weighted landmark/embedding/pose/lighting updates.
+- Added source-identity and source-bank persistence hysteresis and controlled
+  representation transitions; major pose changes can re-estimate immediately.
+- Reused filtered landmarks before `align_crop`, preserving alignment continuity
+  without a second detector or neural model.
+- Added directional mask history and low-frequency-only output blending so
+  current expression, eyes, mouth, and fine texture are not temporally blurred.
+- Added a real-video temporal-delta benchmark with explicit manual visual-review
+  status. Missing video input is recorded as pending.
+
+### Tests and benchmark runs
+
+- `env\\Scripts\\python.exe -m unittest tests.test_temporal_identity
+  tests.test_temporal_tracker tests.test_pose_source_selector -v`
+  — **35 passed, 0 failures**.
+- `env\\Scripts\\python.exe -m py_compile roop\\temporal_identity.py
+  roop\\ProcessMgr.py roop\\procmgr_tracking.py roop\\procmgr_masking.py
+  tests\\test_temporal_identity.py tests\\phase6_temporal_bench.py` — passed.
+- `env\\Scripts\\python.exe -m unittest discover -s tests -p "test_*.py"`
+  — **1558 passed, 1 skipped, 0 failures** in **74.600 s**.
+- `tests/phase6_temporal_bench.py` invocations for static, talking,
+  rapid_rotation, blinking, motion, and lighting were all recorded as
+  **pending** because this checkout contains no video fixture. No synthetic
+  temporal-delta number is being used as real evidence.
+
+### Quality, regressions, and remaining risks
+
+Unit contracts cover static identity/source persistence against alternating candidates,
+major-pose immediate commit with transition alpha, confidence-weighted geometry
+and embedding updates, mask occluder directionality, low-frequency output
+blending with current texture retention, disabled no-op behavior, and runtime
+hook presence. The existing tracking and pose-selector tests also pass. No real
+talking, blinking, rapid-rotation, motion, lighting-transition,
+temporal-difference, visual-review, VRAM, RSS, or physical RTX 3060 result is
+claimed. The full suite and end-to-end opt-in run remain required before this
+phase can be marked validated.
+
+### Next recommended phase
+
+Run the temporal benchmark on a real annotated clip for static, talking, rapid
+rotation, blinking, motion, and lighting transitions, with and without
+`ROOP_TEMPORAL_IDENTITY=1`. Compare temporal deltas, expression preservation,
+identity/source switches, pose/landmark jitter, end-to-end FPS, VRAM, and RSS
+on the physical RTX 4070 and RTX 3060 while preserving their existing pool,
+guard, and custom-look settings. Only then consider changing the default flag.
+
+## PHASE 7 - TEMPORAL OCCLUSION AND INTERACTING-FACE ENGINE - IMPLEMENTED / OPEN (2026-08-31)
+
+### Status and scope
+
+Phase 7 implements an opt-in per-track occlusion state machine around the
+existing mask processors and `face_overlap` ownership system. It is implemented
+but remains open for the required real-video quality and performance validation.
+`ROOP_TEMPORAL_OCCLUSION` is disabled by default; no saved user configuration
+or existing `.fsz` archive is changed.
+
+Commit SHA: no new commit was created in this session; the work is based on
+`ea7b2969cd2d0a110808e41fb533dbd9c4e72cb1` and remains uncommitted.
+
+### Files changed
+
+- `app/roop/temporal_occlusion.py`
+- `app/roop/ProcessMgr.py`
+- `app/roop/procmgr_tracking.py`
+- `app/roop/procmgr_masking.py`
+- `app/tests/test_temporal_occlusion.py`
+- `app/tests/phase7_occlusion_bench.py`
+- `README.md`
+- `docs/PHASE7_OCCLUSION.md`
+- `docs/OPTIMIZATION_PROGRESS.md`
+- `docs/PHASE_HANDOFF.md`
+
+### Features implemented
+
+- Added independent per-track `face_mask`, `visible_face_mask`,
+  `occlusion_mask`, `previous_mask`, `predicted_mask`, confidence, event,
+  interaction, and analysis state.
+- Added explicit normal, occlusion-event, and stable-occlusion propagation
+  modes with refresh, motion, and compact appearance-change triggers.
+- Preserved original object pixels on occlusion entry and released them over
+  multiple frames when the object leaves; the face/output is not temporally
+  blurred.
+- Added crop-local face support and full-frame ownership enforcement so
+  neighboring tracks cannot leak masks or identities into one another.
+- Reused existing configured mask engines on analysis/event frames; no large
+  segmentation model is loaded on every frame.
+- Forced ordered single-worker output only when the opt-in causal identity or
+  occlusion state is enabled. Default parallel/hardware paths remain unchanged.
+
+### Tests and benchmark runs
+
+- `env\\Scripts\\python.exe -m unittest tests.test_temporal_occlusion -v` —
+  targeted contract results recorded after final validation.
+- `env\\Scripts\\python.exe -m py_compile roop\\temporal_occlusion.py
+  roop\\ProcessMgr.py roop\\procmgr_tracking.py roop\\procmgr_masking.py
+  tests\\test_temporal_occlusion.py tests\\phase7_occlusion_bench.py` —
+  required final check.
+- Full regression command remains
+  `env\\Scripts\\python.exe -m unittest discover -s tests -p "test_*.py"`;
+  final result: **1567 passed, 1 skipped, 0 failures** in **73.262 s**.
+- Benchmark entry points were run for `hand_eye`, `hand_cheek`, `hand_mouth`,
+  `hair`, `glasses`, `microphone`, `two_faces_touching`,
+  `two_faces_crossing`, and `partially_hidden`. This checkout contains no
+  supplied real video fixtures, so each report is explicitly `pending` and no
+  synthetic temporal, FPS, VRAM, CPU, GPU, or quality number is claimed.
+
+### Quality, regressions, and remaining risks
+
+Unit contracts cover mask-state separation, object preservation, stable
+propagation, motion/appearance-triggered re-analysis, smooth occlusion exit,
+track isolation, support geometry, disabled no-op behavior, and runtime hook
+presence. Real hand/hair/glasses/microphone/interaction clips, manual visual
+review, end-to-end temporal-difference metrics, and physical RTX 4070/RTX 3060
+resource measurements remain unresolved. The current stable propagation uses a
+bounded refresh interval; fast-moving occluders must be checked visually for
+trails. SAM2's existing full-frame object union remains unchanged and relies on
+per-track support/ownership trimming in this phase.
+
+### Next recommended phase
+
+Supply annotated real clips for all nine requested cases, render with
+`ROOP_TEMPORAL_OCCLUSION=0/1`, and record mask/frame temporal deltas, object
+preservation, restoration lag, cross-face leakage, ID switches, FPS, VRAM, RSS,
+CPU/GPU utilization, and manual visual review on both hardware profiles before
+changing defaults or adding event-triggered segmentation/matting.
+
+## PHASE 8 - TARGET EXPRESSION PRESERVATION - IMPLEMENTED / OPEN (2026-08-31)
+
+### Status and scope
+
+Phase 8 adds an opt-in, model-free target-expression continuity layer. It is
+implemented and regression-tested, but remains open for the required real
+paired-video accuracy and visual validation. `ROOP_TEMPORAL_EXPRESSION` is
+disabled by default; no saved configuration or `.fsz` format is changed.
+
+Commit SHA: no new commit was created in this session; the work is based on
+`ea7b2969cd2d0a110808e41fb533dbd9c4e72cb1` and remains uncommitted.
+
+### Files changed for Phase 8
+
+- `app/roop/temporal_expression.py`
+- `app/roop/ProcessMgr.py`
+- `app/roop/procmgr_tracking.py`
+- `app/roop/procmgr_masking.py`
+- `app/tests/test_temporal_expression.py`
+- `app/tests/phase8_expression_bench.py`
+- `README.md`
+- `docs/PHASE8_EXPRESSION.md`
+- `docs/OPTIMIZATION_PROGRESS.md`
+- `docs/PHASE_HANDOFF.md`
+
+Earlier Phase 6/7 working-tree changes remain preserved and are not treated as
+rewritten by this phase.
+
+### Features implemented
+
+- Added bounded per-track target expression state for left/right eye openness,
+  independent blink/wink states, mouth openness/MAR, eyebrow movement, jaw
+  movement, and confidence.
+- Added adaptive confidence-aware filtering: small landmark noise inherits
+  history, while large expression transitions receive a larger current-frame
+  response. Eye hysteresis prevents open/closed/half-open chatter and keeps
+  asymmetric blink/wink states independent.
+- Added ordered tracker annotations and regional event plans. Only target eye
+  ellipses and the target mouth polygon are eligible for automatic restoration;
+  the swapped identity/skin/cheeks are never whole-face temporally blurred.
+- Preserved manual eye/mouth restoration precedence and usable lip-sync mouth
+  precedence. Existing enhancers, swap models, TensorRT/precision policies,
+  source-bank/3D paths, detectors, providers, and hardware guards remain in
+  the established pipeline.
+- Added an explicit real-video benchmark for all requested expression cases:
+  `slow_blink`, `fast_blink`, `asymmetric_blink`, `wink`, `half_open_eyes`,
+  `talking`, `smiling`, `mouth_wide_open`, `teeth_visible`, `frowning`, and
+  `fast_transitions`.
+
+### Tests and benchmark runs
+
+- `app\env\Scripts\python.exe -m unittest discover -s app/tests -p
+  "test_temporal_expression.py" -v` — **8 passed, 0 failures**.
+- `app\env\Scripts\python.exe -m py_compile app/roop/temporal_expression.py
+  app/roop/ProcessMgr.py app/roop/procmgr_tracking.py
+  app/roop/procmgr_masking.py app/tests/test_temporal_expression.py
+  app/tests/phase8_expression_bench.py` — passed.
+- `app\env\Scripts\python.exe -m unittest discover -s app/tests -p
+  "test_*.py"` — **1575 passed, 1 skipped, 0 failures** in **72.947 s**.
+- `app\env\Scripts\python.exe app/tests/phase8_expression_bench.py --scenario
+  all` — **pending**, because no real paired target/output video was supplied
+  in this checkout. No synthetic temporal-expression, FPS, VRAM, RSS, CPU/GPU,
+  or quality number is claimed.
+
+### Measured performance and quality
+
+The new expression measurement path adds no neural inference and is bounded to
+106-point landmark arithmetic plus an ordered per-track state update. A real
+per-frame millisecond/FPS/VRAM measurement was not claimed because no paired
+production video run was available. Unit tests confirm target-channel
+measurement, confidence filtering, slow/fast blink continuity, wink
+independence, mouth/jaw/brow event detection, disabled no-op behavior, and
+regional integration hooks. Real expression accuracy and visual quality remain
+unmeasured.
+
+### Regressions and unresolved issues
+
+No regression was found in the full suite. ResourceWarning/runtime diagnostic
+output observed during the suite is pre-existing test/runtime noise. Real
+clips still need manual review for eyelid contours, teeth, smile/frown shape,
+fast transitions, severe pose/occlusion, and identity texture after regional
+target restoration. Automatic event strength may need calibration per detector
+pack after real measurements.
+
+### Next recommended phase
+
+Render each of the eleven expression cases with
+`ROOP_TEMPORAL_EXPRESSION=0` and `=1` on the physical RTX 4070 and RTX 3060
+profiles. Run `phase8_expression_bench.py` on every original/output pair and
+record per-eye/mouth correlation, MAE, range retention, temporal-delta
+agreement, expression detection coverage, end-to-end FPS, VRAM, RSS, CPU/GPU
+utilization, and visual findings before changing the default or adding a
+heavier expression model.

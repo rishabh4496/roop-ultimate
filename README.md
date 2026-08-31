@@ -227,6 +227,90 @@ directly; multi-segment outputs still use lossless concat and the resume manifes
 The acceptance record, including separate RTX 3060 pending and RTX 4070 result
 tables, is maintained in [`docs/HARDWARE_VALIDATION_MATRIX.md`](docs/HARDWARE_VALIDATION_MATRIX.md).
 
+### Phase 6 pose/source-bank quality evaluation
+
+`tests/phase6_pose_quality.py` evaluates the existing pose-aware source-bank
+path against local `.fsz` archives without rewriting them. It reports the pose
+axes actually represented by the photographs, source-choice error, detection,
+and the established angle-quality metrics with source-bank off/on in both
+orders. Synthetic in-plane roll stress is explicit; it is not evidence for
+real pitch or inversion coverage.
+
+Run from `app`:
+
+```powershell
+env/Scripts/python.exe tests/phase6_pose_quality.py --target "RTX 4070" --provider auto --source ashna --target-faceset harjot --rolls 0,90,180 --tag phase6_4070
+env/Scripts/python.exe tests/phase6_pose_quality.py --target "RTX 3060" --provider auto --source ashna --target-faceset harjot --rolls 0,90,180 --tag phase6_3060
+```
+
+Results are written under `app/output/phase6_pose_quality/<tag>/` and are
+machine-local. A missing requested GPU is recorded as `pending` rather than
+silently substituting another device. See `docs/PHASE6_POSE_QUALITY.md` for
+the measurement contract and current evidence.
+
+### Phase 6 temporal identity stabilization
+
+The temporal identity layer is opt-in with `ROOP_TEMPORAL_IDENTITY=1` during a
+tracked video run. It keeps bounded per-track identity, pose, landmark,
+alignment, mask, lighting, and aligned-output state. Bank entries require
+persistent evidence before switching, while major pose changes use a bounded
+transition. Only low-frequency aligned crop content is blended; expression,
+eyes, mouth, and fine texture remain current.
+
+Use `tests/phase6_temporal_bench.py` with a real video and face ROI to measure
+raw versus stabilized temporal deltas. The benchmark writes a CSV and a
+before/after montage for manual visual review; it does not fabricate results
+when no video fixture is available. See `docs/PHASE6_TEMPORAL_IDENTITY.md`.
+
+### Phase 7 temporal occlusion and interacting faces
+
+The opt-in `ROOP_TEMPORAL_OCCLUSION=1` layer maintains independent occlusion
+and mask history for every track. Normal frames use the configured mask engine;
+occlusion events re-analyze the ROI, and stable occlusions propagate the last
+trusted mask. Object pixels are preserved while crossing a face and are
+restored gradually when they leave. Existing `face_overlap` ownership keeps
+two interacting tracks separate.
+
+The required real-video scenarios are `hand_eye`, `hand_cheek`, `hand_mouth`,
+`hair`, `glasses`, `microphone`, `two_faces_touching`,
+`two_faces_crossing`, and `partially_hidden`:
+
+```powershell
+env/Scripts/python.exe tests/phase7_occlusion_bench.py --video path/to/clip.mp4 --mask-dir path/to/hand_eye_masks --box 420,160,900,640 --scenario hand_eye --tag phase7_hand_eye_4070
+```
+
+See [`docs/PHASE7_OCCLUSION.md`](docs/PHASE7_OCCLUSION.md) for controls and
+the measurement/visual-review contract. Reports remain pending until real
+clips are rendered through the production path.
+
+### Phase 8 target expression preservation
+
+Enable the lightweight expression layer deliberately with
+`ROOP_TEMPORAL_EXPRESSION=1`. It measures the target's left/right eye
+openness, independent blink/wink state, mouth openness/MAR, brow movement,
+jaw movement, and confidence during the ordered per-track replay. Small
+landmark noise is filtered, while large real transitions pass quickly; the
+source face never supplies expression state.
+
+During blink, wink, half-open-eye, mouth, brow, or jaw events, only the
+affected target eye/mouth regions may be restored with confidence-weighted
+strength. Cheeks, skin texture, identity, and the rest of the swapped face are
+not temporally blurred. Existing manual eye/mouth restore and usable lip-sync
+retain precedence. The default remains disabled.
+
+The real-video harness covers `slow_blink`, `fast_blink`,
+`asymmetric_blink`, `wink`, `half_open_eyes`, `talking`, `smiling`,
+`mouth_wide_open`, `teeth_visible`, `frowning`, and `fast_transitions`:
+
+```powershell
+env/Scripts/python.exe tests/phase8_expression_bench.py --scenario all --target-video path/to/original.mp4 --output-video path/to/swapped.mp4 --json output/phase8_expression.json
+```
+
+It reports target/output MAE, correlation, dynamic-range retention, and
+temporal-delta agreement. Missing real clips are reported as `pending`; no
+synthetic quality or performance number is substituted. See
+[`docs/PHASE8_EXPRESSION.md`](docs/PHASE8_EXPRESSION.md).
+
 ### Phase 16 final integrated validation
 
 Phase 16 is the final end-to-end regression pass. It validates the integrated

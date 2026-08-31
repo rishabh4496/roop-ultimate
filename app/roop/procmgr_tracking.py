@@ -1819,13 +1819,25 @@ class TrackingMixin:
             total_coasts += orientation.resolve_track_rolls(
                 [merged[i] for i in sorted(merged)])
 
-            # Phase 5 pose/source decisions are made in this ordered per-track
-            # pass, after landmark smoothing and roll continuity resolution.
-            # The swap workers run round-robin, so keeping this state here avoids
-            # a frame-order race at a source-pose boundary.  V1 FaceSets and
-            # Source-bank-disabled runs do not perform the optional annotation.
+            # Phase 5 pose/source decisions and Phase 6 temporal identity state
+            # are made in this ordered per-track pass, after landmark smoothing
+            # and roll continuity resolution. The swap workers run round-robin,
+            # so keeping these decisions here avoids a frame-order race at a
+            # source-pose boundary. The Phase 6 layer is opt-in and adds no
+            # detector or neural inference.
+            temporal_identity = getattr(self, '_temporal_identity', None)
+            identity_enabled = bool(
+                temporal_identity is not None and temporal_identity.enabled)
+            temporal_occlusion = getattr(self, '_temporal_occlusion', None)
+            occlusion_enabled = bool(
+                temporal_occlusion is not None and temporal_occlusion.enabled)
+            temporal_expression = getattr(self, '_temporal_expression', None)
+            expression_enabled = bool(
+                temporal_expression is not None and temporal_expression.enabled)
+            temporal_enabled = (identity_enabled or occlusion_enabled
+                                or expression_enabled)
             pose_annotation_enabled = bool(
-                getattr(self.options, 'use_source_bank', False))
+                getattr(self.options, 'use_source_bank', False) or temporal_enabled)
             pose_source_fs = None
             if pose_annotation_enabled:
                 try:
@@ -1846,19 +1858,122 @@ class TrackingMixin:
                 from roop.pose_source_selector import annotate_face_pose
 
             for i, f in merged.items():
+                temporal_state = None
+                if identity_enabled:
+                    try:
+                        lm = (getattr(f, 'landmark_2d_106', None)
+                              if getattr(f, 'landmark_2d_106', None) is not None
+                              else getattr(f, 'kps', None))
+                        source_info = (getattr(self, '_track_source_map', {})
+                                       .get(t['id']))
+                        source_identity = source_info[0] if source_info else None
+                        identity_embedding = None
+                        if source_identity is not None and 0 <= int(source_identity) < len(self.input_face_datas):
+                            source_fs = self.input_face_datas[int(source_identity)]
+                            identity_embedding = getattr(source_fs, 'identity_embedding', None)
+                            if identity_embedding is None:
+                                identity_embedding = getattr(source_fs, 'embedding_average', None)
+                            if identity_embedding is None:
+                                identity_embedding = getattr(source_fs, 'embedding', None)
+                        if source_identity is not None:
+                            source_identity = temporal_identity.propose_identity(
+                                t['id'], source_identity)
+                        temporal_state = temporal_identity.update_geometry(
+                            t['id'], i, landmarks=lm,
+                            target_embedding=getattr(f, 'embedding', None),
+                            confidence=getattr(f, 'det_score', 0.0),
+                            source_identity=source_identity,
+                            identity_embedding=identity_embedding)
+                        if (temporal_state is not None
+                                and temporal_state.landmarks is not None):
+                            shape = np.shape(temporal_state.landmarks)
+                            if shape == np.shape(getattr(f, 'landmark_2d_106', None)):
+                                f['landmark_2d_106'] = temporal_state.landmarks.copy()
+                            elif shape == np.shape(getattr(f, 'kps', None)):
+                                f['kps'] = temporal_state.landmarks.copy()
+                    except Exception:
+                        # Temporal identity is a quality layer; malformed
+                        # optional detector fields must not stop the replay.
+                        temporal_state = None
+                if expression_enabled:
+                    try:
+                        expression_state = temporal_expression.update(
+                            t['id'], i,
+                            getattr(f, 'landmark_2d_106', None),
+                            kps=getattr(f, 'kps', None),
+                            bbox=getattr(f, 'bbox', None),
+                            confidence=getattr(f, 'det_score', 0.0),
+                            landmarks68=getattr(f, 'landmark_2d_68', None))
+                        if expression_state is not None:
+                            f['_expression_left_eye_openness'] = float(
+                                expression_state.left_eye_openness)
+                            f['_expression_right_eye_openness'] = float(
+                                expression_state.right_eye_openness)
+                            f['_expression_blink_state'] = str(
+                                expression_state.blink_state)
+                            f['_expression_left_blink_state'] = str(
+                                expression_state.left_blink_state)
+                            f['_expression_right_blink_state'] = str(
+                                expression_state.right_blink_state)
+                            f['_expression_mouth_openness'] = float(
+                                expression_state.mouth_openness)
+                            f['_expression_mouth_aspect_ratio'] = float(
+                                expression_state.mouth_aspect_ratio)
+                            f['_expression_eyebrow_movement'] = float(
+                                expression_state.eyebrow_movement)
+                            f['_expression_jaw_movement'] = float(
+                                expression_state.jaw_movement)
+                            f['_expression_confidence'] = float(
+                                expression_state.expression_confidence)
+                            plan = temporal_expression.plan(t['id'])
+                            if plan is not None:
+                                f['_expression_eye_strengths'] = tuple(
+                                    float(value) for value in plan['eye_strengths'])
+                                f['_expression_mouth_strength'] = float(
+                                    plan['mouth_strength'])
+                    except Exception:
+                        # Expression continuity is optional and must never make
+                        # a detector or legacy Face object unusable.
+                        pass
                 if pose_annotation_enabled:
                     try:
                         pose = annotate_face_pose(
                             f, frame_shape=getattr(self, '_temporal_frame_shape', None))
+                        if identity_enabled:
+                            temporal_state = temporal_identity.update_pose(t['id'], pose)
+                            if (temporal_state is not None
+                                    and temporal_state.pose is not None):
+                                f['_pose_v5'] = temporal_state.pose
+                            if temporal_state is not None:
+                                f['_temporal_motion'] = float(temporal_state.motion)
+                                f['_temporal_confidence'] = float(
+                                    temporal_state.output_face_confidence)
                         if pose_source_fs is not None:
+                            previous_for_selector = previous_source_index
+                            if (temporal_state is not None
+                                    and temporal_state.selected_source_index is not None):
+                                previous_for_selector = temporal_state.selected_source_index
                             selection = pose_source_fs.select_pose_aware_reference(
-                                pose, expression=pose.expression,
-                                previous_index=previous_source_index)
+                                (temporal_state.pose if temporal_state is not None
+                                 and temporal_state.pose is not None else pose),
+                                expression=pose.expression,
+                                previous_index=previous_for_selector)
                             if selection is not None:
-                                f['_pose_v5_source_index'] = int(selection.index)
+                                selected_index = int(selection.index)
+                                transition_alpha = 1.0
+                                if identity_enabled:
+                                    selected_index, transition_alpha = (
+                                        temporal_identity.propose_source(
+                                            t['id'], selected_index,
+                                            major_pose=(temporal_state.major_pose_transition
+                                                        if temporal_state is not None else None)))
+                                f['_pose_v5_source_index'] = int(selected_index)
+                                f['_temporal_source_index'] = int(selected_index)
+                                f['_temporal_source_transition_alpha'] = float(
+                                    transition_alpha)
                                 f['_pose_v5_source_reason'] = str(selection.reason)
                                 f['_pose_v5_needs_3d'] = bool(selection.needs_3d)
-                                previous_source_index = int(selection.index)
+                                previous_source_index = int(selected_index)
                     except Exception:
                         # A pose annotation is an optimization/quality hint;
                         # never make the established temporal replay fail if a
@@ -1867,6 +1982,7 @@ class TrackingMixin:
             if (pose_source_fs is not None and previous_source_index is not None
                     and hasattr(self, '_track_pose_source_map')):
                 self._track_pose_source_map[t['id']] = int(previous_source_index)
+            if pose_annotation_enabled or temporal_enabled:
                 # Stamp the owning track's id on every face this track hands
                 # out (real observation or gap-filled) so swap_faces can bind
                 # it to its source by exact lookup (self._track_source_map)
@@ -1880,7 +1996,60 @@ class TrackingMixin:
                     f['_track_id'] = t['id']
                 except Exception:
                     pass
-                out.setdefault(i, []).append(f)
+            # This append is intentionally outside the V2 source-bank branch:
+            # temporal replay must also work with source-bank disabled and with
+            # legacy V1 source sets.
+            out.setdefault(i, []).append(f)
+
+        # Phase 7 interaction metadata is deliberately geometry-only and
+        # computed after all tracks have been merged/gap-filled. It tells the
+        # causal mask layer that another *track* is near this face without
+        # sharing embeddings, masks, or identity state between the tracks.
+        if occlusion_enabled:
+            for faces in out.values():
+                for face in faces:
+                    face['_temporal_interaction_score'] = 0.0
+                    face['_temporal_other_track_ids'] = []
+                for left_index, left in enumerate(faces):
+                    left_bbox = getattr(left, 'bbox', None)
+                    left_track = left.get('_track_id') if isinstance(left, dict) else None
+                    if left_bbox is None or left_track is None:
+                        continue
+                    lx0, ly0, lx1, ly1 = (float(v) for v in left_bbox)
+                    left_area = max(1.0, (lx1 - lx0) * (ly1 - ly0))
+                    left_pad = 0.15 * max(1.0, min(lx1 - lx0, ly1 - ly0))
+                    for right in faces[left_index + 1:]:
+                        right_bbox = getattr(right, 'bbox', None)
+                        right_track = right.get('_track_id') if isinstance(right, dict) else None
+                        if right_bbox is None or right_track is None or right_track == left_track:
+                            continue
+                        rx0, ry0, rx1, ry1 = (float(v) for v in right_bbox)
+                        right_area = max(1.0, (rx1 - rx0) * (ry1 - ry0))
+                        right_pad = 0.15 * max(1.0, min(rx1 - rx0, ry1 - ry0))
+                        # Match face_overlap's small interaction padding so
+                        # cheek-to-cheek/touching boxes become an event even
+                        # when their raw detector rectangles only meet at an
+                        # edge. The score is still normalized by the real
+                        # claim areas, not by the padded rectangles.
+                        intersection = max(
+                            0.0,
+                            min(lx1 + left_pad, rx1 + right_pad)
+                            - max(lx0 - left_pad, rx0 - right_pad)) * \
+                            max(
+                                0.0,
+                                min(ly1 + left_pad, ry1 + right_pad)
+                                - max(ly0 - left_pad, ry0 - right_pad))
+                        if intersection <= 0.0:
+                            continue
+                        score = min(1.0, intersection / max(1.0, min(left_area, right_area)))
+                        if score < getattr(temporal_occlusion, 'interaction_threshold', 0.08) * 0.5:
+                            continue
+                        left['_temporal_interaction_score'] = max(
+                            float(left.get('_temporal_interaction_score', 0.0)), score)
+                        right['_temporal_interaction_score'] = max(
+                            float(right.get('_temporal_interaction_score', 0.0)), score)
+                        left['_temporal_other_track_ids'].append(int(right_track))
+                        right['_temporal_other_track_ids'].append(int(left_track))
         if total_coasts:
             bar_write(f"[Orientation] roll resolved by continuity on "
                       f"{total_coasts} observations the per-frame estimate "

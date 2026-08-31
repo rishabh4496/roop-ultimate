@@ -535,7 +535,7 @@ def grade_frame(plate_frame, swapped, src_embed, plate_face, ref_pts=None):
 
 
 def sweep(g, options, src_fs, tgt_plates, pair, outdir, rolls, sheet_rolls,
-          control=False):
+          control=False, source_identity=None):
     """Swap `src_fs` onto every (plate x roll) frame and grade each one.
 
     `control` runs the identical geometry with NO swap, so every number it
@@ -545,7 +545,13 @@ def sweep(g, options, src_fs, tgt_plates, pair, outdir, rolls, sheet_rolls,
     """
     from roop.core import live_swap
 
-    src_embed = getattr(src_fs.faces[0], "embedding", None)
+    # V2 keeps pose-specific embeddings intact.  Grade identity against its
+    # cached global vector when available; using faces[0] would make a valid
+    # profile selection look like an identity regression.  V1 callers retain
+    # the exact historical first-face fallback.
+    src_embed = source_identity
+    if src_embed is None:
+        src_embed = getattr(src_fs.faces[0], "embedding", None)
     rows, sheets = [], {}
     for pi, plate in enumerate(tgt_plates):
         square, bg = prepare_plate(plate)
