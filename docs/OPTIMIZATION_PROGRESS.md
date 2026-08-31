@@ -103,6 +103,85 @@ environment, controlled baseline artifact parse, 25 targeted pytest cases
 covering baseline/hardware/capability/API behavior, all root launcher
 `node --check` checks, and `git diff --check`.
 
+## PHASE 1 — HARDWARE AND INFERENCE BACKEND OPTIMIZATION — VERIFIED (2026-08-31)
+
+Phase 1 was audited and verified against the existing implementation. No
+TensorRT/CUDA implementation was replaced, no user-facing backend default was
+changed, and no application source code was modified for this verification.
+The verified code was at `c2ba7224ab4be7edccaef0f09bd2f3dbb7140cca`.
+
+### Backend audit
+
+| Area | Verified implementation / disposition |
+|---|---|
+| CUDA provider | `core.decode_execution_providers` resolves `CUDAExecutionProvider` with runtime `device_id`, HEURISTIC cuDNN search, stream-safe default copies, adaptive arena strategy, and optional memory limit. |
+| TensorRT provider | The same resolver configures runtime device, FP16 enablement, LayerNorm FP32 fallback, sequential mixed builds, builder heuristics, builder level, auxiliary streams, CUDA graph opt-in, context-memory sharing, engine cache, timing cache, workspace, and partition limits. |
+| FP16 / FP32 / mixed | `precision_policy.py` is model-specific. Unsafe/unknown modes fall back to FP32; RealSwap and known unstable enhancers retain guarded FP32; the CodeFormer FP16 graph is an explicit supported path; mixed is the normal TRT policy where hardware and model evidence permit it. |
+| LayerNorm fallback | Mixed TRT sets `trt_layer_norm_fp32_fallback`; the live TRT log explicitly reported LayerNorm reductions being forced to FP32. UltraMax/CodeFormer also retains its FP32 host postprocess. |
+| Engine/timing cache | `backend_manager.cache_namespace` isolates GPU, SM, CUDA, driver, TRT, ORT, and precision. `trt_tuning_namespace` and `TensorRTEngineManager.cache_key` additionally isolate workspace, partition iterations, builder level, auxiliary streams, CUDA graph, model identity, runtime settings, and workload. A live semantic assertion changed each knob independently and produced a distinct key. |
+| Workspace / builder / auxiliary streams | Workspace is VRAM-derived and capped at 2 GB per session; builder optimization defaults to level 3; auxiliary streams default to `-1`/automatic and are bounded. No measured setting was promoted solely for a small benchmark win. |
+| CUDA graphs | Implemented as opt-in with shape/address/lifetime invalidation. Existing measurements found exact-but-slower replay and provider-level correctness risk, so the default remains off. |
+| Device selection | Runtime `cuda_device_id`, compute capability, total/available VRAM, software versions, and provider capability are probed; cache/profile identity is device-specific. |
+| CPU fallback | Provider chains end in CPU where available, fallback is loud, and unsupported model families remove TRT deliberately rather than misreporting it. |
+| DirectML / ROCm / CoreML | Resolution paths exist. They were not installed in the current ORT build; live resolution returned CPU fallback for each rather than falsely claiming activation. No physical DirectML/ROCm/CoreML benchmark is claimed. |
+| Execution-provider resolution | Current ORT 1.23.2 advertised TRT, CUDA, and CPU. Live 4070 resolution was TRT→CUDA→CPU for `auto`/`tensorrt`, CUDA→CPU for `cuda`, and CPU for `cpu`, `dml`, `rocm`, and `coreml`. |
+
+### RTX 4070 benchmark evidence
+
+The existing controlled end-to-end baseline remains authoritative at **9.62
+FPS** (600 frames / 62.34 s); this verification did not overwrite it. The
+existing `roop.bench --profile quick --no-apply --target RTX 4070` benchmark was
+run twice against the current config (`tensorrt`, `mixed`, RealSwap, UltraMax,
+RetinaFace r50 @512, RealityUX, pools 2/2). This is a component/calibration
+harness, not a replacement for the controlled video baseline.
+
+| Measurement | Result |
+|---|---:|
+| Cold build evidence | Swapper TRT build **199 s**; RealityUX BiSeNet TRT build **179 s**. The first cold process exited 1 after reporting an XSeg invalid-throughput result; no OOM or working-stage runtime exception occurred. |
+| Warm benchmark process | **177.7 s**, exit 0, cached engines; XSeg 227.9 calls/s on the warm pass |
+| Detection inference | 397.2 calls/s in warm quick stage; direct first-call probe 6.592 s including first context allocation, then 14.839 ms mean over 10 synchronized calls |
+| Swap inference | 205.5 calls/s in warm quick stage; direct session build 27.922 s from cache and first call 55.854 ms, then 23.646 ms mean over 10 synchronized calls |
+| Enhancer inference | UltraMax 35.9 calls/s in warm quick stage; direct session build 6.935 s and first call 30.459 s including context allocation, then 33.240 ms mean over 10 synchronized calls |
+| Other selected stages | Recognition 531.2 calls/s; landmarks 689.6 calls/s; BiSeNet 55.9 calls/s in the warm quick pass |
+| Sustained composite curve | Standard peak 58.49 FPS at 32 threads; enhanced peak 33.20 FPS at 16 threads; heavy peak 21.17 FPS at 12 threads. These exclude full tracking/color/stabilization/writer and are not production FPS. |
+| VRAM during warm pass | Approximately 9.8–10.3 GB free of 11.99 GB during stage measurements; no OOM observed |
+
+The first-call probe used explicit CUDA synchronization and therefore is not
+directly comparable to the quick harness's unsynchronized stage-throughput
+loop; it is retained as startup/context-allocation evidence, not as a new
+performance claim. The quick harness's first cold XSeg invalid-throughput row
+was not reproduced on the cached pass and remains a benchmark/tooling anomaly
+requiring a future cold-run investigation.
+
+### Correctness and acceptance
+
+- The live benchmark used the actual TensorRT provider chain; it did not
+  silently run the reported TRT rows on CPU.
+- The controlled end-to-end 4070 baseline remains 600/600 output frames,
+  856 faces seen, 850 swapped, and 0 wrong-FaceSet applications across 642
+  attributed swaps.
+- Existing precision acceptance evidence remains unchanged: 4070 1080p FP32
+  and mixed passed identity/texture/channel checks; the 4K FP16 smoke passed;
+  model-specific unsafe FP16 safeguards remain active. No global FP16 change is
+  justified by this audit.
+- Targeted backend regression tests passed: **176 tests, 3 subtests**. The
+  cache-key semantic probe passed. No application or launcher source was
+  edited.
+
+### Phase 1 result
+
+Phase 1 is **VERIFIED for the RTX 4070 path**. The performance foundation is
+frozen and remains safe to carry into realism/temporal-quality work. This is
+not a dual-GPU validation claim: the RTX 3060 was not physically tested in this
+session. Its separate historical results and known TensorRT/RSS/enhancer
+limitations remain in `HARDWARE_VALIDATION.md` and
+`HARDWARE_VALIDATION_MATRIX.md`.
+
+The safe next phase is realism/temporal-quality design and implementation using
+the existing backend contracts. Any future change to provider configuration,
+precision, engine identity, memory, concurrency, batching, or GPU buffers must
+be revalidated on both mandatory NVIDIA targets.
+
 The authoritative technical record is
 [`PERFORMANCE_OPTIMIZATION_HANDOFF.md`](PERFORMANCE_OPTIMIZATION_HANDOFF.md).
 It records the implemented optimizations, changed-file manifest, architecture
