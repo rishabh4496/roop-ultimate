@@ -226,6 +226,7 @@ class TrackingMixin:
         # confidence/lifecycle state without replacing that established logic.
         temporal_tracker = TemporalFaceTracker.from_env() if collect_obs else None
         self._temporal_tracker = temporal_tracker
+        self._temporal_frame_shape = None
         # Detections the appearance-only fallback was not allowed to claim.
         reid_refused = 0
         # Observations whose embedding was disbelieved because the recognition
@@ -644,6 +645,11 @@ class TrackingMixin:
                     if not ret or frame is None:
                         break
 
+                if (temporal_tracker is not None
+                        and isinstance(frame, np.ndarray)
+                        and self._temporal_frame_shape is None):
+                    self._temporal_frame_shape = tuple(frame.shape)
+
                 # Feed the UI's live view during the pre-pass too. This stage is a
                 # third of a long run's wall clock and it used to leave the
                 # processing box frozen on whatever the swap phase last published
@@ -829,6 +835,10 @@ class TrackingMixin:
         # ProcessMgr.py's identity-lock branch for why this exists.
         self._track_source_map = {tid: (track_src.get(tid), track_map[tid]['emb_mean'])
                                    for tid in track_map}
+        # V2 source-pose hysteresis is track-local and must survive the
+        # ordered per-track replay below. Reinitialize for each pre-pass so a
+        # new video cannot inherit a source index from an earlier one.
+        self._track_pose_source_map = {}
         persons = self._person_angle_indices()
 
         # One line per track, ALWAYS — not behind ROOP_DEBUG_MATCH.
@@ -1809,7 +1819,54 @@ class TrackingMixin:
             total_coasts += orientation.resolve_track_rolls(
                 [merged[i] for i in sorted(merged)])
 
+            # Phase 5 pose/source decisions are made in this ordered per-track
+            # pass, after landmark smoothing and roll continuity resolution.
+            # The swap workers run round-robin, so keeping this state here avoids
+            # a frame-order race at a source-pose boundary.  V1 FaceSets and
+            # Source-bank-disabled runs do not perform the optional annotation.
+            pose_annotation_enabled = bool(
+                getattr(self.options, 'use_source_bank', False))
+            pose_source_fs = None
+            if pose_annotation_enabled:
+                try:
+                    source_info = (getattr(self, '_track_source_map', {})
+                                   .get(t['id']))
+                    source_index = source_info[0] if source_info else None
+                    if (source_index is not None
+                            and 0 <= int(source_index) < len(self.input_face_datas)):
+                        candidate = self.input_face_datas[int(source_index)]
+                        if (getattr(candidate, 'format_version', 1) >= 2
+                                and getattr(candidate, 'faceset_metadata', None)):
+                            pose_source_fs = candidate
+                except Exception:
+                    pose_source_fs = None
+            previous_source_index = getattr(
+                self, '_track_pose_source_map', {}).get(t['id'])
+            if pose_annotation_enabled:
+                from roop.pose_source_selector import annotate_face_pose
+
             for i, f in merged.items():
+                if pose_annotation_enabled:
+                    try:
+                        pose = annotate_face_pose(
+                            f, frame_shape=getattr(self, '_temporal_frame_shape', None))
+                        if pose_source_fs is not None:
+                            selection = pose_source_fs.select_pose_aware_reference(
+                                pose, expression=pose.expression,
+                                previous_index=previous_source_index)
+                            if selection is not None:
+                                f['_pose_v5_source_index'] = int(selection.index)
+                                f['_pose_v5_source_reason'] = str(selection.reason)
+                                f['_pose_v5_needs_3d'] = bool(selection.needs_3d)
+                                previous_source_index = int(selection.index)
+                    except Exception:
+                        # A pose annotation is an optimization/quality hint;
+                        # never make the established temporal replay fail if a
+                        # malformed optional landmark set reaches this branch.
+                        pass
+            if (pose_source_fs is not None and previous_source_index is not None
+                    and hasattr(self, '_track_pose_source_map')):
+                self._track_pose_source_map[t['id']] = int(previous_source_index)
                 # Stamp the owning track's id on every face this track hands
                 # out (real observation or gap-filled) so swap_faces can bind
                 # it to its source by exact lookup (self._track_source_map)

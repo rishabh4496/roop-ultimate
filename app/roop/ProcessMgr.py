@@ -4484,7 +4484,24 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
         # Falls back to faces[0] when the feature is off or poses are absent.
         # selected_src_idx is carried into 3D recon below so the two features
         # compose (recon warps the bank-selected face, not always face[0]).
+        # Phase 5 uses the already-smoothed per-track record when temporal
+        # replay supplied one. Direct image/preview calls compute the same
+        # lightweight estimate from detector landmarks. This remains separate
+        # from the legacy restore angles: the source bank also needs roll,
+        # scale, proportions, expression, and confidence.
+        target_pose_v5 = None
+        # The V5 estimate is only useful to the opt-in source-bank path.  Keep
+        # the default swap path free of even the small classical pose-solver
+        # cost, while temporal replay still precomputes it for bank users.
+        if getattr(self.options, 'use_source_bank', False):
+            try:
+                from roop.pose_source_selector import estimate_target_pose
+                target_pose_v5 = estimate_target_pose(target_face, frame_shape=plate.shape)
+            except Exception:
+                target_pose_v5 = None
+
         selected_src_idx = 0
+        pose_selection_v5 = None
         if 0 <= face_index < len(self.input_face_datas):
             fs = self.input_face_datas[face_index]
             if len(fs.faces) > 0:
@@ -4501,9 +4518,23 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                         target_lighting = fs.lighting_for_frame(plate, target_face['bbox'])
                     except Exception:
                         target_lighting = None
-                    best_idx = fs.select_reference_index(
-                        pose=(bank_yaw_deg, bank_pitch_deg),
-                        appearance=target_lighting)
+                    if target_pose_v5 is not None:
+                        try:
+                            previous_idx = target_face.get('_pose_v5_source_index')
+                        except Exception:
+                            previous_idx = None
+                        pose_selection_v5 = fs.select_pose_aware_reference(
+                            target_pose_v5, appearance=target_lighting,
+                            expression=target_pose_v5.expression,
+                            previous_index=previous_idx)
+                    if pose_selection_v5 is not None:
+                        best_idx = pose_selection_v5.index
+                    else:
+                        # Defensive fallback for a malformed optional pose
+                        # record. Keep the validated Phase 4 V2 selector.
+                        best_idx = fs.select_reference_index(
+                            pose=(bank_yaw_deg, bank_pitch_deg),
+                            appearance=target_lighting)
                 else:
                     best_idx  = 0
                     best_dist = float('inf')
@@ -4540,10 +4571,17 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                 _recon_face_data = _bank[selected_src_idx]
             if _recon_face_data is None:
                 _recon_face_data = _recon_fs.face_3d
+        # A good V2 pose match does not need an extra crop warp. Keep 3D recon
+        # for insufficient/ambiguous source pose, inversion, steep rotation,
+        # perspective risk, and low-confidence geometry. With V1 or no V2
+        # selection, retain the established opt-in behaviour unchanged.
+        recon_needed = (True if pose_selection_v5 is None
+                        else bool(pose_selection_v5.needs_3d))
         if (getattr(self.options, 'use_3d_recon', False)
                 and _swap_is_image
                 and inputface is not None
-                and _recon_face_data is not None):
+                and _recon_face_data is not None
+                and recon_needed):
             try:
                 from roop.face_3d_recon import Face3DRecon, landmarks_to_crop_space
                 from roop.face_util import get_first_face as _gff

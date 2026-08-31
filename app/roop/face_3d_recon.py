@@ -21,8 +21,9 @@ How it works
 2. `cv2.solvePnP` fits a rigid pose to each landmark set against a
    generic 3D reference face.
 3. The angular difference is decomposed into yaw and pitch.
-4. For large yaw the source crop is horizontally reflected and
-   shear-warped to reduce the angular gap.
+4. For large yaw the source crop is horizontally reflected only when both
+   views are materially off-axis on opposite sides of the camera, then bounded
+   shear is used to reduce the residual angular gap.
 5. Insightface re-runs on the warped crop to produce a posed embedding
    which replaces the original for that frame's swap call.
 
@@ -137,8 +138,84 @@ def _horizontal_shear(img: np.ndarray, shear: float) -> np.ndarray:
     h, w = img.shape[:2]
     # Shear matrix: x' = x + shear * (y - h/2),  y' = y
     M = np.float32([[1, shear, -shear * h / 2], [0, 1, 0]])
-    return cv2.warpAffine(img, M, (w, h), flags=cv2.INTER_LINEAR,
-                          borderMode=cv2.BORDER_REFLECT_101)
+    return _safe_affine_warp(img, M)
+
+
+def _safe_affine_warp(img: np.ndarray, matrix: np.ndarray) -> np.ndarray:
+    """Apply a bounded affine, or return the input on an unsafe transform.
+
+    A pose estimate can be numerically valid while still describing a nearly
+    singular projection for an occluded/profiled landmark set. Rejecting that
+    projection keeps perspective compensation from stretching a face or
+    creating a large empty wedge in the crop.
+    """
+    try:
+        matrix = np.asarray(matrix, dtype=np.float64)
+        linear = matrix[:, :2]
+        singular = np.linalg.svd(linear, compute_uv=False)
+        determinant = abs(float(np.linalg.det(linear)))
+        if (matrix.shape != (2, 3) or not np.isfinite(matrix).all()
+                or determinant < 0.65 or determinant > 1.45
+                or singular[0] > 1.35 or singular[-1] < 0.74):
+            return img
+        h, w = img.shape[:2]
+        return cv2.warpAffine(
+            img, matrix.astype(np.float32), (w, h), flags=cv2.INTER_LINEAR,
+            borderMode=cv2.BORDER_REFLECT_101,
+        )
+    except Exception:
+        return img
+
+
+def pose_warp_plan(src_yaw_deg: float, src_pitch_deg: float,
+                   tgt_yaw_deg: float, tgt_pitch_deg: float,
+                   yaw_threshold_deg: float = 15.0,
+                   max_shear: float = 0.25) -> dict:
+    """Describe a conservative source-to-target pose correction.
+
+    Mirroring is geometrically justified only when both views are materially
+    off-axis and face opposite sides of the camera. A frontal source going to
+    a right-facing target is not mirrored: a flip would manufacture the wrong
+    cheek/mole side and reverse the source geometry.
+    """
+    src_yaw = float(src_yaw_deg)
+    tgt_yaw = float(tgt_yaw_deg)
+    src_pitch = float(src_pitch_deg)
+    tgt_pitch = float(tgt_pitch_deg)
+    threshold = max(0.0, float(yaw_threshold_deg))
+    shear_cap = min(max(0.0, float(max_shear)), 0.20)
+    delta_yaw = tgt_yaw - src_yaw
+    flip = (abs(src_yaw) >= 20.0 and abs(tgt_yaw) >= 20.0
+            and src_yaw * tgt_yaw < 0.0 and abs(delta_yaw) >= 45.0)
+    if flip:
+        # The image has been reflected, so the effective source view changes
+        # sign before the residual shear is computed.
+        src_yaw = -src_yaw
+        delta_yaw = tgt_yaw - src_yaw
+    yaw_shear = 0.0
+    if abs(delta_yaw) > threshold:
+        yaw_shear = (np.clip((abs(delta_yaw) - threshold) / 45.0, 0.0, 1.0)
+                     * shear_cap)
+        yaw_shear = float(np.copysign(yaw_shear, delta_yaw))
+
+    delta_pitch = tgt_pitch - src_pitch
+    pitch_shear = 0.0
+    if abs(delta_pitch) > threshold:
+        # Pitch compensation is intentionally much smaller than yaw. It is a
+        # last-mile correction after pose-aware source selection, not a license
+        # to vertically stretch the facial proportions of a frontal capture.
+        pitch_shear = (np.clip((abs(delta_pitch) - threshold) / 45.0, 0.0, 1.0)
+                       * min(shear_cap * 0.35, 0.08))
+        pitch_shear = float(np.copysign(pitch_shear, delta_pitch))
+    return {
+        "flip": bool(flip),
+        "yaw_delta": float(delta_yaw),
+        "pitch_delta": float(delta_pitch),
+        "yaw_shear": float(yaw_shear),
+        "pitch_shear": float(pitch_shear),
+        "magnitude": float(abs(yaw_shear) + abs(pitch_shear)),
+        "safe": bool(abs(yaw_shear) <= 0.20 and abs(pitch_shear) <= 0.08),
+    }
 
 
 def warp_source_to_pose(
@@ -163,45 +240,25 @@ def warp_source_to_pose(
     except RuntimeError:
         return src_crop
 
-    src_yaw, src_pitch = decompose_yaw_pitch(src_rvec)
-    tgt_yaw, tgt_pitch = decompose_yaw_pitch(tgt_rvec)
+    src_yaw, src_pitch = [np.degrees(v) for v in decompose_yaw_pitch(src_rvec)]
+    tgt_yaw, tgt_pitch = [np.degrees(v) for v in decompose_yaw_pitch(tgt_rvec)]
+    plan = pose_warp_plan(src_yaw, src_pitch, tgt_yaw, tgt_pitch,
+                          yaw_threshold_deg=yaw_threshold_deg,
+                          max_shear=max_shear)
 
-    delta_yaw   = tgt_yaw   - src_yaw    # radians
-    delta_pitch = tgt_pitch - src_pitch
+    result = cv2.flip(src_crop, 1) if plan["flip"] else src_crop.copy()
 
-    threshold_rad = np.radians(yaw_threshold_deg)
+    # --- Bounded yaw compensation -----------------------------------------
+    if abs(plan["yaw_shear"]) > 1e-6:
+        result = _horizontal_shear(result, plan["yaw_shear"])
 
-    result = src_crop.copy()
-
-    # --- Yaw compensation ------------------------------------------------
-    if abs(delta_yaw) > threshold_rad:
-        # Flip horizontally if the target is looking in a significantly
-        # different direction than the source
-        if delta_yaw > threshold_rad:
-            result = cv2.flip(result, 1)        # flip left↔right
-        # Apply a gentle shear to further reduce the angular gap
-        remaining = abs(delta_yaw) - threshold_rad
-        shear_amount = np.clip(remaining / np.radians(45.0), 0.0, 1.0) * max_shear
-        if delta_yaw > 0:
-            result = _horizontal_shear(result,  shear_amount)
-        else:
-            result = _horizontal_shear(result, -shear_amount)
-
-    # --- Pitch compensation (subtle vertical shear) -----------------------
-    if abs(delta_pitch) > threshold_rad:
+    # --- Bounded pitch compensation ---------------------------------------
+    if abs(plan["pitch_shear"]) > 1e-6:
         h, w = result.shape[:2]
-        remaining = abs(delta_pitch) - threshold_rad
-        v_shear = np.clip(remaining / np.radians(45.0), 0.0, 1.0) * max_shear * 0.5
-        # Vertical shear: y' = y + v_shear * (x - w/2)
-        M = np.float32([[1, 0, 0], [v_shear, 1, -v_shear * w / 2]])
-        if delta_pitch > 0:
-            result = cv2.warpAffine(result, M, (w, h), flags=cv2.INTER_LINEAR,
-                                    borderMode=cv2.BORDER_REFLECT_101)
-        else:
-            M[1, 0] = -v_shear
-            M[1, 2] =  v_shear * w / 2
-            result = cv2.warpAffine(result, M, (w, h), flags=cv2.INTER_LINEAR,
-                                    borderMode=cv2.BORDER_REFLECT_101)
+        v_shear = plan["pitch_shear"]
+        matrix = np.float64([[1.0, 0.0, 0.0],
+                             [v_shear, 1.0, -v_shear * w / 2.0]])
+        result = _safe_affine_warp(result, matrix)
 
     return result
 

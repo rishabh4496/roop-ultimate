@@ -526,3 +526,93 @@ expression/lighting compatibility, archive size, creation time, load time, and
 video quality/FPS with source-bank and 3D paths separately enabled. Only then
 consider adding more expensive detail descriptors or changing source-bank
 defaults.
+
+## PHASE 5 - POSE-AWARE SOURCE SELECTION AND EXTREME ANGLE ROBUSTNESS - IMPLEMENTED / VALIDATED (2026-08-31)
+
+Status: implemented on the Phase 4 baseline (`079fb7a`) in commit `9e11d83`.
+The existing V1/V2
+FaceSet paths, temporal tracking, source-bank option, 3D reconstruction,
+embedding swappers, provider fallbacks, hardware guards, and enhancer paths
+remain intact.
+
+### Files changed
+
+- `app/roop/pose_source_selector.py`
+- `app/roop/FaceSet.py`
+- `app/roop/procmgr_tracking.py`
+- `app/roop/ProcessMgr.py`
+- `app/roop/face_3d_recon.py`
+- `app/tests/test_pose_source_selector.py`
+- `app/tests/bench_pose_source_selector.py`
+- `docs/POSE_AWARE_SOURCE_SELECTION.md`
+- `docs/OPTIMIZATION_PROGRESS.md`
+- `docs/PHASE_HANDOFF.md`
+
+### Features implemented
+
+- Added a classical `PoseEstimate` record for yaw, pitch, roll, absolute and
+  relative scale, facial proportions, expression, confidence, off-axis angle,
+  perspective risk, and inversion.
+- Temporal replay annotates each track after the existing smoothing and roll
+  latch. The existing track IDs and detector/ROI/recovery policy are reused;
+  no new detector or neural inference is added.
+- Added V2 pose-aware selection with pose distance, identity/quality
+  confidence, expression compatibility, target/source illumination statistics,
+  proportions, relative scale, and source-switch hysteresis.
+- Added explicit 3D fallback reasons for low-confidence, sparse/intermediate,
+  unusually rotated, inverted, perspective-risk, and proportion-mismatch
+  targets. A good V2 pose match skips unnecessary image-source crop warping.
+- Hardened the existing 3D source warp with bounded yaw/pitch shear, affine
+  conditioning checks, stable no-op behavior, and geometrically justified
+  opposite-side flips only. Frontal quality remains on the original path.
+- Kept image-source-only 3D behavior; embedding-based swapper inputs are not
+  replaced with sheared/flipped crops.
+- Default runtime cost is unchanged when `use_source_bank` is disabled. The
+  optional selector hysteresis is configurable with
+  `ROOP_POSE_SOURCE_SWITCH_MARGIN` (default `0.035`).
+
+### Tests and benchmark evidence
+
+- Phase 5 targeted suite:
+  `python -m unittest tests.test_pose_source_selector -v` — **15 passed**.
+  Coverage includes yaw 0/30/45/60/75/profile, pitch, roll, inversion,
+  expression/lighting tie-breaking, hysteresis, low confidence, and safe 3D
+  plans.
+- Existing temporal tracking regression:
+  `python -m unittest tests.test_track_reid tests.test_track_stitch -v` —
+  **38 passed**.
+- Full regression:
+  `python -m unittest discover -s tests -t . -p "test_*.py"` — **1545 tests,
+  1 skipped, 0 failures** in **44.960 s**.
+- Python compilation passed for all changed Python modules and tests.
+- All **45** tracked JavaScript files passed `node --check`; `git diff --check`
+  passed.
+- Classical selector benchmark:
+  `python tests/bench_pose_source_selector.py --iterations 10000` — 7,396.64
+  selections/s over 7 sources and 205,510.14 warp plans/s. This is a
+  synthetic CPU microbenchmark, not end-to-end video FPS, GPU, or quality
+  evidence.
+
+### Performance, quality, and risks
+
+The default path does not call the new pose solver. With source-bank selection
+enabled, target pose work is classical and cached-aware; a good V2 match avoids
+an additional image-source 3D crop warp. No new model, session, GPU buffer, or
+host-device transfer was introduced. Unit tests demonstrate pose-consistent
+source preference and bounded transform decisions, but no real-photo identity
+similarity, temporal metric, visual profile quality, RTX 4070 end-to-end FPS,
+or physical RTX 3060 measurement was run for Phase 5. Therefore those quality
+and hardware claims remain open.
+
+Regressions discovered during implementation: one temporary indentation error
+in the existing tracking frame-read branch was caught by targeted tests and
+fixed before final validation. No remaining regressions were found.
+
+### Next recommended phase
+
+Run an order-balanced real-photo evaluation at yaw 0/30/45/60/75/profile,
+upward/downward pitch, roll, and inversion on both required GPU profiles.
+Measure identity similarity, ID switches, landmark/pose jitter, source-choice
+accuracy, detail/expression/lighting quality, end-to-end FPS, VRAM, and RSS
+with V2 source selection and 3D fallback separately enabled before changing
+defaults or adding heavier geometry models.

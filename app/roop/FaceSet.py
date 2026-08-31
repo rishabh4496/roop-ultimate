@@ -93,6 +93,21 @@ class FaceSet:
                 return min(valid, key=lambda item: item[1])[0]
         return 0
 
+    def select_pose_aware_reference(self, target_pose, appearance=None,
+                                    expression=None, previous_index=None):
+        """Return a Phase 5 V2 source selection, or ``None`` for legacy sets.
+
+        The old ``select_reference_index`` remains untouched for V1 archives
+        and callers that depend on its exact yaw/pitch behaviour.  Phase 5
+        callers opt into the richer result only when V2 metadata is present.
+        """
+        if self.format_version < 2 or not self.faceset_metadata:
+            return None
+        from roop.pose_source_selector import select_pose_aware_source
+        return select_pose_aware_source(
+            self.faceset_metadata, target_pose, appearance=appearance,
+            expression=expression, previous_index=previous_index)
+
     @staticmethod
     def lighting_for_frame(image, bbox=None):
         return measure_lighting(image, bbox)
