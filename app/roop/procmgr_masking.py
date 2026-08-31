@@ -20,6 +20,8 @@ from roop.typing import Frame, Face
 from roop.face_util import clamp_cut_values, kps_pose_ratios
 from roop.nonfrontal import nonfrontal_score
 from roop.procmgr_runtime import _prof
+from roop.temporal_compositing import (boundary_contrast, composite_multiband,
+                                       refine_alpha)
 
 try:
     import torch
@@ -374,7 +376,7 @@ class MaskingMixin:
         blended_image += overlay
         return np.clip(blended_image, 0, 255).astype(np.uint8)
 
-    def paste_upscale(self, fake_face, upsk_face, M, target_img, scale_factor, mask_offsets, face_landmarks=None, face_kps=None, region=None, model_mask=None, model_mask_weight=0.0, inplace=False):
+    def paste_upscale(self, fake_face, upsk_face, M, target_img, scale_factor, mask_offsets, face_landmarks=None, face_kps=None, region=None, model_mask=None, model_mask_weight=0.0, inplace=False, target_face=None, appearance=None, temporal_compositor=None, track_id=None, frame_index=None, occlusion_score=0.0, motion=0.0):
         M_scale = M * scale_factor
         IM = cv2.invertAffineTransform(M_scale)
 
@@ -420,6 +422,25 @@ class MaskingMixin:
         img_matte = self.blur_area(img_matte, mask_offsets[4])
         img_matte = img_matte.astype(np.float32) / 255
 
+        # Phase 12 keeps the canonical matte in a tiny per-track EMA before it
+        # is warped. This is the only stateful mask operation; all downstream
+        # trimming remains authoritative for overlap and occlusion.
+        if (temporal_compositor is not None
+                and getattr(temporal_compositor, 'enabled', False)
+                and track_id is not None):
+            try:
+                confidence = (target_face.get('_temporal_confidence', 1.0)
+                              if isinstance(target_face, dict) else
+                              getattr(target_face, '_temporal_confidence', 1.0))
+                img_matte = temporal_compositor.stabilize_mask(
+                    track_id, img_matte, frame_index=frame_index,
+                    confidence=confidence, motion=motion,
+                    occlusion=occlusion_score)
+            except Exception:
+                # Temporal compositing is a quality layer. A malformed optional
+                # track field must leave the established matte usable.
+                pass
+
         # Cut this face's matte back where another face in the frame owns the
         # pixels (see roop.face_overlap). AFTER the feather deliberately: the
         # blur is what spreads a face's swap onto its neighbour in the first
@@ -444,22 +465,35 @@ class MaskingMixin:
         if mm_matte is not None:
             img_matte *= mm_matte
 
+        _composite_plan = None
+        if (temporal_compositor is not None
+                and getattr(temporal_compositor, 'enabled', False)):
+            try:
+                _contrast = boundary_contrast(target_img, img_matte)
+                _composite_plan = temporal_compositor.plan(
+                    target_face=target_face, appearance=appearance,
+                    local_contrast=_contrast, occlusion=occlusion_score)
+                img_matte = refine_alpha(img_matte, _composite_plan,
+                                         target=target_img,
+                                         landmarks=face_landmarks)
+            except Exception:
+                _composite_plan = None
+
         # Save 2D mask before reshape — used by show_face_area_overlay
         mask_2d = img_matte.copy() if self.options.show_face_area_overlay else None
 
         img_matte = np.reshape(img_matte, [img_matte.shape[0], img_matte.shape[1], 1])
-        paste_face = cv2.warpAffine(upsk_face, IM, (target_img.shape[1], target_img.shape[0]), borderMode=cv2.BORDER_REPLICATE)
-        if upsk_face is not fake_face and getattr(self.options, 'blend_ratio', 1.0) < 0.999:
-            # IM is scaled to upsk_face's resolution — bring fake_face to the same
-            # size first, or the blend layer lands misaligned (quarter-size ghost
-            # with GPEN 1024/2048, whose output is larger than the 512 swap crop).
-            if fake_face.shape[:2] != upsk_face.shape[:2]:
-                fake_face = cv2.resize(fake_face, (upsk_face.shape[1], upsk_face.shape[0]), interpolation=cv2.INTER_CUBIC)
-            fake_face = cv2.warpAffine(fake_face, IM, (target_img.shape[1], target_img.shape[0]), borderMode=cv2.BORDER_REPLICATE)
-            paste_face = cv2.addWeighted(paste_face, self.options.blend_ratio, fake_face, 1.0 - self.options.blend_ratio, 0)
 
-        # Bounded ROI blending: only convert the active face region to float32
-        # to avoid out-of-memory errors on 4K/8K multi-threaded rendering.
+        # Bounded ROI blending: only warp and convert the active face region.
+        # The previous path warped both the upscaled face and (when blend_ratio
+        # was active) the base face over the entire target frame, even though
+        # every downstream operation consumed only the non-zero matte bounds.
+        # On the controlled 1280x720/144-face run this full-frame work was the
+        # largest measured part of blend (~71.7 ms/call). Keep the full matte
+        # warp above because overlap/refinement operates in frame coordinates,
+        # then use the exact same affine with its destination translated into
+        # the bounded ROI. ROOP_BLEND_ROI_WARP=0 is an A/B rollback to the
+        # previous full-frame warps.
         matte_2d = img_matte if img_matte.ndim == 2 else img_matte[:, :, 0]
         nz_y, nz_x = np.where(matte_2d > 0.001)
         if len(nz_y) == 0:
@@ -472,10 +506,53 @@ class MaskingMixin:
         if roi_matte.ndim == 2:
             roi_matte = roi_matte[:, :, None]
 
-        roi_paste = paste_face[y0:y1, x0:x1].astype(np.float32)
+        roi_warp = str(os.environ.get('ROOP_BLEND_ROI_WARP', '1')).strip().lower() not in (
+            '0', 'false', 'no', 'off')
+        if roi_warp:
+            roi_IM = IM.copy()
+            roi_IM[0, 2] -= x0
+            roi_IM[1, 2] -= y0
+            roi_size = (x1 - x0, y1 - y0)
+            roi_paste = cv2.warpAffine(
+                upsk_face, roi_IM, roi_size,
+                borderMode=cv2.BORDER_REPLICATE).astype(np.float32)
+            if upsk_face is not fake_face and getattr(self.options, 'blend_ratio', 1.0) < 0.999:
+                # IM is scaled to upsk_face's resolution — bring fake_face to
+                # the same size first, or the blend layer lands misaligned.
+                if fake_face.shape[:2] != upsk_face.shape[:2]:
+                    fake_face = cv2.resize(
+                        fake_face, (upsk_face.shape[1], upsk_face.shape[0]),
+                        interpolation=cv2.INTER_CUBIC)
+                roi_fake = cv2.warpAffine(
+                    fake_face, roi_IM, roi_size,
+                    borderMode=cv2.BORDER_REPLICATE)
+                roi_paste = cv2.addWeighted(
+                    roi_paste.astype(np.uint8), self.options.blend_ratio,
+                    roi_fake, 1.0 - self.options.blend_ratio, 0).astype(np.float32)
+        else:
+            paste_face = cv2.warpAffine(
+                upsk_face, IM, (target_img.shape[1], target_img.shape[0]),
+                borderMode=cv2.BORDER_REPLICATE)
+            if upsk_face is not fake_face and getattr(self.options, 'blend_ratio', 1.0) < 0.999:
+                if fake_face.shape[:2] != upsk_face.shape[:2]:
+                    fake_face = cv2.resize(
+                        fake_face, (upsk_face.shape[1], upsk_face.shape[0]),
+                        interpolation=cv2.INTER_CUBIC)
+                fake_face = cv2.warpAffine(
+                    fake_face, IM, (target_img.shape[1], target_img.shape[0]),
+                    borderMode=cv2.BORDER_REPLICATE)
+                paste_face = cv2.addWeighted(
+                    paste_face, self.options.blend_ratio,
+                    fake_face, 1.0 - self.options.blend_ratio, 0)
+            roi_paste = paste_face[y0:y1, x0:x1].astype(np.float32)
         roi_target = target_img[y0:y1, x0:x1].astype(np.float32)
 
-        blended_roi = roi_matte * roi_paste + (1.0 - roi_matte) * roi_target
+        if _composite_plan is not None:
+            blended_roi = composite_multiband(
+                roi_paste.astype(np.uint8), roi_target.astype(np.uint8),
+                roi_matte[:, :, 0], _composite_plan).astype(np.float32)
+        else:
+            blended_roi = roi_matte * roi_paste + (1.0 - roi_matte) * roi_target
 
         # ProcessMgr supplies an accumulating destination that is already
         # private from the original plate.  Re-copying that entire frame here
@@ -1097,13 +1174,14 @@ class MaskingMixin:
                            if isinstance(target_face, dict)
                            else getattr(target_face, '_temporal_other_track_ids', []))
                 _frame_index = getattr(self._tls, 'frame_idx', 0)
-                img_mask = _occlusion_mgr.observe(
-                    _occlusion_tid, 0 if _frame_index is None else _frame_index,
-                    _occlusion_support, img_mask, confidence=_face_conf,
-                    motion=_motion, interaction_score=_interaction,
-                    other_track_ids=_others,
-                    analysis_mode=('enhanced' if _occlusion_decision.reason ==
-                                   'occlusion_event_reanalysis' else 'normal'))
+                with _prof('occlusion_analysis'):
+                    img_mask = _occlusion_mgr.observe(
+                        _occlusion_tid, 0 if _frame_index is None else _frame_index,
+                        _occlusion_support, img_mask, confidence=_face_conf,
+                        motion=_motion, interaction_score=_interaction,
+                        other_track_ids=_others,
+                        analysis_mode=('enhanced' if _occlusion_decision.reason ==
+                                       'occlusion_event_reanalysis' else 'normal'))
             except Exception:
                 pass
 

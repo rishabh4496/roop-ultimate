@@ -90,17 +90,25 @@ def measure_cpu_paths():
             counter = np.rot90(base)
             counter.copy()
 
-        def paste_inplace():
+        def _paste(roi):
+            previous = os.environ.get("ROOP_BLEND_ROI_WARP")
+            os.environ["ROOP_BLEND_ROI_WARP"] = "1" if roi else "0"
             target = base.copy()
-            bench.paste_upscale(
-                fake, fake, matrix, target, 1, [0, 0, 0, 0, 0, 0],
-                inplace=True)
+            try:
+                bench.paste_upscale(
+                    fake, fake, matrix, target, 1, [0, 0, 0, 0, 0, 0],
+                    inplace=True)
+            finally:
+                if previous is None:
+                    os.environ.pop("ROOP_BLEND_ROI_WARP", None)
+                else:
+                    os.environ["ROOP_BLEND_ROI_WARP"] = previous
+
+        def paste_inplace():
+            _paste(True)
 
         def paste_legacy():
-            target = base.copy()
-            bench.paste_upscale(
-                fake, fake, matrix, target, 1, [0, 0, 0, 0, 0, 0],
-                inplace=False)
+            _paste(False)
 
         def writer_bytes():
             _Sink().write(base.tobytes())
@@ -113,8 +121,8 @@ def measure_cpu_paths():
             "frame_copy": _timed(frame_copy),
             "retry_old": _timed(retry_old),
             "retry_new": _timed(retry_new),
-            "paste_legacy": _timed(paste_legacy),
-            "paste_inplace": _timed(paste_inplace),
+            "paste_full_frame": _timed(paste_legacy),
+            "paste_roi": _timed(paste_inplace),
             "writer_tobytes": _timed(writer_bytes),
             "writer_memoryview": _timed(writer_view),
         }

@@ -116,6 +116,20 @@ def parse_stage_timing(text):
     return stages
 
 
+def parse_detailed_stage_profile(text):
+    """Pull the machine-readable Phase 14 profile from child stdout."""
+    marker = (r"==== DETAILED STAGE PROFILE \(ROOP_PROFILE_DETAIL\) ====\s*\n"
+              r"(.*?)\n=======================================================")
+    block = re.search(marker, text, re.S)
+    if not block:
+        return {}
+    try:
+        value = json.loads(block.group(1).strip())
+    except (TypeError, ValueError):
+        return {"parse_error": "invalid JSON in detailed stage profile"}
+    return value if isinstance(value, dict) else {"parse_error": "profile is not an object"}
+
+
 def parse_adaptive_downgrades(text):
     """What the sub-7GB policy actually changed before the render started.
 
@@ -296,8 +310,10 @@ def main():
                     choices=("none", "rct", "lct", "mkl", "idt"),
                     help="controlled Phase 12 color-processing override")
     ap.add_argument("--identity-detail-strength", type=float, default=None,
-                    help="FaceSet V2 persistent source-detail restoration; "
-                         "default uses config.yaml")
+                     help="FaceSet V2 persistent source-detail restoration; "
+                          "default uses config.yaml")
+    ap.add_argument("--temporal-compositing-mode", choices=("auto", "off", "on"),
+                    default="auto", help="controlled Phase 12 compositor override")
     ap.add_argument("--target", choices=("RTX 3060", "RTX 4070"),
                     default=None, help="validation target label for the record")
     ap.add_argument("--cuda-device-id", type=int, default=0,
@@ -355,6 +371,8 @@ def main():
                getattr(cfg, "identity_detail_strength", 0.0)
                if args.identity_detail_strength is None
                else args.identity_detail_strength),
+           "--temporal-compositing-strength", str(
+               getattr(cfg, "temporal_compositing_strength", 0.65)),
            "--out", os.path.join(args.out, args.tag)]
 
     if args.stabilization_mode != "auto":
@@ -364,6 +382,9 @@ def main():
                     "--stabilize-enhancer", enabled])
     if args.color_transfer_mode is not None:
         cmd.extend(["--color-transfer-mode", args.color_transfer_mode])
+    if args.temporal_compositing_mode != "auto":
+        if args.temporal_compositing_mode == "on":
+            cmd.append("--temporal-compositing")
 
     env = dict(os.environ)
     env["ROOP_PROFILE"] = "1"          # per-stage latency, decode and encode
@@ -372,6 +393,11 @@ def main():
         if "=" in pair:
             k, v = pair.split("=", 1)
             env[k] = v
+    if args.temporal_compositing_mode == "off":
+        # This setting is a Python global, so set the child environment before
+        # launching two_face_video rather than adding an argument that child
+        # does not own.
+        env["ROOP_TEMPORAL_COMPOSITING_OFF"] = "1"
     env = ensure_ffmpeg(env)
     os.environ["PATH"] = env["PATH"]   # so software_stack() can read its version
 
@@ -475,6 +501,7 @@ def main():
         "wall_seconds": round(elapsed, 3),
         "run": run,
         "stages": stages,
+        "detailed_stage_profile": parse_detailed_stage_profile(out),
         "telemetry": telem,
         "log": log,
     }
@@ -518,6 +545,20 @@ def main():
             print("    %-14s %8.2fs %6.1f%% %8d calls %8.2f ms/call"
                   % (name, st["total_s"], st["share_pct"], st["calls"],
                      st["ms_per_call"]))
+    detail = result.get("detailed_stage_profile") or {}
+    canonical = detail.get("canonical_stages", {}) if isinstance(detail, dict) else {}
+    if canonical:
+        print("\n  per-stage (Phase 14 detailed profile; CPU/GPU/sync/allocator):")
+        for name, st in sorted(canonical.items(),
+                               key=lambda kv: -float(kv[1].get("cpu_ms_total", 0.0))):
+            print("    %-20s cpu=%8.2fms gpu_event=%8.2fms sync=%8.2fms "
+                  "alloc_peak=%8sMB steady=%8sMB calls=%6d %s"
+                  % (name, float(st.get("cpu_ms_total", 0.0)),
+                     float(st.get("gpu_event_ms_total", 0.0)),
+                     float(st.get("sync_ms_total", 0.0)),
+                     st.get("alloc_peak_mb", "n/a"),
+                     st.get("steady_state_allocated_mb", "n/a"),
+                     int(st.get("calls", 0)), st.get("status", "unknown")))
     print("\n  wrote %s" % js)
     return 0 if rc == 0 else 1
 

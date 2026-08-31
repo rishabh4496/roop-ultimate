@@ -51,6 +51,8 @@ def _matrix(mask_engine):
          "color": "rct", "enhancer": "None"},
         {"name": "postprocess_heavy", "stabilization": "on",
          "mask": mask_engine, "color": "rct", "enhancer": "UltraMax"},
+        {"name": "compositing_on", "stabilization": "on", "mask": mask_engine,
+         "color": "rct", "enhancer": "None", "compositing": "on"},
     ]
 
 
@@ -62,6 +64,7 @@ def _run_arm(args, target, arm):
            "--end", str(args.end), "--enhancer", arm["enhancer"],
            "--mask-engine", arm["mask"], "--stabilization-mode",
            arm["stabilization"], "--color-transfer-mode", arm["color"],
+           "--temporal-compositing-mode", arm.get("compositing", "off"),
            "--out", args.out, "--cuda-device-id", str(args.device_id)]
     result_path = os.path.join(args.out, tag + ".json")
     existing = result_path

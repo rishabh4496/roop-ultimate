@@ -2395,6 +2395,47 @@ def _apply_adaptive_enhancer_settings(payload):
     roop_globals.adaptive_enhancer_profile = value if value in allowed else "BALANCED"
 
 
+def _apply_temporal_compositing_settings(payload):
+    """Apply Phase 12 paste-back controls consistently to preview and video."""
+    cfg = roop_globals.CFG
+    roop_globals.temporal_compositing = bool(payload.get(
+        "temporal_compositing",
+        getattr(cfg, "temporal_compositing", False)))
+    for key, default in (
+            ("temporal_compositing_strength", 0.65),
+            ("temporal_compositing_mask_alpha", 0.30),
+            ("temporal_compositing_cache_size", 256),
+            ("temporal_compositing_detail_weight", 0.86),
+            ("temporal_compositing_color_strength", 0.55),
+            ("temporal_compositing_max_feather", 8)):
+        fallback = getattr(cfg, key, default)
+        try:
+            value = float(payload.get(key, fallback))
+            if key.endswith("cache_size") or key.endswith("max_feather"):
+                value = int(value)
+        except (TypeError, ValueError):
+            value = default
+        setattr(roop_globals, key, value)
+
+
+def _apply_temporal_quality_settings(payload):
+    """Apply Phase 13 QC controls consistently to preview and video."""
+    cfg = roop_globals.CFG
+    roop_globals.temporal_quality_control = bool(payload.get(
+        "temporal_quality_control",
+        getattr(cfg, "temporal_quality_control", False)))
+    roop_globals.temporal_quality_logging = bool(payload.get(
+        "temporal_quality_logging",
+        getattr(cfg, "temporal_quality_logging", False)))
+    for key, default in (("temporal_quality_history", 4),
+                         ("temporal_quality_cache_size", 256)):
+        try:
+            value = int(payload.get(key, getattr(cfg, key, default)))
+        except (TypeError, ValueError):
+            value = default
+        setattr(roop_globals, key, max(2 if key.endswith("history") else 1, value))
+
+
 def _apply_lipsync_settings(payload):
     """Lip-sync (MuseTalk) toggle + audio source, onto roop.globals.
 
@@ -2465,6 +2506,8 @@ def preview(payload: dict = Body(...)):
     _apply_parser_region_settings(payload)
     _apply_enhancer_settings(payload)
     _apply_target_appearance_settings(payload)
+    _apply_temporal_compositing_settings(payload)
+    _apply_temporal_quality_settings(payload)
     _apply_lipsync_settings(payload)
 
     faces_list = []
@@ -2707,6 +2750,8 @@ def _run_swap(payload):
             roop_globals.execution_threads = roop_globals.CFG.max_threads
         roop_globals.color_transfer_mode = payload.get("color_transfer_mode", roop_globals.CFG.color_transfer_mode)
         _apply_target_appearance_settings(payload)
+        _apply_temporal_compositing_settings(payload)
+        _apply_temporal_quality_settings(payload)
         roop_globals.refine_landmarks = bool(payload.get("refine_landmarks", roop_globals.CFG.refine_landmarks))
         roop_globals.swap_model_mask_strength = float(payload.get("swap_model_mask_strength", getattr(roop_globals.CFG, "swap_model_mask_strength", 0.0)))
         roop_globals.jaw_reshape = bool(payload.get("jaw_reshape", getattr(roop_globals.CFG, "jaw_reshape", False)))

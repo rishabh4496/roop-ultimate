@@ -160,6 +160,14 @@ UI's progress bar and ETA are fed separately and are unaffected by all of these.
 | `ROOP_PROGRESS_EVERY` | 25 (or explicit `ROOP_RESUME_CHUNK`) | Frames per reported chunk. When an explicit resume chunk is configured, a line in the terminal covers the same stretch as a tab in the console's part strip. |
 | `ROOP_PROGRESS_SECS` | 15 | Longest silence allowed between lines. A chunk can take minutes on a slow model, and a console that has said nothing for that long reads as a hang — whichever comes first, frames or seconds, triggers the line. |
 
+## Phase 14 detailed profiling
+
+| Flag | Default | Effect |
+|------|---------|--------|
+| ROOP_PROFILE_DETAIL | 0 | 1 attaches the Phase 14 profiler to the existing stage hook and emits CPU time, CUDA event time, allocator deltas/peaks, steady-state allocator values, and explicit transfer counters for the required-stage matrix. It is observational and does not change scheduling. |
+| ROOP_PROFILE_DETAIL_SYNC | 0 | 1 fences the selected CUDA device at detailed-stage boundaries and records synchronization windows. This is invasive diagnosis only, not normal throughput. |
+| ROOP_BLEND_ROI_WARP | 1 | Warp the swapped/enhanced face into the active matte ROI instead of the whole output frame. The affine is translated exactly into ROI coordinates; 0 restores full-frame warps for a controlled regression comparison. |
+
 ## Timeline / preview frame decoding
 
 These govern how the **preview and timeline** fetch single frames. None of them
@@ -1149,3 +1157,78 @@ Adaptive is opt-in and is not a replacement for RealityUX, RealSwap, GPEN
 telemetry reports selected paths, reasons, recent metrics, and observed output
 quality. Video measurements are produced by
 `app/tests/bench_adaptive_enhancer_video.py`.
+
+## Temporal compositing and natural blending (Phase 12)
+
+`temporal_compositing` enables the final paste-back extension in the existing
+`MaskingMixin.paste_upscale` authority. The source/generated crop supplies
+identity; the untouched target frame supplies low-frequency lighting and local
+colour. A bounded per-track canonical matte EMA prevents jaw/cheek/forehead
+edges from alternating hard/soft between frames. Geometry angle, confidence,
+occlusion, boundary contrast, and `NORMAL`/`DARK`/`VERY_DARK` target appearance
+then control strength and feathering. The production compositor is a cheap
+two-band blend with local low-frequency colour adaptation; it does not paste
+target noise, JPEG texture, or the whole source crop.
+
+| Setting | Default | Meaning |
+|---|---:|---|
+| `temporal_compositing` | `false` | Opt-in adaptive temporal paste-back; false preserves the legacy linear path. |
+| `temporal_compositing_strength` | `0.65` | Overall bounded composite strength, 0..1. |
+| `temporal_compositing_mask_alpha` | `0.30` | Canonical matte EMA admission; lower is steadier. |
+| `temporal_compositing_cache_size` | `256` | Maximum per-track matte states. |
+| `temporal_compositing_detail_weight` | `0.86` | High-frequency generated-face weight near boundaries, 0.45..1.0. |
+| `temporal_compositing_color_strength` | `0.55` | Low-frequency target shadow/highlight/chroma adaptation, 0..1. |
+| `temporal_compositing_max_feather` | `8` | Maximum adaptive boundary feather in pixels. |
+
+Component benchmark:
+
+```text
+app/env/Scripts/python.exe app/tests/bench_temporal_compositing.py --json app/output/phase12_temporal_compositing.json
+```
+
+## Phase 13 temporal quality control
+
+`temporal_quality_control` adds a lightweight, per-track short-history quality
+check around the existing swap/enhancer/mask/compositor path. It measures only
+state already available in the frame pipeline, so normal frames do not run an
+additional model or correction pass. Anomaly events are edge-triggered: a
+persistent abnormal state does not repeatedly invoke the same correction until
+the signal recovers. Set `temporal_quality_logging` or
+`ROOP_TEMPORAL_QC_LOG=1` to emit anomaly type, track, frame index, confidence,
+and correction details through the debug log. `ROOP_TEMPORAL_QC=1` enables the
+controller for a benchmark without changing saved settings.
+
+| Setting / environment | Default | Meaning |
+|---|---:|---|
+| `temporal_quality_control` / `ROOP_TEMPORAL_QC` | `false` | Enable event-driven temporal QC. |
+| `temporal_quality_logging` / `ROOP_TEMPORAL_QC_LOG` | `false` | Emit structured anomaly/correction records. |
+| `temporal_quality_history` | `4` | Per-track short-history length; minimum 2. |
+| `temporal_quality_cache_size` | `256` | Maximum tracked face histories. |
+
+Detected events include identity drift, mask popping, brightness/color jumps,
+geometry jumps, enhancer hallucination, detail loss, eye/jaw discontinuity,
+and face flicker. Targeted actions can reselect the stable source, reuse a
+prior transform/color state, re-run alignment/occlusion analysis, reduce
+enhancer strength, restore V2 identity detail, or reblend the prior alpha.
+High-motion eye/jaw changes are logged but do not freeze the current expression.
+No whole-face source texture paste or problematic-frame blur is used.
+
+The focused harness is:
+
+```text
+app/env/Scripts/python.exe -m pytest app/tests/test_temporal_quality.py -q
+app/env/Scripts/python.exe app/tests/bench_temporal_quality.py --iterations 2000
+```
+
+The benchmark covers frontal, lateral, profile, hair, glasses, hand
+occlusion, dark scene, and bright scene and records boundary gradient error,
+identity-detail error, target-texture error, temporal edge shimmer, and
+milliseconds per frame. The real-pipeline A/B extension is:
+
+```text
+app/env/Scripts/python.exe app/tests/phase12_benchmark.py --target "RTX 4070" --video <locked-clip> --sources <facesets>
+```
+
+Poisson/gradient-domain blending is reported as an available OpenCV candidate
+but remains disabled in production: `seamlessClone` is CPU/full-patch work and
+was not cheaper or measurably better than the bounded two-band ROI path.

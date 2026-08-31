@@ -316,7 +316,8 @@ class TrackingMixin:
             if skip_detection:
                 return _DetectionResult([], mode='skip')
             with _prof('track_detect'), _gpu_guard(pooled=True):
-                return _run_detect(fr, crop_bbox, expected_count)
+                with _prof('detection'):
+                    return _run_detect(fr, crop_bbox, expected_count)
 
         def _consume(f_idx, faces):
             nonlocal active, retired, next_id, reid_refused, contam_seen, contam_reid
@@ -712,7 +713,8 @@ class TrackingMixin:
                         faces = _DetectionResult([], mode='skip')
                     else:
                         with _prof('track_detect'), _gpu_guard(pooled=analysis_pooled(), owner='analysis'):
-                            faces = _run_detect(frame, crop_bbox, expected_count)
+                            with _prof('detection'):
+                                faces = _run_detect(frame, crop_bbox, expected_count)
                     with _prof('track_consume'):
                         _consume(idx, faces)
                     if temporal_tracker is not None and isinstance(frame, np.ndarray):

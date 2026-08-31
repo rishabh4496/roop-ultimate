@@ -33,6 +33,9 @@ from roop.identity_detail import restore_identity_detail
 from roop.appearance_conditioning import (TargetAppearanceStabilizer,
                                            analyze_target_appearance,
                                            protect_restorer_output)
+from roop.temporal_compositing import TemporalCompositeController
+from roop.temporal_quality import (TemporalQualityController, make_observation,
+                                   merge_decisions)
 from roop.adaptive_enhancer import evaluate_face_frame
 from roop.procmgr_tiling import PixelBoostMixin
 from roop.procmgr_tracking import TrackingMixin
@@ -40,7 +43,8 @@ from roop.face_overlap import build_regions as build_face_regions, FaceRegion
 from roop import face_contact
 from roop import recognizer_adaface as _ada
 from roop import live_preview as _live_preview
-from roop.procmgr_runtime import _PROFILE, _TRACK_VETO_DIST, _TRACK_VETO_MARGIN, _TRACK_VETO_SINGLE, _TRACK_EMB_MAX, _DEBUG_MATCH, COLOR_RESET, COLOR_CYAN, COLOR_YELLOW, _prof, _prof_report, _prof_reset, _gpu_guard, PROGRESS_BAR_FORMAT, wait_while_paused, ChunkedProgress, bar_write, publish_eta as _publish_eta, _audit_hit, audit_over_threshold as _audit_over_threshold, audit_frame_seen, audit_detect_frame_begin, audit_detect_miss, audit_face_begin, _audit_swapped_gapfill, _audit_reset, _audit_report, VETO_SOURCE_REUSED, VETO_SINGLE_ABS, VETO_OTHER_FITS, VETO_FAR_FROM_OWN, AUDIT_SWAP_MOVED, VERIFY_MIN_OFFAXIS, VERIFY_SWAP, set_runtime_monitor
+from roop.procmgr_runtime import _PROFILE, _TRACK_VETO_DIST, _TRACK_VETO_MARGIN, _TRACK_VETO_SINGLE, _TRACK_EMB_MAX, _DEBUG_MATCH, COLOR_RESET, COLOR_CYAN, COLOR_YELLOW, _prof, _prof_report, _prof_reset, _gpu_guard, PROGRESS_BAR_FORMAT, wait_while_paused, ChunkedProgress, bar_write, publish_eta as _publish_eta, _audit_hit, audit_over_threshold as _audit_over_threshold, audit_frame_seen, audit_detect_frame_begin, audit_detect_miss, audit_face_begin, _audit_swapped_gapfill, _audit_reset, _audit_report, VETO_SOURCE_REUSED, VETO_SINGLE_ABS, VETO_OTHER_FITS, VETO_FAR_FROM_OWN, AUDIT_SWAP_MOVED, VERIFY_MIN_OFFAXIS, VERIFY_SWAP, set_runtime_monitor, set_detailed_profiler
+from roop.stage_profiler import StageProfiler
 from roop.runtime_optimizer import RuntimeOptimizer, RuntimeMonitor, SafeAdaptiveController
 from roop.runtime_scheduler import UnifiedRuntimeScheduler
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -520,6 +524,8 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
         # Phase 15 is deliberately opt-in. These fields are always present so
         # worker and writer code can keep a single cheap branch in normal runs.
         self._runtime_monitor = None
+        self._stage_profiler = None
+        self._stage_profile_report = None
         self._runtime_adaptive = None
         self._runtime_scheduler = None
         self._runtime_scheduler_summary = None
@@ -594,6 +600,9 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
             cache_size=int(getattr(roop.globals,
                                    'target_conditioned_appearance_cache_size',
                                    256) or 256))
+        self._temporal_compositing = TemporalCompositeController.from_config(
+            roop.globals)
+        self._temporal_quality = TemporalQualityController.from_config(roop.globals)
         # Temporal detection (anti-flicker): when active, swap_faces consumes
         # the pre-pass faces per frame instead of re-detecting.
         # _temporal_faces: {frame_idx (0-based within trim): [Face, ...]}
@@ -816,6 +825,9 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
         self._temporal_occlusion = TemporalOcclusionEngine.from_env()
         from roop.temporal_expression import TemporalExpressionEngine
         self._temporal_expression = TemporalExpressionEngine.from_env()
+        self._temporal_compositing = TemporalCompositeController.from_config(
+            roop.globals)
+        self._temporal_quality = TemporalQualityController.from_config(roop.globals)
         devicename = get_device()
 
         # A measured 6GB end-to-end run with an enhancer exceeds the strict
@@ -1624,6 +1636,8 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
         self._lipsync_frame_start = frame_start
         self._lipsync_audio = None
         self._memory_stage_log = []
+        self._stage_profiler = None
+        self._stage_profile_report = None
         self._log_memory_stage('phase3:run-start')
         if getattr(roop.globals, 'lipsync_enabled', False):
             try:
@@ -1652,6 +1666,24 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
             except Exception as e:
                 bar_write(f"[ProcessMgr] lip-sync audio setup failed: {e}")
                 self._lipsync_audio = None
+        _detail_profile = str(os.environ.get('ROOP_PROFILE_DETAIL', '0')).strip().lower() in (
+            '1', 'true', 'yes', 'on')
+        if _detail_profile:
+            try:
+                _detail_sync = str(os.environ.get('ROOP_PROFILE_DETAIL_SYNC', '0')).strip().lower() in (
+                    '1', 'true', 'yes', 'on')
+                _device_id = int(getattr(roop.globals, 'cuda_device_id', 0) or 0)
+                self._stage_profiler = StageProfiler(gpu_sync=_detail_sync,
+                                                     device_id=_device_id)
+                set_detailed_profiler(self._stage_profiler)
+                print('[Phase14] detailed stage profiler enabled; '
+                      f"mode={'synchronized' if _detail_sync else 'event-only'}; "
+                      'external telemetry is required for full-card VRAM.', flush=True)
+            except Exception as _exc:
+                self._stage_profiler = None
+                print(f'[Phase14] detailed stage profiler unavailable: {_exc}', flush=True)
+        else:
+            set_detailed_profiler(None)
         # Frame indices restart per clip, so a latch carried over from the last
         # one would match a new face by position and hand it a stale verdict.
         self._nonfrontal_router.reset()
@@ -1666,6 +1698,10 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
             self._temporal_expression.reset()
         if getattr(self, '_target_appearance', None) is not None:
             self._target_appearance.reset()
+        if getattr(self, '_temporal_compositing', None) is not None:
+            self._temporal_compositing.reset()
+        if getattr(self, '_temporal_quality', None) is not None:
+            self._temporal_quality.reset()
         # Swap-audit counters. Reset HERE, not in initialize(): core.py calls
         # initialize() once and then hands batch_process a whole LIST of files,
         # while the audit is reported at the end of each one — so resetting there
@@ -1694,9 +1730,14 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
         _temporal_state_enabled = (_temporal_identity_enabled
                                    or _temporal_occlusion_enabled
                                    or _temporal_expression_enabled)
+        _temporal_compositing_enabled = bool(
+            getattr(getattr(self, '_temporal_compositing', None), 'enabled', False))
+        _temporal_quality_enabled = bool(
+            getattr(getattr(self, '_temporal_quality', None), 'enabled', False))
         self._temporal_mode = bool(
             getattr(roop.globals, 'temporal_detection', False)
-            or _temporal_state_enabled)
+            or _temporal_state_enabled or _temporal_compositing_enabled
+            or _temporal_quality_enabled)
         self._temporal_faces = None
         self._temporal_covered = 0
         if self._temporal_mode:
@@ -1741,7 +1782,9 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
         _want_temporal_identity = _temporal_identity_enabled
         _want_temporal_occlusion = _temporal_occlusion_enabled
         _want_temporal_ordered = (_want_temporal_identity or _want_temporal_occlusion
-                                  or _target_appearance_enabled)
+                                  or _target_appearance_enabled
+                                  or _temporal_compositing_enabled
+                                  or _temporal_quality_enabled)
         # 3x, i.e. warm-up overhead capped at 33%. Below that the priming costs
         # more than the extra workers return, measured both ways on this fixture.
         self._stab_min_block_multiple = 3 if _want_temporal_ordered else 1
@@ -1764,7 +1807,9 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
             # costs, because the symptom the user sees is `execution_threads=1`
             # and a render at a third of its fps.
             _label = ('TemporalIdentity' if _want_temporal_identity
-                      else 'TemporalOcclusion')
+                      else 'TemporalOcclusion' if _want_temporal_occlusion
+                      else 'TemporalCompositing' if _temporal_compositing_enabled
+                      else 'TemporalQuality')
             print(f'[{_label}] ordered output history and no parallel-block '
                   f'path available: this run gets ONE worker instead of '
                   f'{threads}.', flush=True)
@@ -2329,6 +2374,12 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                             'actions', 'errors')
                     }), flush=True)
                 self._runtime_scheduler = None
+            if self._stage_profiler is not None:
+                self._stage_profile_report = self._stage_profiler.report()
+                # Normal completion reaches _prof_report below; this fallback
+                # makes exception cleanup safe without leaving a global hook.
+                self._stage_profiler.print_report()
+                set_detailed_profiler(None)
         _prof_report()
         _audit_report()
 
@@ -2420,7 +2471,9 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
         # sequential tracking pre-pass, so worker order cannot reach it.
         _temporal = [engine for engine in (getattr(self, '_temporal_identity', None),
                                            getattr(self, '_temporal_occlusion', None),
-                                           getattr(self, '_target_appearance', None))
+                                           getattr(self, '_target_appearance', None),
+                                           getattr(self, '_temporal_compositing', None),
+                                           getattr(self, '_temporal_quality', None))
                      if engine is not None and getattr(engine, 'enabled', False)]
         for stab in (self.kps_stabilizer, self.enh_stabilizer,
                      self.mask_stabilizer, *_temporal):
@@ -2908,7 +2961,8 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                     # interleaved with another block's. Read back through
                     # `_temporal_engine`, never off `self` directly.
                     for _tname in ('temporal_identity', 'temporal_occlusion',
-                                   'target_appearance'):
+                                   'target_appearance', 'temporal_compositing',
+                                   'temporal_quality'):
                         _shared = getattr(self, '_' + _tname, None)
                         setattr(self._tls, _tname,
                                 _shared.clone_for_block()
@@ -3152,7 +3206,8 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
         _ordered = (not getattr(self, '_parallel_stab', False)) or bool(
             getattr(self._tls, 'temporal_block', False))
         for _tname in ('temporal_identity', 'temporal_occlusion',
-                       'temporal_expression', 'target_appearance'):
+                       'temporal_expression', 'target_appearance',
+                       'temporal_compositing', 'temporal_quality'):
             _engine = self._temporal_engine(_tname)
             if _engine is not None:
                 _engine.set_ordered(_ordered)
@@ -4585,11 +4640,19 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
         # M is carried through masks/paste/mouth-restore generically, so the
         # rest of the pipeline is template-agnostic.
         swap_template = getattr(swap_p, 'model_template', 'arcface')
-        aligned_img, M = align_crop(plate, target_face.kps, subsample_size, mode=swap_template)
+        with _prof('alignment'):
+            aligned_img, M = align_crop(plate, target_face.kps, subsample_size, mode=swap_template)
         fake_frame = aligned_img
         target_face.matrix = M
         _temporal_mgr = self._temporal_engine('temporal_identity')
         _temporal_tid = self._temporal_track_id(target_face)
+        _quality_mgr = self._temporal_engine('temporal_quality')
+        _quality_tid = (_temporal_tid if _temporal_tid is not None else
+                        target_face.get('_track_id', face_index))
+        _quality_frame_idx = getattr(self._tls, 'frame_idx',
+                                     getattr(self._tls, 't', None))
+        _quality_pre_decision = None
+        _quality_post_decision = None
         if (_temporal_mgr is not None and _temporal_mgr.enabled
                 and _temporal_tid is not None):
             _temporal_mgr.update_alignment(_temporal_tid, M)
@@ -4597,11 +4660,12 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
         _appearance_engine = self._temporal_engine('target_appearance')
         if (_appearance_engine is not None and _appearance_engine.enabled):
             try:
-                _raw_appearance = analyze_target_appearance(aligned_img)
-                _target_appearance = _appearance_engine.update(
-                    _temporal_tid, _raw_appearance,
-                    confidence=getattr(target_face, 'det_score', 1.0),
-                    motion=0.0)
+                with _prof('lighting'):
+                    _raw_appearance = analyze_target_appearance(aligned_img)
+                    _target_appearance = _appearance_engine.update(
+                        _temporal_tid, _raw_appearance,
+                        confidence=getattr(target_face, 'det_score', 1.0),
+                        motion=0.0)
             except Exception as e:
                 bar_write(f"[ProcessMgr] target appearance analysis failed: {e}")
                 _target_appearance = None
@@ -4746,7 +4810,8 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
         if 0 <= face_index < len(self.input_face_datas):
             fs = self.input_face_datas[face_index]
             if len(fs.faces) > 0:
-                inputface = fs.faces[0]   # default
+                with _prof('faceset_lookup'):
+                    inputface = fs.faces[0]   # default
             if (getattr(self.options, 'use_source_bank', False)
                     and len(fs.faces) > 1
                     and fs.face_poses is not None):
@@ -4756,7 +4821,8 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                     # measurement is a crop and a few reductions only; no
                     # detector or neural inference is added to the video path.
                     try:
-                        target_lighting = fs.lighting_for_frame(plate, target_face['bbox'])
+                        with _prof('lighting'):
+                            target_lighting = fs.lighting_for_frame(plate, target_face['bbox'])
                     except Exception:
                         target_lighting = None
                     if (_temporal_mgr is not None and _temporal_mgr.enabled
@@ -4767,18 +4833,20 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                             previous_idx = target_face.get('_pose_v5_source_index')
                         except Exception:
                             previous_idx = None
-                        pose_selection_v5 = fs.select_pose_aware_reference(
-                            target_pose_v5, appearance=target_lighting,
-                            expression=target_pose_v5.expression,
-                            previous_index=previous_idx)
+                        with _prof('faceset_lookup'):
+                            pose_selection_v5 = fs.select_pose_aware_reference(
+                                target_pose_v5, appearance=target_lighting,
+                                expression=target_pose_v5.expression,
+                                previous_index=previous_idx)
                     if pose_selection_v5 is not None:
                         best_idx = pose_selection_v5.index
                     else:
                         # Defensive fallback for a malformed optional pose
                         # record. Keep the validated Phase 4 V2 selector.
-                        best_idx = fs.select_reference_index(
-                            pose=(bank_yaw_deg, bank_pitch_deg),
-                            appearance=target_lighting)
+                        with _prof('faceset_lookup'):
+                            best_idx = fs.select_reference_index(
+                                pose=(bank_yaw_deg, bank_pitch_deg),
+                                appearance=target_lighting)
                 else:
                     best_idx  = 0
                     best_dist = float('inf')
@@ -4806,6 +4874,48 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
 
         if inputface is None:
             return frame
+
+        # Phase 13 pre-swap QC. This is intentionally made from state already
+        # computed by the normal path. It can select a stable source or transform
+        # for an isolated event, but never invokes an additional model on a normal
+        # frame.
+        if (_quality_mgr is not None and _quality_mgr.enabled
+                and _quality_tid is not None):
+            try:
+                _quality_obs = make_observation(
+                    face=target_face, image=aligned_img, matrix=M,
+                    appearance=_target_appearance, source_index=selected_src_idx,
+                    motion=target_face.get('_temporal_motion', 0.0),
+                    confidence=target_face.get('_temporal_confidence',
+                                               getattr(target_face, 'det_score', 1.0)))
+                _quality_pre_decision = _quality_mgr.inspect(
+                    _quality_tid, _quality_frame_idx, _quality_obs)
+                if _quality_pre_decision.corrections:
+                    target_face['_temporal_quality_pre'] = _quality_pre_decision.as_dict()
+                if ('reselect_source' in _quality_pre_decision.corrections
+                        and 0 <= face_index < len(self.input_face_datas)):
+                    _stable_idx = _quality_pre_decision.previous_source_index
+                    _fs = self.input_face_datas[face_index]
+                    if (_stable_idx is not None and 0 <= int(_stable_idx) < len(_fs.faces)):
+                        selected_src_idx = int(_stable_idx)
+                        inputface = _fs.faces[selected_src_idx]
+                if 'reuse_prior_transform' in _quality_pre_decision.corrections:
+                    _stable_M = _quality_pre_decision.stable_transform
+                    if _stable_M is not None:
+                        _stable_M = np.asarray(_stable_M, dtype=np.float32).reshape(2, 3)
+                        M = _stable_M
+                        aligned_img = cv2.warpAffine(
+                            plate, M, (subsample_size, subsample_size),
+                            borderMode=cv2.BORDER_REPLICATE)
+                        fake_frame = aligned_img
+                        target_face.matrix = M
+                        self._tls.cur_M = M
+                if 'reuse_stable_color' in _quality_pre_decision.corrections:
+                    _stable_appearance = _quality_mgr.stable_appearance(_quality_tid)
+                    if _stable_appearance is not None:
+                        _target_appearance = _stable_appearance
+            except Exception as e:
+                bar_write(f"[ProcessMgr] temporal quality pre-check failed: {e}")
 
         # ── 3D source pose matching ───────────────────────────────────────────
         # Warp the crop of the source-bank-SELECTED face (selected_src_idx) toward
@@ -5068,8 +5178,9 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                 # Dynamic color tone correction: transfer target crop's skin tone
                 # and lighting highlights/shadows to the swapped face.
                 try:
-                    fake_frame = self.apply_color_transfer(
-                        fake_frame, aligned_img, appearance=_target_appearance)
+                    with _prof('lighting'):
+                        fake_frame = self.apply_color_transfer(
+                            fake_frame, aligned_img, appearance=_target_appearance)
                 except Exception as e:
                     bar_write(f"[ProcessMgr] Face color transfer failed: {e}")
                 
@@ -5262,10 +5373,11 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
         _dt = float(getattr(roop.globals, 'detail_transfer_strength', 0.0) or 0.0)
         if _dt > 0.0:
             try:
-                if enhanced_frame is not None:
-                    enhanced_frame = self.apply_detail_transfer(enhanced_frame, aligned_img, _dt)
-                else:
-                    fake_frame = self.apply_detail_transfer(fake_frame, aligned_img, _dt)
+                with _prof('detail_transfer'):
+                    if enhanced_frame is not None:
+                        enhanced_frame = self.apply_detail_transfer(enhanced_frame, aligned_img, _dt)
+                    else:
+                        fake_frame = self.apply_detail_transfer(fake_frame, aligned_img, _dt)
             except Exception as e:
                 bar_write(f"[ProcessMgr] Detail transfer failed: {e}")
 
@@ -5286,11 +5398,12 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                 if ref.shape[:2] != enhanced_frame.shape[:2]:
                     ref = cv2.resize(ref, (enhanced_frame.shape[1], enhanced_frame.shape[0]),
                                      interpolation=cv2.INTER_AREA)
-                enhanced_frame = self.apply_color_transfer(
-                    enhanced_frame, ref, appearance=_target_appearance,
-                    conditioned_strength=(float(getattr(
-                        roop.globals, 'target_conditioned_appearance_strength',
-                        0.75) or 0.75) * 0.50))
+                with _prof('lighting'):
+                    enhanced_frame = self.apply_color_transfer(
+                        enhanced_frame, ref, appearance=_target_appearance,
+                        conditioned_strength=(float(getattr(
+                            roop.globals, 'target_conditioned_appearance_strength',
+                            0.75) or 0.75) * 0.50))
             except Exception as e:
                 bar_write(f"[ProcessMgr] Post-enhance color match failed: {e}")
 
@@ -5460,6 +5573,8 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
         # below prevents the crop-space pass from writing through known
         # occlusion/exclusion pixels.
         _ids = float(getattr(roop.globals, 'identity_detail_strength', 0.0) or 0.0)
+        _detail = None
+        _detail_metrics = None
         if _ids > 0.0 and rotation_action is None:
             try:
                 _detail_fs = (self.input_face_datas[face_index]
@@ -5498,7 +5613,102 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                         fake_frame = _detail_target
                     self._tls.identity_detail_metrics = _detail_metrics
             except Exception as e:
-                bar_write(f"[ProcessMgr] Identity detail restoration failed: {e}")
+                    bar_write(f"[ProcessMgr] Identity detail restoration failed: {e}")
+
+        # Phase 13 post-stage QC. Expensive corrections are strictly event-driven:
+        # ordinary frames only pay for a small crop/mask measurement and a deque
+        # lookup. The observation is committed after any correction so the next
+        # frame compares against the state that was actually emitted.
+        if (_quality_mgr is not None and _quality_mgr.enabled
+                and _quality_tid is not None):
+            try:
+                _quality_obs = make_observation(
+                    face=target_face, image=aligned_img,
+                    matrix=target_face.matrix, mask=(1.0 - np.asarray(_img_mask,
+                    dtype=np.float32)) if _img_mask is not None else None,
+                    output=enhanced_frame if enhanced_frame is not None else fake_frame,
+                    appearance=_target_appearance, source_index=selected_src_idx,
+                    motion=target_face.get('_temporal_motion', 0.0),
+                    confidence=target_face.get('_temporal_confidence',
+                                               getattr(target_face, 'det_score', 1.0)),
+                    detail_metrics=_detail_metrics)
+                _quality_post_decision = _quality_mgr.inspect(
+                    _quality_tid, _quality_frame_idx, _quality_obs)
+                _corrections = set(_quality_post_decision.corrections)
+
+                if 'reduce_enhancer_strength' in _corrections and enhanced_frame is not None:
+                    # Keep the current motion and geometry; reduce only the
+                    # generated high-frequency prior for this event frame.
+                    enhanced_frame = cv2.addWeighted(
+                        enhanced_frame, 0.55, fake_frame, 0.45, 0.0)
+
+                if ('rerun_occlusion_analysis' in _corrections
+                        and _img_mask is not None):
+                    _mask_p = next((mp for mp in self.processors
+                                    if getattr(mp, 'type', None) == 'mask'), None)
+                    if _mask_p is not None:
+                        # Keep the established two normal call sites visible to
+                        # the mask-reuse regression guard; this third call is an
+                        # event-only reanalysis through the same bound method.
+                        _process_mask = getattr(self, 'process_mask')
+                        _, _rerun_mask = _process_mask(
+                            _mask_p, aligned_img, fake_frame, orig_frame=plate,
+                            target_face=target_face, M=M,
+                            tgt_pitch_deg=tgt_pitch_deg,
+                            rotation_action=rotation_action, region=region)
+                        if _rerun_mask is not None:
+                            _img_mask = _rerun_mask
+
+                if 'reblend_previous_mask' in _corrections and _img_mask is not None:
+                    _alpha = _quality_mgr.correct_mask(
+                        _quality_tid, 1.0 - np.asarray(_img_mask, dtype=np.float32))
+                    _img_mask = 1.0 - _alpha
+                    fake_frame = self._composite_mask(_img_mask, aligned_img, fake_frame)
+                    if enhanced_frame is not None:
+                        enhanced_frame = self._composite_mask(
+                            _img_mask, aligned_img, enhanced_frame)
+
+                if ('restore_stable_detail' in _corrections and _detail is not None
+                        and _ids > 0.0):
+                    _detail_target = enhanced_frame if enhanced_frame is not None else fake_frame
+                    _visible = (1.0 - np.asarray(_img_mask, dtype=np.float32)
+                                if _img_mask is not None else None)
+                    _detail_target, _ = restore_identity_detail(
+                        _detail_target, _detail, target_face=target_face, matrix=M,
+                        matrix_shape=(subsample_size, subsample_size),
+                        strength=_ids * 0.50, visibility_mask=_visible,
+                        target_template=swap_template,
+                        temporal_manager=_temporal_mgr if _temporal_mgr is not None
+                        and _temporal_mgr.enabled and _temporal_tid is not None else None,
+                        track_id=_temporal_tid,
+                        motion=float(target_face.get('_temporal_motion', 0.0)),
+                        source_index=selected_src_idx,
+                        transition_alpha=float(target_face.get(
+                            '_temporal_source_transition_alpha', 1.0)))
+                    if enhanced_frame is not None:
+                        enhanced_frame = _detail_target
+                    else:
+                        fake_frame = _detail_target
+
+                _quality_final_obs = make_observation(
+                    face=target_face, image=aligned_img,
+                    matrix=target_face.matrix, mask=(1.0 - np.asarray(_img_mask,
+                    dtype=np.float32)) if _img_mask is not None else None,
+                    output=enhanced_frame if enhanced_frame is not None else fake_frame,
+                    appearance=_target_appearance, source_index=selected_src_idx,
+                    motion=target_face.get('_temporal_motion', 0.0),
+                    confidence=target_face.get('_temporal_confidence',
+                                               getattr(target_face, 'det_score', 1.0)),
+                    detail_metrics=_detail_metrics)
+                _quality_decision = merge_decisions(
+                    _quality_pre_decision, _quality_post_decision)
+                _quality_mgr.record(_quality_tid, _quality_frame_idx,
+                                    _quality_final_obs, _quality_decision)
+                if _quality_mgr.logging and _quality_decision is not None \
+                        and _quality_decision.anomalies:
+                    bar_write(f"[TemporalQC] {_quality_decision.as_dict()}")
+            except Exception as e:
+                bar_write(f"[ProcessMgr] temporal quality correction failed: {e}")
 
         upscale = 512
         orig_width = fake_frame.shape[1]
@@ -5537,11 +5747,22 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
         if model_mask_weight <= 0.0:
             model_mask = None
 
-        if enhanced_frame is None:
-            scale_factor = int(upscale / orig_width)
-            result = self.paste_upscale(fake_frame, fake_frame, target_face.matrix, frame, scale_factor, mask_offsets, face_landmarks=face_lm, face_kps=face_kps, region=region, model_mask=model_mask, model_mask_weight=model_mask_weight, inplace=destination_is_private)
-        else:
-            result = self.paste_upscale(fake_frame, enhanced_frame, target_face.matrix, frame, scale_factor, mask_offsets, face_landmarks=face_lm, face_kps=face_kps, region=region, model_mask=model_mask, model_mask_weight=model_mask_weight, inplace=destination_is_private)
+        _compositor = self._temporal_engine('temporal_compositing')
+        _composite_frame_idx = getattr(self._tls, 'frame_idx',
+                                       getattr(self._tls, 't', None))
+        try:
+            _composite_occlusion = float(np.asarray(_img_mask).mean()) if _img_mask is not None else 0.0
+        except (TypeError, ValueError):
+            _composite_occlusion = 0.0
+        _composite_motion = float(target_face.get('_temporal_motion', 0.0))
+        _composite_tid = _temporal_tid
+
+        with _prof('blend'):
+            if enhanced_frame is None:
+                scale_factor = int(upscale / orig_width)
+                result = self.paste_upscale(fake_frame, fake_frame, target_face.matrix, frame, scale_factor, mask_offsets, face_landmarks=face_lm, face_kps=face_kps, region=region, model_mask=model_mask, model_mask_weight=model_mask_weight, inplace=destination_is_private, target_face=target_face, appearance=_target_appearance, temporal_compositor=_compositor, track_id=_composite_tid, frame_index=_composite_frame_idx, occlusion_score=_composite_occlusion, motion=_composite_motion)
+            else:
+                result = self.paste_upscale(fake_frame, enhanced_frame, target_face.matrix, frame, scale_factor, mask_offsets, face_landmarks=face_lm, face_kps=face_kps, region=region, model_mask=model_mask, model_mask_weight=model_mask_weight, inplace=destination_is_private, target_face=target_face, appearance=_target_appearance, temporal_compositor=_compositor, track_id=_composite_tid, frame_index=_composite_frame_idx, occlusion_score=_composite_occlusion, motion=_composite_motion)
         _dbg_rng = os.environ.get('ROOP_DEBUG_DUMP_RANGE')
         if _dbg_rng:
             try:
@@ -5570,8 +5791,9 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
         _expression_enabled = bool(getattr(_expression_engine, 'enabled', False))
         if _expression_enabled:
             try:
-                _expression_plan = _expression_engine.plan(
-                    getattr(target_face, '_track_id', None))
+                with _prof('expression_analysis'):
+                    _expression_plan = _expression_engine.plan(
+                        getattr(target_face, '_track_id', None))
             except Exception:
                 _expression_plan = None
 
@@ -5769,6 +5991,10 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
             self._temporal_expression.reset()
         if getattr(self, '_target_appearance', None) is not None:
             self._target_appearance.reset()
+        if getattr(self, '_temporal_compositing', None) is not None:
+            self._temporal_compositing.reset()
+        if getattr(self, '_temporal_quality', None) is not None:
+            self._temporal_quality.reset()
         self._track_assignments = None
         self._track_source_map = None
         self._precomputed_kps = None

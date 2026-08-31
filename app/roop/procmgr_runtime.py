@@ -40,12 +40,19 @@ _PROFILE = os.environ.get('ROOP_PROFILE', '0') == '1'
 # Phase 15 uses the existing timing context as a zero-copy observation point.
 # ``None`` is the normal state: _prof then keeps its historical no-op cost.
 _RUNTIME_MONITOR = None
+_DETAILED_PROFILER = None
 
 
 def set_runtime_monitor(monitor):
     """Attach/detach the optional per-run monitor without an import cycle."""
     global _RUNTIME_MONITOR
     _RUNTIME_MONITOR = monitor
+
+
+def set_detailed_profiler(profiler):
+    """Attach/detach the opt-in Phase 14 profiler."""
+    global _DETAILED_PROFILER
+    _DETAILED_PROFILER = profiler
 
 
 # ── Identity-lock source veto ────────────────────────────────────────────────
@@ -448,10 +455,12 @@ _prof_counts = _defaultdict(int)
 @contextlib.contextmanager
 def _prof(stage):
     monitor = _RUNTIME_MONITOR
-    if not _PROFILE and monitor is None:
+    profiler = _DETAILED_PROFILER
+    if not _PROFILE and monitor is None and profiler is None:
         yield
         return
     t0 = time.perf_counter()
+    profile_token = profiler.begin(stage) if profiler is not None else None
     try:
         yield
     finally:
@@ -462,6 +471,8 @@ def _prof(stage):
                 _prof_counts[stage] += 1
         if monitor is not None:
             monitor.record_stage(stage, dt)
+        if profiler is not None:
+            profiler.end(profile_token)
 
 
 def _prof_reset():
@@ -482,16 +493,19 @@ def _prof_reset():
 
 
 def _prof_report():
-    if not _PROFILE or not _prof_times:
+    if not _PROFILE and _DETAILED_PROFILER is None:
         return
-    total = sum(_prof_times.values()) or 1.0
-    print("\n==== STAGE TIMING (ROOP_PROFILE) — wall-clock summed across worker threads ====", flush=True)
-    print(f"  {'stage':16s} {'total':>9s} {'share':>7s} {'calls':>8s} {'ms/call':>9s}", flush=True)
-    for k in sorted(_prof_times, key=lambda x: -_prof_times[x]):
-        t = _prof_times[k]
-        c = _prof_counts[k]
-        print(f"  {k:16s} {t:8.2f}s {100 * t / total:6.1f}% {c:8d} {1000 * t / max(c, 1):8.2f}", flush=True)
-    print("=============================================================================\n", flush=True)
+    if _PROFILE and _prof_times:
+        total = sum(_prof_times.values()) or 1.0
+        print("\n==== STAGE TIMING (ROOP_PROFILE) — wall-clock summed across worker threads ====", flush=True)
+        print(f"  {'stage':16s} {'total':>9s} {'share':>7s} {'calls':>8s} {'ms/call':>9s}", flush=True)
+        for k in sorted(_prof_times, key=lambda x: -_prof_times[x]):
+            t = _prof_times[k]
+            c = _prof_counts[k]
+            print(f"  {k:16s} {t:8.2f}s {100 * t / total:6.1f}% {c:8d} {1000 * t / max(c, 1):8.2f}", flush=True)
+        print("=============================================================================\n", flush=True)
+    if _DETAILED_PROFILER is not None:
+        _DETAILED_PROFILER.print_report()
 
 
 # ── Swap audit ───────────────────────────────────────────────────────────────

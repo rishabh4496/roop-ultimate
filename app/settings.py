@@ -657,6 +657,20 @@ class Settings:
         # FaceSet V2 persistent source identity detail restoration. Opt-in to
         # keep V1 archives and existing looks unchanged.
         self.identity_detail_strength = self.default_get(data, 'identity_detail_strength', 0.0)
+        # Phase 12 adaptive temporal paste-back. Opt-in to preserve existing
+        # look settings and the historical linear compositor by default.
+        self.temporal_compositing = self.default_get(data, 'temporal_compositing', False)
+        self.temporal_compositing_strength = self.default_get(data, 'temporal_compositing_strength', 0.65)
+        self.temporal_compositing_mask_alpha = self.default_get(data, 'temporal_compositing_mask_alpha', 0.30)
+        self.temporal_compositing_cache_size = self.default_get(data, 'temporal_compositing_cache_size', 256)
+        self.temporal_compositing_detail_weight = self.default_get(data, 'temporal_compositing_detail_weight', 0.86)
+        self.temporal_compositing_color_strength = self.default_get(data, 'temporal_compositing_color_strength', 0.55)
+        self.temporal_compositing_max_feather = self.default_get(data, 'temporal_compositing_max_feather', 8)
+        # Phase 13 temporal QC is opt-in and diagnostics are independently opt-in.
+        self.temporal_quality_control = self.default_get(data, 'temporal_quality_control', False)
+        self.temporal_quality_logging = self.default_get(data, 'temporal_quality_logging', False)
+        self.temporal_quality_history = self.default_get(data, 'temporal_quality_history', 4)
+        self.temporal_quality_cache_size = self.default_get(data, 'temporal_quality_cache_size', 256)
         # Eye restore — the counterpart to restore_original_mouth
         self.restore_original_eyes = self.default_get(data, 'restore_original_eyes', False)
         self.eyes_blend_amount = self.default_get(data, 'eyes_blend_amount', 1.0)
@@ -894,6 +908,17 @@ class Settings:
             'jaw_reshape_strength': self.jaw_reshape_strength,
             'detail_transfer_strength': self.detail_transfer_strength,
             'identity_detail_strength': self.identity_detail_strength,
+            'temporal_compositing': self.temporal_compositing,
+            'temporal_compositing_strength': self.temporal_compositing_strength,
+            'temporal_compositing_mask_alpha': self.temporal_compositing_mask_alpha,
+            'temporal_compositing_cache_size': self.temporal_compositing_cache_size,
+            'temporal_compositing_detail_weight': self.temporal_compositing_detail_weight,
+            'temporal_compositing_color_strength': self.temporal_compositing_color_strength,
+            'temporal_compositing_max_feather': self.temporal_compositing_max_feather,
+            'temporal_quality_control': self.temporal_quality_control,
+            'temporal_quality_logging': self.temporal_quality_logging,
+            'temporal_quality_history': self.temporal_quality_history,
+            'temporal_quality_cache_size': self.temporal_quality_cache_size,
             'restore_original_eyes': self.restore_original_eyes,
             'eyes_blend_amount': self.eyes_blend_amount,
             'eyes_feather_blend': self.eyes_feather_blend,

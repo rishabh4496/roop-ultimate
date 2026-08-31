@@ -92,6 +92,21 @@ detail_transfer_strength = 0.0
 # this never reads the target crop's texture and is confidence/visibility gated.
 # 0 = off (bit-identical legacy path), 0..1 = controlled restoration strength.
 identity_detail_strength = 0.0
+# Final paste-back compositing.  Kept opt-in so existing custom looks remain
+# unchanged until the Phase 12 path has been explicitly selected.
+temporal_compositing = False
+temporal_compositing_strength = 0.65
+temporal_compositing_mask_alpha = 0.30
+temporal_compositing_cache_size = 256
+temporal_compositing_detail_weight = 0.86
+temporal_compositing_color_strength = 0.55
+temporal_compositing_max_feather = 8
+# Optional event-driven temporal quality control. It observes existing pipeline
+# state and remains a no-op unless explicitly enabled.
+temporal_quality_control = False
+temporal_quality_logging = False
+temporal_quality_history = 4
+temporal_quality_cache_size = 256
 # Eye restore: composite the TARGET's own eyes back over the swapped result.
 # See ProcessMgr.apply_eyes_area. Radii are fractions of interocular distance;
 # feather is a percentage of the eye radius, so none of these need a per-clip

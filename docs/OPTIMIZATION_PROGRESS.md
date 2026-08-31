@@ -1643,3 +1643,270 @@ controlled real lighting measurements, or retained-output visual review.
 The implementation is intentionally **not promoted as a new default**. Real
 video measurements, retained-frame review, and physical RTX 3060 evidence are
 still required before deciding whether any profile/default should change.
+
+## REQUESTED PHASE 12 - TEMPORAL COMPOSITING AND NATURAL BLENDING - OPEN / INCOMPLETE (2026-09-01)
+
+### Explicit phase state
+
+- **Current phase:** requested Phase 12 temporal compositing and natural
+  blending.
+- **Previous completed phase:** historical Phase 10 parallel-block temporal
+  execution. Requested Phase 11 adaptive enhancer orchestration remains open;
+  this phase does not redo or close it.
+- **Current objective:** extend the existing `MaskingMixin.paste_upscale`
+  final paste authority with confidence/geometry/occlusion/lighting-aware
+  compositing and temporally stable masks.
+- **Dependencies:** the existing warped matte, `FaceRegion` ownership,
+  target-conditioned appearance tier, target-face pose/confidence fields, and
+  the existing ordered contiguous-block temporal lifecycle. No new mask or
+  parallel paste pipeline was introduced.
+
+### Implementation
+
+`app/roop/temporal_compositing.py` provides the opt-in
+`TemporalCompositeController`, a 64x64 per-track canonical-mask EMA, adaptive
+geometry/confidence/occlusion/lighting/contrast planning, semantic outer-edge
+weighting, and a bounded two-band compositor. Low frequencies are adapted from
+the target ROI with clipped deltas so target shadows/highlights and scene cast
+survive; high frequencies come from the generated identity crop and are
+attenuated only at the jaw/cheek/forehead/hair boundary. The function never
+pastes target noise or source texture wholesale. Poisson/gradient-domain
+blending was investigated as an OpenCV candidate and rejected for the hot path
+because it is CPU/full-patch work without a measured benefit over the ROI
+two-band method.
+
+`ProcessMgr` includes the controller in reset, warm-up, block cloning, ordered
+state, and release handling. `paste_upscale` applies it after existing model,
+ownership, and occlusion trims and before the bounded ROI write. Therefore
+RealityUX, RealSwap, GPEN 256 Pro, GPEN Realistic, UltraMax, identity detail,
+expression, and other existing paths remain upstream and the final composite
+does not allow a restorer to erase the preserved identity detail afterward.
+
+Settings/API/config wiring is opt-in and preserves the 4070 defaults and the
+3060 custom look (`blend_ratio=0.85`, `face_mask_blend=25`,
+`merger_sharpen=0.55`, `stabilize_enhancer_strength=0.6`). The existing Phase 12
+real-video harness gained a `compositing_on` arm and explicit controlled
+off/on forwarding.
+
+### Files changed for this requested phase
+
+- `app/roop/temporal_compositing.py`
+- `app/roop/procmgr_masking.py`
+- `app/roop/ProcessMgr.py`
+- `app/roop/globals.py`
+- `app/settings.py`
+- `app/api.py`
+- `app/tests/test_temporal_compositing.py`
+- `app/tests/bench_temporal_compositing.py`
+- `app/tests/test_phase12_pipeline.py`
+- `app/tests/baseline_controlled.py`
+- `app/tests/two_face_video.py`
+- `app/tests/phase12_benchmark.py`
+- `docs/ENV_FLAGS.md`
+- `docs/OPTIMIZATION_PROGRESS.md`
+- `docs/PHASE_HANDOFF.md`
+
+### Tests and benchmark evidence
+
+- Focused compositor and scheduling tests: **15 passed**.
+- Existing identity/appearance/mask/temporal/RealSwap regression set:
+  **104 passed, 1 warning**.
+- Full regression suite after implementation: **1648 passed, 1 skipped, 599
+  subtests passed, 2 warnings**.
+- Component benchmark: all eight requested conditions completed. The adaptive
+  compositor reduced synthetic boundary-gradient error versus linear blending
+  (for example frontal **44.2028 -> 3.3763**, profile **45.3427 -> 2.4237**, and
+  dark scene **160.6613 -> 15.9798**) with **5.85–7.22 ms/frame** adaptive cost
+  versus **1.89–2.18 ms/frame** linear reference. The report is saved at
+  `app/output/phase12_temporal_compositing.json`; these are component metrics,
+  not visual acceptance scores.
+- Matching 4070 real-pipeline smoke on locked `double/d4.mp4`, 4 frames,
+  RealSwap/TensorRT/12 workers/None mask/RCT/stabilization on: compositor OFF
+  returned code 0 at **0.47 FPS**, 326.27 ms frame latency, 4,704 MB peak VRAM,
+  8.659 GB peak RSS; compositor ON returned code 0 at **0.49 FPS**, 318.28 ms,
+  4,675 MB peak VRAM, 8.544 GB peak RSS. Both swapped 2 faces with 0 wrong
+  FaceSets. The run is a pipeline safety/cost check only: detector coverage
+  was 1/4 frames, so no real-footage quality conclusion is claimed.
+
+### Complete-phase checklist audit (line by line)
+
+| Requirement | Evidence | Status | Still missing |
+|---|---|---|---|
+| IMPLEMENT | Existing paste authority extended with adaptive semantic/geometry/occlusion/lighting masks, intelligent capped feathering, target low-band adaptation, generated high-band protection, and canonical per-track EMA | PASS | None in the implemented path |
+| TEST | 14 focused tests plus full suite; bounds, temporal chatter reduction, difficult-plan attenuation, legacy linear reference, wiring, and texture separation covered | PASS | None in automated contracts |
+| BENCHMARK | Eight-condition component matrix plus matching 4070 real-pipeline OFF/ON cost/VRAM/RSS/swap safety smoke | PARTIAL | Real annotated quality metrics across frontal/lateral/profile/hair/glasses/hand/dark/bright video and physical RTX 3060 run |
+| REGRESSION TEST | Full suite green; legacy disabled path remains linear; matching real smoke has 0 wrong FaceSets | PARTIAL | Retained-output visual review for jaw/cheek/forehead/hair/shadows/occlusion and restorer-family detail preservation |
+| DOCUMENT | `ENV_FLAGS.md`, this record, benchmark help/description, settings/API behavior documented | PASS | None for current evidence |
+| HANDOFF | Exact next starting point recorded below in `PHASE_HANDOFF.md` | PASS | Phase remains open until benchmark/regression partials close |
+
+The phase is **not marked complete**. Code, tests, component measurements, and
+one 4070 safety/cost smoke do not substitute for real scene quality review or
+the physical RTX 3060 hardware gate.
+
+## REQUESTED PHASE 13 - TEMPORAL ARTIFACT DETECTION AND SELECTIVE CORRECTION - OPEN / INCOMPLETE (2026-09-01)
+
+### Explicit phase state
+
+- **Current phase:** requested Phase 13 temporal artifact detection and
+  selective correction.
+- **Previous completed phase:** historical Phase 10 parallel-block temporal
+  execution. Requested Phases 11 and 12 remain open; this work extends their
+  existing adaptive-enhancer, temporal-detail, appearance, and compositing
+  paths without replacing or reverting them.
+- **Current objective:** compare each tracked face against a bounded short
+  history, pass normal frames through, and apply only targeted event corrections
+  when a temporal quality abnormality is detected.
+- **Dependencies:** existing target-face tracks, aligned crops/transforms,
+  source-bank index, target appearance state, mask/occlusion output, enhancer
+  output, V2 identity-detail metrics, and contiguous ordered-block lifecycle.
+
+### Implementation
+
+`app/roop/temporal_quality.py` provides `TemporalQualityController` and the
+compact `make_observation()` adapter. It detects identity drift, mask popping,
+face brightness jumps, skin-color jumps, geometry jumps, enhancer
+hallucination, detail disappearance, eye-state discontinuity, jawline movement
+discontinuity, and face flicker. Per-track history is bounded and cloned per
+ordered block. Event-edge latching prevents a persistent bad state from
+re-running correction every frame.
+
+`ProcessMgr` performs a cheap pre-swap inspection and a post-enhancer/detail
+inspection. On events it can reselect the previous source representation,
+reuse a stable affine/color state, re-run the existing mask/occlusion path,
+reduce enhancer contribution, restore V2 identity detail at reduced strength,
+and reblend a previous alpha. High-motion eye/jaw changes are recorded while
+the current motion is preserved. No whole-face target texture paste or generic
+blur correction was added. Existing RealityUX, RealSwap, GPEN 256 Pro, GPEN
+Realistic, UltraMax, identity-detail, appearance, and temporal-compositing
+paths remain available.
+
+QC is opt-in through settings/API/config and has independent optional logging.
+The controlled video harness exposes `--temporal-quality-control`,
+`--temporal-quality-logging`, and `--temporal-quality-history`.
+
+### Files changed for this requested phase
+
+- `app/roop/temporal_quality.py`
+- `app/roop/ProcessMgr.py`
+- `app/roop/globals.py`
+- `app/settings.py`
+- `app/api.py`
+- `app/tests/test_temporal_quality.py`
+- `app/tests/bench_temporal_quality.py`
+- `app/tests/two_face_video.py`
+- `docs/ENV_FLAGS.md`
+- `docs/OPTIMIZATION_PROGRESS.md`
+- `docs/PHASE_HANDOFF.md`
+
+### Tests and benchmark evidence
+
+- Focused detector/correction/logging tests: **10 passed**.
+- Combined Phase 13 plus existing adaptive-enhancer, compositing, Phase 11,
+  Phase 12, and settings wiring tests: **61 passed, 1 warning**.
+- Python compile check for the modified runtime/API/settings files: passed.
+- Synthetic event benchmark (`bench_temporal_quality.py`, 2000 iterations per
+  case): normal event rate **0.0**; all ten requested anomaly classes produced
+  a targeted event once (**0.0005 event rate** under the persistent-signal
+  edge-trigger test); inspect/record cost was approximately **0.654–0.678
+  ms/iteration**. This is controller overhead, not model inference time.
+
+### Complete-phase checklist audit (line by line)
+
+| Requirement | Evidence | Status | Still missing |
+|---|---|---|---|
+| IMPLEMENT | Ten anomaly detectors, bounded short history, normal pass-through, event latching, targeted source/transform/color/alignment/occlusion/enhancer/detail/mask actions, high-motion expression protection, optional logging | PASS | None in the implemented code path |
+| TEST | Dedicated regression tests cover every detector, every correction family, persistent-event suppression, required log fields, disabled no-op, mask correction, and high-motion preservation; existing integration tests remain green | PASS | Real retained-frame assertions for each scene are still open |
+| BENCHMARK | Reproducible synthetic event/cost benchmark with per-case event rate and correction count | PARTIAL | Real video-level anomaly rates, correction cost, VRAM/RSS/FPS, and physical RTX 3060 measurements |
+| REGRESSION TEST | Full repository suite: **1658 passed, 1 skipped, 599 subtests passed, 2 warnings**; focused/integration tests and runtime compile also pass | PARTIAL | Retained-output visual review and real-footage artifact gates remain open |
+| DOCUMENT | ENV flags, harness controls, implementation, evidence, and this line-by-line audit recorded | PASS | None for the current implementation description |
+| HANDOFF | Exact next starting point and unresolved gates recorded in `PHASE_HANDOFF.md` | PASS | Phase remains open until benchmark/regression partials close |
+
+Phase 13 is **not marked complete**. The implementation and synthetic contracts
+are present, but real footage, retained visual review, and both-hardware evidence
+remain required before promoting QC or changing defaults.
+
+## Requested Phase 14 — end-to-end GPU performance optimization
+
+### Explicit state at handoff
+
+- **Current phase:** requested Phase 14; implementation and RTX 4070 controlled
+  evidence are present, but the phase remains open.
+- **Previous completed phase:** historical Phase 10 parallel-block temporal
+  execution. Requested Phases 11, 12, and 13 remain open/incomplete in this
+  worktree; their existing optimizations are preserved and not redone.
+- **Current objective:** measure every end-to-end stage with CPU/GPU/synchronization
+  and memory evidence, optimize only a measured bottleneck, and preserve
+  deterministic identity/quality behavior.
+- **Files likely involved:** app/roop/procmgr_runtime.py,
+  app/roop/stage_profiler.py, app/roop/ProcessMgr.py,
+  app/roop/procmgr_tracking.py, app/roop/procmgr_masking.py,
+  app/tests/baseline_controlled.py, app/tests/phase14_bottleneck_report.py,
+  and their Phase 14 tests.
+- **Known risks:** synchronized profiling changes throughput; PyTorch CUDA
+  events do not fully attribute ONNX Runtime work; full-card VRAM is external
+  telemetry; optional detail/expression/occlusion stages are not exercised by
+  the locked default workload; 3060 validation and retained-frame visual review
+  are still open.
+- **Validation plan:** run the same locked clip and stack with ROI warps off/on,
+  collect event-only and synchronized detailed profiles, compare quality guards
+  and telemetry, run the full suite, and repeat the required validation on the
+  3060 profile before any further promotion.
+
+### Implementation and measurement
+
+StageProfiler is attached to the existing _prof context only when
+ROOP_PROFILE_DETAIL=1. It emits raw stages plus a canonical matrix for
+detection, tracking, alignment, FaceSet lookup, swap, expression analysis,
+occlusion analysis, detail restoration, enhancement, lighting, mask, blending,
+and encoding. Every row contains CPU time, CUDA-event time, synchronized-window
+time, synchronization time, allocator peak/steady values, and transfer fields.
+Unavailable values are explicit; provider transfers are not invented.
+
+The measured bottleneck was the final blend's full-frame face warps. The
+default ROOP_BLEND_ROI_WARP=1 path keeps the authoritative full-frame matte
+and moves only the face/image warps into the non-zero matte ROI. The old path
+remains available with ROOP_BLEND_ROI_WARP=0. No model, session ownership,
+TensorRT guard, worker ordering, enhancer, or quality setting was changed.
+
+### Benchmark evidence
+
+All video arms used the same double/d4.mp4, frames 0..60, sources
+harjot,gargee, RealSwap, TensorRT, GPEN 256 Pro, RealityUX, HEVC NVENC,
+12 threads, and the locked stabilizer settings.
+
+- Detailed current control, ROI off: **86.35 s**, **2.75 FPS**,
+  peak sampled VRAM **6559 MB**, peak RSS **9.674 GB**, zero wrong-FaceSet
+  applications. Blend: **11.10 s / 144 calls**.
+- Detailed optimized arm, ROI on: **82.07 s**, **2.87 FPS**,
+  peak sampled VRAM **6485 MB**, peak RSS **9.721 GB**, zero wrong-FaceSet
+  applications. Blend: **9.12 s / 144 calls** (**17.8% lower summed
+  blend time** in this paired arm; total FPS remains a noisy single-run
+  result).
+- The standalone transfer/warp microbenchmark measured ROI versus full-frame
+  paste at **1920x1080: 8.983 vs 9.071 ms** and
+  **3840x2160: 32.840 vs 33.137 ms** median, so the microbenchmark alone
+  is only a ~0.9% improvement. The end-to-end blend result is retained as
+  measured evidence, not as a claim of universal speedup.
+- Synchronized diagnosis on the same clip prefix, 20 frames, ROI on:
+  **76.44 s**, **1.29 FPS**. It recorded non-zero synchronization totals,
+  including **3.98 ms detection**, **3.67 ms blending**, **3.99 ms mask**,
+  and **1.59 ms swap**. This arm is diagnostic only because fences are
+  invasive.
+
+### Complete-phase checklist audit
+
+| Requirement | IMPLEMENT | TEST | BENCHMARK | REGRESSION TEST | DOCUMENT | HANDOFF |
+|---|---|---|---|---|---|---|
+| CPU/GPU/synchronization timing for every stage | PASS: _prof attachment and canonical matrix | PASS: schema/aggregation tests | PARTIAL: event-only full active matrix plus synchronized 20-frame run | PASS: no scheduling/session code changed; full post-Phase-14 suite still required | PASS | PASS |
+| Allocation, peak/steady VRAM, and transfers | PASS: allocator fields, external telemetry linkage, explicit transfer API | PASS: empty/explicit-counter contract | PARTIAL: sampled full-card VRAM recorded; ORT transfers remain opaque | PASS: no allocator ownership changes | PASS | PASS |
+| Optimize only measured bottlenecks | PASS: ROI warp targets measured blend stage and has rollback | PASS: byte-identical synthetic legacy comparison | PASS: paired ROI-off/on and microbenchmark | PARTIAL: retained-frame visual review remains open | PASS | PASS |
+| GPU residency/session reuse/async/batching/shape/ROI/I/O priorities | PARTIAL: ROI path added; existing session/guard/scheduler work preserved | PASS: existing safety suites plus focused tests | PARTIAL: no unmeasured concurrency or session change was promoted | PASS: TensorRT/global guards untouched | PASS | PASS |
+| Race, TensorRT conflict, corruption, determinism, preview/batch safety | PASS: profiler observational; no ownership/scheduling mutation | PASS: existing runtime/adaptive/compositor suites plus ROI equivalence | PARTIAL: full long-run and preview/batch soak remain open | PARTIAL: full post-change suite pending | PASS | PASS |
+| Quality per second / watt / VRAM without degradation | PARTIAL: zero wrong-FaceSet and finiteness/return-code guards; no visual metric added | PASS: output-equivalence fixture | PARTIAL: 4070 telemetry only; no retained visual identity/detail matrix or 3060 arm | PARTIAL | PASS | PASS |
+| IMPLEMENT / TEST / BENCHMARK / REGRESSION TEST / DOCUMENT / HANDOFF | PASS | PASS focused | PARTIAL real-footage coverage | PARTIAL full suite after final edits and cross-hardware | PASS | PASS |
+
+The current phase is **not complete**. Missing items are deliberately explicit:
+feature-enabled measurements for detail restoration, expression analysis, and
+occlusion analysis; per-provider transfer attribution; repeated paired arms to
+separate ROI benefit from run noise; retained-frame identity/detail/temporal
+review; and the physical RTX 3060 run under its 1536 MB / 2.5 GB constraints.

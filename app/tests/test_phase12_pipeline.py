@@ -9,6 +9,7 @@ PM = (APP / "roop" / "ProcessMgr.py").read_text(encoding="utf-8")
 OPT = (APP / "roop" / "runtime_optimizer.py").read_text(encoding="utf-8")
 MASK = (APP / "roop" / "procmgr_masking.py").read_text(encoding="utf-8")
 BENCH = (APP / "tests" / "phase12_benchmark.py").read_text(encoding="utf-8")
+COMPOSITOR_BENCH = (APP / "tests" / "bench_temporal_compositing.py").read_text(encoding="utf-8")
 
 
 class Phase12SchedulingContract(unittest.TestCase):
@@ -62,6 +63,16 @@ class Phase12BenchmarkContract(unittest.TestCase):
     def test_unavailable_target_is_pending(self):
         self.assertIn('report["status"] = "pending"', BENCH)
         self.assertIn('requested GPU is unavailable', BENCH)
+
+    def test_phase12_has_real_compositing_arm_and_quality_bench(self):
+        self.assertIn('"name": "compositing_on"', BENCH)
+        for condition in ("frontal", "lateral", "profile", "hair", "glasses",
+                          "hand_occlusion", "dark_scene", "bright_scene"):
+            self.assertIn('"%s"' % condition, COMPOSITOR_BENCH)
+        for metric in ("boundary_gradient_error", "identity_detail_error",
+                       "target_texture_error", "temporal_edge_shimmer",
+                       "adaptive_ms_per_frame"):
+            self.assertIn('"%s"' % metric, COMPOSITOR_BENCH)
 
 
 if __name__ == "__main__":

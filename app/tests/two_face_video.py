@@ -985,7 +985,17 @@ def main():
     ap.add_argument("--target-conditioned-strength", type=float, default=None,
                     help="Phase 10 target appearance strength; defaults to config")
     ap.add_argument("--target-conditioned-alpha", type=float, default=None,
-                    help="Phase 10 target appearance EMA alpha; defaults to config")
+                     help="Phase 10 target appearance EMA alpha; defaults to config")
+    ap.add_argument("--temporal-compositing", action="store_true", default=None,
+                     help="enable Phase 12 adaptive temporal paste-back")
+    ap.add_argument("--temporal-compositing-strength", type=float, default=None,
+                     help="Phase 12 compositor strength; defaults to config")
+    ap.add_argument("--temporal-quality-control", action="store_true", default=None,
+                    help="enable Phase 13 event-driven temporal QC")
+    ap.add_argument("--temporal-quality-logging", action="store_true", default=None,
+                    help="log Phase 13 anomaly, track, frame, confidence and correction")
+    ap.add_argument("--temporal-quality-history", type=int, default=None,
+                    help="Phase 13 short history length; defaults to config")
     ap.add_argument("--out", default=os.path.join(APP, "output", "bench_two_face"))
     args = ap.parse_args()
 
@@ -1015,6 +1025,20 @@ def main():
         g.target_conditioned_appearance_strength = float(args.target_conditioned_strength)
     if args.target_conditioned_alpha is not None:
         g.target_conditioned_appearance_temporal_alpha = float(args.target_conditioned_alpha)
+    if args.temporal_compositing is not None:
+        g.temporal_compositing = bool(args.temporal_compositing)
+    if os.environ.get("ROOP_TEMPORAL_COMPOSITING_OFF", "0") == "1":
+        g.temporal_compositing = False
+    if args.temporal_compositing_strength is not None:
+        g.temporal_compositing_strength = float(args.temporal_compositing_strength)
+    if args.temporal_quality_control is not None:
+        g.temporal_quality_control = bool(args.temporal_quality_control)
+    if args.temporal_quality_logging is not None:
+        g.temporal_quality_logging = bool(args.temporal_quality_logging)
+        if args.temporal_quality_logging:
+            g.temporal_quality_control = True
+    if args.temporal_quality_history is not None:
+        g.temporal_quality_history = max(2, int(args.temporal_quality_history))
     g.video_encoder = args.codec
     g.video_quality = 12
     g.execution_threads = args.threads if args.threads is not None else g.CFG.max_threads
@@ -1057,7 +1081,11 @@ def main():
           f"identity_detail={g.identity_detail_strength} "
           f"target_appearance={getattr(g, 'target_conditioned_appearance', False)} "
           f"target_strength={getattr(g, 'target_conditioned_appearance_strength', 0.75)} "
-          f"target_alpha={getattr(g, 'target_conditioned_appearance_temporal_alpha', 0.30)}",
+          f"target_alpha={getattr(g, 'target_conditioned_appearance_temporal_alpha', 0.30)} "
+           f"temporal_compositing={getattr(g, 'temporal_compositing', False)} "
+           f"compositing_strength={getattr(g, 'temporal_compositing_strength', 0.65)} "
+           f"temporal_quality={getattr(g, 'temporal_quality_control', False)} "
+           f"quality_logging={getattr(g, 'temporal_quality_logging', False)}",
           flush=True)
 
     outdir = os.path.join(args.out, args.tag)
