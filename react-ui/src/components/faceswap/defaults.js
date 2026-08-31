@@ -37,6 +37,7 @@ export const FACESWAP_DEFAULTS = {
   rescue_small_faces: true,
   num_swap_steps: 1,
   selected_enhancer: 'UltraMax',
+  adaptive_enhancer_profile: 'BALANCED',
   codeformer_fidelity: 0.55,
   max_face_distance: 0.75,
   subsample_upscale: '256px',

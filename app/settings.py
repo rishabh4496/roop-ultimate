@@ -577,6 +577,7 @@ class Settings:
         self.track_identities = self.default_get(data, 'track_identities', True)
         self.num_swap_steps = self.default_get(data, 'num_swap_steps', 1)
         self.selected_enhancer = self.default_get(data, 'selected_enhancer', 'UltraMax')
+        self.adaptive_enhancer_profile = self.default_get(data, 'adaptive_enhancer_profile', 'BALANCED')
         self.codeformer_fidelity = float(self.default_get(data, 'codeformer_fidelity', 0.55))
         self.subsample_upscale = self.default_get(data, 'subsample_upscale', '256px')
         self.upscale_after_swap = self.default_get(data, 'upscale_after_swap', False)
@@ -832,6 +833,7 @@ class Settings:
             'face_detector_threshold': self.face_detector_threshold,
             'num_swap_steps': self.num_swap_steps,
             'selected_enhancer': self.selected_enhancer,
+            'adaptive_enhancer_profile': self.adaptive_enhancer_profile,
             'codeformer_fidelity': self.codeformer_fidelity,
             'subsample_upscale': self.subsample_upscale,
             'upscale_after_swap': self.upscale_after_swap,

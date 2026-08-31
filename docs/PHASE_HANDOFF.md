@@ -309,3 +309,61 @@ compatibility; provider fallbacks; face-overlap ownership; the default
 (no-flag) stabilization geometry, which `_stab_min_block_multiple = 1` keeps
 bit-identical; the RTX 4070 pool settings; the RTX 3060 single-context guard and
 its laptop look values.
+
+## Requested Phase 11 handoff - adaptive enhancer orchestration
+
+Status: **OPEN / INCOMPLETE**.
+
+The exact implementation starting point is the new opt-in `Adaptive` selection
+in `app/roop/core.py`, backed by `app/roop/adaptive_enhancer.py` and the bridge
+`app/roop/processors/AdaptiveEnhancer.py`. `ProcessMgr` publishes pose, mask
+occlusion, target appearance, and identity-detail-required signals before the
+wrapper runs. The wrapper calls at most one existing candidate per face and
+keeps the existing manual branch untouched. Candidate model code is lazy and
+bounded by hardware/profile policy; `VERY_DARK`, extreme pose, low confidence,
+heavy occlusion, and unstable tracks prefer omission.
+
+Validation commands:
+
+```text
+app/env/Scripts/python.exe -m pytest app/tests/test_adaptive_enhancer.py app/tests/test_phase11_inventory.py app/tests/test_runtime_optimizer.py app/tests/test_settings_wiring.py -q
+app/env/Scripts/python.exe app/tests/bench_adaptive_enhancer_video.py --help
+app/env/Scripts/python.exe app/tests/bench_adaptive_enhancer_video.py --clip <locked-clip> --source <faceset> --enhancers Adaptive,GPEN 256 Pro,GPEN Realistic,UltraMax --adaptive-profile BALANCED
+```
+
+The video harness records runtime/FPS, process RSS, peak VRAM when available,
+plate-relative output quality, temporal consistency, detected identity
+similarity, and high-frequency/detail retention. Compare identical source,
+target, detector, mask, swapper, codec, and frame range for each arm. The
+existing `bench_phase11_enhancers.py` remains the isolated model benchmark.
+
+Observed on 2026-09-01: the locked 4070 two-face smoke using
+`double/d4.mp4`, RealSwap, RealityUX, TensorRT, Adaptive/BALANCED, and 12
+workers produced 120/120 output frames, 120/120 swaps for each of two tracked
+people, 240 face rows, and 0 wrong-FaceSet applications. The full video matrix
+attempt entered the renderer but stalled after CUDA stream-906 and the
+existing optional RealSwap secondary-network fallback warnings; it was stopped
+and must be repeated with the stream/fallback condition resolved. No runtime,
+quality, or memory value from that stalled attempt is accepted as a benchmark.
+
+Required gates still open:
+
+1. The final full regression suite is complete: **1641 passed, 1 skipped, 599
+   subtests passed, 2 existing warnings**.
+2. Review the retained-output 4070 Adaptive smoke for high-quality, moderate,
+   dark, extreme-angle, occluded, blurred, and identity-detail frames.
+3. Repeat the video matrix on the physical RTX 3060 with one context/global GPU
+   guard, 1536 MB stabilization cap, RSS under 2.5 GB, and preserved look values
+   (`blend_ratio=0.85`, `face_mask_blend=25`, `merger_sharpen=0.55`,
+   `stabilize_enhancer_strength=0.6`).
+4. Use locked V2 FaceSets and verify identity-detail retention is measured before
+   and after each restoration family; confirm restorers do not erase it.
+5. Manually inspect for flicker, artificial sharp points, lighting mismatch,
+   hallucinated dark-scene detail, wrong FaceSets, and expression/occlusion
+   failures before changing any default.
+
+Exact next-phase starting point: run the full suite, then the 4070 retained
+Adaptive video smoke and the `bench_adaptive_enhancer_video.py` matrix with a
+locked V2 source archive; record its output JSON in the Phase 11 matrix. Keep
+`selected_enhancer` on its current manual default until the 3060 and visual
+gates above pass.

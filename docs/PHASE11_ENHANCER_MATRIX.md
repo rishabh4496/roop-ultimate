@@ -1,6 +1,6 @@
 # Phase 11 enhancer performance matrix
 
-This is the complete matrix schema for the 29 source-discovered enhancement,
+This is the complete matrix schema for the 30 source-discovered enhancement,
 restoration, colorization, and super-resolution paths. The benchmark stores
 one copy per hardware profile; rows are never averaged across GPUs. `pending`
 means that no honest measurement for that exact path/profile is available yet.
@@ -11,6 +11,7 @@ inheriting another model's result.
 
 | Enhancer | Backend | Precision | Input | Output | Batch | Contexts | Streams | FPS | Latency | VRAM | CPU | Notes |
 |---|---|---|---|---|---:|---|---|---:|---:|---:|---:|---|
+| Adaptive | existing selected face enhancer | profile policy | aligned face crop | input-size resize | 1 | hardware-bounded lazy cache | candidate-managed | pending | pending | pending | pending | per-face selector; one candidate max; quality/temporal/identity/detail fields measured by video harness |
 | CodeFormer | ONNX Runtime | FP32 / mixed candidate | 512x512 | 512x512→input | 1 | 1 or VRAM-admitted pool | provider | pending | pending | pending | pending | `Enhance_CodeFormer`; finite guard |
 | CodeFormer FP16 | ONNX Runtime | FP16 graph / FP32 post | 512x512 | 512x512→input | 1 | 1 or VRAM-admitted pool | provider | pending | pending | pending | pending | separate FP16 graph; finite guard |
 | DMDNet | PyTorch | FP32 | 512x512 + landmarks | 512x512→input | ref-dependent | 1 | torch default | pending | pending | pending | pending | `Enhance_DMDNet`; specialized face metadata required |
@@ -444,3 +445,19 @@ substitute for this enhancer benchmark.
 | Baseline FPS | Final FPS | Improvement | Peak VRAM | Average VRAM | CPU utilization | GPU utilization | Decode throughput | Inference throughput | Enhancement throughput | Encode throughput | Latency | Stability | Output quality |
 |---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---|
 | pending physical 3060 fixture | pending | pending | pending | pending | pending | pending | pending | pending | pending | pending | pending | pending | pending |
+
+## Adaptive video-level measurement status
+
+The schema and harness now carry `Quality`, `Temporal`, `Identity`, and
+`Detail` independently from runtime, VRAM, and CPU. The harness is
+`app/tests/bench_adaptive_enhancer_video.py`; it reuses
+`compare_enhancers_video.render` and never chains the enhancer arms.
+
+Recorded integration evidence on 2026-09-01: RTX 4070, RealSwap, RealityUX,
+TensorRT, Adaptive/BALANCED, `double/d4.mp4`, 12 workers, 120 frames. Output
+was 120/120 frames, with 240 face rows, 120/120 swaps for each tracked person,
+and 0 wrong-FaceSet applications. Runtime/FPS and quality columns remain
+pending for this smoke because the two-face harness is the accepted attribution
+instrument; the independent video matrix attempt stalled after CUDA stream-906
+and an existing optional RealSwap secondary-network fallback warning. It was
+stopped and its partial output is not entered as a measurement.

@@ -6,7 +6,8 @@ from roop.hardware_validation import hardware_profile_key
 
 MATRIX_FIELDS = (
     "Enhancer", "Backend", "Precision", "Input", "Output", "Batch",
-    "Contexts", "Streams", "FPS", "Latency", "VRAM", "CPU", "Notes",
+    "Contexts", "Streams", "FPS", "Latency", "VRAM", "CPU", "Quality",
+    "Temporal", "Identity", "Detail", "Notes",
 )
 
 
@@ -36,6 +37,10 @@ def _row(entry, profile_key):
         "Latency": None,
         "VRAM": None,
         "CPU": None,
+        "Quality": None,
+        "Temporal": None,
+        "Identity": None,
+        "Detail": None,
         "Notes": (
             f"pending runtime measurement; source={entry['source']} "
             f"class={entry['class']} Run={entry['run']} "
@@ -74,7 +79,8 @@ def create_matrix(hardware: dict, measurements=None, include_adjacent=True):
         row["hardware_key"] = base_hardware_key
         values = measured.get(entry["id"])
         if values:
-            for key in ("FPS", "Latency", "VRAM", "CPU", "Notes"):
+            for key in ("FPS", "Latency", "VRAM", "CPU", "Quality",
+                        "Temporal", "Identity", "Detail", "Notes"):
                 if key in values:
                     row[key] = values[key]
             row["status"] = values.get("status", "measured")

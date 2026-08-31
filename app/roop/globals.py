@@ -29,6 +29,9 @@ execution_threads = None
 headless = None
 log_level = 'error'
 selected_enhancer = None
+# Adaptive enhancer orchestration is opt-in. Manual selected_enhancer values
+# continue to select exactly one of the existing processor paths.
+adaptive_enhancer_profile = 'BALANCED'
 codeformer_fidelity = 0.5
 subsample_size = 256
 # AI upscale folded into the swap pipeline (runs as the last frame processor,

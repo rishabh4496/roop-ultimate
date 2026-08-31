@@ -529,7 +529,8 @@ def get_processing_plugins(masking_engine, swap_model='inswapper'):
     """
     processors = {"faceswap": {"swap_model": swap_model}}
 
-    if roop.globals.selected_enhancer == 'GFPGAN':
+    _adaptive_requested = roop.globals.selected_enhancer == 'Adaptive'
+    if not _adaptive_requested and roop.globals.selected_enhancer == 'GFPGAN':
         processors.update({"gfpgan": {}})
     elif roop.globals.selected_enhancer == 'Codeformer':
         processors.update({"codeformer": {}})
@@ -578,6 +579,14 @@ def get_processing_plugins(masking_engine, swap_model='inswapper'):
     for engine in (masking_engine or ()):
         if engine and engine not in processors:
             processors[engine] = {}
+
+    if _adaptive_requested:
+        # Put the selector after the mask stages so it can see the target's
+        # occlusion/ownership result before deciding whether restoration is
+        # safe. Manual enhancer ordering above is untouched.
+        processors["adaptive_enhancer"] = {
+            "adaptive_profile": getattr(
+                roop.globals, 'adaptive_enhancer_profile', 'BALANCED')}
 
     return processors
 

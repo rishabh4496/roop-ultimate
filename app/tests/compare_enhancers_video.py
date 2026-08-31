@@ -112,7 +112,7 @@ import sample_bench as sb
 # Every enhancer name get_processing_plugins knows. A name outside this set
 # silently renders with no enhancer at all — see the module docstring.
 VALID_ENHANCERS = {
-    'None', 'GFPGAN', 'Codeformer', 'Codeformer (fp16)', 'DMDNet',
+    'None', 'Adaptive', 'GFPGAN', 'Codeformer', 'Codeformer (fp16)', 'DMDNet',
     'GPEN 256', 'GPEN 256 Pro', 'GPEN Realistic', 'GPEN', 'GPEN 1024', 'GPEN 2048', 'UltraMax',
     'Restoreformer++', 'KEEP (sidecar)',
 }
@@ -178,7 +178,7 @@ def sync_globals_from_config(g, verbose=True):
 
 
 def render(clip, source_name, enhancer, out_dir, swapper, mask, threads,
-           overrides=None):
+           overrides=None, adaptive_profile='BALANCED'):
     """One render, everything from config.yaml except what `overrides` names.
 
     `overrides` is the sweep hook: `{'detail_transfer_strength': 0.7}` and so on,
@@ -196,6 +196,7 @@ def render(clip, source_name, enhancer, out_dir, swapper, mask, threads,
 
     # The values the harness owns, re-applied after the config sync.
     g.selected_enhancer = enhancer
+    g.adaptive_enhancer_profile = str(adaptive_profile or 'BALANCED').upper()
     g.swap_model = swapper
     g.execution_threads = threads
     g.video_encoder = getattr(g.CFG, 'output_video_codec', 'hevc_nvenc') or 'hevc_nvenc'
@@ -454,6 +455,9 @@ def main():
     ap.add_argument("--out", default=None)
     ap.add_argument("--note", default="", help="footer text, e.g. the "
                     "interleaved per-face speedup")
+    ap.add_argument("--adaptive-profile", default="BALANCED",
+                    choices=("FAST", "BALANCED", "REALISTIC", "MAX QUALITY"),
+                    help="profile used when --a or --b is Adaptive")
     args = ap.parse_args()
 
     import yaml
@@ -480,7 +484,8 @@ def main():
     results = {}
     for label, key in ((args.a, 'a'), (args.b, 'b')):
         d = os.path.join(out_base, f"raw_{key}")
-        path, elapsed = render(args.clip, args.source, label, d, swapper, mask, threads)
+        path, elapsed = render(args.clip, args.source, label, d, swapper, mask,
+                               threads, adaptive_profile=args.adaptive_profile)
         fps = nframes / elapsed if elapsed > 0 else 0.0
         results[key] = (label, path, elapsed, fps)
         print(f"[compare] {label}: {elapsed:.1f}s  ->  {fps:.2f} fps", flush=True)

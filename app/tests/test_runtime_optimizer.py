@@ -145,6 +145,14 @@ class RuntimeOptimizerTests(unittest.TestCase):
         self.assertFalse(result["changed"])
         self.assertEqual(result["effective"], "GPEN 256 Pro")
 
+    def test_small_card_adaptive_wrapper_keeps_its_own_safety_policy(self):
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("ROOP_SMALL_CARD_ENHANCER", None)
+            result = small_card_enhancer_policy(_hardware(6.0), "Adaptive")
+        self.assertFalse(result["changed"])
+        self.assertEqual(result["effective"], "Adaptive")
+        self.assertIn("adaptive", result["reason"])
+
     def test_small_card_auto_decode_prefers_lower_rss_cpu_path(self):
         with patch.dict(os.environ, {}, clear=False):
             os.environ.pop("ROOP_NVDEC", None)

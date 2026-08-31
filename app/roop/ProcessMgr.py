@@ -33,6 +33,7 @@ from roop.identity_detail import restore_identity_detail
 from roop.appearance_conditioning import (TargetAppearanceStabilizer,
                                            analyze_target_appearance,
                                            protect_restorer_output)
+from roop.adaptive_enhancer import evaluate_face_frame
 from roop.procmgr_tiling import PixelBoostMixin
 from roop.procmgr_tracking import TrackingMixin
 from roop.face_overlap import build_regions as build_face_regions, FaceRegion
@@ -480,6 +481,7 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
         'ultramax'          : 'Enhance_UltraMax',
         'restoreformer++'   : 'Enhance_RestoreFormerPPlus',
         'keep'              : 'Enhance_KEEP',
+        'adaptive_enhancer' : 'AdaptiveEnhancer',
         'colorizer'         : 'Frame_Colorizer',
         'filter_generic'    : 'Frame_Filter',
         'removebg'          : 'Frame_Masking',
@@ -986,6 +988,16 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                 p = str_to_class(module, classname)
             if p is not None:
                 extoption.update({"devicename": devicename})
+                if key == 'adaptive_enhancer':
+                    try:
+                        import torch as _torch
+                        if _torch.cuda.is_available():
+                            extoption.setdefault('vram_gb', float(
+                                _torch.cuda.get_device_properties(
+                                    int(getattr(roop.globals, 'cuda_device_id', 0) or 0)
+                                ).total_memory) / (1024 ** 3))
+                    except Exception:
+                        pass
                 p.Initialize(extoption)
                 newprocessors.append(p)
             else:
@@ -4630,6 +4642,11 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
         _pose5 = solve_pose_5pt(getattr(target_face, 'kps', None))
         if _pose5 is not None:
             tgt_yaw_deg, tgt_pitch_deg = float(_pose5[0]), float(_pose5[1])
+        try:
+            target_face['_adaptive_yaw'] = tgt_yaw_deg
+            target_face['_adaptive_pitch'] = tgt_pitch_deg
+        except Exception:
+            pass
 
         # ...and the same head with the JAW taken out, for the callers that are
         # asking how far it is TURNED rather than where its five points are.
@@ -5072,6 +5089,17 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                         # from is identical here, so recomputing it (engine call,
                         # landmark hull, mouth mask, blurs) would be pure waste.
                         enhanced_frame, _ = self.process_mask(p, aligned_img, enhanced_frame, orig_frame=plate, target_face=target_face, M=M, tgt_pitch_deg=tgt_pitch_deg, reuse_mask=_img_mask, region=region)
+                if any(getattr(_p, 'processorname', None) == 'adaptive_enhancer'
+                       for _p in self.processors):
+                    try:
+                        target_face['_adaptive_metrics'] = evaluate_face_frame(
+                            target_face, aligned_img, appearance=_target_appearance,
+                            occlusion=(float(np.asarray(_img_mask).mean())
+                                       if _img_mask is not None else 0.0),
+                            identity_detail_required=(float(getattr(
+                                roop.globals, 'identity_detail_strength', 0.0) or 0.0) > 0.0))
+                    except Exception as e:
+                        bar_write(f"[ProcessMgr] adaptive face metrics failed: {e}")
             else:
                 # Pooled (no global lock) ONLY when this enhancer built its own
                 # SessionPool (e.g. RestoreFormer++). Enhancers without a pool

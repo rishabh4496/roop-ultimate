@@ -16,11 +16,12 @@ def test_inventory_contains_all_source_discovered_paths():
         "GPEN 256 Pro", "GPEN Realistic 256", "GPEN Realistic 512",
         "UltraMax", "CodeFormer", "CodeFormer FP16", "GFPGAN",
         "RestoreFormer++", "DMDNet", "KEEP (sidecar)",
+        "Adaptive",
         "Real-ESRGAN x2", "Real-ESRGAN x4", "Real-ESRGAN Anime x4",
         "LSiDIR x4", "UltraSharp x4", "Clear Reality x4", "SPAN x4",
         "Compact ESRGAN x4", "NOMOS 8K x4",
     } <= labels
-    assert len(entries()) == 29
+    assert len(entries()) == 30
 
 
 def test_matrix_keeps_missing_measurements_pending_per_hardware():
@@ -40,3 +41,12 @@ def test_matrix_keeps_missing_measurements_pending_per_hardware():
     assert ra["hardware_profile_key"] != hardware_key(a)
     assert rb["status"] == "pending"
     assert ra["hardware_profile_key"] != rb["hardware_profile_key"]
+
+
+def test_matrix_has_video_quality_and_identity_measurement_columns():
+    rows = create_matrix({"gpu_name": "test", "vram_total_gb": 12},
+                         include_adjacent=False)
+    row = next(item for item in rows if item["id"] == "adaptive")
+    for key in ("Quality", "Temporal", "Identity", "Detail"):
+        assert key in row
+        assert row[key] is None

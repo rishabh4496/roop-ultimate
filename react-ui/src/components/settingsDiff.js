@@ -11,6 +11,7 @@
 export const LABELS = {
   swap_model: 'Swapper',
   selected_enhancer: 'Enhancer',
+  adaptive_enhancer_profile: 'Adaptive profile',
   face_detection_mode: 'Detection',
   mask_engine: 'Mask',
   mask_engine_2: 'Mask 2',

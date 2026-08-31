@@ -3072,6 +3072,9 @@ def small_card_enhancer_policy(hardware: HardwareProfile,
     if value.strip().lower() in ("", "none", "keep"):
         return {"requested": value, "effective": value, "changed": False,
                 "reason": "enhancer was already disabled"}
+    if value.strip().lower() == "adaptive":
+        return {"requested": value, "effective": value, "changed": False,
+                "reason": "adaptive wrapper enforces its own small-card null-path safety"}
     return {"requested": value, "effective": "None", "changed": True,
             "reason": "measured enhancer path exceeds the strict 2.5GB RSS gate"}
 

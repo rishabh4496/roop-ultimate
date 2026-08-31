@@ -933,6 +933,9 @@ def main():
     ap.add_argument("--cuda-device-id", type=int, default=0)
     ap.add_argument("--swap-model", default="inswapper")
     ap.add_argument("--enhancer", default="None")
+    ap.add_argument("--adaptive-profile", default="BALANCED",
+                    choices=("FAST", "BALANCED", "REALISTIC", "MAX QUALITY"),
+                    help="Phase 11 profile when --enhancer Adaptive is selected")
     ap.add_argument("--mask-engine", default="None")
     ap.add_argument("--codec", default="libx264",
                     choices=("libx264", "libx265", "libvpx-vp9",
@@ -1005,6 +1008,7 @@ def main():
         args.identity_detail_strength = float(
             getattr(g.CFG, 'identity_detail_strength', 0.0) or 0.0)
     g.identity_detail_strength = float(args.identity_detail_strength)
+    g.adaptive_enhancer_profile = args.adaptive_profile
     if args.target_conditioned_appearance is not None:
         g.target_conditioned_appearance = bool(args.target_conditioned_appearance)
     if args.target_conditioned_strength is not None:
@@ -1045,6 +1049,7 @@ def main():
     # them by hash-matching a re-render is possible but costs a full arm.
     print(f"[bench] swap_model={args.swap_model} mask_engine={args.mask_engine} "
           f"enhancer={args.enhancer} provider={args.provider} "
+          f"adaptive_profile={g.adaptive_enhancer_profile} "
           f"color_transfer={g.color_transfer_mode} "
           f"threads={g.execution_threads} tracking={track} "
           f"swap_model_mask={g.swap_model_mask_strength} "

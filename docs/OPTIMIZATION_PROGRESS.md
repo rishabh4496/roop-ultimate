@@ -1599,3 +1599,47 @@ backward compatibility and to preserve the RTX 4070/RTX 3060 custom looks.
 The phase is **not complete**. The code, synthetic tests, and 4070 integration
 smoke are real evidence, but they do not replace physical RTX 3060 validation,
 controlled real lighting measurements, or retained-output visual review.
+
+## REQUESTED PHASE 11 - ADAPTIVE ENHANCER ORCHESTRATION - OPEN / INCOMPLETE (2026-09-01)
+
+### Explicit phase state
+
+- **Last completed phase:** historical Phase 10 parallel-block temporal execution.
+- **Current incomplete phase:** requested Phase 11 adaptive enhancer orchestration.
+- **Objective implemented:** an opt-in `Adaptive` path evaluates each face/frame
+  for resolution, sharpness/blur, pose, illumination tier, occlusion,
+  confidence, temporal stability, previous output quality, and identity-detail
+  protection, then runs zero or one existing face enhancer.
+- **Manual paths preserved:** RealityUX, RealSwap, GPEN 256 Pro, GPEN Realistic,
+  UltraMax, and all other existing enhancer/restoration paths remain selectable.
+  Adaptive is a wrapper with lazy candidate loading; it does not chain models.
+- **Profiles:** `FAST`, `BALANCED`, `REALISTIC`, and `MAX QUALITY` are exposed
+  while advanced controls remain available. Sub-7 GB hardware owns one lazy
+  candidate and a null safety veto; larger hardware defaults to two cached
+  candidates, bounded by `ROOP_ADAPTIVE_MAX_LOADED`.
+- **Benchmark extension:** `app/tests/bench_adaptive_enhancer_video.py` uses
+  the existing video renderer and records runtime/FPS, RSS/VRAM, output
+  quality, temporal delta, identity similarity, and detail/edge retention.
+  `phase11_matrix.py` now has Quality, Temporal, Identity, and Detail columns.
+- **Recorded 4070 smoke:** the locked `double/d4.mp4` two-face run with
+  RealSwap + RealityUX + TensorRT + Adaptive/BALANCED produced 120/120 output
+  frames, 240 face rows, 120/120 swaps per tracked person, and 0 wrong-FaceSet
+  applications. The run reported the expected bounded 12 GB-card policy and
+  no Adaptive runtime exception. A separate 427-frame single-face benchmark
+  entered processing but stalled after CUDA stream-906/optional-RealSwap
+  warnings and was stopped; it is not treated as a quality result.
+
+### Complete phase checklist audit (line by line)
+
+| Requirement | Evidence | Status | Still missing |
+|---|---|---|---|
+| IMPLEMENT | Adaptive selector, profile UI/API/config, lazy bounded wrapper, one-path execution, dark/pose/occlusion/temporal vetoes, output-quality feedback | PASS | None in the implemented path |
+| TEST | Selector contracts, required metric coverage, null/lazy/failure behavior, small-card safety, manual enhancer preservation, UI/API wiring, matrix columns | PASS | None in automated contracts |
+| BENCHMARK | Reproducible video-level harness and existing isolated enhancer matrix extended with quality fields | PARTIAL | Recorded real-footage Adaptive results across the requested scene/quality matrix on both GPUs |
+| REGRESSION TEST | Focused regression suite covers no chaining, manual paths, and fallback; final full suite: **1641 passed, 1 skipped, 599 subtests passed** | PARTIAL | Retained-output visual review, physical RTX 3060 run, and a completed independent matrix run |
+| DOCUMENT | This progress record, Phase handoff, ENV_FLAGS, enhancer matrix, benchmark CLI/help text | PASS | None for implementation description |
+| HANDOFF | Exact commands, unresolved hardware/visual gates, and next starting point below | PASS | Phase remains open until benchmark/regression partials close |
+
+The implementation is intentionally **not promoted as a new default**. Real
+video measurements, retained-frame review, and physical RTX 3060 evidence are
+still required before deciding whether any profile/default should change.

@@ -1129,3 +1129,23 @@ sunset, blue, mixed, night, street-light, low-exposure, and backlighting
 fixtures. Appearance analysis averaged **23.3602 ms/call**; the stable-light
 colour temporal delta fell from **0.02481532** to **0.00440974** (**82.2298%**
 reduction). This is component evidence, not a visual acceptance score.
+
+## Adaptive enhancer orchestration (Phase 11)
+
+`selected_enhancer: Adaptive` enables per-face/frame selection over the existing
+GPEN 256 Pro, GPEN Realistic, and UltraMax processors. All manual enhancer
+choices remain independent and unchanged. The selector can choose no enhancer
+for a high-quality face, a light path for dark/low-quality input, a stronger
+path for moderate quality, or hold/omit during unstable, occluded, very-dark,
+or extreme-angle frames. It never sequentially runs the candidate set.
+
+| Setting | Default | Meaning |
+|---|---:|---|
+| `adaptive_enhancer_profile` | `BALANCED` | `FAST`, `BALANCED`, `REALISTIC`, or `MAX QUALITY` preference policy. |
+| `ROOP_ADAPTIVE_MAX_LOADED` | auto | Optional cache bound, clamped to 1..3; sub-7 GB defaults to 1. |
+
+Adaptive is opt-in and is not a replacement for RealityUX, RealSwap, GPEN
+256 Pro, GPEN Realistic, UltraMax, or other existing paths. The wrapper's
+telemetry reports selected paths, reasons, recent metrics, and observed output
+quality. Video measurements are produced by
+`app/tests/bench_adaptive_enhancer_video.py`.

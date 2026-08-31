@@ -1,6 +1,6 @@
 # Phase 11 enhancer inventory
 
-Status: source-tree inventory completed 2026-08-29. This document is the
+Status: source-tree inventory completed 2026-09-01. This document is the
 authoritative inventory for Phase 11; it is based on the implementations under
 `app/roop/processors`, the registered processors in `app/roop/ProcessMgr.py`,
 the public choices in `app/api.py`, and the model files under `app/models`.
@@ -13,6 +13,7 @@ The face-restoration paths actually registered are:
 
 | User-facing path | Source / class | Model or service | Lifecycle |
 |---|---|---|---|
+| Adaptive | `app/roop/adaptive_enhancer.py` / `AdaptiveEnhancer` | lazy bounded delegation to existing GPEN 256 Pro, GPEN Realistic, or UltraMax | `Initialize`, `Run`, `Release`; one candidate per face |
 | CodeFormer | `app/roop/processors/Enhance_CodeFormer.py:18` / `Enhance_CodeFormer` | `app/models/CodeFormer/CodeFormerv0.1.onnx` | `Initialize:60`, `Run:179`, `Release:240` |
 | CodeFormer FP16 | same class | `app/models/CodeFormer/codeformer.fp16.onnx` | same |
 | DMDNet | `Enhance_DMDNet.py:22` / `Enhance_DMDNet` | `app/models/DMDNet.pth` | `Initialize:33`, `Run:44`, `Release:57` |

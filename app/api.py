@@ -704,7 +704,7 @@ def get_meta():
         "git_version": _get_git_version(),
         "providers": providers,
         "trt_precisions": ["fp32", "fp16", "mixed"],
-        "enhancers": ["None", "Codeformer", "Codeformer (fp16)", "DMDNet",
+        "enhancers": ["None", "Adaptive", "Codeformer", "Codeformer (fp16)", "DMDNet",
                        "GFPGAN", "GPEN 256", "GPEN 256 Pro", "GPEN Realistic", "GPEN", "GPEN 1024",
                        "GPEN 2048",
                        "Restoreformer++", "UltraMax", "KEEP (sidecar)"],
@@ -2387,6 +2387,14 @@ def _apply_target_appearance_settings(payload):
         setattr(roop_globals, key, value)
 
 
+def _apply_adaptive_enhancer_settings(payload):
+    """Keep the adaptive profile identical in preview and video runs."""
+    allowed = {"FAST", "BALANCED", "REALISTIC", "MAX QUALITY"}
+    fallback = getattr(roop_globals.CFG, "adaptive_enhancer_profile", "BALANCED")
+    value = str(payload.get("adaptive_enhancer_profile", fallback) or fallback).upper()
+    roop_globals.adaptive_enhancer_profile = value if value in allowed else "BALANCED"
+
+
 def _apply_lipsync_settings(payload):
     """Lip-sync (MuseTalk) toggle + audio source, onto roop.globals.
 
@@ -2498,6 +2506,7 @@ def preview(payload: dict = Body(...)):
 
         roop_globals.face_swap_mode = translate_swap_mode(payload.get("detection", "All faces"))
         roop_globals.selected_enhancer = payload.get("enhancer", "None")
+        _apply_adaptive_enhancer_settings(payload)
         roop_globals.codeformer_fidelity = float(payload.get("codeformer_fidelity", 0.5))
         roop_globals.distance_threshold = float(payload.get("face_distance", roop_globals.CFG.max_face_distance))
         roop_globals.blend_ratio = float(payload.get("blend_ratio", 0.8))
@@ -2663,6 +2672,7 @@ def _run_swap(payload):
         clip_text = payload.get("clip_text", roop_globals.CFG.mask_clip_text)
 
         roop_globals.selected_enhancer = enhancer
+        _apply_adaptive_enhancer_settings(payload)
         roop_globals.codeformer_fidelity = float(payload.get("codeformer_fidelity", getattr(roop_globals.CFG, "codeformer_fidelity", 0.5)))
         roop_globals.target_path = None
         roop_globals.distance_threshold = float(payload.get("face_distance", roop_globals.CFG.max_face_distance))
