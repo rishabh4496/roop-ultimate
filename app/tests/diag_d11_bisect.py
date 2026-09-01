@@ -22,11 +22,12 @@ if APP not in sys.path:
 if HERE not in sys.path:
     sys.path.insert(0, HERE)
 
+import fixtures
 import run_all_samples as ras  # noqa: E402
 from angle_video import ensure_ffmpeg  # noqa: E402
 from two_face_video import load_library_faceset  # noqa: E402
 
-SRC = r"G:\pinokio\roop-keep\double\d11.mp4"
+SRC = fixtures.clip('double/d11.mp4')
 NAMES = ["harjot", "shambhavi"]
 
 

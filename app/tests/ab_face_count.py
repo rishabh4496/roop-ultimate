@@ -35,6 +35,7 @@ for _p in (APP, HERE):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
+import fixtures
 import two_face_video as tfv          # applies the perf env at import
 tfv._apply_perf_env()
 
@@ -76,7 +77,7 @@ def run_arm(label, clip, facesets, targets, groups, options, workroot):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--video", default=r"G:/pinokio/roop-keep/duo/d1.mp4")
+    ap.add_argument("--video", default=fixtures.clip('duo/d1.mp4'))
     ap.add_argument("--sources", default="harjot,gargee")
     ap.add_argument("--start", type=int, default=0)
     ap.add_argument("--end", type=int, default=300)

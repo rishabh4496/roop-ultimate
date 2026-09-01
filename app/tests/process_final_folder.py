@@ -22,6 +22,7 @@ if HERE not in sys.path:
 
 
 # Apply performance environment variables before roop imports
+import fixtures
 def _apply_perf_env():
     try:
         import yaml
@@ -66,7 +67,7 @@ from angle_video import ensure_ffmpeg
 from two_face_video import load_library_faceset, auto_capture_targets
 import sample_bench as sb
 
-FINAL_DIR = r"G:/pinokio/roop-keep/final"
+FINAL_DIR = fixtures.clip_dir('final')
 OUT_DIR = os.path.join(APP, "output", "final_swaps")
 RAW_UM_DIR = os.path.join(APP, "output", "final_comparisons", "um_raw")
 

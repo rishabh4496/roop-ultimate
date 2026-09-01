@@ -17,6 +17,7 @@ if APP not in sys.path:
 if HERE not in sys.path:
     sys.path.insert(0, HERE)
 
+import fixtures
 os.environ['ROOP_TRT_POOL'] = '2'
 os.environ['ROOP_DETMASK_POOL'] = '2'
 os.environ['ROOP_DETECTOR_POOL'] = '2'
@@ -58,7 +59,7 @@ def main():
     enhancer_name = "UltraMax"
     mask_name = "mask_realityux"
 
-    in_dir = r"G:/pinokio/roop-keep/expression"
+    in_dir = fixtures.clip_dir('expression')
     out_dir = os.path.join(APP, "output", "expression_swaps")
     inspect_dir = os.path.join(APP, "output", "expression_inspection_frames")
     os.makedirs(out_dir, exist_ok=True)

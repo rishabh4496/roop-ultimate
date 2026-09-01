@@ -25,11 +25,12 @@ for p in (APP, HERE):
     if p not in sys.path:
         sys.path.insert(0, p)
 
+import fixtures
 import numpy as np
 import cv2
 
 ap = argparse.ArgumentParser()
-ap.add_argument('--clip', default=r'G:/pinokio/roop-keep/inverted/s1.mp4')
+ap.add_argument('--clip', default=fixtures.clip('inverted/s1.mp4'))
 ap.add_argument('--fsz', default='facesets/harjot.fsz')
 ap.add_argument('--frames', type=int, default=4)
 ap.add_argument('--enhancer', default='UltraMax',

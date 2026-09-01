@@ -56,6 +56,7 @@ if HERE not in sys.path:
 # sample_bench here would be circular (it imports FROM this module), and
 # importing all of api.py/run.py has heavy import-time side effects. Must run
 # before the angle_bench import just below.
+import fixtures
 def _apply_perf_env():
     try:
         import yaml
@@ -905,7 +906,7 @@ def _apply_startup_runtime_environment():
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--tag", required=True)
-    ap.add_argument("--video", default=r"G:/pinokio/roop-keep/sample1.mp4")
+    ap.add_argument("--video", default=fixtures.clip('sample1.mp4'))
     ap.add_argument("--sources", default="harjot,ashna",
                     help="faceset names, left person first")
     ap.add_argument("--start", type=int, default=0)

@@ -23,6 +23,7 @@ if APP not in sys.path:
     sys.path.insert(0, APP)
 
 
+import fixtures
 def _hardware():
     try:
         from roop.runtime_optimizer import HardwareProfiler
@@ -250,7 +251,7 @@ def run_end_to_end(args):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--video", default=r"G:/pinokio/roop-keep/double/d1.mp4")
+    ap.add_argument("--video", default=fixtures.clip('double/d1.mp4'))
     ap.add_argument("--runs", type=int, default=3)
     ap.add_argument("--limit", type=int, default=0,
                     help="0 = full file")

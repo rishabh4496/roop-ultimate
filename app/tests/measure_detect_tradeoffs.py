@@ -36,6 +36,7 @@ APP = os.path.dirname(HERE)
 for _p in (APP, HERE):
     if _p not in sys.path:
         sys.path.insert(0, _p)
+import fixtures
 os.environ.setdefault('ROOP_TRT_POOL', '4')
 
 import cv2
@@ -48,7 +49,7 @@ CLIPS = [
     '10 Minute Daily Stretching Routine For Women Over 50!.mp4',
     'Daily Face Yoga _ Face Sculpting Massage for every day _ 8 Min. to Radiant Skin _ Natural Glow.mp4',
 ]
-ROOT = r'G:/pinokio/roop-keep/inverted'
+ROOT = fixtures.clip_dir('inverted')
 
 
 def pose_of(kps):

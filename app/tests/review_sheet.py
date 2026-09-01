@@ -19,14 +19,19 @@ Usage:
 import argparse
 import csv
 import os
+import sys
 
 import cv2
 import numpy as np
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 APP = os.path.dirname(HERE)
+if HERE not in sys.path:
+    sys.path.insert(0, HERE)
+import fixtures
+
 ARMS = os.path.join(APP, "output", "bench_two_face")
-CLIPS = r"G:/pinokio/roop-keep/double"
+CLIPS = fixtures.clip_dir("double")
 
 
 def rows_for(tag):

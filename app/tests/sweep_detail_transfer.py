@@ -51,6 +51,7 @@ for _p in (APP, HERE):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
+import fixtures
 import compare_enhancers_video as C     # applies the perf env at import
 import cv2
 import numpy as np
@@ -244,7 +245,7 @@ def means(clip, source_name, frames=GRADE_FRAMES):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--clip", default=r"G:/pinokio/roop-keep/inverted/s1.mp4")
+    ap.add_argument("--clip", default=fixtures.clip('inverted/s1.mp4'))
     ap.add_argument("--source", default="harjot")
     ap.add_argument("--enhancer", default="UltraMax")
     ap.add_argument("--values", default="0,0.4,0.7,1.0")

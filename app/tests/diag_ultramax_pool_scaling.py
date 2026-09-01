@@ -18,6 +18,7 @@ for p in (APP, HERE):
     if p not in sys.path:
         sys.path.insert(0, p)
 
+import fixtures
 POOL = os.environ.get('POOL', '2')
 os.environ['ROOP_TRT_POOL'] = POOL
 THREADS = int(os.environ.get('THREADS', '10'))
@@ -50,7 +51,7 @@ um.Initialize({'devicename': 'cuda'})
 build = time.perf_counter() - t0
 n_ctx = len(um.pool._items) if um.pool is not None else 1
 
-CLIP = os.environ.get('PROF_CLIP', r'G:/pinokio/roop-keep/inverted/s1.mp4')
+CLIP = os.environ.get('PROF_CLIP', fixtures.clip('inverted/s1.mp4'))
 cap = cv2.VideoCapture(CLIP)
 crops = []
 for f in range(200, 200 + THREADS * 60, 60):

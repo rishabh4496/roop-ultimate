@@ -36,6 +36,7 @@ for _p in (APP, HERE):
         sys.path.insert(0, _p)
 
 
+import fixtures
 def _apply_perf_env():
     """The ROOP_* performance flags, from config.yaml, the way run.py does it.
 
@@ -444,7 +445,7 @@ def grade(a_path, b_path, a_label, b_label, step=5):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--clip", default=r"G:/pinokio/roop-keep/inverted/s1.mp4")
+    ap.add_argument("--clip", default=fixtures.clip('inverted/s1.mp4'))
     ap.add_argument("--source", default="harjot")
     ap.add_argument("--a", default="Codeformer (fp16)")
     ap.add_argument("--b", default="UltraMax")

@@ -47,6 +47,7 @@ if APP not in sys.path:
 if HERE not in sys.path:
     sys.path.insert(0, HERE)
 
+import fixtures
 import angle_bench as ab            # noqa: E402
 from angle_video import ensure_ffmpeg, read_frames   # noqa: E402
 
@@ -215,7 +216,7 @@ def cos(a, b):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--tag", required=True)
-    ap.add_argument("--video", default=r"G:/pinokio/roop-keep/vidssave.mp4")
+    ap.add_argument("--video", default=fixtures.clip('vidssave.mp4'))
     ap.add_argument("--source", default="rhythm", help="source faceset name")
     ap.add_argument("--frame", type=int, default=-1,
                     help="plate frame index; -1 picks the most frontal")

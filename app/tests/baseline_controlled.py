@@ -211,6 +211,19 @@ def parse_run(text):
     m = re.search(r"execution_threads=(\d+)", text)
     if m:
         out["threads"] = int(m.group(1))
+    # The opt-in feature state AS THE CHILD RESOLVED IT, not as this harness
+    # asked for it. Phase 15 shipped an adaptive controller that was wired to a
+    # code path production never takes, and it reported "no effect" for two
+    # sessions on both GPUs. An arm that cannot show the feature was live is not
+    # evidence about the feature.
+    for key, pattern in (("identity_detail", r"identity_detail=([\d.]+)"),
+                         ("target_appearance", r"target_appearance=(True|False)"),
+                         ("target_strength", r"target_strength=([\d.]+)"),
+                         ("target_alpha", r"target_alpha=([\d.]+)")):
+        m = re.search(pattern, text)
+        if m:
+            v = m.group(1)
+            out["feature_" + key] = (v == "True") if v in ("True", "False") else float(v)
     return out
 
 
@@ -314,6 +327,14 @@ def main():
                           "default uses config.yaml")
     ap.add_argument("--temporal-compositing-mode", choices=("auto", "off", "on"),
                     default="auto", help="controlled Phase 12 compositor override")
+    ap.add_argument("--target-appearance-mode", choices=("auto", "off", "on"),
+                    default="auto",
+                    help="controlled Phase 10 target-conditioned appearance "
+                         "override; 'auto' uses config.yaml")
+    ap.add_argument("--target-appearance-strength", type=float, default=None,
+                    help="Phase 10 appearance strength; default uses config.yaml")
+    ap.add_argument("--target-appearance-alpha", type=float, default=None,
+                    help="Phase 10 appearance EMA alpha; default uses config.yaml")
     ap.add_argument("--target", choices=("RTX 3060", "RTX 4070"),
                     default=None, help="validation target label for the record")
     ap.add_argument("--cuda-device-id", type=int, default=0,
@@ -385,6 +406,26 @@ def main():
     if args.temporal_compositing_mode != "auto":
         if args.temporal_compositing_mode == "on":
             cmd.append("--temporal-compositing")
+    # Phase 10 is a config-backed feature with no ROOP_* env hook, so a
+    # controlled A/B can only reach it through the child's own flag. The child
+    # declares --target-conditioned-appearance with an explicit default of None,
+    # so omitting it leaves config.yaml in charge; passing the flag turns it on
+    # and "off" must be expressed as an explicit 0 strength rather than by
+    # silence, which the child cannot distinguish from "unset".
+    # "off" passes NOTHING on purpose. The child cannot express an explicit
+    # disable -- its flag is store_true with default None -- so off is the
+    # config/globals state, which is False in both. That is only safe because
+    # the arm's ACTUAL state is read back out of the child's own echo line
+    # below and recorded, rather than assumed from the flag we did or did not
+    # pass. A feature reporting "no effect" must first be shown to have run.
+    if args.target_appearance_mode == "on":
+        cmd.append("--target-conditioned-appearance")
+    if args.target_appearance_strength is not None:
+        cmd.extend(["--target-conditioned-strength",
+                    str(args.target_appearance_strength)])
+    if args.target_appearance_alpha is not None:
+        cmd.extend(["--target-conditioned-alpha",
+                    str(args.target_appearance_alpha)])
 
     env = dict(os.environ)
     env["ROOP_PROFILE"] = "1"          # per-stage latency, decode and encode

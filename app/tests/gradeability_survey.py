@@ -37,9 +37,10 @@ if APP not in sys.path:
 if HERE not in sys.path:
     sys.path.insert(0, HERE)
 
+import fixtures
 import angle_bench as ab  # noqa: E402
 
-DOUBLE_DIR = r"G:/pinokio/roop-keep/double"
+DOUBLE_DIR = fixtures.clip_dir('double')
 GRADE_CONTAM_MAX = 0.35     # must track two_face_video.GRADE_CONTAM_MAX
 
 

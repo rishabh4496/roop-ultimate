@@ -27,6 +27,7 @@ if APP not in sys.path:
 if HERE not in sys.path:
     sys.path.insert(0, HERE)
 
+import fixtures
 os.environ['ROOP_TRT_POOL'] = '2'
 os.environ['ROOP_DETMASK_POOL'] = '2'
 os.environ['ROOP_DETECTOR_POOL'] = '2'
@@ -113,7 +114,7 @@ def main():
     swapper_name = "realswap"
     mask_name = "mask_realityux"
 
-    video_path = r"G:/pinokio/roop-keep/inverted/8509564-uhd_3840_2160_25fps.mp4"
+    video_path = fixtures.clip('inverted/8509564-uhd_3840_2160_25fps.mp4')
     out_dir = os.path.join(APP, "output", "benchmark_8509564")
     inspect_dir = os.path.join(out_dir, "inspection_frames")
     os.makedirs(out_dir, exist_ok=True)

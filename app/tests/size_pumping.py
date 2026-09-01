@@ -35,10 +35,11 @@ if APP not in sys.path:
 if HERE not in sys.path:
     sys.path.insert(0, HERE)
 
+import fixtures
 import angle_bench as ab  # noqa: E402
 
 ARMS = os.path.join(APP, "output", "bench_two_face")
-CLIPS = r"G:/pinokio/roop-keep/double"
+CLIPS = fixtures.clip_dir('double')
 
 
 def out_video(tag):

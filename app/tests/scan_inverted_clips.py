@@ -15,6 +15,7 @@ if APP not in sys.path:
 if HERE not in sys.path:
     sys.path.insert(0, HERE)
 
+import fixtures
 import roop.face_util as fu
 import roop.orientation as ro
 
@@ -68,7 +69,7 @@ def scan_clip(video_path, max_frames=500, sample_stride=5):
 
 
 def main():
-    in_dir = r"G:/pinokio/roop-keep/inverted"
+    in_dir = fixtures.clip_dir('inverted')
     vids = sorted(glob.glob(os.path.join(in_dir, "*.mp4")))
     for v in vids:
         scan_clip(v, max_frames=600, sample_stride=10)

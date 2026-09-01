@@ -18,6 +18,7 @@ if APP not in sys.path:
 if HERE not in sys.path:
     sys.path.insert(0, HERE)
 
+import fixtures
 os.environ['ROOP_TRT_POOL'] = '2'
 os.environ['ROOP_DETMASK_POOL'] = '2'
 os.environ['ROOP_DETECTOR_POOL'] = '2'
@@ -59,7 +60,7 @@ def main():
     enhancer_name = "UltraMax"
     mask_name = "mask_realityux"
 
-    in_dir = r"G:/pinokio/roop-keep/inverted"
+    in_dir = fixtures.clip_dir('inverted')
     out_dir = os.path.join(APP, "output", "inverted_tests_output")
     inspect_dir = os.path.join(APP, "output", "inverted_inspection_frames")
     os.makedirs(out_dir, exist_ok=True)

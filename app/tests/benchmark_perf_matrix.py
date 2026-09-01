@@ -21,6 +21,7 @@ if HERE not in sys.path:
     sys.path.insert(0, HERE)
 
 
+import fixtures
 def run_benchmark(video_path, source_name, threads, trt_pool, det_pool, temp_step, ultra_cadence):
     os.environ['ROOP_TRT_POOL'] = str(trt_pool)
     os.environ['ROOP_DETMASK_POOL'] = str(det_pool)
@@ -108,7 +109,7 @@ def run_benchmark(video_path, source_name, threads, trt_pool, det_pool, temp_ste
 
 
 def main():
-    video = r"G:/pinokio/roop-keep/final/5155179-hd_1920_1080_30fps.mp4"
+    video = fixtures.clip('final/5155179-hd_1920_1080_30fps.mp4')
     source = "harjot"
 
     configs = [

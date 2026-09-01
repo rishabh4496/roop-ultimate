@@ -39,6 +39,7 @@ APP = os.path.dirname(HERE)
 if APP not in sys.path:
     sys.path.insert(0, APP)
 
+import fixtures
 import yaml
 
 
@@ -88,7 +89,7 @@ def parse(out):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--sources", default="harjot,gargee")
-    ap.add_argument("--in-dir", default=r"G:/pinokio/roop-keep/duo")
+    ap.add_argument("--in-dir", default=fixtures.clip_dir('duo'))
     ap.add_argument("--clips", default="", help="comma-separated stems, default all")
     ap.add_argument("--threads", type=int, default=20)
     ap.add_argument("--end", type=int, default=0, help="0 = whole clip")

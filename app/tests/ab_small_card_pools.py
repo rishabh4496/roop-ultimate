@@ -28,6 +28,7 @@ APP = os.path.dirname(HERE)
 for p in (APP, HERE):
     if p not in sys.path:
         sys.path.insert(0, p)
+import fixtures
 
 
 def sample_gpu(stop, out, pid_box):
@@ -186,9 +187,11 @@ def run_arm(name, env_extra, clip, threads):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument('--clip', default=os.path.join(
-        r'G:/pinokio/cache/TEMP/claude/G--pinokio-api-roop-ultimate'
-        r'/93920599-2f75-4ddd-a101-ca937f9978fc/scratchpad', 's1_400.mp4'))
+    # Was a hardcoded scratchpad path on the 4070 host, complete with
+    # that session's UUID -- unresolvable on any other machine and on
+    # that one after the temp directory was reaped. Resolve a real
+    # fixture instead; pass --clip to use a trimmed local copy.
+    ap.add_argument('--clip', default=fixtures.clip('single/s1.mp4'))
     ap.add_argument('--vram', default='6',
                     help='ROOP_VRAM_GB for both arms (simulates the card)')
     ap.add_argument('--threads', type=int, default=8)

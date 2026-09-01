@@ -38,13 +38,14 @@ if APP not in sys.path:
 if HERE not in sys.path:
     sys.path.insert(0, HERE)
 
+import fixtures
 import angle_bench as ab                                          # noqa: E402
 from angle_video import ensure_ffmpeg                             # noqa: E402
 from two_face_video import (load_library_faceset, faceset_mean,   # noqa: E402
                             cos, auto_capture_targets)
 import sample_bench as sb                                         # noqa: E402
 
-EXPRESSION_DIR = r"G:/pinokio/roop-keep/expression"
+EXPRESSION_DIR = fixtures.clip_dir('expression')
 
 # insightface 106-point indices.
 L_EYE = [33, 35, 36, 37, 39, 42]

@@ -25,6 +25,7 @@ for p in (APP, HERE):
     if p not in sys.path:
         sys.path.insert(0, p)
 
+import fixtures
 import cv2
 import numpy as np
 
@@ -41,7 +42,7 @@ def cos(a, b):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--video", default=r"G:/pinokio/roop-keep/duo/d2.mp4")
+    ap.add_argument("--video", default=fixtures.clip('duo/d2.mp4'))
     ap.add_argument("--seed", type=int, default=675)
     ap.add_argument("--person", type=int, default=0,
                     help="which person (left=0) we want profile angles FOR")

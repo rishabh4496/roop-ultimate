@@ -59,6 +59,7 @@ for _p in (APP, HERE):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
+import fixtures
 import compare_enhancers_video as C
 import cv2
 
@@ -103,7 +104,7 @@ def run_arm(args, temporal, tag, swapper, mask, threads):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument('--clip', default=r'G:/pinokio/roop-keep/inverted/s1.mp4')
+    ap.add_argument('--clip', default=fixtures.clip('inverted/s1.mp4'))
     ap.add_argument('--source', default='harjot')
     ap.add_argument('--enhancer', default='GPEN Realistic')
     ap.add_argument('--reps', type=int, default=2)

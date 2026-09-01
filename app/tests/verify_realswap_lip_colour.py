@@ -27,6 +27,7 @@ APP = os.path.dirname(HERE)
 for p in (APP, HERE):
     if p not in sys.path:
         sys.path.insert(0, p)
+import fixtures
 os.environ.setdefault('ROOP_TRT_POOL', '1')
 
 import numpy as np
@@ -38,7 +39,7 @@ from roop.ProcessMgr import ProcessMgr
 from roop.face_util import get_all_faces, align_crop
 
 FSZ = os.environ.get('FSZ', 'facesets/harjot.fsz')
-CLIP = os.environ.get('PROF_CLIP', r'G:/pinokio/roop-keep/inverted/s1.mp4')
+CLIP = os.environ.get('PROF_CLIP', fixtures.clip('inverted/s1.mp4'))
 src_fs = ab.load_faceset(FSZ)
 pm = ProcessMgr(None)
 pm.initialize([src_fs], [], ab.build_options(g, 'realswap', 'None'))

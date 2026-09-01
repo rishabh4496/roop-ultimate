@@ -36,6 +36,7 @@ APP = os.path.dirname(HERE)
 for _p in (APP, HERE):
     if _p not in sys.path:
         sys.path.insert(0, _p)
+import fixtures
 os.environ.setdefault('ROOP_TRT_POOL', '2')
 
 import cv2
@@ -43,7 +44,7 @@ import numpy as np
 
 import angle_bench as ab
 
-CLIP = os.environ.get('CAL_CLIP', r'G:/pinokio/roop-keep/inverted/s1.mp4')
+CLIP = os.environ.get('CAL_CLIP', fixtures.clip('inverted/s1.mp4'))
 FRAMES = [200, 400, 600, 800, 1000, 1200, 1400, 1600]
 
 

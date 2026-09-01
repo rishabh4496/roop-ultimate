@@ -40,7 +40,11 @@ def _find_ffmpeg():
     exe = _sh.which("ffmpeg")
     if exe:
         return exe
-    for cand in (r"G:/pinokio/bin/ffmpeg-env/Library/bin",):
+    # Resolve under whichever PINOKIO_HOME is live rather than naming
+    # the 4070 host's drive, which does not exist on the 3060.
+    import fixtures as _fx
+    for cand in (os.path.join(_fx.pinokio_home(), "bin",
+                              "ffmpeg-env", "Library", "bin"),):
         p = os.path.join(cand, "ffmpeg.exe")
         if os.path.exists(p):
             return p

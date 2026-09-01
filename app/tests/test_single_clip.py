@@ -20,6 +20,7 @@ if HERE not in sys.path:
     sys.path.insert(0, HERE)
 
 
+import fixtures
 def _apply_perf_env():
     try:
         import yaml
@@ -67,7 +68,7 @@ import sample_bench as sb
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--video", default=r"G:/pinokio/roop-keep/final/5155179-hd_1920_1080_30fps.mp4")
+    ap.add_argument("--video", default=fixtures.clip('final/5155179-hd_1920_1080_30fps.mp4'))
     ap.add_argument("--source", default="harjot")
     ap.add_argument("--threads", type=int, default=12)
     args = ap.parse_args()

@@ -20,12 +20,13 @@ if APP not in sys.path:
 if HERE not in sys.path:
     sys.path.insert(0, HERE)
 
+import fixtures
 import angle_bench as ab
 from angle_video import ensure_ffmpeg
 from two_face_video import load_library_faceset, auto_capture_targets
 import sample_bench as sb
 
-MODEL_3D_DIR = r"G:/pinokio/roop-keep/3d model"
+MODEL_3D_DIR = fixtures.clip_dir('3d model')
 
 
 def make_comparison_video(cf_path, um_path, out_path, sample_title=""):

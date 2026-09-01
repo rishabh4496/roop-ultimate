@@ -1067,13 +1067,64 @@ def get_first_face_detector_only(frame: Frame) -> Any:
     return None
 
 
+# Detector failures reported once per distinct signature. The RETURN VALUE of
+# `get_all_faces` is deliberately unchanged -- an exception still yields an empty
+# list, because callers throughout the pipeline treat "no faces here" as normal
+# and must keep doing so. What changes is that the failure is no longer SILENT.
+#
+# This has cost this project two separate investigations. `yoloface_8n.onnx` is
+# a fixed [1,3,640,640] export, so any other `det_size` raises InvalidArgument
+# on every frame; the swallow turned that into "no faces in this video" with no
+# error anywhere, and the tell was a suspiciously fast 329 fps -- fast because
+# it was doing nothing. Separately, a bench that called this without bringing
+# roop up graded 0 of 600 frames on valid footage and reported
+# `insufficient_detections`, i.e. "your clips are hard" rather than "the
+# detector was never started".
+#
+# Bounded on purpose: a per-frame warning on a 60,000-frame render is its own
+# denial of service, so each distinct signature prints once per process.
+_DETECT_FAIL_SEEN = set()
+_DETECT_FAIL_LOCK = threading.Lock()
+
+
+def _warn_detect_failure(exc):
+    """Announce a swallowed detector exception once per distinct signature."""
+    sig = (type(exc).__name__, str(exc)[:200])
+    with _DETECT_FAIL_LOCK:
+        if sig in _DETECT_FAIL_SEEN:
+            return
+        _DETECT_FAIL_SEEN.add(sig)
+    print('[FaceAnalysis] DETECTOR FAILED on this frame and returned NO FACES: '
+          '%s: %s\n'
+          '[FaceAnalysis] Every frame hitting this path is written through '
+          'UNSWAPPED. A run can therefore finish with return code 0, valid '
+          'output, and a swap audit reading 100%% -- that audit counts faces it '
+          'was HANDED, not faces in the clip. If the output is unswapped, this '
+          'is why. A common cause is a detector/det_size mismatch: yoloface_8n '
+          'and det_10g are fixed 640x640 exports.'
+          % sig, flush=True)
+
+
+def detector_failure_signatures():
+    """Distinct swallowed detector failures seen so far, for harness reporting."""
+    with _DETECT_FAIL_LOCK:
+        return sorted(_DETECT_FAIL_SEEN)
+
+
+def reset_detector_failures():
+    """Clear the once-per-process warning state (used by tests)."""
+    with _DETECT_FAIL_LOCK:
+        _DETECT_FAIL_SEEN.clear()
+
+
 def get_all_faces(frame: Frame) -> Any:
     try:
         faces = _detect_faces(frame)
         if not faces:
             return []
         return sorted(faces, key=lambda x: x.bbox[0])
-    except Exception:
+    except Exception as exc:
+        _warn_detect_failure(exc)
         return []
 
 

@@ -42,6 +42,7 @@ if HERE not in sys.path:
 # (see sample_bench.py's copy of this function for the full rationale) — this
 # script imports angle_bench directly too, so it needs its own copy rather
 # than relying on sample_bench's (which is imported later, at line ~44 below).
+import fixtures
 def _apply_perf_env():
     try:
         import yaml
@@ -90,17 +91,17 @@ import sample_bench as sb                                        # noqa: E402
 # three purpose-built folders replace them. They test different things, so they
 # are graded differently -- expression/ is about whether a blink and a mouth
 # survive the swap, which no identity metric sees.
-EXPRESSION_DIR = r"G:/pinokio/roop-keep/expression"
-THREED_DIR = r"G:/pinokio/roop-keep/3d model"
-FINAL_DIR = r"G:/pinokio/roop-keep/final"
+EXPRESSION_DIR = fixtures.clip_dir('expression')
+THREED_DIR = fixtures.clip_dir('3d model')
+FINAL_DIR = fixtures.clip_dir('final')
 # Kept only so an old tag still resolves if someone re-runs a saved command;
 # both folders are gone and glob will simply return nothing.
-SINGLE_DIR = r"G:/pinokio/roop-keep/single"
-DOUBLE_DIR = r"G:/pinokio/roop-keep/double"
+SINGLE_DIR = fixtures.clip_dir('single')
+DOUBLE_DIR = fixtures.clip_dir('double')
 
 SETS = {"expression": EXPRESSION_DIR, "3d": THREED_DIR, "final": FINAL_DIR}
 OUT_ROOT = os.path.join(APP, "output")
-PAUSE_FLAG = r"G:/pinokio/roop-keep/PAUSE_TESTS"
+PAUSE_FLAG = fixtures.clip_dir('PAUSE_TESTS')
 
 
 def _pause_watcher():

@@ -24,9 +24,39 @@ from roop.nvdec_reader import (  # noqa: E402
 )
 
 
+def _ensure_ffmpeg_on_path():
+    """Resolve ffmpeg the way the application does, not by hoping it is on PATH.
+
+    These two tests spawn a real ffmpeg through `FFmpegVideoReader`. Pinokio
+    ships ffmpeg under `PINOKIO_HOME/bin`, NOT on the interactive PATH, so a
+    bare `python -m unittest` run raised `FileNotFoundError [WinError 2]` from
+    `subprocess` and both tests errored on every machine -- long enough that the
+    failures were being carried in the session logs as "pre-existing
+    environment errors". They are not environmental: the app finds ffmpeg
+    perfectly well at runtime (every render in this repo encodes with
+    hevc_nvenc). The tests simply skipped the resolution step the app performs.
+    """
+    import shutil as _sh
+    if _sh.which("ffmpeg"):
+        return True
+    try:
+        from roop.runtime_optimizer import HardwareProfiler
+        found = HardwareProfiler._resolve_ffmpeg()
+    except Exception:
+        found = None
+    if not found:
+        return False
+    os.environ["PATH"] = (os.path.dirname(found) + os.pathsep
+                          + os.environ.get("PATH", ""))
+    return True
+
+
 class NvdecReaderTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
+        if not _ensure_ffmpeg_on_path():
+            raise unittest.SkipTest(
+                "ffmpeg could not be resolved from PATH or PINOKIO_HOME/bin")
         cls.tmp = tempfile.mkdtemp(prefix="roop_nvdec_reader_")
         cls.video = os.path.join(cls.tmp, "labelled.mp4")
         writer = cv2.VideoWriter(cls.video, cv2.VideoWriter_fourcc(*"mp4v"),

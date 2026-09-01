@@ -147,3 +147,65 @@ class FixtureDeterminismTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Phase10PassThroughTests(unittest.TestCase):
+    """The controlled harness must be able to express the Phase 10 arm.
+
+    `two_face_video.py` has owned `--target-conditioned-appearance` since the
+    feature landed, but `baseline_controlled.py` never forwarded it, so the
+    documented 3060 validation arm could not be run through the controlled
+    harness at all -- the same shape as the 2026-08-23 finding that the bench
+    populated no `merger_*` global, and the Phase 15 controller that was never
+    reachable. An unreachable arm silently measures the baseline twice.
+    """
+
+    def _source(self):
+        import io
+        return io.open(bc.__file__, encoding="utf-8").read()
+
+    def test_harness_declares_the_appearance_override(self):
+        self.assertIn("--target-appearance-mode", self._source())
+
+    def test_on_forwards_the_child_flag(self):
+        self.assertIn("--target-conditioned-appearance", self._source())
+
+    def test_off_does_not_forge_an_explicit_disable(self):
+        """The child cannot express "off"; off must be silence, not strength 0.
+
+        Passing `--target-conditioned-strength 0.0` would read as an off arm
+        while leaving `target_conditioned_appearance` at whatever the config
+        said, which is a different configuration than the one the arm claims.
+        """
+        src = self._source()
+        self.assertNotIn('"--target-conditioned-strength", "0.0"', src)
+
+
+class ResolvedFeatureStateTests(unittest.TestCase):
+    """Record the state the CHILD resolved, never the one we asked for."""
+
+    ECHO = ("[bench] provider=tensorrt threads=8 tracking=1 "
+            "swap_model_mask=0 merger_clarity=0.0 "
+            "identity_detail=0.35 target_appearance=True "
+            "target_strength=0.75 target_alpha=0.3 "
+            "temporal_compositing=False\n"
+            "video took 140.0 secs, 4.29 frames/s\n"
+            "[bench] output: 600 frames\n")
+
+    def test_reads_back_the_opt_in_feature_state(self):
+        out = bc.parse_run(self.ECHO)
+        self.assertEqual(out.get("feature_identity_detail"), 0.35)
+        self.assertIs(out.get("feature_target_appearance"), True)
+        self.assertEqual(out.get("feature_target_strength"), 0.75)
+        self.assertEqual(out.get("feature_target_alpha"), 0.3)
+
+    def test_an_off_arm_is_recorded_as_off_not_as_absent(self):
+        off = self.ECHO.replace("target_appearance=True",
+                                "target_appearance=False")
+        out = bc.parse_run(off)
+        self.assertIs(out.get("feature_target_appearance"), False)
+
+    def test_absent_echo_records_nothing_rather_than_guessing(self):
+        out = bc.parse_run("video took 140.0 secs, 4.29 frames/s\n"
+                           "[bench] output: 600 frames\n")
+        self.assertNotIn("feature_target_appearance", out)

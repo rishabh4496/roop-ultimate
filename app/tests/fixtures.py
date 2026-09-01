@@ -181,3 +181,43 @@ def matches(fp, expect):
     """Which expected fixture fields disagree with the resolved file."""
     return sorted(k for k, v in (expect or {}).items()
                   if fp.get(k) is not None and fp.get(k) != v)
+
+
+def clip_dir(rel, required=False):
+    """Resolve a fixture DIRECTORY like ``"final"`` or ``"double"``.
+
+    The folder analogue of `clip`. Harnesses that sweep a whole category
+    (`final/`, `double/`, `expression/`, `single/`, `3d model/`) hardcoded the
+    4070's `G:/pinokio/roop-keep/<name>`, which does not exist on the 3060 --
+    and a missing directory does not raise the way a missing file does. Several
+    of those harnesses simply iterate nothing and report a clean empty result,
+    which is the silent-empty failure this project has already been caught by
+    twice (yoloface returning zero faces at 329 fps; the Phase 8 bench grading
+    0 of 600 frames and calling it `insufficient_detections`).
+
+    Returns `rel` unchanged when nothing matches, so the caller fails with its
+    own message rather than silently sweeping an empty set.
+    """
+    if os.path.isabs(rel) and os.path.isdir(rel):
+        return rel
+    rel_norm = rel.replace("\\", "/")
+    base = os.path.basename(rel_norm)
+    roots = clip_roots()
+    for root in roots:
+        if not os.path.isdir(root):
+            continue
+        for cand in (os.path.join(root, *rel_norm.split("/")),
+                     os.path.join(root, base)):
+            if os.path.isdir(cand):
+                return cand
+    if required:
+        raise SystemExit(
+            "fixture directory %r not found on this machine.\nSearched:\n  %s\n"
+            "Set ROOP_CLIP_ROOT to the folder holding the benchmark clips."
+            % (rel, "\n  ".join(roots)))
+    return rel
+
+
+def dir_available(rel):
+    """True when `rel` resolves to a real directory here."""
+    return os.path.isdir(clip_dir(rel))

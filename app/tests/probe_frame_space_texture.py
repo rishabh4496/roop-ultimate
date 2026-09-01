@@ -34,6 +34,7 @@ APP = os.path.dirname(HERE)
 for _p in (APP, HERE):
     if _p not in sys.path:
         sys.path.insert(0, _p)
+import fixtures
 os.environ.setdefault('ROOP_TRT_POOL', '2')
 
 import cv2
@@ -73,7 +74,7 @@ def inject(rendered, plate, face, gain, sigma=1.0):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--clip", default=r"G:/pinokio/roop-keep/inverted/s1.mp4")
+    ap.add_argument("--clip", default=fixtures.clip('inverted/s1.mp4'))
     ap.add_argument("--arm", default=None,
                     help="rendered output to probe (default: the dt=0 sweep arm)")
     ap.add_argument("--source", default="harjot")

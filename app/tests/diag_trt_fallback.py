@@ -29,6 +29,7 @@ if APP not in sys.path:
     sys.path.insert(0, APP)
 if HERE not in sys.path:
     sys.path.insert(0, HERE)
+import fixtures
 
 import angle_bench as ab                      # noqa: E402
 from two_face_video import load_library_faceset  # noqa: E402
@@ -68,7 +69,7 @@ def main():
     harjot = load_library_faceset("harjot")
     source_face = harjot.faces[0]
 
-    video = os.path.join("G:/pinokio/roop-keep/single", "s1.mp4")
+    video = fixtures.clip("single/s1.mp4")
     cap = cv2.VideoCapture(video)
     ok, frame = cap.read()
     cap.release()

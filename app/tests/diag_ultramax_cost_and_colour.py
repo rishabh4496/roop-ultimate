@@ -24,6 +24,7 @@ APP = os.path.dirname(HERE)
 for p in (APP, HERE):
     if p not in sys.path:
         sys.path.insert(0, p)
+import fixtures
 os.environ.setdefault('ROOP_TRT_POOL', '2')
 
 import numpy as np
@@ -38,7 +39,7 @@ from roop.processors.Enhance_UltraMax import Enhance_UltraMax
 from roop.processors.Enhance_GPENRealistic import Enhance_GPENRealistic
 from roop.processors.Enhance_GPEN256Pro import Enhance_GPEN256Pro
 
-CLIP = os.environ.get('PROF_CLIP', r'G:/pinokio/roop-keep/inverted/s1.mp4')
+CLIP = os.environ.get('PROF_CLIP', fixtures.clip('inverted/s1.mp4'))
 cap = cv2.VideoCapture(CLIP)
 crops = []
 for f in (200, 400, 700, 1000, 1400):
