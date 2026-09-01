@@ -392,6 +392,30 @@ The fps column is a 30-frame window and includes model init; it ranks the arms
 against each other inside one window and must not be quoted as throughput.
 `ms/face` is the stage's own per-call figure and is the comparable number.
 
+## Phase 8 - single-image face swap (4070)
+
+"Image face swap works" is an acceptance criterion neither campaign had a run
+behind: every end-to-end harness here renders VIDEO, so the still path
+(`roop.core.live_swap` -- no tracker, no temporal engines, no stabilizer
+geometry, no encoder) was covered only by unit tests.
+`tests/image_swap_smoke.py` closes it. Production stack, `single/s1.mp4`,
+`harjot`:
+
+| frame | face-region delta | identity to source, before -> after |
+|---:|---:|---|
+| 200 | 6.44/255 | 0.0596 -> **0.6665** |
+| 600 | 6.44/255 | 0.0437 -> **0.6712** |
+| 1000 | 6.05/255 | 0.0591 -> **0.6941** |
+
+Graded on identity rather than pixels on purpose: two renders of one unchanged
+configuration differ on every frame here, so "the output changed" proves
+nothing. An embedding moving from ~0.05 to ~0.67 toward the source cannot be
+produced by a filter, a colour transfer or an enhancer.
+
+**The harness carries a `--control` arm that skips the swap and must FAIL.** Run
+here: region delta 0.00/255, identity 0.0596 -> 0.0596, both assertions fired.
+Without that, a rubber stamp and a real check are indistinguishable.
+
 ## Phase 11/19 - two interacting swapped faces, and long-run stability (4070)
 
 One full-length render of `double/d3.mp4` -- **5,979 frames, 15,684 detected
