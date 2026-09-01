@@ -1,0 +1,8 @@
+import React from 'react';
+import { useTheme } from '../theme/ThemeProvider';
+import { Button, Card, Select, Toggle } from '../components/primitives';
+
+export default function SettingsScreen() {
+  const { theme, themes, setTheme } = useTheme();
+  return <div className="v2-screen"><div className="v2-page-heading"><div><span className="v2-eyebrow">Foundation preferences</span><h2>Settings</h2><p>Shared appearance controls demonstrate the token contract without touching backend settings.</p></div></div><div className="v2-grid v2-grid-two"><Card><div className="v2-card-heading"><div><span className="v2-eyebrow">Theme engine</span><h3>Choose a shared visual language</h3></div></div><Select label="Theme" value={theme} onChange={(event) => setTheme(event.target.value)} options={Object.entries(themes).map(([value, item]) => ({ value, label: item.label }))} hint="All seven themes use the same primitives and layout." /><div className="v2-theme-grid">{Object.entries(themes).map(([id, item]) => <Button key={id} variant={theme === id ? 'primary' : 'secondary'} size="sm" onClick={() => setTheme(id)} aria-pressed={theme === id}>{item.label}</Button>)}</div></Card><Card><div className="v2-card-heading"><div><span className="v2-eyebrow">State architecture</span><h3>Safe defaults</h3></div></div><Toggle label="Compact navigation" hint="Foundation preview only" checked={false} onChange={() => {}} /><Toggle label="Reduced motion" hint="Reserved for accessibility integration" checked={false} onChange={() => {}} /><p className="v2-muted">These preview toggles are local-only placeholders. They do not alter V1, backend settings, processing, or hardware behavior.</p></Card></div></div>;
+}
