@@ -1,5 +1,71 @@
 # Optimization Progress
 
+## FINAL VALIDATION CAMPAIGN — RTX 4070 (2026-09-01, later session)
+
+Full record: `docs/FINAL_VALIDATION_MATRIX.md`, section
+`# RTX 4070 campaign (2026-09-01)`. Handoff and next steps:
+`docs/PHASE_HANDOFF.md`, top section.
+
+### This invalidates the ABSOLUTE values of the benchmarks above
+
+`tests/two_face_video.py` — the harness `baseline_controlled.py` and every
+Phase/Gate benchmark in this document run through — did not render the
+configuration in `config.yaml`. It inherited `angle_bench.init_pipeline`'s
+"state every setting explicitly" semantics, which is correct for an angle A/B
+and wrong for an end-to-end harness. 28 keys diverged; the ones no harness set
+anywhere were `target_conditioned_appearance` (False against a live True),
+`detail_transfer_strength` (0.0 against 0.4), `color_match_after_enhance`
+(False against True), `codeformer_fidelity` (0.5 against 0.55) and
+`parser_regions` (None against the five configured regions).
+
+**Read every earlier benchmark accordingly:** an A/B ratio survives, because
+both arms were equally off. An absolute FPS, identity or quality value does
+not — it describes a stack nobody ships. This is the third recurrence of the
+same defect class in this project (the `yaw_*` swap-model mask, then the whole
+merger stage), so the sync now lives in one place, `tests/config_sync.py`, and
+`tests/test_bench_config_parity.py` fails if it stops being exhaustive or gets
+unwired.
+
+### New measurement instrument — the pixel noise floor
+
+`tests/measure_output_noise_floor.py`. On this 4070, production stack,
+`double/d4.mp4` frames 0..60, two renders of one unchanged configuration differ
+on every frame: **mean 0.7142/255, max 22/255**, three pairs agreeing to 0.4%.
+Unchanged by threads 12 → 1, by tensorrt → cuda, and by `PYTHONHASHSEED=0`;
+frame 0 differs at one worker and the detected boxes are identical while the
+identity cosines are not. It is non-deterministic GPU reduction order.
+
+**A pixel delta at or below that is not evidence a feature ran.** Prove
+execution from a `ROOP_PROFILE` stage call count. Used in both directions this
+session: it disproved an "identity detail executes" reading, and it confirmed
+that an edit to three `except` handlers in `paste_upscale` left the default
+path unchanged (0.7158 / 0.7175 / 0.7209 against three pre-change renders).
+
+### Verified with evidence on this target
+
+| area | result |
+|---|---|
+| all 14 selectable enhancers | execute end to end, one `enhance` call per swapped face, zero wrong-faceset. DMDNet works here, so "DMDNet is broken" is 3060-specific |
+| adaptive enhancer | **selects `none` on 60 of 60 faces** on the locked fixture and presents as the FASTEST arm; the quality band (0.7665 / 0.7994 / 0.8188) sits far above every profile cut. Policy working as written, now reported. No threshold changed |
+| single-image swap | identity to source 0.05 → 0.67 on every graded frame, with a control arm that must fail and does |
+| application boot | `/api/meta`, `/api/settings`, `/api/progress`, `/api/system/telemetry` all 200; no private keys leaked; clean shutdown |
+| host memory over a long render | 5,979 frames, peak 15.26 GB, quarter means 14.68 / 14.78 / 14.79 / 13.07 — flat then falling |
+| interacting faces, `double/d3.mp4` | 17 wrong-faceset of 2,952 attributable swaps (0.58%); 10.0% of faces on a track with no source; 33.1% of swaps had interpolated landmarks |
+
+### Seven defects fixed
+
+Harness config parity; identity detail silently restoring nothing on V1
+facesets; the adaptive enhancer silently restoring nothing; `faceset_mean` not
+being format-neutral (the 3060 campaign's D.9, previously FOUND NOT FIXED);
+unbounded per-face fallback logging in the adaptive enhancer; an absent
+`quality` entering the adaptive band as 0.0; and three compositing/occlusion
+quality layers falling back to the legacy path in silence.
+
+Six of the seven share one shape — **something reported success while not
+running** — which is the same shape as the eight defects the 3060 campaign
+found. The instruments that keep missing it are the swap audit (counts intent,
+not outcome) and the return code (an unswapped frame is a valid picture).
+
 ## PERFORMANCE FOUNDATION COMPLETE — READY FOR REALISM/QUALITY OPTIMIZATION
 
 The performance foundation is complete at stable implementation SHA

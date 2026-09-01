@@ -1,3 +1,122 @@
+# Phase Handoff - final validation campaign, RTX 4070 (2026-09-01, later)
+
+Device: physical RTX 4070, driver 616.56, TensorRT 10.9.0.34, ORT 1.23.2.
+Full evidence: `docs/FINAL_VALIDATION_MATRIX.md`, section
+`# RTX 4070 campaign (2026-09-01)`.
+
+## Read this first - it changes how to read every earlier benchmark here
+
+**`two_face_video.py` did not render the config the user runs.** It is the
+end-to-end harness `baseline_controlled.py` and the whole Phase/Gate campaign
+go through, and it inherited `angle_bench.init_pipeline`'s "state every setting
+explicitly" semantics -- right for an angle A/B, wrong for end-to-end. 28 keys
+diverged from `config.yaml`. The ones no harness set anywhere:
+
+    target_conditioned_appearance   False  vs  True     <- LIVE feature, off
+    detail_transfer_strength          0.0  vs  0.4      <- whole path dead
+    color_match_after_enhance       False  vs  True
+    codeformer_fidelity               0.5  vs  0.55
+    parser_regions                   None  vs  the five configured regions
+
+**A/B arms remain valid** -- both sides were equally off -- but no absolute
+value from this harness was production, and any quality grading against real
+footage measured a stack nobody ships. Fixed by
+`angle_bench.init_pipeline(sync_config=True)` over the shared
+`tests/config_sync.py`; guarded by `tests/test_bench_config_parity.py`, which
+was verified to fail on the pre-fix state on all 28 keys.
+
+Because silence now means "the user's config", an A/B can no longer express
+"off" by omitting a flag. Each config-backed toggle gained an explicit negative
+(`--no-target-conditioned-appearance` and friends).
+
+## The instrument to use before believing any pixel comparison
+
+`tests/measure_output_noise_floor.py`. Two renders of one unchanged
+configuration on this pipeline differ on EVERY frame:
+
+    mean 0.7142/255   max 22/255   (three pairs, agreeing to 0.4%)
+
+and the floor survives threads 12 -> 1 (0.7469), tensorrt -> cuda (0.8921) and
+`PYTHONHASHSEED=0` (0.7804). Frame 0 differs at one worker; detected boxes are
+identical while identity cosines are not. It is non-deterministic GPU reduction
+order, not scheduling, tactics or hash order.
+
+**A pixel delta at or below ~0.71/255 mean is not evidence a feature ran.**
+Prove execution from a `ROOP_PROFILE` stage call count instead. That is not
+hypothetical: `--identity-detail-strength 0.35` measured 0.766 against this
+floor while the `identity_detail` stage never appeared in the profile at all.
+
+The floor was also used as a regression check, which is the intended second
+use: after editing three except handlers in `procmgr_masking.paste_upscale`, a
+production render sat at 0.7158 / 0.7175 / 0.7209 against the three pre-change
+renders -- inside the floor, so the default path is unchanged.
+
+## What was fixed
+
+| # | defect | status |
+|---|---|---|
+| 1 | the end-to-end harness rendered module defaults, not `config.yaml` | FIXED |
+| 2 | identity detail restored nothing on V1 facesets, silently | FIXED (reported once per cause) |
+| 3 | the adaptive enhancer restored nothing on 60 of 60 faces, silently, as the fastest arm of the sweep | FIXED (visibility only) |
+| 4 | `faceset_mean` was not format-neutral -- the 3060 campaign's D.9, carried as FOUND NOT FIXED | FIXED |
+| 5 | adaptive fallback printed per face (120,000 lines on a long render) | FIXED |
+| 6 | an absent `quality` entered the adaptive band as 0.0 | FIXED |
+| 7 | three compositing/occlusion quality layers fell back to the legacy path in silence | FIXED (reported once per cause) |
+
+## What was verified, with evidence
+
+* **all 14 selectable enhancers execute** end to end, one `enhance` call per
+  swapped face, zero wrong-faceset. DMDNet works on this card, so the inherited
+  "DMDNet is broken" is 3060-specific.
+* **single-image swap** (`tests/image_swap_smoke.py`): identity to source
+  0.05 -> 0.67 on every graded frame, with a `--control` arm that must fail and
+  does.
+* **the application boots**: `/api/meta`, `/api/settings`, `/api/progress`,
+  `/api/system/telemetry` all 200, no private underscore keys leaked, clean
+  shutdown with VRAM released.
+* **no host memory leak**: 5,979-frame `double/d3.mp4` render, 289 samples, peak
+  15.26 GB, quarter means 14.68 / 14.78 / 14.79 / 13.07 -- flat then falling.
+* **interacting faces on `double/d3.mp4`**: 17 wrong-faceset applications of
+  2,952 attributable swaps (0.58%). Recorded as a NEW baseline -- the
+  2026-08-23 audit's 10 was `duo/d3.mp4`, a different clip sharing the filename,
+  and `duo/` does not exist on this machine.
+
+## Exact starting point for the next session
+
+1. **Re-baseline everything through `two_face_video.py`.** Every absolute number
+   taken through it predates the config sync and was measured on a different
+   stack from production. A/B ratios survive; absolute FPS, identity and quality
+   values do not.
+2. **Decide the adaptive enhancer's thresholds, with the missing half.** The
+   distribution is now measured (d4: 0.7665 / 0.7994 / 0.8188 against a 0.68
+   cut; d6: 0.42-0.47, where it engages). What is NOT measured is whether
+   restoring a 0.80-quality face improves it. Do that comparison before moving
+   any cut -- four gate changes here were implemented and reverted for exactly
+   this gap.
+3. **`track matched but has no source` is 10.0% of faces on d3**, the largest
+   single refusal class on that clip. The project already characterises this as
+   intake rather than gating: a track whose best frames never entered the source
+   bank binds to nothing. Untouched by this campaign.
+4. **33.1% of d3's swaps had INTERPOLATED landmarks** and therefore bypassed the
+   identity gates. Unquantified as a quality risk.
+5. **Twelve settings have no UI**: `identity_detail_strength`,
+   `temporal_compositing_*` (7), `temporal_quality_*` (4). They are in
+   `settings.py` and `api.py` but in no React control. Deliberately NOT added
+   here: their own handoffs record them as OPEN/INCOMPLETE, and exposing an
+   unvalidated feature in the main panel presents it as ready.
+6. **Nothing in this campaign is measured on the RTX 3060.** All seven fixes are
+   device-independent code, but the enhancer sweep, the noise floor, the image
+   smoke and the d3 baseline are 4070 numbers only.
+
+## Do not break
+
+Everything in the previous section's "Do not break" list, plus:
+`tests/config_sync.py` is now the single implementation of the config sync --
+`compare_enhancers_video.sync_globals_from_config` re-exports it, and a second
+copy is how this defect happened in the first place.
+
+---
+
 # Phase Handoff - Phase 11 Temporal Identity Per-Face Cost
 
 Date: 2026-09-01
