@@ -372,3 +372,30 @@ cannot be promoted to `PASS`, and the explicit failures prevent acceptance.
 React UI 1.0 must remain available. The next work is defect-resolution and
 revalidation, followed by browser, closure/shutdown, physical RTX 3060, offline,
 and final visual-quality evidence.
+
+## Stage 17A V1 retirement review — 2026-09-02
+
+This is a non-destructive migration audit. It does not retire, rename, or
+switch the V1 client. `docs/development/UI2_MIGRATION_PLAN.md` contains the
+file protection list, future candidates, compatibility shims, risks, and
+planned rollback procedure.
+
+| Retirement criterion | Status | Evidence and reason |
+|---|---|---|
+| V2 has complete required functionality | FAIL | V2 is documented as a parallel partial client; source shows unavailable controls and V1 retains feature/API coverage absent from V2. |
+| V2 has passed the acceptance matrix | FAIL | Stage 16 contains failed, blocked, and untested required rows and explicitly rejects production readiness. |
+| V2 validated on RTX 4070 | FAIL | Device A evidence includes a failed still-image smoke and a 71/467 gradable-frame identity mismatch; V2 browser execution was not verified. |
+| V2 validated on RTX 3060 | BLOCKED | The physical RTX 3060 Laptop was unavailable on the test host. |
+| Persistent projects remain recoverable | BLOCKED | Atomic/control-plane tests passed, but real close/reopen, shutdown/restart, and V2 browser reload were not tested. |
+| Existing user projects remain safe | BLOCKED | Protection guards passed, but V1-to-V2 project migration and real-user project round-trip acceptance are not established. |
+| V1-specific functionality has a verified V2 replacement | FAIL | V1-only or V1-exclusive consumers remain for face management, facesets, extras, livecam, history, quality, benchmark, and advanced source/target workflows. |
+| No required backend API depends uniquely on V1 | BLOCKED | Backend ownership is shared, but many route families are only verified as consumed by V1; complete replacement/retirement analysis is missing. |
+| Pinokio launch behavior remains correct | BLOCKED for V2 migration; PASS for current V1 path | Current scripts correctly launch V1 and use the documented URL capture pattern; they do not install or launch V2. |
+| Rollback to V1 remains possible until migration is complete | BLOCKED | V1 is still present, but the ignored backup, absent verified V1 tag, and untested restore flow do not establish release-grade rollback. |
+
+### Stage 17A decision
+
+V1 retirement is **NOT AUTHORIZED**. Keep `react-ui/`, the current V1
+Pinokio path, backend routes, project/checkpoint/output data, models, and
+environments intact. The exact migration plan and future exit conditions are
+in `docs/development/UI2_MIGRATION_PLAN.md`.

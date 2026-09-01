@@ -1323,3 +1323,91 @@ visual playback.
 Do not declare V2 production-ready, promote `NOT TESTED` or `BLOCKED` items to
 PASS, extrapolate Device A to Device B, remove V1, hide known failures, or
 install critical runtime/dependency updates.
+
+## STAGE 17A - V1 RETIREMENT REVIEW
+
+### CURRENT STATE
+
+Stage 17A completed a non-destructive final migration audit. The working tree
+was clean before the audit; branch `main` was at
+`9cda2c75a1555d374f15f397da93c25b5a8c4f66`, tracking `origin/main`. No React,
+backend, launcher, model, environment, project, checkpoint, output, or V1
+file was deleted or behaviorally changed.
+
+### COMPLETED
+
+- Audited the Stage 16 acceptance matrix against the requested V1 retirement
+  criteria.
+- Inspected the actual V1/V2 source surfaces and backend route ownership.
+- Verified that the current Pinokio React path installs and starts `react-ui`
+  (V1), not `react-ui-v2`.
+- Recorded protected files, future retirement candidates, required
+  compatibility shims, risks, and a planned rollback procedure in
+  `docs/development/UI2_MIGRATION_PLAN.md`.
+- Recorded Stage 17A statuses in `docs/development/VALIDATION_MATRIX.md`.
+
+### VERIFIED
+
+- V1 remains available and current Pinokio launch behavior remains unchanged.
+- The current `start_react.js` URL capture uses the required parenthesized
+  regex and `input.event[1]` local assignment.
+- V2 is not accepted as a complete replacement; Stage 16 has unresolved
+  failures, blocked items, and untested items.
+- V1 contains feature and route consumers not covered by the current V2 source.
+- The physical RTX 3060, real browser acceptance, close/shutdown recovery, and
+  tested V2-to-V1 rollback were not verified.
+
+### NOT VERIFIED / FAILURES
+
+- V2 feature parity and production readiness.
+- V2 validation on both required physical devices.
+- Real V1-to-V2 project migration and application-close/PC-shutdown recovery.
+- Immutable, release-grade V1 rollback artifact and restore test.
+
+### KNOWN ISSUES
+
+Stage 17A migration blockage is recorded as item 47 in
+`docs/development/KNOWN_ISSUES.md`; Stage 16 issues 44-46 remain applicable.
+
+### FILES CHANGED
+
+- `docs/development/UI2_MIGRATION_PLAN.md`
+- `docs/development/MASTER_PLAN.md`
+- `docs/development/CURRENT_STATE.md`
+- `docs/development/VALIDATION_MATRIX.md`
+- `docs/development/KNOWN_ISSUES.md`
+- `docs/development/SESSION_HANDOFF.md`
+
+No application or launcher files were changed. No files were deleted.
+
+### TESTS RUN
+
+This was an audit/documentation gate. No feature test was newly required because
+source behavior was not changed. The following checks were run after the edits:
+
+- `git diff --check` — passed; only expected Git LF/CRLF normalization warnings
+  were emitted.
+- `node --check start_react.js` — passed.
+- Git status/name inspection — passed; only the six development documents and
+  the new migration plan are changed/untracked, with no application or launcher
+  path changed.
+
+Prior Stage 15/16 execution evidence is referenced without being re-claimed as
+a new run.
+
+### COMMIT
+
+No commit was made in this handoff.
+
+### NEXT GATE
+
+Resolve the Stage 16 acceptance blockers and implement/revalidate the documented
+V2 parity and launcher migration prerequisites. V1 retirement remains a later
+gate and is not authorized by Stage 17A.
+
+### DO NOT TOUCH NEXT SESSION
+
+Do not delete or rename `react-ui/`, switch Pinokio to V2, remove backend routes,
+alter project/checkpoint/output data, or call V2 production-ready. Do not
+extrapolate RTX 4070 evidence to RTX 3060 or treat missing rollback/browser/
+shutdown evidence as passed.

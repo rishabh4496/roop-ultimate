@@ -13,7 +13,9 @@ Repository HEAD at Stage 9A audit start: `459dd4082e60ae1b153b2e65c393eb8a2d6d91
 
 ## CURRENT IMPLEMENTATION
 
-The active gate for this session is Stage 16: React UI 2.0 acceptance. Stage 14
+The active gate for this session is Stage 17A: V1 retirement review. Stage 16
+acceptance remains incomplete, so this gate is an audit and migration plan
+only; React UI 1.0 is retained. Stage 14
 and Stage 15 provide separate hardware, regression, and long-run evidence for
 the RTX 4070 and
 RTX 3060 targets; Stage 13 provides the UI integration boundary; Stages 10
@@ -63,6 +65,7 @@ winners.
 | Stage 14 - Dual-Hardware Validation | Fresh Device A RTX 4070 health/video evidence collected; still-image processing failed on Device A; Device B RTX 3060 was unavailable on this host and remains unverified; full cross-feature and long-run acceptance remains open |
 | Stage 15 - Full Regression and Long-Run Validation | Full Python regression and both UI build/lint checks passed; a 600-frame Device A soak completed with bounded post-run GPU/process state; visual-quality mismatch, health-probe timeout, browser/Device B coverage, and full integrated acceptance remain open |
 | Stage 16 - React UI 2.0 Acceptance | Acceptance audit recorded PASS/FAIL/BLOCKED/NOT TESTED per major feature; V2 is not production-ready because critical browser, recovery, Device B, offline, health, and visual-quality evidence is missing or failing |
+| Stage 17A - V1 Retirement Review | Audit completed; V1 remains active because V2 parity, acceptance, dual-device evidence, project migration/recovery, and tested rollback are not established; no files deleted |
 | Next UI2 design or migration gate | Not defined in the repository; scope requires explicit authorization |
 | Visual validation / retained-output review | Open and not yet complete |
 | Phase 16 final production quality gate | Open/incomplete |

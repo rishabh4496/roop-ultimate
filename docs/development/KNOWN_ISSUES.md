@@ -189,3 +189,11 @@ newer writer-options identity are conservatively not trusted for continuation.
     RTX 3060 validation, real offline operation, and final visual playback were
     not tested. The fresh health launch probe also failed and the Device A
     visual-quality mismatch remains, so V2 must not be called production-ready.
+
+47. **Stage 17A V1 retirement is not authorized.** The production Pinokio
+    React path still installs and launches `react-ui` (V1), while V2 lacks
+    verified parity and the Stage 16 acceptance matrix remains incomplete.
+    V1-specific route/workflow coverage, physical RTX 3060 evidence, browser
+    acceptance, close/shutdown recovery, and tested immutable V1 rollback are
+    not established. No V1 files may be deleted until the documented
+    migration exit conditions pass.

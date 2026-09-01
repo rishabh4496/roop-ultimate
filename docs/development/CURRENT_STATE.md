@@ -10,9 +10,25 @@ status; it is not authorization to change application behavior.
 | Branch | `main` tracking `origin/main` |
 | HEAD at Stage 9A audit start | `459dd4082e60ae1b153b2e65c393eb8a2d6d9198` |
 | Working tree at Stage 9A audit start | Clean; Stage 8B implementation and handoff documentation are committed and pushed; no Stage 9A code or launcher changes made |
-| Active stage/gate | Stage 16 - React UI 2.0 Acceptance |
+| Active stage/gate | Stage 17A - V1 Retirement Review |
 | Last completed gate | Stage 13 - UI 2.0 Integration; Stage 14 validation remains open/incomplete |
 | Existing application behavior changed in Stage 8A | Processing pause now requests and acknowledges a controller-owned safe point; queue/API telemetry and both React surfaces expose the transient request and acknowledged pause |
+
+## Stage 17A V1 retirement review
+
+The retirement audit is complete and is blocked. React UI 1.0 remains active;
+no V1 file was deleted or renamed. React UI 2.0 is not a complete verified
+replacement: the Stage 16 acceptance matrix has unresolved `FAIL`, `BLOCKED`,
+and `NOT TESTED` rows, V1 still owns feature and backend-route coverage not
+present in V2, and the production Pinokio React path still installs and starts
+`react-ui`.
+
+The migration plan is recorded in `docs/development/UI2_MIGRATION_PLAN.md`.
+It identifies protected files, future retirement candidates, required shims,
+risks, and a planned rollback procedure. The ignored V1 backup and absence of
+a verified `react-ui-v1` tag mean immutable rollback provenance is not yet
+established. RTX 3060 validation, browser acceptance, application-close and
+PC-shutdown recovery, and a full V2 rollback remain unverified.
 
 ## CURRENT IMPLEMENTATION
 
