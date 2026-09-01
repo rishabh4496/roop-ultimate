@@ -10,7 +10,7 @@ status; it is not authorization to change application behavior.
 | Branch | `main` tracking `origin/main` |
 | HEAD at Stage 9A audit start | `459dd4082e60ae1b153b2e65c393eb8a2d6d9198` |
 | Working tree at Stage 9A audit start | Clean; Stage 8B implementation and handoff documentation are committed and pushed; no Stage 9A code or launcher changes made |
-| Active stage/gate | Stage 15 - Full Regression and Long-Run Validation |
+| Active stage/gate | Stage 16 - React UI 2.0 Acceptance |
 | Last completed gate | Stage 13 - UI 2.0 Integration; Stage 14 validation remains open/incomplete |
 | Existing application behavior changed in Stage 8A | Processing pause now requests and acknowledges a controller-owned safe point; queue/API telemetry and both React surfaces expose the transient request and acknowledged pause |
 
@@ -80,6 +80,14 @@ status; it is not authorization to change application behavior.
   direct launch on port 14561 returned `/api/meta` HTTP 200, so the validator
   result is retained as a failure requiring follow-up rather than being
   reclassified as healthy.
+
+## Stage 16 React UI 2.0 acceptance
+
+The acceptance report is recorded in `VALIDATION_MATRIX.md`. V2 is **not
+production-ready**. Automated contracts, builds, structured telemetry, and the
+Device A 600-frame soak provide bounded evidence, but unchecked criteria remain
+`BLOCKED` or `NOT TESTED`, and the health-validator and visual-quality failures
+remain `FAIL`.
 
 ## Stage 13 UI 2.0 integration
 

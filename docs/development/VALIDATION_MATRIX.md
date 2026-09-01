@@ -332,3 +332,43 @@ health validator launch probe failed, the quality harness reported a 71-frame
 identity mismatch, and Device B/browser/physical offline/full visual playback
 rows remain unverified. No feature change is authorized by this validation
 record.
+
+## Stage 16 React UI 2.0 acceptance report — 2026-09-02
+
+This is an acceptance audit against the preceding evidence in this matrix.
+Only the statuses `PASS`, `FAIL`, `BLOCKED`, and `NOT TESTED` are used. A
+passing source or control-plane test does not close an end-to-end criterion
+when the required live/browser/hardware evidence is absent.
+
+| Major feature | Status | Evidence and reason |
+|---|---|---|
+| V1 feature parity | NOT TESTED | V1 build/lint passed and V1 remains present, but no feature-by-feature parity acceptance was run. |
+| V2 new features | BLOCKED | V2 source/API contracts and focused tests passed, but browser click-through and live feature workflows were unavailable. |
+| Professional commercial application experience | NOT TESTED | No usability, accessibility, browser, or user-acceptance review was performed. |
+| Multiple themes | NOT TESTED | Seven theme definitions and switching code are present, but interactive switching and persistence were not exercised in a browser. |
+| Video-first workflow | BLOCKED | Source workflow and video controls are present; no live V2 browser workflow was available. |
+| Fast preview | BLOCKED | Preview route/control contracts passed; preview playback and render-throughput impact were not tested interactively. |
+| Live telemetry | BLOCKED | Backend structured telemetry and soak samples passed; V2 live rendering of telemetry was not browser-tested. |
+| Repaired batch processing | BLOCKED | Queue/batch control-plane tests passed; physical batch processing and browser queue acceptance were not run. |
+| True pause/resume | BLOCKED | Controller/API tests cover safe pause points and resume; no physical UI render pause/resume output test was run. |
+| Persistent resumable projects | BLOCKED | Atomic checkpoint and validation tests passed; no real application-close or shutdown continuation run was performed. |
+| Recovery after application closure | NOT TESTED | No actual close/reopen application test was performed. |
+| Recovery after PC shutdown | NOT TESTED | No PC shutdown/restart test was performed. |
+| Online operation | BLOCKED | Connected probe and no-op update check passed; full V2 online workflow was not run. |
+| Offline operation | BLOCKED | Deterministic disconnected tests passed; the network adapter was not disconnected and no full offline render was run. |
+| Compatibility-aware updates | PASS | Manifest-gated compatibility logic passed unit coverage and a real no-op check; no candidate installation was available. |
+| Rollback/health validation | FAIL | Fresh health validation failed its launch probe timeout; rollback/real candidate transaction was not exercised. |
+| Cleanup safety | PASS | Reference-aware inventory, guarded deletion tests, and read-only live audit passed; real-user deletion and launch-after-delete were not tested. |
+| Terminal information redesign | PASS | Structured sections, runtime state, terminal metadata, and long-run technical logs were observed; no useful raw diagnostic feed was removed. |
+| RTX 4070 validation | FAIL | Physical Device A long-run completed, but the still-image smoke failed and the 600-frame harness reported 71/467 `harjot` frames re-measured as the other person. |
+| RTX 3060 validation | BLOCKED | RTX 3060 Laptop was unavailable on the test host; no Device A extrapolation is made. |
+| Long-run stability | BLOCKED | Device A completed the 600-frame soak with worker exit and near-baseline VRAM, but Device B and final playback remain untested. |
+| No known critical regression | FAIL | Known acceptance-blocking issues remain: still-image failure, health launch-probe failure, and long-run visual-quality mismatch. |
+
+### Acceptance decision
+
+React UI 2.0 is **NOT PRODUCTION-READY**. The unchecked and blocked criteria
+cannot be promoted to `PASS`, and the explicit failures prevent acceptance.
+React UI 1.0 must remain available. The next work is defect-resolution and
+revalidation, followed by browser, closure/shutdown, physical RTX 3060, offline,
+and final visual-quality evidence.

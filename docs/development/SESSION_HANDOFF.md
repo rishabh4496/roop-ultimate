@@ -1247,3 +1247,79 @@ Do not claim Stage 15 complete, extrapolate Device A to Device B, treat the
 health validator timeout as healthy, hide the 71-frame quality mismatch,
 remove React UI 1.0, change runtime/provider/model policy, perform real cleanup
 deletions, or install critical dependency/runtime updates.
+
+## STAGE 16 - REACT UI 2.0 ACCEPTANCE
+
+### CURRENT STATE
+
+Stage 16 acceptance is **OPEN / INCOMPLETE**. The formal PASS/FAIL/BLOCKED/NOT
+TESTED report is in `docs/development/VALIDATION_MATRIX.md`. React UI 2.0 is
+not production-ready.
+
+### COMPLETED
+
+- Compared every requested acceptance criterion against the recorded Stage
+  13–15 evidence and assigned one of the four required statuses.
+- Preserved the distinction between source/control-plane evidence and missing
+  live browser, physical hardware, shutdown, offline, and visual evidence.
+- Recorded the explicit failures: the Stage 15 health launch-probe timeout and
+  the 71/467 `harjot` long-run visual-quality mismatch.
+
+### VERIFIED
+
+- V2 build/lint, backend contracts, structured telemetry, queue/pause/project
+  control-plane tests, compatibility-gated no-op update checking, cleanup
+  guards, terminal reporting, and the Device A 600-frame runtime soak have
+  supporting evidence in the validation matrix.
+- V1 remains available and its build/lint checks passed.
+
+### NOT VERIFIED / FAILURES
+
+- V1 feature parity and professional commercial experience were not accepted;
+  no parity, usability, accessibility, or browser review was run.
+- V2 interactive workflow, themes, preview, telemetry display, batching,
+  pause/resume, project reload, app-close recovery, PC-shutdown recovery,
+  online/offline end-to-end workflows, and final output playback were not
+  fully tested.
+- RTX 3060 validation is blocked because the physical device was unavailable.
+- Health validation failed its fresh launch probe. Device A still-image
+  processing and long-run visual quality also remain failed.
+
+### KNOWN ISSUES
+
+Stage 16 acceptance blockage is recorded as item 46 in
+`docs/development/KNOWN_ISSUES.md`; Stage 15 issues 44-45 remain applicable.
+
+### FILES CHANGED
+
+- `docs/development/MASTER_PLAN.md`
+- `docs/development/CURRENT_STATE.md`
+- `docs/development/VALIDATION_MATRIX.md`
+- `docs/development/KNOWN_ISSUES.md`
+- `docs/development/SESSION_HANDOFF.md`
+
+No feature, launcher, model, environment, or React UI 1.0 code was changed.
+
+### TESTS RUN
+
+This was an acceptance audit; no new feature test was required because source
+code was unchanged. The report references the actually run full regression,
+UI builds/lints, 600-frame soak, health probe, direct launch probe, update
+check, cleanup audit, and `ffprobe` results from Stage 15.
+
+### COMMIT
+
+No commit was made for Stage 16 in this session.
+
+### NEXT GATE
+
+Defect-resolution and revalidation for the health probe, Device A still-image
+path, and visual-quality mismatch; then browser acceptance, physical RTX 3060,
+application-close/PC-shutdown recovery, real offline operation, and final
+visual playback.
+
+### DO NOT TOUCH NEXT SESSION
+
+Do not declare V2 production-ready, promote `NOT TESTED` or `BLOCKED` items to
+PASS, extrapolate Device A to Device B, remove V1, hide known failures, or
+install critical runtime/dependency updates.

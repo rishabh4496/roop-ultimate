@@ -183,3 +183,9 @@ newer writer-options identity are conservatively not trusted for continuation.
     its quality harness re-measured 71 of 467 gradable `harjot` output frames
     as the other person. This is a real quality limitation; no corrective
     feature change was made during the validation-only gate.
+
+46. **Stage 16 React UI 2.0 acceptance is blocked.** V1 parity, browser
+    click-through, application-close recovery, PC-shutdown recovery, physical
+    RTX 3060 validation, real offline operation, and final visual playback were
+    not tested. The fresh health launch probe also failed and the Device A
+    visual-quality mismatch remains, so V2 must not be called production-ready.
