@@ -24,6 +24,16 @@ module.exports = {
         ]
       }
     },
+    // Install the parallel React UI 2.0 client without changing the V1 client.
+    {
+      method: "shell.run",
+      params: {
+        path: "react-ui-v2",
+        message: [
+          "npm install"
+        ]
+      }
+    },
     {
       method: "script.start",
       params: {

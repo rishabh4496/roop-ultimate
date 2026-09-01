@@ -390,7 +390,7 @@ planned rollback procedure.
 | Existing user projects remain safe | BLOCKED | Protection guards passed, but V1-to-V2 project migration and real-user project round-trip acceptance are not established. |
 | V1-specific functionality has a verified V2 replacement | FAIL | V1-only or V1-exclusive consumers remain for face management, facesets, extras, livecam, history, quality, benchmark, and advanced source/target workflows. |
 | No required backend API depends uniquely on V1 | BLOCKED | Backend ownership is shared, but many route families are only verified as consumed by V1; complete replacement/retirement analysis is missing. |
-| Pinokio launch behavior remains correct | BLOCKED for V2 migration; PASS for current V1 path | Current scripts correctly launch V1 and use the documented URL capture pattern; they do not install or launch V2. |
+| Pinokio launch behavior remains correct | BLOCKED for V2 migration; PASS for current V1 path and separate V2 preview path | Current V1 scripts remain the default. The new `start_react_v2.js` path was launched through Pinokio, served `react-ui-v2` at HTTP 200, and reached `/api/meta` at HTTP 200; the V2 path is not the production default. |
 | Rollback to V1 remains possible until migration is complete | BLOCKED | V1 is still present, but the ignored backup, absent verified V1 tag, and untested restore flow do not establish release-grade rollback. |
 
 ### Stage 17A decision

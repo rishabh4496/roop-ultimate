@@ -50,9 +50,11 @@ cd ../app && python run.py
 
 ## Run
 
-`start.js` launches the React UI, which is the default and only maintained
-interface. The legacy Gradio interface is still present under `app/ui/` and can
-be started with `start_legacy.js`, but it is frozen and receives no new work.
+`start.js` launches React UI 1.0, which remains the default and rollback path.
+Pinokio also exposes **Start React UI 2.0** as a separate preview action; it
+launches `react-ui-v2` with its own local backend/UI ports and does not replace
+V1. The legacy Gradio interface is still present under `app/ui/` and can be
+started with `start_legacy.js`, but it is frozen and receives no new work.
 
 ## Updates
 

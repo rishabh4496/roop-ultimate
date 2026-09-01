@@ -13,9 +13,11 @@ module.exports = {
     // of showing the running one.
     let start_react_script = info.running("start_react.js") ? "start_react.js"
       : (info.running("start.js") ? "start.js" : null)
+    let start_react_v2_script = info.running("start_react_v2.js") ? "start_react_v2.js" : null
     let running = {
       install: info.running("install.js"),
       start_react: start_react_script !== null,
+      start_react_v2: start_react_v2_script !== null,
       start_legacy: info.running("start_legacy.js"),
       update: info.running("update.js"),
       reset: info.running("reset.js"),
@@ -31,7 +33,53 @@ module.exports = {
         href: "install.js",
       }]
     } else if (installed) {
-      if (running.start_react) {
+      let start_v1_item = !running.start_react ? [{
+        icon: "fa-solid fa-rocket",
+        text: "Start React UI 1.0",
+        href: "start_react.js",
+      }] : []
+      let start_v2_item = !running.start_react_v2 ? [{
+        icon: "fa-solid fa-flask",
+        text: "Start React UI 2.0",
+        href: "start_react_v2.js",
+      }] : []
+      if (running.start_react_v2) {
+        let local = info.local(start_react_v2_script)
+        if (local && local.url) {
+          return [{
+            default: true,
+            icon: "fa-solid fa-flask",
+            text: "Open React UI 2.0",
+            href: local.url,
+          }, {
+            icon: "fa-solid fa-circle-stop",
+            text: "<div><strong>Stop Swap</strong><div>Abort the current job and finalize a playable video</div></div>",
+            href: "stop.js",
+            params: { api_url: local.api_url },
+          }, {
+            icon: "fa-solid fa-pause",
+            text: "<div><strong>Pause</strong><div>Hold the running job</div></div>",
+            href: "pause.js",
+            params: { api_url: local.api_url },
+          }, {
+            icon: "fa-solid fa-play",
+            text: "<div><strong>Resume</strong><div>Continue a paused job</div></div>",
+            href: "resume.js",
+            params: { api_url: local.api_url },
+          }, {
+            icon: 'fa-solid fa-terminal',
+            text: "Terminal — React UI 2.0",
+            href: start_react_v2_script,
+          }, ...start_v1_item]
+        } else {
+          return [{
+            default: true,
+            icon: 'fa-solid fa-terminal',
+            text: "Terminal — React UI 2.0",
+            href: start_react_v2_script,
+          }, ...start_v1_item]
+        }
+      } else if (running.start_react) {
         let local = info.local(start_react_script)
         if (local && local.url) {
           return [{
@@ -58,14 +106,14 @@ module.exports = {
             icon: 'fa-solid fa-terminal',
             text: "Terminal",
             href: start_react_script,
-          }]
+          }, ...start_v2_item]
         } else {
           return [{
             default: true,
             icon: 'fa-solid fa-terminal',
             text: "Terminal",
             href: start_react_script,
-          }]
+          }, ...start_v2_item]
         }
       } else if (running.start_legacy) {
         let local = info.local("start_legacy.js")
@@ -129,6 +177,10 @@ module.exports = {
           icon: "fa-solid fa-rocket",
           text: "Start React UI",
           href: "start_react.js",
+        }, {
+          icon: "fa-solid fa-flask",
+          text: "Start React UI 2.0",
+          href: "start_react_v2.js",
         }, {
           icon: "fa-solid fa-power-off",
           text: "Start Legacy UI",

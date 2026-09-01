@@ -30,6 +30,13 @@ a verified `react-ui-v1` tag mean immutable rollback provenance is not yet
 established. RTX 3060 validation, browser acceptance, application-close and
 PC-shutdown recovery, and a full V2 rollback remain unverified.
 
+The separate `Start React UI 2.0` Pinokio action is now wired through
+`start_react_v2.js`. It launches `react-ui-v2` with dynamically allocated
+backend/UI ports and leaves the existing V1 `Start React UI` action as the
+default and rollback path. Pinokio runtime testing reached V2 and `/api/meta`
+successfully on the current RTX 4070 host; this does not promote V2 to
+production readiness.
+
 ## CURRENT IMPLEMENTATION
 
 - `app/api.py` accepts swap requests, applies settings to legacy global state,

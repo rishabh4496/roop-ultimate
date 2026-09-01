@@ -1411,3 +1411,95 @@ Do not delete or rename `react-ui/`, switch Pinokio to V2, remove backend routes
 alter project/checkpoint/output data, or call V2 production-ready. Do not
 extrapolate RTX 4070 evidence to RTX 3060 or treat missing rollback/browser/
 shutdown evidence as passed.
+
+## STAGE 17A FOLLOW-UP - V2 PINOKIO EXPOSURE
+
+### CURRENT STATE
+
+React UI 2.0 is now exposed as a separate Pinokio preview action through
+`start_react_v2.js`. React UI 1.0 remains the default `start.js`/
+`start_react.js` path and was not removed or replaced. The working tree was
+clean before this implementation; current HEAD before these changes was
+`f671a0f09789052f6204980989af4121aea7371a`.
+
+### COMPLETED
+
+- Added a daemonized V2 launcher using the existing FastAPI backend and
+  dynamically allocated API/UI/Gradio ports.
+- Added V2 dependency installation and reset coverage.
+- Added a visible `Start React UI 2.0` Pinokio menu action while preserving the
+  V1 default and fallback.
+- Updated the root run documentation and project-memory records.
+
+### VERIFIED
+
+- Pinokio `pterm search` found the local `roop-ultimate` app.
+- Pinokio direct launch of `start_react_v2.js` completed successfully.
+- Pinokio status reported `running: true`, `ready: true`,
+  `ready_script: start_react_v2.js`, and V2 URL `http://127.0.0.1:42004`.
+- V2 UI returned HTTP 200 and the V2 backend `/api/meta` returned HTTP 200.
+- The launcher output showed the V2 shell path `react-ui-v2`.
+- `node --check` passed for the new/modified launcher scripts and structural
+  menu checks confirmed V2 exposure with V1 preserved as default.
+
+### NOT VERIFIED / FAILURES
+
+- The `pterm run --default start_react_v2.js` selector did not select V2 and
+  launched V1; this was not counted as V2 success. Direct Pinokio `start` of
+  the exact V2 script succeeded.
+- Browser interaction, full V2 feature workflows, RTX 3060, project recovery,
+  and V2 production acceptance remain unverified or failed as recorded in the
+  Stage 16/17A matrix.
+
+### KNOWN ISSUES
+
+Issue 47 remains applicable: V1 is still the production/default path and V2 is
+only a separate preview action until the retirement exit conditions pass.
+
+### FILES CHANGED
+
+- `start_react_v2.js`
+- `install.js`
+- `reset.js`
+- `pinokio.js`
+- `README.md`
+- `docs/development/MASTER_PLAN.md`
+- `docs/development/CURRENT_STATE.md`
+- `docs/development/VALIDATION_MATRIX.md`
+- `docs/development/KNOWN_ISSUES.md`
+- `docs/development/SESSION_HANDOFF.md`
+
+No V1 files, backend files, models, environments, projects, checkpoints, or
+outputs were deleted.
+
+### TESTS RUN
+
+- `node --check start_react_v2.js`
+- `node --check pinokio.js`
+- `node --check install.js`
+- `node --check reset.js`
+- Node structural test for V2 launcher paths, daemon, and URL capture
+- Node menu test confirming V2 action and V1 default
+- Pinokio `pterm search`, `status`, and direct `start` lifecycle test
+- HTTP smoke tests for V2 UI and `/api/meta`
+
+All listed checks passed except the documented `pterm run --default` selector
+attempt, which selected the existing V1 default and was treated as a failed
+V2-selection attempt rather than a V2 success.
+
+### COMMIT
+
+No commit was made in this follow-up.
+
+### NEXT GATE
+
+Commit/push the launcher exposure if desired, then continue V2 parity and
+acceptance work. Keep V1 as the default until the retirement exit conditions
+are actually verified.
+
+### DO NOT TOUCH NEXT SESSION
+
+Do not make V2 the default, delete V1, remove backend routes, or claim that
+Pinokio exposure equals V2 production acceptance. Do not ignore the failed
+`--default` selector behavior; investigate it before relying on that selector
+for automated V2 launch.
