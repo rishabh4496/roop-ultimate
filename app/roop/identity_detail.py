@@ -11,9 +11,65 @@ face owns the pixel.
 from __future__ import annotations
 
 import math
+import threading
 
 import cv2
 import numpy as np
+
+
+# A requested restoration that has no representation to work from is reported
+# once per distinct cause, never silently skipped.
+#
+# `identity_detail_strength` is a user-facing strength dial, so setting it is a
+# statement of intent. `FaceSet.identity_detail_for` returns None for every V1
+# archive -- which is what the shipped facesets are -- and the render path then
+# does nothing at all: the run returns 0, the output is valid, and the swap
+# audit reads 100%, because that audit counts faces it was handed rather than
+# work that was performed. Measured on the 4070 with `--identity-detail-strength
+# 0.35`, the `identity_detail` stage did not appear in the ROOP_PROFILE table at
+# all, and the pixel difference against strength 0 sat inside the pipeline's own
+# run-to-run noise floor. Nothing anywhere said the feature had not run.
+#
+# Bounded like the detector reporter in face_util: one line per distinct cause
+# per process, because a per-face warning on a long render is its own problem.
+_DETAIL_MISSING_SEEN = set()
+_DETAIL_MISSING_LOCK = threading.Lock()
+
+
+def warn_identity_detail_unavailable(source_index=0, faceset=None,
+                                     strength=None):
+    """Announce once that identity detail was requested but is unavailable."""
+    version = getattr(faceset, 'format_version', None)
+    if version is not None and int(version) < 2:
+        cause = ("the source FaceSet is format v%s; persistent identity detail "
+                 "is a FaceSet V2 representation" % version)
+    elif faceset is None:
+        cause = "no source FaceSet was resolved for this face"
+    else:
+        cause = ("the FaceSet is V2 but carries no high-frequency residual for "
+                 "source index %s" % source_index)
+    with _DETAIL_MISSING_LOCK:
+        if cause in _DETAIL_MISSING_SEEN:
+            return
+        _DETAIL_MISSING_SEEN.add(cause)
+    detail = "" if strength is None else " (strength %.3g)" % float(strength)
+    print("[IdentityDetail] identity_detail_strength is set%s but NOTHING WAS "
+          "RESTORED: %s.\n"
+          "[IdentityDetail] The render continues unchanged and reports success; "
+          "rebuild the faceset as V2 or set identity_detail_strength to 0 to "
+          "stop asking for it." % (detail, cause), flush=True)
+
+
+def identity_detail_unavailable_causes():
+    """Distinct skip causes seen so far, for harness and test reporting."""
+    with _DETAIL_MISSING_LOCK:
+        return sorted(_DETAIL_MISSING_SEEN)
+
+
+def reset_identity_detail_warnings():
+    """Clear the once-per-process record. Used by tests."""
+    with _DETAIL_MISSING_LOCK:
+        _DETAIL_MISSING_SEEN.clear()
 
 
 DETAIL_SCHEMA = "roop.identity_detail.v1"

@@ -29,7 +29,8 @@ from roop.procmgr_masking import (MaskingMixin, nonfrontal_routing_enabled,
                                   _DEBUG_ANGLE)
 from roop.procmgr_color import ColorTransferMixin
 from roop.procmgr_merger import MergerMixin
-from roop.identity_detail import restore_identity_detail
+from roop.identity_detail import (restore_identity_detail,
+                                  warn_identity_detail_unavailable)
 from roop.appearance_conditioning import (TargetAppearanceStabilizer,
                                            analyze_target_appearance,
                                            protect_restorer_output)
@@ -5583,6 +5584,12 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                 _detail = (_detail_fs.identity_detail_for(selected_src_idx)
                            if _detail_fs is not None
                            and hasattr(_detail_fs, 'identity_detail_for') else None)
+                if _detail is None:
+                    # Requested and unavailable. Say so once rather than
+                    # skipping in silence -- see the reporter's own comment.
+                    warn_identity_detail_unavailable(
+                        source_index=selected_src_idx, faceset=_detail_fs,
+                        strength=_ids)
                 if _detail is not None:
                     try:
                         _detail_conf = float(target_face.get(
