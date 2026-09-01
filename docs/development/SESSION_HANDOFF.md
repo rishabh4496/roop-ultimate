@@ -485,7 +485,7 @@ models, caches, outputs, facesets, or the React UI 1.0 backup.
 
 ## STAGE 8B HANDOFF
 
-Stage 8B implementation is present but not yet committed. `app/project_checkpoint.py`
+Stage 8B implementation is committed and pushed in `8aa39b4`. `app/project_checkpoint.py`
 stores atomic project records; `app/routes_projects.py` provides validation,
 load, and explicit resume; `routes_queue.py`, `api.py`, `segment_writer.py`,
 `ProcessMgr.py`, and source ingestion connect durable identity to safe segment

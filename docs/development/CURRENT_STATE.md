@@ -9,7 +9,7 @@ status; it is not authorization to change application behavior.
 |---|---|
 | Branch | `main` tracking `origin/main` |
 | HEAD before Stage 5A changes | `5ced7898faa98c2f2b6121258883923ad624d00e` |
-| Working tree at Stage 8B closeout | Persistent project checkpoint, queue/API integration, V2 project controls, and development-document changes are uncommitted; React UI 1.0, launcher files, and hardware policies are unchanged |
+| Working tree at Stage 8B closeout | Implementation and documentation are committed and pushed; React UI 1.0, launcher files, and hardware policies are unchanged |
 | Active stage/gate | Stage 8B - Persistent resumable projects |
 | Last completed gate | Stage 8A - True pause / resume implementation; browser, restart, and physical GPU validation remain incomplete |
 | Existing application behavior changed in Stage 8A | Processing pause now requests and acknowledges a controller-owned safe point; queue/API telemetry and both React surfaces expose the transient request and acknowledged pause |
