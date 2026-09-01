@@ -89,6 +89,36 @@ This is a shared read boundary, not yet a replacement for every legacy flat
 diagnostics consumer. `GET /api/system/telemetry` and some V1 dashboard paths
 remain legacy compatibility surfaces until a later migration gate.
 
+### Stage 10 storage boundary - CURRENT IMPLEMENTATION
+
+`app/storage_manager.py` owns the evidence-based storage inventory. It knows
+only the application/Pinokio roots established by source and documentation,
+and collects references from loaded media, the durable queue, project records,
+manifests, and partial outputs. `routes_storage.py` exposes a fresh review and
+one-at-a-time confirmed deletion; it never accepts arbitrary paths or bulk
+delete requests. Required data and dependencies remain protected, while the
+active React Settings surface is a client of this boundary.
+
+### Stage 10 storage boundary - CURRENT IMPLEMENTATION
+
+`app/storage_manager.py` owns the evidence-based storage inventory. It knows
+only the application/Pinokio roots established by source and documentation,
+and collects references from loaded media, the durable queue, project records,
+manifests, and partial outputs. `routes_storage.py` exposes a fresh review and
+one-at-a-time confirmed deletion; it never accepts arbitrary paths or bulk
+delete requests. Required data and dependencies remain protected, while the
+active React Settings surface is a client of this boundary.
+
+### Stage 11 terminal reporting boundary - CURRENT IMPLEMENTATION
+
+`runtime_state.snapshot` now also exposes stable named sections for system,
+hardware, provider, model, precision, processing, pooling, queue, profile,
+performance, warnings, errors, project, and checkpoint facts. `/api/progress`
+and `/api/runtime/state` pass the same snapshot to the React terminal and other
+consumers. Existing raw terminal text and legacy flat fields remain available;
+new log entries carry category/severity metadata without adding a per-frame
+logging call. Unknown facts remain explicit sentinels.
+
 ## DESIRED FUTURE STATE
 
 Introduce any new UI surface behind the existing API boundary, preserve the current React UI and legacy UI during migration, and define payload/status compatibility before changing endpoints.

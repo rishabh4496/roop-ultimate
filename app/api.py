@@ -293,8 +293,11 @@ def _push_log(msg, force=False, part=None):
             part = segment_writer.current_part_index()
         except Exception:
             part = 0
+    category, level = _runtime_state.classify_log(msg)
     _log_lines.append({"t": _time.strftime("%H:%M:%S"), "msg": msg,
-                       "seq": _log_state["seq"], "part": part})
+                       "seq": _log_state["seq"], "part": part,
+                       "category": category, "level": level,
+                       "event": "terminal_line"})
 # Set by /api/stop, reset at the start of each run — lets the post-swap upscale
 # pass know the run was aborted (so it doesn't start a long upscale on a
 # deliberately-stopped output).
@@ -3307,7 +3310,8 @@ def get_progress():
         output=_last_output,
         eta_s=_procmgr_runtime.eta_seconds(),
         live_seq=live_preview.seq(),
-        parts=parts)
+        parts=parts,
+        log_lines=list(_log_lines))
     # live_seq changes whenever the pipeline publishes a newer frame; the UI
     # uses it as /api/live_frame's cache key, so the image refetches exactly
     # when there is something new and never per poll. live_frame stays empty —
@@ -3324,6 +3328,7 @@ def get_progress():
             # restart its own clock from zero there, which made a 40-minute run
             # read as "0s" and the ETA jump.
             "started_at": float(_run_stats.get("start") or 0.0),
+            "log_schema_version": 1,
             "log": list(_log_lines), "parts": parts,
             # The counter the console pins and rewrites in place instead of
             # scrolling — `desc` when it IS a counter, else the last one seen.
@@ -3350,7 +3355,8 @@ def get_runtime_state():
         output=_last_output,
         eta_s=_procmgr_runtime.eta_seconds(),
         live_seq=live_preview.seq(),
-        parts=parts)
+        parts=parts,
+        log_lines=list(_log_lines))
 
 
 @app.get("/api/live_frame")
@@ -3673,6 +3679,7 @@ import routes_extras as _routes_extras
 import routes_queue as _routes_queue
 import routes_projects as _routes_projects
 import routes_export as _routes_export
+import routes_storage as _routes_storage
 app.include_router(_routes_diagnostics.router)
 app.include_router(_routes_livecam.router)
 app.include_router(_routes_quality.router)
@@ -3680,6 +3687,7 @@ app.include_router(_routes_extras.router)
 app.include_router(_routes_queue.router)
 app.include_router(_routes_projects.router)
 app.include_router(_routes_export.router)
+app.include_router(_routes_storage.router)
 
 # Shared objects the route modules read. All are mutated in place and never
 # rebound here, so these bind one object rather than copying a value.

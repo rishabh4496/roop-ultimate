@@ -76,6 +76,29 @@ environment, models, queue/projects, caches, or output media. The full contract
 and current limitations are documented in
 [`docs/development/UPDATE_CONTRACT.md`](docs/development/UPDATE_CONTRACT.md).
 
+### Storage review
+
+The React Settings screen includes a Storage Manager backed by `GET /api/storage`.
+It shows known application/Pinokio paths, category, size, classification reason,
+regenerability, and current references. Only a single freshly revalidated
+`SAFE_TO_DELETE` item can be explicitly confirmed through
+`POST /api/storage/delete`; models, outputs, facesets, checkpoints, queue state,
+active work, environments, and required dependencies remain protected. Unknown
+drive-wide files and user-wide package caches are intentionally outside this
+manager. See [`docs/development/STORAGE_CONTRACT.md`](docs/development/STORAGE_CONTRACT.md)
+for the evidence and limitations.
+
+### Terminal and runtime report
+
+The processing terminal preserves the raw technical log, part tabs, error
+filter, timestamps, copy action, and live status. It also displays an additive
+structured report from the backend runtime state, with sections for system,
+hardware, provider, model, precision, processing, pooling, queue, profile,
+performance, warnings, errors, project, and checkpoint information where
+those facts are available. Unknown values are shown as unknown; the report
+does not infer hardware or model facts. See
+[`docs/development/TERMINAL_CONTRACT.md`](docs/development/TERMINAL_CONTRACT.md).
+
 ## Layout
 
 ```

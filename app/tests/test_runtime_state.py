@@ -44,6 +44,65 @@ class RuntimeStateContractTest(unittest.TestCase):
         self.assertEqual(value["status"]["code"], "PROCESSING")
         json.dumps(value)
 
+    def test_terminal_report_contains_all_defined_sections(self):
+        with patch.object(runtime_state, "_manager", return_value=None), \
+             patch.object(runtime_state, "_active_provider", return_value="cuda"), \
+             patch.object(runtime_state, "_resource_snapshot", return_value={
+                 "gpu": "NVIDIA Test GPU",
+                 "vram": {"used_gb": 2.0, "free_gb": 4.0, "total_gb": 6.0},
+                 "cpu": {"utilization_pct": 20.0, "logical_threads": 8},
+                 "memory": {"process_rss_gb": 1.0, "used_gb": 4.0,
+                            "available_gb": 12.0, "total_gb": 16.0,
+                            "utilization_pct": 25.0},
+             }):
+            value = runtime_state.snapshot(
+                progress={"processing": True, "desc": "Processing 1 / 2 (2.0 fps)"},
+                log_lines=[{"seq": 1, "msg": "[Queue] job started"},
+                           {"seq": 2, "msg": "Warning: fallback provider"},
+                           {"seq": 3, "msg": "Error: encoder failed"}])
+
+        self.assertEqual(set(runtime_state.SECTION_NAMES), set(value["sections"]))
+        for name in runtime_state.SECTION_NAMES:
+            section = value["sections"][name]
+            self.assertIn(section["status"], {"AVAILABLE", "UNKNOWN", "NOT_APPLICABLE"})
+            self.assertIn("source", section)
+            self.assertIn("values", section)
+        self.assertEqual(value["sections"]["WARNINGS"]["values"]["count"], 1)
+        self.assertEqual(value["sections"]["WARNINGS"]["values"]["items"][0]["seq"], 2)
+        self.assertEqual(value["sections"]["ERRORS"]["values"]["count"], 1)
+        self.assertEqual(value["sections"]["ERRORS"]["values"]["items"][0]["seq"], 3)
+        json.dumps(value)
+
+    def test_log_classification_preserves_unknown_lines_as_processing(self):
+        self.assertEqual(runtime_state.classify_log("provider initialized"),
+                         ("PROVIDER", "INFO"))
+        self.assertEqual(runtime_state.classify_log("Warning: encoder unavailable"),
+                         ("WARNINGS", "WARNING"))
+        self.assertEqual(runtime_state.classify_log("Traceback: failed to open file"),
+                         ("ERRORS", "ERROR"))
+        self.assertEqual(runtime_state.classify_log("useful diagnostic text"),
+                         ("PROCESSING", "INFO"))
+
+    def test_api_log_entries_keep_text_and_add_machine_readable_metadata(self):
+        import api
+        original_lines = list(api._log_lines)
+        original_state = dict(api._log_state)
+        try:
+            api._log_lines.clear()
+            api._log_state.update({"last": None, "last_ts": 0.0, "seq": 0,
+                                   "counter_shapes": set()})
+            api._push_log("[Provider] initialized", force=True, part=0)
+            entry = api._log_lines[-1]
+            self.assertEqual(entry["msg"], "[Provider] initialized")
+            self.assertEqual(entry["category"], "PROVIDER")
+            self.assertEqual(entry["level"], "INFO")
+            self.assertEqual(entry["event"], "terminal_line")
+        finally:
+            api._log_lines.clear()
+            api._log_lines.extend(original_lines)
+            api._log_state.clear()
+            api._log_state.update(original_state)
+
     def test_missing_facts_use_contract_sentinels(self):
         with patch.object(runtime_state, "_manager", return_value=None), \
              patch.object(runtime_state, "_active_provider", return_value=runtime_state.UNKNOWN), \

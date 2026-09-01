@@ -99,5 +99,29 @@ newer writer-options identity are conservatively not trusted for continuation.
     performed.
 28. **The health smoke is intentionally narrow.** It loads the configured
     swapper sessions and performs one finite synthetic inference per model; it
-    does not prove visual quality, a full video render, or acceptance of every
-    optional model/provider/precision combination.
+   does not prove visual quality, a full video render, or acceptance of every
+   optional model/provider/precision combination.
+
+29. **Stage 10 cannot observe all external file ownership.** Pinokio and other
+    processes may hold files or use cache roots that are not exposed through the
+    application API. Pinokio cache, `.pinokio-temp`, TensorRT/profile caches,
+    incomplete downloads, and unverified root-level models therefore remain
+    review-only; no safe deletion claim is made for them.
+30. **Stage 10 does not perform drive-wide orphan detection.** The manager only
+    compares known application roots with loaded media, queue records, project
+    checkpoints, manifests, and partial outputs. External package caches,
+    installers, and unsupported files without repository evidence are unknown,
+    not filename-based cleanup candidates.
+31. **Stage 10 runtime cleanup validation is incomplete.** Isolated inventory and
+    deletion tests plus the React build passed, but no browser cleanup session,
+    real-user cleanup, or full launch-after-cleanup health run has been performed
+    in this gate. No physical RTX 3060 storage validation was possible.
+
+32. **Stage 11 report validation is control-plane only so far.** The structured
+    report is built from the existing API polling path and no per-frame report
+    call was added, but a retained full-video before/after throughput measurement
+    and browser interaction are still required. No physical RTX 3060 reporting
+    run was performed.
+33. **Stage 11 historical log coverage is bounded.** The structured warning and
+    error projections use the in-memory application log ring. Pinokio stdout
+    outside that ring remains raw/unstructured and is not silently reconstructed.

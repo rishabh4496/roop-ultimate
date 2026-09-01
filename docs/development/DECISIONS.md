@@ -93,3 +93,27 @@ Python environments, model artifacts, TensorRT caches, queues/projects, and
 outputs are not copied or silently changed; candidates declaring changes to
 those areas remain review-only. This keeps rollback honest and preserves both
 the RTX 4070 and RTX 3060 provider/memory policies.
+
+## Stage 10 decision
+
+Storage cleanup is an application-owned, reference-aware boundary rather than
+an extension of the Pinokio launcher’s fixed cleanup list. The server inventories
+only verified roots, treats active/resumable work and any recorded media,
+checkpoint, queue, model, output, faceset, environment, or dependency reference
+as protected, and accepts only one freshly revalidated `SAFE_TO_DELETE` item per
+explicit confirmation. Pinokio caches, TensorRT/profile caches, incomplete
+downloads, external package caches, installers, and drive-wide orphan files stay
+review-only or unknown when repository evidence cannot prove ownership. This
+preserves both hardware profiles and resumable projects without touching the
+processing/provider/runtime policy.
+
+## Stage 11 decision
+
+Use the existing backend-owned runtime snapshot as the shared reporting
+boundary. Add stable named sections and metadata to the current API/log
+payloads, but preserve the raw terminal, legacy flat fields, and React UI 1.0.
+Classification is performed when an existing log line enters the bounded ring;
+resource reads are cached; snapshots remain on the API polling path. Unknown
+facts remain unknown rather than being inferred from another GPU, model, or
+provider. This keeps troubleshooting detail and avoids adding reporting work
+to the per-frame processing path.

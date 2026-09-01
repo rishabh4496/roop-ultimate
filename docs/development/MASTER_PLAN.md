@@ -13,10 +13,10 @@ Repository HEAD at Stage 9A audit start: `459dd4082e60ae1b153b2e65c393eb8a2d6d91
 
 ## CURRENT IMPLEMENTATION
 
-The active gate for this session is Stage 9C: establish a reversible,
-health-validated source update transaction using only the verified Stage 9B
-candidate boundary. Stage 8B provides the persistent project/checkpoint
-boundary that updates must preserve.
+The active gate for this session is Stage 11: preserve useful terminal output
+while exposing an evidence-based structured runtime report from the backend
+state already consumed by the React UI. Stage 10 provides the storage/data
+safety boundary that this reporting surface must not weaken.
 
 Stage 6B exposed one backend-owned
 structured runtime telemetry state to the React UI and terminal without
@@ -54,6 +54,8 @@ winners.
 | Stage 9A - Update System Audit | Existing update paths classified with source evidence; minimum safe manifest/snapshot/staged-activation/rollback architecture proposed; no update behavior changed |
 | Stage 9B - Compatibility-aware updates | Implemented as a manifest-gated, source-only fast-forward checker |
 | Stage 9C - Update rollback / health validation | Implemented for source/config snapshots, detached staging, launch/runtime health checks, and rollback where the recorded identities remain valid; full environment/model/data rollback remains outside this boundary |
+| Stage 10 - Cleanup / Storage Manager | Evidence-based storage inventory, reference-aware protection, explicit single-item safe deletion, and active React review UI implemented; Pinokio-owned cache ownership and drive-wide orphan detection remain limited |
+| Stage 11 - Terminal information revamp | Structured backend-owned terminal report and log metadata implemented; full-render throughput impact, browser interaction, and RTX 3060 evidence remain open |
 | Next UI2 design or migration gate | Not defined in the repository; scope requires explicit authorization |
 | Visual validation / retained-output review | Open and not yet complete |
 | Phase 16 final production quality gate | Open/incomplete |

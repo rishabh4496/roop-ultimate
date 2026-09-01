@@ -22,6 +22,53 @@ import { Icon } from '../../icons';
 
 const fmtMB = (b) => (!b ? '' : b >= 1073741824 ? `${(b / 1073741824).toFixed(1)} GB` : `${Math.round(b / 1048576)} MB`);
 const fmtN = (n) => (n == null ? '' : Number(n).toLocaleString());
+const SECTION_ORDER = [
+  'SYSTEM', 'HARDWARE', 'PROVIDER', 'MODEL', 'PRECISION', 'PROCESSING',
+  'POOLING', 'QUEUE', 'PROFILE', 'PERFORMANCE', 'WARNINGS', 'ERRORS',
+  'PROJECT', 'CHECKPOINT',
+];
+
+const flattenValues = (value, prefix = '', depth = 0) => {
+  if (value === null || value === undefined) return [[prefix, 'UNKNOWN']];
+  if (Array.isArray(value)) {
+    if (!value.length) return [[prefix, 'none']];
+    if (value.every((item) => item === null || ['string', 'number', 'boolean'].includes(typeof item))) {
+      return [[prefix, value.join(', ')]];
+    }
+    return [[prefix, `${value.length} item${value.length === 1 ? '' : 's'}`]];
+  }
+  if (typeof value !== 'object') return [[prefix, String(value)]];
+  if (depth >= 2) return [[prefix, '{…}']];
+  return Object.entries(value).flatMap(([key, child]) => flattenValues(
+    child, prefix ? `${prefix}.${key}` : key, depth + 1,
+  ));
+};
+
+function RuntimeSection({ name, section }) {
+  const values = section?.values || {};
+  const rows = flattenValues(values)
+    .filter(([key]) => key !== 'items')
+    .slice(0, 10);
+  const status = section?.status || 'UNKNOWN';
+  const statusTone = status === 'AVAILABLE'
+    ? 'text-emerald-300'
+    : status === 'NOT_APPLICABLE' ? 'text-white/35' : 'text-amber-300';
+  return <div className="rounded-lg border border-white/[0.08] bg-black/25 px-2.5 py-2 min-w-0">
+    <div className="flex items-center justify-between gap-2">
+      <span className="text-nano font-bold tracking-[0.12em] text-white/60">{name}</span>
+      <span className={`text-nano font-semibold uppercase ${statusTone}`}>{status}</span>
+    </div>
+    <div className="mt-1.5 space-y-0.5">
+      {rows.length ? rows.map(([key, value]) => (
+        <div key={key} className="flex items-baseline justify-between gap-2 text-micro leading-relaxed">
+          <span className="min-w-0 truncate text-white/35">{key}</span>
+          <span className="min-w-0 truncate text-right text-white/70" title={String(value)}>{String(value)}</span>
+        </div>
+      )) : <span className="text-micro text-white/35">No structured values</span>}
+    </div>
+    {section?.source && <div className="mt-1 truncate text-nano text-white/25" title={section.source}>source: {section.source}</div>}
+  </div>;
+}
 
 export default function ProcessingTerminal({
   log = [], parts = [], statusLine = '', paused, className = '', bodyClass = 'h-40',
@@ -32,6 +79,7 @@ export default function ProcessingTerminal({
   const tabsRef = useRef(null);
   const [tab, setTab] = useState('all');          // 'all' | 'errors' | part index
   const [copied, setCopied] = useState(false);
+  const [showReport, setShowReport] = useState(true);
 
   // A long render has one part per ROOP_RESUME_CHUNK frames, so the strip can
   // hold dozens: keep the newest (the one being written) in view.
@@ -53,6 +101,12 @@ export default function ProcessingTerminal({
     if (/combin|encod|audio|mux|finaliz/.test(m)) return 'text-sky-300/90';
     if (/upscal|interpolat/.test(m)) return 'text-fuchsia-300/85';
     return 'text-white/70';
+  };
+
+  const structuredLineTone = (line) => {
+    if (line?.level === 'ERROR' || line?.category === 'ERRORS') return 'text-red-400 font-semibold';
+    if (line?.level === 'WARNING' || line?.category === 'WARNINGS') return 'text-amber-300 font-semibold';
+    return lineTone(line?.msg);
   };
 
   const isError = (msg) => /error|fail|abort|⚠/i.test(msg || '');
@@ -113,6 +167,11 @@ export default function ProcessingTerminal({
             <button onClick={() => setTab('all')} className={chip(tab === 'all')} title="Everything this run printed">
               All
             </button>
+            {runtime?.sections && (
+              <button onClick={() => setShowReport((value) => !value)} className={chip(showReport)} title="Toggle structured runtime report">
+                Report
+              </button>
+            )}
             <span className="shrink-0 px-1 text-nano font-semibold uppercase tracking-[0.14em] text-white/45">
               {parts.length ? `${parts.length} part${parts.length > 1 ? 's' : ''}` : 'no parts yet'}
             </span>
@@ -169,6 +228,18 @@ export default function ProcessingTerminal({
         </div>
       )}
 
+      {runtime?.sections && showReport && (
+        <div className="shrink-0 max-h-64 overflow-y-auto border-b border-white/[0.08] bg-white/[0.015] p-2">
+          <div className="mb-1.5 flex items-center justify-between gap-2">
+            <span className="text-nano font-semibold uppercase tracking-[0.16em] text-white/40">Structured runtime report</span>
+            <span className="text-nano text-white/25">authoritative backend state</span>
+          </div>
+          <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2 xl:grid-cols-3">
+            {SECTION_ORDER.map((name) => <RuntimeSection key={name} name={name} section={runtime.sections[name]} />)}
+          </div>
+        </div>
+      )}
+
       {/* Scrolling log body */}
       <div ref={scrollRef} className={`selectable ${bodyClass} min-h-0 overflow-y-auto px-3 py-2 text-mini leading-relaxed scroll-smooth`}>
         {shown.length === 0 ? (
@@ -180,7 +251,7 @@ export default function ProcessingTerminal({
             <div key={l.seq} className="flex gap-2 whitespace-pre-wrap break-words">
               <span className="shrink-0 text-white/25 tabular-nums">{l.t}</span>
               <span className="shrink-0 text-white/25">›</span>
-              <span className={lineTone(l.msg)}>{l.msg}</span>
+              <span className={structuredLineTone(l)}>{l.msg}</span>
             </div>
           ))
         )}

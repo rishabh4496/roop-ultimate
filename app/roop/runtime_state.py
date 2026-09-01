@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import re
 import os
+import platform
 import sys
 import threading
 import time
@@ -21,11 +22,50 @@ NOT_AVAILABLE = "NOT AVAILABLE"
 NOT_APPLICABLE = "NOT APPLICABLE"
 SCHEMA_VERSION = 1
 
+SECTION_NAMES = (
+    "SYSTEM", "HARDWARE", "PROVIDER", "MODEL", "PRECISION",
+    "PROCESSING", "POOLING", "QUEUE", "PROFILE", "PERFORMANCE",
+    "WARNINGS", "ERRORS", "PROJECT", "CHECKPOINT",
+)
+
 _FRAME_RE = re.compile(r"(\d[\d,]*)\s*/\s*(\d[\d,]*)")
 _FPS_RE = re.compile(r"(\d+(?:\.\d+)?)\s*fps\b", re.IGNORECASE)
 _RESOURCE_TTL = 2.0
 _resource_lock = threading.Lock()
 _resource_cache = {"at": 0.0, "value": None, "process": None}
+
+
+def classify_log(message: Any) -> tuple[str, str]:
+    """Classify an existing terminal line without changing its text.
+
+    The prefixes and terms below are already emitted by the processing and
+    queue code.  Classification adds machine-readable context to admitted
+    log entries; it does not create a new diagnostic value or parse a value
+    that was not already present in the line.
+    """
+    text = str(message or "").strip()
+    lowered = text.lower()
+    if re.search(r"error|exception|traceback|failed|failure|abort", lowered):
+        return "ERRORS", "ERROR"
+    if re.search(r"warning|warn|above the measured-safe|fallback|unavailable|skipped", lowered):
+        return "WARNINGS", "WARNING"
+    checks = (
+        ("CHECKPOINT", r"checkpoint|partial output|segment|part \d+ written|resume"),
+        ("QUEUE", r"\bqueue\b|queueing|job"),
+        ("PROVIDER", r"provider|onnx backend|executionprovider"),
+        ("PRECISION", r"precision|fp16|fp32|bf16|mixed"),
+        ("POOLING", r"pool|context|in-flight|inflight|worker"),
+        ("PROFILE", r"profile|autotune|calibrat|tuning"),
+        ("HARDWARE", r"gpu|vram|cuda|nvdec|nvenc|cpu hardware|ram"),
+        ("PERFORMANCE", r"fps|throughput|stage timing|runtime monitor|bottleneck|elapsed"),
+        ("PROJECT", r"project"),
+        ("PROCESSING", r"processing|upscal|interpolat|encod|combining|mux|paused|stopped|done"),
+        ("SYSTEM", r"system host|environment|backend|initialization|keepawake"),
+    )
+    for category, pattern in checks:
+        if re.search(pattern, lowered):
+            return category, "INFO"
+    return "PROCESSING", "INFO"
 
 
 def _number(value: Any) -> Optional[float]:
@@ -197,6 +237,89 @@ def _profile_data(manager) -> tuple[Mapping[str, Any], Any]:
         return {}, profile
 
 
+def _section(status: str, values: Mapping[str, Any], source: str) -> dict:
+    """Build the stable named section shape used by terminal and React."""
+    return {"status": status, "source": source, "values": dict(values)}
+
+
+def _queue_snapshot() -> Optional[dict]:
+    """Read the queue's compact live projection without copying job payloads."""
+    module = sys.modules.get("routes_queue")
+    queue = getattr(module, "_queue", None) if module is not None else None
+    lock = getattr(module, "_lock", None) if module is not None else None
+    if not isinstance(queue, Mapping):
+        return None
+    try:
+        if lock is not None:
+            lock.acquire()
+        jobs = list(queue.get("jobs") or [])
+        current_id = queue.get("current")
+        current = next((job for job in jobs if job.get("id") == current_id), None)
+        counts = {}
+        for job in jobs:
+            state = str(job.get("state") or job.get("status") or UNKNOWN)
+            counts[state] = counts.get(state, 0) + 1
+        return {
+            "running": bool(queue.get("running")),
+            "paused": bool(queue.get("paused")),
+            "current_id": current_id or NOT_AVAILABLE,
+            "current_state": (str(current.get("state") or current.get("status"))
+                              if current else NOT_AVAILABLE),
+            "current_target": (str(current.get("target_name") or UNKNOWN)
+                               if current else NOT_AVAILABLE),
+            "current_project_id": (str(current.get("project_id") or UNKNOWN)
+                                   if current else NOT_APPLICABLE),
+            "job_count": len(jobs),
+            "state_counts": counts,
+        }
+    except Exception:
+        return None
+    finally:
+        if lock is not None:
+            try:
+                lock.release()
+            except RuntimeError:
+                pass
+
+
+def _project_snapshot(project_id: str) -> tuple[Optional[dict], Optional[dict]]:
+    """Return compact project/checkpoint state from the durable record."""
+    if not project_id:
+        return None, None
+    try:
+        import project_checkpoint
+        record = project_checkpoint.load(project_id)
+        checkpoint = record.get("checkpoint") or {}
+        partial = record.get("partial_output") or {}
+        project = {
+            "id": str(record.get("id") or project_id),
+            "name": str(record.get("name") or UNKNOWN),
+            "state": str(record.get("state") or UNKNOWN),
+            "application_version": str(
+                (record.get("application") or {}).get("version") or UNKNOWN),
+            "updated_at": record.get("updated_at", UNKNOWN),
+        }
+        checkpoint_view = {
+            "sequence": checkpoint.get("sequence", UNKNOWN),
+            "safe_frame": checkpoint.get("safe_frame", UNKNOWN),
+            "next_frame": checkpoint.get("next_frame", UNKNOWN),
+            "segment_count": len(checkpoint.get("segments") or []),
+            "manifest": checkpoint.get("manifest") or NOT_APPLICABLE,
+            "partial_file_count": len(partial.get("files") or []),
+            "integrity": partial.get("integrity", UNKNOWN),
+            "written_at": checkpoint.get("written_at", UNKNOWN),
+        }
+        return project, checkpoint_view
+    except Exception:
+        return {
+            "id": str(project_id),
+            "name": UNKNOWN,
+            "state": UNKNOWN,
+            "application_version": UNKNOWN,
+            "updated_at": UNKNOWN,
+        }, {"status": "unreadable", "reason": "project checkpoint could not be read"}
+
+
 def _pause_state(progress: Mapping[str, Any]) -> dict:
     runtime = sys.modules.get("roop.procmgr_runtime")
     controller = getattr(runtime, "pause_controller", None)
@@ -240,7 +363,8 @@ def snapshot(progress: Optional[Mapping[str, Any]] = None,
              output: Optional[Mapping[str, Any]] = None,
              eta_s: Any = None,
              live_seq: Any = None,
-             parts: Optional[list] = None) -> dict:
+             parts: Optional[list] = None,
+             log_lines: Optional[list[Mapping[str, Any]]] = None) -> dict:
     """Build one JSON-safe state object consumed by API clients.
 
     ``progress`` and ``run_stats`` are passed by the API because those objects
@@ -251,6 +375,14 @@ def snapshot(progress: Optional[Mapping[str, Any]] = None,
     run_stats = run_stats or {}
     output = output or {}
     manager = _manager()
+    queue_view = _queue_snapshot()
+    api_module = sys.modules.get("api")
+    project_id = str(getattr(api_module, "_active_project_id", "") or "")
+    if not project_id and queue_view:
+        project_id = str(queue_view.get("current_project_id") or "")
+        if project_id in (UNKNOWN, NOT_APPLICABLE):
+            project_id = ""
+    project_view, checkpoint_view = _project_snapshot(project_id)
     profile_data, profile = _profile_data(manager)
     provider = _active_provider()
     fraction, frame_done, frame_total, fps = _frame_values(progress, run_stats)
@@ -381,6 +513,141 @@ def snapshot(progress: Optional[Mapping[str, Any]] = None,
         summary = getattr(manager, "_runtime_scheduler_summary", None) or {}
         errors.extend(str(item) for item in (summary.get("errors") or []) if item)
 
+    warning_entries = []
+    log_error_entries = []
+    if log_lines is not None:
+        for line in log_lines:
+            message = line.get("msg", "") if isinstance(line, Mapping) else line
+            category, level = classify_log(message)
+            if category == "WARNINGS":
+                warning_entries.append({
+                    "seq": line.get("seq", UNKNOWN) if isinstance(line, Mapping) else UNKNOWN,
+                    "message": str(message),
+                    "level": level,
+                })
+            elif category == "ERRORS":
+                log_error_entries.append({
+                    "seq": line.get("seq", UNKNOWN) if isinstance(line, Mapping) else UNKNOWN,
+                    "message": str(message),
+                    "level": level,
+                })
+
+    requested_provider = UNKNOWN
+    model_values = {"swap_model": configured_model}
+    try:
+        roop_globals = sys.modules.get("roop.globals")
+        cfg = getattr(roop_globals, "CFG", None) if roop_globals else None
+        requested_provider = _text(getattr(cfg, "provider", None))
+        for name in ("selected_enhancer", "mask_engine", "mask_engine_2",
+                     "detector_engine", "upscale_model_after", "interp_after_swap",
+                     "recognizer"):
+            if cfg is not None and hasattr(cfg, name):
+                model_values[name] = _text(getattr(cfg, name, None))
+    except Exception:
+        pass
+
+    available_provider_values = UNKNOWN
+    try:
+        roop_globals = sys.modules.get("roop.globals")
+        providers = getattr(roop_globals, "execution_providers", None) if roop_globals else None
+        if providers:
+            available_provider_values = [str(item) for item in providers]
+    except Exception:
+        pass
+
+    runtime_summary = getattr(manager, "_runtime_summary", None) if manager is not None else None
+    scheduler_summary = getattr(manager, "_runtime_scheduler_summary", None) if manager is not None else None
+    stage_profile = getattr(manager, "_stage_profile_report", None) if manager is not None else None
+    if not isinstance(stage_profile, Mapping):
+        stage_profile = {}
+    if not isinstance(runtime_summary, Mapping):
+        runtime_summary = {}
+    if not isinstance(scheduler_summary, Mapping):
+        scheduler_summary = {}
+
+    def available(value: Any) -> bool:
+        if value is None or value == UNKNOWN or value == NOT_AVAILABLE:
+            return False
+        if isinstance(value, Mapping):
+            return any(available(item) for item in value.values())
+        if isinstance(value, (list, tuple)):
+            return bool(value)
+        return True
+
+    processing_values = {
+        "status": status_code,
+        "stage": _text(desc),
+        "fraction": fraction,
+        "frames_done": frame_done,
+        "frames_total": frame_total,
+        "fps": fps,
+        "eta_s": eta if eta is not None else UNKNOWN,
+        "pause": pause,
+    }
+    pooling_values = {"pool": pool, "workers": workers}
+    profile_values = {
+        "runtime_cache_key": _text(profile_data.get("cache_key")),
+        "quality": quality_profile,
+        "explicit_settings": list(profile_data.get("explicit_settings") or []),
+        "automatic_settings": list(profile_data.get("automatic_settings") or []),
+        "reasons": list(profile_data.get("reasons") or []),
+    }
+    performance_values = {
+        "fps": fps,
+        "eta_s": eta if eta is not None else UNKNOWN,
+        "stage_timing": stage_profile,
+        "runtime_monitor": runtime_summary,
+        "scheduler": scheduler_summary,
+        "bottleneck": (scheduler_summary.get("bottleneck") or
+                       runtime_summary.get("bottleneck") or UNKNOWN),
+    }
+    sections = {
+        "SYSTEM": _section("AVAILABLE", {
+            "platform": platform.platform(),
+            "python": platform.python_version(),
+            "pid": os.getpid(),
+        }, "host runtime"),
+        "HARDWARE": _section("AVAILABLE" if available(resources) else "UNKNOWN",
+                              {"gpu": resources["gpu"], "vram": resources["vram"],
+                               "cpu": resources["cpu"], "memory": resources["memory"]},
+                              "runtime resource probe"),
+        "PROVIDER": _section("AVAILABLE" if available(effective_provider) else "UNKNOWN", {
+            "requested": requested_provider,
+            "effective": effective_provider,
+            "available": available_provider_values,
+        }, "runtime globals/profile"),
+        "MODEL": _section("AVAILABLE" if available(model_values) else "UNKNOWN",
+                           model_values, "runtime configuration"),
+        "PRECISION": _section("AVAILABLE" if available(effective_precision) else "UNKNOWN", {
+            "configured": configured_precision,
+            "effective": effective_precision,
+        }, "runtime configuration/profile"),
+        "PROCESSING": _section("AVAILABLE", processing_values, "progress controller"),
+        "POOLING": _section("AVAILABLE" if available(pooling_values) else "UNKNOWN",
+                             pooling_values, "runtime profile/scheduler"),
+        "QUEUE": _section("AVAILABLE" if queue_view else "UNKNOWN",
+                           queue_view or {"state": UNKNOWN}, "durable queue"),
+        "PROFILE": _section("AVAILABLE" if profile_data else "UNKNOWN",
+                            profile_values, "runtime profile"),
+        "PERFORMANCE": _section("AVAILABLE" if available(performance_values) else "UNKNOWN",
+                                 performance_values, "runtime monitor/profile"),
+        "WARNINGS": _section("AVAILABLE" if log_lines is not None else "UNKNOWN", {
+            "count": len(warning_entries) if log_lines is not None else UNKNOWN,
+            "items": warning_entries if log_lines is not None else UNKNOWN,
+        }, "structured terminal log"),
+        "ERRORS": _section("AVAILABLE" if (log_lines is not None or errors) else "UNKNOWN", {
+            "count": (len(errors) + len(log_error_entries)
+                      if log_lines is not None or errors else UNKNOWN),
+            "items": ([*errors, *log_error_entries]
+                      if log_lines is not None or errors else UNKNOWN),
+        }, "progress/runtime/structured terminal log"),
+        "PROJECT": _section("AVAILABLE" if project_view else "NOT_APPLICABLE",
+                            project_view or {"id": NOT_APPLICABLE}, "durable project record"),
+        "CHECKPOINT": _section("AVAILABLE" if checkpoint_view else "NOT_APPLICABLE",
+                               checkpoint_view or {"state": NOT_APPLICABLE},
+                               "durable project checkpoint"),
+    }
+
     return {
         "schema_version": SCHEMA_VERSION,
         "job": {
@@ -417,8 +684,9 @@ def snapshot(progress: Optional[Mapping[str, Any]] = None,
         },
         "status": {"code": status_code, "message": _text(desc)},
         "pause": pause,
-        "warnings": UNKNOWN,
+        "warnings": warning_entries if log_lines is not None else UNKNOWN,
         "errors": errors,
+        "sections": sections,
         "observed_at": time.time(),
     }
 

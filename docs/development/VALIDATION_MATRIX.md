@@ -34,6 +34,24 @@ The following commits were inspected beyond their messages:
 
 Inspection confirms these commits changed real runtime, test, or validation files; the current matrix is not based on commit messages alone.
 
+## Stage 11 - Terminal information revamp
+
+| Area | Evidence | State |
+|---|---|---|
+| Structured runtime contract | `test_runtime_state`: required named sections, sentinel behavior, JSON serialization, pause status, and log classification | PASS |
+| Full Python regression | `app/env/Scripts/python.exe -m unittest discover -s app/tests -p 'test_*.py'` -> 1,741 passed, 1 skipped | PASS |
+| React static checks | `npm run lint` exited 0 with existing Fast Refresh warnings; `npm run build` transformed 434 modules and exited 0 | PASS |
+| Runtime endpoint | Current app launched on loopback port 8898 with health mode; `/api/runtime/state` returned schema 1 and all 14 required sections | PASS on observed RTX 4070 host |
+| Reporting overhead | 1,000 warmed `runtime_state.snapshot` calls measured 0.0377 ms/snapshot; source inspection found no report/classifier call in `ProcessMgr.process_frame` | PASS for control-plane/hot-path boundary |
+| Full-video throughput | No before/after retained render measurement was run | NOT VERIFIED |
+| Browser/UI review | No browser interaction or visual acceptance run was performed | NOT VERIFIED |
+| RTX 3060 reporting | No physical RTX 3060 run was performed in this gate | NOT VERIFIED |
+
+The host-runtime health probe also passed on the observed RTX 4070: 17 direct
+dependencies, React dependency trees, provider resolution, CUDA device,
+loopback launch, configured models, and finite inference. That probe is not
+evidence for RTX 3060 or full-video throughput.
+
 ## DESIRED FUTURE STATE
 
 Complete the open 17-clip/425-row Phase 16 matrix and refresh each target-specific row with retained outputs, runtime metrics, and visual review.
@@ -100,3 +118,19 @@ The cited commits, `docs/FINAL_VALIDATION_MATRIX.md`, `docs/HARDWARE_VALIDATION_
 | Application launch | Full health worker launched real `app/run.py`; loopback `/api/meta` returned HTTP 200 | PASS on observed 4070 host |
 | Post-update health/rollback | Failure path and no-success-before-health covered with mocks; no candidate existed for a real activation/failure | NOT VERIFIED against a real update |
 | Output/data preservation | Update blocks active persisted work; snapshot does not copy outputs/models/projects/queue | PASS for stated boundary; full artifact rollback NOT PROVIDED |
+
+## Stage 10 cleanup / storage manager evidence
+
+| Check | Evidence | State |
+|---|---|---|
+| Existing cleanup audit | `clean.js`, `cleanup.py`, `reset.js`, `pinokio.js`, runtime roots, `.gitignore`, logs, and source references inspected; existing Clean path unchanged | PASS for audit |
+| Pinokio convention review | `system/examples/MatAnyone/delete-cache.js`, `system/examples/flux-webui/clearcache.js`, and `PINOKIO.md` input/shell/cache/fs.rm sections inspected | PASS for audit |
+| Evidence-based inventory | Isolated tests cover verified roots, current references, active-work protection, category summaries, and unknown paths | PASS |
+| Guarded deletion | Isolated test requires confirmation, revalidation, safe-root ownership, and rejects protected/unknown IDs | PASS |
+| API route registration | `test_storage_manager.py` verifies `/api/storage` and `/api/storage/delete` through the installed FastAPI included-router representation | PASS |
+| Active React UI | `react-ui` `npm run build` -> 434 modules transformed | PASS |
+| Live inventory | Supported app environment read-only probe found 210 known items (138 safe, 54 review-only, 18 protected); no real item was deleted | PASS for read-only probe |
+| Current-checkout runtime health | `app/update_health.py --source-root . --data-root . --json`: dependencies, React trees, configuration, provider, GPU, launch, models, and inference all passed on observed RTX 4070 | PASS on observed 4070 host |
+| Launch after cleanup | No full health-worker launch was run after deleting a real item | NOT VERIFIED |
+| Browser interaction | No browser session was run | NOT VERIFIED |
+| RTX 4070 / RTX 3060 cleanup validation | No physical cleanup run; RTX 3060 unavailable | NOT VERIFIED |

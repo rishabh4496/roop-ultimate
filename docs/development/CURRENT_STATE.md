@@ -10,8 +10,8 @@ status; it is not authorization to change application behavior.
 | Branch | `main` tracking `origin/main` |
 | HEAD at Stage 9A audit start | `459dd4082e60ae1b153b2e65c393eb8a2d6d9198` |
 | Working tree at Stage 9A audit start | Clean; Stage 8B implementation and handoff documentation are committed and pushed; no Stage 9A code or launcher changes made |
-| Active stage/gate | Stage 9C - Update rollback / health validation |
-| Last completed gate | Stage 9B - Compatibility-aware updates; the Stage 9C transaction is implemented in this session |
+| Active stage/gate | Stage 11 - Terminal Information Revamp |
+| Last completed gate | Stage 9C - Update rollback / health validation |
 | Existing application behavior changed in Stage 8A | Processing pause now requests and acknowledges a controller-owned safe point; queue/API telemetry and both React surfaces expose the transient request and acknowledged pause |
 
 ## CURRENT IMPLEMENTATION
@@ -37,6 +37,26 @@ status; it is not authorization to change application behavior.
   those existing sources. V2 consumes `progress.runtime`; the terminal pinned
   status is derived from the same state. Missing values use explicit
   `UNKNOWN`, `NOT AVAILABLE`, or `NOT APPLICABLE` sentinels.
+
+## STAGE 11 - TERMINAL INFORMATION REVAMP
+
+The active terminal keeps its existing raw technical feed and now renders an
+additive backend-owned report with stable sections for system, hardware,
+provider, model, precision, processing, pooling, queue, profile, performance,
+warnings, errors, project, and checkpoint state. API log entries retain their
+original text and now carry category/severity metadata. Resource reporting is
+cached and the report is assembled on API polling, outside the frame hot path.
+
+Focused runtime-state tests and the React build are required before this gate
+can be closed. Full-render throughput, browser interaction, and RTX 3060
+runtime evidence remain open until actually observed.
+
+Current verification: the full repository regression passed with 1,741 tests
+and one skip; the focused runtime/UI suite passed 16 tests; React lint/build,
+Python compilation, launcher syntax, and diff checks passed. A current-source
+loopback launch on the observed RTX 4070 returned all 14 sections. The warmed
+snapshot benchmark measured 0.0377 ms per control-plane snapshot. These are not
+full-video throughput or RTX 3060 acceptance results.
 
 ## STAGE 1A RESULT
 
@@ -519,3 +539,44 @@ Do not install or upgrade Python, CUDA, ONNX Runtime, TensorRT, FFmpeg,
 drivers, models, or the environment. Do not remove React UI 1.0. Do not claim
 full environment/model/output rollback, physical RTX 3060 validation, or real
 candidate activation from this session.
+
+## STAGE 10 - CLEANUP / STORAGE MANAGER
+
+The storage manager inventories only repository-verified application and
+Pinokio roots. It classifies safe regenerable caches, review-only areas, and
+protected data using loaded-media, queue, project, manifest, partial-output,
+and active-work references. `GET /api/storage` is read-only; the active React
+Settings screen asks for confirmation per item, and the server revalidates one
+`SAFE_TO_DELETE` item before deletion.
+
+### VERIFIED
+
+- Existing `clean.js`/`cleanup.py` behavior was audited and left unchanged.
+- The inventory reports application cache, preview-cache status, temp files,
+  logs, model downloads, installer/package-cache unknowns, environments,
+  orphan/unsupported limitations, incomplete downloads, and Pinokio disposable
+  paths with source evidence.
+- Model, output, faceset, checkpoint, queue, environment, required dependency,
+  and referenced paths are protected. Active or resumable work blocks safe
+  deletion.
+- The active React UI 1.0 remains available; Storage Manager was added to its
+  Settings surface. React UI 2.0 and the legacy Gradio UI were not removed.
+
+### NOT VERIFIED
+
+- No physical RTX 3060 run was available. No storage cleanup operation was
+  run against the real checkout, so real-user data deletion is not claimed.
+- Pinokio/other-process open handles, drive-wide orphan files, package-manager
+  caches outside known roots, and installer ownership remain unverified.
+- Browser interaction and a full launch-after-cleanup session remain unverified;
+  automated build, route, inventory, isolated deletion, full regression, and
+  current-checkout health validation passed.
+
+### LIMITATIONS
+
+- TensorRT/profile caches and Pinokio caches are intentionally review-only.
+- The root-level `models` directory observed in this checkout is surfaced as
+  unverified ownership because active application code resolves `app/models`.
+- Review items can overlap for visibility (for example a protected model
+  container and review-only cache children); category totals are not a single
+  grand-total disk-usage figure.

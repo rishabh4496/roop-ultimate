@@ -768,3 +768,135 @@ physical RTX 3060 health evidence before considering any broader update scope.
 Do not install critical runtime/dependency/model updates, remove React UI 1.0,
 or claim real candidate activation, rollback, or RTX 3060 validation without
 actually running them.
+
+# Stage 10 Session Handoff
+
+Date: 2026-09-02
+Scope: cleanup / storage manager
+
+## CURRENT STATE
+
+`app/storage_manager.py` provides a source-backed inventory of known runtime
+roots. `app/routes_storage.py` exposes a read-only review and one-at-a-time
+explicit deletion of freshly revalidated `SAFE_TO_DELETE` items. The active
+React UI 1.0 Settings surface displays paths, categories, sizes, reasons,
+regenerability, classifications, and current references.
+
+## COMPLETED
+
+- Audited existing `clean.js` and `cleanup.py`; neither was broadened or
+  silently changed.
+- Added reference-aware protection for active/resumable queue/project work,
+  loaded media, checkpoint and partial-output records, models, outputs,
+  facesets, dependencies, environments, and queue state.
+- Added evidence-based category reporting and guarded deletion without
+  arbitrary-path or bulk-delete support.
+- Added `STORAGE_CONTRACT.md` and synchronized project state, architecture,
+  environment, README, validation, decisions, and known-issue records.
+
+## VERIFIED
+
+- `app/env/Scripts/python.exe -m unittest app.tests.test_storage_manager app.tests.test_api_routes -v`: 10 tests passed.
+- Final focused API/UI/storage regression (`test_storage_manager`,
+  `test_api_routes`, `test_ui_accessibility`, `test_no_undefined_names`): 16
+  tests passed.
+- `app/env/Scripts/python.exe -m py_compile app/storage_manager.py app/routes_storage.py app/api.py`: passed.
+- `react-ui`: `npm run build` passed; 434 modules transformed.
+- `react-ui`: `npm run lint` exited successfully with existing Fast Refresh
+  warnings only; `node --check start_react.js` and `git diff --check` passed.
+- Live read-only inventory probe found 210 known items and preserved protected
+  model/environment/output/checkpoint/queue roots; no real item was deleted.
+- Source inspection verified `/api/storage` and `/api/storage/delete` under the
+  installed FastAPI included-router representation.
+- Full repository regression: 1,738 tests passed, 1 skipped.
+- `app/update_health.py --source-root . --data-root . --json` passed on the
+  observed RTX 4070 host: dependencies, React dependency trees, configuration,
+  provider resolution, GPU, launch, models, and inference were healthy.
+
+## NOT VERIFIED
+
+- No physical RTX 3060 run was available.
+- No browser interaction or real-user cleanup was run. No actual output,
+  model, checkpoint, environment, or Pinokio cache was deleted.
+- Launch-after-cleanup was not exercised: the health worker ran after the
+  implementation but no real storage item was deleted.
+
+## KNOWN ISSUES
+
+- Pinokio and other-process open handles are not fully observable to the app;
+  those cache areas remain review-only.
+- Drive-wide orphan detection, external package caches, and installer
+  ownership are intentionally unknown rather than guessed.
+
+## FILES CHANGED
+
+`app/storage_manager.py`, `app/routes_storage.py`, `app/api.py`,
+`app/tests/test_storage_manager.py`, `react-ui/src/components/StorageManager.jsx`,
+`react-ui/src/components/Settings.jsx`, `README.md`, and the synchronized
+Stage 10 development documents. Pinokio launcher scripts, models, outputs,
+facesets, environments, and React UI 1.0 backup were untouched.
+
+## NEXT GATE
+
+Stage 10 validation: exercise the review UI and safe deletion in an isolated
+known-good copy, run launch/health verification afterward, and record any
+runtime/browser findings. Do not delete real user data during that validation.
+
+## DO NOT TOUCH NEXT SESSION
+
+Do not broaden deletion to models, outputs, facesets, checkpoints, queue,
+environments, dependencies, Pinokio caches, package caches, or unknown roots.
+Do not modify processing/provider/TensorRT/hardware policy or remove React UI
+1.0 while storage validation remains open.
+
+## STAGE 11 - TERMINAL INFORMATION REVAMP
+
+### CURRENT STATE
+
+The backend-owned `runtime_state.snapshot` now contains the stable structured
+terminal sections defined in `TERMINAL_CONTRACT.md`. `/api/progress` and
+`/api/runtime/state` use the same snapshot. The V1 terminal displays the report
+alongside, rather than instead of, the existing raw log, part tabs, error
+filter, pinned status, and copy action. Existing log entries retain their text
+and gain category/level/event metadata.
+
+### COMPLETED
+
+- Audited the existing Pinokio/API log evidence and preserved useful startup,
+  provider, pool, encoder, and troubleshooting text.
+- Added structured section projection with explicit unknown/not-applicable
+  states and no fabricated values.
+- Added focused schema/classification tests and `TERMINAL_CONTRACT.md`.
+
+### VERIFIED
+
+- Full repository regression passed: 1,741 tests, one skipped.
+- Focused runtime/UI contract suite passed: 16 tests.
+- React lint and production build passed; the build transformed 434 modules.
+- Current-source loopback launch on the physical RTX 4070 returned schema 1
+  with all 14 sections from `/api/runtime/state`.
+- A warmed control-plane benchmark measured 1,000 snapshots at 0.0377 ms per
+  snapshot; source inspection found no reporting call in `ProcessMgr.process_frame`.
+- Python compilation, `node --check start_react.js`, and `git diff --check`
+  passed.
+
+### NOT VERIFIED
+
+- Full-render throughput comparison with and without reporting.
+- Browser interaction and visual review of the terminal report.
+- Physical RTX 3060 runtime/throughput evidence; no claim is made from the
+  RTX 4070 host alone.
+- Historical Pinokio stdout outside the bounded application log is not imported
+  into the structured warning projection.
+
+### NEXT GATE
+
+Complete the measured Stage 11 validation, then define the next authorized UI
+or migration gate. Do not remove React UI 1.0 or alter processing/provider/
+hardware policy in that work.
+
+### DO NOT TOUCH NEXT SESSION
+
+Do not claim full-video throughput, browser acceptance, or RTX 3060 evidence
+without running and recording it. Do not replace the raw terminal feed with
+decorative output or broaden reporting into processing-policy changes.

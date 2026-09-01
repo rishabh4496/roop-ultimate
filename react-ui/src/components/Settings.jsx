@@ -9,6 +9,7 @@ import { fmtVal } from './settingsDiff';
 import { FOCUS_SETTING_EVENT } from './settingsCatalog';
 import { confirmDialog } from './confirm';
 import { Icon } from '../icons';
+import StorageManager from './StorageManager';
 
 // A Section that participates in the settings search and the "only changed"
 // filter. With either active it keeps just the controls that match (or the
@@ -573,6 +574,8 @@ export default function Settings({ meta, settings, setSettings, notify }) {
           <Toggle label="Show video in browser (re-encodes)" {...bindToggle('output_show_video')} />
         </FilterSection>
       </div>
+
+      <StorageManager notify={notify} />
 
       {/* Floating Sticky Action Dock — the ONLY place these two actions live.
           The dock follows the page, so a second static copy at the bottom (and

@@ -8,6 +8,16 @@
 
 `install.js` creates/uses the `app/env` virtual environment, installs `app/requirements.txt` with `uv`, installs React dependencies with `npm`, invokes `torch.js`, and installs SAM2-related packages. `update.js` now invokes `app/update_manager.py`, which requires an exact-commit compatibility manifest and only permits a source-only fast-forward. It does not reinstall Python/Node dependencies or invoke critical-runtime/model installers. `reset.js` removes `app/env` and `react-ui/node_modules`. `clean.js` delegates selectable cleanup to `cleanup.py`; its documented scope excludes models, environment, facesets, and output.
 
+Stage 10 adds the application-owned storage review at `GET /api/storage` and
+the explicit single-item deletion boundary at `POST /api/storage/delete`.
+`app/storage_manager.py` inventories only verified roots, resolves references
+from loaded media, queue state, project checkpoints, manifests, and partial
+outputs, and protects active/resumable work, models, outputs, facesets,
+checkpoints, queue state, environments, and required dependencies. The active
+React Settings surface displays the inventory and asks for confirmation for
+each safe deletion. The legacy Pinokio `Clean` action remains unchanged and is
+not a substitute for the reference-aware application review.
+
 Stage 9A audited these paths in `UPDATE_AUDIT.md`. Stage 9B added immutable
 manifest admission; Stage 9C adds a source-only transaction around the
 existing fast-forward. `app/update_manager.py` first health-checks the prior
@@ -18,6 +28,13 @@ Failure captures health/process diagnostics and attempts to restore the prior
 commit and copied configuration, followed by another health check. No
 dependency, model, CUDA, ONNX Runtime, TensorRT, Python, FFmpeg, driver, or
 other critical-runtime installer is invoked.
+
+Stage 11 adds `TERMINAL_CONTRACT.md`: terminal reporting is a read-only view of
+the backend-owned runtime snapshot. `/api/progress` and `/api/runtime/state`
+carry the same structured sections and existing raw log lines; the React
+terminal adds presentation and log classification only. Missing provider,
+model, hardware, project, checkpoint, or performance facts remain explicit
+unknown/not-applicable values.
 
 ### Dependency definitions
 
