@@ -4,6 +4,14 @@ Master record for the final end-to-end validation, repair and regression
 campaign. One row per test. A row is PASS only when a run on this repository's
 current code produced the evidence named in its own cell.
 
+> **Two campaigns, two machines, one document.** Everything from
+> `## Hardware targets` to `## Open / not attempted` is the **RTX 3060 Laptop**
+> campaign, run on `C:\pinokio\`. The **RTX 4070** campaign is the section
+> `## RTX 4070 campaign (2026-09-01)` at the end of this file, run on
+> `G:\pinokio\`. Neither upgrades the other's `NOT TESTED` cells: the two
+> machines are physically separate and approval rule 7 applies in both
+> directions.
+
 ## How to read this document
 
 Three rules govern every cell, and each was paid for by a defect in this
@@ -287,3 +295,148 @@ Recorded because they cost real arms and the lesson generalizes.
 | Retained-output visual review | the controlled harness keeps only `rows.csv` |
 | Long-run soak / leak test | not run |
 | V2 identity regression (5.9) on a second clip and on the 4070 | needed before generalizing |
+
+---
+
+# RTX 4070 campaign (2026-09-01)
+
+Run on the MAIN device. Separate physical machine from the 3060 campaign above;
+nothing here upgrades a 3060 cell and nothing there upgrades a 4070 cell.
+
+## Target and stack
+
+| item | value |
+|---|---|
+| GPU / driver | RTX 4070 12GB, driver 616.56, compute 8.9 |
+| runtime | TensorRT 10.9.0.34, ORT 1.23.2, torch 2.7.0+cu128, cv2 4.9.0 |
+| host | 24P/32L CPU, 31.7 GB RAM, Windows 11, `G:\pinokio\` |
+| live config | `realswap` / `RealityUX` / `UltraMax` / `tensorrt` / `hevc_nvenc` / 12 threads / `retinaface_r50` at 512 |
+| notable | `target_conditioned_appearance: true` is LIVE here. It is `False` in `settings.py` and in `roop/globals.py`, so on this machine it is not an experiment -- it is the shipped path |
+| fixture | `double/d4.mp4` 1280x720, sources `harjot,gargee`, capture frame 4930 (pinned) |
+
+**No adaptive downgrade is active on this card.** Unlike the 3060, TensorRT is
+admitted, the enhancer is not stripped, RealityUX runs both engines and NVDEC is
+used, so every enhancer row below is measuring the default path.
+
+## The instrument this campaign added
+
+**A pixel difference is not evidence that a feature ran**, and until now nothing
+here knew where that line sat. `tests/measure_output_noise_floor.py` renders one
+unchanged configuration N times and reports the spread. On this target, on the
+production stack, `double/d4.mp4` frames 0..60, three independent pairs:
+
+| pair | mean abs diff | max | frames differing |
+|---|---:|---:|---:|
+| run 0 vs 1 | 0.7135/255 | 22 | 60 of 60 |
+| run 0 vs 2 | 0.7160/255 | 20 | 60 of 60 |
+| run 1 vs 2 | 0.7131/255 | 21 | 60 of 60 |
+
+**Floor: mean 0.714/255, max 22/255**, and the three pairs agree to 0.4%, which
+makes it an instrument rather than an anecdote. It is measured through the same
+lossy encode as every A/B, so the two are directly comparable; it is not a claim
+about the pipeline's internal divergence, which is smaller.
+
+It is not caused by the obvious suspects:
+
+| suspect | test | result |
+|---|---|---|
+| worker scheduling / RAM-derived block geometry | threads 12 -> 1 | 0.7469 -- unchanged |
+| TensorRT tactic selection | tensorrt -> cuda | 0.8921 -- present on both providers |
+| set/dict iteration order | `PYTHONHASHSEED=0` | 0.7804 -- unchanged |
+
+Frame 0 already differs at one worker, so it is not temporal-state divergence
+either. Detected bounding boxes are identical across runs while the identity
+cosines in `rows.csv` are not, so the divergence begins at or after the swap.
+What remains is non-deterministic GPU reduction order. This corroborates the
+3060 campaign's R.4 independently, and quantifies it.
+
+## Phase 0 - repository and build integrity (4070)
+
+| # | test | evidence | 4070 |
+|---|---|---|---|
+| 0.1 | imports, config, models, providers | torch CUDA True, ORT `['Tensorrt','CUDA','CPU']`, buffalo_l resolved, det-size 512, TRT engines built and cached | PASS |
+| 0.2 | full unit suite | **1666 -> 1691 tests, 0 failures, 0 errors, 1 skipped** (25 added by this campaign) | PASS |
+| 0.3 | repeated runs in one session | 30+ consecutive renders, every one rc 0 | PASS |
+| 0.4 | host RSS bounded over a long render | 5,979-frame d3 render held **2.6-3.4 GB**, no monotonic growth | PASS |
+| 0.5 | determinism of repeated identical runs | detection geometry identical; pixels differ at the floor above | PASS (documented) |
+
+## Phase 15 - enhancer regression, all 14 selectable paths (4070)
+
+`tests/enhancer_regression_sweep.py`, 30 frames, 60 swapped faces per arm,
+production stack. **The acceptance test is a `ROOP_PROFILE` `enhance` stage call
+count equal to the swapped-face count** -- never a return code, never the swap
+audit, and never a pixel delta. The audit counts faces it was HANDED, and a
+pixel delta below the floor above means nothing.
+
+| enhancer | enhance calls | ms/face | fps | verdict |
+|---|---:|---:|---:|---|
+| None | 0 / 60 | - | 1.87 | PASS (no stage, correctly) |
+| GFPGAN | 60 / 60 | 48.9 | 1.15 | PASS |
+| Codeformer | 60 / 60 | 43.9 | 1.13 | PASS |
+| Codeformer (fp16) | 60 / 60 | 68.4 | 1.12 | PASS |
+| DMDNet | 60 / 60 | 157.4 | 0.93 | PASS |
+| GPEN 256 | 60 / 60 | 5.2 | 1.77 | PASS |
+| GPEN 256 Pro | 60 / 60 | 14.8 | 1.24 | PASS |
+| GPEN Realistic | 60 / 60 | 38.0 | 1.24 | PASS |
+| GPEN | 60 / 60 | 38.5 | 1.26 | PASS |
+| GPEN 1024 | 60 / 60 | 142.2 | 0.55 | PASS |
+| GPEN 2048 | 60 / 60 | 370.8 | 0.14 | PASS |
+| UltraMax | 60 / 60 | 132.0 | 0.98 | PASS |
+| Restoreformer++ | 60 / 60 | 39.8 | 1.23 | PASS |
+| **Adaptive** | 60 / 60 | **0.0** | **1.95** | **NO-OP - see D4070.3** |
+
+Zero wrong-faceset applications in every arm. **DMDNet works on this card**, so
+the inherited "DMDNet is broken" is 3060-specific.
+
+The fps column is a 30-frame window and includes model init; it ranks the arms
+against each other inside one window and must not be quoted as throughput.
+`ms/face` is the stage's own per-call figure and is the comparable number.
+
+## Defects found and fixed in the 4070 campaign
+
+| # | defect | why it mattered | evidence | status |
+|---|---|---|---|---|
+| D4070.1 | **the end-to-end harness did not render the user's config** | `two_face_video.py` -- which `baseline_controlled.py` and the whole Phase/Gate campaign run through -- inherited `angle_bench.init_pipeline`'s "state everything explicitly" semantics. 28 keys diverged from `config.yaml`. Never set by any harness: `target_conditioned_appearance` False vs **True**, `detail_transfer_strength` 0.0 vs **0.4**, `color_match_after_enhance` False vs **True**, `codeformer_fidelity` 0.5 vs 0.55, `parser_regions` None vs the five configured regions. A/B arms stay valid (both sides equally off); absolute values and any quality grading were never production | the harness echo printed `target_appearance=False` on a run that passed no flag; after the fix, `True`. `tests/test_bench_config_parity.py` verified to FAIL on the pre-fix state, on 28 keys | **FIXED** |
+| D4070.2 | **identity detail restored nothing and said nothing** | `--identity-detail-strength 0.35` on the shipped V1 facesets: no `identity_detail` stage in the profile at all, rc 0, audit 100%, and a pixel delta (0.766) inside the noise floor (0.714). All three instruments read clean | one-shot report naming the cause (V1 archive / V2 without residual / no FaceSet), verified on hardware: one message on a 20-frame render. 6 tests | **FIXED** |
+| D4070.3 | **the adaptive enhancer restored nothing on 60 of 60 faces** | and presented as the FASTEST arm of the sweep (1.95 fps against 1.87 for `None`), with 60 enhance calls -- the wrapper is called and returns immediately when it selects `none`. The recorded 4070 Adaptive smoke reports 120/120 frames and 0 wrong-FaceSets and never noticed | reason counts and the quality band are now reported: `{'high-quality-face-minimal-enhancement': 60}` over **min 0.7665 / p50 0.7994 / max 0.8188** against BALANCED's 0.68 cut. **No threshold changed** -- see below. 9 tests | **FIXED (visibility)** |
+| D4070.4 | `faceset_mean` was not format-neutral (the 3060 campaign's D.9) | `AverageEmbeddings()` mutates `faces[0]` in place for V1 and returns early for V2, so V1 and V2 arms were graded against different reference vectors: 0.427 max abs apart on unit-scale embeddings | reconstructs face 0 from `embeddings_backup`; the guard asserts both formats equal the plain mean, and a second test anchors the divergence so the fix cannot be mistaken for a no-op. Verified to fail on the old definition | **FIXED** |
+| D4070.5 | adaptive fallback printed per face | two lines per face on a failing render: 120,000 on a 60,000-frame two-face clip. The project's own bounded-reporting rule, not applied here | once per distinct cause, counted, totalled at Release | **FIXED** |
+| D4070.6 | an absent `quality` entered the adaptive band as 0.0 | would make a high-scoring population read as low-scoring, inverting the conclusion the band exists to support | found by a test written for the reporting contract, not by inspection | **FIXED** |
+
+### D4070.3 in full - why no threshold was re-tuned
+
+The selector is not broken. On `double/d6.mp4` the same BALANCED profile chose
+`gpen_realistic` for 18 of 73 faces over a quality band of **0.42-0.47**, the
+other 55 refused by `extreme-angle-geometry-first` -- and that gate reads the
+real solved pose, not the crude keypoint fallback, because `ProcessMgr`
+publishes `_adaptive_yaw`/`_adaptive_pitch`.
+
+So the finding is bounded and specific: **on good footage every profile refuses,
+because the population sits far above every cut** (d4's 0.7665 minimum is above
+even MAX QUALITY's 0.76), and on hard footage it engages. That is the stated
+policy working.
+
+What this campaign measured is **the distribution the gate reads**. It did NOT
+measure whether restoration would have improved those faces, and that second
+half is exactly what four gate changes in this project's history lacked before
+being implemented and reverted. Re-tuning without it would be the fifth.
+
+## Cross-cutting notes (4070)
+
+| # | item | result |
+|---|---|---|
+| X.1 | target-conditioned appearance executes | mean 1.24/255 against a 0.71 floor, max 71 against 22. Real, not noise |
+| X.2 | temporal compositing executes | mean 1.82/255, max 110. Real |
+| X.3 | temporal quality control executes | mean 0.92/255 (inside the floor) but max **171** against 22 -- localized corrections, which is what an event-driven controller should look like |
+| X.4 | identity detail at 0.35 | mean 0.766 against a 0.714 floor -- **not resolvable**, and the profile confirmed it never ran. See D4070.2 |
+| X.5 | `lighting` stage cost | 180 calls per 60 faces = 3 distinct sites (appearance analysis, pre-enhance colour transfer, post-enhance colour match) at 23.8 ms/call, 7.6% of thread time. Not redundant work; three real stages sharing one label |
+
+## Open on the 4070
+
+| item | why |
+|---|---|
+| 12 settings with no UI | `identity_detail_strength`, `temporal_compositing_*` (7) and `temporal_quality_*` (4) are in `settings.py` and `api.py` but in no React control, so they are reachable only by editing `config.yaml` |
+| whether Adaptive's cuts should move | needs a quality comparison on real footage, not a distribution |
+| foreign-object occlusion, expression/blink, night scenes, compound scenarios A-H | not run in this campaign |
+| retained-output visual review | the harness keeps `rows.csv` and the video, but no human review was performed |
+| everything on the RTX 3060 | different physical machine; approval rule 7 |
