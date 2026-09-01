@@ -269,6 +269,7 @@ class AdaptiveEnhancer:
         self._decisions = []
         self._max_loaded = 2
         self._small_card = False
+        self._fallback_seen = {}
 
     def Initialize(self, plugin_options: dict):
         if self._loaded:
@@ -325,6 +326,33 @@ class AdaptiveEnhancer:
                 except Exception as exc:
                     print(f"[AdaptiveEnhancer] release {name} skipped: {exc}", flush=True)
 
+    def _report_fallback(self, path, kind, exc):
+        """Announce a fall back to the unenhanced frame -- once per cause.
+
+        Both call sites sit on the PER-FACE path, so an unbounded print here is
+        two lines per face: 120,000 of them on a 60,000-frame two-face render,
+        which is its own failure. Bounded the way face_util bounds swallowed
+        detector failures. The running total is reported at Release, because
+        "it fell back 4,000 times" is the number that matters and a single
+        first-occurrence line does not carry it.
+        """
+        sig = (path, kind, type(exc).__name__, str(exc)[:200])
+        with self._lock:
+            seen = sig in self._fallback_seen
+            self._fallback_seen[sig] = self._fallback_seen.get(sig, 0) + 1
+        if seen:
+            return
+        print(f"[AdaptiveEnhancer] candidate {path} {kind}; using unenhanced "
+              f"frame: {type(exc).__name__}: {exc}\n"
+              f"[AdaptiveEnhancer] Further occurrences of this cause are "
+              f"counted, not printed; the total is reported at Release.",
+              flush=True)
+
+    def fallback_counts(self):
+        """Per-cause fallback totals, for harness and test reporting."""
+        with self._lock:
+            return dict(self._fallback_seen)
+
     def Run(self, source_faceset, target_face, temp_frame):
         metrics = _face_value(target_face, "_adaptive_metrics", None) or {}
         if not metrics:
@@ -347,8 +375,7 @@ class AdaptiveEnhancer:
         try:
             proc = self._candidate(path)
         except Exception as exc:
-            print(f"[AdaptiveEnhancer] candidate {path} unavailable; "
-                  f"using unenhanced frame: {type(exc).__name__}: {exc}", flush=True)
+            self._report_fallback(path, "unavailable", exc)
             self._last_path[key] = NONE
             return None, 0
         try:
@@ -364,8 +391,7 @@ class AdaptiveEnhancer:
                 pass
             return result, scale
         except Exception as exc:
-            print(f"[AdaptiveEnhancer] candidate {path} failed; using "
-                  f"unenhanced frame: {type(exc).__name__}: {exc}", flush=True)
+            self._report_fallback(path, "failed", exc)
             self._last_path[key] = NONE
             return None, 0
         finally:
@@ -375,14 +401,46 @@ class AdaptiveEnhancer:
 
     def telemetry(self):
         with self._lock:
-            counts = {}
+            counts, reasons, scores = {}, {}, []
             for item in self._decisions:
                 counts[item.path] = counts.get(item.path, 0) + 1
+                reasons[item.reason] = reasons.get(item.reason, 0) + 1
+                # An ABSENT quality is not a quality of zero. Defaulting it to
+                # 0.0 would pull the reported band down and make a
+                # high-scoring population read as a low-scoring one -- which
+                # inverts the conclusion this band exists to support.
+                try:
+                    raw = item.metrics.get("quality")
+                except AttributeError:
+                    raw = None
+                if raw is not None:
+                    try:
+                        scores.append(float(raw))
+                    except (TypeError, ValueError):
+                        pass
+            band = None
+            if scores:
+                ordered = sorted(scores)
+                band = {"n": len(ordered),
+                        "min": round(ordered[0], 4),
+                        "p50": round(ordered[len(ordered) // 2], 4),
+                        "max": round(ordered[-1], 4)}
             return {
                 "profile": self.profile,
                 "max_loaded": self._max_loaded,
                 "small_card": self._small_card,
                 "decisions": counts,
+                # The REASON each decision was taken, and the quality score that
+                # drove it. Without these a run is only reportable as
+                # `decisions={'none': 60}`, which says the selector enhanced
+                # nothing and not why -- and `last_quality` is empty in exactly
+                # that case, because it is only written after a candidate runs.
+                # So the one number that explains the behaviour was absent
+                # precisely when it was needed.
+                "reasons": reasons,
+                "quality_band": band,
+                "fallbacks": {"%s %s: %s: %s" % k: v
+                              for k, v in self._fallback_seen.items()},
                 "last_quality": dict(self._last_quality),
                 "loaded": list(self._loaded),
                 "recent": [asdict(x) for x in self._decisions[-20:]],
@@ -392,7 +450,33 @@ class AdaptiveEnhancer:
         summary = self.telemetry()
         if summary["decisions"]:
             print(f"[AdaptiveEnhancer] decisions={summary['decisions']} "
+                  f"reasons={summary['reasons']} "
+                  f"quality={summary['quality_band']} "
                   f"last_quality={summary['last_quality']}", flush=True)
+            # An adaptive selector that restored nothing is a legitimate
+            # outcome of its own policy and is also indistinguishable, in every
+            # other instrument, from the enhancer never having run: the render
+            # returns 0, the swap audit reads 100%, an `enhance` stage is
+            # counted (the wrapper is still called), and the arm comes out as
+            # the FASTEST in an enhancer sweep. Measured on this 4070: BALANCED
+            # on the locked d4 fixture chose `none` for 60 of 60 faces at
+            # 0.0 ms/face and 1.95 fps against 1.87 for `--enhancer None`.
+            if set(summary["decisions"]) <= {NONE}:
+                print("[AdaptiveEnhancer] NO FACE WAS ENHANCED in this run. "
+                      "The output is the unenhanced swap. The reason counts "
+                      "above say which gate refused; if it is "
+                      "'high-quality-face-minimal-enhancement', every face "
+                      "scored at or above this profile's cut and the profile "
+                      "considers them good enough. Select a restorer by name "
+                      "to enhance unconditionally.", flush=True)
+        # The total, not just the first occurrence. A selector that fell back to
+        # the unenhanced frame on most faces is indistinguishable from one that
+        # chose NONE on purpose unless this is said out loud -- and both produce
+        # a run that returns 0 with a swap audit reading 100%.
+        if summary["fallbacks"]:
+            total = sum(summary["fallbacks"].values())
+            print(f"[AdaptiveEnhancer] FELL BACK to the unenhanced frame "
+                  f"{total} time(s): {summary['fallbacks']}", flush=True)
         with self._lock:
             loaded = list(self._loaded.values())
             self._loaded.clear()
