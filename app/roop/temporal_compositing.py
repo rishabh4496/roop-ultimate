@@ -18,6 +18,56 @@ import cv2
 import numpy as np
 
 
+# Compositing failures reported once per distinct cause.
+#
+# Both call sites in `procmgr_masking.paste_upscale` fall back to the legacy
+# linear paste on any exception, which is the right RUNTIME behaviour -- this is
+# a quality layer and a malformed optional track field must leave the
+# established matte usable. Falling back SILENTLY is not: a user who enables
+# `temporal_compositing` and hits an exception on every face sees a run that
+# returns 0, reports 100% swapped, and produces exactly the legacy output, which
+# is indistinguishable from "the feature had no effect". That confusion is the
+# single most expensive pattern in this project's history.
+#
+# Bounded like face_util's detector reporter and the adaptive enhancer's
+# fallback: these sit on the per-face path, so an unbounded print is one line
+# per face per frame.
+_COMPOSITE_FAIL_SEEN = {}
+_COMPOSITE_FAIL_LOCK = RLock()
+
+
+def warn_compositing_fallback(stage, exc):
+    """Announce a fall back to the legacy paste -- once per distinct cause."""
+    sig = (str(stage), type(exc).__name__, str(exc)[:200])
+    with _COMPOSITE_FAIL_LOCK:
+        seen = sig in _COMPOSITE_FAIL_SEEN
+        _COMPOSITE_FAIL_SEEN[sig] = _COMPOSITE_FAIL_SEEN.get(sig, 0) + 1
+    if seen:
+        return
+    # Each stage falls back to a DIFFERENT established path, and naming the
+    # wrong one sends a reader to the wrong code.
+    fallback = {'temporal occlusion': 'the established mask'}.get(
+        str(stage), 'the legacy linear paste')
+    print("[TemporalCompositing] %s FAILED; this face fell back to %s: %s: %s\n"
+          "[TemporalCompositing] The render continues and reports success, so "
+          "output that looks identical to having the feature off is expected "
+          "while this persists. Further occurrences of this cause are counted, "
+          "not printed."
+          % (stage, fallback, type(exc).__name__, str(exc)[:200]), flush=True)
+
+
+def compositing_fallback_counts():
+    """Per-cause fallback totals, for harness and test reporting."""
+    with _COMPOSITE_FAIL_LOCK:
+        return dict(_COMPOSITE_FAIL_SEEN)
+
+
+def reset_compositing_fallbacks():
+    """Clear the once-per-process record. Used by tests."""
+    with _COMPOSITE_FAIL_LOCK:
+        _COMPOSITE_FAIL_SEEN.clear()
+
+
 NORMAL = "NORMAL"
 DARK = "DARK"
 VERY_DARK = "VERY_DARK"

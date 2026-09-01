@@ -21,7 +21,8 @@ from roop.face_util import clamp_cut_values, kps_pose_ratios
 from roop.nonfrontal import nonfrontal_score
 from roop.procmgr_runtime import _prof
 from roop.temporal_compositing import (boundary_contrast, composite_multiband,
-                                       refine_alpha)
+                                       refine_alpha,
+                                       warn_compositing_fallback)
 
 try:
     import torch
@@ -436,10 +437,12 @@ class MaskingMixin:
                     track_id, img_matte, frame_index=frame_index,
                     confidence=confidence, motion=motion,
                     occlusion=occlusion_score)
-            except Exception:
+            except Exception as exc:
                 # Temporal compositing is a quality layer. A malformed optional
-                # track field must leave the established matte usable.
-                pass
+                # track field must leave the established matte usable -- but
+                # not silently: falling back to the legacy paste on every face
+                # is indistinguishable from the feature having no effect.
+                warn_compositing_fallback('mask stabilisation', exc)
 
         # Cut this face's matte back where another face in the frame owns the
         # pixels (see roop.face_overlap). AFTER the feather deliberately: the
@@ -476,7 +479,8 @@ class MaskingMixin:
                 img_matte = refine_alpha(img_matte, _composite_plan,
                                          target=target_img,
                                          landmarks=face_landmarks)
-            except Exception:
+            except Exception as exc:
+                warn_compositing_fallback('alpha refinement', exc)
                 _composite_plan = None
 
         # Save 2D mask before reshape — used by show_face_area_overlay
@@ -927,9 +931,14 @@ class MaskingMixin:
                                 _propagated = np.maximum(_propagated, 1.0 - _owner)
                             return self._composite_mask(
                                 _propagated, frame, target), _propagated
-            except Exception:
+            except Exception as exc:
                 # Temporal occlusion is a quality layer. A malformed optional
-                # landmark/track field must fall back to the established mask.
+                # landmark/track field must fall back to the established mask
+                # -- and must SAY it did. Foreign-object occlusion is one of
+                # the behaviours this pipeline is judged on; a fallback on
+                # every face reads exactly like "the occlusion engine does
+                # nothing", with nothing anywhere distinguishing the two.
+                warn_compositing_fallback('temporal occlusion', exc)
                 _occlusion_decision = None
 
         # ── Should this face be masked on an UNWARPED crop instead? ───────────
