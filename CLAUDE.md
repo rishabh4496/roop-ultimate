@@ -2753,3 +2753,206 @@ No cross-window delta is quoted anywhere in the Phase 9/10 records.
    `expression/` clips are the right material.
 6. Inherited and untouched: Phase 3's RSS gate still fails on the 3060 at
    3.73 GB; interacting faces remains characterized but unsolved.
+
+
+---
+
+## Session Log (2026-09-01 Part 4): The Final Validation Campaign On The 4070 — Seven Defects, Six Of Them The Same Shape, And Four Phases Measured For The First Time
+
+Run on the MAIN device (RTX 4070 12GB, driver 616.56, TRT 10.9.0.34, ORT
+1.23.2, 24P/32L CPU, 31.7 GB RAM). Commits `6010535` through `0f42618`. Suite
+**1666 -> 1698**, 1 skipped, 32 tests added. Full evidence:
+`docs/FINAL_VALIDATION_MATRIX.md` section `# RTX 4070 campaign (2026-09-01)`;
+next steps at the top of `docs/PHASE_HANDOFF.md`.
+
+### 0. READ THIS BEFORE TRUSTING ANY EARLIER BENCHMARK IN THIS REPO
+
+**`two_face_video.py` did not render the configuration in `config.yaml`.** It
+is the end-to-end harness `baseline_controlled.py` and every Phase and Gate
+benchmark run through, and it inherited `angle_bench.init_pipeline`'s "state
+every setting explicitly" semantics — correct for an angle A/B, wrong for an
+end-to-end harness. **28 keys diverged.** The ones no harness set anywhere:
+
+    target_conditioned_appearance   False  vs  True    <- LIVE feature, off
+    detail_transfer_strength          0.0  vs  0.4     <- whole path dead
+    color_match_after_enhance       False  vs  True
+    codeformer_fidelity               0.5  vs  0.55
+    parser_regions                   None  vs  the five configured regions
+
+**An A/B ratio survives — both arms were equally off. An absolute FPS, identity
+or quality value does not.** This is the THIRD recurrence of the same defect
+class here (the `yaw_*` swap-model mask, then the entire merger stage), so the
+sync now lives in one place, `tests/config_sync.py`, wired in as
+`init_pipeline(sync_config=True)`. `tests/test_bench_config_parity.py` was
+verified to fail on the pre-fix state, on all 28 keys.
+
+Because silence now means "the user's config", an A/B can no longer say "off"
+by omitting a flag. Each config-backed toggle gained an explicit negative
+(`--no-target-conditioned-appearance` and friends).
+
+### 1. THE INSTRUMENT: the pixel noise floor, and it is not zero
+
+`tests/measure_output_noise_floor.py`. Two renders of ONE unchanged
+configuration differ on **every** frame:
+
+    mean 0.7142/255   max 22/255   (three pairs agreeing to 0.4%)
+
+and it survives every obvious suspect:
+
+    threads 12 -> 1        0.7469   not scheduling, not the RAM-derived geometry
+    tensorrt -> cuda       0.8921   not a TensorRT tactic choice
+    PYTHONHASHSEED=0       0.7804   not set/dict iteration order
+
+Frame 0 already differs at one worker; detected boxes are identical while the
+identity cosines are not. It is non-deterministic GPU reduction order.
+
+**A pixel delta at or below ~0.71/255 mean is not evidence a feature ran.** Used
+in both directions this session: it DISPROVED my own "identity detail executes"
+reading, and it CONFIRMED that editing three `except` handlers in
+`paste_upscale` left the default path unchanged (0.7158 / 0.7175 / 0.7209
+against three pre-change renders).
+
+### 2. Seven defects fixed. Six share one shape
+
+**Something reported success while not running** — the same shape as the eight
+the 3060 campaign found. The instruments that keep missing it are the swap audit
+(counts INTENT over faces it was handed, not outcome) and the return code (an
+unswapped frame is a valid picture).
+
+| # | defect |
+|---|---|
+| 1 | the end-to-end harness rendered module defaults, not `config.yaml` (§0) |
+| 2 | identity detail restored nothing on V1 facesets, silently |
+| 3 | the adaptive enhancer restored nothing on 60 of 60 faces, silently |
+| 4 | `faceset_mean` was not format-neutral — the 3060's D.9, carried as FOUND NOT FIXED |
+| 5 | adaptive fallback printed per face — 120,000 lines on a long render |
+| 6 | an absent `quality` entered the adaptive band as 0.0, inverting its conclusion |
+| 7 | three compositing/occlusion quality layers fell back to the legacy path in silence |
+
+**#3 is the one to remember.** A 14-arm enhancer sweep passed 13 arms at one
+`enhance` call per swapped face. Adaptive also "passed" — 60/60 calls — at
+**0.0 ms/face and 1.95 fps, the FASTEST row, ahead of `--enhancer None` at
+1.87**. It had selected `none` for every face. A counted call proves the WRAPPER
+ran; it returns immediately when it chooses none. The previously recorded 4070
+Adaptive smoke reports 120/120 frames and 0 wrong-FaceSets and never noticed.
+
+Now reported: reason counts and the quality band the gate actually reads —
+`{'high-quality-face-minimal-enhancement': 60}` over min 0.7665 / p50 0.7994 /
+max 0.8188 against BALANCED's 0.68 cut. The whole population sits above every
+profile cut including MAX QUALITY's 0.76.
+
+**No threshold was changed.** The mechanism works: on `double/d6.mp4` the same
+profile chose `gpen_realistic` for 18 of 73 faces over a 0.42-0.47 band. What
+was measured is the distribution the gate READS, not whether restoring a
+0.80-quality face would improve it — and four gate changes here were implemented
+and reverted for exactly that missing half.
+
+### 3. Phases measured for the first time on this target
+
+**Phase 10, foreign-object occlusion — the campaign's highest priority.** The
+six clips that LOOK like occlusion carry no ground truth (a face can vanish
+because a hand crossed it, because it turned away, or because it left frame). So
+the occluder is composited, mask known exactly, driven through
+approach→touch→cover→cross→leave.
+
+The metric took three attempts, and the two failures are instructive:
+
+* absolute change inside the object is confounded by its COLOUR — same engine,
+  same geometry, only appearance changed: peak change **12.63** (arbitrary),
+  **3.76** (skin), **3.07** (dark);
+* normalising against a background patch DISPROVED ITS OWN PREMISE — background
+  reads **0.00 on every frame**, because `live_swap` writes only inside the
+  pasted region. There is no global operation to subtract.
+
+What works: swap each frame TWICE, once with the engine under test and once with
+**no mask engine**, and report where the output sits between the untouched
+object and the fully-painted reference. Colour-independent, with a `--control`
+arm that swaps nothing and must report zero.
+
+**Result, 3 occluder appearances x 3 mask engines, 40.8% peak face coverage:
+protection is 8-30% worst case, 22-53% median.** No engine excludes a synthetic
+foreign object; protection rests entirely on a learned segmenter recognising the
+object class, with no geometric or appearance fallback. **RealityUX and DFL
+XSeg are indistinguishable** (10%/22% against 10%/22% on texture) — independent
+confirmation that RealityUX's BiSeNet subtraction is nearly inert. Protection is
+best on the skin-toned occluder (53% median), which is the realistic hand case
+and still not exclusion.
+
+**Phase 14, dark scenes.** `tests/survey_fixtures.py` measured all 32 clips:
+**there is no real night footage on this machine.** So a paired exposure ladder
+at 1.00/0.55/0.30/0.15/0.08 gain, graded on the face/scene luma ratio — absolute
+brightness must fall, so a ratio that CLIMBS is the hallucinated-daylight-face
+signature. **PASS both configurations**: -0.5% with `target_conditioned_
+appearance` on (this machine's live setting), +2.2% off, against a +35%
+threshold. Face still detected 4/4 at 0.08 gain. The arms separate monotonically
+across all five rungs; read against the plate's own face the feature biases
+DARKER (-2.2% -> -4.3%) while off tracks closer — the safe direction, and what
+its dark tiers claim to do.
+
+**Phase 12, eyes and expression — PASS.** EAR/MAR correlated between plate and
+output over 60 frames of `Flexpressions.mp4`: **eyes r=0.964 at 102% of the
+target's amplitude, mouth r=0.984 at 86%**, 60/60 frames usable. Amplitude is
+reported beside r because it catches a damped blink — an output reducing every
+blink to a tenth of its depth still correlates at 0.95. Measured on the
+per-frame `live_swap` path, so no tracker and no smoothing: the stricter test.
+
+**Phase 8, single-image swap.** Identity to source 0.05 -> 0.67 on every graded
+frame, with a `--control` arm that must fail and does.
+
+**Phase 11/19, `double/d3.mp4` full length** — 5,979 frames, 15,684 faces,
+1109 s at 5.39 fps. 17 wrong-faceset of 2,952 attributable swaps (0.58%),
+recorded as a NEW baseline: the 2026-08-23 audit's 10 was `duo/d3.mp4`, a
+DIFFERENT clip sharing the filename, and `duo/` does not exist here. Host RSS
+peak 15.26 GB, quarter means 14.68 / 14.78 / 14.79 / 13.07 — flat then falling,
+no leak. Also: **10.0% of faces sit on a track that matched but has no source**,
+and **33.1% of swaps had interpolated landmarks** and bypassed the identity
+gates.
+
+### 4. Identity detail: it runs now, and the null control is what settles it
+
+`tests/build_faceset_v2.py` built V2 archives from the locked V1 sources with
+real detection (`identity_detail_ok=5` both). On V2 at strength 0.35 the
+`identity_detail` stage runs **60 times at 18.77 ms/face**; at 0 it is correctly
+absent; and the V1 reporter added this session stays silent on a working archive.
+
+    strength 0 vs 0.35      mean +0.00074   better on 61.7% of faces
+    strength 0 vs 0 (NULL)  mean +0.00127   better on 60.0%
+
+**The null moves further than the treatment.** Not evidence the feature does
+nothing — ArcFace is largely invariant to the skin markings it restores, so the
+identity cosine is the wrong instrument and was used only to establish that it
+cannot decide the question. Visual review still owed.
+
+### 5. Corrections I made to my own work, mid-session
+
+* A "target appearance executes" claim built on a pixel delta — withdrawn once
+  the noise floor existed; re-established from the ROOP_PROFILE stage instead.
+* The fixture survey's first yaw metric was an ad-hoc nose-offset proxy and
+  published spans of **431 and 666 degrees**. Replaced with `solve_pose_5pt`.
+* The occlusion metric, twice (§3).
+* A "2.6-3.4 GB over the d3 render" figure in the matrix came from a partial
+  run; corrected to the measured 15.26 GB peak.
+
+### 6. OPEN on the 4070
+
+1. **Real-occluder footage** — hands, glasses, microphones, hair. Phase 10 is
+   composited; a synthetic patch is out of distribution for XSeg and BiSeNet.
+2. **Real night / mixed-light footage** — Phase 14 is a synthetic ladder.
+3. **FP16 / FP32 / mixed precision arms** — exercisable on this card unlike the
+   3060, but each precision is a separate TensorRT cache namespace and needs a
+   dedicated cold engine-build budget.
+4. **Re-baseline everything through `two_face_video.py`** — §0.
+5. **Adaptive's cuts** need a quality comparison on real footage, not a
+   distribution.
+6. **Twelve settings have no UI** — `identity_detail_strength`,
+   `temporal_compositing_*` (7), `temporal_quality_*` (4). Deliberately NOT
+   added: their own handoffs record them OPEN/INCOMPLETE.
+7. **Nothing here is measured on the 3060.** All seven fixes are
+   device-independent code; every number is 4070-only.
+
+### 7. New permanent harnesses
+
+`tests/config_sync.py` (the one config sync), `measure_output_noise_floor.py`,
+`enhancer_regression_sweep.py`, `image_swap_smoke.py`, `survey_fixtures.py`,
+`occlusion_ground_truth.py`, `exposure_ladder.py`, `expression_tracking.py`.
+Every one that can pass carries a `--control` arm that must fail.
