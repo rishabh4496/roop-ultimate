@@ -119,63 +119,16 @@ VALID_ENHANCERS = {
 }
 
 
-# Keys whose config.yaml spelling is NOT their roop.globals spelling. A blanket
-# copy corrupts these, so each one names the translator production uses.
-#
-#   no_face_action  config holds the dropdown LABEL, globals holds the
-#                   eNoFaceAction int. Copying the string makes every `==`
-#                   against the enum false, so none of the no-face actions fire
-#                   at all — and nothing in the output says so.
-#   verify_swap     config holds 'auto'|'on'|'off', globals holds a bool that
-#                   run.py derives via ROOP_VERIFY_SWAP.
-_TRANSLATED = {'no_face_action', 'verify_swap'}
+# The config sync lives in `config_sync.py` so every harness shares ONE
+# implementation. It was written here, for the reason its docstring gives,
+# and then the harness that needed it most did not have it. Re-exported
+# under the old names so existing callers and tests keep working.
+from config_sync import TRANSLATED as _TRANSLATED   # noqa: E402,F401
+from config_sync import sync_globals_from_config as _sync_globals
 
 
 def sync_globals_from_config(g, verbose=True):
-    """Push every config.yaml key that roop.globals also defines onto globals.
-
-    The point is not the copying — it is that an unstated setting becomes
-    impossible, so a future reader does not have to guess whether this bench
-    included the stage they care about. Two settings had already fallen through
-    that gap before this existed: `detail_transfer_strength` sat at 0 (the whole
-    Sobel/dark-spot path dead) and `color_match_after_enhance` at False, while
-    production ran 0.4 and True.
-
-    A key is copied only when config's value has the same TYPE as globals'. A
-    type mismatch means the two layers use different representations and a
-    translator exists somewhere — see `_TRANSLATED`. Copying across one of those
-    is silent corruption, not a config sync.
-    """
-    changed, skipped = [], []
-    for k, v in vars(g.CFG).items():
-        if k.startswith('_') or k in _TRANSLATED or not hasattr(g, k):
-            continue
-        cur = getattr(g, k)
-        if cur is not None and not isinstance(v, type(cur)) and not (
-                isinstance(cur, (int, float)) and isinstance(v, (int, float))):
-            skipped.append((k, cur, v))
-            continue
-        if cur != v:
-            changed.append((k, cur, v))
-            setattr(g, k, v)
-
-    # The two translated keys, the way api.py and run.py do them.
-    from api import index_of_no_face_action
-    g.no_face_action = index_of_no_face_action(g.CFG.no_face_action)
-    g.verify_swap = str(getattr(g.CFG, 'verify_swap', 'auto')).lower() != 'off'
-
-    if verbose:
-        print("[compare] config.yaml -> roop.globals:")
-        for k, was, now in sorted(changed):
-            print(f"           {k}: {was!r} -> {now!r}")
-        print(f"           no_face_action: {g.CFG.no_face_action!r} -> "
-              f"{g.no_face_action} (translated)")
-        print(f"           verify_swap: {g.CFG.verify_swap!r} -> "
-              f"{g.verify_swap} (translated)")
-        for k, cur, v in sorted(skipped):
-            print(f"           SKIPPED {k}: type mismatch "
-                  f"{type(cur).__name__} vs {type(v).__name__}")
-    return changed
+    return _sync_globals(g, verbose=verbose, prefix='[compare]')
 
 
 def render(clip, source_name, enhancer, out_dir, swapper, mask, threads,

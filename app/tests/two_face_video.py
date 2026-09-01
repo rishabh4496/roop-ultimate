@@ -934,9 +934,10 @@ def main():
     ap.add_argument("--cuda-device-id", type=int, default=0)
     ap.add_argument("--swap-model", default="inswapper")
     ap.add_argument("--enhancer", default="None")
-    ap.add_argument("--adaptive-profile", default="BALANCED",
+    ap.add_argument("--adaptive-profile", default=None,
                     choices=("FAST", "BALANCED", "REALISTIC", "MAX QUALITY"),
-                    help="Phase 11 profile when --enhancer Adaptive is selected")
+                    help="Phase 11 profile when --enhancer Adaptive is "
+                         "selected; defaults to config.yaml")
     ap.add_argument("--mask-engine", default="None")
     ap.add_argument("--codec", default="libx264",
                     choices=("libx264", "libx265", "libvpx-vp9",
@@ -980,19 +981,38 @@ def main():
     ap.add_argument("--identity-detail-strength", type=float, default=None,
                     help="FaceSet V2 persistent source-detail restoration; "
                          "defaults to config.yaml and remains opt-in")
+    # Tri-state on purpose. Now that an omitted flag inherits config.yaml, "off"
+    # can no longer be expressed by silence -- silence means "whatever the user
+    # runs", which for this key is currently ON. An A/B needs to say off out
+    # loud, so each of these config-backed toggles carries an explicit negative.
     ap.add_argument("--target-conditioned-appearance", action="store_true",
-                    default=None, help="enable Phase 10 target-conditioned "
+                    default=None, dest="target_conditioned_appearance",
+                    help="enable Phase 10 target-conditioned "
                          "lighting/color matching for this controlled run")
+    ap.add_argument("--no-target-conditioned-appearance", action="store_false",
+                    dest="target_conditioned_appearance",
+                    help="explicitly disable Phase 10 target-conditioned "
+                         "appearance, overriding config.yaml")
     ap.add_argument("--target-conditioned-strength", type=float, default=None,
                     help="Phase 10 target appearance strength; defaults to config")
     ap.add_argument("--target-conditioned-alpha", type=float, default=None,
                      help="Phase 10 target appearance EMA alpha; defaults to config")
     ap.add_argument("--temporal-compositing", action="store_true", default=None,
+                     dest="temporal_compositing",
                      help="enable Phase 12 adaptive temporal paste-back")
+    ap.add_argument("--no-temporal-compositing", action="store_false",
+                    dest="temporal_compositing",
+                    help="explicitly disable Phase 12 adaptive temporal "
+                         "paste-back, overriding config.yaml")
     ap.add_argument("--temporal-compositing-strength", type=float, default=None,
                      help="Phase 12 compositor strength; defaults to config")
     ap.add_argument("--temporal-quality-control", action="store_true", default=None,
+                    dest="temporal_quality_control",
                     help="enable Phase 13 event-driven temporal QC")
+    ap.add_argument("--no-temporal-quality-control", action="store_false",
+                    dest="temporal_quality_control",
+                    help="explicitly disable Phase 13 temporal QC, "
+                         "overriding config.yaml")
     ap.add_argument("--temporal-quality-logging", action="store_true", default=None,
                     help="log Phase 13 anomaly, track, frame, confidence and correction")
     ap.add_argument("--temporal-quality-history", type=int, default=None,
@@ -1003,8 +1023,16 @@ def main():
     ensure_ffmpeg()
     _apply_startup_runtime_environment()
     _mm = args.swap_model_mask_strength
+    # sync_config=True: this is the END-TO-END harness, so an unstated setting
+    # must come from the user's config.yaml, not from roop/globals.py's module
+    # defaults. Without it this file rendered target_conditioned_appearance
+    # False against a config carrying True, detail_transfer_strength 0.0 against
+    # 0.4, and color_match_after_enhance False against True -- in every arm of
+    # the validation campaign. Every explicit assignment and CLI flag below
+    # still wins, because the sync runs first.
     g = ab.init_pipeline(args.provider, args.swap_model, args.enhancer,
-                         args.mask_engine, cuda_device_id=args.cuda_device_id)
+                         args.mask_engine, cuda_device_id=args.cuda_device_id,
+                         sync_config=True)
     if args.color_transfer_mode is not None:
         g.color_transfer_mode = args.color_transfer_mode
     # After init_pipeline, which has already built CFG from config.yaml -- so a
@@ -1019,7 +1047,8 @@ def main():
         args.identity_detail_strength = float(
             getattr(g.CFG, 'identity_detail_strength', 0.0) or 0.0)
     g.identity_detail_strength = float(args.identity_detail_strength)
-    g.adaptive_enhancer_profile = args.adaptive_profile
+    if args.adaptive_profile is not None:
+        g.adaptive_enhancer_profile = args.adaptive_profile
     if args.target_conditioned_appearance is not None:
         g.target_conditioned_appearance = bool(args.target_conditioned_appearance)
     if args.target_conditioned_strength is not None:

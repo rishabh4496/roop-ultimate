@@ -93,12 +93,27 @@ YAW_LABEL = {0: -90, 1: -45, 2: 0, 3: 45, 4: 90}   # plate index -> real yaw
 # ── pipeline setup ───────────────────────────────────────────────────────────
 
 def init_pipeline(provider, swap_model, enhancer, mask_engine,
-                  swap_model_mask_strength=0.0, cuda_device_id=0):
+                  swap_model_mask_strength=0.0, cuda_device_id=0,
+                  sync_config=False):
     """Bring roop up headlessly, with every angle-relevant setting stated here
     rather than inherited from config.yaml.
 
     Explicit on purpose. config.yaml is gitignored per-machine state, and a
-    bench whose result depends on it measures the machine, not the code.
+    bench whose result depends on it measures the machine, not the code. That
+    is the right trade for the ANGLE benches, which compare one model against
+    another and want the two arms identical and reproducible across machines.
+
+    It is the wrong trade for an END-TO-END harness, whose job is to render the
+    stack the user actually runs -- and `two_face_video.py`, which the Phase and
+    Gate campaign runs through, inherited the angle bench's semantics by simply
+    being built on this function. Result: `target_conditioned_appearance` False
+    against a config carrying True, `detail_transfer_strength` 0.0 against 0.4,
+    `color_match_after_enhance` False against True, in every validation arm.
+
+    `sync_config=True` copies config.yaml over globals FIRST, so the explicit
+    assignments below and any caller override still win. Everything the caller
+    does not state then comes from the user's machine rather than from
+    roop/globals.py's module defaults.
     """
     os.chdir(APP)
     import roop.globals as g
@@ -106,6 +121,11 @@ def init_pipeline(provider, swap_model, enhancer, mask_engine,
 
     g.CFG = Settings("config.yaml")
     g.CFG.provider = provider
+    if sync_config:
+        # FIRST, so every explicit assignment below and every caller override
+        # still wins. This only adds the keys nobody states.
+        from config_sync import sync_globals_from_config
+        sync_globals_from_config(g, prefix="[bench]")
     g.execution_threads = 1               # bench determinism over speed
     g.cuda_device_id = int(cuda_device_id)
     g.video_encoder = g.CFG.output_video_codec

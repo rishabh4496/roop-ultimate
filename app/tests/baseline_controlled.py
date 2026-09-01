@@ -407,19 +407,25 @@ def main():
         if args.temporal_compositing_mode == "on":
             cmd.append("--temporal-compositing")
     # Phase 10 is a config-backed feature with no ROOP_* env hook, so a
-    # controlled A/B can only reach it through the child's own flag. The child
-    # declares --target-conditioned-appearance with an explicit default of None,
-    # so omitting it leaves config.yaml in charge; passing the flag turns it on
-    # and "off" must be expressed as an explicit 0 strength rather than by
-    # silence, which the child cannot distinguish from "unset".
-    # "off" passes NOTHING on purpose. The child cannot express an explicit
-    # disable -- its flag is store_true with default None -- so off is the
-    # config/globals state, which is False in both. That is only safe because
-    # the arm's ACTUAL state is read back out of the child's own echo line
-    # below and recorded, rather than assumed from the flag we did or did not
-    # pass. A feature reporting "no effect" must first be shown to have run.
+    # controlled A/B reaches it through the child's own tri-state flag.
+    #
+    # "off" used to pass NOTHING, on the stated grounds that the omitted case is
+    # "the config/globals state, which is False in both". Both halves of that
+    # were wrong: the child never read config.yaml for this key at all (it took
+    # roop/globals.py's module default), and config.yaml has carried
+    # `target_conditioned_appearance: true` since the feature shipped. So "auto"
+    # rendered the feature OFF against a production stack that runs it ON, and
+    # "off" agreed with "auto" only by coincidence.
+    #
+    # The child now inherits config.yaml when no flag is passed, which makes
+    # "auto" mean the production stack -- and makes silence unusable as a
+    # disable. Each mode is therefore explicit. The arm's ACTUAL state is still
+    # read back out of the child's own echo line below and recorded rather than
+    # assumed: a feature reporting "no effect" must first be shown to have run.
     if args.target_appearance_mode == "on":
         cmd.append("--target-conditioned-appearance")
+    elif args.target_appearance_mode == "off":
+        cmd.append("--no-target-conditioned-appearance")
     if args.target_appearance_strength is not None:
         cmd.extend(["--target-conditioned-strength",
                     str(args.target_appearance_strength)])
