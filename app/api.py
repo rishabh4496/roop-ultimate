@@ -53,6 +53,7 @@ from roop import segment_writer
 from roop import live_preview
 from roop import procmgr_runtime as _procmgr_runtime
 from roop import runtime_state as _runtime_state
+import project_checkpoint as _project_checkpoint
 import ui.globals as ui_globals
 
 app = FastAPI()
@@ -198,6 +199,8 @@ fm_selected_index = -1
 # Live progress, polled by the React UI
 _progress = {"processing": False, "paused": False, "pause_requested": False,
              "progress": 0.0, "desc": "", "error": ""}
+_resume_context = {"base": 0.0, "total": 0}
+_active_project_id = ""
 _last_output = {"path": "", "kind": ""}
 
 # Per-run accumulator, reset at the start of every swap and read back when the
@@ -296,6 +299,152 @@ def _push_log(msg, force=False, part=None):
 # pass know the run was aborted (so it doesn't start a long upscale on a
 # deliberately-stopped output).
 _stop_requested = {"flag": False}
+_PROJECT_ID_KEY = "_project_id"
+
+
+def _checkpoint_payload(payload):
+    """Remove dispatch-only fields before binding settings to a project."""
+    return {key: value for key, value in (payload or {}).items()
+            if not str(key).startswith("_") and key != "target_index"}
+
+
+def _project_sources():
+    sources = []
+    for index, faceset in enumerate(roop_globals.INPUT_FACESETS):
+        path = getattr(faceset, "_source_path", "") or ""
+        if not path and index == 0:
+            path = getattr(roop_globals, "source_path", "") or ""
+        if not path:
+            raise ValueError(
+                f"source faceset {index + 1} has no reloadable file; save it to the faceset library first")
+        sources.append(_project_checkpoint.file_identity(path))
+    return sources
+
+
+def _project_target_faces():
+    """Serialize the detector facts needed to restore target-face selection."""
+    fields = ("bbox", "kps", "embedding", "landmark_2d_106", "landmark_3d_68",
+              "gender", "age")
+    result = []
+    thumbnails = list(getattr(ui_globals, "ui_target_thumbs", []) or [])
+    groups = list(getattr(roop_globals, "TARGET_FACE_GROUP", []) or [])
+    for index, face in enumerate(roop_globals.TARGET_FACES):
+        data = {}
+        for key in fields:
+            value = face.get(key) if isinstance(face, dict) else getattr(face, key, None)
+            if value is not None:
+                data[key] = value
+        item = {"data": data, "group": groups[index] if index < len(groups) else index}
+        if index < len(thumbnails):
+            item["thumbnail"] = _rgb_to_dataurl(thumbnails[index])
+        result.append(item)
+    return result
+
+
+def _create_processing_project(payload, job_id=None):
+    target_index = payload.get("target_index", state.selected_target_index)
+    try:
+        target_index = int(target_index)
+    except (TypeError, ValueError):
+        target_index = state.selected_target_index
+    if not (0 <= target_index < len(list_files_process)):
+        raise ValueError("target is no longer loaded")
+    entry = list_files_process[target_index]
+    target = _project_checkpoint.file_identity(entry.filename)
+    cfg = roop_globals.CFG
+    start = int(getattr(entry, "startframe", 0) or 0)
+    end = int(getattr(entry, "endframe", 0) or getattr(entry, "total_frames", 0) or 0)
+    output = {
+        "directory": os.path.abspath(roop_globals.output_path or os.path.join(os.getcwd(), "output")),
+        "format": str(getattr(cfg, "output_video_format", "mp4") or "mp4"),
+        "codec": str(getattr(cfg, "output_video_codec", "") or ""),
+        "quality": getattr(cfg, "video_quality", None),
+        "method": str(payload.get("output_method") or getattr(cfg, "output_method", "File")),
+        "template": str(getattr(cfg, "output_template", "") or ""),
+    }
+    return _project_checkpoint.new_project(
+        job_id=job_id,
+        name=os.path.basename(entry.filename),
+        payload=_checkpoint_payload(payload),
+        sources=_project_sources(),
+        target=target,
+        frame_start=start,
+        frame_end=end,
+        output=output,
+        cfg=cfg,
+        target_faces=_project_target_faces(),
+        app_version=_get_git_version(),
+    )
+
+
+def _checkpoint_segment(project_id, writer=None, frame_idx=None, manager=None):
+    if not project_id:
+        return
+    try:
+        record = _project_checkpoint.load(project_id)
+        inputs = record.get("inputs") or {}
+        start = int(inputs.get("frame_start", 0) or 0)
+        segments = list(getattr(writer, "segments", []) or []) if writer is not None else []
+        safe_frame = start + sum(int(item.get("frames", 0) or 0) for item in segments)
+        if writer is None and frame_idx is not None:
+            safe_frame = max(safe_frame, start + int(frame_idx) + 1)
+        files = []
+        if writer is not None:
+            base = os.path.dirname(writer.target_video)
+            for item in segments:
+                path = os.path.join(base, str(item.get("file") or ""))
+                if os.path.isfile(path):
+                    files.append(_project_checkpoint.file_identity(path))
+            manifest = _project_checkpoint.manifest_path(writer.target_video)
+        else:
+            manifest = ""
+        paused = _procmgr_runtime.pause_controller.snapshot()["acknowledged"]
+        _project_checkpoint.update_checkpoint(
+            project_id, safe_frame=safe_frame, next_frame=safe_frame,
+            segments=segments, manifest=manifest, partial_files=files,
+            state="PAUSED" if paused else "PROCESSING")
+        try:
+            import routes_queue as _queue_routes
+            _queue_routes.mark_project_checkpoint(
+                project_id, "PAUSED" if paused else "PROCESSING")
+        except Exception:
+            pass
+    except Exception as exc:
+        # A failed checkpoint must not kill a render; the safe writer manifest is
+        # still present and the project is marked recoverable by the next load.
+        print(f"[Resume] project checkpoint failed: {exc}", flush=True)
+
+
+def _validate_processing_project(project_id, payload=None):
+    record = _project_checkpoint.load(project_id)
+    return _project_checkpoint.validate(
+        record, roop_globals.CFG, current_payload=_checkpoint_payload(payload)
+        if payload is not None else None)
+
+
+def _set_processing_project_state(project_id, state_value, error=""):
+    if not project_id:
+        return
+    mapped = {"INTERRUPTED": "INTERRUPTED", "RECOVERABLE": "RECOVERABLE",
+              "FAILED": "FAILED", "COMPLETED": "COMPLETED",
+              "PROCESSING": "PROCESSING", "PAUSED": "PAUSED"}
+    _project_checkpoint.update_state(project_id, mapped.get(state_value, state_value), error)
+
+
+def _start_existing_project(project_id, payload):
+    """Start a validated project using its existing durable identity."""
+    if _progress["processing"]:
+        return JSONResponse(status_code=409, content={"message": "already processing"})
+    if _benchmark_state["running"]:
+        return JSONResponse(status_code=409, content={
+            "message": "The hardware benchmark is running — cancel it first, or wait for it to finish."})
+    _procmgr_runtime.pause_controller.start()
+    _progress.update({"processing": True, "paused": False, "pause_requested": False,
+                      "progress": 0.0, "desc": "Starting…", "error": ""})
+    resumed = dict(payload or {})
+    resumed["_project_id"] = str(project_id)
+    threading.Thread(target=_run_swap, args=(resumed,), daemon=True).start()
+    return {"status": "started", "project_id": str(project_id)}
 
 no_face_choices = ["Use untouched original frame", "Retry rotated", "Skip Frame",
                    "Skip Frame if no similar face", "Use last swapped"]
@@ -428,9 +577,11 @@ class ApiProgress:
     def __call__(self, value=0, desc="", total=None, unit=None):
         try:
             if isinstance(value, (tuple, list)) and len(value) == 2 and value[1]:
-                _progress["progress"] = float(value[0]) / float(value[1])
+                fraction = float(value[0]) / float(value[1])
             else:
-                _progress["progress"] = float(value)
+                fraction = float(value)
+            base = float(_resume_context.get("base", 0.0) or 0.0)
+            _progress["progress"] = max(0.0, min(1.0, base + fraction * (1.0 - base)))
         except Exception:
             pass
         if desc:
@@ -902,6 +1053,7 @@ def source_add(files: list[UploadFile] = File(...)):
                 faces_data = extract_face_images(path, (False, 0))
                 for fd in faces_data:
                     fs = FaceSet()
+                    fs._source_path = os.path.abspath(path)
                     face = fd[0]
                     face.mask_offsets = _mask_offsets_from_cfg()
                     fs.faces.append(face)
@@ -2667,14 +2819,22 @@ def trigger_swap(payload: dict = Body(...)):
     if len(roop_globals.INPUT_FACESETS) < 1:
         return JSONResponse(status_code=400, content={"message": "no source faces"})
 
+    # Persist the complete input/settings identity before starting the worker.
+    # A process exit immediately after this response still leaves a project the
+    # next application instance can validate instead of guessing from a frame.
+    try:
+        project = _create_processing_project(payload)
+        payload = dict(payload)
+        payload["_project_id"] = project["id"]
+    except Exception as exc:
+        return JSONResponse(status_code=409, content={
+            "message": "cannot create a recoverable project: " + str(exc),
+            "recoverability_error": True})
+
     # Claim the processing flag synchronously — the worker thread also sets it,
     # but only after it starts, so two rapid POSTs could otherwise both pass
     # the guard above and run concurrently.
-    _procmgr_runtime.pause_controller.start()
-    _progress.update({"processing": True, "paused": False, "pause_requested": False,
-                      "progress": 0.0, "desc": "Starting…", "error": ""})
-    threading.Thread(target=_run_swap, args=(payload,), daemon=True).start()
-    return {"status": "started"}
+    return _start_existing_project(project["id"], payload)
 
 
 def _run_swap(payload):
@@ -2685,6 +2845,14 @@ def _run_swap(payload):
     pause_state = _procmgr_runtime.pause_controller.snapshot()
     roop_globals.pause = bool(pause_state["requested"])
     _stop_requested["flag"] = False
+    project_id = str(payload.get(_PROJECT_ID_KEY) or "")
+    global _active_project_id
+    _active_project_id = project_id
+    if project_id:
+        roop_globals._checkpoint_segment_callback = (
+            lambda writer, frame_idx=None, manager=None: _checkpoint_segment(
+                project_id, writer, frame_idx, manager))
+        _set_processing_project_state(project_id, "PROCESSING")
     # Fresh terminal feed for this run.
     _log_lines.clear()
     _log_state.update({"last": "", "last_ts": 0.0, "seq": 0, "last_err": "",
@@ -2699,10 +2867,23 @@ def _run_swap(payload):
     # to the UI's own estimate rather than inheriting a finished run's figure.
     _procmgr_runtime.reset_eta()
     _push_log("▶ Starting job…", force=True)
+    _resume_context.update({"base": 0.0, "total": 0})
+    if project_id:
+        try:
+            inputs = _project_checkpoint.load(project_id).get("inputs") or {}
+            total = max(0, int(inputs.get("frame_end", 0) or 0) -
+                        int(inputs.get("frame_start", 0) or 0))
+            safe = int((_project_checkpoint.load(project_id).get("checkpoint") or {}).get(
+                "safe_frame", inputs.get("frame_start", 0)) or 0)
+            _resume_context.update({"base": min(1.0, max(0.0, safe - int(inputs.get("frame_start", 0) or 0)) /
+                                                total) if total else 0.0,
+                                    "total": total})
+        except Exception:
+            pass
     _progress.update({"processing": True,
                       "paused": bool(pause_state["acknowledged"]),
                       "pause_requested": bool(pause_state["requested"]),
-                      "progress": 0.0, "desc": ("Paused" if pause_state["acknowledged"] else "Starting…"),
+                      "progress": _resume_context["base"], "desc": ("Paused" if pause_state["acknowledged"] else "Starting…"),
                       "error": ""})
     _run_stats.update({"start": time.time(), "frames_done": 0, "frames_total": 0})
     try:
@@ -2710,7 +2891,16 @@ def _run_swap(payload):
         # the finally block and clears the processing flag.
         _update_mask_offsets_from_payload(payload)
         prepare_environment()
-        if roop_globals.CFG.clear_output:
+        # A project with committed segments owns its partial output. Clearing
+        # the output directory here would destroy the only safe resume prefix.
+        has_checkpoint = False
+        if project_id:
+            try:
+                has_checkpoint = bool((_project_checkpoint.load(project_id).get(
+                    "checkpoint") or {}).get("segments"))
+            except Exception:
+                pass
+        if roop_globals.CFG.clear_output and not has_checkpoint:
             shutil.rmtree(roop_globals.output_path, ignore_errors=True)
             os.makedirs(roop_globals.output_path, exist_ok=True)
 
@@ -2827,6 +3017,14 @@ def _run_swap(payload):
         except Exception:
             roop_globals._run_signature = None
 
+        if project_id:
+            _project_checkpoint.update_runtime(
+                project_id,
+                _project_checkpoint.runtime_identity(
+                    _checkpoint_payload(payload), roop_globals.CFG,
+                    effective_provider=(roop_globals.execution_providers or
+                                        getattr(roop_globals.CFG, "provider", ""))))
+
         # Snapshot the output dir so we can tell which files THIS run produces
         # (for the optional AI upscale second pass below).
         _pre_swap_outputs = _snapshot_output_mtimes()
@@ -2932,11 +3130,24 @@ def _run_swap(payload):
         _progress["progress"] = 1.0
         _progress["desc"] = "Done"
         _push_log("✓ Done", force=True)
-        _record_run_history(payload, _outputs_since(_pre_swap_outputs))
+        produced = _outputs_since(_pre_swap_outputs)
+        if project_id:
+            inputs = _project_checkpoint.load(project_id).get("inputs") or {}
+            _project_checkpoint.update_checkpoint(
+                project_id,
+                safe_frame=int(inputs.get("frame_end", 0) or 0),
+                next_frame=int(inputs.get("frame_end", 0) or 0),
+                segments=[], manifest="", partial_files=[
+                    _project_checkpoint.file_identity(path) for path in produced
+                    if os.path.isfile(path)], state="COMPLETED")
+            _set_processing_project_state(project_id, "COMPLETED")
+        _record_run_history(payload, produced)
         _record_last_output()
     except Exception as e:
         traceback.print_exc()
         _progress["error"] = str(e)
+        if project_id:
+            _set_processing_project_state(project_id, "FAILED", str(e))
         _push_log("⚠ " + str(e), force=True)
     finally:
         _procmgr_runtime.pause_controller.finish()
@@ -2948,6 +3159,10 @@ def _run_swap(payload):
         _progress["processing"] = False
         _progress["paused"] = False
         _progress["pause_requested"] = False
+        _resume_context.update({"base": 0.0, "total": 0})
+        if project_id:
+            roop_globals._checkpoint_segment_callback = None
+        _active_project_id = ""
 
 
 def _sync_pause_progress():
@@ -2992,6 +3207,8 @@ def stop_swap():
     _progress["paused"] = False
     _progress["pause_requested"] = False
     _progress["desc"] = "Aborting…"
+    if _active_project_id:
+        _set_processing_project_state(_active_project_id, "INTERRUPTED", "stopped by user")
     return {"status": "stopping"}
 
 
@@ -3008,6 +3225,8 @@ def pause_swap():
     _progress["pause_requested"] = True
     _progress["paused"] = bool(state["acknowledged"])
     _progress["desc"] = "Paused" if state["acknowledged"] else "Pause requested…"
+    if state["acknowledged"] and _active_project_id:
+        _set_processing_project_state(_active_project_id, "PAUSED")
     return {"status": "paused" if state["acknowledged"] else "pause_requested",
             "pause": state}
 
@@ -3452,12 +3671,14 @@ import routes_livecam as _routes_livecam
 import routes_quality as _routes_quality
 import routes_extras as _routes_extras
 import routes_queue as _routes_queue
+import routes_projects as _routes_projects
 import routes_export as _routes_export
 app.include_router(_routes_diagnostics.router)
 app.include_router(_routes_livecam.router)
 app.include_router(_routes_quality.router)
 app.include_router(_routes_extras.router)
 app.include_router(_routes_queue.router)
+app.include_router(_routes_projects.router)
 app.include_router(_routes_export.router)
 
 # Shared objects the route modules read. All are mutated in place and never
@@ -3480,6 +3701,10 @@ _routes_queue._run_swap = _run_swap
 _routes_queue._stop_current = stop_swap
 _routes_queue._snapshot_outputs = _snapshot_output_mtimes
 _routes_queue._outputs_since = _outputs_since
+_routes_queue._create_project = _create_processing_project
+_routes_queue._validate_project = _validate_processing_project
+_routes_queue._set_project_state = _set_processing_project_state
+_routes_queue._project_source_list = list_files_process
 _routes_queue._benchmark_running = lambda: bool(_benchmark_state["running"])
 _routes_queue.load()
 

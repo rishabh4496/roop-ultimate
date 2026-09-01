@@ -56,6 +56,10 @@ _run_swap = None            # api.py's blocking single-run entry point
 _stop_current = None        # api.py's stop_swap(), to abort the in-flight job
 _snapshot_outputs = None    # post_swap._snapshot_output_mtimes
 _outputs_since = None       # post_swap._outputs_since
+_create_project = None      # api.py's durable project creator
+_validate_project = None    # api.py's environment/checkpoint validator
+_set_project_state = None   # api.py's project lifecycle projection
+_project_source_list = None # api.py's canonical target list; protects test/fake bindings
 # True while the hardware benchmark holds the GPU. /api/swap refuses to start a
 # render then and the benchmark refuses to start during one, but the queue is a
 # THIRD way into `_run_swap` that neither guard covers: it calls it directly, so
@@ -294,6 +298,7 @@ def _normalize_job(payload: dict) -> dict:
         "outputs": [],
         "cancel_requested": False,
         "recoverable": False,
+        "project_id": str(payload.get("project_id") or ""),
     }
 
 
@@ -480,6 +485,27 @@ def _run_one(job):
     payload = dict(job.get("payload") or {})
     payload["target_index"] = idx
 
+    project_id = str(job.get("project_id") or "")
+    if project_id and _validate_project is not None:
+        try:
+            reasons = list(_validate_project(project_id, payload) or [])
+        except Exception as exc:
+            reasons = [f"checkpoint validation failed: {exc}"]
+        if reasons:
+            return "RECOVERABLE", "cannot safely resume: " + "; ".join(reasons)
+    elif (_create_project is not None and
+          (_project_source_list is None or list_files_process is _project_source_list)):
+        try:
+            project = _create_project(payload, job_id=job["id"])
+            project_id = str(project.get("id") or "")
+            job["project_id"] = project_id
+            with _lock:
+                _save()
+        except Exception as exc:
+            return "FAILED", f"could not create processing checkpoint: {exc}"
+    if project_id:
+        payload["_project_id"] = project_id
+
     # Sanitize face_mapping payload so null/None entries don't crash ProcessMgr
     fm = payload.get("face_mapping")
     if isinstance(fm, list):
@@ -601,6 +627,11 @@ def _loop(gen):
                         live["progress"]["fraction"] = 1.0
                     live["cancel_requested"] = False
                     live.pop("processing_started", None)
+                    if _set_project_state and live.get("project_id"):
+                        try:
+                            _set_project_state(live["project_id"], status, error)
+                        except Exception:
+                            pass
                 _cancel_requested.discard(job["id"])
                 _queue["current"] = None
                 _save()
@@ -654,12 +685,43 @@ def queue_pause():
         current = _find(_queue["current"]) if _queue["current"] else None
         if current is not None:
             _set_state(current, "PAUSED" if pause["acknowledged"] else "PAUSE_REQUESTED")
+            if pause["acknowledged"] and _set_project_state and current.get("project_id"):
+                try:
+                    _set_project_state(current["project_id"], "PAUSED")
+                except Exception:
+                    pass
         _save()
     return _snapshot()
 
 
 @router.post("/api/queue/resume")
-def queue_resume():
+def queue_resume(payload: dict | None = Body(default=None)):
+    # A recovered project must pass the same identity/environment validation as
+    # the Projects screen. Never turn a stale queue entry into a silent new run.
+    payload = payload if isinstance(payload, dict) else {}
+    job_id = str(payload.get("id") or "")
+    if job_id:
+        with _lock:
+            selected = _find(job_id)
+            project_id = str(selected.get("project_id") or "") if selected else ""
+            selected_state = _state(selected) if selected else ""
+        if selected is None:
+            return JSONResponse(status_code=404, content={"message": "no such job"})
+        if selected_state == "RECOVERABLE" and project_id and _validate_project is not None:
+            try:
+                reasons = list(_validate_project(project_id, selected.get("payload") or {}) or [])
+            except Exception as exc:
+                reasons = [f"checkpoint validation failed: {exc}"]
+            if reasons:
+                if _set_project_state:
+                    _set_project_state(project_id, "RECOVERABLE", "; ".join(reasons))
+                return JSONResponse(status_code=409, content={
+                    "message": "cannot safely resume this project: " + "; ".join(reasons),
+                    "recoverability_error": True,
+                    "reasons": reasons,
+                })
+        if selected_state == "RECOVERABLE":
+            return resume_project_job(project_id) if project_id else _resume_job(job_id)
     pause_controller.resume()
     with _lock:
         _queue["paused"] = False
@@ -673,6 +735,44 @@ def queue_resume():
     if _progress["processing"]:
         _progress["desc"] = "Resuming..."
     return _snapshot()
+
+
+def _resume_job(job_id):
+    with _lock:
+        job = _find(job_id)
+        if job is None:
+            return JSONResponse(status_code=404, content={"message": "no such job"})
+        if _state(job) not in RUNNABLE_STATES:
+            return JSONResponse(status_code=409, content={"message": "job is not recoverable"})
+        _set_state(job, "QUEUED")
+        job.update({"error": "", "finished": 0.0, "cancel_requested": False})
+        _save()
+    return queue_start()
+
+
+def resume_project_job(project_id: str):
+    """Make one validated persisted project runnable, without auto-resuming it."""
+    with _lock:
+        job = next((item for item in _queue["jobs"]
+                    if str(item.get("project_id") or "") == str(project_id)), None)
+        if job is None:
+            return JSONResponse(status_code=404, content={"message": "project job not found"})
+        if _state(job) in ("PREPARING", "PROCESSING", "PAUSE_REQUESTED", "PAUSED"):
+            return JSONResponse(status_code=409, content={"message": "project is already processing"})
+        _set_state(job, "QUEUED")
+        job.update({"error": "", "finished": 0.0, "cancel_requested": False})
+        _save()
+    return queue_start()
+
+
+def mark_project_checkpoint(project_id: str, state_value: str):
+    """Persist the queue projection when a writer reaches a safe boundary."""
+    with _lock:
+        job = next((item for item in _queue["jobs"]
+                    if str(item.get("project_id") or "") == str(project_id)), None)
+        if job is not None and state_value in JOB_STATES:
+            _set_state(job, state_value)
+            _save()
 
 
 @router.post("/api/queue/cancel")

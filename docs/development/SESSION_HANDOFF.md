@@ -482,3 +482,27 @@ explicitly authorized.
 Validate this pause implementation before expanding scope; do not change
 providers, precision, pooling, visual processing, hardware tuning, launchers,
 models, caches, outputs, facesets, or the React UI 1.0 backup.
+
+## STAGE 8B HANDOFF
+
+Stage 8B implementation is present but not yet committed. `app/project_checkpoint.py`
+stores atomic project records; `app/routes_projects.py` provides validation,
+load, and explicit resume; `routes_queue.py`, `api.py`, `segment_writer.py`,
+`ProcessMgr.py`, and source ingestion connect durable identity to safe segment
+boundaries. React UI 2.0 has a saved-project panel. React UI 1.0 and Pinokio
+launcher scripts remain untouched.
+
+VERIFIED: project persistence tests passed (3), existing pause/queue/segment
+tests passed (45), API route tests passed (5), and Python syntax compilation
+passed. The first system-Python test attempt failed at import because that
+interpreter lacks FastAPI; supported `app/env` reruns passed. A real
+close/shutdown/reopen render, browser pass, physical RTX 4070/RTX 3060 resume,
+and final playback integrity are NOT VERIFIED.
+
+NEXT GATE: Stage 8B validation — run the actual pause/close/reopen/load/validate/
+resume flow and inspect output integrity, then repeat on both hardware targets
+where available.
+
+DO NOT TOUCH NEXT SESSION: React UI 1.0, launcher scripts, models, caches,
+facesets, outputs, and unrelated visual/processing policy unless the Stage 8B
+validation reveals a blocking defect.

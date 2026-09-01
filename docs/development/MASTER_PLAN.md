@@ -13,8 +13,10 @@ Repository HEAD before Stage 5A changes: `5ced7898faa98c2f2b6121258883923ad624d0
 
 ## CURRENT IMPLEMENTATION
 
-The active gate for this session is Stage 8A: implement true pause/resume at
-safe processing checkpoints without replacing the existing single-job path.
+The active gate for this session is Stage 8B: persist project checkpoints so a
+paused or interrupted render can be validated and safely continued after an
+application restart. Stage 8A implemented the process-local safe-point
+protocol used by this gate.
 
 Stage 6B exposed one backend-owned
 structured runtime telemetry state to the React UI and terminal without
@@ -48,6 +50,7 @@ winners.
 | Stage 6B - Unified runtime telemetry | Structured state endpoint and V2 consumer implemented; full-render overhead and complete legacy migration remain unverified |
 | Stage 7A - Batch processing 2.0 | Canonical queue lifecycle, persistence migration, job isolation, cancellation, and V2 queue surface implemented; live browser/restart and physical GPU validation remain unverified |
 | Stage 8A - True pause / resume | Controller-backed safe-point implementation and automated coverage added; physical GPU, browser, crash-recovery, and output-playback validation remain open |
+| Stage 8B - Persistent resumable projects | Durable input/settings/runtime/output checkpoint records, safe segment commits, restart validation, and V2 project controls implemented; shutdown, physical GPU, browser, and full output-integrity validation remain open |
 | Next UI2 design or migration gate | Not defined in the repository; scope requires explicit authorization |
 | Visual validation / retained-output review | Open and not yet complete |
 | Phase 16 final production quality gate | Open/incomplete |

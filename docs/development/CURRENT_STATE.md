@@ -1,6 +1,6 @@
 # Current Repository State
 
-Audit date: 2026-09-01. This file records verified repository state and gate
+Audit date: 2026-09-02. This file records verified repository state and gate
 status; it is not authorization to change application behavior.
 
 ## Repository state
@@ -9,9 +9,9 @@ status; it is not authorization to change application behavior.
 |---|---|
 | Branch | `main` tracking `origin/main` |
 | HEAD before Stage 5A changes | `5ced7898faa98c2f2b6121258883923ad624d00e` |
-| Working tree at Stage 6B closeout | Runtime-state, V2 telemetry, V1 terminal-consumer, and development-document changes are uncommitted; processing policy, other V1 surfaces, and launcher files are unchanged |
-| Active stage/gate | Stage 8A - True pause / resume |
-| Last completed gate | Stage 7A - Batch processing 2.0 implementation; browser, restart, and physical GPU validation remain incomplete |
+| Working tree at Stage 8B closeout | Persistent project checkpoint, queue/API integration, V2 project controls, and development-document changes are uncommitted; React UI 1.0, launcher files, and hardware policies are unchanged |
+| Active stage/gate | Stage 8B - Persistent resumable projects |
+| Last completed gate | Stage 8A - True pause / resume implementation; browser, restart, and physical GPU validation remain incomplete |
 | Existing application behavior changed in Stage 8A | Processing pause now requests and acknowledges a controller-owned safe point; queue/API telemetry and both React surfaces expose the transient request and acknowledged pause |
 
 ## CURRENT IMPLEMENTATION
@@ -343,3 +343,25 @@ recovery, and output playback remain unverified.
   frame-checkpoint restart was tested.
 - In-flight model calls and long FFmpeg minterpolate calls remain cooperative
   boundaries and may delay acknowledgement.
+
+## STAGE 8B - PERSISTENT RESUMABLE PROJECTS
+
+The implementation stores one atomic JSON project record under `app/projects/`.
+It binds source and target file identities including SHA-256, target-face
+detector snapshots, frame bounds, the complete processing payload, output
+configuration, model/provider/precision identity, hardware assumptions,
+application compatibility, checkpoint sequence, partial output segment
+identities, and lifecycle state. Existing segmented video parts are committed
+only after a safe writer boundary.
+
+Project load/resume validates all required identities and environment values
+before restoring the source/target runtime. A mismatch returns an explicit
+HTTP 409 recoverability error and does not start processing. A project left in
+`PROCESSING` when next queried is surfaced as `RECOVERABLE`; `PAUSED`,
+`INTERRUPTED`, `FAILED`, and `COMPLETED` remain distinct persisted states.
+Queue recovery uses the same validation hook.
+
+Focused tests cover checkpoint creation, reload, validation, atomic-write
+cleanup, changed-input rejection, and final output hash integrity. They do not
+prove a real OS shutdown, physical GPU resume, browser interaction, or a full
+ffmpeg render across a restart.

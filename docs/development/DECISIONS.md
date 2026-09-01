@@ -56,3 +56,14 @@ work and zero pending output reservations; this preserves model/provider state
 and avoids blocking a bounded writer behind a paused producer. The protocol is
 cooperative and does not promise interruption of a single in-flight inference
 or restart-time frame checkpoint recovery.
+
+## Stage 8B decision
+
+Persistent continuation uses a project JSON record plus the existing segmented
+writer manifest. The project record is the source of truth for input/settings/
+runtime identity and lifecycle; the writer manifest remains the source of truth
+for committed video parts. Both are written atomically at the safe checkpoint
+boundary. Resume is always explicit and validation-gated; recovered projects
+are never auto-started after an application restart. This preserves the
+existing serial queue and processing/model/provider ownership, including the
+RTX 4070 and RTX 3060 hardware policies.

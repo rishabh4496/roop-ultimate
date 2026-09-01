@@ -223,6 +223,10 @@ def _ingest_faceset(path):
                 for fd in extract_face_images(filename, (False, 0)):
                     append_face(fd, frame)
     if len(face_set.faces) > 0:
+        # Keep the originating archive with the in-memory FaceSet so a durable
+        # processing project can reload the exact source rather than only a
+        # thumbnail or an embedding snapshot.
+        face_set._source_path = os.path.abspath(path)
         if faceset_metadata is not None:
             face_set.attach_v2_metadata(faceset_metadata)
         elif len(face_set.faces) > 1:

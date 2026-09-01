@@ -388,3 +388,22 @@ The pause does not interrupt an in-flight CUDA/ONNX/RIFE call, and a long
 FFmpeg minterpolate invocation can delay acknowledgement. The state is
 process-local; restart recovery remains `RECOVERABLE` rather than frame-level
 checkpoint resume.
+
+## STAGE 8B PERSISTENT CHECKPOINTS
+
+The existing segmented writer is the safe output boundary. At an acknowledged
+pause, the active segment is finalized and its manifest is atomically updated;
+the current segment parts remain separate and are not promoted as a completed
+final output. The project JSON is then atomically replaced with the safe frame,
+segment metadata, hashes, and partial-output identities. On resume, committed
+segments are reused and uncommitted frames are recomputed, preventing a partial
+encoder write from being treated as valid output.
+
+`POST /api/projects/{id}/validate` and the load/resume routes compare source,
+target, settings, output configuration, model/provider/precision, hardware
+signature, platform, compatibility, and partial-output identities. A mismatch
+is an HTTP 409 recoverability error. A project left `PROCESSING` after a
+process exit is presented as `RECOVERABLE` when the project list is queried.
+This is conservative: downloaded model artifacts are not individually hashed,
+and real shutdown, full-render playback, and both physical GPU resume paths
+remain unverified.

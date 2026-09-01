@@ -4,6 +4,7 @@ import { useNotifications } from '../state/appState';
 import { Badge, Button, Card, Field, Notice, Progress, Select, Toggle } from '../components/primitives';
 import { LoadingState } from '../components/LoadingState';
 import { QueuePanel } from '../components/QueuePanel';
+import { ProjectsPanel } from '../components/ProjectsPanel';
 import { useCreationWorkflow } from '../workflow/useCreationWorkflow';
 import { useQueue } from '../workflow/useQueue';
 
@@ -57,8 +58,9 @@ function TargetPicker({ workflow }) {
 
 function CreationControls({ workflow }) {
   const { settings: p = {}, options } = workflow;
+  const { notify } = useNotifications();
   const [advanced, setAdvanced] = useState(false);
-  return <div className="v2-controls">
+  return <div className="v2-controls"><ProjectsPanel workflow={workflow} notify={notify} />
     <Card><div className="v2-card-heading"><div><span className="v2-eyebrow">Model and provider</span><h3>Choose the engine</h3></div><Badge tone="accent">Backend-backed</Badge></div><BackendSelect label="Provider" hint="Provider changes are applied by the existing backend settings contract." value={p.provider} onChange={(value) => workflow.setSetting('provider', value)} options={options.providers} /><BackendSelect label="Swap model" value={p.swap_model} onChange={(value) => workflow.setSetting('swap_model', value)} options={options.models} />{p.provider === 'tensorrt' && <BackendSelect label="TensorRT precision" hint="The backend applies this at session startup." value={p.trt_precision} onChange={(value) => workflow.setSetting('trt_precision', value)} options={options.precisions} />}</Card>
     <Card><div className="v2-card-heading"><div><span className="v2-eyebrow">Quality</span><h3>Good defaults, visible control</h3></div><Badge tone="accent">Ready</Badge></div><BackendSelect label="Enhancer" value={p.selected_enhancer} onChange={(value) => workflow.setSetting('selected_enhancer', value)} options={options.enhancers} /><RangeControl label="Original / enhanced blend" value={p.blend_ratio} fallback={0.8} min={0} max={1} step={0.01} onChange={(value) => workflow.setSetting('blend_ratio', value)} /><RangeControl label="Face similarity threshold" hint="Lower values are stricter." value={p.max_face_distance} fallback={0.75} min={0.01} max={1} step={0.01} onChange={(value) => workflow.setSetting('max_face_distance', value)} /><BackendSelect label="Preview / output upscale" value={p.subsample_upscale} onChange={(value) => workflow.setSetting('subsample_upscale', value)} options={options.upscales} /></Card>
     <Card><div className="v2-card-heading"><div><span className="v2-eyebrow">Output</span><h3>What should be delivered?</h3></div></div><BackendSelect label="Output method" value={p.output_method} onChange={(value) => workflow.setSetting('output_method', value)} options={options.outputs} /><BackendSelect label="Video format" value={p.output_video_format} onChange={(value) => workflow.setSetting('output_video_format', value)} options={options.videoFormats} /><BackendSelect label="Video codec" value={p.output_video_codec} onChange={(value) => workflow.setSetting('output_video_codec', value)} options={options.videoCodecs} /><RangeControl label="Video quality" value={p.video_quality} fallback={14} min={0} max={100} step={1} onChange={(value) => workflow.setSetting('video_quality', value)} /></Card>
@@ -95,7 +97,7 @@ export default function CreateScreen() {
   const targetCount = workflow.state?.targets?.length || 0;
   const sourceCount = workflow.state?.source_faces?.length || 0;
   const ready = sourceCount > 0 && targetCount > 0;
-  const unavailable = useMemo(() => ['Resume checkpoints', 'Pinokio controls', 'Hardware/GPU selection'], []);
+  const unavailable = useMemo(() => ['Pinokio controls', 'Hardware/GPU selection'], []);
 
   const addCurrentToQueue = async () => {
     if (!ready) return notify('Add one source face and one target before queueing', 'danger');

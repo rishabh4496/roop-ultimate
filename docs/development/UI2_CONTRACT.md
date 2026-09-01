@@ -538,3 +538,13 @@ until the backend acknowledges a safe point, then shows `Paused`; it does not
 optimistically claim that processing has stopped. Resume calls the backend and
 keeps the same job, output path, and telemetry active. React UI 1.0 remains
 available.
+
+## STAGE 8B PERSISTENT PROJECTS
+
+V2 exposes backend-owned saved projects in `ProjectsPanel`. It polls
+`GET /api/projects` and offers explicit Validate, Load, and Resume actions
+through the corresponding `/api/projects/{id}` routes. Recoverability errors
+include the server-provided reasons; the UI does not hide a failed validation
+behind a disabled button or silently restart with changed inputs. Queue
+`RECOVERABLE` jobs use the same validation boundary. Browser behavior and live
+restart interaction are not yet verified.

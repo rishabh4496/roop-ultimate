@@ -43,6 +43,7 @@ app/run_history.json
 app/profiles.json
 # Persisted batch queue (per-machine; jobs reference locally loaded targets)
 app/queue.json
+app/projects/
 app/facesets/
 # Root-level copy too. This holds .fsz face libraries and preview PNGs for real,
 # named people -- biometric data. `app/facesets/` was ignored and this one was

@@ -76,9 +76,10 @@ update, cleanup, or batch-matrix capabilities.
 
 ## DESIRED FUTURE STATE
 
-An externally versioned schema, durable database/locking policy, resumable
-frame checkpoints, idempotency keys, and independent job execution contexts
-may be added by a later gate. They are not part of the current implementation.
+An externally versioned schema, durable database/locking policy, idempotency
+keys, and independent job execution contexts may be added by a later gate.
+Persistent project frame checkpoints are defined by Stage 8B below; independent
+simultaneous job contexts are not part of the current implementation.
 
 ## UNVERIFIED / UNKNOWN
 
@@ -106,3 +107,19 @@ The queue remains held in both states, so no next job is dispatched. Resume
 returns the current job to `PROCESSING` and wakes the same serialized runner.
 Queue pause while idle only holds dispatch and does not claim a processing
 pause.
+
+## STAGE 8B PERSISTENT PROJECT CONTRACT
+
+Queue jobs may carry `project_id`. Dispatch creates a project before rendering
+when one does not exist; a recovered project is validated before dispatch and
+returns `RECOVERABLE` with an explicit error when any required identity differs.
+The queue never auto-starts a recovered project after application restart.
+
+The project record is the durable continuation boundary. It includes source
+and target file hashes, target-face detector facts, frame bounds, settings
+fingerprint, model/provider/precision, hardware assumptions, output
+configuration, compatibility version, checkpoint sequence, committed segment
+manifest, partial-output identities, and lifecycle state. Queue state is a
+projection of that record for the associated job. `PAUSED` and `INTERRUPTED`
+are user/process lifecycle facts; `RECOVERABLE` means validation is required
+before an explicit resume.

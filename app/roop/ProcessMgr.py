@@ -1179,6 +1179,17 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
         self._log_memory_stage('phase3:initialize-complete')
 
 
+    def _checkpoint_at_safe_output(self, frame_idx=None):
+        """Seal the current video segment after the output queue is drained."""
+        callback = getattr(roop.globals, '_checkpoint_segment_callback', None)
+        if self.output_to_file and self.videowriter is not None:
+            self.videowriter.flush_checkpoint()
+        elif callback is not None:
+            try:
+                callback(None, frame_idx=frame_idx, manager=self)
+            except Exception as exc:
+                bar_write(f'[Resume] checkpoint callback failed: {exc}')
+
     def run_batch(self, source_files, target_files, threads:int = 1):
         progress_bar_format = PROGRESS_BAR_FORMAT
         self.total_frames = len(source_files)
@@ -1239,6 +1250,8 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                 if resimg is not None and not self.options.frame_processing:
                     i = source_files.index(f)
                     cv2.imwrite(target_files[i], resimg)
+                if pause_controller.snapshot()["acknowledged"]:
+                    self._checkpoint_at_safe_output(source_files.index(f) if resimg is not None else idx)
                 del temp_frame
                 del resimg
             if update:
@@ -1516,6 +1529,7 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                     pause_controller.checkpoint(
                         lambda: bool(roop.globals.processing), wait_for_ack=False)
                     if pause_controller.snapshot()["acknowledged"]:
+                        self._checkpoint_at_safe_output(nextindex - 1)
                         pause_controller.wait_until_resumed(
                             lambda: bool(roop.globals.processing))
                     del frame
@@ -1645,6 +1659,7 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
             pause_controller.checkpoint(
                 lambda: bool(roop.globals.processing), wait_for_ack=False)
             if pause_controller.snapshot()["acknowledged"]:
+                self._checkpoint_at_safe_output(frame_idx)
                 pause_controller.wait_until_resumed(
                     lambda: bool(roop.globals.processing))
 
@@ -2142,7 +2157,9 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                     target_video, (width, height), fps,
                     codec=roop.globals.video_encoder, crf=roop.globals.video_quality,
                     source_video=source_video, frame_start=frame_start, frame_end=frame_end,
-                    signature=str(getattr(roop.globals, '_run_signature', '') or ''))
+                    signature=str(getattr(roop.globals, '_run_signature', '') or ''),
+                    checkpoint_callback=getattr(
+                        roop.globals, '_checkpoint_segment_callback', None))
                 skip = self.videowriter.resume_frames
                 if skip >= frame_count > 0:
                     # Everything was already encoded by the interrupted run —
@@ -2957,6 +2974,7 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                         pause_controller.checkpoint(
                             lambda: bool(roop.globals.processing), wait_for_ack=False)
                         if pause_controller.snapshot()["acknowledged"]:
+                            self._checkpoint_at_safe_output(gi)
                             pause_controller.wait_until_resumed(
                                 lambda: bool(roop.globals.processing))
                     res.clear()

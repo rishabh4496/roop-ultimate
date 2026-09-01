@@ -51,6 +51,7 @@ button { cursor: pointer; }
 .v2-button { border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 10px 14px; color: var(--text); background: var(--raised); transition: transform .15s ease, background .15s ease, border-color .15s ease; }
 .v2-button:hover { transform: translateY(-1px); border-color: var(--accent); }
 .v2-button-primary { border-color: var(--accent); color: var(--bg); background: var(--accent); }
+.v2-badge-danger { color: var(--danger); background: color-mix(in srgb, var(--danger) 13%, transparent); }
 .v2-button-secondary { background: var(--raised); }
 .v2-button-sm { padding: 8px 11px; font-size: 12px; }
 .v2-button-md { font-size: 13px; }
@@ -135,6 +136,11 @@ button { cursor: pointer; }
 .v2-unavailable { display: grid; grid-template-columns: 1fr auto; gap: 5px 10px; align-items: center; border: 1px dashed var(--border); border-radius: var(--radius-sm); padding: 10px; color: var(--muted); font-size: 11px; }.v2-unavailable > span:first-child { color: var(--text); font-weight: 700; }.v2-unavailable small { grid-column: 1 / -1; line-height: 1.4; }.v2-unavailable-summary { color: var(--muted); font-size: 11px; }.v2-unavailable-list { display: grid; gap: 7px; margin-top: 10px; }.v2-generation-bar { display: flex; align-items: center; justify-content: space-between; gap: 15px; border: 1px solid var(--accent); border-radius: var(--radius-md); padding: 14px 16px; background: color-mix(in srgb, var(--accent-soft) 55%, var(--surface)); box-shadow: var(--shadow); }.v2-generation-bar strong { display: block; margin-top: 4px; font-size: 14px; }
 .v2-generation-actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
 .v2-queue-card { display: grid; gap: 14px; }
+.v2-projects-card { display: grid; grid-column: 1 / -1; gap: 14px; }
+.v2-project-list { display: grid; gap: 8px; }
+.v2-project-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; align-items: start; border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 11px; }
+.v2-project-main { min-width: 0; display: grid; gap: 5px; }
+.v2-project-actions { display: flex; gap: 7px; flex-wrap: wrap; justify-content: flex-end; }
 .v2-queue-actions, .v2-queue-row-actions { display: flex; gap: 7px; flex-wrap: wrap; }
 .v2-queue-list { display: grid; gap: 8px; }
 .v2-queue-row { display: grid; grid-template-columns: 44px minmax(0, 1fr) auto; gap: 12px; align-items: start; border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 11px; }

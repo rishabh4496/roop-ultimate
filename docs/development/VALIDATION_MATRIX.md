@@ -44,6 +44,19 @@ Complete the open 17-clip/425-row Phase 16 matrix and refresh each target-specif
 - No physical AMD, DirectML, ROCm, or CoreML acceptance evidence was found.
 - Historical validation timestamps and host-specific paths are not a substitute for reproducible current commands.
 
+## Stage 8B persistent project checkpoint evidence
+
+| Check | Evidence | State |
+|---|---|---|
+| Project schema and input/settings identity | `app/tests/test_project_checkpoint.py` creates a project with file hashes, settings, runtime, output, and target-face checkpoint data | PASS in supported app environment |
+| Atomic project writes | Focused test confirms replacement succeeds and no checkpoint temp file remains | PASS |
+| Reload and validation | Focused test reloads a paused checkpoint and validates source/target/settings/partial output identities | PASS |
+| Changed-input refusal | Focused test mutates the target and validation reports a recoverability error | PASS |
+| Final output hash integrity | Focused test records completed output identity and verifies it after reload | PASS at persistence layer |
+| Application close / PC shutdown / reopen render | No real shutdown or full render was performed | NOT VERIFIED |
+| Physical RTX 4070 / RTX 3060 resume | No Stage 8B physical resume run was performed | NOT VERIFIED |
+| Browser project load/resume interaction | Source/build validation only; no browser session | NOT VERIFIED |
+
 ## Source basis
 
 The cited commits, `docs/FINAL_VALIDATION_MATRIX.md`, `docs/HARDWARE_VALIDATION_MATRIX.md`, `docs/OPTIMIZATION_PROGRESS.md`, `docs/PHASE_HANDOFF.md`, current logs, and this session’s test output.

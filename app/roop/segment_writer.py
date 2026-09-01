@@ -112,6 +112,14 @@ def _segments_that_exist(m: dict, seg_dir: str):
                 break
         except OSError:
             break
+        expected_hash = str(s.get("sha256") or "")
+        if expected_hash:
+            try:
+                from project_checkpoint import file_sha256
+                if file_sha256(os.path.join(seg_dir, fn)) != expected_hash:
+                    break
+            except OSError:
+                break
         segs.append({"file": fn, "frames": n})
         done += n
     return segs, done
@@ -124,7 +132,7 @@ class SegmentedVideoWriter:
     def __init__(self, target_video, size, fps, codec="libx264", crf=14,
                  source_video="", frame_start=0, frame_end=0, signature="",
                  preset=None, bitrate=None, threads=None,
-                 ffmpeg_params=None, colorspace=None):
+                 ffmpeg_params=None, colorspace=None, checkpoint_callback=None):
         self.target_video = target_video
         self.size = size
         self.fps = float(fps)
@@ -149,6 +157,8 @@ class SegmentedVideoWriter:
             "ffmpeg_params": ffmpeg_params,
             "colorspace": colorspace,
         }
+        self._checkpoint_callback = checkpoint_callback
+        self._write_lock = threading.RLock()
 
         # Everything a resume must match on — resuming into a run with different
         # settings/trim/dims would silently mix outputs.
@@ -163,6 +173,7 @@ class SegmentedVideoWriter:
             "codec": codec,
             "crf": crf,
             "signature": signature or "",
+            "writer_options": self._writer_options,
         }
 
         self.segments, self.resume_frames = self._load_resume()
@@ -222,6 +233,8 @@ class SegmentedVideoWriter:
             tmp = manifest_path(self.target_video) + ".tmp"
             with open(tmp, "w", encoding="utf-8") as fh:
                 json.dump(m, fh, indent=1)
+                fh.flush()
+                os.fsync(fh.fileno())
             os.replace(tmp, manifest_path(self.target_video))
         except Exception as e:
             bar_write(f"[Resume] could not write manifest: {e}")
@@ -289,7 +302,14 @@ class SegmentedVideoWriter:
                       f"so it is discarded rather than committed. Resume still "
                       f"has parts 1-{len(self.segments)}.")
         if self._cur_frames > 0 and _seg_bytes > 0:
-            self.segments.append({"file": self._cur_seg_file, "frames": self._cur_frames})
+            digest = ""
+            try:
+                from project_checkpoint import file_sha256
+                digest = file_sha256(_seg_path)
+            except Exception:
+                pass
+            self.segments.append({"file": self._cur_seg_file, "frames": self._cur_frames,
+                                  "bytes": _seg_bytes, "sha256": digest})
             self._seg_index += 1
             self._register(len(self.segments), self._cur_seg_file, self._cur_frames,
                            done=True)
@@ -299,6 +319,7 @@ class SegmentedVideoWriter:
             bar_write(f"[Resume] ✓ part {last['index']} written · frames "
                   f"{last['first']}-{last['last']} · {last['bytes'] / 1048576:.0f} MB")
             self._write_manifest()
+            self._notify_checkpoint()
         else:
             try:
                 os.remove(os.path.join(self._dir, self._cur_seg_file))
@@ -309,10 +330,11 @@ class SegmentedVideoWriter:
 
     # ── finish ───────────────────────────────────────────────────────────────
     def close(self):
-        try:
-            self._finalize_segment()
-        except Exception as e:
-            bar_write(f"[Resume] finalizing last segment failed: {e}")
+        with self._write_lock:
+            try:
+                self._finalize_segment()
+            except Exception as e:
+                bar_write(f"[Resume] finalizing last segment failed: {e}")
         if not self.segments:
             return
         # Completed run (nothing signalled a stop) → concat, then clean up.
@@ -393,3 +415,26 @@ class SegmentedVideoWriter:
         except OSError:
             pass
         self.segments = []
+
+    def flush_checkpoint(self):
+        """Finalize only the current segment, keeping resumable parts intact.
+
+        This is called after the pause boundary has drained pending output. The
+        encoder process can therefore be closed before an application shutdown,
+        while resume opens a fresh segment after the durable prefix.
+        """
+        with self._write_lock:
+            had_writer = self._writer is not None
+            self._finalize_segment()
+            if not had_writer:
+                self._write_manifest()
+                self._notify_checkpoint()
+
+    def _notify_checkpoint(self):
+        callback = self._checkpoint_callback
+        if callback is None:
+            return
+        try:
+            callback(self)
+        except Exception as exc:
+            bar_write(f"[Resume] checkpoint callback failed: {exc}")

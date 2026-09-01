@@ -5,7 +5,13 @@ export const API = window.location.origin;
 async function handle(response) {
   if (!response.ok) {
     let message = response.statusText || `HTTP ${response.status}`;
-    try { message = (await response.json()).message || message; } catch { /* keep status text */ }
+    try {
+      const body = await response.json();
+      message = body.message || message;
+      if (body.recoverability_error && body.reasons?.length) {
+        message += `\n${body.reasons.join('\n')}`;
+      }
+    } catch { /* keep status text */ }
     throw new Error(message);
   }
   const type = response.headers.get('content-type') || '';
@@ -55,3 +61,7 @@ export const targetPreviewUrl = (index, frame = 1) => `${API}/api/target/preview
 // frame bytes into progress JSON or request a new swap for every poll.
 export const liveFrameUrl = (seq) => `${API}/api/live_frame?seq=${encodeURIComponent(seq)}`;
 export const fileUrl = (path) => `${API}/api/file?path=${encodeURIComponent(path)}`;
+export const getProjects = () => getJSON('/api/projects');
+export const validateProject = (id) => postJSON(`/api/projects/${encodeURIComponent(id)}/validate`, {});
+export const loadProject = (id) => postJSON(`/api/projects/${encodeURIComponent(id)}/load`, {});
+export const resumeProject = (id) => postJSON(`/api/projects/${encodeURIComponent(id)}/resume`, {});

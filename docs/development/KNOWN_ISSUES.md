@@ -49,3 +49,18 @@ or long FFmpeg minterpolate operation is not interruptible and may delay the
 re-queues the active job rather than resuming from a frame checkpoint. Physical
 RTX 4070/RTX 3060 pause/resume output validation and browser interaction remain
 open.
+
+18. **Stage 8B restart validation is not physical shutdown evidence.** The
+durable project record, atomic writes, segment identities, reload path, and
+recoverability errors are covered by focused automated tests, but no actual
+application-close/PC-shutdown/reopen render has been run in this session.
+Physical RTX 4070 and RTX 3060 resume behavior, browser interaction, and final
+playback integrity remain unverified.
+19. **Stage 8B resumes only committed segmented output.** A pause request can
+wait for an in-flight inference or encoder operation; frames not committed at a
+safe writer boundary are recomputed. Legacy segment manifests without the
+newer writer-options identity are conservatively not trusted for continuation.
+20. **Stage 8B model identity is configuration identity.** The project records
+the selected model/provider/precision and hardware assumptions, but does not
+yet hash every downloaded model artifact. A replaced artifact with unchanged
+configuration may therefore require a future model-manifest gate.
