@@ -66,8 +66,32 @@ _benchmark_running = lambda: False           # noqa: E731
 
 QUEUE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "queue.json")
 
-# Terminal states: the runner skips these, so re-running a part-finished queue
-# resumes rather than redoing work.
+# Canonical job lifecycle.  `status` below is retained as a compatibility
+# projection for the existing V1 queue consumer; new clients should use state.
+JOB_STATES = (
+    "QUEUED", "PREPARING", "PROCESSING", "PAUSED", "COMPLETED",
+    "FAILED", "CANCELLED", "INTERRUPTED", "RECOVERABLE",
+)
+SCHEMA_VERSION = 2
+_LEGACY_STATUS = {
+    "QUEUED": "pending",
+    "PREPARING": "running",
+    "PROCESSING": "running",
+    "PAUSED": "running",
+    "COMPLETED": "finished",
+    "FAILED": "failed",
+    "CANCELLED": "stopped",
+    "INTERRUPTED": "stopped",
+    "RECOVERABLE": "pending",
+}
+_LEGACY_STATE = {
+    "pending": "QUEUED",
+    "running": "PROCESSING",
+    "finished": "COMPLETED",
+    "failed": "FAILED",
+    "stopped": "CANCELLED",
+}
+RUNNABLE_STATES = ("QUEUED", "RECOVERABLE")
 DONE = ("finished", "failed", "stopped")
 
 _lock = threading.RLock()
@@ -77,6 +101,83 @@ _runner = None
 # still the current one, so a thread that outlives the batch it was started for
 # retires instead of dispatching into the next one — see _loop.
 _generation = 0
+_cancel_requested = set()
+
+
+def _empty_progress():
+    return {
+        "fraction": 0.0,
+        "frames_done": None,
+        "frames_total": None,
+        "fps": None,
+        "eta_s": None,
+        "phase": "QUEUED",
+        "updated_at": time.time(),
+    }
+
+
+def _state(job):
+    """Read canonical state, accepting old tests/clients that edit status."""
+    current = job.get("state")
+    legacy = _LEGACY_STATE.get(job.get("status"))
+    if current not in JOB_STATES:
+        return legacy or "QUEUED"
+    # This compatibility case matters for persisted V1 records and for V1's
+    # edit/retry calls, which only know about status.
+    if current == "QUEUED" and legacy and legacy != "QUEUED":
+        return legacy
+    return current
+
+
+def _set_state(job, new_state):
+    if new_state not in JOB_STATES:
+        raise ValueError(f"unknown queue state: {new_state}")
+    job["state"] = new_state
+    job["status"] = _LEGACY_STATUS[new_state]
+    job["recoverable"] = new_state == "RECOVERABLE"
+    progress = job.setdefault("progress", _empty_progress())
+    progress["phase"] = new_state
+    progress["updated_at"] = time.time()
+
+
+def _progress_snapshot():
+    live = _progress or {}
+    fraction = live.get("progress", 0.0)
+    try:
+        fraction = max(0.0, min(1.0, float(fraction)))
+    except (TypeError, ValueError):
+        fraction = 0.0
+    return {
+        "fraction": fraction,
+        "frames_done": live.get("frames_done", live.get("frame_done")),
+        "frames_total": live.get("frames_total", live.get("frame_total")),
+        "fps": live.get("fps", live.get("current_fps")),
+        "eta_s": live.get("eta_s"),
+        "phase": live.get("desc") or "UNKNOWN",
+        "updated_at": time.time(),
+    }
+
+
+def _normalize_loaded_job(job):
+    """Migrate V1 records without making an interrupted render look complete."""
+    state_value = job.get("state")
+    legacy = job.get("status")
+    if state_value not in JOB_STATES:
+        state_value = _LEGACY_STATE.get(legacy, "QUEUED")
+    if state_value in ("PREPARING", "PROCESSING", "PAUSED") or legacy == "running":
+        state_value = "RECOVERABLE"
+        job["error"] = "interrupted by an app restart; start the queue to retry"
+        job["interrupted_at"] = time.time()
+    job.setdefault("schema_version", SCHEMA_VERSION)
+    job.setdefault("progress", _empty_progress())
+    job.setdefault("outputs", [])
+    job.setdefault("cancel_requested", False)
+    job.setdefault("recoverable", state_value == "RECOVERABLE")
+    job.setdefault("error", "")
+    job.setdefault("started", 0.0)
+    job.setdefault("finished", 0.0)
+    _set_state(job, state_value)
+    return job
 
 
 # ── Persistence ──────────────────────────────────────────────────────────────
@@ -102,7 +203,7 @@ def load():
             return
         with open(QUEUE_FILE, encoding="utf-8") as fh:
             data = json.load(fh)
-        jobs = data.get("jobs") or []
+        jobs = [_normalize_loaded_job(job) for job in (data.get("jobs") or [])]
         for job in jobs:
             if job.get("status") == "running":
                 job["status"] = "pending"
@@ -110,7 +211,7 @@ def load():
         with _lock:
             _queue["jobs"] = jobs
         if jobs:
-            pending = sum(1 for j in jobs if j.get("status") not in DONE)
+            pending = sum(1 for j in jobs if _state(j) in RUNNABLE_STATES)
             _say(f"[Queue] restored {len(jobs)} job(s) from queue.json "
                  f"({pending} still to run)")
     except Exception as e:
@@ -119,8 +220,21 @@ def load():
 
 def _snapshot():
     with _lock:
+        jobs = []
+        for original in _queue["jobs"]:
+            job = dict(original)
+            job["state"] = _state(original)
+            job["status"] = _LEGACY_STATUS[job["state"]]
+            job["position"] = len(jobs) + 1
+            if job["id"] == _queue["current"]:
+                job["progress"] = _progress_snapshot()
+            else:
+                job["progress"] = dict(original.get("progress") or _empty_progress())
+            jobs.append(job)
         return {
-            "jobs": [dict(j) for j in _queue["jobs"]],
+            "schema_version": SCHEMA_VERSION,
+            "job_states": list(JOB_STATES),
+            "jobs": jobs,
             "running": _queue["running"],
             "paused": _queue["paused"],
             "current": _queue["current"],
@@ -142,6 +256,7 @@ def queue_list():
 
 def _normalize_job(payload: dict) -> dict:
     return {
+        "schema_version": SCHEMA_VERSION,
         "id": uuid.uuid4().hex[:12],
         "target_name": str(payload.get("target_name") or ""),
         "source_index": int(payload.get("source_index") or 0),
@@ -155,6 +270,11 @@ def _normalize_job(payload: dict) -> dict:
         "added": time.time(),
         "started": 0.0,
         "finished": 0.0,
+        "state": "QUEUED",
+        "progress": _empty_progress(),
+        "outputs": [],
+        "cancel_requested": False,
+        "recoverable": False,
     }
 
 
@@ -230,17 +350,19 @@ def queue_update(payload: dict = Body(...)):
         job = _find(job_id)
         if job is None:
             return JSONResponse(status_code=404, content={"message": "no such job"})
-        if job["status"] == "running":
+        if _state(job) in ("PREPARING", "PROCESSING", "PAUSED"):
             return JSONResponse(status_code=409, content={"message": "job is running"})
         for key in ("payload", "target_name", "source_index", "source_name",
                     "label", "frame_start", "frame_end"):
             if key in payload:
                 job[key] = payload[key]
         # An edited job is worth running again even if it already ran.
-        if payload.get("requeue") or job["status"] in DONE:
-            job["status"] = "pending"
+        if payload.get("requeue") or _state(job) in ("COMPLETED", "FAILED", "CANCELLED", "INTERRUPTED"):
+            _set_state(job, "QUEUED")
             job["error"] = ""
             job["started"] = job["finished"] = 0.0
+            job["progress"] = _empty_progress()
+            job["cancel_requested"] = False
         _save()
     return _snapshot()
 
@@ -254,9 +376,13 @@ def queue_duplicate(payload: dict = Body(...)):
         if job is None:
             return JSONResponse(status_code=404, content={"message": "no such job"})
         clone = dict(job)
-        clone.update({"id": uuid.uuid4().hex[:12], "status": "pending", "error": "",
+        clone.update({"id": uuid.uuid4().hex[:12], "state": "QUEUED", "status": "pending", "error": "",
                       "added": time.time(), "started": 0.0, "finished": 0.0})
         clone["payload"] = dict(job.get("payload") or {})
+        clone["progress"] = _empty_progress()
+        clone["outputs"] = []
+        clone["cancel_requested"] = False
+        clone["recoverable"] = False
         _queue["jobs"].insert(_queue["jobs"].index(job) + 1, clone)
         _save()
     return _snapshot()
@@ -268,10 +394,13 @@ def queue_retry(payload: dict = Body(default={})):
     job_id = payload.get("id")
     with _lock:
         targets = ([_find(str(job_id))] if job_id
-                   else [j for j in _queue["jobs"] if j["status"] in ("failed", "stopped")])
+                   else [j for j in _queue["jobs"]
+                         if _state(j) in ("FAILED", "CANCELLED", "INTERRUPTED")])
         for job in targets:
-            if job is not None and job["status"] != "running":
-                job.update({"status": "pending", "error": "", "started": 0.0, "finished": 0.0})
+            if job is not None and _state(job) not in ("PREPARING", "PROCESSING", "PAUSED"):
+                _set_state(job, "QUEUED")
+                job.update({"error": "", "started": 0.0, "finished": 0.0,
+                            "progress": _empty_progress(), "cancel_requested": False})
         _save()
     return _snapshot()
 
@@ -298,18 +427,21 @@ def _apply_segment(entry, job):
 
 def _next_pending():
     for job in _queue["jobs"]:
-        if job["status"] not in DONE and job["status"] != "running":
+        if _state(job) in RUNNABLE_STATES:
             return job
     return None
 
 
 def _run_one(job):
-    """Dispatch one job and block until it finishes. Returns (status, error)."""
+    """Dispatch one job and block until it finishes. Returns (state, error)."""
+    job["processing_started"] = False
+    if job.get("cancel_requested") or job["id"] in _cancel_requested:
+        return "CANCELLED", "cancelled before processing"
     names = [os.path.basename(getattr(e, "filename", "") or "") for e in list_files_process]
     try:
         idx = names.index(os.path.basename(job["target_name"]))
     except ValueError:
-        return "failed", f'target "{job["target_name"]}" is no longer loaded'
+        return "FAILED", f'target "{job["target_name"]}" is no longer loaded'
 
     state.selected_target_index = idx
 
@@ -334,6 +466,9 @@ def _run_one(job):
     if isinstance(fm, list):
         payload["face_mapping"] = [0 if (x is None or x == "") else int(x) for x in fm]
 
+    _set_state(job, "PROCESSING")
+    job["processing_started"] = True
+    job["progress"] = _empty_progress()
     _progress.update({"processing": True, "paused": False, "progress": 0.0,
                       "desc": "Starting queued job…", "error": ""})
     before = _snapshot_outputs() if _snapshot_outputs else None
@@ -353,14 +488,16 @@ def _run_one(job):
         except Exception:
             job["outputs"] = []
 
+    if job.get("cancel_requested") or job["id"] in _cancel_requested:
+        return "CANCELLED", "cancelled by user"
     if _progress.get("error"):
-        return "failed", str(_progress["error"])
+        return "FAILED", str(_progress["error"])
     # A deliberate Stop leaves no error but did not finish the job. Report it as
     # its own state so "I stopped this one" is distinguishable from "it crashed"
     # — they want different things from the Retry button.
     if not roop_globals.processing and _progress.get("progress", 0.0) < 1.0:
-        return "stopped", ""
-    return "finished", ""
+        return "INTERRUPTED", "processing stopped before completion"
+    return "COMPLETED", ""
 
 
 def _say(msg):
@@ -409,9 +546,10 @@ def _loop(gen):
                     _save()
                     _say("[Queue] all jobs finished")
                     break
-                job["status"] = "running"
+                _set_state(job, "PREPARING")
                 job["started"] = time.time()
                 job["error"] = ""
+                job["cancel_requested"] = False
                 _queue["current"] = job["id"]
                 _save()
         if job is None:
@@ -424,15 +562,26 @@ def _loop(gen):
         except Exception as e:          # a crashed job must not kill the batch
             import traceback
             traceback.print_exc()
-            status, error = "failed", str(e)
+            status, error = "FAILED", str(e)
 
         try:
             with _lock:
                 live = _find(job["id"])   # it may have been edited or removed meanwhile
                 if live is not None:
-                    live["status"] = status
+                    _set_state(live, status)
                     live["error"] = error
                     live["finished"] = time.time()
+                    # A target-resolution or pre-dispatch failure must not
+                    # inherit the previous job's shared progress snapshot.
+                    if status in ("FAILED", "CANCELLED") and not job.get("processing_started"):
+                        live["progress"] = dict(job.get("progress") or _empty_progress())
+                    else:
+                        live["progress"] = _progress_snapshot()
+                    if status == "COMPLETED":
+                        live["progress"]["fraction"] = 1.0
+                    live["cancel_requested"] = False
+                    live.pop("processing_started", None)
+                _cancel_requested.discard(job["id"])
                 _queue["current"] = None
                 _save()
             _say(f'[Queue] "{job["target_name"]}" -> {status}' + (f" ({error})" if error else ""))
@@ -449,7 +598,7 @@ def queue_start():
     with _lock:
         if _queue["running"]:
             return _snapshot()
-        if not any(j["status"] not in DONE for j in _queue["jobs"]):
+        if not any(_state(j) in RUNNABLE_STATES for j in _queue["jobs"]):
             return JSONResponse(status_code=400,
                                 content={"message": "nothing left to run — retry or add a job"})
         if _progress["processing"]:
@@ -474,6 +623,9 @@ def queue_pause():
     roop_globals.pause) and hold dispatch of the next one."""
     with _lock:
         _queue["paused"] = True
+        current = _find(_queue["current"]) if _queue["current"] else None
+        if current is not None and _state(current) == "PROCESSING":
+            _set_state(current, "PAUSED")
     if _progress["processing"]:
         roop_globals.pause = True
         _progress["paused"] = True
@@ -484,9 +636,42 @@ def queue_pause():
 def queue_resume():
     with _lock:
         _queue["paused"] = False
+        current = _find(_queue["current"]) if _queue["current"] else None
+        if current is not None and _state(current) == "PAUSED":
+            _set_state(current, "PROCESSING")
     if _progress["processing"]:
         roop_globals.pause = False
         _progress["paused"] = False
+    return _snapshot()
+
+
+@router.post("/api/queue/cancel")
+def queue_cancel(payload: dict = Body(...)):
+    """Cancel one queued job, or request cooperative cancellation of the
+    current job without changing the state of unrelated jobs."""
+    job_id = str(payload.get("id") or "")
+    if not job_id:
+        return JSONResponse(status_code=400, content={"message": "job id is required"})
+    stop_current = False
+    with _lock:
+        job = _find(job_id)
+        if job is None:
+            return JSONResponse(status_code=404, content={"message": "no such job"})
+        current_state = _state(job)
+        if current_state in ("COMPLETED", "FAILED", "CANCELLED"):
+            return JSONResponse(status_code=409,
+                                content={"message": f"job is already {current_state.lower()}"})
+        job["cancel_requested"] = True
+        if _queue["current"] == job_id:
+            _cancel_requested.add(job_id)
+            stop_current = True
+        else:
+            _set_state(job, "CANCELLED")
+            job["error"] = "cancelled before processing"
+            job["finished"] = time.time()
+        _save()
+    if stop_current and _stop_current is not None:
+        _stop_current()
     return _snapshot()
 
 
@@ -562,9 +747,17 @@ def queue_stop():
     """Stop the batch AND whatever it is rendering. Without the second half the
     runner would sit blocked in _run_swap until the current job finished on its
     own, so 'Stop queue' would appear to do nothing for the next hour."""
+    current_id = None
     with _lock:
         _queue["running"] = False
         _queue["paused"] = False
+        current_id = _queue["current"]
+        if current_id:
+            current = _find(current_id)
+            if current is not None:
+                current["cancel_requested"] = True
+                _cancel_requested.add(current_id)
+        _save()
     if _progress["processing"] and _stop_current is not None:
         _stop_current()
     return _snapshot()

@@ -15,10 +15,21 @@
 11. **Cross-frame batching cannot apply the swapper-provided mask.** The batcher deliberately clears mask attribution when tiles from multiple worker requests are combined, so the visible swap-mask strength control is partial on that path (`app/roop/ProcessMgr.py:5072-5077`).
 12. **Encoder resume identity omits some writer options.** `SegmentedVideoWriter` records preset, bitrate, threads, extra FFmpeg parameters, and colorspace in its writer options, but resume identity does not include all of them; changing those options between segments may mix encoding behavior (`app/roop/segment_writer.py:145-166`).
 13. **Odd-dimension output colorspace handling is not validated.** The FFmpeg command uses the scale branch instead of the normal colorspace-filter branch for odd dimensions (`app/roop/ffmpeg_writer.py:270-281`).
+14. **V2 live preview is sampled at approximately 1 Hz.** The existing watched publisher measured approximately 1.979 Hz, but V2 intentionally reuses the existing one-second progress poll to avoid extra status traffic. Browser timing and full-render impact remain unverified (`react-ui-v2/src/screens/CreateScreen.jsx:45-58`, `app/roop/live_preview.py:116-158`).
+15. **Runtime telemetry migration is partial.** Stage 6B adds the backend-owned
+    `runtime` object to `/api/progress` and exposes `/api/runtime/state`, but
+    the legacy `/api/system/telemetry` projection, V1 dashboard consumers, and
+    historical terminal log tail remain in place for compatibility. Full
+    migration and a retained end-to-end overhead comparison are unverified.
+
+16. **Stage 7A queue runtime validation is incomplete.** The canonical queue
+    lifecycle and V2 controls are covered by automated tests and builds, but no
+    fresh physical RTX 4070/RTX 3060 queue render, browser interaction pass, or
+    live application-restart recovery test was run in this session.
 
 ## DESIRED FUTURE STATE
 
-Resolve issues through their authorized gates: complete evidence, keep host-specific records separate, make diagnostics authoritative, define API schemas, and declare the test toolchain reproducibly.
+Resolve issues through their authorized gates: complete evidence, keep host-specific records separate, make diagnostics authoritative, define API schemas, validate the V2 live path in a browser and during a real render, and declare the test toolchain reproducibly.
 
 ## UNVERIFIED / UNKNOWN
 
@@ -28,4 +39,6 @@ Resolve issues through their authorized gates: complete evidence, keep host-spec
 
 ## Scope note
 
-No issue listed here was fixed during Stage 0 because the active gate forbids application-behavior changes and unrelated cleanup.
+No unrelated issue listed here was fixed during Stage 7A. The queue's old
+five-state semantics were repaired at the queue boundary; physical hardware,
+browser, and live restart validation remain open.

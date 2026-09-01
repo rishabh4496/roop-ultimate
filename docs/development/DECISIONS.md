@@ -18,6 +18,10 @@ This is an audit of decisions evidenced by source or tracked history. It does no
 | No optimization is accepted by commit message alone | Validation documents explicitly separate code tests, hardware runs, quality evidence, and unresolved rows |
 | React UI 2.0 starts as a parallel package | `react-ui-v2/index.html`, `react-ui-v2/src/main.jsx`, and `react-ui-v2/README.md`; preserves the existing V1/current clients and keeps migration reversible |
 | V2 themes share one token schema | `react-ui-v2/src/theme/tokens.js` defines seven theme data sets consumed by one `ThemeProvider`; no per-theme component tree exists |
+| V2 creation uses a narrow verified-route adapter | `react-ui-v2/src/api.js` and `src/workflow/useCreationWorkflow.js` call only verified FastAPI routes; unsupported checkpoint/update/cleanup/hardware controls remain unavailable rather than simulated |
+| Source selection remains explicit local V2 state | `/api/state` exposes target selection but no selected-source index; `useCreationWorkflow.js` therefore keeps the source index locally and commits it through `/api/source/select` |
+| V2 live preview reuses the processing publisher | `ProcessMgr._publish_live` -> `roop.live_preview.publish` -> `/api/progress.live_seq` -> `/api/live_frame` is already bounded, throttled, encoded, and used by V1; V2 consumes the same path without a second inference loop |
+| Stage 6B runtime telemetry is aggregated at the backend boundary | `app/roop/runtime_state.py:snapshot` feeds `/api/progress.runtime` and `/api/runtime/state`; V2 consumes that structured object and `api.get_progress` derives the terminal pinned status from it. Missing values remain explicit sentinels. |
 
 ## DESIRED FUTURE STATE
 
@@ -33,4 +37,13 @@ This is an audit of decisions evidenced by source or tracked history. It does no
 
 ## Source basis
 
-`app/api.py`, `app/routes_queue.py`, `app/settings.py`, `app/roop/backend_manager.py`, `app/roop/runtime_optimizer.py`, `app/roop/runtime_scheduler.py`, `app/roop/segment_writer.py`, `react-ui/src/api.js`, `docs/HARDWARE_VALIDATION_MATRIX.md`, and relevant commits listed in `VALIDATION_MATRIX.md`.
+`app/api.py`, `app/routes_queue.py`, `app/settings.py`, `app/roop/backend_manager.py`, `app/roop/runtime_optimizer.py`, `app/roop/runtime_scheduler.py`, `app/roop/runtime_state.py`, `app/roop/segment_writer.py`, `react-ui/src/api.js`, `react-ui/src/components/faceswap/ProcessingTerminal.jsx`, `docs/HARDWARE_VALIDATION_MATRIX.md`, and relevant commits listed in `VALIDATION_MATRIX.md`.
+
+## Stage 7A decision
+
+The queue is the lifecycle boundary for durable job identity, ordering,
+recovery, cancellation, and V2 orchestration. Its canonical state is exposed
+alongside the legacy V1 status projection. Queue jobs remain serialized around
+the existing `_run_swap` entry point so the validated single-job processing,
+pooling, and frame-worker paths are preserved; independent simultaneous jobs
+are intentionally not introduced.

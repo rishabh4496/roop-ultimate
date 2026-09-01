@@ -1,10 +1,47 @@
 # Processing Contract
 
-Audit scope: Stage 1A — Processing Architecture Audit, 2026-09-01. This
+Audit scope: Stages 1A and 6A — Processing Architecture Audit, 2026-09-01. This
 document records observed implementation and evidence. A passing unit test is
 not treated as proof of a complete hardware or visual-quality run.
 
 ## CURRENT IMPLEMENTATION
+
+### STAGE 6A CHOSEN LIVE-PREVIEW DATA PATH (DOCUMENTED BEFORE IMPLEMENTATION)
+
+The existing processing-owned live-preview path is the selected integration
+boundary for React UI 2.0:
+
+```text
+ProcessMgr.process_frame()
+  -> ProcessMgr._publish_live(frame)
+  -> roop.live_preview.publish(frame)
+  -> one throttled/downscaled JPEG in bounded module state
+  -> GET /api/progress returns live_seq only
+  -> GET /api/live_frame?seq=<live_seq> returns JPEG bytes
+  -> V2 <img> loads the URL keyed by the sequence
+```
+
+This path is verified in `app/roop/ProcessMgr.py:3176-3185`,
+`app/roop/live_preview.py:1-158`, and `app/api.py:2995-3097`. The producer
+is called from the existing frame-processing path and excludes the dedicated
+single-frame preview manager (`is_preview`), so a V2 live view cannot overwrite
+the current batch's frame with a scrub-preview result. `live_preview.publish`
+returns on most frames, downscales to the configured maximum width, encodes
+once to JPEG, and stores only the latest encoded frame. Its watched/idle cadence
+and `ROOP_LIVE_PREVIEW=0` switch remain backend-owned.
+
+The Stage 6A V2 consumer reuses the existing one-second progress poll, reads
+`live_seq`, and changes the image URL only when that sequence changes.
+The browser then requests the already encoded bytes from `/api/live_frame`;
+`/api/progress` will not carry image data. This preserves the existing render
+queue, provider/session ownership, VRAM guards, frame ordering, pause/stop
+semantics, and output writer. The V2 fallback remains the existing raw target
+frame while no live frame is available.
+
+The following are explicitly outside this gate: a second processing/inference
+pipeline, per-frame `/api/preview` requests during a run, full-resolution frame
+copies in shared progress state, WebSocket/SSE frame streaming, and changes to
+the producer cadence or hardware policy.
 
 ### Entry and frame pipeline
 
@@ -203,10 +240,10 @@ not treated as proof of a complete hardware or visual-quality run.
 
 | ID | Finding | Evidence of absence |
 |---|---|---|
-| D1 | Formal versioned processing request/status schema and durable job identity | The current entry is a dict payload in `api.trigger_swap` (`api.py:2651-2673`); no versioned schema or job ID is used by this path. |
+| D1 | Formal versioned processing request/status schema and durable job identity | Queue jobs now have `schema_version: 2`, durable IDs, canonical state, progress, and output fields in `routes_queue.py`; direct `/api/swap` remains a non-durable dict request without a job ID. |
 | D2 | Complete acceptance evidence for all mandatory provider/precision/model combinations on both GPUs | Existing records leave visual, soak, DMDNet, telemetry, or precision limitations; Phase 16 `final_report.json` is incomplete. |
-| D3 | Complete crash/restart recovery for an in-flight render beyond queue startup requeue | `routes_queue.load` requeues persisted running jobs, but no evidence establishes recovery of arbitrary in-memory frame state, all partial files, or process crashes. |
-| D4 | Immediate cancellation of active inference and a separate durable pause state | Current flags are cooperative globals (`api.py:2961-2991`); no interruptible inference contract or durable pause checkpoint is present. |
+| D3 | Complete crash/restart recovery for an in-flight render beyond queue startup requeue | Queue startup now migrates active records to `RECOVERABLE`, but no evidence establishes recovery of arbitrary in-memory frame state, all partial files, or process crashes. |
+| D4 | Immediate cancellation of active inference and a separate durable pause checkpoint | Queue adds durable `PAUSED`/`CANCELLED` state observations and a cancel command, but active inference remains cooperative and no frame checkpoint exists. |
 
 ### 5. Potentially dangerous
 
@@ -225,7 +262,7 @@ not treated as proof of a complete hardware or visual-quality run.
 | F1 | Provider selection is distributed across backend resolution, core options, precision policy, session-pool TRT removal, and processor policy | `backend_manager.py:91-127`, `core.py:96-303`, `precision_policy.py:328-405`, `session_pool.py:604-619`, `FaceSwapInsightFace.py:443-480`. No single authoritative provider object exists. |
 | F2 | Thread/concurrency policy has multiple authorities | Settings thread resolution is applied by API; `core.suggest_execution_threads` (`core.py:328-357`) applies provider overrides; `ProcessMgr.py:1913-1984` applies workload policy; `runtime_scheduler.py:473-475` clamps workers again. |
 | F3 | Runtime hints, saved configuration, and explicit environment values overlap | `runtime_optimizer.apply_environment` (`:2890-2969`), `run.py:60-78`, `utilities.py:768-797`, and `session_pool.py:564-601` participate. Explicit values are preserved, but legacy/unused hints remain possible. |
-| F4 | Progress/telemetry has separate API, profiler, monitor, scheduler, ETA, and diagnostics representations | `api.py:198-235`, `api.py:2994-3071`, `procmgr_runtime.py:1202-1261`, `runtime_optimizer.py:2425-2540`, `runtime_scheduler.py:409-459`, and `routes_diagnostics.py:372-501`. There is no canonical event stream. |
+| F4 | Runtime internals still have separate profiler, monitor, scheduler, ETA, and legacy diagnostics representations; the client-facing snapshot is now unified | `api.py:198-235`, `api.py:2994-3104`, `procmgr_runtime.py:1202-1261`, `runtime_optimizer.py:2425-2540`, `runtime_scheduler.py:409-459`, `routes_diagnostics.py:372-501`, and `runtime_state.py:222-414`. Stage 6B provides a canonical JSON snapshot for V2/terminal status, but not a replacement event stream or full legacy migration. |
 | F5 | Cancellation/finalization is implemented in API, core, ProcessMgr, scheduler, queue, and Pinokio controls | `api.py:2961-2991`, `core.py:1184-1217`, `ProcessMgr.py:1200-1202`, `:2815-2859`, `runtime_scheduler.py:482-493`, and `routes_queue.py`. It is cooperative but not a single lifecycle contract. |
 
 ## Verification record for this audit
@@ -235,3 +272,105 @@ not treated as proof of a complete hardware or visual-quality run.
 - No processing source code, model, UI, or launcher file was modified.
 - Full Stage 0 results and hardware records remain in `CURRENT_STATE.md`; they
   were not relabeled as fresh Stage 1A hardware verification.
+
+## STAGE 6A CURRENT V2 INTERFACE AND MEASUREMENTS
+
+React UI 2.0 consumes the existing processing-owned live frame path through
+`react-ui-v2/src/api.js:56-60` (`liveFrameUrl`) and
+`react-ui-v2/src/screens/CreateScreen.jsx:45-58` (`PreviewPanel`). It reads
+the existing `progress.live_seq`, forms one `/api/live_frame?seq=...` URL, and
+lets the browser fetch the JPEG bytes. A failed or empty live response falls
+back to the existing preview still. The V2 manual preview action is disabled
+while a real render is processing, so it cannot compete with the main run.
+
+The following producer-side measurements were run on 2026-09-01 in the
+supported `app/env` environment. They are isolated publisher measurements, not
+claims about a complete render:
+
+| Measurement | Result | Boundary |
+|---|---:|---|
+| Forced 1920x1080 publish latency, median | 2.749 ms | Includes resize/JPEG encode; 30 samples |
+| Forced 1920x1080 publish latency, p90 | 3.038 ms | Same synthetic frame benchmark |
+| Watched publish rate | 1.979 Hz | 3.031 s at 60 offered calls; 6 publications; backend 500 ms cadence |
+| Throttled hot-path incremental CPU | 0.156 microseconds/call | 100,000 calls minus empty-loop baseline |
+| Throttled hot-path incremental wall time | 0.204 microseconds/call | Same synthetic benchmark |
+| Stored JPEG for the benchmark frame | 8,788 bytes | Not a general upper bound; content-dependent |
+| RSS delta after one stored frame | 0.000 MB observed | Allocator/process measurement; bounded state remains the source guarantee |
+| GPU work in live-preview module | 0 calls | Source inspection: `cv2`/NumPy only |
+
+The V2 consumer samples progress at one second, so its observed image-update
+rate is capped at approximately 1 Hz even though the watched backend publisher
+can publish at approximately 2 Hz. This keeps progress traffic at the existing
+cadence and is the accepted Stage 6A tradeoff; browser timing was not measured.
+No end-to-end processing-throughput, full-render CPU/GPU overhead, VRAM, or
+long-job memory comparison was run, so those remain `UNVERIFIED` rather than
+being inferred from the publisher benchmark.
+
+## STAGE 6B UNIFIED RUNTIME TELEMETRY — CURRENT IMPLEMENTATION
+
+The backend now exposes one JSON-safe runtime observation schema through
+`app/roop/runtime_state.py:snapshot`. The aggregator reads, without changing,
+the existing `_progress`/`_run_stats` state, `roop.globals` provider/settings,
+`ProcessMgr.runtime_profile`, scheduler fields, optional `RuntimeMonitor`
+samples, and cached read-only `psutil`/Torch resource probes.
+
+The verified data path is:
+
+```text
+processing/API-owned state + runtime profile/scheduler/monitor + cached probes
+    -> roop.runtime_state.snapshot
+    -> GET /api/progress.runtime and GET /api/runtime/state
+    -> V2 telemetry view and terminal pinned status
+```
+
+The schema includes `job`, `frame_progress`, `fps`, `eta_s`, `provider`,
+`model`, `precision`, `gpu`, `vram`, `cpu`, `memory`, `pool`, `workers`,
+`queue`, `profile`, `status`, `warnings`, and `errors`. Frame counts/FPS are
+derived server-side from the existing backend progress status grammar; React
+does not parse terminal text. A missing fact is represented by `UNKNOWN`,
+`NOT AVAILABLE`, or `NOT APPLICABLE`. An unavailable warning source is
+`UNKNOWN`; an empty `errors` list means no error is present in the explicit
+progress/scheduler error fields.
+
+Provider and model values are selected/effective configuration observations;
+the schema does not claim that a model is loaded unless the existing runtime
+profile establishes it. Effective precision is taken from the runtime profile
+when present, TensorRT configuration when TensorRT is active, and is
+`NOT APPLICABLE` for a known non-TensorRT provider.
+
+The V2 workflow uses the embedded `progress.runtime` object and the terminal's
+pinned status uses the same object. The old flat `/api/system/telemetry`
+endpoint and V1 dashboard consumers remain compatibility surfaces and are not
+yet a complete migration to this schema.
+
+### Stage 6B verification record
+
+- `test_runtime_state.py` and `test_api_routes.py`: 9 passed, one existing
+  Albumentations update warning.
+- Direct API import/probe returned runtime schema version `1`, JSON-safe output,
+  status `IDLE`, provider `cuda`, and the detected host GPU
+  `NVIDIA GeForce RTX 4070`.
+- A warmed isolated observer benchmark measured 0.007042 ms average and
+  0.0074 ms p95 across 2,000 snapshots; a warmed 500-call `/api/progress`
+  probe measured 0.009160 ms average. Resource probes are cached for two
+  seconds and no runtime-state call is made from `ProcessMgr`'s per-frame
+  callbacks. A full render overhead comparison has not been run.
+
+## STAGE 7A QUEUE BOUNDARY - CURRENT IMPLEMENTATION
+
+The durable queue is a lifecycle/orchestration layer around the existing
+single-job processing path. `routes_queue.py` resolves target/source identity,
+applies optional frame segments, records the canonical job state, and invokes
+`api._run_swap`. The processing engine remains responsible for provider/model
+selection, precision, VRAM guards, pooling, frame scheduling, visual work,
+encoding, and cooperative stop/pause behavior. Queue jobs are intentionally
+serial; their internal frame-worker concurrency is unchanged.
+
+The queue's current progress view projects the active shared `_progress`
+object into the current job record and stores lifecycle-boundary snapshots for
+completed or interrupted jobs. It does not implement checkpointed frame resume,
+independent simultaneous job contexts, or a new transfer path.
+
+Stage 7A automated verification is recorded in `JOB_CONTRACT.md` and
+`CURRENT_STATE.md`. No fresh physical RTX 4070 or RTX 3060 queue render was
+performed in this session.

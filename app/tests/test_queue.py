@@ -401,5 +401,56 @@ class BenchmarkAndTheQueueDoNotShareTheGpu(QueueTestBase):
                       "guards are wired to a constant False")
 
 
+class CanonicalLifecycle(QueueTestBase):
+    def test_new_jobs_expose_required_state_schema_and_order(self):
+        self._add("a.mp4")
+        self._add("b.mp4")
+        snapshot = q._snapshot()
+        self.assertEqual(snapshot["schema_version"], 2)
+        self.assertEqual(snapshot["job_states"], list(q.JOB_STATES))
+        self.assertEqual([job["state"] for job in snapshot["jobs"]], ["QUEUED", "QUEUED"])
+        self.assertEqual([job["position"] for job in snapshot["jobs"]], [1, 2])
+        self.assertIn("fraction", snapshot["jobs"][0]["progress"])
+
+    def test_legacy_running_record_migrates_to_recoverable(self):
+        self._add("a.mp4")
+        job = q._find(q._snapshot()["jobs"][0]["id"])
+        job.pop("state", None)
+        job["status"] = "running"
+        q._save()
+        q._queue["jobs"] = []
+        q.load()
+        restored = q._snapshot()["jobs"][0]
+        self.assertEqual(restored["state"], "RECOVERABLE")
+        self.assertEqual(restored["status"], "pending")
+        self.assertIn("restart", restored["error"])
+
+    def test_queued_cancel_isolated_from_other_jobs(self):
+        self.entries.append(_Entry("/media/a.mp4"))
+        self._add("a.mp4")
+        self._add("missing.mp4")
+        jobs = q._snapshot()["jobs"]
+        q.queue_cancel({"id": jobs[1]["id"]})
+        self._drain()
+        result = q._snapshot()["jobs"]
+        self.assertEqual(result[0]["state"], "COMPLETED")
+        self.assertEqual(result[1]["state"], "CANCELLED")
+        self.assertEqual(len(self.ran), 1)
+
+    def test_current_cancel_becomes_cancelled_after_cooperative_stop(self):
+        self.entries.append(_Entry("/media/a.mp4"))
+        self._add("a.mp4")
+        job = q._snapshot()["jobs"][0]
+        q._queue["current"] = job["id"]
+        q._find(job["id"])["state"] = "PROCESSING"
+        q._find(job["id"])["status"] = "running"
+        called = []
+        q._stop_current = lambda: called.append(True)
+        result = q.queue_cancel({"id": job["id"]})
+        self.assertEqual(result["jobs"][0]["state"], "PROCESSING")
+        self.assertTrue(q._find(job["id"])["cancel_requested"])
+        self.assertEqual(called, [True])
+
+
 if __name__ == "__main__":
     unittest.main()

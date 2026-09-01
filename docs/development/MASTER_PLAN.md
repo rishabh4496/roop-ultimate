@@ -1,7 +1,7 @@
 # Roop Ultimate Development Master Plan
 
 Audit date: 2026-09-01  
-Repository HEAD: `fd40c31438e8e03b77e3e2abaaad5266b3f61049`
+Repository HEAD before Stage 5A changes: `5ced7898faa98c2f2b6121258883923ad624d00e`
 
 ## Status vocabulary
 
@@ -13,8 +13,12 @@ Repository HEAD: `fd40c31438e8e03b77e3e2abaaad5266b3f61049`
 
 ## CURRENT IMPLEMENTATION
 
-The active gate for this session was Stage 4A: establish a parallel React UI
-2.0 foundation without changing existing application behavior. Stage 0
+The active gate for this session is Stage 7A: repair the durable batch queue
+around the existing single-job processing path.
+
+Stage 6B exposed one backend-owned
+structured runtime telemetry state to the React UI and terminal without
+changing processing policy. Stage 0
 established the baseline contracts, Stage 1A audited processing architecture,
 and Stage 2A audited the visual/output pipeline. The repository contains a
 Python processing application, current React UI, frozen legacy Gradio UI, and Pinokio
@@ -39,6 +43,10 @@ winners.
 | Stage 2A - visual pipeline audit | Completed as documentation/audit |
 | Stage 3A - React V1 forensic audit | Completed as documentation/audit |
 | Stage 4A - React UI 2.0 foundation | Completed as isolated implementation in this session |
+| Stage 5A - React UI 2.0 creation workflow | Implemented in the isolated V2 package; live backend/GPU validation remains incomplete |
+| Stage 6A - Fast live preview | Implemented through the existing sequence-keyed JPEG path; end-to-end render impact remains unverified |
+| Stage 6B - Unified runtime telemetry | Structured state endpoint and V2 consumer implemented; full-render overhead and complete legacy migration remain unverified |
+| Stage 7A - Batch processing 2.0 | Canonical queue lifecycle, persistence migration, job isolation, cancellation, and V2 queue surface implemented; live browser/restart and physical GPU validation remain unverified |
 | Next UI2 design or migration gate | Not defined in the repository; scope requires explicit authorization |
 | Visual validation / retained-output review | Open and not yet complete |
 | Phase 16 final production quality gate | Open/incomplete |

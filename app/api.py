@@ -52,6 +52,7 @@ from roop import capture_seed
 from roop import segment_writer
 from roop import live_preview
 from roop import procmgr_runtime as _procmgr_runtime
+from roop import runtime_state as _runtime_state
 import ui.globals as ui_globals
 
 app = FastAPI()
@@ -3050,16 +3051,24 @@ def get_progress():
         parts = segment_writer.parts_snapshot()
     except Exception:
         parts = []
+    runtime = _runtime_state.snapshot(
+        progress=_progress,
+        run_stats=_run_stats,
+        output=_last_output,
+        eta_s=_procmgr_runtime.eta_seconds(),
+        live_seq=live_preview.seq(),
+        parts=parts)
     # live_seq changes whenever the pipeline publishes a newer frame; the UI
     # uses it as /api/live_frame's cache key, so the image refetches exactly
     # when there is something new and never per poll. live_frame stays empty —
     # inlining a base64 still into every poll is what made this expensive.
     return {**_progress, "output": _last_output, "live_frame": "",
-            "live_seq": live_preview.seq(),
+            "live_seq": runtime["frame_progress"]["live_seq"],
             # Seconds remaining as the TERMINAL's progress bar is showing them.
-            # None between stages (nothing is counting frames during encode/mux)
-            # and during start-up, where the UI falls back to its own estimate.
-            "eta_s": _procmgr_runtime.eta_seconds(),
+            # UNKNOWN between stages (nothing is counting frames during
+            # encode/mux) and during start-up; legacy clients treat the
+            # non-numeric sentinel as unavailable.
+            "eta_s": runtime["eta_s"],
             # Epoch seconds the run started, so elapsed/ETA survive a webview
             # reload (Pinokio reloads it on every tab switch). The UI used to
             # restart its own clock from zero there, which made a 40-minute run
@@ -3068,7 +3077,29 @@ def get_progress():
             "log": list(_log_lines), "parts": parts,
             # The counter the console pins and rewrites in place instead of
             # scrolling — `desc` when it IS a counter, else the last one seen.
-            "status_line": _log_state.get("status", "")}
+            "status_line": runtime["status"]["message"],
+            "runtime": runtime}
+
+
+@app.get("/api/runtime/state")
+def get_runtime_state():
+    """Return the structured runtime state used by the V2 client.
+
+    This endpoint intentionally has no terminal-text parsing contract.  The
+    progress endpoint embeds the same schema so the existing terminal/status
+    path and the V2 client can observe one backend-owned state shape.
+    """
+    try:
+        parts = segment_writer.parts_snapshot()
+    except Exception:
+        parts = []
+    return _runtime_state.snapshot(
+        progress=_progress,
+        run_stats=_run_stats,
+        output=_last_output,
+        eta_s=_procmgr_runtime.eta_seconds(),
+        live_seq=live_preview.seq(),
+        parts=parts)
 
 
 @app.get("/api/live_frame")

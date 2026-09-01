@@ -8,11 +8,11 @@ status; it is not authorization to change application behavior.
 | Item | Verified value |
 |---|---|
 | Branch | `main` tracking `origin/main` |
-| HEAD | `fd40c31438e8e03b77e3e2abaaad5266b3f61049` |
-| Working tree before Stage 2A documentation | Only `docs/development/` was untracked; no tracked application/launcher/React changes |
-| Active stage/gate | Stage 4A - React UI 2.0 Foundation (isolated frontend implementation) |
-| Last completed gate | Stage 4A - React UI 2.0 Foundation |
-| Existing application behavior changed in Stage 4A | No |
+| HEAD before Stage 5A changes | `5ced7898faa98c2f2b6121258883923ad624d00e` |
+| Working tree at Stage 6B closeout | Runtime-state, V2 telemetry, V1 terminal-consumer, and development-document changes are uncommitted; processing policy, other V1 surfaces, and launcher files are unchanged |
+| Active stage/gate | Stage 7A - Batch processing 2.0 |
+| Last completed gate | Stage 6B - Unified runtime telemetry; Stage 7A implementation checks pass but browser, restart, and physical GPU validation remain incomplete |
+| Existing application behavior changed in Stage 7A | Durable queue state schema, lifecycle, cancellation, and V2 queue controls were added; processing policy and per-job frame execution remain unchanged |
 
 ## CURRENT IMPLEMENTATION
 
@@ -32,6 +32,10 @@ status; it is not authorization to change application behavior.
   `app/roop/procmgr_runtime.py`.
 - Pause/stop remain cooperative shared flags. API progress, logs, ETA, and
   system telemetry are exposed; runtime monitor/adaptive sampling is opt-in.
+- `app/roop/runtime_state.py` now builds a JSON-safe structured state from
+  those existing sources. V2 consumes `progress.runtime`; the terminal pinned
+  status is derived from the same state. Missing values use explicit
+  `UNKNOWN`, `NOT AVAILABLE`, or `NOT APPLICABLE` sentinels.
 
 ## STAGE 1A RESULT
 
@@ -124,21 +128,21 @@ existing React Fast Refresh warnings.
 
 ## CURRENT STAGE STATUS
 
-- Active gate: Stage 4A - React UI 2.0 Foundation (completed for this session;
-  isolated implementation only).
-- Last completed gate: Stage 4A - React UI 2.0 Foundation.
-- Next gate: Stage 4A was subsequently authorized and completed below. No
-  further named gate is defined in the repository; future UI2 feature work
-  requires explicit authorization.
+- Active gate: Stage 6A - Fast live preview (implemented for this session;
+  final live browser/render/GPU validation remains unverified).
+- Last completed gate: Stage 5A - UI 2.0 creation workflow implementation;
+  live runtime evidence remained incomplete.
+- Next gate: no named next gate is defined in the repository; future UI2
+  feature work requires explicit authorization.
 
-## STAGE 4A RESULT
+## STAGE 4A RESULT (HISTORICAL)
 
-Stage 4A React UI 2.0 foundation implemented in the new parallel
+Stage 4A React UI 2.0 foundation was implemented in the new parallel
 `react-ui-v2/` package. It has an independent Vite entry point, hash
 navigation, shared design tokens, seven-theme engine, responsive shell,
 reducer/context state, reusable primitives, loading states, error boundary,
-and notifications. It makes no backend requests and does not connect feature
-processing controls.
+and notifications. The later Stage 5A workflow is documented separately
+below.
 
 The existing `react-ui/` client and `react-ui-v1-backup/` were not modified or
 imported. The V2 package uses the existing React/Vite stack and has generated
@@ -160,3 +164,147 @@ imported. The V2 package uses the existing React/Vite stack and has generated
 No physical hardware or processing runtime validation was required or
 performed because Stage 4A has no hardware-dependent or backend-connected
 behavior.
+
+## STAGE 6A RESULT
+
+The V2 creation preview now consumes the existing processing-owned live frame
+publisher. `react-ui-v2/src/api.js` exposes a sequence-keyed
+`/api/live_frame` URL, and `CreateScreen.jsx` reads `progress.live_seq` from
+the existing progress poll. It prefers the live JPEG while retaining the
+target/manual preview fallback and disables manual preview rendering during a
+real job. No processing, provider, runtime, or V1 code changed.
+
+The selected path stores one throttled/downscaled JPEG in the backend and does
+not stream frame bytes through progress JSON, create a second inference loop,
+or add a WebSocket/SSE channel.
+
+## STAGE 6A VERIFICATION
+
+- V2 build passed: 31 modules transformed.
+- V2 lint passed with no warnings.
+- Focused UI/API/queue/live-preview suite from `app/env`: **139 passed, one
+  existing Albumentations update warning**.
+- Direct FastAPI live-frame probe returned HTTP 200, `image/jpeg`, 1,588
+  payload bytes, and `X-Live-Seq: 1`.
+- Producer benchmark: forced 1080p publish latency **2.749 ms median / 3.038
+  ms p90**; watched publisher **1.979 Hz**; throttled hot-path incremental
+  CPU **0.156 microseconds/call**; benchmark JPEG **8,788 bytes**; no GPU
+  calls in the live-preview module.
+
+## STAGE 6A NOT VERIFIED
+
+- No browser image timing, accessibility, or responsive interaction pass.
+- No end-to-end processing run, so full-render throughput, CPU/GPU/VRAM
+  overhead, long-job memory impact, and output continuity are unverified.
+- The host exposes one RTX 4070, but no fresh RTX 4070 render was run; no
+  physical RTX 3060 was available.
+
+## STAGE 5A RESULT
+
+The isolated `react-ui-v2/` package now contains a media-first `#/create`
+workflow. `CreateScreen.jsx` makes the target preview primary, supports source
+and target upload/selection, source-face selection, dynamic backend-provided
+model/provider choices, verified quality/output controls, progressive advanced
+options, preview, generation, progress, stop, and completed-output linking.
+
+Unsupported batch, resume, update, cleanup, Pinokio, and hardware/GPU
+selection capabilities are explicitly presented as unavailable or omitted.
+No V1/current React source, backend, processing, model, runtime, launcher,
+cache, faceset, or output files were modified.
+
+## STAGE 5A VERIFICATION
+
+- `react-ui-v2`: `npm run build` passed; 31 modules transformed.
+- `react-ui-v2`: `npm run lint` passed with no warnings.
+- V2 dev server returned HTTP 200 at `http://127.0.0.1:5174/` and served the
+  V2 entry; the `#/create` route is handled by the client router.
+- Existing `react-ui`: `npm run build` passed; 433 modules transformed.
+- Targeted UI/API/queue rerun from `app/env`: **125 passed, one existing
+  Albumentations update warning**. The earlier repository-focused record of
+  144 tests and 344 subtests remains documented in the historical Stage 3A
+  section above.
+- Source inspection verified the V2 adapter calls only existing FastAPI
+  operations: `/api/meta`, `/api/settings`, `/api/state`, `/api/progress`,
+  `/api/source/add`, `/api/source/select`, `/api/target/add`,
+  `/api/target/select`, `/api/target/preview`, `/api/preview`, `/api/swap`,
+  `/api/stop`, `/api/output`, and `/api/file`.
+
+## STAGE 5A NOT VERIFIED
+
+- A real browser interaction/accessibility pass was not performed.
+- No live backend generation, model load, output-quality, throughput, or
+  cancellation run was performed through V2.
+- No physical RTX 3060 was available; no fresh RTX 4070 GPU run was required
+  or performed for this UI-only gate. Existing hardware records remain
+  authoritative only for their documented scenarios.
+## STAGE 6B RESULT
+
+The backend now has a single structured runtime observation object in
+`app/roop/runtime_state.py`. `/api/progress` embeds it as `runtime`, and
+`/api/runtime/state` exposes it directly. V2 uses this object for telemetry
+and status/progress display; the existing terminal pinned status is derived
+from the same object. No processing, provider, TensorRT, batching, pooling,
+hardware policy, live-preview producer, or other V1 surface was changed. The
+existing V1 terminal component now reads the structured status object while
+retaining its legacy log tail.
+
+## STAGE 6B VERIFICATION
+
+- `app/env/Scripts/python.exe -m py_compile app/roop/runtime_state.py app/api.py`
+  passed.
+- Focused backend suite: **9 passed, one existing Albumentations update
+  warning**.
+- Direct API probe returned schema version `1`, JSON-safe state, `IDLE`
+  status, provider `cuda`, and detected host GPU `NVIDIA GeForce RTX 4070`.
+- A two-second resource cache is used; no runtime-state call is made from a
+  per-frame processing callback.
+- Warm observer benchmark: 2,000 snapshots averaged **0.007042 ms** with
+  **0.0074 ms p95**; warmed 500-call `/api/progress` probe averaged
+  **0.009160 ms**. These do not establish full-render impact.
+
+## STAGE 6B NOT VERIFIED
+
+- No full render was run, so material throughput, CPU/GPU/VRAM, memory, or
+  output impact of polling telemetry is not established.
+- No physical RTX 3060 validation was possible in this session; no fresh RTX
+  4070 processing validation was performed.
+- V1 flat diagnostics consumers and the historical terminal log tail remain
+  compatibility paths rather than a complete schema migration.
+
+## STAGE 7A RESULT
+
+The durable queue now exposes a canonical nine-state lifecycle in
+`app/routes_queue.py`: `QUEUED`, `PREPARING`, `PROCESSING`, `PAUSED`,
+`COMPLETED`, `FAILED`, `CANCELLED`, `INTERRUPTED`, and `RECOVERABLE`. Existing
+V1 `status` values remain as a compatibility projection. Queue records are
+schema version 2, preserve ordering and job identity, carry individual
+progress/error/output fields, migrate active legacy records to recoverable on
+startup, and retain queued jobs when another job fails or is cancelled.
+
+V2 now consumes the server-owned queue through `useQueue.js` and
+`QueuePanel.jsx`. It supports enqueueing the current verified creation payload,
+start, pause/resume, stop, cancel, retry, remove, and reorder. Each job still
+dispatches through the existing `_run_swap` path; processing/provider,
+TensorRT/ONNX, pooling, worker concurrency, and V1 code were not changed.
+
+## STAGE 7A VERIFICATION
+
+- `app/env/Scripts/python.exe -m pytest app/tests/test_queue.py -q`: **31
+  passed**.
+- Broader backend regression selection including queue, runtime optimizer,
+  scheduler, TensorRT context, fallback, and GPU locks: **126 passed**, one
+  existing Albumentations update warning.
+- `react-ui-v2`: `npm run build` passed; 33 modules transformed.
+- `react-ui-v2`: `npm run lint` passed.
+- Existing `react-ui`: `npm run build` passed; 433 modules transformed.
+- Existing `react-ui`: `npm run lint` completed with the pre-existing
+  Fast Refresh warnings in icon, motion, confirm, and quality-profile files.
+
+## STAGE 7A NOT VERIFIED
+
+- No physical RTX 3060 was available for queue rendering.
+- No fresh physical RTX 4070 queue render, throughput, VRAM, or output-quality
+  measurement was run in this session; existing hardware records do not prove
+  this new queue path.
+- Browser interaction and restart recovery against a live process were not
+  exercised; they remain beyond the automated queue/build checks.

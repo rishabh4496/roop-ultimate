@@ -5,12 +5,12 @@ import { LoadingState } from './components/LoadingState';
 import { useRouter } from './router';
 
 const HomeScreen = lazy(() => import('./screens/HomeScreen'));
-const WorkspaceScreen = lazy(() => import('./screens/WorkspaceScreen'));
+const CreateScreen = lazy(() => import('./screens/CreateScreen'));
 const SettingsScreen = lazy(() => import('./screens/SettingsScreen'));
 
 const screens = {
   home: HomeScreen,
-  workspace: WorkspaceScreen,
+  create: CreateScreen,
   settings: SettingsScreen,
 };
 

@@ -1,22 +1,23 @@
 # React UI 2.0 Boundary Contract and React V1 Forensic Audit
 
 Audit date: 2026-09-01  
-Audit scope: Stage 4A, parallel React UI 2.0 foundation  
-Audit HEAD: `fd40c31438e8e03b77e3e2abaaad5266b3f61049`  
-React V1/current client source changes in this gate: none; new V2 foundation added in parallel
+Audit scope: Stages 3A, 4A, and 5A React UI 2.0 work
+Audit HEAD before Stage 5A changes: `5ced7898faa98c2f2b6121258883923ad624d00e`
+React V1/current client source changes in this gate: none; V2 remains a parallel package
 
 ## Evidence and version mapping
 
 The repository does not declare a formal React V1/V2 release or migration
-manifest, and the V1/current clients do not use URL routing. Stage 4A now gives
-the new V2 foundation a clearly identifiable package and entry point. The
+manifest, and the V1/current clients do not use URL routing. Stage 4A gave the
+new V2 foundation a clearly identifiable package and entry point; Stage 5A adds
+a verified-route creation workflow inside that package. The
 following mapping is the least-assumptive interpretation of the checked source:
 
 | Audit side | Repository evidence | Confidence |
 |---|---|---|
 | V1 baseline | `react-ui-v1-backup/`, an ignored local snapshot with five tabs and ten component files | VERIFIED as a filesystem artifact; its release provenance is UNKNOWN |
 | Current/V2 comparison side | `react-ui/`, described as the active front end in `react-ui/README.md`, with nine tab IDs and the current component graph | VERIFIED as the active client; formal release/migration naming is UNKNOWN |
-| V2 foundation | `react-ui-v2/`, added in Stage 4A with `index.html` -> `src/main.jsx` and its own Vite package | VERIFIED as a separate foundation entry point; feature integration is intentionally absent |
+| V2 foundation/workflow | `react-ui-v2/`, with `index.html` -> `src/main.jsx`, its own Vite package, and the Stage 5A Create route | VERIFIED as a separate entry point; creation integration is limited to the routes listed below |
 | Legacy non-React UI | `app/ui/`, the original Gradio UI; `app/README.md` says interface work belongs in `react-ui/` | VERIFIED and excluded from React V1 parity |
 
 “Working” below means the source has a reachable handler and a matching route
@@ -271,7 +272,7 @@ No current or V1 React source calls Pinokio `shell.run`, `script.start`,
 outside this client; the React side uses same-origin HTTP. Pinokio terminal
 logs and `ProcessingTerminal` are separate surfaces.
 
-## STAGE 4A FOUNDATION - CURRENT IMPLEMENTATION
+## STAGE 4A FOUNDATION - HISTORICAL IMPLEMENTATION
 
 The new V2 foundation is now a separate package at `react-ui-v2/`. Its clearly
 identifiable browser entry point is `react-ui-v2/index.html` ->
@@ -292,11 +293,9 @@ identifiable browser entry point is `react-ui-v2/index.html` ->
 | Loading states | `src/components/LoadingState.jsx`, `WorkspaceScreen.jsx` | Suspense fallback, spinner, and skeleton primitives; **working at source/build level** |
 | Notifications | `src/components/NotificationCenter.jsx`, `appState.jsx` | Reducer-backed toast queue with dismissal/timeout; **working at source/build level** |
 
-The foundation screens are intentionally placeholders. `HomeScreen.jsx` shows
-foundation status and a test notification; `WorkspaceScreen.jsx` reserves the
-future feature area; `SettingsScreen.jsx` exercises all seven themes and
-local-only preview toggles. No processing, provider, model, queue, GPU,
-output, or FastAPI feature is connected in Stage 4A.
+The foundation screens were intentionally placeholders. The Stage 5A Create
+route now owns the first V2 feature slice; the other foundation screens remain
+limited to shell, theme, and unavailable-state presentation.
 
 ## STAGE 4A ARCHITECTURAL DECISION
 
@@ -405,3 +404,129 @@ implementation.
 `react-ui/src/components/`, the comparable files under
 `react-ui-v1-backup/src/`, `app/api.py`, `app/routes_*.py`, `app/README.md`,
 and the existing `app/tests/test_ui_*.py` / API and queue wiring tests.
+
+## STAGE 5A CREATION WORKFLOW - CURRENT IMPLEMENTATION
+
+`react-ui-v2/src/screens/CreateScreen.jsx` is the media-first V2 creation
+workflow. The large target preview is the primary visual surface. Source and
+target media are selected beside it; model/provider, quality, output, and
+advanced options use progressive disclosure. The workflow uses the isolated
+adapter in `react-ui-v2/src/api.js` and `useCreationWorkflow.js`.
+
+| Workflow area | Verified operation and evidence | Status |
+|---|---|---|
+| Backend bootstrap | `GET /api/meta`, `/api/settings`, `/api/state`, `/api/progress` in `useCreationWorkflow.js:29-35`; matching handlers in `app/api.py:473-501,695-745,862-878,2994-3071` | **working; backend-backed** |
+| Source | File input and `POST /api/source/add` in `CreateScreen.jsx` and `useCreationWorkflow.js:80-95`; handler `app/api.py:891-909` | **working; backend-backed** |
+| Target | File input and `POST /api/target/add`; target thumbnail uses `/api/target/preview`; handlers `app/api.py:1091-1102,1300-1335` | **working; backend-backed** |
+| Face selection | Backend-provided `face_detection_modes`, source-face selection through `/api/source/select`, and preview face count; `CreateScreen.jsx`, `useCreationWorkflow.js:97-102,148-151` | **working at wiring level; backend-backed** |
+| Model/provider | Dynamic choices from `/api/meta`; values are held in settings and sent to `/api/settings` and the verified swap/preview payload aliases | **working at wiring level; backend-backed; restart/runtime effect unverified** |
+| Quality | Dynamic enhancer/upscale choices plus verified blend, face-distance, and advanced detection/mask/color controls | **working at wiring level; backend-backed; quality outcome unverified** |
+| Preview | Original target image via `/api/target/preview`; optional swapped frame via `POST /api/preview` with fields mirrored from V1/current payload contracts | **working at wiring level; backend-backed; visual outcome unverified** |
+| Generation | `POST /api/settings` followed by `POST /api/swap` in `useCreationWorkflow.js:155-164`; handler `app/api.py:2651-2673` | **working at command-wiring level; backend-backed; runtime outcome unverified** |
+| Progress/stop | Polls `/api/progress` and calls `/api/stop`; `useCreationWorkflow.js:52-70,167-173` | **working at wiring level; backend-backed; cooperative semantics inherited from backend** |
+| Output | Uses `/api/output` and `/api/file` for the latest completed output | **working at wiring level; backend-backed** |
+| Unsupported workflow features | Resume checkpoints, update, cleanup, Pinokio controls, and hardware/GPU selection are rendered as unavailable notices or omitted; batch matrix recipes remain unavailable | **explicitly unavailable; no fake implementation** |
+
+The creation workflow uses the server-owned `/api/queue/*` contract for queued
+single-generation jobs. Resume checkpoints, update, cleanup, Pinokio APIs, and
+direct `ProcessMgr.py` calls remain outside V2. It does not change provider
+selection policy, TensorRT/ONNX behavior, batching, pooling, or hardware
+guards. The old `#/workspace` hash remains accepted as a compatibility alias
+to the new `#/create` route in `router.js`.
+
+The source-selection index is intentionally local UI state because the
+verified `/api/state` response exposes source faces but not a selected-source
+index. The selected source is still committed through the verified
+`POST /api/source/select` operation before generation.
+
+## STAGE 6A LIVE PREVIEW - DATA PATH SELECTED BEFORE IMPLEMENTATION
+
+V2 will consume the existing processing-owned live frame path already used by
+the current React client. The selected path is:
+
+```text
+ProcessMgr._publish_live(frame)
+  -> roop.live_preview.publish(frame)
+  -> GET /api/progress -> live_seq
+  -> GET /api/live_frame?seq=<live_seq> -> encoded JPEG bytes
+  -> V2 preview <img>
+```
+
+The producer and API are verified at `app/roop/ProcessMgr.py:3176-3185`,
+`app/roop/live_preview.py:1-158`, and `app/api.py:2995-3097`. The producer
+throttles and watched-gates publication, downsizes and JPEG-encodes once, and
+stores only the latest bytes. V2 updates its image URL only when the
+existing progress poll observes a new `live_seq`. This avoids putting image
+data in progress JSON and avoids a second swap/inference request for every
+frame.
+
+The workflow retains the existing target-frame fallback before the first live
+publication or when the backend disables live preview. It does not add a
+WebSocket, SSE stream, per-frame `/api/preview` loop, full-frame React state,
+or processing/hardware changes. The producer's actual cadence, JPEG size,
+memory bound, and render impact are measured in
+`PROCESSING_CONTRACT.md`; source comments and existing unit tests are not
+treated as fresh Stage 6A runtime measurements.
+
+## STAGE 6A LIVE PREVIEW - CURRENT IMPLEMENTATION
+
+The selected interface is implemented in the V2 creation preview:
+
+| Concern | V2 implementation | Status |
+|---|---|---|
+| Status source | Existing `useCreationWorkflow.js` progress poll reads `live_seq` without changing its cadence | **working; backend-backed** |
+| Frame URL | `api.js:56-60` `liveFrameUrl(seq)` creates `/api/live_frame?seq=...` | **working; sequence-keyed, no image JSON** |
+| Primary render | `CreateScreen.jsx:45-58` prefers the live URL over the manual preview still | **working at wiring level** |
+| Empty/error fallback | The `<img>` error handler marks the failed sequence and falls back to the existing preview/target frame | **working at source level; browser behavior unverified** |
+| Main-pipeline isolation | V2 sends no per-frame `/api/preview` calls while processing; the manual preview action is disabled during a run | **working at source level** |
+| Long-job usability | Progress, description, stop control, and the latest processed frame remain on the same screen | **working at wiring level** |
+
+Producer-side measurements from the Stage 6A run are recorded in
+`PROCESSING_CONTRACT.md`. The measured watched producer rate was 1.979 Hz;
+because V2 reuses the existing one-second progress poll, its visible live-frame
+update rate is expected to be approximately 1 Hz. The selected design avoids
+extra frame payloads and preserves the backend's existing throttle and idle
+gating.
+
+The following remain unverified: live browser image timing, end-to-end render
+throughput impact, full-render CPU/GPU/VRAM overhead, long-job memory impact,
+and physical RTX 4070/RTX 3060 processing runs. No V2 claim of those results is
+made from the producer benchmark.
+
+## STAGE 6B UNIFIED RUNTIME TELEMETRY — CURRENT IMPLEMENTATION
+
+V2 consumes the backend-owned structured runtime object returned as
+`GET /api/progress.runtime` (also directly available at
+`GET /api/runtime/state`). `useCreationWorkflow.js` stores this object as
+`workflow.runtime`; `CreateScreen.jsx` reads its status, frame progress, FPS,
+ETA, provider, precision, GPU, and VRAM values. The status/progress view uses
+the structured fields rather than parsing terminal log text.
+
+The object is produced by `app/roop/runtime_state.py:snapshot` from verified
+backend state and optional runtime observations. Its schema has one explicit
+location for `job`, `frame_progress`, `fps`, `eta_s`, `provider`, `model`,
+`precision`, `gpu`, `vram`, `cpu`, `memory`, `pool`, `workers`, `queue`,
+`profile`, `status`, `warnings`, and `errors`. Missing values are rendered as
+`UNKNOWN`, `NOT AVAILABLE`, or `NOT APPLICABLE`; no V2 fallback invents a
+numeric telemetry value.
+
+The existing terminal pinned status returned in the same progress response is
+derived from `runtime.status.message`. Its historical log tail and the V1 flat
+diagnostics endpoint remain compatibility surfaces and are not yet fully
+migrated. This keeps V1 launchable and makes the V2 boundary reversible.
+
+## STAGE 7A QUEUE - CURRENT IMPLEMENTATION
+
+V2 `CreateScreen.jsx` can enqueue the currently selected source, target, and
+verified settings payload. `useQueue.js` consumes `/api/queue` as the
+server-owned source of truth and calls the queue mutation routes. `QueuePanel`
+shows one-based order, target/source/model, canonical state, per-job progress,
+errors, and actions for start, pause/resume, stop, cancel, retry, remove, and
+reorder. It does not parse terminal text or expose unsupported checkpoint,
+update, cleanup, hardware selection, or batch-matrix recipe controls.
+
+The V2 queue is a serial job dispatcher around the existing backend single-run
+path. It therefore preserves job isolation and the existing per-job frame
+concurrency, but does not claim simultaneous independent render jobs.
+Browser interaction, live restart recovery, and physical hardware behavior for
+this new queue surface remain unverified.

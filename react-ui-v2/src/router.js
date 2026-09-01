@@ -2,14 +2,15 @@ import { useCallback, useEffect, useState } from 'react';
 
 export const ROUTES = Object.freeze([
   { id: 'home', label: 'Overview', path: '#/home', description: 'Foundation overview' },
-  { id: 'workspace', label: 'Workspace', path: '#/workspace', description: 'Future processing workspace' },
+  { id: 'create', label: 'Create', path: '#/create', description: 'Media-first creation workflow' },
   { id: 'settings', label: 'Settings', path: '#/settings', description: 'Appearance and foundation settings' },
 ]);
 
 const routeById = new Map(ROUTES.map((route) => [route.id, route]));
 
 function routeFromHash(hash) {
-  const id = (hash || '').replace(/^#\//, '').split('/')[0] || 'home';
+  const rawId = (hash || '').replace(/^#\//, '').split('/')[0] || 'home';
+  const id = rawId === 'workspace' ? 'create' : rawId;
   return routeById.get(id) || ROUTES[0];
 }
 

@@ -25,6 +25,7 @@ const fmtN = (n) => (n == null ? '' : Number(n).toLocaleString());
 
 export default function ProcessingTerminal({
   log = [], parts = [], statusLine = '', paused, className = '', bodyClass = 'h-40',
+  runtime = null,
 }) {
   const scrollRef = useRef(null);
   const bottomRef = useRef(null);
@@ -65,6 +66,7 @@ export default function ProcessingTerminal({
   const errorCount = useMemo(() => log.filter((l) => isError(l.msg)).length, [log]);
   const activePart = typeof tab === 'number' ? parts.find((p) => p.index === tab) : null;
   const lastShownSeq = shown.length ? shown[shown.length - 1].seq : null;
+  const authoritativeStatus = runtime?.status?.message || statusLine;
 
   useEffect(() => {
     const el = scrollRef.current;
@@ -188,7 +190,7 @@ export default function ProcessingTerminal({
       {/* Pinned status line — rewritten in place, never scrolled into history */}
       <div className="shrink-0 flex items-center gap-2 px-3 py-1.5 border-t border-white/10 bg-white/[0.03] text-mini">
         <span className="text-white/25">›</span>
-        <span className="truncate tabular-nums text-white/80">{statusLine || (paused ? 'paused' : 'idle')}</span>
+        <span className="truncate tabular-nums text-white/80">{authoritativeStatus || (paused ? 'paused' : 'idle')}</span>
         <span className="ml-auto inline-block h-3.5 w-2 shrink-0 bg-[var(--accent)]/80 animate-pulse" />
       </div>
     </div>

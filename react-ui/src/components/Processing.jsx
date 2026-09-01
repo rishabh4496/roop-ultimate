@@ -376,6 +376,7 @@ export default function Processing({ progress, settings, notify, setTab,
               log={progress.log || []}
               parts={progress.parts || []}
               statusLine={progress.status_line || progress.desc}
+              runtime={progress.runtime}
               paused={progress.paused}
               className="flex-1 min-h-0"
               bodyClass="h-full"
@@ -404,6 +405,7 @@ export default function Processing({ progress, settings, notify, setTab,
             log={progress.log || []}
             parts={progress.parts || []}
             statusLine={progress.status_line || ''}
+            runtime={progress.runtime}
             paused={false}
             className="min-h-[320px]"
             bodyClass="h-[320px]"
