@@ -1,7 +1,7 @@
 # Roop Ultimate Development Master Plan
 
-Audit date: 2026-09-01  
-Repository HEAD before Stage 5A changes: `5ced7898faa98c2f2b6121258883923ad624d00e`
+Audit date: 2026-09-02
+Repository HEAD at Stage 9A audit start: `459dd4082e60ae1b153b2e65c393eb8a2d6d9198`
 
 ## Status vocabulary
 
@@ -13,10 +13,10 @@ Repository HEAD before Stage 5A changes: `5ced7898faa98c2f2b6121258883923ad624d0
 
 ## CURRENT IMPLEMENTATION
 
-The active gate for this session is Stage 8B: persist project checkpoints so a
-paused or interrupted render can be validated and safely continued after an
-application restart. Stage 8A implemented the process-local safe-point
-protocol used by this gate.
+The active gate for this session is Stage 9C: establish a reversible,
+health-validated source update transaction using only the verified Stage 9B
+candidate boundary. Stage 8B provides the persistent project/checkpoint
+boundary that updates must preserve.
 
 Stage 6B exposed one backend-owned
 structured runtime telemetry state to the React UI and terminal without
@@ -51,6 +51,9 @@ winners.
 | Stage 7A - Batch processing 2.0 | Canonical queue lifecycle, persistence migration, job isolation, cancellation, and V2 queue surface implemented; live browser/restart and physical GPU validation remain unverified |
 | Stage 8A - True pause / resume | Controller-backed safe-point implementation and automated coverage added; physical GPU, browser, crash-recovery, and output-playback validation remain open |
 | Stage 8B - Persistent resumable projects | Durable input/settings/runtime/output checkpoint records, safe segment commits, restart validation, and V2 project controls implemented; shutdown, physical GPU, browser, and full output-integrity validation remain open |
+| Stage 9A - Update System Audit | Existing update paths classified with source evidence; minimum safe manifest/snapshot/staged-activation/rollback architecture proposed; no update behavior changed |
+| Stage 9B - Compatibility-aware updates | Implemented as a manifest-gated, source-only fast-forward checker |
+| Stage 9C - Update rollback / health validation | Implemented for source/config snapshots, detached staging, launch/runtime health checks, and rollback where the recorded identities remain valid; full environment/model/data rollback remains outside this boundary |
 | Next UI2 design or migration gate | Not defined in the repository; scope requires explicit authorization |
 | Visual validation / retained-output review | Open and not yet complete |
 | Phase 16 final production quality gate | Open/incomplete |
@@ -64,6 +67,9 @@ winners.
 4. Resolve documented output-recovery/colorspace risks through an authorized gate.
 5. Close the final quality gate with complete rows, retained outputs, and
    separate hardware evidence.
+6. Complete the later staged-generation, snapshot, and rollback gate without
+  automatically upgrading CUDA, ONNX Runtime, TensorRT, Python, FFmpeg,
+  NVIDIA drivers, or other critical components.
 
 ## UNVERIFIED / UNKNOWN
 
@@ -73,6 +79,10 @@ winners.
 - No evidence establishes production acceptance on non-NVIDIA providers despite
   launcher branches for them.
 - No future UI 2.0 removal or migration date is recorded.
+- The current update admission is manifest-gated and source-only. Stage 9C
+  does not snapshot or restore the Python environment, models, TensorRT
+  caches, queue/projects, or output media; candidate changes to those critical
+  areas remain review-only.
 
 ## Source basis
 

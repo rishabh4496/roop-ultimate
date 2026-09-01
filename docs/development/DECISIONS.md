@@ -67,3 +67,29 @@ boundary. Resume is always explicit and validation-gated; recovered projects
 are never auto-started after an application restart. This preserves the
 existing serial queue and processing/model/provider ownership, including the
 RTX 4070 and RTX 3060 hardware policies.
+
+## Stage 9B decision
+
+Update admission is manifest-gated and compatibility-first. The candidate
+identity is the exact fetched Git commit, and `SAFE` requires explicit
+platform, Python, provider availability, runtime (including CUDA), checkpoint
+contract, both mandatory GPU profiles and compute architectures, application
+requirements, model policy, sensitive-file hashes, clean/idle state, and
+fast-forward ancestry. Dependency, model, application-requirement, and
+critical-runtime changes are review-only; the Pinokio Update action performs
+no automatic installer or model operation. This preserves the existing
+processing environment and both GPU policies while leaving staged-generation,
+snapshot, and rollback work for a later gate.
+
+## Stage 9C decision
+
+The reversible update boundary is a source-only transaction: a Git backup ref
+and atomic ignored-config copy are the valid local snapshot, a detached Git
+worktree is the staging generation, and application health is evaluated in a
+child process before and after activation. Health uses the real launcher and
+actual provider/model/inference paths, and failed activation rolls back the
+tracked source/configuration only when their recorded identities remain safe.
+Python environments, model artifacts, TensorRT caches, queues/projects, and
+outputs are not copied or silently changed; candidates declaring changes to
+those areas remain review-only. This keeps rollback honest and preserves both
+the RTX 4070 and RTX 3060 provider/memory policies.

@@ -6,7 +6,18 @@
 
 `pinokio.js` is the dynamic menu. It detects `app/env`, selects the running React or legacy start script, and exposes install, update, clean, TensorRT repair, link, and reset actions. `start_react.js` uses Pinokio-selected ports, starts `python run.py` from `app`, starts Vite from `react-ui`, binds services to loopback, and sets the displayed URL through the captured shell event (`input.event[1]`).
 
-`install.js` creates/uses the `app/env` virtual environment, installs `app/requirements.txt` with `uv`, installs React dependencies with `npm`, invokes `torch.js`, and installs SAM2-related packages. `update.js` runs `git pull`, reinstalls Python requirements, and runs `npm install`. `reset.js` removes `app/env` and `react-ui/node_modules`. `clean.js` delegates selectable cleanup to `cleanup.py`; its documented scope excludes models, environment, facesets, and output.
+`install.js` creates/uses the `app/env` virtual environment, installs `app/requirements.txt` with `uv`, installs React dependencies with `npm`, invokes `torch.js`, and installs SAM2-related packages. `update.js` now invokes `app/update_manager.py`, which requires an exact-commit compatibility manifest and only permits a source-only fast-forward. It does not reinstall Python/Node dependencies or invoke critical-runtime/model installers. `reset.js` removes `app/env` and `react-ui/node_modules`. `clean.js` delegates selectable cleanup to `cleanup.py`; its documented scope excludes models, environment, facesets, and output.
+
+Stage 9A audited these paths in `UPDATE_AUDIT.md`. Stage 9B added immutable
+manifest admission; Stage 9C adds a source-only transaction around the
+existing fast-forward. `app/update_manager.py` first health-checks the prior
+installation, records an atomic transaction and a Git backup ref, copies the
+ignored `app/config.yaml`, validates a detached candidate worktree, activates
+only with `git merge --ff-only`, and then runs post-update health checks.
+Failure captures health/process diagnostics and attempts to restore the prior
+commit and copied configuration, followed by another health check. No
+dependency, model, CUDA, ONNX Runtime, TensorRT, Python, FFmpeg, driver, or
+other critical-runtime installer is invoked.
 
 ### Dependency definitions
 
@@ -31,6 +42,13 @@ Provide reproducible lock data for all runtime dependencies, version the environ
 - No Python lockfile or complete cross-platform dependency lock was found.
 - The installed environment is local state and may differ from a fresh `install.js` run.
 - AMD/DirectML/CoreML installation branches were not physically validated in this audit.
+- No complete Python lock or content-addressed model artifact backup exists.
+  The implemented snapshot is intentionally limited to the tracked Git
+  generation, a backup ref, runtime identity, and ignored configuration.
+  Environments, models, outputs, queue/projects, and TensorRT caches are not
+  copied; active work is update-blocking. A candidate requiring critical
+  dependency/runtime/model changes remains review-only and cannot be staged
+  by this updater.
 
 ## Source basis
 

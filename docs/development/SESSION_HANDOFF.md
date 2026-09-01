@@ -506,3 +506,265 @@ where available.
 DO NOT TOUCH NEXT SESSION: React UI 1.0, launcher scripts, models, caches,
 facesets, outputs, and unrelated visual/processing policy unless the Stage 8B
 validation reveals a blocking defect.
+
+## STAGE 9A HANDOFF — UPDATE SYSTEM AUDIT
+
+### CURRENT STATE
+
+Stage 9A is complete as an audit/design-only gate. `update.js` currently runs a
+root `git pull`, an in-place Python requirements install in `app/env`, and
+`npm install` only for React UI 1.0. The audit is recorded in
+`docs/development/UPDATE_AUDIT.md` with exact source, log, Pinokio example, and
+`PINOKIO.md` evidence.
+
+The current system has no safe update transaction: there is no update manifest,
+preflight lock, coordinated snapshot, staged source/environment generation,
+artifact manifest, compatibility admission, or rollback operation. Existing
+atomic model-download and project-checkpoint mechanisms are narrower safeguards,
+not update rollback or complete model identity.
+
+### COMPLETED
+
+- Audited application and launcher source update paths and their GitHub remote.
+- Audited Python/Node dependency installation, critical runtime installation,
+  sidecar installation, and model download paths.
+- Audited version tracking, integrity checks, compatibility checks, rollback,
+  and backup/snapshot behavior.
+- Proposed the minimum manifest-gated, snapshot-backed, staged, verifiable,
+  rollback-capable architecture.
+- Preserved the RTX 4070 and RTX 3060 hardware requirements and the prohibition
+  on automatic critical-runtime upgrades.
+
+### VERIFIED
+
+- Branch `main`, HEAD `459dd4082e60ae1b153b2e65c393eb8a2d6d9198`, and clean tree
+  were inspected at audit start.
+- `logs/api/update.js/latest` records a successful React UI 1.0 `npm install`;
+  historical update logs record the root fast-forward and Python/Node steps.
+- `G:\pinokio\prototype\system\examples\comfy\update.js` and relevant
+  `PINOKIO.md` update/menu/shell sections were inspected.
+- No application or launcher update was executed by this gate.
+
+### NOT VERIFIED
+
+- No safe update implementation exists or was tested.
+- No actual shutdown/restart update recovery was run.
+- No physical RTX 4070 or RTX 3060 update validation was run.
+- No complete Python environment lock, source signature, model artifact
+  manifest, staged generation, or rollback transaction currently exists.
+
+### KNOWN ISSUES
+
+- Current `update.js` can leave source and environment changes partially applied
+  if a later step fails; it also has no active-job admission check.
+- Most model downloads use mutable upstream paths and existence-only reuse; the
+  KEEP sidecar checkpoint has no checksum validation.
+- Stage 8B project validation records model configuration identity, but not a
+  digest for every downloaded model artifact.
+
+### FILES CHANGED
+
+- `docs/development/UPDATE_AUDIT.md`
+- `docs/development/MASTER_PLAN.md`
+- `docs/development/CURRENT_STATE.md`
+- `docs/development/SESSION_HANDOFF.md`
+- `docs/development/KNOWN_ISSUES.md`
+- `docs/development/ENVIRONMENT_CONTRACT.md`
+
+No application, launcher, model, cache, output, faceset, or generated
+environment file was changed.
+
+### TESTS RUN
+
+No runtime or update tests were run; this gate produced documentation only.
+Repository inspection commands and log review were completed. No test pass is
+claimed for an update implementation.
+
+### COMMIT
+
+No commit made in this gate.
+
+### NEXT GATE
+
+Stage 9B — Safe Update Implementation, only after explicit authorization.
+
+### DO NOT TOUCH NEXT SESSION
+
+Do not implement a moving-branch or in-place update as a shortcut. Do not
+automatically upgrade CUDA, ONNX Runtime, TensorRT, Python, FFmpeg, NVIDIA
+drivers, or other critical components. Preserve React UI 1.0, React UI 2.0,
+processing/model/provider policy, project checkpoint compatibility, models,
+caches, outputs, facesets, and the current launcher behavior until Stage 9B
+defines and verifies the staged update boundary.
+
+## STAGE 9B HANDOFF - COMPATIBILITY-AWARE UPDATES
+
+### CURRENT STATE
+
+Stage 9B implements compatibility admission in `app/update_manager.py` and
+routes Pinokio Update through it in `update.js`. The updater discovers an exact
+remote commit, requires a candidate `update_manifest.json`, collects local
+runtime/provider/GPU/checkpoint/work-state evidence, and classifies the
+candidate as `SAFE`, `REQUIRES REVIEW`, `UNVERIFIED`, or `INCOMPATIBLE`.
+
+### COMPLETED
+
+- Added explicit checks for application commit identity, Python, CUDA, Torch,
+  ONNX Runtime, TensorRT, execution-provider availability, both required GPU
+  profiles, both recorded compute architectures, application/checkpoint
+  contract, application requirements policy, model policy, sensitive file
+  hashes, dirty state, active processing state, and fast-forward ancestry.
+- Restricted automatic activation to a manifest-gated source-only
+  fast-forward. Dependency, model, and critical-runtime changes are review-only.
+- Added `UPDATE_CONTRACT.md` and synchronized the project state, audit,
+  environment contract, decisions, validation matrix, and known issues.
+
+### VERIFIED
+
+- `python -m unittest app.tests.test_update_manager -v` -> 13 passed.
+- `app/env/Scripts/python.exe -m unittest app.tests.test_update_manager -v` ->
+  13 passed.
+- `node --check update.js` passed.
+- The app-environment `check --json` observed the current RTX 4070 runtime and
+  found that origin matched HEAD, so no candidate was installed.
+- The app-environment `apply` command exited 0 for the same no-newer-commit
+  no-op and performed no installer or model operation.
+
+### NOT VERIFIED
+
+- No candidate manifest/update activation was available or executed.
+- No physical RTX 3060 run, staged environment, model update, snapshot,
+  rollback, shutdown recovery, or post-update application health check was run.
+- Repository evidence does not prove physical compatibility merely from a
+  manifest declaration.
+
+### KNOWN ISSUES
+
+- The updater still lacks the staged-generation, environment/model snapshot,
+  retained-generation rollback, and post-activation health architecture
+  proposed in Stage 9A.
+- The current branch has no committed update manifest candidate, so any future
+  candidate without one is intentionally `UNVERIFIED`.
+
+### FILES CHANGED
+
+- `README.md`
+- `update.js`
+- `app/update_manager.py`
+- `app/tests/test_update_manager.py`
+- `docs/development/UPDATE_CONTRACT.md`
+- `docs/development/UPDATE_AUDIT.md`
+- `docs/development/MASTER_PLAN.md`
+- `docs/development/CURRENT_STATE.md`
+- `docs/development/SESSION_HANDOFF.md`
+- `docs/development/KNOWN_ISSUES.md`
+- `docs/development/ENVIRONMENT_CONTRACT.md`
+- `docs/development/VALIDATION_MATRIX.md`
+- `docs/development/DECISIONS.md`
+
+### TESTS RUN
+
+See `VALIDATION_MATRIX.md`; all Stage 9B focused checks listed above passed.
+
+### COMMIT
+
+No commit made in this session.
+
+### NEXT GATE
+
+Stage 9C - staged update generations, coordinated snapshots, verification,
+retention, and explicit rollback, after explicit authorization.
+
+### DO NOT TOUCH NEXT SESSION
+
+Do not silently install dependency, model, CUDA, ONNX Runtime, TensorRT,
+Python, FFmpeg, driver, or other critical-runtime updates. Do not remove
+React UI 1.0. Preserve project checkpoints, models, caches, outputs, facesets,
+the two hardware policies, and the source-only compatibility boundary until
+Stage 9C is explicitly authorized.
+
+# Stage 9C Session Handoff
+
+Date: 2026-09-02
+Scope: update rollback and runtime health validation
+Behavior changes: source-only updater transaction and read-only health mode
+
+## CURRENT STATE
+
+- Active gate is Stage 9C. The updater remains manifest-gated and source-only;
+  dependency, model, and critical-runtime changes are review-only.
+- `app/update_manager.py` now records a durable transaction, creates a Git
+  backup ref and atomic ignored-config snapshot, stages candidates in a
+  detached worktree, validates before activation, and health-checks after
+  activation. Failure attempts source/config rollback and re-health-checks it.
+- `app/update_health.py` validates Python and both React dependency trees,
+  configuration, provider/GPU admission, configured local model sessions,
+  finite inference, and the real launcher loopback API.
+  `ROOP_UPDATE_HEALTH=1` prevents startup prewarm downloads during that launch
+  probe.
+
+## COMPLETED
+
+- Implemented atomic snapshot metadata/config writes and ignored transaction
+  paths.
+- Implemented detached source staging, compile/pre-health checks, post-health
+  validation, diagnostics, rollback state, and false-success prevention.
+- Added focused tests and updated the environment/update contracts and gate
+  records.
+
+## VERIFIED
+
+- `app/env/Scripts/python.exe -m unittest app.tests.test_update_manager app.tests.test_update_health -v`: **19 passed**.
+- Full repository regression: **1,733 passed, one skipped**.
+- Real full health worker on the physical RTX 4070 passed: 17 direct
+  dependencies, TensorRT/CUDA/CPU provider chain, CUDA device/SM 8.9, the
+  configured RealSwap/HifiFace sessions, finite inference, real `run.py`, and
+  HTTP 200 `/api/meta`.
+- `node --check update.js`, Python compilation, and `git diff --check` passed.
+- The existing installed app environment and critical runtime were not
+  upgraded; no model/download/install update ran.
+
+## NOT VERIFIED
+
+- Remote branch matched HEAD; no real candidate was available. Detached staging,
+  post-update failure, and rollback were unit-covered but not exercised by a
+  real remote activation.
+- No physical RTX 3060 health/update run was possible.
+- Environment/model/cache/output/queue/project rollback is not implemented;
+  the snapshot explicitly excludes those artifacts.
+
+## KNOWN ISSUES
+
+- The health smoke validates one finite synthetic inference for configured
+  models; it is not visual-quality or full-video acceptance.
+- Existing FFmpeg encoder availability warnings remain in the launch log and
+  are reported by the health probe; they did not fail `/api/meta` health.
+- A future broader update system still needs digest-verified model artifacts
+  and a separately staged environment if critical dependencies are ever put in
+  scope.
+
+## FILES CHANGED
+
+See `CURRENT_STATE.md`; the implementation files are `app/update_manager.py`,
+`app/update_health.py`, `app/roop/core.py`, the two focused test modules,
+`.gitignore`, and the synchronized update/project documents.
+
+## TESTS RUN
+
+See `VALIDATION_MATRIX.md` for the focused suite, real health commands,
+launcher syntax, compilation, and diff checks.
+
+## COMMIT
+
+No commit made in this session.
+
+## NEXT GATE
+
+Run a real candidate transaction in an isolated known-good clone and collect
+physical RTX 3060 health evidence before considering any broader update scope.
+
+## DO NOT TOUCH NEXT SESSION
+
+Do not install critical runtime/dependency/model updates, remove React UI 1.0,
+or claim real candidate activation, rollback, or RTX 3060 validation without
+actually running them.

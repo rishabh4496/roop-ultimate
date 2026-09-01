@@ -54,6 +54,28 @@ cd ../app && python run.py
 interface. The legacy Gradio interface is still present under `app/ui/` and can
 be started with `start_legacy.js`, but it is frozen and receives no new work.
 
+## Updates
+
+Pinokio's **Update** action runs a compatibility check before changing source.
+A candidate must provide an exact-commit `update_manifest.json` declaring
+compatible Python, CUDA/Torch, ONNX Runtime/TensorRT, execution provider,
+checkpoint contract, model/application policy, and both supported GPU profiles
+(RTX 4070 12 GB and RTX 3060 Laptop 6 GB). Missing evidence is reported as
+`UNVERIFIED`; mismatches are `INCOMPATIBLE`; dependency, model, and critical
+runtime changes are `REQUIRES REVIEW`.
+
+Only an explicitly manifest-gated source-only fast-forward is currently
+applied. Before activation the updater records a Git/config snapshot, checks a
+detached candidate worktree, and validates dependencies, provider/GPU/model
+initialization, finite inference, and the real application loopback launch.
+Post-update health must pass; otherwise diagnostics are captured and source/
+configuration rollback is attempted. The Update action does not silently
+reinstall Python/Node dependencies, change CUDA, ONNX Runtime, TensorRT,
+Python, FFmpeg, drivers, or replace models. Its snapshot does not copy the
+environment, models, queue/projects, caches, or output media. The full contract
+and current limitations are documented in
+[`docs/development/UPDATE_CONTRACT.md`](docs/development/UPDATE_CONTRACT.md).
+
 ## Layout
 
 ```

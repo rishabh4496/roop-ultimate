@@ -8,10 +8,10 @@ status; it is not authorization to change application behavior.
 | Item | Verified value |
 |---|---|
 | Branch | `main` tracking `origin/main` |
-| HEAD before Stage 5A changes | `5ced7898faa98c2f2b6121258883923ad624d00e` |
-| Working tree at Stage 8B closeout | Implementation and documentation are committed and pushed; React UI 1.0, launcher files, and hardware policies are unchanged |
-| Active stage/gate | Stage 8B - Persistent resumable projects |
-| Last completed gate | Stage 8A - True pause / resume implementation; browser, restart, and physical GPU validation remain incomplete |
+| HEAD at Stage 9A audit start | `459dd4082e60ae1b153b2e65c393eb8a2d6d9198` |
+| Working tree at Stage 9A audit start | Clean; Stage 8B implementation and handoff documentation are committed and pushed; no Stage 9A code or launcher changes made |
+| Active stage/gate | Stage 9C - Update rollback / health validation |
+| Last completed gate | Stage 9B - Compatibility-aware updates; the Stage 9C transaction is implemented in this session |
 | Existing application behavior changed in Stage 8A | Processing pause now requests and acknowledges a controller-owned safe point; queue/API telemetry and both React surfaces expose the transient request and acknowledged pause |
 
 ## CURRENT IMPLEMENTATION
@@ -365,3 +365,157 @@ Focused tests cover checkpoint creation, reload, validation, atomic-write
 cleanup, changed-input rejection, and final output hash integrity. They do not
 prove a real OS shutdown, physical GPU resume, browser interaction, or a full
 ffmpeg render across a restart.
+
+## STAGE 9A - UPDATE SYSTEM AUDIT
+
+`docs/development/UPDATE_AUDIT.md` records the evidence-based audit of the
+current update paths. The root `update.js` performs an in-place root `git pull`,
+Python requirement installation into the existing `app/env`, and React UI 1.0
+`npm install`. No update preflight, snapshot, staged generation, artifact
+manifest, compatibility admission, or rollback path exists.
+
+The audit classifies source/dependency/environment mutation as unsafe or partial,
+depending on the protection that exists. Main model downloads use a temporary
+file and rename but generally lack digests; CLIP has a URL-embedded SHA-256 check;
+the KEEP sidecar checkpoint has no digest check. These are model-loading controls,
+not a complete model update system.
+
+The minimum proposed architecture is an immutable release manifest, idle/update
+preflight, atomic snapshot, staged source and environment, verification before
+activation, retained previous generation, explicit rollback, and a separate
+digest-verified model update flow. No application, dependency, model, CUDA,
+ONNX Runtime, TensorRT, Python, FFmpeg, driver, launcher, or UI behavior changed
+in Stage 9A.
+
+### STAGE 9A VERIFICATION
+
+- Repository state, recent history, remotes, tracked/generated paths, and update
+  logs were inspected.
+- `update.js`, `install.js`, `reset.js`, `torch.js`, `fix_tensorrt.js`, model
+  loaders, version/compatibility code, and checkpoint code were inspected with
+  line-level evidence recorded in `UPDATE_AUDIT.md`.
+- The closest matching Pinokio application update example was inspected at
+  `G:\pinokio\prototype\system\examples\comfy\update.js`; relevant
+  `PINOKIO.md` update/menu/shell sections were inspected.
+- No update or runtime tests were run because this gate changes documentation
+  only; no test result is claimed as a Stage 9A implementation result.
+
+### STAGE 9A NOT VERIFIED
+
+- No staged update implementation exists yet.
+- No release manifest, environment snapshot, rollback transaction, or model
+  artifact manifest exists yet.
+- No shutdown/restart or physical RTX 4070/RTX 3060 update validation was run.
+
+## STAGE 9B - COMPATIBILITY-AWARE UPDATES
+
+`app/update_manager.py` now collects the current Git/application identity,
+Python version, installed Torch/ONNX Runtime/TensorRT/CUDA/FFmpeg versions,
+configured and available execution providers, NVIDIA GPU profile and compute
+capability, sensitive dependency-file hashes, and persisted active-work state.
+It compares that evidence with an exact-commit `update_manifest.json` from the
+remote candidate and classifies it as `SAFE`, `REQUIRES REVIEW`,
+`UNVERIFIED`, or `INCOMPATIBLE`. `update.js` invokes this checker in the
+existing Pinokio app environment.
+
+Only a manifest-gated source-only fast-forward is currently applied. Critical
+runtime, dependency, model, application-requirement, dirty-checkout, and
+active-work conditions prevent unattended activation. No dependency, model,
+CUDA, ONNX Runtime, TensorRT, Python, FFmpeg, driver, or torch installation is
+performed by the update path.
+
+### STAGE 9B VERIFICATION
+
+- Focused updater tests pass under system Python and the application Pinokio
+  environment; `node --check update.js` passes.
+- The application environment updater check ran on the current RTX 4070 host
+  and observed Python 3.10.20, PyTorch 2.7.0+cu128, CUDA 12.8, ONNX Runtime
+  1.23.2 with TensorRT/CUDA/CPU providers, TensorRT 10.9.0.34, and FFmpeg
+  8.1.2. The remote branch matched the current commit, so no update was
+  available or installed.
+- The application environment `app/update_manager.py apply` command also
+  completed with exit code 0 as the same no-op; no installer or model operation
+  ran.
+- No physical RTX 3060 updater run, candidate update activation, shutdown
+  recovery, staged environment, model update, or rollback was tested.
+
+### STAGE 9B LIMITATIONS
+
+- The current repository has no committed `update_manifest.json` candidate;
+  future candidates without one are intentionally `UNVERIFIED`.
+- The implementation does not yet provide staged second-generation
+  environments, coordinated snapshots, artifact manifests, or supported
+  rollback. Those are outside this gate and remain required before broad
+  unattended updates.
+
+## STAGE 9C - UPDATE ROLLBACK / HEALTH VALIDATION
+
+`app/update_manager.py` now wraps the manifest-gated source fast-forward in a
+reversible transaction. It performs a read-only health check of the current
+generation, records an atomic transaction and timestamped Git backup ref,
+copies the ignored `app/config.yaml`, validates a detached candidate worktree,
+and activates only after staged checks pass. Post-activation health must pass
+before success is reported. Health validation uses the actual installed direct
+dependencies, config, provider resolver, CUDA device when required, selected
+local model sessions, finite inference, and the real `app/run.py` loopback API
+launch. Failed activation captures diagnostics and attempts source/config
+rollback, then health-checks the restored generation.
+
+### VERIFIED
+
+- 19 focused updater/health unit tests passed in `app/env`.
+- Full repository regression from `app/env` passed: 1,733 tests, one skipped.
+- The real full health worker passed on the physical RTX 4070 host, including
+  HTTP 200 from `/api/meta`, provider/model initialization, and finite model
+  inference.
+- `node --check update.js`, Python compilation, and `git diff --check` passed.
+- No dependency, model, CUDA, ONNX Runtime, TensorRT, Python, FFmpeg, driver,
+  or other critical-runtime update was installed.
+
+### NOT VERIFIED
+
+- The configured remote matched HEAD, so no real candidate was available for
+  detached staging, post-update failure, or rollback execution.
+- No physical RTX 3060 health/update run was possible.
+- The source-only snapshot does not prove rollback of an environment, model,
+  TensorRT cache, output, queue, or project artifact.
+
+### KNOWN ISSUES
+
+- Active processing/project state remains admission-blocking.
+- Critical runtime/dependency/model changes remain review-only and are not
+  staged or installed by this updater.
+- The smoke is a narrow configured-model finite-inference check, not visual or
+  full-video acceptance.
+
+### FILES CHANGED
+
+- `app/update_health.py`
+- `app/update_manager.py`
+- `app/roop/core.py`
+- `app/tests/test_update_health.py`
+- `app/tests/test_update_manager.py`
+- `.gitignore`
+- `README.md`
+- `docs/development/ENVIRONMENT_CONTRACT.md`
+- `docs/development/UPDATE_CONTRACT.md`
+- `docs/development/UPDATE_AUDIT.md`
+- `docs/development/MASTER_PLAN.md`
+- `docs/development/CURRENT_STATE.md`
+- `docs/development/SESSION_HANDOFF.md`
+- `docs/development/KNOWN_ISSUES.md`
+- `docs/development/VALIDATION_MATRIX.md`
+- `docs/development/DECISIONS.md`
+
+### NEXT GATE
+
+No automatic critical-runtime update gate is authorized. The next required
+work is a real candidate transaction test on an isolated/known-good clone and
+physical RTX 3060 health evidence before any broader update scope.
+
+### DO NOT TOUCH NEXT SESSION
+
+Do not install or upgrade Python, CUDA, ONNX Runtime, TensorRT, FFmpeg,
+drivers, models, or the environment. Do not remove React UI 1.0. Do not claim
+full environment/model/output rollback, physical RTX 3060 validation, or real
+candidate activation from this session.

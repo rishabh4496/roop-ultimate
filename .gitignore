@@ -51,6 +51,11 @@ app/facesets/
 /facesets/
 # Root-level benchmark/render outputs (generated, machine-local)
 /output/
+
+# Compatibility-gated updater transaction metadata and temporary worktrees
+/.update-snapshots/
+/.update-staging/
+/.update-transaction.json
 # KEEP sidecar local state (venv, cloned repo, weights)
 app/sidecar_keep/.venv/
 app/sidecar_keep/KEEP/

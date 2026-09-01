@@ -61,6 +61,43 @@ wait for an in-flight inference or encoder operation; frames not committed at a
 safe writer boundary are recomputed. Legacy segment manifests without the
 newer writer-options identity are conservatively not trusted for continuation.
 20. **Stage 8B model identity is configuration identity.** The project records
-the selected model/provider/precision and hardware assumptions, but does not
-yet hash every downloaded model artifact. A replaced artifact with unchanged
-configuration may therefore require a future model-manifest gate.
+   the selected model/provider/precision and hardware assumptions, but does not
+   yet hash every downloaded model artifact. A replaced artifact with unchanged
+   configuration may therefore require a future model-manifest gate.
+21. **Stage 9A update paths are not transactional.** `update.js` mutates the
+    tracked checkout and existing environment in place, has no active-job
+    admission check or snapshot, and has no supported rollback. A later install
+    failure can leave source and dependencies at different generations.
+22. **Stage 9A model update identity is incomplete.** Most model URLs are
+    mutable upstream paths and existing files are generally trusted by name;
+    the KEEP sidecar checkpoint has no checksum validation. The proposed model
+    manifest and digest gate are not implemented.
+
+23. **Stage 9B has no current update candidate manifest.** The updater requires
+    a candidate `update_manifest.json` at the exact fetched commit; the
+    current branch has no newer candidate, and a future candidate without that
+    manifest is intentionally `UNVERIFIED`.
+24. **Stage 9B applies only source fast-forwards.** Dependency, model,
+    application-requirement, and critical-runtime changes require review and
+    are not installed by `update.js`; staged environments, coordinated
+    snapshots, and supported rollback remain future work.
+25. **Stage 9B hardware verification is host-limited.** The compatibility
+    checker observed the RTX 4070 host, but no physical RTX 3060 updater run or
+    candidate activation was performed. Manifest admission is not physical
+    acceptance evidence.
+
+26. **Stage 9C rollback is source/configuration-only.** The updater snapshots a
+    Git backup ref and ignored `app/config.yaml`, but does not duplicate the
+    Python environment, model files, TensorRT caches, outputs, queue, or
+    projects. Candidate changes to dependencies, models, or critical runtimes
+    remain review-only, and a missing/replaced artifact is not restored by this
+    rollback path.
+27. **Stage 9C candidate activation is unexercised.** The remote branch matched
+    HEAD during this session, so detached candidate staging, post-update
+    failure injection, and rollback were covered by unit tests but not by a
+    real remote update transaction. No physical RTX 3060 health/update run was
+    performed.
+28. **The health smoke is intentionally narrow.** It loads the configured
+    swapper sessions and performs one finite synthetic inference per model; it
+    does not prove visual quality, a full video render, or acceptance of every
+    optional model/provider/precision combination.

@@ -406,12 +406,16 @@ def pre_check() -> bool:
         update_status('Python version is not supported - please upgrade to 3.9 or higher.')
         return False
     
+    # A health probe must be read-only: it validates the installed local model
+    # set and must not turn application startup into a download operation.
+    if os.environ.get('ROOP_UPDATE_HEALTH') == '1':
+        print('Health validation mode: skipping model pre-download.', flush=True)
     # Pre-warm the model cache while online. Offline (auto-detected), we skip
     # this entirely and fall back to whatever is already on disk — the app still
     # boots, and a missing model is only reported when its feature is actually
     # used. required=False so even a single failed download online (host down,
     # transient error) warns instead of aborting startup.
-    if util.is_online():
+    elif util.is_online():
         _pre_warm = [
             ('../models', [
                 'https://huggingface.co/countfloyd/deepfake/resolve/main/inswapper_128.onnx',
