@@ -667,6 +667,64 @@ project already characterises as intake rather than gating -- a track whose
 best frames never entered the source bank binds to nothing, and the fix lives
 upstream in capture, not in the assignment threshold.
 
+## Phase 12 - eyes, blinking and expression (4070)
+
+`tests/expression_tracking.py`, `3d model/Flexpressions.mp4`, 60 frames, stride
+4, production stack. Eye and mouth aperture are measured as scale-free ratios
+(EAR/MAR) from 68-point landmarks on the PLATE and on the SWAPPED output, then
+correlated across the clip.
+
+| channel | Pearson r | target range | output range | amplitude kept |
+|---|---:|---:|---:|---:|
+| eyes (EAR) | **0.964** | 0.0737 | 0.0752 | **102%** |
+| mouth (MAR) | **0.984** | 0.2537 | 0.2182 | **86%** |
+
+60 of 60 frames usable. **PASS.** The target drives eye state and mouth; the
+source does not.
+
+Amplitude is reported beside r because it is the half that catches a damped
+blink: an output that reduces every blink to a tenth of its depth still
+correlates at 0.95 and looks obviously wrong. Neither channel is damped here.
+
+Measured on the per-frame `live_swap` path, so no tracker and no temporal
+smoothing -- the stricter version of the question. Not covered: wink asymmetry,
+eyes fully closed for a sustained run, and teeth visibility.
+
+## Phase 13 - identity detail, now that it can actually run (4070)
+
+`tests/build_faceset_v2.py` built V2 archives from the locked V1 sources with
+real detection: `version=2, sources=5, identity_detail_ok=5,
+migrated_without_detection=False` for both `harjot_v2` and `gargee_v2`.
+
+That closes the "can it even run" half of D4070.2, in both directions:
+
+| arm | `identity_detail` stage | V1 warning |
+|---|---|---|
+| V2 sources, strength 0 | absent, correctly | none |
+| V2 sources, strength 0.35 | **60 calls, 18.77 ms/face, 2.0% of thread time** | none |
+| V1 sources, strength 0.35 | absent | **one message, naming the format** |
+
+So the feature executes on V2, is correctly inert at 0, and the reporter added
+by this campaign does not false-positive on a working archive.
+
+**Its effect on identity is NOT resolvable, and the null control is what says
+so.** Paired over 60 faces on the locked fixture:
+
+    strength 0 vs 0.35     mean +0.00074   median +0.00205   better on 61.7%
+    strength 0 vs 0 (NULL) mean +0.00127   median +0.00195   better on 60.0%
+
+The null moves further than the treatment. A 61.7% win rate looked like a
+result until the same comparison against an unchanged configuration produced
+60.0%.
+
+**This is not evidence the feature does nothing.** ArcFace embeddings are
+largely invariant to the high-frequency skin markings identity detail restores
+-- moles, freckles, fine texture -- so the identity cosine is the wrong
+instrument, and it was used here only to establish that it cannot decide the
+question. Whether the feature improves perceived detail needs the retained-
+output visual review its own handoff already asks for. What is now known: it
+runs, and it costs 18.77 ms per face.
+
 ## Defects found and fixed in the 4070 campaign
 
 | # | defect | why it mattered | evidence | status |
@@ -710,6 +768,10 @@ being implemented and reverted. Re-tuning without it would be the fifth.
 
 | item | why |
 |---|---|
+| **real-occluder validation** | Phase 10 is measured on a composited object; hands, glasses, microphones and hair need footage this machine does not have |
+| **real night / mixed-light footage** | Phase 14 is measured on a synthetic exposure ladder; no clip here has a dark median |
+| **FP16 / FP32 / mixed precision arms** | exercisable on this card, unlike the 3060, but each precision is a separate TensorRT cache namespace and needs a dedicated cold engine-build budget |
+| Phase 4 tracking, Phase 7 pose, Phase 17/18 compound scenarios | material identified by the fixture survey; not run |
 | 12 settings with no UI | `identity_detail_strength`, `temporal_compositing_*` (7) and `temporal_quality_*` (4) are in `settings.py` and `api.py` but in no React control, so they are reachable only by editing `config.yaml` |
 | whether Adaptive's cuts should move | needs a quality comparison on real footage, not a distribution |
 | foreign-object occlusion, expression/blink, night scenes, compound scenarios A-H | not run in this campaign |
