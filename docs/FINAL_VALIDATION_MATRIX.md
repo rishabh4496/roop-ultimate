@@ -392,6 +392,198 @@ The fps column is a 30-frame window and includes model init; it ranks the arms
 against each other inside one window and must not be quoted as throughput.
 `ms/face` is the stage's own per-call figure and is the comparable number.
 
+## Fixture survey - what is actually in each clip (4070)
+
+`tests/survey_fixtures.py`. Fixtures here have been chosen by name and by
+memory, and it has gone wrong twice in ways that invalidated results:
+`duo/d4.mp4` and `double/d4.mp4` are different clips sharing a filename, and
+`d1`/`d6` were used as identity fixtures before anyone measured that the two
+people overlap in every frame. So every remaining phase picked its material
+from a measurement instead.
+
+All 32 clips across `double/`, `single/`, `expression/`, `final/`, `3d model/`,
+24 samples each, detection through `init_pipeline`. Recorded per clip: dims,
+frames, luma p05/p50, faces per frame, face pixel size, yaw span from
+`solve_pose_5pt`, and detector miss rate.
+
+**Correction made during this work.** A first version derived yaw from an ad-hoc
+nose-offset-over-interocular proxy and published spans of **431 and 666
+degrees** -- physically impossible. Replaced with the project's own
+`solve_pose_5pt`, which separates yaw from pitch; the spans are now 1-175
+degrees. The scalar ratio proxies it replaced are each contaminated by the other
+angle, which is the documented reason `solve_pose_5pt` exists.
+
+What the survey settles for this campaign:
+
+| phase | material found |
+|---|---|
+| pose / hard angles | `d1 d2 d3 d5 d6 s1 s5 s8`, yaw spans 121-175 deg |
+| interacting faces | `d1 d3 d4`, plus three 4K `final/` clips |
+| detection stress | `s1` (79 px faces, 25% miss), `s6` (59 px) |
+| expression | `expression/` x4 and `3d model/Flexpressions.mp4` -- all single-face |
+| **night / low light** | **NONE.** Darkest real clip has p05 13.9 with a bright median; the only dark-median clip is a CGI head on black |
+| occlusion | six "occlusion-lead" clips, but **none with ground truth** about what occludes, or whether anything does |
+
+The two NONE/no-ground-truth rows are why Phases 10 and 14 below are measured
+with composited material rather than found footage.
+
+## Phase 10 - foreign-object occlusion (4070)
+
+The campaign's highest-priority behaviour, and it had no run behind it on either
+target. `tests/occlusion_ground_truth.py` closes it as far as this machine's
+material allows.
+
+### Why the occluder is synthetic
+
+The clips here that LOOK like occlusion carry no ground truth. `survey_fixtures`
+found six with a face lost on 8-29% of sampled frames, but a face can vanish
+because a hand crossed it, because it turned away, or because it left frame, and
+nothing in the file says which. Grading the highest-priority phase against a
+guess is how two earlier conclusions in this project had to be withdrawn.
+
+So the occluder is composited by the harness: an opaque, textured, hand-sized
+ellipse whose mask is known exactly, per frame, driven through
+approach -> touch -> cover -> cross -> leave. The question then has a factual
+answer.
+
+### The metric, and the two versions of it that were wrong
+
+**v1 - absolute change inside the occluder.** Wrong: it is confounded by the
+object's COLOUR. The swapped face is skin-toned, so painting it over a
+skin-toned patch produces a small delta and over an arbitrary-coloured patch a
+large one, with no difference in how much was actually painted. Measured, same
+engine and geometry, only appearance changed: peak change **12.63** (arbitrary),
+**3.76** (skin), **3.07** (dark). A 4x spread saying nothing about masking.
+
+**v1.5 - change inside the occluder against a background patch.** Also wrong,
+and it disproved its own premise: the far-corner background reads **0.00 on
+every frame**, because `live_swap` writes only inside the pasted face region.
+There is no global operation to subtract, so the ratio degenerates.
+
+**v2 - the paired unprotected reference.** Every frame is swapped TWICE: once
+with the engine under test, once with **no mask engine at all**. The output
+inside the occluder then sits somewhere between the untouched plate and the
+fully-painted reference, and where it sits is colour-independent.
+
+    protection = |swapped - unmasked| / (|swapped - plate| + |swapped - unmasked|)
+
+100% = the object came through untouched. 0% = the engine did nothing the
+unprotected pipeline would not have done. Frames where the unprotected arm did
+not paint either are marked non-informative and excluded rather than averaged in.
+
+A `--control` arm swaps nothing: it must report 0.00 inside the occluder and no
+informative frames, and does.
+
+### Result - 3 occluder appearances x 3 mask engines, 16 frames each
+
+Peak face coverage 40.8%, six informative frames per arm.
+
+| occluder | mask engine | worst protection | median | worst overpaint | unprotected paint at worst |
+|---|---|---:|---:|---:|---:|
+| texture | RealityUX | **10%** | 22% | 2.43% | 6.05/255 |
+| texture | DFL XSeg | **10%** | 22% | 2.45% | 6.05/255 |
+| texture | Face Occluder | **8%** | 22% | 7.94% | 12.63/255 |
+| skin | RealityUX | **29%** | 53% | 0.95% | 3.75/255 |
+| skin | DFL XSeg | **29%** | 53% | 0.94% | 3.75/255 |
+| skin | Face Occluder | 26% | 37% | 0.91% | 3.75/255 |
+| dark | RealityUX | **30%** | 44% | 0.68% | 2.26/255 |
+| dark | DFL XSeg | 29% | 38% | 0.67% | 2.26/255 |
+| dark | Face Occluder | 25% | 41% | 0.70% | 2.26/255 |
+
+**Three findings, in order of confidence.**
+
+1. **No engine excludes a synthetic foreign object.** Worst-case protection is
+   8-30%; the output inside the object sits most of the way toward the
+   fully-unprotected result. Protection depends entirely on a learned segmenter
+   recognising the object class -- there is no geometric or appearance fallback
+   saying "this is not skin, it is on top of the face, do not paint it".
+
+2. **RealityUX and DFL XSeg are indistinguishable here** -- 10%/22% against
+   10%/22% on texture, 29%/53% against 29%/53% on skin. RealityUX is XSeg plus
+   BiSeNet, so for occlusion purposes it is measuring as XSeg alone. That is an
+   independent confirmation of the recorded finding that RealityUX's BiSeNet
+   subtraction is nearly inert because of its own gate.
+
+3. **Protection rises with how face-like the object is** -- skin 53% median
+   against texture's 22%. Counter-intuitive but favourable for the real case: a
+   hand IS skin-toned, so the realistic occluder is the better-protected one.
+   53% is still not exclusion.
+
+### What this does NOT establish
+
+A textured synthetic ellipse is out of distribution for XSeg and BiSeNet, which
+were trained on real occluders. A PASS here would be weaker evidence than a pass
+on real footage, and this is not a pass. Real-hand, glasses, microphone and hair
+validation stays **OPEN** and needs material this machine does not have -- the
+one approval-gated item in this phase.
+
+## Phase 14 - lighting and dark scenes (4070)
+
+### There is no real night footage on this machine
+
+`tests/survey_fixtures.py` measured all 32 clips across `double/`, `single/`,
+`expression/`, `final/` and `3d model/`. The darkest REAL material has dark
+passages (`single/s1.mp4`, 5th-percentile luma 13.9; `double/d2.mp4`, 32.9) and
+no clip has a dark median except a CGI head rotating on black, which is not a
+lit scene. Grading a lighting phase on that would be grading it on nothing.
+
+So `tests/exposure_ladder.py` builds the ladder instead: the same frames, the
+same face, the same pose, at **1.00 / 0.55 / 0.30 / 0.15 / 0.08** of original
+exposure through a gamma round trip. That is PAIRED, which real night footage
+can never be -- the only variable is how much light there is.
+
+### The invariant, and why it is a ratio
+
+The face must get darker as the scene does, so absolute brightness proves
+nothing. The invariant is the **face/scene luma ratio**: flat means exposure is
+respected, and a ratio that CLIMBS as the scene darkens is the hallucinated-
+daylight-face signature the campaign names -- a face brighter than the room it
+is in.
+
+### Result - 5 rungs x 4 frames, `single/s5.mp4`, production stack
+
+| gain | scene luma | plate face | swapped face | face/scene ON | face/scene OFF | plate face/scene |
+|---:|---:|---:|---:|---:|---:|---:|
+| 1.00 | 145.22 | 146.87 | 143.63 / 144.75 | 0.990 | 0.997 | 1.012 |
+| 0.55 | 110.16 | 112.41 | 109.37 / 110.41 | 0.993 | 1.003 | 1.021 |
+| 0.30 | 83.50 | 85.57 | 82.53 / 83.94 | 0.989 | 1.006 | 1.026 |
+| 0.15 | 60.79 | 62.39 | 59.87 / 61.23 | 0.985 | 1.008 | 1.027 |
+| 0.08 | 45.56 | 46.80 | 44.81 / 46.40 | **0.984** | **1.019** | 1.028 |
+
+ON = `target_conditioned_appearance` true (this machine's live config);
+OFF = the same run with it forced false. The face was detected on 4 of 4 frames
+at every rung, including 0.08 gain.
+
+**PASS in both configurations. No hallucinated daylight face.** The ratio moves
+-0.5% (ON) and +2.2% (OFF) from the brightest rung to the darkest, against a
+threshold of +35%.
+
+**And the two arms separate, monotonically.** OFF rises on every rung
+(0.997 -> 1.003 -> 1.006 -> 1.008 -> 1.019); ON does not (0.990 -> 0.993 ->
+0.989 -> 0.985 -> 0.984). Five rungs moving in one direction, four frames each,
+is a signal rather than noise.
+
+**Read against the plate's own face, which is the ground truth.** The plate's
+face/scene ratio itself rises 1.012 -> 1.028 down the ladder, because the gamma
+round trip compresses highlights more than midtones. Relative to that:
+
+    ON   -2.2% at full exposure  ->  -4.3% at 0.08
+    OFF  -1.5% at full exposure  ->  -0.9% at 0.08
+
+So `target_conditioned_appearance` makes the swapped face progressively DARKER
+than the target's own face as the scene darkens, while OFF tracks the target
+more closely. That is the conservative direction and it is what the feature
+says it does -- its dark tiers reduce restoration and avoid aggressive exposure
+correction. It is a deliberate bias toward under-lighting, not a defect, and
+neither arm shows the failure this phase exists to catch.
+
+### What this does NOT establish
+
+Scaling exposure is not shooting in the dark: there is no sensor noise, no
+colour shift, and no lost shadow detail. Real night footage, coloured
+street-light casts and mixed lighting stay **OPEN** and need material this
+machine does not have.
+
 ## Phase 8 - single-image face swap (4070)
 
 "Image face swap works" is an acceptance criterion neither campaign had a run
