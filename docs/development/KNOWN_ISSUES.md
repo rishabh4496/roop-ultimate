@@ -125,3 +125,18 @@ newer writer-options identity are conservatively not trusted for continuation.
 33. **Stage 11 historical log coverage is bounded.** The structured warning and
     error projections use the in-memory application log ring. Pinokio stdout
     outside that ring remains raw/unstructured and is not silently reconstructed.
+
+34. **Stage 12 disconnected full-workflow evidence is pending.** Unit tests
+    cover connected/disconnected probes, local-cache use, missing-model policy,
+    and atomic transfer cleanup. The machine's network adapter was not
+    disconnected, so no real offline full-video render is claimed. MuseTalk
+    cache-only and KEEP sidecar runs, and physical RTX 3060 offline evidence,
+    remain unverified.
+35. **Some model artifacts remain weakly identified.** CLIP has an embedded
+    SHA-256, but most general model URLs are mutable and reuse is still based on
+    the configured filename. A repository-wide artifact manifest is not part of
+    Stage 12.
+36. **The UI reports local backend state, not Internet state.** This is
+    intentional because the local processing contract does not require an
+    Internet probe. There is no verified remote inference service to display;
+    missing selected models surface an error instead.

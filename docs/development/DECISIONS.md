@@ -117,3 +117,15 @@ resource reads are cached; snapshots remain on the API polling path. Unknown
 facts remain unknown rather than being inferred from another GPU, model, or
 provider. This keeps troubleshooting detail and avoids adding reporting work
 to the per-frame processing path.
+
+## Stage 12 decision
+
+Treat Internet access as an optional acquisition/update capability, not as a
+boot or per-frame processing dependency. Existing local artifacts must be
+usable without a connectivity probe; a missing artifact may fail clearly when
+its feature is selected. Probe the actual download host only after a cache miss,
+expire the result so reconnection can recover, and atomically promote verified
+downloads. Keep the UI's local-engine status separate from Internet status so
+an Internet outage cannot be mistaken for a failed local backend. Unknown
+transitive network behavior remains unknown, and no remote inference service is
+assumed.

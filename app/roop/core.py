@@ -410,12 +410,10 @@ def pre_check() -> bool:
     # set and must not turn application startup into a download operation.
     if os.environ.get('ROOP_UPDATE_HEALTH') == '1':
         print('Health validation mode: skipping model pre-download.', flush=True)
-    # Pre-warm the model cache while online. Offline (auto-detected), we skip
-    # this entirely and fall back to whatever is already on disk — the app still
-    # boots, and a missing model is only reported when its feature is actually
-    # used. required=False so even a single failed download online (host down,
-    # transient error) warns instead of aborting startup.
-    elif util.is_online():
+    # Pre-warm is best-effort and cache-first. Existing local models do not
+    # need an Internet probe; missing optional models warn instead of aborting
+    # startup because all pre-warm calls use required=False.
+    else:
         _pre_warm = [
             ('../models', [
                 'https://huggingface.co/countfloyd/deepfake/resolve/main/inswapper_128.onnx',
@@ -454,9 +452,6 @@ def pre_check() -> bool:
         ]
         for subdir, urls in _pre_warm:
             util.conditional_download(util.resolve_relative_path(subdir), urls, required=False)
-    else:
-        update_status('Offline mode: skipping model pre-download. Using locally available models; any missing model will be reported only when you use the feature that needs it.')
-
     print_cuda_info()  # Debug CUDA during pre-check
 
 

@@ -2,6 +2,7 @@ import hashlib
 import os
 import urllib
 import warnings
+from urllib.parse import urlparse
 from typing import Any, Union, List
 
 import torch
@@ -11,6 +12,7 @@ from tqdm import tqdm
 
 from .model import build_model
 from .simple_tokenizer import SimpleTokenizer as _Tokenizer
+from roop.utilities import is_online
 
 try:
     from torchvision.transforms import InterpolationMode
@@ -52,18 +54,41 @@ def _download(url: str, root: str):
         else:
             warnings.warn(f"{download_target} exists, but the SHA256 checksum does not match; re-downloading the file")
 
-    with urllib.request.urlopen(url) as source, open(download_target, "wb") as output:
-        with tqdm(total=int(source.info().get("Content-Length")), ncols=80, unit='iB', unit_scale=True, unit_divisor=1024) as loop:
-            while True:
-                buffer = source.read(8192)
-                if not buffer:
-                    break
+    host = urlparse(url).hostname
+    if not host:
+        raise RuntimeError(f"CLIP model URL has no host: {url}")
+    if not is_online(hosts=(host,)):
+        raise RuntimeError(
+            f"CLIP model {filename} is not available locally and the model host "
+            "cannot be reached. Connect once to download it, or place the "
+            f"verified file in {root}.")
 
-                output.write(buffer)
-                loop.update(len(buffer))
+    partial_path = download_target + ".part"
+    try:
+        with urllib.request.urlopen(url, timeout=15) as source, open(partial_path, "wb") as output:
+            length = source.info().get("Content-Length")
+            total = int(length) if length else None
+            with tqdm(total=total, ncols=80, unit='iB', unit_scale=True, unit_divisor=1024) as loop:
+                while True:
+                    buffer = source.read(8192)
+                    if not buffer:
+                        break
 
-    if hashlib.sha256(open(download_target, "rb").read()).hexdigest() != expected_sha256:
-        raise RuntimeError("Model has been downloaded but the SHA256 checksum does not not match")
+                    output.write(buffer)
+                    loop.update(len(buffer))
+
+        with open(partial_path, "rb") as downloaded:
+            digest = hashlib.sha256(downloaded.read()).hexdigest()
+        if digest != expected_sha256:
+            raise RuntimeError("Model has been downloaded but the SHA256 checksum does not match")
+        os.replace(partial_path, download_target)
+    except Exception:
+        try:
+            if os.path.exists(partial_path):
+                os.remove(partial_path)
+        except OSError:
+            pass
+        raise
 
     return download_target
 

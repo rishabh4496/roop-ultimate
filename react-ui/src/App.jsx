@@ -80,6 +80,14 @@ const warmTab = (id) => {
   t?.preload?.().catch(() => warmed.delete(id));
 };
 
+const hudValue = (value, suffix = '') => {
+  if (value === null || value === undefined || value === ''
+      || value === 'UNKNOWN' || value === 'NOT_APPLICABLE'
+      || value === 'NOT_AVAILABLE') return 'UNKNOWN';
+  if (Array.isArray(value)) return value.length ? value.join(', ') : 'none';
+  return `${value}${suffix}`;
+};
+
 export default function App() {
   const [tab, setTab] = useState('faceswap');
   const [meta, setMeta] = useState(null);
@@ -113,11 +121,12 @@ export default function App() {
   const pollRef = useRef(null);
 
   // ── Connection health ────────────────────────────────────────────────────
-  // Every backend call in this shell reports its outcome here. A single blip is
-  // ignored (the server briefly stalls during heavy GPU work); three in a row
-  // flips the UI to "reconnecting", which starts a cheap heartbeat that clears
-  // itself the moment the backend answers again. Costs nothing while healthy —
-  // the heartbeat only exists while we believe we are offline.
+  // Every backend call in this shell reports its outcome here. This is the
+  // local engine connection, not Internet reachability: core processing and
+  // previews use the loopback backend and must keep working when optional model
+  // download hosts are unavailable. A single blip is ignored (the server may
+  // briefly stall during heavy GPU work); three in a row starts a cheap
+  // heartbeat that clears itself when the backend answers again.
   const [offline, setOffline] = useState(false);
   const failsRef = useRef(0);
   const beatRef = useRef(null);
@@ -946,19 +955,21 @@ export default function App() {
         <div className="w-[98%] mx-auto mt-3 p-4 bg-black/80 backdrop-blur-xl border border-white/10 rounded-2xl grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs text-white shadow-xl animate-slide-up z-30 relative">
           <div className="flex flex-col">
             <span className="text-nano font-semibold uppercase tracking-wider text-white/40">Execution Engine</span>
-            <span className="font-mono text-emerald-400 font-bold">CUDA / TensorRT (FP16)</span>
+            <span className="font-mono text-emerald-400 font-bold">{hudValue(progress.runtime?.sections?.PROVIDER?.values?.effective)}</span>
           </div>
           <div className="flex flex-col">
-            <span className="text-nano font-semibold uppercase tracking-wider text-white/40">VRAM Workspace</span>
-            <span className="font-mono text-amber-300 font-bold">2.0 GB Capped Arena</span>
+            <span className="text-nano font-semibold uppercase tracking-wider text-white/40">VRAM Total</span>
+            <span className="font-mono text-amber-300 font-bold">{hudValue(progress.runtime?.sections?.HARDWARE?.values?.vram?.total_gb, ' GB')}</span>
           </div>
           <div className="flex flex-col">
-            <span className="text-nano font-semibold uppercase tracking-wider text-white/40">CPU Threading</span>
-            <span className="font-mono text-cyan-300 font-bold">OpenCV (1 thread)</span>
+            <span className="text-nano font-semibold uppercase tracking-wider text-white/40">Configured Workers</span>
+            <span className="font-mono text-cyan-300 font-bold">{hudValue(progress.runtime?.sections?.POOLING?.values?.workers?.configured)}</span>
           </div>
           <div className="flex flex-col">
             <span className="text-nano font-semibold uppercase tracking-wider text-white/40">Engine Connection</span>
-            <span className="font-mono text-emerald-400 font-bold">Online (0.2 ms latency)</span>
+            <span className={`font-mono font-bold ${offline ? 'text-amber-300' : meta ? 'text-emerald-400' : 'text-white/60'}`}>
+              {offline ? 'Local engine unavailable' : meta ? 'Local engine connected' : 'Local engine checking'}
+            </span>
           </div>
         </div>
       )}

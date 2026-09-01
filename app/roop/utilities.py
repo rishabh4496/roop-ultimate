@@ -7,7 +7,9 @@ import shutil
 import ssl
 import subprocess
 import sys
+import time
 import urllib
+from urllib.parse import urlparse
 import torch
 import gradio
 import tempfile
@@ -489,32 +491,66 @@ def is_video(video_path: str) -> bool:
 
 
 _ONLINE_STATE = None
+_ONLINE_STATE_AT = 0.0
+_ONLINE_HOST_STATE = {}
+_ONLINE_CACHE_SECONDS = 30.0
 
 
-def is_online(timeout: float = 2.5) -> bool:
-    """Best-effort, cached connectivity probe (auto offline mode).
+def reset_online_state() -> None:
+    """Clear the short-lived connectivity cache.
 
-    Every model download happens over the network, so before we attempt one we
-    check — once per process — whether the machine can actually reach the model
-    hosts. When there is no connection we skip the network entirely instead of
-    blocking on a socket timeout, and callers fall back to whatever models are
-    already present on disk. The result is cached because it is queried on every
-    ``conditional_download`` call and connectivity does not meaningfully change
-    within a single run.
+    Connectivity is intentionally not a process-lifetime fact: a laptop can
+    reconnect after startup.  This hook also keeps tests from sharing network
+    state with one another.
     """
-    global _ONLINE_STATE
-    if _ONLINE_STATE is not None:
-        return _ONLINE_STATE
+    global _ONLINE_STATE, _ONLINE_STATE_AT
+    _ONLINE_STATE = None
+    _ONLINE_STATE_AT = 0.0
+    _ONLINE_HOST_STATE.clear()
+
+
+def is_online(timeout: float = 2.5, hosts=None) -> bool:
+    """Best-effort, short-lived connectivity probe for model acquisition.
+
+    ``hosts`` lets a caller check the host it will actually use.  The result is
+    cached briefly because startup may ask for many models, but it expires so a
+    connection restored later in the same process can be used.  This function
+    is never called from a per-frame processing path.
+    """
+    global _ONLINE_STATE, _ONLINE_STATE_AT
     import socket
-    for host in ("huggingface.co", "github.com"):
+
+    default_hosts = ("huggingface.co", "github.com")
+    explicit_hosts = hosts is not None
+    host_values = (hosts,) if isinstance(hosts, str) else (hosts or default_hosts)
+    target_hosts = tuple(str(host).strip() for host in host_values
+                         if str(host).strip())
+    if not target_hosts:
+        return False
+    now = time.monotonic()
+    cache_key = tuple(dict.fromkeys(target_hosts))
+    if explicit_hosts:
+        cached = _ONLINE_HOST_STATE.get(cache_key)
+        if cached and now - cached[1] < _ONLINE_CACHE_SECONDS:
+            return cached[0]
+    elif _ONLINE_STATE is not None and (
+            _ONLINE_STATE_AT == 0.0 or now - _ONLINE_STATE_AT < _ONLINE_CACHE_SECONDS):
+        return _ONLINE_STATE
+
+    result = False
+    for host in cache_key:
         try:
             with socket.create_connection((host, 443), timeout=timeout):
-                _ONLINE_STATE = True
-                return True
+                result = True
+                break
         except OSError:
             continue
-    _ONLINE_STATE = False
-    return False
+    if explicit_hosts:
+        _ONLINE_HOST_STATE[cache_key] = (result, now)
+    else:
+        _ONLINE_STATE = result
+        _ONLINE_STATE_AT = now
+    return result
 
 
 def _handle_missing_model(download_file_path: str, download_directory_path: str,
@@ -555,10 +591,17 @@ def conditional_download(download_directory_path: str, urls: List[str], required
         if os.path.exists(download_file_path):
             continue
 
-        # Auto offline mode: with no connectivity, don't block on a socket
-        # timeout — the model simply isn't downloadable right now. Fall back to
-        # local files and let _handle_missing_model apply the required policy.
-        if not is_online():
+        parsed = urlparse(url)
+        host = parsed.hostname
+        if not host:
+            _handle_missing_model(download_file_path, download_directory_path,
+                                  required, reason="model URL has no host")
+            continue
+
+        # Auto offline mode: with no connectivity to THIS model host, don't
+        # block on a download timeout. Fall back to local files and let
+        # _handle_missing_model apply the required policy.
+        if not is_online(hosts=(host,)):
             _handle_missing_model(download_file_path, download_directory_path, required, reason="offline")
             continue
 

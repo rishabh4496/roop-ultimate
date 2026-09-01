@@ -134,3 +134,21 @@ The cited commits, `docs/FINAL_VALIDATION_MATRIX.md`, `docs/HARDWARE_VALIDATION_
 | Launch after cleanup | No full health-worker launch was run after deleting a real item | NOT VERIFIED |
 | Browser interaction | No browser session was run | NOT VERIFIED |
 | RTX 4070 / RTX 3060 cleanup validation | No physical cleanup run; RTX 3060 unavailable | NOT VERIFIED |
+
+## Stage 12 online / offline operation evidence
+
+| Check | Evidence | State |
+|---|---|---|
+| Network dependency audit | `NETWORK_CONTRACT.md` records application, Pinokio, package, model, update, sidecar, and unknown/transitive paths with source evidence | PASS |
+| Connected probe | Real installed-environment probe reached the model-host connectivity path and returned `is_online=True` | PASS on observed 4070 host/network; not a processing acceptance result |
+| Disconnected probe | Focused tests simulate socket failure and verify fail-closed behavior | PASS at unit level; adapter was not disconnected |
+| Local model without network | Focused test verifies an existing model is accepted without calling the connectivity probe | PASS |
+| Optional/required missing model offline | Focused tests verify optional skip and actionable required-model error | PASS |
+| Atomic model transfer | Focused test verifies `.part` transfer and final replacement; failed partials are removed by implementation | PASS at unit level |
+| CLIP integrity path | Source implementation verifies embedded SHA-256 and atomically replaces the final file | PASS at source/test contract level |
+| MuseTalk cache-first path | Installed Hugging Face signatures accept `local_files_only`; source uses cache-first then host-aware download | PASS at source/signature level; no populated-cache runtime run |
+| Local runtime health | `app/update_health.py --source-root . --data-root . --json` passed dependencies, provider, GPU, launch, models, and inference on RTX 4070 with health pre-download disabled | PASS on observed 4070 host; not offline evidence |
+| React validation | `npm run build`, `npm run lint`, and focused UI source test passed; lint retained existing Fast Refresh warnings | PASS |
+| Full regression | `app/env/Scripts/python.exe -m unittest discover -s app/tests -p 'test_*.py'` -> 1,749 passed, 1 skipped; an earlier run had one transient Windows temp-directory cleanup error, then the isolated test and complete reruns passed | PASS; existing warnings remain |
+| Real disconnected full workflow | No network adapter shutdown or isolated offline application render was run | NOT VERIFIED |
+| RTX 3060 offline workflow | No physical RTX 3060 run was available | NOT VERIFIED |

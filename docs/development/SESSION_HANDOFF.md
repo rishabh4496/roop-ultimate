@@ -900,3 +900,62 @@ hardware policy in that work.
 Do not claim full-video throughput, browser acceptance, or RTX 3060 evidence
 without running and recording it. Do not replace the raw terminal feed with
 decorative output or broaden reporting into processing-policy changes.
+
+## STAGE 12 - ONLINE / OFFLINE OPERATION
+
+### CURRENT STATE
+
+Network dependencies are classified in `NETWORK_CONTRACT.md`. The local
+processing boundary is cache-first: installed dependencies, local models,
+projects, checkpoints, previews, and the loopback API do not require Internet
+access. Installation, explicit updates, and missing model acquisition remain
+network-capable paths.
+
+### COMPLETED
+
+- Added host-specific, short-lived connectivity checks after model cache misses.
+- Preserved optional startup pre-warming as best-effort and required feature
+  model failures as actionable errors.
+- Made CLIP downloads checksum-verified and atomic.
+- Made MuseTalk load its local Hugging Face cache before probing/downloading.
+- Replaced hard-coded HUD provider/VRAM/worker/latency claims with backend-owned
+  values or `UNKNOWN`, and kept local backend status distinct from Internet
+  availability.
+- Added `app/tests/test_offline_operation.py` and documented the audited
+  dependency/update/version/rollback limits.
+
+### VERIFIED
+
+- Focused online/offline suite: 8 passed.
+- Focused combined runtime/UI suite: 20 passed.
+- Python compilation, React production build (434 modules), React lint, Node
+  syntax check, and `git diff --check` passed. Lint retained only existing Fast
+  Refresh warnings.
+- Real installed-environment connectivity probe returned `is_online=True`.
+- Current local health worker passed dependencies, provider, GPU, launch,
+  configured models, and inference on the RTX 4070 with pre-download disabled.
+- Full repository regression rerun passed: 1,749 tests, one skipped. The first
+  run exposed a transient Windows temporary-directory cleanup error; the
+  affected project-checkpoint test passed in isolation and the complete rerun
+  passed.
+
+### NOT VERIFIED
+
+- The operating system network adapter was not disconnected. No real isolated
+  offline full-video render is claimed.
+- MuseTalk with a fully populated local cache, KEEP sidecar offline, and
+  physical RTX 3060 offline operation were not run.
+- Final tracked-state review completed; only the files listed in this handoff
+  are changed and protected runtime/data roots remain untouched.
+
+### NEXT GATE
+
+Stage 12 is ready for handoff; the next gate must be explicitly authorized.
+Do not expand this work into critical runtime upgrades, model-manifest work,
+remote inference, or removal of React UI 1.0.
+
+### DO NOT TOUCH NEXT SESSION
+
+Do not claim real disconnected full-video operation, MuseTalk/KEEP offline
+acceptance, or RTX 3060 evidence without running it. Do not update CUDA,
+ONNX Runtime, TensorRT, Python, FFmpeg, drivers, dependencies, or models.

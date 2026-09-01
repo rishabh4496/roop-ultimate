@@ -36,6 +36,16 @@ terminal adds presentation and log classification only. Missing provider,
 model, hardware, project, checkpoint, or performance facts remain explicit
 unknown/not-applicable values.
 
+Stage 12 adds `NETWORK_CONTRACT.md`. The local workflow is cache-first: existing
+models are used without an Internet probe, optional pre-warming skips missing
+models while offline, and selected features with absent required models report
+an actionable error. Model downloads use host-specific, short-lived connectivity
+checks and atomic `.part` replacement. CLIP additionally validates its embedded
+SHA-256; MuseTalk tries its local Hugging Face cache before any network access.
+The React UI does not probe the Internet during boot and its connection state
+means local backend availability only. The application has no verified remote
+Internet inference service; KEEP is an optional local loopback sidecar.
+
 ### Dependency definitions
 
 Python pins include NumPy `<2`, Gradio 5.50.0, OpenCV 4.9.0.80, ONNX 1.16.0, InsightFace 0.7.3, Albucore 0.0.16, psutil 5.9.6, tqdm 4.66.4, Pydantic 2.10.6, Diffusers 0.30.2, Transformers 4.39.2, and Librosa 0.11.0; several packages remain unpinned. React uses React 19.2.7, Vite 8.1.0, Tailwind/PostCSS, Framer Motion 12.42.2, Lucide React 1.21.0, and Oxlint 1.69.0 ranges from `package.json`.

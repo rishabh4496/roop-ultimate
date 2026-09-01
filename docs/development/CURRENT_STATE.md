@@ -10,7 +10,7 @@ status; it is not authorization to change application behavior.
 | Branch | `main` tracking `origin/main` |
 | HEAD at Stage 9A audit start | `459dd4082e60ae1b153b2e65c393eb8a2d6d9198` |
 | Working tree at Stage 9A audit start | Clean; Stage 8B implementation and handoff documentation are committed and pushed; no Stage 9A code or launcher changes made |
-| Active stage/gate | Stage 11 - Terminal Information Revamp |
+| Active stage/gate | Stage 12 - Online / Offline Operation |
 | Last completed gate | Stage 9C - Update rollback / health validation |
 | Existing application behavior changed in Stage 8A | Processing pause now requests and acknowledges a controller-owned safe point; queue/API telemetry and both React surfaces expose the transient request and acknowledged pause |
 
@@ -37,6 +37,34 @@ status; it is not authorization to change application behavior.
   those existing sources. V2 consumes `progress.runtime`; the terminal pinned
   status is derived from the same state. Missing values use explicit
   `UNKNOWN`, `NOT AVAILABLE`, or `NOT APPLICABLE` sentinels.
+
+## Stage 12 online/offline implementation
+
+- Network classifications and evidence are recorded in
+  `docs/development/NETWORK_CONTRACT.md`.
+- Existing local model files bypass connectivity checks. Missing model requests
+  check the actual URL host with a short-lived cache and preserve only complete
+  downloads through atomic replacement.
+- CLIP downloads now use the same host-aware boundary, SHA-256 validation, and
+  atomic `.part` files. MuseTalk first loads from its local Hugging Face cache.
+- The React HUD reports backend-owned provider, VRAM, worker, and local-engine
+  state; fabricated latency/provider values were removed.
+- No Pinokio script, critical runtime installer, processing policy, model file,
+  environment, project, checkpoint, or React UI 1.0 file was changed.
+
+## Stage 12 validation
+
+- Focused online/offline tests: 8 passed.
+- Full repository regression: 1,749 passed, 1 skipped. A first run exposed a
+  transient Windows temporary-directory cleanup error; the affected test
+  passed in isolation and the complete reruns passed.
+- Python compilation, React build, React lint, Node syntax, and diff checks
+  passed. The lint output contains only the existing Fast Refresh warnings.
+- Real connectivity probe returned `is_online=True`; disconnected behavior was
+  tested with deterministic socket-failure simulation. The adapter was not
+  disconnected.
+- The installed runtime health worker passed on the RTX 4070 with model
+  pre-download disabled; this is local runtime evidence, not offline evidence.
 
 ## STAGE 11 - TERMINAL INFORMATION REVAMP
 

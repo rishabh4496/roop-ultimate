@@ -210,6 +210,7 @@ class Lipsync_MuseTalk:
         from diffusers import AutoencoderKL, UNet2DConditionModel
         from huggingface_hub import hf_hub_download
         from transformers import AutoFeatureExtractor, WhisperModel
+        from roop.utilities import is_online
 
         devicename = resolve_device((plugin_options or {}).get('devicename'),
                                     torch.cuda.is_available())
@@ -217,13 +218,29 @@ class Lipsync_MuseTalk:
         cache_dir = resolve_relative_path('../models/musetalk_hf_cache')
         os.makedirs(cache_dir, exist_ok=True)
 
-        vae = AutoencoderKL.from_pretrained(_VAE_REPO, cache_dir=cache_dir)
+        def cached_or_download(loader, *args, **kwargs):
+            """Use a complete local Hugging Face cache without network I/O."""
+            try:
+                return loader(*args, local_files_only=True, **kwargs)
+            except Exception as cached_error:
+                if not is_online(hosts=("huggingface.co",)):
+                    raise RuntimeError(
+                        "MuseTalk is not available in the local Hugging Face "
+                        "cache and huggingface.co cannot be reached. Connect "
+                        "once to download the selected lip-sync models, then "
+                        "the feature can run offline.") from cached_error
+                return loader(*args, local_files_only=False, **kwargs)
+
+        vae = cached_or_download(AutoencoderKL.from_pretrained,
+                                 _VAE_REPO, cache_dir=cache_dir)
         self.vae = vae.to(self.device, dtype=self.dtype).eval()
         self.vae.requires_grad_(False)
         self.scaling_factor = self.vae.config.scaling_factor
 
-        config_path = hf_hub_download(_MUSETALK_REPO, _UNET_CONFIG_FILE, cache_dir=cache_dir)
-        weights_path = hf_hub_download(_MUSETALK_REPO, _UNET_WEIGHTS_FILE, cache_dir=cache_dir)
+        config_path = cached_or_download(hf_hub_download, _MUSETALK_REPO,
+                                         _UNET_CONFIG_FILE, cache_dir=cache_dir)
+        weights_path = cached_or_download(hf_hub_download, _MUSETALK_REPO,
+                                          _UNET_WEIGHTS_FILE, cache_dir=cache_dir)
         with open(config_path, 'r', encoding='utf-8') as f:
             unet_config = json.load(f)
         unet = UNet2DConditionModel(**unet_config)
@@ -232,8 +249,10 @@ class Lipsync_MuseTalk:
         self.unet = unet.to(self.device, dtype=self.dtype).eval()
         self.unet.requires_grad_(False)
 
-        self.feature_extractor = AutoFeatureExtractor.from_pretrained(_WHISPER_REPO, cache_dir=cache_dir)
-        whisper = WhisperModel.from_pretrained(_WHISPER_REPO, cache_dir=cache_dir)
+        self.feature_extractor = cached_or_download(
+            AutoFeatureExtractor.from_pretrained, _WHISPER_REPO, cache_dir=cache_dir)
+        whisper = cached_or_download(WhisperModel.from_pretrained,
+                                     _WHISPER_REPO, cache_dir=cache_dir)
         self.whisper = whisper.to(self.device, dtype=self.dtype).eval()
         self.whisper.requires_grad_(False)
 

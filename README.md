@@ -226,6 +226,15 @@ The application downloads machine-learning models on first use. They are not
 part of this project and are not covered by its licence; each has its own terms,
 some of which prohibit commercial use. See [`NOTICE.md`](NOTICE.md).
 
+### Online and offline operation
+
+Normal processing, local previews, saved projects, checkpoints, and existing
+models do not require Internet access after installation. Internet access is
+used for installation, explicit application updates, and downloading a model
+that is not already available locally. Optional startup pre-warming is skipped
+when offline. See [`NETWORK_CONTRACT.md`](docs/development/NETWORK_CONTRACT.md)
+for the audited dependency boundary and known limitations.
+
 ## Licence and use
 
 GNU Affero General Public License v3 — see [`LICENSE`](LICENSE), and
