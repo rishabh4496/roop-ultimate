@@ -726,9 +726,32 @@ def cos(a, b):
 
 
 def faceset_mean(fs):
+    """The reference identity vector this bench grades against.
+
+    FORMAT-NEUTRAL BY CONSTRUCTION, and it was not. `AverageEmbeddings()`
+    OVERWRITES `faces[0].embedding` in place with the mean of all faces for a
+    V1 FaceSet, and returns early for V2 (which keeps every pose-specific
+    embedding intact and stores the global identity vector separately). A plain
+    mean over `faces[*].embedding` therefore computed
+
+        V1:  mean(mean(e0..en), e1, ..., en)     -- the mean, double-weighted
+        V2:  mean(e0, e1, ..., en)               -- the plain mean
+
+    so a V1 arm and a V2 arm were scored against DIFFERENT reference vectors,
+    and any V1-vs-V2 quality comparison through this harness was invalid. That
+    was found on the RTX 3060 campaign (matrix defect D.9) and recorded as
+    FOUND, NOT FIXED.
+
+    The fix restores face 0's pre-averaging embedding from the backup the
+    FaceSet already keeps for exactly this purpose, so both formats yield the
+    plain mean of the ORIGINAL per-face embeddings. `embeddings_backup` is None
+    when averaging never ran (a single-face set, or a V2 set), in which case
+    faces[0] was never touched and nothing needs undoing.
+    """
+    backup = getattr(fs, "embeddings_backup", None)
     embs = []
-    for f in fs.faces:
-        e = getattr(f, "embedding", None)
+    for i, f in enumerate(fs.faces):
+        e = backup if (i == 0 and backup is not None) else getattr(f, "embedding", None)
         if e is not None:
             embs.append(np.asarray(e, np.float64).ravel())
     return np.mean(embs, axis=0) if embs else None
