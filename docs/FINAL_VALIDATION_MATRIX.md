@@ -357,7 +357,7 @@ What remains is non-deterministic GPU reduction order. This corroborates the
 | 0.1 | imports, config, models, providers | torch CUDA True, ORT `['Tensorrt','CUDA','CPU']`, buffalo_l resolved, det-size 512, TRT engines built and cached | PASS |
 | 0.2 | full unit suite | **1666 -> 1691 tests, 0 failures, 0 errors, 1 skipped** (25 added by this campaign) | PASS |
 | 0.3 | repeated runs in one session | 30+ consecutive renders, every one rc 0 | PASS |
-| 0.4 | host RSS bounded over a long render | 5,979-frame d3 render held **2.6-3.4 GB**, no monotonic growth | PASS |
+| 0.4 | host RSS bounded over a long render | 5,979-frame `double/d3.mp4` render, 289 samples: min 10.48, **peak 15.26 GB**, quarter means **14.68 / 14.78 / 14.79 / 13.07** -- flat then falling, no monotonic growth | PASS |
 | 0.5 | determinism of repeated identical runs | detection geometry identical; pixels differ at the floor above | PASS (documented) |
 
 ## Phase 15 - enhancer regression, all 14 selectable paths (4070)
@@ -391,6 +391,65 @@ the inherited "DMDNet is broken" is 3060-specific.
 The fps column is a 30-frame window and includes model init; it ranks the arms
 against each other inside one window and must not be quoted as throughput.
 `ms/face` is the stage's own per-call figure and is the comparable number.
+
+## Phase 11/19 - two interacting swapped faces, and long-run stability (4070)
+
+One full-length render of `double/d3.mp4` -- **5,979 frames, 15,684 detected
+faces, 1109 s at 5.39 fps** -- production stack (RealSwap / RealityUX /
+UltraMax / TensorRT / hevc_nvenc / 12 workers), sources `harjot,gargee`. This is
+the interacting-faces workload and the long-run soak in one pass.
+
+### What the pipeline decided
+
+| audit reason | faces | share |
+|---|---:|---:|
+| swapped (identity lock) | 13,585 | 89.3% |
+| swapped (per-frame match) | 510 | 3.4% |
+| **track matched but has no source** | **1,516** | **10.0%** |
+| discarded: the swap put the face somewhere it was not | 73 | 0.5% |
+
+Of the 14,095 faces actually swapped, **4,663 (33.1%) had INTERPOLATED
+landmarks** -- nobody detected them; box and keypoints were filled in between
+neighbours. Interpolated faces bypass the identity gates, so a third of this
+clip's swaps are not gated the way the other two thirds are.
+
+### Wrong faceset
+
+| person | frames | swapped | wrong faceset | re-measured as the other person |
+|---|---:|---:|---:|---|
+| harjot (box 0) | 5,975 | 5,622 (94.1%) | **13 of 1,340 attributed swaps** | 193 of 2,765 gradable |
+| gargee (box 1) | 5,774 | 5,267 (91.2%) | **4 of 1,612 attributed swaps** | 37 of 1,880 gradable |
+
+**17 wrong-faceset applications of 2,952 attributable swaps (0.58%)**, from the
+pipeline's own decision log rather than from re-detecting the output.
+
+**This is a NEW baseline, not a comparison.** The 2026-08-23 duo audit that
+recorded 10 wrong-faceset applications on "d3" ran `duo/d3.mp4` (854x480,
+3,597 frames). This is `double/d3.mp4` (5,979 frames), and `duo/` does not exist
+on this machine at all. Two different clips share the filename -- the same trap
+that once put the wrong 854x480 `d4` into a run that otherwise looked valid --
+so 17 must not be read as a regression from 10.
+
+The "re-measured as the other person" column is reported and deliberately NOT
+treated as a defect count: it re-detects the finished output, which on exactly
+the contact frames where a two-faceset bug would live hits the shared
+recognition-crop problem and reports each person as the other regardless of what
+the swap did. The pipeline's own decision is the sound instrument here.
+
+### Long-run stability
+
+Host RSS across 289 samples of that render: min 10.48 GB, **peak 15.26 GB**,
+quarter means **14.68 / 14.78 / 14.79 / 13.07 GB**. Flat and then falling, on a
+31.7 GB host. No monotonic growth over 5,979 frames, and the process exited
+cleanly (rc 0) with a complete output file.
+
+### What remains open here
+
+`track matched but has no source` at 10.0% is the largest single refusal class
+on this clip and is untouched by this campaign. It is the coverage gap the
+project already characterises as intake rather than gating -- a track whose
+best frames never entered the source bank binds to nothing, and the fix lives
+upstream in capture, not in the assignment threshold.
 
 ## Defects found and fixed in the 4070 campaign
 
