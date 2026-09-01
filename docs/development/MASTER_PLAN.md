@@ -13,10 +13,11 @@ Repository HEAD at Stage 9A audit start: `459dd4082e60ae1b153b2e65c393eb8a2d6d91
 
 ## CURRENT IMPLEMENTATION
 
-The active gate for this session is Stage 12: audit network dependencies and
-preserve local processing when optional Internet resources are unavailable.
-Stages 10 and 11 provide the storage/data-safety and runtime-reporting
-boundaries that this work must not weaken.
+The active gate for this session is Stage 15: full regression and long-run
+validation. Stage 14 provides separate hardware evidence for the RTX 4070 and
+RTX 3060 targets; Stage 13 provides the UI integration boundary; Stages 10
+through 12 provide the storage, runtime-reporting, and offline boundaries that
+this validation must cover.
 
 Stage 6B exposed one backend-owned
 structured runtime telemetry state to the React UI and terminal without
@@ -57,6 +58,9 @@ winners.
 | Stage 10 - Cleanup / Storage Manager | Evidence-based storage inventory, reference-aware protection, explicit single-item safe deletion, and active React review UI implemented; Pinokio-owned cache ownership and drive-wide orphan detection remain limited |
 | Stage 11 - Terminal information revamp | Structured backend-owned terminal report and log metadata implemented; full-render throughput impact, browser interaction, and RTX 3060 evidence remain open |
 | Stage 12 - Online / Offline Operation | Network dependencies audited and classified; cache-first optional resource loading, atomic model downloads, and local-engine UI status implemented; real disconnected full-video, MuseTalk/KEEP, and RTX 3060 evidence remain open |
+| Stage 13 - UI 2.0 Integration | Backend-backed creation, visual options, provider/model state, telemetry, live preview, queue, pause/resume, projects/recovery, and storage review integrated; browser interaction and physical RTX 3060 evidence remain open; update/full-health execution remains Pinokio/CLI-only |
+| Stage 14 - Dual-Hardware Validation | Fresh Device A RTX 4070 health/video evidence collected; still-image processing failed on Device A; Device B RTX 3060 was unavailable on this host and remains unverified; full cross-feature and long-run acceptance remains open |
+| Stage 15 - Full Regression and Long-Run Validation | Full Python regression and both UI build/lint checks passed; a 600-frame Device A soak completed with bounded post-run GPU/process state; visual-quality mismatch, health-probe timeout, browser/Device B coverage, and full integrated acceptance remain open |
 | Next UI2 design or migration gate | Not defined in the repository; scope requires explicit authorization |
 | Visual validation / retained-output review | Open and not yet complete |
 | Phase 16 final production quality gate | Open/incomplete |

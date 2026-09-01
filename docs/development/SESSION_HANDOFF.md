@@ -959,3 +959,291 @@ remote inference, or removal of React UI 1.0.
 Do not claim real disconnected full-video operation, MuseTalk/KEEP offline
 acceptance, or RTX 3060 evidence without running it. Do not update CUDA,
 ONNX Runtime, TensorRT, Python, FFmpeg, drivers, dependencies, or models.
+
+## STAGE 13 - UI 2.0 INTEGRATION
+
+### CURRENT STATE
+
+Stage 13 integrates React UI 2.0 through the verified backend contracts while
+keeping React UI 1.0 available. The implementation is intentionally additive:
+the existing creation workflow, visual options, provider/model state, runtime
+telemetry, live preview, queue, pause/resume, projects/recovery, update-center
+boundary, environment evidence, and storage review are surfaced in V2.
+
+### COMPLETED
+
+- Added the V2 operations-status adapter for runtime, hardware, profile, and
+  application metadata evidence.
+- Added Settings surfaces for observed environment evidence, the explicit
+  Pinokio/CLI update boundary, and reference-aware storage review with
+  confirmation before deletion.
+- Updated V2 home/shell/readme messaging to describe the integrated state and
+  preserve the V1 availability statement.
+- Added focused V2/backend contract tests covering route ownership, error/state
+  boundaries, storage guards, update/health boundary, and V1 preservation.
+- Synchronized Stage 13 state in the master plan, current state, UI2 contract,
+  environment contract, decisions, known issues, and validation matrix.
+
+### VERIFIED
+
+- V2 build: PASS, 35 modules transformed.
+- V2 lint: PASS, exit 0.
+- V1 build: PASS, 434 modules transformed.
+- V1 lint: PASS, existing Fast Refresh warnings only.
+- Focused V2/backend suite: PASS, 60 tests.
+- Full Python regression: PASS, 1,755 tests, 1 skipped.
+- V2 development shell: HTTP 200 with the React UI 2.0 application shell.
+- No Pinokio launcher, backend processing, model, environment, or V1 source
+  was modified by this gate.
+
+### NOT VERIFIED
+
+- Browser click-through was not possible: the browser runtime reported that no
+  browser was available. No browser success claim is made for any control.
+- No physical RTX 3060 UI run was performed. Existing RTX 3060 backend policy
+  remains protected but is not UI-validated in this gate.
+- No retained full render/live-preview playback or real storage deletion was
+  performed in this gate.
+- Update execution and full child-process health remain Pinokio/CLI-owned;
+  V2 does not claim a browser update or full-health result.
+
+### KNOWN ISSUES
+
+The outstanding Stage 13 limitations are recorded as items 37-39 in
+`docs/development/KNOWN_ISSUES.md`. Historical Stage 12 offline limitations
+remain open and are not closed by UI integration.
+
+### FILES CHANGED
+
+- `react-ui-v2/src/api.js`
+- `react-ui-v2/src/workflow/useOperationsStatus.js`
+- `react-ui-v2/src/screens/SettingsScreen.jsx`
+- `react-ui-v2/src/screens/HomeScreen.jsx`
+- `react-ui-v2/src/components/AppShell.jsx`
+- `react-ui-v2/src/styles.css`
+- `react-ui-v2/README.md`
+- `app/tests/test_ui2_integration.py`
+- Stage 13 development contract/state documents under `docs/development/`
+
+### TESTS RUN
+
+- `npm run build` and `npm run lint` in `react-ui-v2`.
+- `npm run build` and `npm run lint` in `react-ui`.
+- Focused backend/UI and existing contract suites: 60 passed.
+- `app\\env\\Scripts\\python.exe -m unittest discover -s app/tests -p 'test_*.py'`:
+  1,755 passed, 1 skipped.
+- V2 dev-server shell check: HTTP 200.
+
+### COMMIT
+
+No commit was made in this session.
+
+### NEXT GATE
+
+Stage 13 is ready for explicit review/closure. The next gate is not defined in
+the repository and requires explicit authorization.
+
+### DO NOT TOUCH NEXT SESSION
+
+Do not remove React UI 1.0, invent browser update/health endpoints, claim
+browser or RTX 3060 validation, change runtime/provider/model policies, or
+expand into offline, full-render, cleanup, or critical dependency work without
+an explicitly authorized gate.
+
+## STAGE 14 - DUAL-HARDWARE VALIDATION
+
+### CURRENT STATE
+
+Stage 14 is open and incomplete. Device A was physically present and tested on
+this host. Device B was not present; the repository target guard refused to
+substitute Device A for the requested RTX 3060.
+
+### COMPLETED
+
+- Collected fresh Device A identity: RTX 4070, 12,282 MiB, driver 616.56,
+  compute capability 8.9, Python 3.10.20, PyTorch 2.7.0+cu128, CUDA 12.8,
+  ONNX Runtime 1.23.2, TensorRT 10.9.0.34, and FFmpeg 8.1.2.
+- Ran the read-only health worker: launch, dependencies, provider, GPU,
+  configured models, and finite inference all passed.
+- Ran a target-profile 30-frame d4 video with TensorRT pool 2/2: 60/60 faces
+  swapped, zero wrong-faceset applications, 1.45 FPS, 6,130 MB peak GPU
+  memory, 8.934 GB peak RSS, and valid 30-frame 1280x720 HEVC output.
+- Ran the Device B target guard: it returned `pending` and identified only the
+  RTX 4070, with no substitution.
+- Ran 89 focused control-plane tests covering UI contracts, API routes, queue,
+  pause/resume, project recovery, runtime/terminal state, offline behavior,
+  update compatibility/health, and storage protection.
+- Ran the live no-op update check and read-only cleanup report.
+
+### VERIFIED
+
+- Device A launch, hardware detection, provider selection, model loading,
+  short video processing, telemetry, terminal metrics, online update check,
+  cleanup review, and post-run GPU release evidence.
+- Device A video output structural integrity and face attribution for the
+  short canonical workload.
+- Control-plane behavior for preview routes, batching, pause/resume,
+  persistence/recovery, offline simulation, and cleanup guards.
+
+### NOT VERIFIED / FAILURES
+
+- Device A still-image processing failed twice: canonical `single/s1.mp4`,
+  source `harjot`, frame 200 returned `0.00/255` face-region delta and zero
+  identity gain under both configured TensorRT and CUDA/no-enhancer paths.
+- Device A long-run stability was not completed. The latest available long run
+  stopped after 1,588.72 seconds with partial output.
+- Device B all Stage 14 runtime and feature rows remain unverified because its
+  physical hardware was unavailable.
+- Physical/browser preview, UI pause/resume, project reload/recovery, batch
+  acceptance, real offline adapter test, and real cleanup deletion were not
+  performed.
+- No visual quality review was performed for the fresh video output.
+
+### KNOWN ISSUES
+
+Stage 14 issues are recorded as items 40-43 in
+`docs/development/KNOWN_ISSUES.md`. Existing historical RTX 3060 evidence is
+not treated as fresh Stage 14 validation.
+
+### FILES CHANGED
+
+- `docs/development/MASTER_PLAN.md`
+- `docs/development/CURRENT_STATE.md`
+- `docs/development/VALIDATION_MATRIX.md`
+- `docs/development/KNOWN_ISSUES.md`
+- This session handoff document
+
+Runtime test outputs were written under ignored `output/stage14_device_a/` and
+`output/stage14_device_b_pending/`; no generated output is part of the source
+change set.
+
+### TESTS RUN
+
+- `app/update_health.py --source-root . --data-root . --json`: PASS on Device A.
+- `app/tests/image_swap_smoke.py`: FAIL on Device A still path under two
+  configurations.
+- `app/tests/baseline_controlled.py`: PASS on Device A for two 30-frame video
+  runs; target-profile result uses pool 2/2.
+- `app/tests/phase12_benchmark.py --target "RTX 3060"`: correctly returned
+  pending on this host.
+- Focused suite: 89 passed.
+- `app/update_manager.py check --json`: PASS, no newer commit available.
+- `cleanup.py`: PASS, read-only report.
+- `nvidia-smi` post-run check and FFmpeg `ffprobe`: PASS for observed evidence.
+
+### COMMIT
+
+No commit was made in this session.
+
+### NEXT GATE
+
+Stage 14 remains active until a physical RTX 3060 session is run and the Device
+A still-image and long-run failures are resolved or explicitly accepted by a
+later gate decision.
+
+### DO NOT TOUCH NEXT SESSION
+
+Do not extrapolate Device A to Device B, claim the still path passes, claim
+long-run stability, remove V1, change hardware/provider policy, or delete
+generated/project/output data while investigating these results.
+
+## STAGE 15 - FULL REGRESSION AND LONG-RUN VALIDATION
+
+### CURRENT STATE
+
+Stage 15 is open and incomplete. No feature code was changed. The fresh full
+Python regression and both preserved React UI package checks passed. A real
+600-frame Device A soak completed, but health-validator, visual-quality,
+browser, Device B, offline-adapter, and final playback limits remain.
+
+### COMPLETED
+
+- Ran `unittest discover` across `app/tests`: 1,755 tests, one skipped, in
+  48.335 seconds, ending `OK`.
+- Ran build and lint for both `react-ui-v2` and `react-ui`; V2 was clean and V1
+  retained only its existing Fast Refresh warnings. React UI 1.0 remains
+  available.
+- Ran the Device A `double/d4.mp4` 600-frame soak with TensorRT pool 2/2. It
+  returned code 0 in 178.475 seconds at 8.82 FPS, with 886 swaps, zero
+  wrong-faceset applications, peak RSS 11.031 GB, and peak GPU allocation
+  6,711 MB.
+- Verified the soak-specific worker and encoder exited and GPU usage returned
+  from 1,983 MiB used at baseline to 1,973 MiB after completion.
+- Verified both retained encoded intermediates with `ffprobe`: 600 frames,
+  1280x720, 30 FPS, 20 seconds.
+- Ran the no-op online update check and read-only cleanup audit.
+
+### VERIFIED
+
+- Automated regression across the repository and preserved UI build/lint.
+- Device A long-run processing completion, structured telemetry, bounded
+  observed resource state, worker cleanup, and encoded-file structural
+  integrity for the tested workload.
+- Automated/control-plane coverage for queue, pause/resume, projects/recovery,
+  preview, terminal/runtime state, offline simulation, updates, and cleanup
+  guards.
+
+### NOT VERIFIED / FAILURES
+
+- `update_health.py` returned failure because its launch probe timed out, even
+  though the child output reported loopback listening; a separate direct launch
+  on port 14561 returned HTTP 200. The validator issue remains open.
+- The long-run harness re-measured 71 of 467 gradable `harjot` frames as the
+  other person. Zero wrong-faceset applications does not eliminate this visual
+  quality failure.
+- Device B RTX 3060 Laptop was unavailable; no result is extrapolated from the
+  RTX 4070.
+- Browser interaction, physical UI workflows, real disconnected adapter
+  operation, final user-output playback, and human visual review were not run.
+- Stage 14's reproducible Device A still-image failure remains unresolved.
+
+### KNOWN ISSUES
+
+Stage 15 additions are items 44-45 in `docs/development/KNOWN_ISSUES.md`.
+Stage 14 issues 40-43 remain applicable.
+
+### FILES CHANGED
+
+Stage 15 added validation records to:
+
+- `docs/development/MASTER_PLAN.md`
+- `docs/development/CURRENT_STATE.md`
+- `docs/development/VALIDATION_MATRIX.md`
+- `docs/development/KNOWN_ISSUES.md`
+- `docs/development/SESSION_HANDOFF.md`
+
+No application, Pinokio, model, environment, or React feature code was changed
+in Stage 15. Runtime artifacts are under ignored `output/stage15_device_a/`.
+
+### TESTS RUN
+
+- `app\env\Scripts\python.exe -m unittest discover -s app/tests -p 'test_*.py'`: 1,755 tests, one skipped, `OK`.
+- `npm run build` and `npm run lint` in `react-ui-v2`: PASS.
+- `npm run build` and `npm run lint` in `react-ui`: PASS; existing warnings.
+- `app/tests/baseline_controlled.py --tag stage15_4070_long_600`: PASS return
+  code 0; 600 frames; telemetry and output checks recorded above.
+- `app/update_health.py --source-root . --data-root . --json`: FAIL launch
+  probe timeout; other health checks passed.
+- Direct `run.py` launch on port 14561 plus `/api/meta`: PASS HTTP 200.
+- `app/update_manager.py check --json`: PASS no-op, no newer commit.
+- `cleanup.py`: PASS read-only report.
+- `ffprobe` on both retained encoded intermediates: PASS structural checks.
+- `git diff --check` and `node --check start_react.js`: pending final checklist.
+
+### COMMIT
+
+No commit was made in this session.
+
+### NEXT GATE
+
+Stage 15 remains open. The next gate is a defect-resolution/revalidation gate
+for the health launch probe and Device A visual-quality/still-path failures,
+plus separate physical RTX 3060 and browser/offline evidence before any final
+acceptance or migration decision.
+
+### DO NOT TOUCH NEXT SESSION
+
+Do not claim Stage 15 complete, extrapolate Device A to Device B, treat the
+health validator timeout as healthy, hide the 71-frame quality mismatch,
+remove React UI 1.0, change runtime/provider/model policy, perform real cleanup
+deletions, or install critical dependency/runtime updates.

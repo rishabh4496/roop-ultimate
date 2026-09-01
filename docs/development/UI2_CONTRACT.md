@@ -548,3 +548,29 @@ include the server-provided reasons; the UI does not hide a failed validation
 behind a disabled button or silently restart with changed inputs. Queue
 `RECOVERABLE` jobs use the same validation boundary. Browser behavior and live
 restart interaction are not yet verified.
+
+## STAGE 13 - UI 2.0 INTEGRATION
+
+React UI 2.0 is integrated incrementally through verified existing FastAPI
+contracts. The UI does not invent a browser update or full-health API, and the
+React UI 1.0 package remains available.
+
+| Order | UI surface | Verified backend/state boundary | Result shown by UI |
+|---|---|---|---|
+| 1 | Basic processing | Creation workflow source/target/select, preview, swap, stop, and output routes | Backend response, progress, and errors |
+| 2 | Visual options | Existing settings payload plus preview/swap state | Selected settings and returned preview/error |
+| 3 | Provider/model state | `/api/meta`, `/api/settings`, and runtime provider/model values | Observed provider/model/precision state |
+| 4 | Runtime telemetry | `/api/progress` and backend `progress.runtime`; operations status also reads runtime/system evidence | Backend-owned progress, performance, and warnings |
+| 5 | Live preview | Existing live-frame URL and sequence state | Current frame or unavailable/error state |
+| 6 | Batch queue | `/api/queue` lifecycle and reorder routes | Server-owned job state, order, progress, and errors |
+| 7 | Pause/resume | `/api/pause` and `/api/resume` | Requested, acknowledged paused, processing, or returned error |
+| 8 | Persistent projects | `/api/projects` list and project validate/load/resume routes | Project state and server recoverability result |
+| 9 | Recovery | Project/queue validation errors from the backend | User-readable recoverability error; no silent resume |
+| 10 | Update center | Verified Pinokio `update.js` / CLI ownership; no browser update route | Explicit unavailable-in-browser boundary |
+| 11 | Environment health | `/api/runtime/state`, `/api/system/hardware`, `/api/system/profile`, `/api/meta` | Observed evidence, not a fabricated full-health result |
+| 12 | Cleanup | `/api/storage` and confirmed `/api/storage/delete` | Classified inventory, references, errors, and refreshed result |
+
+The implementation is contract-tested at source/backend level. Browser click
+through, full render/live-preview playback, real storage mutation, and physical
+RTX 3060 UI validation remain unverified. Existing V2 workflow code continues
+to use backend results for state; it does not infer success from a button click.

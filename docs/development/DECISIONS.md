@@ -129,3 +129,12 @@ downloads. Keep the UI's local-engine status separate from Internet status so
 an Internet outage cannot be mistaken for a failed local backend. Unknown
 transitive network behavior remains unknown, and no remote inference service is
 assumed.
+
+## Stage 13 decision
+
+Integrate React UI 2.0 incrementally through the existing, verified FastAPI
+routes and backend-owned state. Each supported control must map to a real route
+or state projection and render the returned result/error; unsupported browser
+surfaces must remain explicit boundaries. Keep update execution in the
+Pinokio/CLI boundary, expose only observed environment/storage evidence, and
+retain React UI 1.0 until a later migration gate.

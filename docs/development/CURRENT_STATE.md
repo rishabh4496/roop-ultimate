@@ -10,8 +10,8 @@ status; it is not authorization to change application behavior.
 | Branch | `main` tracking `origin/main` |
 | HEAD at Stage 9A audit start | `459dd4082e60ae1b153b2e65c393eb8a2d6d9198` |
 | Working tree at Stage 9A audit start | Clean; Stage 8B implementation and handoff documentation are committed and pushed; no Stage 9A code or launcher changes made |
-| Active stage/gate | Stage 12 - Online / Offline Operation |
-| Last completed gate | Stage 9C - Update rollback / health validation |
+| Active stage/gate | Stage 15 - Full Regression and Long-Run Validation |
+| Last completed gate | Stage 13 - UI 2.0 Integration; Stage 14 validation remains open/incomplete |
 | Existing application behavior changed in Stage 8A | Processing pause now requests and acknowledges a controller-owned safe point; queue/API telemetry and both React surfaces expose the transient request and acknowledged pause |
 
 ## CURRENT IMPLEMENTATION
@@ -51,6 +51,73 @@ status; it is not authorization to change application behavior.
   state; fabricated latency/provider values were removed.
 - No Pinokio script, critical runtime installer, processing policy, model file,
   environment, project, checkpoint, or React UI 1.0 file was changed.
+
+## Stage 15 full regression and long-run validation
+
+- The fresh repository regression passed: 1,755 tests, one skipped, in 48.335
+  seconds. Existing test warnings/resource warnings were emitted but did not
+  fail the suite.
+- React UI 2.0 and React UI 1.0 each passed `npm run build` and `npm run lint`.
+  V1 retained its existing Fast Refresh lint warnings; neither UI was removed.
+- The Device A 600-frame `double/d4.mp4` soak completed with return code 0 in
+  178.475 seconds (8.82 FPS; 68.02 seconds processing). It used TensorRT,
+  `realswap / GPEN 256 Pro / RealityUX`, `hevc_nvenc`, 12 threads, and pool
+  settings 2/2. The report recorded 900 faces seen, 886 swaps, and zero
+  wrong-faceset applications. Peak RSS was 11.031 GB, mean RSS 7.576 GB, peak
+  GPU allocation 6,711 MB, mean GPU allocation 4,275.258 MB, across 314
+  telemetry samples.
+- The soak-specific worker and encoder exited. `nvidia-smi` returned to 1,973
+  MiB used / 10,038 MiB free after the run versus 1,983 MiB / 10,028 MiB at
+  baseline. This is evidence of no observed persistent worker or VRAM growth
+  for this run, not a proof for the unavailable RTX 3060.
+- Both retained encoded intermediates passed `ffprobe` with 600 frames,
+  1280x720, 30 FPS, and 20 seconds. A final user-output playback/visual review
+  was not performed. The harness re-measured 71 of 467 gradable `harjot`
+  frames as the other person; this is a real visual-quality limitation despite
+  zero wrong-faceset decisions.
+- The fresh health worker passed dependencies, provider, GPU, model sessions,
+  and finite inference but failed its launch probe with a timeout. A separate
+  direct launch on port 14561 returned `/api/meta` HTTP 200, so the validator
+  result is retained as a failure requiring follow-up rather than being
+  reclassified as healthy.
+
+## Stage 13 UI 2.0 integration
+
+- React UI 2.0 now uses the verified FastAPI boundary for the creation workflow,
+  visual options, provider/model state, runtime telemetry, live preview, queue,
+  pause/resume, persistent projects, recovery validation, and storage review.
+- The Settings screen exposes observed runtime/environment evidence and the
+  guarded storage review/delete flow. The Update Center states the verified
+  Pinokio/CLI boundary because no browser update route was found; it does not
+  fabricate update or full-health controls.
+- React UI 1.0 remains present and is not imported or removed by V2.
+
+## Stage 13 validation
+
+- `npm run build` and `npm run lint` in `react-ui-v2` passed.
+- The focused backend/UI contract suite passed 60 tests. Full repository
+  regression passed 1,755 tests with 1 skipped. React UI 1.0 build and lint
+  also passed.
+- The V2 dev server returned HTTP 200 for the application shell. Browser
+  interaction could not be verified because no browser runtime was available.
+
+## Stage 14 dual-hardware validation
+
+- Device A is physically present on this host: NVIDIA GeForce RTX 4070,
+  12,282 MiB, driver 616.56, compute capability 8.9. The installed stack is
+  Python 3.10.20, PyTorch 2.7.0+cu128, CUDA 12.8, ONNX Runtime 1.23.2,
+  TensorRT 10.9.0.34, and FFmpeg 8.1.2.
+- Device A read-only health passed, and the target-profile 30-frame d4 video
+  passed with 60/60 faces swapped and zero wrong-faceset applications. The
+  canonical still-image smoke failed reproducibly with 0.00/255 face-region
+  delta and no identity gain, including the CUDA/no-enhancer path.
+- Device B was not detected. The target guard produced `pending` for an RTX
+  3060 request while detecting only the RTX 4070; no Device B result is
+  inferred from Device A or from historical records.
+- Control-plane tests cover pause/resume, project reload/recovery, telemetry,
+  terminal metadata, offline behavior, update compatibility, and cleanup, but
+  physical/browser execution for those paths remains open as recorded in the
+  Stage 14 validation matrix.
 
 ## Stage 12 validation
 

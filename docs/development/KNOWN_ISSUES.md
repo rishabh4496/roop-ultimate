@@ -140,3 +140,46 @@ newer writer-options identity are conservatively not trusted for continuation.
     intentional because the local processing contract does not require an
     Internet probe. There is no verified remote inference service to display;
     missing selected models surface an error instead.
+
+37. **Stage 13 browser interaction is not verified.** The V2 shell returned
+    HTTP 200 and source contract tests passed, but the available browser
+    runtime reported that no browser was available. No click-through claim is
+    made for processing, queue, projects, storage, or error flows.
+38. **Stage 13 physical RTX 3060 UI evidence is not verified.** The current
+    host evidence is from the RTX 4070 environment; no claim is made for the
+    laptop profile in this gate.
+39. **Stage 13 full-render and storage mutation evidence is not verified.**
+    No retained full render, live preview playback, or real storage deletion
+    was performed in this gate. Storage deletion remains server-revalidated
+    and limited to one explicitly confirmed safe item.
+
+40. **Stage 14 Device B was unavailable.** `nvidia-smi` on the current host
+    detected only the RTX 4070. The target guard correctly marked the RTX 3060
+    run pending; historical 3060 records are not fresh Stage 14 evidence.
+41. **Stage 14 Device A still-image processing failed.** The canonical
+    `single/s1.mp4` smoke with source `harjot` produced a 0.00/255 face-region
+    delta and zero identity gain at frame 200 under both the configured
+    TensorRT path and the documented CUDA/no-enhancer path. The separate
+    short d4 video path passed; the still-path failure remains unresolved.
+42. **Stage 14 long-run stability is not accepted.** No fresh long-run soak
+    was completed in this gate. The latest available long render log records
+    a stopped partial output after 1,588.72 seconds, so it cannot be counted
+    as a successful stability run.
+43. **Stage 14 integrated UI feature validation remains incomplete.** The
+    control-plane suite passed, but no browser runtime was available and no
+    physical RTX 3060, UI click-through, preview playback, pause/resume render,
+    persistent-project UI reload, or real cleanup mutation was executed here.
+
+44. **Stage 15 health launch validation is inconsistent.** A fresh
+    `update_health.py --source-root . --data-root . --json` run passed
+    dependencies, providers, GPU, model sessions, and finite inference but
+    returned failure because its `/api/meta` launch probe timed out. The
+    captured child output said it was listening on loopback, and a separate
+    direct launch on port 14561 returned HTTP 200. The validator failure remains
+    open; it is not silently treated as a healthy launch.
+
+45. **Stage 15 long-run visual quality is not clean.** The 600-frame Device A
+    soak completed and made 886 swaps with zero wrong-faceset applications, but
+    its quality harness re-measured 71 of 467 gradable `harjot` output frames
+    as the other person. This is a real quality limitation; no corrective
+    feature change was made during the validation-only gate.

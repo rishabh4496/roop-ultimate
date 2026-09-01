@@ -65,3 +65,11 @@ export const getProjects = () => getJSON('/api/projects');
 export const validateProject = (id) => postJSON(`/api/projects/${encodeURIComponent(id)}/validate`, {});
 export const loadProject = (id) => postJSON(`/api/projects/${encodeURIComponent(id)}/load`, {});
 export const resumeProject = (id) => postJSON(`/api/projects/${encodeURIComponent(id)}/resume`, {});
+export const getRuntimeState = () => getJSON('/api/runtime/state');
+export const getHardwareProfile = () => getJSON('/api/system/hardware');
+export const getSystemProfile = () => getJSON('/api/system/profile');
+export const getStorageReview = () => getJSON('/api/storage');
+export const deleteStorageItem = (itemId) => postJSON('/api/storage/delete', {
+  item_id: itemId,
+  confirm: true,
+});

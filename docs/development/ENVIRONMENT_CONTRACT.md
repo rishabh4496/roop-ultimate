@@ -70,6 +70,16 @@ Provide reproducible lock data for all runtime dependencies, version the environ
 - The installed environment is local state and may differ from a fresh `install.js` run.
 - AMD/DirectML/CoreML installation branches were not physically validated in this audit.
 - No complete Python lock or content-addressed model artifact backup exists.
+
+## Stage 13 React UI 2.0 boundary
+
+React UI 2.0 consumes the existing application API for processing, visual
+settings, provider/model state, telemetry, previews, queue operations,
+pause/resume, projects/recovery, and storage review. It does not change the
+hardware/provider policy. Update execution and full child-process health remain
+Pinokio/CLI-owned because no verified browser routes for those operations were
+found. Environment evidence shown in V2 is observed API data and is not a
+replacement for the established runtime health worker.
   The implemented snapshot is intentionally limited to the tracked Git
   generation, a backup ref, runtime identity, and ignored configuration.
   Environments, models, outputs, queue/projects, and TensorRT caches are not
