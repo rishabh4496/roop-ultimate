@@ -33,7 +33,7 @@ from roop import session_pool
 from roop.face_util import get_all_faces, analysis_pooled
 from roop import face_contact
 from roop.utilities import compute_cosine_distance
-from roop.procmgr_runtime import _prof, _gpu_guard, wait_while_paused, PROGRESS_BAR_FORMAT, _TRACK_OVERLAP_FRAC, ChunkedProgress, bar_write, publish_eta, audit_detect_frame_begin, audit_detect_miss_here
+from roop.procmgr_runtime import _prof, _gpu_guard, pause_scope, wait_while_paused, PROGRESS_BAR_FORMAT, _TRACK_OVERLAP_FRAC, ChunkedProgress, bar_write, publish_eta, audit_detect_frame_begin, audit_detect_miss_here
 from roop.temporal_tracker import TemporalFaceTracker
 
 
@@ -89,6 +89,9 @@ class TrackingMixin:
                 first = None
                 idx = 0
                 while roop.globals.processing:
+                    wait_while_paused()
+                    if not roop.globals.processing:
+                        break
                     ret, fr = cap.read()
                     if not ret or fr is None:
                         break
@@ -105,8 +108,11 @@ class TrackingMixin:
                 sam2_p.precomputed = {}
                 return
 
-            with _gpu_guard(pooled=analysis_pooled(), owner='analysis'):
-                faces = get_all_faces(first) or []
+            with pause_scope(lambda: bool(roop.globals.processing)) as allowed:
+                if not allowed:
+                    return
+                with _gpu_guard(pooled=analysis_pooled(), owner='analysis'):
+                    faces = get_all_faces(first) or []
             boxes = [f.bbox.astype(np.float32) for f in faces if getattr(f, 'bbox', None) is not None]
             print(f'[SAM2] seeding tracker with {len(boxes)} face(s) over {idx} frames')
             h, w = first.shape[:2]
@@ -2086,8 +2092,11 @@ class TrackingMixin:
         precomputed = {}
 
         def handle(idx, frame):
-            with _gpu_guard(pooled=analysis_pooled(), owner='analysis'):
-                faces = get_all_faces(frame)
+            with pause_scope(lambda: bool(roop.globals.processing)) as allowed:
+                if not allowed:
+                    return
+                with _gpu_guard(pooled=analysis_pooled(), owner='analysis'):
+                    faces = get_all_faces(frame)
             if not faces:
                 return
             entries = []
@@ -2104,6 +2113,7 @@ class TrackingMixin:
         if awebp_frames is not None:
             subset = awebp_frames[frame_start:frame_end] if frame_end > frame_start else awebp_frames[frame_start:]
             for idx, frame in enumerate(subset):
+                wait_while_paused()
                 if not roop.globals.processing:
                     break
                 handle(idx, frame)
@@ -2114,6 +2124,9 @@ class TrackingMixin:
                     cap.set(cv2.CAP_PROP_POS_FRAMES, frame_start)
                 idx = 0
                 while roop.globals.processing:
+                    wait_while_paused()
+                    if not roop.globals.processing:
+                        break
                     ret, frame = cap.read()
                     if not ret or frame is None:
                         break

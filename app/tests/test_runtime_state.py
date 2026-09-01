@@ -9,12 +9,14 @@ from unittest.mock import patch
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from roop import runtime_state  # noqa: E402
+from roop.procmgr_runtime import pause_controller  # noqa: E402
 
 
 class RuntimeStateContractTest(unittest.TestCase):
 
     def setUp(self):
         runtime_state.reset_resource_cache()
+        pause_controller.cancel()
 
     def test_progress_and_fps_are_structured_from_backend_status(self):
         with patch.object(runtime_state, "_manager", return_value=None), \
@@ -96,6 +98,30 @@ class RuntimeStateContractTest(unittest.TestCase):
                   and "GET" in (getattr(route, "methods", None) or set())]
         self.assertEqual(len(routes), 1)
         self.assertEqual(routes[0].endpoint.__name__, "get_runtime_state")
+
+    def test_pause_state_distinguishes_request_from_acknowledged_pause(self):
+        pause_controller.start()
+        roop_globals = __import__("roop.globals", fromlist=["processing"])
+        roop_globals.processing = True
+        self.assertTrue(pause_controller.begin(lambda: roop_globals.processing))
+        pause_controller.request()
+        with patch.object(runtime_state, "_manager", return_value=None), \
+             patch.object(runtime_state, "_active_provider", return_value="cpu"), \
+             patch.object(runtime_state, "_resource_snapshot", return_value={
+                 "gpu": "UNKNOWN",
+                 "vram": {},
+                 "cpu": {},
+                 "memory": {},
+             }):
+            value = runtime_state.snapshot(progress={"processing": True,
+                                                      "pause_requested": True,
+                                                      "paused": False})
+        self.assertEqual(value["status"]["code"], "PAUSE_REQUESTED")
+        self.assertFalse(value["pause"]["acknowledged"])
+        pause_controller.end()
+        self.assertTrue(pause_controller.snapshot()["acknowledged"])
+        pause_controller.cancel()
+        roop_globals.processing = False
 
 
 if __name__ == "__main__":

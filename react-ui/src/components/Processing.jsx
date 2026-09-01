@@ -33,6 +33,7 @@ export default function Processing({ progress, settings, notify, setTab,
                                      desktopAlerts, onToggleDesktopAlerts }) {
   const p = settings || {};
   const processing = !!progress.processing;
+  const pauseRequested = !!progress.pause_requested;
 
   const telemetry = useTelemetry();
   const { renderLite, toggleRenderLite } = useRenderLite(processing);
@@ -82,7 +83,7 @@ export default function Processing({ progress, settings, notify, setTab,
     : 0;
 
   const stop = async () => { try { await postJSON('/api/stop', {}); notify('Stopping…', 'info'); } catch (e) { notify(e.message, 'error'); } };
-  const pause = async () => { try { await postJSON('/api/pause', {}); notify('Paused', 'info'); } catch (e) { notify(e.message, 'error'); } };
+  const pause = async () => { try { await postJSON('/api/pause', {}); notify('Pause requested; waiting for a safe checkpoint', 'info'); } catch (e) { notify(e.message, 'error'); } };
   const resume = async () => { try { await postJSON('/api/resume', {}); notify('Resumed'); } catch (e) { notify(e.message, 'error'); } };
 
   const out = !processing ? progress.output : null;
@@ -134,9 +135,9 @@ export default function Processing({ progress, settings, notify, setTab,
 
               <div className="space-y-0.5 min-w-0">
                 <div className="flex items-center gap-1.5">
-                  <span className={`h-2 w-2 rounded-full ${progress.paused ? 'bg-amber-400' : 'bg-[var(--accent)] animate-ping'}`} />
-                  <span className={`text-mini font-semibold uppercase tracking-[0.14em] ${progress.paused ? 'text-amber-400' : 'text-[var(--accent)]'}`}>
-                    {progress.paused ? 'Paused' : 'Processing'}
+                  <span className={`h-2 w-2 rounded-full ${progress.paused || pauseRequested ? 'bg-amber-400' : 'bg-[var(--accent)] animate-ping'}`} />
+                  <span className={`text-mini font-semibold uppercase tracking-[0.14em] ${progress.paused || pauseRequested ? 'text-amber-400' : 'text-[var(--accent)]'}`}>
+                    {progress.paused ? 'Paused' : pauseRequested ? 'Pause Requested' : 'Processing'}
                   </span>
                 </div>
                 <div className="text-sm font-bold text-white truncate max-w-[340px]">
@@ -171,13 +172,13 @@ export default function Processing({ progress, settings, notify, setTab,
                   <span className="text-micro font-semibold uppercase tracking-[0.14em] text-white/45 group-hover:text-emerald-400 transition-colors">Resume</span>
                 </motion.button>
               ) : (
-                <motion.button type="button" onClick={pause} title="Pause" aria-label="Pause the run"
+                <motion.button type="button" onClick={pause} disabled={pauseRequested} title={pauseRequested ? 'Waiting for a safe checkpoint' : 'Pause'} aria-label={pauseRequested ? 'Pause requested' : 'Pause the run'}
                   whileHover={{ y: -3, scale: 1.06 }} whileTap={{ scale: 0.92, y: 0 }} transition={spring.snappy}
                   className="group flex flex-col items-center gap-1.5 focus:outline-none">
                   <span className="h-11 w-11 rounded-xl flex items-center justify-center bg-amber-500/15 border border-amber-500/40 text-amber-400 transition-colors duration-200 group-hover:bg-amber-500/25">
                     <svg viewBox="0 0 24 24" className="w-6 h-6" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1.5" /><rect x="14" y="5" width="4" height="14" rx="1.5" /></svg>
                   </span>
-                  <span className="text-micro font-semibold uppercase tracking-[0.14em] text-white/45 group-hover:text-amber-400 transition-colors">Pause</span>
+                  <span className="text-micro font-semibold uppercase tracking-[0.14em] text-white/45 group-hover:text-amber-400 transition-colors">{pauseRequested ? 'Requested' : 'Pause'}</span>
                 </motion.button>
               )}
               <motion.button type="button" onClick={stop} title="Stop" aria-label="Stop the run"
@@ -330,6 +331,7 @@ export default function Processing({ progress, settings, notify, setTab,
             {/* Processing action control dock */}
             <ProcessingDock
               paused={progress.paused}
+              pauseRequested={pauseRequested}
               onTogglePause={() => (progress.paused ? resume() : pause())}
               onCancelJob={stop}
               desktopAlerts={desktopAlerts}

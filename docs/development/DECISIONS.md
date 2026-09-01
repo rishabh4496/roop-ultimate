@@ -47,3 +47,12 @@ alongside the legacy V1 status projection. Queue jobs remain serialized around
 the existing `_run_swap` entry point so the validated single-job processing,
 pooling, and frame-worker paths are preserved; independent simultaneous jobs
 are intentionally not introduced.
+
+## Stage 8A decision
+
+True pause/resume uses one process-local condition controller shared by API,
+queue, processing workers, and writers. Acknowledgement requires zero active
+work and zero pending output reservations; this preserves model/provider state
+and avoids blocking a bounded writer behind a paused producer. The protocol is
+cooperative and does not promise interruption of a single in-flight inference
+or restart-time frame checkpoint recovery.

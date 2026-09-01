@@ -44,7 +44,7 @@ from roop.face_overlap import build_regions as build_face_regions, FaceRegion
 from roop import face_contact
 from roop import recognizer_adaface as _ada
 from roop import live_preview as _live_preview
-from roop.procmgr_runtime import _PROFILE, _TRACK_VETO_DIST, _TRACK_VETO_MARGIN, _TRACK_VETO_SINGLE, _TRACK_EMB_MAX, _DEBUG_MATCH, COLOR_RESET, COLOR_CYAN, COLOR_YELLOW, _prof, _prof_report, _prof_reset, _gpu_guard, PROGRESS_BAR_FORMAT, wait_while_paused, ChunkedProgress, bar_write, publish_eta as _publish_eta, _audit_hit, audit_over_threshold as _audit_over_threshold, audit_frame_seen, audit_detect_frame_begin, audit_detect_miss, audit_face_begin, _audit_swapped_gapfill, _audit_reset, _audit_report, VETO_SOURCE_REUSED, VETO_SINGLE_ABS, VETO_OTHER_FITS, VETO_FAR_FROM_OWN, AUDIT_SWAP_MOVED, VERIFY_MIN_OFFAXIS, VERIFY_SWAP, set_runtime_monitor, set_detailed_profiler
+from roop.procmgr_runtime import _PROFILE, _TRACK_VETO_DIST, _TRACK_VETO_MARGIN, _TRACK_VETO_SINGLE, _TRACK_EMB_MAX, _DEBUG_MATCH, COLOR_RESET, COLOR_CYAN, COLOR_YELLOW, _prof, _prof_report, _prof_reset, _gpu_guard, PROGRESS_BAR_FORMAT, wait_while_paused, pause_controller, pause_scope, pause_aware, ChunkedProgress, bar_write, publish_eta as _publish_eta, _audit_hit, audit_over_threshold as _audit_over_threshold, audit_frame_seen, audit_detect_frame_begin, audit_detect_miss, audit_face_begin, _audit_swapped_gapfill, _audit_reset, _audit_report, VETO_SOURCE_REUSED, VETO_SINGLE_ABS, VETO_OTHER_FITS, VETO_FAR_FROM_OWN, AUDIT_SWAP_MOVED, VERIFY_MIN_OFFAXIS, VERIFY_SWAP, set_runtime_monitor, set_detailed_profiler
 from roop.stage_profiler import StageProfiler
 from roop.runtime_optimizer import RuntimeOptimizer, RuntimeMonitor, SafeAdaptiveController
 from roop.runtime_scheduler import UnifiedRuntimeScheduler
@@ -1205,15 +1205,27 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
             if temp_frame is not None:
                 try:
                     if self.options.frame_processing:
-                        with _gpu_guard():
-                            frame = temp_frame
-                            for p in self.processors:
-                                frame = p.Run(frame)
-                            resimg = frame
+                        with pause_scope(lambda: bool(roop.globals.processing)) as allowed:
+                            if not allowed:
+                                return
+                            with _gpu_guard():
+                                frame = temp_frame
+                                for p in self.processors:
+                                    frame = p.Run(frame)
+                                resimg = frame
+                            if resimg is not None:
+                                pause_controller.pending_output(1)
+                                try:
+                                    i = source_files.index(f)
+                                    cv2.imwrite(target_files[i], resimg)
+                                finally:
+                                    pause_controller.pending_output(-1)
                     else:
                         # process_frame serialises only its GPU primitives (under
                         # TensorRT); CPU work overlaps across threads.
-                        resimg = self.process_frame(temp_frame)
+                        resimg = self.process_frame(temp_frame, output_pending=True)
+                        if resimg is not None:
+                            pause_controller.pending_output(-1)
                 except RuntimeError as exc:
                     # Catch per-frame GPU failures (CUDA error 999, OOM, etc.) so a
                     # single bad frame does not abort the entire batch.  Write the
@@ -1224,7 +1236,7 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                         resimg = temp_frame   # fall back to unmodified frame
                     else:
                         raise   # non-GPU errors propagate normally
-                if resimg is not None:
+                if resimg is not None and not self.options.frame_processing:
                     i = source_files.index(f)
                     cv2.imwrite(target_files[i], resimg)
                 del temp_frame
@@ -1394,7 +1406,8 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                         else:
                             # process_frame serialises only its GPU primitives (under
                             # TensorRT), so CPU work overlaps across threads.
-                            resimg = self.process_frame(frame, frame_idx=frame_idx)
+                            resimg = self.process_frame(frame, frame_idx=frame_idx,
+                                                         output_pending=True)
                 except RuntimeError as exc:
                     err_str = str(exc)
                     if 'CUDA' in err_str or 'cuda' in err_str or 'onnxruntime' in err_str.lower():
@@ -1426,6 +1439,7 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                     raise
                 # Bounded: the writer is the only consumer, and if it has died
                 # this is where every worker would otherwise park forever.
+                pending = resimg is not None
                 self._runtime_worker_exit(threadindex)
                 while True:
                     try:
@@ -1433,6 +1447,8 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                         break
                     except _QueueFull:
                         if not roop.globals.processing:
+                            if pending:
+                                pause_controller.pending_output(-1)
                             break
                 del frame
                 del resimg
@@ -1446,6 +1462,21 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
     def write_frames_thread(self):
         nextindex = 0
         num_producers = self.num_threads
+
+        def _release_queued_outputs():
+            """Release reservations for frames discarded after cancellation."""
+            try:
+                for q in self.processed_queue:
+                    while True:
+                        try:
+                            item = q.get_nowait()
+                        except _QueueEmpty:
+                            break
+                        if (isinstance(item, tuple) and len(item) > 1
+                                and item[1] is not None):
+                            pause_controller.pending_output(-1)
+            except Exception:
+                pass
 
         try:
             while True:
@@ -1467,18 +1498,26 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                             return
                 nextindex += 1
                 if frame is not None:
-                    with _prof('encode'):
-                        if self.output_to_file:
-                            self.videowriter.write_frame(frame)
-                        if self.output_to_cam:
-                            self.streamwriter.WriteToStream(frame)
-                        if self._temporal_faces is not None:
-                            self._temporal_faces.pop(nextindex - 1, None)
-                        if hasattr(self, '_track_assignments') and self._track_assignments is not None:
-                            self._track_assignments.pop(nextindex - 1, None)
-                        if hasattr(self, '_precomputed_kps') and self._precomputed_kps is not None:
-                            self._precomputed_kps.pop(nextindex - 1, None)
+                    try:
+                        with _prof('encode'):
+                            if self.output_to_file:
+                                self.videowriter.write_frame(frame)
+                            if self.output_to_cam:
+                                self.streamwriter.WriteToStream(frame)
+                            if self._temporal_faces is not None:
+                                self._temporal_faces.pop(nextindex - 1, None)
+                            if hasattr(self, '_track_assignments') and self._track_assignments is not None:
+                                self._track_assignments.pop(nextindex - 1, None)
+                            if hasattr(self, '_precomputed_kps') and self._precomputed_kps is not None:
+                                self._precomputed_kps.pop(nextindex - 1, None)
+                    finally:
+                        pause_controller.pending_output(-1)
                     self._runtime_adaptive_boundary()
+                    pause_controller.checkpoint(
+                        lambda: bool(roop.globals.processing), wait_for_ack=False)
+                    if pause_controller.snapshot()["acknowledged"]:
+                        pause_controller.wait_until_resumed(
+                            lambda: bool(roop.globals.processing))
                     del frame
                     if nextindex % 50 == 0:
                         import gc
@@ -1499,19 +1538,8 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
             roop.globals.processing = False
             # Unblock the producers rather than leave them parked forever. They
             # check `processing` and exit; draining is what lets them get there.
-            try:
-                while True:
-                    drained = False
-                    for q in self.processed_queue:
-                        try:
-                            q.get_nowait()
-                            drained = True
-                        except _QueueEmpty:
-                            pass
-                    if not drained:
-                        break
-            except Exception:
-                pass
+        finally:
+            _release_queued_outputs()
 
 
     def _run_unified_scheduler(self, cap, awebp_frames, frame_start, frame_end,
@@ -1567,17 +1595,27 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
             try:
                 with _prof('frame_total'):
                     if self.options.frame_processing:
-                        with _gpu_guard():
-                            result = frame
-                            for processor in self.processors:
-                                result = processor.Run(result)
-                            return result
-                    return self.process_frame(frame, frame_idx=frame_idx)
+                        if not pause_controller.begin(lambda: bool(roop.globals.processing)):
+                            return frame
+                        try:
+                            with _gpu_guard():
+                                result = frame
+                                for processor in self.processors:
+                                    result = processor.Run(result)
+                                if result is not None:
+                                    pause_controller.pending_output(1)
+                                return result
+                        finally:
+                            pause_controller.end()
+                    result = self.process_frame(frame, frame_idx=frame_idx,
+                                                output_pending=True)
+                    return result
             except RuntimeError as exc:
                 message = str(exc)
                 if 'CUDA' in message or 'cuda' in message or 'onnxruntime' in message.lower():
                     bar_write('[ProcessMgr] scheduler GPU error on frame %s — '
                               'writing original: %s' % (frame_idx, message[:200]))
+                    pause_controller.pending_output(1)
                     return frame
                 raise
             finally:
@@ -1603,6 +1641,12 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                 self._track_assignments.pop(frame_idx, None)
             if getattr(self, '_precomputed_kps', None) is not None:
                 self._precomputed_kps.pop(frame_idx, None)
+            pause_controller.pending_output(-1)
+            pause_controller.checkpoint(
+                lambda: bool(roop.globals.processing), wait_for_ack=False)
+            if pause_controller.snapshot()["acknowledged"]:
+                pause_controller.wait_until_resumed(
+                    lambda: bool(roop.globals.processing))
 
         def on_frame(_frame_idx):
             self._runtime_adaptive_boundary()
@@ -2908,7 +2952,13 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                         # adaptive controller unreachable on the path the user
                         # actually renders with. Same call, same safe boundary
                         # (immediately after a frame is written).
+                        pause_controller.pending_output(-1)
                         self._runtime_adaptive_boundary()
+                        pause_controller.checkpoint(
+                            lambda: bool(roop.globals.processing), wait_for_ack=False)
+                        if pause_controller.snapshot()["acknowledged"]:
+                            pause_controller.wait_until_resumed(
+                                lambda: bool(roop.globals.processing))
                     res.clear()
             except Exception as exc:
                 _writer_exc[0] = exc
@@ -2993,7 +3043,8 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                             # including them would inflate the frame count and
                             # deflate ms/frame on exactly the path production uses.
                             with _prof('frame_total'):
-                                out = self.process_frame(_combined[ci], frame_idx=gi)
+                                out = self.process_frame(_combined[ci], frame_idx=gi,
+                                                          output_pending=True)
                         except Exception:
                             out = _combined[ci]
                         _results[gi] = out if out is not None else _combined[ci]
@@ -3184,13 +3235,11 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
             return
         _live_preview.publish(frame)
 
+    @pause_aware
     def process_frame(self, frame:Frame, frame_idx=None):
-        # ── Pause support ────────────────────────────────────────────────────
-        # Spin-wait while the user has paused. Checks every 50 ms so the UI
-        # stays responsive. Exits immediately if processing is cancelled.
-        while getattr(roop.globals, 'pause', False) and roop.globals.processing:
-            time.sleep(0.05)
-
+        """Process one frame inside the shared pause-safe work boundary."""
+        # Pause admission is owned by the wrapper above; this implementation
+        # runs only after the controller has granted the frame's work scope.
         if len(self.input_face_datas) < 1 and not self.options.show_face_masking:
             return frame
         # `ordered` asks "is this worker seeing frames in order", and the answer

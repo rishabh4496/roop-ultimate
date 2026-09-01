@@ -20,6 +20,7 @@ import { Icon } from '../../icons';
  */
 export default function ProcessingDock({
   paused = false,
+  pauseRequested = false,
   onTogglePause,
   onCancelJob,
   desktopAlerts = false,
@@ -33,15 +34,16 @@ export default function ProcessingDock({
         {/* Pause / Resume Button */}
         <button
           onClick={onTogglePause}
+          disabled={pauseRequested}
           className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all shadow-md active:scale-95 ${
             paused
               ? 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-emerald-600/20'
               : 'bg-amber-600 hover:bg-amber-500 text-white shadow-amber-600/20'
           }`}
-          title={paused ? 'Resume execution' : 'Pause execution'}
+          title={pauseRequested ? 'Waiting for a safe checkpoint' : paused ? 'Resume execution' : 'Pause execution'}
         >
           {paused ? <Icon.play size={13} /> : <Icon.pause size={13} />}
-          <span>{paused ? 'Resume Render' : 'Pause Render'}</span>
+          <span>{pauseRequested ? 'Pause Requested' : paused ? 'Resume Render' : 'Pause Render'}</span>
         </button>
 
         {/* Cancel Job Button */}

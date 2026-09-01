@@ -196,7 +196,8 @@ list_files_process: list = []          # list[ProcessEntry] – the target media
 fm_selected_index = -1
 
 # Live progress, polled by the React UI
-_progress = {"processing": False, "paused": False, "progress": 0.0, "desc": "", "error": ""}
+_progress = {"processing": False, "paused": False, "pause_requested": False,
+             "progress": 0.0, "desc": "", "error": ""}
 _last_output = {"path": "", "kind": ""}
 
 # Per-run accumulator, reset at the start of every swap and read back when the
@@ -2669,7 +2670,9 @@ def trigger_swap(payload: dict = Body(...)):
     # Claim the processing flag synchronously — the worker thread also sets it,
     # but only after it starts, so two rapid POSTs could otherwise both pass
     # the guard above and run concurrently.
-    _progress.update({"processing": True, "paused": False, "progress": 0.0, "desc": "Starting…", "error": ""})
+    _procmgr_runtime.pause_controller.start()
+    _progress.update({"processing": True, "paused": False, "pause_requested": False,
+                      "progress": 0.0, "desc": "Starting…", "error": ""})
     threading.Thread(target=_run_swap, args=(payload,), daemon=True).start()
     return {"status": "started"}
 
@@ -2678,7 +2681,9 @@ def _run_swap(payload):
     from ui.main import prepare_environment
     from roop.core import batch_process_regular
 
-    roop_globals.pause = False
+    _procmgr_runtime.pause_controller.start()
+    pause_state = _procmgr_runtime.pause_controller.snapshot()
+    roop_globals.pause = bool(pause_state["requested"])
     _stop_requested["flag"] = False
     # Fresh terminal feed for this run.
     _log_lines.clear()
@@ -2694,7 +2699,11 @@ def _run_swap(payload):
     # to the UI's own estimate rather than inheriting a finished run's figure.
     _procmgr_runtime.reset_eta()
     _push_log("▶ Starting job…", force=True)
-    _progress.update({"processing": True, "paused": False, "progress": 0.0, "desc": "Starting…", "error": ""})
+    _progress.update({"processing": True,
+                      "paused": bool(pause_state["acknowledged"]),
+                      "pause_requested": bool(pause_state["requested"]),
+                      "progress": 0.0, "desc": ("Paused" if pause_state["acknowledged"] else "Starting…"),
+                      "error": ""})
     _run_stats.update({"start": time.time(), "frames_done": 0, "frames_total": 0})
     try:
         # Inside the try so any failure (e.g. CFG.save() I/O error) still hits
@@ -2930,6 +2939,7 @@ def _run_swap(payload):
         _progress["error"] = str(e)
         _push_log("⚠ " + str(e), force=True)
     finally:
+        _procmgr_runtime.pause_controller.finish()
         roop_globals.pause = False
         # Safety net: normally end_processing() clears this, but if batch_process
         # raised before reaching it, clear here so a later terminal Ctrl-C doesn't
@@ -2937,6 +2947,19 @@ def _run_swap(payload):
         roop_globals.batch_active = False
         _progress["processing"] = False
         _progress["paused"] = False
+        _progress["pause_requested"] = False
+
+
+def _sync_pause_progress():
+    """Project the controller's acknowledged boundary into API telemetry."""
+    state = _procmgr_runtime.pause_controller.snapshot()
+    _progress["pause_requested"] = bool(state["requested"])
+    _progress["paused"] = bool(state["acknowledged"])
+    if state["acknowledged"] and _progress.get("processing"):
+        _progress["desc"] = "Paused"
+    elif state["requested"] and _progress.get("processing") and not state["acknowledged"]:
+        _progress["desc"] = "Pause requested…"
+    return state
 
 
 # ── AI upscale / interpolation second pass ─────────────────────────────────
@@ -2962,10 +2985,12 @@ def _record_last_output():
 @app.post("/api/stop")
 def stop_swap():
     # Clear pause too so a stop while paused fully aborts (wait loop checks both).
+    _procmgr_runtime.pause_controller.cancel()
     roop_globals.pause = False
     roop_globals.processing = False
     _stop_requested["flag"] = True
     _progress["paused"] = False
+    _progress["pause_requested"] = False
     _progress["desc"] = "Aborting…"
     return {"status": "stopping"}
 
@@ -2978,22 +3003,28 @@ def pause_swap():
         # script from surfacing a red failure on a misclick. The React run-bar
         # only shows Pause while processing, so it never relies on the 409.
         return {"status": "idle"}
+    state = _procmgr_runtime.pause_controller.request()
     roop_globals.pause = True
-    _progress["paused"] = True
-    _progress["desc"] = "Paused"
-    return {"status": "paused"}
+    _progress["pause_requested"] = True
+    _progress["paused"] = bool(state["acknowledged"])
+    _progress["desc"] = "Paused" if state["acknowledged"] else "Pause requested…"
+    return {"status": "paused" if state["acknowledged"] else "pause_requested",
+            "pause": state}
 
 
 @app.post("/api/resume")
 def resume_swap():
+    state = _procmgr_runtime.pause_controller.resume()
     roop_globals.pause = False
+    _progress["pause_requested"] = False
     _progress["paused"] = False
     _progress["desc"] = "Resuming…"
-    return {"status": "resumed"}
+    return {"status": "resumed", "pause": state}
 
 
 @app.get("/api/progress")
 def get_progress():
+    _sync_pause_progress()
     # The UI no longer streams live swapped frames into the preview box (it shows
     # a progress bar + elapsed/ETA instead), so we skip the per-poll JPEG encode
     # of the latest frame entirely. The fields are kept (empty) for shape
@@ -3089,6 +3120,7 @@ def get_runtime_state():
     progress endpoint embeds the same schema so the existing terminal/status
     path and the V2 client can observe one backend-owned state shape.
     """
+    _sync_pause_progress()
     try:
         parts = segment_writer.parts_snapshot()
     except Exception:

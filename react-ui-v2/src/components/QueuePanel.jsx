@@ -11,7 +11,7 @@ function display(value) {
 function stateTone(state) {
   if (state === 'COMPLETED') return 'success';
   if (state === 'FAILED') return 'danger';
-  if (state === 'PROCESSING' || state === 'PREPARING') return 'accent';
+  if (state === 'PROCESSING' || state === 'PREPARING' || state === 'PAUSE_REQUESTED') return 'accent';
   return 'neutral';
 }
 
@@ -44,7 +44,7 @@ export function QueuePanel({ queue, onCancel, onRetry, onRemove, onReorder, onSt
         const state = job.state || 'QUEUED';
         const fraction = Number(job.progress?.fraction);
         const percent = Number.isFinite(fraction) ? Math.round(Math.max(0, Math.min(1, fraction)) * 100) : 0;
-        const active = ['PREPARING', 'PROCESSING', 'PAUSED'].includes(state);
+        const active = ['PREPARING', 'PROCESSING', 'PAUSE_REQUESTED', 'PAUSED'].includes(state);
         return <div className="v2-queue-row" key={job.id}>
           <div className="v2-queue-order"><strong>{job.position || index + 1}</strong><button type="button" onClick={() => move(index, -1)} disabled={index === 0}>↑</button><button type="button" onClick={() => move(index, 1)} disabled={index === jobs.length - 1}>↓</button></div>
           <div className="v2-queue-main"><div className="v2-queue-title"><strong>{job.label || job.target_name || 'Unnamed target'}</strong><Badge tone={stateTone(state)}>{JOB_STATE_LABELS[state] || state}</Badge></div><small>Source: {display(job.source_name || (Number.isInteger(job.source_index) ? `Face ${job.source_index + 1}` : null))} · {display(job.payload?.swap_model)}</small>{(active || state === 'COMPLETED') && <Progress value={percent} label={`${percent}% · ${display(job.progress?.phase)}`} />}{job.error && <div className="v2-queue-error">{job.error}</div>}</div>

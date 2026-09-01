@@ -29,6 +29,7 @@ import numpy as np
 import roop.globals as roop_globals
 from roop import utilities as util
 from roop.capturer import get_image_frame
+from roop.procmgr_runtime import pause_controller, pause_scope, wait_while_paused
 
 
 # ── Injected by api.py at import time (see module docstring) ─────────────────
@@ -85,8 +86,11 @@ def _upscale_image_inplace(proc, path):
     img = get_image_frame(path)
     if img is None:
         return
-    out = proc.Run(img)
-    cv2.imwrite(path, out)
+    with pause_scope(lambda: bool(roop_globals.processing)) as allowed:
+        if not allowed:
+            return
+        out = proc.Run(img)
+        cv2.imwrite(path, out)
 
 
 def _select_upscale_encoder(out_w=None, out_h=None):
@@ -173,7 +177,10 @@ def _upscale_video_inplace(proc, path):
             ok, first = cap.read()
             if not ok or first is None:
                 return
-            o = proc.Run(first)
+            with pause_scope(lambda: bool(roop_globals.processing)) as allowed:
+                if not allowed:
+                    return
+                o = proc.Run(first)
             oh, ow = o.shape[:2]
             cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
         else:
@@ -204,22 +211,25 @@ def _upscale_video_inplace(proc, path):
             """Run *sessions* concurrently on *probe* and return the LOWEST free
             VRAM observed — the real concurrent peak, which is what actually
             spills (a single-session steady-state probe underestimates it)."""
-            lo = [_free_gb()]
-            stop = [False]
-            def _sampler():
-                while not stop[0]:
-                    lo[0] = min(lo[0], _free_gb())
-                    _time.sleep(0.008)
-            st = _threading.Thread(target=_sampler, daemon=True)
-            st.start()
-            ts = [_threading.Thread(target=lambda ss=ss: ss.RunThreadSafe(probe)) for ss in sessions]
-            for t in ts:
-                t.start()
-            for t in ts:
-                t.join()
-            stop[0] = True
-            st.join(timeout=1)
-            return lo[0]
+            with pause_scope(lambda: bool(roop_globals.processing)) as allowed:
+                if not allowed:
+                    return 0.0
+                lo = [_free_gb()]
+                stop = [False]
+                def _sampler():
+                    while not stop[0]:
+                        lo[0] = min(lo[0], _free_gb())
+                        _time.sleep(0.008)
+                st = _threading.Thread(target=_sampler, daemon=True)
+                st.start()
+                ts = [_threading.Thread(target=lambda ss=ss: ss.RunThreadSafe(probe)) for ss in sessions]
+                for t in ts:
+                    t.start()
+                for t in ts:
+                    t.join()
+                stop[0] = True
+                st.join(timeout=1)
+                return lo[0]
 
         pool = _queue.Queue()
         pool.put(proc)
@@ -259,6 +269,14 @@ def _upscale_video_inplace(proc, path):
             codec=enc, crf=roop_globals.video_quality, audiofile=None)
 
         def _do(frame):
+            if not pause_controller.begin(lambda: bool(roop_globals.processing)):
+                return frame
+            try:
+                return _do_impl(frame)
+            finally:
+                pause_controller.end()
+
+        def _do_impl(frame):
             sess = pool.get()
             try:
                 res = sess.RunThreadSafe(frame)
@@ -272,12 +290,16 @@ def _upscale_video_inplace(proc, path):
                 pool.put(sess)
             if res.shape[:2] != (oh, ow):
                 res = cv2.resize(res, (ow, oh))
+            pause_controller.pending_output(1)
             return res
 
         def _write(res):
             nonlocal done
             if res is not None:
-                writer.write_frame(res)
+                try:
+                    writer.write_frame(res)
+                finally:
+                    pause_controller.pending_output(-1)
             del res
             done += 1
             pbar.update(1)
@@ -291,6 +313,9 @@ def _upscale_video_inplace(proc, path):
 
         if n_sessions <= 1:
             while roop_globals.processing:
+                wait_while_paused()
+                if not roop_globals.processing:
+                    break
                 ok, fr = cap.read()
                 if not ok or fr is None:
                     break
@@ -310,6 +335,9 @@ def _upscale_video_inplace(proc, path):
             # unbounded post-swap queue.
             max_inflight = max(1, min(n_sessions * 2, runtime_inflight))
             while roop_globals.processing:
+                wait_while_paused()
+                if not roop_globals.processing:
+                    break
                 ok, fr = cap.read()
                 if not ok or fr is None:
                     break
@@ -519,7 +547,14 @@ def _classical_video_inplace(path, mode, scale):
     if os.name == 'nt':
         popen_kwargs['creationflags'] = 0x08000000   # CREATE_NO_WINDOW
     # stderr inherits the terminal so ffmpeg's own progress stats show in the log.
-    proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, **popen_kwargs)
+    wait_while_paused()
+    if not pause_controller.begin(lambda: bool(roop_globals.processing)):
+        return
+    try:
+        proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, **popen_kwargs)
+    except Exception:
+        pause_controller.end()
+        raise
     stopped = False
     try:
         while proc.poll() is None:
@@ -534,6 +569,7 @@ def _classical_video_inplace(path, mode, scale):
             _time.sleep(0.2)
     finally:
         ok = (proc.returncode == 0)
+        pause_controller.end()
     if ok and os.path.exists(tmp):
         os.replace(tmp, path)
     else:
@@ -563,6 +599,7 @@ def _run_post_swap_upscale(produced_files, subtype):
         n = len(produced_files)
         try:
             for idx, path in enumerate(produced_files):
+                wait_while_paused()
                 if not roop_globals.processing:
                     break
                 _progress["desc"] = f"{mode.upper()} upscaling {idx + 1}/{n}…"
@@ -593,6 +630,7 @@ def _run_post_swap_upscale(produced_files, subtype):
     n = len(produced_files)
     try:
         for idx, path in enumerate(produced_files):
+            wait_while_paused()
             if not roop_globals.processing:
                 break
             _progress["desc"] = f"AI upscaling {idx + 1}/{n}…"
@@ -681,11 +719,22 @@ def _interp_video_rife(path, factor):
         if ok and prev is not None:
             _emit(prev)
             while roop_globals.processing:
+                wait_while_paused()
+                if not roop_globals.processing:
+                    break
                 ok, cur = cap.read()
                 if not ok or cur is None:
                     break
                 for k in range(1, factor):
-                    _emit(rife.interpolate(prev, cur, k / factor))
+                    wait_while_paused()
+                    if not roop_globals.processing:
+                        break
+                    if not pause_controller.begin(lambda: bool(roop_globals.processing)):
+                        break
+                    try:
+                        _emit(rife.interpolate(prev, cur, k / factor))
+                    finally:
+                        pause_controller.end()
                     if not roop_globals.processing:
                         break
                 if not roop_globals.processing:

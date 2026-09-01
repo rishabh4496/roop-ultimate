@@ -530,3 +530,11 @@ path. It therefore preserves job isolation and the existing per-job frame
 concurrency, but does not claim simultaneous independent render jobs.
 Browser interaction, live restart recovery, and physical hardware behavior for
 this new queue surface remain unverified.
+
+## STAGE 8A PAUSE / RESUME
+
+V1 and V2 consume backend-owned pause state. The UI shows `Pause requested`
+until the backend acknowledges a safe point, then shows `Paused`; it does not
+optimistically claim that processing has stopped. Resume calls the backend and
+keeps the same job, output path, and telemetry active. React UI 1.0 remains
+available.

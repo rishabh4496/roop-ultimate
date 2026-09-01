@@ -42,6 +42,7 @@ import uuid
 
 import roop.globals as roop_globals
 import api_state as state
+from roop.procmgr_runtime import pause_controller
 
 
 router = APIRouter()
@@ -69,7 +70,7 @@ QUEUE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "queue.jso
 # Canonical job lifecycle.  `status` below is retained as a compatibility
 # projection for the existing V1 queue consumer; new clients should use state.
 JOB_STATES = (
-    "QUEUED", "PREPARING", "PROCESSING", "PAUSED", "COMPLETED",
+    "QUEUED", "PREPARING", "PROCESSING", "PAUSE_REQUESTED", "PAUSED", "COMPLETED",
     "FAILED", "CANCELLED", "INTERRUPTED", "RECOVERABLE",
 )
 SCHEMA_VERSION = 2
@@ -77,6 +78,7 @@ _LEGACY_STATUS = {
     "QUEUED": "pending",
     "PREPARING": "running",
     "PROCESSING": "running",
+    "PAUSE_REQUESTED": "running",
     "PAUSED": "running",
     "COMPLETED": "finished",
     "FAILED": "failed",
@@ -142,18 +144,28 @@ def _set_state(job, new_state):
 
 def _progress_snapshot():
     live = _progress or {}
+    pause = pause_controller.snapshot()
     fraction = live.get("progress", 0.0)
     try:
         fraction = max(0.0, min(1.0, float(fraction)))
     except (TypeError, ValueError):
         fraction = 0.0
+    pause_requested = bool(pause["requested"] or live.get("pause_requested"))
+    paused = bool(pause["acknowledged"] or live.get("paused"))
+    phase = live.get("desc") or "UNKNOWN"
+    if paused:
+        phase = "Paused"
+    elif pause_requested:
+        phase = "Pause requested..."
     return {
         "fraction": fraction,
         "frames_done": live.get("frames_done", live.get("frame_done")),
         "frames_total": live.get("frames_total", live.get("frame_total")),
         "fps": live.get("fps", live.get("current_fps")),
         "eta_s": live.get("eta_s"),
-        "phase": live.get("desc") or "UNKNOWN",
+        "phase": phase,
+        "pause_requested": pause_requested,
+        "paused": paused,
         "updated_at": time.time(),
     }
 
@@ -164,7 +176,7 @@ def _normalize_loaded_job(job):
     legacy = job.get("status")
     if state_value not in JOB_STATES:
         state_value = _LEGACY_STATE.get(legacy, "QUEUED")
-    if state_value in ("PREPARING", "PROCESSING", "PAUSED") or legacy == "running":
+    if state_value in ("PREPARING", "PROCESSING", "PAUSE_REQUESTED", "PAUSED") or legacy == "running":
         state_value = "RECOVERABLE"
         job["error"] = "interrupted by an app restart; start the queue to retry"
         job["interrupted_at"] = time.time()
@@ -228,6 +240,13 @@ def _snapshot():
             job["position"] = len(jobs) + 1
             if job["id"] == _queue["current"]:
                 job["progress"] = _progress_snapshot()
+                pause = pause_controller.snapshot()
+                if pause["requested"] and not pause["acknowledged"]:
+                    job["state"] = "PAUSE_REQUESTED"
+                    job["status"] = _LEGACY_STATUS[job["state"]]
+                elif pause["acknowledged"]:
+                    job["state"] = "PAUSED"
+                    job["status"] = _LEGACY_STATUS[job["state"]]
             else:
                 job["progress"] = dict(original.get("progress") or _empty_progress())
             jobs.append(job)
@@ -350,7 +369,7 @@ def queue_update(payload: dict = Body(...)):
         job = _find(job_id)
         if job is None:
             return JSONResponse(status_code=404, content={"message": "no such job"})
-        if _state(job) in ("PREPARING", "PROCESSING", "PAUSED"):
+        if _state(job) in ("PREPARING", "PROCESSING", "PAUSE_REQUESTED", "PAUSED"):
             return JSONResponse(status_code=409, content={"message": "job is running"})
         for key in ("payload", "target_name", "source_index", "source_name",
                     "label", "frame_start", "frame_end"):
@@ -397,7 +416,7 @@ def queue_retry(payload: dict = Body(default={})):
                    else [j for j in _queue["jobs"]
                          if _state(j) in ("FAILED", "CANCELLED", "INTERRUPTED")])
         for job in targets:
-            if job is not None and _state(job) not in ("PREPARING", "PROCESSING", "PAUSED"):
+            if job is not None and _state(job) not in ("PREPARING", "PROCESSING", "PAUSE_REQUESTED", "PAUSED"):
                 _set_state(job, "QUEUED")
                 job.update({"error": "", "started": 0.0, "finished": 0.0,
                             "progress": _empty_progress(), "cancel_requested": False})
@@ -469,7 +488,8 @@ def _run_one(job):
     _set_state(job, "PROCESSING")
     job["processing_started"] = True
     job["progress"] = _empty_progress()
-    _progress.update({"processing": True, "paused": False, "progress": 0.0,
+    pause_controller.start()
+    _progress.update({"processing": True, "paused": False, "pause_requested": False, "progress": 0.0,
                       "desc": "Starting queued job…", "error": ""})
     before = _snapshot_outputs() if _snapshot_outputs else None
     _run_swap(payload)          # blocking; clears processing in its own finally
@@ -608,6 +628,7 @@ def queue_start():
             return JSONResponse(status_code=409,
                                 content={"message": "the hardware benchmark is running — "
                                                     "cancel it first, or wait for it to finish"})
+        pause_controller.cancel()
         _queue["running"] = True
         _queue["paused"] = False
         _generation += 1
@@ -619,29 +640,38 @@ def queue_start():
 
 @router.post("/api/queue/pause")
 def queue_pause():
-    """Pause the batch: hold the in-flight job (the swap loop honours
-    roop_globals.pause) and hold dispatch of the next one."""
+    """Request a pause and report PAUSED only after output is safe."""
+    pause = pause_controller.request() if _progress["processing"] else pause_controller.snapshot()
     with _lock:
         _queue["paused"] = True
         current = _find(_queue["current"]) if _queue["current"] else None
-        if current is not None and _state(current) == "PROCESSING":
-            _set_state(current, "PAUSED")
     if _progress["processing"]:
         roop_globals.pause = True
-        _progress["paused"] = True
+        _progress["pause_requested"] = True
+        _progress["paused"] = bool(pause["acknowledged"])
+        _progress["desc"] = "Paused" if pause["acknowledged"] else "Pause requested..."
+    with _lock:
+        current = _find(_queue["current"]) if _queue["current"] else None
+        if current is not None:
+            _set_state(current, "PAUSED" if pause["acknowledged"] else "PAUSE_REQUESTED")
+        _save()
     return _snapshot()
 
 
 @router.post("/api/queue/resume")
 def queue_resume():
+    pause_controller.resume()
     with _lock:
         _queue["paused"] = False
         current = _find(_queue["current"]) if _queue["current"] else None
-        if current is not None and _state(current) == "PAUSED":
+        if current is not None and _state(current) in ("PAUSE_REQUESTED", "PAUSED"):
             _set_state(current, "PROCESSING")
+        _save()
+    roop_globals.pause = False
+    _progress["pause_requested"] = False
+    _progress["paused"] = False
     if _progress["processing"]:
-        roop_globals.pause = False
-        _progress["paused"] = False
+        _progress["desc"] = "Resuming..."
     return _snapshot()
 
 

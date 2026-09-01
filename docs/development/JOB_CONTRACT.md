@@ -35,10 +35,11 @@ The authoritative lifecycle is:
 
 `QUEUED -> PREPARING -> PROCESSING -> COMPLETED`
 
-`PAUSED` is a cooperative hold from `PROCESSING` and returns to `PROCESSING`
-on resume. A processing error becomes `FAILED`; a user cancellation becomes
+`PAUSE_REQUESTED` is the transient hold while active work and pending output
+drain. `PAUSED` is the acknowledged cooperative hold from `PROCESSING` and
+returns to `PROCESSING` on resume. A processing error becomes `FAILED`; a user cancellation becomes
 `CANCELLED`; an unexpected/non-completing stop becomes `INTERRUPTED`.
-Records found in `PREPARING`, `PROCESSING`, or `PAUSED` during startup become
+Records found in `PREPARING`, `PROCESSING`, `PAUSE_REQUESTED`, or `PAUSED` during startup become
 `RECOVERABLE` with an interruption message and are never started unattended.
 `RECOVERABLE` can be explicitly started or retried.
 
@@ -96,3 +97,12 @@ may be added by a later gate. They are not part of the current implementation.
 `app/routes_queue.py`, `app/api.py`, `app/core.py`, `app/roop/ProcessMgr.py`,
 `app/roop/session_pool.py`, `react-ui-v2/src/workflow/useQueue.js`,
 `react-ui-v2/src/components/QueuePanel.jsx`, and `app/tests/test_queue.py`.
+
+## STAGE 8A PAUSE CONTRACT
+
+Queue pause has two current-job states: `PAUSE_REQUESTED` while the processing
+boundary drains, and `PAUSED` after active work and pending output reach zero.
+The queue remains held in both states, so no next job is dispatched. Resume
+returns the current job to `PROCESSING` and wakes the same serialized runner.
+Queue pause while idle only holds dispatch and does not claim a processing
+pause.

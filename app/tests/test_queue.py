@@ -19,6 +19,7 @@ render.
 import os
 import sys
 import tempfile
+import threading
 import time
 import unittest
 
@@ -45,6 +46,8 @@ class QueueTestBase(unittest.TestCase):
         q.QUEUE_FILE = os.path.join(self._tmp, "queue.json")
         q._queue["jobs"] = []
         q._queue.update({"running": False, "paused": False, "current": None})
+        q.pause_controller.cancel()
+        q.pause_controller.start()
 
         self.ran = []                       # payloads the fake runner received
         self.progress = {"processing": False, "progress": 0.0, "error": "", "paused": False}
@@ -237,6 +240,38 @@ class Runner(QueueTestBase):
         self._add("a.mp4")
         q._queue["jobs"][0]["status"] = "finished"
         self.assertEqual(q.queue_start().status_code, 400)
+
+    def test_current_job_reports_request_then_ack_and_resumes(self):
+        self.entries.append(_Entry("/media/a.mp4"))
+        entered = threading.Event()
+
+        def pausable_run(_payload):
+            self.progress["processing"] = True
+            self.assertTrue(q.pause_controller.begin(lambda: self.progress["processing"]))
+            entered.set()
+            time.sleep(0.05)
+            q.pause_controller.end()
+            q.pause_controller.checkpoint(lambda: self.progress["processing"])
+            self.progress.update({"processing": False, "progress": 1.0})
+
+        q._run_swap = pausable_run
+        self._add("a.mp4")
+        q.queue_start()
+        self.assertTrue(entered.wait(1.0))
+        requested = q.queue_pause()
+        self.assertEqual(requested["jobs"][0]["state"], "PAUSE_REQUESTED")
+        deadline = time.time() + 2.0
+        while time.time() < deadline:
+            if q._snapshot()["jobs"][0]["state"] == "PAUSED":
+                break
+            time.sleep(0.01)
+        self.assertEqual(q._snapshot()["jobs"][0]["state"], "PAUSED")
+        q.queue_resume()
+        deadline = time.time() + 2.0
+        while q._queue["running"] and time.time() < deadline:
+            time.sleep(0.01)
+        self.assertFalse(q._queue["running"])
+        self.assertEqual(q._snapshot()["jobs"][0]["state"], "COMPLETED")
 
 
 class Segments(QueueTestBase):

@@ -13,8 +13,8 @@ Repository HEAD before Stage 5A changes: `5ced7898faa98c2f2b6121258883923ad624d0
 
 ## CURRENT IMPLEMENTATION
 
-The active gate for this session is Stage 7A: repair the durable batch queue
-around the existing single-job processing path.
+The active gate for this session is Stage 8A: implement true pause/resume at
+safe processing checkpoints without replacing the existing single-job path.
 
 Stage 6B exposed one backend-owned
 structured runtime telemetry state to the React UI and terminal without
@@ -47,6 +47,7 @@ winners.
 | Stage 6A - Fast live preview | Implemented through the existing sequence-keyed JPEG path; end-to-end render impact remains unverified |
 | Stage 6B - Unified runtime telemetry | Structured state endpoint and V2 consumer implemented; full-render overhead and complete legacy migration remain unverified |
 | Stage 7A - Batch processing 2.0 | Canonical queue lifecycle, persistence migration, job isolation, cancellation, and V2 queue surface implemented; live browser/restart and physical GPU validation remain unverified |
+| Stage 8A - True pause / resume | Controller-backed safe-point implementation and automated coverage added; physical GPU, browser, crash-recovery, and output-playback validation remain open |
 | Next UI2 design or migration gate | Not defined in the repository; scope requires explicit authorization |
 | Visual validation / retained-output review | Open and not yet complete |
 | Phase 16 final production quality gate | Open/incomplete |

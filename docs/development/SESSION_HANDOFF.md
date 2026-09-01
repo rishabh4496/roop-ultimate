@@ -419,3 +419,66 @@ runtime scheduler, frame-worker concurrency, visual processing, V1 source,
 launcher scripts, models, caches, outputs, facesets, or logs. Preserve the
 queue's canonical state API and legacy status projection until validation is
 complete.
+
+## Stage 8A - TRUE PAUSE / RESUME
+
+### CURRENT STATE
+
+The runtime has a shared condition-based pause controller. API and queue state
+expose `PAUSE_REQUESTED` until active processing and pending output drain to a
+safe checkpoint, then expose `PAUSED`. Resume wakes the same workers and model
+sessions. The canonical queue lifecycle contains ten states, with the legacy
+V1 status projection preserved.
+
+### COMPLETED
+
+- Added controller-backed pause request/acknowledgement/resume semantics.
+- Added writer and bounded-output coordination to avoid queue deadlocks.
+- Added V1/V2 pause-requested UI states and V2 direct controls.
+- Added backend, runtime telemetry, queue, and early/mid/late pause tests.
+
+### VERIFIED
+
+- Narrow Stage 8A backend suite: **75 tests passed**.
+- Complete backend suite: **1710 passed, 1 skipped**, exit code 0.
+- Python `compileall` passed for `app`.
+- React UI 2.0 build and lint passed; 33 modules transformed.
+- React UI 1.0 build passed; 433 modules transformed. Its lint completed with
+  pre-existing Fast Refresh warnings.
+- `git diff --check` passed; only line-ending warnings were emitted by Git.
+
+### NOT VERIFIED
+
+- No physical RTX 4070 or RTX 3060 pause/resume render was run.
+- Browser interaction, output playback, process crash recovery, and FFmpeg
+  minterpolate acknowledgement latency were not runtime-tested.
+
+### KNOWN ISSUES
+
+- Pause is cooperative: an in-flight inference or long FFmpeg operation may
+  delay acknowledgement. Restart still re-queues the active job; it does not
+  resume from a frame checkpoint.
+
+### FILES CHANGED
+
+Launcher scripts, models, caches, outputs, facesets, and the React UI 1.0
+backup remain untouched.
+
+### TESTS RUN
+
+`app/env/Scripts/python.exe -m unittest app.tests.test_pause_resume app.tests.test_runtime_state app.tests.test_queue app.tests.test_runtime_scheduler`
+
+### COMMIT
+
+No commit made.
+
+### NEXT GATE
+
+Stage 8B — runtime/browser/hardware validation of true pause/resume, if
+explicitly authorized.
+
+### DO NOT TOUCH NEXT SESSION
+
+Validate this pause implementation before expanding scope; do not change
+providers, precision, pooling, visual processing, hardware tuning, launchers,
+models, caches, outputs, facesets, or the React UI 1.0 backup.

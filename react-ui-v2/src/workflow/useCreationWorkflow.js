@@ -175,6 +175,23 @@ export function useCreationWorkflow(notify) {
     finally { setBusy(''); }
   }, [notify, refreshProgress]);
 
+  const pause = useCallback(async () => {
+    setBusy('pause');
+    try {
+      await postJSON('/api/pause', {});
+      await refreshProgress();
+      notify('Pause requested; waiting for a safe checkpoint', 'info');
+    } catch (cause) { notify(cause.message, 'danger'); }
+    finally { setBusy(''); }
+  }, [notify, refreshProgress]);
+
+  const resume = useCallback(async () => {
+    setBusy('resume');
+    try { await postJSON('/api/resume', {}); await refreshProgress(); notify('Generation resumed', 'success'); }
+    catch (cause) { notify(cause.message, 'danger'); }
+    finally { setBusy(''); }
+  }, [notify, refreshProgress]);
+
   const selectedTarget = state?.targets?.[state?.selected_target_index || 0];
   const options = useMemo(() => ({
     providers: optionList(meta?.providers), precisions: optionList(meta?.trt_precisions),
@@ -189,6 +206,6 @@ export function useCreationWorkflow(notify) {
   return {
     meta, settings, state, progress, runtime, output, preview, selectedTarget, selectedSource, frame, setFrame,
     setSetting, upload, loading, busy, error, options, refresh, refreshState,
-    uploadMedia, selectSource, selectTarget, renderPreview, start, stop, buildPayload,
+    uploadMedia, selectSource, selectTarget, renderPreview, start, stop, pause, resume, buildPayload,
   };
 }

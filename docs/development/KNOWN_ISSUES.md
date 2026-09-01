@@ -42,3 +42,10 @@ Resolve issues through their authorized gates: complete evidence, keep host-spec
 No unrelated issue listed here was fixed during Stage 7A. The queue's old
 five-state semantics were repaired at the queue boundary; physical hardware,
 browser, and live restart validation remain open.
+
+17. **Stage 8A pause acknowledgement is cooperative.** An in-flight inference
+or long FFmpeg minterpolate operation is not interruptible and may delay the
+`PAUSED` acknowledgement. Pause state is process-local; restart recovery still
+re-queues the active job rather than resuming from a frame checkpoint. Physical
+RTX 4070/RTX 3060 pause/resume output validation and browser interaction remain
+open.

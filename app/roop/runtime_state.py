@@ -197,6 +197,22 @@ def _profile_data(manager) -> tuple[Mapping[str, Any], Any]:
         return {}, profile
 
 
+def _pause_state(progress: Mapping[str, Any]) -> dict:
+    runtime = sys.modules.get("roop.procmgr_runtime")
+    controller = getattr(runtime, "pause_controller", None)
+    if controller is not None:
+        try:
+            return dict(controller.snapshot())
+        except Exception:
+            pass
+    return {
+        "requested": bool(progress.get("pause_requested")),
+        "acknowledged": bool(progress.get("paused")),
+        "active_work": UNKNOWN,
+        "pending_output": UNKNOWN,
+    }
+
+
 def _frame_values(progress: Mapping[str, Any], run_stats: Mapping[str, Any]) -> tuple[Any, Any, Any, Any]:
     desc = str(progress.get("desc") or "")
     match = _FRAME_RE.search(desc)
@@ -282,11 +298,16 @@ def snapshot(progress: Optional[Mapping[str, Any]] = None,
 
     active = bool(progress.get("processing"))
     paused = bool(progress.get("paused"))
+    pause = _pause_state(progress)
+    pause_requested = bool(pause.get("requested"))
+    pause_acknowledged = bool(pause.get("acknowledged"))
     error = str(progress.get("error") or "").strip()
     desc = str(progress.get("desc") or "").strip()
     if error:
         status_code = "ERROR"
-    elif paused:
+    elif pause_requested and not pause_acknowledged:
+        status_code = "PAUSE_REQUESTED"
+    elif paused or pause_acknowledged:
         status_code = "PAUSED"
     elif active:
         status_code = "PROCESSING"
@@ -365,7 +386,8 @@ def snapshot(progress: Optional[Mapping[str, Any]] = None,
         "job": {
             "id": NOT_AVAILABLE,
             "processing": active,
-            "paused": paused,
+            "paused": pause_acknowledged,
+            "pause_requested": pause_requested,
             "started_at": (_number(run_stats.get("start"))
                            if _number(run_stats.get("start")) is not None else UNKNOWN),
             "output": _text(output.get("path")),
@@ -394,6 +416,7 @@ def snapshot(progress: Optional[Mapping[str, Any]] = None,
             "quality": quality_profile,
         },
         "status": {"code": status_code, "message": _text(desc)},
+        "pause": pause,
         "warnings": UNKNOWN,
         "errors": errors,
         "observed_at": time.time(),

@@ -10,6 +10,7 @@ their original comments explaining the measured values behind them.
 """
 
 import contextlib
+import functools
 import os
 import sys
 import time
@@ -33,6 +34,132 @@ import roop.globals
 # Net effect: CUDA/CPU → full multi-thread throughput; TensorRT → serialised
 # (switch to the CUDA provider for parallelism).
 _gpu_lock = Lock()
+
+
+class PauseController:
+    """Coordinate a cooperative pause at an output-safe processing boundary.
+
+    A pause request never interrupts an inference call or closes a writer.  A
+    worker enters a scope before model work, reserves any produced output
+    before leaving that scope, and the writer clears the reservation after the
+    frame is durable.  Only then is the request acknowledged.  This keeps the
+    existing bounded queues and model sessions alive while paused.
+    """
+
+    def __init__(self):
+        self._condition = _threading.Condition()
+        self._requested = False
+        self._paused = False
+        self._active = 0
+        self._pending_output = 0
+        self._owners = _threading.local()
+
+    def start(self):
+        """Start a run, preserving a request made during dispatch."""
+        with self._condition:
+            self._active = 0
+            self._pending_output = 0
+            if not self._requested:
+                self._paused = False
+            self._condition.notify_all()
+
+    def request(self) -> dict:
+        with self._condition:
+            self._requested = True
+            self._acknowledge_locked()
+            return self.snapshot()
+
+    def resume(self) -> dict:
+        with self._condition:
+            self._requested = False
+            self._paused = False
+            self._condition.notify_all()
+            return self.snapshot()
+
+    def cancel(self) -> dict:
+        return self.resume()
+
+    def finish(self) -> dict:
+        """Clear a completed run after its workers and writers have joined."""
+        with self._condition:
+            self._requested = False
+            self._paused = False
+            self._active = 0
+            self._pending_output = 0
+            self._condition.notify_all()
+            return self.snapshot()
+
+    def _acknowledge_locked(self):
+        if self._requested and self._active == 0 and self._pending_output == 0:
+            self._paused = True
+            self._condition.notify_all()
+
+    def begin(self, processing) -> bool:
+        """Wait for a requested pause, then claim one unit of live work.
+
+        Nested scopes are allowed for ``process_frame`` callers.  The owning
+        worker must not wait on its own outer scope after a request arrives.
+        """
+        depth = int(getattr(self._owners, "depth", 0) or 0)
+        with self._condition:
+            if depth == 0:
+                while self._requested and processing():
+                    self._acknowledge_locked()
+                    self._condition.wait(timeout=0.25)
+                if not processing():
+                    return False
+            self._active += 1
+            self._owners.depth = depth + 1
+            return True
+
+    def end(self):
+        depth = int(getattr(self._owners, "depth", 1) or 1)
+        with self._condition:
+            self._active = max(0, self._active - 1)
+            self._owners.depth = max(0, depth - 1)
+            self._acknowledge_locked()
+            self._condition.notify_all()
+
+    def pending_output(self, delta: int):
+        with self._condition:
+            self._pending_output = max(0, self._pending_output + int(delta))
+            self._acknowledge_locked()
+            self._condition.notify_all()
+
+    def checkpoint(self, processing, wait_for_ack=True) -> bool:
+        """Acknowledge and wait at a safe checkpoint, or return on stop.
+
+        A writer may call this after clearing one output reservation while
+        other reservations remain; it must keep draining those outputs instead
+        of waiting and deadlocking the bounded pipeline. Readers and prepasses
+        use the default blocking behavior and therefore admit no new work.
+        """
+        with self._condition:
+            while self._requested and processing():
+                if not wait_for_ack:
+                    self._acknowledge_locked()
+                    return bool(processing())
+                self._acknowledge_locked()
+                self._condition.wait(timeout=0.25)
+            return bool(processing())
+
+    def wait_until_resumed(self, processing) -> bool:
+        with self._condition:
+            while self._requested and processing():
+                self._condition.wait(timeout=0.25)
+            return bool(processing())
+
+    def snapshot(self) -> dict:
+        with self._condition:
+            return {
+                "requested": bool(self._requested),
+                "acknowledged": bool(self._paused),
+                "active_work": int(self._active),
+                "pending_output": int(self._pending_output),
+            }
+
+
+pause_controller = PauseController()
 
 
 _PROFILE = os.environ.get('ROOP_PROFILE', '0') == '1'
@@ -987,6 +1114,33 @@ def _gpu_guard(pooled=False, owner=None):
     return _gpu_lock if owner is None else _stage_lock(owner)
 
 
+@contextlib.contextmanager
+def pause_scope(processing):
+    """Own one pause-aware unit without changing the GPU-lock API."""
+    entered = pause_controller.begin(processing)
+    if not entered:
+        yield False
+        return
+    try:
+        yield True
+    finally:
+        pause_controller.end()
+
+
+def pause_aware(function):
+    """Decorate a frame operation while preserving its source-level method."""
+    @functools.wraps(function)
+    def wrapped(self, frame, frame_idx=None, output_pending=False):
+        with pause_scope(lambda: bool(getattr(roop.globals, 'processing', False))) as allowed:
+            if not allowed:
+                return frame
+            result = function(self, frame, frame_idx=frame_idx)
+            if output_pending and result is not None:
+                pause_controller.pending_output(1)
+            return result
+    return wrapped
+
+
 # ANSI escape codes for terminal coloring
 COLOR_RESET = "\033[0m"
 
@@ -1287,10 +1441,14 @@ def bar_write(msg):
 
 
 def wait_while_paused():
-    """Block while a pause has been requested so processing can later resume
-    from the exact same frame. Returns immediately if a stop was requested
-    instead (roop.globals.processing == False), so abort always wins."""
-    while getattr(roop.globals, 'pause', False) and roop.globals.processing:
-        time.sleep(0.1)
+    """Block at the next safe checkpoint until the run is resumed.
+
+    ``roop.globals.pause`` remains a compatibility input for the legacy test
+    watcher and older callers; the controller supplies the acknowledged state
+    and condition-based wake-up for API pause/resume.
+    """
+    if getattr(roop.globals, 'pause', False) and not pause_controller.snapshot()["requested"]:
+        pause_controller.request()
+    pause_controller.checkpoint(lambda: bool(getattr(roop.globals, 'processing', False)))
 
 

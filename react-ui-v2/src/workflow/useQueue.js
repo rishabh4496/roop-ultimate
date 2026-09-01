@@ -7,6 +7,7 @@ export const JOB_STATE_LABELS = Object.freeze({
   QUEUED: 'Queued',
   PREPARING: 'Preparing',
   PROCESSING: 'Processing',
+  PAUSE_REQUESTED: 'Pause requested',
   PAUSED: 'Paused',
   COMPLETED: 'Completed',
   FAILED: 'Failed',

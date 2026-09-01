@@ -772,7 +772,7 @@ export default function App() {
           </div>
           {progress.processing && (
             <div className="ml-2 flex items-center gap-2 px-2.5 py-1 rounded-lg bg-[var(--accent)]/10 border border-[var(--accent)]/20 text-micro font-bold tracking-wide uppercase">
-              <span className={`h-1.5 w-1.5 rounded-full ${progress.paused ? 'bg-amber-400' : 'bg-[var(--accent)] animate-ping'}`} />
+              <span className={`h-1.5 w-1.5 rounded-full ${progress.paused || progress.pause_requested ? 'bg-amber-400' : 'bg-[var(--accent)] animate-ping'}`} />
               {/* The chip is the one piece of the run that is on screen from
                   every tab, so it doubles as the way back to the run's own tab
                   once you have wandered off it. */}
@@ -780,9 +780,9 @@ export default function App() {
                 type="button"
                 onClick={() => { warmTab('processing'); setTab('processing'); }}
                 title="Open the Processing tab"
-                className={`hover:underline ${progress.paused ? 'text-amber-400/90' : 'text-[var(--accent)]'}`}
+                className={`hover:underline ${progress.paused || progress.pause_requested ? 'text-amber-400/90' : 'text-[var(--accent)]'}`}
               >
-                {progress.paused ? 'Paused' : `Processing ${Math.round((progress.progress || 0) * 100)}%`}
+                {progress.paused ? 'Paused' : progress.pause_requested ? 'Pause requested' : `Processing ${Math.round((progress.progress || 0) * 100)}%`}
               </button>
               {/* Same "time left" the Processing tab and the terminal show:
                   eta_s is the render's own progress bar, and the extrapolation
@@ -822,15 +822,16 @@ export default function App() {
                 ) : (
                   <button
                     type="button"
+                    disabled={progress.pause_requested}
                     onClick={async (e) => {
                       e.stopPropagation();
                       try {
                         await postJSON('/api/pause', {});
-                        setProgress((pr) => ({ ...pr, paused: true, desc: 'Paused' }));
+                        setProgress((pr) => ({ ...pr, pause_requested: true, desc: 'Pause requested…' }));
                       } catch {}
                     }}
                     className="grid place-items-center hover:text-white text-white/60 transition-colors cursor-pointer"
-                    title="Pause Job" aria-label="Pause job"
+                    title={progress.pause_requested ? 'Pause requested' : 'Pause Job'} aria-label={progress.pause_requested ? 'Pause requested' : 'Pause job'}
                   >
                     <Icon.pause size={13} />
                   </button>

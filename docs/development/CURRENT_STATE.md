@@ -10,9 +10,9 @@ status; it is not authorization to change application behavior.
 | Branch | `main` tracking `origin/main` |
 | HEAD before Stage 5A changes | `5ced7898faa98c2f2b6121258883923ad624d00e` |
 | Working tree at Stage 6B closeout | Runtime-state, V2 telemetry, V1 terminal-consumer, and development-document changes are uncommitted; processing policy, other V1 surfaces, and launcher files are unchanged |
-| Active stage/gate | Stage 7A - Batch processing 2.0 |
-| Last completed gate | Stage 6B - Unified runtime telemetry; Stage 7A implementation checks pass but browser, restart, and physical GPU validation remain incomplete |
-| Existing application behavior changed in Stage 7A | Durable queue state schema, lifecycle, cancellation, and V2 queue controls were added; processing policy and per-job frame execution remain unchanged |
+| Active stage/gate | Stage 8A - True pause / resume |
+| Last completed gate | Stage 7A - Batch processing 2.0 implementation; browser, restart, and physical GPU validation remain incomplete |
+| Existing application behavior changed in Stage 8A | Processing pause now requests and acknowledges a controller-owned safe point; queue/API telemetry and both React surfaces expose the transient request and acknowledged pause |
 
 ## CURRENT IMPLEMENTATION
 
@@ -30,8 +30,9 @@ status; it is not authorization to change application behavior.
 - TensorRT/ONNX execution, session pooling, and global GPU guards are implemented
   in processor modules, `app/roop/session_pool.py`, and
   `app/roop/procmgr_runtime.py`.
-- Pause/stop remain cooperative shared flags. API progress, logs, ETA, and
-  system telemetry are exposed; runtime monitor/adaptive sampling is opt-in.
+- Pause/stop remain cooperative controls. Pause uses the shared condition-based
+  controller; API progress, logs, ETA, and system telemetry are exposed;
+  runtime monitor/adaptive sampling is opt-in.
 - `app/roop/runtime_state.py` now builds a JSON-safe structured state from
   those existing sources. V2 consumes `progress.runtime`; the terminal pinned
   status is derived from the same state. Missing values use explicit
@@ -273,8 +274,8 @@ retaining its legacy log tail.
 
 ## STAGE 7A RESULT
 
-The durable queue now exposes a canonical nine-state lifecycle in
-`app/routes_queue.py`: `QUEUED`, `PREPARING`, `PROCESSING`, `PAUSED`,
+The durable queue now exposes a canonical ten-state lifecycle in
+`app/routes_queue.py`: `QUEUED`, `PREPARING`, `PROCESSING`, `PAUSE_REQUESTED`, `PAUSED`,
 `COMPLETED`, `FAILED`, `CANCELLED`, `INTERRUPTED`, and `RECOVERABLE`. Existing
 V1 `status` values remain as a compatibility projection. Queue records are
 schema version 2, preserve ordering and job identity, carry individual
@@ -305,6 +306,40 @@ TensorRT/ONNX, pooling, worker concurrency, and V1 code were not changed.
 - No physical RTX 3060 was available for queue rendering.
 - No fresh physical RTX 4070 queue render, throughput, VRAM, or output-quality
   measurement was run in this session; existing hardware records do not prove
-  this new queue path.
+this new queue path.
 - Browser interaction and restart recovery against a live process were not
   exercised; they remain beyond the automated queue/build checks.
+
+## STAGE 8A - TRUE PAUSE / RESUME
+
+Implemented a process-local `PauseController` shared by the FastAPI pause
+routes, durable queue, frame processing, bounded writers, analysis checkpoints,
+and post-swap frame admission. API and queue telemetry distinguish
+`PAUSE_REQUESTED` from acknowledged `PAUSED`; acknowledgement waits for active
+work and pending output to reach zero. Resume keeps existing model/provider
+sessions and wakes the same processing path.
+
+Automated coverage exercises early, middle, and late simulated processing
+points, stop while paused, runtime telemetry, a durable queue request/ack/
+resume sequence, existing GPU-lock contracts, and the complete backend suite.
+Physical RTX 4070/RTX 3060 pause/resume renders, browser interaction, crash
+recovery, and output playback remain unverified.
+
+## STAGE 8A VERIFICATION
+
+- `app/env/Scripts/python.exe -m unittest app.tests.test_pause_resume app.tests.test_runtime_state app.tests.test_queue app.tests.test_runtime_scheduler app.tests.test_gpu_stage_locks app.tests.test_enhancer_pool app.tests.test_no_face_action`: **75 passed**.
+- `app/env/Scripts/python.exe -m unittest discover -s app/tests -p 'test_*.py'`: **1710 passed, 1 skipped**, exit code 0.
+- `app/env/Scripts/python.exe -m compileall -q app`: passed.
+- `react-ui-v2`: build and lint passed; 33 modules transformed.
+- Existing `react-ui`: build passed; 433 modules transformed. Lint completed with
+  the pre-existing Fast Refresh warnings.
+- `git diff --check`: passed; only Git line-ending warnings were emitted.
+
+## STAGE 8A NOT VERIFIED
+
+- No physical RTX 3060 pause/resume render was possible, and no fresh physical
+  RTX 4070 pause/resume render was performed.
+- No live browser interaction, output playback, application-crash recovery, or
+  frame-checkpoint restart was tested.
+- In-flight model calls and long FFmpeg minterpolate calls remain cooperative
+  boundaries and may delay acknowledgement.

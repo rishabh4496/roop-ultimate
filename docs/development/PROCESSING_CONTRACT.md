@@ -374,3 +374,17 @@ independent simultaneous job contexts, or a new transfer path.
 Stage 7A automated verification is recorded in `JOB_CONTRACT.md` and
 `CURRENT_STATE.md`. No fresh physical RTX 4070 or RTX 3060 queue render was
 performed in this session.
+
+## STAGE 8A TRUE PAUSE / RESUME
+
+The runtime now uses `roop.procmgr_runtime.pause_controller` as a cooperative,
+condition-based boundary. A request is exposed as `PAUSE_REQUESTED`; active
+inference finishes, bounded output drains, and only then does telemetry expose
+`PAUSED`. Resume wakes the same workers and model sessions without reloading
+providers or releasing GPU resources. Stop clears the controller and wakes
+all waiters.
+
+The pause does not interrupt an in-flight CUDA/ONNX/RIFE call, and a long
+FFmpeg minterpolate invocation can delay acknowledgement. The state is
+process-local; restart recovery remains `RECOVERABLE` rather than frame-level
+checkpoint resume.
