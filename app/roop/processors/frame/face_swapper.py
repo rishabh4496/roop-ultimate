@@ -20,7 +20,12 @@ Features:
    - Extracts inner lip landmark polygon (points 61-68 in 68-pt scheme, 0-indexed 60-67).
    - If lip separation > 8 pixels:
      - Feathers inner-mouth contour by 3 pixels.
-     - Passes through target's native teeth, tongue, and oral cavity.
+   - Passes through target's native teeth, tongue, and oral cavity.
+5. Dermal Detail, Tone Mapping & Multi-band Compositing:
+   - Separates a crop into guided-filter base/detail layers (r=4, eps=0.01).
+   - Matches only skin-pixel LAB luminance distributions for low-light scenes.
+   - Restores target and optional FaceSet V2 dermal residuals before a
+     three-level Laplacian-pyramid composite.  No Poisson clone is used.
 """
 
 import os
@@ -64,6 +69,15 @@ THREAD_LOCK_OCCLUDER = threading.Lock()
 
 OCCLUSION_INPUT_SIZE = 256
 DEFAULT_EMA_ALPHA = 0.8  # Mask_t = 0.8 * Mask_t + 0.2 * WarpedMask_{t-1}
+
+# The values below intentionally keep the extra CPU work small: two 128 px
+# guided decompositions and a three-level image pyramid are safe on both the
+# 12 GB desktop and 6 GB laptop profiles, and introduce no model contexts.
+DERMAL_GUIDED_RADIUS = 4
+DERMAL_GUIDED_EPSILON = 0.01
+DERMAL_TARGET_DETAIL_WEIGHT = 0.60
+DERMAL_SWAP_DETAIL_WEIGHT = 0.25
+DERMAL_PATCH_WEIGHT = 0.30
 
 # Facial dynamics thresholds
 EAR_BLINK_THRESHOLD = 0.21
@@ -630,28 +644,303 @@ def clear_temporal_state(track_id: Optional[Any] = None) -> None:
     _GLOBAL_SMOOTHER.reset(track_id)
 
 
+def guided_filter_decompose(
+    image: np.ndarray,
+    radius: int = DERMAL_GUIDED_RADIUS,
+    epsilon: float = DERMAL_GUIDED_EPSILON,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Return ``(base, detail)`` using a grayscale-guided filter.
+
+    The computation follows ``detail = image - GuidedFilter(image, r=4,
+    eps=0.01)`` with image values normalized to [0, 1].  OpenCV's optional
+    ximgproc module is deliberately not required: this box-filter form is
+    portable across the project's supported installations.
+    """
+    src = np.asarray(image)
+    if src.ndim != 3 or src.shape[2] < 3 or src.size == 0:
+        raise ValueError("guided_filter_decompose expects a non-empty BGR image")
+    value = np.clip(src[..., :3], 0, 255).astype(np.float32) / 255.0
+    guide = cv2.cvtColor((value * 255.0).astype(np.uint8), cv2.COLOR_BGR2GRAY)
+    guide = guide.astype(np.float32) / 255.0
+    r = max(1, int(radius))
+    window = (2 * r + 1, 2 * r + 1)
+    mean_guide = cv2.boxFilter(guide, cv2.CV_32F, window, normalize=True,
+                                borderType=cv2.BORDER_REFLECT)
+    var_guide = (cv2.boxFilter(guide * guide, cv2.CV_32F, window,
+                               normalize=True, borderType=cv2.BORDER_REFLECT)
+                 - mean_guide * mean_guide)
+    base = np.empty_like(value)
+    denom = np.maximum(var_guide + max(1e-6, float(epsilon)), 1e-6)
+    for channel in range(3):
+        p = value[..., channel]
+        mean_p = cv2.boxFilter(p, cv2.CV_32F, window, normalize=True,
+                               borderType=cv2.BORDER_REFLECT)
+        covariance = (cv2.boxFilter(guide * p, cv2.CV_32F, window,
+                                    normalize=True, borderType=cv2.BORDER_REFLECT)
+                      - mean_guide * mean_p)
+        a = covariance / denom
+        b = mean_p - a * mean_guide
+        mean_a = cv2.boxFilter(a, cv2.CV_32F, window, normalize=True,
+                               borderType=cv2.BORDER_REFLECT)
+        mean_b = cv2.boxFilter(b, cv2.CV_32F, window, normalize=True,
+                               borderType=cv2.BORDER_REFLECT)
+        base[..., channel] = mean_a * guide + mean_b
+    base *= 255.0
+    return base.astype(np.float32), (value * 255.0 - base).astype(np.float32)
+
+
+def derive_skin_mask(target_crop: np.ndarray,
+                     face_mask: Optional[np.ndarray] = None) -> np.ndarray:
+    """Estimate a soft skin-only support mask, excluding background and hair.
+
+    YCrCb is used instead of brightness thresholds so it remains usable in
+    dark scenes.  If a very dim/colour-neutral frame leaves too few candidate
+    pixels, the existing face matte is the conservative fallback rather than
+    sampling the surrounding background.
+    """
+    target = np.asarray(target_crop)
+    if target.ndim != 3 or target.shape[2] < 3:
+        raise ValueError("derive_skin_mask expects a BGR image")
+    h, w = target.shape[:2]
+    if face_mask is None:
+        support = create_static_face_mask((h, w))
+    else:
+        support = np.asarray(face_mask, dtype=np.float32)
+        if support.ndim == 3:
+            support = support[..., 0]
+        if support.shape != (h, w):
+            support = cv2.resize(support, (w, h), interpolation=cv2.INTER_LINEAR)
+        support = np.clip(support, 0.0, 1.0)
+    ycrcb = cv2.cvtColor(np.clip(target[..., :3], 0, 255).astype(np.uint8),
+                           cv2.COLOR_BGR2YCrCb)
+    cr, cb = ycrcb[..., 1], ycrcb[..., 2]
+    candidate = ((cr >= 120) & (cr <= 180) & (cb >= 70) & (cb <= 145)).astype(np.uint8)
+    candidate = cv2.morphologyEx(candidate, cv2.MORPH_OPEN,
+                                 cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3)))
+    candidate = cv2.GaussianBlur(candidate.astype(np.float32), (0, 0), 1.1)
+    skin = np.clip(candidate, 0.0, 1.0) * support
+    if float(np.count_nonzero(skin > 0.2)) < max(32.0, 0.02 * float(np.count_nonzero(support > 0.2))):
+        return support.astype(np.float32)
+    return np.clip(skin, 0.0, 1.0).astype(np.float32)
+
+
+def skin_masked_lab_tone_map(
+    swap_crop: np.ndarray,
+    target_crop: np.ndarray,
+    skin_mask: np.ndarray,
+) -> np.ndarray:
+    """Map swap LAB L* CDF to the target's CDF using skin pixels only.
+
+    Hair and the dark background never enter either histogram.  A bounded
+    skin-only a*/b* mean offset follows the L* match: it keeps a dim target's
+    chroma from making an otherwise correct L* conversion look too bright when
+    returned to BGR, without allowing a broad colour cast.
+    """
+    swap = np.asarray(swap_crop)
+    target = np.asarray(target_crop)
+    if swap.ndim != 3 or target.ndim != 3 or swap.shape[2] < 3 or target.shape[2] < 3:
+        raise ValueError("skin_masked_lab_tone_map expects BGR images")
+    if target.shape[:2] != swap.shape[:2]:
+        target = cv2.resize(target, (swap.shape[1], swap.shape[0]), interpolation=cv2.INTER_LINEAR)
+    mask = np.asarray(skin_mask, dtype=np.float32)
+    if mask.ndim == 3:
+        mask = mask[..., 0]
+    if mask.shape != swap.shape[:2]:
+        mask = cv2.resize(mask, (swap.shape[1], swap.shape[0]), interpolation=cv2.INTER_LINEAR)
+    mask = np.clip(mask, 0.0, 1.0)
+    sample = mask > 0.35
+    if int(np.count_nonzero(sample)) < 32:
+        return swap.copy()
+
+    s_lab = cv2.cvtColor(np.clip(swap[..., :3], 0, 255).astype(np.uint8), cv2.COLOR_BGR2LAB)
+    t_lab = cv2.cvtColor(np.clip(target[..., :3], 0, 255).astype(np.uint8), cv2.COLOR_BGR2LAB)
+    source_l = s_lab[..., 0]
+    target_l = t_lab[..., 0]
+    source_hist = np.bincount(source_l[sample], minlength=256).astype(np.float64)
+    target_hist = np.bincount(target_l[sample], minlength=256).astype(np.float64)
+    if source_hist.sum() <= 0.0 or target_hist.sum() <= 0.0:
+        return swap.copy()
+    source_cdf = np.cumsum(source_hist) / source_hist.sum()
+    target_cdf = np.cumsum(target_hist) / target_hist.sum()
+    # A nearly flat synthetic/restored swap has no usable rank ordering.  A
+    # literal CDF inverse maps every one of those pixels to the target's
+    # brightest sample, visibly lifting a night face.  Preserve the target
+    # profile's centre in this degenerate case; normal images use the full CDF.
+    if float(np.std(source_l[sample])) < 1.0:
+        mapped_l = np.clip(source_l.astype(np.float32) +
+                           (float(target_l[sample].mean()) - float(source_l[sample].mean())),
+                           0.0, 255.0).astype(np.uint8)
+    else:
+        lookup = np.searchsorted(target_cdf, source_cdf, side='left').clip(0, 255).astype(np.uint8)
+        mapped_l = lookup[source_l]
+    out_lab = s_lab.copy()
+    # Feathering the operation with the same skin mask avoids a hard cheek or
+    # hairline change while retaining exact CDF mapping in the skin interior.
+    out_lab[..., 0] = np.clip(source_l.astype(np.float32) +
+                              (mapped_l.astype(np.float32) - source_l.astype(np.float32)) * mask,
+                              0.0, 255.0).astype(np.uint8)
+    chroma_delta = np.clip(t_lab[..., 1:3][sample].mean(axis=0) -
+                           s_lab[..., 1:3][sample].mean(axis=0), -32.0, 32.0)
+    out_lab[..., 1:3] = np.clip(s_lab[..., 1:3].astype(np.float32) +
+                                chroma_delta.reshape(1, 1, 2) * mask[..., None],
+                                0.0, 255.0).astype(np.uint8)
+    return cv2.cvtColor(out_lab, cv2.COLOR_LAB2BGR)
+
+
+def _field(value: Any, name: str, default: Any = None) -> Any:
+    if isinstance(value, dict):
+        return value.get(name, default)
+    return getattr(value, name, default)
+
+
+def resolve_dermal_patch(source: Any) -> Optional[Dict[str, Any]]:
+    """Find an optional V2 dermal patch on a face or its loaded FaceSet."""
+    if source is None:
+        return None
+    candidates = [
+        _field(source, 'dermal_patch'),
+        (_field(source, 'faceset_metadata') or {}).get('dermal_patch')
+        if isinstance(_field(source, 'faceset_metadata'), dict) else None,
+    ]
+    for owner_name in ('faceset', 'source_faceset', 'face_set'):
+        owner = _field(source, owner_name)
+        if owner is not None:
+            candidates.append(_field(owner, 'dermal_patch'))
+            metadata = _field(owner, 'faceset_metadata')
+            if isinstance(metadata, dict):
+                candidates.append(metadata.get('dermal_patch'))
+    for patch in candidates:
+        if isinstance(patch, dict) and isinstance(patch.get('texture') or patch, dict):
+            return patch
+    return None
+
+
+def warp_dermal_patch(
+    dermal_patch: Optional[Dict[str, Any]],
+    output_shape: Tuple[int, int],
+    target_landmarks: Optional[np.ndarray] = None,
+) -> Tuple[Optional[np.ndarray], Optional[np.ndarray]]:
+    """Warp a FaceSet V2 residual from its UV anchors into target crop space."""
+    if not isinstance(dermal_patch, dict):
+        return None, None
+    try:
+        from roop.identity_detail import decode_detail
+        decoded = decode_detail(dermal_patch.get('texture') or dermal_patch)
+        anchors = dermal_patch.get('uv_anchors') or {}
+        source_uv = np.asarray(anchors.get('uv'), dtype=np.float32)
+        if decoded is None or source_uv.shape != (5, 2) or not np.isfinite(source_uv).all():
+            return None, None
+        h, w = int(output_shape[0]), int(output_shape[1])
+        dh, dw = decoded['residual'].shape
+        source_points = source_uv * np.array([dw - 1, dh - 1], dtype=np.float32)
+        if target_landmarks is None:
+            destination = source_uv * np.array([w - 1, h - 1], dtype=np.float32)
+        else:
+            destination = np.asarray(target_landmarks, dtype=np.float32).reshape(-1, 2)[:5]
+            if destination.shape != (5, 2) or not np.isfinite(destination).all():
+                return None, None
+            if float(np.max(destination)) <= 1.2:
+                destination = destination * np.array([w - 1, h - 1], dtype=np.float32)
+        transform, _ = cv2.estimateAffinePartial2D(source_points, destination, method=cv2.LMEDS)
+        if transform is None:
+            return None, None
+        residual = cv2.warpAffine(decoded['residual'], transform, (w, h), flags=cv2.INTER_LINEAR,
+                                  borderMode=cv2.BORDER_CONSTANT, borderValue=0.0)
+        confidence = decoded['confidence'] * decoded['mask']
+        weight = cv2.warpAffine(confidence, transform, (w, h), flags=cv2.INTER_LINEAR,
+                                borderMode=cv2.BORDER_CONSTANT, borderValue=0.0)
+        return residual.astype(np.float32), np.clip(weight, 0.0, 1.0).astype(np.float32)
+    except (ImportError, TypeError, ValueError, cv2.error):
+        return None, None
+
+
+def restore_dermal_and_tone(
+    target_crop: np.ndarray,
+    enhanced_swap_crop: np.ndarray,
+    face_mask: Optional[np.ndarray] = None,
+    dermal_patch: Optional[Dict[str, Any]] = None,
+    target_landmarks: Optional[np.ndarray] = None,
+) -> np.ndarray:
+    """Tone-map skin and restore photograph-derived high-frequency detail.
+
+    Both crops are decomposed before recomposition.  The target's residual
+    keeps pores/moles photographed in the destination lighting; an available
+    V2 patch contributes only its confidence-weighted source residual after
+    UV-landmark warping.
+    """
+    target = np.asarray(target_crop)
+    swap = np.asarray(enhanced_swap_crop)
+    if target.ndim != 3 or swap.ndim != 3 or target.shape[2] < 3 or swap.shape[2] < 3:
+        raise ValueError("restore_dermal_and_tone expects BGR images")
+    if target.shape[:2] != swap.shape[:2]:
+        target = cv2.resize(target, (swap.shape[1], swap.shape[0]), interpolation=cv2.INTER_LINEAR)
+    skin = derive_skin_mask(target, face_mask)
+    toned = skin_masked_lab_tone_map(swap, target, skin)
+    target_base, target_detail = guided_filter_decompose(target)
+    swap_base, swap_detail = guided_filter_decompose(toned)
+    del target_base  # Detail is the target contribution; its base stays untouched.
+    smooth_restored = toned.astype(np.float32) * (1.0 - skin[..., None]) + swap_base * skin[..., None]
+    detail = (DERMAL_TARGET_DETAIL_WEIGHT * target_detail +
+              DERMAL_SWAP_DETAIL_WEIGHT * swap_detail)
+    patch_residual, patch_weight = warp_dermal_patch(dermal_patch, target.shape[:2], target_landmarks)
+    if patch_residual is not None and patch_weight is not None:
+        detail += (DERMAL_PATCH_WEIGHT * patch_residual * patch_weight)[..., None]
+    # Keep detail strictly inside the skin support.  Smoothly cap it so a noisy
+    # source cannot turn a mole into a clipped black/white pixel.
+    detail = 24.0 * np.tanh(detail / 24.0)
+    out = smooth_restored + detail * skin[..., None]
+    return np.clip(out, 0.0, 255.0).astype(np.uint8)
+
+
+def laplacian_pyramid_blend(
+    target_buffer: np.ndarray,
+    swap_buffer: np.ndarray,
+    blend_mask: np.ndarray,
+    levels: int = 3,
+) -> np.ndarray:
+    """Blend target/swap buffers with a bounded multi-level Laplacian pyramid."""
+    target = np.asarray(target_buffer, dtype=np.float32)
+    swap = np.asarray(swap_buffer, dtype=np.float32)
+    mask = np.asarray(blend_mask, dtype=np.float32)
+    if target.ndim != 3 or target.shape[2] < 3:
+        raise ValueError("laplacian_pyramid_blend expects a BGR target")
+    if swap.shape != target.shape:
+        swap = cv2.resize(swap, (target.shape[1], target.shape[0]), interpolation=cv2.INTER_LINEAR)
+    if mask.ndim == 3:
+        mask = mask[..., 0]
+    if mask.shape != target.shape[:2]:
+        mask = cv2.resize(mask, (target.shape[1], target.shape[0]), interpolation=cv2.INTER_LINEAR)
+    mask = np.clip(mask, 0.0, 1.0)
+    depth = max(1, min(int(levels), 3))
+    target_gaussian, swap_gaussian, mask_gaussian = [target], [swap], [mask]
+    for _ in range(1, depth):
+        if min(target_gaussian[-1].shape[:2]) < 2:
+            break
+        target_gaussian.append(cv2.pyrDown(target_gaussian[-1]))
+        swap_gaussian.append(cv2.pyrDown(swap_gaussian[-1]))
+        mask_gaussian.append(cv2.pyrDown(mask_gaussian[-1]))
+    target_laplacian, swap_laplacian = [], []
+    for index in range(len(target_gaussian) - 1):
+        size = (target_gaussian[index].shape[1], target_gaussian[index].shape[0])
+        target_laplacian.append(target_gaussian[index] - cv2.pyrUp(target_gaussian[index + 1], dstsize=size))
+        swap_laplacian.append(swap_gaussian[index] - cv2.pyrUp(swap_gaussian[index + 1], dstsize=size))
+    blended = (target_gaussian[-1] * (1.0 - mask_gaussian[-1][..., None]) +
+               swap_gaussian[-1] * mask_gaussian[-1][..., None])
+    for index in range(len(target_laplacian) - 1, -1, -1):
+        size = (target_laplacian[index].shape[1], target_laplacian[index].shape[0])
+        blended = cv2.pyrUp(blended, dstsize=size)
+        m = mask_gaussian[index][..., None]
+        blended += target_laplacian[index] * (1.0 - m) + swap_laplacian[index] * m
+    return np.clip(blended, 0.0, 255.0).astype(np.uint8)
+
+
 def blend_swap_buffer(
     target_buffer: np.ndarray,
     swap_buffer: np.ndarray,
     blend_mask: np.ndarray
 ) -> np.ndarray:
-    """Apply effective blend mask to composite swapped face into target buffer."""
-    target = np.asarray(target_buffer, dtype=np.float32)
-    swap = np.asarray(swap_buffer, dtype=np.float32)
-    mask = np.asarray(blend_mask, dtype=np.float32)
-
-    if mask.ndim == 2 and target.ndim == 3:
-        mask = mask[..., np.newaxis]
-
-    if swap.shape != target.shape:
-        swap = cv2.resize(swap, (target.shape[1], target.shape[0]), interpolation=cv2.INTER_LINEAR)
-    if mask.shape[:2] != target.shape[:2]:
-        mask = cv2.resize(mask, (target.shape[1], target.shape[0]), interpolation=cv2.INTER_LINEAR)
-        if target.ndim == 3 and mask.ndim == 2:
-            mask = mask[..., np.newaxis]
-
-    blended = target * (1.0 - mask) + swap * mask
-    return np.clip(blended, 0.0, 255.0).astype(np.uint8)
+    """Composite with the three-level Laplacian blend used instead of Poisson."""
+    return laplacian_pyramid_blend(target_buffer, swap_buffer, blend_mask, levels=3)
 
 
 def create_static_face_mask(shape: Tuple[int, int], radius_factor: float = 0.40) -> np.ndarray:
@@ -747,6 +1036,17 @@ def swap_face(
     # Step 3: Base face mask
     face_mask = create_static_face_mask(crop_frame.shape[:2])
 
+    # Step 3a: Skin-only LAB tone mapping plus guided-filter dermal recovery.
+    # A loaded V2 FaceSet can expose its patch directly on the chosen source
+    # face or through its FaceSet owner.  V1/missing metadata is intentionally
+    # a no-op for the source contribution while target micro-detail remains.
+    crop_kps = None
+    if kps is not None and len(kps) == 5 and M is not None:
+        crop_kps = cv2.transform(np.asarray(kps, dtype=np.float32).reshape(-1, 1, 2), M).reshape(-1, 2)
+    swapped_crop = restore_dermal_and_tone(
+        crop_frame, swapped_crop, face_mask=face_mask,
+        dermal_patch=resolve_dermal_patch(source_face), target_landmarks=crop_kps)
+
     # Step 4: Occlusion Parsing Pipeline at 256x256
     occlusion_mask = compute_occlusion_mask(crop_frame, face_mask=face_mask)
     blend_mask = apply_occlusion_blend(face_mask, occlusion_mask)
@@ -754,17 +1054,22 @@ def swap_face(
     # Step 5: Temporal Mask Smoothing (Optical Flow / EMA)
     smoothed_mask = smooth_temporal_mask(blend_mask, crop_frame, track_id=track_id)
 
-    # Step 6: Composite into crop buffer
-    blended_crop = blend_swap_buffer(crop_frame, swapped_crop, smoothed_mask)
-
-    # Step 7: Paste back into full frame
+    # Step 6: Composite and paste back.  For an aligned crop the pyramid runs
+    # against a full-frame source that is explicitly filled with the target
+    # outside the matte.  Feeding its black warp border into a coarse pyramid
+    # level would create precisely the gray halo this replaces Poisson to avoid.
     if M is not None:
         inv_M = cv2.invertAffineTransform(M)
         h, w = temp_frame.shape[:2]
-        warped_crop = cv2.warpAffine(blended_crop, inv_M, (w, h), borderMode=cv2.BORDER_TRANSPARENT)
+        warped_crop = cv2.warpAffine(swapped_crop, inv_M, (w, h),
+                                     borderMode=cv2.BORDER_CONSTANT, borderValue=0)
         warped_mask = cv2.warpAffine(smoothed_mask, inv_M, (w, h), borderMode=cv2.BORDER_CONSTANT, borderValue=0.0)
-        return blend_swap_buffer(temp_frame, warped_crop, warped_mask)
+        pyramid_source = temp_frame.copy()
+        valid = warped_mask > 1e-4
+        pyramid_source[valid] = warped_crop[valid]
+        return laplacian_pyramid_blend(temp_frame, pyramid_source, warped_mask, levels=3)
     else:
+        blended_crop = blend_swap_buffer(crop_frame, swapped_crop, smoothed_mask)
         target_frame[y1:y2, x1:x2] = cv2.resize(blended_crop, (x2 - x1, y2 - y1))
         return target_frame
 
