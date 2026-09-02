@@ -156,24 +156,67 @@ class UltraMaxEyeProtection(unittest.TestCase):
 
     @unittest.skipUnless(__import__('torch').cuda.is_available(),
                          'requires CUDA for tensor-path parity')
-    def test_cuda_eye_protection_stays_within_image_quality_tolerance(self):
-        """The CUDA implementation may differ at feathered boundaries, but it
-        must preserve the CPU operator's visual decision, not merely its shape."""
+    def test_cuda_eye_protection_is_bit_identical_to_the_cpu_operator(self):
+        """Not "close" -- EQUAL. This path decides every rendered face.
+
+        The tolerance here used to be a mean, and a mean hid three real
+        divergences at once: the GPU applied the core mix once where the CPU
+        applies it twice, its feather sigma was 1.68x the CPU's (spelling
+        cv2's ksize-derived sigma as `k/3`), and it rasterised the eye
+        ellipses analytically where `cv2.ellipse` fills a polygon
+        approximation. Together those reached 65/255 inside the eye band while
+        the mean stayed at 0.27 and the assertion passed.
+
+        Random noise is deliberate: it is the worst case for the
+        gradient-agreement gates, which divide by near-zero magnitudes.
+        """
         import torch
         from roop.processors.Enhance_UltraMax import Enhance_UltraMax
 
-        rng = np.random.default_rng(20260902)
-        source = rng.integers(0, 256, (512, 512, 3), dtype=np.uint8)
-        restored = rng.integers(0, 256, (512, 512, 3), dtype=np.uint8)
-        cpu = Enhance_UltraMax._protect_swapped_eyes(restored, source)
-        gpu_tensor = Enhance_UltraMax._protect_swapped_eyes_gpu(
-            torch.from_numpy(restored).cuda().float(),
-            torch.from_numpy(source).cuda().float())
-        self.assertTrue(gpu_tensor.is_cuda)
-        gpu = gpu_tensor.round().to(torch.uint8).cpu().numpy()
-        delta = np.abs(cpu.astype(np.int16) - gpu.astype(np.int16))
-        self.assertLess(float(delta.mean()), 0.5)
-        self.assertLessEqual(float(np.quantile(delta, 0.99)), 10.0)
+        for seed in (20260902, 7, 99):
+            rng = np.random.default_rng(seed)
+            source = rng.integers(0, 256, (512, 512, 3), dtype=np.uint8)
+            restored = rng.integers(0, 256, (512, 512, 3), dtype=np.uint8)
+            cpu = Enhance_UltraMax._protect_swapped_eyes(restored, source)
+            gpu_tensor = Enhance_UltraMax._protect_swapped_eyes_gpu(
+                torch.from_numpy(restored).cuda().float(),
+                torch.from_numpy(source).cuda().float())
+            self.assertTrue(gpu_tensor.is_cuda)
+            gpu = gpu_tensor.round().to(torch.uint8).cpu().numpy()
+            delta = np.abs(cpu.astype(np.int16) - gpu.astype(np.int16))
+            self.assertEqual(int(delta.max()), 0,
+                             f'seed {seed}: CUDA eye protection diverged from '
+                             f'the CPU operator by {int(delta.max())}/255')
+
+    @unittest.skipUnless(__import__('torch').cuda.is_available(),
+                         'requires CUDA for tensor-path parity')
+    def test_cuda_rebalance_matches_the_cpu_operator(self):
+        """`_rebalance_eye_detail` had NO tensor implementation at all.
+
+        The CUDA post-process therefore skipped a whole stage relative to the
+        host path. This asserts both that the operator FIRES on an imbalanced
+        pair -- a test that silently no-ops proves nothing -- and that the two
+        implementations agree once it does.
+        """
+        import torch
+        from roop.processors.Enhance_UltraMax import Enhance_UltraMax
+
+        for seed in (1, 2, 3):
+            rng = np.random.default_rng(seed)
+            img = np.full((512, 512, 3), 120, np.uint8)
+            img[200:280, 150:240] = rng.integers(0, 256, (80, 90, 3))
+            img[220:260, 300:340] = rng.integers(100, 140, (40, 40, 3))
+            cpu = Enhance_UltraMax._rebalance_eye_detail(img)
+            self.assertFalse(np.array_equal(cpu, img),
+                             'the rebalance operator did not fire, so this '
+                             'test would pass on a no-op')
+            gpu = Enhance_UltraMax._rebalance_eye_detail_gpu(
+                torch.from_numpy(img).cuda().float())
+            gpu = gpu.round().to(torch.uint8).cpu().numpy()
+            delta = np.abs(cpu.astype(np.int16) - gpu.astype(np.int16))
+            # 1 LSB: the CPU truncates to uint8 between stages, the CUDA chain
+            # stays in float. That is strictly less quantisation, not a defect.
+            self.assertLessEqual(int(delta.max()), 1)
 
 
 class GrainMustNotFlicker(unittest.TestCase):

@@ -193,11 +193,21 @@ class TestUltraMaxRun(unittest.TestCase):
         self.assertEqual(out.dtype, np.uint8)
         self.assertEqual(scale, 1)
 
-    def test_tensorrt_never_binds_model_output_into_torch_memory(self):
-        """TRT accepts the pointer but can return finite, spatially corrupt faces.
+    def test_model_output_is_never_bound_into_torch_owned_memory(self):
+        """ORT must ALLOCATE AND OWN the output; we never hand it our pointer.
 
-        The host compatibility output is intentional for this provider. CUDA EP
-        remains eligible for the direct tensor post-process path.
+        This is the invariant, and it is the whole reason the CUDA
+        post-process is safe under TensorRT. Handing ORT a Torch allocation via
+        the 7-argument `bind_output(name, dev, id, elem, shape, ptr)` form is
+        what produced finite-but-spatially-corrupt faces on ORT 1.23 / TRT 10 --
+        striped and ghosted, so no numerical guard can catch it. The response
+        used to be to refuse the CUDA path entirely whenever TensorRT was the
+        provider, which meant it never ran on a single face in production.
+
+        The three-argument form lets ORT own the allocation and is measured
+        bit-identical to the host path on TensorRT. So the test is no longer
+        "never bind anything" -- inputs are legitimately bound from Torch
+        memory -- it is specifically "never bind an OUTPUT POINTER".
         """
         p = self._make()
         p._cuda_iob_available = None
@@ -205,10 +215,35 @@ class TestUltraMaxRun(unittest.TestCase):
                                                 'CUDAExecutionProvider']
         frame = np.zeros((512, 512, 3), dtype=np.uint8)
         with patch.object(UM, '_TORCH_CUDA', True):
-            self.assertIsNone(p._run_cuda_postprocess(frame, 512, frame))
-        self.assertFalse(p._cuda_iob_available)
-        p.io_binding.bind_input.assert_not_called()
-        p.io_binding.bind_output.assert_not_called()
+            p._run_cuda_postprocess(frame, 512, frame)
+        for call_ in p.io_binding.bind_output.call_args_list:
+            self.assertLessEqual(
+                len(call_.args), 3,
+                'bind_output was given a data pointer; ORT must own the output '
+                'allocation or TensorRT can return spatially corrupt faces')
+            self.assertNotIn('buffer_ptr', call_.kwargs)
+
+    def test_cuda_input_is_contiguous_before_its_pointer_is_bound(self):
+        """`bind_input` takes a RAW POINTER and reads it as contiguous.
+
+        `permute(2,0,1).flip(0)` leaves a non-contiguous view. Binding that
+        tensor's `data_ptr()` feeds the network transposed garbage -- and it
+        still returns a plausible finite image, so the only visible symptom was
+        the collapse guard rejecting every face. Nothing else in the stack can
+        catch this, which is why it is asserted directly.
+        """
+        import torch
+        if not torch.cuda.is_available():
+            self.skipTest('requires CUDA')
+        src = np.arange(512 * 512 * 3, dtype=np.uint8).reshape(512, 512, 3)
+        source = torch.from_numpy(src).to('cuda', dtype=torch.float32)
+        x = (source.permute(2, 0, 1).flip(0).unsqueeze(0)
+             .div(127.5).sub(1.0).to(torch.float16).contiguous())
+        self.assertTrue(x.is_contiguous())
+        # And the un-contiguous spelling really is non-contiguous, so this test
+        # is guarding something that can actually happen.
+        loose = source.permute(2, 0, 1).flip(0).unsqueeze(0).div(127.5).sub(1.0)
+        self.assertFalse(loose.is_contiguous())
 
     def test_input_is_normalised_rgb_chw_in_the_model_dtype(self):
         """The LUT gather has to produce exactly what the graph expects."""

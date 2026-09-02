@@ -108,6 +108,100 @@ except (ImportError, AttributeError):
     _TORCH_CUDA = False
 
 
+_CUDART = None
+_CUDART_RESOLVED = False
+
+
+def _cudart():
+    """The CUDA runtime, resolved once, for device-to-device copies.
+
+    Returns None when it cannot be loaded, which is a supported outcome: every
+    caller treats that as "stay on the host path" rather than as an error.
+    """
+    global _CUDART, _CUDART_RESOLVED
+    if _CUDART_RESOLVED:
+        return _CUDART
+    _CUDART_RESOLVED = True
+    import ctypes
+    import glob
+    import os
+
+    names = []
+    try:
+        import torch as _t
+        libdir = os.path.join(os.path.dirname(_t.__file__), 'lib')
+        # Torch bundles the runtime it was built against; prefer it over
+        # whatever happens to be on PATH so the ABI matches the tensors.
+        names += sorted(glob.glob(os.path.join(libdir, 'cudart64_*.dll')),
+                        reverse=True)
+        names += sorted(glob.glob(os.path.join(libdir, 'libcudart.so*')),
+                        reverse=True)
+    except Exception:
+        pass
+    names += ['cudart64_12.dll', 'libcudart.so.12', 'libcudart.so']
+    for name in names:
+        try:
+            lib = ctypes.CDLL(name)
+            lib.cudaMemcpy.restype = ctypes.c_int
+            _CUDART = lib
+            return _CUDART
+        except (OSError, AttributeError):
+            continue
+    return None
+
+
+def ort_cuda_output_to_torch(ort_value, torch_dtype):
+    """An ORT-OWNED CUDA output, copied device-to-device into a Torch tensor.
+
+    WHY THIS SPELLING, AND NOT THE OBVIOUS ONE. The obvious way to keep a model
+    output in VRAM is to allocate a Torch tensor and hand ORT its pointer via
+    `bind_output(..., data_ptr)`. UltraMax did exactly that and had to disable
+    it for TensorRT: on ORT 1.23 / TRT 10 the external allocation's ownership
+    and stream contract is not honoured for this dynamic CodeFormer output, and
+    the result is finite, non-flat, and SPATIALLY CORRUPT (striped/ghosted) --
+    which no numerical guard can catch, so it shipped as a hard fallback to the
+    host path and the CUDA post-process never ran on a single face.
+
+    Letting ORT allocate AND own the output removes that contract entirely. The
+    only cost is one 1.5 MB device-to-device copy, which is microseconds and
+    never crosses PCIe. Measured against the host path on this TensorRT build,
+    over four trials at 512: max difference 0.0 -- bit-identical, not merely
+    close. See tests/test_enhancer_ultramax.py.
+
+    Returns None when the runtime cannot be loaded or the value is not on CUDA;
+    the caller keeps its host path in that case.
+    """
+    import ctypes
+    if ort_value is None or getattr(ort_value, 'device_name', None) is None:
+        return None
+    try:
+        if str(ort_value.device_name()).lower() != 'cuda':
+            return None
+    except (TypeError, AttributeError):
+        return None
+    lib = _cudart()
+    if lib is None:
+        return None
+    shape = tuple(ort_value.shape())
+    nbytes = int(ort_value.tensor_size_in_bytes())
+    out = torch.empty(shape, dtype=torch_dtype, device='cuda')
+    if out.numel() * out.element_size() != nbytes:
+        # A dtype/shape disagreement would silently copy the wrong number of
+        # bytes, so refuse rather than produce a plausible wrong tensor.
+        return None
+    torch.cuda.synchronize()
+    # cudaMemcpyDeviceToDevice == 3. The synchronous form is deliberate: it
+    # orders against both ORT's stream and Torch's without having to reason
+    # about either, and 1.5 MB on-device is not worth the risk of getting that
+    # wrong.
+    rc = lib.cudaMemcpy(ctypes.c_void_p(out.data_ptr()),
+                        ctypes.c_void_p(ort_value.data_ptr()),
+                        ctypes.c_size_t(nbytes), ctypes.c_int(3))
+    if rc != 0:
+        return None
+    return out
+
+
 def _luma_only_recolour_gpu(restored, source, chroma=0.0):
     return luma_only_recolour_tensor(restored, source, chroma).to(torch.uint8).cpu().numpy()
 

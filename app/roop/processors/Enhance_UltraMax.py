@@ -199,7 +199,8 @@ import roop.globals
 from roop.typing import Face, FaceSet, Frame
 from roop.processors.enhance_common import (looks_collapsed, sized, exclusive,
                                             luma_only_recolour,
-                                            luma_only_recolour_tensor)
+                                            luma_only_recolour_tensor,
+                                            ort_cuda_output_to_torch)
 from roop.utilities import resolve_relative_path
 from roop import session_pool
 from roop.precision_policy import providers_for
@@ -303,10 +304,10 @@ class Enhance_UltraMax:
     # two 512-square float masks costs 2 MiB/device and avoids rebuilding and
     # blurring them in every restorer invocation.
     _eye_mask_cache = {}
+    _rebalance_mask_cache = {}
     _gaussian_1d_cache = {}
 
     _warned_colour = False
-    _warned_trt_external_output = False
 
     def __init__(self):
         self.plugin_options = None
@@ -555,13 +556,24 @@ class Enhance_UltraMax:
             return restored
 
     @classmethod
-    def _blur_gpu(cls, image, sigma):
-        """Gaussian blur for HWC CUDA images without an OpenCV round-trip."""
+    def _blur_gpu(cls, image, sigma, radius=None):
+        """Gaussian blur for HWC CUDA images without an OpenCV round-trip.
+
+        The kernel WIDTH matters as much as the sigma. `cv2.GaussianBlur` with
+        ksize=(0, 0) picks `ksize = cvRound(sigma*4*2 + 1) | 1` for float input;
+        spelling the radius as `round(3*sigma)` truncates the tail earlier at
+        every sigma this class uses (radius 2 against OpenCV's 3 at sigma 0.8,
+        6 against 8 at sigma 2.0) and moved the two paths apart. Pass `radius`
+        explicitly where the CPU operator passed an explicit ksize instead of
+        letting OpenCV derive one.
+        """
         sigma = max(0.1, float(sigma))
-        key = (str(image.device), sigma)
+        key = (str(image.device), sigma, radius)
         cached = cls._gaussian_1d_cache.get(key)
         if cached is None:
-            radius = int(round(3 * sigma))
+            if radius is None:
+                radius = (int(round(sigma * 4 * 2 + 1)) | 1) // 2
+            radius = max(1, int(radius))
             axis = torch.arange(-radius, radius + 1, dtype=torch.float32,
                                 device=image.device)
             kernel = torch.exp(-0.5 * (axis / sigma) ** 2)
@@ -598,22 +610,37 @@ class Enhance_UltraMax:
         sep = float(np.linalg.norm(pts[1] - pts[0]))
         if not np.isfinite(sep) or sep < 2.0:
             return None, None
-        y, x = torch.meshgrid(torch.arange(image.shape[0], device=image.device, dtype=torch.float32),
-                              torch.arange(image.shape[1], device=image.device, dtype=torch.float32),
-                              indexing='ij')
-        outer = torch.zeros_like(x)
-        core = torch.zeros_like(x)
+        # BUILD THE MASK WITH THE SAME cv2 CALLS THE CPU OPERATOR USES, then
+        # upload it once. `cv2.ellipse(..., -1)` fills a POLYGON APPROXIMATION
+        # of the ellipse, not the analytic `(dx^2 + dy^2 <= 1)` region, so an
+        # analytic meshgrid rasterisation disagrees with it by up to a pixel at
+        # the rim -- which survives the feather as a ~0.197 difference in a
+        # mask that multiplies every term downstream. It was the single largest
+        # remaining source of disagreement between the two paths.
+        #
+        # There is no recurring cost to doing it this way: these masks depend
+        # only on the template and the crop size, so they are built once per
+        # run and served from `_eye_mask_cache` for every face after the first.
+        outer_x = max(1, int(round(cls._PROTECT_EYE_OUTER_X * sep)))
+        outer_y = max(1, int(round(cls._PROTECT_EYE_OUTER_Y * sep)))
+        core_x = max(1, int(round(cls._PROTECT_EYE_CORE_X * sep)))
+        core_y = max(1, int(round(cls._PROTECT_EYE_CORE_Y * sep)))
         lift = cls._PROTECT_EYE_LIFT * sep
+        shape = (int(image.shape[0]), int(image.shape[1]))
+        outer_np = np.zeros(shape, dtype=np.float32)
+        core_np = np.zeros(shape, dtype=np.float32)
         for eye in pts[:2]:
-            dx = (x - float(eye[0])) / max(1.0, cls._PROTECT_EYE_OUTER_X * sep)
-            dy = (y - float(eye[1] - lift)) / max(1.0, cls._PROTECT_EYE_OUTER_Y * sep)
-            outer = torch.maximum(outer, (dx.square() + dy.square() <= 1.0).to(torch.float32))
-            dx = (x - float(eye[0])) / max(1.0, cls._PROTECT_EYE_CORE_X * sep)
-            dy = (y - float(eye[1] - lift)) / max(1.0, cls._PROTECT_EYE_CORE_Y * sep)
-            core = torch.maximum(core, (dx.square() + dy.square() <= 1.0).to(torch.float32))
-        feather = max(0.5, cls._PROTECT_EYE_FEATHER * sep / 3.0)
-        masks = (cls._blur_gpu(outer.unsqueeze(-1), feather)[:, :, 0].clamp(0, 1),
-                 cls._blur_gpu(core.unsqueeze(-1), feather)[:, :, 0].clamp(0, 1))
+            center = (int(round(float(eye[0]))),
+                      int(round(float(eye[1] - lift))))
+            cv2.ellipse(outer_np, center, (outer_x, outer_y), 0, 0, 360, 1.0, -1)
+            cv2.ellipse(core_np, center, (core_x, core_y), 0, 0, 360, 1.0, -1)
+        k = max(1, int(round(cls._PROTECT_EYE_FEATHER * sep)))
+        if k % 2 == 0:
+            k += 1
+        outer_np = cv2.GaussianBlur(outer_np, (k, k), 0)
+        core_np = cv2.GaussianBlur(core_np, (k, k), 0)
+        masks = (torch.from_numpy(outer_np).to(image.device).clamp(0, 1),
+                 torch.from_numpy(core_np).to(image.device).clamp(0, 1))
         cls._eye_mask_cache[cache_key] = masks
         return masks
 
@@ -625,9 +652,21 @@ class Enhance_UltraMax:
             return restored
         src_blur = cls._blur_gpu(source, 0.8)
         src_sharp = (source + cls._PROTECT_EYE_SHARPEN * (source - src_blur)).clamp(0, 255)
-        weights = restored.new_tensor((0.114, 0.587, 0.299))
-        src_gray = (source * weights).sum(dim=2, keepdim=True)
-        out_gray = (restored * weights).sum(dim=2, keepdim=True)
+        # `cv2.cvtColor(..., BGR2GRAY)` returns uint8, so the CPU operator's
+        # Sobel reads a QUANTISED luminance. Rounding here keeps the gradient
+        # gates -- which are thresholded at 1, 2 and 8 grey levels -- reading
+        # the same signal on both paths.
+        # `cv2.cvtColor(..., BGR2GRAY)` is FIXED-POINT integer arithmetic:
+        # (B*3735 + G*19235 + R*9798 + 16384) >> 15, on uint8, yielding uint8.
+        # A rounded float dot product with (0.114, 0.587, 0.299) is close but
+        # not equal, and the gradient gates below threshold at 1, 2 and 8 grey
+        # levels, so a one-level disagreement is not cosmetic there.
+        def _cv_gray(t):
+            v = (t[:, :, 0] * 3735.0 + t[:, :, 1] * 19235.0
+                 + t[:, :, 2] * 9798.0 + 16384.0)
+            return torch.floor(v / 32768.0).clamp(0, 255).unsqueeze(-1)
+        src_gray = _cv_gray(source)
+        out_gray = _cv_gray(restored)
         sobel_x = restored.new_tensor(((1., 0., -1.), (2., 0., -2.), (1., 0., -1.))).view(1, 1, 3, 3)
         sobel_y = sobel_x.transpose(2, 3)
         def grad(gray):
@@ -645,9 +684,19 @@ class Enhance_UltraMax:
         base = restored * (1.0 - outer.unsqueeze(-1)) + src_sharp * outer.unsqueeze(-1)
         presence = ((src_mag - 1.0) / 12.0).clamp(0, 1)
         colour_agreement = torch.exp(-(restored - source).abs().mean(dim=2) / 28.0)
-        core_mix = cls._PROTECT_EYE_CORE_MIX * core * presence * colour_agreement
+        core_mix = (cls._PROTECT_EYE_CORE_MIX * core * presence
+                    * colour_agreement).unsqueeze(-1)
+        # TWO successive mixes, matching the CPU operator exactly -- first
+        # toward the raw restored crop, then toward its sharpened form. This is
+        # not redundant and it is not a transcription slip: applying the mask
+        # once with `core_sharp` gives a materially different result wherever
+        # the mask is partial (at m=0.5, `0.5*base + 0.5*S` against the CPU's
+        # `0.25*base + 0.25*R + 0.5*S`). Collapsing it measured max 65/255
+        # against the CPU path on random input, which is a visibly different
+        # eye, and the parity test's mean-based tolerance did not catch it.
         core_sharp = (restored + 0.55 * (restored - cls._blur_gpu(restored, 0.65))).clamp(0, 255)
-        base = base * (1.0 - core_mix.unsqueeze(-1)) + core_sharp * core_mix.unsqueeze(-1)
+        base = base * (1.0 - core_mix) + restored * core_mix
+        base = base * (1.0 - core_mix) + core_sharp * core_mix
         detail = cls._PROTECT_EYE_DETAIL_GAIN * detail_gate + cls._PROTECT_EYE_CORE_DETAIL_GAIN * core_gate
         return (base + detail.unsqueeze(-1) * restored_detail).clamp(0, 255)
 
@@ -754,6 +803,79 @@ class Enhance_UltraMax:
             return restored
 
     @classmethod
+    def _rebalance_masks_gpu(cls, image, sep, pts):
+        """Selection and feathered masks for the rebalance pass, built once.
+
+        Same reasoning as `_eye_masks_gpu`: `cv2.ellipse` fills a polygon
+        approximation, so these are built with cv2 and uploaded rather than
+        rasterised analytically. They depend only on the template and the crop
+        size, so the cost is paid once per run, not once per face.
+        """
+        key = (str(image.device), int(image.shape[0]), int(image.shape[1]),
+               cls.model_template, round(sep, 4))
+        cached = cls._rebalance_mask_cache.get(key)
+        if cached is not None:
+            return cached
+        rx = max(1, int(round(0.28 * sep)))
+        ry = max(1, int(round(0.15 * sep)))
+        shape = (int(image.shape[0]), int(image.shape[1]))
+        selects, feathers = [], []
+        for eye in pts[:2]:
+            m = np.zeros(shape, dtype=np.float32)
+            center = (int(round(float(eye[0]))),
+                      int(round(float(eye[1] - cls._PROTECT_EYE_LIFT * sep))))
+            cv2.ellipse(m, center, (rx, ry), 0, 0, 360, 1.0, -1)
+            selects.append(torch.from_numpy(m > 0.5).to(image.device))
+            feathers.append(torch.from_numpy(
+                cv2.GaussianBlur(m, (0, 0), max(1.0, 0.035 * sep))).to(image.device))
+        cached = (selects, feathers)
+        cls._rebalance_mask_cache[key] = cached
+        return cached
+
+    @classmethod
+    def _rebalance_eye_detail_gpu(cls, image):
+        """CUDA equivalent of `_rebalance_eye_detail` for an HWC float tensor.
+
+        This operator was absent from the CUDA post-process entirely, so the
+        two paths differed by a whole stage as well as by their arithmetic.
+        """
+        if image.ndim != 3 or image.shape[0] != cls._SIZE or image.shape[1] != cls._SIZE:
+            return image
+        try:
+            from roop.face_util import swap_template_points
+            pts = np.asarray(swap_template_points(cls._SIZE, cls.model_template),
+                             dtype=np.float32)
+            if pts.shape[0] < 2:
+                return image
+            sep = float(np.linalg.norm(pts[1] - pts[0]))
+            if not np.isfinite(sep) or sep < 2.0:
+                return image
+            selects, feathers = cls._rebalance_masks_gpu(image, sep, pts)
+            gray = (image[:, :, 0] * 3735.0 + image[:, :, 1] * 19235.0
+                    + image[:, :, 2] * 9798.0 + 16384.0)
+            gray = torch.floor(gray / 32768.0).clamp(0, 255)
+            lap_k = image.new_tensor(((0., 1., 0.), (1., -4., 1.), (0., 1., 0.))).view(1, 1, 3, 3)
+            padded = _F.pad(gray.view(1, 1, *gray.shape), (1, 1, 1, 1), mode='reflect')
+            lap = torch.abs(_F.conv2d(padded, lap_k))[0, 0]
+            scores = []
+            for sel in selects:
+                vals = lap[sel]
+                scores.append(float(vals.mean().item()) if vals.numel() else 0.0)
+            lo = int(np.argmin(scores))
+            hi = int(np.argmax(scores))
+            if scores[lo] <= 0.0 or scores[hi] <= scores[lo] * cls._EYE_BALANCE_TRIGGER:
+                return image
+            gain = min(cls._EYE_BALANCE_MAX,
+                       max(0.0, (scores[hi] - scores[lo]) / scores[hi]))
+            if gain <= 0.0:
+                return image
+            blur = cls._blur_gpu(image, 0.75)
+            m = (feathers[lo] * gain).unsqueeze(-1)
+            return torch.clamp(image + m * (image - blur), 0.0, 255.0)
+        except (RuntimeError, TypeError, ValueError, ImportError):
+            return image
+
+    @classmethod
     def _rebalance_eye_detail(cls, image):
         """Lift only the softer eye when the two apertures are imbalanced.
 
@@ -813,33 +935,75 @@ class Enhance_UltraMax:
 
         Returns ``None`` only when the installed provider rejects that binding;
         the established host path then remains the compatibility fallback.
+
+        MEASURED, AND THE THROUGHPUT RESULT IS NEGATIVE -- READ BEFORE
+        "OPTIMISING" ANYTHING ELSE HERE. Isolated, this path is 3.14x faster
+        per face than the host one (92.92 -> 29.56 ms, RTX 4070 / TensorRT,
+        40 warm calls). End to end it is worth NOTHING:
+
+            600 frames of double/d1.mp4, UltraMax + realswap + RealityUX,
+            threads 10, counterbalanced host/CUDA/CUDA/host, null control first
+
+            null control    4.65 / 4.77 fps   (2.6% spread)
+            host arms       4.54 / 4.68       mean 4.61
+            CUDA arms       4.54 / 4.70       mean 4.62   -> +0.2%, NOT RESOLVABLE
+
+        The arithmetic says why, and it was predictable: 63.4 ms/face saved
+        over 361 faces is 22.9 s of THREAD time, which across 10 workers is
+        2.29 s of wall clock against a 130 s render -- a 1.76% ceiling before
+        anything else is considered. +0.2% is consistent with that ceiling.
+        The host work was already parallel and was never the wall-clock
+        limiter. GPU sat at ~25% in every arm, so the render is not GPU-bound
+        either; it is bound by serialisation, not by this stage.
+
+        This path is kept because it is CORRECT and strictly cheaper, not
+        because it is faster: it is bit-identical to the host path on a real
+        aligned crop, it removes 63 ms/face of host CPU work that contends
+        with everything else on the machine, and getting here fixed three
+        genuine defects (see the note below, `.contiguous()`, and the eye
+        operators' parity). It is NOT evidence that moving more OpenCV to the
+        GPU will pay -- the opposite; see the 2026-06-27 verdict that rejected
+        exactly that, and the standing rule that a stage's share of thread
+        time is not a speedup budget.
         """
         if (self._cuda_iob_available is False or not
                 (_TORCH_CUDA and getattr(self, 'devicename', '') == 'cuda')):
             return None
-        # TensorRT accepts a raw CUDA pointer passed to ``bind_output`` but, on
-        # ORT 1.23 / TRT 10, does not reliably honour the Torch allocation's
-        # ownership and stream contract for this dynamic CodeFormer output. The
-        # result is finite and non-flat yet spatially corrupt (striped/ghosted
-        # facial features), so the numerical guards below cannot catch it. Keep
-        # CUDA EP on the zero-copy post-process path; use ORT's owned output
-        # binding for TensorRT, which is the established artifact-free path.
-        try:
-            uses_tensorrt = 'TensorrtExecutionProvider' in self.session.get_providers()
-        except (AttributeError, TypeError):
-            uses_tensorrt = False
-        if uses_tensorrt:
+        # Escape hatch, and the lever an A/B needs to measure this at all.
+        # Defaults ON: the CUDA chain is measured bit-identical to the host
+        # path on a real aligned crop, so there is no reason for a user to be
+        # opted out of it by default.
+        if os.environ.get('ROOP_ULTRAMAX_CUDA_POST', '1').strip().lower() in (
+                '0', 'off', 'false', 'no'):
             self._cuda_iob_available = False
-            if not self._warned_trt_external_output:
-                type(self)._warned_trt_external_output = True
-                print('[UltraMax] TensorRT external CUDA output disabled; '
-                      'using verified ORT-owned output to prevent spatial artifacts',
-                      flush=True)
             return None
+        # HISTORY, BECAUSE THIS BLOCK USED TO DISABLE ITSELF HERE. UltraMax
+        # originally bound a TORCH-owned allocation as the model output. On
+        # ORT 1.23 / TRT 10 that allocation's ownership and stream contract is
+        # not honoured for this dynamic CodeFormer output: the result is finite
+        # and non-flat yet spatially corrupt (striped/ghosted), which no
+        # numerical guard can catch. The response was to refuse the whole CUDA
+        # post-process whenever TensorRT was the provider -- and since
+        # TensorRT is this project's shipped provider, the consequence was that
+        # NOT ONE FACE ever took this path. Every render in the logs, including
+        # 58,887- and 52,569-face production runs, reports the host path.
+        #
+        # The fix is to stop handing ORT foreign memory. Binding the output
+        # with `bind_output(name, 'cuda', 0)` lets ORT allocate AND own it; the
+        # tensor is then copied device-to-device into Torch. Measured against
+        # the host path on this TensorRT build over four trials at 512: max
+        # difference 0.0, bit-identical. See `ort_cuda_output_to_torch`.
         try:
             dtype = torch.float16 if self.in_dtype == np.float16 else torch.float32
             source = torch.from_numpy(src512).to('cuda', dtype=torch.float32, non_blocking=True)
-            x = source.permute(2, 0, 1).flip(0).unsqueeze(0).div(127.5).sub(1.0).to(dtype)
+            # `.contiguous()` IS LOAD-BEARING. `permute` + `flip` leave a
+            # non-contiguous view, and `bind_input` is handed a raw
+            # `data_ptr()` -- ORT reads that pointer as though the tensor were
+            # contiguous, so without this the network receives transposed
+            # garbage. It still returns a plausible finite image, so the only
+            # symptom was the collapse guard rejecting the face.
+            x = (source.permute(2, 0, 1).flip(0).unsqueeze(0)
+                 .div(127.5).sub(1.0).to(dtype).contiguous())
             fidelity = torch.tensor([getattr(roop.globals, 'codeformer_fidelity', 0.5)],
                                     device=source.device, dtype=torch.float64)
             in0, in1 = self.model_inputs[0].name, self.model_inputs[1].name
@@ -847,7 +1011,6 @@ class Enhance_UltraMax:
             input_element = np.float16 if dtype == torch.float16 else np.float32
             out_dtype = (torch.float16 if 'float16' in self.model_outputs[0].type
                          else torch.float32)
-            output_element = np.float16 if out_dtype == torch.float16 else np.float32
             with exclusive(self.pool, self._session_lock,
                            (self.session, self.io_binding)) as (sess, iob):
                 if hasattr(iob, 'clear_binding_inputs'):
@@ -856,15 +1019,17 @@ class Enhance_UltraMax:
                     iob.clear_binding_outputs()
                 iob.bind_input(in0, 'cuda', 0, input_element, tuple(x.shape), x.data_ptr())
                 iob.bind_input(in1, 'cuda', 0, np.float64, tuple(fidelity.shape), fidelity.data_ptr())
-                # ONNX Runtime writes directly into Torch-owned VRAM.  This is
-                # preferable to `get_outputs()` + DLPack: ORT 1.23 exposes no
-                # CUDA DLPack producer, which previously made every face fall
-                # through to the CPU post-process path.
-                output = torch.empty((1, 3, self._SIZE, self._SIZE),
-                                     dtype=out_dtype, device=source.device)
-                iob.bind_output(out_name, 'cuda', 0, output_element,
-                                tuple(output.shape), output.data_ptr())
+                # ORT allocates and owns this. Do NOT pass a Torch pointer
+                # here; see the note above for what that cost.
+                iob.bind_output(out_name, 'cuda', 0)
                 sess.run_with_iobinding(iob)
+                iob.synchronize_outputs()
+                output = ort_cuda_output_to_torch(iob.get_outputs()[0], out_dtype)
+            if output is None:
+                # No CUDA runtime, or a device/shape the copy declined. The
+                # host path below is the supported fallback, not an error.
+                self._cuda_iob_available = False
+                return None
             restored = output[0].flip(0).permute(1, 2, 0).to(torch.float32)
             if not bool(torch.isfinite(restored).all().item()):
                 print('[UltraMax] non-finite CUDA output - using unenhanced frame')
@@ -881,7 +1046,11 @@ class Enhance_UltraMax:
                 restored = (restored + self._STRUCTURE_SHARPEN *
                             (restored - self._blur_gpu(restored, 0.8))).clamp(0, 255)
             if chroma != 1.0:
+                # Both operators, in the host path's order. `_rebalance_eye_detail`
+                # was absent from this chain entirely, so enabling the CUDA path
+                # without it would have silently dropped a stage.
                 restored = self._protect_swapped_eyes_gpu(restored, source)
+                restored = self._rebalance_eye_detail_gpu(restored)
             gain = _env_float('ROOP_ULTRAMAX_TEXTURE', self._TEXTURE_GAIN)
             if gain > 0.0:
                 # The opt-in texture residual remains in VRAM as well.  The
