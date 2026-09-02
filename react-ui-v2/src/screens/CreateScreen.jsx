@@ -222,12 +222,23 @@ export default function CreateScreen() {
   return (
     <div className="v2-create-screen">
       <div className="v2-creation-header">
-        <div>
-          <span className="v2-eyebrow">Creation workflow</span>
-          <h2>Make the moment yours.</h2>
-          <p>Select a source, choose a target, check the frame, and generate when it looks right.</p>
+        <div className="flex items-center gap-3 flex-wrap">
+          <span className="v2-eyebrow">Active Session</span>
+          <h2>{workflow.selectedTarget?.name || 'No Target Media Selected'}</h2>
+          <div className="flex items-center gap-2">
+            {workflow.selectedTarget && (
+              <Badge tone="neutral">
+                {workflow.selectedTarget.frames > 1
+                  ? `${workflow.selectedTarget.frames} frames • ${workflow.selectedTarget.fps || '?'} fps`
+                  : 'Still Image'}
+              </Badge>
+            )}
+            <Badge tone="accent">
+              Source #{workflow.selectedSource + 1} Active
+            </Badge>
+            <Badge tone={connectionTone}>{connectionLabel}</Badge>
+          </div>
         </div>
-        <Badge tone={connectionTone}>{connectionLabel}</Badge>
       </div>
 
       {workflow.error && (
@@ -286,9 +297,13 @@ export default function CreateScreen() {
       </div>
 
       <div className="v2-generation-bar">
-        <div>
-          <span className="v2-eyebrow">Ready to generate</span>
-          <strong>{ready ? 'Your setup is ready.' : 'Add one source face and one target.'}</strong>
+        <div className="flex flex-col gap-1">
+          <span className="v2-eyebrow">Pipeline Execution</span>
+          <strong>
+            {ready
+              ? `Ready: Swap Person 1 → Source #${workflow.selectedSource + 1} with ${workflow.settings?.swap_model || 'InSwapper'} + ${workflow.settings?.face_enhancer_name || 'None'}`
+              : 'Add at least one source face and one target media to begin.'}
+          </strong>
         </div>
         <div className="v2-generation-actions">
           <Button size="lg" onClick={addCurrentToQueue} disabled={!ready || queue.busy === 'add'}>
@@ -300,7 +315,7 @@ export default function CreateScreen() {
             onClick={workflow.start}
             disabled={!ready || workflow.busy === 'start' || Boolean(workflow.progress?.processing)}
           >
-            {workflow.busy === 'start' ? 'Starting...' : workflow.progress?.processing ? 'Generating...' : 'Generate'}
+            {workflow.busy === 'start' ? 'Starting...' : workflow.progress?.processing ? 'Generating...' : 'Start Swap'}
           </Button>
         </div>
       </div>
