@@ -277,8 +277,8 @@ class FaceSetV2QualityScreeningTest(unittest.TestCase):
         self.assertEqual(sorted(selected), [0, 1, 2])
         outliers = [r for r in metadata["rejected"] if r["reason"] == "identity_outlier"]
         self.assertEqual([r["index"] for r in outliers], [3])
-        self.assertLess(outliers[0]["cosine_similarity"], 0.70)
-        self.assertEqual(metadata["gates"]["min_identity_cosine"], 0.70)
+        self.assertLess(outliers[0]["cosine_similarity"], 0.60)
+        self.assertEqual(metadata["gates"]["min_identity_cosine"], 0.60)
 
     def test_outlier_gate_uses_the_median_so_one_impostor_cannot_drag_it(self):
         # With a mean centroid a single distant vector pulls the reference
@@ -292,6 +292,27 @@ class FaceSetV2QualityScreeningTest(unittest.TestCase):
         # The mean of the four is dragged towards the impostor; the median is
         # not, which is the only reason index 3 is caught here.
         self.assertEqual(metadata["gates"]["rejected_identity_outlier"], 1)
+
+    def test_a_profile_reference_of_the_subject_is_not_treated_as_an_impostor(self):
+        # Measured on the real 38-archive library: the subject turned to
+        # profile sits 0.67-0.71 from a frontal-dominated median, while true
+        # background bystanders sit 0.30-0.59. A floor of 0.70 discards the
+        # former -- which is the pose coverage the bank exists to provide.
+        # This pins the separation the 0.60 floor was measured to achieve.
+        base = np.zeros(8, dtype=np.float32); base[0] = 1.0
+        off = np.zeros(8, dtype=np.float32); off[1] = 1.0
+        profile = 0.68 * base + 0.733 * off          # ~0.68 from the median
+        bystander = np.zeros(8, dtype=np.float32); bystander[2] = 1.0
+        faces = [_identity_face(70, base, yaw=-45.0),
+                 _identity_face(70, base + 0.05 * off, yaw=0.0),
+                 _identity_face(70, base - 0.05 * off, yaw=45.0),
+                 _identity_face(70, profile, yaw=-60.0),
+                 _identity_face(70, bystander, yaw=60.0)]
+        images = [_image(200 + i) for i in range(5)]
+        metadata, selected = prepare_faceset_v2(faces, images, min_quality=0.0)
+        reasons = {r["index"]: r["reason"] for r in metadata["rejected"]}
+        self.assertIn(3, selected, "the subject's profile reference was discarded")
+        self.assertEqual(reasons.get(4), "identity_outlier")
 
     def test_two_references_skip_outlier_rejection_entirely(self):
         # A median over two points is their midpoint and both are equidistant

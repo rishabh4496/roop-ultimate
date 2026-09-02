@@ -54,12 +54,27 @@ DEFAULT_LAPLACIAN_FLOOR = 100.0
 
 # Cosine-similarity floor against the median identity centroid.
 #
-# Also measured first: within-identity similarity to the median centroid runs
-# 0.782-0.924 across the existing V2 archives, while cross-identity (impostor)
-# similarity peaks at 0.238. 0.70 sits in a gap ~0.54 wide, rejects 0 of 10
-# genuine references and catches 10 of 10 impostors. 0.80 begins cutting
-# genuine profile references, so this is deliberately not tightened.
-DEFAULT_MIN_IDENTITY_COSINE = 0.70
+# RE-MEASURED on the whole 38-archive library (224 detected faces), because the
+# first calibration used 10 crops from 2 clean, frontal-ish archives and that
+# population was not representative. Full distribution: p01 0.488 / p05 0.723 /
+# p50 0.906. Two separable populations sit at the bottom:
+#
+#   < 0.60   n=4,  face 119-146 px  -- background bystanders in group photos,
+#                                      all BELOW the library's p05 face size
+#                                      (161 px)
+#   0.67-0.71 n=6, face 333-452 px  -- the SUBJECT turned to profile
+#
+# The widest gap anywhere in the 0.55-0.75 band is 0.591 -> 0.668, exactly
+# where those two populations separate, so the floor sits at 0.60.
+#
+# 0.70 -- the value this gate was first written with -- rejects 10 of 224, and
+# 6 of those 10 are large-face profile references of the subject themselves.
+# That is actively counterproductive: profile coverage is what the pose bank
+# exists to provide, so discarding it degrades exactly the lateral-angle case
+# the V2 format was built to improve. Do not raise this back to 0.70 without
+# re-measuring; the small-n calibration that produced it is recorded here so
+# the mistake is not repeated.
+DEFAULT_MIN_IDENTITY_COSINE = 0.60
 
 # A median is only a cluster statistic once there is a cluster. With two
 # references the median is their midpoint and both sit equidistant from it, so
