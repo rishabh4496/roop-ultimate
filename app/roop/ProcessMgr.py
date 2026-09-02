@@ -19,7 +19,7 @@ from roop.processors.FaceSwapInsightFace import verify_tol_for as _swap_verify_t
 from roop import orientation
 from roop.face_util import estimate_norm, solve_pose_5pt, solve_pose_jaw_5pt
 from roop.face_util import offaxis_deg, swap_template_points
-from roop.face_analyser import canonicalize_face_alignment
+from roop.face_analyser import FaceTracker, canonicalize_face_alignment
 from roop.lipsync_audio import frame_time
 import roop.util_ffmpeg as util_ffmpeg
 from roop.utilities import compute_cosine_distance, get_device, str_to_class
@@ -541,6 +541,10 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
         self.last_swapped_frame = None
         self.output_to_file = None
         self.output_to_cam = None
+        # Per-frame detector output is not guaranteed to retain a stable order.
+        # This light CPU-only tracker supplies persistent IDs before source
+        # dispatch; temporal pre-pass faces already arrive stamped and bypass it.
+        self._dispatch_face_tracker = FaceTracker(max_age=30)
         # One Euro stabilizers (video only); active flag is set per-run.
         self.kps_stabilizer = None    # smooths face keypoints (anti-wobble)
         self.enh_stabilizer = None    # smooths enhancer output (anti-flicker)
@@ -821,6 +825,7 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
         self.num_frames_no_face = 0
         self.last_swapped_frame = None
         self.last_found_bboxes = None
+        self._dispatch_face_tracker = FaceTracker(max_age=30)
         self.options = options
         from roop.temporal_identity import TemporalIdentityStabilizer
         self._temporal_identity = TemporalIdentityStabilizer.from_env()
@@ -3670,6 +3675,15 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                 _audit_hit('frames with no face detected at all')
                 audit_detect_miss(getattr(roop.globals, 'face_detector_threshold', 0.5))
                 return num_faces_found, frame
+            if _tfaces is None:
+                # Detector order commonly follows x-coordinate.  Once two faces
+                # cross, that order swaps and ``all_input`` would otherwise paste
+                # each source onto the other person.  Hungarian association keeps
+                # IDs attached to ArcFace identity and Kalman geometry instead.
+                faces = self._dispatch_face_tracker.update(faces, frame_idx)
+                faces.sort(key=lambda detected: int(
+                    detected.get('_track_id', 2 ** 31 - 1)
+                    if isinstance(detected, dict) else 2 ** 31 - 1))
             self.last_found_bboxes = np.array([f.bbox for f in faces])   # cache for next frame
             if os.environ.get('ROOP_DEBUG_FACELIST') == '1' and frame_idx is not None:
                 bar_write(f"[FaceList] f={frame_idx} n={len(faces)} " +
@@ -6219,6 +6233,7 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
         self.last_swapped_frame = None
         self.face_masks = {}
         self._temporal_faces = None
+        self._dispatch_face_tracker = FaceTracker(max_age=30)
         if getattr(self, '_temporal_identity', None) is not None:
             self._temporal_identity.reset()
         if getattr(self, '_temporal_occlusion', None) is not None:
