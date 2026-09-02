@@ -27,7 +27,7 @@ def _read(name):
 
 class LauncherActivationTests(unittest.TestCase):
     def test_start_js_launches_the_production_client(self):
-        self.assertIn("require('./start_react_v2.js')", _read("start.js"))
+        self.assertIn("require('./start_react.js')", _read("start.js"))
 
     def test_both_launch_scripts_still_exist(self):
         for name in ("start_react.js", "start_react_v2.js", "start_legacy.js"):
@@ -56,16 +56,16 @@ class LauncherActivationTests(unittest.TestCase):
         start = menu.rindex("return [{", 0, anchor)
         return menu[start:menu.index("]", anchor)]
 
-    def test_the_default_menu_action_starts_v2(self):
+    def test_the_default_menu_action_starts_the_production_client(self):
         idle = self._idle_menu()
         first = idle.index("href:")
-        self.assertIn("start_react_v2.js", idle[first:first + 60],
-                      "the default idle action must start React UI 2.0")
+        self.assertIn("start_react.js", idle[first:first + 60],
+                      "the default idle action must start the production client")
         self.assertIn("default: true", idle[:first])
 
-    def test_the_idle_menu_still_offers_react_ui_1(self):
-        """The fallback must be reachable from the same menu, not just present."""
-        self.assertIn('href: "start_react.js"', self._idle_menu())
+    def test_the_idle_menu_still_offers_the_other_client(self):
+        """Both clients must be reachable from the menu, not just present."""
+        self.assertIn('href: "start_react_v2.js"', self._idle_menu())
 
     def test_every_launcher_branch_keeps_a_route_back_to_v1(self):
         """While V2 runs, the menu must still offer the V1 action."""
@@ -73,6 +73,32 @@ class LauncherActivationTests(unittest.TestCase):
         self.assertIn("start_v1_item", menu)
         # Both V2 branches (with and without a captured URL) spread it in.
         self.assertGreaterEqual(menu.count("...start_v1_item"), 2)
+
+    def test_pinokio_resolves_a_running_start_js_as_the_client_it_launches(self):
+        """The menu's branch detection must agree with what start.js re-exports.
+
+        `start.js` is a thin re-export, so a running `start.js` has to be
+        resolved onto one of the two clients for both `info.local()` and the
+        Terminal href. That mapping lives in `pinokio.js` and is easy to leave
+        behind: when the default was rolled back to V1 and this line was not,
+        a running V1 process was still resolved as V2 and the menu offered a
+        "Terminal - React UI 2.0" for it.
+        """
+        start = _read("start.js")
+        menu = _read("pinokio.js")
+        v1_is_default = "require('./start_react.js')" in start
+        # The variable that ALSO accepts "start.js" is the one start.js feeds.
+        v1_takes_start_js = re.search(
+            r'start_react_script\s*=.*?info\.running\("start\.js"\)',
+            menu, re.S) is not None
+        v2_takes_start_js = re.search(
+            r'start_react_v2_script\s*=.*?info\.running\("start\.js"\)',
+            menu, re.S) is not None
+        self.assertNotEqual(v1_takes_start_js, v2_takes_start_js,
+                            "exactly one client may claim a running start.js")
+        self.assertEqual(v1_is_default, v1_takes_start_js,
+                         "pinokio.js resolves a running start.js onto a "
+                         "different client than start.js actually launches")
 
     def test_install_and_reset_cover_both_clients(self):
         install, reset = _read("install.js"), _read("reset.js")

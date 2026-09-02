@@ -1,3 +1,48 @@
+# Stage 20 Session Handoff - V2 rolled back as the default
+
+## Stage 20 - React UI 2.0 rolled back as the default (2026-09-02)
+
+**CORRECTION TO STAGES 18 AND 19.** V2 was promoted to the production default
+and should not have been. Reported by the user against the running application:
+it cannot capture a face, has no advanced features, no timeline, and the design
+reads as cheap.
+
+Measured: V2 is **1,125 source lines against V1's 22,093 (5%)** and references
+**33 of 101 backend routes**. The absent ones are not extras - they are face
+capture (8 routes), the faceset library (8), the face manager (8), media intake
+(`source/add`, `target/add`, `target/add_path`) and the timeline
+(`target/preview_grid`, `preview_seq`, `set_frame`). **From a cold start a user
+cannot add media or choose a face in V2 at all.**
+
+**Why the acceptance missed it** - the reusable lesson: the browser checks
+graded that controls RENDER and carry accessible names, so a client with no
+capture control has no *unlabelled* capture control and scores 44/44; and
+`runtime_lifecycle.py` drove the FastAPI boundary DIRECTLY, loading the faceset
+and target itself, so its 29/29 proved the **backend** and never touched the
+client under test. **Grade a UI by whether a user can complete the workflow IN
+IT.**
+
+`start.js` and the Pinokio default are back on **React UI 1.0** (verified in a
+real browser: 181 controls, zero page errors). **V2 is untouched on disk** and
+keeps its own menu action, relabelled as a preview naming what it lacks.
+
+New guard `test_default_client_capability.py` reads which client `start.js`
+actually promotes and fails if it cannot reference the routes a job cannot be
+created without; verified to fail when V2 is re-promoted, naming the exact gaps.
+It also exposed a live coupling bug - with the default flipped but `pinokio.js`
+branch detection left behind, a running V1 process was labelled "Terminal -
+React UI 2.0".
+
+Withdrawn: Stage 19's `CORE WORKFLOW: PASS` and `V2 PRODUCTION STATUS: PASS`.
+The processing, render, queue, pause/resume, projects, recovery, health,
+local-only, storage and RTX 4070 rows are unaffected - they were measured at the
+backend and hold under either client.
+
+Suite **1791 -> 1795**, OK, 1 skipped. Full record: `VALIDATION_MATRIX.md` ->
+*Stage 20*.
+
+---
+
 # Stage 19 Session Handoff - RTX 4070 validation of the activated V2
 
 Date: 2026-09-02

@@ -1,3 +1,121 @@
+# Stage 20 - V2 rolled back as default: it cannot start a job - 2026-09-02
+
+## CORRECTION TO STAGE 18 AND STAGE 19 - read before trusting either
+
+**React UI 2.0 was promoted to the production default and should not have
+been.** Reported by the user against the running application: *"react ui v2 is
+very bad, it has nothing like ui v1 -> cant capture face, no advance features,
+UI looks cheap, no timeline."* Every part of that is correct and is now
+measured.
+
+`start.js` and the Pinokio menu default are back on **React UI 1.0**. V2 is
+untouched on disk and remains launchable from its own menu action, relabelled
+as a preview.
+
+### What V2 actually cannot do
+
+V2 is **1,125 lines of source against V1's 22,093 (5%)** and references **33 of
+the 101 backend routes**. The routes it lacks are not advanced extras - they are
+the ones a job cannot be created without:
+
+| Capability | Routes absent from V2 |
+|---|---|
+| **Face capture** | `target/auto_capture`, `target/add_angle`, `target/auto_angles`, `target/use_face`, `target/group`, `target/autocluster`, `target/remove_face`, `target/clear_faces` |
+| **Faceset library** | all 8 (`faceset/library/load`, `save`, `import`, `rename`, `delete`, `open`, `rebuild_thumbs`, `library`) |
+| **Face manager** | all 8 (`facemgr/add`, `build`, `cut`, `prune`, `remove`, `clear`, `faceset`, `frame`) |
+| **Media intake** | `source/add`, `source/remove`, `source/clear`, `source/move`, `target/add`, `target/add_path`, `target/remove`, `target/clear` |
+| **Timeline / scrubbing** | `target/preview_grid`, `target/preview_seq`, `target/set_frame` |
+
+V2 can only *select* among state something else already established. From a cold
+start a user cannot add a source, add a target, pick which face to swap, or
+bound a frame range.
+
+### Why Stage 19 reported CORE WORKFLOW: PASS
+
+Two instruments, both wrong in the same direction, and this is the reusable
+part:
+
+- **The browser acceptance graded that controls RENDER and carry accessible
+  names.** A client with no capture control has no *unlabelled* capture
+  control, so its absence scores as a perfect 44-of-44. "0 unlabelled of 44"
+  says nothing about whether 44 is the right number, or whether the missing
+  ones are the load-bearing ones.
+- **`runtime_lifecycle.py` drove the FastAPI boundary DIRECTLY.** It calls
+  `/api/faceset/library/load` and `/api/target/add_path` itself, then asks for a
+  render. It proved the **backend** works end to end and never touched the
+  client under test. Its 29-of-29 is a backend lifecycle pass.
+
+So a UI that cannot set up a job passed every acceptance row that was run
+against it. **Grade a UI by whether a user can complete the workflow IN IT**, not
+by whether its widgets mount and its API answers.
+
+The parity gap was recorded in both stages (`V1 179/170 controls vs V2 47/44`,
+`93 routes vs 33`) and was read as "V2 is a smaller client". It was not: it was
+a client missing its intake half. A count of controls does not distinguish
+"fewer features" from "cannot be used".
+
+### Rows withdrawn
+
+| Row | Stage 19 said | Correct |
+|---|---|---|
+| Core workflow | PASS | **FAIL for V2** - measured through the API, not the UI. PASS for V1. |
+| V2 production status | PASS | **FAIL** - not viable as the default client |
+| Public-use readiness (as V2-default) | PASS | **PASS only with V1 as the default**, which is now the shipped state |
+
+The processing, render, queue, pause/resume, projects, recovery, health,
+local-only, storage and RTX 4070 rows are **unaffected** - they were measured at
+the backend and are equally true under either client.
+
+### Changes
+
+| File | Change |
+|---|---|
+| `start.js` | re-exports `start_react.js` (V1) with the reason recorded inline |
+| `pinokio.js` | idle default is V1; V2 relabelled as a preview naming what it lacks; branch detection now resolves a running `start.js` onto V1 |
+| `app/tests/test_default_client_capability.py` | **new** - the default client must reference the routes a job cannot be created without |
+| `app/tests/test_launcher_activation.py` | default expectations flipped; new guard that `pinokio.js`'s `start.js` resolution agrees with what `start.js` re-exports |
+
+### The new guard, and proof it works
+
+`test_default_client_capability.py` reads which client `start.js` actually
+promotes - following the re-export rather than hardcoding a name, so flipping
+the default cannot silently skip the check - and asserts that client references
+`source/add`, `target/add_path`, `target/use_face` and `target/set_frame`.
+
+Verified by re-promoting V2 and re-running it: it fails, naming the exact
+missing capabilities. Restored, it passes. It is deliberately a **floor, not a
+parity check**: it says nothing about whether V2 should eventually be the
+default, only that a client which cannot take in media or pick a face must not
+be what launches.
+
+The `pinokio.js` coupling bug it exposed is real and was live: with the default
+flipped but the branch detection left behind, a running V1 process was resolved
+as V2 and the menu offered "Terminal - React UI 2.0" for it.
+
+### Verification
+
+| Check | Result |
+|---|---|
+| Full Python suite | **1795 tests, OK, 1 skipped** (1791 + 4 new) |
+| Launcher contract | 13 of 13 |
+| Menu evaluated in node, all three run states | idle -> V1 `[DEFAULT]`; V1 running -> correct label; V2 running -> V1 still offered |
+| V1 launches as the default | real Chromium: mounts, `/api/meta` HTTP 200, **181** interactive controls, zero page errors |
+| V2 still present and launchable | `start_react_v2.js` and `react-ui-v2/src` intact; own menu action retained |
+
+### Still true, and still open
+
+V2's remaining value is real but partial: render, queue, pause/resume, projects
+and storage review all work against the backend. Making it a viable default
+means building the intake half - capture, faceset library, media add, timeline -
+not polishing what is there. That is a product decision, not a defect fix, and
+it is not started.
+
+The user also reports the V2 visual design reads as cheap. That is not measured
+here and no harness in this repository can measure it; it is recorded as
+reported.
+
+---
+
 # Stage 19 acceptance - RTX 4070 physical validation of the activated V2 - 2026-09-02
 
 **Host: NVIDIA GeForce RTX 4070, 12,282 MiB, driver 616.56, compute 8.9,

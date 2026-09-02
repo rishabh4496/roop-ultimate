@@ -6,18 +6,23 @@ module.exports = {
   icon: "icon.png",
   menu: async (kernel, info) => {
     let installed = info.exists("app/env")
-    // start.js is a thin re-export of start_react_v2.js (React UI 2.0 is the
+    // start.js is a thin re-export of start_react.js (React UI 1.0 is the
     // production client), so EITHER path can be the one actually running.
     // Resolve which, and use that same path for both info.local() and the
     // Terminal href — a Terminal button pointing at the file that is NOT
     // running starts a second copy of the whole stack instead of showing the
     // running one.
     //
-    // React UI 1.0 remains fully present and launchable through its own action
-    // below; it is the supported fallback and is never started by start.js.
-    let start_react_v2_script = info.running("start_react_v2.js") ? "start_react_v2.js"
+    // KEEP THIS IN STEP WITH start.js. These two lines encode which client
+    // start.js re-exports; when the default was flipped back to V1 and this was
+    // not, a running start.js was still resolved as V2 and the menu offered a
+    // "Terminal — React UI 2.0" for a V1 process.
+    //
+    // React UI 2.0 remains fully present and launchable through its own action
+    // below; it is a preview and is never started by start.js.
+    let start_react_script = info.running("start_react.js") ? "start_react.js"
       : (info.running("start.js") ? "start.js" : null)
-    let start_react_script = info.running("start_react.js") ? "start_react.js" : null
+    let start_react_v2_script = info.running("start_react_v2.js") ? "start_react_v2.js" : null
     let running = {
       install: info.running("install.js"),
       start_react: start_react_script !== null,
@@ -43,13 +48,13 @@ module.exports = {
       // the advanced source/target operations), so it is a supported fallback,
       // not a deprecated leftover.
       let start_v1_item = !running.start_react ? [{
-        icon: "fa-solid fa-rotate-left",
-        text: "<div><strong>Start React UI 1.0</strong><div>Fallback — includes the face manager, faceset library, extras and live cam</div></div>",
+        icon: "fa-solid fa-rocket",
+        text: "<div><strong>Start React UI 1.0</strong><div>The full client — face capture, faceset library, face manager, timeline, extras and live cam</div></div>",
         href: "start_react.js",
       }] : []
       let start_v2_item = !running.start_react_v2 ? [{
-        icon: "fa-solid fa-rocket",
-        text: "Start React UI 2.0",
+        icon: "fa-solid fa-flask",
+        text: "<div><strong>Start React UI 2.0</strong><div>Preview — render, queue, pause/resume and projects only; no face capture or faceset library yet</div></div>",
         href: "start_react_v2.js",
       }] : []
       if (running.start_react_v2) {
@@ -182,17 +187,19 @@ module.exports = {
         }]
       } else {
         return [{
-          // React UI 2.0 is the production client and therefore the default
-          // action. React UI 1.0 is listed directly beneath it and remains
-          // fully installed; nothing about it was removed.
+          // React UI 1.0 is the production client and therefore the default
+          // action. V2 was the default briefly and was rolled back: it cannot
+          // capture a face, add media, open the faceset library or scrub a
+          // timeline, so it cannot start a job from a cold start. It remains
+          // fully installed and is listed directly beneath; nothing was removed.
           default: true,
           icon: "fa-solid fa-rocket",
-          text: "Start React UI 2.0",
-          href: "start_react_v2.js",
-        }, {
-          icon: "fa-solid fa-rotate-left",
-          text: "<div><strong>Start React UI 1.0</strong><div>Fallback — includes the face manager, faceset library, extras and live cam</div></div>",
+          text: "Start React UI 1.0",
           href: "start_react.js",
+        }, {
+          icon: "fa-solid fa-flask",
+          text: "<div><strong>Start React UI 2.0</strong><div>Preview — render, queue, pause/resume and projects only; no face capture or faceset library yet</div></div>",
+          href: "start_react_v2.js",
         }, {
           icon: "fa-solid fa-power-off",
           text: "Start Legacy UI",
