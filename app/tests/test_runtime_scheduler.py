@@ -85,6 +85,33 @@ class RuntimeSchedulerTests(unittest.TestCase):
         self.assertLessEqual(result["max_queue_depths"].get("decode", 0), 2)
         self.assertLessEqual(result["max_queue_depths"].get("encode", 0), 2)
 
+    def test_aggregate_frame_leases_never_exceed_four(self):
+        """Two queue maxsizes are not a memory bound; decode waiting, CUDA
+        work, and encode waiting must be capped together."""
+        scheduler = UnifiedRuntimeScheduler(
+            _hardware(12.0), _workload(3840, 2160),
+            RuntimeTuning(worker_count=32, queue_depth=32, in_flight_frames=32,
+                          ram_buffer_mb=4096))
+        source = list(range(24))
+        output = []
+
+        def decode():
+            return source.pop(0) if source else None
+
+        def process(frame, index):
+            return frame
+
+        def encode(frame, index):
+            time.sleep(0.001)
+            output.append(index)
+
+        result = scheduler.run(decode, process, encode)
+        self.assertLessEqual(result["queue_capacity"], 4)
+        self.assertLessEqual(result["in_flight_limit"], 4)
+        self.assertLessEqual(result["max_active_frames"], 4)
+        self.assertEqual(result["active_frames"], 0)
+        self.assertEqual(output, list(range(24)))
+
     def test_pressure_reduces_future_admission_without_destroying_resources(self):
         scheduler = UnifiedRuntimeScheduler(
             _hardware(12.0), _workload(),
@@ -101,11 +128,11 @@ class RuntimeSchedulerTests(unittest.TestCase):
         self.assertGreaterEqual(scheduler.effective_inflight, 1)
         self.assertEqual(scheduler.metrics.errors, [])
 
-    def test_stateful_stabilization_uses_specialized_chunk_path(self):
+    def test_stateful_stabilization_uses_the_ordered_stream(self):
         scheduler = UnifiedRuntimeScheduler(
             _hardware(12.0), _workload(),
             RuntimeTuning(worker_count=4, queue_depth=3, in_flight_frames=4))
-        self.assertFalse(scheduler.frame_pipeline_allowed(stateful_stabilization=True))
+        self.assertTrue(scheduler.frame_pipeline_allowed(stateful_stabilization=True))
         self.assertTrue(scheduler.frame_pipeline_allowed(stateful_stabilization=False))
 
 

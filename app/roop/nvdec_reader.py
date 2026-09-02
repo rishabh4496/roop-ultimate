@@ -380,7 +380,8 @@ class FFmpegVideoReader:
         return self.prefetch_depth
 
 
-def wrap_capture(cap, video_path, width, height, fps, tag="decode"):
+def wrap_capture(cap, video_path, width, height, fps, tag="decode",
+                 prefetch_depth=None):
     """Swap a cv2.VideoCapture for the NVDEC pipe reader when enabled and the
     file probes OK; otherwise return the cv2 capture untouched. The returned
     object always supports set/read/get/release."""
@@ -395,7 +396,8 @@ def wrap_capture(cap, video_path, width, height, fps, tag="decode"):
         cap.release()
     except Exception:
         pass
-    reader = FFmpegVideoReader(video_path, width, height, fps)
+    reader = FFmpegVideoReader(video_path, width, height, fps,
+                               prefetch_depth=prefetch_depth)
     print(f"[NVDEC] GPU decode active for {tag} ({os.path.basename(video_path)}); "
           f"host_format={reader.pix_fmt}, prefetch_depth={reader.prefetch_depth}")
     return reader

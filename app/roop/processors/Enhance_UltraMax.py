@@ -198,7 +198,8 @@ import onnxruntime
 import roop.globals
 from roop.typing import Face, FaceSet, Frame
 from roop.processors.enhance_common import (looks_collapsed, sized, exclusive,
-                                            luma_only_recolour)
+                                            luma_only_recolour,
+                                            luma_only_recolour_tensor)
 from roop.utilities import resolve_relative_path
 from roop import session_pool
 from roop.precision_policy import providers_for
@@ -298,6 +299,11 @@ class Enhance_UltraMax:
     _EYE_BALANCE_TRIGGER = 1.12
     _EYE_BALANCE_MAX = 0.55
     _STRUCTURE_SHARPEN = 0.18
+    # Registered FFHQ eye geometry does not change from face to face.  Holding
+    # two 512-square float masks costs 2 MiB/device and avoids rebuilding and
+    # blurring them in every restorer invocation.
+    _eye_mask_cache = {}
+    _gaussian_1d_cache = {}
 
     _warned_colour = False
 
@@ -313,6 +319,9 @@ class Enhance_UltraMax:
         self._lut = None
         self._faces = 0
         self._textured = 0
+        # ``False`` means this ORT build/provider rejected binding its output
+        # directly into a PyTorch CUDA allocation; avoid retrying per face.
+        self._cuda_iob_available = None
         self._lock = threading.Lock()
         # Guards the SINGLE shared (session, io_binding) used when there is no
         # pool -- binding state is not thread-safe. Distinct from _lock, which
@@ -545,6 +554,103 @@ class Enhance_UltraMax:
             return restored
 
     @classmethod
+    def _blur_gpu(cls, image, sigma):
+        """Gaussian blur for HWC CUDA images without an OpenCV round-trip."""
+        sigma = max(0.1, float(sigma))
+        key = (str(image.device), sigma)
+        cached = cls._gaussian_1d_cache.get(key)
+        if cached is None:
+            radius = int(round(3 * sigma))
+            axis = torch.arange(-radius, radius + 1, dtype=torch.float32,
+                                device=image.device)
+            kernel = torch.exp(-0.5 * (axis / sigma) ** 2)
+            cached = (kernel / kernel.sum(), radius)
+            cls._gaussian_1d_cache[key] = cached
+        kernel_1d, radius = cached
+        nchw = image.permute(2, 0, 1).unsqueeze(0)
+        channels = nchw.shape[1]
+        horizontal = kernel_1d.view(1, 1, 1, -1).expand(channels, 1, 1, -1)
+        vertical = kernel_1d.view(1, 1, -1, 1).expand(channels, 1, -1, 1)
+        # The CPU implementation is separable too.  Doing the two 1-D passes
+        # avoids the pathological 21x21 single-channel convolution selected
+        # for the feather mask on CUDA while retaining the same Gaussian.
+        tmp = _F.conv2d(_F.pad(nchw, (radius, radius, 0, 0), mode='reflect'),
+                        horizontal, groups=channels)
+        return _F.conv2d(_F.pad(tmp, (0, 0, radius, radius), mode='reflect'),
+                         vertical, groups=channels)[0].permute(1, 2, 0)
+
+    @classmethod
+    def _eye_masks_gpu(cls, image):
+        """Return feathered outer/core eye masks entirely on the active GPU."""
+        cache_key = (str(image.device), image.shape[0], image.shape[1],
+                     cls.model_template, cls._PROTECT_EYE_OUTER_X,
+                     cls._PROTECT_EYE_OUTER_Y, cls._PROTECT_EYE_CORE_X,
+                     cls._PROTECT_EYE_CORE_Y, cls._PROTECT_EYE_LIFT,
+                     cls._PROTECT_EYE_FEATHER)
+        cached = cls._eye_mask_cache.get(cache_key)
+        if cached is not None:
+            return cached
+        from roop.face_util import swap_template_points
+        pts = np.asarray(swap_template_points(cls._SIZE, cls.model_template), dtype=np.float32)
+        if pts.shape[0] < 2:
+            return None, None
+        sep = float(np.linalg.norm(pts[1] - pts[0]))
+        if not np.isfinite(sep) or sep < 2.0:
+            return None, None
+        y, x = torch.meshgrid(torch.arange(image.shape[0], device=image.device, dtype=torch.float32),
+                              torch.arange(image.shape[1], device=image.device, dtype=torch.float32),
+                              indexing='ij')
+        outer = torch.zeros_like(x)
+        core = torch.zeros_like(x)
+        lift = cls._PROTECT_EYE_LIFT * sep
+        for eye in pts[:2]:
+            dx = (x - float(eye[0])) / max(1.0, cls._PROTECT_EYE_OUTER_X * sep)
+            dy = (y - float(eye[1] - lift)) / max(1.0, cls._PROTECT_EYE_OUTER_Y * sep)
+            outer = torch.maximum(outer, (dx.square() + dy.square() <= 1.0).to(torch.float32))
+            dx = (x - float(eye[0])) / max(1.0, cls._PROTECT_EYE_CORE_X * sep)
+            dy = (y - float(eye[1] - lift)) / max(1.0, cls._PROTECT_EYE_CORE_Y * sep)
+            core = torch.maximum(core, (dx.square() + dy.square() <= 1.0).to(torch.float32))
+        feather = max(0.5, cls._PROTECT_EYE_FEATHER * sep / 3.0)
+        masks = (cls._blur_gpu(outer.unsqueeze(-1), feather)[:, :, 0].clamp(0, 1),
+                 cls._blur_gpu(core.unsqueeze(-1), feather)[:, :, 0].clamp(0, 1))
+        cls._eye_mask_cache[cache_key] = masks
+        return masks
+
+    @classmethod
+    def _protect_swapped_eyes_gpu(cls, restored, source):
+        """CUDA equivalent of `_protect_swapped_eyes` for HWC float tensors."""
+        outer, core = cls._eye_masks_gpu(restored)
+        if outer is None:
+            return restored
+        src_blur = cls._blur_gpu(source, 0.8)
+        src_sharp = (source + cls._PROTECT_EYE_SHARPEN * (source - src_blur)).clamp(0, 255)
+        weights = restored.new_tensor((0.114, 0.587, 0.299))
+        src_gray = (source * weights).sum(dim=2, keepdim=True)
+        out_gray = (restored * weights).sum(dim=2, keepdim=True)
+        sobel_x = restored.new_tensor(((1., 0., -1.), (2., 0., -2.), (1., 0., -1.))).view(1, 1, 3, 3)
+        sobel_y = sobel_x.transpose(2, 3)
+        def grad(gray):
+            n = gray.permute(2, 0, 1).unsqueeze(0)
+            p = _F.pad(n, (1, 1, 1, 1), mode='reflect')
+            return _F.conv2d(p, sobel_x)[0, 0], _F.conv2d(p, sobel_y)[0, 0]
+        sx, sy = grad(src_gray)
+        rx, ry = grad(out_gray)
+        src_mag = torch.sqrt(sx.square() + sy.square())
+        out_mag = torch.sqrt(rx.square() + ry.square())
+        agreement = ((sx * rx + sy * ry) / (src_mag * out_mag + 1e-4) - 0.35).div(0.65).clamp(0, 1)
+        detail_gate = outer * ((src_mag - 8.0) / 36.0).clamp(0, 1) * agreement
+        core_gate = core * ((src_mag - 2.0) / 18.0).clamp(0, 1) * agreement
+        restored_detail = restored - cls._blur_gpu(restored, 0.8)
+        base = restored * (1.0 - outer.unsqueeze(-1)) + src_sharp * outer.unsqueeze(-1)
+        presence = ((src_mag - 1.0) / 12.0).clamp(0, 1)
+        colour_agreement = torch.exp(-(restored - source).abs().mean(dim=2) / 28.0)
+        core_mix = cls._PROTECT_EYE_CORE_MIX * core * presence * colour_agreement
+        core_sharp = (restored + 0.55 * (restored - cls._blur_gpu(restored, 0.65))).clamp(0, 255)
+        base = base * (1.0 - core_mix.unsqueeze(-1)) + core_sharp * core_mix.unsqueeze(-1)
+        detail = cls._PROTECT_EYE_DETAIL_GAIN * detail_gate + cls._PROTECT_EYE_CORE_DETAIL_GAIN * core_gate
+        return (base + detail.unsqueeze(-1) * restored_detail).clamp(0, 255)
+
+    @classmethod
     def _protect_swapped_eyes(cls, restored, source):
         """Preserve RealSwap's eye/eyelash structure after UltraMax restore.
 
@@ -695,6 +801,97 @@ class Enhance_UltraMax:
             return image
 
     # ── run ──────────────────────────────────────────────────────────────────
+    def _run_cuda_postprocess(self, src512, input_size, original_frame):
+        """Run ORT I/O binding and all UltraMax post-ops on CUDA tensors.
+
+        ORT 1.23 does not implement DLPack for CUDA OrtValues.  Instead, bind
+        the model output to a pre-allocated Torch CUDA allocation: ORT writes
+        the tensor directly and PyTorch owns it immediately afterwards.  This
+        keeps the model output, chroma transfer, eye protection, and optional
+        texture operation on one device with no ORT->NumPy round-trip.
+
+        Returns ``None`` only when the installed provider rejects that binding;
+        the established host path then remains the compatibility fallback.
+        """
+        if (self._cuda_iob_available is False or not
+                (_TORCH_CUDA and getattr(self, 'devicename', '') == 'cuda')):
+            return None
+        try:
+            dtype = torch.float16 if self.in_dtype == np.float16 else torch.float32
+            source = torch.from_numpy(src512).to('cuda', dtype=torch.float32, non_blocking=True)
+            x = source.permute(2, 0, 1).flip(0).unsqueeze(0).div(127.5).sub(1.0).to(dtype)
+            fidelity = torch.tensor([getattr(roop.globals, 'codeformer_fidelity', 0.5)],
+                                    device=source.device, dtype=torch.float64)
+            in0, in1 = self.model_inputs[0].name, self.model_inputs[1].name
+            out_name = self.model_outputs[0].name
+            input_element = np.float16 if dtype == torch.float16 else np.float32
+            out_dtype = (torch.float16 if 'float16' in self.model_outputs[0].type
+                         else torch.float32)
+            output_element = np.float16 if out_dtype == torch.float16 else np.float32
+            with exclusive(self.pool, self._session_lock,
+                           (self.session, self.io_binding)) as (sess, iob):
+                if hasattr(iob, 'clear_binding_inputs'):
+                    iob.clear_binding_inputs()
+                if hasattr(iob, 'clear_binding_outputs'):
+                    iob.clear_binding_outputs()
+                iob.bind_input(in0, 'cuda', 0, input_element, tuple(x.shape), x.data_ptr())
+                iob.bind_input(in1, 'cuda', 0, np.float64, tuple(fidelity.shape), fidelity.data_ptr())
+                # ONNX Runtime writes directly into Torch-owned VRAM.  This is
+                # preferable to `get_outputs()` + DLPack: ORT 1.23 exposes no
+                # CUDA DLPack producer, which previously made every face fall
+                # through to the CPU post-process path.
+                output = torch.empty((1, 3, self._SIZE, self._SIZE),
+                                     dtype=out_dtype, device=source.device)
+                iob.bind_output(out_name, 'cuda', 0, output_element,
+                                tuple(output.shape), output.data_ptr())
+                sess.run_with_iobinding(iob)
+            restored = output[0].flip(0).permute(1, 2, 0).to(torch.float32)
+            if not bool(torch.isfinite(restored).all().item()):
+                print('[UltraMax] non-finite CUDA output - using unenhanced frame')
+                return sized(original_frame, input_size)
+            restored = restored.clamp(-1.0, 1.0).add(1.0).mul(127.5)
+            source_std = source.std()
+            if bool((source_std > 8.0).item()) and bool((restored.std() < source_std * 0.35).item()):
+                print('[UltraMax] CUDA output collapsed (flat) - using unenhanced frame')
+                return sized(original_frame, input_size)
+            chroma = _env_float('ROOP_ULTRAMAX_CHROMA', self._CHROMA)
+            if chroma != 1.0:
+                restored = luma_only_recolour_tensor(restored, source, chroma)
+            if self._STRUCTURE_SHARPEN > 0.0:
+                restored = (restored + self._STRUCTURE_SHARPEN *
+                            (restored - self._blur_gpu(restored, 0.8))).clamp(0, 255)
+            if chroma != 1.0:
+                restored = self._protect_swapped_eyes_gpu(restored, source)
+            gain = _env_float('ROOP_ULTRAMAX_TEXTURE', self._TEXTURE_GAIN)
+            if gain > 0.0:
+                # The opt-in texture residual remains in VRAM as well.  The
+                # default is zero; this conservative high-pass is limited to
+                # the same source signal and cannot invent texture.
+                high = (source - self._blur_gpu(source, self._SIGMA)).clamp(
+                    -11.0 * self._SIGMA, 11.0 * self._SIGMA)
+                restored = (restored + high * gain).clamp(0, 255)
+                with self._lock:
+                    self._textured += 1
+            scale = 1
+            if restored.shape[1] < input_size:
+                restored = _F.interpolate(restored.permute(2, 0, 1).unsqueeze(0),
+                                          size=(input_size, input_size), mode='bicubic',
+                                          align_corners=False)[0].permute(1, 2, 0)
+            else:
+                scale = max(1, int(restored.shape[1] / input_size))
+            # One intentional egress boundary remains because the surrounding
+            # merger/writer API is NumPy today.  No intermediate CPU copy is
+            # made between ONNX output, chroma, eye protection, and texture.
+            with self._lock:
+                self._faces += 1
+            self._cuda_iob_available = True
+            return restored.round().to(torch.uint8).cpu().numpy(), scale
+        except Exception:
+            # Old ORT builds expose CUDA OrtValues but not DLPack.  Fall back to
+            # the established CPU binding path rather than failing a render.
+            self._cuda_iob_available = False
+            return None
+
     def Run(self, source_faceset: FaceSet, target_face: Face, temp_frame: Frame) -> Frame:
         if temp_frame is None or getattr(temp_frame, 'size', 0) == 0:
             return temp_frame, 1
@@ -709,6 +906,10 @@ class Enhance_UltraMax:
         else:
             src512 = temp_frame
 
+        cuda_result = self._run_cuda_postprocess(src512, input_size, temp_frame)
+        if cuda_result is not None:
+            return cuda_result
+
         # One gather: uint8 BGR HWC -> model dtype RGB CHW in [-1, 1]. Fancy
         # indexing returns a fresh C-contiguous array, so the [None] that follows
         # is a free view and no extra copy is made.
@@ -717,10 +918,19 @@ class Enhance_UltraMax:
                          dtype=np.float64)
 
         in0, in1 = self.model_inputs[0].name, self.model_inputs[1].name
+        out_name = self.model_outputs[0].name
 
         def _infer(sess, iob):
+            # `_run_cuda_postprocess` clears bindings before attempting its
+            # zero-copy path.  Rebind the compatibility output explicitly so a
+            # failed CUDA probe cannot poison this CPU fallback.
+            if hasattr(iob, 'clear_binding_inputs'):
+                iob.clear_binding_inputs()
+            if hasattr(iob, 'clear_binding_outputs'):
+                iob.clear_binding_outputs()
             iob.bind_cpu_input(in0, x)
             iob.bind_cpu_input(in1, w_fid)
+            iob.bind_output(out_name)
             sess.run_with_iobinding(iob)
             return iob.copy_outputs_to_cpu()
 
@@ -824,5 +1034,7 @@ class Enhance_UltraMax:
         c = _env_float('ROOP_ULTRAMAX_CHROMA', self._CHROMA)
         colour = ("swapper chrominance" if c <= 0.0
                   else f"chrominance {c:g} toward CodeFormer's own")
-        return (f"[UltraMax] {f} faces restored (codeformer.fp16, lean host "
-                f"path, {colour}); texture restored on {t}")
+        path = ('CUDA tensor post-process' if self._cuda_iob_available
+                else 'compatibility host path')
+        return (f"[UltraMax] {f} faces restored (codeformer.fp16, {path}, "
+                f"{colour}); texture restored on {t}")

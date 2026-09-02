@@ -1,3 +1,4 @@
+import gc
 import os
 import cv2
 try:
@@ -94,7 +95,8 @@ def _configure_opencv_worker_threads(workers):
 # Above this, a stabilizer's warm-up is longer than any block we would be willing
 # to hold in memory, so parallel stabilization cannot be made seam-free and the
 # scheduler stays sequential instead. Same cap the derivation saturates at.
-from roop.one_euro import _MAX_WARMUP as _MAX_STAB_WARMUP
+from roop.one_euro import (_MAX_WARMUP as _MAX_STAB_WARMUP,
+                           StreamingStabilizationHistory)
 
 
 # frame_idx -> [(bbox, source_index), ...] for the faces actually swapped.
@@ -782,7 +784,6 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
             face_util.release_face_analyser_aux()
             _released = 'auxiliary analysis sessions'
             self._replay_analysis_released = True
-            import gc
             gc.collect()
             self._log_memory_stage(
                 f'phase3:{_released.replace(" ", "-")}-for-replay')
@@ -932,6 +933,7 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
         self._stab_active = False
         self._stab_t = 0
         self._stab_warmup = 0
+        self._stab_history = None
         self._stab_frame_bytes = None   # set once the clip's dimensions are known
         self._nonfrontal_router.reset()
 
@@ -1189,6 +1191,9 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                 callback(None, frame_idx=frame_idx, manager=self)
             except Exception as exc:
                 bar_write(f'[Resume] checkpoint callback failed: {exc}')
+        # A checkpoint is a deliberate queue flush boundary.  This is the only
+        # in-run collection point; never run GC on an arbitrary frame cadence.
+        gc.collect()
 
     def run_batch(self, source_files, target_files, threads:int = 1):
         progress_bar_format = PROGRESS_BAR_FORMAT
@@ -1256,9 +1261,6 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                 del resimg
             if update:
                 update()
-            if (idx + 1) % 50 == 0:
-                import gc
-                gc.collect()
 
 
     def _post_sentinels(self, queues, num_threads, tag, give_up_after=300.0):
@@ -1467,9 +1469,6 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                 del resimg
                 progress()
                 frame_counter += 1
-                if frame_counter % 50 == 0:
-                    import gc
-                    gc.collect()
 
 
     def write_frames_thread(self):
@@ -1533,9 +1532,6 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                         pause_controller.wait_until_resumed(
                             lambda: bool(roop.globals.processing))
                     del frame
-                    if nextindex % 50 == 0:
-                        import gc
-                        gc.collect()
                 elif process == False:
                     num_producers -= 1
                     if num_producers < 1:
@@ -1800,6 +1796,9 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
             or _temporal_quality_enabled)
         self._temporal_faces = None
         self._temporal_covered = 0
+        # A ProcessMgr instance can render more than one clip.  Never let a
+        # completed clip's compact stabilization context seed the next one.
+        self._stab_history = None
         if self._temporal_mode:
             self.kps_stabilizer = None
             self._kps_stab_factory = None
@@ -1813,6 +1812,13 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
         # _stab_warmup_frames), not guessed. Turning it off costs 2-3x on the
         # swap pass, measured, because the fallback is ONE thread.
         # ROOP_STAB_PARALLEL=0 restores the sequential path.
+        # A temporal filter is a recurrence.  The normal path preserves one
+        # live state over the entire clip in the bounded decode -> CUDA ->
+        # encode stream, rather than priming a fresh block and discarding it.
+        # Keep the old block path as an explicit rollback only.
+        _streaming_stabilization = (
+            (_want_kps_stab or _want_enh_stab or _want_mask_stab)
+            and os.environ.get('ROOP_STAB_STREAMING', '1') != '0')
         _parallel_ok = os.environ.get('ROOP_STAB_PARALLEL', '1') != '0'
         self._stab_warmup = self._stab_warmup_frames()
         if _parallel_ok and self._stab_warmup >= _MAX_STAB_WARMUP:
@@ -1848,15 +1854,17 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
         # 3x, i.e. warm-up overhead capped at 33%. Below that the priming costs
         # more than the extra workers return, measured both ways on this fixture.
         self._stab_min_block_multiple = 3 if _want_temporal_ordered else 1
-        use_parallel_stab = ((_want_kps_stab or _want_enh_stab or _want_mask_stab
-                              or _want_temporal_ordered)
-                             and threads > 1 and _parallel_ok)
+        use_parallel_stab = ((not _streaming_stabilization)
+                              and (_want_kps_stab or _want_enh_stab or _want_mask_stab
+                               or _want_temporal_ordered)
+                              and threads > 1 and _parallel_ok)
         _two_pass_ok = os.environ.get('ROOP_STAB_2PASS', '1') != '0'
         # 2-pass smooths sequentially in pass 1 and then swaps ROUND-ROBIN in
         # pass 2. That is fine for a kps filter, whose work is finished before
         # pass 2 begins, and useless here: the output history advances during the
         # swap. So it is never an option for the temporal engines.
-        use_2pass = ((not use_parallel_stab) and _want_kps_stab and not _want_enh_stab
+        use_2pass = ((not _streaming_stabilization) and (not use_parallel_stab)
+                     and _want_kps_stab and not _want_enh_stab
                      and not _want_mask_stab and not _want_temporal_ordered
                      and threads > 1 and _two_pass_ok)
         if _want_temporal_ordered and not use_parallel_stab and threads != 1:
@@ -1876,7 +1884,7 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
             threads = 1
         if ((_want_kps_stab or _want_enh_stab or _want_mask_stab
              or _want_temporal_ordered)
-                and not use_2pass and not use_parallel_stab):
+                and not _streaming_stabilization and not use_2pass and not use_parallel_stab):
             if threads != 1:
                 print("[Stabilize] Forcing single thread for temporal smoothing.")
             threads = 1
@@ -1888,6 +1896,17 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                 self.enh_stabilizer.reset()
             if self.mask_stabilizer is not None:
                 self.mask_stabilizer.reset()
+
+        if _streaming_stabilization:
+            # The one CUDA owner advances these exactly once per frame.  This
+            # is the rolling FIFO: no clone, no block boundary, no rework.
+            self._stab_active = True
+            self._stab_t = 0
+            self._stab_history = StreamingStabilizationHistory()
+            for _stab in (self.kps_stabilizer, self.enh_stabilizer,
+                          self.mask_stabilizer):
+                if _stab is not None:
+                    _stab.reset()
 
         # Animated WebP: OpenCV cannot decode it — use PIL-based reader instead
         is_awebp = source_video.lower().endswith('.webp')
@@ -1932,7 +1951,13 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                 print(f'[RuntimeOptimizer] small-card decode policy unavailable: {_exc}',
                       flush=True)
             from roop.nvdec_reader import wrap_capture
-            cap = wrap_capture(cap, source_video, width, height, fps, tag='swap decode')
+            # The unified stream owns one aggregate four-frame lease budget.
+            # Do not add a hidden reader-prefetch queue outside that budget;
+            # FFmpeg remains a separate decode process and the scheduler's
+            # decode thread still overlaps pipe I/O with CUDA/encode work.
+            _stream_prefetch = (0 if self._runtime_scheduler is not None else None)
+            cap = wrap_capture(cap, source_video, width, height, fps,
+                               tag='swap decode', prefetch_depth=_stream_prefetch)
 
         processed_resolution = None
         for p in self.processors:
@@ -2283,6 +2308,12 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                 self._log_memory_stage('phase3:tracking-prepass-fallback')
 
         self._log_memory_stage('phase4:before-main-processing')
+        # Avoid generational collections in the frame hot loop.  Frame queues
+        # are bounded and frame references are released at encode/checkpoint
+        # flushes; the finalizer below performs the only explicit sweep.
+        self._hot_loop_gc_was_enabled = gc.isenabled()
+        if self._hot_loop_gc_was_enabled:
+            gc.disable()
 
         progress_bar_format = PROGRESS_BAR_FORMAT
         try:
@@ -2292,7 +2323,7 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
             use_unified_scheduler = bool(
                 scheduler_enabled and self._runtime_scheduler is not None and
                 self._runtime_scheduler.frame_pipeline_allowed(
-                    stateful_stabilization=use_parallel_stab) and
+                    stateful_stabilization=_streaming_stabilization) and
                 not use_parallel_stab)
             if scheduler_enabled and self._runtime_scheduler is not None:
                 print('[RuntimeScheduler] unified coordinator ON: '
@@ -2300,11 +2331,15 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                       f"workers={threads}, queue={self._runtime_scheduler.queue_capacity}, "
                       f"in_flight={self._runtime_scheduler.effective_inflight}", flush=True)
             if use_unified_scheduler:
+                _inference_workers = 1
+                self._active_inference_workers = _inference_workers
                 print('[RuntimeScheduler] unified frame pipeline ON: '
-                      f"workers={self._runtime_scheduler.worker_count}, "
+                      f"cuda_owner={_inference_workers}, "
                       f"queue={self._runtime_scheduler.queue_capacity}, "
                       f"in_flight={self._runtime_scheduler.effective_inflight}, "
-                      f"ram_budget={self._runtime_scheduler.budget.ram_budget_bytes // 2**20}MB",
+                      f"ram_budget={self._runtime_scheduler.budget.ram_budget_bytes // 2**20}MB"
+                      + ('; continuous stabilizer FIFO (zero warm-up recompute)'
+                         if _streaming_stabilization else ''),
                       flush=True)
                 with ChunkedProgress(total=self.total_frames, desc='Processing',
                                      unit='frames', dynamic_ncols=True,
@@ -2312,7 +2347,7 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                     self._run_unified_scheduler(
                         cap, awebp_frames, frame_start, frame_end, frame_count,
                         progress_cb=lambda: self.update_progress(progress),
-                        threads=threads)
+                        threads=_inference_workers)
             elif use_parallel_stab:
                 stab_threads = max(1, min(
                     threads, int(self._runtime_stab_workers or threads)))
@@ -2405,10 +2440,12 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                 else:
                     os.environ.pop('ROOP_NVDEC', None)
                 self._small_card_decode_policy = None
-            import gc
+            if getattr(self, '_hot_loop_gc_was_enabled', False):
+                gc.enable()
             gc.collect()
             self._log_memory_stage('phase3:run-cleanup-complete')
             self._psutil_proc = None
+            self._active_inference_workers = None
             if self._runtime_monitor is not None:
                 self._runtime_summary = self._runtime_monitor.finish(
                     queue_depths=self._runtime_queue_snapshot(),
@@ -2956,6 +2993,12 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                                 self.videowriter.write_frame(fr)
                         if self.output_to_cam:
                             self.streamwriter.WriteToStream(fr)
+                        # Progress represents output the user can consume, not
+                        # work handed to a stabilization block.  Counting here
+                        # makes the completion timestamps continuous and prevents
+                        # a whole ~230-frame chunk from appearing as an FPS burst.
+                        if progress_cb:
+                            progress_cb()
                         if self._temporal_faces is not None:
                             self._temporal_faces.pop(gi, None)
                         if hasattr(self, '_track_assignments') and self._track_assignments is not None:
@@ -3067,7 +3110,6 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                             out = _combined[ci]
                         _results[gi] = out if out is not None else _combined[ci]
                         del out
-                        progress_cb()
 
                 # ── Work-stealing block dispatch ──────────────────────────────
                 # Per-frame cost varies a lot (face count/size, masking, close-up
@@ -3169,9 +3211,6 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                 carry = combined[-WU:] if WU > 0 else []
                 chunk_start += len(chunk)
                 del combined, chunk, results, workers
-                if _chunk_no % 2 == 0:
-                    import gc
-                    gc.collect()
         finally:
             # Drain _write_q before sending the sentinel when:
             #  - cancel: discard queued frames so the writer exits promptly.
@@ -3214,7 +3253,8 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
             process = self._psutil_proc = psutil.Process(os.getpid())
         memory_usage = process.memory_info().rss / 1024 / 1024 / 1024
         mem_str = f"{COLOR_CYAN}{memory_usage:.2f}GB{COLOR_RESET}"
-        thread_str = f"{COLOR_YELLOW}{self.num_threads}{COLOR_RESET}"
+        active_workers = getattr(self, '_active_inference_workers', None)
+        thread_str = f"{COLOR_YELLOW}{active_workers or self.num_threads}{COLOR_RESET}"
         # refresh=False: this fires once per FRAME, and a refreshing set_postfix
         # re-renders the whole bar each time on top of the render update() is
         # about to do anyway. The values are picked up by the next draw.
@@ -3228,10 +3268,14 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
             total = self.total_frames or 1
             _now = time.perf_counter()
             _last_g = getattr(self, '_last_gradio_t', 0.0)
-            # Throttle Gradio events to max 5/sec, every 10 frames, or at completion to prevent WebSocket/SSE buffer overflow
-            if (_now - _last_g >= 0.2) or (n >= total) or (n % 10 == 0):
+            # Match the terminal's fixed 500-ms cadence.  Do not force an update
+            # on frame-count boundaries: a completed stabilization block would
+            # otherwise reintroduce the bursty FPS display this throttling avoids.
+            if (_now - _last_g >= 0.5) or (n >= total):
                 self._last_gradio_t = _now
-                rate = progress.format_dict.get('rate', 0.0) if hasattr(progress, 'format_dict') else 0.0
+                rate = getattr(progress, 'rolling_rate', None)
+                if not rate:
+                    rate = progress.format_dict.get('rate', 0.0) if hasattr(progress, 'format_dict') else 0.0
                 fps_str = f" ({rate:.1f} FPS)" if rate and rate > 0 else ""
                 desc = f"Processing frame {n} / {total}{fps_str}"
                 _publish_eta(progress)
@@ -3451,6 +3495,12 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
             if face is not None and getattr(face, 'kps', None) is not None:
                 with _prof('stabilize'):
                     face.kps = ks.apply(face.kps, self._cur_stab_t())
+                if self._stab_history is not None:
+                    track_id = self._temporal_track_id(face)
+                    if track_id is None:
+                        track_id = tuple(np.rint(face.kps.mean(axis=0) / 32.0).astype(int))
+                    self._stab_history.record_landmarks(
+                        track_id, face.kps, self._cur_stab_t())
         except Exception:
             pass
 
@@ -3474,8 +3524,19 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
         # Tick once per frame if any stabilizer is active. Parallel path uses a
         # per-thread frame index (TLS) instead of this shared counter.
         if (stabilize and self._stab_active and not self._parallel_stab
-                and (self.kps_stabilizer is not None or self.enh_stabilizer is not None)):
+                and (self.kps_stabilizer is not None or self.enh_stabilizer is not None
+                     or self.mask_stabilizer is not None)):
             self._stab_t += 1
+            if (self._stab_history is not None and
+                    self._stab_history.observe_frame(frame, self._stab_t)):
+                # Seed this new shot from its first real frame.  A scene cut is
+                # a true discontinuity, not a missing-frame gap, so carrying an
+                # old face/mask/affine into it is the temporal artifact.
+                for _stab in (self.kps_stabilizer, self.enh_stabilizer,
+                              self.mask_stabilizer):
+                    if _stab is not None:
+                        _stab.reset()
+                bar_write(f'[Stabilize] scene cut at frame {frame_idx}; rolling history reset')
         do_kps_stab = stabilize and self._stab_active and self._cur_kps_stab() is not None
         # 2-pass parallel stabilization: replace kps with the value precomputed
         # for this frame in pass 1 instead of running the (stateful) stabilizer.
@@ -4712,6 +4773,11 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
             aligned_img, M = align_crop(plate, target_face.kps, subsample_size, mode=swap_template)
         fake_frame = aligned_img
         target_face.matrix = M
+        if self._stab_history is not None:
+            _stab_track = self._temporal_track_id(target_face)
+            if _stab_track is None:
+                _stab_track = face_index
+            self._stab_history.record_affine(_stab_track, M, self._cur_stab_t())
         _temporal_mgr = self._temporal_engine('temporal_identity')
         _temporal_tid = self._temporal_track_id(target_face)
         _quality_mgr = self._temporal_engine('temporal_quality')
@@ -5261,6 +5327,11 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                     except Exception as e:
                         bar_write(f"[ProcessMgr] Defrontalization failed: {e}")
             elif p.type == 'mask':
+                # Keep the pre-mask crops: if the temporal filter changes the
+                # weight field, rebuild the composite from the same raw inputs
+                # instead of filtering an already-composited result twice.
+                _pre_mask_fake = fake_frame
+                _pre_mask_enhanced = enhanced_frame
                 with _prof('mask'), _gpu_guard(pooled=getattr(p, 'pool', None) is not None, owner='mask'):  # mask: lock-free when pooled
                     fake_frame, _img_mask = self.process_mask(p, aligned_img, fake_frame, orig_frame=plate, target_face=target_face, M=M, tgt_pitch_deg=tgt_pitch_deg, rotation_action=rotation_action, region=region)
                     if enhanced_frame is not None:
@@ -5268,6 +5339,22 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                         # from is identical here, so recomputing it (engine call,
                         # landmark hull, mouth mask, blurs) would be pure waste.
                         enhanced_frame, _ = self.process_mask(p, aligned_img, enhanced_frame, orig_frame=plate, target_face=target_face, M=M, tgt_pitch_deg=tgt_pitch_deg, reuse_mask=_img_mask, region=region)
+                _ms = self._cur_mask_stab()
+                if (self._stab_active and _ms is not None and _img_mask is not None
+                        and rotation_action is None):
+                    with _prof('stabilize'):
+                        _img_mask = _ms.apply(
+                            _img_mask, target_face.kps, self._cur_stab_t())
+                    fake_frame = self._composite_mask(_img_mask, aligned_img,
+                                                      _pre_mask_fake)
+                    if _pre_mask_enhanced is not None:
+                        enhanced_frame = self._composite_mask(
+                            _img_mask, aligned_img, _pre_mask_enhanced)
+                if self._stab_history is not None and _img_mask is not None:
+                    _stab_track = self._temporal_track_id(target_face)
+                    self._stab_history.record_mask(
+                        face_index if _stab_track is None else _stab_track,
+                        _img_mask, self._cur_stab_t())
                 if any(getattr(_p, 'processorname', None) == 'adaptive_enhancer'
                        for _p in self.processors):
                     try:
@@ -6075,5 +6162,4 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
         self._lipsync_audio = None
         self._memory_stage_log = []
         self._psutil_proc = None
-        import gc
         gc.collect()

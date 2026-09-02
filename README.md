@@ -76,6 +76,28 @@ nothing else changes.
 
 The legacy Gradio interface is preserved under `app/ui/` and can be started with `start_legacy.js`.
 
+### Video performance pipeline
+
+Video renders use bounded decode → inference → encode queues. FFmpeg remains the
+hardware decode/encode process, while one ordered CUDA owner advances temporal
+filters continuously; this avoids repeatedly evaluating the old block warm-up
+prefix. A single aggregate lease permits at most four full-resolution frames
+across decode, CUDA work, and encode; frame references are released at the
+encode boundary while generational GC is disabled during active rendering.
+The normal mode is `ROOP_STAB_STREAMING=1` (default). Set
+`ROOP_STAB_STREAMING=0` only to return to the previous block scheduler for an
+investigation. Its bounded FIFO retains landmark, affine, and decimated mask
+history and resets all temporal state at a hard scene cut, so state never
+bleeds between shots. Progress FPS and ETA use a three-second completion-time
+window, sampled every 500 ms with a fixed 0.15 EMA; only frames emitted by the
+writer advance that meter.
+
+UltraMax binds its ONNX CUDA output directly into a PyTorch CUDA allocation,
+then completes chroma transfer and eye protection on that tensor. This also
+works on ONNX Runtime builds without CUDA DLPack support. Providers that reject
+the binding automatically retain the established CPU-compatible path; no UI,
+CLI, or resume setting changes are required.
+
 ## Updates
 
 Pinokio's **Update** action runs a compatibility check before changing source.

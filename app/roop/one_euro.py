@@ -9,12 +9,80 @@ Time `t` here is a monotonically increasing per-frame index (dt = 1 frame), so
 `min_cutoff` / `beta` are expressed in per-frame units.
 """
 import math
+from collections import defaultdict, deque
 import numpy as np
 
 
 def _alpha(t_e, cutoff):
     r = 2.0 * math.pi * cutoff * t_e
     return r / (r + 1.0)
+
+
+class StreamingStabilizationHistory:
+    """Bounded, ordered history shared by the streaming stabilization path.
+
+    The filters retain the full-resolution previous value they need to smooth;
+    this object records the compact causal context that defines that state:
+    landmarks, crop affine matrices, and decimated mask weights.  It also owns
+    hard-cut detection so none of those values can bleed into a new shot.
+    """
+
+    def __init__(self, capacity=32, cut_threshold=0.32):
+        self.capacity = max(4, int(capacity))
+        self.cut_threshold = float(cut_threshold)
+        self.frames = deque(maxlen=self.capacity)
+        self.landmarks = defaultdict(lambda: deque(maxlen=self.capacity))
+        self.affines = defaultdict(lambda: deque(maxlen=self.capacity))
+        self.mask_weights = defaultdict(lambda: deque(maxlen=self.capacity))
+        self._scene_signature = None
+        self.scene_cuts = 0
+
+    @staticmethod
+    def _signature(frame):
+        """Small luma thumbnail; no full frame is retained by the FIFO."""
+        arr = np.asarray(frame)
+        if arr.ndim != 3 or arr.shape[2] < 3:
+            return None
+        stride = max(1, int(max(arr.shape[:2]) / 64))
+        sample = arr[::stride, ::stride, :3].astype(np.float32)
+        return (0.114 * sample[:, :, 0] + 0.587 * sample[:, :, 1] +
+                0.299 * sample[:, :, 2]) / 255.0
+
+    def observe_frame(self, frame, t):
+        """Append the linear frame observation and return ``True`` on a cut."""
+        signature = self._signature(frame)
+        if signature is None:
+            return False
+        previous = self._scene_signature
+        # A deterministic resize-free comparison: adjacent signatures have the
+        # same source dimensions for one stream. Resolution changes are a cut.
+        cut = previous is not None and (
+            previous.shape != signature.shape or
+            float(np.mean(np.abs(signature - previous))) >= self.cut_threshold)
+        if cut:
+            self.frames.clear()
+            self.landmarks.clear()
+            self.affines.clear()
+            self.mask_weights.clear()
+            self.scene_cuts += 1
+        self._scene_signature = signature
+        self.frames.append((int(t), float(signature.mean()), float(signature.std())))
+        return cut
+
+    def record_landmarks(self, track_id, kps, t):
+        if kps is not None:
+            self.landmarks[track_id].append((int(t), np.asarray(kps, np.float32).copy()))
+
+    def record_affine(self, track_id, matrix, t):
+        if matrix is not None:
+            self.affines[track_id].append((int(t), np.asarray(matrix, np.float32).reshape(2, 3).copy()))
+
+    def record_mask(self, track_id, mask, t):
+        if mask is None:
+            return
+        value = np.asarray(mask, np.float32)
+        stride = max(1, int(max(value.shape[:2]) / 32))
+        self.mask_weights[track_id].append((int(t), value[::stride, ::stride].copy()))
 
 
 # Warm-up frames needed before a filter's seed stops showing in its output.

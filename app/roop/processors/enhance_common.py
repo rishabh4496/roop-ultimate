@@ -109,9 +109,19 @@ except (ImportError, AttributeError):
 
 
 def _luma_only_recolour_gpu(restored, source, chroma=0.0):
-    device = torch.device('cuda')
-    t_r = torch.from_numpy(restored).to(device, dtype=torch.float32)
-    t_s = torch.from_numpy(source).to(device, dtype=torch.float32)
+    return luma_only_recolour_tensor(restored, source, chroma).to(torch.uint8).cpu().numpy()
+
+
+def luma_only_recolour_tensor(restored, source, chroma=0.0):
+    """CUDA-resident luminance transfer for HWC BGR tensors in [0, 255].
+
+    Unlike the legacy helper this deliberately does not stage either crop
+    through NumPy.  Callers own the final download boundary.
+    """
+    if not _TORCH_CUDA or not getattr(restored, 'is_cuda', False):
+        raise RuntimeError('CUDA tensor luminance transfer requires torch.cuda')
+    t_r = restored.to(dtype=torch.float32)
+    t_s = source.to(device=t_r.device, dtype=torch.float32)
     g_r = 0.114 * t_r[:, :, 0] + 0.587 * t_r[:, :, 1] + 0.299 * t_r[:, :, 2]
     g_s = 0.114 * t_s[:, :, 0] + 0.587 * t_s[:, :, 1] + 0.299 * t_s[:, :, 2]
     d = g_r - g_s
@@ -119,7 +129,7 @@ def _luma_only_recolour_gpu(restored, source, chroma=0.0):
     if chroma > 0.0:
         out = (1.0 - chroma) * out + chroma * t_r
         out = torch.clamp(out, 0, 255)
-    return out.to(torch.uint8).cpu().numpy()
+    return out
 
 
 def luma_only_recolour(restored, source, chroma=0.0, lab_exact=False):

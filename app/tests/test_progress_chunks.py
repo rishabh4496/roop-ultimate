@@ -1,4 +1,4 @@
-"""Terminal progress reporting: one line per chunk, not one per frame.
+"""Terminal progress reporting: fixed wall-clock updates, not chunk commits.
 
 A progress bar is a thing you rewrite in place, which needs a terminal to move
 the cursor on AND nothing else printing. During a render neither holds: output
@@ -20,7 +20,9 @@ import re
 import sys
 import time
 import unittest
+from collections import deque
 from contextlib import redirect_stdout
+from unittest.mock import patch
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -67,24 +69,22 @@ class ProgressEnv(unittest.TestCase):
 
 
 class ChunkedOutputTest(ProgressEnv):
-    def test_one_line_per_chunk_not_per_frame(self):
-        lines = self.run_frames(1000, every=100)
-        self.assertEqual(len(lines), 10,
-                         "expected one line per 100-frame chunk, got:\n" + "\n".join(lines))
+    def test_fast_render_emits_only_its_final_state(self):
+        lines = self.run_frames(1000, every=1)
+        self.assertEqual(len(lines), 1,
+                         "a frame-count chunk must not force terminal redraws")
 
-    def test_scales_with_the_render_not_with_update_calls(self):
-        """The property that matters: a ten-times-longer render must cost ten
-        times the lines, not ten times per frame."""
+    def test_frame_chunk_environment_does_not_change_cadence(self):
+        """ROOP_PROGRESS_EVERY is retained for compatibility but never controls FPS."""
         short = self.run_frames(500, every=100)
-        long = self.run_frames(5000, every=100)
-        self.assertEqual(len(short), 5)
-        self.assertEqual(len(long), 50)
+        long = self.run_frames(500, every=1)
+        self.assertEqual(len(short), 1)
+        self.assertEqual(len(long), 1)
 
-    def test_every_line_says_which_chunk_of_how_many(self):
+    def test_terminal_line_has_progress_without_chunk_numbers(self):
         lines = self.run_frames(400, every=100)
-        for i, line in enumerate(lines, start=1):
-            self.assertIn(f"chunk {i}/4", line, f"line {i} did not name its chunk: {line}")
-            self.assertIn("Processing", line)
+        self.assertIn("Processing", lines[-1])
+        self.assertNotIn("chunk", lines[-1].lower())
 
     def test_last_line_reaches_100_percent_exactly_once(self):
         lines = self.run_frames(450, every=100)     # does NOT divide evenly
@@ -93,42 +93,47 @@ class ChunkedOutputTest(ProgressEnv):
                          "100% reported more than once:\n" + "\n".join(lines))
 
     def test_no_duplicate_final_line_when_total_divides_evenly(self):
-        """A total that lands exactly on a chunk boundary gets its final line
-        from the update AND from close() unless close() checks."""
+        """A completion update and close() must not duplicate the final state."""
         lines = self.run_frames(400, every=100)
-        self.assertEqual(len(lines), 4)
+        self.assertEqual(len(lines), 1)
         self.assertEqual(len(set(lines)), len(lines), "duplicate line emitted")
 
     def test_counts_and_percentage_are_right(self):
         lines = self.run_frames(300, every=100)
-        self.assertIn("100/300", lines[0])
-        self.assertIn(" 33.3%", lines[0])
-        self.assertIn("300/300", lines[-1])
+        self.assertIn("300/300", lines[0])
+        self.assertIn("100.0%", lines[0])
 
     def test_slow_chunk_still_reports_on_a_timer(self):
-        """A chunk of a thousand frames can take minutes; a terminal silent that
-        long reads as a hang, so time triggers a line too."""
-        os.environ["ROOP_PROGRESS_SECS"] = "0.05"
-        lines = self.run_frames(6, every=100_000, sleep=0.03)
+        """A slow render reports every 500 ms, independent of frame chunks."""
+        lines = self.run_frames(6, every=100_000, sleep=0.12)
         self.assertGreater(len(lines), 1,
                            "the time-based fallback never fired")
 
-    def test_rate_reflects_the_chunk_not_the_lifetime_average(self):
-        """A stretch that ran slower than the last one is the whole reason to
-        print per-chunk lines, so the rate has to be the chunk's own."""
-        os.environ["ROOP_PROGRESS_EVERY"] = "20"
+    def test_rate_uses_the_rolling_completion_ema(self):
+        """``display = .15 * current + .85 * previous`` exactly."""
+        with redirect_stdout(io.StringIO()):
+            with ChunkedProgress(total=100, desc="Processing", unit="frames") as p:
+                p._completion_times = deque([(0.0, 0), (1.0, 20)])
+                p._refresh_rate()
+                self.assertAlmostEqual(p.rolling_rate, 20.0)
+                p._completion_times = deque([(1.0, 20), (2.0, 60)])
+                p._refresh_rate()
+                self.assertAlmostEqual(p.rolling_rate, 23.0)
+
+    def test_draws_on_500ms_boundaries_not_completion_count(self):
         buf = io.StringIO()
         with redirect_stdout(buf):
-            with ChunkedProgress(total=40, desc="Processing", unit="frames") as p:
-                for i in range(40):
-                    time.sleep(0.05 if i < 20 else 0.0)
-                    p.update(1)
-        rates = [float(m.group(1)) for m in
-                 (re.search(r"([\d.]+) frames/s", strip(l))
-                  for l in buf.getvalue().splitlines() if l.strip()) if m]
-        self.assertEqual(len(rates), 2, f"expected two chunk lines, got {rates}")
-        self.assertGreater(rates[1], rates[0] * 2,
-                           f"the fast chunk did not report a faster rate: {rates}")
+            with ChunkedProgress(total=4, desc="Processing", unit="frames") as p:
+                p._last_t = 0.0
+                p._completion_times = deque([(0.0, 0)])
+                with patch("roop.procmgr_runtime.time.perf_counter",
+                           side_effect=(0.49, 0.50, 0.99, 1.00)):
+                    for _ in range(4):
+                        p.update(1)
+        lines = [strip(line) for line in buf.getvalue().splitlines() if line.strip()]
+        self.assertEqual(len(lines), 2, lines)
+        self.assertIn("2/4", lines[0])
+        self.assertIn("4/4", lines[1])
 
     def test_unknown_total_is_reported_without_crashing(self):
         """Stages fed from a pipe (upscale, interpolate) may not know the total."""
@@ -140,7 +145,7 @@ class ChunkedOutputTest(ProgressEnv):
         lines = [strip(l) for l in buf.getvalue().splitlines() if l.strip()]
         self.assertTrue(lines)
         self.assertIn("Upscaling", lines[0])
-        self.assertIn("100 frame", lines[0])
+        self.assertIn("250 frame", lines[0])
 
     def test_zero_frame_stage_says_nothing(self):
         lines = self.run_frames(0, every=100)
@@ -189,11 +194,10 @@ class DropInBehaviourTest(ProgressEnv):
         # Under the test runner stdout/stderr are not terminals, so auto means
         # chunked — the assertion is that it resolves rather than raising.
         lines = self.run_frames(200, every=100)
-        self.assertEqual(len(lines), 2)
+        self.assertEqual(len(lines), 1)
 
-    def test_chunk_size_defaults_to_the_resume_segment(self):
-        """A line in the terminal and a tab in the console's part strip should
-        cover the same stretch of the render."""
+    def test_resume_segment_does_not_change_display_cadence(self):
+        """Resume segmentation must not change the wall-clock display cadence."""
         os.environ.pop("ROOP_PROGRESS_EVERY", None)
         os.environ["ROOP_RESUME_CHUNK"] = "250"
         buf = io.StringIO()
@@ -201,7 +205,7 @@ class DropInBehaviourTest(ProgressEnv):
             with ChunkedProgress(total=1000, desc="Processing", unit="frames") as p:
                 for _ in range(1000):
                     p.update(1)
-        self.assertEqual(len([l for l in buf.getvalue().splitlines() if l.strip()]), 4)
+        self.assertEqual(len([l for l in buf.getvalue().splitlines() if l.strip()]), 1)
 
 
 class BarWriteTest(unittest.TestCase):

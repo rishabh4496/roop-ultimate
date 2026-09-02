@@ -7,13 +7,12 @@ decisions one owner without taking ownership of model/session lifetimes.
 
 Two execution modes are intentional:
 
-* ``run`` is a frame pipeline for workloads whose processing callback is safe
-  to run concurrently.  Decode, processing, and encode use bounded queues and
-  can occupy different frames at the same time.
-* ``admit``/``observe`` is the control plane used by the existing chunked
-  stabilizer.  Temporal stabilizers remain chunk-owned because changing their
-  execution order would change output pixels; the coordinator still owns the
-  resource budget and safe-boundary limits.
+* ``run`` is a bounded three-stage stream.  FFmpeg owns hardware decode and
+  encode in its child processes; one Python-owned CUDA inference stage consumes
+  frames in presentation order.  Keeping one owner for CUDA contexts avoids the
+  GIL/ORT/TensorRT thread stampede and is also the only correct execution order
+  for temporal filters.
+* ``admit``/``observe`` is the control plane used at queue boundaries.
 
 All limits are derived from the detected hardware profile and workload.  No
 GPU model, VRAM capacity, or architecture is selected by name here.
@@ -25,7 +24,6 @@ import os
 import threading
 import time
 from collections import deque
-from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from dataclasses import dataclass, field
 from queue import Empty, Full, Queue
 from typing import Any, Callable, Mapping, Optional
@@ -35,6 +33,14 @@ from roop.runtime_optimizer import (
     RuntimeTuning,
     WorkloadProfile,
 )
+
+
+# Decode, CUDA inference, and encode exchange full-resolution mutable BGR
+# frames.  A per-queue maxsize is not a memory limit: two queues of four plus a
+# frame being processed can retain nine large arrays.  The stream therefore
+# owns one aggregate lease budget.  Keep it intentionally small; this is the
+# back-pressure boundary that prevents 4K frames from producing RSS sawteeth.
+_MAX_STREAM_INFLIGHT = 4
 
 
 def _number(value: Any, default: float = 0.0) -> float:
@@ -99,7 +105,11 @@ class SchedulerBudget:
         requested_queue = max(1, int(tuning.queue_depth or 1))
         requested_inflight = max(1, int(tuning.in_flight_frames or 1))
         workers = max(1, int(tuning.worker_count or 1))
-        worker_buffer_frames = workers
+        # `run()` has exactly one CUDA/process owner.  Do not reserve a full
+        # frame for every legacy execution-thread setting: that made a stale
+        # 280-thread setting look like a multi-gigabyte queue requirement even
+        # though the ordered stream has one active frame.
+        worker_buffer_frames = 1
         stabilization_chunk_frames = (max(0, int(tuning.stabilization_chunk_size or 0))
                                        if workload.stabilization_enabled else 0)
         # Reserve host memory for worker destinations and any stateful
@@ -112,11 +122,15 @@ class SchedulerBudget:
                            ram_budget - min(reserved_bytes,
                                             max(0, ram_budget - per_frame_bytes)))
         memory_slots = max(2, queue_budget // max(1, per_frame_bytes))
-        queue_capacity = max(1, min(requested_queue, memory_slots // 2 or 1))
+        queue_capacity = max(1, min(_MAX_STREAM_INFLIGHT, requested_queue,
+                                    memory_slots // 2 or 1))
         in_flight = max(1, min(requested_inflight,
                                max(1, memory_slots - queue_capacity * 2)))
-        in_flight = min(in_flight, workers + queue_capacity)
-        buffered_frames = queue_capacity * 2 + in_flight
+        in_flight = min(_MAX_STREAM_INFLIGHT, in_flight,
+                        workers + queue_capacity)
+        # Queue capacities are individual back-pressure guards.  The shared
+        # frame lease, not their sum, is the real number of live frames.
+        buffered_frames = in_flight
         estimated_host_bytes = frame_bytes * (
             buffered_frames * 2 + worker_buffer_frames +
             stabilization_chunk_frames)
@@ -148,6 +162,8 @@ class SchedulerMetrics:
     processed: int = 0
     encoded: int = 0
     dropped: int = 0
+    active_frames: int = 0
+    max_active_frames: int = 0
     queue_wait_seconds: dict = field(default_factory=dict)
     stage_seconds: dict = field(default_factory=dict)
     stage_calls: dict = field(default_factory=dict)
@@ -166,11 +182,43 @@ class SchedulerMetrics:
         self.max_queue_depths[name] = max(value, self.max_queue_depths.get(name, 0))
 
 
-@dataclass
+@dataclass(slots=True)
 class _FramePacket:
     index: int
     frame: Any
     submitted_at: float = field(default_factory=time.perf_counter)
+
+
+class _FramePacketPool:
+    """Reuse the scheduler's packet metadata and drop frame references early.
+
+    Decoder-owned NumPy arrays cannot safely be reused while OpenCV/ORT stages
+    may mutate them, but the metadata wrapper can.  More importantly, clearing
+    it at the encode boundary makes the intended frame lifetime explicit and
+    lets CPython release the array immediately while generational GC is off.
+    """
+
+    def __init__(self, capacity: int):
+        self._free = deque(_FramePacket(-1, None, 0.0)
+                           for _ in range(max(1, int(capacity))))
+        self._capacity = max(1, int(capacity))
+        self._lock = threading.Lock()
+
+    def acquire(self, index: int, frame: Any) -> _FramePacket:
+        with self._lock:
+            packet = self._free.pop() if self._free else _FramePacket(-1, None, 0.0)
+        packet.index = int(index)
+        packet.frame = frame
+        packet.submitted_at = time.perf_counter()
+        return packet
+
+    def release(self, packet: _FramePacket) -> None:
+        packet.frame = None
+        packet.index = -1
+        packet.submitted_at = 0.0
+        with self._lock:
+            if len(self._free) < self._capacity:
+                self._free.append(packet)
 
 
 class UnifiedRuntimeScheduler:
@@ -220,9 +268,13 @@ class UnifiedRuntimeScheduler:
             return max(1, int(self._effective_inflight))
 
     def frame_pipeline_allowed(self, stateful_stabilization: bool = False) -> bool:
-        """Whether frame-level processing is safe for this workload."""
-        if stateful_stabilization and self.worker_count > 1:
-            return False
+        """Whether the ordered one-owner frame stream is enabled.
+
+        Stateful stabilization used to select a block scheduler that re-ran a
+        warm-up prefix for every block.  The stream has exactly one inference
+        owner, so it preserves the recurrence naturally and is safe for both
+        stateful and stateless workloads.
+        """
         return _enabled(os.environ.get("ROOP_SCHEDULER_FRAME_PIPELINE", "1"), True)
 
     def stage(self, name: str):
@@ -454,6 +506,8 @@ class UnifiedRuntimeScheduler:
                 "processed": metrics.processed,
                 "encoded": metrics.encoded,
                 "dropped": metrics.dropped,
+                "active_frames": metrics.active_frames,
+                "max_active_frames": metrics.max_active_frames,
                 "stage_seconds": dict(metrics.stage_seconds),
                 "stage_calls": dict(metrics.stage_calls),
                 "max_queue_depths": dict(metrics.max_queue_depths),
@@ -468,16 +522,58 @@ class UnifiedRuntimeScheduler:
             should_continue: Optional[Callable[[], bool]] = None,
             on_frame: Optional[Callable[[int], None]] = None,
             workers: Optional[int] = None) -> dict:
-        """Run a bounded decode/process/encode pipeline in frame order."""
+        """Run a bounded decode/infer/encode pipeline in frame order.
+
+        There is intentionally no frame-worker executor here.  TensorRT
+        contexts are not safely shareable among Python worker threads, and a
+        stateful filter cannot be advanced out of order.  FFmpeg decode and
+        encode already run in independent child *processes*; this coordinator
+        contributes just three light Python threads (pipe reader, one CUDA
+        owner, pipe writer) with bounded queues between them.
+        """
         should_continue = should_continue or (lambda: not self._stop.is_set())
-        worker_count = max(1, min(self.worker_count,
-                                  _integer(workers, self.worker_count)
-                                  if workers is not None else self.worker_count))
+        # Retain the argument for API compatibility.  A single CUDA owner is a
+        # correctness and throughput boundary, not a user-visible worker cap.
+        del workers
+        self._stop.clear()
         decode_q: Queue = Queue(maxsize=self.queue_capacity)
         encode_q: Queue = Queue(maxsize=self.queue_capacity)
         errors = []
         decoder_done = object()
         processor_done = object()
+        # This is deliberately shared by both queues and the active CUDA
+        # owner.  It is the real memory bound; queue.maxsize alone cannot bound
+        # the sum of decode waiting + processing + encode waiting frames.
+        lease_limit = min(_MAX_STREAM_INFLIGHT, self.effective_inflight)
+        frame_leases = threading.BoundedSemaphore(lease_limit)
+        packet_pool = _FramePacketPool(lease_limit)
+
+        def acquire_frame_lease() -> bool:
+            while not self._stop.is_set():
+                if frame_leases.acquire(timeout=0.25):
+                    return True
+                self.observe({"decode": decode_q.qsize(),
+                              "encode": encode_q.qsize()})
+                if not should_continue():
+                    self._stop.set()
+                    return False
+            return False
+
+        def release_packet(packet: Any) -> None:
+            if not isinstance(packet, _FramePacket):
+                return
+            # Clear the sole scheduler-owned reference before returning its
+            # capacity.  This is what makes refcount reclamation deterministic
+            # while the render has intentionally disabled generational GC.
+            packet_pool.release(packet)
+            with self._lock:
+                self.metrics.active_frames = max(0, self.metrics.active_frames - 1)
+            try:
+                frame_leases.release()
+            except ValueError:
+                # Error shutdown can race a queue drain.  The packet is already
+                # frame-free, so a duplicate release must not mask the real error.
+                pass
 
         def put_until(queue: Queue, item: Any) -> bool:
             while not self._stop.is_set():
@@ -494,63 +590,76 @@ class UnifiedRuntimeScheduler:
 
         def decoder() -> None:
             index = 0
+            lease_owned_here = False
             try:
                 while should_continue() and not self._stop.is_set():
+                    if not acquire_frame_lease():
+                        break
+                    lease_owned_here = True
                     started = time.perf_counter()
                     frame = decode()
                     self.record_stage("decode", time.perf_counter() - started)
                     if frame is None:
+                        frame_leases.release()
+                        lease_owned_here = False
                         break
-                    packet = _FramePacket(index=index, frame=frame)
+                    packet = packet_pool.acquire(index=index, frame=frame)
+                    with self._lock:
+                        self.metrics.active_frames += 1
+                        self.metrics.max_active_frames = max(
+                            self.metrics.max_active_frames,
+                            self.metrics.active_frames)
                     if not put_until(decode_q, packet):
+                        release_packet(packet)
+                        lease_owned_here = False
                         break
+                    # The packet now owns this lease until encode completes.
+                    lease_owned_here = False
                     with self._lock:
                         self.metrics.decoded += 1
                     index += 1
             except Exception as exc:
+                if lease_owned_here:
+                    frame_leases.release()
                 errors.append(exc)
                 self._stop.set()
             finally:
                 put_until(decode_q, decoder_done)
 
         def processor() -> None:
-            pending = {}
+            active_packet = None
             try:
-                with ThreadPoolExecutor(max_workers=worker_count,
-                                        thread_name_prefix="roop-scheduler") as pool:
-                    input_done = False
-                    while not self._stop.is_set() and (not input_done or pending):
-                        while not input_done and len(pending) < self.effective_inflight:
-                            try:
-                                item = decode_q.get(timeout=0.25)
-                            except Empty:
-                                if not should_continue():
-                                    self._stop.set()
-                                    break
-                                continue
-                            self.observe({"decode": decode_q.qsize(),
-                                          "encode": encode_q.qsize()})
-                            if item is decoder_done:
-                                input_done = True
-                                break
-                            future = pool.submit(self._process_one, process, item)
-                            pending[future] = item
-                        if not pending:
-                            continue
-                        done, _ = wait(tuple(pending), return_when=FIRST_COMPLETED)
-                        for future in done:
-                            item = pending.pop(future)
-                            result = future.result()
-                            if result is None:
-                                with self._lock:
-                                    self.metrics.dropped += 1
-                                continue
-                            item.frame = result
-                            if not put_until(encode_q, item):
-                                return
-                            with self._lock:
-                                self.metrics.processed += 1
+                while not self._stop.is_set():
+                    try:
+                        item = decode_q.get(timeout=0.25)
+                    except Empty:
+                        if not should_continue():
+                            self._stop.set()
+                            break
+                        continue
+                    self.observe({"decode": decode_q.qsize(),
+                                  "encode": encode_q.qsize()})
+                    if item is decoder_done:
+                        break
+                    active_packet = item
+                    result = self._process_one(process, item)
+                    if result is None:
+                        with self._lock:
+                            self.metrics.dropped += 1
+                        release_packet(item)
+                        active_packet = None
+                        continue
+                    item.frame = result
+                    if not put_until(encode_q, item):
+                        release_packet(item)
+                        active_packet = None
+                        return
+                    active_packet = None
+                    with self._lock:
+                        self.metrics.processed += 1
             except Exception as exc:
+                if active_packet is not None:
+                    release_packet(active_packet)
                 errors.append(exc)
                 self._stop.set()
             finally:
@@ -569,18 +678,28 @@ class UnifiedRuntimeScheduler:
                         continue
                     if item is processor_done:
                         for index in sorted(pending):
-                            packet = pending[index]
-                            self._encode_one(encode, packet, on_frame)
+                            packet = pending.pop(index)
+                            try:
+                                self._encode_one(encode, packet, on_frame)
+                            finally:
+                                release_packet(packet)
                         pending.clear()
                         break
                     pending[item.index] = item
                     while expected in pending:
                         packet = pending.pop(expected)
-                        self._encode_one(encode, packet, on_frame)
+                        try:
+                            self._encode_one(encode, packet, on_frame)
+                        finally:
+                            release_packet(packet)
                         expected += 1
             except Exception as exc:
                 errors.append(exc)
                 self._stop.set()
+            finally:
+                for packet in pending.values():
+                    release_packet(packet)
+                pending.clear()
 
         threads = [
             threading.Thread(target=decoder, name="roop-scheduler-decode", daemon=True),
@@ -592,6 +711,15 @@ class UnifiedRuntimeScheduler:
         for thread in threads:
             thread.join()
         self._stop.set()
+        # Cancellation/error paths can leave packets in a queue after another
+        # stage has stopped.  Drop those frame references before returning to
+        # ProcessMgr's checkpoint/final GC boundary.
+        for queue in (decode_q, encode_q):
+            try:
+                while True:
+                    release_packet(queue.get_nowait())
+            except Empty:
+                pass
         if errors:
             with self._lock:
                 self.metrics.errors.extend("%s: %s" % (type(e).__name__, e)

@@ -154,6 +154,27 @@ class UltraMaxEyeProtection(unittest.TestCase):
 
         self.assertGreater(int(out[240, 192, 0]), int(source[240, 192, 0]))
 
+    @unittest.skipUnless(__import__('torch').cuda.is_available(),
+                         'requires CUDA for tensor-path parity')
+    def test_cuda_eye_protection_stays_within_image_quality_tolerance(self):
+        """The CUDA implementation may differ at feathered boundaries, but it
+        must preserve the CPU operator's visual decision, not merely its shape."""
+        import torch
+        from roop.processors.Enhance_UltraMax import Enhance_UltraMax
+
+        rng = np.random.default_rng(20260902)
+        source = rng.integers(0, 256, (512, 512, 3), dtype=np.uint8)
+        restored = rng.integers(0, 256, (512, 512, 3), dtype=np.uint8)
+        cpu = Enhance_UltraMax._protect_swapped_eyes(restored, source)
+        gpu_tensor = Enhance_UltraMax._protect_swapped_eyes_gpu(
+            torch.from_numpy(restored).cuda().float(),
+            torch.from_numpy(source).cuda().float())
+        self.assertTrue(gpu_tensor.is_cuda)
+        gpu = gpu_tensor.round().to(torch.uint8).cpu().numpy()
+        delta = np.abs(cpu.astype(np.int16) - gpu.astype(np.int16))
+        self.assertLess(float(delta.mean()), 0.5)
+        self.assertLessEqual(float(np.quantile(delta, 0.99)), 10.0)
+
 
 class GrainMustNotFlicker(unittest.TestCase):
     """GPEN 256 Pro's synthetic micro-grain is deterministic ON PURPOSE.

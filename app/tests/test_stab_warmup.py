@@ -31,12 +31,15 @@ import sys
 import unittest
 from pathlib import Path
 
+import numpy as np
+
 APP = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, APP)
 
 from roop.one_euro import (                                    # noqa: E402
     _MAX_WARMUP, _alpha, ema_warmup_frames,
     EmaKpsStabilizer, EnhancerStabilizer, KpsStabilizer,
+    StreamingStabilizationHistory,
 )
 
 PM = Path(APP, 'roop', 'ProcessMgr.py').read_text(encoding='utf-8')
@@ -106,20 +109,42 @@ class WarmupIsSolvedNotGuessed(unittest.TestCase):
         for cutoff, extra in ((0.02, 0.5), (0.22, 0.1), (0.1, 2.0)):
             self.assertGreater(_alpha(1.0, cutoff + extra), _alpha(1.0, cutoff))
 
+    def test_streaming_history_resets_only_at_a_hard_scene_cut(self):
+        h = StreamingStabilizationHistory(capacity=8, cut_threshold=0.25)
+        black = np.zeros((96, 128, 3), dtype=np.uint8)
+        white = np.full((96, 128, 3), 255, dtype=np.uint8)
+        self.assertFalse(h.observe_frame(black, 1))
+        h.record_landmarks('face', np.zeros((5, 2), np.float32), 1)
+        h.record_affine('face', np.eye(2, 3, dtype=np.float32), 1)
+        h.record_mask('face', np.ones((64, 64), np.float32), 1)
+        self.assertFalse(h.observe_frame(black, 2))
+        self.assertEqual(len(h.landmarks['face']), 1)
+        self.assertTrue(h.observe_frame(white, 3))
+        self.assertEqual(h.scene_cuts, 1)
+        self.assertEqual(len(h.landmarks), 0)
+        self.assertEqual(len(h.affines), 0)
+        self.assertEqual(len(h.mask_weights), 0)
+
 
 class SchedulerPrefersParallel(unittest.TestCase):
 
     def test_source_was_found(self):
         self.assertGreater(len(PM_CODE), 20000)
 
-    def test_parallel_is_the_default(self):
+    def test_streaming_is_the_default(self):
         """The old default was '0', which meant every stabilized render silently
         collapsed to ONE worker thread — measured at 2.5-3x the wall time."""
-        m = re.search(r"ROOP_STAB_PARALLEL['\"]\s*,\s*['\"]([01])['\"]", PM_CODE)
-        self.assertIsNotNone(m, 'ROOP_STAB_PARALLEL default not found')
+        m = re.search(r"ROOP_STAB_STREAMING['\"]\s*,\s*['\"]([01])['\"]", PM_CODE)
+        self.assertIsNotNone(m, 'ROOP_STAB_STREAMING default not found')
         self.assertEqual(m.group(1), '1',
-                         'parallel stabilization must default ON; off means '
-                         'single-threaded rendering')
+                         'the continuous stabilization stream must be the default')
+
+    def test_streaming_path_has_no_block_warmup(self):
+        """The default path observes each decoded frame once and resets its
+        bounded causal history only on a scene cut."""
+        self.assertIn('StreamingStabilizationHistory', PM_CODE)
+        self.assertIn('observe_frame(frame, self._stab_t)', PM_CODE)
+        self.assertIn('rolling history reset', PM_CODE)
 
     def test_warmup_comes_from_the_filters(self):
         self.assertIn('_stab_warmup_frames', PM_CODE)

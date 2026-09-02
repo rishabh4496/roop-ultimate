@@ -23,6 +23,8 @@ if APP not in sys.path:
 
 import roop.globals
 import roop.processors.Enhance_UltraMax as UM
+from roop.processors.enhance_common import (luma_only_recolour,
+                                            luma_only_recolour_tensor)
 
 
 def _fake_session(out_chw):
@@ -115,6 +117,25 @@ class TestUltraMaxTextureRestore(unittest.TestCase):
         self.assertAlmostEqual(lap(out), lap(restored), delta=lap(restored) * 0.02)
 
 
+@unittest.skipUnless(UM._TORCH_CUDA, 'requires CUDA for tensor-path parity')
+class TestUltraMaxCudaColourTransfer(unittest.TestCase):
+    def test_cuda_luminance_transfer_is_byte_close_to_opencv(self):
+        """The GPU path must retain the established BGR luminance result to
+        one uint8 level, including when some CodeFormer colour is retained."""
+        import torch
+        rng = np.random.default_rng(20260902)
+        source = rng.integers(0, 256, (128, 128, 3), dtype=np.uint8)
+        restored = rng.integers(0, 256, (128, 128, 3), dtype=np.uint8)
+        for chroma in (0.0, 0.35):
+            cpu = luma_only_recolour(restored, source, chroma)
+            tensor = luma_only_recolour_tensor(
+                torch.from_numpy(restored).cuda(), torch.from_numpy(source).cuda(), chroma)
+            self.assertTrue(tensor.is_cuda)
+            gpu = tensor.round().to(torch.uint8).cpu().numpy()
+            self.assertLessEqual(
+                int(np.abs(cpu.astype(np.int16) - gpu.astype(np.int16)).max()), 1)
+
+
 class TestUltraMaxRun(unittest.TestCase):
     def setUp(self):
         self._saved_pool_env = os.environ.get('ROOP_TRT_POOL')
@@ -144,6 +165,9 @@ class TestUltraMaxRun(unittest.TestCase):
         p = UM.Enhance_UltraMax()
         p.plugin_options = {'devicename': 'cuda'}
         p.devicename = 'cuda'
+        # This deliberately models the compatibility host binding.  The mock
+        # cannot execute an ORT CUDA write into a Torch allocation.
+        p._cuda_iob_available = False
         p.in_dtype = np.float16
         p._lut = ((np.arange(256, dtype=np.float32) / 127.5) - 1.0).astype(np.float16)
         if out_chw is None:

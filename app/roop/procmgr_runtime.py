@@ -16,7 +16,7 @@ import sys
 import time
 import threading as _threading
 from threading import Lock
-from collections import defaultdict as _defaultdict
+from collections import defaultdict as _defaultdict, deque
 
 from tqdm import tqdm
 
@@ -1207,9 +1207,9 @@ PROGRESS_BAR_FORMAT = (
 #
 # So when nothing can rewrite a bar, don't draw one. tqdm keeps doing all the
 # arithmetic (n, rate, elapsed, and the ETA the web UI reads), but draws to a
-# sink, and ChunkedProgress prints one compact line per CHUNK of frames instead.
-# The chunk defaults to the resume-segment size, so a line in the terminal and a
-# tab in the console's part strip cover the same stretch of the render.
+# sink, and ChunkedProgress prints one compact line every 500 ms instead.  The
+# cadence is wall-clock based, not tied to an arbitrary render/resume chunk: a
+# chunk finishing must never turn into a false instantaneous FPS spike.
 
 
 class _NullStream:
@@ -1268,16 +1268,23 @@ def _progress_max_gap() -> float:
 
 
 class ChunkedProgress(tqdm):
-    """tqdm that reports in chunks when its output cannot be rewritten in place.
+    """tqdm with a wall-clock, completion-based throughput display.
 
     A drop-in replacement: same constructor, same `n`/`format_dict`, so callers
-    reading the rate for the web UI are unaffected. On a real terminal it IS an
-    ordinary tqdm bar.
+    reading the rate for the web UI are unaffected.  On a real terminal it is
+    an ordinary tqdm bar, redrawn at the same 500 ms cadence as captured logs.
     """
+
+    DISPLAY_INTERVAL_SECONDS = 0.5
+    RATE_WINDOW_SECONDS = 3.0
+    EMA_ALPHA = 0.15
 
     def __init__(self, *args, **kwargs):
         style = _progress_style()
         self._chunked = style == "chunk" or (style == "auto" and not _stream_is_terminal())
+        # tqdm otherwise defaults to a 100-ms redraw.  Make an interactive
+        # terminal and Pinokio's captured log agree on exactly the same cadence.
+        kwargs["mininterval"] = self.DISPLAY_INTERVAL_SECONDS
         if self._chunked:
             # Draw nowhere. Everything tqdm computes stays available; only the
             # rendering is suppressed, so `set_postfix` and `refresh` calls
@@ -1285,15 +1292,60 @@ class ChunkedProgress(tqdm):
             kwargs["file"] = _NullStream()
             kwargs["mininterval"] = float("inf")
         super().__init__(*args, **kwargs)
-        self._every = _progress_every()
-        self._max_gap = _progress_max_gap()
-        self._last_n = 0
-        self._last_t = time.perf_counter()
-        # The rate the last emitted chunk line divided by. Kept so the web UI
-        # can report the same "N left" this bar last printed (see publish_eta);
-        # tqdm's own smoothed rate is not usable here, because the bar never
-        # redraws and so the EMA it comes from is never updated.
+        started = time.perf_counter()
+        self._last_n = int(self.n)
+        self._last_t = started
+        # The rate shown at the last 500-ms refresh. Kept so the web UI and ETA
+        # use exactly the terminal's value even when tqdm itself is not drawing.
         self._last_rate = None
+        # Completion timestamps, rather than arbitrary chunk boundaries, are
+        # the rate source. The zero-frame baseline is intentional: the first
+        # completed frame has a real elapsed duration instead of an invented
+        # chunk duration.
+        self._completion_times = deque([(started, int(self.n))])
+        self._ema_rate = None
+
+    @property
+    def rolling_rate(self):
+        """Three-second completion-rate EMA sampled every 500 ms."""
+        return self._ema_rate
+
+    @property
+    def format_dict(self):
+        """Expose the displayed EMA to tqdm, ETA, and existing UI callers."""
+        values = super().format_dict
+        rate = getattr(self, "_ema_rate", None)
+        if rate is not None:
+            values["rate"] = rate
+        return values
+
+    def _record_completion(self, now):
+        self._completion_times.append((now, int(self.n)))
+        cutoff = now - self.RATE_WINDOW_SECONDS
+        while len(self._completion_times) > 1 and self._completion_times[0][0] < cutoff:
+            self._completion_times.popleft()
+
+    def _refresh_rate(self):
+        """Sample the rolling window and apply the fixed requested EMA.
+
+        This deliberately runs at display cadence, not per ``update()``.  A
+        different worker completion frequency therefore cannot change alpha or
+        make a stabilization chunk look like a burst of completed video.
+        """
+        if len(self._completion_times) < 2:
+            return
+        then, previous_n = self._completion_times[0]
+        now, current_n = self._completion_times[-1]
+        elapsed = now - then
+        completed = current_n - previous_n
+        if elapsed <= 0.0 or completed <= 0:
+            return
+        window_rate = completed / elapsed
+        if self._ema_rate is None:
+            self._ema_rate = window_rate
+        else:
+            self._ema_rate = ((self.EMA_ALPHA * window_rate) +
+                              ((1.0 - self.EMA_ALPHA) * self._ema_rate))
 
     # perf_counter, not time(): time() has ~15 ms granularity on Windows, so a
     # chunk that goes by quickly measures as having taken exactly zero seconds
@@ -1301,29 +1353,26 @@ class ChunkedProgress(tqdm):
     # is what a monotonic clock is for.
     def update(self, n=1):
         ret = super().update(n)
-        if self._chunked:
-            now = time.perf_counter()
-            if (self.n - self._last_n) >= self._every or (now - self._last_t) >= self._max_gap:
-                self._emit(now)
+        now = time.perf_counter()
+        self._record_completion(now)
+        # There is no background timer: emitting from the actual completion
+        # callback makes a rate reflect only frames the pipeline has emitted.
+        # The terminal is refreshed at most every 500 ms, plus the final frame.
+        if self._chunked and ((now - self._last_t) >= self.DISPLAY_INTERVAL_SECONDS
+                              or (self.total is not None and self.n >= self.total)):
+            self._emit(now)
         return ret
 
     def close(self):
-        # Always land on a final line, so the log records where a stage actually
-        # finished rather than at the last chunk boundary before it — but not a
-        # second copy of one just emitted, which is what a total that divides
-        # exactly by the chunk size would otherwise produce.
+        # Always land on a final line, without duplicating an update that already
+        # emitted the terminal state at completion.
         if self._chunked and not self.disable and self.n and self.n != self._last_n:
             self._emit(time.perf_counter())
         return super().close()
 
     def _emit(self, now):
-        # This chunk's own rate, not a lifetime average: the point of a per-chunk
-        # line is to show that THIS stretch ran slower than the last one, which
-        # an average smooths away. tqdm's own `rate` is unavailable here — it is
-        # only recomputed when the bar redraws, and the bar never redraws.
-        dn = self.n - self._last_n
-        dt = now - self._last_t
-        rate = (dn / dt) if (dn > 0 and dt > 0) else None
+        self._refresh_rate()
+        rate = self.rolling_rate
         if not rate:
             elapsed = self.format_dict.get("elapsed") or 0
             rate = (self.n / elapsed) if elapsed > 0 else None
@@ -1331,11 +1380,11 @@ class ChunkedProgress(tqdm):
         self._last_t = now
         self._last_rate = rate          # what the web UI's ETA must divide by
         try:
-            print(self._chunk_line(rate), flush=True)
+            print(self._progress_line(rate), flush=True)
         except Exception:
             pass
 
-    def _chunk_line(self, rate=None) -> str:
+    def _progress_line(self, rate=None) -> str:
         d = self.format_dict
         n = int(d.get("n") or 0)
         total = int(d.get("total") or 0)
@@ -1344,9 +1393,7 @@ class ChunkedProgress(tqdm):
         unit = self.unit or "it"
 
         if total:
-            chunks = max(1, -(-total // self._every))
-            here = min(chunks, max(1, -(-n // self._every)))
-            head = f"{self.desc or 'Progress'} chunk {here}/{chunks}"
+            head = self.desc or 'Progress'
             count = f"{n:,}/{total:,} {unit}  {n / total * 100:5.1f}%"
         else:
             head = f"{self.desc or 'Progress'}"
@@ -1400,7 +1447,10 @@ def _bar_eta_seconds(bar):
         total = int(d.get("total") or 0)
         if not total or n >= total:
             return None
-        rate = getattr(bar, "_last_rate", None) if getattr(bar, "_chunked", False) else d.get("rate")
+        rate = getattr(bar, "rolling_rate", None)
+        if not rate:
+            rate = (getattr(bar, "_last_rate", None) if getattr(bar, "_chunked", False)
+                    else d.get("rate"))
         if not rate:
             elapsed = d.get("elapsed") or 0
             rate = (n / elapsed) if (elapsed > 0 and n > 0) else None
