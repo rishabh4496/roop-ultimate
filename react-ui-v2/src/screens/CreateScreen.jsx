@@ -7,6 +7,8 @@ import { QueuePanel } from '../components/QueuePanel';
 import { ProjectsPanel } from '../components/ProjectsPanel';
 import { useCreationWorkflow } from '../workflow/useCreationWorkflow';
 import { useQueue } from '../workflow/useQueue';
+import { InteractivePreview } from '../components/preview/InteractivePreview';
+import { SourceGallery, TargetPersonsPanel, FacesetLibraryModal } from '../components/faces/index';
 
 function Unavailable({ label, reason = 'Unavailable until the backend exposes this option.' }) {
   return <div className="v2-unavailable"><span>{label}</span><Badge tone="neutral">Unavailable</Badge><small>{reason}</small></div>;
@@ -44,11 +46,6 @@ function MediaUpload({ kind, busy, upload, onFiles }) {
   return <label className="v2-upload"><input type="file" accept={isSource ? 'image/*,.fsz' : 'image/*,video/*,.webp'} multiple onChange={(event) => { onFiles(event.target.files); event.target.value = ''; }} /><span className="v2-upload-icon">+</span><span><strong>{isSource ? 'Add source face' : 'Add target media'}</strong><small>{busy === kind ? `${upload?.phase === 'analyzing' ? 'Analyzing' : 'Uploading'} ${upload?.percent || 0}%` : isSource ? 'Image or .fsz faceset' : 'Image, video, GIF, or WebP'}</small></span></label>;
 }
 
-function SourcePicker({ workflow }) {
-  const faces = workflow.state?.source_faces || [];
-  const selected = workflow.selectedSource;
-  return <Card className="v2-picker-card"><div className="v2-card-heading"><div><span className="v2-eyebrow">Source</span><h3>Who should appear?</h3></div><Badge tone="neutral">{faces.length} loaded</Badge></div><MediaUpload kind="source" busy={workflow.busy} upload={workflow.upload} onFiles={(files) => workflow.uploadMedia('source', files)} />{faces.length ? <div className="v2-media-grid">{faces.map((face, index) => <button type="button" className={`v2-face-tile ${selected === index ? 'is-selected' : ''}`} key={`${face}-${index}`} onClick={() => workflow.selectSource(index)}><img src={face} alt={`Source face ${index + 1}`} /><span>Face {index + 1}</span></button>)}</div> : <div className="v2-empty-picker">Add a clear face image to begin.</div>}</Card>;
-}
 
 function TargetPicker({ workflow }) {
   const targets = workflow.state?.targets || [];
@@ -69,13 +66,14 @@ function CreationControls({ workflow }) {
 }
 
 function PreviewPanel({ workflow }) {
-  const [failedLiveSeq, setFailedLiveSeq] = useState(0);
+  const [failedLiveSeq, _setFailedLiveSeq] = useState(0);
   const targetIndex = workflow.state?.selected_target_index ?? 0;
   const hasTarget = Boolean(workflow.selectedTarget);
   const runtime = workflow.runtime;
   const liveSeq = Number(runtime?.frame_progress?.live_seq || workflow.progress?.live_seq || 0);
   const liveSrc = liveSeq > 0 && liveSeq !== failedLiveSeq ? liveFrameUrl(liveSeq) : '';
-  const previewSrc = liveSrc || workflow.preview?.image || (hasTarget ? targetPreviewUrl(targetIndex, workflow.frame) : '');
+  const beforeSrc = hasTarget ? targetPreviewUrl(targetIndex, workflow.frame) : '';
+  const afterSrc = workflow.preview?.image || '';
   const frameMax = workflow.selectedTarget?.frames || 1;
   const isProcessing = runtime?.job?.processing ?? workflow.progress?.processing;
   const pauseRequested = runtime?.job?.pause_requested ?? workflow.progress?.pause_requested;
@@ -84,7 +82,108 @@ function PreviewPanel({ workflow }) {
   const statusMessage = runtime?.status?.message || workflow.progress?.desc || 'Generating';
   const completedOutput = workflow.output?.files?.[0];
   const completedPath = workflow.progress?.output?.path || (workflow.output?.output_path && completedOutput ? `${workflow.output.output_path}/${completedOutput.name}` : '');
-  return <Card className="v2-preview-card"><div className="v2-preview-heading"><div><span className="v2-eyebrow">Preview</span><h2>{hasTarget ? workflow.selectedTarget.name : 'Your media will appear here'}</h2></div><div className="v2-preview-actions"><Badge tone={liveSrc || workflow.preview ? 'success' : 'neutral'}>{liveSrc ? 'Live processed frame' : workflow.preview ? 'Preview ready' : 'Original frame'}</Badge><Button size="sm" onClick={workflow.renderPreview} disabled={!hasTarget || workflow.busy === 'preview' || isProcessing}>{workflow.busy === 'preview' ? 'Rendering...' : 'Preview swap'}</Button></div></div><div className="v2-preview-stage">{previewSrc ? <img src={previewSrc} alt={liveSrc ? 'Latest processed frame' : 'Target preview'} onError={() => { if (liveSrc) setFailedLiveSeq(liveSeq); }} /> : <div className="v2-preview-empty"><span>O</span><strong>Drop target media to start</strong><small>The preview stays the primary workspace.</small></div>}{workflow.busy === 'preview' && <div className="v2-preview-overlay"><LoadingState label="Rendering preview" /></div>}</div>{hasTarget && <div className="v2-frame-control"><Field label={`Frame ${workflow.frame} of ${frameMax}`}><input className="v2-range" type="range" min={1} max={frameMax} step={1} value={Math.min(workflow.frame, frameMax)} onChange={(event) => workflow.setFrame(Number(event.target.value))} /></Field></div>}{liveSrc && <div className="v2-preview-note"><Badge tone="success">Live</Badge><span>Latest processed frame from the main pipeline; updates are sequence-gated.</span></div>}{workflow.preview?.faces?.length > 0 && <div className="v2-preview-note"><Badge tone="success">{workflow.preview.faces.length} face(s) detected</Badge><span>Detection is provided by the backend preview response.</span></div>}{isProcessing && <div className="v2-progress-panel"><Progress value={Math.round(fraction * 100)} label={statusMessage} /><div className="v2-progress-actions">{isPaused ? <Button size="sm" onClick={workflow.resume} disabled={workflow.busy === 'resume'}>Resume generation</Button> : <Button size="sm" onClick={workflow.pause} disabled={pauseRequested || workflow.busy === 'pause'}>{pauseRequested ? 'Pause requested...' : 'Pause generation'}</Button>}<Button variant="danger" size="sm" onClick={workflow.stop} disabled={workflow.busy === 'stop'}>Stop generation</Button></div></div>}<RuntimeTelemetry runtime={runtime} />{completedPath && !isProcessing && <div className="v2-output-result"><Badge tone="success">Output ready</Badge><a href={fileUrl(completedPath)} target="_blank" rel="noreferrer">Open latest output</a></div>}</Card>;
+
+  return (
+    <Card className="v2-preview-card">
+      <div className="v2-preview-heading">
+        <div>
+          <span className="v2-eyebrow">Preview & Face Tracking</span>
+          <h2>{hasTarget ? workflow.selectedTarget.name : 'Your media will appear here'}</h2>
+        </div>
+        <div className="v2-preview-actions">
+          <Badge tone={liveSrc || workflow.preview ? 'success' : 'neutral'}>
+            {liveSrc ? 'Live processed frame' : workflow.preview ? 'Preview ready' : 'Original frame'}
+          </Badge>
+          <Button size="sm" onClick={workflow.renderPreview} disabled={!hasTarget || workflow.busy === 'preview' || isProcessing}>
+            {workflow.busy === 'preview' ? 'Rendering...' : 'Preview swap'}
+          </Button>
+        </div>
+      </div>
+
+      <div className="v2-preview-stage relative rounded-xl overflow-hidden min-h-[460px] border border-white/10 bg-[#07080c]">
+        <InteractivePreview
+          beforeSrc={beforeSrc}
+          afterSrc={afterSrc}
+          liveSrc={liveSrc}
+          liveSeq={liveSeq}
+          faces={workflow.preview?.faces || []}
+          kps={workflow.preview?.kps || []}
+          pose={workflow.preview?.pose || []}
+          personIds={workflow.preview?.person_ids || []}
+          faceMapping={workflow.faceMapping || {}}
+          onSelectPerson={(faceIndex) => workflow.captureTargetFace(faceIndex)}
+          onMaskChange={workflow.setManualMask}
+          isProcessing={Boolean(isProcessing)}
+        />
+        {workflow.busy === 'preview' && (
+          <div className="v2-preview-overlay">
+            <LoadingState label="Rendering preview" />
+          </div>
+        )}
+      </div>
+
+      {hasTarget && (
+        <div className="v2-frame-control mt-3">
+          <Field label={`Frame ${workflow.frame} of ${frameMax}`}>
+            <input
+              className="v2-range"
+              type="range"
+              min={1}
+              max={frameMax}
+              step={1}
+              value={Math.min(workflow.frame, frameMax)}
+              onChange={(event) => workflow.setFrame(Number(event.target.value))}
+            />
+          </Field>
+        </div>
+      )}
+
+      {liveSrc && (
+        <div className="v2-preview-note">
+          <Badge tone="success">Live</Badge>
+          <span>Latest processed frame from the main pipeline; updates are sequence-gated.</span>
+        </div>
+      )}
+
+      {workflow.preview?.faces?.length > 0 && (
+        <div className="v2-preview-note">
+          <Badge tone="success">{workflow.preview.faces.length} face(s) detected</Badge>
+          <span>Detection is provided by the backend preview response.</span>
+        </div>
+      )}
+
+      {isProcessing && (
+        <div className="v2-progress-panel">
+          <Progress value={Math.round(fraction * 100)} label={statusMessage} />
+          <div className="v2-progress-actions">
+            {isPaused ? (
+              <Button size="sm" onClick={workflow.resume} disabled={workflow.busy === 'resume'}>
+                Resume generation
+              </Button>
+            ) : (
+              <Button size="sm" onClick={workflow.pause} disabled={pauseRequested || workflow.busy === 'pause'}>
+                {pauseRequested ? 'Pause requested...' : 'Pause generation'}
+              </Button>
+            )}
+            <Button variant="danger" size="sm" onClick={workflow.stop} disabled={workflow.busy === 'stop'}>
+              Stop generation
+            </Button>
+          </div>
+        </div>
+      )}
+
+      <RuntimeTelemetry runtime={runtime} />
+
+      {completedPath && !isProcessing && (
+        <div className="v2-output-result">
+          <Badge tone="success">Output ready</Badge>
+          <a href={fileUrl(completedPath)} target="_blank" rel="noreferrer">
+            Open latest output
+          </a>
+        </div>
+      )}
+    </Card>
+  );
 }
 
 export default function CreateScreen() {
@@ -92,6 +191,8 @@ export default function CreateScreen() {
   const workflow = useCreationWorkflow(notify);
   const queue = useQueue(notify);
   const [showUnavailable, setShowUnavailable] = useState(false);
+  const [libraryOpen, setLibraryOpen] = useState(false);
+
   const connectionLabel = workflow.error ? 'Backend unavailable' : workflow.loading ? 'Connecting' : 'Backend connected';
   const connectionTone = workflow.error ? 'danger' : workflow.loading ? 'neutral' : 'success';
   const targetCount = workflow.state?.targets?.length || 0;
@@ -103,11 +204,144 @@ export default function CreateScreen() {
     if (!ready) return notify('Add one source face and one target before queueing', 'danger');
     const sourceInfo = workflow.state?.source_faces_info?.[workflow.selectedSource];
     try {
-      await queue.add({ target_name: workflow.selectedTarget.name, source_index: workflow.selectedSource, source_name: sourceInfo?.name || '', label: workflow.selectedTarget.name, payload: workflow.buildPayload(false) });
+      await queue.add({
+        target_name: workflow.selectedTarget.name,
+        source_index: workflow.selectedSource,
+        source_name: sourceInfo?.name || '',
+        label: workflow.selectedTarget.name,
+        payload: workflow.buildPayload(false),
+      });
       notify('Generation added to the queue', 'success');
-    } catch { /* useQueue reports the backend error */ }
+    } catch {
+      /* useQueue reports the backend error */
+    }
   };
 
   if (workflow.loading && !workflow.meta) return <LoadingState label="Connecting to the existing backend" />;
-  return <div className="v2-create-screen"><div className="v2-creation-header"><div><span className="v2-eyebrow">Creation workflow</span><h2>Make the moment yours.</h2><p>Select a source, choose a target, check the frame, and generate when it looks right.</p></div><Badge tone={connectionTone}>{connectionLabel}</Badge></div>{workflow.error && <Notice tone="danger" title="No backend connection">Controls are disabled until the existing FastAPI backend is available. V2 does not simulate results.</Notice>}<div className="v2-creation-layout"><div className="v2-preview-column"><PreviewPanel workflow={workflow} /></div><aside className="v2-control-column"><SourcePicker workflow={workflow} /><TargetPicker workflow={workflow} /><CreationControls workflow={workflow} /></aside></div><div className="v2-generation-bar"><div><span className="v2-eyebrow">Ready to generate</span><strong>{ready ? 'Your setup is ready.' : 'Add one source face and one target.'}</strong></div><div className="v2-generation-actions"><Button size="lg" onClick={addCurrentToQueue} disabled={!ready || queue.busy === 'add'}>{queue.busy === 'add' ? 'Queueing...' : 'Add to queue'}</Button><Button variant="primary" size="lg" onClick={workflow.start} disabled={!ready || workflow.busy === 'start' || Boolean(workflow.progress?.processing)}>{workflow.busy === 'start' ? 'Starting...' : workflow.progress?.processing ? 'Generating...' : 'Generate'}</Button></div></div><QueuePanel queue={queue} onCancel={queue.cancel} onRetry={queue.retry} onRemove={queue.remove} onReorder={queue.reorder} onStart={queue.start} onPause={queue.pause} onResume={queue.resume} onStop={queue.stop} /><div className="v2-unavailable-summary"><button type="button" className="v2-text-button" onClick={() => setShowUnavailable((open) => !open)}>{showUnavailable ? 'Hide unavailable capabilities' : 'What is not connected yet?'}</button>{showUnavailable && <div className="v2-unavailable-list">{unavailable.map((item) => <Unavailable key={item} label={item} reason="Deferred; no verified backend operation is being invented." />)}</div>}</div></div>;
+
+  return (
+    <div className="v2-create-screen">
+      <div className="v2-creation-header">
+        <div>
+          <span className="v2-eyebrow">Creation workflow</span>
+          <h2>Make the moment yours.</h2>
+          <p>Select a source, choose a target, check the frame, and generate when it looks right.</p>
+        </div>
+        <Badge tone={connectionTone}>{connectionLabel}</Badge>
+      </div>
+
+      {workflow.error && (
+        <Notice tone="danger" title="No backend connection">
+          Controls are disabled until the existing FastAPI backend is available. V2 does not simulate results.
+        </Notice>
+      )}
+
+      <div className="v2-creation-layout">
+        <div className="v2-preview-column">
+          <PreviewPanel workflow={workflow} />
+        </div>
+
+        <aside className="v2-control-column flex flex-col gap-3">
+          {/* Pro Source Identities Gallery */}
+          <SourceGallery
+            sourceFaces={workflow.state?.source_faces || []}
+            selectedSourceIndex={workflow.selectedSource}
+            onSelectSource={workflow.selectSource}
+            onRemoveSource={workflow.removeSource}
+            onMoveSource={workflow.moveSource}
+            onClearSources={workflow.clearSources}
+            onAddFiles={(files) => workflow.uploadMedia('source', files)}
+            onOpenLibrary={() => setLibraryOpen(true)}
+            pinnedIdentities={workflow.pinnedIdentities}
+            onTogglePin={workflow.togglePin}
+            busy={Boolean(workflow.busy)}
+          />
+
+          {/* Target Media Selection */}
+          <TargetPicker workflow={workflow} />
+
+          {/* Target Person Groups & Angle Banking */}
+          <TargetPersonsPanel
+            targetFaces={workflow.state?.target_faces || []}
+            targetGroups={workflow.state?.target_groups || []}
+            targetNames={workflow.state?.target_names || []}
+            targetFacesInfo={workflow.state?.target_faces_info || []}
+            selectedTargetFace={workflow.selectedTargetFace}
+            onSelectTargetFace={workflow.setSelectedTargetFace}
+            sourceFaces={workflow.state?.source_faces || []}
+            faceMapping={workflow.faceMapping}
+            onChangeMapping={workflow.changeFaceMapping}
+            onAutoCapture={workflow.autoCapture}
+            onAutoAngles={workflow.autoAngles}
+            onAutocluster={workflow.autocluster}
+            onAddAngle={workflow.addAngle}
+            onRemoveFace={workflow.removeTargetFace}
+            onRenamePerson={workflow.renamePerson}
+            busy={Boolean(workflow.busy)}
+          />
+
+          {/* Core Creation Knobs & Advanced Drawers */}
+          <CreationControls workflow={workflow} />
+        </aside>
+      </div>
+
+      <div className="v2-generation-bar">
+        <div>
+          <span className="v2-eyebrow">Ready to generate</span>
+          <strong>{ready ? 'Your setup is ready.' : 'Add one source face and one target.'}</strong>
+        </div>
+        <div className="v2-generation-actions">
+          <Button size="lg" onClick={addCurrentToQueue} disabled={!ready || queue.busy === 'add'}>
+            {queue.busy === 'add' ? 'Queueing...' : 'Add to queue'}
+          </Button>
+          <Button
+            variant="primary"
+            size="lg"
+            onClick={workflow.start}
+            disabled={!ready || workflow.busy === 'start' || Boolean(workflow.progress?.processing)}
+          >
+            {workflow.busy === 'start' ? 'Starting...' : workflow.progress?.processing ? 'Generating...' : 'Generate'}
+          </Button>
+        </div>
+      </div>
+
+      <QueuePanel
+        queue={queue}
+        onCancel={queue.cancel}
+        onRetry={queue.retry}
+        onRemove={queue.remove}
+        onReorder={queue.reorder}
+        onStart={queue.start}
+        onPause={queue.pause}
+        onResume={queue.resume}
+        onStop={queue.stop}
+      />
+
+      <div className="v2-unavailable-summary">
+        <button
+          type="button"
+          className="v2-text-button"
+          onClick={() => setShowUnavailable((open) => !open)}
+        >
+          {showUnavailable ? 'Hide unavailable capabilities' : 'What is not connected yet?'}
+        </button>
+        {showUnavailable && (
+          <div className="v2-unavailable-list">
+            {unavailable.map((item) => (
+              <Unavailable key={item} label={item} reason="Deferred; no verified backend operation is being invented." />
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Faceset Library Archive (.fsz) Modal */}
+      <FacesetLibraryModal
+        isOpen={libraryOpen}
+        onClose={() => setLibraryOpen(false)}
+        canSave={Boolean(workflow.state?.source_faces?.length)}
+        onLoadedFaceset={workflow.refreshState}
+        notify={notify}
+      />
+    </div>
+  );
 }

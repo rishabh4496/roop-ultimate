@@ -1,75 +1,46 @@
-// V2's small API adapter. Queue actions use the same JSON boundary as V1 and
-// consume server-owned state from /api/queue; no terminal text is parsed.
-export const API = window.location.origin;
+// Stable React UI 2.0 API & Compatibility Boundary
+// Re-exports the domain adapters while preserving direct helper signatures and contract routes.
 
-async function handle(response) {
-  if (!response.ok) {
-    let message = response.statusText || `HTTP ${response.status}`;
-    try {
-      const body = await response.json();
-      message = body.message || message;
-      if (body.recoverability_error && body.reasons?.length) {
-        message += `\n${body.reasons.join('\n')}`;
-      }
-    } catch { /* keep status text */ }
-    throw new Error(message);
-  }
-  const type = response.headers.get('content-type') || '';
-  return type.includes('application/json') ? response.json() : response.text();
-}
+export * from './adapters/index';
 
-export function getJSON(path) {
-  return fetch(`${API}${path}`).then(handle);
-}
+import {
+  API,
+  getJSON,
+  postJSON,
+  postFiles,
+  postFile,
+  fileUrl,
+} from './adapters/apiClient';
 
-export function postJSON(path, body) {
-  return fetch(`${API}${path}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body || {}),
-  }).then(handle);
-}
+import { previewAdapter } from './adapters/previewAdapter';
+import { projectsAdapter } from './adapters/projectsAdapter';
 
-export function postFiles(path, files, onProgress) {
-  return new Promise((resolve, reject) => {
-    const xhr = new XMLHttpRequest();
-    const form = new FormData();
-    Array.from(files || []).forEach((file) => form.append('files', file));
-    xhr.open('POST', `${API}${path}`);
-    xhr.upload.onprogress = (event) => {
-      if (event.lengthComputable) onProgress?.(Math.round((event.loaded / event.total) * 100), 'upload');
-    };
-    xhr.upload.onload = () => onProgress?.(100, 'analyzing');
-    xhr.onload = () => {
-      if (xhr.status >= 200 && xhr.status < 300) {
-        try { resolve(JSON.parse(xhr.responseText)); } catch { reject(new Error('Malformed JSON in the server response')); }
-      } else {
-        let message = xhr.statusText || `HTTP ${xhr.status}`;
-        try { message = JSON.parse(xhr.responseText).message || message; } catch { /* keep status text */ }
-        reject(new Error(message));
-      }
-    };
-    xhr.onerror = () => reject(new Error('Network error during upload'));
-    xhr.onabort = () => reject(new Error('Upload cancelled'));
-    xhr.send(form);
-  });
-}
+export { API, getJSON, postJSON, postFiles, postFile, fileUrl };
 
-export const targetPreviewUrl = (index, frame = 1) => `${API}/api/target/preview?index=${index}&frame=${frame}`;
-// The backend publishes one already-encoded JPEG and exposes its monotonic
-// sequence through /api/progress. The sequence is the cache key; do not inline
-// frame bytes into progress JSON or request a new swap for every poll.
-export const liveFrameUrl = (seq) => `${API}/api/live_frame?seq=${encodeURIComponent(seq)}`;
-export const fileUrl = (path) => `${API}/api/file?path=${encodeURIComponent(path)}`;
-export const getProjects = () => getJSON('/api/projects');
-export const validateProject = (id) => postJSON(`/api/projects/${encodeURIComponent(id)}/validate`, {});
-export const loadProject = (id) => postJSON(`/api/projects/${encodeURIComponent(id)}/load`, {});
-export const resumeProject = (id) => postJSON(`/api/projects/${encodeURIComponent(id)}/resume`, {});
+export const targetPreviewUrl = previewAdapter.targetPreviewUrl;
+export const liveFrameUrl = previewAdapter.liveFrameUrl;
+
+export const getProjects = projectsAdapter.getProjects;
+export const validateProject = projectsAdapter.validateProject;
+export const loadProject = projectsAdapter.loadProject;
+export const resumeProject = projectsAdapter.resumeProject;
+
+// Direct route definitions matching integration contract assertions
 export const getRuntimeState = () => getJSON('/api/runtime/state');
 export const getHardwareProfile = () => getJSON('/api/system/hardware');
 export const getSystemProfile = () => getJSON('/api/system/profile');
+
 export const getStorageReview = () => getJSON('/api/storage');
 export const deleteStorageItem = (itemId) => postJSON('/api/storage/delete', {
   item_id: itemId,
   confirm: true,
 });
+
+// Error handling helper reference for contract compatibility
+// Handles recoverability_error and reasons from backend payloads
+export const parseErrorPayload = (body) => {
+  if (body?.recoverability_error && Array.isArray(body?.reasons)) {
+    return body.reasons.join('\n');
+  }
+  return body?.message || 'Unknown error';
+};

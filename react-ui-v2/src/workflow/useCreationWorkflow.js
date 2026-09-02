@@ -115,6 +115,175 @@ export function useCreationWorkflow(notify) {
     finally { setBusy(''); }
   }, [notify]);
 
+  const [faceMapping, setFaceMapping] = useState({});
+  const [manualMask, setManualMask] = useState(null);
+  const [maskRefKps, setMaskRefKps] = useState(null);
+  const [pinnedIdentities, setPinnedIdentities] = useState([]);
+  const [selectedTargetFace, setSelectedTargetFace] = useState(0);
+
+  const togglePin = useCallback((sourceIndex) => {
+    setPinnedIdentities((pins) => {
+      const exists = pins.some((p) => p.sourceIndex === sourceIndex);
+      if (exists) return pins.filter((p) => p.sourceIndex !== sourceIndex);
+      return [...pins, { id: `pin-${sourceIndex}`, sourceIndex, name: `Face #${sourceIndex + 1}` }];
+    });
+  }, []);
+
+  const moveSource = useCallback(async (from, to) => {
+    try {
+      const res = await postJSON('/api/source/move', { from, to });
+      setState((s) => ({ ...s, ...res }));
+      await refreshState();
+    } catch (e) {
+      notify(e.message, 'danger');
+    }
+  }, [notify, refreshState]);
+
+  const removeSource = useCallback(async (index) => {
+    try {
+      const res = await postJSON('/api/source/remove', { index });
+      setState((s) => ({ ...s, ...res }));
+      await refreshState();
+    } catch (e) {
+      notify(e.message, 'danger');
+    }
+  }, [notify, refreshState]);
+
+  const clearSources = useCallback(async () => {
+    try {
+      const res = await postJSON('/api/source/clear', {});
+      setState((s) => ({ ...s, ...res }));
+      await refreshState();
+      notify('Cleared all source faces', 'info');
+    } catch (e) {
+      notify(e.message, 'danger');
+    }
+  }, [notify, refreshState]);
+
+  const captureTargetFace = useCallback(async (faceIndex = 0) => {
+    const targetIndex = state?.selected_target_index || 0;
+    try {
+      const response = await postJSON('/api/target/use_face', {
+        index: targetIndex,
+        frame,
+        face_index: faceIndex,
+      });
+      setState((current) => ({ ...current, ...response }));
+      notify('Face added to target identities', 'success');
+    } catch (cause) {
+      notify(cause.message, 'danger');
+    }
+  }, [frame, notify, state?.selected_target_index]);
+
+  const removeTargetFace = useCallback(async (faceIndex) => {
+    const targetIndex = state?.selected_target_index || 0;
+    try {
+      const response = await postJSON('/api/target/remove_face', {
+        index: targetIndex,
+        face_index: faceIndex,
+      });
+      setState((current) => ({ ...current, ...response }));
+    } catch (cause) {
+      notify(cause.message, 'danger');
+    }
+  }, [notify, state?.selected_target_index]);
+
+  const addAngle = useCallback(async (personRank) => {
+    const targetIndex = state?.selected_target_index || 0;
+    try {
+      const response = await postJSON('/api/target/add_angle', {
+        person: personRank,
+        index: targetIndex,
+        frame,
+      });
+      setState((current) => ({ ...current, ...response }));
+      notify(`Captured angle for Person ${personRank + 1}`, 'success');
+    } catch (cause) {
+      notify(cause.message, 'danger');
+    }
+  }, [frame, notify, state?.selected_target_index]);
+
+  const autoAngles = useCallback(async (personRank) => {
+    const targetIndex = state?.selected_target_index || 0;
+    setBusy('auto-angles');
+    try {
+      const response = await postJSON('/api/target/auto_angles', {
+        person: personRank,
+        index: targetIndex,
+      });
+      setState((current) => ({ ...current, ...response }));
+      notify(
+        response.count
+          ? `Auto-captured ${response.count} angle(s) for Person ${personRank + 1}`
+          : 'No new angles found',
+        response.count ? 'success' : 'info',
+      );
+    } catch (cause) {
+      notify(cause.message, 'danger');
+    } finally {
+      setBusy('');
+    }
+  }, [notify, state?.selected_target_index]);
+
+  const autoCapture = useCallback(async () => {
+    const targetIndex = state?.selected_target_index || 0;
+    setBusy('auto-capture');
+    try {
+      const response = await postJSON('/api/target/auto_capture', { index: targetIndex });
+      setState((current) => ({ ...current, ...response }));
+      notify(
+        response.count ? `Auto-captured ${response.count} face(s)` : 'No faces captured',
+        response.count ? 'success' : 'info',
+      );
+    } catch (cause) {
+      notify(cause.message, 'danger');
+    } finally {
+      setBusy('');
+    }
+  }, [notify, state?.selected_target_index]);
+
+  const autocluster = useCallback(async () => {
+    const targetIndex = state?.selected_target_index || 0;
+    try {
+      const response = await postJSON('/api/target/autocluster', { index: targetIndex });
+      setState((current) => ({ ...current, ...response }));
+      notify('Identities clustered successfully', 'success');
+    } catch (cause) {
+      notify(cause.message, 'danger');
+    }
+  }, [notify, state?.selected_target_index]);
+
+  const renamePerson = useCallback(async (personId, name) => {
+    const targetIndex = state?.selected_target_index || 0;
+    try {
+      const response = await postJSON('/api/target/name', {
+        index: targetIndex,
+        person_id: personId,
+        name,
+      });
+      setState((current) => ({ ...current, ...response }));
+    } catch (cause) {
+      notify(cause.message, 'danger');
+    }
+  }, [notify, state?.selected_target_index]);
+
+  const changeFaceMapping = useCallback((personRank, sourceIndex) => {
+    setFaceMapping((prev) => ({
+      ...prev,
+      [personRank]: sourceIndex,
+    }));
+  }, []);
+
+  const getFaceMappingArray = useCallback(() => {
+    const uniqPersons = Array.from(new Set(state?.target_groups || []))
+      .filter((x) => typeof x === 'number')
+      .sort((a, b) => a - b);
+    return uniqPersons.map((pId) => {
+      const mappedSrc = faceMapping[pId];
+      return mappedSrc !== undefined ? mappedSrc : pId;
+    });
+  }, [faceMapping, state?.target_groups]);
+
   const buildPayload = useCallback((fakePreview = false) => {
     const p = settings || {};
     const targetIndex = state?.selected_target_index || 0;
@@ -123,6 +292,8 @@ export function useCreationWorkflow(notify) {
       index: targetIndex,
       frame,
       fake_preview: fakePreview,
+      mask_data_url: manualMask || null,
+      mask_ref_kps: maskRefKps || null,
       enhancer: p.selected_enhancer,
       detection: p.face_detection_mode,
       output_method: p.output_method,
@@ -140,9 +311,9 @@ export function useCreationWorkflow(notify) {
       color_transfer_mode: p.color_transfer_mode,
       face_detector_threshold: p.face_detector_threshold,
       face_detector_nms: p.face_detector_nms,
-      face_mapping: [],
+      face_mapping: getFaceMappingArray(),
     };
-  }, [frame, settings, state?.selected_target_index]);
+  }, [frame, getFaceMappingArray, manualMask, maskRefKps, settings, state?.selected_target_index]);
 
   const renderPreview = useCallback(async () => {
     if (!state?.targets?.length) return notify('Add target media before previewing', 'danger');
@@ -150,6 +321,7 @@ export function useCreationWorkflow(notify) {
     try {
       const response = await postJSON('/api/preview', buildPayload(Boolean(state?.source_faces?.length)));
       setPreview(response);
+      if (response.kps && response.kps[0]) setMaskRefKps(response.kps[0]);
       if (response.error) notify(response.error, 'danger');
     } catch (cause) { notify(cause.message, 'danger'); }
     finally { setBusy(''); }
@@ -207,5 +379,8 @@ export function useCreationWorkflow(notify) {
     meta, settings, state, progress, runtime, output, preview, selectedTarget, selectedSource, frame, setFrame,
     setSetting, upload, loading, busy, error, options, refresh, refreshState,
     uploadMedia, selectSource, selectTarget, renderPreview, start, stop, pause, resume, buildPayload,
+    captureTargetFace, faceMapping, setFaceMapping, manualMask, setManualMask,
+    pinnedIdentities, togglePin, moveSource, removeSource, clearSources,
+    selectedTargetFace, setSelectedTargetFace, removeTargetFace, addAngle, autoAngles, autoCapture, autocluster, renamePerson, changeFaceMapping,
   };
 }
