@@ -1,20 +1,26 @@
-"""Face swapper frame processor with foreground occlusion parsing and temporal mask smoothing.
+"""Face swapper frame processor with foreground occlusion parsing, temporal smoothing,
+eyelid blink retention (EAR), and teeth/inner-mouth passthrough.
 
-Task Specification:
+Features:
 1. Occlusion Parsing Pipeline:
-   - Integrate an ONNX-based face occlusion / parsing model (e.g. lightweight BiSeNet / DFL-XSeg ONNX session).
-   - Segment foreground occlusions (hands, hair, objects, food).
-   - Generate effective blend mask by subtracting occlusion from the face mask:
-     Mask_blend = Mask_face * (1.0 - Mask_occlusion)
+   - Integrates an ONNX-based face occlusion / parsing model at 256x256 resolution.
+   - Segments foreground occlusions (hands, hair, objects, food).
+   - Generates effective blend mask: Mask_blend = Mask_face * (1.0 - Mask_occlusion).
 2. Temporal Mask Smoothing (Optical Flow / EMA):
-   - Store the previous frame's mask and target crop.
-   - Compute motion vectors between frame t-1 and frame t (using OpenCV DIS optical flow or Farneback as fallback).
-   - Warp Mask_{t-1} to frame t and apply Exponential Moving Average:
-     Mask_t = 0.8 * Mask_t + 0.2 * WarpedMask_{t-1}
-   - Eliminates boundary flickering and chatter around moving objects.
-3. Performance Guardrails:
-   - Execute the occlusion model at 256x256 resolution to keep inference under 4ms on GPU.
-   - Add a UI toggle in configuration: --enable-occlusion-mask (default: True).
+   - Dense optical flow (DIS with Farneback fallback).
+   - Warps Mask_{t-1} to frame t and applies EMA:
+     Mask_t = 0.8 * Mask_t + 0.2 * WarpedMask_{t-1}.
+3. Eye Aspect Ratio (EAR) Blink Detection & Multi-Scale Eyelid Blending:
+   - Evaluates EAR for both eyes: EAR = (||p2-p6|| + ||p3-p5||) / (2 * ||p1-p4||).
+   - If EAR < 0.21 (blink/eye closing):
+     - Extracts target actor's eyelid region.
+     - Attenuates/bypasses restorer enhancement on eye bounding box.
+     - Blends target's original eyelid back onto swap using multi-scale frequency decomposition.
+4. Teeth & Inner Mouth Passthrough:
+   - Extracts inner lip landmark polygon (points 61-68 in 68-pt scheme, 0-indexed 60-67).
+   - If lip separation > 8 pixels:
+     - Feathers inner-mouth contour by 3 pixels.
+     - Passes through target's native teeth, tongue, and oral cavity.
 """
 
 import os
@@ -59,6 +65,11 @@ THREAD_LOCK_OCCLUDER = threading.Lock()
 OCCLUSION_INPUT_SIZE = 256
 DEFAULT_EMA_ALPHA = 0.8  # Mask_t = 0.8 * Mask_t + 0.2 * WarpedMask_{t-1}
 
+# Facial dynamics thresholds
+EAR_BLINK_THRESHOLD = 0.21
+MIN_LIP_SEPARATION_PX = 8.0
+MOUTH_FEATHER_PX = 3
+
 _OCCLUDER_URL = 'https://github.com/rishabh4496/roop-sam-weights/releases/download/v1/face_occluder.onnx'
 _SWAPPER_URL = 'https://huggingface.co/countfloyd/deepfake/resolve/main/inswapper_128.onnx'
 
@@ -70,6 +81,10 @@ ARCFACE_DST_128 = np.array([
     [70.7299, 92.2041]
 ], dtype=np.float32)
 
+
+# ==============================================================================
+# 1. Temporal Mask Smoothing (Optical Flow / EMA)
+# ==============================================================================
 
 class TemporalMaskSmoother:
     """Flow-warped Exponential Moving Average (EMA) over temporal mask sequences.
@@ -163,7 +178,7 @@ class TemporalMaskSmoother:
                 flow = self._dense_flow(gray_small, prev_gray)
                 warped = self._warp(prev_mask, flow, cur_mask.shape)
 
-                # Reset on large flow residual (e.g. cut or sudden teleportation)
+                # Reset on large flow residual (scene cut or sudden teleportation)
                 residual = float(np.mean(np.abs(warped - cur_mask)))
                 if residual <= self.RESET_RESIDUAL:
                     out_mask = np.clip(eff_alpha * cur_mask + (1.0 - eff_alpha) * warped, 0.0, 1.0)
@@ -188,6 +203,265 @@ class TemporalMaskSmoother:
 
 _GLOBAL_SMOOTHER = TemporalMaskSmoother(alpha=DEFAULT_EMA_ALPHA)
 
+
+# ==============================================================================
+# 2. Eye Aspect Ratio (EAR) Blink Detection & Multi-Scale Eyelid Blending
+# ==============================================================================
+
+def calculate_ear(eye_points: np.ndarray) -> float:
+    """Calculate Eye Aspect Ratio (EAR) from 6 landmark points.
+
+    Formula:
+        EAR = (||p2 - p6|| + ||p3 - p5||) / (2.0 * ||p1 - p4||)
+    """
+    pts = np.asarray(eye_points, dtype=np.float32).reshape(-1, 2)
+    if pts.shape[0] < 6:
+        return 0.30
+    p1, p2, p3, p4, p5, p6 = pts[:6]
+    v1 = float(np.linalg.norm(p2 - p6))
+    v2 = float(np.linalg.norm(p3 - p5))
+    h = float(np.linalg.norm(p1 - p4))
+    if h < 1e-6:
+        return 0.30
+    return float((v1 + v2) / (2.0 * h))
+
+
+def compute_eye_aspect_ratios(landmarks_68: np.ndarray) -> Tuple[float, float, float]:
+    """Compute (left_ear, right_ear, mean_ear) from standard 68-point landmarks.
+
+    0-indexed scheme:
+        Left eye (viewer-left): points 36..41
+        Right eye (viewer-right): points 42..47
+    """
+    pts = np.asarray(landmarks_68, dtype=np.float32).reshape(-1, 2)
+    if pts.shape[0] < 68:
+        return 0.30, 0.30, 0.30
+    left_ear = calculate_ear(pts[36:42])
+    right_ear = calculate_ear(pts[42:48])
+    mean_ear = float(0.5 * (left_ear + right_ear))
+    return left_ear, right_ear, mean_ear
+
+
+def build_blink_eyelid_mask(
+    landmarks_68: np.ndarray,
+    shape: Tuple[int, int],
+    ear_threshold: float = EAR_BLINK_THRESHOLD
+) -> np.ndarray:
+    """Extract smooth eyelid mask for eyes whose EAR is below the blink threshold (< 0.21)."""
+    h, w = int(shape[0]), int(shape[1])
+    eyelid_mask = np.zeros((h, w), dtype=np.float32)
+    pts = np.asarray(landmarks_68, dtype=np.float32).reshape(-1, 2)
+    if pts.shape[0] < 68:
+        return eyelid_mask
+
+    left_ear, right_ear, _ = compute_eye_aspect_ratios(pts)
+
+    eye_indices = [
+        (36, 42, left_ear),
+        (42, 48, right_ear),
+    ]
+
+    for start_idx, end_idx, ear in eye_indices:
+        if ear < ear_threshold:
+            eye_pts = pts[start_idx:end_idx]
+            # Center of eye
+            cx = float(np.mean(eye_pts[:, 0]))
+            cy = float(np.mean(eye_pts[:, 1]))
+            # Width and height of eye
+            ew = float(np.linalg.norm(eye_pts[0] - eye_pts[3]))
+            eh = float(max(np.linalg.norm(eye_pts[1] - eye_pts[5]),
+                           np.linalg.norm(eye_pts[2] - eye_pts[4])))
+
+            # Eyelid region: extend upper lid upwards to capture the folding lid
+            axis_x = max(6, int(ew * 0.75))
+            axis_y = max(4, int(max(eh * 1.5, ew * 0.35)))
+
+            # Blink weight smoothly transitions from 0 at threshold down to 1.0 when fully shut
+            closure_weight = np.clip((ear_threshold - ear) / (ear_threshold - 0.12), 0.0, 1.0)
+
+            sub_mask = np.zeros((h, w), dtype=np.float32)
+            cv2.ellipse(sub_mask, (int(round(cx)), int(round(cy - axis_y * 0.15))),
+                        (axis_x, axis_y), 0, 0, 360, float(closure_weight), -1)
+
+            # Feather boundary softly
+            k = max(3, int(round(axis_x * 0.35)) | 1)
+            sub_mask = cv2.GaussianBlur(sub_mask, (k, k), 0)
+            eyelid_mask = np.maximum(eyelid_mask, sub_mask)
+
+    return np.clip(eyelid_mask, 0.0, 1.0)
+
+
+def blend_eyelid_multiscale(
+    target_crop: np.ndarray,
+    swapped_crop: np.ndarray,
+    eyelid_mask: np.ndarray
+) -> np.ndarray:
+    """Multi-scale frequency blend to composite original eyelid onto swapped crop seamlessly."""
+    if eyelid_mask is None or not np.any(eyelid_mask > 1e-4):
+        return swapped_crop.copy()
+
+    t_f = target_crop.astype(np.float32)
+    s_f = swapped_crop.astype(np.float32)
+
+    # Multi-scale mask decomposition (fine texture vs coarse illumination)
+    m_fine = cv2.GaussianBlur(eyelid_mask, (5, 5), 1.5)[..., np.newaxis]
+    m_coarse = cv2.GaussianBlur(eyelid_mask, (15, 15), 5.0)[..., np.newaxis]
+
+    # Frequency split
+    t_low = cv2.GaussianBlur(t_f, (15, 15), 5.0)
+    s_low = cv2.GaussianBlur(s_f, (15, 15), 5.0)
+    t_high = t_f - t_low
+    s_high = s_f - s_low
+
+    # Blend low and high frequency components independently
+    blended_low = s_low * (1.0 - m_coarse) + t_low * m_coarse
+    blended_high = s_high * (1.0 - m_fine) + t_high * m_fine
+
+    blended = blended_low + blended_high
+    return np.clip(blended, 0.0, 255.0).astype(np.uint8)
+
+
+def get_closed_eyes_attenuation(
+    landmarks_68: np.ndarray,
+    shape: Tuple[int, int],
+    ear_threshold: float = EAR_BLINK_THRESHOLD
+) -> Tuple[bool, np.ndarray]:
+    """Generate attenuation mask over closed eye bounding boxes to bypass GPEN/restorer hallucination."""
+    h, w = int(shape[0]), int(shape[1])
+    attenuation_mask = np.ones((h, w), dtype=np.float32)
+    pts = np.asarray(landmarks_68, dtype=np.float32).reshape(-1, 2)
+    if pts.shape[0] < 68:
+        return False, attenuation_mask
+
+    left_ear, right_ear, _ = compute_eye_aspect_ratios(pts)
+    is_blinking = (left_ear < ear_threshold or right_ear < ear_threshold)
+
+    for start_idx, end_idx, ear in ((36, 42, left_ear), (42, 48, right_ear)):
+        if ear < ear_threshold:
+            eye_pts = pts[start_idx:end_idx]
+            x1 = max(0, int(np.min(eye_pts[:, 0]) - 8))
+            y1 = max(0, int(np.min(eye_pts[:, 1]) - 12))
+            x2 = min(w, int(np.max(eye_pts[:, 0]) + 8))
+            y2 = min(h, int(np.max(eye_pts[:, 1]) + 8))
+            # Attenuate enhancement within closed eye bounding box to 0.0
+            attenuation_mask[y1:y2, x1:x2] = 0.0
+
+    if is_blinking:
+        attenuation_mask = cv2.GaussianBlur(attenuation_mask, (7, 7), 2.0)
+    return is_blinking, attenuation_mask
+
+
+# ==============================================================================
+# 3. Teeth & Inner Mouth Passthrough
+# ==============================================================================
+
+def extract_inner_mouth_mask(
+    landmarks_68: np.ndarray,
+    shape: Tuple[int, int],
+    min_separation: float = MIN_LIP_SEPARATION_PX,
+    feather_px: int = MOUTH_FEATHER_PX
+) -> np.ndarray:
+    """Extract inner-mouth contour mask (points 61-68 / 0-indexed 60-67) when mouth is open (> 8px).
+
+    The contour is softly feathered by 3 pixels to allow clean teeth, tongue, and oral cavity
+    passthrough without static or blurry mouth artifacts.
+    """
+    h, w = int(shape[0]), int(shape[1])
+    mouth_mask = np.zeros((h, w), dtype=np.float32)
+    pts = np.asarray(landmarks_68, dtype=np.float32).reshape(-1, 2)
+    if pts.shape[0] < 68:
+        return mouth_mask
+
+    # Inner lips: indices 60 to 67
+    inner_lips = pts[60:68]
+
+    # Vertical separation: between upper center inner lip (62) and lower center inner lip (66)
+    vertical_sep = float(np.linalg.norm(pts[62] - pts[66]))
+
+    if vertical_sep > min_separation:
+        poly = np.asarray(inner_lips, dtype=np.int32).reshape(-1, 1, 2)
+        cv2.fillPoly(mouth_mask, [poly], 1.0)
+
+        # 3-pixel contour feathering
+        k = max(3, int(feather_px * 2 + 1))
+        mouth_mask = cv2.GaussianBlur(mouth_mask, (k, k), 1.5)
+
+    return np.clip(mouth_mask, 0.0, 1.0)
+
+
+def blend_inner_mouth_passthrough(
+    target_crop: np.ndarray,
+    composite_crop: np.ndarray,
+    mouth_mask: np.ndarray
+) -> np.ndarray:
+    """Passthrough target actor's native teeth, tongue, and oral cavity into composite crop."""
+    if mouth_mask is None or not np.any(mouth_mask > 1e-4):
+        return composite_crop.copy()
+
+    t_f = target_crop.astype(np.float32)
+    c_f = composite_crop.astype(np.float32)
+    m = mouth_mask[..., np.newaxis] if mouth_mask.ndim == 2 else mouth_mask
+
+    blended = c_f * (1.0 - m) + t_f * m
+    return np.clip(blended, 0.0, 255.0).astype(np.uint8)
+
+
+def apply_facial_dynamics(
+    target_crop: np.ndarray,
+    swapped_crop: np.ndarray,
+    landmarks_68: Optional[np.ndarray],
+    blend_mask: Optional[np.ndarray] = None
+) -> Tuple[np.ndarray, Dict[str, Any]]:
+    """Unified handler for eyelid blinks (EAR < 0.21) and inner-mouth retention (sep > 8px)."""
+    meta = {
+        'is_blinking': False,
+        'left_ear': 0.30,
+        'right_ear': 0.30,
+        'mouth_open': False,
+        'lip_separation': 0.0,
+        'eyelid_mask': None,
+        'mouth_mask': None,
+        'attenuation_mask': None,
+    }
+
+    if landmarks_68 is None:
+        return swapped_crop.copy(), meta
+
+    pts = np.asarray(landmarks_68, dtype=np.float32).reshape(-1, 2)
+    if pts.shape[0] < 68:
+        return swapped_crop.copy(), meta
+
+    shape = target_crop.shape[:2]
+
+    # 1. EAR Blink Detection & Eyelid blending
+    l_ear, r_ear, _ = compute_eye_aspect_ratios(pts)
+    meta['left_ear'] = l_ear
+    meta['right_ear'] = r_ear
+    is_blink, att_mask = get_closed_eyes_attenuation(pts, shape, ear_threshold=EAR_BLINK_THRESHOLD)
+    meta['is_blinking'] = is_blink
+    meta['attenuation_mask'] = att_mask
+
+    current_result = swapped_crop
+    if is_blink:
+        eyelid_mask = build_blink_eyelid_mask(pts, shape, ear_threshold=EAR_BLINK_THRESHOLD)
+        meta['eyelid_mask'] = eyelid_mask
+        current_result = blend_eyelid_multiscale(target_crop, current_result, eyelid_mask)
+
+    # 2. Teeth & Inner Mouth Passthrough
+    sep = float(np.linalg.norm(pts[62] - pts[66]))
+    meta['lip_separation'] = sep
+    if sep > MIN_LIP_SEPARATION_PX:
+        meta['mouth_open'] = True
+        mouth_mask = extract_inner_mouth_mask(pts, shape, min_separation=MIN_LIP_SEPARATION_PX, feather_px=MOUTH_FEATHER_PX)
+        meta['mouth_mask'] = mouth_mask
+        current_result = blend_inner_mouth_passthrough(target_crop, current_result, mouth_mask)
+
+    return current_result, meta
+
+
+# ==============================================================================
+# 4. Occlusion Parsing Pipeline
+# ==============================================================================
 
 def _find_model_file(filename: str) -> str:
     candidates = [
@@ -247,8 +521,7 @@ def _heuristic_occlusion_mask(crop_frame: np.ndarray, face_mask: Optional[np.nda
     h, w = crop_frame.shape[:2]
     crop_256 = cv2.resize(crop_frame, (OCCLUSION_INPUT_SIZE, OCCLUSION_INPUT_SIZE), interpolation=cv2.INTER_AREA)
     gray = cv2.cvtColor(crop_256, cv2.COLOR_BGR2GRAY) if crop_256.ndim == 3 else crop_256
-    
-    # Identify low-luminance / artificial occluding objects across face
+
     dark = (gray < 35).astype(np.float32)
     kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
     dark = cv2.morphologyEx(dark, cv2.MORPH_CLOSE, kernel)
@@ -305,8 +578,6 @@ def compute_occlusion_mask(
             elif raw_out.ndim == 3 and raw_out.shape[0] == 1:
                 raw_out = raw_out[0]
 
-            # Face occluder outputs high on unoccluded skin; low on occluded areas.
-            # Convert visible face probability to occlusion mask:
             vis_face = np.clip(raw_out / 0.70, 0.0, 1.0)
             occ_256 = np.clip(1.0 - vis_face, 0.0, 1.0)
 
@@ -326,10 +597,7 @@ def apply_occlusion_blend(
     occlusion_mask: np.ndarray,
     enable_occlusion: Optional[bool] = None
 ) -> np.ndarray:
-    """Generate the effective blend mask by subtracting occlusion from the face mask:
-
-        Mask_blend = Mask_face * (1.0 - Mask_occlusion)
-    """
+    """Generate effective blend mask: Mask_blend = Mask_face * (1.0 - Mask_occlusion)."""
     if enable_occlusion is None:
         enable_occlusion = getattr(roop.globals, 'enable_occlusion_mask', True)
 
@@ -367,10 +635,7 @@ def blend_swap_buffer(
     swap_buffer: np.ndarray,
     blend_mask: np.ndarray
 ) -> np.ndarray:
-    """Apply effective blend mask to composite swapped face into target buffer:
-
-        Buffer = Target * (1.0 - Mask_blend) + Swap * Mask_blend
-    """
+    """Apply effective blend mask to composite swapped face into target buffer."""
     target = np.asarray(target_buffer, dtype=np.float32)
     swap = np.asarray(swap_buffer, dtype=np.float32)
     mask = np.asarray(blend_mask, dtype=np.float32)
@@ -400,13 +665,18 @@ def create_static_face_mask(shape: Tuple[int, int], radius_factor: float = 0.40)
     return cv2.GaussianBlur(mask, (k, k), 0)
 
 
+# ==============================================================================
+# 5. Core Swap Pipeline
+# ==============================================================================
+
 def swap_face(
     source_face: Face,
     target_face: Face,
     temp_frame: Frame,
     track_id: Any = 0
 ) -> Frame:
-    """Core face swapping pipeline with occlusion subtraction and temporal smoothing."""
+    """Core face swapping pipeline with occlusion subtraction, temporal smoothing,
+    eyelid blink retention, and teeth/inner-mouth passthrough."""
     target_frame = temp_frame.copy()
     kps = getattr(target_face, 'kps', None)
     if kps is None and isinstance(target_face, dict):
@@ -458,20 +728,36 @@ def swap_face(
     else:
         swapped_crop = crop_frame.copy()
 
-    # Step 2: Base face mask
+    # Step 2: Facial dynamics (Blinks & Inner Mouth retention)
+    landmarks_68 = getattr(target_face, 'landmark_3d_68', None)
+    if landmarks_68 is None and hasattr(target_face, 'landmarks'):
+        landmarks_68 = getattr(target_face, 'landmarks')
+    if landmarks_68 is None and isinstance(target_face, dict):
+        landmarks_68 = target_face.get('landmark_3d_68') or target_face.get('landmarks_68') or target_face.get('landmarks')
+
+    if landmarks_68 is not None:
+        # Transform landmarks into crop space
+        pts_full = np.asarray(landmarks_68, dtype=np.float32).reshape(-1, 2)
+        if M is not None:
+            pts_crop = cv2.transform(pts_full.reshape(-1, 1, 2), M).reshape(-1, 2)
+        else:
+            pts_crop = pts_full - np.array([x1, y1], dtype=np.float32)
+        swapped_crop, _ = apply_facial_dynamics(crop_frame, swapped_crop, pts_crop)
+
+    # Step 3: Base face mask
     face_mask = create_static_face_mask(crop_frame.shape[:2])
 
-    # Step 3: Occlusion Parsing Pipeline at 256x256
+    # Step 4: Occlusion Parsing Pipeline at 256x256
     occlusion_mask = compute_occlusion_mask(crop_frame, face_mask=face_mask)
     blend_mask = apply_occlusion_blend(face_mask, occlusion_mask)
 
-    # Step 4: Temporal Mask Smoothing (Optical Flow / EMA)
+    # Step 5: Temporal Mask Smoothing (Optical Flow / EMA)
     smoothed_mask = smooth_temporal_mask(blend_mask, crop_frame, track_id=track_id)
 
-    # Step 5: Composite into crop buffer
+    # Step 6: Composite into crop buffer
     blended_crop = blend_swap_buffer(crop_frame, swapped_crop, smoothed_mask)
 
-    # Step 6: Paste back into full frame
+    # Step 7: Paste back into full frame
     if M is not None:
         inv_M = cv2.invertAffineTransform(M)
         h, w = temp_frame.shape[:2]
