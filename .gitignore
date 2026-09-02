@@ -60,3 +60,8 @@ app/facesets/
 app/sidecar_keep/.venv/
 app/sidecar_keep/KEEP/
 app/sidecar_keep/weights/
+
+# Gemini CLI ignore file: tools rewrite it with a machine-specific
+# absolute workspace path (G:\pinokio vs C:\pinokio), so tracking it
+# makes every cross-machine pull abort. Kept local per machine.
+.geminiignore
