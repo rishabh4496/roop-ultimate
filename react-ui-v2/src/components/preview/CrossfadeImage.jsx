@@ -41,7 +41,7 @@ export function CrossfadeImage({
       aria-hidden={layers.front !== which}
       draggable={false}
       onLoad={(e) => handleLayerLoad(which, e)}
-      className={`absolute inset-0 w-full h-full object-contain pointer-events-none select-none ${className}`}
+      className={`v2-preview-image ${className}`}
       style={{
         ...style,
         opacity: layers.front === which ? 1 : 0,
@@ -51,7 +51,7 @@ export function CrossfadeImage({
   );
 
   return (
-    <div className="relative w-full h-full">
+    <div className="v2-preview-image-stack">
       {renderLayer('a')}
       {renderLayer('b')}
     </div>

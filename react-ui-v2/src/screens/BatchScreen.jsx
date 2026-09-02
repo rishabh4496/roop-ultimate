@@ -83,7 +83,7 @@ export default function BatchScreen() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      <div className="v2-batch-grid">
         {/* Source Matrix */}
         <Card>
           <div className="v2-card-heading">
@@ -93,10 +93,10 @@ export default function BatchScreen() {
             </div>
           </div>
           {sources.length ? (
-            <div className="grid grid-cols-4 sm:grid-cols-5 gap-2 max-h-[240px] overflow-y-auto">
+            <div className="v2-batch-source-grid">
               {sources.map((src, i) => (
-                <div key={`batch-src-${i}`} className="flex flex-col items-center rounded border border-[var(--border)] p-1 bg-[var(--raised)]">
-                  <img src={src} alt={`Source #${i + 1}`} className="w-full aspect-square object-cover rounded" />
+                <div key={`batch-src-${i}`} className="v2-batch-source-tile">
+                  <img src={src} alt={`Source #${i + 1}`} />
                   <span className="text-[10px] font-mono mt-1 text-[var(--muted)]">#{i + 1}</span>
                 </div>
               ))}
@@ -115,13 +115,13 @@ export default function BatchScreen() {
             </div>
           </div>
           {targets.length ? (
-            <div className="flex flex-col gap-1.5 max-h-[240px] overflow-y-auto">
+            <div className="v2-batch-target-list">
               {targets.map((tgt, i) => (
-                <div key={`batch-tgt-${i}`} className="flex items-center gap-2 rounded border border-[var(--border)] p-1.5 bg-[var(--raised)]">
-                  <img src={targetPreviewUrl(i, tgt.start_frame || 1)} alt="" className="w-12 h-9 object-cover rounded bg-black" />
-                  <div className="min-w-0 flex-1">
-                    <strong className="block text-xs truncate text-[var(--text)]">{tgt.name}</strong>
-                    <small className="block text-[10px] text-[var(--muted)] font-mono">
+                <div key={`batch-tgt-${i}`} className="v2-batch-target-row">
+                  <img src={targetPreviewUrl(i, tgt.start_frame || 1)} alt="" />
+                  <div className="v2-batch-target-main">
+                    <strong>{tgt.name}</strong>
+                    <small>
                       {tgt.frames > 1 ? `${tgt.frames} frames • ${tgt.fps || '?'} fps` : 'Still Image'}
                     </small>
                   </div>

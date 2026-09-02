@@ -77,16 +77,16 @@ export function ComparisonWipe({
   // 1. Difference Map Mode
   if (compareMode === 'diff') {
     return (
-      <div className={`relative w-full h-full ${className}`}>
+      <div className={`v2-compare-surface ${className}`}>
         <img
           src={beforeSrc}
           alt="Original"
-          className="absolute inset-0 w-full h-full object-contain pointer-events-none"
+          className="v2-compare-image"
         />
         <img
           src={afterSrc}
           alt="Swapped"
-          className="absolute inset-0 w-full h-full object-contain pointer-events-none mix-blend-difference"
+          className="v2-compare-image v2-compare-image-difference"
         />
       </div>
     );
@@ -96,16 +96,16 @@ export function ComparisonWipe({
   if (compareMode === 'blend') {
     const alpha = sliderPosition / 100;
     return (
-      <div className={`relative w-full h-full ${className}`}>
+      <div className={`v2-compare-surface ${className}`}>
         <img
           src={beforeSrc}
           alt="Original"
-          className="absolute inset-0 w-full h-full object-contain pointer-events-none"
+          className="v2-compare-image"
         />
         <img
           src={afterSrc}
           alt="Swapped"
-          className="absolute inset-0 w-full h-full object-contain pointer-events-none transition-opacity duration-75"
+          className="v2-compare-image"
           style={{ opacity: alpha }}
         />
       </div>
@@ -125,7 +125,7 @@ export function ComparisonWipe({
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}
       onPointerCancel={handlePointerUp}
-      className={`relative w-full h-full select-none cursor-ew-resize ${
+      className={`v2-compare-surface v2-compare-slider ${
         compareDir === 'horizontal' ? 'cursor-ns-resize' : 'cursor-ew-resize'
       } ${className}`}
     >
@@ -134,7 +134,7 @@ export function ComparisonWipe({
         src={afterSrc}
         alt="Swapped"
         decoding="async"
-        className="absolute inset-0 w-full h-full object-contain pointer-events-none"
+        className="v2-compare-image"
       />
 
       {/* Foreground Clipped Layer: Original (Before) */}
@@ -142,7 +142,7 @@ export function ComparisonWipe({
         src={beforeSrc}
         alt="Original"
         decoding="async"
-        className="absolute inset-0 w-full h-full object-contain pointer-events-none"
+        className="v2-compare-image"
         style={{ clipPath }}
       />
 

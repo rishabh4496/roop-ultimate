@@ -36,6 +36,7 @@ export function InteractivePreview({
   liveSrc = '',
   liveSeq = 0,
   className = '',
+  onMediaDimensions,
 }) {
   const containerRef = useRef(null);
   const imageRef = useRef(null);
@@ -82,6 +83,7 @@ export function InteractivePreview({
     const { naturalWidth, naturalHeight } = e.target;
     if (naturalWidth && naturalHeight) {
       setImgDim({ w: naturalWidth, h: naturalHeight });
+      onMediaDimensions?.({ w: naturalWidth, h: naturalHeight });
     }
   };
 
@@ -297,7 +299,7 @@ export function InteractivePreview({
       onPointerUp={handlePointerUp}
       onPointerCancel={handlePointerUp}
       onDoubleClick={handleDoubleClick}
-      className={`relative w-full h-full min-h-[420px] flex items-center justify-center overflow-hidden bg-[#07080c] select-none ${
+      className={`v2-preview-canvas ${
         zoom > 1 ? (isPanning ? 'cursor-grabbing' : 'cursor-grab') : ''
       } ${className}`}
     >
@@ -333,7 +335,7 @@ export function InteractivePreview({
       {hasMedia ? (
         <div
           ref={imageRef}
-          className="relative max-w-full max-h-full flex items-center justify-center transition-transform duration-75"
+          className="v2-preview-media"
           style={{
             aspectRatio: imgDim ? `${imgDim.w}/${imgDim.h}` : '16/9',
             ...transformStyle,
@@ -367,7 +369,6 @@ export function InteractivePreview({
             faceMapping={faceMapping}
             imgDim={imgDim}
             showDetections={showDetections}
-            showTracking={showTracking}
             showLandmarks={showLandmarks}
             showLabels={showLabels}
             overlayOpacity={overlayOpacity}
@@ -386,11 +387,11 @@ export function InteractivePreview({
         </div>
       ) : (
         /* Empty State */
-        <div className="flex flex-col items-center justify-center gap-3 p-8 text-center select-none text-white/40">
+        <div className="v2-preview-empty-state">
           <div className="w-16 h-16 rounded-2xl bg-white/[0.03] border border-white/10 flex items-center justify-center text-2xl text-white/30 shadow-inner">
             ◇
           </div>
-          <div className="space-y-1">
+          <div>
             <h3 className="text-sm font-semibold text-white/80">No Target Media Loaded</h3>
             <p className="text-xs text-white/40 max-w-[280px]">
               Drop an image or video onto the workspace or use the media intake rail to begin.

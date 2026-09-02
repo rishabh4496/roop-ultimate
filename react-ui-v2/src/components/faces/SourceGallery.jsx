@@ -30,7 +30,7 @@ export function SourceGallery({
   };
 
   return (
-    <div className={`flex flex-col gap-2.5 p-3 rounded-xl bg-[#0b0d13] border border-white/10 ${className}`}>
+    <div className={`v2-face-panel v2-source-gallery ${className}`}>
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-1.5">
@@ -88,7 +88,7 @@ export function SourceGallery({
 
       {/* Source Thumbnails Strip / Grid */}
       {sourceFaces.length > 0 ? (
-        <div className="grid grid-cols-3 sm:grid-cols-4 gap-2 max-h-[220px] overflow-y-auto pr-1">
+        <div className="v2-source-grid">
           {sourceFaces.map((face, index) => {
             const isSelected = selectedSourceIndex === index;
             const isPinned = pinnedIdentities.some((p) => p.sourceIndex === index);

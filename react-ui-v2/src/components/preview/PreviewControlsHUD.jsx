@@ -38,10 +38,10 @@ export function PreviewControlsHUD({
   if (!hasMedia) return null;
 
   return (
-    <div className="absolute inset-x-0 bottom-3 z-40 flex justify-center px-4 pointer-events-none">
-      <div className="pointer-events-auto flex flex-wrap items-center gap-1 p-1.5 rounded-xl bg-[#090a0f]/90 border border-white/10 backdrop-blur-xl shadow-2xl text-white select-none">
+    <div className="v2-preview-hud">
+      <div className="v2-preview-hud-inner">
         {/* Face Tracking & Landmarks Group */}
-        <div className="flex items-center gap-0.5 pr-1.5 border-r border-white/10">
+        <div className="v2-preview-hud-group">
           <button
             type="button"
             onClick={onToggleDetections}
@@ -88,7 +88,7 @@ export function PreviewControlsHUD({
         </div>
 
         {/* Pro Tools Group: Loupe & Mask Brush */}
-        <div className="flex items-center gap-0.5 px-1.5 border-r border-white/10">
+        <div className="v2-preview-hud-group">
           <button
             type="button"
             onClick={onToggleMagnifier}
@@ -117,7 +117,7 @@ export function PreviewControlsHUD({
         </div>
 
         {/* Comparison Suite Group */}
-        <div className="flex items-center gap-0.5 px-1.5 border-r border-white/10">
+        <div className="v2-preview-hud-group">
           <button
             type="button"
             onClick={onToggleCompare}
@@ -174,7 +174,7 @@ export function PreviewControlsHUD({
         </div>
 
         {/* Zoom & Viewport Group */}
-        <div className="flex items-center gap-1 pl-1.5">
+        <div className="v2-preview-hud-group v2-preview-hud-zoom">
           <button
             type="button"
             onClick={onZoomOut}

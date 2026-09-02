@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { fileUrl, liveFrameUrl, targetPreviewUrl } from '../api';
 import { useNotifications } from '../state/appState';
 import { Badge, Button, Card, Field, Notice, Progress, Select, Toggle } from '../components/primitives';
@@ -54,7 +54,11 @@ function TargetPicker({ workflow }) {
 }
 
 function CreationControls({ workflow }) {
-  const { settings: p = {}, options } = workflow;
+  // A failed initial API request leaves settings as null. Keep the shell
+  // renderable so the connection notice can explain the problem instead of
+  // taking down the entire route while the backend is starting.
+  const p = workflow.settings || {};
+  const { options } = workflow;
   const { notify } = useNotifications();
   const [advanced, setAdvanced] = useState(false);
   return <div className="v2-controls"><ProjectsPanel workflow={workflow} notify={notify} />
@@ -67,7 +71,11 @@ function CreationControls({ workflow }) {
 
 function PreviewPanel({ workflow }) {
   const [failedLiveSeq, _setFailedLiveSeq] = useState(0);
+  const [mediaDimensions, setMediaDimensions] = useState(null);
   const targetIndex = workflow.state?.selected_target_index ?? 0;
+  useEffect(() => {
+    setMediaDimensions(null);
+  }, [targetIndex]);
   const hasTarget = Boolean(workflow.selectedTarget);
   const runtime = workflow.runtime;
   const liveSeq = Number(runtime?.frame_progress?.live_seq || workflow.progress?.live_seq || 0);
@@ -100,7 +108,10 @@ function PreviewPanel({ workflow }) {
         </div>
       </div>
 
-      <div className="v2-preview-stage relative rounded-xl overflow-hidden min-h-[460px] border border-white/10 bg-[#07080c]">
+      <div
+        className="v2-preview-stage"
+        style={mediaDimensions ? { '--preview-aspect': `${mediaDimensions.w} / ${mediaDimensions.h}` } : undefined}
+      >
         <InteractivePreview
           beforeSrc={beforeSrc}
           afterSrc={afterSrc}
@@ -114,6 +125,7 @@ function PreviewPanel({ workflow }) {
           onSelectPerson={(faceIndex) => workflow.captureTargetFace(faceIndex)}
           onMaskChange={workflow.setManualMask}
           isProcessing={Boolean(isProcessing)}
+          onMediaDimensions={setMediaDimensions}
         />
         {workflow.busy === 'preview' && (
           <div className="v2-preview-overlay">

@@ -92,7 +92,7 @@ export function TargetPersonsPanel({
   };
 
   return (
-    <div className={`flex flex-col gap-2.5 p-3 rounded-xl bg-[#0b0d13] border border-white/10 ${className}`}>
+    <div className={`v2-face-panel v2-target-persons ${className}`}>
       {/* Header & Global Harvesting Actions */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-1.5">
