@@ -1816,9 +1816,30 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
         # live state over the entire clip in the bounded decode -> CUDA ->
         # encode stream, rather than priming a fresh block and discarding it.
         # Keep the old block path as an explicit rollback only.
+        # DEFAULT '0' -- the streaming stream is OPT-IN, measured 2026-09-02.
+        #
+        # It is a real continuous FIFO with zero warm-up recompute, and that is
+        # exactly what makes it slow: `use_unified_scheduler` pins the run to
+        # ONE inference owner (`_inference_workers = 1` below), so decode fills
+        # a 3-deep queue that a single consumer drains. Counterbalanced ABBA,
+        # 141 output frames, production stabilizer settings, RTX 4070:
+        #
+        #     streaming (cuda_owner=1)   155.5 / 154.8 s   GPU peak 68-73%
+        #     parallel blocks (8 wkrs)   126.4 / 139.0 s   GPU peak 92-97%
+        #                                -> blocks +16.9%
+        #
+        # The worst block arm still beat the best streaming arm by 11.4%, and
+        # the block path does ~28% MORE inference to get there (361 face
+        # instances against 283, the excess being warm-up frames it
+        # re-processes). Output frame counts are identical, 141 in / 141 out.
+        #
+        # Note for anyone reading a thread profile before changing this: the
+        # FASTER arm has FEWER OS threads (198 mean against 256). Thread count
+        # and the GIL are not what gates this pipeline -- inference
+        # concurrency is. See also the Gate E sweep, 0.7% across threads 4..20.
         _streaming_stabilization = (
             (_want_kps_stab or _want_enh_stab or _want_mask_stab)
-            and os.environ.get('ROOP_STAB_STREAMING', '1') != '0')
+            and os.environ.get('ROOP_STAB_STREAMING', '0') != '0')
         _parallel_ok = os.environ.get('ROOP_STAB_PARALLEL', '1') != '0'
         self._stab_warmup = self._stab_warmup_frames()
         if _parallel_ok and self._stab_warmup >= _MAX_STAB_WARMUP:

@@ -131,16 +131,37 @@ class SchedulerPrefersParallel(unittest.TestCase):
     def test_source_was_found(self):
         self.assertGreater(len(PM_CODE), 20000)
 
-    def test_streaming_is_the_default(self):
-        """The old default was '0', which meant every stabilized render silently
-        collapsed to ONE worker thread — measured at 2.5-3x the wall time."""
+    def test_streaming_is_opt_in(self):
+        """Parallel blocks are the default; the continuous stream is opt-in.
+
+        THE RATIONALE THIS TEST USED TO CARRY WAS STALE AND IS THE REASON THE
+        DEFAULT SURVIVED. It claimed a '0' default "meant every stabilized
+        render silently collapsed to ONE worker thread". That is not what '0'
+        does: it selects `use_parallel_stab`, which ran at EIGHT workers in
+        both arms of the 2026-09-02 A/B. The single-worker collapse is a
+        different branch, reached only when the parallel path is unavailable
+        (ROOP_STAB_PARALLEL=0, or a warm-up above _MAX_STAB_WARMUP).
+
+        Measured, counterbalanced ABBA, production stabilizer settings:
+        streaming 155.5/154.8 s at GPU peak 68-73% against parallel blocks
+        126.4/139.0 s at 92-97% -- blocks +16.9%, with identical output frame
+        counts. Streaming pins the run to one inference owner, which is the
+        whole of the difference.
+        """
         m = re.search(r"ROOP_STAB_STREAMING['\"]\s*,\s*['\"]([01])['\"]", PM_CODE)
         self.assertIsNotNone(m, 'ROOP_STAB_STREAMING default not found')
-        self.assertEqual(m.group(1), '1',
-                         'the continuous stabilization stream must be the default')
+        self.assertEqual(m.group(1), '0',
+                         'parallel stabilization blocks must be the default; '
+                         'the one-owner stream is +16.9% slower')
+
+    def test_the_stream_still_exists_and_is_reachable(self):
+        """Opt-in is not removed. The FIFO remains the correct choice where a
+        block boundary cannot be tolerated, so it must stay wired."""
+        self.assertIn("os.environ.get('ROOP_STAB_STREAMING'", PM_CODE)
+        self.assertIn('StreamingStabilizationHistory', PM_CODE)
 
     def test_streaming_path_has_no_block_warmup(self):
-        """The default path observes each decoded frame once and resets its
+        """The opt-in stream observes each decoded frame once and resets its
         bounded causal history only on a scene cut."""
         self.assertIn('StreamingStabilizationHistory', PM_CODE)
         self.assertIn('observe_frame(frame, self._stab_t)', PM_CODE)
