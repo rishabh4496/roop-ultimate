@@ -219,9 +219,23 @@ def _dim_band(spec: InputSpec, index: int,
     return spatial
 
 
+def enabled() -> bool:
+    """Whether shape profiling is switched on (default yes).
+
+    ROOP_TRT_SHAPE_PROFILE=0 turns it off.  It exists for two reasons: it is
+    the escape hatch if a future model's profile is ever wrong, and it is what
+    makes the feature A/B-able end to end -- a profile that cannot be turned
+    off cannot be measured against its own absence.
+    """
+    return os.environ.get("ROOP_TRT_SHAPE_PROFILE", "1").strip().lower() not in (
+        "0", "off", "false", "no")
+
+
 def resolve_profile(model_key: str | None,
                     model_path: str | None) -> Optional[ShapeProfile]:
     """Return the profile for *model_path*, or None when nothing is dynamic."""
+    if not enabled():
+        return None
     specs = graph_inputs(model_path)
     if not specs or not any(spec.dynamic for spec in specs):
         return None

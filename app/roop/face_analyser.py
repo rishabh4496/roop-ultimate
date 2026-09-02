@@ -539,12 +539,67 @@ _openvino_lock = RLock()
 
 
 def openvino_available() -> bool:
-    """Whether the installed ONNX Runtime build exposes the OpenVINO EP."""
+    """Whether the installed ONNX Runtime build LISTS the OpenVINO EP.
+
+    Listed is not usable, and for this EP the gap is unusually dangerous --
+    see openvino_device_usable().
+    """
     try:
         from roop.backend_manager import provider_available
         return provider_available("OpenVINOExecutionProvider")
     except Exception:
         return False
+
+
+def _probe_model() -> bytes:
+    """A one-node ONNX graph, built in memory, for the usability probe."""
+    from onnx import TensorProto, helper
+    node = helper.make_node("Relu", ["x"], ["y"])
+    graph = helper.make_graph(
+        [node], "probe",
+        [helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 3, 8, 8])],
+        [helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 3, 8, 8])])
+    model = helper.make_model(graph, opset_imports=[helper.make_opsetid("", 13)])
+    model.ir_version = 9
+    return model.SerializeToString()
+
+
+def openvino_device_usable(device: str) -> bool:
+    """Whether the OpenVINO EP genuinely ACTIVATES for *device* on this box.
+
+    THIS EP FAILS OPEN, which is why a probe is needed rather than a listing.
+    Measured 2026-09-03 against onnxruntime-openvino 1.23.0 on this machine,
+    asking for a device the system does not have:
+
+        device_type=CPU    build 0.4s  EP active   -> ran on OpenVINO
+        device_type=GPU    build 0.3s  EP ABSENT   -> ran on CPUExecutionProvider
+        device_type=NPU    build 0.3s  EP ABSENT   -> ran on CPUExecutionProvider
+        device_type=GPU.1  build 0.4s  EP ABSENT   -> ran on CPUExecutionProvider
+
+    In every failing row `InferenceSession` returned a working session and
+    raised NOTHING; ORT logged to stderr and quietly dropped the provider.  A
+    mismatched OpenVINO runtime version does the same thing.  So neither
+    `build_session_with_fallback` nor any try/except can see this: the only
+    reliable signal is asking the constructed session which providers it ended
+    up with, which is what this does -- once per device, on a one-node graph.
+    """
+    key = f"usable::{device}"
+    with _openvino_lock:
+        if key in _openvino_state:
+            return _openvino_state[key]
+    usable = False
+    try:
+        import onnxruntime as ort
+        session = ort.InferenceSession(
+            _probe_model(),
+            providers=[("OpenVINOExecutionProvider", {"device_type": device}),
+                       "CPUExecutionProvider"])
+        usable = "OpenVINOExecutionProvider" in session.get_providers()
+    except Exception:
+        usable = False
+    with _openvino_lock:
+        _openvino_state[key] = usable
+    return usable
 
 
 def openvino_devices() -> Tuple[str, ...]:
@@ -587,15 +642,18 @@ def detector_offload_target(requested: Optional[str] = None) -> Optional[str]:
         return None
     devices = openvino_devices()
     if value.lower() in ("auto", "1", "on", "true", "yes"):
-        # Prefer the NPU, then a secondary (integrated) GPU.  GPU.0 is skipped
-        # deliberately: on a discrete-GPU machine that is usually the card this
-        # offload exists to keep free.
+        # Prefer the NPU, then a secondary GPU.  GPU.0 is skipped deliberately:
+        # OpenVINO 2026.3 on this machine enumerates GPU as
+        # "NVIDIA GeForce RTX 4070 (dGPU)", i.e. the first GPU slot really can
+        # be the discrete card this offload exists to keep free.  Taking it
+        # would move detection onto the very device we are trying to unload,
+        # through a slower runtime than the TensorRT path it already has.
         for candidate in ("NPU", "GPU.1"):
-            if candidate in devices:
+            if candidate in devices and openvino_device_usable(candidate):
                 return candidate
         _warn_once("openvino_auto_none",
-                   f"[Detector] {_OPENVINO_ENV}=auto found no NPU or secondary "
-                   f"GPU (devices: {', '.join(devices) or 'none reported'}); "
+                   f"[Detector] {_OPENVINO_ENV}=auto found no usable NPU or "
+                   f"secondary GPU (devices: {', '.join(devices) or 'none reported'}); "
                    f"detection stays on the primary provider.")
         return None
     if devices and value not in devices:
@@ -604,6 +662,17 @@ def detector_offload_target(requested: Optional[str] = None) -> Optional[str]:
                    f"OpenVINO devices on this machine "
                    f"({', '.join(devices) or 'none reported'}); detection stays "
                    f"on the primary provider.")
+        return None
+    # The listing can be absent or stale, and the EP fails OPEN on a device it
+    # cannot serve -- a session that silently runs on CPU while every log line
+    # says the detector was offloaded. Confirm the EP actually activates for
+    # this device before routing anything to it.
+    if not openvino_device_usable(value):
+        _warn_once(f"openvino_inactive_{value}",
+                   f"[Detector] {_OPENVINO_ENV}={value}: the OpenVINO provider "
+                   f"is listed but does not activate for that device (ORT would "
+                   f"fall back to CPU without raising); detection stays on the "
+                   f"primary provider.")
         return None
     return value
 

@@ -25,7 +25,7 @@ import io
 import os
 import sys
 import unittest
-from contextlib import redirect_stdout
+from contextlib import contextmanager, redirect_stdout
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 APP = os.path.dirname(HERE)
@@ -46,6 +46,30 @@ from roop.trt_shape_profile import (apply_shape_profile,          # noqa: E402
                                     resolve_profile)
 
 MODELS = os.path.join(APP, 'models')
+
+
+@contextmanager
+def _openvino_stub(available, devices, usable):
+    """Drive the offload branches on a machine with no OpenVINO EP.
+
+    The module memoises device enumeration, probe results and one-shot
+    warnings in a single dict, so the whole dict is swapped and restored --
+    otherwise a warning fired by one test silences the assertion in the next.
+    """
+    import roop.face_analyser as fa
+    saved = (fa.openvino_available, fa.openvino_devices,
+             fa.openvino_device_usable, dict(fa._openvino_state))
+    fa.openvino_available = lambda: available
+    fa.openvino_devices = lambda: tuple(devices)
+    fa.openvino_device_usable = lambda _d: usable
+    fa._openvino_state.clear()
+    try:
+        yield
+    finally:
+        (fa.openvino_available, fa.openvino_devices,
+         fa.openvino_device_usable, state) = saved
+        fa._openvino_state.clear()
+        fa._openvino_state.update(state)
 
 
 def _model(name):
@@ -329,15 +353,54 @@ class OpenVINODetectorOffload(unittest.TestCase):
                 ['CUDAExecutionProvider'], key)
 
     def test_offload_keeps_the_primary_provider_behind_it(self):
-        """Routing is a prepend, so an unsupported op still runs on CUDA."""
+        """Routing is a prepend, so an unsupported op still runs on CUDA.
+
+        Driven through injected availability rather than skipped: this machine
+        has no OpenVINO EP, and a test that skips here never exercises the only
+        branch that actually routes anything.
+        """
         chain = ['CUDAExecutionProvider', 'CPUExecutionProvider']
-        with redirect_stdout(io.StringIO()):
-            routed = detector_providers(chain, 'face_detection', requested='NPU')
-        if routed == chain:
-            self.skipTest('OpenVINO unavailable, offload correctly inert')
+        with _openvino_stub(available=True, devices=('NPU',), usable=True):
+            with redirect_stdout(io.StringIO()):
+                routed = detector_providers(chain, 'face_detection',
+                                            requested='NPU')
         self.assertEqual(routed[0][0], 'OpenVINOExecutionProvider')
         self.assertEqual(routed[0][1]['device_type'], 'NPU')
         self.assertEqual(routed[1:], chain)
+
+    def test_a_device_that_fails_open_is_refused(self):
+        """The EP is listed and the device is listed, but it does not activate.
+
+        Measured on this machine 2026-09-03 with onnxruntime-openvino 1.23.0:
+        asking for GPU/NPU/GPU.1 that the box does not have returns a WORKING
+        session in ~0.3s that silently ran on CPUExecutionProvider, raising
+        nothing. No try/except can catch that, so the probe result -- not the
+        listing -- has to be what gates routing.
+        """
+        chain = ['CUDAExecutionProvider']
+        with _openvino_stub(available=True, devices=('NPU',), usable=False):
+            buffer = io.StringIO()
+            with redirect_stdout(buffer):
+                routed = detector_providers(chain, 'face_detection',
+                                            requested='NPU')
+            self.assertEqual(routed, chain)
+            self.assertIn('does not activate', buffer.getvalue())
+
+    def test_auto_never_takes_the_first_gpu_slot(self):
+        """OpenVINO 2026.3 enumerates this machine's RTX 4070 as 'GPU'.
+
+        Auto-selecting GPU.0 would move detection onto the very card the
+        offload exists to unload, through a slower runtime than the TensorRT
+        path it already has.
+        """
+        with _openvino_stub(available=True, devices=('CPU', 'GPU'), usable=True):
+            with redirect_stdout(io.StringIO()):
+                self.assertIsNone(detector_offload_target('auto'))
+
+    def test_auto_takes_an_npu_when_one_is_really_there(self):
+        with _openvino_stub(available=True, devices=('CPU', 'GPU', 'NPU'),
+                            usable=True):
+            self.assertEqual(detector_offload_target('auto'), 'NPU')
 
     def test_report_is_json_safe_and_honest(self):
         report = offload_report()
