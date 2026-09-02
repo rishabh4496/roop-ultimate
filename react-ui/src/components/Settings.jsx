@@ -10,6 +10,7 @@ import { FOCUS_SETTING_EVENT } from './settingsCatalog';
 import { confirmDialog } from './confirm';
 import { Icon } from '../icons';
 import StorageManager from './StorageManager';
+import EnvironmentHealth from './EnvironmentHealth';
 
 // A Section that participates in the settings search and the "only changed"
 // filter. With either active it keeps just the controls that match (or the
@@ -574,6 +575,12 @@ export default function Settings({ meta, settings, setSettings, notify }) {
           <Toggle label="Show video in browser (re-encodes)" {...bindToggle('output_show_video')} />
         </FilterSection>
       </div>
+
+      {/* Standing environment evidence and the update compatibility verdict.
+          Both were previously unreachable while idle: the runtime report only
+          rendered inside the Processing tab, and the updater's classification
+          only existed once you had already run the updater. */}
+      <EnvironmentHealth notify={notify} />
 
       <StorageManager notify={notify} />
 

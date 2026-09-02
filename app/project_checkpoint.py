@@ -12,6 +12,7 @@ import hashlib
 import json
 import os
 import platform
+import re
 import tempfile
 import time
 import uuid
@@ -123,20 +124,60 @@ def project_path(project_id: str) -> str:
     return os.path.join(PROJECTS_DIR, safe + ".json")
 
 
+_PROVIDER_ALIASES = {
+    "CUDAExecutionProvider": "cuda",
+    "TensorrtExecutionProvider": "tensorrt",
+    "TensorRTExecutionProvider": "tensorrt",
+    "CPUExecutionProvider": "cpu",
+    "CoreMLExecutionProvider": "coreml",
+}
+
+
+def normalize_provider(value: Any) -> str:
+    """Reduce anything ORT calls a provider to this project's short name.
+
+    The shapes that actually reach here are not interchangeable and only one
+    of them used to be handled:
+
+        "tensorrt"                                  cfg.provider
+        "TensorrtExecutionProvider"                 a bare EP name
+        ("TensorrtExecutionProvider", {...opts})    an EP with options
+        [("Tensorrt...", {...}), "CPUExecution..."] roop_globals.execution_providers
+
+    The last one is what `api.py` passes as `effective_provider` on every real
+    render, and a single unwrap of it yields the *tuple*, not the name — which
+    `str()` then rendered as the whole `('TensorrtExecutionProvider', {...})`
+    literal, engine-cache path and all. Validation recomputes the identity
+    without an effective provider, gets the short "tensorrt", and the two can
+    never be equal. Every project written under TensorRT was therefore reported
+    RECOVERABLE while being permanently refused with "runtime provider differs
+    from the checkpoint" — a checkpoint that could not be resumed by the very
+    machine that wrote it, seconds earlier.
+
+    So: unwrap until a string, then alias. `test_project_provider_identity.py`
+    fails on the single-unwrap version.
+    """
+    for _ in range(4):
+        if isinstance(value, (list, tuple)):
+            value = value[0] if len(value) else ""
+        else:
+            break
+    text = str(value or "")
+    # Records written before the unwrap was fixed hold the stringified tuple.
+    # Reading the EP name back out of it is lossless, so those projects become
+    # resumable again without rewriting any file on disk — which matters,
+    # because a migration that rewrites a checkpoint is a migration that can
+    # corrupt one.
+    if text[:1] in "([":
+        match = re.match(r"[(\[]\s*['\"]([A-Za-z]+ExecutionProvider)['\"]", text)
+        text = match.group(1) if match else text
+    return _PROVIDER_ALIASES.get(text, text)
+
+
 def runtime_identity(payload: Mapping[str, Any], cfg: Any, effective_provider: Any = None) -> dict:
     hardware = dict(getattr(cfg, "hardware", {}) or {})
-    provider = effective_provider or payload.get("provider") or getattr(cfg, "provider", "")
-    if isinstance(provider, (list, tuple)):
-        provider = provider[0] if provider else ""
-    provider = str(provider or "")
-    provider_aliases = {
-        "CUDAExecutionProvider": "cuda",
-        "TensorrtExecutionProvider": "tensorrt",
-        "TensorRTExecutionProvider": "tensorrt",
-        "CPUExecutionProvider": "cpu",
-        "CoreMLExecutionProvider": "coreml",
-    }
-    provider = provider_aliases.get(provider, provider)
+    provider = normalize_provider(
+        effective_provider or payload.get("provider") or getattr(cfg, "provider", ""))
     return {
         "provider": provider,
         "precision": str(payload.get("trt_precision") or getattr(cfg, "trt_precision", "")),
@@ -320,9 +361,13 @@ def validate(record: Mapping[str, Any], cfg: Any, current_payload: Mapping[str, 
 
     saved_runtime = record.get("runtime") or {}
     current_runtime = runtime_identity(payload, cfg)
-    for key in ("provider", "precision"):
-        if saved_runtime.get(key) != current_runtime.get(key):
-            reasons.append(f"runtime {key} differs from the checkpoint")
+    # The saved side goes through the same normalisation as the live side, so a
+    # record written before normalize_provider was fixed compares on the EP name
+    # it always meant rather than on the literal it was accidentally stored as.
+    if normalize_provider(saved_runtime.get("provider")) != current_runtime.get("provider"):
+        reasons.append("runtime provider differs from the checkpoint")
+    if saved_runtime.get("precision") != current_runtime.get("precision"):
+        reasons.append("runtime precision differs from the checkpoint")
     saved_models = saved_runtime.get("models") or {}
     for key, value in saved_models.items():
         if value != (current_runtime.get("models") or {}).get(key):
@@ -378,6 +423,7 @@ def summarize(record: Mapping[str, Any], validation: list[str] | None = None) ->
 __all__ = [
     "COMPATIBILITY", "PROJECT_SCHEMA_VERSION", "PROJECTS_DIR", "STATES",
     "file_identity", "file_sha256", "fingerprint", "list_projects", "load",
-    "new_project", "project_path", "runtime_identity", "save", "summarize",
+    "new_project", "normalize_provider", "project_path", "runtime_identity",
+    "save", "summarize",
     "update_checkpoint", "update_runtime", "update_state", "validate",
 ]

@@ -88,8 +88,27 @@ const hudValue = (value, suffix = '') => {
   return `${value}${suffix}`;
 };
 
+// ── Which tab, in the URL ────────────────────────────────────────────────────
+//
+// Pinokio reloads the webview on every RUN/DEV/FILES tab switch. The backend
+// keeps running and this app already restores the workspace across that reload
+// (see FaceSwap's rehydrate), but WHICH SCREEN you were on was not part of the
+// restored state — every reload dropped the user back on Face Swap from the
+// middle of a render they were watching, or from the settings page they were
+// halfway through.
+//
+// The hash is the natural place for it: it survives the reload for free, it is
+// shareable and bookmarkable, and Back/Forward start working. `transient: true`
+// tabs (Processing) are ordinary destinations here — a reload during a render
+// should return to the render.
+const tabFromHash = (hash, valid) => {
+  const id = String(hash || '').replace(/^#\/?/, '').split(/[/?]/)[0];
+  return valid.includes(id) ? id : null;
+};
+
 export default function App() {
-  const [tab, setTab] = useState('faceswap');
+  const [tab, setTabState] = useState(
+    () => tabFromHash(window.location.hash, ALL_TABS.map((t) => t.id)) || 'faceswap');
   const [meta, setMeta] = useState(null);
   const [settings, setSettings] = useState(null);
   const [toasts, setToasts] = useState([]);
@@ -113,6 +132,38 @@ export default function App() {
     setToasts((ts) => [...ts, { id, message, type }].slice(-4));
     setLiveMsg(`${type}: ${message}`);
     setTimeout(() => setToasts((ts) => ts.filter((t) => t.id !== id)), 4000);
+  }, []);
+
+  // Every existing setTab call site goes through here, so navigation and the
+  // URL cannot drift apart. `replace` is for the automatic switch into
+  // Processing when a run starts: that is a consequence of pressing Start, not
+  // a place the user navigated to, and it should not need two Backs to leave.
+  const setTab = useCallback((next, { replace = false } = {}) => {
+    setTabState((current) => {
+      const id = typeof next === 'function' ? next(current) : next;
+      const path = `#/${id}`;
+      if (window.location.hash !== path) {
+        if (replace) window.history.replaceState(null, '', path);
+        else window.location.hash = path;
+      }
+      return id;
+    });
+  }, []);
+
+  // Back/Forward, and a hash typed or pasted into the address bar.
+  useEffect(() => {
+    const ids = ALL_TABS.map((t) => t.id);
+    const onHash = () => {
+      const id = tabFromHash(window.location.hash, ids);
+      if (id) setTabState(id);
+    };
+    // Stamp the opening tab so the first Back does not land on a bare URL.
+    if (!tabFromHash(window.location.hash, ids)) {
+      window.history.replaceState(null, '', `#/${tab}`);
+    }
+    window.addEventListener('hashchange', onHash);
+    return () => window.removeEventListener('hashchange', onHash);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- mount only; `tab` is read once to stamp the initial URL
   }, []);
 
   const [progress, setProgress] = useState({ processing: false, progress: 0, desc: '', output: null });
@@ -248,7 +299,9 @@ export default function App() {
       // Follow the run. Only on the edge, so going back to Face Swap mid-render
       // to line up the next job is not undone a second later.
       warmTab('processing');
-      setTab('processing');
+      // replace, not push: this switch is a consequence of the run starting,
+      // so Back should return to where the user actually was.
+      setTab('processing', { replace: true });
     } else if (!progress.processing && was) {
       setStartTime(null);
     }

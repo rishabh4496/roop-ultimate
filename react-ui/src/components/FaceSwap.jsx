@@ -9,8 +9,11 @@ import FileDrop from './faceswap/FileDrop';
 import CompareGrid from './faceswap/CompareGrid';
 import ParserRegions from './faceswap/ParserRegions';
 import InteractivePreview from './faceswap/InteractivePreview';
-import useQueue from './faceswap/useQueue';
+import useQueue, {
+  ACTIVE_STATES, QUEUE_STATE_CLASS, QUEUE_STATE_LABEL, RETRYABLE_STATES, jobState,
+} from './faceswap/useQueue';
 import QueuePanel from './faceswap/QueuePanel';
+import ProjectsPanel from './faceswap/ProjectsPanel';
 import useSegments from './faceswap/useSegments';
 import SegmentBar from './faceswap/SegmentBar';
 import SliderTrackerBar from './faceswap/SliderTrackerBar';
@@ -460,7 +463,7 @@ export default function FaceSwap({
     const name = targets[selTarget]?.name;
     if (!name) return [];
     return queue.jobs
-      .filter((j) => j.target_name === name && j.status === 'finished'
+      .filter((j) => j.target_name === name && jobState(j) === 'COMPLETED'
                      && j.frame_start != null && (j.outputs || []).length > 0)
       .sort((a, b) => a.frame_start - b.frame_start);
   }, [queue.jobs, targets, selTarget]);
@@ -702,37 +705,55 @@ export default function FaceSwap({
   // faceswap/useViewPersistence.
   const restoredViewRef = useViewPersistence({ selTarget, frame, previewSrc });
 
+  // Pull the backend's own view of the workspace — sources, targets, harvested
+  // faces — into this component. Two callers, and the difference between them
+  // is `restoreView`:
+  //
+  //   mount        restoreView: true  — the webview was reloaded under a
+  //                                     running backend, so the playhead and
+  //                                     rendered frame the user was looking at
+  //                                     are still the truth.
+  //   project load restoreView: false — the sources and target have just been
+  //                                     REPLACED by a saved project's, so a
+  //                                     playhead remembered from the previous
+  //                                     media would point at the wrong frame of
+  //                                     the wrong file.
+  const hydrateWorkspaceFromState = React.useCallback(async ({ restoreView = false } = {}) => {
+    const st = await getJSON('/api/state');
+    checkDesync(st);
+    setSourceFaces(st.source_faces || []);
+    if (st.source_faces_info) setSourceFacesInfo(st.source_faces_info);
+    setTargetFaces(st.target_faces || []);
+    setTargetGroups(st.target_groups || []);
+    setTargetNames(st.target_names || []);
+    setTargetFacesInfo(st.target_faces_info || []);
+    const tg = st.targets || [];
+    setTargets(tg);
+    if (tg.length > 0) {
+      // The BACKEND owns which target is selected — never override it from
+      // storage. The playhead and the rendered preview are client-only, so
+      // they are restored, but only when they belong to that same target and
+      // are still in range; otherwise showing them would be a lie about which
+      // frame you are looking at.
+      const sel = st.selected_target_index || 0;
+      const mf = tg[sel]?.frames || 1;
+      const v = restoreView ? restoredViewRef.current : null;
+      const sameView = v && v.target === sel && v.frame >= 1 && v.frame <= mf;
+      setSelTarget(sel);
+      setMaxFrames(mf);
+      setFrame(sameView ? v.frame : 1);
+      if (sameView && v.image) { setPreviewSrc(v.image); setPreviewFor(`${sel}_${v.frame}`); }
+    }
+    return st;
+  /* eslint-disable-next-line react-hooks/exhaustive-deps -- setters are stable; checkDesync and restoredViewRef are refs/stable by construction */
+  }, []);
+
   // ── initial rehydrate ──
   // Pinokio reloads the webview whenever you switch the RUN/DEV/FILES tabs,
   // which remounts this component and wipes its React state. The backend keeps
   // running, so we restore both the faces/targets AND the live job state.
   useEffect(() => {
-    getJSON('/api/state').then((st) => {
-      checkDesync(st);
-      setSourceFaces(st.source_faces || []);
-      if (st.source_faces_info) setSourceFacesInfo(st.source_faces_info);
-      setTargetFaces(st.target_faces || []);
-      setTargetGroups(st.target_groups || []);
-      setTargetNames(st.target_names || []);
-      setTargetFacesInfo(st.target_faces_info || []);
-      const tg = st.targets || [];
-      setTargets(tg);
-      if (tg.length > 0) {
-        // The BACKEND owns which target is selected — never override it from
-        // storage. The playhead and the rendered preview are client-only, so
-        // they are restored, but only when they belong to that same target and
-        // are still in range; otherwise showing them would be a lie about which
-        // frame you are looking at.
-        const sel = st.selected_target_index || 0;
-        const mf = tg[sel]?.frames || 1;
-        const v = restoredViewRef.current;
-        const sameView = v && v.target === sel && v.frame >= 1 && v.frame <= mf;
-        setSelTarget(sel);
-        setMaxFrames(mf);
-        setFrame(sameView ? v.frame : 1);
-        if (sameView && v.image) { setPreviewSrc(v.image); setPreviewFor(`${sel}_${v.frame}`); }
-      }
-    }).catch(() => {});
+    hydrateWorkspaceFromState({ restoreView: true }).catch(() => {});
 
     // Restore an in-flight swap so the run bar shows Pause/Resume/Stop and the
     // progress %/desc again instead of falling back to "Start Swapping".
@@ -2370,23 +2391,13 @@ export default function FaceSwap({
                   // Show the most advanced state any queued job for this file
                   // reached — with segments, one target can carry several jobs.
                   const jobs = queue.jobs.filter(j => j.target_name === t.name);
-                  const job = jobs.find(j => j.status === 'running')
-                    || jobs.find(j => j.status === 'failed' || j.status === 'stopped')
-                    || jobs.find(j => j.status === 'finished');
-                  let statusLabel = null;
-                  let badgeColor = '';
-                  if (job) {
-                    if (job.status === 'running') {
-                      statusLabel = 'Running';
-                      badgeColor = 'text-yellow-400 border-yellow-500/30 bg-yellow-500/10 animate-pulse';
-                    } else if (job.status === 'finished') {
-                      statusLabel = 'Finished';
-                      badgeColor = 'text-emerald-400 border-emerald-500/30 bg-emerald-500/10';
-                    } else {
-                      statusLabel = job.status === 'stopped' ? 'Stopped' : 'Failed';
-                      badgeColor = 'text-red-400 border-red-500/30 bg-red-500/10';
-                    }
-                  }
+                  const job = jobs.find(j => ACTIVE_STATES.includes(jobState(j)))
+                    || jobs.find(j => RETRYABLE_STATES.includes(jobState(j)))
+                    || jobs.find(j => jobState(j) === 'RECOVERABLE')
+                    || jobs.find(j => jobState(j) === 'COMPLETED');
+                  const jobSt = job ? jobState(job) : null;
+                  const statusLabel = jobSt ? (QUEUE_STATE_LABEL[jobSt] || jobSt) : null;
+                  const badgeColor = jobSt ? QUEUE_STATE_CLASS[jobSt] : '';
                   const isVideo = t.frames > 1;
                   const duration = isVideo && t.fps ? (t.frames / t.fps).toFixed(1) : null;
                   const TypeIcon = isVideo ? Icon.film : Icon.still;
@@ -3048,6 +3059,18 @@ export default function FaceSwap({
               onLoadJobSettings={loadJobSettings}
               canAdd={targets.length > 0 && sourceFaces.length > 0}
               notify={notify}
+            />
+          </div>
+
+          {/* Saved projects. The backend has always written one per render
+              (api.py `_create_processing_project`) and kept its safe frame up
+              to date; until now nothing could read them, so an interrupted
+              render's checkpoint was unreachable from the UI. */}
+          <div>
+            <ProjectsPanel
+              notify={notify}
+              processing={progress.processing}
+              onLoaded={() => hydrateWorkspaceFromState({ restoreView: false })}
             />
           </div>
 

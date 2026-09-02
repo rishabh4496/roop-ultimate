@@ -41,7 +41,13 @@ export default function StorageManager({ notify }) {
   const refresh = useCallback(async () => {
     setLoading(true);
     try {
-      setReview(await getJSON('/api/storage', { timeout: 10000 }));
+      // /api/storage walks the model, cache, output and project trees. Measured
+      // at 6.4s warm on this machine and longer on the first call after a boot,
+      // when the page-cache is cold and the backend is still loading models —
+      // so a 10s deadline reported "Request timed out" on exactly the visit
+      // where the panel is first opened. The scan is bounded work, not a poll;
+      // waiting for it is correct, and a spurious failure is not.
+      setReview(await getJSON('/api/storage', { timeout: 45000 }));
       setError('');
     } catch (cause) {
       setError(cause.message || 'Storage review is unavailable');

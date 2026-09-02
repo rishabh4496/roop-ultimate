@@ -1,7 +1,10 @@
 import React, { useState } from 'react';
 import { Button, Section } from '../ui';
 import { confirmDialog } from '../confirm';
-import { QUEUE_STATUS_CLASS, QUEUE_STATUS_LABEL } from './useQueue';
+import {
+  ACTIVE_STATES, QUEUE_STATE_CLASS, QUEUE_STATE_LABEL, RETRYABLE_STATES,
+  TERMINAL_STATES, jobState,
+} from './useQueue';
 import { Icon } from '../../icons';
 
 // The batch queue view. It renders whatever /api/queue reports and sends every
@@ -118,7 +121,7 @@ export default function QueuePanel({
               )}
               {retryable.length > 0 && !running && (
                 <Button size="sm" variant="secondary" onClick={() => q.retry()}>
-                  ↺ Retry {retryable.length} failed
+                  ↺ Retry {retryable.length} unfinished
                 </Button>
               )}
               {finished.length >= 2 && (
@@ -147,8 +150,19 @@ export default function QueuePanel({
         <ul className="space-y-1.5 max-h-72 overflow-y-auto pr-1 list-none m-0 p-0">
           {jobs.map((job, idx) => {
             const isCurrent = job.id === current;
-            const shown = (paused && isCurrent) ? 'paused' : job.status;
-            const editable = !isCurrent && job.status !== 'running';
+            // The backend already resolves PAUSE_REQUESTED/PAUSED onto the
+            // current row, so the state it reports is the state to show — the
+            // old local `paused ? 'paused'` override existed only because the
+            // legacy `status` field could not express either.
+            const st = jobState(job);
+            const isActive = ACTIVE_STATES.includes(st);
+            const editable = !isCurrent && !isActive;
+            // Per-job progress, which /api/queue has always reported and this
+            // panel never read.
+            const frac = Number(job.progress?.fraction);
+            const pct = Number.isFinite(frac)
+              ? Math.round(Math.max(0, Math.min(1, frac)) * 100) : null;
+            const phase = job.progress?.phase;
             const seg = (job.frame_start != null || job.frame_end != null)
               ? `frames ${job.frame_start ?? 1}–${job.frame_end ?? '∞'}`
               : null;
@@ -172,7 +186,7 @@ export default function QueuePanel({
                   setDropId(null);
                 }}
                 className={`flex items-center justify-between px-3 py-2 rounded-xl text-xs border transition-colors ${
-                  QUEUE_STATUS_CLASS[shown] || 'text-white bg-white/5 border-white/5'
+                  QUEUE_STATE_CLASS[st] || 'text-white bg-white/5 border-white/5'
                 } ${dropId === job.id ? 'ring-2 ring-[var(--accent)]' : ''} ${
                   dragId === job.id ? 'opacity-40' : ''
                 } ${editable && !running ? 'cursor-grab active:cursor-grabbing' : ''}`}
@@ -194,10 +208,28 @@ export default function QueuePanel({
                       {job.error}
                     </span>
                   )}
+                  {isActive && pct !== null && (
+                    <div className="mt-1 flex items-center gap-2">
+                      <div className="h-1 flex-1 rounded-full bg-black/40 overflow-hidden">
+                        <div
+                          className="h-full rounded-full bg-[var(--accent)] transition-[width] duration-300"
+                          style={{ width: `${pct}%` }}
+                        />
+                      </div>
+                      <span className="text-nano font-mono text-white/60 shrink-0">
+                        {pct}%{phase ? ` · ${phase}` : ''}
+                      </span>
+                    </div>
+                  )}
+                  {st === 'RECOVERABLE' && (
+                    <span className="text-micro text-cyan-300/90 block truncate">
+                      Has a safe checkpoint — “Start queue” will pick it up where it stopped.
+                    </span>
+                  )}
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
                   <span className="font-bold uppercase text-nano tracking-wider px-2 py-0.5 rounded bg-black/30 border border-white/5">
-                    {QUEUE_STATUS_LABEL[shown] || shown}
+                    {QUEUE_STATE_LABEL[st] || st}
                   </span>
                   {onLoadJobSettings && (
                     <button
@@ -221,7 +253,7 @@ export default function QueuePanel({
                       ⧉
                     </button>
                   )}
-                  {editable && (job.status === 'failed' || job.status === 'stopped' || job.status === 'finished') && (
+                  {editable && TERMINAL_STATES.includes(st) && (
                     <button
                       type="button"
                       onClick={() => q.retry(job.id)}
@@ -230,6 +262,29 @@ export default function QueuePanel({
                       aria-label={`Re-run job ${idx + 1}`}
                     >
                       ↺
+                    </button>
+                  )}
+                  {/* Cancel just this job. /api/queue/remove refuses the
+                      running one and /api/queue/stop ends the whole batch, so
+                      before this there was no way to drop a single job that
+                      had already started without taking the queue down. */}
+                  {(isActive || (!isCurrent && !TERMINAL_STATES.includes(st))) && (
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        if (isCurrent && !(await confirmDialog({
+                          title: 'Cancel the running job?',
+                          message: 'It stops at its next safe checkpoint. Frames already written stay on disk, and the rest of the queue keeps going.',
+                          confirmLabel: 'Cancel this job',
+                          danger: true,
+                        }))) return;
+                        q.cancel(job.id);
+                      }}
+                      className="text-white/40 hover:text-orange-300 transition-colors"
+                      title={isCurrent ? 'Cancel this job at its next safe checkpoint' : 'Cancel this job'}
+                      aria-label={`Cancel job ${idx + 1}`}
+                    >
+                      ⃠
                     </button>
                   )}
                   {editable && (

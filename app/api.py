@@ -2914,14 +2914,32 @@ def _run_swap(payload):
         _resume_context.update({"base": 0.0, "total": 0})
         if project_id:
             try:
-                inputs = _project_checkpoint.load(project_id).get("inputs") or {}
+                record = _project_checkpoint.load(project_id)
+                inputs = record.get("inputs") or {}
                 total = max(0, int(inputs.get("frame_end", 0) or 0) -
                             int(inputs.get("frame_start", 0) or 0))
-                safe = int((_project_checkpoint.load(project_id).get("checkpoint") or {}).get(
-                    "safe_frame", inputs.get("frame_start", 0)) or 0)
-                _resume_context.update({"base": min(1.0, max(0.0, safe - int(inputs.get("frame_start", 0) or 0)) /
-                                                    total) if total else 0.0,
-                                        "total": total})
+                # `base` is the share of the range this run will NOT redo, and
+                # ApiProgress maps the run's own 0..1 onto [base, 1]. So it has
+                # to be the prefix that genuinely survives — the frames inside
+                # COMMITTED segments — and not `safe_frame`.
+                #
+                # safe_frame is the furthest frame the previous run was seen at:
+                # `_checkpoint_segment` advances it from the frame index alone
+                # when no writer exists yet, so it routinely claims a prefix
+                # that has nothing on disk behind it. Reading it here produced
+                # base = 1.0 for any run interrupted at or past the end of its
+                # range — and 1.0 pins `base + fraction * (1 - base)` at 1.0, so
+                # the resumed render reported 100% from its first frame to its
+                # last while actually re-rendering the entire segment.
+                #
+                # With no committed segments there is nothing to concatenate
+                # onto, the pipeline correctly restarts the range, and base 0.0
+                # is what tells the truth about it.
+                committed = sum(int(item.get("frames", 0) or 0)
+                                for item in ((record.get("checkpoint") or {}).get("segments") or []))
+                _resume_context.update({
+                    "base": min(1.0, max(0, committed) / total) if total else 0.0,
+                    "total": total})
             except Exception:
                 pass
         _progress.update({"processing": True,

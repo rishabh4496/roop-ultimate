@@ -499,3 +499,63 @@ def get_telemetry():
         pass
 
     return telemetry
+
+
+# ── Update compatibility ─────────────────────────────────────────────────────
+#
+# READ-ONLY. This endpoint cannot install anything.
+#
+# `update_manager.py` already carries the whole compatibility story — manifest
+# gating, an environment snapshot, a post-update health run and a rollback —
+# but it is reachable only from Pinokio's Update action (update.js runs
+# `python update_manager.py apply`). No client could ever see WHY an update was
+# or was not safe, which left "is there an update, and can I take it?" as a
+# question with no answer short of running the updater and finding out.
+#
+# `update_manager.check()` is the answer, and it is the half that changes
+# nothing: it asks the remote for the candidate commit, verifies the manifest,
+# and classifies the result. Applying it stays where it is, behind Pinokio.
+#
+# It reaches the network (`git ls-remote`), so it is deliberately NOT polled —
+# the UI calls it when asked. Offline it returns UNVERIFIED, which is the
+# honest answer rather than a failure.
+_UPDATE_CHECK_LOCK = threading.Lock()
+_UPDATE_CHECK_CACHE = {"at": 0.0, "value": None}
+_UPDATE_CHECK_TTL = 60.0
+
+
+@router.get("/api/update/check")
+def update_check(refresh: bool = False):
+    """Classify the available update. Never installs, never changes settings."""
+    now = time.time()
+    with _UPDATE_CHECK_LOCK:
+        cached = _UPDATE_CHECK_CACHE["value"]
+        if (not refresh and cached is not None
+                and now - _UPDATE_CHECK_CACHE["at"] < _UPDATE_CHECK_TTL):
+            return dict(cached, cached=True)
+    try:
+        import update_manager
+        report = update_manager.check()
+    except Exception as exc:
+        # A broken check must not read as "no update available".
+        return {"classification": "UNVERIFIED", "available": False,
+                "reasons": [f"compatibility evidence could not be collected: {exc}"],
+                "apply_channel": "pinokio"}
+    # `current` carries the full local identity; the file-hash map inside it is
+    # large and of no use to a reader, so it is dropped rather than shipped.
+    current = dict(report.get("current") or {})
+    current.pop("files", None)
+    result = {
+        "classification": report.get("classification", "UNVERIFIED"),
+        "available": bool(report.get("available")),
+        "reasons": list(report.get("reasons") or []),
+        "candidate_sha": report.get("candidate_sha"),
+        "candidate_ref": report.get("candidate_ref"),
+        "current": current,
+        # Says plainly where the install lives. The browser cannot start one.
+        "apply_channel": "pinokio",
+        "checked_at": now,
+    }
+    with _UPDATE_CHECK_LOCK:
+        _UPDATE_CHECK_CACHE.update({"at": now, "value": result})
+    return dict(result, cached=False)

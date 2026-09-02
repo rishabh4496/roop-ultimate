@@ -3,6 +3,7 @@ import { getJSON, fileUrl } from '../api';
 import { Card, Section, Skeleton, AnimatedNumber, MotionIcon } from './ui';
 import { Stagger, Reveal, motion, spring } from '../motion';
 import { CHIP_KEYS, LABELS, fmtVal, fmtDur } from './settingsDiff';
+import { TERMINAL_STATES, jobState } from './faceswap/useQueue';
 import { Icon } from '../icons';
 
 // ── Home ──────────────────────────────────────────────────────────────────
@@ -97,7 +98,7 @@ export default function Home({ progress, setTab, setSettings, notify }) {
       last: runs[0] || null,
       files: files.length,
       bytes: files.reduce((a, f) => a + (f.size || 0), 0),
-      pending: jobs.filter((j) => !['finished', 'failed', 'stopped'].includes(j.status)).length,
+      pending: jobs.filter((j) => !TERMINAL_STATES.includes(jobState(j))).length,
     };
   }, [history, outputs, queue]);
 
