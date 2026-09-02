@@ -45,6 +45,29 @@ class _DetectionResult(list):
         self.mode = mode
 
 
+def no_source_reason(dd, near, assign_max):
+    """Why a track bound to no source, named accurately.
+
+    `dd` maps a captured person to that person's distance from this track. It
+    is EMPTY when no captured target person carries an embedding -- nothing was
+    ever compared, so the caller's `near` is NaN.
+
+    That case has to be tested FIRST, because NaN fails every comparison:
+    `nan > assign_max` is False, so an over-the-gate test does not catch it and
+    the decision falls through to the margin/concurrency line. The audit then
+    names a refusal that never happened -- the track was not refused on margin,
+    it was never a candidate. Real logs read
+    `3 tracks ... 0 matched to a source` beside three margin refusals that no
+    margin produced, which sends the reader to the gate constants instead of to
+    the missing capture.
+    """
+    if not dd:
+        return 'no captured target person to compare against'
+    if near > assign_max:
+        return 'over the gate'
+    return 'refused by margin/concurrency'
+
+
 def _readahead_depth(cap, budget_mb=256.0, lo=4, hi=16):
     """How many decoded frames of lead fit inside a memory budget.
 
@@ -935,10 +958,8 @@ class TrackingMixin:
                                else f'-> source {src} (via track {via}, d={vd:.2f})')
                 elif src is not None:
                     verdict = f'-> source {src}'
-                elif near > assign_max:
-                    verdict = '-> NO SOURCE (over the gate)'
                 else:
-                    verdict = '-> NO SOURCE (refused by margin/concurrency)'
+                    verdict = f'-> NO SOURCE ({no_source_reason(dd, near, assign_max)})'
                 note = '' if src is not None else _overlap_note(t['id'])
                 span_note = f"  [{int(t.get('first_seen', 0))}..{int(t.get('last_seen', 0))}]"
                 print(f"    track {t['id']:>3}  frames {n_frames:>5} ({100.0 * n_frames / span:4.1f}% of clip)"

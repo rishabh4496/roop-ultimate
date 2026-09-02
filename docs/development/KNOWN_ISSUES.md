@@ -1,5 +1,46 @@
 # Known Issues and Open Questions
 
+## Stage 19 amendment (2026-09-02, physical RTX 4070)
+
+Issues **resolved or bounded** on Device A this session. Nothing below is
+claimed for the RTX 3060, which was absent.
+
+- **Resolved (Device A).** The four inherited failures Stage 18 fixed on Device
+  B but could not run here now all pass on this GPU: the still-image swap
+  (identity gain +0.6239), the health validator (`healthy: true`, exit 0), the
+  V1-preservation guard, and both previously uncollected test modules. The
+  runtime lifecycle passes 29 of 29 on real frames and reproduces on a second
+  independent run.
+- **Fixed here.** `procmgr_tracking`'s per-track audit reported
+  `refused by margin/concurrency` for tracks that no margin refused: an empty
+  per-person distance map makes `near` NaN, and `nan > gate` is False, so the
+  over-the-gate branch never fired and the decision fell through to the margin
+  line. `no_source_reason()` now tests the empty case first. Diagnostic-only;
+  no gate, threshold, binding decision or rendered pixel changed.
+- **Bounded, not closed - cleanup deletion.** The storage manager provably
+  cannot destroy the installation: PROTECTED, REVIEW and unconfirmed deletions
+  were all attempted for real and refused, with `env/` and `models/` verified
+  intact afterwards. But it classifies **zero** items as `SAFE_TO_DELETE` on
+  this host, so the delete-a-safe-item path still has no end-to-end run.
+  Roughly 39.9 GB sits in `REVIEW_BEFORE_DELETE`, almost all stale
+  `models/trt_cache/` namespaces including several `drvunknown` ones.
+- **New caution - control counts are host-state-dependent.** Device A renders
+  V1 170 / V2 44 where Device B rendered V1 179 / V2 47; the count moves with
+  loaded facesets, targets and queue state. The parity ratio reproduces, but
+  the absolute numbers in any matrix must be read as "on that host at that
+  moment", not as fixed properties of a client.
+- **New caution - `runtime_lifecycle.py` does not grade swap content.** It
+  grades that the output decodes, has the requested frame count and is
+  non-empty. Its PASS is a lifecycle PASS and must not be read as covering
+  visual correctness; grade the swap audit or `image_swap_smoke.py` beside it,
+  as Stage 19 did.
+- **Still open on both devices**: a real PC shutdown/restart continuation, a
+  physical network disconnection, human visual review of rendered output, an
+  update candidate with executed rollback, Phase 16's 17-clip matrix, and
+  Stage 15's 71/467 identity mismatch.
+
+
+
 ## CURRENT IMPLEMENTATION / VERIFIED
 
 1. **Phase 16 is open.** The final report has 17 missing clips, 425 planned rows, zero complete runs, and no winners. This is the primary release-blocking validation issue.

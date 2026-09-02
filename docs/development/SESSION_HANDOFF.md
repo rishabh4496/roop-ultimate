@@ -1,3 +1,117 @@
+# Stage 19 Session Handoff - RTX 4070 validation of the activated V2
+
+Date: 2026-09-02
+Host: **NVIDIA GeForce RTX 4070, 12 GB** (Device A)
+Behavior changes: **one diagnostic string**; no gate, threshold or pixel changed
+HEAD at session start: `382b9d8` (clean tree)
+
+## READ THIS FIRST
+
+**This session ran on the RTX 4070. The previous one ran on the RTX 3060.**
+Stage 18 activated React UI 2.0 and fixed seven defects on Device B, then left
+every Device A row open because the fixes were device-independent code that had
+never executed on this GPU. Its handoff's action #1 was "run everything in this
+handoff on the RTX 4070". That is what this stage did, and **all four named
+harnesses now pass here**:
+
+| Handoff item | Result on Device A |
+|---|---|
+| `tests/image_swap_smoke.py` | **PASS** - 3/3, identity `0.057 -> 0.669`, `0.044 -> 0.672`, `0.059 -> 0.693`, mean gain **+0.6239**; `--control` still fails |
+| `update_health.py --source-root . --data-root . --json` | **`healthy: true`, exit 0** |
+| `tests/ui_browser_acceptance.py --ui v2` / `--ui v1` | **22/22** and **7/7** |
+| `tests/runtime_lifecycle.py --frames 900` | **29 checks, 0 FAIL**; reproduced at `--frames 600` |
+
+**React UI 2.0 remains the default client and React UI 1.0 remains preserved.**
+V1 is byte-identical to the `react-ui-v1` tag apart from one browser tab title,
+and the `pinokio.js` menu was evaluated in node in all three run states: V1 is
+offered in every one.
+
+## The lesson this stage adds: NaN takes the else branch
+
+The one defect found here is a small instance of the shape this project keeps
+hitting - **an instrument reporting a cause that did not occur**.
+
+`procmgr_tracking` printed, on a live 4070 render:
+
+    [Track] 3 tracks over 899 frames, 0 matched to a source (gate 0.75)
+        track 2  frames 368 (40.9%)   -> NO SOURCE (refused by margin/concurrency)
+        track 0  frames 200 (22.2%)   -> NO SOURCE (refused by margin/concurrency)
+        track 1  frames 200 (22.2%)   -> NO SOURCE (refused by margin/concurrency)
+
+No margin refused anything. `dd` - the per-person distance map - was EMPTY
+because no target person had been captured, so `near` was `NaN`; `nan > gate`
+is `False`, the over-the-gate test did not fire, and the decision fell through
+to the margin line. A reader following that log goes to the gate constants,
+which are innocent, instead of to the missing capture.
+
+**Whenever a decision chain ends in a bare `else`, ask what a NaN or an empty
+collection does to it.** The empty case has to be tested first, because NaN
+fails every comparison it is given, including the ones written to exclude it.
+
+## The other thing worth carrying: grade the outcome, not the file
+
+That same log looked alarming for a different reason - `0 matched to a source`
+reads like "nothing was swapped", which is this project's most expensive
+recurring bug. It was not: `All input faces` mode binds nth-face to nth-source
+without the track gate, and the swap audit shows **999 of 1257 detected faces
+swapped (79.5%)**, with the 258 refusals correctly attributed to a two-person
+clip carrying one faceset.
+
+But establishing that needed a separate instrument. **`runtime_lifecycle.py`
+grades that the output decodes, has the right frame count and is non-empty - it
+does not grade whether the frames contain a swap.** Its PASS is a lifecycle
+PASS. Do not read it as covering visual correctness; run the swap audit or
+`image_swap_smoke.py` beside it, as this stage did.
+
+## Also worth knowing
+
+- **Control counts are host-state-dependent.** Device A renders V1 170 / V2 44
+  where Device B rendered V1 179 / V2 47 - the count moves with loaded facesets,
+  targets and queue state. The parity *ratio* reproduces; do not treat the
+  absolute numbers in any matrix as fixed properties of a client.
+- **Host RSS falls across a render on this box** (11.76 -> 10.98 GB mean, peak
+  12.11 of 31.69 GB). The `111feb1` leak fix holds on Device A. Note this is 4x
+  the 3060's 2.4-2.9 GB because that card's small-card policy strips the
+  enhancer; the two numbers are not comparable.
+- **Cleanup is provably safe but not provably functional here.** Deletion was
+  attempted for real: PROTECTED refused, REVIEW refused, unconfirmed refused,
+  `env/` and `models/` intact afterwards. But the scan finds **zero**
+  `SAFE_TO_DELETE` items on this host, so the delete-a-safe-item path still has
+  no end-to-end run. ~39.9 GB sits in `REVIEW_BEFORE_DELETE`, almost all stale
+  `models/trt_cache/` namespaces - including several `drvunknown` ones left by
+  the phantom driver probe.
+
+## Start here next session
+
+1. **Run this handoff on the RTX 3060.** The `no_source_reason` fix is
+   device-independent code and has not executed there. Re-run the four harnesses
+   above plus `tests/test_track_assignment.py`.
+2. **Decide the feature-parity policy.** Still the open product decision from
+   Stage 18, now measured from the backend side too: **101 routes exist, V1
+   references 93, V2 references 33.** Either close specific families in V2 or
+   document V1 as the supported route to them.
+3. **The two physical tests nobody has run on either device**: a real PC
+   shutdown/restart continuation, and a physical network disconnection.
+4. **Human visual review of rendered output.** Untested on both GPUs, and it is
+   the one acceptance criterion no harness here can substitute for.
+5. **Close the startup window** (inherited, unchanged): `run.py` starts the API
+   thread before `core.run()` populates `roop.globals.CFG`, because the launcher
+   waits on the URL that thread prints.
+6. Still owed and untouched: an update candidate with rollback, cleanup mutation
+   of a SAFE item, Phase 16's 17-clip matrix, and Stage 15's 71/467 identity
+   mismatch.
+
+## Files changed
+
+| File | Change |
+|---|---|
+| `app/roop/procmgr_tracking.py` | new pure `no_source_reason()`; the audit's `else` chain now calls it |
+| `app/tests/test_track_assignment.py` | `NoSourceReasonTest` - 5 tests covering the NaN fallthrough, the two real refusals, and their distinctness |
+
+Suite: **1786 -> 1791**, OK, 1 skipped. Both UIs build and lint clean.
+
+---
+
 # Stage 18 Session Handoff - RTX 3060 validation and React UI 2.0 activation
 
 Date: 2026-09-02

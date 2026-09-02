@@ -1,3 +1,191 @@
+# Stage 19 acceptance - RTX 4070 physical validation of the activated V2 - 2026-09-02
+
+**Host: NVIDIA GeForce RTX 4070, 12,282 MiB, driver 616.56, compute 8.9,
+Python 3.10.20, PyTorch 2.7.0+cu128 / CUDA 12.8, ONNX Runtime 1.23.2,
+TensorRT 10.9.0.34, 24C/32T @ 3.20 GHz, 31.69 GB RAM.** Live configuration read
+from `app/config.yaml`: `realswap / RealityUX / UltraMax / tensorrt`,
+`hevc_nvenc`, detector 512, `max_threads 12`.
+
+This is **Device A**. Stage 18 activated React UI 2.0 on Device B (RTX 3060) and
+recorded every Device A row as unverified, because all seven of its fixes are
+device-independent code that had never run on this GPU. This stage closes those
+rows. **Device B was not present here**, and no result below is extrapolated to
+it.
+
+### Statuses used
+
+`PASS`, `FAIL`, `BLOCKED`, `NOT TESTED`, `PARTIALLY VERIFIED`, `OBSERVED`.
+A control-plane test does not close an end-to-end row.
+
+### A. React UI 1.0 preservation
+
+| Check | Evidence | State |
+|---|---|---|
+| V1 is byte-identical to its immutable tag | `git diff react-ui-v1 HEAD -- react-ui/` is **one line**: `index.html`'s title. No other V1 file differs. | PASS |
+| Nothing deleted since the tag | `git diff --diff-filter=D --name-only react-ui-v1 HEAD -- react-ui/` is **empty** | PASS |
+| V1 tracked | `git ls-files react-ui/` -> 89 files | PASS |
+| V1 builds and lints | `npm run build` exit 0; `npm run lint` exit 0 with only the documented pre-existing Fast Refresh warnings | PASS |
+| V1 launches and runs | Real Chromium: mounts, `/api/meta` HTTP 200 through its own dev server, **170** interactive controls, **zero** uncaught page errors. `tests/ui_browser_acceptance.py --ui v1`: **7 of 7** | PASS |
+| V1 reachable from the launcher in every state | `pinokio.js` menu evaluated in node for idle / V2-running / V1-running: V1 is offered in all three, labelled as the fallback that carries the face manager, faceset library, extras and live cam | PASS |
+| V1 covered by install/reset | `install.js` and `reset.js` both name `react-ui` and `react-ui-v2` | PASS |
+| Launcher contract | `tests/test_launcher_activation.py`: **9 of 9** | PASS |
+| Rollback executed | not performed; documented rollback remains one line in `start.js` plus the `react-ui-v1` tag | NOT TESTED |
+
+### B. React UI 2.0 - real browser acceptance on Device A
+
+`tests/ui_browser_acceptance.py --ui v2` boots the same two processes the
+Pinokio launcher boots and drives a real Chromium over CDP.
+**22 of 22 checks PASS in 40.4 s.**
+
+| Check | Evidence | State |
+|---|---|---|
+| Browser runtime | Chrome resolved; `websockets` already in `app/env`, so no dependency added to the environment under test | PASS |
+| Backend + dev server boot | `/api/meta` on 127.0.0.1:5483; dev server on 5484 | PASS |
+| Shell renders / mounts | sidebar and topbar mounted, React tree non-empty | PASS |
+| Backend reachable through the dev-server proxy | `/api/meta` HTTP 200, 22 keys - exercises the whole launcher wiring | PASS |
+| Routing | `home`, `create`, `settings` each mount with the correct heading | PASS |
+| Navigation by real click | sidebar click changes the route | PASS |
+| Themes applied | **7 of 7** (light, dark, professional, modern, minimal, gaming, anime) | PASS |
+| Themes change the palette | 7 distinct computed `--bg` values | PASS |
+| Theme persistence | 7 of 7 written to `localStorage` | PASS |
+| Controls present | **44** interactive (home 6, create 24, settings 14) | PASS |
+| Controls carry an accessible name | **0 unlabelled of 44** | PASS |
+| Controls respond | 12 non-destructive controls activated, 0 new page errors | PASS |
+| Telemetry honesty | an explicit `UNKNOWN` / `NOT AVAILABLE` sentinel is rendered rather than a fabricated value; confirmed in source (`SettingsScreen.jsx`, `CreateScreen.jsx` use `UNKNOWN` for every null) | PASS |
+| Responsive | zero horizontal overflow at 1440x900, 1024x768, 900x800, 420x900 | PASS |
+| Console clean | zero uncaught page errors | PASS |
+| V2 builds and lints | `npm run build` exit 0; `oxlint` exit 0, no warnings | PASS |
+| Human visual/aesthetic review | not performed - a driven browser is not a designer | NOT TESTED |
+
+**Control counts are host-state-dependent.** Device A renders V1 170 / V2 44
+where Device B rendered V1 179 / V2 47, because the count varies with loaded
+facesets, targets and queue state. The *ratio* reproduces; the absolute numbers
+must be read as "on that host at that moment", not as fixed properties.
+
+### C. Processing, visual pipeline and output
+
+| Check | Evidence | State |
+|---|---|---|
+| Single-image swap (inherited Stage 14 `#41`) | `tests/image_swap_smoke.py`, live config: **3 of 3** frames, mean region delta 6.31/255, identity to source `0.0596 -> 0.6687`, `0.0437 -> 0.6724`, `0.0591 -> 0.6931`, **mean gain +0.6239** | PASS |
+| The smoke discriminates | `--control` arm fails every assertion (`0.00/255`, zero identity gain) as required | PASS |
+| Video render end to end | 899 frames, 1280x720, 21,163,029 bytes, decodes; 143.28 s at **6.27 fps**, 12 worker threads | PASS |
+| **The render actually swaps** | swap audit graded separately, because the lifecycle harness grades file validity, not content: **999 of 1257 detected faces swapped (79.5%)**; the 258 refusals are `no source faceset for that person`, correct for a two-person clip with one faceset loaded | PASS |
+| Encoder | `hevc_nvenc` selected and encoding; `libvpx-vp9` correctly hidden as unavailable in this ffmpeg build | PASS |
+| Gap-filled swaps | 274 of 999 (27.4%) had interpolated landmarks; 199 of 1198 frames (16.6%) had no face detected at all | OBSERVED |
+| Host memory | 27 in-render samples: min 10.61 / max 12.11 / mean 11.36 GB of 31.69 GB; first half 11.76 -> second half 10.98 GB, **delta -0.79 GB** - falling, no monotonic growth. Confirms the `111feb1` leak fix holds on Device A. | PASS |
+| VRAM | ~7.25 GB peak of 11.99 GB; no thrashing | OBSERVED |
+| Visual quality review of rendered frames | no human review | NOT TESTED |
+| Stage 15's 71/467 identity mismatch | not re-run this session | NOT TESTED |
+
+### D. Runtime lifecycle on real frames
+
+`tests/runtime_lifecycle.py --frames 900`: **29 checks, 0 FAIL.** Independently
+re-run at `--frames 600 --skip-queue`: **0 FAIL**.
+
+| Check | Evidence | State |
+|---|---|---|
+| Backend boots and initialises before work is accepted | `/api/settings` returns a populated configuration | PASS |
+| Source faceset loads / target referenced by path | 1 source entry; no upload, no duplicate copy | PASS |
+| Render starts | `processing: true`; a backend refusal is detected rather than read as a start | PASS |
+| Work advances before the pause | progress 0.044 on live frames | PASS |
+| Pause acknowledged at a safe point | `paused: true`, controller `{requested: true, acknowledged: true, active_work: 0, pending_output: 0}` | PASS |
+| **Paused engine stops doing work** | progress held at **0.056 across 15 s** - the claim a UI-only pause cannot satisfy | PASS |
+| Resume continues the same run | 0.056 -> 0.122 | PASS |
+| Paused-and-resumed run completes | `desc: 'Done'`, no error | PASS |
+| Output produced, decodes, non-empty | 899 frames at the requested 900-frame bound, 21,163,029 bytes | PASS |
+| Queue accepts multiple independent jobs | 2 accepted, both `QUEUED`, neither lost | PASS |
+| Every queued job reaches a terminal state | both `COMPLETED` / `finished` | PASS |
+| Each completed job owns its own output | two distinct files, 21.16 MB and 21.17 MB | PASS |
+| Persistent project records exist | 4-5 records after real renders | PASS |
+| Project records survive a real backend restart | 4 records before and after; the record written pre-restart still listed and reloadable | PASS |
+| An interrupted run does not claim success | the killed render left a `RECOVERABLE` record; observed states are `COMPLETED` and `RECOVERABLE` only | PASS |
+| Environment change is detected | validate refused with `runtime provider differs from the checkpoint` | PASS |
+| PC shutdown / restart continuation | a backend restart is not a machine restart | NOT TESTED |
+
+### E. Environment health, network and storage
+
+| Check | Evidence | State |
+|---|---|---|
+| Runtime health worker | `update_health.py --source-root . --data-root . --json`: **healthy true, exit 0** - dependencies, node dependencies for BOTH clients, configuration, provider (`tensorrt` -> TRT/CUDA/CPU chain), GPU (RTX 4070, 12,281 MiB, CC 8.9), launch probe (`/api/meta` HTTP 200 on port 3303), model sessions (`realswap`, `hififace`), one finite inference per model | PASS |
+| Update compatibility check | `update_manager.py check`: classification `SAFE`, application `main@react-ui-v1-2-g382b9d8`, Python 3.10.20, provider `tensorrt`, GPU profile `rtx4070_12gb`, reason `no newer commit is available on the configured branch`, exit 0 | PASS for a no-op check |
+| Update candidate installation and rollback | no candidate exists on this branch to install. Rollback logic itself is exercised at unit level in the suite (`post-update runtime health validation failed ... Rollback: succeeded - restored`) | NOT TESTED end to end |
+| Local-only operation | `tests/local_only_probe.py --seconds 90` against 4 live backend PIDs during a real render: **176 samples, non-loopback peers: NONE** | PASS |
+| Physical disconnected operation | the network adapter was not disconnected | NOT TESTED |
+| Storage review | `StorageManager.scan()`: 234 items - **180 PROTECTED (76.06 GB)**, **54 REVIEW_BEFORE_DELETE (39.86 GB)**, **0 SAFE_TO_DELETE**. `app/env` and `app/models` both PROTECTED. `active_work: true` (`a persisted project is active or resumable`). | PASS for review |
+| **Cleanup cannot destroy required files** | proven by attempting real deletions: PROTECTED `app/env` -> refused (`item is PROTECTED`); a REVIEW item -> refused (`item is REVIEW_BEFORE_DELETE`); a REVIEW item without confirmation -> refused (`explicit confirmation is required`). `env/` and `models/` verified still on disk afterwards. | PASS |
+| Cleanup deletion of a SAFE item | **not exercisable**: the scan classifies zero items as `SAFE_TO_DELETE` on this host, and the policy is `Only a single freshly revalidated SAFE_TO_DELETE item may be explicitly deleted`. This is the manager behaving conservatively, not a defect. | NOT TESTED |
+
+### F. Defect found and fixed in this session
+
+One, device-independent, with five regression tests.
+
+**The track-assignment audit named a refusal that never happened.** `dd` maps
+each captured person to that person's distance from a track, and it is EMPTY
+when no target person was captured - so `near` is `NaN`. `NaN > assign_max` is
+`False`, so the over-the-gate test did not catch it and every unbound track fell
+through to `-> NO SOURCE (refused by margin/concurrency)`. The live 4070 log
+read `3 tracks over 899 frames ... 0 matched to a source` beside three margin
+refusals that no margin produced - sending a reader to the gate constants
+instead of to the missing capture.
+
+Fixed by extracting a pure `no_source_reason(dd, near, assign_max)` in
+`app/roop/procmgr_tracking.py`, which tests the empty-`dd` case FIRST and
+reports `no captured target person to compare against`. The pre-fix decision
+order was replayed and confirmed to return `refused by margin/concurrency` for
+that input, so the new assertion fails on the old code.
+`tests/test_track_assignment.py`: 17 tests (5 new), OK.
+
+This changes a diagnostic string only. No gate, threshold, binding decision or
+rendered pixel is affected; the render that exposed it swapped 79.5% of
+detected faces both before and after.
+
+### G. Regression
+
+| Check | Evidence | State |
+|---|---|---|
+| Full Python suite, before the change | `1786 tests, OK (skipped=1)`, exit 0 | PASS |
+| Full Python suite, after the change | **`1791 tests, OK (skipped=1)`**, exit 0 (+5 new) | PASS |
+| Both UIs build | V2 and V1 `npm run build` exit 0 | PASS |
+| Both UIs lint | V2 `oxlint` exit 0 clean; V1 exit 0 with pre-existing warnings only | PASS |
+| Working tree | clean at session start; the only changes are the two files in section F | PASS |
+
+### H. Not closed by this session
+
+| Item | Reason |
+|---|---|
+| Every RTX 3060 row | Device B absent. The fix in section F is device-independent code and has not run there. |
+| PC shutdown / restart continuation | a backend restart was performed; a machine restart was not |
+| Physical network disconnection | not performed; local-only was measured from the opposite direction |
+| Human visual review of output | not performed on either device |
+| Update installation and rollback end to end | no candidate exists on this branch |
+| Cleanup mutation of a SAFE item | none exist on this host; the refusal guard is proven instead |
+| Phase 16 (17-clip visual matrix) | untouched; still `OPEN_INCOMPLETE` |
+| Stage 15's 71/467 identity mismatch | not re-run |
+| Feature parity | quantified, not closed: 101 backend routes exist, V1 references 93, V2 references 33 |
+
+### Stage 19 acceptance conclusion
+
+Every Device A row that Stage 18 left open is now closed with evidence, and the
+seven device-independent fixes it shipped are confirmed working on this GPU.
+React UI 2.0 passes **22 of 22** browser checks, the runtime lifecycle passes
+**29 of 29** on real frames and reproduces on a second independent run, the
+still path swaps with a **+0.62** identity gain, health is `healthy: true`, the
+backend reaches **zero** non-loopback peers during a live render, and cleanup
+refuses every deletion that would damage the installation.
+
+React UI 1.0 is **byte-identical to its immutable tag apart from one browser tab
+title**, builds, lints, launches, renders 170 controls with zero page errors,
+and is offered by the launcher in every menu state.
+
+This is **not** a declaration that the full acceptance matrix is green. Device B
+is unmeasured this session, feature parity is a known and quantified gap, and
+every row in section H remains `NOT TESTED`. The correct reading is unchanged
+from Stage 18 and now holds on both GPUs independently: **public-use ready as a
+local distributable application, with V1 retained for the capabilities V2 does
+not yet cover.**
+
+---
+
 # Stage 0 Validation Matrix
 
 This matrix separates evidence that was actually observed in this session from existing repository records. A historical record is cited as a repository fact; it is not presented as a fresh hardware run here.

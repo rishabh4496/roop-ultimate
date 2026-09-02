@@ -26,7 +26,7 @@ import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from roop.procmgr_tracking import TrackingMixin              # noqa: E402
+from roop.procmgr_tracking import TrackingMixin, no_source_reason  # noqa: E402
 from roop.procmgr_runtime import _TRACK_ASSIGN_MAX           # noqa: E402
 
 
@@ -228,3 +228,46 @@ class GateOrderTest(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class NoSourceReasonTest(unittest.TestCase):
+    """The audit must name the refusal that actually happened.
+
+    `near` is NaN whenever no captured target person carried an embedding, and
+    NaN fails every comparison. Before this was handled first, such a track was
+    reported as `refused by margin/concurrency` -- a cause that never occurred,
+    pointing the reader at the gate constants instead of at the missing capture.
+    """
+
+    def test_no_captured_person_is_not_reported_as_a_margin_refusal(self):
+        reason = no_source_reason({}, float('nan'), _TRACK_ASSIGN_MAX)
+        self.assertEqual(reason, 'no captured target person to compare against')
+        self.assertNotIn('margin', reason)
+        self.assertNotIn('gate', reason)
+
+    def test_nan_does_not_reach_the_gate_comparison(self):
+        # The regression guard: NaN > gate is False, so an implementation that
+        # tests the gate before the empty case silently mislabels this track.
+        self.assertFalse(float('nan') > _TRACK_ASSIGN_MAX)
+
+    def test_over_the_gate_is_still_reported_as_over_the_gate(self):
+        self.assertEqual(
+            no_source_reason({0: _TRACK_ASSIGN_MAX + 0.20},
+                             _TRACK_ASSIGN_MAX + 0.20, _TRACK_ASSIGN_MAX),
+            'over the gate')
+
+    def test_a_real_margin_refusal_is_still_reported_as_one(self):
+        # Inside the gate but bound to nothing: the genuine margin/concurrency
+        # case, which must keep its own wording.
+        self.assertEqual(
+            no_source_reason({0: _TRACK_ASSIGN_MAX - 0.10},
+                             _TRACK_ASSIGN_MAX - 0.10, _TRACK_ASSIGN_MAX),
+            'refused by margin/concurrency')
+
+    def test_every_reason_is_distinct(self):
+        reasons = {
+            no_source_reason({}, float('nan'), _TRACK_ASSIGN_MAX),
+            no_source_reason({0: 0.95}, 0.95, _TRACK_ASSIGN_MAX),
+            no_source_reason({0: 0.10}, 0.10, _TRACK_ASSIGN_MAX),
+        }
+        self.assertEqual(len(reasons), 3)

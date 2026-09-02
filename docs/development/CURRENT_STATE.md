@@ -1,5 +1,89 @@
 # Current Repository State
 
+Audit date: 2026-09-02 (Stage 19). This file records verified repository state
+and gate status; it is not authorization to change application behavior.
+
+## Stage 19 - RTX 4070 physical validation of the activated React UI 2.0
+
+**Host: NVIDIA GeForce RTX 4070, 12,282 MiB, driver 616.56, compute capability
+8.9, 24C/32T @ 3.20 GHz, 31.69 GB RAM.** This is **Device A** - the target
+Stage 18 could not test, having run on the RTX 3060. **Device B was not present
+in this session** and nothing below is extrapolated to it.
+
+Branch `main`, HEAD `382b9d8` at session start, working tree clean.
+Live configuration: `realswap / RealityUX / UltraMax / tensorrt`, `hevc_nvenc`,
+detector 512, `max_threads 12`.
+
+### Production UI - unchanged and now verified on this device
+
+**React UI 2.0 remains the default application UI**, and **React UI 1.0 remains
+preserved and launchable**. Both were exercised in a real browser on this GPU:
+V2 **22 of 22**, V1 **7 of 7**.
+
+V1's preservation is now established at the strongest available level: the
+entire V1 tree is **byte-identical to the `react-ui-v1` tag apart from one
+browser tab title**, with zero deletions. The `pinokio.js` menu was evaluated in
+node in all three run states (idle, V2 running, V1 running) and offers V1 in
+every one.
+
+V2 is still **not** feature-complete against V1 and is not claimed to be. Measured
+from the backend side this session: **101 routes exist; V1 references 93, V2
+references 33.** That is why V1 stays one click away.
+
+### What Stage 18 left open for this device, and is now closed
+
+All four harnesses its handoff named as action #1:
+
+| Harness | Result |
+|---|---|
+| `tests/image_swap_smoke.py` | 3/3 frames, identity gain **+0.6239**; `--control` fails as required |
+| `update_health.py` | **`healthy: true`, exit 0** |
+| `tests/ui_browser_acceptance.py` | V2 **22/22**, V1 **7/7** |
+| `tests/runtime_lifecycle.py --frames 900` | **29 checks, 0 FAIL**, reproduced at 600 frames |
+
+Also measured here for the first time: a 899-frame render at **6.27 fps** with
+**999 of 1257 faces swapped (79.5%)**, true pause holding progress at 0.056
+across 15 s, two queued jobs completing to distinct outputs, project records
+surviving a real backend restart with a `RECOVERABLE` record after
+interruption, **176 network samples with zero non-loopback peers** during a live
+render, and host RSS **falling** 0.79 GB across a render (peak 12.11 GB of
+31.69 GB).
+
+### Defect found and fixed
+
+One, device-independent, diagnostic-only, with five regression tests.
+
+`procmgr_tracking`'s per-track audit reported `refused by margin/concurrency`
+for tracks that no margin refused. When no target person is captured the
+per-person distance map is empty, so `near` is `NaN`; `nan > gate` is `False`,
+so the over-the-gate branch did not fire and the decision fell through to the
+margin line. Now extracted to a pure `no_source_reason()` that tests the empty
+case first. The pre-fix decision order was replayed to confirm the new
+assertion fails against it.
+
+**No gate, threshold, binding decision or rendered pixel changed.** The render
+that exposed it swapped 79.5% of detected faces both before and after.
+
+### Regression
+
+Full Python suite **1786 -> 1791 tests, OK, 1 skipped**, exit 0. Both UIs build
+(exit 0) and lint (exit 0; V1 with its documented pre-existing Fast Refresh
+warnings only).
+
+### What this session did not test
+
+A real PC shutdown/restart continuation, a physical network disconnection,
+human visual review of rendered output, an executed update-candidate
+installation with rollback (no candidate exists on this branch), cleanup
+deletion of a `SAFE_TO_DELETE` item (the scan classifies **zero** such items on
+this host, though the refusal guard was proven by attempting real deletions),
+Phase 16's 17-clip matrix, Stage 15's 71/467 identity mismatch, and anything at
+all on the RTX 3060.
+
+Full evidence: `VALIDATION_MATRIX.md` -> *Stage 19 acceptance*.
+
+---
+
 Audit date: 2026-09-02 (Stage 18). This file records verified repository state
 and gate status; it is not authorization to change application behavior.
 

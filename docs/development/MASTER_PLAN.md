@@ -1,5 +1,36 @@
 # Roop Ultimate Development Master Plan
 
+## Stage 19 - RTX 4070 validation of the activated React UI 2.0 (2026-09-02)
+
+Run on the physical **RTX 4070 12 GB** (Device A), the target Stage 18 recorded
+as unverified because it ran on the RTX 3060. Device B was absent and no row is
+closed for it.
+
+- **Every Device A row Stage 18 left open is now closed with evidence.** Its
+  handoff's action #1 was to re-run its four harnesses here; all four pass:
+  still-image swap (identity gain **+0.6239**), health worker (**`healthy: true`,
+  exit 0**), real-browser acceptance (**V2 22/22, V1 7/7**), and the runtime
+  lifecycle (**29 checks, 0 FAIL**, reproduced on a second independent run).
+- **React UI 2.0 remains the default client; React UI 1.0 remains preserved** -
+  byte-identical to its immutable tag apart from one browser tab title, with
+  zero deletions, and offered by the launcher in all three menu states.
+- Measured here for the first time: a 899-frame render at 6.27 fps with
+  **79.5% of detected faces swapped**, true pause holding across 15 s, queue
+  isolation, project survival across a real backend restart, **zero
+  non-loopback network peers** during a live render, and host RSS falling
+  across a render.
+- **One defect found and fixed**: the track-assignment audit reported
+  `refused by margin/concurrency` for tracks that no margin refused, because an
+  empty distance map makes `near` NaN and NaN fails the over-the-gate test.
+  Diagnostic-only; no gate, threshold or pixel changed.
+- V1 retirement remains NOT authorized. Parity is now measured from both sides:
+  **101 backend routes exist, V1 references 93, V2 references 33.**
+
+Full evidence: `VALIDATION_MATRIX.md` -> *Stage 19 acceptance*. Next steps:
+`SESSION_HANDOFF.md`.
+
+---
+
 ## Stage 18 - RTX 3060 validation and React UI 2.0 activation (2026-09-02)
 
 Run on the physical **RTX 3060 Laptop 6 GB** (Device B), the target every stage
@@ -89,6 +120,8 @@ winners.
 | Stage 15 - Full Regression and Long-Run Validation | Full Python regression and both UI build/lint checks passed; a 600-frame Device A soak completed with bounded post-run GPU/process state; visual-quality mismatch, health-probe timeout, browser/Device B coverage, and full integrated acceptance remain open |
 | Stage 16 - React UI 2.0 Acceptance | Acceptance audit recorded PASS/FAIL/BLOCKED/NOT TESTED per major feature; V2 is not production-ready because critical browser, recovery, Device B, offline, health, and visual-quality evidence is missing or failing |
 | Stage 17A - V1 Retirement Review | Audit completed; V2 is now exposed as a separate Pinokio preview action while V1 remains the default because parity, acceptance, dual-device evidence, project migration/recovery, and tested rollback are not established; no files deleted |
+| Stage 18 - RTX 3060 validation and V2 activation | React UI 2.0 activated as the default client with V1 preserved; seven defects fixed; Device A left unverified |
+| Stage 19 - RTX 4070 validation of the activated V2 | Every Device A row closed with evidence; one diagnostic defect fixed; Device B unverified this session |
 | Next UI2 design or migration gate | Not defined in the repository; scope requires explicit authorization |
 | Visual validation / retained-output review | Open and not yet complete |
 | Phase 16 final production quality gate | Open/incomplete |
