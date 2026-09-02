@@ -1224,6 +1224,44 @@ def _is_usable_target(path):
             or path.lower().endswith('.gif') or util.is_animated_webp(path))
 
 
+def _resolve_user_path(raw):
+    """Turn a path the user handed us into the absolute path it MEANT.
+
+    `os.path.abspath` alone resolves a relative path against the working
+    directory, which for this backend is `app/` (run.py is started there by
+    the launcher). That is the wrong root for the one relative path this app
+    is routinely given: Pinokio's browser copies a dropped or pasted file into
+    `.pinokio-temp/` beside the launcher scripts — i.e. at the PROJECT root,
+    one level above `app/` — and hands the page a project-root-relative path
+    like `.pinokio-temp/image_10.png`. FileDrop passes that straight through to
+    /api/target/add_path, abspath resolved it under `app/`, and every dropped
+    file was rejected as "not a file on this machine" while sitting on disk a
+    directory away.
+
+    So a relative path is tried against each root the file could plausibly be
+    relative to, in the order of how specific the claim is — the working
+    directory first (a path typed into the "add by path" box means what the
+    shell would mean by it), then this file's own `app/` directory, then the
+    project root that owns `.pinokio-temp`. Same three roots /api/file already
+    names for exactly this directory, resolved from __file__ rather than from
+    the working directory so they land in the same place however the process
+    was started.
+
+    An absolute path is returned untouched. If no candidate exists the plain
+    abspath is returned, so the caller's "not a file" rejection still names the
+    path in the form the user would recognise.
+    """
+    text = os.path.expanduser(str(raw).strip().strip('"'))
+    if os.path.isabs(text):
+        return os.path.abspath(text)
+    app_dir = os.path.dirname(os.path.abspath(__file__))
+    for root in (os.getcwd(), app_dir, os.path.dirname(app_dir)):
+        candidate = os.path.abspath(os.path.join(root, text))
+        if os.path.isfile(candidate):
+            return candidate
+    return os.path.abspath(text)
+
+
 @app.post("/api/target/add_path")
 def target_add_path(payload: dict = Body(...)):
     """Add targets that are ALREADY on this machine, by path — no upload.
@@ -1251,7 +1289,7 @@ def target_add_path(payload: dict = Body(...)):
     first_new = len(list_files_process)
     added, rejected = [], []
     for p in raw:
-        path = os.path.abspath(os.path.expanduser(str(p).strip().strip('"')))
+        path = _resolve_user_path(p)
         if not os.path.isfile(path):
             rejected.append({"path": p, "why": "not a file on this machine"})
             continue
