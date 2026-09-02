@@ -39,6 +39,7 @@ subsample_size = 256
 upscale_after_swap = True
 upscale_model_after = 'esrganx2'
 face_swap_mode = 'DFL XSeg'
+enable_occlusion_mask = True
 blend_ratio = 0.80
 distance_threshold = 1
 default_det_size = True

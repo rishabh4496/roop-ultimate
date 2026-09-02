@@ -84,7 +84,11 @@ def parse_args() -> None:
     program = argparse.ArgumentParser(formatter_class=lambda prog: argparse.HelpFormatter(prog, max_help_position=100))
     program.add_argument('--server_share', help='Public server', dest='server_share', action='store_true', default=False)
     program.add_argument('--cuda_device_id', help='Index of the cuda gpu to use', dest='cuda_device_id', type=int, default=0)
+    program.add_argument('--enable-occlusion-mask', help='Enable foreground occlusion masking', dest='enable_occlusion_mask', action='store_true', default=True)
+    program.add_argument('--disable-occlusion-mask', help='Disable foreground occlusion masking', dest='enable_occlusion_mask', action='store_false')
     roop.globals.startup_args = program.parse_args()
+    if hasattr(roop.globals.startup_args, 'enable_occlusion_mask') and roop.globals.startup_args.enable_occlusion_mask is not None:
+        roop.globals.enable_occlusion_mask = roop.globals.startup_args.enable_occlusion_mask
     # Always enable all processors when using GUI
     roop.globals.frame_processors = ['face_swapper', 'face_enhancer']
 
