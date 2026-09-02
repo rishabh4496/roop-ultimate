@@ -1,5 +1,29 @@
 # React UI 2.0 Boundary Contract and React V1 Forensic Audit
 
+## Stage 18 amendment (2026-09-02) - V2 is the default client
+
+React UI 2.0 is now the **default** client: `start.js` re-exports
+`start_react_v2.js` and the Pinokio menu's default action starts V2. React UI
+1.0 remains present, installed, launchable from its own menu action, and
+covered by `install.js`/`reset.js`.
+
+The boundary this contract describes is unchanged. What changed is which client
+a user gets by default, and two facts now measured rather than assumed:
+
+- **Browser acceptance exists.** Both clients were driven in a real Chromium
+  (`tests/ui_browser_acceptance.py`): V2 passed 22/22 checks including all seven
+  themes and four viewport widths; V1 passed 7/7. The repeated "no browser
+  runtime was available" caveat in this contract's earlier sections no longer
+  applies to those rows.
+- **The parity gap is quantified.** V1 references 87 API routes, V2 references
+  31, and 62 are V1-only. In a browser V1 renders 179 interactive controls to
+  V2's 47. V2 is the default client; it is NOT a replacement, and V1 is the
+  supported route to the families it still owns.
+
+The audit below is retained as written.
+
+---
+
 Audit date: 2026-09-01  
 Audit scope: Stages 3A, 4A, and 5A React UI 2.0 work
 Audit HEAD before Stage 5A changes: `5ced7898faa98c2f2b6121258883923ad624d00e`

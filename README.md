@@ -50,11 +50,30 @@ cd ../app && python run.py
 
 ## Run
 
-`start.js` launches React UI 1.0, which remains the default and rollback path.
-Pinokio also exposes **Start React UI 2.0** as a separate preview action; it
-launches `react-ui-v2` with its own local backend/UI ports and does not replace
-V1. The legacy Gradio interface is still present under `app/ui/` and can be
-started with `start_legacy.js`, but it is frozen and receives no new work.
+`start.js` launches **React UI 2.0**, the production client, and it is the
+default Pinokio action.
+
+**React UI 1.0 is preserved and remains one click away** as *Start React UI
+1.0*. It is a supported fallback, not a deprecated leftover: V2 does not yet
+cover every V1 surface, and the following still require V1 —
+
+| Only in React UI 1.0 |
+|---|
+| Faceset library (save, import, rename, delete, rebuild thumbnails) |
+| Face manager (build, cut, prune, add/remove faces) |
+| Extras (frame operations, standalone enhance, apply) |
+| Live cam |
+| Run history |
+| Quality analysis, the hardware benchmark and the advisor |
+| Export/preset management and the advanced source/target operations |
+
+Both clients talk to the same backend and share projects, queue and output, so
+you can switch between them at any time. To make V1 the default again, point
+`start.js` back at `./start_react.js`; the `react-ui-v1` git tag is the
+immutable rollback reference.
+
+The legacy Gradio interface is still present under `app/ui/` and can be started
+with `start_legacy.js`, but it is frozen and receives no new work.
 
 ## Updates
 
@@ -112,7 +131,8 @@ roop-ultimate/
 │   ├── ui/               legacy Gradio interface (frozen)
 │   ├── tests/            unit tests, benchmarks and measurement harnesses
 │   └── config.yaml       live settings (per-machine, not tracked)
-├── react-ui/             React front end (Vite)
+├── react-ui/             React UI 1.0 — preserved fallback (Vite)
+├── react-ui-v2/          React UI 2.0 — production client (Vite)
 ├── install.js start.js update.js reset.js    Pinokio launcher scripts
 ├── pinokio.js pinokio.json                   launcher UI and metadata
 ├── LICENSE               GNU AGPL-3.0

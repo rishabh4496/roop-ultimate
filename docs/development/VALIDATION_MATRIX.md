@@ -399,3 +399,147 @@ V1 retirement is **NOT AUTHORIZED**. Keep `react-ui/`, the current V1
 Pinokio path, backend routes, project/checkpoint/output data, models, and
 environments intact. The exact migration plan and future exit conditions are
 in `docs/development/UI2_MIGRATION_PLAN.md`.
+
+## Stage 18 acceptance - RTX 3060 physical validation and V2 activation - 2026-09-02
+
+**Host: NVIDIA GeForce RTX 3060 Laptop GPU, 6,144 MiB, driver 616.56, compute
+8.6, Python 3.10.20, PyTorch 2.7.0+cu128 / CUDA 12.8, ONNX Runtime 1.23.2,
+TensorRT 10.9.0.34, i7 14P/20L, 15.8 GB RAM.** Live configuration read from
+`app/config.yaml`: `realswap / RealityUX / GPEN 256 Pro / tensorrt`,
+`hevc_nvenc`, detector 512, `max_threads 8`.
+
+This is **Device B**, which stages 14-17A could not test. **Device A (RTX 4070)
+was not present.** No row below is closed for Device A, and no Device B result
+is extrapolated to it.
+
+### Statuses used
+
+`PASS`, `FAIL`, `BLOCKED`, `NOT TESTED`, `PARTIALLY VERIFIED`. A control-plane
+test does not close an end-to-end row.
+
+### A. React UI 1.0 preservation
+
+| Check | Evidence | State |
+|---|---|---|
+| V1 tree intact | `git status`: the only V1 change in this session is `react-ui/index.html`'s tab title (was the Vite scaffold default `react-ui`). No V1 file deleted or renamed. | PASS |
+| V1 tracked, not merely present | `git ls-files react-ui` contains `react-ui/src/App.jsx`; asserted by `test_ui2_integration` | PASS |
+| V1 builds and lints | `npm run build` exit 0; `npm run lint` exit 0 with the pre-existing Fast Refresh warnings only | PASS |
+| V1 launches and runs | Real Chromium: mounts, reaches `/api/meta` HTTP 200 through its own dev server, renders **179** interactive controls, **zero** uncaught page errors | PASS |
+| V1 reachable from the launcher | `start_react.js` unchanged and present in every `pinokio.js` branch; asserted by `test_launcher_activation` | PASS |
+| V1 covered by install/reset | `install.js` and `reset.js` both name `react-ui` and `react-ui-v2` | PASS |
+| Immutable rollback artifact | `react-ui-v1` annotated tag created at `6d3d2f1`; `git ls-tree` confirms `react-ui/src/App.jsx`. Previously ABSENT while `.gitignore` named it canonical. | PASS |
+| Rollback executed | Not performed; the documented rollback is one line in `start.js` plus the tag | NOT TESTED |
+
+### B. React UI 2.0 - real browser acceptance
+
+`tests/ui_browser_acceptance.py` boots the same two processes the Pinokio
+launcher boots and drives a real Chromium over the DevTools Protocol.
+**22 of 22 checks PASS.** Screenshots retained under
+`app/output/ui_acceptance/v2/screens/`.
+
+| Check | Evidence | State |
+|---|---|---|
+| Browser runtime | Chrome resolved on this host; `websockets` already in `app/env`, so no dependency was added to the environment under test | PASS |
+| Shell renders | sidebar and topbar mounted; React tree non-empty | PASS |
+| Backend reachable from the page | `/api/meta` HTTP 200, 22 keys, **through the dev server's proxy** - proves the whole launcher wiring, not just two live processes | PASS |
+| Routing | `#/home`, `#/create`, `#/settings` each mount their own screen with the correct heading | PASS |
+| Navigation by real click | clicking the sidebar entry changes the route | PASS |
+| Themes applied | all **7 of 7** (light, dark, professional, modern, minimal, gaming, anime) | PASS |
+| Themes actually change the palette | 7 distinct computed `--bg` values - not just a changed `data-theme` attribute | PASS |
+| Theme persistence | 7 of 7 written to `localStorage` | PASS |
+| Controls present | 47 interactive controls (home 6, create 27, settings 14) | PASS |
+| Controls have accessible names | 0 unlabelled of 47 | PASS |
+| Controls respond | 12 non-destructive controls activated; 0 new page errors | PASS |
+| Telemetry honesty | the rendered Settings screen carries an explicit `UNKNOWN` / `NOT AVAILABLE` sentinel rather than a fabricated value | PASS |
+| Responsive | zero horizontal overflow at 1440x900, 1024x768, 900x800 and 420x900 | PASS |
+| Console clean | zero uncaught page errors after the missing-favicon 404 was fixed | PASS |
+| Human visual/aesthetic review | not performed - a driven browser is not a designer | NOT TESTED |
+
+### C. Processing, visual pipeline and output
+
+| Check | Evidence | State |
+|---|---|---|
+| Single-image swap | `tests/image_swap_smoke.py`, live config: 3 of 3 frames graded, mean region delta 6.29/255, identity to source `0.057 -> 0.755`. Was `0.00/255` and zero identity gain before the fix. | PASS |
+| The smoke discriminates | `--control` arm fails every assertion as required | PASS |
+| Video render end to end | 899 frames, 1280x720, 30,667,386 bytes, decodes; 13-15 fps, 4 worker threads | PASS |
+| Encoder | `hevc_nvenc` probes OK and encodes after the ffmpeg-resolution fix | PASS |
+| Host memory | 2.4-2.9 GB RSS across the render - below the 3.46-3.9 GB the earlier 3060 records report | OBSERVED |
+| VRAM | ~4.4 GB peak of 6,144 MiB; no thrashing | OBSERVED |
+| Adaptive small-card policy | enhancer stripped to None and RealityUX reduced to XSeg on the sub-7GB tier, announced in the log | OBSERVED, unchanged behaviour |
+| Visual quality review | no human review of rendered frames | NOT TESTED |
+| Stage 15's 71/467 identity mismatch | that measurement is Device A's; not reproduced or refuted here | NOT TESTED |
+
+### D. Runtime lifecycle on real frames
+
+`tests/runtime_lifecycle.py` drives the same FastAPI boundary the V2 client
+drives, on this GPU, and grades outcomes rather than intent.
+
+| Check | Evidence | State |
+|---|---|---|
+| Backend boots and initialises | `/api/settings` returns a populated configuration | PASS |
+| Source faceset loads | 1 source entry ingested | PASS |
+| Target referenced by path | no upload, no duplicate copy | PASS |
+| Render starts | `processing: true`, and a backend refusal is now detected rather than read as a start | PASS |
+| Work advances before the pause | progress 0.022 on live frames | PASS |
+| Pause acknowledged at a safe point | `paused: true`, controller `{requested: true, acknowledged: true, active_work: 0, pending_output: 0}` | PASS |
+| **Paused engine stops doing work** | progress held at 0.022 across 15 s - this is the claim a UI-only pause cannot satisfy | PASS |
+| Resume continues the same run | 0.022 -> 0.033 | PASS |
+| Paused-and-resumed run completes | `desc: 'Done'`, no error | PASS |
+| Output produced and correct | 899 frames at the requested 900-frame bound, decodes, 30.7 MB | PASS |
+
+### E. Environment health, network and storage
+
+| Check | Evidence | State |
+|---|---|---|
+| Runtime health worker | `update_health.py --source-root . --data-root . --json`: **8 of 8 checks pass, `healthy: true`, exit 0** - dependencies, node dependencies for BOTH clients, configuration, provider, GPU, launch probe (`/api/meta` HTTP 200), model sessions, finite inference. Previously exit 2. | PASS |
+| Online update check | no newer candidate on this branch | PASS for a no-op check |
+| Update candidate installation and rollback | no candidate exists to install | NOT TESTED |
+| Local-only operation | `tests/local_only_probe.py`: 177 samples over 90 s of a live render, **zero non-loopback TCP peers** from the backend process tree | PASS |
+| Physical disconnected operation | the network adapter was not disconnected | NOT TESTED |
+| Cleanup report | read-only categorised report; `react-ui-v2/dist` now included, `node_modules` still excluded from every category | PASS for review |
+| Cleanup deletion and launch-after-delete | not performed | NOT TESTED |
+
+### F. Feature parity - measured, not estimated
+
+| Measure | React UI 1.0 | React UI 2.0 |
+|---|---:|---:|
+| Distinct API routes referenced | 87 | 31 |
+| Routes unique to that client | **62** | 6 |
+| Interactive controls rendered in a browser | **179** | 47 |
+
+V1-only families: faceset library (8), advanced target operations (14), face
+manager (7), advanced source operations (5), settings/benchmark (4), extra
+queue operations (4), extras (3), live cam (3), run history (2), export
+presets (2), plus quality analysis, the advisor, profiles, reveal, output
+deletion, preview upscale, lipsync audio and the legacy telemetry projection.
+
+**V2 is therefore NOT a complete replacement for V1**, and is not activated as
+one. It is the default client; V1 remains one click away and is the supported
+route to every capability above.
+
+### G. Not closed by this session
+
+| Item | Reason |
+|---|---|
+| Every RTX 4070 row | Device A absent. The seven fixes are device-independent code, but its still-image smoke, its 71/467 identity mismatch and its launch-probe timeout need a session on that host. |
+| PC shutdown / restart continuation | not performed |
+| Physical network disconnection | not performed |
+| Human visual review of output | not performed |
+| Update installation and rollback | no candidate available |
+| Cleanup mutation | not performed |
+| Phase 16 (17-clip visual matrix) | untouched; still `OPEN_INCOMPLETE` |
+| The strict `<2.5 GB` RSS gate | this render measured 2.4-2.9 GB, but that is with the small-card policy stripping the enhancer; the gate's scope decision from 2026-08-31 Part 2 is still owed |
+
+### Stage 18 acceptance conclusion
+
+React UI 2.0 is **activated as the default client** and passes every check that
+was run against it on this device. React UI 1.0 is **preserved, launchable and
+verified**. Four hard failures inherited from stages 14-16 are resolved with
+evidence, and three further defects that no gate had detected were found and
+fixed.
+
+This is **not** a declaration that the full acceptance matrix is green. Device A
+is unmeasured this session, feature parity is a known and quantified gap, and
+the rows in section G remain `NOT TESTED`. The correct reading is: **public-use
+ready as a local distributable application on this device, with V1 retained for
+the capabilities V2 does not yet cover.**

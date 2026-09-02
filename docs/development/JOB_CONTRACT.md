@@ -1,5 +1,34 @@
 # Job and Lifecycle Contract
 
+## Stage 18 amendment (2026-09-02, physical RTX 3060)
+
+Batch queue, pause/resume and persistent projects are now measured end to end
+on hardware (`tests/runtime_lifecycle.py`), not only at the control plane:
+
+| Claim | Measured |
+|---|---|
+| Multiple independent jobs coexist | 2 accepted, both `QUEUED`, neither lost |
+| Each job reaches a terminal state | both `COMPLETED` / `finished` |
+| Each job owns its own output | two distinct output files |
+| Pause acknowledges at a safe point | `{requested: true, acknowledged: true, active_work: 0, pending_output: 0}` |
+| A paused engine stops working | progress held at 0.022 across 15 s |
+| Resume continues the same run | 0.022 -> 0.033, run completed |
+| Project records survive a real backend restart | 8 records before and after; the record written pre-restart still listed and reloadable |
+| An interrupted run does not claim success | the killed render left a `RECOVERABLE` record; observed states are `COMPLETED` and `RECOVERABLE` only |
+| Environment change is detected | validate refused with `runtime provider differs from the checkpoint` |
+
+**A checkpoint failure can no longer abort a render.** `_atomic_write`'s
+`os.replace` was unretried; on Windows it raises `PermissionError` whenever
+another process momentarily holds either file. That call sits at the top of
+`api._run_swap` BEFORE that function's own `try`, so the exception escaped the
+worker: the render never began and `_progress["processing"]` was never cleared,
+leaving the app at `processing: true, progress: 0.0, error: ''` indefinitely.
+The rename now retries with bounded backoff, and `_set_processing_project_state`
+reports a persistence failure instead of raising.
+
+Still NOT tested: a real PC shutdown/restart continuation, and anything on the
+RTX 4070.
+
 ## CURRENT IMPLEMENTATION
 
 ### Execution boundary

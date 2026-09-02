@@ -26,6 +26,11 @@ COMPATIBILITY = {
 PROJECTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "projects")
 STATES = ("PAUSED", "INTERRUPTED", "RECOVERABLE", "FAILED", "COMPLETED", "PROCESSING")
 
+# Roughly 1.2 s of backoff in total: long enough to outlast an antivirus or
+# indexer handle, short enough that a real permissions fault still surfaces
+# promptly rather than stalling a render.
+_REPLACE_ATTEMPTS = 8
+
 
 def _json_default(value):
     if hasattr(value, "item"):
@@ -36,7 +41,24 @@ def _json_default(value):
 
 
 def _atomic_write(path: str, value: Mapping[str, Any]) -> None:
-    """Replace one JSON record only after its contents have reached disk."""
+    """Replace one JSON record only after its contents have reached disk.
+
+    THE RENAME IS RETRIED, BECAUSE ON WINDOWS IT FAILS TRANSIENTLY.  `os.replace`
+    raises PermissionError (WinError 5 / WinError 32) whenever any other process
+    holds a handle to either file for even a moment -- Defender scanning the
+    freshly written temporary, the Search indexer touching the destination, a
+    backup agent.  Nothing in this application is holding them.
+
+    Observed on the physical RTX 3060 host: a project's PROCESSING state update
+    raised WinError 5, the exception escaped the render worker, and the run died
+    while `_progress["processing"]` stayed true -- the UI showed a job
+    generating forever with no error and no output.  A single unretried rename
+    was therefore able to wedge the whole application.
+
+    The retry window is short and bounded; a genuine, persistent failure (a
+    read-only directory, a real permissions problem) still raises, so this
+    cannot mask a broken projects directory.
+    """
     directory = os.path.dirname(os.path.abspath(path)) or "."
     os.makedirs(directory, exist_ok=True)
     fd, temporary = tempfile.mkstemp(prefix=".checkpoint-", suffix=".tmp", dir=directory)
@@ -45,7 +67,16 @@ def _atomic_write(path: str, value: Mapping[str, Any]) -> None:
             json.dump(value, fh, indent=1, sort_keys=True, default=_json_default)
             fh.flush()
             os.fsync(fh.fileno())
-        os.replace(temporary, path)
+        delay = 0.02
+        for attempt in range(_REPLACE_ATTEMPTS):
+            try:
+                os.replace(temporary, path)
+                break
+            except PermissionError:
+                if attempt == _REPLACE_ATTEMPTS - 1:
+                    raise
+                time.sleep(delay)
+                delay = min(delay * 2, 0.4)
     finally:
         try:
             os.remove(temporary)

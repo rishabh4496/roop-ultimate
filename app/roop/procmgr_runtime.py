@@ -1128,9 +1128,33 @@ def pause_scope(processing):
 
 
 def pause_aware(function):
-    """Decorate a frame operation while preserving its source-level method."""
+    """Decorate a frame operation while preserving its source-level method.
+
+    ADMISSION IS RUN-SCOPED, AND THE STILL PATH IS NOT PART OF A RUN.
+    ``pause_scope``'s predicate is ``roop.globals.processing``, which answers
+    "is a batch run in progress and not stopped".  ``PauseController.begin``
+    refuses outright when it is False, so the decorated frame operation is
+    skipped and the INPUT FRAME IS RETURNED UNCHANGED.
+
+    That flag is owned by ``core.batch_process`` / the API's swap route.  It is
+    False for ``core.live_swap`` -- the single-image swap and the UI's preview
+    button -- because those are not a run.  The effect was that every still
+    swap and every out-of-render preview loaded the models, ran no swap at all,
+    and handed back the original plate: bit-identical output, 0.00/255
+    face-region delta, zero identity movement, on BOTH validation GPUs.  It is
+    the same silent class as the temporal-faces dedent: every stage reported
+    success and nothing was swapped.
+
+    A preview manager outside a run therefore bypasses the run-scoped gate --
+    there is no run to stop and nothing to pause.  While a run IS in progress
+    the normal admission still applies, so a paused render does not get extra
+    GPU work through the preview route.
+    """
     @functools.wraps(function)
     def wrapped(self, frame, frame_idx=None, output_pending=False):
+        if getattr(self, 'is_preview', False) and not bool(
+                getattr(roop.globals, 'processing', False)):
+            return function(self, frame, frame_idx=frame_idx)
         with pause_scope(lambda: bool(getattr(roop.globals, 'processing', False))) as allowed:
             if not allowed:
                 return frame

@@ -455,7 +455,12 @@ def pre_check() -> bool:
     print_cuda_info()  # Debug CUDA during pre-check
 
 
-    if not shutil.which('ffmpeg'):
+    # Ask the same resolver the render path uses.  A bare `which` reported
+    # "ffmpeg is not installed" on machines where it is installed but simply
+    # not on this process's PATH, and said nothing about the encoder actually
+    # used, so the notice and the behaviour could disagree.
+    from roop.ffmpeg_path import ffmpeg_binary
+    if not os.path.isabs(ffmpeg_binary()) and not shutil.which('ffmpeg'):
        update_status('ffmpeg is not installed.')
     return True
 

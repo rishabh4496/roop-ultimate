@@ -4,6 +4,22 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+import sys
+from pathlib import Path
+
+# `app.update_manager` is only importable when the REPOSITORY ROOT is on sys.path.
+# Both documented suite commands must collect this module:
+#   from app/ : python -m unittest discover -s tests -t . -p "test_*.py"
+#   from root : python -m unittest discover -s app/tests -p "test_*.py"
+# Only the second puts the repository root on sys.path, so under the
+# app-relative command this module raised ImportError and unittest reported an
+# ERROR instead of running its tests -- a whole module silently uncollected on
+# one of the two commands the project documents.  Bootstrapping here makes the
+# module self-sufficient under either.
+_ROOT = Path(__file__).resolve().parents[2]
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
+
 from app import update_manager
 
 

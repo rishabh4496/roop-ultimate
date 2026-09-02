@@ -1,3 +1,114 @@
+# Stage 18 Session Handoff - RTX 3060 validation and React UI 2.0 activation
+
+Date: 2026-09-02
+Host: **NVIDIA GeForce RTX 3060 Laptop GPU, 6 GB** (Device B)
+Behavior changes: **yes** - seven defect fixes and the production UI switch
+
+## READ THIS FIRST
+
+**This session ran on the RTX 3060, not the RTX 4070.** Every stage from 14
+onward recorded Device B as `BLOCKED / NOT VERIFIED` because the hardware was
+not present. It was present here, and nothing in this handoff is extrapolated
+to Device A - which was, in turn, absent.
+
+**React UI 2.0 is now the default client, and React UI 1.0 is untouched and
+still launchable.** `start.js` re-exports `start_react_v2.js`; the Pinokio menu
+default starts V2; V1 has its own action in every branch. The only V1 file
+edited in this session was `react-ui/index.html`, whose tab title was still the
+Vite scaffold default. To roll back: point `start.js` at `./start_react.js`.
+The `react-ui-v1` tag (new) is the immutable reference.
+
+## The lesson this stage adds: PATH is part of the contract
+
+Three of the seven defects were the same shape - **a tool invoked by bare name,
+working only because a Pinokio-managed shell happened to put it on PATH**:
+
+| tool | consequence outside a Pinokio shell |
+|---|---|
+| `ffmpeg` (render path) | every video render aborted; `progress: 1.0`, `desc: 'Done'`, **no output file**, queue jobs FAILED |
+| `npm` (health worker) | the whole health report unhealthy on a healthy machine |
+| `node` (dev-server child) | the UI never answered; `'"node"' is not recognized` |
+
+The project had already been bitten by this twice and fixed it twice with a
+private copy of the search, which is exactly how the render path came to be the
+one place still using the bare name. There is now one shared resolver,
+`roop/ffmpeg_path.py`, and `HardwareProfiler._resolve_ffmpeg` delegates to it.
+
+**Whenever a change is validated only under the launcher, ask what it does when
+the launcher is not there** - because the health worker, the updater and every
+benchmark child process are exactly that case.
+
+## The other recurring shape: something reported success while doing nothing
+
+Four defects here were invisible to every existing gate because the failure
+path returns a plausible value:
+
+- `pause_aware` returned the INPUT FRAME when admission was refused, so every
+  still swap and every UI preview handed back the untouched plate. Return code
+  0, valid image, swap audit satisfied.
+- The encoder abort left `desc: 'Done'` and `progress: 1.0`.
+- `get_all_faces` swallows detector exceptions, so an unguarded
+  `CFG.force_cpu` during the startup window produced a faceset with **zero
+  faces** and no error.
+- A checkpoint rename failure escaped `_run_swap` **before its own `try`**,
+  leaving `processing: true, progress: 0.0, error: ''` forever.
+
+The instruments that keep missing this class are the return code and the swap
+audit. What caught them was grading an OUTCOME: identity movement, a decoded
+frame count, an observed progress delta across a held pause.
+
+## What is now verified on this device
+
+- **Real browser acceptance is no longer blocked.** Chrome/Edge are present and
+  `websockets` is already in `app/env`, so `tests/browser_driver.py` drives a
+  real Chromium over CDP without adding a dependency to the environment that
+  `update_health` validates. V2: **22/22**. V1: **7/7**.
+- **True pause/resume on real frames**: progress held at 0.022 across 15 s of a
+  live render, advanced on resume, and the run completed to a valid 899-frame
+  1280x720 video.
+- **Health worker: 8/8, `healthy: true`, exit 0** - first time on this device.
+- **Single-image swap**: identity `0.057 -> 0.755`, control arm still fails.
+- **Local-only**: 177 samples, zero non-loopback peers during a live render.
+
+## Start here next session
+
+1. **Run everything in this handoff on the RTX 4070.** All seven fixes are
+   device-independent code and none is 4070-verified. Specifically re-close
+   there: the still-image smoke (`tests/image_swap_smoke.py`), the health
+   worker (`update_health.py --source-root . --data-root . --json`), the
+   browser acceptance (`tests/ui_browser_acceptance.py --ui v2` and `--ui v1`)
+   and the runtime lifecycle (`tests/runtime_lifecycle.py --frames 900`).
+2. **Re-examine Stage 15's 71/467 identity mismatch.** It is Device A evidence
+   and was neither reproduced nor refuted here. Note that it was measured
+   through a harness on a host where the still path was returning unswapped
+   plates; that does not explain a video-path mismatch, but the pipeline has
+   changed since.
+3. **Decide the feature-parity policy.** V2 is the default with 47 controls
+   against V1's 179 and 62 V1-only routes. Either close specific families in
+   V2 or keep V1 as the documented route to them - but that is now a product
+   decision, not an unknown.
+4. **Close the startup window.** `run.py` starts the API thread before
+   `core.run()` populates `roop.globals.CFG` because the launcher waits on the
+   URL that thread prints. The crash is fixed; the window is not.
+5. Still owed and untouched: a physical disconnection test, a real PC
+   shutdown/restart continuation, human visual review, an update candidate with
+   rollback, cleanup mutation, and Phase 16's 17-clip matrix.
+
+## New permanent harnesses
+
+| File | Purpose |
+|---|---|
+| `tests/browser_driver.py` | CDP client for a real Chromium; no new dependency |
+| `tests/ui_browser_acceptance.py` | V2 acceptance and V1 regression in a real browser |
+| `tests/runtime_lifecycle.py` | render / pause / resume / queue / projects / restart against the live API |
+| `tests/local_only_probe.py` | observes the backend's own TCP peers during a render |
+| `tests/test_preview_admission.py` | the still/preview path must actually run |
+| `tests/test_ffmpeg_resolution.py` | ffmpeg is resolved, never invoked bare |
+| `tests/test_checkpoint_resilience.py` | a transient rename cannot wedge a render |
+| `tests/test_launcher_activation.py` | V2 is default AND V1 stays reachable |
+
+---
+
 # Stage 2A Session Handoff
 
 Date: 2026-09-01  

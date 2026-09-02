@@ -7,7 +7,25 @@ what is verified in the repository and what must be completed before React UI
 1.0 can be retired. It is not authorization to delete V1 or switch the
 production launcher.
 
-## Decision
+## Decision - SUPERSEDED for activation, UNCHANGED for retirement (Stage 18, 2026-09-02)
+
+**React UI 2.0 has been ACTIVATED as the default client.** `start.js` now
+re-exports `start_react_v2.js` and the Pinokio menu's default action starts V2.
+That is an ACTIVATION, not a migration: nothing was deleted, and rollback is one
+line in `start.js` plus the `react-ui-v1` tag created in Stage 18.
+
+**V1 RETIREMENT REMAINS NOT AUTHORIZED.** Every exit condition below still
+stands. Stage 18 closed several of them - a physical RTX 3060 session, real
+browser acceptance for both clients, an immutable rollback tag, and a project
+record surviving a real backend restart - but the decisive one did not move:
+V2 is measurably not a replacement. V1 references 87 API routes to V2's 31, 62
+of them V1-only, and renders 179 interactive controls to V2's 47. Until those
+families exist in V2, V1 is the supported route to them and must stay.
+
+The Stage 17A audit below is retained verbatim as the record of what was true
+before activation.
+
+### Stage 17A decision (historical)
 
 React UI 1.0 must remain available. React UI 2.0 is not ready for migration.
 The Stage 16 acceptance matrix contains `FAIL`, `BLOCKED`, and `NOT TESTED`

@@ -198,3 +198,152 @@ newer writer-options identity are conservatively not trusted for continuation.
     acceptance, close/shutdown recovery, and tested immutable V1 rollback are
     not established. No V1 files may be deleted until the documented
     migration exit conditions pass.
+
+---
+
+## Stage 18 - RTX 3060 physical validation and React UI 2.0 activation (2026-09-02)
+
+Run on the **secondary device, RTX 3060 Laptop 6 GB** - the target every prior
+stage recorded as `BLOCKED / NOT VERIFIED`. Device A (RTX 4070) was not present
+in this session; no result below is extrapolated to it.
+
+### Resolved in this session
+
+48. **RESOLVED - issue 41, the Stage 14 still-image processing failure.**
+    Reproduced byte-identically on the RTX 3060 (region delta `0.00/255`,
+    identity `0.0574 -> 0.0574`), so it was never hardware-specific. Root cause:
+    `procmgr_runtime.pause_aware` gates every decorated frame operation on
+    `roop.globals.processing`, and `PauseController.begin` refuses outright when
+    that flag is false. The flag is owned by the batch run, so it is false for
+    `core.live_swap` - the single-image swap **and the UI preview button**. The
+    decorator's refusal path returns the input frame, so the still path loaded
+    every model, ran no swap at all, and handed back the original plate. A
+    preview manager outside a run now bypasses the run-scoped gate; admission
+    during a live run is unchanged, so a paused render still cannot be given
+    extra GPU work. After the fix identity moves `0.057 -> 0.755` on every
+    graded frame. Covered by `tests/test_preview_admission.py`.
+
+49. **RESOLVED - issue 44, the health-validator failure.** Two distinct causes,
+    one per host. On this device the failing check was `node-dependencies`, not
+    launch: `shutil.which("npm")` misses the npm Pinokio keeps in its own
+    toolchain and puts on PATH only inside a Pinokio shell, so the whole health
+    report was unhealthy on a healthy machine. `update_health._resolve_npm` now
+    mirrors `HardwareProfiler._resolve_ffmpeg`. The launch probe was separately
+    hardened for the 4070's reported symptom: its child's stdout pipe was never
+    drained while the probe ran, so a child printing more than the OS pipe
+    buffer blocks on write and can never bind its port; and its fixed 90 s
+    budget cannot cover a cold TensorRT start on a target that admits TensorRT
+    (this device resolves to CUDA/CPU and starts fast, which is why its probe
+    passed). Health now returns `healthy: true`, exit 0, eight of eight checks
+    green here. **The 4070's launch-probe timeout is not re-measured** - both
+    mechanisms are addressed, but that host must confirm.
+
+50. **RESOLVED - the V1-preservation guard could not run on a second machine.**
+    `test_ui2_integration.test_v1_remains_available_and_is_not_imported_by_v2`
+    asserted on `react-ui-v1-backup/src/App.jsx`, which `.gitignore` excludes.
+    It passed only on the machine that happened to create that directory, and
+    FAILED on this host and on any fresh user clone - a V1-preservation guard
+    that cannot run on a second machine cannot protect V1 anywhere. It now
+    asserts tracked V1 (filesystem plus `git ls-files`) and that V1 stays
+    launchable. The `react-ui-v1` tag that `.gitignore` names as the canonical
+    backup did not exist; it has been created, and a new test asserts it
+    resolves and contains V1. This closes the Stage 17A rollback-provenance gap.
+
+51. **RESOLVED - two test modules were silently uncollected.**
+    `tests/test_update_manager.py` and `tests/test_update_health.py` import
+    `from app import ...`, which resolves only from the repository root. Under
+    the app-relative command AGENTS.md documents, both raised ImportError and
+    unittest reported ERRORs instead of running them. Both now bootstrap the
+    repository root and collect under either documented command.
+
+### Found and fixed in this session
+
+52. **The render path invoked ffmpeg by bare name.**
+    `ffmpeg_writer.FFMPEG_BINARY` was the literal `"ffmpeg"` and `util_ffmpeg`
+    built its command lines the same way. Pinokio's shell puts ffmpeg on PATH,
+    so under the launcher this worked and every prior validation passed. Outside
+    it - the health worker's launch probe, a benchmark child process, a plain
+    terminal - the encoder pre-flight aborted every video render with
+    `Video encoder 'hevc_nvenc' is not working ... ffmpeg binary 'ffmpeg' was
+    not found on PATH`. Measured here: a 900-frame render reported
+    `progress: 1.0` and `desc: 'Done'` within seconds, wrote **no output file**,
+    and both queued jobs were marked FAILED - on a machine whose ffmpeg works
+    and exposes NVENC. The failure is silent in the worst way: the run
+    "finishes". Resolution now goes through one shared `roop/ffmpeg_path.py`,
+    and `HardwareProfiler._resolve_ffmpeg` delegates to it rather than keeping a
+    third private copy of the search. Covered by
+    `tests/test_ffmpeg_resolution.py`, including a guard that fails if a bare
+    invocation reappears.
+
+53. **A transient checkpoint rename could wedge the whole application.**
+    `project_checkpoint._atomic_write` called `os.replace` once. On Windows that
+    raises `PermissionError` (WinError 5/32) whenever another process holds a
+    handle to either file for a moment - antivirus scanning the freshly fsynced
+    temporary, the Search indexer, a backup agent. Observed here on a PROCESSING
+    state update. Because that call sits at the top of `api._run_swap` **before
+    that function's own `try` (api.py:2892)**, the exception escaped the worker
+    thread: the render never began and the `finally` that clears
+    `_progress["processing"]` never ran, so the API reported
+    `processing: true, progress: 0.0, desc: 'Starting...', error: ''`
+    indefinitely - a job the user sees generating forever that is not running,
+    produces nothing and reports no error. The rename is now retried with
+    bounded backoff, and `_set_processing_project_state` reports a persistence
+    failure instead of raising, so no future checkpoint fault can abort a
+    render. A genuinely unwritable directory still raises. Covered by
+    `tests/test_checkpoint_resilience.py`.
+
+54. **A detector request before initialisation returned zero faces silently.**
+    `run.py` starts the API thread before `core.run()` populates
+    `roop.globals.CFG`, so the server accepts work during that window.
+    `face_util` read `roop.globals.CFG.force_cpu` unguarded - `retinaface.py`
+    and `yoloface.py` already guard the same attribute - and the resulting
+    `AttributeError` is swallowed by `get_all_faces`. The visible symptom was a
+    faceset that ingested **zero faces**; in a render it is every frame written
+    through unswapped with no error. `face_util` now matches its peers.
+
+55. **React UI 2.0 logged a 404 for a missing favicon on every page load**, and
+    React UI 1.0's browser tab title was still the Vite scaffold default
+    `react-ui`. Both fixed; V2 now ships `react-ui-v2/public/favicon.svg`.
+
+56. **`cleanup.py` did not know about `react-ui-v2/dist`.** Both clients ship,
+    both are served by the Vite dev server, and both `dist` trees are ignored -
+    so V2's build output was disposable space the supported cleanup path could
+    never report or reclaim. `node_modules` remains deliberately excluded from
+    every cleanup category because it is required to launch either client.
+
+### Still open after this session
+
+57. **The startup window itself is not closed.** `run.py` must start the API
+    thread before `core.run()` because the Pinokio launcher waits on the
+    loopback URL that thread prints. Issue 54 makes the window degrade safely
+    rather than crash, but a request arriving before `roop.globals.CFG` exists
+    still runs with default configuration rather than the user's. A readiness
+    gate on the API is the real fix and was not attempted here.
+    `tests/runtime_lifecycle.py` waits for `/api/settings` to return a populated
+    configuration, which is a usable readiness signal for callers.
+
+58. **React UI 2.0 is NOT feature-complete against React UI 1.0.** Measured, not
+    estimated: V1 references **87** distinct API routes, V2 references **31**,
+    and **62 are V1-only** - the faceset library (8 routes), the face manager
+    (7), advanced target operations (14), advanced source operations (5),
+    extras (3), live cam (3), run history (2), export presets (2), quality
+    analysis, the advisor and the benchmark controls (4), among others. In a
+    real browser V1 renders **179** interactive controls against V2's **47**.
+    V2 is now the default client and V1 remains one click away for exactly this
+    reason; the gap is a documented limitation, not a regression, and no V1
+    file was deleted.
+
+59. **Device A (RTX 4070) was not present in this session.** Every measurement
+    recorded for Stage 18 is RTX 3060 evidence. The seven code fixes are
+    device-independent, but the 4070 rows - its own still-image smoke, the
+    71/467 identity mismatch from Stage 15, and its launch-probe timeout - need
+    a session on that host before they can be re-closed.
+
+60. **Not tested in this session:** a physical network disconnection, a real PC
+    shutdown and restart continuation, human visual review of rendered output,
+    and an executed update-candidate installation with rollback (no newer
+    candidate exists on this branch). Local-only operation was measured in the
+    opposite direction instead - `tests/local_only_probe.py` observed the
+    backend's own TCP endpoints for 90 s across 177 samples during a live render
+    and found **zero non-loopback peers** - which bounds the claim without
+    simulating a disconnection.

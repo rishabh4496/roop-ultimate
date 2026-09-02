@@ -1,5 +1,28 @@
 # Roop Ultimate Development Master Plan
 
+## Stage 18 - RTX 3060 validation and React UI 2.0 activation (2026-09-02)
+
+Run on the physical **RTX 3060 Laptop 6 GB** (Device B), the target every stage
+from 14 onward recorded as unavailable. Device A (RTX 4070) was absent and no
+row is closed for it.
+
+- **React UI 2.0 is the default client**; **React UI 1.0 is preserved,
+  launchable and verified in a real browser.** V1 retirement remains NOT
+  authorized - see `UI2_MIGRATION_PLAN.md`.
+- Four inherited hard failures resolved with evidence (still-image swap, health
+  validator, the non-portable V1-preservation guard, two uncollected test
+  modules) and three previously undetected defects fixed (bare-`ffmpeg`
+  resolution, a checkpoint rename that could wedge a render, an unguarded
+  `CFG` read during the startup window).
+- Real-browser acceptance is no longer blocked: V2 **22/22**, V1 **7/7**.
+- True pause/resume, batch queue, output correctness and project survival
+  across a real backend restart are now measured on hardware, not inferred.
+
+Full evidence: `VALIDATION_MATRIX.md` -> *Stage 18 acceptance*. Next steps:
+`SESSION_HANDOFF.md`.
+
+---
+
 Audit date: 2026-09-02
 Repository HEAD at Stage 9A audit start: `459dd4082e60ae1b153b2e65c393eb8a2d6d9198`
 

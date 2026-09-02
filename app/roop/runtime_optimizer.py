@@ -801,6 +801,13 @@ class HardwareProfiler:
         The capability must be probed from a resolvable binary, per the
         hardware-matrix rule that capabilities are detected rather than assumed.
         """
+        # Delegated to the shared resolver so the profiler and the render path
+        # can never disagree about which ffmpeg exists.  The search order below
+        # is retained as the fallback it always was.
+        from roop.ffmpeg_path import ffmpeg_binary
+        resolved = ffmpeg_binary()
+        if resolved and os.path.isabs(resolved) and os.path.isfile(resolved):
+            return resolved
         found = shutil.which("ffmpeg")
         if found:
             return found

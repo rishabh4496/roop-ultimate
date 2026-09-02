@@ -1,5 +1,72 @@
 # Current Repository State
 
+Audit date: 2026-09-02 (Stage 18). This file records verified repository state
+and gate status; it is not authorization to change application behavior.
+
+## Stage 18 - RTX 3060 physical validation and React UI 2.0 activation
+
+**Host: NVIDIA GeForce RTX 3060 Laptop GPU, 6,144 MiB, driver 616.56, compute
+capability 8.6, i7 14P/20L, 15.8 GB RAM.** This is Device B - the target every
+stage from 14 onward recorded as `BLOCKED` or `NOT VERIFIED` for want of
+hardware. Device A (RTX 4070) was **not** present in this session and nothing
+below is extrapolated to it.
+
+### Production UI
+
+**React UI 2.0 is now the default application UI.** `start.js` re-exports
+`start_react_v2.js`, and the Pinokio menu's default action starts V2.
+
+**React UI 1.0 is preserved in full and remains launchable.** No V1 file was
+deleted or renamed; the only V1 edit in this session was its browser tab title,
+which was still the Vite scaffold default. V1 has its own menu action in every
+launcher branch, is covered by `install.js` and `reset.js`, was rebuilt and
+re-linted, and was exercised in a real browser. Rollback is one line in
+`start.js` plus the new immutable `react-ui-v1` git tag.
+
+V2 is **not** feature-complete against V1 and is not claimed to be: V1
+references 87 API routes to V2's 31, with 62 V1-only (faceset library, face
+manager, extras, live cam, run history, quality analysis, advisor, benchmark,
+export presets, advanced source/target operations), and renders 179 interactive
+controls against V2's 47. That is why V1 stays one click away.
+
+### Defects found and fixed
+
+Seven, all device-independent code, each with a regression test:
+
+| # | Defect | Evidence |
+|---|---|---|
+| 1 | `pause_aware` gated every frame on `roop.globals.processing`, which is false outside a batch run - so **every single-image swap and every UI preview returned the untouched plate**. This is the unresolved Stage 14 `#41` failure, reproduced byte-identically here. | `0.00/255` region delta before, identity `0.057 -> 0.755` after |
+| 2 | The render path invoked **ffmpeg by bare name**, so outside a Pinokio shell every video render aborted with "video encoder unavailable" - reporting `progress: 1.0`, `desc: 'Done'`, no output file, and FAILED queue jobs | 900-frame render produced nothing; after the fix, 899 frames / 30.7 MB |
+| 3 | A transient Windows `os.replace` failure in the project checkpoint **escaped `_run_swap` before its own `try`**, wedging the app at `processing: true, progress: 0.0, error: ''` forever | observed `PermissionError [WinError 5]` mid-run |
+| 4 | `update_health` resolved **npm** by bare PATH, so the whole health report was unhealthy on a healthy machine; its launch probe also never drained the child's stdout pipe and used a 90 s budget | health now `healthy: true`, exit 0, 8/8 |
+| 5 | `face_util` read `roop.globals.CFG.force_cpu` unguarded during the startup window, so a faceset ingested **zero faces** silently | peers `retinaface`/`yoloface` already guarded it |
+| 6 | The V1-preservation test asserted on a **gitignored** directory, so it passed on one machine and failed everywhere else; the `react-ui-v1` tag it pointed at did not exist | tag created; guard rewritten against tracked V1 |
+| 7 | Two test modules (`test_update_manager`, `test_update_health`) were **silently uncollected** under the documented app-relative suite command | both now collect under either command |
+
+### Evidence gathered on this host
+
+- **Real-browser acceptance is no longer blocked.** Chrome and Edge are present
+  and `websockets` is already in `app/env`, so `tests/browser_driver.py` drives
+  a real Chromium over the DevTools Protocol with no new dependency - which
+  matters because the validated environment is itself under test. React UI 2.0
+  passed **22 of 22** checks; React UI 1.0 passed **7 of 7**.
+- **True pause/resume proven on real frames**, not at the control plane: the
+  engine held at progress 0.022 across 15 s of a live render and then advanced
+  on resume, and the paused-and-resumed run completed to a valid 899-frame,
+  1280x720, 30.7 MB video.
+- **Local-only operation measured directly**: 177 samples over 90 s of a live
+  render observed **zero non-loopback TCP peers** from the backend process tree.
+- Full runtime health passes end to end on this device for the first time.
+
+### What this session did not test
+
+A physical network disconnection, a real PC shutdown/restart continuation,
+human visual review of rendered output, an executed update-candidate
+installation with rollback (no newer candidate exists on this branch), and
+anything at all on the RTX 4070.
+
+---
+
 Audit date: 2026-09-02. This file records verified repository state and gate
 status; it is not authorization to change application behavior.
 

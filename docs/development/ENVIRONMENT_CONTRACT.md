@@ -1,5 +1,40 @@
 # Environment and Launcher Contract
 
+## Stage 18 amendment (2026-09-02) - PATH is part of the contract
+
+**React UI 2.0 is the default client.** `start.js` re-exports
+`start_react_v2.js`; the Pinokio menu default starts V2; React UI 1.0 keeps its
+own action in every launcher branch and is covered by `install.js` and
+`reset.js`. Rollback: point `start.js` at `./start_react.js`. The `react-ui-v1`
+tag is the immutable reference and is asserted by a test.
+
+**Three tools were being invoked by bare name and worked only because a
+Pinokio-managed shell happened to put them on PATH.** Outside one -- the health
+worker, the updater, a benchmark child process, a plain terminal:
+
+| Tool | Consequence |
+|---|---|
+| `ffmpeg` (render path) | every video render aborted with "video encoder unavailable", reporting `progress: 1.0`, `desc: 'Done'` and NO output file |
+| `npm` (`update_health`) | the entire health report unhealthy on a healthy machine |
+| `node` (dev-server child) | the UI never answered: `'"node"' is not recognized` |
+
+`roop/ffmpeg_path.py` is now the single ffmpeg/ffprobe resolver and
+`HardwareProfiler._resolve_ffmpeg` delegates to it; `update_health._resolve_npm`
+mirrors it. Resolution is runtime-only -- **no absolute path is written into any
+launcher script or config**, per the project guide's `PINOKIO_HOME` rule.
+
+**The health worker passes end to end on the RTX 3060 for the first time:** 8/8
+checks, `healthy: true`, exit 0, including its `/api/meta` launch probe and the
+dependency trees of BOTH React clients. Its launch probe now drains the child's
+stdout on a thread (an undrained pipe blocks a chatty child before it can bind)
+and its budget is configurable via `ROOP_HEALTH_LAUNCH_TIMEOUT`.
+
+**Known startup window:** `run.py` starts the API thread before `core.run()`
+populates `roop.globals.CFG`, because the launcher waits on the loopback URL
+that thread prints. A request arriving in that window now degrades safely
+rather than crashing the detector, but still runs with default configuration.
+`/api/settings` returning a populated body is a usable readiness signal.
+
 ## CURRENT IMPLEMENTATION
 
 ### Pinokio and launcher

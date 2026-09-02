@@ -426,12 +426,37 @@ def _validate_processing_project(project_id, payload=None):
 
 
 def _set_processing_project_state(project_id, state_value, error=""):
+    """Record a run's project state.  This is bookkeeping ABOUT a run and must
+    never be able to abort the run it is describing.
+
+    The first call sits at the top of `_run_swap`, BEFORE that function's `try`
+    (api.py:2892), so an exception here escaped the worker entirely: the render
+    never began, the `finally` that clears `_progress["processing"]` never ran,
+    and the application sat at `processing: true, progress: 0.0,
+    desc: 'Starting...', error: ''` indefinitely.  Observed on the physical RTX
+    3060 host when a checkpoint rename hit a transient Windows WinError 5.
+    The last call sits inside the `except` handler, where raising would replace
+    the real failure with this one.
+
+    The underlying flakiness is fixed in `project_checkpoint._atomic_write`;
+    this is the second layer, so no future checkpoint fault can wedge a render.
+    It is deliberately LOUD -- a persistence failure is reported to the terminal
+    and the run's log rather than swallowed, because degraded resumability the
+    user cannot see is its own defect.
+    """
     if not project_id:
         return
     mapped = {"INTERRUPTED": "INTERRUPTED", "RECOVERABLE": "RECOVERABLE",
               "FAILED": "FAILED", "COMPLETED": "COMPLETED",
               "PROCESSING": "PROCESSING", "PAUSED": "PAUSED"}
-    _project_checkpoint.update_state(project_id, mapped.get(state_value, state_value), error)
+    try:
+        _project_checkpoint.update_state(
+            project_id, mapped.get(state_value, state_value), error)
+    except Exception as exc:
+        traceback.print_exc()
+        _push_log(f"⚠ project state could not be saved as {state_value}: {exc}. "
+                  f"The run continues, but this project may not be resumable.",
+                  force=True)
 
 
 def _start_existing_project(project_id, payload):

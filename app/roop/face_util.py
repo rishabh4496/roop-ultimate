@@ -81,7 +81,18 @@ def _face_analysis_providers():
     all-TensorRT behaviour for diagnostics.
     """
     providers = list(roop.globals.execution_providers or [])
-    if roop.globals.CFG.force_cpu:
+    # CFG IS NOT POPULATED UNTIL THE FIRST RUN PREPARES THE ENVIRONMENT, but the
+    # API starts serving as soon as it binds.  A request that reaches a detector
+    # before then -- loading a faceset from the library right after launch, for
+    # instance -- raised `AttributeError: 'NoneType' has no attribute
+    # 'force_cpu'` here.  `get_all_faces` swallows detector exceptions, so the
+    # visible result was a faceset that ingested ZERO faces, and in a render it
+    # is every frame written through unswapped with no error.
+    #
+    # `retinaface.py` and `yoloface.py` already guard this exact attribute the
+    # same way; face_util was the outlier.  Absent config means "no override",
+    # which is the same answer a default Settings gives.
+    if roop.globals.CFG is not None and roop.globals.CFG.force_cpu:
         return ["CPUExecutionProvider"]
     if os.environ.get('ROOP_ALLOW_TRT_SMALL_GPU', '').strip().lower() in (
             '1', 'true', 'yes', 'on'):
@@ -192,7 +203,7 @@ def _ensure_face_analyser():
             _ANALYSER_DET_THRESH = cur_det_thresh
             _ANALYSER_ENGINE = cur_engine
             _ANALYSER_LM68_LAZY = cur_lm68_lazy
-            if roop.globals.CFG.force_cpu:
+            if roop.globals.CFG is not None and roop.globals.CFG.force_cpu:
                 print("Forcing CPU for Face Analysis")
             n = (session_pool.detmask_pool_size(
                 model_key='detector:face-analysis',

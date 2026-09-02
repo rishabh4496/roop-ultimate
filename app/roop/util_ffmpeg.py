@@ -3,11 +3,12 @@ import os
 import subprocess
 import roop.globals
 import roop.utilities as util
+from roop.ffmpeg_path import ffmpeg_binary
 
 from typing import List, Any
 
 def run_ffmpeg(args: List[str]) -> bool:
-    commands = ['ffmpeg', '-hide_banner', '-hwaccel', 'auto', '-y', '-loglevel', roop.globals.log_level]
+    commands = [ffmpeg_binary(), '-hide_banner', '-hwaccel', 'auto', '-y', '-loglevel', roop.globals.log_level]
     commands.extend(args)
     print("Running ffmpeg")
     try:
@@ -392,7 +393,7 @@ def apply_media_transforms_webp(input_path: str, output_path: str,
     user_vf = ','.join(vf_filters)
     vf = f'{user_vf},{even_scale}' if user_vf else even_scale
     cmd = [
-        'ffmpeg', '-hide_banner', '-hwaccel', 'auto', '-y',
+        ffmpeg_binary(), '-hide_banner', '-hwaccel', 'auto', '-y',
         '-loglevel', roop.globals.log_level,
         '-f', 'rawvideo', '-vcodec', 'rawvideo',
         '-s', f'{width}x{height}',

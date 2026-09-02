@@ -1,5 +1,32 @@
 # Processing Contract
 
+## Stage 18 amendment (2026-09-02, physical RTX 3060)
+
+Two processing defects were found and fixed; both were invisible to the return
+code and to the swap audit, because each failure path returns a plausible value.
+
+1. **The still/preview path ran no swap at all.** `procmgr_runtime.pause_aware`
+   gates every decorated frame operation on `roop.globals.processing`, and
+   `PauseController.begin` refuses when that flag is false. The flag belongs to
+   a batch run, so it is false for `core.live_swap` -- the single-image swap and
+   the UI preview button. The decorator's refusal path returns the INPUT FRAME,
+   so those paths loaded every model and handed back the untouched plate
+   (`0.00/255` face-region delta, zero identity movement). A preview manager
+   outside a run now bypasses the run-scoped gate; admission during a live run
+   is unchanged, so a paused render still cannot be given extra GPU work.
+   Measured after the fix: identity to source `0.057 -> 0.755`.
+
+2. **Video encoding depended on the caller's PATH.** The render path invoked
+   `ffmpeg` by bare name, so outside a Pinokio-managed shell the encoder
+   pre-flight aborted every render -- while reporting `progress: 1.0` and
+   `desc: 'Done'` with no output file. Resolution now goes through
+   `roop/ffmpeg_path.py`.
+
+**Pause is now verified against real work, not the control plane:** during a
+live render the engine held at progress 0.022 across 15 s, advanced on resume,
+and the run completed to a valid 899-frame 1280x720 output. RTX 3060 only;
+Device A is unmeasured for these rows.
+
 Audit scope: Stages 1A and 6A — Processing Architecture Audit, 2026-09-01. This
 document records observed implementation and evidence. A passing unit test is
 not treated as proof of a complete hardware or visual-quality run.

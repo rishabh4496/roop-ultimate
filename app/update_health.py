@@ -19,6 +19,7 @@ import re
 import shutil
 import socket
 import subprocess
+import threading
 import sys
 import time
 import urllib.error
@@ -87,9 +88,54 @@ def _requirements_check(source_root: Path) -> dict[str, Any]:
     return _result("dependencies", True, f"verified {len(checked)} direct requirements", checked=checked)
 
 
+def _resolve_npm() -> str | None:
+    """Find npm without depending on the caller's PATH.
+
+    WHY THIS IS NOT `shutil.which` ALONE.  Pinokio ships node/npm inside its own
+    toolchain (``<PINOKIO_HOME>/bin/miniforge``) and puts them on PATH only
+    inside a Pinokio-managed shell.  This health worker is spawned as a plain
+    child process by `update_manager`, so on the physical RTX 3060 host the bare
+    lookup MISSED an npm that is installed and working, the check returned
+    `ok: False`, and the whole health report -- and therefore the updater's
+    activation gate -- was reported unhealthy on a healthy machine.
+
+    Same defect class as the bare `shutil.which('ffmpeg')` that made the
+    hardware profile record a machine with no NVDEC and no NVENC; the resolution
+    order here mirrors `HardwareProfiler._resolve_ffmpeg`.  Resolution is
+    deliberately runtime-only: no absolute path is written into any script.
+    """
+    found = shutil.which("npm")
+    if found:
+        return found
+    home = os.environ.get("PINOKIO_HOME")
+    if not home or not os.path.isdir(home):
+        try:
+            cfg = os.path.join(os.path.expanduser("~"), ".pinokio", "config.json")
+            with open(cfg, "r", encoding="utf-8") as handle:
+                home = json.load(handle).get("home")
+        except Exception:
+            home = None
+    # <PINOKIO_HOME>/api/<launcher>/app/this_file.py
+    app_dir = os.path.dirname(os.path.abspath(__file__))
+    if not home or not os.path.isdir(home):
+        home = os.path.dirname(os.path.dirname(os.path.dirname(app_dir)))
+    roots = (
+        os.path.join(home, "bin", "miniforge"),
+        os.path.join(home, "bin", "miniconda"),
+        os.path.join(home, "bin", "miniforge", "Library", "bin"),
+        os.path.join(app_dir, "env"),
+    )
+    for root in roots:
+        for name in ("npm.cmd", "npm.exe", "npm"):
+            candidate = os.path.join(root, name)
+            if os.path.isfile(candidate):
+                return candidate
+    return None
+
+
 def _node_dependencies_check(source_root: Path, data_root: Path) -> dict[str, Any]:
     """Validate both shipped React generations without installing anything."""
-    npm = shutil.which("npm")
+    npm = _resolve_npm()
     if not npm:
         return _result("node-dependencies", False, "npm is not available for dependency validation",
                        classification="UNVERIFIED")
@@ -313,7 +359,45 @@ def _launch_check(source_root: Path, config: dict[str, Any]) -> dict[str, Any]:
         )
     except OSError as exc:
         return _result("launch", False, f"application process could not start: {exc}")
-    deadline = time.monotonic() + 90.0
+
+    # DRAIN THE CHILD CONCURRENTLY.  The pipe was previously read only AFTER the
+    # probe finished, so the child's startup output accumulated in an OS pipe
+    # buffer of a few kilobytes.  This application prints far more than that
+    # before it serves: every ONNX Runtime session dumps a ~1 KB provider-option
+    # block and the model loader prints one per model.  Once the buffer fills,
+    # the child BLOCKS ON WRITE and can never reach the point where it binds the
+    # port -- the probe then times out against a process that is alive, healthy
+    # and simply gagged.  A reader thread removes that failure mode entirely.
+    collected: list[str] = []
+
+    def _drain(stream):
+        try:
+            for line in iter(stream.readline, ""):
+                collected.append(line)
+        except Exception:
+            pass
+        finally:
+            try:
+                stream.close()
+            except Exception:
+                pass
+
+    reader = None
+    if process.stdout is not None:
+        reader = threading.Thread(target=_drain, args=(process.stdout,), daemon=True)
+        reader.start()
+
+    # A COLD START IS NOT A 90-SECOND OPERATION ON EVERY TARGET.  Where the
+    # provider policy admits TensorRT, `run.py` may build engines on first use,
+    # which runs into minutes; where it resolves to CUDA/CPU (the sub-7GB
+    # laptop tier) startup is fast.  A single 90 s budget therefore passed on
+    # one validation GPU and timed out on the other while both were healthy.
+    # The budget is generous and bounded, and overridable for slow hosts.
+    try:
+        budget = float(os.environ.get("ROOP_HEALTH_LAUNCH_TIMEOUT", "300"))
+    except ValueError:
+        budget = 300.0
+    deadline = time.monotonic() + max(30.0, budget)
     response_status: int | None = None
     launch_error = ""
     url = f"http://127.0.0.1:{port}/api/meta"
@@ -334,12 +418,9 @@ def _launch_check(source_root: Path, config: dict[str, Any]) -> dict[str, Any]:
     except subprocess.TimeoutExpired:
         process.kill()
         process.wait(timeout=15)
-    output = ""
-    if process.stdout is not None:
-        try:
-            output = process.stdout.read()[-12000:]
-        except Exception:
-            output = ""
+    if reader is not None:
+        reader.join(timeout=10)
+    output = "".join(collected)[-12000:]
     ok = response_status == 200 and alive_after_probe
     detail = (f"/api/meta returned HTTP 200 on loopback port {port}"
               if ok else f"application did not pass launch probe: {launch_error or output[-1000:]}")

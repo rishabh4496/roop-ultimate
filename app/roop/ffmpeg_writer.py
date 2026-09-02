@@ -19,7 +19,13 @@ PIPE = -1
 STDOUT = -2
 DEVNULL = -3
 
-FFMPEG_BINARY = "ffmpeg"
+from roop.ffmpeg_path import ffmpeg_binary
+
+# Resolved rather than assumed: a bare "ffmpeg" only works inside a
+# Pinokio-managed shell, and outside one the encoder pre-flight aborted
+# every video render with "video encoder unavailable" on a machine whose
+# ffmpeg was installed and working.  See roop/ffmpeg_path.py.
+FFMPEG_BINARY = ffmpeg_binary()
 
 
 def probe_encoder(codec="libx265", crf=14, timeout=30):
