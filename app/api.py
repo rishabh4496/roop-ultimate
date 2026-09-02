@@ -2869,54 +2869,67 @@ def _run_swap(payload):
     from ui.main import prepare_environment
     from roop.core import batch_process_regular
 
-    _procmgr_runtime.pause_controller.start()
-    pause_state = _procmgr_runtime.pause_controller.snapshot()
-    roop_globals.pause = bool(pause_state["requested"])
-    _stop_requested["flag"] = False
-    project_id = str(payload.get(_PROJECT_ID_KEY) or "")
-    global _active_project_id
-    _active_project_id = project_id
-    if project_id:
-        roop_globals._checkpoint_segment_callback = (
-            lambda writer, frame_idx=None, manager=None: _checkpoint_segment(
-                project_id, writer, frame_idx, manager))
-        _set_processing_project_state(project_id, "PROCESSING")
-    # Fresh terminal feed for this run.
-    _log_lines.clear()
-    _log_state.update({"last": "", "last_ts": 0.0, "seq": 0, "last_err": "",
-                       "status": "", "parts_seen": 0, "counter_shapes": set()})
-    # Parts are per-run: clear now rather than waiting for the writer, which is
-    # only constructed once encoding starts (and never, for an image job).
-    segment_writer.reset_parts()
-    # Likewise the live frame — otherwise a new run opens showing the last
-    # frame of the previous one.
-    live_preview.reset()
-    # And the previous run's "time left", so this one's opening seconds fall back
-    # to the UI's own estimate rather than inheriting a finished run's figure.
-    _procmgr_runtime.reset_eta()
-    _push_log("▶ Starting job…", force=True)
-    _resume_context.update({"base": 0.0, "total": 0})
-    if project_id:
-        try:
-            inputs = _project_checkpoint.load(project_id).get("inputs") or {}
-            total = max(0, int(inputs.get("frame_end", 0) or 0) -
-                        int(inputs.get("frame_start", 0) or 0))
-            safe = int((_project_checkpoint.load(project_id).get("checkpoint") or {}).get(
-                "safe_frame", inputs.get("frame_start", 0)) or 0)
-            _resume_context.update({"base": min(1.0, max(0.0, safe - int(inputs.get("frame_start", 0) or 0)) /
-                                                total) if total else 0.0,
-                                    "total": total})
-        except Exception:
-            pass
-    _progress.update({"processing": True,
-                      "paused": bool(pause_state["acknowledged"]),
-                      "pause_requested": bool(pause_state["requested"]),
-                      "progress": _resume_context["base"], "desc": ("Paused" if pause_state["acknowledged"] else "Starting…"),
-                      "error": ""})
-    _run_stats.update({"start": time.time(), "frames_done": 0, "frames_total": 0})
+    # THE TRY OPENS HERE, not below the preamble.  _start_existing_project
+    # sets _progress["processing"] SYNCHRONOUSLY before spawning this thread,
+    # and only the finally at the end of this function clears it -- so any
+    # statement that raises above the try leaves the app reporting
+    # processing: true, progress: 0.0, error: '' forever, with every later
+    # start answering 409.  A checkpoint fault did exactly that and is now
+    # guarded at its own call site, but the guard is per-fault: every other
+    # statement below (the pause controller, the log and preview resets, the
+    # ETA reset) can wedge the app the same way.  Covering the whole preamble
+    # is what makes that structural rather than one fault at a time.
+    #
+    # project_id and pause_state are bound first so the except and finally
+    # can always read them, however early the failure lands.
+    project_id = ""
+    pause_state = {"requested": False, "acknowledged": False}
     try:
-        # Inside the try so any failure (e.g. CFG.save() I/O error) still hits
-        # the finally block and clears the processing flag.
+        _procmgr_runtime.pause_controller.start()
+        pause_state = _procmgr_runtime.pause_controller.snapshot()
+        roop_globals.pause = bool(pause_state["requested"])
+        _stop_requested["flag"] = False
+        project_id = str(payload.get(_PROJECT_ID_KEY) or "")
+        global _active_project_id
+        _active_project_id = project_id
+        if project_id:
+            roop_globals._checkpoint_segment_callback = (
+                lambda writer, frame_idx=None, manager=None: _checkpoint_segment(
+                    project_id, writer, frame_idx, manager))
+            _set_processing_project_state(project_id, "PROCESSING")
+        # Fresh terminal feed for this run.
+        _log_lines.clear()
+        _log_state.update({"last": "", "last_ts": 0.0, "seq": 0, "last_err": "",
+                           "status": "", "parts_seen": 0, "counter_shapes": set()})
+        # Parts are per-run: clear now rather than waiting for the writer, which is
+        # only constructed once encoding starts (and never, for an image job).
+        segment_writer.reset_parts()
+        # Likewise the live frame — otherwise a new run opens showing the last
+        # frame of the previous one.
+        live_preview.reset()
+        # And the previous run's "time left", so this one's opening seconds fall back
+        # to the UI's own estimate rather than inheriting a finished run's figure.
+        _procmgr_runtime.reset_eta()
+        _push_log("▶ Starting job…", force=True)
+        _resume_context.update({"base": 0.0, "total": 0})
+        if project_id:
+            try:
+                inputs = _project_checkpoint.load(project_id).get("inputs") or {}
+                total = max(0, int(inputs.get("frame_end", 0) or 0) -
+                            int(inputs.get("frame_start", 0) or 0))
+                safe = int((_project_checkpoint.load(project_id).get("checkpoint") or {}).get(
+                    "safe_frame", inputs.get("frame_start", 0)) or 0)
+                _resume_context.update({"base": min(1.0, max(0.0, safe - int(inputs.get("frame_start", 0) or 0)) /
+                                                    total) if total else 0.0,
+                                        "total": total})
+            except Exception:
+                pass
+        _progress.update({"processing": True,
+                          "paused": bool(pause_state["acknowledged"]),
+                          "pause_requested": bool(pause_state["requested"]),
+                          "progress": _resume_context["base"], "desc": ("Paused" if pause_state["acknowledged"] else "Starting…"),
+                          "error": ""})
+        _run_stats.update({"start": time.time(), "frames_done": 0, "frames_total": 0})
         _update_mask_offsets_from_payload(payload)
         prepare_environment()
         # A project with committed segments owns its partial output. Clearing
