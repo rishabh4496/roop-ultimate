@@ -163,6 +163,33 @@ class TestGCLifecycleAndCoreFastPath(unittest.TestCase):
         gc.enable()
         self.assertTrue(gc.isenabled())
 
+    def test_terminal_throughput_meter_ema(self):
+        meter = roop.core.create_throughput_progress(total=10, desc="TestEMA", unit="frames")
+        self.assertEqual(meter.ALPHA, 0.15)
+        self.assertEqual(meter.HEARTBEAT_INTERVAL, 0.5)
+
+        # First frame emission: initializes EMA
+        meter.update(1)
+        self.assertGreater(meter.fps_display, 0.0)
+        self.assertEqual(meter.n, 1)
+
+        # Second frame emission: applies EMA formula
+        prev_fps = meter.fps_display
+        meter.update(1)
+        # fps_display = 0.15 * instant + 0.85 * prev
+        self.assertGreater(meter.fps_display, 0.0)
+        meter.close()
+
+    def test_chunked_progress_ema_rate(self):
+        from roop.procmgr_runtime import ChunkedProgress
+        prog = ChunkedProgress(total=5, desc="TestChunked", unit="frames", disable=True)
+        self.assertEqual(prog.EMA_ALPHA, 0.15)
+        self.assertEqual(prog.DISPLAY_INTERVAL_SECONDS, 0.5)
+        prog.update(1)
+        self.assertGreater(prog.rolling_rate, 0.0)
+        self.assertIn("rate", prog.format_dict)
+        prog.close()
+
 
 if __name__ == "__main__":
     unittest.main()

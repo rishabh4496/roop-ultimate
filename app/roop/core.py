@@ -470,6 +470,105 @@ def set_display_ui(function):
     call_display_ui = function
 
 
+class TerminalThroughputMeter:
+    """Smooth Terminal Throughput Meter using Exponential Moving Average (EMA).
+
+    Calculates EMA on actual frame emission timestamps:
+        fps_display = (alpha * instant_fps) + ((1.0 - alpha) * prev_fps) with alpha = 0.15.
+    Updates the terminal display at a fixed 500 ms heartbeat interval.
+    """
+    ALPHA = 0.15
+    HEARTBEAT_INTERVAL = 0.5
+
+    def __init__(self, total=None, desc="Processing", unit="frames"):
+        self.total = total
+        self.desc = desc
+        self.unit = unit
+        self.n = 0
+        self.prev_fps = 0.0
+        self.fps_display = 0.0
+        self.start_t = _time.perf_counter()
+        self.last_emission_t = self.start_t
+        self.last_heartbeat_t = self.start_t
+        self._lock = _threading.Lock()
+
+    def update(self, n=1):
+        now = _time.perf_counter()
+        with self._lock:
+            dt = now - self.last_emission_t
+            self.n += n
+            if dt > 1e-6:
+                instant_fps = n / dt
+                if self.fps_display <= 0.0:
+                    self.fps_display = instant_fps
+                else:
+                    self.fps_display = (self.ALPHA * instant_fps) + ((1.0 - self.ALPHA) * self.prev_fps)
+                self.prev_fps = self.fps_display
+                self.last_emission_t = now
+
+            if (now - self.last_heartbeat_t) >= self.HEARTBEAT_INTERVAL or (self.total and self.n >= self.total):
+                self._render(now)
+                self.last_heartbeat_t = now
+
+    def _render(self, now):
+        elapsed = max(0.001, now - self.start_t)
+        total = self.total or 0
+        fps = self.fps_display if self.fps_display > 0 else (self.n / elapsed)
+        if total > 0:
+            pct = min(100.0, (self.n / total) * 100.0)
+            count_str = f"{self.n:,}/{total:,} {self.unit} ({pct:5.1f}%)"
+            eta_str = ""
+            if fps > 0:
+                eta_s = int(max(0, total - self.n) / fps)
+                m, s = divmod(eta_s, 60)
+                h, m = divmod(m, 60)
+                eta_str = f" · ETA {h:02d}:{m:02d}:{s:02d}" if h else f" · ETA {m:02d}:{s:02d}"
+        else:
+            count_str = f"{self.n:,} {self.unit}"
+            eta_str = ""
+
+        m_e, s_e = divmod(int(elapsed), 60)
+        h_e, m_e = divmod(m_e, 60)
+        el_str = f"{h_e:02d}:{m_e:02d}:{s_e:02d}" if h_e else f"{m_e:02d}:{s_e:02d}"
+        import sys
+        sys.stderr.write(f"\r[Throughput] {self.desc}: {count_str} · {fps:.1f} {self.unit}/s · elapsed {el_str}{eta_str}")
+        sys.stderr.flush()
+
+    def __call__(self, progress_tuple=None, desc=None, total=None, unit=None, **kwargs):
+        if isinstance(progress_tuple, (tuple, list)) and len(progress_tuple) >= 2:
+            cur_n, tot = progress_tuple
+            if tot is not None:
+                self.total = tot
+            diff = cur_n - self.n
+            if diff > 0:
+                self.update(diff)
+        elif isinstance(progress_tuple, (int, float)):
+            diff = int(progress_tuple) - self.n
+            if diff > 0:
+                self.update(diff)
+        if desc:
+            self.desc = desc
+        if unit:
+            self.unit = unit
+
+    def close(self):
+        self._render(_time.perf_counter())
+        import sys
+        sys.stderr.write("\n")
+        sys.stderr.flush()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.close()
+
+
+def create_throughput_progress(total=None, desc="Processing", unit="frames"):
+    """Factory creating a smooth EMA terminal throughput meter."""
+    return TerminalThroughputMeter(total=total, desc=desc, unit=unit)
+
+
 def update_status(message: str) -> None:
     global call_display_ui
 
@@ -794,6 +893,8 @@ def batch_process_regular(output_method, files:list[ProcessEntry], masking_engin
 
     release_resources()
     limit_resources()
+    if progress is None:
+        progress = create_throughput_progress(desc="Processing", unit="frames")
     if process_mgr is None:
         process_mgr = ProcessMgr(progress)
     # imagemask is a JSON string produced by the canvas masking modal
@@ -843,6 +944,8 @@ def batch_process_with_options(files:list[ProcessEntry], options, progress):
 
     release_resources()
     limit_resources()
+    if progress is None:
+        progress = create_throughput_progress(desc="Processing", unit="frames")
     if process_mgr is None:
         process_mgr = ProcessMgr(progress)
     process_mgr.initialize(roop.globals.INPUT_FACESETS, roop.globals.TARGET_FACES, options)
