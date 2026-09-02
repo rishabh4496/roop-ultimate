@@ -495,3 +495,165 @@ def evaluate_fast_path(
             return True, faces
 
     return False, faces
+
+
+# ── Heterogeneous detector offload (OpenVINO NPU / integrated GPU) ─────────
+#
+# The detector, its landmark models and the occlusion mask are small graphs
+# that run once per face, while the swapper and the restorer are the large
+# ones.  On an Intel machine with an NPU or an integrated GPU there is idle
+# silicon that could take the small graphs and leave the discrete card to the
+# swap and restoration models, which is where this pipeline's GPU time
+# actually goes.
+#
+# THIS IS OFF BY DEFAULT, and the reason is worth stating rather than leaving
+# as an accident:
+#
+#   1. Neither validated machine can execute it.  The RTX 4070 desktop and the
+#      RTX 3060 laptop both run an ORT build whose providers are exactly
+#      ('TensorrtExecutionProvider', 'CUDAExecutionProvider',
+#      'CPUExecutionProvider') -- no OpenVINOExecutionProvider, and no
+#      `openvino` package.  Every number in this repo's records comes from one
+#      of those two boxes, so there is no measurement to support switching it
+#      on and this project's standing rule is that a default change must prove
+#      no regression.
+#
+#   2. The blast radius is the whole pipeline, not one stage.  Detection
+#      output feeds every identity gate, the track binding and the alignment
+#      matrices.  A different kernel's rounding here does not show up as a
+#      slower render, it shows up as a different face being swapped -- and the
+#      swap audit counts intent, not outcome, so it would read 100% either way.
+#
+# So this ships as a real, wired, testable path that a user on Intel hardware
+# can turn on explicitly, and as an honest no-op everywhere else.  When it is
+# requested but cannot be satisfied, it says so once instead of pretending.
+
+_OPENVINO_ENV = "ROOP_DETECTOR_OPENVINO"
+
+# Only the small per-face graphs are ever offloaded.  The swapper and the
+# restorers stay on the discrete GPU: moving them is the opposite of the point.
+_OFFLOADABLE = frozenset(("face_detection", "masking", "recognition"))
+
+_openvino_state: Dict[str, Any] = {}
+_openvino_lock = RLock()
+
+
+def openvino_available() -> bool:
+    """Whether the installed ONNX Runtime build exposes the OpenVINO EP."""
+    try:
+        from roop.backend_manager import provider_available
+        return provider_available("OpenVINOExecutionProvider")
+    except Exception:
+        return False
+
+
+def openvino_devices() -> Tuple[str, ...]:
+    """Device strings OpenVINO reports on this machine, e.g. NPU, GPU.1, CPU.
+
+    Queried through the ``openvino`` runtime when it is importable.  The ORT
+    provider can be present without it, so an empty tuple means "cannot
+    enumerate", not "no devices" -- callers treat an explicitly requested
+    device as usable in that case and let the session build decide.
+    """
+    with _openvino_lock:
+        if "devices" in _openvino_state:
+            return _openvino_state["devices"]
+    devices: Tuple[str, ...] = ()
+    try:
+        import openvino as ov
+        devices = tuple(str(d) for d in ov.Core().available_devices)
+    except Exception:
+        devices = ()
+    with _openvino_lock:
+        _openvino_state["devices"] = devices
+    return devices
+
+
+def detector_offload_target(requested: Optional[str] = None) -> Optional[str]:
+    """Resolve the configured offload device, or None when it is not usable.
+
+    ``requested`` accepts an explicit device string ("NPU", "GPU.1"), "auto"
+    to take the best available accelerator, or an off value.  Unset is off.
+    """
+    raw = requested if requested is not None else os.environ.get(_OPENVINO_ENV, "")
+    value = str(raw or "").strip()
+    if value.lower() in ("", "0", "off", "false", "no", "none"):
+        return None
+    if not openvino_available():
+        _warn_once("openvino_missing",
+                   f"[Detector] {_OPENVINO_ENV}={value} but this ONNX Runtime "
+                   f"build has no OpenVINOExecutionProvider; detection stays on "
+                   f"the primary provider.")
+        return None
+    devices = openvino_devices()
+    if value.lower() in ("auto", "1", "on", "true", "yes"):
+        # Prefer the NPU, then a secondary (integrated) GPU.  GPU.0 is skipped
+        # deliberately: on a discrete-GPU machine that is usually the card this
+        # offload exists to keep free.
+        for candidate in ("NPU", "GPU.1"):
+            if candidate in devices:
+                return candidate
+        _warn_once("openvino_auto_none",
+                   f"[Detector] {_OPENVINO_ENV}=auto found no NPU or secondary "
+                   f"GPU (devices: {', '.join(devices) or 'none reported'}); "
+                   f"detection stays on the primary provider.")
+        return None
+    if devices and value not in devices:
+        _warn_once(f"openvino_absent_{value}",
+                   f"[Detector] {_OPENVINO_ENV}={value} is not among the "
+                   f"OpenVINO devices on this machine "
+                   f"({', '.join(devices) or 'none reported'}); detection stays "
+                   f"on the primary provider.")
+        return None
+    return value
+
+
+def _warn_once(key: str, message: str) -> None:
+    with _openvino_lock:
+        if key in _openvino_state:
+            return
+        _openvino_state[key] = True
+    print(message)
+
+
+def detector_providers(providers: Sequence, model_key: str = "face_detection",
+                       requested: Optional[str] = None) -> List:
+    """Prepend the OpenVINO EP for a small per-face model, when enabled.
+
+    The primary chain is kept behind it rather than replaced, so any operator
+    OpenVINO cannot take still falls back to CUDA/CPU inside the same session.
+    Models outside ``_OFFLOADABLE`` are returned untouched.
+    """
+    chain = list(providers or ())
+    family = str(model_key or "").split(":", 1)[0].strip().lower()
+    if family not in _OFFLOADABLE:
+        return chain
+    device = detector_offload_target(requested)
+    if device is None:
+        return chain
+    if any("openvino" in str(p[0] if isinstance(p, (tuple, list)) else p).lower()
+           for p in chain):
+        return chain
+    options = {"device_type": device}
+    precision = os.environ.get("ROOP_DETECTOR_OPENVINO_PRECISION", "").strip()
+    if precision:
+        options["precision"] = precision
+    _warn_once(f"openvino_active_{device}_{family}",
+               f"[Detector] routing {family} models to OpenVINO {device}; the "
+               f"primary provider is retained as in-session fallback.")
+    return [("OpenVINOExecutionProvider", options)] + chain
+
+
+def offload_report(requested: Optional[str] = None) -> dict:
+    """JSON-safe diagnostics for the panel and the self-verification test."""
+    target = detector_offload_target(requested)
+    return {
+        "env": _OPENVINO_ENV,
+        "configured": (requested if requested is not None
+                       else os.environ.get(_OPENVINO_ENV, "") or "off"),
+        "provider_available": openvino_available(),
+        "devices": list(openvino_devices()),
+        "target": target,
+        "offloadable_models": sorted(_OFFLOADABLE),
+        "active": target is not None,
+    }

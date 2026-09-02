@@ -283,15 +283,28 @@ def _pool_size():
 
 def _build_one(model_type, model_path, providers, file):
     """Construct ONE independent detector (its own ORT session)."""
+    from roop.backend_manager import build_session_with_fallback
+    from roop.face_analyser import detector_providers
     providers, _precision = providers_for(
         f'face_detection:{model_type}', providers, model_path)
+    # Optional NPU/iGPU offload for this small per-face graph; off unless the
+    # user opts in, and a no-op on a build without the OpenVINO provider.
+    providers = detector_providers(providers, 'face_detection')
     if model_type == 'r50':
         from roop.utilities import get_onnx_session_options
-        session = onnxruntime.InferenceSession(model_path, get_onnx_session_options(), providers=providers)
+        # A detector that cannot build its TensorRT engine must degrade to
+        # CUDA rather than abort the run: get_all_faces swallows detector
+        # exceptions, so the alternative is a render with no swaps and no error.
+        session, providers = build_session_with_fallback(
+            lambda chain: onnxruntime.InferenceSession(
+                model_path, get_onnx_session_options(), providers=chain),
+            providers, tag=f'retinaface_{model_type}')
         det = RetinaFace3Output(model_path, session=session)
     else:
         from insightface.model_zoo import get_model
-        det = get_model(model_path, providers=providers)
+        det, providers = build_session_with_fallback(
+            lambda chain: get_model(model_path, providers=chain),
+            providers, tag=f'detector_{model_type}')
         if det is None or not hasattr(det, 'detect'):
             raise RuntimeError(f'insightface could not route {file} to a detector')
         # 10g decodes inside insightface, whose nms() would otherwise delete one

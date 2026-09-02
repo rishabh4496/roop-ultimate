@@ -142,7 +142,32 @@ def decode_execution_providers(execution_providers: List[str]) -> List[str]:
                 trt_cache = str(pathlib.Path(__file__).parent.parent / 'models' / 'trt_cache')
                 os.makedirs(trt_cache, exist_ok=True)
                 trt_precision = getattr(roop.globals.CFG, 'trt_precision', 'mixed') if roop.globals.CFG else 'mixed'
-                fp16_enable = trt_precision in ('fp16', 'mixed')
+                # Precision requests are gated on what this SM can actually do
+                # fast. Asking TensorRT for FP16 on a card without FP16 tensor
+                # cores does not fail -- it emulates, which is slower than the
+                # FP32 the user would otherwise have got, while every log line
+                # still says "fp16". Compute capability is the cheap, offline
+                # answer: 7.0 (Volta) is the first with FP16 tensor cores and
+                # 8.9 (Ada) the first with FP8.
+                try:
+                    _cc = torch.cuda.get_device_capability(roop.globals.cuda_device_id)
+                except Exception:
+                    _cc = (0, 0)
+                fp16_capable = _cc >= (7, 0)
+                fp8_capable = _cc >= (8, 9)
+                fp16_enable = trt_precision in ('fp16', 'mixed') and fp16_capable
+                if trt_precision in ('fp16', 'mixed') and not fp16_capable:
+                    print(f'[TRT] compute capability {_cc[0]}.{_cc[1]} has no FP16 '
+                          f'tensor cores; building {trt_precision} as FP32 rather '
+                          f'than emulating.')
+                # FP8 is recorded as ELIGIBLE here and is still not enabled by
+                # this block. `precision_policy` owns that decision and refuses
+                # FP8 for every model family until a calibrated path and a
+                # measured quality result exist, so a future Ada/Hopper card
+                # cannot silently opt into an uncalibrated precision just by
+                # being new enough. Keeping the probe here means the capability
+                # is visible in diagnostics and in the cache identity below.
+                roop.globals.trt_fp8_eligible = fp8_capable
                 # Include precision, GPU compute capability and ORT ABI in the
                 # parent namespace. TensorRT's graph hash alone is not enough
                 # to safely reuse an engine after a runtime/device change.
@@ -239,6 +264,11 @@ def decode_execution_providers(execution_providers: List[str]) -> List[str]:
                     'cuda_graph': cuda_graph,
                     'auxiliary_streams': auxiliary_streams,
                     'precision': trt_precision,
+                    # The EFFECTIVE flag, not just the request: on a pre-Volta
+                    # card 'mixed' now builds FP32, and that engine must not be
+                    # reused as though it were a mixed one.
+                    'fp16_enable': fp16_enable,
+                    'fp8_eligible': fp8_capable,
                 }
                 cache_label += trt_tuning_namespace(
                     builder_opt, auxiliary_streams, cuda_graph,

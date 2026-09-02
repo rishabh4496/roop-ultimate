@@ -302,3 +302,83 @@ def trt_tuning_namespace(builder_optimization_level: int = 3,
                                separators=(",", ":"), default=str).encode()
         namespace += "_c" + hashlib.sha256(canonical).hexdigest()[:16]
     return namespace
+
+
+# ── Session-build fallback ────────────────────────────────────────────────
+#
+# `resolve_provider_names` answers "could this provider work on this machine".
+# It cannot answer "did this particular model's engine build succeed", because
+# TensorRT does not allocate or compile anything until a session is actually
+# constructed -- and for the engine itself, not until the first inference.
+# So a provider chain that passes every admission check here can still throw
+# inside `InferenceSession` for one model: an unsupported op forcing a bad
+# partition, a workspace that does not fit beside the pooled sessions already
+# resident, or a corrupt entry in the engine cache.
+#
+# The failure mode this exists to prevent is the whole app dying at startup
+# because one model could not build a TensorRT engine, when CUDA would have
+# run it perfectly.  The failure mode it must NOT introduce is a silent
+# downgrade: this project has repeatedly been caught by a stage that reported
+# success while running somewhere slower or not at all, so every step down is
+# printed once and recorded for diagnostics.
+
+_DEGRADATIONS: List[dict] = []
+
+
+def _strip_provider(providers: Iterable, token: str) -> List:
+    return [p for p in list(providers or ())
+            if token not in str(_name(p)).lower()]
+
+
+def session_degradations() -> List[dict]:
+    """Every provider downgrade taken this process, for the diagnostics panel."""
+    with _lock:
+        return list(_DEGRADATIONS)
+
+
+def _record_degradation(tag: str, frm: str, to: str, error: BaseException) -> None:
+    entry = {"model": str(tag), "from": frm, "to": to,
+             "error": f"{type(error).__name__}: {error}"[:400]}
+    with _lock:
+        _DEGRADATIONS.append(entry)
+    print(f"[Backend] {tag}: {frm} session build FAILED, falling back to {to}. "
+          f"{entry['error']}")
+
+
+def build_session_with_fallback(build, providers, tag: str = "model"):
+    """Build a session, stepping down the provider chain only on real failure.
+
+    ``build`` is called as ``build(providers)`` and may be any session factory
+    (``onnxruntime.InferenceSession``, insightface's ``get_model``, a pooled
+    slot builder).  The chain is walked at most twice: TensorRT is removed
+    first, then CUDA/ROCm, leaving CPU.
+
+    The ORIGINAL exception is re-raised when even CPU fails, because at that
+    point the model itself is broken and the TensorRT error is the informative
+    one.  Returns ``(session, providers_used)`` so the caller can record what
+    actually ran rather than what it asked for.
+    """
+    attempts: List[Tuple[str, List]] = [("requested", list(providers or ()))]
+    if any("tensorrt" in str(_name(p)).lower() for p in (providers or ())):
+        attempts.append(("cuda/cpu", _strip_provider(providers, "tensorrt")))
+    without_gpu = [p for p in (providers or ())
+                   if not any(token in str(_name(p)).lower()
+                              for token in ("tensorrt", "cuda", "rocm"))]
+    if without_gpu != list(providers or ()):
+        attempts.append(("cpu", without_gpu or ["CPUExecutionProvider"]))
+
+    first_error: BaseException | None = None
+    for index, (label, chain) in enumerate(attempts):
+        if not chain:
+            continue
+        try:
+            return build(chain), chain
+        except Exception as error:  # noqa: BLE001 - the point is to degrade
+            if first_error is None:
+                first_error = error
+            if index + 1 >= len(attempts):
+                break
+            _record_degradation(tag, label, attempts[index + 1][0], error)
+    if first_error is not None:
+        raise first_error
+    raise RuntimeError(f"{tag}: no usable execution provider chain")

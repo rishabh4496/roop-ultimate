@@ -390,19 +390,42 @@ def providers_for(model_key: str, providers, model_path: str | None = None,
         # revisions.
         write_decision_cache(decision)
     if not decision.trt_enabled:
-        return _cudnn_algo(model_key, model_path, providers, device_id), decision
+        return _finalize(model_key, model_path, providers, device_id), decision
     if decision.policy.trt_supported == "no":
-        return _cudnn_algo(model_key, model_path, _without_trt(providers),
+        return _finalize(model_key, model_path, _without_trt(providers),
                            device_id), decision
     if decision.effective == "fp32":
-        return _cudnn_algo(model_key, model_path,
+        return _finalize(model_key, model_path,
                            _force_fp32(providers, decision.model),
                            device_id), decision
     if decision.effective == "bf16":
-        return _cudnn_algo(model_key, model_path,
+        return _finalize(model_key, model_path,
                            _enable_bf16(providers, decision.model),
                            device_id), decision
-    return _cudnn_algo(model_key, model_path, providers, device_id), decision
+    return _finalize(model_key, model_path, providers, device_id), decision
+
+
+def _finalize(model_key, model_path, providers, device_id=0):
+    """Apply the per-model provider policies that need the model identity.
+
+    Two policies live here because neither can be decided in core.py, which
+    builds one provider list for the whole process and has never seen a model
+    path:
+
+      * the device-verified cuDNN conv algo lowering (see _cudnn_algo), and
+      * the TensorRT optimization profile, which is derived from THIS model's
+        own dynamic axes and is skipped entirely for a static graph so that a
+        fully-static install keeps its existing engine cache namespace.
+    """
+    providers = _cudnn_algo(model_key, model_path, providers, device_id)
+    try:
+        # Local import: trt_shape_profile imports canonical_model_key from
+        # this module, so a module-level import here would be circular.
+        from roop.trt_shape_profile import apply_shape_profile
+        return apply_shape_profile(providers, model_key, model_path)
+    except Exception:
+        # Shape profiling is an optimisation, never a reason to fail a build.
+        return providers
 
 
 def _cudnn_algo(model_key, model_path, providers, device_id=0):

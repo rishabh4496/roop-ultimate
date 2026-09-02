@@ -18,6 +18,7 @@ from roop.utilities import resolve_relative_path, conditional_download, get_onnx
 from roop.nms import bind_instance_nms
 from roop import face_contact
 from roop.precision_policy import providers_for
+from roop.backend_manager import build_session_with_fallback
 
 # Pool of independent insightface FaceAnalysis instances (opt-in, ROOP_DETMASK_POOL).
 #
@@ -113,8 +114,22 @@ def _face_analysis_providers():
             p[0] if isinstance(p, (tuple, list)) else p).lower()]
         print('[FaceAnalysis] sub-7GB GPU: using CUDA/CPU for buffalo_l '
               'sessions to keep host RSS bounded; swapper provider unchanged.')
-        return safe or ["CPUExecutionProvider"]
-    return providers
+        return _detector_offload(safe or ["CPUExecutionProvider"])
+    return _detector_offload(providers)
+
+
+def _detector_offload(providers):
+    """Offer this small-model bundle to an OpenVINO NPU / iGPU when configured.
+
+    Off unless the user sets ROOP_DETECTOR_OPENVINO, and a no-op on a build
+    without the provider -- see the rationale in face_analyser. Imported
+    locally because face_analyser imports this module.
+    """
+    try:
+        from roop.face_analyser import detector_providers
+        return detector_providers(providers, 'face_detection')
+    except Exception:
+        return providers
 
 
 def analysis_pooled() -> bool:
@@ -128,9 +143,15 @@ def _build_face_analyser():
     allowed_modules = roop.globals.g_desired_face_analysis
     providers = _face_analysis_providers()
     providers, _precision = providers_for('recognition:buffalo_l', providers)
-    fa = insightface.app.FaceAnalysis(
-        name="buffalo_l", root=model_path, providers=providers, allowed_modules=allowed_modules,
-        sess_options=get_onnx_session_options())
+    # buffalo_l builds several sessions at once, so a TensorRT engine failure
+    # here used to take the whole application down at startup on a machine
+    # where CUDA would have run every one of them. Step down instead, loudly.
+    fa, providers = build_session_with_fallback(
+        lambda chain: insightface.app.FaceAnalysis(
+            name="buffalo_l", root=model_path, providers=chain,
+            allowed_modules=allowed_modules,
+            sess_options=get_onnx_session_options()),
+        providers, tag='buffalo_l')
     fa.prepare(
         ctx_id=0,
         det_size=_desired_det_size(),

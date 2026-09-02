@@ -9,6 +9,10 @@ target_folder_path = None
 startup_args = None
 
 cuda_device_id = 0
+# Set by core.decode_execution_providers from the live compute capability
+# (SM >= 8.9). Records FP8 EXPOSURE only: precision_policy still refuses to
+# select FP8 for every model family until a calibrated path exists.
+trt_fp8_eligible = False
 frame_processors: List[str] = []
 keep_fps = None
 keep_frames = None
