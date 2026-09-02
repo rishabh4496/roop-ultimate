@@ -18,7 +18,7 @@ import zipfile
 import traceback
 
 from pathlib import Path
-from typing import List, Any
+from typing import List, Any, Optional, Tuple
 from tqdm import tqdm
 from scipy.spatial import distance
 from datetime import datetime
@@ -30,6 +30,100 @@ import roop.globals
 
 TEMP_FILE = "temp.mp4"
 TEMP_DIRECTORY = "temp"
+
+
+def transform_points(points: np.ndarray, matrix: np.ndarray) -> np.ndarray:
+    """Apply a 2x3 affine matrix to Nx2 points without mutating the input."""
+    pts = np.asarray(points, dtype=np.float32).reshape(-1, 2)
+    affine = np.asarray(matrix, dtype=np.float32).reshape(2, 3)
+    return pts @ affine[:, :2].T + affine[:, 2]
+
+
+def compose_affines(after: np.ndarray, before: np.ndarray) -> np.ndarray:
+    """Return the affine equivalent of applying ``before`` then ``after``."""
+    a = np.vstack((np.asarray(after, dtype=np.float32).reshape(2, 3),
+                   [0.0, 0.0, 1.0]))
+    b = np.vstack((np.asarray(before, dtype=np.float32).reshape(2, 3),
+                   [0.0, 0.0, 1.0]))
+    return (a @ b)[:2].astype(np.float32)
+
+
+def rotation_affines(bbox: np.ndarray, roll_degrees: float) -> Tuple[np.ndarray, np.ndarray]:
+    """Build forward/inverse target-space rotations around a face bbox centre.
+
+    ``roll_degrees`` is the image-space roll to apply.  The caller passes
+    ``-roll`` to upright the face.  Keeping both matrices together is important:
+    the inverse is composed into the final paste affine, so alpha blending is
+    performed back in the original target coordinate system.
+    """
+    x0, y0, x1, y1 = np.asarray(bbox, dtype=np.float32).reshape(4)
+    centre = ((float(x0) + float(x1)) * 0.5, (float(y0) + float(y1)) * 0.5)
+    forward = cv2.getRotationMatrix2D(centre, float(roll_degrees), 1.0)
+    return forward.astype(np.float32), cv2.invertAffineTransform(forward).astype(np.float32)
+
+
+def pre_rotate_face_crop(image: np.ndarray, bbox: np.ndarray, roll_degrees: float,
+                         threshold: float = 30.0):
+    """Upright a target image around ``bbox`` when its roll exceeds ``threshold``.
+
+    Returns ``(upright_image, forward, inverse, applied)``.  For a small roll,
+    identity matrices preserve the existing hot path exactly.  ``BORDER_REPLICATE``
+    matches the normal alignment crop and avoids introducing a black wedge at an
+    image edge.
+    """
+    identity = np.array([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]], dtype=np.float32)
+    try:
+        roll = float(roll_degrees)
+    except (TypeError, ValueError):
+        return image, identity, identity, False
+    if image is None or not np.isfinite(roll) or abs(roll) <= float(threshold):
+        return image, identity, identity, False
+    forward, inverse = rotation_affines(bbox, -roll)
+    upright = cv2.warpAffine(image, forward, (image.shape[1], image.shape[0]),
+                             flags=cv2.INTER_LINEAR,
+                             borderMode=cv2.BORDER_REPLICATE)
+    return upright, forward, inverse, True
+
+
+def _similarity_matrix(source: np.ndarray, destination: np.ndarray) -> Optional[np.ndarray]:
+    """Estimate a rigid, uniformly scaled 2D transform (never an anisotropic affine)."""
+    src = np.asarray(source, dtype=np.float32).reshape(-1, 2)
+    dst = np.asarray(destination, dtype=np.float32).reshape(-1, 2)
+    if src.shape != dst.shape or src.shape[0] < 3 or not np.isfinite(src).all() or not np.isfinite(dst).all():
+        return None
+    matrix, _ = cv2.estimateAffinePartial2D(src, dst, method=cv2.LMEDS)
+    if matrix is None or not np.isfinite(matrix).all():
+        return None
+    # estimateAffinePartial2D is constrained to a similarity transform.  This
+    # explicit check makes a future OpenCV/API change fail safe rather than
+    # silently compressing a lateral face.
+    linear = matrix[:, :2]
+    scales = np.linalg.norm(linear, axis=1)
+    if min(scales) <= 1e-7 or max(scales) / min(scales) > 1.0001:
+        return None
+    return matrix.astype(np.float32)
+
+
+def profile_alignment_matrix(profile_anchors: np.ndarray, image_size: int,
+                             yaw_degrees: float) -> Optional[np.ndarray]:
+    """Return a similarity alignment from visible-ear, nose and chin anchors.
+
+    The profile template intentionally has a lateral ear-to-nose baseline and a
+    vertical nose-to-chin baseline.  Because the fit is similarity-only, a
+    foreshortened visible profile can be scaled and rotated but can never be
+    squeezed in one axis.  ``yaw_degrees`` selects the matching visible side.
+    """
+    anchors = np.asarray(profile_anchors, dtype=np.float32).reshape(-1, 2)
+    if anchors.shape != (3, 2):
+        return None
+    side = 1.0 if float(yaw_degrees) >= 0.0 else -1.0
+    size = float(image_size)
+    destination = np.array([
+        [0.50 * size + side * 0.25 * size, 0.48 * size],  # visible tragus/ear
+        [0.50 * size,                         0.52 * size],  # nose tip
+        [0.50 * size,                         0.80 * size],  # chin centre
+    ], dtype=np.float32)
+    return _similarity_matrix(anchors, destination)
 
 
 def get_small_card_safe_providers(providers=None, model_path=None, stage=None):

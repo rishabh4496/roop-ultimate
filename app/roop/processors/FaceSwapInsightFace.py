@@ -13,6 +13,34 @@ from roop import session_pool
 from roop.precision_policy import providers_for
 
 
+def pose_embedding_for_target(source_faceset, target_face):
+    """Select the exact V2 yaw/pitch cell for this target, else its default.
+
+    This deliberately asks ``fallback=False`` first. A missing cell means the
+    archive has no representation for that pose; using an adjacent profile or
+    pitch cell is more misleading than the identity centroid on a lateral face.
+    """
+    if (source_faceset is None
+            or int(getattr(source_faceset, 'format_version', 1) or 1) < 2):
+        return None
+    try:
+        def field(name, default=0.0):
+            value = (target_face.get(name, default) if isinstance(target_face, dict)
+                     else getattr(target_face, name, default))
+            return float(value if value is not None else default)
+        pose = (field('_adaptive_yaw'), field('_adaptive_pitch'))
+        embedding = source_faceset.pose_bin_embedding(pose, fallback=False)
+        if embedding is None:
+            embedding = source_faceset.default_embedding
+        if embedding is None:
+            return None
+        vector = np.asarray(embedding, dtype=np.float32).reshape(-1)
+        norm = float(np.linalg.norm(vector))
+        return vector / norm if norm > 1e-8 and np.isfinite(vector).all() else None
+    except (TypeError, ValueError, AttributeError):
+        return None
+
+
 # ── Per-model swap contract ───────────────────────────────────────────────────
 # Every swapper here consumes the buffalo_l / w600k_r50 ArcFace identity
 # embedding, but each differs in resolution, alignment template, input

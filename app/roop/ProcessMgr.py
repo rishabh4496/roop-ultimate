@@ -19,6 +19,7 @@ from roop.processors.FaceSwapInsightFace import verify_tol_for as _swap_verify_t
 from roop import orientation
 from roop.face_util import estimate_norm, solve_pose_5pt, solve_pose_jaw_5pt
 from roop.face_util import offaxis_deg, swap_template_points
+from roop.face_analyser import canonicalize_face_alignment
 from roop.lipsync_audio import frame_time
 import roop.util_ffmpeg as util_ffmpeg
 from roop.utilities import compute_cosine_distance, get_device, str_to_class
@@ -4822,7 +4823,10 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
         with _prof('alignment'):
             from roop.buffer_pool import get_crop_buffer
             crop_dst = get_crop_buffer(subsample_size)
-            aligned_img, M = align_crop(plate, target_face.kps, subsample_size, mode=swap_template, dst=crop_dst)
+            # The composed paste affine includes inverse roll, so alpha blending
+            # returns to original target coordinates without a second resample.
+            aligned_img, M, _alignment = canonicalize_face_alignment(
+                plate, target_face, subsample_size, swap_template, dst=crop_dst)
         fake_frame = aligned_img
         target_face.matrix = M
         if self._stab_history is not None:
@@ -4895,6 +4899,7 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
         try:
             target_face['_adaptive_yaw'] = tgt_yaw_deg
             target_face['_adaptive_pitch'] = tgt_pitch_deg
+            target_face['_adaptive_roll'] = float(_alignment['roll'])
         except Exception:
             pass
 
@@ -4992,9 +4997,11 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                 target_pose_v5 = None
 
         selected_src_idx = 0
+        source_faceset = None
         pose_selection_v5 = None
         if 0 <= face_index < len(self.input_face_datas):
             fs = self.input_face_datas[face_index]
+            source_faceset = fs
             if len(fs.faces) > 0:
                 with _prof('faceset_lookup'):
                     inputface = fs.faces[0]   # default
@@ -5193,6 +5200,22 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                         inputface = posed_input
             except Exception as e:
                 bar_write(f"[ProcessMgr] Pose-aware embedding failed: {e}")
+
+        # V2 holds identity vectors per yaw/pitch cell. Copy the selected source
+        # before overriding its vector: source Face objects are shared by workers.
+        if not _swap_is_image and source_faceset is not None:
+            try:
+                from roop.processors.FaceSwapInsightFace import pose_embedding_for_target
+                pose_embedding = pose_embedding_for_target(source_faceset, target_face)
+                if pose_embedding is not None:
+                    pose_input = type(inputface)(inputface)
+                    pose_input['embedding'] = pose_embedding
+                    for key in list(pose_input.keys()):
+                        if str(key).startswith('_latent_'):
+                            del pose_input[key]
+                    inputface = pose_input
+            except Exception as e:
+                bar_write(f"[ProcessMgr] V2 pose embedding selection failed: {e}")
 
         # ── Option 2: Target frontalization ──────────────────────────────────
         # Warp the aligned crop toward frontal before the swap, then apply

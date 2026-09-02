@@ -145,9 +145,9 @@ class FaceSet:
     def pose_bin_embedding(self, pose=None, fallback=True):
         """Return the 3x3 pose-cell centroid for `pose`.
 
-        Falls back along a widening path -- exact cell, then same yaw column,
-        then `default_embedding` -- so a V1 FaceSet and a V2 FaceSet with an
-        empty cell both answer with a usable vector instead of ``None``.
+        A V2 cell is intentionally all-or-nothing: a target must use its closest
+        pose cell or the global default identity.  Borrowing a neighbouring pitch
+        cell subtly reintroduced the wrong-pose identity vector on profiles.
         """
         cell = pose_matrix_cell(pose) if pose is not None else ("center", "center")
         vector = self.pose_bins.get(cell)
@@ -155,10 +155,6 @@ class FaceSet:
             return vector
         if not fallback:
             return None
-        for pitch_bin in ("center", "up", "down"):
-            vector = self.pose_bins.get((cell[0], pitch_bin))
-            if vector is not None:
-                return vector
         return self.default_embedding
 
     def select_reference_index(self, pose=None, appearance=None, embedding=None):

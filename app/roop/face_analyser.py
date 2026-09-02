@@ -11,10 +11,13 @@ from __future__ import annotations
 import os
 from typing import Any, List, Optional, Tuple
 
+import cv2
 import numpy as np
 
 import roop.globals
 from roop.typing import Frame, Face
+from roop.utilities import (compose_affines, pre_rotate_face_crop,
+                            profile_alignment_matrix, transform_points)
 from roop.face_util import (
     FACE_ANALYSER,
     FACE_ANALYSER_POOL,
@@ -31,6 +34,123 @@ from roop.face_util import (
     analysis_pooled,
     estimate_norm,
 )
+
+
+def face_roll_degrees(face: Any) -> float:
+    """Return the resolved roll when present, otherwise derive it from the eyes."""
+    try:
+        value = face.get('roll_deg') if isinstance(face, dict) else getattr(face, 'roll_deg', None)
+        if value is not None and np.isfinite(float(value)):
+            return float(value)
+    except (TypeError, ValueError):
+        pass
+    try:
+        kps = face.get('kps') if isinstance(face, dict) else getattr(face, 'kps', None)
+        left_eye, right_eye = np.asarray(kps, dtype=np.float32).reshape(5, 2)[:2]
+        return float(np.degrees(np.arctan2(right_eye[1] - left_eye[1],
+                                           right_eye[0] - left_eye[0])))
+    except (TypeError, ValueError, AttributeError):
+        return 0.0
+
+
+def face_yaw_pitch(face: Any) -> Tuple[float, float]:
+    """Read target pose stamped by the tracker, with a 5-point solver fallback."""
+    def _value(name):
+        return face.get(name) if isinstance(face, dict) else getattr(face, name, None)
+    try:
+        yaw, pitch = _value('_adaptive_yaw'), _value('_adaptive_pitch')
+        if yaw is not None and pitch is not None:
+            return float(yaw), float(pitch)
+    except (TypeError, ValueError):
+        pass
+    try:
+        from roop.face_util import solve_pose_5pt
+        pose = solve_pose_5pt(_value('kps'))
+        if pose is not None:
+            return float(pose[0]), float(pose[1])
+    except Exception:
+        pass
+    return 0.0, 0.0
+
+
+def profile_anchors(face: Any, yaw_degrees: float) -> Optional[np.ndarray]:
+    """Find visible tragus/ear, nose tip and chin centre from refined landmarks.
+
+    A detector may optionally stamp ``profile_anchors`` explicitly.  Otherwise
+    the lateral contour and lowest refined point supply the visible ear/tragus
+    and chin.  Without 106-point refinement this returns ``None`` so callers
+    retain the well-defined five-point path rather than inventing an ear.
+    """
+    def _value(name):
+        return face.get(name) if isinstance(face, dict) else getattr(face, name, None)
+    explicit = _value('profile_anchors')
+    if explicit is not None:
+        try:
+            anchors = np.asarray(explicit, dtype=np.float32).reshape(3, 2)
+            return anchors if np.isfinite(anchors).all() else None
+        except (TypeError, ValueError):
+            return None
+    try:
+        refined = np.asarray(_value('landmark_2d_106'), dtype=np.float32).reshape(-1, 2)
+        kps = np.asarray(_value('kps'), dtype=np.float32).reshape(5, 2)
+        if refined.shape[0] < 20 or not np.isfinite(refined).all():
+            return None
+        # Keep the lower face from being chosen as the lateral ear contour.
+        upper = refined[refined[:, 1] <= np.percentile(refined[:, 1], 80)]
+        if len(upper) == 0:
+            return None
+        ear = upper[np.argmax(upper[:, 0]) if yaw_degrees >= 0.0 else np.argmin(upper[:, 0])]
+        chin = refined[np.argmax(refined[:, 1])]
+        return np.asarray((ear, kps[2], chin), dtype=np.float32)
+    except (TypeError, ValueError, AttributeError):
+        return None
+
+
+def adaptive_alignment_matrix(kps: np.ndarray, image_size: int, mode: str,
+                              yaw_degrees: float = 0.0,
+                              anchors: Optional[np.ndarray] = None) -> Tuple[np.ndarray, str]:
+    """Choose standard five-point or non-squashing profile alignment."""
+    if abs(float(yaw_degrees)) > 45.0 and anchors is not None:
+        matrix = profile_alignment_matrix(anchors, image_size, yaw_degrees)
+        if matrix is not None:
+            return matrix, 'profile_3pt'
+    return estimate_norm(np.asarray(kps, dtype=np.float32).reshape(5, 2), image_size, mode), 'five_point'
+
+
+def canonicalize_face_alignment(image: Frame, face: Any, image_size: int, mode: str,
+                                dst: Optional[np.ndarray] = None):
+    """Pre-upright a rolled face and return its canonical crop plus paste affine.
+
+    ``paste_matrix`` maps original target coordinates directly to canonical crop
+    coordinates.  Its inverse is therefore the exact un-rotation/paste mapping
+    used before alpha blending, with no second resample of the swapped result.
+    """
+    def _value(name):
+        return face.get(name) if isinstance(face, dict) else getattr(face, name, None)
+    kps = np.asarray(_value('kps'), dtype=np.float32).reshape(5, 2)
+    bbox = np.asarray(_value('bbox'), dtype=np.float32).reshape(4)
+    yaw, pitch = face_yaw_pitch(face)
+    roll = face_roll_degrees(face)
+    upright, pre_rotation, inverse_pre_rotation, applied = pre_rotate_face_crop(image, bbox, roll)
+    upright_kps = transform_points(kps, pre_rotation)
+    anchors = profile_anchors(face, yaw)
+    if anchors is not None:
+        anchors = transform_points(anchors, pre_rotation)
+    local_matrix, alignment_kind = adaptive_alignment_matrix(
+        upright_kps, image_size, mode, yaw_degrees=yaw, anchors=anchors)
+    paste_matrix = compose_affines(local_matrix, pre_rotation)
+    if dst is not None:
+        cv2.warpAffine(upright, local_matrix, (image_size, image_size), dst=dst,
+                       borderMode=cv2.BORDER_REPLICATE)
+        aligned = dst
+    else:
+        aligned = cv2.warpAffine(upright, local_matrix, (image_size, image_size),
+                                 borderMode=cv2.BORDER_REPLICATE)
+    return aligned, paste_matrix, {
+        'yaw': yaw, 'pitch': pitch, 'roll': roll, 'pre_rotation': pre_rotation,
+        'inverse_pre_rotation': inverse_pre_rotation, 'applied_roll_prerotation': applied,
+        'alignment_kind': alignment_kind,
+    }
 
 
 def has_face(frame: Frame) -> bool:
