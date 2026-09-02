@@ -6,11 +6,21 @@ import { useRouter } from './router';
 
 const HomeScreen = lazy(() => import('./screens/HomeScreen'));
 const CreateScreen = lazy(() => import('./screens/CreateScreen'));
+const BatchScreen = lazy(() => import('./screens/BatchScreen'));
+const FaceManagerScreen = lazy(() => import('./screens/FaceManagerScreen'));
+const ExtrasScreen = lazy(() => import('./screens/ExtrasScreen'));
+const GalleryScreen = lazy(() => import('./screens/GalleryScreen'));
+const HistoryScreen = lazy(() => import('./screens/HistoryScreen'));
 const SettingsScreen = lazy(() => import('./screens/SettingsScreen'));
 
 const screens = {
   home: HomeScreen,
   create: CreateScreen,
+  batch: BatchScreen,
+  facemgr: FaceManagerScreen,
+  extras: ExtrasScreen,
+  gallery: GalleryScreen,
+  history: HistoryScreen,
   settings: SettingsScreen,
 };
 

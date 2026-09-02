@@ -1,9 +1,14 @@
 import { useCallback, useEffect, useState } from 'react';
 
 export const ROUTES = Object.freeze([
-  { id: 'home', label: 'Overview', path: '#/home', description: 'Foundation overview' },
-  { id: 'create', label: 'Create', path: '#/create', description: 'Media-first creation workflow' },
-  { id: 'settings', label: 'Settings', path: '#/settings', description: 'Appearance and foundation settings' },
+  { id: 'home', label: 'Overview', path: '#/home', description: 'Workstation status' },
+  { id: 'create', label: 'Studio', path: '#/create', description: 'Media workstation & live preview' },
+  { id: 'batch', label: 'Batch Matrix', path: '#/batch', description: 'Multi-source x multi-target queue' },
+  { id: 'facemgr', label: 'Face Manager', path: '#/facemgr', description: 'Face harvester & embedding bench' },
+  { id: 'extras', label: 'AI Enhancers', path: '#/extras', description: 'Neural upscaling & colorization' },
+  { id: 'gallery', label: 'Outputs', path: '#/gallery', description: 'Rendered media library' },
+  { id: 'history', label: 'History', path: '#/history', description: 'Execution telemetry & run logs' },
+  { id: 'settings', label: 'Settings', path: '#/settings', description: 'Hardware & inference parameters' },
 ]);
 
 const routeById = new Map(ROUTES.map((route) => [route.id, route]));
