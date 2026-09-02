@@ -37,6 +37,7 @@ export function CrossfadeImage({
       key={which}
       src={layers[which] || ''}
       alt={alt}
+      decoding="async"
       aria-hidden={layers.front !== which}
       draggable={false}
       onLoad={(e) => handleLayerLoad(which, e)}

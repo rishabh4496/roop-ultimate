@@ -133,6 +133,7 @@ export function ComparisonWipe({
       <img
         src={afterSrc}
         alt="Swapped"
+        decoding="async"
         className="absolute inset-0 w-full h-full object-contain pointer-events-none"
       />
 
@@ -140,6 +141,7 @@ export function ComparisonWipe({
       <img
         src={beforeSrc}
         alt="Original"
+        decoding="async"
         className="absolute inset-0 w-full h-full object-contain pointer-events-none"
         style={{ clipPath }}
       />

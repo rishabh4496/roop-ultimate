@@ -228,6 +228,7 @@ export function TargetPersonsPanel({
                           <img
                             src={thumbSrc}
                             alt={`Angle #${faceIdx + 1}`}
+                            decoding="async"
                             className="w-full h-full object-cover rounded pointer-events-none"
                           />
 

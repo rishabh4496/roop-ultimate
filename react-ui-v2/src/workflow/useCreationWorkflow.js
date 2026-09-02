@@ -66,9 +66,37 @@ export function useCreationWorkflow(notify) {
   useEffect(() => { refresh().catch(() => {}); }, [refresh]);
 
   useEffect(() => {
-    if (!progress?.processing) return undefined;
-    pollRef.current = window.setInterval(() => { refreshProgress().catch(() => {}); }, 1000);
-    return () => window.clearInterval(pollRef.current);
+    if (!progress?.processing) {
+      document.documentElement.removeAttribute('data-render-lite');
+      return undefined;
+    }
+
+    document.documentElement.setAttribute('data-render-lite', 'true');
+
+    const schedulePoll = () => {
+      const interval = document.hidden ? 2000 : 350;
+      pollRef.current = window.setTimeout(async () => {
+        try {
+          await refreshProgress();
+        } catch {
+          /* ignore */
+        }
+        if (progress?.processing) schedulePoll();
+      }, interval);
+    };
+
+    schedulePoll();
+
+    const onVisibility = () => {
+      if (!document.hidden) refreshProgress().catch(() => {});
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+
+    return () => {
+      document.documentElement.removeAttribute('data-render-lite');
+      window.clearTimeout(pollRef.current);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
   }, [progress?.processing, refreshProgress]);
 
   useEffect(() => {

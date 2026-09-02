@@ -110,6 +110,7 @@ export function SourceGallery({
                     <img
                       src={thumbSrc}
                       alt={`Source #${index + 1}`}
+                      decoding="async"
                       className="w-full h-full object-cover pointer-events-none"
                     />
                   ) : (
