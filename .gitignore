@@ -51,6 +51,7 @@ app/facesets/
 /facesets/
 # Root-level benchmark/render outputs (generated, machine-local)
 /output/
+tests/fixtures/
 
 # Compatibility-gated updater transaction metadata and temporary worktrees
 /.update-snapshots/
