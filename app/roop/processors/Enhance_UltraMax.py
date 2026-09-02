@@ -306,6 +306,7 @@ class Enhance_UltraMax:
     _gaussian_1d_cache = {}
 
     _warned_colour = False
+    _warned_trt_external_output = False
 
     def __init__(self):
         self.plugin_options = None
@@ -815,6 +816,25 @@ class Enhance_UltraMax:
         """
         if (self._cuda_iob_available is False or not
                 (_TORCH_CUDA and getattr(self, 'devicename', '') == 'cuda')):
+            return None
+        # TensorRT accepts a raw CUDA pointer passed to ``bind_output`` but, on
+        # ORT 1.23 / TRT 10, does not reliably honour the Torch allocation's
+        # ownership and stream contract for this dynamic CodeFormer output. The
+        # result is finite and non-flat yet spatially corrupt (striped/ghosted
+        # facial features), so the numerical guards below cannot catch it. Keep
+        # CUDA EP on the zero-copy post-process path; use ORT's owned output
+        # binding for TensorRT, which is the established artifact-free path.
+        try:
+            uses_tensorrt = 'TensorrtExecutionProvider' in self.session.get_providers()
+        except (AttributeError, TypeError):
+            uses_tensorrt = False
+        if uses_tensorrt:
+            self._cuda_iob_available = False
+            if not self._warned_trt_external_output:
+                type(self)._warned_trt_external_output = True
+                print('[UltraMax] TensorRT external CUDA output disabled; '
+                      'using verified ORT-owned output to prevent spatial artifacts',
+                      flush=True)
             return None
         try:
             dtype = torch.float16 if self.in_dtype == np.float16 else torch.float32

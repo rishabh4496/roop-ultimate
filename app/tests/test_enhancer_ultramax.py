@@ -13,7 +13,7 @@ printed a second eyelid crease.
 import os
 import sys
 import unittest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 import numpy as np
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -192,6 +192,23 @@ class TestUltraMaxRun(unittest.TestCase):
         self.assertEqual(out.shape, (512, 512, 3))
         self.assertEqual(out.dtype, np.uint8)
         self.assertEqual(scale, 1)
+
+    def test_tensorrt_never_binds_model_output_into_torch_memory(self):
+        """TRT accepts the pointer but can return finite, spatially corrupt faces.
+
+        The host compatibility output is intentional for this provider. CUDA EP
+        remains eligible for the direct tensor post-process path.
+        """
+        p = self._make()
+        p._cuda_iob_available = None
+        p.session.get_providers.return_value = ['TensorrtExecutionProvider',
+                                                'CUDAExecutionProvider']
+        frame = np.zeros((512, 512, 3), dtype=np.uint8)
+        with patch.object(UM, '_TORCH_CUDA', True):
+            self.assertIsNone(p._run_cuda_postprocess(frame, 512, frame))
+        self.assertFalse(p._cuda_iob_available)
+        p.io_binding.bind_input.assert_not_called()
+        p.io_binding.bind_output.assert_not_called()
 
     def test_input_is_normalised_rgb_chw_in_the_model_dtype(self):
         """The LUT gather has to produce exactly what the graph expects."""
