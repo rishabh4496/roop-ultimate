@@ -1228,24 +1228,31 @@ def _resolve_user_path(raw):
     """Turn a path the user handed us into the absolute path it MEANT.
 
     `os.path.abspath` alone resolves a relative path against the working
-    directory, which for this backend is `app/` (run.py is started there by
-    the launcher). That is the wrong root for the one relative path this app
-    is routinely given: Pinokio's browser copies a dropped or pasted file into
-    `.pinokio-temp/` beside the launcher scripts — i.e. at the PROJECT root,
-    one level above `app/` — and hands the page a project-root-relative path
-    like `.pinokio-temp/image_10.png`. FileDrop passes that straight through to
-    /api/target/add_path, abspath resolved it under `app/`, and every dropped
-    file was rejected as "not a file on this machine" while sitting on disk a
-    directory away.
+    directory, which for this backend is `app/` — start_react.js runs
+    `python run.py` with `path: "app"`. But everything a person is likely to
+    name relatively lives one level UP, at the project root: the launcher
+    scripts, `output/`, and `.pinokio-temp/`, the directory Pinokio's own
+    browser writes dropped and pasted files into. A path typed or pasted as
+    `.pinokio-temp/image_10.png` therefore resolved to `app/.pinokio-temp/...`,
+    which does not exist, and came back "not a file on this machine" while the
+    file sat on disk a directory away. Confirmed against the running backend.
 
-    So a relative path is tried against each root the file could plausibly be
-    relative to, in the order of how specific the claim is — the working
-    directory first (a path typed into the "add by path" box means what the
-    shell would mean by it), then this file's own `app/` directory, then the
-    project root that owns `.pinokio-temp`. Same three roots /api/file already
-    names for exactly this directory, resolved from __file__ rather than from
-    the working directory so they land in the same place however the process
-    was started.
+    NOT the cause of any reported failure. This was written while chasing
+    "cannot create a recoverable project" (that was `_json_default`, see
+    project_checkpoint.py) on the strength of a path that turned out to be
+    Pinokio's name for a SCREENSHOT the user pasted into a chat, not a path
+    the UI had ever sent. Whether FileDrop's `onPaths` can produce a relative
+    path at all is unverified — Electron's `File.path` is absolute. So: a real
+    wrong-root defect on the "add by path" box, with no observed reproduction
+    through the drop zone. Do not read the drop zone into it.
+
+    A relative path is tried against each root it could plausibly be relative
+    to, most specific claim first — the working directory (a path typed into
+    "add by path" means what a shell in that directory would mean), then this
+    file's own `app/` directory, then the project root. The same three roots
+    /api/file already names for this directory, resolved from __file__ rather
+    than from the working directory so they land in the same place however the
+    process was started.
 
     An absolute path is returned untouched. If no candidate exists the plain
     abspath is returned, so the caller's "not a file" rejection still names the

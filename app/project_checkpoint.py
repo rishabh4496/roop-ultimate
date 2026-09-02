@@ -34,10 +34,34 @@ _REPLACE_ATTEMPTS = 8
 
 
 def _json_default(value):
-    if hasattr(value, "item"):
-        return value.item()
+    """JSON fallback for the numpy that every detector fact arrives as.
+
+    `tolist` is asked FIRST because a numpy ndarray has BOTH methods and only
+    one of them is safe for it: `ndarray.item()` raises
+
+        ValueError: can only convert an array of size 1 to a Python scalar
+
+    for anything larger than a single element. Asking for `item` first
+    therefore worked on the numpy SCALARS (age, gender, a score) and failed on
+    every ARRAY -- bbox, kps, embedding, landmark_2d_106, landmark_3d_68 --
+    i.e. on exactly the fields a project records when the user has captured
+    target faces. `/api/swap` answered "cannot create a recoverable project:
+    can only convert an array of size 1 to a Python scalar" and the run never
+    started, while a swap with no captured target face was unaffected.
+
+    Every project on disk reads `target_faces: 0` for this reason; the target
+    faces a project exists to restore could never be written in the first
+    place.
+
+    `tolist` covers both shapes on its own -- a numpy scalar returns a Python
+    scalar, a 0-d array returns its element, an array returns nested lists --
+    so the `item` branch below now only serves objects that expose `item`
+    WITHOUT `tolist`.
+    """
     if hasattr(value, "tolist"):
         return value.tolist()
+    if hasattr(value, "item"):
+        return value.item()
     return str(value)
 
 

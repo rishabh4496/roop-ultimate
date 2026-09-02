@@ -1,16 +1,22 @@
 """Where a RELATIVE target path is resolved from.
 
-The backend's working directory is `app/` — the launcher starts run.py there —
-but the one relative path this app is routinely handed points at the PROJECT
-root: Pinokio's browser copies a dropped or pasted file into `.pinokio-temp/`
-beside the launcher scripts and gives the page `.pinokio-temp/image_10.png`.
-FileDrop forwards that verbatim to /api/target/add_path.
+The backend's working directory is `app/` — start_react.js runs `python run.py`
+with `path: "app"` — but everything a person is likely to name relatively sits
+one level up at the project root: the launcher scripts, `output/`, and
+`.pinokio-temp/`. A path typed into the "add by path" box as
+`.pinokio-temp/image_10.png` was resolved with a bare `os.path.abspath`, landed
+on `app/.pinokio-temp/...`, and came back "not a file on this machine" while
+the file sat on disk a directory away. Confirmed against the running backend.
 
-Resolved with a bare `os.path.abspath` that lands under `app/.pinokio-temp`,
-which does not exist, so every dropped file came back "not a file on this
-machine" while sitting on disk one directory up. Nothing errored and no log
-line was written — the rejection is a normal response — so this needs a test
-rather than a review.
+This is a latent wrong-root defect, NOT the cause of a reported failure — the
+report it was chased from ("cannot create a recoverable project") was
+`_json_default` in project_checkpoint.py, and the `.pinokio-temp` path in it
+was Pinokio's name for a pasted SCREENSHOT rather than anything the UI sent.
+Whether the drop zone can produce a relative path is unverified; these tests
+cover the path-box route only, which is the one that was measured.
+
+The rejection is an ordinary 200 response, so neither the terminal log nor a
+return code showed it — hence a test rather than a review.
 """
 import os
 import sys
