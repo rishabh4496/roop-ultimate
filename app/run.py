@@ -158,10 +158,43 @@ if __name__ == '__main__':
 
     import threading
     from api import run_api
-    threading.Thread(target=run_api, daemon=True).start()
+    api_thread = threading.Thread(target=run_api, daemon=True)
+    api_thread.start()
     # Pinokio's launcher waits for a concrete loopback URL before advancing
     # to the React shell.  The API owns the port, so publish the detected
     # address here instead of making the launcher guess or hard-code it.
     api_port = int(os.environ.get("ROOP_API_PORT", "8001"))
     print(f"[Backend] listening on http://127.0.0.1:{api_port}", flush=True)
+
     core.run()
+
+    # core.run() launches the legacy Gradio UI and blocks in ITS OWN loop.  The
+    # API above is a DAEMON thread, so it dies the instant this process exits --
+    # which is the moment core.run() returns.
+    #
+    # For a React client that coupling is a live outage, and it was observed as
+    # one: a second launcher instance collided on the Gradio port (both React
+    # launchers derive it as ROOP_API_PORT + 2), ui/main.py CAUGHT the
+    # "When localhost is not accessible, a shareable link must be created"
+    # error, set run_server = False, closed the UI and RETURNED NORMALLY.  The
+    # backend had already logged "[Backend] listening on 127.0.0.1:42003"
+    # successfully; run.py then fell off the end of __main__ and took it down,
+    # and the React UI showed ECONNREFUSED on every poll.
+    #
+    # Note the failure returns rather than raising, so wrapping core.run() in
+    # try/except does NOT catch this -- the return itself has to be handled.
+    #
+    # Gradio is incidental to the React clients; they speak only to the API.  So
+    # when a React launcher started us, outlive Gradio and keep serving.  The
+    # legacy launcher is unchanged: there Gradio IS the application, and its
+    # shutdown should still end the process.
+    if os.environ.get("ROOP_REACT_CLIENT") == "1" and api_thread.is_alive():
+        print("[Backend] the legacy Gradio UI has stopped. This does NOT affect "
+              "the React client.", flush=True)
+        print(f"[Backend] still serving the API on http://127.0.0.1:{api_port} "
+              f"- stop this script in Pinokio to shut it down.", flush=True)
+        try:
+            while api_thread.is_alive():
+                api_thread.join(timeout=1.0)
+        except KeyboardInterrupt:
+            print("[Backend] interrupted; shutting down.", flush=True)

@@ -16,6 +16,11 @@ module.exports = async (kernel) => {
             // Keep the backend/profile policy shared with the existing launcher.
             ROOP_API_PORT: String(API_PORT),
             ROOP_GRADIO_PORT: String(GRADIO_PORT),
+            // This client talks ONLY to the FastAPI backend. The legacy
+            // Gradio UI is incidental here, so run.py must keep serving
+            // the API if Gradio fails to launch -- without this it did
+            // not, and a Gradio port collision killed the whole backend.
+            ROOP_REACT_CLIENT: "1",
             ROOP_TEMPORAL_STEP: "1"
           },
           path: "app",

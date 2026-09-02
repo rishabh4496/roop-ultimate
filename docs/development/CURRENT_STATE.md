@@ -1,5 +1,81 @@
 # Current Repository State
 
+## Stage 21 - a Gradio failure was killing the whole backend (2026-09-02)
+
+**Reported as a screenshot of the V2 client failing:** `[vite] http proxy error`
+/ `connect ECONNREFUSED 127.0.0.1:42003` repeating against every endpoint.
+
+**The backend was not broken. It had started perfectly and then been killed by
+something unrelated to it.** From the launcher's own log:
+
+    [Backend] listening on http://127.0.0.1:42003        <- API up and healthy
+    * Running on local URL:  http://127.0.0.1:42005
+    Exception When localhost is not accessible, a shareable link must be
+      created. ... when launching Gradio Server!
+    Closing server running on port: 42005
+    (env) (base) G:\pinokio\api\roop-ultimate\app>       <- process exited
+
+`run.py` starts the FastAPI backend on a **daemon** thread and then calls
+`core.run()`, which launches the legacy Gradio UI on the main thread. The API
+therefore lives exactly as long as Gradio does. A second launcher instance
+collided on the Gradio port -- both React launchers derive it as
+`ROOP_API_PORT + 2` -- Gradio failed, `core.run()` came back, `run.py` fell off
+the end of `__main__`, and the daemon thread died with it. The React client, which
+speaks only to the API and does not use Gradio at all, went to ECONNREFUSED.
+
+### The trap in fixing it
+
+**The failure RETURNS, it does not raise.** `ui/main.py:543` catches the Gradio
+exception, prints `Exception ... when launching Gradio Server!`, sets
+`run_server = False`, closes the UI and returns normally. So the obvious fix --
+wrapping `core.run()` in `try/except` -- never fires. The condition to handle is
+"core.run() returned", and the process exits cleanly with status 0.
+
+### The fix
+
+Both React launchers now declare `ROOP_REACT_CLIENT: "1"`. When that is set and
+the API thread is still alive, `run.py` outlives Gradio and keeps serving,
+saying so explicitly. `start_legacy.js` is deliberately NOT marked: there Gradio
+IS the application and its shutdown must still end the process.
+
+### Verified by reproducing the outage, not by reading the code
+
+`tests/gradio_outage_repro.py` occupies the Gradio port so the launch genuinely
+fails, starts `run.py`, and asks the only question that matters -- is
+`/api/meta` still answering afterwards?
+
+| arm | process exited | `/api/meta` after Gradio died | result |
+|---|---|---|---|
+| `ARM=1` React client | **no** | **200** | PASS |
+| `ARM=0` legacy (control) | **yes** | no | PASS - still exits, as it must |
+
+The control arm is load-bearing: without it, "the process stayed up" would be
+equally consistent with having pinned every process open forever.
+
+`tests/test_backend_outlives_gradio.py` (5 tests) pins the code shape, including
+an assertion that `ui/main.py` still SWALLOWS the error -- the premise the whole
+design rests on, so it is asserted rather than remembered.
+
+### A harness bug worth recording, because this repo has hit it before
+
+The first three runs of the reproduction reported the API as dead when it was
+not. **The harness was not draining the child's stdout pipe**, so once the pipe
+buffer filled the child BLOCKED ON WRITE -- including the API thread's own
+logging -- and never finished initialising. The probe wedged the process it was
+measuring and then reported it as broken. Output stopped at the last line
+written with `flush=True`, which is the visible fingerprint.
+
+`update_health`'s launch probe had the identical defect and it was fixed in
+Stage 18. **Any probe that starts a child with `stdout=PIPE` must drain it.**
+
+### Status
+
+Suite **1795 -> 1800**, OK, 1 skipped. This is a shared `run.py` fix and applies
+to **both** clients; V1 was equally exposed.
+
+---
+
+
 ## Stage 20 - React UI 2.0 rolled back as the default (2026-09-02)
 
 **CORRECTION TO STAGES 18 AND 19.** V2 was promoted to the production default

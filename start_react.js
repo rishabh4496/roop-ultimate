@@ -16,6 +16,11 @@ module.exports = async (kernel) => {
             // service plumbing and does not pin one GPU's tuning onto another.
             ROOP_API_PORT: String(API_PORT),
             ROOP_GRADIO_PORT: String(GRADIO_PORT),
+            // This client talks ONLY to the FastAPI backend. The legacy
+            // Gradio UI is incidental here, so run.py must keep serving
+            // the API if Gradio fails to launch -- without this it did
+            // not, and a Gradio port collision killed the whole backend.
+            ROOP_REACT_CLIENT: "1",
             // Full-frame temporal intake is a quality/workload invariant, not
             // a GPU performance profile.
             ROOP_TEMPORAL_STEP: "1"
