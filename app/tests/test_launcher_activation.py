@@ -27,7 +27,7 @@ def _read(name):
 
 class LauncherActivationTests(unittest.TestCase):
     def test_start_js_launches_the_production_client(self):
-        self.assertIn("require('./start_react.js')", _read("start.js"))
+        self.assertIn("require('./start_react_v2.js')", _read("start.js"))
 
     def test_both_launch_scripts_still_exist(self):
         for name in ("start_react.js", "start_react_v2.js", "start_legacy.js"):
@@ -59,13 +59,13 @@ class LauncherActivationTests(unittest.TestCase):
     def test_the_default_menu_action_starts_the_production_client(self):
         idle = self._idle_menu()
         first = idle.index("href:")
-        self.assertIn("start_react.js", idle[first:first + 60],
+        self.assertIn("start_react_v2.js", idle[first:first + 60],
                       "the default idle action must start the production client")
         self.assertIn("default: true", idle[:first])
 
     def test_the_idle_menu_still_offers_the_other_client(self):
         """Both clients must be reachable from the menu, not just present."""
-        self.assertIn('href: "start_react_v2.js"', self._idle_menu())
+        self.assertIn('href: "start_react.js"', self._idle_menu())
 
     def test_every_launcher_branch_keeps_a_route_back_to_v1(self):
         """While V2 runs, the menu must still offer the V1 action."""

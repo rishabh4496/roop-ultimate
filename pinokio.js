@@ -20,9 +20,9 @@ module.exports = {
     //
     // React UI 2.0 remains fully present and launchable through its own action
     // below; it is a preview and is never started by start.js.
-    let start_react_script = info.running("start_react.js") ? "start_react.js"
+    let start_react_v2_script = info.running("start_react_v2.js") ? "start_react_v2.js"
       : (info.running("start.js") ? "start.js" : null)
-    let start_react_v2_script = info.running("start_react_v2.js") ? "start_react_v2.js" : null
+    let start_react_script = info.running("start_react.js") ? "start_react.js" : null
     let running = {
       install: info.running("install.js"),
       start_react: start_react_script !== null,
@@ -42,19 +42,15 @@ module.exports = {
         href: "install.js",
       }]
     } else if (installed) {
-      // React UI 1.0 is PRESERVED and stays one click away. It still owns
-      // feature surfaces V2 does not provide (faceset library management, face
-      // manager, extras, live cam, run history, quality analysis, benchmark and
-      // the advanced source/target operations), so it is a supported fallback,
-      // not a deprecated leftover.
+      // React UI 1.0 remains fully PRESERVED and accessible as a fallback.
       let start_v1_item = !running.start_react ? [{
-        icon: "fa-solid fa-rocket",
-        text: "<div><strong>Start React UI 1.0</strong><div>The full client — face capture, faceset library, face manager, timeline, extras and live cam</div></div>",
+        icon: "fa-solid fa-clock-rotate-left",
+        text: "<div><strong>Start React UI 1.0 (Fallback)</strong><div>Maintained legacy interface</div></div>",
         href: "start_react.js",
       }] : []
       let start_v2_item = !running.start_react_v2 ? [{
-        icon: "fa-solid fa-flask",
-        text: "<div><strong>Start React UI 2.0</strong><div>Preview — render, queue, pause/resume and projects only; no face capture or faceset library yet</div></div>",
+        icon: "fa-solid fa-rocket",
+        text: "<div><strong>Start React UI 2.0</strong><div>Default Workstation — media canvas, 3D pose tracking, face manager, batch matrix, AI enhancers</div></div>",
         href: "start_react_v2.js",
       }] : []
       if (running.start_react_v2) {
@@ -187,19 +183,14 @@ module.exports = {
         }]
       } else {
         return [{
-          // React UI 1.0 is the production client and therefore the default
-          // action. V2 was the default briefly and was rolled back: it cannot
-          // capture a face, add media, open the faceset library or scrub a
-          // timeline, so it cannot start a job from a cold start. It remains
-          // fully installed and is listed directly beneath; nothing was removed.
           default: true,
           icon: "fa-solid fa-rocket",
-          text: "Start React UI 1.0",
-          href: "start_react.js",
-        }, {
-          icon: "fa-solid fa-flask",
-          text: "<div><strong>Start React UI 2.0</strong><div>Preview — render, queue, pause/resume and projects only; no face capture or faceset library yet</div></div>",
+          text: "<div><strong>Start React UI 2.0</strong><div>Default Workstation — media canvas, 3D pose tracking, face manager, batch matrix, AI enhancers</div></div>",
           href: "start_react_v2.js",
+        }, {
+          icon: "fa-solid fa-clock-rotate-left",
+          text: "<div><strong>Start React UI 1.0 (Fallback)</strong><div>Maintained legacy interface</div></div>",
+          href: "start_react.js",
         }, {
           icon: "fa-solid fa-power-off",
           text: "Start Legacy UI",

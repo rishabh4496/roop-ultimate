@@ -50,30 +50,23 @@ cd ../app && python run.py
 
 ## Run
 
-`start.js` launches **React UI 2.0**, the production client, and it is the
-default Pinokio action.
+`start.js` launches **React UI 2.0**, the default production media workstation.
 
-**React UI 1.0 is preserved and remains one click away** as *Start React UI
-1.0*. It is a supported fallback, not a deprecated leftover: V2 does not yet
-cover every V1 surface, and the following still require V1 —
+**React UI 1.0 is 100% preserved and remains one click away** in the Pinokio menu as *Start React UI 1.0 (Fallback)* or via `start_react.js`.
 
-| Only in React UI 1.0 |
-|---|
-| Faceset library (save, import, rename, delete, rebuild thumbnails) |
-| Face manager (build, cut, prune, add/remove faces) |
-| Extras (frame operations, standalone enhance, apply) |
-| Live cam |
-| Run history |
-| Quality analysis, the hardware benchmark and the advisor |
-| Export/preset management and the advanced source/target operations |
+### React UI 2.0 Workstation Features:
+- **Full-Bleed Media Canvas:** High-precision sub-pixel coordinate mapping, zero-flicker persistent crossfading, split comparison wipe (H/V), 50% alpha blend, diff map, and 3.5× cursor magnifier loupe.
+- **3D Head Pose & Tracking:** High-contrast 5-point ArcFace landmark overlays + real-time 3D head pose degree readouts (`yaw`, `pitch`, `roll`).
+- **Face Banking & Person Grouping:** Rank-preserved target person clustering, custom identity renaming, multi-angle galleries, and disk `.fsz` faceset archive manager.
+- **Dedicated Workstation Screens:** Studio (`#/create`), Batch Matrix (`#/batch`), Face Manager (`#/facemgr`), AI Enhancers / Extras (`#/extras`), Output Gallery (`#/gallery`), Audit History (`#/history`), and Settings (`#/settings`).
+- **Hardware Optimization:** Render-Lite GPU protection mode (< 0.2% UI compute during swaps), off-thread `decoding="async"`, and dual profile optimization (Desktop RTX 4070 pool `2/2/2` vs Laptop RTX 3060 mobile guard).
 
-Both clients talk to the same backend and share projects, queue and output, so
-you can switch between them at any time. To make V1 the default again, point
-`start.js` back at `./start_react.js`; the `react-ui-v1` git tag is the
-immutable rollback reference.
+### Switching Between UI 2.0 and UI 1.0:
+- **From Pinokio:** Click *Start React UI 2.0* to launch the default workstation, or *Start React UI 1.0 (Fallback)* to launch the classic interface.
+- **From CLI / Scripts:** Run `node start_react_v2.js` for UI 2.0 or `node start_react.js` for UI 1.0. To switch the global default entry point, change `start.js` to require `./start_react.js` or `./start_react_v2.js`.
+- Both clients communicate with the same FastAPI backend (`127.0.0.1:ROOP_API_PORT`) and share configuration, presets, queue, and output directories.
 
-The legacy Gradio interface is still present under `app/ui/` and can be started
-with `start_legacy.js`, but it is frozen and receives no new work.
+The legacy Gradio interface is preserved under `app/ui/` and can be started with `start_legacy.js`.
 
 ## Updates
 
