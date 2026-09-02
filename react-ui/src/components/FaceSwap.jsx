@@ -28,7 +28,10 @@ import { setLastPreview } from './faceswap/lastPreview';
 import { num, fmtTime } from './faceswap/utils';
 import useProfiles from './faceswap/useProfiles';
 import useTelemetry from './faceswap/useTelemetry';
-import useSequentialImage from './faceswap/useSequentialImage';
+import useThrottledFrameRequest from './faceswap/useThrottledFrameRequest';
+import {
+  dataUrlToOwnedBlobUrl, releaseOwner, revokeUrl, blobUrlToDataUrl,
+} from './faceswap/objectUrls';
 import useCompareGrid from './faceswap/useCompareGrid';
 import useRenderLite from './faceswap/useRenderLite';
 import useLiveCam from './faceswap/useLiveCam';
@@ -81,6 +84,10 @@ export default function FaceSwap({
   const [frame, setFrame] = useState(1);
   const [maxFrames, setMaxFrames] = useState(1);
   const [previewSrc, setPreviewSrc] = useState('');
+  // The same value, readable synchronously. The revoke decision above has to
+  // be made against what state currently HOLDS, not against the value this
+  // render closed over — refreshPreview is async and re-entrant.
+  const previewSrcRef = useRef('');
   // Which view `previewSrc` was actually rendered for, as `${index}_${frame}`.
   // A render lags the playhead by however long the swap takes, so without this
   // the stage had no way to tell "the swap for the frame you are looking at"
@@ -264,13 +271,52 @@ export default function FaceSwap({
   // Pasted Files Dialog State
   const [pastedFiles, setPastedFiles] = useState(null);
 
-  // Preview Cache Ref
+  // Preview Cache Ref.
+  //
+  // Entries hold a blob URL, not the base64 data URL the backend sends. The
+  // difference is not cosmetic: this cache is capped at 200 entries, and a
+  // rendered HD/4K preview is 1-4 MB of base64 — so as data URLs it was a ref
+  // holding up to ~800 MB of JavaScript STRING, re-read on every cache lookup
+  // and copied by every consumer that touched it. As blob URLs the bytes live
+  // once in the browser's blob store and each entry is a ~50-character token.
+  //
+  // The whole cost of that is that blob URLs must be revoked BY NAME or they
+  // outlive the document — so eviction and clearing both go through
+  // objectUrls.js, which owns them against `previewOwner` and can free the lot
+  // in one call. An entry dropped without a revoke is a permanent leak that no
+  // GC will ever collect, which is exactly the trade this makes explicit.
   const previewCacheRef = useRef({});
+  const previewOwner = useRef({ tag: 'preview-cache' }).current;
   // Set when a preview refresh is skipped because a swap run owns the GPU.
   const previewDeferredRef = useRef(false);
 
+  // Every blob URL that is CURRENTLY ON SCREEN — the stage, plus any comparison
+  // grid cell. Recomputed each render, which is cheap (at most ~17 short
+  // strings) and, crucially, always current at the moment the cache is cleared.
+  const displayedUrlsRef = useRef(new Set());
+  displayedUrlsRef.current = new Set([
+    previewSrc,
+    ...Object.values(enhancerPreviews || {}),
+    ...Object.values(maskPreviews || {}),
+    ...Object.values(swapperPreviews || {}),
+    ...Object.values(upscalePreviews || {}),
+  ].filter(Boolean));
+
+  // Dropping the cache must free its blobs — but NOT the ones something is
+  // still showing. `releaseOwner` would take the lot, and the caller of this is
+  // a settings/faceset change that leaves the stage and any open grid up until
+  // their replacements land: revoking underneath them blanks the picture with
+  // no error anywhere, which is the hardest kind of regression to trace back to
+  // a memory fix. What stays behind is bounded by what is visible, and the
+  // unmount handler below sweeps it.
   const clearPreviewCache = () => {
+    const cache = previewCacheRef.current;
     previewCacheRef.current = {};
+    const displayed = displayedUrlsRef.current;
+    for (const k in cache) {
+      const url = cache[k]?.image;
+      if (url && !displayed.has(url)) revokeUrl(url);
+    }
   };
 
   // Content signature of a face gallery. The count alone is NOT enough to
@@ -303,6 +349,17 @@ export default function FaceSwap({
     return `${idx}_${fr}_${previewKey}_${cacheSuffix}`;
   };
 
+  // Is this url still referenced by a cache entry? Asked before freeing the
+  // url that state is dropping — the cache and `previewSrc` routinely point at
+  // the same blob, and revoking one out from under the other blanks the stage
+  // on the next cache hit with no error anywhere.
+  const cacheHoldsUrl = (url) => {
+    if (!url) return false;
+    const cache = previewCacheRef.current;
+    for (const k in cache) if (cache[k]?.image === url) return true;
+    return false;
+  };
+
   const getCachedPreview = (idx = selTarget, fr = frame) => {
     const key = getCacheKey(idx, fr);
     return previewCacheRef.current[key];
@@ -313,10 +370,25 @@ export default function FaceSwap({
     const cache = previewCacheRef.current;
     const keys = Object.keys(cache);
     if (keys.length > 200) {
-      delete cache[keys[0]]; // cap at 200 items to prevent memory bloat
+      // Evicting the entry is not enough — its blob URL would stay resident for
+      // the life of the document. Free it here, where the reference is still in
+      // hand; there is nowhere later that could.
+      const victim = cache[keys[0]];
+      if (victim?.image) revokeUrl(victim.image);
+      delete cache[keys[0]];
+    }
+    // Replacing a key in place leaks the same way.
+    if (cache[key] && cache[key].image && cache[key].image !== data.image) {
+      revokeUrl(cache[key].image);
     }
     cache[key] = data;
   };
+
+  // Last resort: the panel going away must not strand a cache full of blobs.
+  // clearPreviewCache covers the in-app paths (a settings change, a new
+  // faceset); this covers the tab switch, which is how this window usually
+  // ends.
+  useEffect(() => () => { releaseOwner(previewOwner); }, [previewOwner]);
 
   // Invalidate cache when source/target faces or selections change
   useEffect(() => {
@@ -793,6 +865,10 @@ export default function FaceSwap({
         setPreviewPersonIds(cached.personIds || []);
         setPreviewKps(cached.kps || []);
         setPreviewPose(cached.pose || []);
+        // No revoke of the outgoing url here: it is a cache entry, and the
+        // cache is what owns it. Freeing it would blank a frame the user can
+        // still step back onto.
+        previewSrcRef.current = cached.image;
         setPreviewSrc(cached.image);
         setPreviewFor(`${idx}_${fr}`);
         return;
@@ -823,10 +899,20 @@ export default function FaceSwap({
       setPreviewPersonIds(res.person_ids || []);
       setPreviewKps(res.kps || []);
       setPreviewPose(res.pose || []);
-      setPreviewSrc(res.image || '');
-      setPreviewFor(res.image ? `${idx}_${fr}` : '');
-      if (res.image) {
-        setCachedPreview(idx, fr, { faces: res.faces || [], personIds: res.person_ids || [], kps: res.kps || [], pose: res.pose || [], image: res.image });
+      // The backend hands back a base64 data URL. It is converted here, ONCE,
+      // at the only point it enters the client — so nothing downstream (React
+      // state, the cache, the pop-out, localStorage) ever holds the megabytes.
+      // See the note on previewCacheRef.
+      const blobSrc = res.image ? dataUrlToOwnedBlobUrl(res.image, previewOwner) : '';
+      // The previous frame's URL is about to stop being referenced by state. If
+      // the cache is not holding it too, nothing else ever will, so free it.
+      const prevSrc = previewSrcRef.current;
+      if (prevSrc && prevSrc !== blobSrc && !cacheHoldsUrl(prevSrc)) revokeUrl(prevSrc);
+      previewSrcRef.current = blobSrc;
+      setPreviewSrc(blobSrc);
+      setPreviewFor(blobSrc ? `${idx}_${fr}` : '');
+      if (blobSrc) {
+        setCachedPreview(idx, fr, { faces: res.faces || [], personIds: res.person_ids || [], kps: res.kps || [], pose: res.pose || [], image: blobSrc });
       }
     } catch (e) {
       notify(e.name === 'AbortError' ? 'Preview timed out (model build took too long)' : e.message, 'error');
@@ -854,7 +940,7 @@ export default function FaceSwap({
   const gridCommon = {
     settings: p, fakePreview, selTarget, frame, targetCount: targets.length,
     buildPreviewPayload, previewSignature, previewCacheRef,
-    cacheSuffix, reloadKey: previewKey,
+    cacheSuffix, reloadKey: previewKey, owner: previewOwner,
   };
 
   useGridPreviewLoader({
@@ -1178,8 +1264,14 @@ export default function FaceSwap({
     if (!previewSrc) { notify('No preview to upscale', 'error'); return; }
     setUpscaling(true);
     try {
+      // The backend wants the pixels, and previewSrc is now a blob URL — a
+      // reference this process owns, meaningless to the server. Re-serialise
+      // on demand: this is a click, not a render tick, so the cost is invisible
+      // here and the saving is on every frame of every scrub.
+      const imageBytes = await blobUrlToDataUrl(previewSrc);
+      if (!imageBytes) throw new Error('preview frame is no longer available');
       const res = await postJSON('/api/preview_upscale', {
-        image: previewSrc,
+        image: imageBytes,
         subtype: p.upscale_model_after || 'esrganx2',
       });
       if (!res.image) throw new Error(res.message || 'upscale failed');
@@ -1275,7 +1367,11 @@ export default function FaceSwap({
   // an <img> directly to rawReqUrl issued a request per intermediate frame of a
   // drag, and since each one is a video seek on a single shared decoder, the
   // frame you stopped on arrived behind every frame you swept past.
-  const loadedRawUrl = useSequentialImage(rawReqUrl);
+  // Throttled to 150 ms, one request in flight, and — the part useSequentialImage
+  // could not do — the superseded request is ABORTED rather than left to finish
+  // into a frame nobody will look at. See useThrottledFrameRequest.
+  const { frame: rawFrameBitmap, frameSrc: loadedRawUrl } =
+    useThrottledFrameRequest(rawReqUrl, { throttleMs: 150 });
   // Until the first frame of a new target has loaded there is nothing better to
   // show, so fall through to the request URL rather than blanking the box.
   const rawUrl = loadedRawUrl || rawReqUrl;
@@ -1317,10 +1413,20 @@ export default function FaceSwap({
   // carried on. Only broadcasts while a pop-out is actually open: a rendered
   // preview is a multi-MB data URI.
   useEffect(() => {
+    if (!popoutManager.isOpen()) return undefined;
     const src = previewSrc || rawUrl;
-    if (src && popoutManager.isOpen()) {
-      popoutManager.sendUpdate({ type: 'UPDATE_PREVIEW', src });
-    }
+    if (!src) return undefined;
+    let cancelled = false;
+    // A blob URL is a handle into THIS document's blob store. The pop-out is a
+    // separate window with its own lifetime — it outlives this component, and
+    // this component revokes what it owns on unmount — so it is sent the bytes.
+    // http(s) frame URLs are already self-contained and pass straight through.
+    (async () => {
+      const payload = src.startsWith('blob:') ? await blobUrlToDataUrl(src) : src;
+      if (cancelled || !payload) return;
+      popoutManager.sendUpdate({ type: 'UPDATE_PREVIEW', src: payload });
+    })();
+    return () => { cancelled = true; };
   }, [previewSrc, rawUrl]);
 
   // Park the current still where the Processing tab can find it. That tab is
@@ -1328,7 +1434,20 @@ export default function FaceSwap({
   // to show for the window before the pipeline publishes its first frame — see
   // faceswap/lastPreview.
   useEffect(() => {
-    setLastPreview({ previewSrc, rawUrl, frame, maxFrames });
+    let cancelled = false;
+    // Coordinates first, so the processing tab has the right frame numbers even
+    // if the image re-serialisation loses a race with a tab switch.
+    setLastPreview({ rawUrl, frame, maxFrames });
+    (async () => {
+      // Bytes, not the blob URL — see the header of lastPreview.js. This runs
+      // once per RENDERED preview (a GPU swap costing hundreds of ms), never
+      // per scrub tick, so the re-encode is not on any hot path.
+      const bytes = previewSrc.startsWith('blob:')
+        ? await blobUrlToDataUrl(previewSrc)
+        : previewSrc;
+      if (!cancelled) setLastPreview({ previewSrc: bytes });
+    })();
+    return () => { cancelled = true; };
   }, [previewSrc, rawUrl, frame, maxFrames]);
 
   const revealOutput = async () => {
@@ -2817,9 +2936,21 @@ export default function FaceSwap({
                     previewSrc={previewSrc || rawUrl}
                     enabled={ambilightEnabled}
                   />
+                  {/* beforeFrame/afterFrame hand over the bitmap the scrub
+                      hook has ALREADY decoded, so the stage does not fetch and
+                      decode the same JPEG a second time — on 4K footage that
+                      was ~30 ms of duplicated main-thread work per frame of
+                      every drag. Passed only while the scrub hook is the one
+                      that fetched the frame: during playback the buffered
+                      player owns it and supplies a url instead. */}
                   <InteractivePreview
                     beforeSrc={(isPlaying && bufferedSrc) ? bufferedSrc : rawUrl}
                     afterSrc={stageAfterSrc}
+                    beforeFrame={(isPlaying && bufferedSrc) ? null : (
+                      rawFrameBitmap && loadedRawUrl === rawUrl ? rawFrameBitmap : null)}
+                    afterFrame={scrubbingNow && !isPlaying
+                      && stageAfterSrc === rawUrl
+                      && loadedRawUrl === rawUrl ? rawFrameBitmap : null}
                     scrubbing={scrubbingNow}
                     onMaskChange={applyManualMask}
                     maskApplied={!!manualMask}

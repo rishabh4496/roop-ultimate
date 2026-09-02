@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { postJSON } from '../../api';
+import { dataUrlToOwnedBlobUrl, revokeUrl } from './objectUrls';
 
 // ── One comparison grid's preview loader ──────────────────────────────────
 // Renders one preview per selected variant, holding every OTHER setting fixed,
@@ -38,6 +39,7 @@ export default function useGridPreviewLoader({
   buildPreviewPayload, previewSignature, previewCacheRef,
   cacheSuffix,        // the source/target/selection part of the cache key
   reloadKey,          // previewKey — any preview-relevant setting change
+  owner,              // object-URL owner token; shared with the main preview cache
 }) {
   /* eslint-disable react-hooks/exhaustive-deps -- intentional: `load` is
      rebuilt every render and closes over current values on purpose; the effect
@@ -95,10 +97,24 @@ export default function useGridPreviewLoader({
           stopTimer();
           if (!activeCheck()) return;
           if (res.image) {
-            setPreviews((prev) => ({ ...prev, [value]: res.image }));
+            // Same reason as the main preview: a grid of six cells held six
+            // full-resolution base64 strings in React state AND six more in the
+            // cache. As blob URLs the bytes exist once each and the state holds
+            // tokens. Owned by the panel's token, so the panel's teardown frees
+            // the grid's frames along with everything else.
+            const blobSrc = dataUrlToOwnedBlobUrl(res.image, owner);
+            setPreviews((prev) => {
+              // Replacing a cell's url without revoking the outgoing one leaks
+              // a frame per re-render of the grid.
+              const old = prev[value];
+              if (old && old !== blobSrc && previewCacheRef.current[cacheKey]?.image !== old) {
+                revokeUrl(old);
+              }
+              return { ...prev, [value]: blobSrc };
+            });
             setTimes((prev) => ({ ...prev, [value]: `${duration}s` }));
             setTimers((prev) => ({ ...prev, [value]: null }));
-            previewCacheRef.current[cacheKey] = { faces: res.faces || [], image: res.image };
+            previewCacheRef.current[cacheKey] = { faces: res.faces || [], image: blobSrc };
           }
         } catch {
           stopTimer();

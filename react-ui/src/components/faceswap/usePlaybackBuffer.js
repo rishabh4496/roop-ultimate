@@ -102,6 +102,8 @@ export default function usePlaybackBuffer({ frame, setFrame, selTarget, maxFrame
       const s = Math.max(1, t?.start_frame || 1);
       return { start: s, end: Math.max(s, t?.end_frame || maxFrames) };
     };
+    // Every chunk request currently on the wire, so teardown can cancel them.
+    const chunkAborters = new Set();
     let { start, end } = bounds();
     const frameDur = 1000 / (fps * (playbackRate || 1));
     // Lead is measured in TIME, not frames: a 60fps clip drains the buffer twice
@@ -192,12 +194,22 @@ export default function usePlaybackBuffer({ frame, setFrame, selTarget, maxFrame
       const n = Math.max(1, Math.min(CHUNK, end - fr + 1));
       for (let i = 0; i < n; i++) playFetchRef.current.add(fr + i);
       inFlight++;
+      // A chunk is up to 48 server-side video seeks. Stopping playback, seeking
+      // away or switching target used to leave the whole request running to
+      // completion against the ONE decoder the preview also has to use — so the
+      // frame you scrubbed to queued behind a chunk nobody would ever look at.
+      // `cancelled` only decided whether to KEEP the result; it could not stop
+      // the work. This can.
+      const ctrl = new AbortController();
+      chunkAborters.add(ctrl);
       const done = () => {
         for (let i = 0; i < n; i++) playFetchRef.current.delete(fr + i);
         inFlight--;
+        chunkAborters.delete(ctrl);
       };
-      fetch(`${API}/api/target/preview_seq?index=${idx}&start=${fr}&count=${n}&width=960`)
-        .then((r) => (r.ok ? r.arrayBuffer() : Promise.reject()))
+      fetch(`${API}/api/target/preview_seq?index=${idx}&start=${fr}&count=${n}&width=960`,
+        { signal: ctrl.signal })
+        .then((r) => (r.ok ? r.arrayBuffer() : Promise.reject(new Error('seq failed'))))
         .then((buf) => {
           if (cancelled) return;
           splitChunk(buf).forEach((blob, i) => {
@@ -205,7 +217,7 @@ export default function usePlaybackBuffer({ frame, setFrame, selTarget, maxFrame
             if (!playBufRef.current.has(f)) playBufRef.current.set(f, URL.createObjectURL(blob));
           });
         })
-        .catch(() => {})
+        .catch(() => { /* aborted, or a failed chunk: pump() re-requests it */ })
         .finally(done);
     };
 
@@ -293,7 +305,12 @@ export default function usePlaybackBuffer({ frame, setFrame, selTarget, maxFrame
       rafId = requestAnimationFrame(tick);
     };
     rafId = requestAnimationFrame(tick);
-    return () => { cancelled = true; if (rafId) cancelAnimationFrame(rafId); };
+    return () => {
+      cancelled = true;
+      if (rafId) cancelAnimationFrame(rafId);
+      for (const c of chunkAborters) c.abort();
+      chunkAborters.clear();
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- `frame`/`targets` are read through refs on purpose: the loop writes `frame` itself every tick, and re-binding on `targets` restarted playback on every In/Out drag.
   }, [isPlaying, isLooping, playbackRate, selTarget, maxFrames]);
 

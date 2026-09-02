@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import useSequentialImage from './useSequentialImage';
+import useThrottledFrameRequest from './useThrottledFrameRequest';
 
 /**
  * The clip timeline — an editor-style scrubber for the target video.
@@ -411,9 +411,18 @@ export default function Timeline({
   // names a new frame roughly every pixel, and each one is a video seek on the
   // same decoder the playhead's own frame needs — so an unthrottled hover strip
   // could bury the main preview under a hundred requests for stills that were
-  // out of date before they finished (see useSequentialImage).
-  const hoverSrc = useSequentialImage(
-    hoverFrame !== null && thumbUrl ? thumbUrl(hoverFrame) : '');
+  // out of date before they finished.
+  //
+  // This is the SAME decoder the scrubber competes for, so it gets the same
+  // treatment: 150 ms throttle, one in flight, and the superseded request
+  // ABORTED rather than left to run. A hover thumbnail is decoration; it must
+  // never be able to delay the frame the user is actually looking at, and the
+  // previous single-flight-only version could, because an <img> load cannot be
+  // cancelled. The <img> below points at the same URL and is answered from the
+  // browser cache the request already filled.
+  const { frameSrc: hoverSrc } = useThrottledFrameRequest(
+    hoverFrame !== null && thumbUrl ? thumbUrl(hoverFrame) : '',
+    { throttleMs: 150 });
 
   // Labels at the very edges would hang off the track; anchor those to the edge
   // instead of centring them.

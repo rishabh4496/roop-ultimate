@@ -1,63 +1,17 @@
 import React, { useCallback, useEffect, useRef, useState, useMemo } from 'react';
 import AIScannerOverlay from './AIScannerOverlay';
+import PreviewCanvas from './PreviewCanvas';
+import CompareSlider from './CompareSlider';
 import {
   clampPan, panAnchoredAt, panCenteringAt, transformFor, uiScale, wheelZoom,
 } from './zoomPan';
 
-// Cross-fades between src changes using TWO persistent <img> layers that are
-// never remounted.
-function CrossfadeImage({ src, className, style, fadeMs = 200, onLoad }) {
-  const [layers, setLayers] = useState({ a: src, b: src, front: 'a' });
-
-  useEffect(() => {
-    setLayers((s) => {
-      if (src === s[s.front]) return s;
-      const back = s.front === 'a' ? 'b' : 'a';
-      // The back layer is ALREADY showing this exact image — stepping back onto
-      // a frame whose render is still cached puts the previous src back. An
-      // <img> whose src is re-assigned to what it already holds fires no load
-      // event, so the promote below would never run: the stage stayed on the
-      // other frame while the playhead said otherwise, and stepping between two
-      // frames looked like the picture was flicking back and forth at random.
-      // It is loaded, so promote it here instead of waiting for a load.
-      if (src === s[back]) return { ...s, front: back };
-      return { ...s, [back]: src };
-    });
-  }, [src]);
-
-  const promote = (which, e) => {
-    if (onLoad) onLoad(e);
-    setLayers((s) => {
-      if (s.front === which) return s;
-      if (s[which] !== src) return s;
-      return { ...s, front: which };
-    });
-  };
-
-  const renderLayer = (which) => (
-    <img
-      key={which}
-      src={layers[which]}
-      alt=""
-      aria-hidden
-      draggable={false}
-      onLoad={(e) => promote(which, e)}
-      className={className}
-      style={{
-        ...style,
-        opacity: layers.front === which ? 1 : 0,
-        transition: `opacity ${fadeMs}ms ease-out`,
-      }}
-    />
-  );
-
-  return (
-    <>
-      {renderLayer('a')}
-      {renderLayer('b')}
-    </>
-  );
-}
+// The two-<img>-layer CrossfadeImage that used to live here is gone. It faded
+// by animating an `opacity` held in React state, so a cross-fade was a burst of
+// commits of the whole Face Swap panel, and its two <img> elements each held a
+// multi-megabyte base64 src. PreviewCanvas does the same fade as an alpha ramp
+// inside one rAF, over decoded bitmaps, with no React involvement at all — see
+// its header for why that distinction is the point of this refactor.
 
 const ZOOM_MAX = 8;
 const LENS_R = 88;        // lens radius in px (the glass is 2R across)
@@ -66,6 +20,11 @@ const LENS_ZOOM = 3.5;    // magnification ON TOP of the stage's own zoom
 export default function InteractivePreview({
   beforeSrc,
   afterSrc,
+  // Optional pre-decoded frames from useThrottledFrameRequest. When present the
+  // canvas paints these directly instead of fetching `*Src` itself, so a scrub
+  // costs one decode total rather than one per component that shows the frame.
+  beforeFrame = null,
+  afterFrame = null,
   faces = [],
   kps = [],
   pose = [],
@@ -88,11 +47,19 @@ export default function InteractivePreview({
   maskApplied = false,
 }) {
   const [sliderPosition, setSliderPosition] = useState(50);
+  // The live value during a drag. `sliderPosition` only ever holds the value
+  // the user SETTLED on; reading state mid-drag would read one frame stale.
+  const sliderPosRef = useRef(50);
   const [compareMode, setCompareMode] = useState('slider'); // 'slider' | 'blend' | 'diff'
   const [compareDir, setCompareDir] = useState('vertical'); // 'vertical' | 'horizontal'
   const [autoSwipe, setAutoSwipe] = useState(false);
   const containerRef = useRef(null);
   const imageRef = useRef(null);
+  // Imperative handles. The wipe travels canvas-ward through these on every
+  // pointer move; `sliderPosition` in state is only the SETTLED value, read by
+  // the labels and persisted across mode switches.
+  const canvasApiRef = useRef(null);
+  const compareApiRef = useRef(null);
   const maskCanvasRef = useRef(null);
   const maskExportRef = useRef(null);
   const lastPtRef = useRef(null);
@@ -125,20 +92,30 @@ export default function InteractivePreview({
   // Declared up here because the keydown effect below lists it as a dependency.
   const splitMode = compare && splitView;
 
+  // Dragging anywhere on the stage while in compare mode also moves the wipe
+  // (the divider handle itself is CompareSlider's). Imperative for the same
+  // reason: a pointer-move must not commit the tree.
   const handleSliderMove = (clientX, clientY) => {
     const target = imageRef.current || containerRef.current;
     if (!target) return;
     const rect = target.getBoundingClientRect();
+    let percent = null;
     if (compareDir === 'horizontal' && clientY !== undefined) {
       const y = Math.max(0, Math.min(clientY - rect.top, rect.height));
-      const percent = Math.max(0, Math.min((y / rect.height) * 100, 100));
-      setSliderPosition(percent);
+      percent = Math.max(0, Math.min((y / rect.height) * 100, 100));
     } else if (clientX !== undefined) {
       const x = Math.max(0, Math.min(clientX - rect.left, rect.width));
-      const percent = Math.max(0, Math.min((x / rect.width) * 100, 100));
-      setSliderPosition(percent);
+      percent = Math.max(0, Math.min((x / rect.width) * 100, 100));
     }
+    if (percent === null) return;
+    sliderPosRef.current = percent;
+    if (compareMode === 'blend') canvasApiRef.current?.setWipe(percent);
+    else compareApiRef.current?.set(100 - percent);
   };
+
+  // Called on release, so the settled value reaches the things that are React's
+  // business (the corner labels, and the value that survives a mode switch).
+  const commitSliderPosition = (percent) => setSliderPosition(percent);
 
   // Auto-swipe animation.
   //
@@ -152,10 +129,11 @@ export default function InteractivePreview({
   // can get (see the render-lite mode in FaceSwap/index.css).
   const autoSwipeRuns = autoSwipe && compare && compareMode !== 'diff';
   useEffect(() => {
-    if (!autoSwipeRuns) return;
+    if (!autoSwipeRuns) return undefined;
     let animId;
     let startTime;
     let phase = 0;                      // seconds into the oscillation
+    let pos = 50;
     const animate = (time) => {
       if (document.hidden
           || document.documentElement.hasAttribute('data-render-lite')) {
@@ -169,20 +147,37 @@ export default function InteractivePreview({
       // the jump this branch exists to avoid.
       if (startTime === undefined) startTime = time - phase * 1000;
       phase = (time - startTime) / 1000;
-      const pos = 50 + 40 * Math.sin(phase * (Math.PI * 2 / 2.5));
-      setSliderPosition(pos);
+      pos = 50 + 40 * Math.sin(phase * (Math.PI * 2 / 2.5));
+      // This used to be setSliderPosition(pos) — sixty commits a second of the
+      // panel that owns this component, to move a divider. It goes straight to
+      // the canvas now. In blend mode there is no divider to move, so the wipe
+      // (which the canvas reads as the top layer's alpha) is set directly.
+      if (compareMode === 'blend') canvasApiRef.current?.setWipe(pos);
+      else compareApiRef.current?.set(100 - pos);
       animId = requestAnimationFrame(animate);
     };
     animId = requestAnimationFrame(animate);
-    return () => cancelAnimationFrame(animId);
-  }, [autoSwipeRuns]);
+    return () => {
+      cancelAnimationFrame(animId);
+      // Settle the React value where the animation stopped, so turning Auto off
+      // leaves the divider where it visibly is rather than snapping back to
+      // whatever state was last told.
+      setSliderPosition(pos);
+    };
+  }, [autoSwipeRuns, compareMode]);
 
   // Ends any drag — slider, pan, peek or brush stroke. Bound both on window
   // (so a release anywhere lands) and on the stage as a pointer handler, since
   // `mouseup`/`touchend` are compatibility events a pen never emits: with a
   // stylus the stage stayed latched in panning mode after lifting off.
   const endDrag = useCallback(() => {
-    setIsDraggingSlider(false);
+    // A stage drag moved the wipe imperatively; this is where that live value
+    // becomes the React one. Guarded on actually having been dragging, so an
+    // unrelated mouseup does not keep re-committing the same number.
+    setIsDraggingSlider((was) => {
+      if (was) commitSliderPosition(sliderPosRef.current);
+      return false;
+    });
     setIsPanning(false);
     setIsPeekingOriginal(false);
     setIsDrawingMask(false);
@@ -902,11 +897,12 @@ export default function InteractivePreview({
         <div className={`flex w-full h-full ${interacting ? '' : 'transition-transform duration-75'}`} style={transformStyle}>
           <div className="flex-1 relative border-r border-white/10 flex items-center justify-center overflow-hidden bg-black/60">
             <div className="relative" style={aspectStyle}>
-              <img
-                src={beforeSrc}
-                alt="Before"
+              <PreviewCanvas
+                baseSrc={beforeSrc}
+                baseFrame={beforeFrame}
+                wipe={0}
+                onDimensions={setImgDim}
                 className="w-full h-full object-contain pointer-events-none"
-                onLoad={(e) => setImgDim({ w: e.target.naturalWidth, h: e.target.naturalHeight })}
               />
               <div className="absolute inset-0 pointer-events-none">{faceBoxes}{debugOverlay}</div>
             </div>
@@ -916,9 +912,11 @@ export default function InteractivePreview({
           </div>
           <div className="flex-1 relative flex items-center justify-center overflow-hidden bg-black/60">
             <div className="relative" style={aspectStyle}>
-              <img
-                src={isPeekingOriginal ? beforeSrc : afterSrc}
-                alt="After"
+              <PreviewCanvas
+                baseSrc={isPeekingOriginal ? beforeSrc : afterSrc}
+                baseFrame={isPeekingOriginal ? beforeFrame : afterFrame}
+                wipe={0}
+                fadeMs={isPlaying ? 0 : scrubbing ? 60 : 200}
                 className="w-full h-full object-contain pointer-events-none"
               />
             </div>
@@ -934,7 +932,25 @@ export default function InteractivePreview({
   }
 
   // Standard or Slide-Comparison View (Vertical slider handle)
-  const currentClipPosition = isPeekingOriginal ? 0 : compare ? sliderPosition : 100;
+  // ── What the canvas is told to draw ──────────────────────────────────────
+  // `wipe` is HOW MUCH OF THE STAGE THE SWAPPED LAYER COVERS, 0..100. The
+  // slider's own `sliderPosition` is the DIVIDER's distance from the left, and
+  // the swapped side is to its right — so the two are complements, and mixing
+  // them up silently inverts the comparison. Blend mode reuses the same number
+  // as an alpha, keeping the old behaviour where 100 is fully swapped.
+  //
+  // Peeking (hold to see the original) is expressed as wipe 0 in normal mode
+  // rather than by clearing `topSrc`: clearing it would drop the decoded frame
+  // and pay a full re-decode on release, for something the user does by holding
+  // a key for half a second.
+  const canvasMode = compare && !isPeekingOriginal ? compareMode : 'normal';
+  const canvasWipe = (() => {
+    if (isPeekingOriginal) return 0;
+    if (!compare) return 100;
+    if (compareMode === 'blend') return sliderPosition;
+    if (compareMode === 'diff') return 100;
+    return 100 - sliderPosition;
+  })();
 
   return (
     <div
@@ -1027,7 +1043,12 @@ export default function InteractivePreview({
                 <button
                   key={pct}
                   type="button"
-                  onClick={() => setSliderPosition(pct)}
+                  onClick={() => {
+                    sliderPosRef.current = pct;
+                    setSliderPosition(pct);
+                    if (compareMode === 'blend') canvasApiRef.current?.setWipe(pct);
+                    else compareApiRef.current?.set(100 - pct);
+                  }}
                   aria-label={`Move the compare split to ${pct}%`}
                   aria-pressed={sliderPosition === pct}
                   className={`px-1.5 py-1 rounded text-nano font-mono font-bold ${
@@ -1141,39 +1162,31 @@ export default function InteractivePreview({
         style={transformStyle}
       >
         <div className="relative z-10" style={aspectStyle} ref={imageRef}>
-          {/* Base Target Image */}
-          <img
-            src={beforeSrc}
-            alt="Before"
+          {/* ── The stage ────────────────────────────────────────────────
+              One uncontrolled canvas, painted imperatively. It replaces a
+              stacked pair of <img> elements plus a clip-path'd overlay div:
+              the base frame, the swapped frame, the cross-fade between
+              successive swapped frames, and the compare wipe are now four
+              things ONE component does inside a single rAF, instead of four
+              things the compositor and React had to agree about per frame.
+
+              `topSrc` falls back to `beforeSrc` so a target with no swap yet
+              still shows a picture rather than a black stage — same rule the
+              <img> version had. */}
+          <PreviewCanvas
+            ref={canvasApiRef}
+            baseSrc={beforeSrc}
+            baseFrame={beforeFrame}
+            topSrc={afterSrc || beforeSrc}
+            topFrame={afterFrame || (afterSrc ? null : beforeFrame)}
+            wipe={canvasWipe}
+            wipeDir={compareDir}
+            mode={canvasMode}
+            fadeMs={isPlaying ? 0 : scrubbing ? 60 : 200}
+            onDimensions={setImgDim}
             className="relative z-[1] w-full h-full object-contain pointer-events-none"
-            onLoad={(e) => setImgDim({ w: e.target.naturalWidth, h: e.target.naturalHeight })}
-            draggable={false}
           />
           <div className="absolute inset-0 pointer-events-none z-30">{faceBoxes}{debugOverlay}</div>
-
-          {/* Swapped Image Overlay with Multi-Mode Comparison Styling */}
-          <div
-            className="absolute inset-0 pointer-events-none z-20"
-            style={
-              isPeekingOriginal
-                ? { opacity: 0 }
-                : !compare
-                ? { opacity: 1 }
-                : compareMode === 'blend'
-                ? { opacity: sliderPosition / 100 }
-                : compareMode === 'diff'
-                ? { mixBlendMode: 'difference', opacity: 1 }
-                : compareDir === 'horizontal'
-                ? { clipPath: `polygon(0 ${currentClipPosition}%, 100% ${currentClipPosition}%, 100% 100%, 0 100%)` }
-                : { clipPath: `polygon(${currentClipPosition}% 0, 100% 0, 100% 100%, ${currentClipPosition}% 100%)` }
-            }
-          >
-            <CrossfadeImage
-              src={afterSrc || beforeSrc}
-              fadeMs={isPlaying ? 0 : scrubbing ? 60 : 200}
-              className="absolute inset-0 w-full h-full object-contain"
-            />
-          </div>
 
           {/* Interactive Mask Paint Canvas Overlay */}
           {imgDim && (
@@ -1199,53 +1212,26 @@ export default function InteractivePreview({
             </>
           )}
 
-          {/* Draggable Vertical or Horizontal Compare Slider Handle */}
+          {/* ── The A/B curtain ──────────────────────────────────────────
+              Overlaid rather than wrapping, so it can be mounted and
+              unmounted with the compare mode without ever remounting the
+              canvas under it — a remount would drop the backing store and
+              flash black. `pointer-events-none` on the host: only the handle
+              itself is interactive, everything else still pans the stage. */}
           {compare && !isPeekingOriginal && compareMode === 'slider' && (
-            compareDir === 'vertical' ? (
-              <div
-                className="absolute top-0 bottom-0 w-0.5 bg-gradient-to-b from-[var(--accent)] via-white to-[var(--accent)] shadow-[0_0_12px_rgba(233,69,96,0.8)] z-40 pointer-events-none"
-                style={{ left: `${sliderPosition}%` }}
-              >
-                <div
-                  className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-9 h-9 bg-black/80 backdrop-blur-md border border-white/30 rounded-full flex items-center justify-center shadow-[0_4px_20px_rgba(0,0,0,0.7)] transition-transform duration-200 group-hover:scale-110 cursor-ew-resize pointer-events-auto"
-                  onPointerDown={(e) => {
-                    e.stopPropagation();
-                    setIsDraggingSlider(true);
-                    handleSliderMove(e.clientX ?? e.touches?.[0]?.clientX, e.clientY ?? e.touches?.[0]?.clientY);
-                  }}
-                  onDoubleClick={(e) => {
-                    e.stopPropagation();
-                    setSliderPosition(50);
-                  }}
-                  title="Drag left/right to compare faces (Double-click to reset to 50%)"
-                >
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" className="mr-0.5"><polyline points="15 18 9 12 15 6"></polyline></svg>
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" className="rotate-180 ml-0.5"><polyline points="15 18 9 12 15 6"></polyline></svg>
-                </div>
-              </div>
-            ) : (
-              <div
-                className="absolute left-0 right-0 h-0.5 bg-gradient-to-r from-[var(--accent)] via-white to-[var(--accent)] shadow-[0_0_12px_rgba(233,69,96,0.8)] z-40 pointer-events-none"
-                style={{ top: `${sliderPosition}%` }}
-              >
-                <div
-                  className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-9 h-9 bg-black/80 backdrop-blur-md border border-white/30 rounded-full flex items-center justify-center shadow-[0_4px_20px_rgba(0,0,0,0.7)] transition-transform duration-200 group-hover:scale-110 cursor-ns-resize pointer-events-auto"
-                  onPointerDown={(e) => {
-                    e.stopPropagation();
-                    setIsDraggingSlider(true);
-                    handleSliderMove(e.clientX ?? e.touches?.[0]?.clientX, e.clientY ?? e.touches?.[0]?.clientY);
-                  }}
-                  onDoubleClick={(e) => {
-                    e.stopPropagation();
-                    setSliderPosition(50);
-                  }}
-                  title="Drag up/down to compare faces (Double-click to reset to 50%)"
-                >
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" className="-mt-0.5 rotate-90"><polyline points="15 18 9 12 15 6"></polyline></svg>
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" className="-mb-0.5 -rotate-90"><polyline points="15 18 9 12 15 6"></polyline></svg>
-                </div>
-              </div>
-            )
+            <CompareSlider
+              ref={compareApiRef}
+              canvasRef={canvasApiRef}
+              direction={compareDir}
+              defaultPosition={100 - sliderPosition}
+              onCommit={(pct) => {
+                sliderPosRef.current = 100 - pct;
+                setSliderPosition(100 - pct);
+              }}
+              labelA="Target original"
+              labelB="Swapped result"
+              className="absolute inset-0 z-40 pointer-events-none"
+            />
           )}
         </div>
       </div>

@@ -7,6 +7,8 @@ import ErrorBoundary from './components/ErrorBoundary';
 import { ConfirmHost, confirmDialog } from './components/confirm';
 import { fmtTime } from './components/faceswap/utils';
 import useRunCompleteAlert from './components/faceswap/useRunCompleteAlert';
+import useJobRecovery from './components/faceswap/useJobRecovery';
+import { useJobStore } from './store/jobStore';
 import { themeByName, allThemes, applyThemeToDom } from './themes';
 import { SETTINGS_CATALOG, focusSetting } from './components/settingsCatalog';
 import { motion, AnimatePresence, MotionConfig, spring, viewTransition } from './motion';
@@ -47,6 +49,11 @@ const RunHistory = lazy(loadRunHistory);
 // spinner so the swap reads as intentional, not a flash of empty space. It
 // fades in on a delay (see `.deferred-fallback`) so a chunk that resolves in a
 // few frames shows nothing at all rather than a jarring spinner blink.
+// Windows paths come back from the backend with backslashes, POSIX ones with
+// slashes, and the toast only wants the file name. Split on each in turn rather
+// than reaching for a character class that needs an escaped separator in it.
+const basename = (p) => String(p || '').split('\\').pop().split('/').pop();
+
 function TabFallback() {
   return (
     <div className="deferred-fallback flex flex-col items-center justify-center h-[40vh] gap-3">
@@ -270,6 +277,49 @@ export default function App() {
       }
     };
   }, [progress.processing, startPolling]);
+
+  // ── Reattach to a render that was already running ────────────────────────
+  // Pinokio reloads this webview on every tab switch and a render can run for
+  // forty minutes, so a fresh mount over a live job is the NORMAL case, not an
+  // edge case. The store remembers which job this client started; the endpoint
+  // says what is actually running; useJobRecovery reconciles the two and is the
+  // only thing allowed to conclude either "still going" or "over". See
+  // store/jobStore.js for why that order is load-bearing.
+  const beginJob = useJobStore((s) => s.beginJob);
+  const endJob = useJobStore((s) => s.endJob);
+  useJobRecovery({
+    onReattach: ({ startedAt, label }) => {
+      // Resume everything a running job owns: the clock (from the BACKEND's
+      // start time, not this window's), the 1 s progress poll, and the run tab.
+      if (startedAt) setStartTime(startedAt);
+      if (!pollRef.current) startPolling();
+      // The run tab opens itself off `progress.processing` (see below), and the
+      // poll started above is what makes that true — so it is deliberately NOT
+      // forced here. `runTabOpen` is also declared further down this component,
+      // and reaching it from up here would be a temporal-dead-zone crash on
+      // first render, which is a bug this codebase has shipped before.
+      notify(label
+        ? `Reconnected to the render in progress — ${basename(label)}`
+        : 'Reconnected to the render already in progress', 'info');
+    },
+  });
+
+  // Keep the store's memory in step with what this window does. The edge, not
+  // the level: writing on every poll would re-stamp `startedAt` forever.
+  const prevPhaseRef = useRef(false);
+  useEffect(() => {
+    const was = prevPhaseRef.current;
+    prevPhaseRef.current = progress.processing;
+    if (progress.processing && !was) {
+      beginJob({
+        settings,
+        label: progress.output?.path || '',
+        startedAt: progress.started_at ? progress.started_at * 1000 : Date.now(),
+      });
+    } else if (!progress.processing && was) {
+      endJob();
+    }
+  }, [progress.processing, progress.started_at, progress.output, settings, beginJob, endJob]);
 
   // ── The Processing tab ───────────────────────────────────────────────────
   // A run no longer takes the Face Swap tab over. It gets a tab of its own,

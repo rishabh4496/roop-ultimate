@@ -3448,6 +3448,59 @@ def get_progress():
             "runtime": runtime}
 
 
+@app.get("/api/jobs/active")
+def get_active_job():
+    """What is running RIGHT NOW, in the smallest shape a reconnecting client
+    needs.
+
+    This exists because the webview is torn down and rebuilt constantly —
+    Pinokio reloads it on every tab switch — while a render here routinely runs
+    for forty minutes. A fresh client therefore has to answer "is one of my jobs
+    still going?" before it can render anything honest, and it has to answer it
+    from the SERVER, not from its own localStorage: a remembered job may have
+    finished, failed, or belonged to a different window.
+
+    Deliberately NOT /api/progress. That endpoint carries the rolling log, the
+    parts list and the whole runtime snapshot — kilobytes per call — because it
+    is polled once a second by a client that is already attached and wants all
+    of it. This one is polled on mount and then every fifteen seconds by clients
+    that may not be attached to anything, so it carries only the identity of the
+    run and the queue tail.
+
+    `job_id` is the queue's current job when the run came from the queue, and
+    None for a direct /api/swap run — this backend has never issued ids for
+    those. A client that remembered a job and finds `processing` true with a
+    null id may treat it as its own: only one render can be in flight.
+    """
+    _sync_pause_progress()
+    processing = bool(_progress.get("processing"))
+    try:
+        queue_snapshot = _routes_queue._snapshot()
+    except Exception:
+        queue_snapshot = {"jobs": [], "current": None, "running": False, "paused": False}
+
+    current_id = queue_snapshot.get("current")
+    # Everything not yet finished, in queue order — what the client shows as
+    # "still to run" after a refresh mid-batch.
+    pending = [j.get("id") for j in queue_snapshot.get("jobs", [])
+               if j.get("state") in ("QUEUED", "RUNNING", "PAUSED", "PAUSE_REQUESTED")]
+
+    return {
+        "processing": processing,
+        "job_id": current_id if processing else None,
+        # The backend's own clock, so a client that loaded ten minutes into a
+        # run shows the run's elapsed time and not its own.
+        "started_at": float(_run_stats.get("start") or 0.0) or None,
+        "label": (_last_output.get("path") or "") if processing else "",
+        "desc": _progress.get("desc", "") if processing else "",
+        "queued": pending,
+        "queue_running": bool(queue_snapshot.get("running")),
+        "queue_paused": bool(queue_snapshot.get("paused")),
+        "frames_done": int(_run_stats.get("frames_done") or 0),
+        "frames_total": int(_run_stats.get("frames_total") or 0),
+    }
+
+
 @app.get("/api/runtime/state")
 def get_runtime_state():
     """Return the structured runtime state, as one backend-owned shape.

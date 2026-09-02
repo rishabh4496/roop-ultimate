@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import { blobUrlToDataUrl } from './objectUrls';
 
 // ── Remember where you were looking, across a webview reload ──────────────
 // Switching Pinokio tabs (React UI ↔ Terminal, Run ↔ Dev) reloads the webview,
@@ -50,8 +51,20 @@ export default function useViewPersistence({ selTarget, frame, previewSrc }) {
   }, []);
 
   // Debounced so scrubbing writes once when it settles, not once per frame.
+  //
+  // `previewSrc` is a BLOB URL now, and a blob URL dies with the document — the
+  // one thing this hook exists to survive. So the bytes are read back out and
+  // stored as a data URL. That re-serialisation is why the debounce matters
+  // more than it used to: it must happen once, when the user settles, never per
+  // scrub tick.
   useEffect(() => {
-    const t = setTimeout(() => {
+    let cancelled = false;
+    const t = setTimeout(async () => {
+      const bytes = await blobUrlToDataUrl(previewSrc);
+      // The playhead moved while we were re-serialising: this image is of a
+      // frame that is no longer on screen, and pairing it with the new frame
+      // number is exactly the mismatch the comment below refuses to write.
+      if (cancelled) return;
       try {
         // Image FIRST, and dropped outright if it cannot be written. If the
         // view entry were written first and the image then hit the quota, the
@@ -59,8 +72,8 @@ export default function useViewPersistence({ selTarget, frame, previewSrc }) {
         // would pair it with this frame, showing the wrong picture under a
         // frame number that says otherwise. No image is fine; a mismatched one
         // is not.
-        if (previewSrc && previewSrc.length < MAX_IMAGE_BYTES) {
-          try { localStorage.setItem(VIEW_IMG_KEY, previewSrc); }
+        if (bytes && bytes.length < MAX_IMAGE_BYTES) {
+          try { localStorage.setItem(VIEW_IMG_KEY, bytes); }
           catch { localStorage.removeItem(VIEW_IMG_KEY); }
         } else {
           localStorage.removeItem(VIEW_IMG_KEY);
@@ -68,7 +81,7 @@ export default function useViewPersistence({ selTarget, frame, previewSrc }) {
         localStorage.setItem(VIEW_KEY, JSON.stringify({ target: selTarget, frame, t: Date.now() }));
       } catch { /* storage blocked — the view just won't be restored */ }
     }, WRITE_DEBOUNCE_MS);
-    return () => clearTimeout(t);
+    return () => { cancelled = true; clearTimeout(t); };
   }, [selTarget, frame, previewSrc]);
 
   return restoredViewRef;
