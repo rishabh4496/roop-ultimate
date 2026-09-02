@@ -1,6 +1,8 @@
 import numpy as np
 
-from roop.faceset_v2 import FORMAT_NAME, FORMAT_VERSION, measure_lighting, select_reference_index
+from roop.faceset_v2 import (FORMAT_NAME, FORMAT_VERSION, measure_lighting,
+                              parse_pose_matrix_key, pose_matrix_cell,
+                              select_reference_index)
 
 class FaceSet:
     faces = []
@@ -27,6 +29,11 @@ class FaceSet:
         self.faceset_metadata = None
         self.face_metadata = []
         self.pose_bank = None
+        # Spec'd V2 surface, populated by `attach_v2_metadata`. `pose_bins` is
+        # keyed by the `(yaw_bin, pitch_bin)` TUPLE in memory even though it is
+        # stored under a flat string key on disk, because JSON has no tuple key.
+        self.pose_bins = {}
+        self.dermal_patch = None
         self.identity_embedding = None
         self.normalized_embedding = None
         self.faceset_valid = True
@@ -57,8 +64,22 @@ class FaceSet:
         self.format_version = int(metadata.get('version', FORMAT_VERSION))
         self.face_metadata = list(metadata.get('sources') or [])
         self.pose_bank = metadata.get('pose_bank') or {}
+        self.dermal_patch = metadata.get('dermal_patch') or None
+        self.pose_bins = {}
+        for key, cell in (metadata.get('pose_bins') or {}).items():
+            parsed = parse_pose_matrix_key(key)
+            if parsed is None or not isinstance(cell, dict):
+                continue
+            vector = self._unit_vector(cell.get('embedding'))
+            if vector is not None:
+                self.pose_bins[parsed] = vector
         identity = metadata.get('identity') or {}
-        value = identity.get('embedding') or identity.get('normalized_embedding')
+        # `default_embedding` is the spec'd top-level name; the nested identity
+        # block carries the same vector and remains the fallback for archives
+        # written before that key existed.
+        value = (metadata.get('default_embedding')
+                 or identity.get('embedding')
+                 or identity.get('normalized_embedding'))
         if value is not None:
             arr = np.asarray(value, dtype=np.float32).reshape(-1)
             norm = float(np.linalg.norm(arr))
@@ -78,6 +99,67 @@ class FaceSet:
                     setattr(face, 'faceset_v2_index', index)
                 except Exception:
                     pass
+
+    @staticmethod
+    def _unit_vector(value):
+        if value is None:
+            return None
+        try:
+            arr = np.asarray(value, dtype=np.float32).reshape(-1)
+        except (TypeError, ValueError):
+            return None
+        if arr.size == 0 or not np.isfinite(arr).all():
+            return None
+        norm = float(np.linalg.norm(arr))
+        if norm <= 1e-8:
+            return None
+        return (arr / norm).astype(np.float32)
+
+    @property
+    def default_embedding(self):
+        """The global normalized centroid, for both V2 and legacy FaceSets.
+
+        V2 reads the stored centroid. V1 has none, so it is derived from the
+        faces in memory -- and deliberately from `embeddings_backup` when
+        `AverageEmbeddings` has already overwritten `faces[0].embedding` with
+        the legacy mean, so this returns the same vector whether or not that
+        in-place mutation has happened yet.
+        """
+        if self.identity_embedding is not None:
+            return self.identity_embedding
+        vectors = []
+        for index, face in enumerate(self.faces or []):
+            if index == 0 and self.embeddings_backup is not None:
+                value = self.embeddings_backup
+            elif isinstance(face, dict):
+                value = face.get('embedding')
+            else:
+                value = getattr(face, 'embedding', None)
+            vector = self._unit_vector(value)
+            if vector is not None:
+                vectors.append(vector)
+        if not vectors or len({v.shape for v in vectors}) != 1:
+            return None
+        return self._unit_vector(np.mean(np.asarray(vectors), axis=0))
+
+    def pose_bin_embedding(self, pose=None, fallback=True):
+        """Return the 3x3 pose-cell centroid for `pose`.
+
+        Falls back along a widening path -- exact cell, then same yaw column,
+        then `default_embedding` -- so a V1 FaceSet and a V2 FaceSet with an
+        empty cell both answer with a usable vector instead of ``None``.
+        """
+        cell = pose_matrix_cell(pose) if pose is not None else ("center", "center")
+        vector = self.pose_bins.get(cell)
+        if vector is not None:
+            return vector
+        if not fallback:
+            return None
+        for pitch_bin in ("center", "up", "down"):
+            vector = self.pose_bins.get((cell[0], pitch_bin))
+            if vector is not None:
+                return vector
+        return self.default_embedding
 
     def select_reference_index(self, pose=None, appearance=None, embedding=None):
         """Fast V2 lookup with legacy pose-bank fallback."""

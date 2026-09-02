@@ -40,6 +40,42 @@ DEFAULT_MIN_QUALITY = 0.35
 DEFAULT_MAX_ENTRIES = 32
 DEFAULT_MAX_PER_BIN = 6
 
+# Absolute motion-blur floor, applied to the native-resolution face crop.
+#
+# Measured before it was chosen, on the 190 reference images across the 38
+# facesets in this install: native-resolution crop variance runs p05 143.6 /
+# p50 242.0 / p95 432.3, and a floor of 100 rejects 0.5% of them (1 image).
+# On the two existing V2 archives, whose crops are the population this gate
+# actually reads, native crop variance is 211-361 and the floor rejects 0 of
+# 10. It is a catastrophic-blur floor, not a selectivity knob -- the composite
+# `quality.score` gate above already does the grading. Raising it towards 200
+# would start rejecting 28% of real material.
+DEFAULT_LAPLACIAN_FLOOR = 100.0
+
+# Cosine-similarity floor against the median identity centroid.
+#
+# Also measured first: within-identity similarity to the median centroid runs
+# 0.782-0.924 across the existing V2 archives, while cross-identity (impostor)
+# similarity peaks at 0.238. 0.70 sits in a gap ~0.54 wide, rejects 0 of 10
+# genuine references and catches 10 of 10 impostors. 0.80 begins cutting
+# genuine profile references, so this is deliberately not tightened.
+DEFAULT_MIN_IDENTITY_COSINE = 0.70
+
+# A median is only a cluster statistic once there is a cluster. With two
+# references the median is their midpoint and both sit equidistant from it, so
+# "outlier" is undefined and the gate is skipped rather than guessed.
+MIN_ENTRIES_FOR_OUTLIER_REJECTION = 3
+
+# Spec'd 3x3 pose matrix. This is a coarse, additive index built alongside the
+# existing nine-way `POSE_BINS` yaw ladder, which stays the runtime selector's
+# population -- see `pose_matrix_cell`.
+POSE_MATRIX_YAW_EDGES = (-25.0, 25.0)
+POSE_MATRIX_PITCH_EDGES = (-15.0, 15.0)
+POSE_MATRIX_YAW_NAMES = ("left", "center", "right")
+POSE_MATRIX_PITCH_NAMES = ("down", "center", "up")
+POSE_MATRIX_CELLS = tuple((y, p) for y in POSE_MATRIX_YAW_NAMES
+                          for p in POSE_MATRIX_PITCH_NAMES)
+
 
 def _get(obj, name, default=None):
     if isinstance(obj, dict):
@@ -196,6 +232,68 @@ def _sharpness(crop):
         return _clamp01(variance / 350.0), variance
     except Exception:
         return 0.0, 0.0
+
+
+def _native_laplacian_variance(crop):
+    """Laplacian variance on the crop at its own resolution.
+
+    Deliberately separate from `_sharpness`, which resizes to 160x160 first so
+    its 0-1 score is comparable across differently sized references. That
+    resize also rescales the variance (the same crops read 148-745 resized
+    against 99-513 native), so a threshold calibrated on one scale is wrong on
+    the other. This is the value the documented floor is calibrated against.
+    """
+    if crop is None or getattr(crop, "size", 0) == 0:
+        return 0.0
+    try:
+        gray = crop if crop.ndim == 2 else cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
+        value = float(cv2.Laplacian(gray, cv2.CV_64F).var())
+        return value if math.isfinite(value) else 0.0
+    except Exception:
+        return 0.0
+
+
+def pose_matrix_cell(pose):
+    """Return the spec'd ``(yaw_bin, pitch_bin)`` 3x3 cell for a pose.
+
+    An unknown pose is treated as ``("center", "center")`` to match
+    `_pose_bin`, which resolves a missing pose to "frontal": a reference whose
+    pose could not be solved is still usable frontal-ish material, and dropping
+    it would silently shrink the bank.
+    """
+    if pose is None or len(pose) < 2:
+        return ("center", "center")
+    yaw = _json_float(pose[0], 0.0) or 0.0
+    pitch = _json_float(pose[1], 0.0) or 0.0
+    if yaw < POSE_MATRIX_YAW_EDGES[0]:
+        yaw_bin = "left"
+    elif yaw > POSE_MATRIX_YAW_EDGES[1]:
+        yaw_bin = "right"
+    else:
+        yaw_bin = "center"
+    if pitch < POSE_MATRIX_PITCH_EDGES[0]:
+        pitch_bin = "down"
+    elif pitch > POSE_MATRIX_PITCH_EDGES[1]:
+        pitch_bin = "up"
+    else:
+        pitch_bin = "center"
+    return (yaw_bin, pitch_bin)
+
+
+def pose_matrix_key(cell):
+    """Serialize a ``(yaw, pitch)`` cell to its JSON object key."""
+    return f"{cell[0]}_{cell[1]}"
+
+
+def parse_pose_matrix_key(key):
+    """Inverse of `pose_matrix_key`; returns ``None`` for an unknown key."""
+    try:
+        yaw_bin, pitch_bin = str(key).split("_", 1)
+    except ValueError:
+        return None
+    if yaw_bin in POSE_MATRIX_YAW_NAMES and pitch_bin in POSE_MATRIX_PITCH_NAMES:
+        return (yaw_bin, pitch_bin)
+    return None
 
 
 def _exposure_saturation(crop):
@@ -400,6 +498,7 @@ def _entry(face, image, source_index):
     if normalized is None:
         normalized = _normalised(raw_embedding)
     sharp_score, sharp_var = _sharpness(crop)
+    laplacian_variance = _native_laplacian_variance(crop)
     exposure_score, saturation_score, luminance = _exposure_saturation(crop)
     appearance = _appearance(crop)
     face_px = 0.0 if bbox is None else min(float(bbox[2] - bbox[0]), float(bbox[3] - bbox[1]))
@@ -450,12 +549,14 @@ def _entry(face, image, source_index):
         },
         "quality": {**{key: round(float(value), 6) for key, value in quality_parts.items()},
                     "sharpness_variance": round(float(sharp_var), 5),
+                    "laplacian_variance": round(float(laplacian_variance), 5),
                     "face_pixels": round(face_px, 5),
                     "score": round(float(quality), 6)},
         "appearance": appearance,
         "expression": _expression(lm68, bbox),
         "identity_details": _identity_details(crop, sharp_score, image=image, face=face),
         "pose_bin": _pose_bin(pose),
+        "pose_cell": pose_matrix_key(pose_matrix_cell(pose)),
     }
 
 
@@ -483,10 +584,106 @@ def _sha256(data):
     return hashlib.sha256(data).hexdigest()
 
 
-def _select_candidates(entries, min_quality, max_entries, max_per_bin):
+def _reject_blurred(entries, laplacian_floor):
+    """Drop references below the absolute motion-blur floor.
+
+    Returns ``(kept_indices, rejections)``. Runs before identity clustering so
+    a smeared frame cannot drag the median centroid it would then be measured
+    against.
+    """
+    kept, rejected = [], []
+    for i, entry in enumerate(entries):
+        variance = float((entry.get("quality") or {}).get("laplacian_variance", 0.0))
+        if variance < laplacian_floor:
+            rejected.append({"index": int(i), "reason": "motion_blur",
+                             "laplacian_variance": round(variance, 5),
+                             "threshold": round(float(laplacian_floor), 5)})
+        else:
+            kept.append(i)
+    return kept, rejected
+
+
+def _reject_identity_outliers(entries, candidates, min_cosine):
+    """Drop references whose identity disagrees with the primary cluster.
+
+    The reference is the per-component MEDIAN of the candidate embeddings, not
+    their mean: the mean is dragged by the very outlier being looked for, so a
+    single wrong-person frame in a small bank can pull the centroid far enough
+    towards itself to survive its own test. The median is not.
+    """
+    kept, rejected = [], []
+    vectors = {i: _embedding(entries[i]) for i in candidates}
+    usable = [i for i in candidates if vectors[i] is not None]
+    if len(usable) < MIN_ENTRIES_FOR_OUTLIER_REJECTION:
+        return list(candidates), []
+    sizes = {vectors[i].shape for i in usable}
+    if len(sizes) != 1:
+        # Mixed embedding widths cannot be clustered; leave selection to the
+        # quality gate rather than rejecting on an incomparable measurement.
+        return list(candidates), []
+    centroid = _normalised(np.median(np.stack([vectors[i] for i in usable]), axis=0))
+    if centroid is None:
+        return list(candidates), []
+    for i in candidates:
+        vector = vectors[i]
+        if vector is None:
+            # No embedding to disagree with; the quality gate still governs it.
+            kept.append(i)
+            continue
+        similarity = float(np.dot(centroid, vector))
+        if similarity < min_cosine:
+            rejected.append({"index": int(i), "reason": "identity_outlier",
+                             "cosine_similarity": round(similarity, 6),
+                             "threshold": round(float(min_cosine), 6)})
+        else:
+            kept.append(i)
+    if not kept:
+        # Every reference disagreed with the median, which means the median is
+        # not describing a cluster. Refusing the whole set on that basis would
+        # be a worse answer than declining to reject.
+        return list(candidates), []
+    return kept, rejected
+
+
+def _pose_matrix(entries):
+    """Normalized mean centroid embedding per non-empty 3x3 pose cell."""
+    grouped = {}
+    for index, entry in enumerate(entries):
+        cell = entry.get("pose_cell") or pose_matrix_key(("center", "center"))
+        grouped.setdefault(cell, []).append(index)
+    matrix = {}
+    for cell in POSE_MATRIX_CELLS:
+        key = pose_matrix_key(cell)
+        members = grouped.get(key)
+        if not members:
+            continue
+        vectors, weights = [], []
+        for index in members:
+            vector = _embedding(entries[index])
+            if vector is None:
+                continue
+            vectors.append(vector)
+            weights.append(max(0.01, float((entries[index].get("quality") or {}).get("score", 0.0))))
+        centroid = None
+        if vectors and len({v.shape for v in vectors}) == 1:
+            centroid = _normalised(np.average(np.asarray(vectors), axis=0,
+                                              weights=np.asarray(weights)))
+        matrix[key] = {
+            "yaw_bin": cell[0],
+            "pitch_bin": cell[1],
+            "members": [int(i) for i in members],
+            "support": len(members),
+            "embedding": _json_array(centroid),
+        }
+    return matrix
+
+
+def _select_candidates(entries, min_quality, max_entries, max_per_bin, allowed=None):
     valid = []
     rejected = []
-    for i, entry in enumerate(entries):
+    allowed = range(len(entries)) if allowed is None else allowed
+    for i in allowed:
+        entry = entries[i]
         q = float((entry.get("quality") or {}).get("score", 0.0))
         face_px = float((entry.get("quality") or {}).get("face_pixels", 0.0))
         if q < min_quality or face_px < 32.0:
@@ -520,8 +717,79 @@ def _select_candidates(entries, min_quality, max_entries, max_per_bin):
     return chosen[:max_entries], rejected
 
 
+def _dermal_patch(entries):
+    """Pick the sharpest, highest-resolution frontal reference's detail map.
+
+    "Frontal" widens in two steps before giving up, because the spec'd +-15
+    degree pitch edge is tight enough to exclude genuinely frontal material: on
+    the real `harjot` bank the head-on reference solves to yaw -4.3 / pitch
+    -16.4, which lands in `center_down` and, under a strict `center_center`
+    test, handed the dermal patch to a 38-degree profile instead. Yaw is what
+    decides whether a face is presented to camera; a mild nod is not a profile.
+
+    Within the chosen pool, ranked on native Laplacian variance then face
+    pixels -- sharpest first, highest-resolution to break ties.
+    """
+    by_cell = {}
+    for i, entry in enumerate(entries):
+        by_cell.setdefault(entry.get("pose_cell"), []).append(i)
+    strict = list(by_cell.get(pose_matrix_key(("center", "center"))) or [])
+    yaw_centered = [i for pitch_bin in POSE_MATRIX_PITCH_NAMES
+                    for i in (by_cell.get(pose_matrix_key(("center", pitch_bin))) or [])]
+    frontal = strict or yaw_centered
+    pool = frontal or list(range(len(entries)))
+
+    def rank(index):
+        quality = entries[index].get("quality") or {}
+        return (float(quality.get("laplacian_variance", 0.0)),
+                float(quality.get("face_pixels", 0.0)),
+                -index)
+
+    for index in sorted(pool, key=rank, reverse=True):
+        detail = ((entries[index].get("identity_details") or {}).get("high_frequency"))
+        if not detail or not detail.get("residual_q"):
+            continue
+        quality = entries[index].get("quality") or {}
+        return {
+            "source_index": int(index),
+            "is_frontal": bool(index in frontal),
+            "frontal_basis": ("pose_cell_center" if index in strict else
+                              ("yaw_center" if index in yaw_centered else "none")),
+            "laplacian_variance": round(float(quality.get("laplacian_variance", 0.0)), 5),
+            "face_pixels": round(float(quality.get("face_pixels", 0.0)), 5),
+            "texture": detail,
+            "uv_anchors": _detail_uv_anchors(),
+        }
+    return {}
+
+
+def _detail_uv_anchors():
+    """Normalized 0-1 UV positions of the 5 landmarks the patch is anchored to.
+
+    `_identity_detail_crop` aligns with ``align_crop(..., 128, mode="arcface")``,
+    so the anchors are asked of the project's own `swap_template_points` for
+    that exact size. Reconstructing them as ``arcface_dst * 128/112`` is the
+    documented trap: 128 takes the ``% 128`` branch, which scales by size/128
+    and shifts x by 8, and the naive guess is wrong by 13px at 128 while still
+    looking plausible.
+    """
+    try:
+        from roop.face_util import swap_template_points
+        points = np.asarray(swap_template_points(128, "arcface"), dtype=np.float32)
+        if points.shape != (5, 2) or not np.isfinite(points).all():
+            return None
+        return {
+            "space": "arcface_128",
+            "order": ["left_eye", "right_eye", "nose", "left_mouth", "right_mouth"],
+            "uv": np.round(points / 128.0, 6).tolist(),
+        }
+    except Exception:
+        return None
+
+
 def prepare_faceset_v2(faces, images, source_name="", min_quality=None,
-                       max_entries=None, max_per_bin=None):
+                       max_entries=None, max_per_bin=None,
+                       laplacian_floor=None, min_identity_cosine=None):
     """Analyze and select source images, returning ``(metadata, indices)``."""
     min_quality = float(os.environ.get("ROOP_FACESET_V2_MIN_QUALITY", DEFAULT_MIN_QUALITY)
                         if min_quality is None else min_quality)
@@ -529,6 +797,11 @@ def prepare_faceset_v2(faces, images, source_name="", min_quality=None,
                       if max_entries is None else max_entries)
     max_per_bin = int(os.environ.get("ROOP_FACESET_V2_MAX_PER_BIN", DEFAULT_MAX_PER_BIN)
                       if max_per_bin is None else max_per_bin)
+    laplacian_floor = float(os.environ.get("ROOP_FACESET_V2_BLUR_FLOOR", DEFAULT_LAPLACIAN_FLOOR)
+                            if laplacian_floor is None else laplacian_floor)
+    min_identity_cosine = float(
+        os.environ.get("ROOP_FACESET_V2_MIN_IDENTITY_COSINE", DEFAULT_MIN_IDENTITY_COSINE)
+        if min_identity_cosine is None else min_identity_cosine)
     faces = list(faces or [])
     images = list(images or [])
     entries = []
@@ -537,7 +810,22 @@ def prepare_faceset_v2(faces, images, source_name="", min_quality=None,
         entries.append(_entry(face, image, i))
     if not entries:
         raise ValueError("FaceSet has no reference images")
-    chosen, rejected = _select_candidates(entries, min_quality, max_entries, max_per_bin)
+
+    # Pre-screen: motion blur first, then identity outliers against the median
+    # of what survives. Both are absolute floors and run before the relative
+    # quality/pose selection so a smeared or wrong-person frame can neither win
+    # a pose slot nor shift the centroid it is measured against.
+    screened, blur_rejected = _reject_blurred(entries, laplacian_floor)
+    if not screened:
+        raise ValueError(
+            "every reference image was below the FaceSet V2 motion-blur floor "
+            f"(laplacian variance < {laplacian_floor:g})")
+    screened, identity_rejected = _reject_identity_outliers(
+        entries, screened, min_identity_cosine)
+
+    chosen, rejected = _select_candidates(
+        entries, min_quality, max_entries, max_per_bin, allowed=screened)
+    rejected = blur_rejected + identity_rejected + rejected
     selected_entries = [entries[i] for i in chosen]
     for new_index, entry in enumerate(selected_entries):
         entry["source_index"] = int(chosen[new_index])
@@ -558,6 +846,8 @@ def prepare_faceset_v2(faces, images, source_name="", min_quality=None,
     pose_bank = {name: [] for name in POSE_BINS}
     for i, entry in enumerate(selected_entries):
         pose_bank.setdefault(entry.get("pose_bin", "frontal"), []).append(i)
+    pose_bins = _pose_matrix(selected_entries)
+    dermal_patch = _dermal_patch(selected_entries)
     descriptor_vectors = []
     detail_vectors = []
     entry_weights = [max(0.01, float((entry.get("quality") or {}).get("score", 0.0)))
@@ -600,9 +890,26 @@ def prepare_faceset_v2(faces, images, source_name="", min_quality=None,
             "aggregation": "quality_weighted_mean_of_pose_specific_embeddings",
         },
         "identity_details": global_details,
+        # Spec'd V2 surface. `default_embedding` is the same vector as
+        # `identity.normalized_embedding`, hoisted to the top level so a reader
+        # needs no knowledge of the nested identity block; `pose_bins` is the
+        # 3x3 yaw/pitch matrix; `dermal_patch` is the single sharpest frontal
+        # texture. `pose_bank` (the nine-way yaw ladder) is retained unchanged
+        # beside them because `final_quality_gate` requires the key and
+        # `pose_source_selector` drives runtime selection from `sources`.
+        "default_embedding": _json_array(global_embedding),
+        "pose_bins": pose_bins,
+        "dermal_patch": dermal_patch,
         "pose_bank": pose_bank,
         "sources": selected_entries,
         "rejected": rejected,
+        "gates": {
+            "laplacian_floor": round(float(laplacian_floor), 5),
+            "min_identity_cosine": round(float(min_identity_cosine), 6),
+            "min_quality": round(float(min_quality), 6),
+            "rejected_motion_blur": len(blur_rejected),
+            "rejected_identity_outlier": len(identity_rejected),
+        },
         "index": {
             "embedding_metric": "cosine_distance",
             "normalized_embeddings": [_json_array(_embedding(entry)) for entry in selected_entries],
@@ -625,7 +932,8 @@ def _zip_write(zf, name, data):
 
 
 def write_faceset_v2(path, faceset, images, source_name="", min_quality=None,
-                     max_entries=None, max_per_bin=None):
+                     max_entries=None, max_per_bin=None,
+                     laplacian_floor=None, min_identity_cosine=None):
     """Write a V2 archive atomically while retaining root-level PNG members."""
     faces = getattr(faceset, "faces", None) or []
     # V1 loading may have placed the original first embedding in
@@ -647,7 +955,8 @@ def write_faceset_v2(path, faceset, images, source_name="", min_quality=None,
             pass
     metadata, selected = prepare_faceset_v2(
         faces, images, source_name=source_name, min_quality=min_quality,
-        max_entries=max_entries, max_per_bin=max_per_bin)
+        max_entries=max_entries, max_per_bin=max_per_bin,
+        laplacian_floor=laplacian_floor, min_identity_cosine=min_identity_cosine)
     encoded_images = [_image_bytes(images[i]) for i in selected]
     metadata["integrity"] = {
         "sha256": {f"{j}.png": _sha256(data) for j, data in enumerate(encoded_images)},
@@ -730,6 +1039,54 @@ def validate_metadata(metadata):
     for indexes in pose_bank.values():
         if not isinstance(indexes, list) or any(not isinstance(i, int) or i < 0 or i >= len(sources) for i in indexes):
             raise ValueError("FaceSet pose bank index is invalid")
+
+    # The three keys below are optional: V2 archives written before they
+    # existed (and `migrate_legacy_fsz` output from those builds) stay valid,
+    # so they are checked for shape only when present.
+    default_embedding = metadata.get("default_embedding")
+    if default_embedding is not None and _normalised(default_embedding) is None:
+        raise ValueError("FaceSet default embedding is invalid")
+
+    pose_bins = metadata.get("pose_bins")
+    if pose_bins is not None:
+        if not isinstance(pose_bins, dict):
+            raise ValueError("FaceSet pose bins is not an object")
+        for key, cell in pose_bins.items():
+            if parse_pose_matrix_key(key) is None:
+                raise ValueError(f"FaceSet pose bin key is invalid: {key}")
+            if not isinstance(cell, dict):
+                raise ValueError("FaceSet pose bin entry is not an object")
+            # NOT `members`: that name already holds the reference-member
+            # list the checksum check below reads, and rebinding it here made
+            # every V2 archive fail as "checksum metadata is invalid".
+            cell_members = cell.get("members")
+            if not isinstance(cell_members, list) or any(
+                    not isinstance(i, int) or i < 0 or i >= len(sources) for i in cell_members):
+                raise ValueError("FaceSet pose bin member index is invalid")
+            embedding = cell.get("embedding")
+            if embedding is not None and _normalised(embedding) is None:
+                raise ValueError("FaceSet pose bin embedding is invalid")
+
+    dermal = metadata.get("dermal_patch")
+    if dermal:
+        if not isinstance(dermal, dict):
+            raise ValueError("FaceSet dermal patch is not an object")
+        index = dermal.get("source_index")
+        if not isinstance(index, int) or index < 0 or index >= len(sources):
+            raise ValueError("FaceSet dermal patch source index is invalid")
+        texture = dermal.get("texture") or {}
+        if texture.get("schema") != "roop.identity_detail.v1" or texture.get("shape") != [64, 64]:
+            raise ValueError("FaceSet dermal patch texture is invalid")
+        for key in ("residual_q", "confidence_q", "mask_q"):
+            values = texture.get(key)
+            if not isinstance(values, list) or len(values) != 64 * 64:
+                raise ValueError("FaceSet dermal patch channel is invalid")
+        anchors = dermal.get("uv_anchors")
+        if anchors is not None:
+            uv = _array((anchors or {}).get("uv"))
+            if uv is None or uv.shape != (5, 2):
+                raise ValueError("FaceSet dermal patch UV anchors are invalid")
+
     hashes = ((metadata.get("integrity") or {}).get("sha256") or {})
     if not isinstance(hashes, dict):
         raise ValueError("FaceSet integrity metadata is invalid")
