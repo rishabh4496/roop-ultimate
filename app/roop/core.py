@@ -640,6 +640,17 @@ def get_face_crop_from_frame(frame_bgr) -> str:
     return "data:image/png;base64," + _b64.b64encode(buf.tobytes()).decode('utf-8')
 
 
+def fast_path_bypass(frame, target_faces=None, threshold=None):
+    """Early fast-path bypass check. Returns True if frame has 0 faces or similarity < threshold."""
+    from roop.face_analyser import evaluate_fast_path
+    should_bypass, _ = evaluate_fast_path(
+        frame,
+        target_faces=target_faces if target_faces is not None else getattr(roop.globals, 'TARGET_FACES', None),
+        threshold=threshold
+    )
+    return should_bypass
+
+
 def live_swap(frame, options, input_facesets=None):
     """Swap a single frame. `input_facesets` overrides the loaded source
     facesets (the API passes a person-ordered remap); None = use them as-is."""
@@ -647,6 +658,11 @@ def live_swap(frame, options, input_facesets=None):
 
     if frame is None:
         return frame
+
+    if not getattr(options, 'show_face_masking', False):
+        if fast_path_bypass(frame, target_faces=roop.globals.TARGET_FACES,
+                            threshold=getattr(options, 'face_distance_threshold', None)):
+            return frame
 
     facesets = roop.globals.INPUT_FACESETS if input_facesets is None else input_facesets
 
@@ -925,6 +941,11 @@ def batch_process(output_method, files:list[ProcessEntry], use_new_method) -> No
     # output video to be finalized before exiting. Cleared in end_processing.
     roop.globals.batch_active = True
 
+    import gc
+    _batch_gc_was_enabled = gc.isenabled()
+    if _batch_gc_was_enabled:
+        gc.disable()
+
     # Keep the GPU powered while the display is off so long runs don't freeze
     # (released in end_processing, which every exit path below goes through).
     from roop import keep_awake
@@ -1172,6 +1193,9 @@ def batch_process(output_method, files:list[ProcessEntry], use_new_method) -> No
         # later Ctrl-C / window-close never waits on a batch that is gone.
         keep_awake.release()
         roop.globals.batch_active = False
+        if '_batch_gc_was_enabled' in locals() and _batch_gc_was_enabled:
+            import gc
+            gc.enable()
 
 
 def end_processing(msg:str):

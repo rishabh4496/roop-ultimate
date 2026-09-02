@@ -2392,7 +2392,7 @@ def estimate_norm(lmk, image_size=112, mode="arcface"):
 
 
 # aligned, M = norm_crop2(f[1], face.kps, 512)
-def align_crop(img, landmark, image_size=112, mode="arcface"):
+def align_crop(img, landmark, image_size=112, mode="arcface", dst=None):
     M = estimate_norm(landmark, image_size, mode)
     # Replicate the frame edge instead of filling with BLACK.
     #
@@ -2411,6 +2411,10 @@ def align_crop(img, landmark, image_size=112, mode="arcface"):
     # Costs nothing anywhere else: warpAffine only consults the border mode for
     # samples that fall OUTSIDE the source image, so for a face fully inside the
     # frame this is bit-identical to the old call (verified).
+    if dst is not None:
+        warped = cv2.warpAffine(img, M, (image_size, image_size), dst=dst,
+                                borderMode=cv2.BORDER_REPLICATE)
+        return dst, M
     warped = cv2.warpAffine(img, M, (image_size, image_size),
                             borderMode=cv2.BORDER_REPLICATE)
     return warped, M

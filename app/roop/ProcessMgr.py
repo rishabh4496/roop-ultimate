@@ -1199,19 +1199,29 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
         progress_bar_format = PROGRESS_BAR_FORMAT
         self.total_frames = len(source_files)
         self.num_threads = threads
-        with ChunkedProgress(total=self.total_frames, desc='Processing', unit='frame', dynamic_ncols=True, bar_format=progress_bar_format) as progress:
-            with ThreadPoolExecutor(max_workers=threads) as executor:
-                futures = []
-                queue = create_queue(source_files)
-                queue_per_future = max(len(source_files) // threads, 1)
-                while not queue.empty():
-                    future = executor.submit(self.process_frames, source_files, target_files, pick_queue(queue, queue_per_future), lambda: self.update_progress(progress))
-                    futures.append(future)
-                for future in as_completed(futures):
-                    future.result()
+        _hot_loop_gc_was_enabled = gc.isenabled()
+        if _hot_loop_gc_was_enabled:
+            gc.disable()
+        try:
+            with ChunkedProgress(total=self.total_frames, desc='Processing', unit='frame', dynamic_ncols=True, bar_format=progress_bar_format) as progress:
+                with ThreadPoolExecutor(max_workers=threads) as executor:
+                    futures = []
+                    queue = create_queue(source_files)
+                    queue_per_future = max(len(source_files) // threads, 1)
+                    while not queue.empty():
+                        future = executor.submit(self.process_frames, source_files, target_files, pick_queue(queue, queue_per_future), lambda: self.update_progress(progress))
+                        futures.append(future)
+                    for future in as_completed(futures):
+                        future.result()
+        finally:
+            if _hot_loop_gc_was_enabled:
+                gc.enable()
+            gc.collect()
 
 
     def process_frames(self, source_files: List[str], target_files: List[str], current_files, update: Callable[[], None]) -> None:
+        if gc.isenabled():
+            gc.disable()
         for idx, f in enumerate(current_files):
             wait_while_paused()
             if not roop.globals.processing:
@@ -1386,6 +1396,8 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                     return
 
     def process_videoframes(self, threadindex, progress) -> None:
+        if gc.isenabled():
+            gc.disable()
         frame_counter = 0
         while True:
             # Bounded, because a sentinel is not guaranteed to arrive.
@@ -1600,6 +1612,8 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                     return frame if ret else None
 
         def process(frame, frame_idx):
+            if gc.isenabled():
+                gc.disable()
             worker_id = get_ident()
             self._runtime_worker_enter(worker_id)
             try:
@@ -3162,6 +3176,8 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                         block_q.put((a, b))
 
                 def _runner(_wi, _bt=_block_times, _q=block_q, _pb=_process_block):
+                    if gc.isenabled():
+                        gc.disable()
                     _w0 = time.perf_counter()
                     while roop.globals.processing:
                         try:
@@ -3344,9 +3360,10 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
             _engine = self._temporal_engine(_tname)
             if _engine is not None:
                 _engine.set_ordered(_ordered)
-        temp_frame = frame.copy()
-        num_swapped, temp_frame = self.swap_faces(frame, temp_frame, stabilize=True, frame_idx=frame_idx)
+        # Fast-path: avoid frame.copy() before face detection & target matching
+        num_swapped, resimg = self.swap_faces(frame, None, stabilize=True, frame_idx=frame_idx)
         if num_swapped > 0:
+            temp_frame = resimg
             if roop.globals.no_face_action == eNoFaceAction.SKIP_FRAME_IF_DISSIMILAR:
                 if len(self.input_face_datas) > num_swapped:
                     return None
@@ -3525,7 +3542,7 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
         except Exception:
             pass
 
-    def swap_faces(self, frame, temp_frame, stabilize=False, frame_idx=None):
+    def swap_faces(self, frame, temp_frame=None, stabilize=False, frame_idx=None):
         num_faces_found = 0
         # Used only by retry_rotated() as a conservative admission hint. None
         # means the detector did not provide a usable list; that case must keep
@@ -3558,6 +3575,7 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                     if _stab is not None:
                         _stab.reset()
                 bar_write(f'[Stabilize] scene cut at frame {frame_idx}; rolling history reset')
+                gc.collect()
         do_kps_stab = stabilize and self._stab_active and self._cur_kps_stab() is not None
         # 2-pass parallel stabilization: replace kps with the value precomputed
         # for this frame in pass 1 instead of running the (stateful) stabilizer.
@@ -3588,6 +3606,8 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
             if face is None:
                 return num_faces_found, frame
             self.last_found_bboxes = np.array([face.bbox])   # cache for next frame
+            if temp_frame is None:
+                temp_frame = frame.copy()
             if precomp:
                 face.kps = self._lookup_precomputed_kps(frame_idx, face)
             elif do_kps_stab:
@@ -3656,13 +3676,6 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                                 round(float(f.bbox[2]),0), round(float(f.bbox[3]),0),
                                 bool(f.get('_interpolated')) if isinstance(f, dict) else False)
                                for f in faces]))
-            if precomp:
-                for f in faces:
-                    f.kps = self._lookup_precomputed_kps(frame_idx, f)
-            elif do_kps_stab:
-                for f in faces:
-                    self._apply_stab(f)
-
             if self.options.swap_mode == "all":
                 # Audited like every other mode. Nothing is ever refused here, so
                 # the refusal half of the report is vacuous — but the gap-fill
@@ -4382,6 +4395,20 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
             # a frame or two. The face then alternates between defending itself
             # and being smeared, which is a flicker on BOTH faces, and it happens
             # precisely when two people are close enough to interact.
+            if not pending:
+                for face in faces:
+                    del face
+                faces.clear()
+                return 0, frame
+
+            # Apply precomputed or stabilized kps ONLY to faces actually being swapped
+            if precomp:
+                for _, f in pending:
+                    f.kps = self._lookup_precomputed_kps(frame_idx, f)
+            elif do_kps_stab:
+                for _, f in pending:
+                    self._apply_stab(f)
+
             _matched = {id(f) for _, f in pending}
             _others = [f for f in faces if id(f) not in _matched]
             # WHICH source went onto WHICH face, recorded once for the whole
@@ -4393,6 +4420,8 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
             if _SWAP_LOG is not None and frame_idx is not None:
                 _SWAP_LOG.setdefault(frame_idx, []).extend(
                     ([float(v) for v in f.bbox], int(s)) for s, f in pending)
+            if temp_frame is None:
+                temp_frame = frame.copy()
             temp_frame = self._composite_faces(pending, frame, temp_frame, _others)
 
             for face in faces:
@@ -4791,7 +4820,9 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
         # rest of the pipeline is template-agnostic.
         swap_template = getattr(swap_p, 'model_template', 'arcface')
         with _prof('alignment'):
-            aligned_img, M = align_crop(plate, target_face.kps, subsample_size, mode=swap_template)
+            from roop.buffer_pool import get_crop_buffer
+            crop_dst = get_crop_buffer(subsample_size)
+            aligned_img, M = align_crop(plate, target_face.kps, subsample_size, mode=swap_template, dst=crop_dst)
         fake_frame = aligned_img
         target_face.matrix = M
         if self._stab_history is not None:

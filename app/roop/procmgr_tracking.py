@@ -647,6 +647,8 @@ class TrackingMixin:
                 # join() on a thread that failed to start raises, which would
                 # come out of the finally block and mask the real failure.
                 reader = _t
+            from roop.one_euro import StreamingStabilizationHistory
+            _scene_tracker = StreamingStabilizationHistory()
             idx = 0
             while roop.globals.processing:
                 wait_while_paused()
@@ -752,12 +754,13 @@ class TrackingMixin:
                             detection_mode=getattr(faces, 'mode', 'full'))
                     del faces
 
+                if _scene_tracker is not None and isinstance(frame, np.ndarray):
+                    if _scene_tracker.observe_frame(frame, idx):
+                        import gc
+                        gc.collect()
                 del frame
                 idx += 1
                 pbar.update(1)   # terminal bar
-                if idx % 100 == 0:
-                    import gc
-                    gc.collect()
                 # Drive the UI progress bar so the pre-pass isn't a silent black box.
                 if self.progress_gradio is not None and (idx % 10 == 0 or idx == 1):
                     tot = frame_count or idx

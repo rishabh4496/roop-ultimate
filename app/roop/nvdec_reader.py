@@ -35,6 +35,7 @@ import cv2
 import numpy as np
 
 from roop.ffmpeg_writer import FFMPEG_BINARY
+from roop.buffer_pool import get_frame_buffer_pool
 
 _probe_cache = {}
 _probe_lock = threading.Lock()
@@ -219,6 +220,9 @@ class FFmpegVideoReader:
         self._stop_event = threading.Event()
         self._eof = False
         self._prefetch_error = None
+        self._buffer_pool = get_frame_buffer_pool(
+            self.height, self.width,
+            capacity=max(8, (self.prefetch_depth or 2) * 2 + 4))
 
     def set(self, prop, value):
         if prop == cv2.CAP_PROP_POS_FRAMES and self.proc is None:
@@ -297,20 +301,39 @@ class FFmpegVideoReader:
         stdout = self.proc.stdout
         try:
             while not self._stop_event.is_set():
-                buf = bytearray(self._frame_bytes)
-                mv = memoryview(buf)
-                n = 0
-                while n < self._frame_bytes and not self._stop_event.is_set():
-                    k = stdout.readinto(mv[n:])
-                    if not k:
-                        self._eof = True
-                        self._put_prefetched(_END_OF_STREAM)
+                if self.pix_fmt == "bgr24":
+                    frame_buf = self._buffer_pool.acquire()
+                    mv = memoryview(frame_buf.reshape(-1))
+                    n = 0
+                    while n < self._frame_bytes and not self._stop_event.is_set():
+                        k = stdout.readinto(mv[n:])
+                        if not k:
+                            self._eof = True
+                            self._put_prefetched(_END_OF_STREAM)
+                            return
+                        n += k
+                    if self._stop_event.is_set():
                         return
-                    n += k
-                if self._stop_event.is_set():
-                    return
-                if not self._put_prefetched(self._decode_buffer(buf)):
-                    return
+                    if not self._put_prefetched(frame_buf):
+                        return
+                else:
+                    buf = bytearray(self._frame_bytes)
+                    mv = memoryview(buf)
+                    n = 0
+                    while n < self._frame_bytes and not self._stop_event.is_set():
+                        k = stdout.readinto(mv[n:])
+                        if not k:
+                            self._eof = True
+                            self._put_prefetched(_END_OF_STREAM)
+                            return
+                        n += k
+                    if self._stop_event.is_set():
+                        return
+                    yuv = np.frombuffer(buf, np.uint8).reshape(self.height * 3 // 2, self.width)
+                    bgr_buf = self._buffer_pool.acquire()
+                    cv2.cvtColor(yuv, cv2.COLOR_YUV2BGR_NV12, dst=bgr_buf)
+                    if not self._put_prefetched(bgr_buf):
+                        return
         except Exception as exc:
             self._prefetch_error = exc
             self._eof = True
@@ -330,28 +353,31 @@ class FFmpegVideoReader:
             return True, item
         want = self._frame_bytes
         stdout = self.proc.stdout
-        # Fill a pre-sized buffer in place. The old path built the frame with
-        # bytearray() + read() + extend(), which copies every frame TWICE — once
-        # into the bytes object read() allocates, once again into the bytearray,
-        # plus the regrowth as it extends. At 1080p that is 6.2MB per copy and it
-        # showed: measured over 600 frames, 123.5 fps against a raw pipe that
-        # delivers 138.4, i.e. ~0.94ms per frame of pure memcpy. readinto brings
-        # it to 7.23 ms/frame against the pipe's own 7.16 ceiling — the reader
-        # stops being a factor.
-        #
-        # A FRESH buffer per frame is required, not a reused one: frames go into
-        # a queue and are held by the pre-pass and the swap loop, so a shared
-        # buffer would alias the previous frame and rewrite it under them.
-        buf = bytearray(want)
-        mv = memoryview(buf)
-        n = 0
-        while n < want:
-            k = stdout.readinto(mv[n:])
-            if not k:
-                self._eof = True
-                return False, None
-            n += k
-        return True, self._decode_buffer(buf)
+        if self.pix_fmt == "bgr24":
+            frame_buf = self._buffer_pool.acquire()
+            mv = memoryview(frame_buf.reshape(-1))
+            n = 0
+            while n < want:
+                k = stdout.readinto(mv[n:])
+                if not k:
+                    self._eof = True
+                    return False, None
+                n += k
+            return True, frame_buf
+        else:
+            buf = bytearray(want)
+            mv = memoryview(buf)
+            n = 0
+            while n < want:
+                k = stdout.readinto(mv[n:])
+                if not k:
+                    self._eof = True
+                    return False, None
+                n += k
+            yuv = np.frombuffer(buf, np.uint8).reshape(self.height * 3 // 2, self.width)
+            bgr_buf = self._buffer_pool.acquire()
+            cv2.cvtColor(yuv, cv2.COLOR_YUV2BGR_NV12, dst=bgr_buf)
+            return True, bgr_buf
 
     def release(self):
         self._stop_event.set()
