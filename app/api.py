@@ -398,7 +398,18 @@ def _checkpoint_segment(project_id, writer=None, frame_idx=None, manager=None):
                 path = os.path.join(base, str(item.get("file") or ""))
                 if os.path.isfile(path):
                     files.append(_project_checkpoint.file_identity(path))
-            manifest = _project_checkpoint.manifest_path(writer.target_video)
+            # manifest_path belongs to segment_writer, which owns the manifest.
+            # This said `_project_checkpoint.manifest_path` and that function
+            # has never existed, so the AttributeError was raised on EVERY
+            # segment commit and swallowed by the handler below as
+            # "[Resume] project checkpoint failed". The consequence is quiet
+            # and total: `update_checkpoint` was never reached from the writer
+            # path, so no project ever recorded its committed segments,
+            # partial files or manifest. Every project on disk reads
+            # `segments: 0` however many parts it actually wrote — which is
+            # also what left safe_frame as the only thing a resume could look
+            # at, and safe_frame is not backed by anything on disk.
+            manifest = segment_writer.manifest_path(writer.target_video)
         else:
             manifest = ""
         paused = _procmgr_runtime.pause_controller.snapshot()["acknowledged"]
@@ -3394,11 +3405,14 @@ def get_progress():
 
 @app.get("/api/runtime/state")
 def get_runtime_state():
-    """Return the structured runtime state used by the V2 client.
+    """Return the structured runtime state, as one backend-owned shape.
 
     This endpoint intentionally has no terminal-text parsing contract.  The
     progress endpoint embeds the same schema so the existing terminal/status
-    path and the V2 client can observe one backend-owned state shape.
+    path and any client observe the same object. The React client normally
+    reads it from /api/progress's embedded `runtime` rather than polling here;
+    this route exists for a client that wants the state WITHOUT the log and
+    progress payload -- the Settings environment-health card is one.
     """
     _sync_pause_progress()
     try:

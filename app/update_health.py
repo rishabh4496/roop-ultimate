@@ -141,7 +141,7 @@ def _node_dependencies_check(source_root: Path, data_root: Path) -> dict[str, An
                        classification="UNVERIFIED")
     checked: list[str] = []
     failures: list[str] = []
-    for relative in ("react-ui", "react-ui-v2"):
+    for relative in ("react-ui",):
         package = source_root / relative / "package.json"
         modules = data_root / relative / "node_modules"
         if not package.is_file():

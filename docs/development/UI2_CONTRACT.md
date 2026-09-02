@@ -1,5 +1,20 @@
 # React UI 2.0 Boundary Contract and React V1 Forensic Audit
 
+> **SUPERSEDED — 2026-09-02.** React UI 2.0 (`react-ui-v2/`) was **removed**
+> after an endpoint-level audit found its unique surface to be seven items,
+> all of which were migrated into React UI 1.0 and verified against a live
+> backend. React UI 1.0 is now the sole production client.
+>
+> This file is kept as the record of the V2 effort. **It no longer describes
+> any shipping code**, and several of its claims were measured to be wrong —
+> in particular the "complete endpoint parity (87 routes)" claim, which was
+> satisfied by writing adapter wrappers that no screen imported, three of them
+> naming routes that do not exist in the backend.
+>
+> See `docs/development/UI_V1_V2_MIGRATION_AUDIT.md` for the audit and the
+> per-feature decisions.
+
+
 ## Stage 18 amendment (2026-09-02) - V2 is the default client
 
 React UI 2.0 is now the **default** client: `start.js` re-exports

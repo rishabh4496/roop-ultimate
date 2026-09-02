@@ -50,21 +50,29 @@ cd ../app && python run.py
 
 ## Run
 
-`start.js` launches **React UI 2.0**, the default production media workstation.
+`start.js` launches **React UI**, the production media workstation, and is the
+only client. React UI 2.0 was an experimental parallel client; it was removed on
+2026-09-02 after every capability it uniquely had was migrated here and
+verified. The audit and the per-feature decisions are in
+`docs/development/UI_V1_V2_MIGRATION_AUDIT.md`.
 
-**React UI 1.0 is 100% preserved and remains one click away** in the Pinokio menu as *Start React UI 1.0 (Fallback)* or via `start_react.js`.
+### Workstation features
+- **Full-bleed media canvas:** sub-pixel coordinate mapping, persistent crossfading, split comparison wipe, alpha blend, diff map, a 3.5x magnifier loupe and a paint/erase mask brush.
+- **Timeline:** filmstrip thumbnails, a measured timecode ruler, in/out trim points, chapter markers and 0.25x-4x playback.
+- **3D head pose & tracking:** 5-point ArcFace landmark overlays with live `yaw`/`pitch`/`roll` readouts.
+- **Face banking & person grouping:** rank-preserved target clustering, identity renaming, multi-angle galleries and a `.fsz` archive manager.
+- **Batch matrix:** four strategies (one-to-many, grouped, per-file matrix, recipe matrix) with automatic video segment splitting.
+- **Persistent projects:** every render writes a checkpoint of its exact inputs, settings, provider and hardware. Close the app, shut the machine down, come back, and a project whose inputs still validate can be loaded and resumed.
+- **Queue:** the backend owns it, so it survives closing the tab and restarting. Ten job states, per-job progress, per-job cancel, drag reorder, duplicate, retry and clip joining.
+- **Diagnostics:** a live GPU/VRAM/CPU HUD, a structured runtime report with 14 named sections, a thread/pool benchmark runner, a standing environment-health card and a read-only update compatibility check.
+- **Screens:** Home (`#/home`), Face Swap (`#/faceswap`), Batch Matrix (`#/batch`), Processing (`#/processing`), Face Manager (`#/facemgr`), Editor (`#/extras`), Outputs (`#/gallery`), History (`#/history`), Settings (`#/settings`). Each is a deep link, so a Pinokio tab switch returns you where you were.
 
-### React UI 2.0 Workstation Features:
-- **Full-Bleed Media Canvas:** High-precision sub-pixel coordinate mapping, zero-flicker persistent crossfading, split comparison wipe (H/V), 50% alpha blend, diff map, and 3.5× cursor magnifier loupe.
-- **3D Head Pose & Tracking:** High-contrast 5-point ArcFace landmark overlays + real-time 3D head pose degree readouts (`yaw`, `pitch`, `roll`).
-- **Face Banking & Person Grouping:** Rank-preserved target person clustering, custom identity renaming, multi-angle galleries, and disk `.fsz` faceset archive manager.
-- **Dedicated Workstation Screens:** Studio (`#/create`), Batch Matrix (`#/batch`), Face Manager (`#/facemgr`), AI Enhancers / Extras (`#/extras`), Output Gallery (`#/gallery`), Audit History (`#/history`), and Settings (`#/settings`).
-- **Hardware Optimization:** Render-Lite GPU protection mode (< 0.2% UI compute during swaps), off-thread `decoding="async"`, and dual profile optimization (Desktop RTX 4070 pool `2/2/2` vs Laptop RTX 3060 mobile guard).
-
-### Switching Between UI 2.0 and UI 1.0:
-- **From Pinokio:** Click *Start React UI 2.0* to launch the default workstation, or *Start React UI 1.0 (Fallback)* to launch the classic interface.
-- **From CLI / Scripts:** Run `node start_react_v2.js` for UI 2.0 or `node start_react.js` for UI 1.0. To switch the global default entry point, change `start.js` to require `./start_react.js` or `./start_react_v2.js`.
-- Both clients communicate with the same FastAPI backend (`127.0.0.1:ROOP_API_PORT`) and share configuration, presets, queue, and output directories.
+### Offline
+The client has no external URLs at all: fonts are self-hosted and nothing is
+fetched from a CDN. Every processing feature runs against the loopback backend.
+The single action that reaches the internet is the explicit
+**Check compatibility** button in Settings; offline it reports UNVERIFIED and
+nothing else changes.
 
 The legacy Gradio interface is preserved under `app/ui/` and can be started with `start_legacy.js`.
 
@@ -124,8 +132,7 @@ roop-ultimate/
 │   ├── ui/               legacy Gradio interface (frozen)
 │   ├── tests/            unit tests, benchmarks and measurement harnesses
 │   └── config.yaml       live settings (per-machine, not tracked)
-├── react-ui/             React UI 1.0 — preserved fallback (Vite)
-├── react-ui-v2/          React UI 2.0 — production client (Vite)
+├── react-ui/             the React client (Vite)
 ├── install.js start.js update.js reset.js    Pinokio launcher scripts
 ├── pinokio.js pinokio.json                   launcher UI and metadata
 ├── LICENSE               GNU AGPL-3.0

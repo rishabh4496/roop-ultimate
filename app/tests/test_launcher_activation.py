@@ -1,16 +1,26 @@
-"""The launcher must open V2 by default and must never lose the V1 action.
+"""The launcher must open the React client, and start.js must resolve onto it.
 
-WHY THIS EXISTS.  React UI 2.0 is now the production client: `start.js`
-re-exports `start_react_v2.js` and the Pinokio menu's default action starts V2.
-The explicit, standing requirement alongside that is that React UI 1.0 stays
-present and launchable -- it still owns feature surfaces V2 does not provide.
+WHY THIS EXISTS.  React UI 1.0 is the sole production client: `start.js`
+re-exports `start_react.js` and the Pinokio menu's default action starts it.
+React UI 2.0 was removed after its seven unique capabilities were migrated
+into V1 and verified -- see docs/development/UI_V1_V2_MIGRATION_AUDIT.md, and
+`test_default_client_capability.py` for the guard that it stays removed.
 
-"V1 is still on disk" is not the same as "a user can start V1".  A menu edit
-that dropped the V1 entry would leave the tree intact and the fallback
-unreachable, and nothing else in this suite would notice.  These are text-level
-assertions on the launcher because Pinokio scripts are configuration: there is
-no Python surface to exercise, and the failure mode is a missing entry rather
-than a wrong return value.
+The assertions that survived the two-client era are the ones that were never
+about which client won:
+
+  * the Pinokio menu's default action must actually start something, and it
+    must be the client `start.js` re-exports -- these drifted apart once
+    already, and the menu then offered a Terminal for the wrong process;
+  * `pinokio.js` must claim a running `start.js`, or the Terminal button
+    launches a SECOND copy of the whole stack instead of showing the running
+    one;
+  * the URL-capture pattern (regex event -> `local.set`) is this project's
+    Pinokio contract and is what surfaces the "Open" action at all.
+
+These are text-level assertions because Pinokio scripts are configuration:
+there is no Python surface to exercise, and the failure mode is a missing
+entry rather than a wrong return value.
 """
 
 import os
@@ -27,19 +37,14 @@ def _read(name):
 
 class LauncherActivationTests(unittest.TestCase):
     def test_start_js_launches_the_production_client(self):
-        self.assertIn("require('./start_react_v2.js')", _read("start.js"))
+        self.assertIn("require('./start_react.js')", _read("start.js"))
 
-    def test_both_launch_scripts_still_exist(self):
-        for name in ("start_react.js", "start_react_v2.js", "start_legacy.js"):
+    def test_the_launch_scripts_still_exist(self):
+        for name in ("start_react.js", "start_legacy.js"):
             self.assertTrue(os.path.isfile(os.path.join(_ROOT, name)), name)
 
-    def test_v1_launcher_still_targets_the_v1_client(self):
-        v1 = _read("start_react.js")
-        self.assertIn('path: "react-ui"', v1)
-        self.assertNotIn("react-ui-v2", v1)
-
-    def test_v2_launcher_targets_the_v2_client(self):
-        self.assertIn('path: "react-ui-v2"', _read("start_react_v2.js"))
+    def test_the_launcher_targets_the_react_client(self):
+        self.assertIn('path: "react-ui"', _read("start_react.js"))
 
     @staticmethod
     def _idle_menu():
@@ -59,60 +64,39 @@ class LauncherActivationTests(unittest.TestCase):
     def test_the_default_menu_action_starts_the_production_client(self):
         idle = self._idle_menu()
         first = idle.index("href:")
-        self.assertIn("start_react_v2.js", idle[first:first + 60],
+        self.assertIn("start_react.js", idle[first:first + 60],
                       "the default idle action must start the production client")
         self.assertIn("default: true", idle[:first])
-
-    def test_the_idle_menu_still_offers_the_other_client(self):
-        """Both clients must be reachable from the menu, not just present."""
-        self.assertIn('href: "start_react.js"', self._idle_menu())
-
-    def test_every_launcher_branch_keeps_a_route_back_to_v1(self):
-        """While V2 runs, the menu must still offer the V1 action."""
-        menu = _read("pinokio.js")
-        self.assertIn("start_v1_item", menu)
-        # Both V2 branches (with and without a captured URL) spread it in.
-        self.assertGreaterEqual(menu.count("...start_v1_item"), 2)
 
     def test_pinokio_resolves_a_running_start_js_as_the_client_it_launches(self):
         """The menu's branch detection must agree with what start.js re-exports.
 
         `start.js` is a thin re-export, so a running `start.js` has to be
-        resolved onto one of the two clients for both `info.local()` and the
+        resolved onto the client it launches for both `info.local()` and the
         Terminal href. That mapping lives in `pinokio.js` and is easy to leave
-        behind: when the default was rolled back to V1 and this line was not,
-        a running V1 process was still resolved as V2 and the menu offered a
-        "Terminal - React UI 2.0" for it.
+        behind: while two clients existed, rolling the default back to V1
+        without updating this line meant a running V1 process was still
+        resolved as V2 and the menu offered a "Terminal - React UI 2.0" for it.
+        There is one client now, so the assertion is that the resolver claims a
+        running start.js at all -- without it, the Terminal button starts a
+        SECOND copy of the whole stack instead of showing the running one.
         """
-        start = _read("start.js")
-        menu = _read("pinokio.js")
-        v1_is_default = "require('./start_react.js')" in start
-        # The variable that ALSO accepts "start.js" is the one start.js feeds.
-        v1_takes_start_js = re.search(
-            r'start_react_script\s*=.*?info\.running\("start\.js"\)',
-            menu, re.S) is not None
-        v2_takes_start_js = re.search(
-            r'start_react_v2_script\s*=.*?info\.running\("start\.js"\)',
-            menu, re.S) is not None
-        self.assertNotEqual(v1_takes_start_js, v2_takes_start_js,
-                            "exactly one client may claim a running start.js")
-        self.assertEqual(v1_is_default, v1_takes_start_js,
-                         "pinokio.js resolves a running start.js onto a "
-                         "different client than start.js actually launches")
+        self.assertIn("require('./start_react.js')", _read("start.js"))
+        self.assertIsNotNone(
+            re.search(r'start_react_script\s*=.*?info\.running\("start\.js"\)',
+                      _read("pinokio.js"), re.S),
+            "pinokio.js must resolve a running start.js onto the React client")
 
-    def test_install_and_reset_cover_both_clients(self):
-        install, reset = _read("install.js"), _read("reset.js")
-        for name in ("react-ui", "react-ui-v2"):
-            self.assertIn(name, install)
-            self.assertIn(name, reset)
+    def test_install_and_reset_cover_the_client(self):
+        self.assertIn("react-ui", _read("install.js"))
+        self.assertIn("react-ui", _read("reset.js"))
 
-    def test_the_url_capture_pattern_is_intact_on_both_launchers(self):
+    def test_the_url_capture_pattern_is_intact(self):
         """The project's Pinokio contract: capture the URL, set it via local.set."""
-        for name in ("start_react.js", "start_react_v2.js"):
-            text = _read(name)
-            self.assertTrue(re.search(r'"event":\s*"/\(http', text), name)
-            self.assertIn('url: "{{input.event[1]}}"', text, name)
-            self.assertIn('method: "local.set"', text, name)
+        text = _read("start_react.js")
+        self.assertTrue(re.search(r'"event":\s*"/\(http', text))
+        self.assertIn('url: "{{input.event[1]}}"', text)
+        self.assertIn('method: "local.set"', text)
 
 
 if __name__ == "__main__":

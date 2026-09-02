@@ -151,16 +151,12 @@ TARGETS = {
     ),
     "build": (
         "Front-end build output",
-        "react-ui/dist, react-ui-v2/dist and lint caches. Both clients are served "
-        "by the Vite dev server, so these are rebuilt on demand and unused at "
-        "runtime.",
-        # Both React generations ship, both are launched through `npm run dev`,
-        # and both dist trees are gitignored.  Listing only V1 left the V2 build
-        # output permanently invisible to the cleanup report -- disposable space
-        # the user could never reclaim through the supported path.  node_modules
-        # is deliberately NOT here: it is required to launch either client.
+        "react-ui/dist and lint caches. The client is served by the Vite dev "
+        "server, so these are rebuilt on demand and unused at runtime.",
+        # node_modules is deliberately NOT here: it is required to launch the
+        # client.  react-ui-v2/dist was listed here until React UI 2.0 was
+        # removed; there is one client now.
         lambda: [p for p in (os.path.join(ROOT, "react-ui", "dist"),
-                             os.path.join(ROOT, "react-ui-v2", "dist"),
                              os.path.join(ROOT, ".ruff_cache"),
                              os.path.join(APP, ".ruff_cache"))
                  if os.path.exists(p)],

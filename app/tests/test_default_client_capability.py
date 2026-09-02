@@ -88,13 +88,25 @@ class DefaultClientCapabilityTests(unittest.TestCase):
               "what start.js promotes.")
 
     def test_the_guard_reads_the_launcher_rather_than_a_hardcoded_name(self):
-        """It must follow start.js, or flipping the default silently skips it."""
-        self.assertIn(_client_dir_of_default(), ("react-ui", "react-ui-v2"))
+        """It must follow start.js, or flipping the default silently skips it.
 
-    def test_v2_is_still_present_and_launchable(self):
-        """Rolling the default back must never mean deleting V2."""
-        self.assertTrue(os.path.isfile(os.path.join(_ROOT, "start_react_v2.js")))
-        self.assertTrue(os.path.isdir(os.path.join(_ROOT, "react-ui-v2", "src")))
+        The regex in `_client_dir_of_default` still accepts a `_v2` launcher on
+        purpose: the point of this guard is that it FOLLOWS start.js instead of
+        naming a directory, and it has to keep working if a second client is
+        ever introduced again.
+        """
+        self.assertTrue(os.path.isdir(
+            os.path.join(_ROOT, _client_dir_of_default(), "src")))
+
+    def test_react_ui_2_is_gone_and_nothing_can_launch_it(self):
+        """It was removed after its seven unique capabilities were migrated
+        into V1 and verified -- docs/development/UI_V1_V2_MIGRATION_AUDIT.md.
+        This fails if any part of it returns without that record."""
+        self.assertFalse(os.path.exists(os.path.join(_ROOT, "react-ui-v2")))
+        self.assertFalse(os.path.exists(os.path.join(_ROOT, "start_react_v2.js")))
+        for name in ("start.js", "pinokio.js", "install.js", "reset.js"):
+            self.assertNotIn("react-ui-v2", _read(name), name)
+            self.assertNotIn("start_react_v2", _read(name), name)
 
 
 if __name__ == "__main__":

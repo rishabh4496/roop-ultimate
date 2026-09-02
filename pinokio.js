@@ -6,27 +6,18 @@ module.exports = {
   icon: "icon.png",
   menu: async (kernel, info) => {
     let installed = info.exists("app/env")
-    // start.js is a thin re-export of start_react.js (React UI 1.0 is the
-    // production client), so EITHER path can be the one actually running.
-    // Resolve which, and use that same path for both info.local() and the
-    // Terminal href — a Terminal button pointing at the file that is NOT
-    // running starts a second copy of the whole stack instead of showing the
-    // running one.
+    // start.js is a thin re-export of start_react.js, so EITHER path can be
+    // the one actually running. Resolve which, and use that same path for both
+    // info.local() and the Terminal href — a Terminal button pointing at the
+    // file that is NOT running starts a second copy of the whole stack instead
+    // of showing the running one.
     //
-    // KEEP THIS IN STEP WITH start.js. These two lines encode which client
-    // start.js re-exports; when the default was flipped back to V1 and this was
-    // not, a running start.js was still resolved as V2 and the menu offered a
-    // "Terminal — React UI 2.0" for a V1 process.
-    //
-    // React UI 2.0 remains fully present and launchable through its own action
-    // below; it is a preview and is never started by start.js.
-    let start_react_v2_script = info.running("start_react_v2.js") ? "start_react_v2.js"
+    // KEEP THIS IN STEP WITH start.js.
+    let start_react_script = info.running("start_react.js") ? "start_react.js"
       : (info.running("start.js") ? "start.js" : null)
-    let start_react_script = info.running("start_react.js") ? "start_react.js" : null
     let running = {
       install: info.running("install.js"),
       start_react: start_react_script !== null,
-      start_react_v2: start_react_v2_script !== null,
       start_legacy: info.running("start_legacy.js"),
       update: info.running("update.js"),
       reset: info.running("reset.js"),
@@ -42,54 +33,7 @@ module.exports = {
         href: "install.js",
       }]
     } else if (installed) {
-      // React UI 1.0 remains fully PRESERVED and accessible as a fallback.
-      let start_v1_item = !running.start_react ? [{
-        icon: "fa-solid fa-clock-rotate-left",
-        text: "<div><strong>Start React UI 1.0 (Fallback)</strong><div>Maintained legacy interface</div></div>",
-        href: "start_react.js",
-      }] : []
-      let start_v2_item = !running.start_react_v2 ? [{
-        icon: "fa-solid fa-rocket",
-        text: "<div><strong>Start React UI 2.0</strong><div>Default Workstation — media canvas, 3D pose tracking, face manager, batch matrix, AI enhancers</div></div>",
-        href: "start_react_v2.js",
-      }] : []
-      if (running.start_react_v2) {
-        let local = info.local(start_react_v2_script)
-        if (local && local.url) {
-          return [{
-            default: true,
-            icon: "fa-solid fa-rocket",
-            text: "Open React UI 2.0",
-            href: local.url,
-          }, {
-            icon: "fa-solid fa-circle-stop",
-            text: "<div><strong>Stop Swap</strong><div>Abort the current job and finalize a playable video</div></div>",
-            href: "stop.js",
-            params: { api_url: local.api_url },
-          }, {
-            icon: "fa-solid fa-pause",
-            text: "<div><strong>Pause</strong><div>Hold the running job</div></div>",
-            href: "pause.js",
-            params: { api_url: local.api_url },
-          }, {
-            icon: "fa-solid fa-play",
-            text: "<div><strong>Resume</strong><div>Continue a paused job</div></div>",
-            href: "resume.js",
-            params: { api_url: local.api_url },
-          }, {
-            icon: 'fa-solid fa-terminal',
-            text: "Terminal — React UI 2.0",
-            href: start_react_v2_script,
-          }, ...start_v1_item]
-        } else {
-          return [{
-            default: true,
-            icon: 'fa-solid fa-terminal',
-            text: "Terminal — React UI 2.0",
-            href: start_react_v2_script,
-          }, ...start_v1_item]
-        }
-      } else if (running.start_react) {
+      if (running.start_react) {
         let local = info.local(start_react_script)
         if (local && local.url) {
           return [{
@@ -116,14 +60,14 @@ module.exports = {
             icon: 'fa-solid fa-terminal',
             text: "Terminal — React UI 1.0",
             href: start_react_script,
-          }, ...start_v2_item]
+          }]
         } else {
           return [{
             default: true,
             icon: 'fa-solid fa-terminal',
             text: "Terminal — React UI 1.0",
             href: start_react_script,
-          }, ...start_v2_item]
+          }]
         }
       } else if (running.start_legacy) {
         let local = info.local("start_legacy.js")
@@ -185,11 +129,7 @@ module.exports = {
         return [{
           default: true,
           icon: "fa-solid fa-rocket",
-          text: "<div><strong>Start React UI 2.0</strong><div>Default Workstation — media canvas, 3D pose tracking, face manager, batch matrix, AI enhancers</div></div>",
-          href: "start_react_v2.js",
-        }, {
-          icon: "fa-solid fa-clock-rotate-left",
-          text: "<div><strong>Start React UI 1.0 (Fallback)</strong><div>Maintained legacy interface</div></div>",
+          text: "<div><strong>Start</strong><div>Media canvas, 3D pose tracking, face manager, batch matrix, persistent projects, AI enhancers</div></div>",
           href: "start_react.js",
         }, {
           icon: "fa-solid fa-power-off",

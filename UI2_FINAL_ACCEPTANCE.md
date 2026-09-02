@@ -1,5 +1,20 @@
 # React UI 2.0 Final Acceptance Review
 
+> **SUPERSEDED — 2026-09-02.** React UI 2.0 (`react-ui-v2/`) was **removed**
+> after an endpoint-level audit found its unique surface to be seven items,
+> all of which were migrated into React UI 1.0 and verified against a live
+> backend. React UI 1.0 is now the sole production client.
+>
+> This file is kept as the record of the V2 effort. **It no longer describes
+> any shipping code**, and several of its claims were measured to be wrong —
+> in particular the "complete endpoint parity (87 routes)" claim, which was
+> satisfied by writing adapter wrappers that no screen imported, three of them
+> naming routes that do not exist in the backend.
+>
+> See `docs/development/UI_V1_V2_MIGRATION_AUDIT.md` for the audit and the
+> per-feature decisions.
+
+
 **Evaluation Question:** *"Is React UI 2.0 objectively better than React UI 1.0 without losing any proven functionality?"*  
 **Verdict:** **ACCEPTED (100% Behavioral Parity, Measurable Ergonomic & Performance Improvements across all 10 Categories)**  
 **Safety Invariant:** React UI 1.0 (`react-ui/`) remains **100% separate, operational, and accessible as a fallback**.

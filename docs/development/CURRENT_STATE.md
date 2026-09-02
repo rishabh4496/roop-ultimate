@@ -1,5 +1,106 @@
 # Current Repository State
 
+## Stage 22 - React UI 2.0 removed; its seven real capabilities live in V1 (2026-09-02)
+
+**React UI 1.0 (`react-ui/`) is the sole production client.** `start.js`
+re-exports `start_react.js`, the Pinokio menu has one Start action, and
+`react-ui-v2/`, `start_react_v2.js` and the five `test_ui2_*.py` files are
+gone. `test_default_client_capability.py` fails if any of it returns.
+
+### What the audit actually found
+
+Full matrix: `UI_V1_V2_MIGRATION_AUDIT.md`. The comparison was made from the
+repository -- an endpoint diff of both clients against the 104 routes
+`api.py` + `routes_*.py` register -- not from the UI2 contract documents.
+
+V1 is 22,093 LOC to V2's 5,170 and calls 94 endpoint literals to V2's 88.
+**V2's unique surface was seven items.** Three more of its "unique" calls --
+`/api/facemgr/save`, `/api/faceset/library/reveal`, `/api/history/clear` --
+name routes that **do not exist in the backend**, sitting in `src/adapters/`
+wrappers that no screen imports. The contract's "complete endpoint parity (87
+routes)" was satisfied by writing wrapper functions, not by wiring them to
+controls: the same "bound to something nothing reads" failure class this
+project keeps meeting.
+
+Three V2 behaviours would have been REGRESSIONS if carried across: its
+`styles.css` imports Google Fonts over the network (V1 deliberately
+self-hosts and has zero external URLs); its Settings screen cannot change a
+single processing parameter; and the phantom adapters above.
+
+### Migrated, in the order they were done
+
+| # | capability | where it landed |
+|---|---|---|
+| 1 | persistent projects (list / validate / load / resume) | `faceswap/ProjectsPanel.jsx` |
+| 2 | canonical ten-value job states | `faceswap/useQueue.js` |
+| 3 | per-job cancel (`/api/queue/cancel`) | `faceswap/QueuePanel.jsx` |
+| 4 | per-job progress in the queue rows | `faceswap/QueuePanel.jsx` |
+| 5 | hash routing / deep links | `App.jsx` |
+| 6 | standing environment-health card | `EnvironmentHealth.jsx` |
+| 7 | update compatibility verdict | `EnvironmentHealth.jsx` + `GET /api/update/check` |
+
+**(1) is the one that mattered.** `api.py::_create_processing_project` writes a
+project on EVERY `/api/swap` and `_checkpoint_segment` keeps it current. Users
+have been generating recoverable projects for as long as that code has existed
+and had no way to see, validate, load or resume one.
+
+**(2)** `routes_queue::_snapshot` emits BOTH `state` (ten values) and `status`
+(a five-value legacy projection). V1 read the projection, so PREPARING,
+PAUSE_REQUESTED and PAUSED all showed as "Running", CANCELLED and INTERRUPTED
+were indistinguishable, and RECOVERABLE -- the state that means "this can be
+picked up again" -- showed as "Pending".
+
+**(7)** `update_manager.py` (868 LOC) already gates on a manifest, snapshots
+the environment, health-checks the result and rolls back; it is reachable only
+from Pinokio's Update action, so its verdict was invisible until you had run
+it. The new endpoint is READ-ONLY and `test_update_check_route.py` fails if
+`routes_diagnostics.py` ever references the installer.
+
+### Two defects found while verifying the ported feature
+
+Both made persistent projects non-functional end to end, and both were
+invisible precisely because no client listed a project.
+
+**`runtime_identity` unwrapped a provider one level.** The swap path passes
+`roop_globals.execution_providers` -- a LIST of `(name, options)` tuples -- so
+one unwrap yields the *tuple*, and `str()` stored the entire
+`('TensorrtExecutionProvider', {...engine cache path...})` literal. Validation
+recomputes the short `"tensorrt"` from cfg and the two can never be equal, so
+**every project written under TensorRT was reported RECOVERABLE and then
+permanently refused by the machine that had just written it.** 4 of the 5
+records on this install were affected. `normalize_provider` now unwraps to a
+string and also reads the EP name back out of an already-stored literal, so
+existing records recover with no file migration. `test_project_provider_identity.py`
+fails 4 of its 11 cases on the old code.
+
+**`_resume_context["base"]` came from `safe_frame`.** `_checkpoint_segment`
+advances that from the frame index alone when no writer exists, so it routinely
+claims a prefix with nothing on disk behind it. Any run interrupted at or past
+the end of its range gave base 1.0, and `base + fraction * (1 - base)` is then
+1.0 for every fraction -- **the resumed render reported 100% from its first
+frame to its last.** Observed live at "Processing frame 777 / 899" with
+progress 1.0. It now comes from the frames inside COMMITTED segments, which is
+the prefix that actually survives. The UI says which case a project is in
+rather than promising a resume point it cannot honour.
+
+### Verified on hardware (RTX 4070, live backend)
+
+* A project was listed, **loaded into an empty workspace across a backend
+  restart** (0 sources / 0 targets -> the project's faceset and d4.mp4),
+  resumed, run to completion, and moved RECOVERABLE -> COMPLETED.
+* All 9 tabs render with live data; 19 endpoints return 200; no console errors.
+* Deep links resolve (`#/settings` opens Settings) and Back/Forward work.
+* `GET /api/update/check` returned SAFE / "no newer commit is available".
+* Suite **1831 -> 1856** with the ports (+25 new tests), **1815** after removing
+  the five V2 test files. OK, 1 skipped, throughout.
+
+### Incidental fixes
+
+* `.claude/launch.json` still pointed at the pre-standalone working copy, deleted in
+  August.
+* `StorageManager`'s 10s deadline reported "Request timed out" against the
+  6.4s-warm `/api/storage` scan on the first visit after a boot; raised to 45s.
+
 ## Stage 21 - a Gradio failure was killing the whole backend (2026-09-02)
 
 **Reported as a screenshot of the V2 client failing:** `[vite] http proxy error`

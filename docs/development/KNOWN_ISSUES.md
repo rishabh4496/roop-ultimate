@@ -1,5 +1,57 @@
 # Known Issues and Open Questions
 
+## Stage 22 - persistent projects: three defects fixed, one left open (2026-09-02)
+
+Found while migrating the projects panel out of React UI 2.0 and verifying it
+against a live backend. Between them the first three made the whole
+persistent-project system non-functional, and all three were invisible for the
+same reason: **no client had ever listed a project**, so nothing exercised the
+path far enough to notice.
+
+### FIXED - the provider identity could never match itself
+
+`project_checkpoint.runtime_identity` unwrapped a provider ONE level.
+`api.py` passes `roop_globals.execution_providers`, a LIST of
+`(name, options)` tuples, so one unwrap yields the tuple and `str()` stored the
+whole `('TensorrtExecutionProvider', {...})` literal. Validation recomputes the
+short `"tensorrt"`, so every project written under TensorRT was reported
+RECOVERABLE and then permanently refused. 4 of 5 records on this install.
+`normalize_provider` + `test_project_provider_identity.py`.
+
+### FIXED - a resumed render reported 100% for its whole duration
+
+`_resume_context["base"]` came from `safe_frame`, which `_checkpoint_segment`
+advances from the frame index alone. Interrupted at or past the end of a range
+gave base 1.0, and `base + fraction * (1 - base)` is 1.0 for every fraction.
+Now derived from committed segments. `test_resume_progress_base.py`.
+
+### FIXED - no project ever recorded a committed segment
+
+`api.py` called `_project_checkpoint.manifest_path`, which has never existed on
+that module -- it belongs to `roop.segment_writer`. `_checkpoint_segment` is
+wrapped in a broad `except Exception` so the AttributeError was swallowed as
+one line, `[Resume] project checkpoint failed`, on EVERY segment commit.
+`update_checkpoint` was therefore never reached from the writer path, and every
+project on disk reads `segments: 0` however many parts it wrote.
+`test_checkpoint_segment_commit.py` also asserts, via `ast`, that no
+`_project_checkpoint.<name>` in `api.py` names a missing attribute -- the
+general form, since a broad `except` leaves a call's spelling untested.
+
+### OPEN - `safe_frame` still claims a prefix nothing backs
+
+`_checkpoint_segment` sets `safe_frame = start + frame_idx + 1` when no writer
+exists yet. That is "the furthest frame reached", not "the frames that
+survive", and the two are not the same quantity. Nothing now DEPENDS on the
+difference -- the resume base and the UI both read committed segments -- but
+the field's name still promises more than it delivers, and a future reader
+will believe it.
+
+Not changed here because the write path is shared with the queue's
+`mark_project_checkpoint` and a rename mid-migration is the kind of change that
+needs its own verification pass. The UI states the distinction explicitly
+instead: a project with zero committed segments says so, and says that resuming
+re-renders the range from its start.
+
 ## Stage 21 - a Gradio failure was killing the whole backend (2026-09-02)
 
 **Reported as a screenshot of the V2 client failing:** `[vite] http proxy error`

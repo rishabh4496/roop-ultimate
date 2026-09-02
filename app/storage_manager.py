@@ -247,7 +247,6 @@ class StorageManager:
             os.path.join(self.project_root, ".ruff_cache"),
             os.path.join(self.app_root, ".ruff_cache"),
             os.path.join(self.project_root, "react-ui", "dist"),
-            os.path.join(self.project_root, "react-ui-v2", "dist"),
         ]
         for root in safe_roots:
             if _canonical(path) == _canonical(root):
@@ -300,8 +299,7 @@ class StorageManager:
 
     def _pycache_dirs(self) -> list[str]:
         result = []
-        for base in (self.app_root, os.path.join(self.project_root, "react-ui"),
-                     os.path.join(self.project_root, "react-ui-v2")):
+        for base in (self.app_root, os.path.join(self.project_root, "react-ui")):
             if not os.path.isdir(base):
                 continue
             for directory, dirnames, _files in os.walk(base, followlinks=False):
@@ -334,7 +332,6 @@ class StorageManager:
                 ("app/projects", "checkpoints", "Project checkpoint records reconstruct resumable work."),
                 ("app/queue.json", "files referenced by active jobs", "The durable queue owns pending and resumable job references."),
                 ("react-ui/node_modules", "required dependencies", "The active React UI dependency tree is required by start_react.js."),
-                ("react-ui-v2/node_modules", "required dependencies", "The parallel React UI 2.0 dependency tree is retained and not a cleanup target."),
             ]
             for relative, category, reason in protected:
                 add(self._root(relative), category, PROTECTED, reason, False)
@@ -380,7 +377,7 @@ class StorageManager:
                                     True, CATEGORY_DEFINITIONS["logs"]["evidence"])
 
             for relative in (".pytest_cache", "app/.pytest_cache", ".ruff_cache", "app/.ruff_cache",
-                             "react-ui/dist", "react-ui-v2/dist"):
+                             "react-ui/dist"):
                 add(self._root(relative), "application cache", SAFE_TO_DELETE,
                     "Generated tool/build cache; the application recreates it on demand.", True,
                     CATEGORY_DEFINITIONS["application cache"]["evidence"])
@@ -472,7 +469,7 @@ class StorageManager:
             if os.path.islink(path) or not any(_within(path, self._root(root))
                                               for root in (
                                                   ".pytest_cache", "app/.pytest_cache", ".ruff_cache",
-                                                  "app/.ruff_cache", "react-ui/dist", "react-ui-v2/dist",
+                                                  "app/.ruff_cache", "react-ui/dist",
                                                   "app", "logs")):
                 raise StorageError("refusing to delete a symlink or unowned path")
             try:

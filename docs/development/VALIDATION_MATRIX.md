@@ -1,3 +1,54 @@
+# Validation Matrix
+
+## Stage 22 - React UI 1.0 as the sole client (2026-09-02, RTX 4070)
+
+Device: RTX 4070 12GB, driver 616.56, CUDA 12.8, TensorRT 10.9.0.34, ORT
+1.23.2, i9-14900K 24P/32L, 31.7GB RAM. All rows measured against a live
+backend on 127.0.0.1:8001 with the client on Vite.
+
+**Not tested on the RTX 3060.** Every change in this stage is
+device-independent (React code, one route, three Python fixes) and none touches
+a performance path, but that is an argument, not a measurement. See §RTX 3060.
+
+### Migration
+
+| # | ported capability | evidence | result |
+|---|---|---|---|
+| 1 | persistent projects | 5 real projects listed with correct state, safe frame, segment count and per-reason refusal | **PASS** |
+| 1a | project load | workspace 0 sources / 0 targets -> the project's faceset + d4.mp4 (13,305 frames), **across a backend restart** | **PASS** |
+| 1b | project resume | RECOVERABLE project resumed, ran to completion, state -> COMPLETED | **PASS** |
+| 1c | refusal is honoured | project with deleted inputs still refused, both reasons shown, no Load/Resume offered | **PASS** |
+| 2 | canonical job states | ten states rendered from `state`, not the five-value legacy `status` | **PASS** |
+| 3 | per-job cancel | wired to `/api/queue/cancel`; running job confirms first | **PASS** (control wired; a live cancel of a running job was NOT exercised) |
+| 4 | per-job progress | `job.progress.fraction` / `.phase` rendered on active rows | **PASS** |
+| 5 | hash routing | `#/settings` deep-links; click -> `#/gallery`; Back -> `#/settings` with the tab following | **PASS** |
+| 6 | environment health | GPU, driver, CUDA, TRT, ORT, provider, precision, VRAM, RAM, RSS, CPU, threads 8, pools 3/3/2, NVDEC/NVENC all live | **PASS** |
+| 7 | update compatibility | `GET /api/update/check` -> SAFE, available=no, candidate SHA, "no newer commit is available on the configured branch" | **PASS** |
+
+### V1 regression after removal
+
+| check | evidence | result |
+|---|---|---|
+| all 9 tabs render | home/faceswap/batch/processing/facemgr/extras/gallery/history/settings, live data, no error boundary | **PASS** |
+| endpoints | 19 of 19 return 200, including the 4 V2-only routes now consumed by V1 | **PASS** |
+| console | no errors (the 502s were the backend restarting mid-session; `ERR_ABORTED` on `/api/file` 206 are video elements torn down on tab switch) | **PASS** |
+| production build | 436 modules, clean | **PASS** |
+| end-to-end swap | `/api/swap` on a 120-frame range -> **158 of 158 faces composited**, UltraMax restored 158, 119-frame HEVC 1280x720, 2.85MB, 3.97s, rc 0 | **PASS** |
+| pinokio menu | idle menu default action -> `start_react.js`; running menu -> Open / Stop / Pause / Resume / Terminal; a running `start.js` resolves to the same client | **PASS** (exercised by executing `pinokio.js`, not through Pinokio itself) |
+| suite | 1831 baseline -> 1856 with ports (+25) -> 1815 after removing 5 V2 test files. OK, 1 skipped, throughout | **PASS** |
+| storage cleanup | 55 reviewed, 193 protected, 0 safe-to-delete because resumable project work exists -- the safety gate firing correctly | **PASS** |
+
+### NOT TESTED
+
+| item | why |
+|---|---|
+| RTX 3060 Laptop 6GB | not present in this session |
+| Pinokio launcher end to end | `pinokio.js` was executed directly and `start.js`/`install.js`/`reset.js` parsed; the app was NOT launched through Pinokio's own UI |
+| cancelling a RUNNING queue job | the control and route were verified; no long render was interrupted to exercise it |
+| update APPLY / rollback | deliberately out of reach of the browser; `update_manager.apply()` was not run |
+| shutdown-and-return recovery | a backend RESTART was exercised (§1a); an OS shutdown was not |
+| long-run soak | longest render this session was 900 frames |
+
 ## Stage 21 - a Gradio failure was killing the whole backend (2026-09-02)
 
 **Reported as a screenshot of the V2 client failing:** `[vite] http proxy error`

@@ -47,8 +47,6 @@ SENSITIVE_FILES = (
     "update.js",
     "react-ui/package.json",
     "react-ui/package-lock.json",
-    "react-ui-v2/package.json",
-    "react-ui-v2/package-lock.json",
 )
 ROOT = Path(__file__).resolve().parents[1]
 SNAPSHOT_ROOT = ROOT / ".update-snapshots"

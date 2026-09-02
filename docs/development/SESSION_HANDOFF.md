@@ -1,4 +1,64 @@
-# Stage 21 Session Handoff - Gradio failure was killing the backend
+# Stage 22 Session Handoff - React UI 2.0 removed, its real capabilities migrated
+
+## What changed
+
+**React UI 1.0 is the sole production client.** `react-ui-v2/`,
+`start_react_v2.js` and five `test_ui2_*.py` files are gone; `start.js`
+re-exports `start_react.js`; the Pinokio menu has one Start action.
+
+Seven capabilities were migrated first and verified individually. Three
+defects were found while verifying them, all in the persistent-project system
+and all pre-existing. Full detail: `CURRENT_STATE.md` Stage 22,
+`UI_V1_V2_MIGRATION_AUDIT.md`, `KNOWN_ISSUES.md` Stage 22,
+`VALIDATION_MATRIX.md` Stage 22.
+
+Rollback point: tag **`pre-v2-removal`** (commit `627b51b`) — every capability
+migrated and verified, V2 still present.
+
+## The thing worth carrying forward
+
+**Three of V2's "unique" endpoints did not exist in the backend**, in adapter
+wrappers no screen imported. The UI2 contract's headline claim — "complete
+endpoint parity (87 routes)" — was satisfied by writing wrapper functions.
+That is the same failure class as a control bound to a value nothing reads,
+and it is the third time this project has met it.
+
+**The three project defects were all invisible for one reason: no client had
+ever listed a project.** The backend has written a project record on every
+`/api/swap` for as long as that code has existed. Nothing read them, so
+nothing exercised the path far enough to notice that
+
+  * the provider identity could never match itself (so every TensorRT project
+    was permanently unresumable),
+  * a resumed render reported 100% for its whole duration, and
+  * `_checkpoint_segment` raised AttributeError on every segment commit, inside
+    a broad `except`, so no project ever recorded a committed segment.
+
+Writing the UI is what found all three. A feature with no consumer is not
+"working"; it is untested.
+
+## Open, in priority order
+
+1. **Nothing in Stage 22 is measured on the RTX 3060.** The changes are
+   device-independent (React, one route, three Python fixes) and none touches
+   a performance path — but that is an argument, not a measurement.
+2. **`safe_frame` still claims a prefix nothing backs.** `KNOWN_ISSUES.md`
+   Stage 22 has the reasoning for leaving it; nothing depends on the
+   difference any more, but the name still misleads.
+3. **The Pinokio launcher was not exercised through Pinokio itself.**
+   `pinokio.js` was executed directly and every launcher script parsed, but the
+   app was started from the shell, not from Pinokio's UI.
+4. **Cancelling a RUNNING queue job** — the control and route are verified, but
+   no long render was interrupted to exercise the cooperative path.
+5. **`update_manager.apply()` / rollback** is deliberately unreachable from the
+   browser and was not run.
+
+## Inherited and untouched
+
+Phase 3's RSS gate still fails on the 3060 at 3.73 GB; interacting faces
+remains characterized but unsolved; the Gradio UI under `app/ui/` stays frozen.
+
+---
 
 ## Stage 21 - a Gradio failure was killing the whole backend (2026-09-02)
 

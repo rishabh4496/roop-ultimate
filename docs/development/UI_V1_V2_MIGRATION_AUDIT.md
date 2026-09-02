@@ -97,3 +97,32 @@ screen) would be regressions if carried across.
 **Not a port but required by §14:** the read-only update check endpoint.
 Justification is in row 7 — the compatibility logic already exists and is
 verified; only a read-only view of it was missing from every UI.
+
+---
+
+## E. What migrating row 1 uncovered
+
+Persistent projects were not merely missing a UI. Writing one exposed **three
+pre-existing defects that made the whole system non-functional**, each
+invisible for the same reason: the backend had written a project record on
+every `/api/swap` since that code existed, and **no client had ever listed
+one**, so nothing exercised the path far enough to fail.
+
+| defect | effect | fixed by |
+|---|---|---|
+| `runtime_identity` unwrapped a provider one level, so a LIST of `(name, options)` tuples stored the whole `('TensorrtExecutionProvider', {...})` literal | every project written under TensorRT was reported RECOVERABLE and then permanently refused by the machine that wrote it (4 of 5 records here) | `normalize_provider`, `test_project_provider_identity.py` |
+| `_resume_context["base"]` came from `safe_frame`, which advances on frame index with nothing committed | a resumed render reported 100% for its entire duration — observed at "frame 777 / 899" with progress 1.0 | committed-segment derivation, `test_resume_progress_base.py` |
+| `api.py` called `_project_checkpoint.manifest_path`, which lives on `roop.segment_writer`, inside a broad `except` | `AttributeError` on **every** segment commit; `update_checkpoint` never reached from the writer path, so no project ever recorded a committed segment, manifest or partial file | one-line fix, `test_checkpoint_segment_commit.py` |
+
+All three verified on hardware. After the third fix an interrupted 900-frame
+render recorded a real segment for the first time:
+
+    segments  : [{'file': '.d4__temp.seg0000.mp4', 'frames': 899,
+                  'bytes': 20679948, 'sha256': 'a948e338a1ae...'}]
+    manifest  : ...\output\d4__temp.mp4.resume.json
+
+Before it, that was `[]` and `''` on every run this application has ever done.
+
+**The general lesson, and it is the third instance of it in this repo:** a
+feature with no consumer is not "working", it is untested. The swap audit, the
+return code and the green suite all reported success throughout.

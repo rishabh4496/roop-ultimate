@@ -64,10 +64,9 @@ class BackendOutlivesGradioTests(unittest.TestCase):
         legacy = _read(os.path.join(_ROOT, "start_legacy.js"))
         self.assertNotIn("ROOP_REACT_CLIENT", legacy)
 
-    def test_both_react_launchers_declare_themselves(self):
-        for name in ("start_react.js", "start_react_v2.js"):
-            text = _read(os.path.join(_ROOT, name))
-            self.assertIn('ROOP_REACT_CLIENT: "1"', text, name)
+    def test_the_react_launcher_declares_itself(self):
+        text = _read(os.path.join(_ROOT, "start_react.js"))
+        self.assertIn('ROOP_REACT_CLIENT: "1"', text)
 
     def test_ui_main_swallows_the_gradio_error(self):
         """The premise: if ui/main.py ever re-raises, run.py needs a try too.
