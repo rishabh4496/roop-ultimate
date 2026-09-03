@@ -5,7 +5,8 @@ import numpy as np
 
 from roop.typing import Frame
 from roop.processors.Mask_XSeg import Mask_XSeg
-from roop.processors.Mask_FaceParser import Mask_FaceParser
+from roop.processors.Mask_FaceParser import (Mask_FaceParser,
+                                             glasses_frame_mask)
 from roop import session_pool
 
 
@@ -94,6 +95,14 @@ class Mask_RealityUX():
     in this set, see the notes there). It never expands what XSeg already
     swaps, and it never second-guesses XSeg inside the core skin/eyes/nose/
     mouth area.
+
+    Eyeglass FRAMES are the one exception, and they take a separate path at the
+    end of Run() rather than joining `_NONFACE_OPAQUE`. They cannot use the set
+    for two independent reasons: class 6 covers the lens as well as the frame,
+    so protecting it wholesale keeps the original person's eye; and the
+    accessory gate would suppress it anyway, because XSeg reads ~0.003 there.
+    `glasses_frame_mask` removes the eye socket geometrically and is composited
+    ungated -- see the note at the call site.
 
     First version of this fusion combined the two engines as a straight
     intersection of their swap regions (`np.maximum` of both "keep original"
@@ -231,6 +240,31 @@ class Mask_RealityUX():
         non_face = np.clip(is_accessory * accessory_allowed, 0.0, 1.0)
 
         combined = np.maximum(xseg_mask, non_face)
+
+        # Eyeglass FRAMES, deliberately NOT routed through `accessory_allowed`.
+        #
+        # The gate above exists to stop BiSeNet's frontal priors eating an
+        # angled face, and it works by only letting the parser exclude where
+        # XSeg is ALREADY excluding. Class 6 cannot be helped by that: measured
+        # over ~800k glasses pixels on three subjects, xseg p50 is 0.002-0.004
+        # -- XSeg wants to swap essentially all of it -- so ~60% of the class
+        # sits below the gate's 0.05 floor where permission is exactly zero,
+        # and the fused mask paints over ~71% of the frame, bit for bit the
+        # same as XSeg alone.
+        #
+        # Being ungated is safe HERE, and only here, because the region is
+        # geometrically bounded: `glasses_frame_mask` removes the eye socket
+        # before returning, and refuses outright when class 6 covers an
+        # implausible share of the crop. It therefore cannot produce the
+        # half-unswapped face the gate was written to prevent, which is a
+        # property of the mask's shape rather than of a threshold.
+        glasses = glasses_frame_mask(labels, crop_size=img1.shape[0])
+        if glasses is not None:
+            if glasses.shape[:2] != combined.shape[:2]:
+                glasses = cv2.resize(glasses, (combined.shape[1],
+                                               combined.shape[0]),
+                                     interpolation=cv2.INTER_LINEAR)
+            combined = np.maximum(combined, glasses)
         return combined.astype(np.float32)
 
     def Release(self):

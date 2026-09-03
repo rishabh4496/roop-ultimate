@@ -693,6 +693,7 @@ export default function FaceSwap({
       eyes_radius_x: num(activeParams.eyes_radius_x, 1),
       eyes_radius_y: num(activeParams.eyes_radius_y, 1),
       parser_regions: activeParams.parser_regions,
+      glasses_frame_protect: activeParams.glasses_frame_protect,
       parser_region_grow: activeParams.parser_region_grow,
       merger_hist_match: num(activeParams.merger_hist_match, 0),
       merger_sharpen: num(activeParams.merger_sharpen, 0),
@@ -2230,6 +2231,7 @@ export default function FaceSwap({
           {p.mask_engine === 'Segment Anything 2 (tracked)' && (
             <Select label="SAM2 checkpoint (speed ↔ quality)" value={p.sam2_model_size || 'tiny'} onChange={(v) => set('sam2_model_size', v)} options={meta.sam2_model_sizes || ['tiny', 'small', 'base_plus', 'large']} />
           )}
+          <Toggle label="Protect eyeglass frames" info="Keeps the rim, bridge and temple arms of a pair of glasses from being painted over by the swap, while leaving the lens directly over each eye swappable so the eyes stay the faceset&apos;s own rather than the original person&apos;s. Needs a parser-backed masking engine (RealityUX or Face Parser) — the classes come from BiSeNet. Measured over ~800k parsed glasses pixels on three subjects: ~71% of the frame was being painted over, and the RealityUX fusion was contributing exactly nothing there, because XSeg reads ~0.003 on glasses and the accessory gate scales with XSeg. Costs no extra model call — it reuses the parse already being run." checked={p.glasses_frame_protect !== false} onChange={(v) => set('glasses_frame_protect', v)} />
           <Toggle label="Show mask overlay in preview" checked={!!p.show_mask_offsets} onChange={(v) => set('show_mask_offsets', v)} />
           <Slider label="Offset face top" min={0} max={2} step={0.01} value={num(p.mask_top, 0)} onChange={(v) => set('mask_top', v)} />
           <Slider label="Offset face bottom" min={0} max={2} step={0.01} value={num(p.mask_bottom, 0)} onChange={(v) => set('mask_bottom', v)} />

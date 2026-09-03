@@ -47,6 +47,127 @@ PARSER_REGIONS = {
     'cloth':  [16],
 }
 PARSER_DEFAULT_ON = ('skin', 'brows', 'eyes', 'nose', 'mouth')
+
+# ---------------------------------------------------------------- glasses ---
+# BiSeNet's glasses class (6) is deliberately NOT in PARSER_DEFAULT_ON and NOT
+# in Mask_RealityUX._NONFACE_OPAQUE, and the reason recorded there is real:
+# the model labels the whole LENS AREA as glasses, the eye behind it included.
+# Protecting class 6 wholesale therefore keeps the ORIGINAL person's eye, which
+# is the one thing a face swap may never do. Measured here, on 191 crops off
+# the roster: ZERO eye/brow-class pixels fall inside class 6 -- the eye is not
+# mislabelled, it is SUBSUMED, so the parse cannot be used to find it.
+#
+# The consequence of leaving it out, measured over ~800k class-6 pixels on
+# three separate subjects (s5, s6, d4):
+#
+#     class 6 xseg p50            0.002 - 0.004   XSeg wants to swap all of it
+#     painted, XSeg alone         69.1% / 74.1%
+#     painted, RealityUX fused    69.1% / 74.1%   <- IDENTICAL: no contribution
+#     of which the gate blocks    ~60%            (xseg < 0.05 -> zero permission)
+#
+# So the frame is painted over ~71% of the time and the fusion does nothing
+# about it. Splitting frame from lens is what makes protection possible without
+# reintroducing the original eye.
+#
+# The split is GEOMETRIC, not morphological. A morphological opening was tried
+# first -- the frame is thin, the lens is broad, so `glasses - open(glasses)`
+# looks like it should isolate the rim -- and measured useless: only 0.8% of
+# class 6 survives at k=15 and 3.1% at k=31, because the labelled region is one
+# solid blob rather than a rim drawn around a lens.
+#
+# `align_crop` fits the 5 keypoints to a fixed template, so the eyes land at a
+# known place in the crop regardless of the subject. Measured against the parsed
+# eye centroid on faces WITHOUT glasses: p50 10-12 px in 512-mask space. Both
+# sockets are always applied as a union, so which eye is which never matters.
+GLASSES_CLASS = 6
+_EYE_CLASSES = (4, 5)
+
+# Socket semi-axes as a fraction of the template's interocular distance (140.9 px
+# in 512-mask space). The parsed eye's own rms radius measures p50 15.6 px,
+# i.e. roughly a 28x14 px half-extent, so 0.22/0.13 (31x18 px) covers the eye
+# aperture with margin while staying clear of a top rim sitting at or above the
+# brow -- which is the most visible part of the frame and the part worth
+# protecting.
+_SOCKET_SEMI_X = 0.22
+_SOCKET_SEMI_Y = 0.13
+_EDGE_DILATE = 2          # px, covers the anti-aliased label boundary
+_FEATHER_SIGMA = 3.0      # px, matches the softening the other engines use
+# Below this the region is label noise, not spectacles.
+_MIN_GLASSES_PX = 200
+# Above this it is a misparse: nothing plausibly reads as glasses over a third
+# of an aligned face crop, and protecting that much would cut the face in half
+# -- the same failure the background class was removed from the fusion for.
+_MAX_GLASSES_FRAC = 0.33
+
+
+def glasses_protection_enabled():
+    """Read per call, like parser_region_settings, so a preview and a render
+    within one process can disagree."""
+    v = getattr(roop.globals, 'glasses_frame_protect', True)
+    return True if v is None else bool(v)
+
+
+def _eye_socket(shape, crop_size, mode='arcface'):
+    """The region that must stay SWAPPABLE: the lens directly over each eye.
+
+    Built from the crop template rather than guessed. `swap_template_points`
+    exists precisely because reconstructing it as `arcface_dst * size/112` is
+    wrong by 53 px at 512 in a way that still looks plausible -- a since-removed
+    visibility polygon was built on exactly that guess.
+    """
+    from roop.face_util import swap_template_points          # lazy: import cycle
+    h, w = shape[:2]
+    dst = swap_template_points(int(crop_size), mode)
+    scale = float(w) / float(crop_size)
+    left, right = dst[0] * scale, dst[1] * scale
+    iod = float(np.linalg.norm(right - left))
+    if not np.isfinite(iod) or iod <= 1.0:
+        return None
+    ax = max(1, int(round(_SOCKET_SEMI_X * iod)))
+    ay = max(1, int(round(_SOCKET_SEMI_Y * iod)))
+    socket = np.zeros((h, w), dtype=np.uint8)
+    for c in (left, right):
+        cv2.ellipse(socket, (int(round(c[0])), int(round(c[1]))),
+                    (ax, ay), 0, 0, 360, 1, -1)
+    return socket
+
+
+def glasses_frame_mask(labels, crop_size, mode='arcface'):
+    """Soft mask over the eyeglass FRAME only -- rim, bridge and temple arms.
+
+    Returns None when there are no spectacles to protect, so a caller can skip
+    the composite entirely rather than max() against a zero array.
+
+    1.0 = keep the ORIGINAL pixel, matching every mask engine's convention.
+    """
+    if not glasses_protection_enabled():
+        return None
+    gl = (labels == GLASSES_CLASS).astype(np.uint8)
+    n = int(gl.sum())
+    if n < _MIN_GLASSES_PX or n > _MAX_GLASSES_FRAC * gl.size:
+        return None
+    socket = _eye_socket(labels.shape, crop_size, mode)
+    if socket is None:
+        return None
+    # Where the parser CAN see an eye -- thin or rimless frames -- believe it,
+    # in addition to the geometric socket.
+    eyes = np.isin(labels, _EYE_CLASSES).astype(np.uint8)
+    if eyes.any():
+        socket = socket | eyes
+
+    k = cv2.getStructuringElement(
+        cv2.MORPH_ELLIPSE, (_EDGE_DILATE * 2 + 1,) * 2)
+    # Grow the frame BEFORE removing the socket, never after: dilating to cover
+    # the anti-aliased label edge would otherwise push the protected region back
+    # over the eye, which is the whole thing this is avoiding.
+    prot = cv2.dilate(gl, k, iterations=1)
+    prot = cv2.bitwise_and(prot, 1 - socket)
+    if not prot.any():
+        return None
+    out = cv2.GaussianBlur(prot.astype(np.float32), (0, 0),
+                           sigmaX=_FEATHER_SIGMA)
+    return np.clip(out, 0.0, 1.0)
+
 _MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32)
 _STD = np.array([0.229, 0.224, 0.225], dtype=np.float32)
 _MODEL_URL = 'https://github.com/yakhyo/face-parsing/releases/download/weights/resnet18.onnx'
@@ -179,6 +300,25 @@ class Mask_FaceParser():
         # Soften edges so the blend matches the smooth XSeg output.
         face = cv2.GaussianBlur(face, (0, 0), sigmaX=3)
         face = np.clip(face, 0.0, 1.0)
+
+        # Standalone, this engine already excludes ALL of class 6, because
+        # 'glasses' is not in PARSER_DEFAULT_ON -- which protects the frame and
+        # the lens alike, and so shows the ORIGINAL person's eye through the
+        # lens. Give the socket back to the swap region so the eye is the
+        # faceset's own, exactly as in the fused engine. Only meaningful while
+        # 'glasses' is excluded: if the user has opted class 6 INTO the swap
+        # region the socket is already inside `face` and this is a no-op.
+        on, _grow = parser_region_settings()
+        if 'glasses' not in on and glasses_protection_enabled():
+            socket = _eye_socket(labels.shape, img1.shape[0])
+            if socket is not None:
+                lens = (socket > 0) & (labels == GLASSES_CLASS)
+                if lens.any():
+                    face = np.maximum(face, cv2.GaussianBlur(
+                        lens.astype(np.float32), (0, 0),
+                        sigmaX=_FEATHER_SIGMA))
+                    face = np.clip(face, 0.0, 1.0)
+
         # invert: keep original everywhere outside the face region
         return (1.0 - face).astype(np.float32)
 

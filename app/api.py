@@ -2720,6 +2720,9 @@ def _apply_parser_region_settings(payload):
     roop_globals.parser_regions = list(regions) if isinstance(regions, (list, tuple)) else None
     grow = payload.get("parser_region_grow", getattr(roop_globals.CFG, "parser_region_grow", None))
     roop_globals.parser_region_grow = dict(grow) if isinstance(grow, dict) else None
+    gfp = payload.get("glasses_frame_protect",
+                      getattr(roop_globals.CFG, "glasses_frame_protect", True))
+    roop_globals.glasses_frame_protect = bool(gfp) if gfp is not None else True
 
 
 # ── Live preview swap ────────────────────────────────────────────────────────
