@@ -57,6 +57,8 @@ degrade      Bicubic down-and-up. Matches a soft or heavily compressed plate
              that a sharp 512px swap does not belong in.
 """
 
+import os
+
 import cv2
 import numpy as np
 
@@ -70,6 +72,14 @@ _RNG = np.random.default_rng()
 
 # Below this, a knob is treated as off and its op is skipped entirely.
 _EPS = 1e-6
+
+# Unsharp residual bound, in 0-255 levels, before the amount is applied. See
+# `MergerMixin.apply_sharpen`: this is what stops a strong silhouette edge
+# (hair against sky, jaw against a dark background) from growing a rim. Chosen
+# to match `apply_clarity`'s long-standing +-18 on L, which exists for exactly
+# the same reason, and measured to leave pore-scale detail alone -- real skin
+# residuals at this sigma are single-digit, so the clamp is inactive there.
+_SHARPEN_CLAMP = 18.0
 
 
 def _cfg(name, default=0.0):
@@ -228,13 +238,44 @@ class MergerMixin:
         standard unsharp, at a = -0.5 it is a half-and-half blend toward the
         blur (the denoise direction). Radius scales with crop width so the
         effect is perceptually the same at 256 / 512 / 1024.
+
+        THE OVERSHOOT IS BOUNDED, and it was not before. `addWeighted` on
+        uint8 saturates, so the old form could not wrap around -- but nothing
+        limited how far a pixel travelled before it hit 0 or 255. At a strong
+        boundary (hair against sky, a jawline against a dark background) the
+        residual `img - blur` is large by construction, and multiplying it by
+        `a` puts a bright rim on the light side and a dark one on the dark
+        side: a halo. That is the whole failure mode, and it is worst exactly
+        where this pipeline pastes a face into a plate.
+
+        `_SHARPEN_CLAMP` bounds the residual in 0-255 levels before it is
+        added, which leaves ordinary skin and pore detail untouched (their
+        residuals are single-digit) and only bites on the silhouette-scale
+        edges that ring. `apply_clarity` has carried the same +-18 bound on
+        the L channel since it was written, for the same reason; this is that
+        guard reaching the operator that lacked it.
+
+        Set `ROOP_MERGER_SHARPEN_CLAMP=0` to restore the unbounded form
+        exactly, which is what an A/B against pre-2026-09-04 renders needs.
         """
         a = float(amount)
         if abs(a) < _EPS:
             return face_img
         sigma = max(1.0, face_img.shape[1] / 256.0)
         blur = cv2.GaussianBlur(face_img, (0, 0), sigma)
-        return cv2.addWeighted(face_img, 1.0 + a, blur, -a, 0)
+
+        try:
+            lim = float(os.environ.get('ROOP_MERGER_SHARPEN_CLAMP', '')
+                        or _SHARPEN_CLAMP)
+        except ValueError:
+            lim = _SHARPEN_CLAMP
+        if lim <= 0.0:
+            return cv2.addWeighted(face_img, 1.0 + a, blur, -a, 0)
+
+        base = face_img.astype(np.float32)
+        residual = base - blur.astype(np.float32)
+        np.clip(residual, -lim, lim, out=residual)
+        return cv2.convertScaleAbs(base + a * residual)
 
     def apply_motion_blur(self, face_img, orig_crop, power):
         """Directional blur along the plate's measured motion axis.
