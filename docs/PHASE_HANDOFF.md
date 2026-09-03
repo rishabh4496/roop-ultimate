@@ -1,4 +1,56 @@
-# Handoff - shape-profile A/B CLOSED as NO RESULT, and the decode stall it found (2026-09-03, later)
+# Handoff - shape-profile A/B VOID (contaminated), and the decode stall it found (2026-09-03, later)
+
+## CORRECTION, written minutes after the section below
+
+**The A/B arms did not all run the same code, so the run is VOID -- not merely
+unresolvable.** Two feature commits landed in this working tree WHILE the arms
+were rendering, both touching `app/roop/processors/frame/face_swapper.py`, the
+hot path of every arm:
+
+    13:48:54  null_0         done   <- original face_swapper.py
+    13:49:36  7da4d08 feat(nvof)      +238 lines   *** MID-RUN ***
+    13:52:30  null_1         done   <- import raced the commit (ambiguous)
+    13:55:58  profile1_rep0  done   <- NVOF present
+    13:59:00  b084915 feat(lighting)  +245 lines   *** MID-RUN ***
+    13:59:19  profile0_rep0  done   <- started pre-relighting
+    14:02:53  profile0_rep1  done   <- NVOF + relighting
+    14:06:28  profile1_rep1  done   <- NVOF + relighting
+
+Each arm is its own process and loads the module at start, so the six arms are
+split across THREE versions of the swapper. Counterbalancing assumes only the
+treatment varies; here the largest variable was the tree.
+
+**What this retracts.** The section below reads the 33.4% null-control spread as
+the rig's resolution. It is not: `null_0` and `null_1` were "identical config"
+arms that ran DIFFERENT CODE, and the 5.48 -> 7.68 step sits exactly across the
+NVOF commit. The post-fix resolution of this machine is UNMEASURED. The -2.4%
+was already being reported as no result and still is, now for a stronger
+reason.
+
+**What survives, and why.** The decode finding is unaffected. It was measured
+at the reader in isolation (2.0 -> 468 fps) by direct instrumentation, before
+either commit, and its mechanism is a deterministic `1 / 0.5s` stall rather
+than a throughput delta needing statistics. The pre-fix arms all ran on
+`b353917` with no commits landing during them, so the 0.96/0.96 null and the
+55%-of-wall-clock decode share are clean.
+
+**The rule this actually adds** (the one below about tight nulls stands on the
+PRE-fix data and is unchanged): *a benchmark must record the tree it ran on.*
+`baseline_controlled.py` should stamp `git rev-parse HEAD` plus dirty state
+into every arm JSON and the harness should refuse to summarise arms whose
+stamps disagree. Nothing in this repo does that today, which is why six arms
+across three code versions summarised without a murmur. This project has been
+here before -- the 2026-08-31 4070 session reconciled a concurrent session's
+ten commits landing mid-benchmark -- and it was caught that time by noticing,
+not by a guard.
+
+**Re-run required** on a quiescent tree before anything is claimed about the
+shape profile or about this machine's post-fix resolution.
+
+---
+
+## Original section, retained as written (its null-spread reasoning is retracted above)
+
 
 Device: physical RTX 4070, driver 616.56, TRT 10.9.0.34, ORT 1.23.2,
 i9-14900K, 31.7 GB RAM. Commit `d542608`. Suite 1989 -> **1993 green**, 1
@@ -86,6 +138,11 @@ the rig is SENSITIVE to the thing being varied. When a null comes back far
 tighter than the machine's known noise, treat it as a signal that something
 constant is dominating the measurement -- not as licence to believe a small
 delta.
+
+(RETRACTED: the "33.4%" quoted just above as the post-fix spread is not the
+rig's noise -- those two null arms ran different code, per the correction at
+the top of this file. The PRE-fix half of this rule -- 0.96/0.96 at 0.0% spread
+while blind -- is measured and stands.)
 
 ## Second harness defect, fixed in the same commit
 
