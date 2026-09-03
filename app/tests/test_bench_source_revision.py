@@ -12,6 +12,8 @@ Nothing objected because nothing recorded the tree. These tests pin both
 halves: the stamp, and the refusal to summarise across a mixed set.
 """
 
+import contextlib
+import io
 import os
 import sys
 import unittest
@@ -86,6 +88,57 @@ class TestRefusesMixedTrees(unittest.TestCase):
         a stamp is not evidence of sameness.
         """
         self.assertTrue(assert_one_tree([('a', {}), ('b', {})]))
+
+
+class TestGuardIsActuallyWiredIntoMain(unittest.TestCase):
+    """Run main() with rendering stubbed out.
+
+    The guard's own unit tests passed while the call to it sat in the wrong
+    scope -- inserted after the OPENING banner, above where `results` is
+    built -- so every real invocation died with NameError before rendering a
+    single frame. Testing the function is not testing the wiring; this project
+    has a standing rule about proving the code path executes, and that is what
+    these assert.
+    """
+
+    def _run_main(self, revs):
+        import ab_shape_profile as ab
+        calls = {'n': 0}
+
+        def fake_run_arm(tag, profile_on, end, extra_env=None):
+            calls['n'] += 1
+            head = revs[min(calls['n'] - 1, len(revs) - 1)]
+            return {'run': {'fps': 10.0 + calls['n'], 'faces_seen': 900,
+                            'faces_swapped': 898},
+                    'source_revision': {'head': head, 'dirty': False},
+                    '_wall': 1.0, '_rc': 0}
+
+        argv, run_arm = sys.argv, ab.run_arm
+        buf = io.StringIO()
+        try:
+            ab.run_arm = fake_run_arm
+            sys.argv = ['ab', '--reps', '1', '--end', '10', '--skip-warmup']
+            with contextlib.redirect_stdout(buf):
+                ab.main()
+        finally:
+            ab.run_arm, sys.argv = run_arm, argv
+        return buf.getvalue()
+
+    def test_main_completes_and_reports_one_tree(self):
+        out = self._run_main(['d542608aa'] * 2)
+        self.assertIn('source revision per arm', out)
+        self.assertIn('all arms ran the same committed tree', out)
+        self.assertIn('profile ON vs OFF', out)
+        self.assertNotIn('VOID', out)
+
+    def test_main_voids_the_delta_when_a_commit_lands_mid_run(self):
+        # --reps 1 renders two arms; the second lands after a commit
+        out = self._run_main(['d542608aa', '7da4d08bb'])
+        self.assertIn('ARMS RAN DIFFERENT CODE', out)
+        self.assertIn('VOID', out)
+        # the number must still be refused where a reader would look for it
+        delta = [l for l in out.splitlines() if 'profile ON vs OFF' in l]
+        self.assertTrue(delta and 'VOID' in delta[0], delta)
 
 
 if __name__ == '__main__':

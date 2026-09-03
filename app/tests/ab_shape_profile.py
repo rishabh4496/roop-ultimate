@@ -185,11 +185,6 @@ def main():
     args = parser.parse_args()
 
     print('=' * 74)
-    every_arm = [(tag, r) for on in (False, True)
-                 for tag, r in zip(['profile%d_rep%d' % (int(on), k)
-                                    for k in range(len(results[on]))],
-                                   results[on])]
-    one_tree = assert_one_tree(every_arm)
     print('[ab] TensorRT shape profile, %d frames/arm, %d counterbalanced pass(es)'
           % (args.end, args.reps))
     print('=' * 74, flush=True)
@@ -222,6 +217,11 @@ def main():
             print(line(tag, result), flush=True)
 
     print('\n' + '=' * 74)
+    every_arm = [(tag, r) for on in (False, True)
+                 for tag, r in zip(['profile%d_rep%d' % (int(on), k)
+                                    for k in range(len(results[on]))],
+                                   results[on])]
+    one_tree = assert_one_tree(every_arm)
     for on in (False, True):
         fps = [metric(r, 'fps') or 0.0 for r in results[on]]
         summarise('profile=%s' % ('ON' if on else 'OFF'), fps)
