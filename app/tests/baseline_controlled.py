@@ -299,6 +299,48 @@ def software_stack(device_id=0):
     return info
 
 
+def source_revision():
+    """Identify the working tree this arm ran against.
+
+    An arm is its own process and imports the pipeline at start, so a commit
+    landing mid-benchmark silently splits a counterbalanced set across
+    different code.  That happened on 2026-09-03: two feature commits touching
+    `face_swapper.py` landed between arms, and six arms summarised across three
+    versions of the swapper with nothing objecting -- the "identical config"
+    null pair alone stepped 5.48 -> 7.68 fps and the step was read as noise.
+
+    Recorded per arm so the comparison can be REFUSED rather than believed.
+    `dirty` matters as much as the sha: an uncommitted edit moves the code
+    without moving HEAD.
+    """
+    def git(*args, strip=True):
+        try:
+            out = subprocess.run(('git',) + args, cwd=APP, capture_output=True,
+                                 text=True, timeout=10)
+            if out.returncode != 0:
+                return None
+            return out.stdout.strip() if strip else out.stdout
+        except Exception:
+            return None
+    head = git('rev-parse', 'HEAD')
+    # NOT stripped: porcelain status codes are column-significant (" M path"),
+    # and stripping the blob eats the leading space of the FIRST line only, so
+    # exactly one path comes back with its first character missing.
+    status = git('status', '--porcelain', strip=False)
+    paths = []
+    for line in (status or '').splitlines():
+        path = line[3:] if len(line) > 3 else ''
+        if path.endswith('.py'):
+            paths.append(path)
+    return {
+        'head': head,
+        'dirty': bool((status or '').strip()) if status is not None else None,
+        # Only files that can change what a render does; docs and outputs churn
+        # constantly and must not invalidate a set.
+        'dirty_code': sorted(paths) or None,
+    }
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--tag", required=True, help="device tag, e.g. phase2_4070")
@@ -545,6 +587,7 @@ def main():
                       "reason": WORKLOAD["reason"]},
         "extra_env": {p.split("=", 1)[0]: p.split("=", 1)[1]
                       for p in args.env if "=" in p},
+        "source_revision": source_revision(),
         "wall_seconds": round(elapsed, 3),
         "run": run,
         "stages": stages,

@@ -124,6 +124,54 @@ def summarise(title, values):
           % (title, len(values), st.mean(values), min(values), max(values), spread))
 
 
+def revisions(results):
+    """Map each arm tag -> the source revision it ran against."""
+    out = {}
+    for tag, result in results:
+        rev = result.get('source_revision') or {}
+        head = rev.get('head')
+        out[tag] = (head[:9] if head else 'unstamped',
+                    'dirty' if rev.get('dirty') else 'clean')
+    return out
+
+
+def assert_one_tree(results):
+    """REFUSE to summarise arms that did not run the same code.
+
+    A counterbalanced design assumes the treatment is the only thing that
+    varies.  On 2026-09-03 two feature commits landed mid-run, both touching
+    face_swapper.py, and this harness averaged six arms across three versions
+    of the swapper: the "identical config" null pair stepped 5.48 -> 7.68 fps
+    and was read as machine noise.  Nothing objected because nothing recorded
+    the tree.
+
+    Prints its verdict either way -- a clean set must say so, or the guard is
+    invisible until the day it fires.
+    """
+    revs = revisions(results)
+    distinct = set(revs.values())
+    print('')
+    print('[ab] source revision per arm')
+    for tag, rev in revs.items():
+        print('  %-26s %s (%s)' % (tag, rev[0], rev[1]))
+    if len(distinct) > 1:
+        print('  !! ARMS RAN DIFFERENT CODE -- this comparison is VOID.')
+        print('  !! %d distinct revisions across %d arms: %s'
+              % (len(distinct), len(revs), sorted(distinct)))
+        print('  !! A commit landing mid-run splits a counterbalanced set. '
+              'Re-run on a quiescent tree.')
+        return False
+    if any(rev[1] == 'dirty' for rev in revs.values()):
+        print('  !  arms share a revision but the tree was DIRTY: an '
+              'uncommitted edit moves the code without moving HEAD.')
+    elif 'unstamped' in {rev[0] for rev in revs.values()}:
+        print('  !  arms are unstamped (older baseline_controlled.py); '
+              'sameness of code is NOT established.')
+    else:
+        print('  OK all arms ran the same committed tree.')
+    return True
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--reps', type=int, default=2,
@@ -137,6 +185,11 @@ def main():
     args = parser.parse_args()
 
     print('=' * 74)
+    every_arm = [(tag, r) for on in (False, True)
+                 for tag, r in zip(['profile%d_rep%d' % (int(on), k)
+                                    for k in range(len(results[on]))],
+                                   results[on])]
+    one_tree = assert_one_tree(every_arm)
     print('[ab] TensorRT shape profile, %d frames/arm, %d counterbalanced pass(es)'
           % (args.end, args.reps))
     print('=' * 74, flush=True)
@@ -176,7 +229,11 @@ def main():
     on = [metric(r, 'fps') or 0.0 for r in results[True]]
     if off and on and st.mean(off):
         delta = (st.mean(on) - st.mean(off)) / st.mean(off) * 100.0
-        print('  profile ON vs OFF: %+.1f%%' % delta)
+        if one_tree:
+            print('  profile ON vs OFF: %+.1f%%' % delta)
+        else:
+            print('  profile ON vs OFF: %+.1f%% -- VOID, arms ran '
+                  'different code (see above); do not quote it.' % delta)
     swapped = {(metric(r, 'faces_swapped'), metric(r, 'faces_seen'))
                for group in results.values() for r in group}
     print('  face counts across all arms: %s' % sorted(swapped))
