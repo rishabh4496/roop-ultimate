@@ -264,12 +264,27 @@ def decode_execution_providers(execution_providers: List[str]) -> List[str]:
                     'cuda_graph': cuda_graph,
                     'auxiliary_streams': auxiliary_streams,
                     'precision': trt_precision,
-                    # The EFFECTIVE flag, not just the request: on a pre-Volta
-                    # card 'mixed' now builds FP32, and that engine must not be
-                    # reused as though it were a mixed one.
-                    'fp16_enable': fp16_enable,
-                    'fp8_eligible': fp8_capable,
                 }
+                # ONLY record the capability gate when it actually CHANGED the
+                # outcome. `fp16_enable` is otherwise a pure function of
+                # `precision`, which is already in this dict, and
+                # `fp8_eligible` never reaches the builder at all because FP8
+                # is never selected -- so putting either in unconditionally
+                # adds nothing to the identity while changing the digest for
+                # everyone.
+                #
+                # It did exactly that: this dict is hashed into the engine
+                # cache directory name, so adding two constant keys moved the
+                # namespace from _c3b1a9752fee69034 to _cc3a4d61f058c77bc and
+                # silently orphaned every engine on the machine. The next run
+                # rebuilt the whole model set -- 27 minutes before the first
+                # frame, measured, with the swapper and enhancer engines being
+                # recompiled for no reason.
+                #
+                # A pre-Volta card, where the gate really does force FP32 out
+                # of a 'mixed' request, still gets its own namespace.
+                if fp16_enable != (trt_precision in ('fp16', 'mixed')):
+                    builder_config['fp16_gated_off'] = True
                 cache_label += trt_tuning_namespace(
                     builder_opt, auxiliary_streams, cuda_graph,
                     builder_config=builder_config)
