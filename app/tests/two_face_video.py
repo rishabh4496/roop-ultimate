@@ -690,7 +690,18 @@ def run_swap(clip_path, facesets, targets, groups, options, out_dir):
     g.output_path = out_dir
     os.makedirs(out_dir, exist_ok=True)
 
-    entry = ProcessEntry(clip_path, 0, 0, 30.0)
+    # The clip's OWN frame rate, not a hardcoded 30. trim() writes at the
+    # source rate, so a 25fps source rendered as 30 produces an output with the
+    # right frame COUNT and the wrong time base: s5.mp4 (4096x2160, 25fps) came
+    # back as 600 frames at 30fps, i.e. 20% fast with audio that would drift.
+    # Per-frame grading pairs by index and is unaffected, which is why this
+    # survived so long; anything anyone WATCHES is affected.
+    _probe = cv2.VideoCapture(clip_path)
+    _fps = _probe.get(cv2.CAP_PROP_FPS) or 30.0
+    _probe.release()
+    if not (1.0 <= _fps <= 240.0):
+        _fps = 30.0
+    entry = ProcessEntry(clip_path, 0, 0, float(_fps))
     before = set(os.listdir(out_dir))
     batch_process_with_options([entry], options, None)
 

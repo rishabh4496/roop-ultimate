@@ -77,8 +77,26 @@ for _p in (APP, HERE):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
+import fixtures  # noqa: E402  (needs the sys.path above)
+
 VIDEO_EXTS = (".mp4", ".mkv", ".avi", ".mov")
-DEFAULT_BASE = r"G:\pinokio\roop-keep"
+
+
+def default_base():
+    """The corpus root, resolved -- never a hardcoded drive letter.
+
+    The 3060 has no G: drive at all, so a literal path makes this harness
+    unrunnable there, and a MISSING directory does not raise the way a missing
+    file does: the sweep would iterate nothing and report a clean empty result.
+    tests/fixtures.py exists for exactly this, and tests/test_fixture_paths.py
+    enforces it -- that guard is what caught this file.
+    """
+    for name in ("single", "double"):
+        found = fixtures.clip_dir(name)
+        if os.path.isdir(found):
+            return os.path.dirname(os.path.abspath(found))
+    return fixtures.clip_roots()[0]
+
 
 # ── thresholds, all from the brief ───────────────────────────────────────────
 YAW_EXTREME = 45.0          # deg, "full profile"
@@ -1086,8 +1104,9 @@ def tally(videos):
 def main():
     parser = argparse.ArgumentParser(
         description="End-to-end quality verification over the roop-keep corpus.")
-    parser.add_argument("--base-dir", default=DEFAULT_BASE,
-                        help=r"corpus root (default %s)" % DEFAULT_BASE)
+    parser.add_argument("--base-dir", default=None,
+                        help="corpus root (default: resolved via "
+                             "tests/fixtures.py, so both GPUs can run it)")
     parser.add_argument("--execution-provider", default="tensorrt",
                         choices=["tensorrt", "cuda", "cpu"])
     parser.add_argument("--save-strips", action="store_true",
