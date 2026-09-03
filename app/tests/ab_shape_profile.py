@@ -2,11 +2,14 @@
 
 WHAT IS BEING MEASURED. `roop/trt_shape_profile.py` gives TensorRT an explicit
 min/opt/max optimization profile for the models whose inputs are genuinely
-dynamic.  On this pipeline that is exactly one model in the render path --
-`retinaface_r50`, whose input is `[b, 3, h, w]`.  Every restorer, the live
-swapper and `yoloface_8n` are static exports and are not profiled at all, so
-this A/B is really "does telling TensorRT the detector's shape range help,
-hurt, or do nothing".
+dynamic.  THREE models get a profile in the live stack, established by
+inspecting the engine cache a real render wrote (2026-09-03): `retinaface_r50`
+(`_sp12x512input8x3x1280x1280`), the batch-dynamic `hififace` second net inside
+`realswap` (`_spet8x3x256x256source8x512`), and `_spx512x512input8x3x512x512`.
+An earlier note in `97d562a` claimed the detector was the only one; that was
+true of the models sampled by hand and WRONG for the running stack.  So this
+A/B asks "does pinning the shape range of the dynamic models help, hurt, or do
+nothing" -- a broader question than the detector alone.
 
 WHY IT MIGHT HELP. Without a profile TensorRT picks its own range from the
 graph, and a shape outside what it assumed forces a rebuild or a slower
@@ -88,10 +91,28 @@ def run_arm(tag, profile_on, end, extra_env=None):
     return result
 
 
+def metric(result, key, default=None):
+    """Read a run metric.
+
+    `baseline_controlled.py` nests its measurements under a `run` object.
+    Reading them at the top level returns None for every arm, which prints
+    `0.00 fps  swapped ?/?`, makes the mean zero so the delta guard
+    (`if off and on and st.mean(off)`) silently prints NO result, and reduces
+    the face-count guard to `[(None, None)]` -- the check that is supposed to
+    catch an arm that "got faster" by finding fewer faces.  Everything still
+    exits 0.  Found on 2026-09-03, after four arms had already printed zeros.
+    """
+    run = result.get('run')
+    if isinstance(run, dict) and key in run:
+        return run[key]
+    return result.get(key, default)
+
+
 def line(tag, result):
     return ('  %-26s %7.2f fps  %6.1fs  swapped %s/%s  rc=%s'
-            % (tag, result.get('fps') or 0.0, result.get('_wall', 0.0),
-               result.get('faces_swapped', '?'), result.get('faces_seen', '?'),
+            % (tag, metric(result, 'fps') or 0.0, result.get('_wall', 0.0),
+               metric(result, 'faces_swapped', '?'),
+               metric(result, 'faces_seen', '?'),
                result.get('_rc')))
 
 
@@ -133,7 +154,7 @@ def main():
         for index in range(2):
             tag = 'null_%d' % index
             result = run_arm(tag, True, args.end)
-            nulls.append(result.get('fps') or 0.0)
+            nulls.append(metric(result, 'fps') or 0.0)
             print(line(tag, result), flush=True)
         summarise('null control', nulls)
 
@@ -149,14 +170,14 @@ def main():
 
     print('\n' + '=' * 74)
     for on in (False, True):
-        fps = [r.get('fps') or 0.0 for r in results[on]]
+        fps = [metric(r, 'fps') or 0.0 for r in results[on]]
         summarise('profile=%s' % ('ON' if on else 'OFF'), fps)
-    off = [r.get('fps') or 0.0 for r in results[False]]
-    on = [r.get('fps') or 0.0 for r in results[True]]
+    off = [metric(r, 'fps') or 0.0 for r in results[False]]
+    on = [metric(r, 'fps') or 0.0 for r in results[True]]
     if off and on and st.mean(off):
         delta = (st.mean(on) - st.mean(off)) / st.mean(off) * 100.0
         print('  profile ON vs OFF: %+.1f%%' % delta)
-    swapped = {(r.get('faces_swapped'), r.get('faces_seen'))
+    swapped = {(metric(r, 'faces_swapped'), metric(r, 'faces_seen'))
                for group in results.values() for r in group}
     print('  face counts across all arms: %s' % sorted(swapped))
     print('  (identical counts are the guard: an arm that goes faster by '

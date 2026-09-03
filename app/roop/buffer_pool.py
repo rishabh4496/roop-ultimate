@@ -64,12 +64,32 @@ class PinnedBufferPool:
             self._pool.put(buf)
             self._total_allocated += 1
 
-    def acquire(self, timeout: Optional[float] = 0.5) -> np.ndarray:
-        """Acquire a pre-allocated pinned buffer from the pool."""
+    def acquire(self, timeout: Optional[float] = None) -> np.ndarray:
+        """Acquire a pre-allocated pinned buffer, or a fresh one if none is free.
+
+        NON-BLOCKING BY DEFAULT, and that default is load-bearing.  A buffer
+        only comes back through `release()`, so a consumer that hands frames
+        onward without returning them drains the pool permanently.  Waiting for
+        a refill that cannot arrive costs the full timeout PER ACQUIRE and then
+        falls back to allocating anyway -- silently, because the frame returned
+        is still correct.
+
+        `roop/nvdec_reader.py` is exactly that consumer: decoded frames escape
+        to ProcessMgr and are never released, so with the old `timeout=0.5` the
+        NVDEC reader stalled half a second per frame after its first `capacity`
+        frames.  That is 2.0 fps, measured at 2.0 fps in isolation and 1.96 fps
+        end to end, against ~900 fps for the same ffmpeg pipe -- while every
+        correctness check passed, because the frames were right and only slow.
+
+        Pass an explicit timeout only where a `release()` protocol genuinely
+        exists and waiting can be repaid.
+        """
         try:
-            return self._pool.get(timeout=timeout)
+            if timeout:
+                return self._pool.get(timeout=timeout)
+            return self._pool.get_nowait()
         except queue.Empty:
-            # Fallback allocation if pool is momentarily exhausted
+            # Fallback allocation if the pool is exhausted.
             return allocate_pinned_buffer(self.shape, self.dtype)
 
     def release(self, buf: np.ndarray) -> None:
