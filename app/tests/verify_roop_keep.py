@@ -455,6 +455,45 @@ def cosine(a, b):
     return float(np.dot(a, b) / (na * nb))
 
 
+def boundary_metrics(plate, swapped, box):
+    """Return an approximate boundary-ring SSIM and seam delta for one face.
+
+    The exact face mask used by the renderer is not persisted with a video, so
+    this deliberately measures a narrow ring around the detected output area,
+    not a fictional "mask SSIM".  It is a diagnostic (not a quality gate): an
+    identity replacement is expected to change pixels inside the face, whereas
+    a discontinuity at its perimeter is the boundary artefact of interest.
+    """
+    x1, y1, x2, y2 = box
+    h, w = plate.shape[:2]
+    pad_x = max(2, int((x2 - x1) * 0.14))
+    pad_y = max(2, int((y2 - y1) * 0.14))
+    ax1, ay1 = max(0, x1 - pad_x), max(0, y1 - pad_y)
+    ax2, ay2 = min(w, x2 + pad_x), min(h, y2 + pad_y)
+    if ax2 - ax1 < 16 or ay2 - ay1 < 16:
+        return None, None
+    before = cv2.cvtColor(plate[ay1:ay2, ax1:ax2], cv2.COLOR_BGR2GRAY).astype(np.float32)
+    after = cv2.cvtColor(swapped[ay1:ay2, ax1:ax2], cv2.COLOR_BGR2GRAY).astype(np.float32)
+    ring = np.ones(before.shape, dtype=bool)
+    ix1, iy1 = x1 - ax1 + pad_x // 2, y1 - ay1 + pad_y // 2
+    ix2, iy2 = x2 - ax1 - pad_x // 2, y2 - ay1 - pad_y // 2
+    if ix2 > ix1 and iy2 > iy1:
+        ring[iy1:iy2, ix1:ix2] = False
+    a, b = before[ring], after[ring]
+    if a.size < 32:
+        return None, None
+    mu_a, mu_b = float(a.mean()), float(b.mean())
+    var_a, var_b = float(a.var()), float(b.var())
+    cov = float(((a - mu_a) * (b - mu_b)).mean())
+    c1, c2 = 6.5025, 58.5225  # (0.01 * 255)^2, (0.03 * 255)^2
+    ssim = ((2 * mu_a * mu_b + c1) * (2 * cov + c2)
+            / max(1e-9, (mu_a * mu_a + mu_b * mu_b + c1) * (var_a + var_b + c2)))
+    edge_a = cv2.Laplacian(before, cv2.CV_32F)
+    edge_b = cv2.Laplacian(after, cv2.CV_32F)
+    seam_delta = float(np.abs(edge_a[ring] - edge_b[ring]).mean())
+    return ssim, seam_delta
+
+
 def match_face(faces, box):
     """The detected face whose bbox best overlaps `box`, or None."""
     best, best_iou = None, 0.0
@@ -517,7 +556,8 @@ def summarise(values):
 # per-video analysis
 # ═════════════════════════════════════════════════════════════════════════════
 
-def analyse(plate_path, swapped_path, means, double, stride, progress=None):
+def analyse(plate_path, swapped_path, means, double, stride, progress=None,
+            faceset_names=None):
     """Walk the plate/output pair once and fill every criterion.
 
     Detection runs on the PLATE so the two people are located by untouched
@@ -533,12 +573,20 @@ def analyse(plate_path, swapped_path, means, double, stride, progress=None):
     tracking = Criterion("tracking", "Multi-face identity tracking & collision")
     occlusion = Criterion("occlusion", "Occlusion & foreign-object interaction",
                           advisory=True)
+    boundary = Criterion("boundary", "Boundary-ring SSIM & seam energy",
+                         advisory=True)
+    identity = Criterion("identity", "ArcFace cosine to reference facesets",
+                         advisory=True)
 
     yaw_cosines, extreme_yaw, aspect_deltas = [], 0, []
+    yaw_over_45, inverted_roll, strict_extreme_detected = 0, 0, 0
     dark_frames, dark_delta_l, delta_e_all = 0, [], []
     blink_frames, blink_bad = 0, 0
     texture_ratios, plate_energies, swap_energies = [], [], []
     occ_candidates, occ_scores = 0, []
+    boundary_ssims, boundary_seams = [], []
+    faceset_names = list(faceset_names or ["faceset_%d" % i for i in range(len(means))])
+    identity_scores = {name: [] for name in faceset_names}
     prev_assign, flips, overlap_frames = None, 0, 0
     ear_series, pose_series = [], []
     stress = {"yaw": (None, -1.0), "blink": (None, 1e9),
@@ -574,6 +622,13 @@ def analyse(plate_path, swapped_path, means, double, stride, progress=None):
                 yaw, pitch, roll = pose
                 pose_series.append({"f": index, "yaw": round(yaw, 2),
                                     "pitch": round(pitch, 2), "roll": round(roll, 2)})
+                is_yaw_over_45 = abs(yaw) > YAW_EXTREME
+                # An inverted head is near 180 degrees, not merely a 30-degree
+                # tilt. Keep the historic broad roll gate below for regression
+                # continuity while separately logging the brief's strict class.
+                is_inverted = abs(roll) >= 150.0
+                yaw_over_45 += int(is_yaw_over_45)
+                inverted_roll += int(is_inverted)
                 hard = abs(yaw) > YAW_EXTREME or abs(roll) > ROLL_EXTREME
                 if hard:
                     extreme_yaw += 1
@@ -594,6 +649,8 @@ def analyse(plate_path, swapped_path, means, double, stride, progress=None):
                             angle.samples += 1
                             if delta > ASPECT_TOLERANCE:
                                 angle.failures += 1
+                            if is_yaw_over_45 or is_inverted:
+                                strict_extreme_detected += 1
                         best = None
                         for mean in means:
                             value = cosine(getattr(partner, "normed_embedding", None), mean)
@@ -603,6 +660,32 @@ def analyse(plate_path, swapped_path, means, double, stride, progress=None):
                             yaw_cosines.append(best)
                     if abs(yaw) > stress["yaw"][1]:
                         stress["yaw"] = ((index, box), abs(yaw))
+
+            # ArcFace is independently collected on every detectable output
+            # face, rather than only on the extreme-angle subset above.
+            if swapped_faces is None:
+                try:
+                    swapped_faces = get_all_faces(swapped) or []
+                except Exception:
+                    swapped_faces = []
+            partner = match_face(swapped_faces, box)
+            if partner is not None:
+                scores = [cosine(getattr(partner, "normed_embedding", None), mean)
+                          for mean in means]
+                usable = [(slot, score) for slot, score in enumerate(scores)
+                          if score is not None]
+                if usable:
+                    slot, score = max(usable, key=lambda item: item[1])
+                    if slot < len(faceset_names):
+                        identity_scores[faceset_names[slot]].append(score)
+                    identity.samples += 1
+
+            ssim, seam = boundary_metrics(plate, swapped, box)
+            if ssim is not None:
+                boundary.samples += 1
+                boundary_ssims.append(ssim)
+            if seam is not None:
+                boundary_seams.append(seam)
 
             # ── 2. colour ───────────────────────────────────────────────────
             mask = skin_mask_geometric(face, plate.shape)
@@ -696,7 +779,14 @@ def analyse(plate_path, swapped_path, means, double, stride, progress=None):
                     flips += 1
                 prev_assign = assign
 
+    strict_extreme_total = yaw_over_45 + inverted_roll
     angle.detail = {"extreme_pose_faces": extreme_yaw,
+                    "yaw_gt_45_faces": yaw_over_45,
+                    "inverted_roll_faces": inverted_roll,
+                    "strict_extreme_detected_faces": strict_extreme_detected,
+                    "strict_extreme_detection_success_pct": (
+                        round(100.0 * strict_extreme_detected / strict_extreme_total, 2)
+                        if strict_extreme_total else None),
                     "aspect_ratio_change": summarise(aspect_deltas),
                     "cosine_on_extreme_yaw": summarise(yaw_cosines),
                     "tolerance": ASPECT_TOLERANCE}
@@ -717,6 +807,12 @@ def analyse(plate_path, swapped_path, means, double, stride, progress=None):
     occlusion.detail = {"inferred_occluder_faces": occ_candidates,
                         "swap_suppressed_fraction": summarise(occ_scores),
                         "floor": OCCLUSION_PRESERVE}
+    boundary.detail = {"boundary_ring_ssim": summarise(boundary_ssims),
+                       "boundary_seam_delta": summarise(boundary_seams),
+                       "method": "detected-face perimeter ring; advisory"}
+    identity.detail = {"cosine_by_faceset": {
+        name: summarise(scores) for name, scores in identity_scores.items()},
+        "assignment": "highest ArcFace reference per detected output face"}
 
     if not double:
         tracking.notes.append("single-faceset clip: not applicable")
@@ -731,6 +827,13 @@ def analyse(plate_path, swapped_path, means, double, stride, progress=None):
         "the feature bands and keeping only the largest connected component it "
         "fires on 9 of 60 (15%) with scores 0.470-0.782. Sound measurement "
         "needs a COMPOSITED occluder with a known mask, per Phase 10.")
+    boundary.notes.append(
+        "Advisory: this is a detected-bbox perimeter ring, not the renderer's "
+        "private alpha mask. It exposes edge discontinuities without claiming "
+        "that the identity-changing face interior should be pixel-identical.")
+    identity.notes.append(
+        "Per-faceset summaries use each output face's highest ArcFace reference; "
+        "the tracking criterion separately catches double-face assignment flips.")
     texture.notes.append(
         "Laplacian variance counts SYNTHESISED GRAIN as texture. With "
         "merger_grain_match 0.45 and merger_clarity 1.0 the swap measures "
@@ -740,7 +843,7 @@ def analyse(plate_path, swapped_path, means, double, stride, progress=None):
         "criterion is therefore near-vacuous in the FAIL direction: read "
         "failure_rate and the absolute energies, not the ratio alone.")
 
-    criteria = [angle, colour, blink, texture, tracking, occlusion]
+    criteria = [angle, colour, blink, texture, tracking, occlusion, boundary, identity]
     return criteria, {
         "frames_seen": frames_seen,
         "frames_with_face": frames_with_face,
@@ -1039,7 +1142,7 @@ footer{padding:20px 32px;color:var(--dim);font-size:12px;border-top:1px solid va
 <main>
 <table><thead><tr><th class="name">video</th><th>frames&nbsp;w/&nbsp;face</th>
 <th>angle</th><th>colour</th><th>blink</th><th>texture</th><th>tracking</th>
-<th>occlusion</th></tr></thead><tbody>__ROWS__</tbody></table>
+<th>occlusion</th><th>boundary</th><th>ArcFace</th></tr></thead><tbody>__ROWS__</tbody></table>
 __PANELS__
 </main>
 <footer>__FOOT__</footer>
@@ -1125,6 +1228,10 @@ def main():
                              "tests/fixtures.py, so both GPUs can run it)")
     parser.add_argument("--execution-provider", default="tensorrt",
                         choices=["tensorrt", "cuda", "cpu"])
+    parser.add_argument("--output-dir", default=None,
+                        help="report/video destination (default: <base-dir>/output)")
+    parser.add_argument("--kind", choices=["single", "double"], default=None,
+                        help="restrict the corpus class; used by the isolated runner")
     parser.add_argument("--save-strips", action="store_true",
                         help="write 4-column diagnostic strips per video")
     parser.add_argument("--single-faceset", default="mehak")
@@ -1148,7 +1255,7 @@ def main():
     args = parser.parse_args()
 
     base = resolve_base(args)
-    out_root = os.path.join(base, "output")
+    out_root = os.path.abspath(args.output_dir or os.path.join(base, "output"))
     started = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     print("=" * 78)
@@ -1210,6 +1317,8 @@ def main():
     jobs = []
     for kind, folder, names in (("single", os.path.join(base, "single"), [single_name]),
                                 ("double", os.path.join(base, "double"), double_names)):
+        if args.kind and kind != args.kind:
+            continue
         found = discover_videos(folder)
         if not found:
             print("  !  no videos in %s" % folder, flush=True)
@@ -1230,9 +1339,9 @@ def main():
                 prior = json.load(handle)
             for item in prior.get("videos", []):
                 if item.get("criteria") and not item.get("error"):
-                    done[item["name"]] = item
+                    done[(item.get("kind"), item["name"])] = item
             print("[resume] keeping %d completed video(s): %s"
-                  % (len(done), ", ".join(sorted(done))), flush=True)
+                  % (len(done), ", ".join(sorted(name for _, name in done))), flush=True)
         except Exception as exc:
             print("[resume] could not read prior report: %s" % exc, flush=True)
 
@@ -1249,10 +1358,11 @@ def main():
     totals = {"pass": 0, "fail": 0, "na": 0, "advisory": 0}
     for number, (kind, video, names) in enumerate(jobs, 1):
         name = os.path.basename(video)
-        if name in done:
+        job_key = (kind, name)
+        if job_key in done:
             print("[%d/%d] %s  -- already recorded, kept (--resume)"
                   % (number, len(jobs), name), flush=True)
-            report["videos"].append(done[name])
+            report["videos"].append(done[job_key])
             continue
         print("\n[%d/%d] %s  (%s: %s)"
               % (number, len(jobs), name, kind, ", ".join(names)), flush=True)
@@ -1286,7 +1396,7 @@ def main():
                           % (index, time.time() - _began), flush=True)
 
             criteria, extra = analyse(clip, swapped, means, kind == "double",
-                                      max(1, args.stride), progress)
+                                      max(1, args.stride), progress, names)
             entry.update({k: v for k, v in extra.items()
                           if k not in ("stress", "stress_boxes")})
             entry["criteria"] = [c.as_dict() for c in criteria]
