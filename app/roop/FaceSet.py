@@ -36,6 +36,13 @@ class FaceSet:
         self.dermal_patch = None
         self.identity_embedding = None
         self.normalized_embedding = None
+        # Folder uploads keep a compact in-memory 512-D identity bank.  It is
+        # intentionally separate from the V2 archive metadata: saving the set
+        # through the existing library writer still produces the canonical .fsz.
+        self.reference_embeddings = []
+        self.reference_weights = []
+        self.reference_paths = []
+        self.reference_rejected = []
         self.faceset_valid = True
         self.faceset_migration = None
 
@@ -156,6 +163,30 @@ class FaceSet:
         if not fallback:
             return None
         return self.default_embedding
+
+    def reference_embedding_for_pose(self, pose=None):
+        """Folder-upload identity lookup with optional nearest-pose blending."""
+        vectors = list(getattr(self, 'reference_embeddings', None) or [])
+        poses = list(getattr(self, 'face_poses', None) or [])
+        if not vectors or len(vectors) != len(poses):
+            return None
+        try:
+            from roop.face_reference import ClusteredReferences, ReferenceSample
+            samples = [ReferenceSample(None, None, '', self._unit_vector(vector),
+                                       float(item[0]), float(item[1]),
+                                       float((self.reference_weights or [1.0] * len(vectors))[i]))
+                       for i, (vector, item) in enumerate(zip(vectors, poses))
+                       if self._unit_vector(vector) is not None and item is not None]
+            if not samples:
+                return None
+            mean = self._unit_vector(self.identity_embedding)
+            if mean is None:
+                mean = samples[0].embedding
+            cluster = ClusteredReferences(samples, mean, [])
+            yaw, pitch = (pose or (0.0, 0.0))[:2]
+            return cluster.embedding_for_pose(float(yaw), float(pitch))
+        except (TypeError, ValueError, IndexError):
+            return None
 
     def select_reference_index(self, pose=None, appearance=None, embedding=None):
         """Fast V2 lookup with legacy pose-bank fallback."""

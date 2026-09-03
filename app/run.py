@@ -134,6 +134,8 @@ from roop import core
 import argparse
 parser = argparse.ArgumentParser()
 parser.add_argument('--execution-provider', default='cuda', help='Execution provider: cpu or cuda')
+parser.add_argument('--source', '--source-path', dest='source_reference_path', default=None,
+                    help='source image or folder of same-identity reference images')
 args = parser.parse_args()
 from roop import globals
 # Normalize to onnxruntime's exact provider names — naive concatenation makes

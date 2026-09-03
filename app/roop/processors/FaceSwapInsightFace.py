@@ -21,8 +21,7 @@ def pose_embedding_for_target(source_faceset, target_face):
     archive has no representation for that pose; using an adjacent profile or
     pitch cell is more misleading than the identity centroid on a lateral face.
     """
-    if (source_faceset is None
-            or int(getattr(source_faceset, 'format_version', 1) or 1) < 2):
+    if source_faceset is None:
         return None
     try:
         def field(name, default=0.0):
@@ -30,6 +29,14 @@ def pose_embedding_for_target(source_faceset, target_face):
                      else getattr(target_face, name, default))
             return float(value if value is not None else default)
         pose = (field('_adaptive_yaw'), field('_adaptive_pitch'))
+        # Folder-upload banks have per-reference embeddings but no archive
+        # metadata. Prefer their closest pose (or boundary blend) before the
+        # V2 cell lookup below.
+        direct = source_faceset.reference_embedding_for_pose(pose)
+        if direct is not None:
+            return direct
+        if int(getattr(source_faceset, 'format_version', 1) or 1) < 2:
+            return None
         embedding = source_faceset.pose_bin_embedding(pose, fallback=False)
         if embedding is None:
             embedding = source_faceset.default_embedding

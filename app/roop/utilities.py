@@ -468,7 +468,39 @@ def detect_fps(target_path: str) -> float:
     if cap.isOpened():
         fps = cap.get(cv2.CAP_PROP_FPS)
     cap.release()
-    return fps
+    return constant_frame_rate(fps)
+
+
+def constant_frame_rate(value, fallback: float = 24.0) -> float:
+    """Return a finite CFR suitable for FFmpeg timestamps and image sequences."""
+    try:
+        fps = float(value)
+    except (TypeError, ValueError):
+        fps = fallback
+    if not np.isfinite(fps) or fps <= 0.0 or fps > 240.0:
+        fps = fallback
+    # Avoid an overly long decimal in filter expressions while retaining the
+    # common NTSC rates closely enough for a one-hour clip to stay in sync.
+    return round(fps, 6)
+
+
+def cfr_video_filter(fps: float) -> str:
+    """FFmpeg filter that assigns deterministic PTS to processed frames."""
+    rate = constant_frame_rate(fps)
+    return f"fps={rate:.6f},setpts=N/({rate:.6f}*TB)"
+
+
+def audio_sample_rate(path: str) -> Optional[int]:
+    """Best-effort sample-rate probe used to document the stream-copy path."""
+    try:
+        command = ["ffprobe", "-v", "error", "-select_streams", "a:0",
+                   "-show_entries", "stream=sample_rate", "-of", "default=nw=1:nk=1", path]
+        result = subprocess.run(command, capture_output=True, text=True, check=False,
+                                timeout=10)
+        rate = int((result.stdout or "").strip())
+        return rate if rate > 0 else None
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return None
 
 
 def detect_dimensions(target_path: str):

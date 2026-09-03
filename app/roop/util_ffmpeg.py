@@ -166,10 +166,16 @@ def extract_frames(target_path : str, trim_frame_start, trim_frame_end, fps : fl
     if target_path.lower().endswith('.webp') and util.is_animated_webp(target_path):
         return _extract_frames_from_animated_webp(target_path, trim_frame_start, trim_frame_end, temp_directory_path)
 
+    fps = util.constant_frame_rate(fps)
     commands = ['-i', target_path, '-q:v', '1', '-pix_fmt', 'rgb24', ]
     if trim_frame_start is not None and trim_frame_end is not None:
-        commands.extend([ '-vf', 'trim=start_frame=' + str(trim_frame_start) + ':end_frame=' + str(trim_frame_end) + ',fps=' + str(fps) ])
-    commands.extend(['-vsync', '0', os.path.join(temp_directory_path, '%06d.' + roop.globals.CFG.output_image_format)])
+        commands.extend([ '-vf', 'trim=start_frame=' + str(trim_frame_start) + ':end_frame=' + str(trim_frame_end) + ',' + util.cfr_video_filter(fps) ])
+    else:
+        commands.extend(['-vf', util.cfr_video_filter(fps)])
+    # A numbered image sequence has no reliable input timestamps. Force CFR
+    # here, rather than passing through VFR PTS and losing/duplicating frames.
+    commands.extend(['-vsync', 'cfr', '-fps_mode', 'cfr',
+                     os.path.join(temp_directory_path, '%06d.' + roop.globals.CFG.output_image_format)])
     return run_ffmpeg(commands)
 
 
@@ -179,8 +185,9 @@ def create_video(target_path: str, dest_filename: str, fps: float = 24.0, temp_d
     # scale=trunc(iw/2)*2:trunc(ih/2)*2 rounds odd dimensions down to even, which is
     # required by yuv420p / libx264. Without this, frames with odd width or height
     # cause ffmpeg to fail silently and produce an empty (corrupt) output file.
-    vf = 'scale=trunc(iw/2)*2:trunc(ih/2)*2,colorspace=bt709:iall=bt601-6-625:fast=1'
-    run_ffmpeg(['-r', str(fps), '-i', os.path.join(temp_directory_path, f'%06d.{roop.globals.CFG.output_image_format}'), '-c:v', roop.globals.video_encoder] + _rate_control(roop.globals.video_encoder, roop.globals.video_quality) + ['-pix_fmt', 'yuv420p', '-vf', vf, '-y', dest_filename])
+    fps = util.constant_frame_rate(fps)
+    vf = util.cfr_video_filter(fps) + ',scale=trunc(iw/2)*2:trunc(ih/2)*2,colorspace=bt709:iall=bt601-6-625:fast=1'
+    run_ffmpeg(['-framerate', str(fps), '-i', os.path.join(temp_directory_path, f'%06d.{roop.globals.CFG.output_image_format}'), '-c:v', roop.globals.video_encoder] + _rate_control(roop.globals.video_encoder, roop.globals.video_quality) + ['-pix_fmt', 'yuv420p', '-vf', vf, '-r', str(fps), '-vsync', 'cfr', '-fps_mode', 'cfr', '-y', dest_filename])
     return dest_filename
 
 
@@ -443,14 +450,16 @@ def create_video_from_frames_dir(frames_dir: str, output_path: str, fps: float,
     codec   = roop.globals.video_encoder   or 'libx264'
     quality = roop.globals.video_quality   if roop.globals.video_quality is not None else 14
     # scale=trunc(iw/2)*2:trunc(ih/2)*2 rounds odd dimensions down to even, required by yuv420p.
-    vf = 'scale=trunc(iw/2)*2:trunc(ih/2)*2,colorspace=bt709:iall=bt601-6-625:fast=1'
+    fps = util.constant_frame_rate(fps)
+    vf = util.cfr_video_filter(fps) + ',scale=trunc(iw/2)*2:trunc(ih/2)*2,colorspace=bt709:iall=bt601-6-625:fast=1'
     return run_ffmpeg([
-        '-r',    str(fps),
+        '-framerate', str(fps),
         '-i',    os.path.join(frames_dir, f'%06d.{image_format}'),
         '-c:v',  codec,
     ] + _rate_control(codec, quality) + [
         '-pix_fmt', 'yuv420p',
         '-vf',   vf,
+        '-r', str(fps), '-vsync', 'cfr', '-fps_mode', 'cfr',
         '-y',    output_path,
     ])
 
@@ -489,7 +498,7 @@ def restore_audio(intermediate_video: str, original_video: str, trim_frame_start
     correct position when the original was trimmed before processing.
     Returns True on success, False on failure.
     """
-    fps = util.detect_fps(original_video)
+    fps = util.constant_frame_rate(util.detect_fps(original_video))
 
     # Seek the audio source to match any trim that was applied before processing.
     audio_seek = []
@@ -497,17 +506,27 @@ def restore_audio(intermediate_video: str, original_video: str, trim_frame_start
         audio_seek += ['-ss', format(trim_frame_start / fps, ".2f")]
     else:
         audio_seek += ['-ss', '0']
+    duration = None
     if trim_frame_end is not None:
-        audio_seek += ['-to', format(trim_frame_end / fps, ".2f")]
+        duration = max(0.0, (trim_frame_end - (trim_frame_start or 0)) / fps)
+
+    rate = util.audio_sample_rate(original_video)
+    if rate is not None:
+        print(f"[A/V] stream-copying {rate} Hz source audio with CFR video PTS")
 
     commands = (
         ['-i', intermediate_video]
         + audio_seek
         + ['-i', original_video,
-           '-c', 'copy',
            '-map', '0:v:0',
            '-map', '1:a:0?',
+           '-c:v', 'copy', '-c:a', 'copy',
+           '-vsync', 'cfr', '-fps_mode', 'cfr',
+           '-avoid_negative_ts', 'make_zero',
            '-shortest',
-           final_video]
+          ]
     )
+    if duration is not None:
+        commands += ['-t', format(duration, '.6f')]
+    commands += [final_video]
     return run_ffmpeg(commands)

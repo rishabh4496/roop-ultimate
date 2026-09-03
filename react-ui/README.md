@@ -48,7 +48,7 @@ The backend (`app/api.py`) exposes, among others:
 | `GET /api/meta` | choice lists for dropdowns |
 | `GET/POST /api/settings` | read / write CFG |
 | `GET /api/state` | rehydrate galleries + target queue |
-| `POST /api/source/add\|remove\|move\|clear\|select` | source faceset management |
+| `POST /api/source/add\|add-folder\|remove\|move\|clear\|select` | source faceset management; `add-folder` builds one clustered multi-angle identity |
 | `POST /api/target/add\|select\|clear\|set_frame\|use_face\|remove_face` | target management |
 | `POST /api/preview` | render a frame, optionally face-swapped |
 | `POST /api/swap` · `GET /api/progress` · `POST /api/stop` | run / track / cancel |

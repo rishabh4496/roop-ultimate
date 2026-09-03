@@ -250,6 +250,41 @@ into the RTX 3060 table or vice versa. Optimization verdicts are classified as
 beneficial on both, target-specific, neutral, regression on one GPU, or unsafe/
 rejected.
 
+### Multi-angle sources and timestamp-safe video
+
+Use **Build one multi-angle faceset from a folder** in the React source panel,
+or start the backend with `python run.py --source <image-or-folder>`. Each
+reference is detected with the existing ArcFace analyser, normalized to 512
+dimensions, clustered at cosine similarity 0.65, and combined as a
+quality-weighted, L2-normalized identity vector. The retained reference yaw and
+pitch values select (or blend at a pose boundary) the closest identity vector
+during a swap. This adds no second detector or GPU session.
+
+Programmatic folder ingestion is `POST /api/source/add-folder` as multipart
+field `files`. The usual `POST /api/source/add` remains the one-image-per-source
+operation. Example clients:
+
+```javascript
+const form = new FormData();
+for (const file of folderFiles) form.append('files', file);
+const source = await fetch(`${baseUrl}/api/source/add-folder`, { method: 'POST', body: form }).then(r => r.json());
+```
+
+```python
+import requests
+files = [('files', open(path, 'rb')) for path in reference_paths]
+source = requests.post(f'{base_url}/api/source/add-folder', files=files, timeout=120).json()
+```
+
+```bash
+curl -F "files=@front.jpg" -F "files=@left.jpg" -F "files=@right.jpg" "$BASE_URL/api/source/add-folder"
+```
+
+Video processing forces constant frame rate and explicit generated video PTS;
+audio is muxed with `-c:a copy` and the original audio bitstream when possible.
+`python scripts/verify_roop_keep.py` records CFR, copied-audio codec/sample
+rate, and output A/V duration drift for every rendered clip.
+
 ## What is not in this repository
 
 `app/env` (the virtual environment), `app/models` (model weights) and

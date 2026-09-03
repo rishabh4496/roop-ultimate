@@ -39,6 +39,7 @@ from source_gallery import (
     _get_source_faces_info,
     _source_faces_payload,
     _ingest_faceset,
+    add_reference_folder,
 )
 from api_media import (_save_upload, _rgb_to_dataurl, _bgr_to_dataurl,
                        _bgr_to_preview_dataurl, _dataurl_to_bgr)
@@ -1099,6 +1100,24 @@ def source_add(files: list[UploadFile] = File(...)):
                     _sources_append(fs, util.convert_to_gradio(fd[1]))
         except Exception:
             traceback.print_exc()
+    return _source_faces_payload()
+
+
+@app.post("/api/source/add-folder")
+def source_add_folder(files: list[UploadFile] = File(...)):
+    """Treat a folder or multi-shot picker selection as one source identity."""
+    paths = []
+    for file in files:
+        path = _save_upload(file)
+        if util.has_image_extension(path):
+            paths.append(path)
+    try:
+        add_reference_folder(paths)
+    except ValueError as exc:
+        return {**_source_faces_payload(), "error": str(exc)}
+    except Exception:
+        traceback.print_exc()
+        return {**_source_faces_payload(), "error": "could not build source faceset"}
     return _source_faces_payload()
 
 
@@ -3924,4 +3943,3 @@ def run_api():
     except ValueError:
         port = 8001
     uvicorn.run(app, host="127.0.0.1", port=port, log_level="error")
-

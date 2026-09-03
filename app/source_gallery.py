@@ -22,6 +22,7 @@ from roop.face_util import extract_face_images
 from roop.capturer import get_image_frame
 from api_media import _rgb_to_dataurl
 from roop.faceset_v2 import read_faceset_archive
+from roop.face_reference import clustered_faceset
 
 
 # ── Injected by api.py at import time ────────────────────────────────────
@@ -142,6 +143,63 @@ def _source_faces_payload():
     if desync:
         payload["desync"] = desync
     return payload
+
+
+def _largest_detected_face(detections):
+    """Pick the intended subject from a reference image without extra inference."""
+    def area(item):
+        try:
+            face = item[0]
+            bbox = face.get("bbox") if isinstance(face, dict) else face.bbox
+            box = np.asarray(bbox, dtype=np.float32).reshape(4)
+            return max(0.0, float((box[2] - box[0]) * (box[3] - box[1])))
+        except (AttributeError, TypeError, ValueError):
+            return 0.0
+    return max(detections or [], key=area, default=None)
+
+
+def add_reference_folder(paths, min_cosine=0.65):
+    """Add many images as one identity-bearing, pose-aware FaceSet.
+
+    The existing analyser detects each reference once.  ArcFace validation and
+    clustering do not create a second CUDA/ORT session, which preserves the
+    small-GPU single-context safety policy.
+    """
+    candidates = []
+    for path in paths or []:
+        if not util.has_image_extension(path):
+            continue
+        frame = get_image_frame(path)
+        if frame is None:
+            continue
+        item = _largest_detected_face(extract_face_images(path, (False, 0)))
+        if item is not None:
+            candidates.append((item[0], frame, path, item[1]))
+    cluster = clustered_faceset([(face, frame, path)
+                                 for face, frame, path, _ in candidates],
+                                min_cosine=min_cosine)
+    accepted_paths = {sample.path for sample in cluster.samples}
+    accepted = [item for item in candidates if str(item[2]) in accepted_paths]
+    if not accepted:
+        raise ValueError("no reference image survived identity clustering")
+
+    face_set = FaceSet()
+    face_set.faces = [face for face, _, _, _ in accepted]
+    face_set.ref_images = [frame for _, frame, _, _ in accepted]
+    for face in face_set.faces:
+        face.mask_offsets = _mask_offsets_from_cfg()
+    face_set.face_poses = cluster.poses
+    face_set.reference_embeddings = cluster.embeddings
+    face_set.reference_weights = [sample.weight for sample in cluster.samples]
+    face_set.reference_paths = [sample.path for sample in cluster.samples]
+    face_set.reference_rejected = cluster.rejected
+    face_set.identity_embedding = cluster.embedding
+    face_set.normalized_embedding = cluster.embedding.copy()
+    face_set._source_path = os.path.abspath(accepted[0][2])
+    thumb_index = min(range(len(accepted)), key=lambda i: sum(
+        value * value for value in cluster.poses[i]))
+    _sources_append(face_set, util.convert_to_gradio(accepted[thumb_index][3]))
+    return face_set
 
 def _ingest_faceset(path):
     # Validate V2 before touching the shared extraction directory. A corrupt

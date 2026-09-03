@@ -1117,6 +1117,24 @@ export default function FaceSwap({
     finally { setUploadingSrc(false); setSrcProgress(null); srcAbortRef.current = null; }
   };
 
+  const onAddSourceFolder = async (files) => {
+    if (!files || !files.length) return;
+    const ctrl = new AbortController();
+    srcAbortRef.current = ctrl;
+    setUploadingSrc(true);
+    setSrcProgress(null);
+    try {
+      const res = checkDesync(await postFiles('/api/source/add-folder', files, undefined, {
+        onProgress: setSrcProgress, signal: ctrl.signal,
+      }));
+      if (res.error) throw new Error(res.error);
+      setSourceFaces(res.source_faces);
+      if (res.source_faces_info) setSourceFacesInfo(res.source_faces_info);
+      notify(`Built multi-angle faceset from ${files.length} reference image(s)`);
+    } catch (err) { reportUploadError(err); }
+    finally { setUploadingSrc(false); setSrcProgress(null); srcAbortRef.current = null; }
+  };
+
   // Everything that happens once the backend has accepted new targets, however
   // they arrived — uploaded, or referenced by path. Shared so the two routes
   // cannot drift on the auto-queue rule or the preview refresh.
@@ -2579,6 +2597,11 @@ export default function FaceSwap({
           <Section title="Source images / facesets" icon={Icon.faces}>
           <FileDrop accept="image/*,.fsz" multiple label="Add source faces" onFiles={onAddSource} busy={uploadingSrc} hint="drop images or .fsz here"
                     progress={srcProgress} onCancel={() => srcAbortRef.current?.abort()} />
+          <label className="mt-2 flex cursor-pointer items-center justify-center rounded-xl border border-dashed border-white/15 px-3 py-2 text-xs text-white/55 transition hover:border-[var(--accent)] hover:text-white">
+            Build one multi-angle faceset from a folder
+            <input type="file" accept="image/*" multiple webkitdirectory="" directory="" className="sr-only"
+              onChange={(event) => { onAddSourceFolder(Array.from(event.target.files || [])); event.target.value = ''; }} />
+          </label>
           <FacesetLibrary
             canSave={sourceFaces.length > 0}
             onLoaded={(r) => { setSourceFaces(r.source_faces || []); if (r.source_faces_info) setSourceFacesInfo(r.source_faces_info); }}

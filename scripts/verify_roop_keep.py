@@ -162,6 +162,79 @@ def repair_stream(source: Path, recovery_root: Path, kind: str) -> Optional[Path
     return None
 
 
+def _fraction(value: Any) -> Optional[float]:
+    try:
+        numerator, denominator = str(value).split("/", 1)
+        result = float(numerator) / float(denominator)
+        return result if result > 0 else None
+    except (AttributeError, TypeError, ValueError, ZeroDivisionError):
+        return None
+
+
+def timestamp_integrity(path: Path) -> Dict[str, Any]:
+    """Read container timing without decoding/re-encoding the evidence video."""
+    ffprobe = shutil.which("ffprobe")
+    if not ffprobe or not path.is_file():
+        return {"available": False, "path": str(path)}
+    command = [ffprobe, "-v", "error", "-show_streams", "-show_format", "-of", "json", str(path)]
+    try:
+        result = subprocess.run(command, capture_output=True, text=True, timeout=30, check=False)
+        data = json.loads(result.stdout or "{}") if result.returncode == 0 else {}
+    except (OSError, subprocess.SubprocessError, json.JSONDecodeError):
+        return {"available": False, "path": str(path)}
+    streams = data.get("streams") or []
+    video = next((item for item in streams if item.get("codec_type") == "video"), {})
+    audio = next((item for item in streams if item.get("codec_type") == "audio"), {})
+    fps = _fraction(video.get("avg_frame_rate"))
+    nominal = _fraction(video.get("r_frame_rate"))
+    video_duration = video.get("duration") or (data.get("format") or {}).get("duration")
+    audio_duration = audio.get("duration")
+    try:
+        video_duration = float(video_duration) if video_duration is not None else None
+        audio_duration = float(audio_duration) if audio_duration is not None else None
+    except (TypeError, ValueError):
+        video_duration = audio_duration = None
+    drift = (abs(video_duration - audio_duration)
+             if video_duration is not None and audio_duration is not None else None)
+    return {
+        "available": bool(video), "path": str(path), "fps": fps,
+        "nominal_fps": nominal, "constant_frame_rate": bool(
+            fps is not None and nominal is not None and abs(fps - nominal) < 0.001),
+        "frames": int(video.get("nb_frames")) if str(video.get("nb_frames", "")).isdigit() else None,
+        "video_duration_seconds": video_duration,
+        "audio_duration_seconds": audio_duration,
+        "a_v_drift_seconds": drift,
+        "audio_codec": audio.get("codec_name"),
+        "audio_sample_rate": audio.get("sample_rate"),
+    }
+
+
+def validate_timestamp_integrity(source: Path, output: Path) -> Dict[str, Any]:
+    """Validate CFR output, direct audio copy, and bounded A/V drift."""
+    before, after = timestamp_integrity(source), timestamp_integrity(output)
+    result = {"source": before, "output": after, "verdict": "n/a"}
+    if not after.get("available"):
+        result.update(verdict="fail", reason="output video stream is unreadable")
+        return result
+    if not after.get("constant_frame_rate"):
+        result.update(verdict="fail", reason="output is not constant-frame-rate")
+        return result
+    drift = after.get("a_v_drift_seconds")
+    fps = after.get("fps") or 24.0
+    if drift is not None and drift > max(0.100, 2.0 / float(fps)):
+        result.update(verdict="fail", reason="audio/video duration drift exceeds two frames")
+        return result
+    if before.get("audio_codec") and after.get("audio_codec"):
+        result["audio_bitstream_copied"] = (
+            before["audio_codec"] == after["audio_codec"]
+            and before.get("audio_sample_rate") == after.get("audio_sample_rate"))
+        if not result["audio_bitstream_copied"]:
+            result.update(verdict="fail", reason="source audio was not stream-copied")
+            return result
+    result["verdict"] = "pass"
+    return result
+
+
 def compact(value: Any, digits: int = 3) -> str:
     if value is None:
         return "n/a"
@@ -386,6 +459,11 @@ def main() -> int:
         entry["source"] = str(source)
         entry["worker_log"] = str(worker_log)
         entry["render_fps"] = renderer_fps(worker_log)
+        final_output = Path(str(entry.get("output", "")))
+        entry["timestamp_integrity"] = validate_timestamp_integrity(source, final_output)
+        if entry["timestamp_integrity"].get("verdict") == "fail":
+            detail = entry["timestamp_integrity"].get("reason", "timestamp validation failed")
+            entry["error"] = "; ".join(filter(None, [entry.get("error"), detail]))
         entry["test_metrics"] = metrics_for(entry)
         results[key] = entry
         report["videos"] = list(results.values())

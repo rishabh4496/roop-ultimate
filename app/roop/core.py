@@ -89,6 +89,8 @@ def parse_args() -> None:
     program.add_argument('--enable-occlusion-mask', help='Enable foreground occlusion masking', dest='enable_occlusion_mask', action='store_true', default=True)
     program.add_argument('--disable-occlusion-mask', help='Disable foreground occlusion masking', dest='enable_occlusion_mask', action='store_false')
     program.add_argument('--detector-scale-pyramid', help='Multi-scale detector pyramid levels (e.g. "0.5,0.75,1.0", "auto", or "none")', dest='detector_scale_pyramid', default=None)
+    program.add_argument('--source', '--source-path', dest='source_reference_path', default=None,
+                         help='Source image or folder of same-identity reference images')
     roop.globals.startup_args = program.parse_args()
     if hasattr(roop.globals.startup_args, 'enable_occlusion_mask') and roop.globals.startup_args.enable_occlusion_mask is not None:
         roop.globals.enable_occlusion_mask = roop.globals.startup_args.enable_occlusion_mask
@@ -1357,7 +1359,11 @@ def batch_process(output_method, files:list[ProcessEntry], use_new_method) -> No
                 if not roop.globals.processing:
                     end_processing('Processing stopped!')
                     return
-                fps = v.fps if v.fps > 0 else util.detect_fps(v.filename)
+                # All frame extraction/encoding paths consume this value.  Keep
+                # it finite and fixed so RealSwap never inherits VFR PTS drift
+                # from a mobile/variable-frame-rate input clip.
+                fps = util.constant_frame_rate(
+                    v.fps if v.fps > 0 else util.detect_fps(v.filename))
                 if v.endframe == 0:
                     v.endframe = get_video_frame_total(v.filename)
 
@@ -1701,5 +1707,18 @@ def run() -> None:
     roop.globals.max_memory = roop.globals.CFG.memory_limit if roop.globals.CFG.memory_limit > 0 else None
     if roop.globals.startup_args.server_share:
         roop.globals.CFG.server_share = True
+    source_reference_path = getattr(roop.globals.startup_args, 'source_reference_path', None)
+    if source_reference_path:
+        try:
+            path = os.path.abspath(source_reference_path)
+            source_paths = ([os.path.join(path, name) for name in sorted(os.listdir(path))]
+                            if os.path.isdir(path) else [path])
+            from source_gallery import add_reference_folder
+            add_reference_folder(source_paths)
+            print(f"[Source] loaded multi-shot reference from {path}")
+        except Exception as exc:
+            # Starting the UI remains useful if a path was stale; make the
+            # failure explicit instead of silently swapping with no identity.
+            print(f"[Source] could not load --source {source_reference_path!r}: {exc}")
     print_startup_banner()
     main.run()
