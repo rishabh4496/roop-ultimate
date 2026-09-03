@@ -579,7 +579,7 @@ def analyse(plate_path, swapped_path, means, double, stride, progress=None,
                          advisory=True)
 
     yaw_cosines, extreme_yaw, aspect_deltas = [], 0, []
-    yaw_over_45, inverted_roll, strict_extreme_detected = 0, 0, 0
+    yaw_over_45, inverted_roll, strict_extreme_detected, strict_extreme_total = 0, 0, 0, 0
     dark_frames, dark_delta_l, delta_e_all = 0, [], []
     blink_frames, blink_bad = 0, 0
     texture_ratios, plate_energies, swap_energies = [], [], []
@@ -629,6 +629,7 @@ def analyse(plate_path, swapped_path, means, double, stride, progress=None,
                 is_inverted = abs(roll) >= 150.0
                 yaw_over_45 += int(is_yaw_over_45)
                 inverted_roll += int(is_inverted)
+                strict_extreme_total += int(is_yaw_over_45 or is_inverted)
                 hard = abs(yaw) > YAW_EXTREME or abs(roll) > ROLL_EXTREME
                 if hard:
                     extreme_yaw += 1
@@ -779,7 +780,6 @@ def analyse(plate_path, swapped_path, means, double, stride, progress=None,
                     flips += 1
                 prev_assign = assign
 
-    strict_extreme_total = yaw_over_45 + inverted_roll
     angle.detail = {"extreme_pose_faces": extreme_yaw,
                     "yaw_gt_45_faces": yaw_over_45,
                     "inverted_roll_faces": inverted_roll,
