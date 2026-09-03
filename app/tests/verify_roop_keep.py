@@ -146,6 +146,22 @@ def source_revision():
 # fixtures
 # ═════════════════════════════════════════════════════════════════════════════
 
+def resolve_base(args):
+    """The corpus root for this run: the flag if given, else resolved.
+
+    Extracted so it is testable WITHOUT loading models. It shipped broken once:
+    the --base-dir default was changed to None and this fallback was not
+    applied, so every invocation died with
+
+        TypeError: _getfullpathname: path should be string ... not NoneType
+
+    on the first line of main(). default_base() had been tested directly and
+    passed; the ENTRY POINT had not been run. Testing a function is not testing
+    its wiring.
+    """
+    return os.path.abspath(args.base_dir or default_base())
+
+
 def discover_videos(folder):
     if not os.path.isdir(folder):
         return []
@@ -1131,7 +1147,7 @@ def main():
                         help="inline strips as data URIs (portable, larger)")
     args = parser.parse_args()
 
-    base = os.path.abspath(args.base_dir)
+    base = resolve_base(args)
     out_root = os.path.join(base, "output")
     started = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
