@@ -25,6 +25,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -98,6 +99,19 @@ def tail(path: Path, lines: int = 30) -> str:
         return ""
 
 
+def renderer_fps(log_path: Path) -> Optional[float]:
+    """Read the renderer's FPS, excluding startup/capture/analysis overhead."""
+    try:
+        text = log_path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    matches = re.findall(r"Processing .*? took [0-9.]+ secs, ([0-9.]+) frames/s", text)
+    try:
+        return round(float(matches[-1]), 3) if matches else None
+    except ValueError:
+        return None
+
+
 def looks_like_cuda_oom(text: str) -> bool:
     text = text.lower()
     return any(token in text for token in (
@@ -168,11 +182,14 @@ def metrics_for(entry: Dict[str, Any]) -> Dict[str, Any]:
     identity = criterion(entry, "identity").get("detail", {})
     seconds = entry.get("seconds")
     frames = entry.get("frames_seen")
-    fps = float(frames) / float(seconds) if frames and seconds and float(seconds) > 0 else None
+    end_to_end_fps = (float(frames) / float(seconds)
+                      if frames and seconds and float(seconds) > 0 else None)
     occlusion_samples = occlusion.get("samples", 0) or 0
     occlusion_failures = occlusion.get("failures", 0) or 0
     return {
-        "average_processing_fps": round(fps, 3) if fps is not None else None,
+        "average_processing_fps": entry.get("render_fps"),
+        "end_to_end_fps_including_validation": (round(end_to_end_fps, 3)
+                                                  if end_to_end_fps is not None else None),
         "face_detection_extreme": {
             "yaw_gt_45_faces": angle.get("yaw_gt_45_faces"),
             "inverted_roll_faces": angle.get("inverted_roll_faces"),
@@ -281,6 +298,18 @@ def main() -> int:
     previous = read_json(report_path) if args.resume else {}
     prior_by_key = {job_key(item.get("kind", ""), Path(item.get("name", ""))): item
                     for item in previous.get("videos", [])}
+    # Older partial reports remain useful after an interruption. Rehydrate their
+    # renderer-only FPS from the retained worker logs before deciding what to skip.
+    for entry in prior_by_key.values():
+        candidate = Path(entry.get("worker_log", output / "logs" / (
+            "%s__%s.attempt1.log" % (entry.get("kind", ""),
+                                      Path(entry.get("name", "")).stem))))
+        fps = renderer_fps(candidate)
+        if fps is not None:
+            entry["render_fps"] = fps
+            entry["worker_log"] = str(candidate)
+        entry["test_metrics"] = metrics_for(entry)
+
     report: Dict[str, Any] = {
         "started": previous.get("started") if args.resume else datetime.now(timezone.utc).isoformat(),
         "updated": datetime.now(timezone.utc).isoformat(),
@@ -311,8 +340,8 @@ def main() -> int:
 
         print("[%d/%d] %s -- RealSwap + %s" % (index, total, key, args.enhancer), flush=True)
         command = make_command(python, base, output, kind, source.name, args)
-        code, log_tail = run_worker(command, baseline_env,
-                                    output / "logs" / ("%s__%s.attempt1.log" % (kind, source.stem)))
+        worker_log = output / "logs" / ("%s__%s.attempt1.log" % (kind, source.stem))
+        code, log_tail = run_worker(command, baseline_env, worker_log)
         worker_report = read_json(report_path)
         entry = find_entry(worker_report, kind, source.name)
         combined_error = "\n".join(filter(None, [str((entry or {}).get("error", "")), log_tail]))
@@ -323,8 +352,8 @@ def main() -> int:
             safe_env.update({"ROOP_TRT_POOL": "1", "ROOP_DETMASK_POOL": "1",
                              "ROOP_DETECTOR_POOL": "1", "ROOP_EXPR_POOL": "0",
                              "ROOP_BATCH_SWAP": "0", "ROOP_BATCH_SWAP_XFRAME": "0"})
-            code, log_tail = run_worker(command, safe_env,
-                                        output / "logs" / ("%s__%s.oom-retry.log" % (kind, source.stem)))
+            worker_log = output / "logs" / ("%s__%s.oom-retry.log" % (kind, source.stem))
+            code, log_tail = run_worker(command, safe_env, worker_log)
             worker_report = read_json(report_path)
             entry = find_entry(worker_report, kind, source.name)
             if entry:
@@ -338,9 +367,8 @@ def main() -> int:
                 print("  corrupt stream: retrying repaired copy %s" % recovered.name, flush=True)
                 recovered_command = make_command(python, recovered_root, output, kind,
                                                   recovered.name, args)
-                code, log_tail = run_worker(
-                    recovered_command, baseline_env,
-                    output / "logs" / ("%s__%s.repaired-retry.log" % (kind, source.stem)))
+                worker_log = output / "logs" / ("%s__%s.repaired-retry.log" % (kind, source.stem))
+                code, log_tail = run_worker(recovered_command, baseline_env, worker_log)
                 worker_report = read_json(report_path)
                 entry = find_entry(worker_report, kind, source.name)
                 if entry:
@@ -356,6 +384,8 @@ def main() -> int:
                      "error": "worker exited %d without a report entry" % code,
                      "worker_log": str(output / "logs" / ("%s__%s.attempt1.log" % (kind, source.stem)))}
         entry["source"] = str(source)
+        entry["worker_log"] = str(worker_log)
+        entry["render_fps"] = renderer_fps(worker_log)
         entry["test_metrics"] = metrics_for(entry)
         results[key] = entry
         report["videos"] = list(results.values())
