@@ -50,7 +50,10 @@ import onnxruntime
 try:
     import roop.globals
     from roop.typing import Face, Frame
-    from roop.utilities import resolve_relative_path, conditional_download, transform_points
+    from roop.utilities import (
+        resolve_relative_path, conditional_download, transform_points,
+        CudaOrtIOBinding, cuda_warp_affine, cuda_laplacian_pyramid_blend,
+    )
     from roop.face_analyser import (
         compute_canonical_roll_angle,
         build_canonical_rotation_matrix,
@@ -101,7 +104,8 @@ except ImportError:
             compute_composite_inverse,
             compute_composite_forward,
         )
-        from utilities import transform_points
+        from utilities import (transform_points, CudaOrtIOBinding,
+                               cuda_warp_affine, cuda_laplacian_pyramid_blend)
     except ImportError:
         pass
     try:
@@ -123,6 +127,7 @@ NAME = 'ROOP.FACE-SWAPPER'
 PROCESSOR_NAME = 'face_swapper'
 
 FACE_SWAPPER: Optional[onnxruntime.InferenceSession] = None
+FACE_SWAPPER_IO: Optional[Any] = None
 FACE_OCCLUDER: Optional[onnxruntime.InferenceSession] = None
 GAZE_RETARGETER: Optional[onnxruntime.InferenceSession] = None
 THREAD_LOCK_SWAPPER = threading.Lock()
@@ -1010,7 +1015,7 @@ def _find_model_file(filename: str) -> str:
 
 
 def get_face_swapper() -> Optional[onnxruntime.InferenceSession]:
-    global FACE_SWAPPER
+    global FACE_SWAPPER, FACE_SWAPPER_IO
     with THREAD_LOCK_SWAPPER:
         if FACE_SWAPPER is None:
             model_path = _find_model_file('inswapper_128.onnx')
@@ -1021,7 +1026,20 @@ def get_face_swapper() -> Optional[onnxruntime.InferenceSession]:
             if os.path.isfile(model_path):
                 providers = getattr(roop.globals, 'execution_providers', ['CUDAExecutionProvider', 'CPUExecutionProvider'])
                 FACE_SWAPPER = onnxruntime.InferenceSession(model_path, providers=providers)
+                FACE_SWAPPER_IO = CudaOrtIOBinding(
+                    FACE_SWAPPER, int(getattr(roop.globals, 'cuda_device_id', 0) or 0))
     return FACE_SWAPPER
+
+
+def _run_swapper_bound(swapper: onnxruntime.InferenceSession,
+                       feed: Dict[str, np.ndarray]) -> List[np.ndarray]:
+    """Use persistent CUDA I/O buffers, or retain the portable ORT route."""
+    binding = FACE_SWAPPER_IO if swapper is FACE_SWAPPER else None
+    if binding is not None:
+        outputs = binding.run(feed)
+        if outputs is not None:
+            return outputs
+    return swapper.run(None, feed)
 
 
 def get_face_occluder() -> Optional[onnxruntime.InferenceSession]:
@@ -1958,7 +1976,7 @@ def swap_face(
         crop_blob = np.expand_dims(crop_blob, axis=0)
 
         with THREAD_LOCK_SWAPPER:
-            swapped_blob = swapper.run(None, {
+            swapped_blob = _run_swapper_bound(swapper, {
                 'target': crop_blob,
                 'source': source_emb
             })[0]
@@ -2035,41 +2053,35 @@ def swap_face(
     # Step 6: Composite and paste back using composite inverse T_final
     if T_final is not None:
         h, w = temp_frame.shape[:2]
-        warped_crop = cv2.warpAffine(
-            swapped_crop, T_final, (w, h),
-            flags=cv2.INTER_LINEAR,
-            borderMode=cv2.BORDER_CONSTANT,
-            borderValue=0
-        )
-        warped_mask = cv2.warpAffine(
-            smoothed_mask, T_final, (w, h),
-            flags=cv2.INTER_LINEAR,
-            borderMode=cv2.BORDER_CONSTANT,
-            borderValue=0.0
-        )
+        warped_crop = cuda_warp_affine(swapped_crop, T_final, (w, h))
+        if warped_crop is None:
+            warped_crop = cv2.warpAffine(swapped_crop, T_final, (w, h), flags=cv2.INTER_LINEAR,
+                                         borderMode=cv2.BORDER_CONSTANT, borderValue=0)
+        warped_mask = cuda_warp_affine(smoothed_mask, T_final, (w, h))
+        if warped_mask is None:
+            warped_mask = cv2.warpAffine(smoothed_mask, T_final, (w, h), flags=cv2.INTER_LINEAR,
+                                         borderMode=cv2.BORDER_CONSTANT, borderValue=0.0)
         pyramid_source = temp_frame.copy()
         valid = warped_mask > 1e-4
         pyramid_source[valid] = warped_crop[valid]
-        return laplacian_pyramid_blend(temp_frame, pyramid_source, warped_mask, levels=3)
+        gpu_blend = cuda_laplacian_pyramid_blend(temp_frame, pyramid_source, warped_mask, levels=3)
+        return gpu_blend if gpu_blend is not None else laplacian_pyramid_blend(temp_frame, pyramid_source, warped_mask, levels=3)
     elif M is not None:
         inv_M = cv2.invertAffineTransform(M)
         h, w = temp_frame.shape[:2]
-        warped_crop = cv2.warpAffine(
-            swapped_crop, inv_M, (w, h),
-            flags=cv2.INTER_LINEAR,
-            borderMode=cv2.BORDER_CONSTANT,
-            borderValue=0
-        )
-        warped_mask = cv2.warpAffine(
-            smoothed_mask, inv_M, (w, h),
-            flags=cv2.INTER_LINEAR,
-            borderMode=cv2.BORDER_CONSTANT,
-            borderValue=0.0
-        )
+        warped_crop = cuda_warp_affine(swapped_crop, inv_M, (w, h))
+        if warped_crop is None:
+            warped_crop = cv2.warpAffine(swapped_crop, inv_M, (w, h), flags=cv2.INTER_LINEAR,
+                                         borderMode=cv2.BORDER_CONSTANT, borderValue=0)
+        warped_mask = cuda_warp_affine(smoothed_mask, inv_M, (w, h))
+        if warped_mask is None:
+            warped_mask = cv2.warpAffine(smoothed_mask, inv_M, (w, h), flags=cv2.INTER_LINEAR,
+                                         borderMode=cv2.BORDER_CONSTANT, borderValue=0.0)
         pyramid_source = temp_frame.copy()
         valid = warped_mask > 1e-4
         pyramid_source[valid] = warped_crop[valid]
-        return laplacian_pyramid_blend(temp_frame, pyramid_source, warped_mask, levels=3)
+        gpu_blend = cuda_laplacian_pyramid_blend(temp_frame, pyramid_source, warped_mask, levels=3)
+        return gpu_blend if gpu_blend is not None else laplacian_pyramid_blend(temp_frame, pyramid_source, warped_mask, levels=3)
     else:
         blended_crop = blend_swap_buffer(crop_frame, swapped_crop, smoothed_mask)
         target_frame[y1:y2, x1:x2] = cv2.resize(blended_crop, (x2 - x1, y2 - y1))

@@ -7,6 +7,7 @@ import shutil
 import ssl
 import subprocess
 import sys
+import threading
 import time
 import urllib
 from urllib.parse import urlparse
@@ -18,7 +19,7 @@ import zipfile
 import traceback
 
 from pathlib import Path
-from typing import List, Any, Optional, Tuple
+from typing import List, Any, Optional, Tuple, Dict
 from tqdm import tqdm
 from scipy.spatial import distance
 from datetime import datetime
@@ -30,6 +31,231 @@ import roop.globals
 
 TEMP_FILE = "temp.mp4"
 TEMP_DIRECTORY = "temp"
+
+
+# ---------------------------------------------------------------------------
+# CUDA transport and compositing primitives
+# ---------------------------------------------------------------------------
+
+class CudaOrtIOBinding:
+    """Reusable CUDA buffers for an ONNX Runtime session.
+
+    ORT's normal ``session.run`` path accepts NumPy arrays and returns NumPy
+    arrays.  With CUDA/TensorRT that means an upload and download at *every*
+    call, even when the next stage is also on CUDA.  This helper owns
+    contiguous torch allocations, exposes their pointers to ORT through
+    ``bind_input``/``bind_output`` and reuses those allocations for every
+    compatible call.
+
+    It is deliberately a best-effort acceleration.  CPU-only installs, a
+    provider that rejects a user allocation, dynamic output shapes we cannot
+    prove, and any ORT error all return ``None`` so callers retain their
+    established ``session.run`` path.  The class is per-session: TensorRT
+    contexts must never share an I/O binding or an output allocation.
+    """
+
+    def __init__(self, session, device_id: int = 0):
+        self.session = session
+        self.device_id = int(device_id)
+        self.enabled = self._has_cuda_provider(session)
+        self._inputs: Dict[Tuple[str, Tuple[int, ...]], torch.Tensor] = {}
+        self._outputs: Dict[Tuple[str, Tuple[int, ...]], torch.Tensor] = {}
+        self._lock = threading.RLock()
+        self._failure_reported = False
+
+    @staticmethod
+    def _has_cuda_provider(session) -> bool:
+        try:
+            providers = session.get_providers()
+            return (torch.cuda.is_available() and any(
+                name in ('CUDAExecutionProvider', 'TensorrtExecutionProvider')
+                for name in providers))
+        except Exception:
+            return False
+
+    @staticmethod
+    def _shape_for(meta, batch: int) -> Optional[Tuple[int, ...]]:
+        shape = list(meta.shape or [])
+        if not shape:
+            return None
+        result = []
+        for index, dimension in enumerate(shape):
+            if isinstance(dimension, int) and dimension > 0:
+                result.append(int(dimension))
+            elif index == 0:
+                result.append(int(batch))
+            else:
+                # User-allocated output needs a concrete shape.  Do not guess
+                # non-batch dynamic axes; ordinary ORT remains the fallback.
+                return None
+        return tuple(result)
+
+    @staticmethod
+    def _as_float32(value) -> np.ndarray:
+        array = np.asarray(value, dtype=np.float32)
+        return np.ascontiguousarray(array)
+
+    def _buffer(self, cache, name: str, shape: Tuple[int, ...]) -> torch.Tensor:
+        key = (name, shape)
+        tensor = cache.get(key)
+        if tensor is None:
+            tensor = torch.empty(shape, dtype=torch.float32,
+                                 device=f'cuda:{self.device_id}').contiguous()
+            cache[key] = tensor
+        return tensor
+
+    def run_gpu(self, feed: Dict[str, np.ndarray]) -> Optional[List[torch.Tensor]]:
+        """Run one concrete-shape request and leave every output on CUDA."""
+        if not self.enabled or not feed:
+            return None
+        try:
+            with self._lock, torch.cuda.device(self.device_id):
+                binding = self.session.io_binding()
+                batch = None
+                for name, value in feed.items():
+                    host = self._as_float32(value)
+                    if host.ndim < 1:
+                        return None
+                    batch = int(host.shape[0]) if batch is None else batch
+                    if int(host.shape[0]) != batch:
+                        return None
+                    device_tensor = self._buffer(self._inputs, name, tuple(host.shape))
+                    # This is the sole unavoidable host -> device transfer for
+                    # an external NumPy crop.  The ORT call itself does not copy.
+                    device_tensor.copy_(torch.from_numpy(host), non_blocking=False)
+                    binding.bind_input(name, 'cuda', self.device_id, np.float32,
+                                       tuple(host.shape), device_tensor.data_ptr())
+
+                outputs: List[torch.Tensor] = []
+                for meta in self.session.get_outputs():
+                    shape = self._shape_for(meta, batch or 1)
+                    if shape is None:
+                        return None
+                    output_tensor = self._buffer(self._outputs, meta.name, shape)
+                    binding.bind_output(meta.name, 'cuda', self.device_id, np.float32,
+                                        shape, output_tensor.data_ptr())
+                    outputs.append(output_tensor)
+                self.session.run_with_iobinding(binding)
+                # The caller may immediately feed outputs to torch compositing;
+                # do not synchronize or copy them to the host here.
+                return outputs
+        except Exception as exc:
+            self.enabled = False
+            if not self._failure_reported:
+                self._failure_reported = True
+                print(f'[CUDA I/O binding] disabled for this session: {exc}', flush=True)
+            return None
+
+    def run(self, feed: Dict[str, np.ndarray]) -> Optional[List[np.ndarray]]:
+        """Compatibility form of :meth:`run_gpu` for NumPy-based callers."""
+        outputs = self.run_gpu(feed)
+        if outputs is None:
+            return None
+        # One final D2H transfer is unavoidable for legacy CPU consumers.  It
+        # replaces ORT's per-output transfer and happens only after all bound
+        # GPU work for this inference has completed.
+        return [tensor.detach().cpu().numpy().copy() for tensor in outputs]
+
+
+def cuda_warp_affine(image: np.ndarray, matrix: np.ndarray,
+                     output_size: Tuple[int, int], *,
+                     border_mode: str = 'zeros',
+                     interpolation: str = 'bilinear') -> Optional[np.ndarray]:
+    """GPU equivalent of the common OpenCV affine warp, with safe fallback.
+
+    ``matrix`` has OpenCV's source->destination pixel convention.  PyTorch's
+    ``grid_sample`` wants destination->source normalized coordinates, so the
+    conversion is explicit rather than relying on a subtly incompatible affine
+    shortcut.  The result is returned to NumPy solely because the surrounding
+    mature pipeline is still CPU-frame based.
+    """
+    if not torch.cuda.is_available() or image is None:
+        return None
+    try:
+        data = np.asarray(image)
+        if data.ndim not in (2, 3):
+            return None
+        h, w = data.shape[:2]
+        out_w, out_h = int(output_size[0]), int(output_size[1])
+        if min(h, w, out_h, out_w) <= 0:
+            return None
+        channels = 1 if data.ndim == 2 else data.shape[2]
+        source = torch.from_numpy(np.ascontiguousarray(data)).to(
+            device='cuda', dtype=torch.float32).permute(
+                2, 0, 1).unsqueeze(0) if channels > 1 else torch.from_numpy(
+                    np.ascontiguousarray(data)).to(device='cuda', dtype=torch.float32).unsqueeze(0).unsqueeze(0)
+        affine = np.asarray(matrix, dtype=np.float32).reshape(2, 3)
+        inverse = cv2.invertAffineTransform(affine)
+        ys, xs = torch.meshgrid(
+            torch.arange(out_h, device='cuda', dtype=torch.float32),
+            torch.arange(out_w, device='cuda', dtype=torch.float32), indexing='ij')
+        src_x = inverse[0, 0] * xs + inverse[0, 1] * ys + inverse[0, 2]
+        src_y = inverse[1, 0] * xs + inverse[1, 1] * ys + inverse[1, 2]
+        grid = torch.stack((2.0 * (src_x + 0.5) / w - 1.0,
+                            2.0 * (src_y + 0.5) / h - 1.0), dim=-1).unsqueeze(0)
+        padding = 'border' if border_mode == 'replicate' else 'zeros'
+        result = torch.nn.functional.grid_sample(
+            source, grid, mode=interpolation, padding_mode=padding,
+            align_corners=False)
+        result = result.squeeze(0).permute(1, 2, 0) if channels > 1 else result[0, 0]
+        if np.issubdtype(data.dtype, np.integer):
+            result = result.clamp(0, 255).to(torch.uint8)
+        else:
+            result = result.to(torch.float32)
+        return result.cpu().numpy()
+    except Exception:
+        return None
+
+
+def cuda_laplacian_pyramid_blend(target: np.ndarray, swap: np.ndarray,
+                                 mask: np.ndarray, levels: int = 3) -> Optional[np.ndarray]:
+    """Blend BGR buffers on CUDA using a bounded Laplacian pyramid.
+
+    This keeps the feather/multiband compositing arithmetic on the GPU and
+    performs one final download.  It intentionally returns ``None`` on any
+    unsupported input so the established OpenCV implementation remains exact.
+    """
+    if not torch.cuda.is_available():
+        return None
+    try:
+        target_a = np.ascontiguousarray(np.asarray(target, dtype=np.float32))
+        swap_a = np.ascontiguousarray(np.asarray(swap, dtype=np.float32))
+        mask_a = np.ascontiguousarray(np.asarray(mask, dtype=np.float32))
+        if target_a.ndim != 3 or target_a.shape[2] < 3:
+            return None
+        h, w = target_a.shape[:2]
+        if swap_a.shape[:2] != (h, w):
+            return None
+        if mask_a.ndim == 3:
+            mask_a = mask_a[..., 0]
+        if mask_a.shape != (h, w):
+            return None
+        to_t = lambda a: torch.from_numpy(a).to('cuda', non_blocking=False)
+        a = to_t(target_a[..., :3]).permute(2, 0, 1).unsqueeze(0)
+        b = to_t(swap_a[..., :3]).permute(2, 0, 1).unsqueeze(0)
+        m = to_t(np.clip(mask_a, 0.0, 1.0)).unsqueeze(0).unsqueeze(0)
+        ga, gb, gm = [a], [b], [m]
+        for _ in range(1, max(1, min(int(levels), 3))):
+            if min(ga[-1].shape[-2:]) < 2:
+                break
+            ga.append(torch.nn.functional.avg_pool2d(ga[-1], 2, 2))
+            gb.append(torch.nn.functional.avg_pool2d(gb[-1], 2, 2))
+            gm.append(torch.nn.functional.avg_pool2d(gm[-1], 2, 2))
+        la, lb = [], []
+        for index in range(len(ga) - 1):
+            size = ga[index].shape[-2:]
+            la.append(ga[index] - torch.nn.functional.interpolate(ga[index + 1], size=size,
+                                                                    mode='bilinear', align_corners=False))
+            lb.append(gb[index] - torch.nn.functional.interpolate(gb[index + 1], size=size,
+                                                                    mode='bilinear', align_corners=False))
+        blended = ga[-1] * (1.0 - gm[-1]) + gb[-1] * gm[-1]
+        for index in range(len(la) - 1, -1, -1):
+            blended = torch.nn.functional.interpolate(blended, size=la[index].shape[-2:],
+                                                       mode='bilinear', align_corners=False)
+            blended = blended + la[index] * (1.0 - gm[index]) + lb[index] * gm[index]
+        return blended.squeeze(0).permute(1, 2, 0).clamp(0, 255).to(torch.uint8).cpu().numpy()
+    except Exception:
+        return None
 
 
 def transform_points(points: np.ndarray, matrix: np.ndarray) -> np.ndarray:

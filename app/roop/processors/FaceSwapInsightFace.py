@@ -8,7 +8,8 @@ import onnx
 import onnxruntime
 
 from roop.typing import Face, Frame
-from roop.utilities import resolve_relative_path, conditional_download
+from roop.utilities import (resolve_relative_path, conditional_download,
+                            CudaOrtIOBinding, cuda_warp_affine)
 from roop import session_pool
 from roop.precision_policy import providers_for
 
@@ -533,6 +534,10 @@ class FaceSwapInsightFace():
         self._model_arg = None        # onnx path or serialized bytes handed to ORT
         self._trt_disabled = False    # set once we fall back off TensorRT for this model
         self._batch_unsupported = False   # set once RunBatch/RunBatchMulti fail for this model
+        # Session id -> persistent CUDA input/output allocations.  A pool owns
+        # independent TensorRT contexts, therefore each session needs its own
+        # binding and must never borrow another session's output pointer.
+        self._io_bindings = {}
         # Contract consumed by ProcessMgr — defaults match inswapper_128.
         self.model_output_size = 128
         self.model_mean = [0.0, 0.0, 0.0]
@@ -901,6 +906,7 @@ class FaceSwapInsightFace():
             return onnxruntime.InferenceSession(
                 self._model_arg, get_onnx_session_options(), providers=providers)
         self.model_swap_insightface = _build()
+        self._io_bindings.clear()
         if self.pool is not None:
             old_pool = self.pool
             self.pool = None
@@ -999,18 +1005,33 @@ class FaceSwapInsightFace():
         that a batch-shape problem, not a real TRT failure, forced onto them.
         """
         is_batch1 = feed[self.image_input_name].shape[0] <= 1
+        def _run(session):
+            # IO binding is intentionally tried inside the session lease.  This
+            # keeps the preallocated CUDA buffers associated with the exact ORT
+            # / TensorRT execution context that owns the call.
+            if os.environ.get('ROOP_ORT_IO_BINDING', '1') != '0':
+                key = id(session)
+                binding = self._io_bindings.get(key)
+                if binding is None:
+                    binding = CudaOrtIOBinding(
+                        session, int(getattr(roop.globals, 'cuda_device_id', 0) or 0))
+                    self._io_bindings[key] = binding
+                bound = binding.run(feed)
+                if bound is not None:
+                    return bound
+            return session.run(None, feed)
         try:
             if self.pool is not None:
                 with self.pool.lease() as sess:
-                    return sess.run(None, feed)
-            return self.model_swap_insightface.run(None, feed)
+                    return _run(sess)
+            return _run(self.model_swap_insightface)
         except Exception:
             if not is_batch1 or not self._rebuild_without_trt():
                 raise
             if self.pool is not None:
                 with self.pool.lease() as sess:
-                    return sess.run(None, feed)
-            return self.model_swap_insightface.run(None, feed)
+                    return _run(sess)
+            return _run(self.model_swap_insightface)
 
     # ── RealSwap: two nets, one crop ─────────────────────────────────────────
 
@@ -1070,8 +1091,17 @@ class FaceSwapInsightFace():
         """
         img = np.ascontiguousarray(np.asarray(chw).transpose(1, 2, 0))
         c_min, c_max = float(np.min(chw)), float(np.max(chw))
-        out = cv2.warpAffine(img, M, (size, size), flags=cv2.INTER_LANCZOS4,
-                             borderMode=cv2.BORDER_REPLICATE)
+        # CUDA's bicubic sampler is the closest hardware path to the existing
+        # high-detail LANCZOS4 contract.  It avoids a CPU-bound 256x256 warp on
+        # every RealSwap secondary crop; set ROOP_GPU_AFFINE=0 for an exact
+        # OpenCV/LANCZOS comparison while diagnosing quality.
+        out = None
+        if os.environ.get('ROOP_GPU_AFFINE', '1') != '0':
+            out = cuda_warp_affine(img, M, (size, size), border_mode='replicate',
+                                   interpolation='bicubic')
+        if out is None:
+            out = cv2.warpAffine(img, M, (size, size), flags=cv2.INTER_LANCZOS4,
+                                 borderMode=cv2.BORDER_REPLICATE)
         if c_min < c_max:
             np.clip(out, c_min, c_max, out=out)
         return np.ascontiguousarray(out.transpose(2, 0, 1))
@@ -1946,6 +1976,7 @@ class FaceSwapInsightFace():
         if self.pool is not None:
             self.pool.release()
             self.pool = None
+        self._io_bindings.clear()
         del self.model_swap_insightface
         self.model_swap_insightface = None
         self.emap = None
