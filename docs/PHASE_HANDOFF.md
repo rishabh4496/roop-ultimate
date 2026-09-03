@@ -1,3 +1,123 @@
+# Handoff - shape-profile A/B CLOSED as NO RESULT, and the decode stall it found (2026-09-03, later)
+
+Device: physical RTX 4070, driver 616.56, TRT 10.9.0.34, ORT 1.23.2,
+i9-14900K, 31.7 GB RAM. Commit `d542608`. Suite 1989 -> **1993 green**, 1
+skipped (4 new tests). The A/B below is finished; the section under this one
+describes the paused state it resumed from.
+
+## The A/B: NO RESULT. Do not quote the -2.4%.
+
+    profile=OFF   n=2  mean 7.84  min 7.29  max 8.39   spread 14.0%
+    profile=ON    n=2  mean 7.65  min 7.52  max 7.79   spread  3.5%
+    profile ON vs OFF: -2.4%
+
+    null control  n=2       5.48 / 7.68              spread 33.4%
+
+**The null control spread is 33.4%. The measured effect is 2.4%.** The rig
+cannot resolve it, so the sign is not evidence and the feature is NOT being
+changed on it. `ROOP_TRT_SHAPE_PROFILE` stays at its default of 1.
+
+The face-count guard passed -- (900,903), (901,904), (902,904) across all six
+arms -- so no arm gained speed by finding fewer faces. That is the one thing
+this run establishes cleanly.
+
+Position accounts for much of the spread: `null_0` is the first 600-frame arm
+of the process at 5.48 while every later arm sits at 7.29-8.39. Excluding it,
+five arms spread 14%. Either figure is many times the effect. Resolving 2.4%
+here would need roughly 25 arms per side at ~3.5 min each -- about three hours
+of rendering for a number with no mechanism arguing it should be nonzero.
+
+**Recommended: close it as unresolvable rather than fund that.** The profile's
+real cost is not throughput, it is that each profiled model gets its own engine
+cache namespace (see the 886 MB orphaning in the section below); if it is ever
+removed, remove it for that reason, not for -2.4%.
+
+## What the A/B actually found: decode ran at 2.0 fps
+
+The first attempt was stopped after four arms because the null control came
+back at **0.96 fps** against this fixture's ~12.9 fps baseline. The stage table
+said why, and it was not the treatment:
+
+    decode         306.5s  28.3%  510.87 ms/call
+    track_decode   297.0s  27.4%  494.98 ms/call
+    read_wait  87466 ms on one chunk, against 14.98s of processing at 13.0 FPS
+
+The swap pipeline was running at its normal 13.0 FPS and starving.
+
+**Root cause.** `PinnedBufferPool.acquire()` defaulted to `timeout=0.5`. A
+buffer only returns through `release()`, and nothing in the codebase calls it:
+`roop/nvdec_reader.py` is the pool's only consumer and its decoded frames
+escape to ProcessMgr. So the pool is permanently empty after its first
+`capacity` acquires, and every acquire past that point waited the full half
+second for a refill that could not arrive -- then allocated a fresh buffer
+anyway.
+
+`1 / 0.5s = 2.0 fps`, and that is what it measured. Eliminated in order:
+
+    raw disk read                        1815 MB/s
+    plain cv2                             760 fps
+    ffmpeg -hwaccel cuda from a shell     ~900 fps  (correct byte count)
+    the app's own NVDEC reader            2.0 fps   <- the defect
+    the same reader, after the fix        468 fps
+
+End to end, `decode_fps` went **1.96 -> 134.5-158.7**, and `decode` and
+`track_decode` -- previously the two largest stages at 55% combined -- dropped
+out of the top seven entirely.
+
+**Why nothing caught it.** The frames were CORRECT, only late. rc stayed 0, the
+swap audit stayed at 100%, output integrity would have passed, and every stage
+was individually healthy. The stall is in the producer, so it surfaced only as
+`read_wait` -- a field no gate reads. The suite was green through all of it
+because no test asserted that an exhausted pool does not stall.
+`tests/test_buffer_pool_acquire.py` now does, and was verified to FAIL on the
+pre-fix code (4.9s vs 0.29s).
+
+## THE RULE THIS ADDS: a tight null control can mean a blind one
+
+The pre-fix null control read **0.96 / 0.96, spread 0.0%** -- by a wide margin
+the quietest null this project has ever recorded, on a machine documented at
+4-8%. It was not quiet. Both arms were pinned behind a constant 0.5 s-per-frame
+stall that dominated everything downstream of it, so the rig looked
+exquisitely repeatable *and could not have detected any change to the stage
+under test*. The same fixture, once decode was fixed, spreads 33.4%.
+
+A null control establishes that a rig is repeatable. It does NOT establish that
+the rig is SENSITIVE to the thing being varied. When a null comes back far
+tighter than the machine's known noise, treat it as a signal that something
+constant is dominating the measurement -- not as licence to believe a small
+delta.
+
+## Second harness defect, fixed in the same commit
+
+`tests/ab_shape_profile.py` read `fps` / `faces_swapped` / `faces_seen` at the
+top level of the arm JSON, while `baseline_controlled.py` nests them under
+`run`. Every arm printed `0.00 fps  swapped ?/?`; the zero mean tripped the
+delta guard (`if off and on and st.mean(off)`) so **no result would have
+printed at all**; and the face-count guard degraded to `[(None, None)]` -- the
+check meant to catch an arm that got faster by finding fewer faces. Exit code 0
+throughout. Fixed via a `metric()` helper that reads `run` first.
+
+The module docstring's claim that `retinaface_r50` is the only profiled model
+is also corrected: the engine cache written by a real render shows three, as
+the previous handoff recorded.
+
+## NEXT
+
+1. **`lighting` is now the second-largest stage** -- 87.9-100.3 s, ~19% of
+   frame time, 32.6-37.1 ms/call at ~4.5 calls per frame. It was invisible
+   underneath decode. Nothing is claimed about it yet; it is simply the largest
+   thing left after the swap itself, and it has never been profiled.
+2. **Re-baseline the locked fixture.** Every end-to-end number on this device
+   predates the decode fix. The ~12.9 fps baseline in `RECODE_STATUS.md` was
+   measured when the stall was present, so it is not the ceiling either.
+3. **Nothing here is measured on the 3060**, where the same stall was present
+   and host RAM is the constrained resource -- the fix removes a per-frame
+   pinned allocation, so the effect there may differ in kind, not just size.
+4. Inherited and untouched: Phase 3's RSS gate still fails on the 3060 at
+   3.73 GB; interacting faces remains characterized but unsolved.
+
+---
+
 # Handoff - execution providers (2026-09-03, PAUSED mid-benchmark)
 
 Device: physical RTX 4070, driver 616.56, TRT 10.9.0.34, ORT 1.23.2,
