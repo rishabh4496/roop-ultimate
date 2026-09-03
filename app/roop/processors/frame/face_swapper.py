@@ -7,9 +7,10 @@ Features:
    - Segments foreground occlusions (hands, hair, objects, food).
    - Generates effective blend mask: Mask_blend = Mask_face * (1.0 - Mask_occlusion).
 2. Temporal Mask Smoothing (Optical Flow / EMA):
-   - Dense optical flow (DIS with Farneback fallback).
+   - NVIDIA Optical Flow hardware when available, with CUDA Farneback and
+     CPU DIS fallbacks.
    - Warps Mask_{t-1} to frame t and applies EMA:
-     Mask_t = 0.8 * Mask_t + 0.2 * WarpedMask_{t-1}.
+     Mask_t = 0.85 * Mask_t + 0.15 * WarpedMask_{t-1}.
 3. Eye Aspect Ratio (EAR) Blink Detection & Multi-Scale Eyelid Blending:
    - Evaluates EAR for both eyes: EAR = (||p2-p6|| + ||p3-p5||) / (2 * ||p1-p4||).
    - If EAR < 0.21 (blink/eye closing):
@@ -68,7 +69,7 @@ THREAD_LOCK_SWAPPER = threading.Lock()
 THREAD_LOCK_OCCLUDER = threading.Lock()
 
 OCCLUSION_INPUT_SIZE = 256
-DEFAULT_EMA_ALPHA = 0.8  # Mask_t = 0.8 * Mask_t + 0.2 * WarpedMask_{t-1}
+DEFAULT_EMA_ALPHA = 0.85  # Mask_t = 0.85 * Mask_t + 0.15 * WarpedMask_{t-1}
 
 # The values below intentionally keep the extra CPU work small: two 128 px
 # guided decompositions and a three-level image pyramid are safe on both the
@@ -107,38 +108,226 @@ class TemporalMaskSmoother:
     and boundary chatter around moving foreground objects (hands, food, microphones).
 
     Formula:
-        Mask_t = 0.8 * Mask_t + 0.2 * WarpedMask_{t-1}
+        Mask_t = 0.85 * Mask_t + 0.15 * WarpedMask_{t-1}
+
+    Optical-flow priority is deliberately fixed: NVIDIA Optical Flow hardware
+    (NVOF) first, CUDA Farneback second, then CPU DIS FAST.  NVOF uses the
+    GPU's dedicated optical-flow engine; it does not schedule the flow solve
+    on CUDA compute cores.  The single resulting vector field is reused to
+    remap both the previous face mask and its seam boundary.
     """
 
     FLOW_SIZE = 128
     RESET_RESIDUAL = 0.50
+    FLOW_TIERS = ('nvof', 'cuda_farneback', 'dis')
 
-    def __init__(self, alpha: float = DEFAULT_EMA_ALPHA):
+    def __init__(self, alpha: float = DEFAULT_EMA_ALPHA,
+                 flow_tier: str = 'auto'):
         self.alpha = float(alpha)
+        if flow_tier not in ('auto',) + self.FLOW_TIERS:
+            raise ValueError("flow_tier must be 'auto', 'nvof', "
+                             "'cuda_farneback', or 'dis'")
+        # A forced tier is principally useful for deterministic self-tests.
+        # Production uses auto and always retains the fallback hierarchy.
+        self.flow_tier = flow_tier
+        self.last_flow_tier: Optional[str] = None
         self._states: Dict[Any, Dict[str, Any]] = {}
         self._lock = threading.RLock()
         self._tls = threading.local()
 
-    def _flow_engine(self):
+    @staticmethod
+    def _cuda_available() -> bool:
+        """Return whether this OpenCV build can address a CUDA device."""
+        try:
+            return (hasattr(cv2, 'cuda') and
+                    cv2.cuda.getCudaEnabledDeviceCount() > 0)
+        except (AttributeError, cv2.error):
+            return False
+
+    @staticmethod
+    def _flow_is_valid(flow: Any) -> bool:
+        return (isinstance(flow, np.ndarray) and flow.ndim == 3 and
+                flow.shape[2] == 2 and flow.size > 0 and
+                np.isfinite(flow).all())
+
+    @staticmethod
+    def _nvof_class() -> Optional[Any]:
+        """Find either spelling used by CUDA-enabled OpenCV Python wheels."""
+        cuda = getattr(cv2, 'cuda', None)
+        return (getattr(cuda, 'NvidiaOpticalFlow_2_0', None) or
+                getattr(cv2, 'cuda_NvidiaOpticalFlow_2_0', None))
+
+    @staticmethod
+    def _nvof_constant(nvof_class: Any, name: str, default: int) -> int:
+        """Read a binding-specific NVOF enum without assuming its namespace."""
+        cuda = getattr(cv2, 'cuda', None)
+        return getattr(nvof_class, name,
+                       getattr(cuda, name, getattr(
+                           cv2, 'cuda_NvidiaOpticalFlow_2_0_' + name,
+                           getattr(cv2, name, default))))
+
+    def _nvof_engine(self, shape: Tuple[int, int]) -> Optional[Any]:
+        """Create one NVOF context per worker and input resolution.
+
+        NVOF contexts own device buffers, so sharing one between parallel frame
+        workers risks both cross-track temporal hints and unsafe CUDA access.
+        """
+        if not self._cuda_available():
+            return None
+        nvof_class = self._nvof_class()
+        if nvof_class is None:
+            return None
+        key = (int(shape[1]), int(shape[0]))  # OpenCV Size is (width, height)
+        engines = getattr(self._tls, 'nvof', None)
+        if engines is None:
+            engines = {}
+            self._tls.nvof = engines
+        if key not in engines:
+            try:
+                perf = self._nvof_constant(
+                    nvof_class, 'NV_OF_PERF_LEVEL_FAST', 20)
+                output_grid = self._nvof_constant(
+                    nvof_class, 'NV_OF_OUTPUT_VECTOR_GRID_SIZE_1', 1)
+                hint_grid = self._nvof_constant(
+                    nvof_class, 'NV_OF_HINT_VECTOR_GRID_SIZE_UNDEFINED', 0)
+                create = nvof_class.create
+                try:
+                    engines[key] = create(key, perf, output_grid, hint_grid,
+                                          False, False, False, 0)
+                except TypeError:
+                    # Some Python bindings expose only the default arguments.
+                    engines[key] = create(key)
+            except (AttributeError, cv2.error, TypeError):
+                engines[key] = False
+        return engines[key] or None
+
+    @staticmethod
+    def _gpu_mat() -> Any:
+        gpu_mat_class = getattr(cv2, 'cuda_GpuMat', None)
+        if gpu_mat_class is None:
+            gpu_mat_class = getattr(getattr(cv2, 'cuda', None), 'GpuMat', None)
+        return gpu_mat_class()
+
+    def _flow_nvof(self, cur_small: np.ndarray,
+                   prev_small: np.ndarray) -> Optional[np.ndarray]:
+        """Calculate backward vectors on the dedicated NVIDIA OFA engine."""
+        engine = self._nvof_engine(cur_small.shape[:2])
+        if engine is None:
+            return None
+        try:
+            cur_gpu = self._gpu_mat()
+            prev_gpu = self._gpu_mat()
+            cur_gpu.upload(cur_small)
+            prev_gpu.upload(prev_small)
+            raw_flow = engine.calc(cur_gpu, prev_gpu, None)
+
+            # NVOF returns fixed-point CV_16FC2 vectors.  Convert on-device
+            # before the one required download for CPU-side mask remapping.
+            float_gpu = self._gpu_mat()
+            converted = engine.convertToFloat(raw_flow, float_gpu)
+            if converted is None:
+                converted = float_gpu
+            flow = converted.download()
+            return np.asarray(flow, dtype=np.float32)
+        except (AttributeError, cv2.error, TypeError):
+            return None
+
+    def _cuda_farneback_engine(self) -> Optional[Any]:
+        if not self._cuda_available():
+            return None
+        engine = getattr(self._tls, 'cuda_farneback', None)
+        if engine is None:
+            try:
+                cuda = getattr(cv2, 'cuda', None)
+                klass = (getattr(cv2, 'cuda_FarnebackOpticalFlow', None) or
+                         getattr(cuda, 'FarnebackOpticalFlow', None))
+                engine = klass.create(3, 0.5, False, 15, 3, 5, 1.2, 0)
+            except (AttributeError, cv2.error, TypeError):
+                engine = False
+            self._tls.cuda_farneback = engine
+        return engine or None
+
+    def _flow_cuda_farneback(self, cur_small: np.ndarray,
+                             prev_small: np.ndarray) -> Optional[np.ndarray]:
+        """CUDA-core fallback for builds without the Optical Flow SDK module."""
+        if not self._cuda_available():
+            return None
+        try:
+            cur_gpu = self._gpu_mat()
+            prev_gpu = self._gpu_mat()
+            cur_gpu.upload(cur_small)
+            prev_gpu.upload(prev_small)
+
+            # Prefer the direct binding where a wheel exposes it.  Other
+            # CUDA-enabled OpenCV builds expose the equivalent algorithm class
+            # below instead.
+            direct = getattr(getattr(cv2, 'cuda', None),
+                             'calcOpticalFlowFarneback', None)
+            if direct is not None:
+                flow_gpu = direct(cur_gpu, prev_gpu, None, 0.5, 3, 15, 3,
+                                  5, 1.2, 0)
+                return np.asarray(flow_gpu.download(), dtype=np.float32)
+
+            engine = self._cuda_farneback_engine()
+            if engine is None:
+                return None
+            flow_gpu = engine.calc(cur_gpu, prev_gpu, None)
+            return np.asarray(flow_gpu.download(), dtype=np.float32)
+        except (AttributeError, cv2.error, TypeError):
+            return None
+
+    def _flow_dis_engine(self) -> Optional[Any]:
+        """Return a thread-local CPU DIS FAST instance."""
         engine = getattr(self._tls, 'dis', None)
         if engine is None:
             try:
-                engine = cv2.DISOpticalFlow_create(cv2.DISOPTICAL_FLOW_PRESET_ULTRAFAST)
+                engine = cv2.DISOpticalFlow_create(cv2.DISOPTICAL_FLOW_PRESET_FAST)
             except (AttributeError, cv2.error):
                 engine = False
             self._tls.dis = engine
         return engine or None
 
     def _dense_flow(self, cur_small: np.ndarray, prev_small: np.ndarray) -> np.ndarray:
-        """Compute dense backward motion vectors between frame t and frame t-1."""
-        engine = self._flow_engine()
-        if engine is not None:
-            try:
-                return engine.calc(cur_small, prev_small, None)
-            except Exception:
-                pass
-        return cv2.calcOpticalFlowFarneback(
-            cur_small, prev_small, None, 0.5, 3, 15, 3, 5, 1.2, 0)
+        """Compute current-to-previous vectors using the configured hierarchy."""
+        candidates = (
+            ('nvof', self._flow_nvof),
+            ('cuda_farneback', self._flow_cuda_farneback),
+        )
+        for tier, calculate in candidates:
+            if self.flow_tier not in ('auto', tier):
+                continue
+            flow = calculate(cur_small, prev_small)
+            if self._flow_is_valid(flow):
+                self.last_flow_tier = tier
+                return flow
+
+        if self.flow_tier in ('auto', 'dis'):
+            engine = self._flow_dis_engine()
+            if engine is not None:
+                try:
+                    flow = engine.calc(cur_small, prev_small, None)
+                    if self._flow_is_valid(flow):
+                        self.last_flow_tier = 'dis'
+                        return flow
+                except cv2.error:
+                    pass
+
+        # A build without DIS cannot estimate tier-3 motion.  Keeping the
+        # mask fixed is safer than introducing an undeclared fourth tier that
+        # could smear a cut or consume unexpected CPU time.
+        self.last_flow_tier = 'dis_unavailable'
+        return np.zeros(cur_small.shape + (2,), dtype=np.float32)
+
+    def calculate_motion_vectors(self, current_crop: np.ndarray,
+                                 previous_crop: np.ndarray) -> np.ndarray:
+        """Return finite backward motion vectors for two crop-sized frames.
+
+        The vectors are solved at ``FLOW_SIZE``.  This public, side-effect-free
+        method exists for diagnostics and the NVOF pipeline self-test.
+        """
+        cur_small = self._to_gray_small(current_crop, self.FLOW_SIZE)
+        prev_small = self._to_gray_small(previous_crop, self.FLOW_SIZE)
+        return self._dense_flow(cur_small, prev_small)
 
     def _warp(self, prev_mask: np.ndarray, flow: np.ndarray, shape: Tuple[int, int]) -> np.ndarray:
         """Warp previous mask using dense optical flow field."""
@@ -156,6 +345,13 @@ class TemporalMaskSmoother:
         map_y = grid_y + scaled_flow[..., 1]
         return cv2.remap(prev_mask, map_x, map_y, cv2.INTER_LINEAR,
                          borderMode=cv2.BORDER_REPLICATE)
+
+    @staticmethod
+    def _seam_boundary(mask: np.ndarray) -> np.ndarray:
+        """Represent the soft face-mask rim that must follow temporal motion."""
+        source = np.clip(np.asarray(mask, dtype=np.float32), 0.0, 1.0)
+        kernel = np.ones((3, 3), dtype=np.uint8)
+        return cv2.morphologyEx(source, cv2.MORPH_GRADIENT, kernel)
 
     @staticmethod
     def _to_gray_small(crop: np.ndarray, size: int = 128) -> np.ndarray:
@@ -191,19 +387,27 @@ class TemporalMaskSmoother:
 
                 flow = self._dense_flow(gray_small, prev_gray)
                 warped = self._warp(prev_mask, flow, cur_mask.shape)
+                # Reuse the same hardware/compute flow: boundary motion is
+                # never estimated separately, so NVOF adds no second pass.
+                warped_seam = self._warp(state['seam'], flow, cur_mask.shape)
 
                 # Reset on large flow residual (scene cut or sudden teleportation)
                 residual = float(np.mean(np.abs(warped - cur_mask)))
                 if residual <= self.RESET_RESIDUAL:
                     out_mask = np.clip(eff_alpha * cur_mask + (1.0 - eff_alpha) * warped, 0.0, 1.0)
+                    out_seam = np.clip(eff_alpha * self._seam_boundary(cur_mask) +
+                                       (1.0 - eff_alpha) * warped_seam, 0.0, 1.0)
                 else:
                     out_mask = cur_mask
+                    out_seam = self._seam_boundary(cur_mask)
             else:
                 out_mask = cur_mask
+                out_seam = self._seam_boundary(cur_mask)
 
             self._states[track_id] = {
                 'mask': out_mask.copy(),
-                'gray': gray_small
+                'gray': gray_small,
+                'seam': out_seam.copy(),
             }
             return out_mask
 
