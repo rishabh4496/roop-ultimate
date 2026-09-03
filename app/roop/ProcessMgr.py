@@ -994,6 +994,35 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
         if options.swap_mode == "all_female" or options.swap_mode == "all_male":
             roop.globals.g_desired_face_analysis.append("genderage")
 
+        # ── Foreground-occluder masking ──────────────────────────────────────
+        # M_composite = M_face_blend * (1 - M_occluder), and appending IS that
+        # product: every mask processor blends the swapped crop back toward the
+        # untouched plate wherever its mask says "not face", so running them in
+        # sequence multiplies the keeps. See roop/occlusion_mask.py for the
+        # algebra and for why the occluder must go LAST.
+        #
+        # This has to happen HERE rather than in `get_processing_plugins`,
+        # because the mask stage is what protects the SWAP and only ProcessMgr
+        # knows the run actually has one — the preview mask editor builds a
+        # mask-only chain with no swap to protect, and injecting there would
+        # have made it fight itself.
+        #
+        # It was previously written and never called from anywhere: the shipped
+        # default is mask_engine RealityUX / mask_engine_2 None, so on a default
+        # render nothing in the chain had been trained to recognise a hand, a mug
+        # or a microphone in front of a face.
+        try:
+            from roop.occlusion_mask import inject_occlusion_engine
+            _updated, _note = inject_occlusion_engine(
+                options.processors,
+                enabled=False if getattr(options, 'disable_occlusion_injection',
+                                         False) else None)
+            if _updated is not options.processors:
+                options.processors = _updated
+                print(f'[Occlusion] {_note}', flush=True)
+        except Exception as _exc:
+            print(f'[Occlusion] occluder injection unavailable: {_exc}', flush=True)
+
         for p in self.processors:
             newp = next((x for x in options.processors.keys() if x == p.processorname), None)
             if newp is None:
@@ -3666,6 +3695,33 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                             faces.append(f)
                             _audit_hit('recovered via ROI redetect (partial miss)')
             self._tls.retry_detected_faces = list(faces) if faces else None
+            if _tfaces is None and self._dispatch_face_tracker is not None:
+                # Detector order commonly follows x-coordinate.  Once two faces
+                # cross, that order swaps and ``all_input`` would otherwise paste
+                # each source onto the other person.  Hungarian association keeps
+                # IDs attached to ArcFace identity and Kalman geometry instead.
+                #
+                # PERSISTENCE THROUGH OCCLUSION. This block now runs BEFORE the
+                # "no face at all" return below rather than after it, and that
+                # move is the fix: that return is where the swap blinks off when
+                # a hand crosses the face, and one frame of detector silence is
+                # weaker evidence than a track that was confidently detected a
+                # frame ago. `update` is still fed ONLY the real detections --
+                # feeding a coasted face back in would let a prediction re-seed
+                # itself and drift indefinitely -- and `coast` then emits nothing
+                # unless the track is established, its prediction is still on
+                # screen, and it does not land on another face. See roop/tracker.py.
+                faces = self._dispatch_face_tracker.update(faces, frame_idx)
+                _coasted = self._dispatch_face_tracker.coast(
+                    frame_idx, frame_shape=getattr(frame, 'shape', None),
+                    occupied=faces)
+                if _coasted:
+                    faces = list(faces) + list(_coasted)
+                    _audit_hit('recovered on Kalman prediction (occluded)',
+                               len(_coasted))
+                faces.sort(key=lambda detected: int(
+                    detected.get('_track_id', 2 ** 31 - 1)
+                    if isinstance(detected, dict) else 2 ** 31 - 1))
             if not faces:
                 # Counted, because a frame where the detector found NOTHING is
                 # the other half of the flicker and is invisible from the
@@ -3675,15 +3731,6 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                 _audit_hit('frames with no face detected at all')
                 audit_detect_miss(getattr(roop.globals, 'face_detector_threshold', 0.5))
                 return num_faces_found, frame
-            if _tfaces is None:
-                # Detector order commonly follows x-coordinate.  Once two faces
-                # cross, that order swaps and ``all_input`` would otherwise paste
-                # each source onto the other person.  Hungarian association keeps
-                # IDs attached to ArcFace identity and Kalman geometry instead.
-                faces = self._dispatch_face_tracker.update(faces, frame_idx)
-                faces.sort(key=lambda detected: int(
-                    detected.get('_track_id', 2 ** 31 - 1)
-                    if isinstance(detected, dict) else 2 ** 31 - 1))
             self.last_found_bboxes = np.array([f.bbox for f in faces])   # cache for next frame
             if os.environ.get('ROOP_DEBUG_FACELIST') == '1' and frame_idx is not None:
                 bar_write(f"[FaceList] f={frame_idx} n={len(faces)} " +

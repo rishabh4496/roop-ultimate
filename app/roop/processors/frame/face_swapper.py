@@ -41,7 +41,7 @@ Features:
 import os
 import sys
 import threading
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 import cv2
 import numpy as np
@@ -59,6 +59,19 @@ try:
         profile_aware_umeyama_alignment,
         compute_composite_inverse,
         compute_composite_forward,
+    )
+    # One tracker, shared with the real render path (see the Tracklet
+    # persistence section below) rather than a second copy that can drift.
+    from roop.tracker import (
+        FaceTracker,
+        MAX_COAST_FRAMES,
+        MAX_LOST_FRAMES,
+        STATE_PARTIAL,
+        STATE_VISIBLE,
+        _face_field as _field,
+        landmark_visibility,
+        occlusion_state_for,
+        symmetry_inpaint_landmarks,
     )
 except ImportError:
     try:
@@ -89,6 +102,20 @@ except ImportError:
             compute_composite_forward,
         )
         from utilities import transform_points
+    except ImportError:
+        pass
+    try:
+        from tracker import (
+            FaceTracker,
+            MAX_COAST_FRAMES,
+            MAX_LOST_FRAMES,
+            STATE_PARTIAL,
+            STATE_VISIBLE,
+            _face_field as _field,
+            landmark_visibility,
+            occlusion_state_for,
+            symmetry_inpaint_landmarks,
+        )
     except ImportError:
         pass
 
@@ -1161,7 +1188,18 @@ def smooth_temporal_mask(
 
 
 def clear_temporal_state(track_id: Optional[Any] = None) -> None:
+    """Drop per-clip temporal state: the mask history and the tracklets.
+
+    Both, not just the mask. A tracker carried across clips would coast the
+    previous clip's people into the first frames of the next one, which is the
+    same "swap painted on nothing" failure the coast guards exist to prevent --
+    just sourced from a stale run rather than a stale frame. The whole tracker
+    goes when no `track_id` is named; a named one only clears that mask history,
+    because a tracklet is not addressable by the smoother's key.
+    """
     _GLOBAL_SMOOTHER.reset(track_id)
+    if track_id is None:
+        _GLOBAL_TRACKER.reset()
 
 
 def guided_filter_decompose(
@@ -1704,6 +1742,81 @@ def inject_film_grain(
 # 6. Core Swap Pipeline
 # ==============================================================================
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Tracklet persistence
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# READ THIS BEFORE TREATING THIS MODULE AS THE RENDER PATH. It is not. In this
+# fork the video and image pipelines run through `roop.ProcessMgr`; the
+# `process_frame` / `process_video` entry points at the bottom of this file are
+# pass-throughs. What lives here is the reference implementation of the per-face
+# swap and the helper surface the tests exercise. The equivalent wiring in the
+# real path is:
+#
+#   persistence        ProcessMgr.swap_faces          -> FaceTracker.coast
+#                      procmgr_tracking._coast_track_gaps
+#   occluder mask      ProcessMgr.initialize          -> inject_occlusion_engine
+#   occlusion_state    procmgr_masking._stamp_occlusion_state
+#
+# Both consume the same `roop.tracker`, so there is one tracker and one set of
+# guards rather than two that can drift.
+
+_GLOBAL_TRACKER = FaceTracker(max_age=MAX_LOST_FRAMES, max_coast=MAX_COAST_FRAMES)
+
+
+def track_faces(detections: Sequence[Any], frame_index: Optional[int] = None,
+                frame_shape: Optional[Tuple[int, ...]] = None
+                ) -> Tuple[List[Any], List[Any]]:
+    """Associate this frame's detections and coast the ones that went missing.
+
+    Returns ``(faces, coasted)``. `faces` is every face the swap should run on,
+    real and predicted, each carrying `_track_id`; `coasted` is the predicted
+    subset, which also carries `_coasted`, `_coast_age` and `occlusion_state`.
+
+    Callers pass a face's `_track_id` to `swap_face(..., track_id=)` so the
+    temporal mask smoother keeps one history per person rather than one per
+    frame -- with the default `track_id=0` two people share a mask history and
+    each inherits the other's occlusion boundary.
+    """
+    return _GLOBAL_TRACKER.update_with_coasting(
+        detections, frame_index=frame_index, frame_shape=frame_shape)
+
+
+def _repair_occluded_landmarks(pts_crop: np.ndarray,
+                               occlusion_mask: Optional[np.ndarray],
+                               target_face: Any = None) -> Tuple[np.ndarray, str]:
+    """Symmetry-inpaint the landmarks the occluder mask says are hidden.
+
+    Returns ``(points, occlusion_state)``.  The points are returned untouched
+    whenever the repair is not justified -- nothing occluded, no usable mirror
+    map, too much yaw, or both halves of a pair hidden -- so a clear face is
+    bit-identical to the pre-change path.
+
+    `occlusion_state` is also stamped on `target_face` when one was supplied,
+    which is the flag the spec asks the swap pipeline to carry.
+    """
+    points = np.asarray(pts_crop, dtype=np.float32).reshape(-1, 2)
+    if occlusion_mask is None:
+        return points, STATE_VISIBLE
+    visible = landmark_visibility(points, occlusion_mask, threshold=0.5)
+    if visible.size != len(points):
+        return points, STATE_VISIBLE
+    coasted = bool(_field(target_face, '_coasted', False)) if target_face is not None else False
+    state = occlusion_state_for(visible, coasted=coasted)
+    if target_face is not None:
+        try:
+            target_face['occlusion_state'] = state
+            target_face['_occluded_landmark_frac'] = float(1.0 - visible.mean())
+        except (TypeError, AttributeError):
+            pass
+    if state != STATE_PARTIAL:
+        return points, state
+    repaired, filled = symmetry_inpaint_landmarks(
+        points, visible,
+        pose=_field(target_face, 'pose', None) if target_face is not None else None)
+    return (repaired if filled.any() else points), state
+
+
 def swap_face(
     source_face: Face,
     target_face: Face,
@@ -1816,6 +1929,21 @@ def swap_face(
         M = None
         T_final = None
 
+    # Step 1a: Foreground occluder, computed BEFORE the landmarks are consumed.
+    #
+    # It used to be computed at step 4, after the blink and inner-mouth
+    # retention had already run off the raw landmarks. That ordering is the bug
+    # this module is being asked to fix: when a hand covers an eye the detector
+    # does not report "this eye is hidden", it returns a guessed eye, and the
+    # blink logic then reads an eye-aspect ratio measured on a hallucination and
+    # pastes the target's eyelid through the hand. The occluder mask is the only
+    # thing here that knows which landmarks are behind something, so it has to
+    # exist before anything reads them.
+    #
+    # Nothing extra is computed: this is the same single call, moved.
+    face_mask = create_static_face_mask(crop_frame.shape[:2])
+    occlusion_mask = compute_occlusion_mask(crop_frame, face_mask=face_mask)
+
     # Step 1: Face Swapper ONNX inference
     swapper = get_face_swapper()
     embedding = getattr(source_face, 'embedding', None)
@@ -1860,12 +1988,18 @@ def swap_face(
             pts_crop = cv2.transform(pts_full.reshape(-1, 1, 2), M).reshape(-1, 2)
         else:
             pts_crop = pts_full - np.array([x1, y1], dtype=np.float32)
+        # Step 2a: repair landmarks the occluder says are hidden, by reflecting
+        # their partners across the nasal-bridge midline. `symmetry_inpaint_
+        # landmarks` refuses on strong yaw and where both halves are hidden, and
+        # returns the input untouched when nothing is occluded -- so the common
+        # frame is bit-identical to before and only an actually-occluded face
+        # is changed. See roop/tracker.py for the axis, the derived mirror map
+        # and every refusal condition.
+        pts_crop, occlusion_state = _repair_occluded_landmarks(
+            pts_crop, occlusion_mask, target_face)
         swapped_crop, _ = apply_facial_dynamics(crop_frame, swapped_crop, pts_crop)
         # Step 2b: LivePortrait Neural Gaze & Eye Direction Retargeting
         swapped_crop, _ = retarget_eye_gaze(swapped_crop, crop_frame, pts_crop)
-
-    # Step 3: Base face mask
-    face_mask = create_static_face_mask(crop_frame.shape[:2])
 
     # Step 3a: Skin-only LAB tone mapping plus guided-filter dermal recovery.
     # A loaded V2 FaceSet can expose its patch directly on the chosen source
@@ -1878,8 +2012,11 @@ def swap_face(
         crop_frame, swapped_crop, face_mask=face_mask,
         dermal_patch=resolve_dermal_patch(source_face), target_landmarks=crop_kps)
 
-    # Step 4: Occlusion Parsing Pipeline at 256x256
-    occlusion_mask = compute_occlusion_mask(crop_frame, face_mask=face_mask)
+    # Step 4: Foreground occluder subtraction.
+    #     M_composite = M_face_blend * (1.0 - M_occluder)
+    # The mask itself was computed at step 1a, before anything read the
+    # landmarks; this is where it is applied, so the hand or the mug stays in
+    # front of the swapped face instead of being painted over.
     blend_mask = apply_occlusion_blend(face_mask, occlusion_mask)
 
     # Step 4a: Match scene directionality and sensor texture before the final
@@ -1952,7 +2089,49 @@ def post_process() -> None:
 
 
 def process_frame(source_face: Face, reference_face: Face, temp_frame: Frame) -> Frame:
-    return swap_face(source_face, reference_face, temp_frame)
+    """Single-face path. Signature unchanged.
+
+    The only difference from before is that the face's own `_track_id` is passed
+    to the temporal mask smoother when the caller has been through
+    `track_faces`; without one it still falls back to 0, which is exactly the
+    previous behaviour.
+    """
+    track_id = _field(reference_face, '_track_id', 0)
+    return swap_face(source_face, reference_face, temp_frame,
+                     track_id=0 if track_id is None else track_id)
+
+
+def process_frame_tracked(source_faces: Any, detections: Sequence[Any],
+                          temp_frame: Frame,
+                          frame_index: Optional[int] = None) -> Frame:
+    """Multi-face path with tracklet persistence through occlusion.
+
+    `source_faces` is either one source face (applied to every target, the
+    single-source multi-face mode) or a sequence indexed by track id modulo its
+    length.  `detections` is this frame's raw detector output -- possibly empty,
+    which is the whole point: a frame where a hand hid the only face still
+    produces a swap, from the tracklet's Kalman prediction, for up to
+    MAX_COAST_FRAMES frames.
+
+    Faces are swapped in track-id order so that two people crossing cannot
+    exchange sources when the detector's left-to-right ordering flips.
+    """
+    faces, _coasted = track_faces(detections, frame_index=frame_index,
+                                  frame_shape=getattr(temp_frame, 'shape', None))
+    if not faces:
+        return temp_frame
+    ordered = sorted(faces, key=lambda f: int(_field(f, '_track_id', 0) or 0))
+    result = temp_frame
+    for face in ordered:
+        track_id = int(_field(face, '_track_id', 0) or 0)
+        if isinstance(source_faces, (list, tuple)) and source_faces:
+            source = source_faces[track_id % len(source_faces)]
+        else:
+            source = source_faces
+        if source is None:
+            continue
+        result = swap_face(source, face, result, track_id=track_id)
+    return result
 
 
 def process_frames(source_path: str, temp_frame_paths: List[str], update_progress: Optional[Any] = None) -> None:

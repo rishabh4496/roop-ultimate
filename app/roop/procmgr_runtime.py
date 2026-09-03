@@ -321,6 +321,33 @@ _INTERP_MAX_SCALE = float(os.environ.get('ROOP_INTERP_MAX_SCALE', '2.0'))
 _INTERP_COLLIDE_FRAC = float(os.environ.get('ROOP_INTERP_COLLIDE_FRAC', '0.35'))
 
 
+# ── Kalman coasting through occlusion ────────────────────────────────────────
+# Gap-fill INTERPOLATES between two real observations and is capped at
+# ROOP_TEMPORAL_GAP (10). It therefore covers nothing when the gap is longer
+# than that, when _bridgeable refuses the bridge, or past the last observation
+# of a track. Those are exactly the frames a hand, a mug or a microphone in
+# front of a face produces, and they are the frames the swap blinks off on.
+#
+# Coasting fills them from the Kalman prediction instead. It is deliberately
+# SHORTER than the track lifetime: how long a swap may ride a prediction and
+# how long a track stays available for re-association are different questions.
+# 15 frames is half a second at 30fps — long enough for the hand-across-face
+# case measured in the Phase 10 occlusion work, short enough that a
+# constant-velocity extrapolation has not yet diverged into fiction.
+#
+# ROOP_COAST_FRAMES=0 disables coasting and restores the previous output.
+_COAST_FRAMES = int(os.environ.get('ROOP_COAST_FRAMES', '15'))
+# How long a coasting tracklet stays alive for re-association. Only ever
+# consulted inside the per-track coasting pass, never by the whole-clip track
+# builder, which has its own STALE/Re-ID policy.
+_COAST_LOST_FRAMES = int(os.environ.get('ROOP_COAST_LOST_FRAMES', '30'))
+# A track has to have been SEEN this many times before its prediction is
+# allowed to carry a swap. A one-observation track is as likely to be a false
+# detection as a person, and coasting a false detection paints a face onto
+# whatever produced it.
+_COAST_MIN_HITS = int(os.environ.get('ROOP_COAST_MIN_HITS', '3'))
+
+
 # ── Track → source assignment gate ───────────────────────────────────────────
 # Binding a track to a source is a DURABLE decision: every face on that track,
 # for as long as it runs, is swapped with no further identity check beyond the

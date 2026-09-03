@@ -182,6 +182,13 @@ def main():
     # untouched plate and the fully-painted reference, and where it sits is
     # colour-independent.
     unmasked_options = ab.build_options(g, swap_model, None)
+    # ProcessMgr.initialize appends a foreground occluder to every swapping
+    # chain that has no occlusion-aware engine in it -- which is exactly this
+    # reference. Protecting the reference would protect the very object it
+    # exists to leave unprotected, and `protection` would collapse toward 0 for
+    # every engine while nothing had got worse. Opting out here keeps
+    # "nothing protects this object" true.
+    unmasked_options.disable_occlusion_injection = True
     src_fs = load_library_faceset(args.source)
     from roop.core import live_swap
 

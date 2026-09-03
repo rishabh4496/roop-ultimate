@@ -263,6 +263,67 @@ def _edge_blur_kernel(M, crop_shape, mask_shape, target_px=None):
         return 5
 
 
+def _stamp_occlusion_state(target_face, occluder_mask, M):
+    """Record what the occluder mask says about THIS face's landmarks.
+
+    Stamps three fields on the face and returns nothing:
+
+        occlusion_state          'visible' | 'partial'   (see roop.tracker)
+        _occluded_landmark_frac  share of landmarks behind the occluder
+        _landmarks_symmetric     landmarks repaired by bilateral symmetry, or
+                                 absent when the repair was refused
+
+    WHY THE REPAIR IS STAMPED RATHER THAN APPLIED.  By the time any mask engine
+    runs, alignment has already happened -- the crop this mask lives in was
+    built from the very landmarks in question. Overwriting them here would
+    change nothing about this frame's crop and would silently corrupt the track
+    geometry every later frame is smoothed against. The repaired set is
+    published for consumers that can use it (the hull, the mouth cut-out, a
+    later frame's stabiliser) and the measurement is published for everyone
+    else. `roop.tracker.symmetry_inpaint_landmarks` refuses on strong yaw and
+    when both halves are hidden, so an absent field means "not answerable",
+    never "no occlusion".
+
+    Failure here must never take a render down: this is a diagnostic layer over
+    a mask that is already correct without it.
+    """
+    if target_face is None or M is None or occluder_mask is None:
+        return
+    try:
+        from roop import tracker as _tracker
+
+        landmarks = getattr(target_face, 'landmark_2d_106', None)
+        if landmarks is None:
+            landmarks = getattr(target_face, 'kps', None)
+        if landmarks is None:
+            return
+        points = np.asarray(landmarks, dtype=np.float32).reshape(-1, 2)
+        # Frame space -> this crop's space, the coordinates img_mask is in.
+        affine = np.asarray(M, dtype=np.float32).reshape(2, 3)
+        in_crop = points @ affine[:, :2].T + affine[:, 2]
+
+        visible = _tracker.landmark_visibility(in_crop, occluder_mask,
+                                               threshold=0.5)
+        if visible.size != len(points):
+            return
+        coasted = bool(target_face.get('_coasted')
+                       if isinstance(target_face, dict) else False)
+        state = _tracker.occlusion_state_for(visible, coasted=coasted)
+        target_face['occlusion_state'] = state
+        target_face['_occluded_landmark_frac'] = float(1.0 - visible.mean())
+        if state != _tracker.STATE_PARTIAL:
+            return
+        kps = getattr(target_face, 'kps', None)
+        repaired, filled = _tracker.symmetry_inpaint_landmarks(
+            points, visible, kps=kps,
+            pose=getattr(target_face, 'pose', None))
+        if filled.any():
+            target_face['_landmarks_symmetric'] = repaired
+            target_face['_landmarks_symmetric_filled'] = filled
+    except Exception:
+        pass
+
+
 def landmark_hull(landmarks_2d, kps=None):
     """Convex hull of the 106-pt face landmarks, plus a forehead extension.
 
@@ -1114,6 +1175,21 @@ class MaskingMixin:
             k = _edge_blur_kernel(M, frame.shape, img_mask.shape)
             img_mask = (cv2.GaussianBlur(binary_mask, (k, k), 0) if k > 1
                         else binary_mask)
+
+            # ── occlusion_state, read off the occluder's own verdict ──────────
+            # This is the ONLY engine in the chain trained to find a foreign
+            # object in front of a face, and its mask is already computed, in
+            # this crop's coordinates, on this frame. Sampling ~106 points out of
+            # it costs a warpAffine on a (106, 2) array -- there is no second
+            # inference and no extra model.
+            #
+            # It is confined to the occluder family on purpose. A face-shape
+            # masker (XSeg, FaceParser, RealityUX) is HIGH on everything that is
+            # not face INCLUDING the background, so every landmark on the jaw or
+            # hairline would read as occluded and the state would be "partial"
+            # on essentially every frame -- a flag that is always on carries no
+            # information.
+            _stamp_occlusion_state(target_face, img_mask, M)
 
         if p_name in dense_maskers and kps is not None and M is not None:
             img_mask = _recover_undersized_mask(img_mask, kps, M)

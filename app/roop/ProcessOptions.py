@@ -37,3 +37,13 @@ class ProcessOptions:
         # One Euro temporal smoothing of the mask edge (anti-flicker)
         self.stabilize_mask = stabilize_mask
         self.stabilize_mask_strength = stabilize_mask_strength
+        # Opt OUT of the foreground occluder ProcessMgr.initialize otherwise
+        # appends to every swapping chain (see roop/occlusion_mask.py).
+        #
+        # This is not a user setting -- `enable_occlusion_mask` is. It exists
+        # for measurement: `tests/occlusion_ground_truth.py` grades a protected
+        # arm against a deliberately UNPROTECTED reference built with no mask
+        # engine at all, and injecting an occluder into that reference would
+        # protect the thing the reference exists to leave unprotected, quietly
+        # collapsing the metric toward "no difference".
+        self.disable_occlusion_injection = False

@@ -9,13 +9,11 @@ stabilizer matrices, and GPU tensor allocations.
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
 from threading import RLock
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import cv2
 import numpy as np
-from scipy.optimize import linear_sum_assignment
 
 import roop.globals
 from roop.typing import Frame, Face
@@ -39,236 +37,19 @@ from roop.face_util import (
 )
 
 
-def _face_field(face: Any, name: str, default: Any = None) -> Any:
-    """Read an InsightFace ``Face``, mapping, or small test-double uniformly."""
-    if isinstance(face, dict):
-        return face.get(name, default)
-    try:
-        value = face.get(name, default)
-    except (AttributeError, TypeError):
-        value = getattr(face, name, default)
-    return default if value is None else value
-
-
-def _set_face_field(face: Any, name: str, value: Any) -> None:
-    """Stamp metadata without imposing a concrete detector-face type."""
-    try:
-        face[name] = value
-        return
-    except (TypeError, AttributeError):
-        pass
-    setattr(face, name, value)
-
-
-def _bbox_iou(first: Sequence[float], second: Sequence[float]) -> float:
-    """Intersection-over-union for ``[left, top, right, bottom]`` boxes."""
-    ax0, ay0, ax1, ay1 = (float(v) for v in first)
-    bx0, by0, bx1, by1 = (float(v) for v in second)
-    ix0, iy0 = max(ax0, bx0), max(ay0, by0)
-    ix1, iy1 = min(ax1, bx1), min(ay1, by1)
-    intersection = max(0.0, ix1 - ix0) * max(0.0, iy1 - iy0)
-    if intersection <= 0.0:
-        return 0.0
-    first_area = max(0.0, ax1 - ax0) * max(0.0, ay1 - ay0)
-    second_area = max(0.0, bx1 - bx0) * max(0.0, by1 - by0)
-    union = first_area + second_area - intersection
-    return intersection / union if union > 1e-6 else 0.0
-
-
-def _cosine_similarity(first: Optional[np.ndarray], second: Optional[np.ndarray]) -> float:
-    """Return a bounded ArcFace cosine similarity; missing embeddings are neutral."""
-    if first is None or second is None:
-        return 0.0
-    a = np.asarray(first, dtype=np.float32).reshape(-1)
-    b = np.asarray(second, dtype=np.float32).reshape(-1)
-    if a.shape != b.shape or not len(a):
-        return 0.0
-    denominator = float(np.linalg.norm(a) * np.linalg.norm(b))
-    if denominator <= 1e-6:
-        return 0.0
-    return float(np.clip(np.dot(a, b) / denominator, -1.0, 1.0))
-
-
-@dataclass
-class FaceTrack:
-    """One constant-velocity face track in centre/aspect/height space."""
-
-    track_id: int
-    state: np.ndarray
-    covariance: np.ndarray
-    embedding: Optional[np.ndarray]
-    hits: int = 1
-    missed: int = 0
-
-
-class FaceTracker:
-    """Small deterministic Kalman/Hungarian tracker for detector dispatch.
-
-    The state is exactly ``[x, y, a, h, dx, dy, da, dh]``: box centre,
-    aspect ratio, height, and their constant velocities.  ArcFace appearance
-    and predicted-box IoU are solved together, preventing the left-to-right
-    detector ordering from exchanging sources when people cross.
-    """
-
-    _MOTION_WEIGHT = 0.6
-    _IDENTITY_WEIGHT = 0.4
-
-    def __init__(self, max_age: int = 30, max_cost: float = 0.85,
-                 process_noise: float = 1.0, measurement_noise: float = 4.0):
-        self.max_age = max(0, int(max_age))
-        self.max_cost = float(max_cost)
-        self.process_noise = max(1e-6, float(process_noise))
-        self.measurement_noise = max(1e-6, float(measurement_noise))
-        self.tracks: Dict[int, FaceTrack] = {}
-        self._next_track_id = 0
-        self._last_frame_index: Optional[int] = None
-        self._lock = RLock()
-
-    @staticmethod
-    def bbox_to_measurement(bbox: Sequence[float]) -> np.ndarray:
-        """Convert an xyxy box to the Kalman measurement ``[x, y, a, h]``."""
-        x0, y0, x1, y1 = (float(v) for v in bbox)
-        height = max(1e-3, y1 - y0)
-        width = max(1e-3, x1 - x0)
-        return np.asarray(((x0 + x1) * 0.5, (y0 + y1) * 0.5,
-                           width / height, height), dtype=np.float32)
-
-    @staticmethod
-    def measurement_to_bbox(measurement: Sequence[float]) -> np.ndarray:
-        """Convert ``[x, y, a, h]`` back to an xyxy box."""
-        x, y, aspect, height = (float(v) for v in measurement)
-        height = max(1e-3, height)
-        width = max(1e-3, aspect * height)
-        return np.asarray((x - width * 0.5, y - height * 0.5,
-                           x + width * 0.5, y + height * 0.5), dtype=np.float32)
-
-    @staticmethod
-    def _embedding(face: Any) -> Optional[np.ndarray]:
-        embedding = _face_field(face, 'embedding')
-        if embedding is None:
-            return None
-        try:
-            vector = np.asarray(embedding, dtype=np.float32).reshape(-1)
-            return vector.copy() if vector.size and np.isfinite(vector).all() else None
-        except (TypeError, ValueError):
-            return None
-
-    @staticmethod
-    def _transition(dt: float) -> np.ndarray:
-        transition = np.eye(8, dtype=np.float32)
-        transition[0, 4] = transition[1, 5] = dt
-        transition[2, 6] = transition[3, 7] = dt
-        return transition
-
-    def _predict(self, track: FaceTrack, dt: float) -> None:
-        transition = self._transition(dt)
-        # Velocity uncertainty should grow faster than measurement uncertainty.
-        q = self.process_noise * np.diag((dt * dt, dt * dt, 0.01 * dt * dt,
-                                           dt * dt, dt, dt, 0.01 * dt, dt)).astype(np.float32)
-        track.state = transition @ track.state
-        track.state[2] = max(track.state[2], 1e-3)
-        track.state[3] = max(track.state[3], 1e-3)
-        track.covariance = transition @ track.covariance @ transition.T + q
-
-    def _update(self, track: FaceTrack, measurement: np.ndarray,
-                embedding: Optional[np.ndarray]) -> None:
-        observation = np.zeros((4, 8), dtype=np.float32)
-        observation[np.arange(4), np.arange(4)] = 1.0
-        innovation = measurement - observation @ track.state
-        innovation_covariance = (observation @ track.covariance @ observation.T +
-                                 np.eye(4, dtype=np.float32) * self.measurement_noise)
-        gain = track.covariance @ observation.T @ np.linalg.pinv(innovation_covariance)
-        track.state = track.state + gain @ innovation
-        track.state[2] = max(track.state[2], 1e-3)
-        track.state[3] = max(track.state[3], 1e-3)
-        track.covariance = (np.eye(8, dtype=np.float32) - gain @ observation) @ track.covariance
-        track.hits += 1
-        track.missed = 0
-        if embedding is not None:
-            # Never blend an identity discontinuity into a stable ArcFace mean.
-            if track.embedding is None or _cosine_similarity(track.embedding, embedding) >= 0.5:
-                base = embedding if track.embedding is None else 0.9 * track.embedding + 0.1 * embedding
-                norm = float(np.linalg.norm(base))
-                track.embedding = (base / norm if norm > 1e-6 else base).astype(np.float32)
-
-    def _new_track(self, measurement: np.ndarray,
-                   embedding: Optional[np.ndarray]) -> FaceTrack:
-        track = FaceTrack(
-            track_id=self._next_track_id,
-            state=np.concatenate((measurement, np.zeros(4, dtype=np.float32))).astype(np.float32),
-            covariance=np.diag((16.0, 16.0, 0.04, 16.0,
-                                64.0, 64.0, 0.16, 64.0)).astype(np.float32),
-            embedding=embedding,
-        )
-        self.tracks[track.track_id] = track
-        self._next_track_id += 1
-        return track
-
-    def association_cost_matrix(self, detections: Sequence[Any]) -> np.ndarray:
-        """Return the specified IoU/ArcFace cost for active tracks and detections."""
-        active = [self.tracks[track_id] for track_id in sorted(self.tracks)]
-        matrix = np.empty((len(active), len(detections)), dtype=np.float32)
-        for row, track in enumerate(active):
-            predicted_bbox = self.measurement_to_bbox(track.state[:4])
-            for column, face in enumerate(detections):
-                detection_bbox = _face_field(face, 'bbox')
-                if detection_bbox is None:
-                    matrix[row, column] = np.inf
-                    continue
-                iou = _bbox_iou(predicted_bbox, detection_bbox)
-                similarity = _cosine_similarity(track.embedding, self._embedding(face))
-                matrix[row, column] = (self._MOTION_WEIGHT * (1.0 - iou) +
-                                       self._IDENTITY_WEIGHT * (1.0 - similarity))
-        return matrix
-
-    def update(self, detections: Sequence[Any], frame_index: Optional[int] = None) -> List[Any]:
-        """Associate detections, stamp ``_track_id``, and expire stale tracks."""
-        faces = list(detections or ())
-        with self._lock:
-            if frame_index is None:
-                frame_index = 0 if self._last_frame_index is None else self._last_frame_index + 1
-            frame_index = int(frame_index)
-            if self._last_frame_index is None:
-                dt = 1.0
-            else:
-                # A worker may finish an old frame after a newer one.  It may use
-                # the current prediction, but must not rewind the persistent state.
-                dt = max(1.0, float(frame_index - self._last_frame_index))
-            for track in self.tracks.values():
-                self._predict(track, dt)
-                track.missed += 1
-
-            cost = self.association_cost_matrix(faces)
-            matched_detections = set()
-            if cost.size:
-                rows, columns = linear_sum_assignment(cost)
-                active_ids = sorted(self.tracks)
-                for row, column in zip(rows, columns):
-                    value = float(cost[row, column])
-                    if not np.isfinite(value) or value > self.max_cost:
-                        continue
-                    track = self.tracks[active_ids[int(row)]]
-                    bbox = _face_field(faces[int(column)], 'bbox')
-                    self._update(track, self.bbox_to_measurement(bbox),
-                                 self._embedding(faces[int(column)]))
-                    _set_face_field(faces[int(column)], '_track_id', track.track_id)
-                    matched_detections.add(int(column))
-
-            for index, face in enumerate(faces):
-                if index in matched_detections:
-                    continue
-                bbox = _face_field(face, 'bbox')
-                if bbox is None:
-                    continue
-                track = self._new_track(self.bbox_to_measurement(bbox), self._embedding(face))
-                _set_face_field(face, '_track_id', track.track_id)
-
-            for track_id in tuple(self.tracks):
-                if self.tracks[track_id].missed > self.max_age:
-                    del self.tracks[track_id]
-            if self._last_frame_index is None or frame_index > self._last_frame_index:
-                self._last_frame_index = frame_index
-        return faces
+# The Kalman/Hungarian tracker and its face-field helpers now live in
+# `roop.tracker`, which also owns coasting through occlusion and landmark
+# symmetry inpainting. They are re-exported here unchanged so every existing
+# `from roop.face_analyser import FaceTracker` keeps working -- ProcessMgr and
+# tests/test_face_tracker.py both import them from this module.
+from roop.tracker import (                                  # noqa: F401
+    FaceTrack,
+    FaceTracker,
+    _bbox_iou,
+    _cosine_similarity,
+    _face_field,
+    _set_face_field,
+)
 
 
 # ---------------------------------------------------------------------------

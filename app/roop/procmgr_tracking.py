@@ -26,7 +26,9 @@ from roop.procmgr_runtime import (_DEBUG_MATCH, _TRACK_EMB_MAX, _TRACK_ASSIGN_MA
                                   _TRACK_INHERIT_MAX, _TRACK_INHERIT_GAIN,
                                   _TRACK_INHERIT_MARGIN, _TRACK_ELIM_FRAC,
                                   _INTERP_MAX_TRAVEL, _INTERP_MAX_SCALE,
-                                  _INTERP_COLLIDE_FRAC)
+                                  _INTERP_COLLIDE_FRAC,
+                                  _COAST_FRAMES, _COAST_LOST_FRAMES,
+                                  _COAST_MIN_HITS)
 
 import roop.globals
 from roop import session_pool
@@ -1639,10 +1641,24 @@ class TrackingMixin:
         n_faces = sum(len(v) for v in self._temporal_faces.values())
         n_interp = sum(1 for v in self._temporal_faces.values()
                        for f in v if f.get('_interpolated'))
+        # Coasted faces also carry _interpolated (deliberately — see
+        # roop/tracker.py), so they are a SUBSET of n_interp and are reported
+        # separately rather than added to it.
+        n_coasted = sum(1 for v in self._temporal_faces.values()
+                        for f in v if f.get('_coasted'))
         n_refused = int(getattr(self, '_interp_refused', 0) or 0)
+        n_coast_refused = int(getattr(self, '_coast_refused', 0) or 0)
         print(f'[Temporal] {len(tracks or [])} track(s); faces on {n_frames} frames '
               f'({n_faces} total, {n_interp} gap-filled, gap limit {gap_max}'
               + (f', {n_refused} refused as unbridgeable' if n_refused else '') + ').')
+        # Printed unconditionally when coasting produced anything, because a
+        # prediction carrying a swap is the one thing here a reviewer must be
+        # able to see happened. Silence means it did not fire.
+        if n_coasted or n_coast_refused:
+            print(f'[Coast] {n_coasted} face(s) carried on Kalman prediction past '
+                  f'the {gap_max}-frame gap limit'
+                  + (f'; {n_coast_refused} refused as colliding' if n_coast_refused else '')
+                  + f' (limit {_COAST_FRAMES} frames, ROOP_COAST_FRAMES=0 to disable).')
 
         # ── Coverage guard ───────────────────────────────────────────────────
         # The swap pass trusts this cache INSTEAD of detecting, so a scan that
@@ -1752,6 +1768,96 @@ class TrackingMixin:
         f['_interpolated'] = True
         return f
 
+    def _coast_track_gaps(self, merged, idxs, tid, other_real):
+        """Fill frames interpolation left empty with guarded Kalman predictions.
+
+        Returns ``(filled, refused)``. `merged` is mutated in place.
+
+        WHY TWO PASSES.  A hole between two observations is approached from both
+        ends, and the two predictions are not equally good: a coast is only as
+        trustworthy as it is YOUNG, because a constant-velocity extrapolation
+        diverges with the square of the time since its last measurement. So the
+        timeline is run forward and then backward, and each empty frame takes
+        whichever pass reaches it with the smaller `_coast_age`. On a 20-frame
+        occlusion that covers both ends and correctly leaves the middle empty
+        rather than pushing one prediction the whole way across.
+
+        The backward pass is the same tracker over a reversed frame index — a
+        Kalman with a symmetric constant-velocity model has no preferred time
+        direction, so nothing has to be re-derived for it.
+
+        WHY THIS IS BOUNDED THE WAY IT IS.  A coasted face carries the track's
+        mean embedding by construction and therefore passes every downstream
+        identity gate automatically (see `phantom-gapfill-swap`). The only thing
+        standing between a prediction and a swap painted on the background is
+        this guard set: MAX_COAST_FRAMES, the established-track requirement, the
+        on-screen test, and `_interp_collides` against every other track's REAL
+        detections. `ROOP_COAST_FRAMES=0` disables it entirely and restores the
+        pre-change output exactly.
+        """
+        from roop.tracker import FaceTracker
+
+        try:
+            max_coast = int(os.environ.get('ROOP_COAST_FRAMES', '') or
+                            _COAST_FRAMES)
+        except ValueError:
+            max_coast = _COAST_FRAMES
+        if max_coast <= 0 or len(idxs) < 2:
+            return 0, 0
+
+        shape = getattr(self, '_temporal_frame_shape', None)
+        lo, hi = int(idxs[0]), int(idxs[-1])
+        holes = [i for i in range(lo + 1, hi) if i not in merged]
+        if not holes:
+            return 0, 0
+        hole_set = set(holes)
+
+        def _run(order):
+            """One directional pass; returns {frame_index: coasted Face}."""
+            found = {}
+            tracker = FaceTracker(max_age=max(max_coast, _COAST_LOST_FRAMES),
+                                  max_coast=max_coast,
+                                  min_hits_to_coast=_COAST_MIN_HITS)
+            for step, i in enumerate(order):
+                real = merged.get(i)
+                # `update` is given the real observation when there is one and an
+                # empty list when there is not, which is precisely the condition
+                # `coast` keys off. Frames the interpolator already filled count
+                # as observations: they are the best geometry available there,
+                # and treating them as misses would coast over a filled frame.
+                tracker.update([real] if real is not None else [], step)
+                if i not in hole_set:
+                    continue
+                produced = tracker.coast(step, frame_shape=shape, occupied=[])
+                if produced:
+                    # `coast` walks tracks in id order, so the first is the
+                    # oldest -- the established one. A second track here means
+                    # association broke mid-gap, and its prediction is the one
+                    # with no history behind it.
+                    found[i] = produced[0]
+            return found
+
+        forward = _run(list(range(lo, hi + 1)))
+        backward = _run(list(range(hi, lo - 1, -1)))
+
+        filled = refused = 0
+        for i in holes:
+            a, b = forward.get(i), backward.get(i)
+            if a is None and b is None:
+                continue
+            if a is None:
+                best = b
+            elif b is None:
+                best = a
+            else:
+                best = a if int(a.get('_coast_age', 1)) <= int(b.get('_coast_age', 1)) else b
+            if self._interp_collides(best, tid, i, other_real):
+                refused += 1
+                continue
+            merged[i] = best
+            filled += 1
+        return filled, refused
+
     def _build_temporal_faces(self, tracks, gap_max):
         """Build {frame_idx: [Face, ...]} from tracked observations: gap-fill
         detection misses ≤ gap_max frames, then (when stabilize_face is on)
@@ -1765,6 +1871,8 @@ class TrackingMixin:
         bt = float(getattr(self.options, 'stabilize_beta', 0.02))
         out = {}
         self._interp_refused = 0
+        self._coast_refused = 0
+        total_coasted = 0
         total_coasts = 0
         # Every track's REAL (actually detected, non-interpolated) observation,
         # indexed by frame — used below so gap-fill never invents a face on top
@@ -1801,6 +1909,18 @@ class TrackingMixin:
                             continue
                         merged[g] = cand
                 prev = i
+
+            # ── Kalman coasting over what interpolation could not reach ──────
+            # Interpolation is strictly BETTER than prediction here — it has the
+            # closing anchor, so it knows where the face actually went — which is
+            # why it runs first and this only ever sees frames it left empty:
+            # gaps longer than gap_max, and gaps _bridgeable / _interp_collides
+            # refused. Those are exactly the long occlusions the swap blinks off
+            # through today. See roop/tracker.py for the guards.
+            n_coasted, n_coast_refused = self._coast_track_gaps(
+                merged, idxs, t['id'], other_real)
+            total_coasted += n_coasted
+            self._coast_refused += n_coast_refused
 
             if os.environ.get('ROOP_DEBUG_GAPS') == '1':
                 # One-off diagnostic (2026-08-16, interacting-faces investigation):
