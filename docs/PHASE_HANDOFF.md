@@ -1,3 +1,87 @@
+# Handoff - shape-profile A/B: CLOSED, no measurable effect (2026-09-03, final)
+
+Device: RTX 4070, driver 616.56, TRT 10.9.0.34, ORT 1.23.2, i9-14900K, 31.7 GB.
+Commits `d542608`, `c264e86`, `4ec1f0f`, `66d754e`, `91c9d48`. Suite **2002
+green**, 1 skipped. Supersedes the VOID run described below; the guard that
+distinguishes the two is now in the harness.
+
+## The result
+
+Re-run on a quiescent tree, every arm verified to share one revision:
+
+    [ab] source revision per arm
+      profile0_rep0 / rep1 / profile1_rep0 / rep1     91c9d481f  (all four)
+
+    profile=OFF   n=2  mean 8.32   min 8.30  max 8.34   spread 0.5%
+    profile=ON    n=2  mean 8.23   min 8.13  max 8.34   spread 2.6%
+    profile ON vs OFF: -1.0%
+
+**No measurable effect. `ROOP_TRT_SHAPE_PROFILE` stays at its default of 1.**
+
+The bound is much tighter than the earlier attempt allowed. All four measured
+arms report `faces_seen` 903 -- the same code path -- and spread **2.5%**
+between them. The effect sits inside that, so if the profile does anything on
+this pipeline it is smaller than this rig resolves at 600 frames. That is a
+real closure, not the "33% noise, cannot tell" non-answer the contaminated run
+produced.
+
+**The 7.6% null-control spread is NOT the noise floor, and `faces_seen` says
+why.** `null_0` reports **868** faces seen against 903-904 everywhere else, so
+the two "identical config" null arms took different PATHS -- the documented
+discriminator (a parallel block re-processes its warm-up frames; a sequential
+pass does not). Its 7.87 fps is a different execution path, not a slow repeat
+of the same one. Read the four same-path arms for resolution, not the null
+pair.
+
+Mechanism agrees with the null result: detection is ~4.5% of frame time here,
+the pipeline feeds one `det_size` for a whole render so TensorRT already sees a
+stable shape after frame one, and this project has measured several
+stage-level wins that were neutral end to end. Nothing argued the effect should
+be nonzero.
+
+**If the profile is ever removed, remove it for cache-namespace cost** -- each
+profiled model gets its own engine directory, which orphaned 886 MB once
+already -- **not for -1.0%.**
+
+## Decode, confirmed end to end
+
+`decode_fps` **142.5-161.7** across all six arms, against **1.96** before
+`d542608`. `decode` and `track_decode`, previously the two largest stages at
+55% of wall clock combined, no longer appear among the top stages. Throughput
+on the locked fixture went 0.96 -> 8.13-8.49 fps.
+
+## The guard that made this run trustworthy
+
+`baseline_controlled.py` now stamps `source_revision` (HEAD, dirty, dirty .py
+paths) into every arm JSON, and `ab_shape_profile.py` refuses to quote a delta
+when arms disagree. It reported honestly here: all four arms on `91c9d481f`,
+flagged **dirty** -- another session's uncommitted `core.py` /
+`face_swapper.py` edits were present, shared by every arm. Internally valid,
+not reproducible from a commit; that limitation is recorded rather than hidden.
+
+Note the guard shipped broken in `66d754e`: the call sat above where `results`
+is built, so `main()` died with `NameError` before rendering a frame while its
+seven unit tests stayed green. Testing a function is not testing its wiring.
+`TestGuardIsActuallyWiredIntoMain` now runs `main()` with `run_arm` stubbed and
+is verified to fail with the original `NameError` when the misplacement is
+reintroduced.
+
+## NEXT
+
+1. **`lighting` is the largest stage after the swap** (~19% of frame time,
+   32-37 ms/call, ~4.5 calls/frame). Hidden under decode until now; never
+   profiled. This is where per-face work reduction should look.
+2. **Re-baseline the locked fixture** -- every end-to-end number on this device
+   predates the decode fix, including the ~12.9 fps figure in
+   `RECODE_STATUS.md`.
+3. **Nothing here is measured on the 3060**, which had the same stall and is
+   host-RAM constrained; the fix removes a per-frame pinned allocation, so the
+   effect there may differ in kind rather than size.
+4. **Commit or stash before benchmarking** -- this run was internally valid but
+   dirty. The guard will keep saying so.
+
+---
+
 # Handoff - shape-profile A/B VOID (contaminated), and the decode stall it found (2026-09-03, later)
 
 ## CORRECTION, written minutes after the section below
