@@ -271,6 +271,368 @@ class FaceTracker:
         return faces
 
 
+# ---------------------------------------------------------------------------
+# Canonical 3D Facial Mesh Template (OpenCV camera convention: +X right, +Y down, +Z forward)
+# ---------------------------------------------------------------------------
+
+CANONICAL_FACE_3D_5 = np.array([
+    [-0.342, -0.412,  0.169],  # Left eye center
+    [ 0.342, -0.412,  0.169],  # Right eye center
+    [ 0.000, -0.095,  0.487],  # Nose tip
+    [-0.368,  0.547,  0.299],  # Left mouth corner
+    [ 0.368,  0.547,  0.299],  # Right mouth corner
+], dtype=np.float64)
+
+
+def compute_canonical_roll_angle(landmarks: Any) -> Tuple[float, float]:
+    """Compute the exact 2D roll angle from eye/nose landmarks with continuous angle math.
+
+    Formula:
+        theta = atan2(right_eye.y - left_eye.y, right_eye.x - left_eye.x)
+
+    Returns:
+        (theta_rad, theta_deg) continuously wrapped in (-pi, pi] and (-180, 180].
+    """
+    if landmarks is None:
+        return 0.0, 0.0
+    try:
+        pts = np.asarray(landmarks, dtype=np.float32).reshape(-1, 2)
+        if pts.shape[0] < 2 or not np.isfinite(pts[:2]).all():
+            return 0.0, 0.0
+
+        if pts.shape[0] >= 68:
+            left_eye = np.mean(pts[36:42], axis=0)
+            right_eye = np.mean(pts[42:48], axis=0)
+        else:
+            left_eye = pts[0]
+            right_eye = pts[1]
+
+        dx = float(right_eye[0] - left_eye[0])
+        dy = float(right_eye[1] - left_eye[1])
+
+        if abs(dx) < 1e-7 and abs(dy) < 1e-7:
+            return 0.0, 0.0
+
+        theta_rad = float(np.arctan2(dy, dx))
+        # Continuous wrap-around without discontinuities around +-pi
+        theta_rad = float((theta_rad + np.pi) % (2.0 * np.pi) - np.pi)
+        theta_deg = float(np.degrees(theta_rad))
+        return theta_rad, theta_deg
+    except Exception:
+        return 0.0, 0.0
+
+
+def build_canonical_rotation_matrix(
+    center: Tuple[float, float],
+    theta_deg: float,
+    threshold_deg: float = 45.0
+) -> Tuple[np.ndarray, np.ndarray, bool]:
+    """Dynamically construct an affine rotation matrix R(theta, center) that maps
+    the cropped face to an upright canonical orientation, along with its inverse inv(R).
+
+    If abs(theta) > 45 degrees, active rotation R is computed.
+    Otherwise, identity matrices are returned to preserve hot paths.
+
+    Returns:
+        (R, inv_R, applied) where R and inv_R are 2x3 float32 affine matrices.
+    """
+    norm_deg = float((theta_deg + 180.0) % 360.0 - 180.0)
+    if abs(norm_deg) <= float(threshold_deg):
+        identity = np.array([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]], dtype=np.float32)
+        return identity, identity.copy(), False
+
+    cx, cy = float(center[0]), float(center[1])
+    # In OpenCV (+y down), getRotationMatrix2D rotates with positive angle counter-clockwise.
+    # To upright a face with in-plane roll of norm_deg (atan2(dy, dx)), we rotate by norm_deg around center.
+    R = cv2.getRotationMatrix2D((cx, cy), norm_deg, 1.0).astype(np.float32)
+    inv_R = cv2.getRotationMatrix2D((cx, cy), -norm_deg, 1.0).astype(np.float32)
+    return R, inv_R, True
+
+
+def estimate_head_pose_pnp(
+    landmarks: Any,
+    image_shape: Optional[Tuple[int, int]] = None
+) -> Tuple[float, float, float]:
+    """Estimate 3D head pose (Yaw, Pitch, Roll in degrees) using 2D-to-3D PnP
+    with a canonical 3D facial mesh template.
+
+    Returns:
+        (yaw_deg, pitch_deg, roll_deg) in degrees.
+    """
+    if landmarks is None:
+        return 0.0, 0.0, 0.0
+
+    try:
+        pts = np.asarray(landmarks, dtype=np.float64).reshape(-1, 2)
+        if pts.shape[0] < 5 or not np.isfinite(pts).all():
+            return 0.0, 0.0, 0.0
+
+        if image_shape is not None and len(image_shape) >= 2:
+            h, w = int(image_shape[0]), int(image_shape[1])
+        else:
+            span = float(max(np.std(pts) * 4.0, 128.0))
+            h, w = int(span), int(span)
+
+        focal = max(h, w) * 1.2
+        cx = float(w) * 0.5
+        cy = float(h) * 0.5
+        cam_matrix = np.array([
+            [focal, 0.0,   cx],
+            [0.0,   focal, cy],
+            [0.0,   0.0,   1.0]
+        ], dtype=np.float64)
+        dist_coeffs = np.zeros((4, 1), dtype=np.float64)
+
+        if pts.shape[0] >= 68:
+            from roop.face_3d_recon import _REF3D_68
+            ref3d = (_REF3D_68 * np.array([1.0, -1.0, 1.0])).astype(np.float64)
+            target_pts = pts[:68]
+        else:
+            ref3d = CANONICAL_FACE_3D_5
+            target_pts = pts[:5]
+
+        lm_std = float(np.std(target_pts))
+        ref_std = float(np.std(ref3d[:, :2]))
+        scale = lm_std / max(ref_std, 1e-6)
+        pts3d = (ref3d * scale).copy()
+        pts3d[:, 2] += focal
+
+        # Use SQPNP for 5 points, or EPNP as fallback
+        ok, rvec, tvec = False, None, None
+        for flag in (cv2.SOLVEPNP_SQPNP, cv2.SOLVEPNP_EPNP):
+            try:
+                ok, rvec, tvec = cv2.solvePnP(
+                    pts3d, target_pts.astype(np.float64),
+                    cam_matrix, dist_coeffs,
+                    flags=flag
+                )
+                if ok and np.isfinite(rvec).all():
+                    break
+            except Exception:
+                pass
+
+        if not ok or rvec is None or not np.isfinite(rvec).all():
+            from roop.face_util import solve_pose_5pt
+            pose = solve_pose_5pt(pts[:5])
+            if pose is not None:
+                return float(pose[0]), float(pose[1]), float(pose[2])
+            return 0.0, 0.0, 0.0
+
+        R, _ = cv2.Rodrigues(rvec)
+        r02 = float(R[0, 2])
+        r22 = float(R[2, 2])
+        r12 = float(np.clip(-R[1, 2], -1.0, 1.0))
+        r10 = float(R[1, 0])
+        r11 = float(R[1, 1])
+
+        yaw = float(np.degrees(np.arctan2(r02, r22)))
+        pitch = float(np.degrees(np.arcsin(r12)))
+        roll = float(np.degrees(np.arctan2(r10, r11)))
+
+        yaw = float((yaw + 180.0) % 360.0 - 180.0)
+        pitch = float((pitch + 180.0) % 360.0 - 180.0)
+        roll = float((roll + 180.0) % 360.0 - 180.0)
+        return yaw, pitch, roll
+    except Exception:
+        try:
+            from roop.face_util import solve_pose_5pt
+            pose = solve_pose_5pt(np.asarray(landmarks, dtype=np.float32).reshape(-1, 2)[:5])
+            if pose is not None:
+                return float(pose[0]), float(pose[1]), float(pose[2])
+        except Exception:
+            pass
+        return 0.0, 0.0, 0.0
+
+
+def weighted_umeyama_alignment(
+    src: np.ndarray,
+    dst: np.ndarray,
+    weights: Optional[np.ndarray] = None
+) -> np.ndarray:
+    """Closed-form Weighted Umeyama similarity transform estimation.
+
+    Finds similarity transform M = [c*R | t] minimizing:
+        sum_i w_i || dst_i - (c*R*src_i + t) ||^2
+
+    src: (N, 2) source points (observed landmarks)
+    dst: (N, 2) destination points (canonical template)
+    weights: (N,) positive weights for each landmark
+
+    Returns:
+        (2, 3) float32 affine similarity matrix.
+    """
+    X = np.asarray(src, dtype=np.float64).reshape(-1, 2)
+    Y = np.asarray(dst, dtype=np.float64).reshape(-1, 2)
+    n = X.shape[0]
+    if n < 2:
+        return np.array([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]], dtype=np.float32)
+
+    if weights is None:
+        w = np.full(n, 1.0 / float(n), dtype=np.float64)
+    else:
+        w = np.asarray(weights, dtype=np.float64).reshape(-1)
+        w_sum = float(np.sum(w))
+        if w_sum <= 1e-9 or not np.isfinite(w_sum):
+            w = np.full(n, 1.0 / float(n), dtype=np.float64)
+        else:
+            w = np.clip(w / w_sum, 1e-6, None)
+            w = w / float(np.sum(w))
+
+    # 1. Weighted centroids
+    mu_X = np.sum(X * w[:, None], axis=0)
+    mu_Y = np.sum(Y * w[:, None], axis=0)
+
+    # 2. Shifted centered coordinates
+    X_c = X - mu_X
+    Y_c = Y - mu_Y
+
+    # 3. Weighted variance of source points
+    var_X = float(np.sum(w * np.sum(X_c ** 2, axis=1)))
+    if var_X < 1e-9:
+        t = mu_Y - mu_X
+        return np.array([[1.0, 0.0, float(t[0])], [0.0, 1.0, float(t[1])]], dtype=np.float32)
+
+    # 4. Weighted cross-covariance matrix: Sigma_{YX} = Y_c^T W X_c
+    cov_YX = (Y_c * w[:, None]).T @ X_c
+
+    # 5. SVD
+    U, S, Vt = np.linalg.svd(cov_YX)
+
+    # 6. Reflection correction
+    d = float(np.linalg.det(U) * np.linalg.det(Vt))
+    D = np.diag([1.0, 1.0 if d >= 0.0 else -1.0])
+
+    # 7. Rotation
+    R = U @ D @ Vt
+
+    # 8. Scale
+    scale = float(S[0] + D[1, 1] * S[1]) / var_X
+    if scale <= 1e-7 or not np.isfinite(scale):
+        scale = 1.0
+
+    # 9. Translation
+    t = mu_Y - scale * (R @ mu_X)
+
+    # 10. Composite affine
+    M = np.zeros((2, 3), dtype=np.float32)
+    M[:, :2] = (scale * R).astype(np.float32)
+    M[:, 2] = t.astype(np.float32)
+    return M
+
+
+def profile_aware_umeyama_alignment(
+    kps: np.ndarray,
+    image_size: int = 128,
+    yaw_degrees: float = 0.0,
+    pitch_degrees: float = 0.0,
+    landmarks_68: Optional[np.ndarray] = None
+) -> Tuple[np.ndarray, str]:
+    """Profile-Aware Weighted Umeyama Alignment.
+
+    When abs(yaw) <= 35:
+        Applies standard uniform-weighted similarity transform to template.
+    When abs(yaw) > 35:
+        Switches from standard 2D similarity transform to a 3D-aware affine projection
+        with landmark visibility weighting: assigns lower weights to occluded eye/cheek
+        landmarks and higher weights to the nasal bridge, visible eye, and chin tip.
+        Prevents horizontal aspect-ratio collapse when yaw increases (> 45 to 85).
+    """
+    from roop.face_util import swap_template_points
+    base_dst_5 = swap_template_points(image_size, "arcface")
+    kps_5 = np.asarray(kps, dtype=np.float32).reshape(5, 2)
+
+    yaw = float(yaw_degrees)
+    abs_yaw = abs(yaw)
+
+    if abs_yaw <= 35.0:
+        M = weighted_umeyama_alignment(kps_5, base_dst_5, weights=None)
+        return M, "standard_5pt"
+
+    # Profile-aware weighted alignment
+    gamma = float(np.clip((abs_yaw - 35.0) / 45.0, 0.0, 1.0))
+
+    if landmarks_68 is not None and len(landmarks_68) >= 68:
+        lm68 = np.asarray(landmarks_68, dtype=np.float32).reshape(-1, 2)
+        left_eye = np.mean(lm68[36:42], axis=0)
+        right_eye = np.mean(lm68[42:48], axis=0)
+        nose_tip = lm68[30]
+        left_mouth = lm68[48]
+        right_mouth = lm68[54]
+        nasal_bridge = lm68[27]
+        chin_tip = lm68[8]
+
+        src_7 = np.stack([left_eye, right_eye, nose_tip, left_mouth, right_mouth, nasal_bridge, chin_tip], axis=0)
+
+        ratio = float(image_size) / 128.0
+        template_bridge = np.array([56.0252 * ratio, 42.0 * ratio], dtype=np.float32)
+        template_chin = np.array([56.0252 * ratio, 112.0 * ratio], dtype=np.float32)
+        dst_7 = np.vstack([base_dst_5, template_bridge[None, :], template_chin[None, :]])
+
+        weights = np.ones(7, dtype=np.float64)
+        weights[5] = 2.5 + 0.5 * gamma  # nasal bridge
+        weights[6] = 2.0 + 0.5 * gamma  # chin tip
+        weights[2] = 2.5 + 1.0 * gamma  # nose tip
+
+        if yaw > 35.0:
+            weights[0] = 1.8 + 0.6 * gamma  # visible eye (left)
+            weights[1] = max(0.05, 1.0 - 0.95 * gamma)  # occluded eye (right)
+            weights[3] = 1.4 + 0.4 * gamma  # visible mouth
+            weights[4] = max(0.10, 1.0 - 0.85 * gamma)  # occluded mouth
+        else:
+            weights[0] = max(0.05, 1.0 - 0.95 * gamma)  # occluded eye (left)
+            weights[1] = 1.8 + 0.6 * gamma  # visible eye (right)
+            weights[3] = max(0.10, 1.0 - 0.85 * gamma)  # occluded mouth
+            weights[4] = 1.4 + 0.4 * gamma  # visible mouth
+
+        M = weighted_umeyama_alignment(src_7, dst_7, weights=weights)
+        return M, "profile_weighted_7pt"
+    else:
+        weights = np.ones(5, dtype=np.float64)
+        weights[2] = 2.5 + 1.0 * gamma  # nose tip
+
+        if yaw > 35.0:
+            weights[0] = 1.8 + 0.6 * gamma  # visible eye (left)
+            weights[1] = max(0.05, 1.0 - 0.95 * gamma)  # occluded eye (right)
+            weights[3] = 1.4 + 0.4 * gamma  # visible mouth (left)
+            weights[4] = max(0.10, 1.0 - 0.85 * gamma)  # occluded mouth (right)
+        else:
+            weights[0] = max(0.05, 1.0 - 0.95 * gamma)  # occluded eye (left)
+            weights[1] = 1.8 + 0.6 * gamma  # visible eye (right)
+            weights[3] = max(0.10, 1.0 - 0.85 * gamma)  # occluded mouth (left)
+            weights[4] = 1.4 + 0.4 * gamma  # visible mouth (right)
+
+        M = weighted_umeyama_alignment(kps_5, base_dst_5, weights=weights)
+        return M, "profile_weighted_5pt"
+
+
+def compute_composite_inverse(
+    inv_R: np.ndarray,
+    inv_M_warp: np.ndarray
+) -> np.ndarray:
+    """Compute the composite inverse transformation T_final = inv(R) @ inv(M_warp).
+
+    Maps canonical crop coordinates directly back to original full frame coordinates.
+    """
+    a = np.vstack([np.asarray(inv_R, dtype=np.float64).reshape(2, 3), [0.0, 0.0, 1.0]])
+    b = np.vstack([np.asarray(inv_M_warp, dtype=np.float64).reshape(2, 3), [0.0, 0.0, 1.0]])
+    composite = a @ b
+    return composite[:2].astype(np.float32)
+
+
+def compute_composite_forward(
+    M_warp: np.ndarray,
+    R: np.ndarray
+) -> np.ndarray:
+    """Compute composite forward transform M_composite = M_warp @ R.
+
+    Maps original full frame coordinates to canonical crop coordinates.
+    """
+    a = np.vstack([np.asarray(M_warp, dtype=np.float64).reshape(2, 3), [0.0, 0.0, 1.0]])
+    b = np.vstack([np.asarray(R, dtype=np.float64).reshape(2, 3), [0.0, 0.0, 1.0]])
+    composite = a @ b
+    return composite[:2].astype(np.float32)
+
+
 def face_roll_degrees(face: Any) -> float:
     """Return the resolved roll when present, otherwise derive it from the eyes."""
     try:
@@ -279,17 +641,15 @@ def face_roll_degrees(face: Any) -> float:
             return float(value)
     except (TypeError, ValueError):
         pass
-    try:
-        kps = face.get('kps') if isinstance(face, dict) else getattr(face, 'kps', None)
-        left_eye, right_eye = np.asarray(kps, dtype=np.float32).reshape(5, 2)[:2]
-        return float(np.degrees(np.arctan2(right_eye[1] - left_eye[1],
-                                           right_eye[0] - left_eye[0])))
-    except (TypeError, ValueError, AttributeError):
-        return 0.0
+    kps = face.get('kps') if isinstance(face, dict) else getattr(face, 'kps', None)
+    if kps is not None:
+        _, deg = compute_canonical_roll_angle(kps)
+        return deg
+    return 0.0
 
 
 def face_yaw_pitch(face: Any) -> Tuple[float, float]:
-    """Read target pose stamped by the tracker, with a 5-point solver fallback."""
+    """Read target pose stamped by tracker, with PnP solver fallback."""
     def _value(name):
         return face.get(name) if isinstance(face, dict) else getattr(face, name, None)
     try:
@@ -298,14 +658,14 @@ def face_yaw_pitch(face: Any) -> Tuple[float, float]:
             return float(yaw), float(pitch)
     except (TypeError, ValueError):
         pass
-    try:
-        from roop.face_util import solve_pose_5pt
-        pose = solve_pose_5pt(_value('kps'))
-        if pose is not None:
-            return float(pose[0]), float(pose[1])
-    except Exception:
-        pass
-    return 0.0, 0.0
+    kps = _value('kps')
+    lm68 = _value('landmark_3d_68')
+    if lm68 is None:
+        lm68 = _value('landmarks_68')
+    if lm68 is None:
+        lm68 = _value('landmarks')
+    yaw, pitch, _ = estimate_head_pose_pnp(lm68 if lm68 is not None else kps)
+    return yaw, pitch
 
 
 def profile_anchors(face: Any, yaw_degrees: float) -> Optional[np.ndarray]:
@@ -343,48 +703,77 @@ def profile_anchors(face: Any, yaw_degrees: float) -> Optional[np.ndarray]:
 
 def adaptive_alignment_matrix(kps: np.ndarray, image_size: int, mode: str,
                               yaw_degrees: float = 0.0,
-                              anchors: Optional[np.ndarray] = None) -> Tuple[np.ndarray, str]:
-    """Choose standard five-point or non-squashing profile alignment."""
-    if abs(float(yaw_degrees)) > 45.0 and anchors is not None:
-        matrix = profile_alignment_matrix(anchors, image_size, yaw_degrees)
-        if matrix is not None:
-            return matrix, 'profile_3pt'
-    return estimate_norm(np.asarray(kps, dtype=np.float32).reshape(5, 2), image_size, mode), 'five_point'
+                              anchors: Optional[np.ndarray] = None,
+                              landmarks_68: Optional[np.ndarray] = None) -> Tuple[np.ndarray, str]:
+    """Choose standard five-point or profile-aware weighted Umeyama alignment."""
+    if abs(float(yaw_degrees)) > 35.0:
+        return profile_aware_umeyama_alignment(
+            kps, image_size=image_size, yaw_degrees=yaw_degrees, landmarks_68=landmarks_68)
+    from roop.face_util import swap_template_points
+    return weighted_umeyama_alignment(
+        np.asarray(kps, dtype=np.float32).reshape(5, 2),
+        swap_template_points(image_size, mode)
+    ), 'five_point'
 
 
 def canonicalize_face_alignment(image: Frame, face: Any, image_size: int, mode: str,
                                 dst: Optional[np.ndarray] = None):
     """Pre-upright a rolled face and return its canonical crop plus paste affine.
 
-    ``paste_matrix`` maps original target coordinates directly to canonical crop
-    coordinates.  Its inverse is therefore the exact un-rotation/paste mapping
-    used before alpha blending, with no second resample of the swapped result.
+    paste_matrix maps original target coordinates directly to canonical crop coordinates.
+    Its inverse is T_final = inv(R) @ inv(M_warp), mapping back to target coordinates
+    in a single bilinear sampling step without orientation snapping or edge degradation.
     """
     def _value(name):
         return face.get(name) if isinstance(face, dict) else getattr(face, name, None)
     kps = np.asarray(_value('kps'), dtype=np.float32).reshape(5, 2)
     bbox = np.asarray(_value('bbox'), dtype=np.float32).reshape(4)
-    yaw, pitch = face_yaw_pitch(face)
-    roll = face_roll_degrees(face)
-    upright, pre_rotation, inverse_pre_rotation, applied = pre_rotate_face_crop(image, bbox, roll)
-    upright_kps = transform_points(kps, pre_rotation)
-    anchors = profile_anchors(face, yaw)
-    if anchors is not None:
-        anchors = transform_points(anchors, pre_rotation)
-    local_matrix, alignment_kind = adaptive_alignment_matrix(
-        upright_kps, image_size, mode, yaw_degrees=yaw, anchors=anchors)
-    paste_matrix = compose_affines(local_matrix, pre_rotation)
+    lm68 = _value('landmark_3d_68')
+    if lm68 is None:
+        lm68 = _value('landmarks_68')
+    if lm68 is None:
+        lm68 = _value('landmarks')
+    if lm68 is not None:
+        lm68_arr = np.asarray(lm68, dtype=np.float32)
+        lm68 = lm68_arr[:, :2] if lm68_arr.ndim == 2 and lm68_arr.shape[1] >= 2 else None
+    _, roll_deg = compute_canonical_roll_angle(kps)
+    center = ((float(bbox[0]) + float(bbox[2])) * 0.5,
+              (float(bbox[1]) + float(bbox[3])) * 0.5)
+
+    R, inv_R, applied = build_canonical_rotation_matrix(center, roll_deg, threshold_deg=45.0)
+
+    h, w = image.shape[:2]
+    if applied:
+        upright = cv2.warpAffine(image, R, (w, h), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
+        upright_kps = transform_points(kps, R)
+        # On a rolled face (>45 deg), the 2D/3D-68 model running on the unrotated crop hallucinates an upright
+        # orientation, making its landmarks inverted. Do not use unrotated 68-pt landmarks for upright alignment.
+        upright_68 = None
+    else:
+        upright = image
+        upright_kps = kps
+        upright_68 = lm68
+
+    yaw, pitch, _ = estimate_head_pose_pnp(upright_68 if upright_68 is not None else upright_kps, (h, w))
+
+    local_matrix, alignment_kind = profile_aware_umeyama_alignment(
+        upright_kps, image_size=image_size, yaw_degrees=yaw, pitch_degrees=pitch, landmarks_68=upright_68)
+
+    paste_matrix = compute_composite_forward(local_matrix, R)
+    inv_local = cv2.invertAffineTransform(local_matrix).astype(np.float32)
+    inv_paste = compute_composite_inverse(inv_R, inv_local)
+
     if dst is not None:
         cv2.warpAffine(upright, local_matrix, (image_size, image_size), dst=dst,
-                       borderMode=cv2.BORDER_REPLICATE)
+                       flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
         aligned = dst
     else:
         aligned = cv2.warpAffine(upright, local_matrix, (image_size, image_size),
-                                 borderMode=cv2.BORDER_REPLICATE)
+                                 flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
     return aligned, paste_matrix, {
-        'yaw': yaw, 'pitch': pitch, 'roll': roll, 'pre_rotation': pre_rotation,
-        'inverse_pre_rotation': inverse_pre_rotation, 'applied_roll_prerotation': applied,
-        'alignment_kind': alignment_kind,
+        'yaw': yaw, 'pitch': pitch, 'roll': roll_deg, 'pre_rotation': R,
+        'inverse_pre_rotation': inv_R, 'applied_roll_prerotation': applied,
+        'alignment_kind': alignment_kind, 'inv_paste_matrix': inv_paste,
     }
 
 

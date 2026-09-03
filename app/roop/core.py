@@ -10,7 +10,9 @@ if any(arg.startswith('--execution-provider') for arg in sys.argv):
     os.environ['OMP_NUM_THREADS'] = '1'
 
 import warnings
-from typing import List
+from typing import List, Dict, Any, Optional, Union, Tuple
+from dataclasses import dataclass, asdict
+import numpy as np
 import platform
 import signal
 import torch
@@ -664,8 +666,11 @@ def start() -> None:
     print('Headless batch processing is not implemented - falling through to UI.')
 
 
-def get_processing_plugins(masking_engine, swap_model='inswapper'):
+def get_processing_plugins(masking_engine, swap_model='inswapper', target_face=None, enable_adaptive_lod=False):
     """Build the processor dict for ProcessOptions.
+
+    If `enable_adaptive_lod` is True and `target_face` is provided, routes dynamically
+    via the Adaptive LOD Dispatcher.
 
     `masking_engine` may be one engine name or several. Several compose, and they
     compose the right way round for occlusion: each mask processor blends the
@@ -679,6 +684,10 @@ def get_processing_plugins(masking_engine, swap_model='inswapper'):
     Order in the dict is order of execution (dicts preserve insertion), and the
     mask stage runs after the swap and the enhancer because it is inserted last.
     """
+    if enable_adaptive_lod and target_face is not None:
+        effective_mask = masking_engine[0] if isinstance(masking_engine, (list, tuple)) and masking_engine else masking_engine
+        return dispatch_adaptive_lod(target_face, masking_engine=str(effective_mask or 'RealityUX')).plugins
+
     processors = {"faceswap": {"swap_model": swap_model}}
 
     _adaptive_requested = roop.globals.selected_enhancer == 'Adaptive'
@@ -741,6 +750,177 @@ def get_processing_plugins(masking_engine, swap_model='inswapper'):
                 roop.globals, 'adaptive_enhancer_profile', 'BALANCED')}
 
     return processors
+
+
+# ==============================================================================
+# Adaptive Level-of-Detail (LOD) Dispatcher
+# ==============================================================================
+
+@dataclass
+class AdaptiveLODDecision:
+    """Routing decision produced by the Adaptive LOD Dispatcher."""
+    lod: int
+    level: str
+    diagonal: float
+    swap_model: str
+    swap_size: int
+    enhancer: Optional[str]
+    gpen_size: Optional[int]
+    bypass_gpen: bool
+    mask_engine: Optional[str]
+    dermal_injection: bool
+    plugins: Dict[str, Any]
+
+    def __getitem__(self, item: str) -> Any:
+        return getattr(self, item)
+
+    def __contains__(self, item: str) -> bool:
+        return hasattr(self, item)
+
+    def get(self, item: str, default: Any = None) -> Any:
+        return getattr(self, item, default)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+
+def calculate_face_diagonal(face_or_bbox: Any) -> float:
+    """Measure the face bounding box diagonal D = sqrt(w^2 + h^2) in target space.
+
+    Accepts:
+    - [x1, y1, x2, y2] bounding box coordinates or array
+    - (w, h) tuple/list
+    - Face object with .bbox attribute
+    - Dict with 'bbox' key
+    """
+    if face_or_bbox is None:
+        return 0.0
+
+    bbox = None
+    if hasattr(face_or_bbox, 'bbox'):
+        bbox = face_or_bbox.bbox
+    elif isinstance(face_or_bbox, dict) and 'bbox' in face_or_bbox:
+        bbox = face_or_bbox['bbox']
+    elif isinstance(face_or_bbox, (list, tuple, np.ndarray)):
+        bbox = face_or_bbox
+
+    if bbox is None:
+        return 0.0
+
+    b = np.asarray(bbox, dtype=np.float32).flatten()
+    if b.size == 4:
+        w = abs(float(b[2] - b[0]))
+        h = abs(float(b[3] - b[1]))
+    elif b.size == 2:
+        w = abs(float(b[0]))
+        h = abs(float(b[1]))
+    else:
+        return 0.0
+
+    return float(np.sqrt(w * w + h * h))
+
+
+def dispatch_adaptive_lod(
+    face_or_bbox: Any,
+    masking_engine: str = 'RealityUX'
+) -> AdaptiveLODDecision:
+    """Route swap model and GPEN restoration based on target face bounding box diagonal D.
+
+    LOD Tiers:
+    - LOD 0 (Background, D < 120px):
+        Route to lightweight 128px swapper model (inswapper); bypass GPEN restoration completely.
+    - LOD 1 (Mid-ground, 120px <= D <= 350px):
+        Route to 256px model (RealSwap/RealityUX) + GPEN-256.
+    - LOD 2 (Close-up, D > 350px):
+        Route to 512px model (simswap_512) + full GPEN-512 + high-frequency dermal injection.
+    """
+    D = calculate_face_diagonal(face_or_bbox)
+
+    if D < 120.0:
+        # LOD 0: Background
+        lod = 0
+        level = "LOD 0 (Background)"
+        swap_model = "inswapper"
+        swap_size = 128
+        enhancer = None
+        gpen_size = None
+        bypass_gpen = True
+        mask_eng = None
+        dermal = False
+        plugins = {
+            "faceswap": {"swap_model": "inswapper"}
+        }
+    elif D <= 350.0:
+        # LOD 1: Mid-ground
+        lod = 1
+        level = "LOD 1 (Mid-ground)"
+        swap_model = "realswap"
+        swap_size = 256
+        enhancer = "GPEN 256"
+        gpen_size = 256
+        bypass_gpen = False
+        mask_eng = masking_engine or "RealityUX"
+        dermal = False
+        plugins = {
+            "faceswap": {"swap_model": "realswap"},
+            "gpen": {"size": 256}
+        }
+        if mask_eng:
+            engine_key = "mask_realityux" if mask_eng == "RealityUX" else mask_eng
+            plugins[engine_key] = {}
+    else:
+        # LOD 2: Close-up
+        lod = 2
+        level = "LOD 2 (Close-up)"
+        swap_model = "simswap_512"
+        swap_size = 512
+        enhancer = "GPEN"
+        gpen_size = 512
+        bypass_gpen = False
+        mask_eng = masking_engine or "RealityUX"
+        dermal = True
+        plugins = {
+            "faceswap": {
+                "swap_model": "simswap_512",
+                "dermal_injection": True
+            },
+            "gpen": {"size": 512}
+        }
+        if mask_eng:
+            engine_key = "mask_realityux" if mask_eng == "RealityUX" else mask_eng
+            plugins[engine_key] = {}
+
+    return AdaptiveLODDecision(
+        lod=lod,
+        level=level,
+        diagonal=D,
+        swap_model=swap_model,
+        swap_size=swap_size,
+        enhancer=enhancer,
+        gpen_size=gpen_size,
+        bypass_gpen=bypass_gpen,
+        mask_engine=mask_eng,
+        dermal_injection=dermal,
+        plugins=plugins
+    )
+
+
+class AdaptiveLODDispatcher:
+    """Dispatcher class for Level-of-Detail model routing."""
+    LOD0_THRESHOLD = 120.0
+    LOD1_THRESHOLD = 350.0
+
+    @staticmethod
+    def calculate_diagonal(face_or_bbox: Any) -> float:
+        return calculate_face_diagonal(face_or_bbox)
+
+    @classmethod
+    def dispatch(cls, face_or_bbox: Any, masking_engine: str = 'RealityUX') -> AdaptiveLODDecision:
+        return dispatch_adaptive_lod(face_or_bbox, masking_engine=masking_engine)
+
+    @classmethod
+    def get_plugins(cls, face_or_bbox: Any, masking_engine: str = 'RealityUX') -> Dict[str, Any]:
+        return dispatch_adaptive_lod(face_or_bbox, masking_engine=masking_engine).plugins
 
 
 def get_face_crop_from_frame(frame_bgr) -> str:

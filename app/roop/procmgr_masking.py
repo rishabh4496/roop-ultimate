@@ -286,7 +286,10 @@ def landmark_hull(landmarks_2d, kps=None):
     arithmetic exactly when the head is upright, so frontal faces are
     bit-identical to before.
     """
-    pts = np.asarray(landmarks_2d).astype(np.int32)
+    pts = np.asarray(landmarks_2d, dtype=np.float32)
+    if pts.ndim == 2 and pts.shape[1] >= 2:
+        pts = pts[:, :2]
+    pts = pts.astype(np.int32)
 
     # Head "up" unit vector. Image y grows downward, so an upright head
     # yields (0, -1) and every projection below collapses to the original
@@ -585,8 +588,8 @@ class MaskingMixin:
     def _crop_mask_to_frame(cls, mask8, weight, IM, frame_shape, margin_frac):
         """Turn a crop-space 0-255 keep-mask into a FRAME-space multiplier.
 
-        Shared by the two things that trim the matte from crop space — the pose
-        visibility polygon and a swap model's own mask output — because both need
+        Shared by the two things that trim the matte from crop space -- the pose
+        visibility polygon and a swap model's own mask output -- because both need
         the identical treatment and it is easy to get subtly different.
 
         `margin_frac` is a dilation, as a fraction of the crop, for shapes that

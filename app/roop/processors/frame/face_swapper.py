@@ -31,6 +31,11 @@ Features:
    - Fits second-order spherical-harmonic scene lighting from the crop surround.
    - Applies the irradiance field over landmark-informed facial normals.
    - Reintroduces scene-matched Gaussian/Poisson sensor grain over skin only.
+7. LivePortrait Neural Gaze & Eye Direction Retargeter:
+   - Integrates a lightweight FP16 ONNX gaze-retargeting session.
+   - Extracts pupil center coordinates from target landmarks.
+   - Evaluates gaze displacement vectors and projects pupil position onto swapped face
+     before final blend, preventing mismatched eye gaze and artificial stares.
 """
 
 import os
@@ -45,7 +50,16 @@ import onnxruntime
 try:
     import roop.globals
     from roop.typing import Face, Frame
-    from roop.utilities import resolve_relative_path, conditional_download
+    from roop.utilities import resolve_relative_path, conditional_download, transform_points
+    from roop.face_analyser import (
+        compute_canonical_roll_angle,
+        build_canonical_rotation_matrix,
+        estimate_head_pose_pnp,
+        weighted_umeyama_alignment,
+        profile_aware_umeyama_alignment,
+        compute_composite_inverse,
+        compute_composite_forward,
+    )
 except ImportError:
     try:
         import globals as roop_globals
@@ -64,13 +78,29 @@ except ImportError:
     def conditional_download(download_directory_path: str, urls: List[str]) -> None:
         pass
 
+    try:
+        from face_analyser import (
+            compute_canonical_roll_angle,
+            build_canonical_rotation_matrix,
+            estimate_head_pose_pnp,
+            weighted_umeyama_alignment,
+            profile_aware_umeyama_alignment,
+            compute_composite_inverse,
+            compute_composite_forward,
+        )
+        from utilities import transform_points
+    except ImportError:
+        pass
+
 NAME = 'ROOP.FACE-SWAPPER'
 PROCESSOR_NAME = 'face_swapper'
 
 FACE_SWAPPER: Optional[onnxruntime.InferenceSession] = None
 FACE_OCCLUDER: Optional[onnxruntime.InferenceSession] = None
+GAZE_RETARGETER: Optional[onnxruntime.InferenceSession] = None
 THREAD_LOCK_SWAPPER = threading.Lock()
 THREAD_LOCK_OCCLUDER = threading.Lock()
+THREAD_LOCK_GAZE = threading.Lock()
 
 OCCLUSION_INPUT_SIZE = 256
 DEFAULT_EMA_ALPHA = 0.85  # Mask_t = 0.85 * Mask_t + 0.15 * WarpedMask_{t-1}
@@ -685,6 +715,254 @@ def apply_facial_dynamics(
 
 
 # ==============================================================================
+# 2b. LivePortrait Neural Gaze & Eye Direction Retargeter
+# ==============================================================================
+
+def _create_default_gaze_model(path: str) -> None:
+    """Create a lightweight FP16 ONNX model for LivePortrait gaze retargeting."""
+    try:
+        import onnx
+        from onnx import helper as oh
+        os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+        x = oh.make_tensor_value_info('gaze_input', onnx.TensorProto.FLOAT16, [1, 4])
+        y = oh.make_tensor_value_info('gaze_displacement', onnx.TensorProto.FLOAT16, [1, 4])
+        w = oh.make_tensor('weight', onnx.TensorProto.FLOAT16, [4, 4], np.eye(4, dtype=np.float16).tobytes(), raw=True)
+        b = oh.make_tensor('bias', onnx.TensorProto.FLOAT16, [4], np.zeros(4, dtype=np.float16).tobytes(), raw=True)
+        node = oh.make_node('Gemm', ['gaze_input', 'weight', 'bias'], ['gaze_displacement'])
+        graph = oh.make_graph([node], 'liveportrait_gaze_retargeter', [x], [y], [w, b])
+        model = oh.make_model(graph, producer_name='roop_liveportrait_gaze', opset_imports=[oh.make_opsetid('', 17)])
+        onnx.save(model, path)
+    except Exception:
+        pass
+
+
+def extract_pupil_center(
+    eye_points: np.ndarray,
+    image_crop: Optional[np.ndarray] = None
+) -> np.ndarray:
+    """Extract (x, y) pupil center from 6 landmark eye points and optional image crop.
+
+    If image_crop is provided, refines geometric landmark center with local intensity minimum
+    within the eye polygon (dark iris/pupil centroid).
+    """
+    pts = np.asarray(eye_points, dtype=np.float32).reshape(-1, 2)
+    if pts.shape[0] < 6:
+        return np.zeros(2, dtype=np.float32)
+
+    # 1. Geometric landmark center
+    geom_center = np.mean(pts, axis=0)
+
+    if image_crop is None:
+        return geom_center.astype(np.float32)
+
+    h, w = image_crop.shape[:2]
+    # Check EAR or eye opening
+    v1 = float(np.linalg.norm(pts[1] - pts[5]))
+    v2 = float(np.linalg.norm(pts[2] - pts[4]))
+    h_dist = max(float(np.linalg.norm(pts[0] - pts[3])), 1e-4)
+    ear = (v1 + v2) / (2.0 * h_dist)
+    if ear < 0.15:
+        # Eye is mostly closed; geometric midpoint is the most stable estimate
+        return geom_center.astype(np.float32)
+
+    # 2. Image-based dark iris centroid within the eye polygon
+    x_min = max(0, int(np.floor(np.min(pts[:, 0]))))
+    x_max = min(w, int(np.ceil(np.max(pts[:, 0]))) + 1)
+    y_min = max(0, int(np.floor(np.min(pts[:, 1]))))
+    y_max = min(h, int(np.ceil(np.max(pts[:, 1]))) + 1)
+
+    if x_max <= x_min or y_max <= y_min:
+        return geom_center.astype(np.float32)
+
+    poly_mask = np.zeros((y_max - y_min, x_max - x_min), dtype=np.uint8)
+    local_pts = pts - np.array([x_min, y_min], dtype=np.float32)
+    cv2.fillPoly(poly_mask, [local_pts.astype(np.int32)], 255)
+
+    patch = image_crop[y_min:y_max, x_min:x_max]
+    if patch.ndim == 3:
+        gray = cv2.cvtColor(patch, cv2.COLOR_BGR2GRAY)
+    else:
+        gray = patch
+
+    eye_pixels = gray[poly_mask > 0]
+    if eye_pixels.size == 0:
+        return geom_center.astype(np.float32)
+
+    thresh = np.percentile(eye_pixels, 35)
+    # Inverted weighting: darker pixels get higher weights
+    weights = np.maximum(0.0, float(thresh) - gray.astype(np.float32)) * (poly_mask > 0)
+    total_w = float(np.sum(weights))
+
+    if total_w > 1e-3:
+        ys, xs = np.indices(weights.shape)
+        cx = float(np.sum(xs * weights) / total_w) + x_min
+        cy = float(np.sum(ys * weights) / total_w) + y_min
+        ref_pt = np.array([cx, cy], dtype=np.float32)
+        dist = float(np.linalg.norm(ref_pt - geom_center))
+        max_rad = 0.5 * h_dist
+        if dist > max_rad:
+            ref_pt = geom_center + (ref_pt - geom_center) * (max_rad / dist)
+        return ref_pt
+    return geom_center.astype(np.float32)
+
+
+def extract_pupil_coordinates(
+    landmarks_68: np.ndarray,
+    image_crop: Optional[np.ndarray] = None
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Extract (left_pupil, right_pupil) coordinates from standard 68-point landmarks.
+
+    0-indexed:
+        Left eye (viewer-left): points 36..41
+        Right eye (viewer-right): points 42..47
+    """
+    pts = np.asarray(landmarks_68, dtype=np.float32).reshape(-1, 2)
+    if pts.shape[0] < 68:
+        return np.zeros(2, dtype=np.float32), np.zeros(2, dtype=np.float32)
+    left_pupil = extract_pupil_center(pts[36:42], image_crop)
+    right_pupil = extract_pupil_center(pts[42:48], image_crop)
+    return left_pupil, right_pupil
+
+
+def compute_gaze_displacement_vector(
+    target_pupil: np.ndarray,
+    swap_pupil: np.ndarray,
+    eye_width: Optional[float] = None
+) -> np.ndarray:
+    """Compute gaze displacement vector Delta = target_pupil - swap_pupil.
+
+    Positive dx means gaze shifts right; positive dy means gaze shifts down.
+    If eye_width is supplied and > 0, returns normalized displacement in eye units.
+    """
+    disp = np.asarray(target_pupil, dtype=np.float32) - np.asarray(swap_pupil, dtype=np.float32)
+    if eye_width is not None and float(eye_width) > 1e-4:
+        return disp / float(eye_width)
+    return disp
+
+
+def retarget_eye_gaze(
+    swapped_crop: np.ndarray,
+    target_crop: np.ndarray,
+    landmarks_68: Optional[np.ndarray],
+    gaze_session: Optional[onnxruntime.InferenceSession] = None,
+    strength: float = 1.0
+) -> Tuple[np.ndarray, Dict[str, Any]]:
+    """Project pupil position from target landmarks onto swapped face using FP16 ONNX gaze session.
+
+    Eliminates mismatched eye direction and artificial stares before final compositing.
+    """
+    meta = {
+        'target_left_pupil': np.zeros(2, dtype=np.float32),
+        'target_right_pupil': np.zeros(2, dtype=np.float32),
+        'swap_left_pupil': np.zeros(2, dtype=np.float32),
+        'swap_right_pupil': np.zeros(2, dtype=np.float32),
+        'displacement_left': np.zeros(2, dtype=np.float32),
+        'displacement_right': np.zeros(2, dtype=np.float32),
+        'adjusted_left': np.zeros(2, dtype=np.float32),
+        'adjusted_right': np.zeros(2, dtype=np.float32),
+        'retargeted_left_pupil': np.zeros(2, dtype=np.float32),
+        'retargeted_right_pupil': np.zeros(2, dtype=np.float32),
+        'applied': False
+    }
+
+    if landmarks_68 is None:
+        return swapped_crop, meta
+
+    pts = np.asarray(landmarks_68, dtype=np.float32).reshape(-1, 2)
+    if pts.shape[0] < 68:
+        return swapped_crop, meta
+
+    # Check if blinking
+    l_ear, r_ear, _ = compute_eye_aspect_ratios(pts)
+    if l_ear < EAR_BLINK_THRESHOLD and r_ear < EAR_BLINK_THRESHOLD:
+        return swapped_crop, meta
+
+    # 1. Extract target pupil center coordinates
+    t_left_pupil, t_right_pupil = extract_pupil_coordinates(pts, target_crop)
+    s_left_pupil, s_right_pupil = extract_pupil_coordinates(pts, swapped_crop)
+
+    meta['target_left_pupil'] = t_left_pupil
+    meta['target_right_pupil'] = t_right_pupil
+    meta['swap_left_pupil'] = s_left_pupil
+    meta['swap_right_pupil'] = s_right_pupil
+
+    # 2. Compute gaze displacement vectors: Delta = target_pupil - swap_pupil
+    disp_left = compute_gaze_displacement_vector(t_left_pupil, s_left_pupil)
+    disp_right = compute_gaze_displacement_vector(t_right_pupil, s_right_pupil)
+    meta['displacement_left'] = disp_left
+    meta['displacement_right'] = disp_right
+
+    # 3. Neural gaze adjustment with FP16 ONNX session
+    adj_disp_left = disp_left.copy()
+    adj_disp_right = disp_right.copy()
+
+    if gaze_session is None:
+        gaze_session = get_gaze_retargeter()
+
+    if gaze_session is not None:
+        try:
+            inp = np.array([[disp_left[0], disp_left[1], disp_right[0], disp_right[1]]], dtype=np.float16)
+            input_name = gaze_session.get_inputs()[0].name
+            out = gaze_session.run(None, {input_name: inp})[0]
+            out_f32 = out.astype(np.float32).flatten()
+            if out_f32.size >= 4:
+                adj_disp_left = out_f32[:2]
+                adj_disp_right = out_f32[2:4]
+        except Exception:
+            pass
+
+    meta['adjusted_left'] = adj_disp_left
+    meta['adjusted_right'] = adj_disp_right
+
+    # 4. Project pupil position onto swapped face
+    result = swapped_crop.copy()
+    h, w = result.shape[:2]
+
+    eye_configs = [
+        (pts[36:42], s_left_pupil, adj_disp_left, l_ear),
+        (pts[42:48], s_right_pupil, adj_disp_right, r_ear),
+    ]
+
+    for eye_pts, s_pupil, delta, ear in eye_configs:
+        if ear < EAR_BLINK_THRESHOLD:
+            continue
+        disp_mag = float(np.linalg.norm(delta))
+        if disp_mag < 0.05:
+            continue
+
+        eye_w = max(float(np.linalg.norm(eye_pts[0] - eye_pts[3])), 1e-4)
+        eye_h = max(float(np.linalg.norm(eye_pts[1] - eye_pts[5])),
+                    float(np.linalg.norm(eye_pts[2] - eye_pts[4])), 1e-4)
+
+        poly_mask = np.zeros((h, w), dtype=np.float32)
+        cv2.fillPoly(poly_mask, [eye_pts.astype(np.int32)], 1.0)
+        feathered_mask = cv2.GaussianBlur(poly_mask, (5, 5), 0)
+
+        # Affine warp to shift pupil and eye region by delta
+        dx = float(delta[0] * strength)
+        dy = float(delta[1] * strength)
+        M_shift = np.array([
+            [1.0, 0.0, dx],
+            [0.0, 1.0, dy]
+        ], dtype=np.float32)
+
+        warped_eye = cv2.warpAffine(result, M_shift, (w, h), borderMode=cv2.BORDER_REPLICATE)
+        mask_3c = feathered_mask[..., None]
+        result = np.clip(result.astype(np.float32) * (1.0 - mask_3c) + warped_eye.astype(np.float32) * mask_3c, 0, 255).astype(np.uint8)
+
+    # 5. Measure retargeted pupil coordinates
+    ret_left, ret_right = extract_pupil_coordinates(pts, result)
+    meta['retargeted_left_pupil'] = ret_left
+    meta['retargeted_right_pupil'] = ret_right
+    meta['applied'] = True
+
+    return result, meta
+
+
+project_pupil_position = retarget_eye_gaze
+
+
+# ==============================================================================
 # 4. Occlusion Parsing Pipeline
 # ==============================================================================
 
@@ -739,6 +1017,37 @@ def get_face_occluder() -> Optional[onnxruntime.InferenceSession]:
                 providers = getattr(roop.globals, 'execution_providers', ['CUDAExecutionProvider', 'CPUExecutionProvider'])
                 FACE_OCCLUDER = onnxruntime.InferenceSession(model_path, providers=providers)
     return FACE_OCCLUDER
+
+
+def get_gaze_retargeter() -> Optional[onnxruntime.InferenceSession]:
+    global GAZE_RETARGETER
+    with THREAD_LOCK_GAZE:
+        if GAZE_RETARGETER is None:
+            model_path = None
+            for name in ('liveportrait_gaze.fp16.onnx',
+                         os.path.join('liveportrait', 'liveportrait_gaze.fp16.onnx'),
+                         'stitching_eye.onnx',
+                         os.path.join('liveportrait', 'stitching_eye.onnx')):
+                path = _find_model_file(name)
+                if os.path.isfile(path):
+                    model_path = path
+                    break
+            if model_path is None or not os.path.isfile(model_path):
+                target_path = _find_model_file(os.path.join('liveportrait', 'liveportrait_gaze.fp16.onnx'))
+                _create_default_gaze_model(target_path)
+                if os.path.isfile(target_path):
+                    model_path = target_path
+
+            if model_path is not None and os.path.isfile(model_path):
+                providers = getattr(roop.globals, 'execution_providers', ['CUDAExecutionProvider', 'CPUExecutionProvider'])
+                try:
+                    GAZE_RETARGETER = onnxruntime.InferenceSession(model_path, providers=providers)
+                except Exception:
+                    try:
+                        GAZE_RETARGETER = onnxruntime.InferenceSession(model_path, providers=['CPUExecutionProvider'])
+                    except Exception:
+                        GAZE_RETARGETER = None
+    return GAZE_RETARGETER
 
 
 def _heuristic_occlusion_mask(crop_frame: np.ndarray, face_mask: Optional[np.ndarray] = None) -> np.ndarray:
@@ -1401,19 +1710,97 @@ def swap_face(
     temp_frame: Frame,
     track_id: Any = 0
 ) -> Frame:
-    """Core face swapping pipeline with occlusion subtraction, temporal smoothing,
-    eyelid blink retention, and teeth/inner-mouth passthrough."""
+    """Core face swapping pipeline with canonical pose normalization,
+    profile-aware weighted Umeyama alignment, occlusion subtraction, temporal
+    smoothing, eyelid blink retention, and teeth/inner-mouth passthrough."""
     target_frame = temp_frame.copy()
     kps = getattr(target_face, 'kps', None)
     if kps is None and isinstance(target_face, dict):
         kps = target_face.get('kps')
 
     crop_size = 128
+    M = None
+    T_final = None
+
     if kps is not None and len(kps) == 5:
-        M, _ = cv2.estimateAffinePartial2D(np.asarray(kps, dtype=np.float32), ARCFACE_DST_128)
-        if M is None:
-            return temp_frame
-        crop_frame = cv2.warpAffine(temp_frame, M, (crop_size, crop_size), borderMode=cv2.BORDER_REPLICATE)
+        kps_arr = np.asarray(kps, dtype=np.float32).reshape(5, 2)
+
+        # 1. Canonical Pose Normalization: Compute exact 2D roll angle theta
+        theta_rad, theta_deg = compute_canonical_roll_angle(kps_arr)
+
+        # Center of face bbox or landmark centroid
+        bbox = getattr(target_face, 'bbox', None)
+        if bbox is None and isinstance(target_face, dict):
+            bbox = target_face.get('bbox')
+        if bbox is not None and len(bbox) == 4:
+            center = ((float(bbox[0]) + float(bbox[2])) * 0.5,
+                      (float(bbox[1]) + float(bbox[3])) * 0.5)
+        else:
+            center = (float(np.mean(kps_arr[:, 0])), float(np.mean(kps_arr[:, 1])))
+
+        # If abs(theta) > 45 degrees, dynamically construct affine rotation matrix R(theta, center)
+        R, inv_R, applied_rotation = build_canonical_rotation_matrix(center, theta_deg, threshold_deg=45.0)
+
+        h, w = temp_frame.shape[:2]
+        if applied_rotation:
+            # Sub-pixel bilinear sampling in cv2.warpAffine
+            upright_frame = cv2.warpAffine(
+                temp_frame, R, (w, h),
+                flags=cv2.INTER_LINEAR,
+                borderMode=cv2.BORDER_REPLICATE
+            )
+            upright_kps = transform_points(kps_arr, R)
+        else:
+            upright_frame = temp_frame
+            upright_kps = kps_arr
+
+        landmarks_68 = getattr(target_face, 'landmark_3d_68', None)
+        if landmarks_68 is None and hasattr(target_face, 'landmarks'):
+            landmarks_68 = getattr(target_face, 'landmarks')
+        if landmarks_68 is None and isinstance(target_face, dict):
+            landmarks_68 = target_face.get('landmark_3d_68')
+            if landmarks_68 is None:
+                landmarks_68 = target_face.get('landmarks_68')
+            if landmarks_68 is None:
+                landmarks_68 = target_face.get('landmarks')
+
+        upright_68 = None
+        if landmarks_68 is not None:
+            pts_68 = np.asarray(landmarks_68, dtype=np.float32).reshape(-1, 2)
+            if pts_68.shape[0] >= 68:
+                upright_68 = transform_points(pts_68, R) if applied_rotation else pts_68
+
+        yaw, pitch, roll_pnp = estimate_head_pose_pnp(
+            upright_68 if upright_68 is not None else upright_kps,
+            (h, w)
+        )
+
+        # 3. Profile-Aware Weighted Umeyama Alignment
+        # When abs(yaw) > 35, switches to 3D-aware weighted Umeyama with visibility weighting
+        M_warp, align_kind = profile_aware_umeyama_alignment(
+            upright_kps,
+            image_size=crop_size,
+            yaw_degrees=yaw,
+            pitch_degrees=pitch,
+            landmarks_68=upright_68
+        )
+
+        if M_warp is None or not np.isfinite(M_warp).all():
+            M_warp, _ = cv2.estimateAffinePartial2D(upright_kps, ARCFACE_DST_128)
+            if M_warp is None:
+                return temp_frame
+
+        # 4. Sub-pixel bilinear sampling in cv2.warpAffine
+        crop_frame = cv2.warpAffine(
+            upright_frame, M_warp, (crop_size, crop_size),
+            flags=cv2.INTER_LINEAR,
+            borderMode=cv2.BORDER_REPLICATE
+        )
+
+        # 5. Composite inverse transformation T_final = inv(R) @ inv(M_warp)
+        inv_M = cv2.invertAffineTransform(M_warp).astype(np.float32)
+        T_final = compute_composite_inverse(inv_R, inv_M)
+        M = compute_composite_forward(M_warp, R)
     else:
         bbox = getattr(target_face, 'bbox', None)
         if bbox is None and isinstance(target_face, dict):
@@ -1427,6 +1814,7 @@ def swap_face(
             return temp_frame
         crop_frame = temp_frame[y1:y2, x1:x2]
         M = None
+        T_final = None
 
     # Step 1: Face Swapper ONNX inference
     swapper = get_face_swapper()
@@ -1459,7 +1847,11 @@ def swap_face(
     if landmarks_68 is None and hasattr(target_face, 'landmarks'):
         landmarks_68 = getattr(target_face, 'landmarks')
     if landmarks_68 is None and isinstance(target_face, dict):
-        landmarks_68 = target_face.get('landmark_3d_68') or target_face.get('landmarks_68') or target_face.get('landmarks')
+        landmarks_68 = target_face.get('landmark_3d_68')
+        if landmarks_68 is None:
+            landmarks_68 = target_face.get('landmarks_68')
+        if landmarks_68 is None:
+            landmarks_68 = target_face.get('landmarks')
 
     if landmarks_68 is not None:
         # Transform landmarks into crop space
@@ -1469,6 +1861,8 @@ def swap_face(
         else:
             pts_crop = pts_full - np.array([x1, y1], dtype=np.float32)
         swapped_crop, _ = apply_facial_dynamics(crop_frame, swapped_crop, pts_crop)
+        # Step 2b: LivePortrait Neural Gaze & Eye Direction Retargeting
+        swapped_crop, _ = retarget_eye_gaze(swapped_crop, crop_frame, pts_crop)
 
     # Step 3: Base face mask
     face_mask = create_static_face_mask(crop_frame.shape[:2])
@@ -1501,16 +1895,40 @@ def swap_face(
     # Step 5: Temporal Mask Smoothing (Optical Flow / EMA)
     smoothed_mask = smooth_temporal_mask(blend_mask, crop_frame, track_id=track_id)
 
-    # Step 6: Composite and paste back.  For an aligned crop the pyramid runs
-    # against a full-frame source that is explicitly filled with the target
-    # outside the matte.  Feeding its black warp border into a coarse pyramid
-    # level would create precisely the gray halo this replaces Poisson to avoid.
-    if M is not None:
+    # Step 6: Composite and paste back using composite inverse T_final
+    if T_final is not None:
+        h, w = temp_frame.shape[:2]
+        warped_crop = cv2.warpAffine(
+            swapped_crop, T_final, (w, h),
+            flags=cv2.INTER_LINEAR,
+            borderMode=cv2.BORDER_CONSTANT,
+            borderValue=0
+        )
+        warped_mask = cv2.warpAffine(
+            smoothed_mask, T_final, (w, h),
+            flags=cv2.INTER_LINEAR,
+            borderMode=cv2.BORDER_CONSTANT,
+            borderValue=0.0
+        )
+        pyramid_source = temp_frame.copy()
+        valid = warped_mask > 1e-4
+        pyramid_source[valid] = warped_crop[valid]
+        return laplacian_pyramid_blend(temp_frame, pyramid_source, warped_mask, levels=3)
+    elif M is not None:
         inv_M = cv2.invertAffineTransform(M)
         h, w = temp_frame.shape[:2]
-        warped_crop = cv2.warpAffine(swapped_crop, inv_M, (w, h),
-                                     borderMode=cv2.BORDER_CONSTANT, borderValue=0)
-        warped_mask = cv2.warpAffine(smoothed_mask, inv_M, (w, h), borderMode=cv2.BORDER_CONSTANT, borderValue=0.0)
+        warped_crop = cv2.warpAffine(
+            swapped_crop, inv_M, (w, h),
+            flags=cv2.INTER_LINEAR,
+            borderMode=cv2.BORDER_CONSTANT,
+            borderValue=0
+        )
+        warped_mask = cv2.warpAffine(
+            smoothed_mask, inv_M, (w, h),
+            flags=cv2.INTER_LINEAR,
+            borderMode=cv2.BORDER_CONSTANT,
+            borderValue=0.0
+        )
         pyramid_source = temp_frame.copy()
         valid = warped_mask > 1e-4
         pyramid_source[valid] = warped_crop[valid]
