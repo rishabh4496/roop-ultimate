@@ -826,11 +826,15 @@ def render(video, faceset_names, workdir, args, log):
     log("sources: " + ", ".join("%s (%d faces)" % (n, len(f.faces))
                                 for n, f in zip(faceset_names, facesets)))
 
+    # strict=False: the default raises SystemExit, which inherits from
+    # BaseException and therefore walks straight through a per-video
+    # `except Exception`, aborting the whole batch on one unrenderable clip.
+    # That happened on s3.mp4 (2026-09-03) and killed a 12-video run.
     targets, groups = T.auto_capture_targets(
         video, expect=len(faceset_names), time_budget=args.capture_budget,
-        log_prefix="  [capture]")
+        log_prefix="  [capture]", strict=False)
     if not targets:
-        raise RuntimeError("auto-capture found no target faces")
+        raise RuntimeError("auto-capture found no usable face in this clip")
     log("captured %d target face(s)" % len(targets))
 
     os.makedirs(workdir, exist_ok=True)
@@ -1281,7 +1285,11 @@ def main():
             verdicts = " ".join("%s=%s" % (c["key"], c["verdict"])
                                 for c in entry["criteria"])
             log("verdicts: %s" % verdicts)
-        except Exception as exc:
+        except (Exception, SystemExit) as exc:
+            # SystemExit is deliberately included: several helpers in
+            # two_face_video raise it for "this clip is unusable", and it is
+            # NOT an Exception subclass. KeyboardInterrupt stays uncaught so
+            # the operator can still stop the batch.
             entry["error"] = "%s: %s" % (type(exc).__name__, exc)
             entry["traceback"] = traceback.format_exc()
             entry.setdefault("criteria", [])
