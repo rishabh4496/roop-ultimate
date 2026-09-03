@@ -1069,6 +1069,16 @@ boot();addEventListener('resize',boot);
 # main
 # ═════════════════════════════════════════════════════════════════════════════
 
+def tally(videos):
+    """Verdict counts over whatever has been recorded so far."""
+    totals = {"pass": 0, "fail": 0, "na": 0, "advisory": 0}
+    key = {"pass": "pass", "fail": "fail", "n/a": "na", "advisory": "advisory"}
+    for video in videos:
+        for crit in video.get("criteria") or []:
+            totals[key[crit["verdict"]]] += 1
+    return totals
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="End-to-end quality verification over the roop-keep corpus.")
@@ -1091,6 +1101,9 @@ def main():
     parser.add_argument("--capture-budget", type=float, default=90.0)
     parser.add_argument("--only", default="",
                         help="comma-separated video basenames to restrict to")
+    parser.add_argument("--resume", action="store_true",
+                        help="skip videos already recorded in the JSON and "
+                             "keep their results")
     parser.add_argument("--embed-images", action="store_true",
                         help="inline strips as data URIs (portable, larger)")
     args = parser.parse_args()
@@ -1170,6 +1183,20 @@ def main():
     print("[plan] %d video(s): %s"
           % (len(jobs), ", ".join(os.path.basename(p) for _, p, _ in jobs)), flush=True)
 
+    json_path = os.path.join(out_root, "verification_report.json")
+    done = {}
+    if args.resume and os.path.isfile(json_path):
+        try:
+            with open(json_path, encoding="utf-8") as handle:
+                prior = json.load(handle)
+            for item in prior.get("videos", []):
+                if item.get("criteria") and not item.get("error"):
+                    done[item["name"]] = item
+            print("[resume] keeping %d completed video(s): %s"
+                  % (len(done), ", ".join(sorted(done))), flush=True)
+        except Exception as exc:
+            print("[resume] could not read prior report: %s" % exc, flush=True)
+
     report = {"started": started,
               "base_dir": base,
               "source_revision": source_revision(),
@@ -1183,6 +1210,11 @@ def main():
     totals = {"pass": 0, "fail": 0, "na": 0, "advisory": 0}
     for number, (kind, video, names) in enumerate(jobs, 1):
         name = os.path.basename(video)
+        if name in done:
+            print("[%d/%d] %s  -- already recorded, kept (--resume)"
+                  % (number, len(jobs), name), flush=True)
+            report["videos"].append(done[name])
+            continue
         print("\n[%d/%d] %s  (%s: %s)"
               % (number, len(jobs), name, kind, ", ".join(names)), flush=True)
         began = time.time()
@@ -1246,9 +1278,6 @@ def main():
                 entry["strips"] = strips
                 log("strips: %d" % len(strips))
 
-            for crit in entry["criteria"]:
-                totals[{"pass": "pass", "fail": "fail", "n/a": "na",
-                        "advisory": "advisory"}[crit["verdict"]]] += 1
             verdicts = " ".join("%s=%s" % (c["key"], c["verdict"])
                                 for c in entry["criteria"])
             log("verdicts: %s" % verdicts)
@@ -1262,8 +1291,19 @@ def main():
         entry["seconds"] = round(time.time() - began, 1)
         report["videos"].append(entry)
 
-    report["totals"] = totals
-    json_path = os.path.join(out_root, "verification_report.json")
+        # Persist after EVERY video. Two full-corpus runs were killed partway
+        # on 2026-09-03 and lost everything, because the report was written
+        # only at the end. A long batch must survive an interruption;
+        # --resume then skips what is already recorded.
+        report["totals"] = tally(report["videos"])
+        try:
+            os.makedirs(out_root, exist_ok=True)
+            with open(json_path, "w", encoding="utf-8") as handle:
+                json.dump(report, handle, indent=2)
+        except Exception as exc:
+            print("  !  could not flush report: %s" % exc, flush=True)
+
+    totals = report["totals"] = tally(report["videos"])
     os.makedirs(out_root, exist_ok=True)
     with open(json_path, "w", encoding="utf-8") as handle:
         json.dump(report, handle, indent=2)
