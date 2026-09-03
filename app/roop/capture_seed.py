@@ -57,17 +57,6 @@ MIN_GAP_FRAC = 0.25
 def landmarks_plausible(bbox, kps, det_score=None, min_det_score=MIN_DET_SCORE):
     """Sanity-check a face's 5-point landmarks against its own bbox before
     trusting it as a reference-capture candidate.
-
-    A face rotated far enough away from camera can still return a bbox and 5
-    keypoints, with an off-axis reading that looks deceptively good — but the
-    eye/nose/mouth labels no longer correspond to real anatomy. Measured on
-    d1.mp4 (investigating a regression from 19.6% back to 81.1% not-swapped):
-    the "best" (lowest off-axis, 15.8 deg) frame for one person was a "Neck
-    Rotation" exercise's fully-back head tilt — chin at the sky, no face
-    actually visible — and its detected "mouth" keypoints sat ABOVE its "eye"
-    keypoints, an inverted geometry no real face has at any yaw/pitch/roll.
-    The other person's bad capture in the same investigation had normal-looking
-    geometry but det_score 0.434 on a barely-60px bbox, caught by the floor.
     """
     if det_score is not None and det_score < min_det_score:
         return False
@@ -78,11 +67,18 @@ def landmarks_plausible(bbox, kps, det_score=None, min_det_score=MIN_DET_SCORE):
     kps = np.asarray(kps, dtype=np.float64)
     if kps.shape[0] < 5:
         return False
-    ny = (kps[:, 1] - y0) / h
-    eye_y = (ny[0] + ny[1]) / 2.0
-    nose_y = ny[2]
-    mouth_y = (ny[3] + ny[4]) / 2.0
-    margin = 0.05
+    # Upright the keypoints to canonical orientation before anatomical checks
+    from roop.face_analyser import compute_canonical_roll_angle, build_canonical_rotation_matrix
+    from roop.utilities import transform_points
+    center = ((x0 + x1) * 0.5, (y0 + y1) * 0.5)
+    _, theta_deg = compute_canonical_roll_angle(kps)
+    R, _, applied = build_canonical_rotation_matrix(center, theta_deg, threshold_deg=10.0)
+    kps_up = transform_points(kps, R) if applied else kps
+
+    eye_y = (kps_up[0, 1] + kps_up[1, 1]) / 2.0
+    nose_y = kps_up[2, 1]
+    mouth_y = (kps_up[3, 1] + kps_up[4, 1]) / 2.0
+    margin = 0.05 * max(w, h)
     if mouth_y < eye_y + margin:
         return False
     if not (eye_y - margin <= nose_y <= mouth_y + margin):
@@ -108,8 +104,11 @@ def min_pair_gap(faces):
         for j in range(i + 1, len(faces)):
             a, b = faces[i].bbox, faces[j].bbox
             dx = max(b[0] - a[2], a[0] - b[2], 0.0)
+            dy = max(b[1] - a[3], a[1] - b[3], 0.0)
             w = 0.5 * ((a[2] - a[0]) + (b[2] - b[0]))
-            worst = min(worst, float(dx / max(w, 1.0)))
+            h = 0.5 * ((a[3] - a[1]) + (b[3] - b[1]))
+            dist = max(dx / max(w, 1.0), dy / max(h, 1.0))
+            worst = min(worst, float(dist))
     return worst if faces else 0.0
 
 

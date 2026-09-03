@@ -347,11 +347,18 @@ def _landmarks_plausible(bbox, kps, det_score=None, min_det_score=_CAPTURE_MIN_D
     kps = np.asarray(kps, dtype=np.float64)
     if kps.shape[0] < 5:
         return False
-    ny = (kps[:, 1] - y0) / h
-    eye_y = (ny[0] + ny[1]) / 2.0
-    nose_y = ny[2]
-    mouth_y = (ny[3] + ny[4]) / 2.0
-    margin = 0.05
+    # Upright the keypoints to canonical orientation before anatomical checks
+    from roop.face_analyser import compute_canonical_roll_angle, build_canonical_rotation_matrix
+    from roop.utilities import transform_points
+    center = ((x0 + x1) * 0.5, (y0 + y1) * 0.5)
+    _, theta_deg = compute_canonical_roll_angle(kps)
+    R, _, applied = build_canonical_rotation_matrix(center, theta_deg, threshold_deg=10.0)
+    kps_up = transform_points(kps, R) if applied else kps
+
+    eye_y = (kps_up[0, 1] + kps_up[1, 1]) / 2.0
+    nose_y = kps_up[2, 1]
+    mouth_y = (kps_up[3, 1] + kps_up[4, 1]) / 2.0
+    margin = 0.05 * max(w, h)
     if mouth_y < eye_y + margin:
         return False
     if not (eye_y - margin <= nose_y <= mouth_y + margin):

@@ -247,6 +247,11 @@ def main():
     names = [s.strip() for s in args.sources.split(",") if s.strip()]
     if len(names) not in (1, 2):
         raise SystemExit("--sources needs 1 (single/) or 2 (double/) faceset names")
+    if len(names) > 1 and args.mode == "all":
+        print(f"[bench] multiple sources ({names}) specified with default mode='all': switching to mode='selected'", flush=True)
+        mode = "selected"
+        g.face_swap_mode = mode
+        options.swap_mode = mode
     facesets = [load_library_faceset(n) for n in names]
     print(f"[bench] sources: " + ", ".join(f"{n} ({len(fs.faces)} faces)" for n, fs in zip(names, facesets)),
           flush=True)
