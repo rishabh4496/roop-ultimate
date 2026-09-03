@@ -4,7 +4,9 @@ class ProcessOptions:
                  use_source_bank=False, use_frontalization=False, frontalization_threshold=25.0, swap_model='inswapper',
                  stabilize_face=False, stabilize_method='one_euro', stabilize_min_cutoff=0.05, stabilize_beta=0.02,
                  stabilize_enhancer=False, stabilize_enhancer_strength=0.5,
-                 stabilize_mask=False, stabilize_mask_strength=0.5):
+                 stabilize_mask=False, stabilize_mask_strength=0.5,
+                 stabilize_landmarks=True, stabilize_hf_texture=False,
+                 stabilize_hf_texture_weight=0.15):
         self.processors = processordefines
         self.face_distance_threshold = face_distance
         self.blend_ratio = blend_ratio
@@ -37,6 +39,12 @@ class ProcessOptions:
         # One Euro temporal smoothing of the mask edge (anti-flicker)
         self.stabilize_mask = stabilize_mask
         self.stabilize_mask_strength = stabilize_mask_strength
+        # Dense-landmark smoothing, in step with the kps filter above; and the
+        # flow-warped high-frequency carry over the restorer's output.
+        # See roop/temporal_smoother.py.
+        self.stabilize_landmarks = stabilize_landmarks
+        self.stabilize_hf_texture = stabilize_hf_texture
+        self.stabilize_hf_texture_weight = stabilize_hf_texture_weight
         # Opt OUT of the foreground occluder ProcessMgr.initialize otherwise
         # appends to every swapping chain (see roop/occlusion_mask.py).
         #

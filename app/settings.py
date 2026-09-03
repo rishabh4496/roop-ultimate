@@ -635,6 +635,24 @@ class Settings:
         self.stabilize_enhancer_strength = self.default_get(data, 'stabilize_enhancer_strength', 0.25)
         self.stabilize_mask = self.default_get(data, 'stabilize_mask', True)
         self.stabilize_mask_strength = self.default_get(data, 'stabilize_mask_strength', 0.5)
+        # Dense-landmark smoothing. Rides on stabilize_face: the kps filter above
+        # left `landmark_2d_106` raw, and that array is what the paste matte's
+        # outline is drawn from, so the crop was stabilised while its own edge
+        # jittered. Defaults on because that IS the boundary-crawl fix, not an
+        # experiment -- it declines safely wherever frames are non-contiguous.
+        self.stabilize_landmarks = self.default_get(data, 'stabilize_landmarks', True)
+        # Flow-warped high-frequency carry over the restorer's output. Opt-in:
+        # it is new per-face CPU work and its quality claim has not yet been
+        # settled by a counterbalanced rendered A/B on this footage.
+        self.stabilize_hf_texture = self.default_get(data, 'stabilize_hf_texture', False)
+        self.stabilize_hf_texture_weight = self.default_get(data, 'stabilize_hf_texture_weight', 0.15)
+        # Paste-matte edge ramp: 'gaussian' (shipped) | 'distance'.
+        # `face_mask_blend` was calibrated against the Gaussian's behaviour, so
+        # the distance ramp is offered rather than substituted.
+        self.mask_edge_mode = self.default_get(data, 'mask_edge_mode', 'gaussian')
+        # Rim-only low-frequency grade of the paste toward the plate. 0 disables
+        # and is a bit-identical no-op.
+        self.boundary_illumination_strength = self.default_get(data, 'boundary_illumination_strength', 0.0)
         # Skin-tone / lighting match of swapped crop → original: none|rct|lct|mkl
         self.color_transfer_mode = self.default_get(data, 'color_transfer_mode', 'lct')
         # Target-conditioned appearance is opt-in; it extends the existing
@@ -898,6 +916,11 @@ class Settings:
             'stabilize_enhancer_strength': self.stabilize_enhancer_strength,
             'stabilize_mask': self.stabilize_mask,
             'stabilize_mask_strength': self.stabilize_mask_strength,
+            'stabilize_landmarks': self.stabilize_landmarks,
+            'stabilize_hf_texture': self.stabilize_hf_texture,
+            'stabilize_hf_texture_weight': self.stabilize_hf_texture_weight,
+            'mask_edge_mode': self.mask_edge_mode,
+            'boundary_illumination_strength': self.boundary_illumination_strength,
             'color_transfer_mode': self.color_transfer_mode,
             'target_conditioned_appearance': self.target_conditioned_appearance,
             'target_conditioned_appearance_strength': self.target_conditioned_appearance_strength,

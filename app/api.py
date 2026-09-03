@@ -2734,6 +2734,8 @@ def preview(payload: dict = Body(...)):
     roop_globals.jaw_reshape = bool(payload.get("jaw_reshape", getattr(roop_globals.CFG, "jaw_reshape", False)))
     roop_globals.jaw_reshape_strength = float(payload.get("jaw_reshape_strength", getattr(roop_globals.CFG, "jaw_reshape_strength", 0.5)))
     roop_globals.detail_transfer_strength = float(payload.get("detail_transfer_strength", getattr(roop_globals.CFG, "detail_transfer_strength", 0.0)))
+    roop_globals.mask_edge_mode = payload.get("mask_edge_mode", getattr(roop_globals.CFG, "mask_edge_mode", "gaussian"))
+    roop_globals.boundary_illumination_strength = float(payload.get("boundary_illumination_strength", getattr(roop_globals.CFG, "boundary_illumination_strength", 0.0)))
     roop_globals.identity_detail_strength = float(payload.get("identity_detail_strength", getattr(roop_globals.CFG, "identity_detail_strength", 0.0)))
     roop_globals.expression_restore_strength = float(payload.get("expression_restore_strength", getattr(roop_globals.CFG, "expression_restore_strength", 0.0)))
     roop_globals.expression_restore_region = payload.get("expression_restore_region", getattr(roop_globals.CFG, "expression_restore_region", "all"))
@@ -3073,6 +3075,8 @@ def _run_swap(payload):
         roop_globals.jaw_reshape = bool(payload.get("jaw_reshape", getattr(roop_globals.CFG, "jaw_reshape", False)))
         roop_globals.jaw_reshape_strength = float(payload.get("jaw_reshape_strength", getattr(roop_globals.CFG, "jaw_reshape_strength", 0.5)))
         roop_globals.detail_transfer_strength = float(payload.get("detail_transfer_strength", getattr(roop_globals.CFG, "detail_transfer_strength", 0.0)))
+        roop_globals.mask_edge_mode = payload.get("mask_edge_mode", getattr(roop_globals.CFG, "mask_edge_mode", "gaussian"))
+        roop_globals.boundary_illumination_strength = float(payload.get("boundary_illumination_strength", getattr(roop_globals.CFG, "boundary_illumination_strength", 0.0)))
         roop_globals.identity_detail_strength = float(payload.get("identity_detail_strength", getattr(roop_globals.CFG, "identity_detail_strength", 0.0)))
         roop_globals.expression_restore_strength = float(payload.get("expression_restore_strength", getattr(roop_globals.CFG, "expression_restore_strength", 0.0)))
         roop_globals.expression_restore_region = payload.get("expression_restore_region", getattr(roop_globals.CFG, "expression_restore_region", "all"))
@@ -3178,6 +3182,9 @@ def _run_swap(payload):
             stabilize_enhancer_strength=float(payload.get("stabilize_enhancer_strength", roop_globals.CFG.stabilize_enhancer_strength)),
             stabilize_mask=bool(payload.get("stabilize_mask", roop_globals.CFG.stabilize_mask)),
             stabilize_mask_strength=float(payload.get("stabilize_mask_strength", roop_globals.CFG.stabilize_mask_strength)),
+            stabilize_landmarks=bool(payload.get("stabilize_landmarks", roop_globals.CFG.stabilize_landmarks)),
+            stabilize_hf_texture=bool(payload.get("stabilize_hf_texture", roop_globals.CFG.stabilize_hf_texture)),
+            stabilize_hf_texture_weight=float(payload.get("stabilize_hf_texture_weight", roop_globals.CFG.stabilize_hf_texture_weight)),
             input_facesets=run_facesets)
 
         # batch_process_regular returns normally after a deliberate stop so it

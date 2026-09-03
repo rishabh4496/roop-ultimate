@@ -96,6 +96,11 @@ jaw_reshape_strength = 0.5
 # Skin detail transfer: inject the original footage's high-frequency texture
 # (pores, grain) onto the swapped/enhanced face. 0 = off (no-op), 0..1 = amount.
 detail_transfer_strength = 0.0
+# Paste-matte edge ramp shape: 'gaussian' (shipped) | 'distance'. See
+# procmgr_masking.blur_area and roop/temporal_smoother.soft_distance_matte.
+mask_edge_mode = 'gaussian'
+# Rim-only low-frequency grade of the paste toward the plate; 0 is a no-op.
+boundary_illumination_strength = 0.0
 # Persistent source identity detail from FaceSet V2. Unlike the setting above,
 # this never reads the target crop's texture and is confidence/visibility gated.
 # 0 = off (bit-identical legacy path), 0..1 = controlled restoration strength.

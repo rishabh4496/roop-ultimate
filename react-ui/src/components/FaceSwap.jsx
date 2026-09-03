@@ -721,6 +721,8 @@ export default function FaceSwap({
       mask_left: activeParams.mask_left,
       mask_right: activeParams.mask_right,
       face_mask_blend: activeParams.face_mask_blend,
+      mask_edge_mode: activeParams.mask_edge_mode,
+      boundary_illumination_strength: activeParams.boundary_illumination_strength,
       mouth_mask_blend: activeParams.mouth_mask_blend,
       mouth_top_scale: activeParams.mouth_top_scale,
       mouth_bottom_scale: activeParams.mouth_bottom_scale,
@@ -2216,6 +2218,8 @@ export default function FaceSwap({
           <Slider label="Offset face left" min={0} max={2} step={0.01} value={num(p.mask_left, 0)} onChange={(v) => set('mask_left', v)} />
           <Slider label="Offset face right" min={0} max={2} step={0.01} value={num(p.mask_right, 0)} onChange={(v) => set('mask_right', v)} />
           <Slider label="Face mask edge blend" min={0} max={200} step={1} value={num(p.face_mask_blend, 20)} onChange={(v) => set('face_mask_blend', v)} />
+          <Select label="Mask edge falloff" info="Shape of the ramp between swapped and original pixels. 'Gaussian' is the shipped behaviour and what 'Face mask edge blend' was calibrated against. 'Distance (soft)' derives the ramp from a distance transform, so it is the SAME WIDTH everywhere along the boundary — a Gaussian narrows wherever the mask is locally convex or thin, which is why one setting can look soft along the cheek and hard at the temple in the same frame." value={p.mask_edge_mode || 'gaussian'} onChange={(v) => set('mask_edge_mode', v)} options={[['gaussian', 'Gaussian (default)'], ['distance', 'Distance (soft, constant width)']]} />
+          <Slider label="Boundary illumination match" info="Grades only the LOW frequencies of the pasted face toward the original plate, and only at the rim — exactly zero where the mask is fully opaque, so the identity region is untouched and no target texture is copied in. Use when a seam is still visible after the edge is soft: that residual line is a brightness step, not a geometry problem. 0 disables it entirely." min={0} max={1} step={0.05} value={num(p.boundary_illumination_strength, 0)} onChange={(v) => set('boundary_illumination_strength', v)} />
         </Section>
 
         <Section title="Mouth & Angle math" collapsible defaultOpen={false}>
@@ -2248,6 +2252,11 @@ export default function FaceSwap({
           <Toggle label="Reduce mask flicker" info="Temporally blends the mask edge (the boundary between swapped and original pixels). XSeg/Face Parser/RealityUX all recompute this edge from scratch every frame with no memory of the last one, so on a close-up with hair moving across an eye it can jitter — most visible as the swapped face's own features flickering in and out right at the edge. Runs on the same multi-threaded chunked pipeline as the other stabilizers; unlike enhancer flicker reduction it does not back off during head motion, since the mask lives in the already motion-compensated aligned crop." checked={!!p.stabilize_mask} onChange={(v) => set('stabilize_mask', v)} />
           {p.stabilize_mask && (
             <Slider label="Mask flicker reduction strength" info="higher = smoother" min={0} max={1} step={0.05} value={num(p.stabilize_mask_strength, 0.5)} onChange={(v) => set('stabilize_mask_strength', v)} />
+          )}
+          <Toggle label="Smooth face landmarks (boundary crawl)" info="Requires 'Stabilize face'. That filter smooths the 5 alignment keypoints only, leaving the 106-point landmarks raw — and those are what the paste mask's OUTLINE is drawn from, so the face sat still while its own edge crawled a pixel or two every frame along the jaw and hairline. This smooths both under one velocity-adaptive factor, so the crop and its outline cannot drift apart during motion: heavy smoothing when the head is nearly still, near-instant response on a fast turn." checked={p.stabilize_landmarks !== false} onChange={(v) => set('stabilize_landmarks', v)} />
+          <Toggle label="Flow-warped texture carry (pore boiling)" info="Requires an enhancer. GPEN/CodeFormer/UltraMax invent pores and lashes from scratch on every frame, so nearly-still skin gets a different micro-texture 25 times a second. This warps the PREVIOUS frame's high-frequency layer along dense optical flow and carries a fraction of it forward, so only the invented noise is averaged — brightness, colour and expression still come wholly from the current frame and cannot ghost. Costs extra CPU per face." checked={!!p.stabilize_hf_texture} onChange={(v) => set('stabilize_hf_texture', v)} />
+          {p.stabilize_hf_texture && (
+            <Slider label="Texture carry amount" info="Fraction of the previous frame's detail retained. 0.15 gives the pore field about a 6-frame memory while leaving 85% of the current frame, so genuinely new texture — a turn revealing a new cheek — is not held back." min={0} max={0.9} step={0.05} value={num(p.stabilize_hf_texture_weight, 0.15)} onChange={(v) => set('stabilize_hf_texture_weight', v)} />
           )}
         </Section>
 

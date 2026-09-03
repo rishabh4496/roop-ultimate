@@ -190,7 +190,9 @@ def init_pipeline(provider, swap_model, enhancer, mask_engine,
 def build_options(g, swap_model, mask_engine, source_bank=None,
                    stabilize_mask=False, stabilize_mask_strength=0.5,
                    stabilize_face=False, stabilize_enhancer=False,
-                   stabilize_enhancer_strength=None):
+                   stabilize_enhancer_strength=None,
+                   stabilize_landmarks=None, stabilize_hf_texture=None,
+                   stabilize_hf_texture_weight=None):
     from roop.core import get_processing_plugins
     from roop.ProcessOptions import ProcessOptions
     # get_processing_plugins keys the processor dict by engine name, so the UI's
@@ -224,7 +226,23 @@ def build_options(g, swap_model, mask_engine, source_bank=None,
             getattr(g.CFG, "stabilize_enhancer_strength", 0.5)
             if stabilize_enhancer_strength is None else stabilize_enhancer_strength),
         stabilize_mask=bool(stabilize_mask),
-        stabilize_mask_strength=float(stabilize_mask_strength))
+        stabilize_mask_strength=float(stabilize_mask_strength),
+        # None -> the user's config, not the ProcessOptions default. An
+        # unstated setting silently taking a MODULE default is the defect this
+        # helper has now been caught by three times (the swap-model mask, the
+        # whole merger stage, and target_conditioned_appearance): both arms of
+        # an A/B are equally wrong, so the ratio survives while every absolute
+        # number describes a stack nobody ships.
+        stabilize_landmarks=bool(
+            getattr(g.CFG, "stabilize_landmarks", True)
+            if stabilize_landmarks is None else stabilize_landmarks),
+        stabilize_hf_texture=bool(
+            getattr(g.CFG, "stabilize_hf_texture", False)
+            if stabilize_hf_texture is None else stabilize_hf_texture),
+        stabilize_hf_texture_weight=float(
+            getattr(g.CFG, "stabilize_hf_texture_weight", 0.15)
+            if stabilize_hf_texture_weight is None
+            else stabilize_hf_texture_weight))
 
 
 # ── material ─────────────────────────────────────────────────────────────────

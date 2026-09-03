@@ -65,6 +65,11 @@ export const FACESWAP_DEFAULTS = {
   mask_left: 0,
   mask_right: 0,
   face_mask_blend: 12,
+  // Paste-matte edge ramp shape. 'gaussian' is the shipped behaviour that
+  // face_mask_blend was calibrated against; 'distance' gives a ramp of
+  // constant width regardless of the matte's local curvature.
+  mask_edge_mode: 'gaussian',
+  boundary_illumination_strength: 0,
 
   // Mouth & Angle math
   mouth_top_scale: 1,
@@ -114,6 +119,11 @@ export const FACESWAP_DEFAULTS = {
   stabilize_enhancer_strength: 0.25,
   stabilize_mask: true,
   stabilize_mask_strength: 0.5,
+  // Dense-landmark smoothing rides on stabilize_face; it is what keeps the
+  // paste matte's OUTLINE steady, which the 5-point kps filter never touched.
+  stabilize_landmarks: true,
+  stabilize_hf_texture: false,
+  stabilize_hf_texture_weight: 0.15,
 
   // System options
   autorotate_faces: true,

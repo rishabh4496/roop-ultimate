@@ -997,6 +997,27 @@ def main():
     ap.add_argument("--stabilize-mask", default="0",
                     help="1 to enable mask-edge anti-flicker smoothing")
     ap.add_argument("--stabilize-mask-strength", type=float, default=0.5)
+    # Explicit negatives, for the same reason the Phase-10/12/13 toggles have
+    # them: silence now means "the user's config.yaml", so an A/B can no longer
+    # say "off" by omitting a flag.
+    ap.add_argument("--stabilize-landmarks", action="store_true", default=None,
+                    dest="stabilize_landmarks",
+                    help="smooth the dense landmarks in step with the kps "
+                         "(defaults to config.yaml)")
+    ap.add_argument("--no-stabilize-landmarks", action="store_false",
+                    dest="stabilize_landmarks",
+                    help="explicitly disable dense-landmark smoothing, "
+                         "overriding config.yaml")
+    ap.add_argument("--stabilize-hf-texture", action="store_true", default=None,
+                    dest="stabilize_hf_texture",
+                    help="flow-warped high-frequency carry over the restorer "
+                         "output (defaults to config.yaml)")
+    ap.add_argument("--no-stabilize-hf-texture", action="store_false",
+                    dest="stabilize_hf_texture",
+                    help="explicitly disable the HF carry, overriding config.yaml")
+    ap.add_argument("--stabilize-hf-texture-weight", type=float, default=None,
+                    help="fraction of the previous frame's detail carried "
+                         "forward; defaults to config")
     ap.add_argument("--tracking", default="1")
     ap.add_argument("--threads", type=int, default=None,
                     help="defaults to config.yaml's live 'max_threads' setting if not "
@@ -1137,7 +1158,10 @@ def main():
                                stabilize_mask=(args.stabilize_mask == "1"),
                                stabilize_mask_strength=args.stabilize_mask_strength,
                                stabilize_face=(args.stabilize_face == "1"),
-                               stabilize_enhancer=(args.stabilize_enhancer == "1"))
+                               stabilize_enhancer=(args.stabilize_enhancer == "1"),
+                               stabilize_landmarks=args.stabilize_landmarks,
+                               stabilize_hf_texture=args.stabilize_hf_texture,
+                               stabilize_hf_texture_weight=args.stabilize_hf_texture_weight)
 
     # The settings that decide what this arm measured, on the arm's own log, so
     # a later comparison does not have to guess them from the tag. Recovering

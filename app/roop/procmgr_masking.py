@@ -11,6 +11,7 @@ through the MRO, since both are bases of the same class.
 """
 
 import os
+import threading as _threading
 
 import cv2
 import numpy as np
@@ -45,6 +46,35 @@ _DEBUG_ANGLE = os.environ.get('ROOP_DEBUG_ANGLE') == '1'
 # whether a routing decision you disagree with came from the latch holding on to
 # a stale verdict, or from the score itself.
 _NO_HYST = os.environ.get('ROOP_NONFRONTAL_HYST', '1').strip().lower() in ('0', 'off', 'false')
+
+# Bounded fallback reporting for the optional mask-edge paths. These sit on the
+# per-face path, so an unbounded print is one line per face per frame -- 120,000
+# on a long render, which is a defect of its own (Session Log 2026-09-01, #5).
+# Same shape as temporal_compositing.warn_compositing_fallback.
+_MASK_WARN_SEEN = {}
+_MASK_WARN_LOCK = _threading.RLock()
+
+
+def _warn_once(key, message):
+    """Print `message` the first time `key` occurs; count every occurrence."""
+    with _MASK_WARN_LOCK:
+        seen = key in _MASK_WARN_SEEN
+        _MASK_WARN_SEEN[key] = _MASK_WARN_SEEN.get(key, 0) + 1
+    if not seen:
+        print(message + ' Further occurrences are counted, not printed.',
+              flush=True)
+
+
+def mask_warn_counts():
+    """Per-cause fallback totals, for harness and test reporting."""
+    with _MASK_WARN_LOCK:
+        return dict(_MASK_WARN_SEEN)
+
+
+def reset_mask_warnings():
+    """Clear the once-per-process record. Used by tests."""
+    with _MASK_WARN_LOCK:
+        _MASK_WARN_SEEN.clear()
 
 
 def nonfrontal_mask_mode():
@@ -615,6 +645,28 @@ class MaskingMixin:
             roi_paste = paste_face[y0:y1, x0:x1].astype(np.float32)
         roi_target = target_img[y0:y1, x0:x1].astype(np.float32)
 
+        # ── Rim-only illumination match ──────────────────────────────────────
+        # A seam that survives a perfect alpha ramp is an ILLUMINATION step, not
+        # a geometry one: the restorer regrades the face, so swapped skin meets
+        # untouched skin at a slightly different brightness and the eye reads
+        # the ramp as an edge however soft it is. Correct the paste's LOW
+        # frequencies toward the plate, weighted by the ramp itself, so the
+        # correction is full strength at the rim and exactly zero where alpha
+        # saturates -- the identity region is bit-unchanged. Only the low band
+        # moves, so no target texture is copied onto the face.
+        _rim = float(getattr(roop.globals, 'boundary_illumination_strength', 0.0) or 0.0)
+        if _rim > 0.0:
+            try:
+                from roop.temporal_smoother import boundary_illumination_match
+                roi_paste = boundary_illumination_match(
+                    roi_paste, roi_target, roi_matte[:, :, 0],
+                    strength=_rim).astype(np.float32)
+            except Exception as exc:
+                _warn_once('boundary_illumination',
+                           '[Mask] boundary illumination match failed; this '
+                           'face was composited without it: %s: %s'
+                           % (type(exc).__name__, str(exc)[:160]))
+
         if _composite_plan is not None:
             blended_roi = composite_multiband(
                 roi_paste.astype(np.uint8), roi_target.astype(np.uint8),
@@ -760,6 +812,61 @@ class MaskingMixin:
         return IM, face_landmarks
 
     def blur_area(self, img_matte, face_mask_blend):
+        """Feather the paste matte.
+
+        Two ramp shapes, selected by `mask_edge_mode`:
+
+          'gaussian'  (default, unchanged) erode + Gaussian, below.
+          'distance'  a normalised distance transform with a sigmoid falloff,
+                      `roop.temporal_smoother.soft_distance_matte`.
+
+        WHY THE SECOND ONE EXISTS. A Gaussian applied to a BINARY region does
+        not produce a ramp of constant width: at a convex corner (temple, chin
+        tip) the blur of a half-plane is halved, and where the matte is locally
+        thin the two sides' ramps overlap so alpha never reaches 1. One
+        `face_mask_blend` setting therefore yields a visibly soft seam along the
+        cheek and a hard one at the temple IN THE SAME FRAME.
+        `cv2.distanceTransform` measures the true distance to the boundary, so
+        the ramp is the same width everywhere regardless of curvature.
+
+        Kept as a mode rather than a replacement: `face_mask_blend` was
+        calibrated against the Gaussian's behaviour (30 -> 12 on 2026-08-22 to
+        kill a halo), so switching the ramp shape under every existing config
+        would silently re-tune a setting several sessions have measured.
+        """
+        mode = str(getattr(roop.globals, 'mask_edge_mode', 'gaussian') or 'gaussian').lower()
+        if mode == 'distance' and face_mask_blend > 0:
+            try:
+                from roop.temporal_smoother import soft_distance_matte
+                # Same extent metric the Gaussian path sizes its feather from,
+                # so a face reads as the same size to both ramps.
+                from roop.temporal_smoother import adaptive_margin_px
+                # cv2.boundingRect, not np.where: same box, and np.where over a
+                # 4K frame costs 14.6 ms against boundingRect's 0.5 -- more
+                # than the distance transform it is only there to size.
+                bx, by, bw, bh = cv2.boundingRect(
+                    (img_matte > 127).astype(np.uint8))
+                if bw > 0 and bh > 0:
+                    # `face_mask_blend` keeps its meaning as a relative width:
+                    # scale the adaptive 8..18 px margin by it against the 12.0
+                    # shipped default, so the existing slider still widens and
+                    # narrows the seam monotonically.
+                    margin = (adaptive_margin_px(float(np.sqrt(bw * bh)))
+                              * (float(face_mask_blend) / 12.0))
+                    # as_uint8: returning float32 would cost a full-frame
+                    # clip+scale+convert (20.7 ms at 4K) purely to undo itself.
+                    return soft_distance_matte(img_matte, margin_px=margin,
+                                               as_uint8=True)
+            except Exception as exc:
+                # A quality layer must not cost the frame. Announce once --
+                # falling back silently is indistinguishable from the mode
+                # having no effect, which is this project's most expensive
+                # class of confusion.
+                _warn_once('mask_edge_mode=distance',
+                           '[Mask] distance-transform edge failed; this face '
+                           'used the Gaussian feather: %s: %s'
+                           % (type(exc).__name__, str(exc)[:160]))
+
         # Always apply minimal anti-aliasing after the affine warp
         img_matte = cv2.GaussianBlur(img_matte, (3, 3), 0)
         if face_mask_blend <= 0:

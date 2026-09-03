@@ -1651,6 +1651,12 @@ class TrackingMixin:
         print(f'[Temporal] {len(tracks or [])} track(s); faces on {n_frames} frames '
               f'({n_faces} total, {n_interp} gap-filled, gap limit {gap_max}'
               + (f', {n_refused} refused as unbridgeable' if n_refused else '') + ').')
+        # Coupled kps+lm106 smoothing, per track. Printed unconditionally when
+        # the feature is on, because "the alignment and the paste hull now move
+        # together" is invisible in the output until it is wrong, and a filter
+        # that silently declined would look identical to one that worked.
+        for _line in (getattr(self, '_landmark_smooth_lines', None) or []):
+            print('[Temporal] ' + _line, flush=True)
         # Printed unconditionally when coasting produced anything, because a
         # prediction carrying a swap is the one thing here a reviewer must be
         # able to see happened. Silence means it did not fire.
@@ -1870,6 +1876,10 @@ class TrackingMixin:
         mc = float(getattr(self.options, 'stabilize_min_cutoff', 0.05))
         bt = float(getattr(self.options, 'stabilize_beta', 0.02))
         out = {}
+        # Per-track summary lines from the coupled landmark smoother, reported
+        # once at the end of the pre-pass. Collected rather than printed inline
+        # because this loop runs once per track.
+        self._landmark_smooth_lines = []
         self._interp_refused = 0
         self._coast_refused = 0
         total_coasted = 0
@@ -1949,16 +1959,55 @@ class TrackingMixin:
                         if flt is None:
                             flt = _filters[key] = OneEuroFilter(min_cutoff=mc, beta=bt)
                         return flt(val, _t)
+                # COUPLED kps + lm106, when `stabilize_landmarks` is on.
+                #
+                # The 5 keypoints drive the alignment matrix (WHERE the swap is
+                # sampled) and the 106 landmarks drive `landmark_hull` (WHERE
+                # the paste matte is drawn). Both are smoothed above, but by two
+                # INDEPENDENT filters holding independent state, so they respond
+                # to the same head motion at different rates: OneEuro's cutoff
+                # is `min_cutoff + beta * |dx_hat|` PER ELEMENT, and a 5-point
+                # array and a 106-point array do not produce the same |dx_hat|.
+                # The crop and its own outline therefore drift apart during
+                # motion by a pixel or two, which opens and closes a sliver of
+                # untouched plate at the jaw -- the boundary crawl.
+                #
+                # This does NOT add smoothing that was missing; lm106 was
+                # already filtered here. It makes the two share ONE factor,
+                # derived from the 5-point velocity, so they cannot disagree.
+                # `bbox` deliberately keeps its own filter: it is a detection
+                # rectangle, not part of the alignment/hull pair.
+                coupled = None
+                if bool(getattr(self.options, 'stabilize_landmarks', True)):
+                    from roop.temporal_smoother import AdaptiveLandmarkSmoother
+                    coupled = AdaptiveLandmarkSmoother.from_env()
                 for i in sorted(merged):
                     f = merged[i]
-                    if getattr(f, 'kps', None) is not None:
-                        f['kps'] = _smooth('kps', np.asarray(f.kps, np.float64), i).astype(np.float32)
+                    kps = getattr(f, 'kps', None)
                     lm = getattr(f, 'landmark_2d_106', None)
-                    if lm is not None:
-                        f['landmark_2d_106'] = _smooth('lm106', np.asarray(lm, np.float64), i).astype(np.float32)
+                    if coupled is not None and kps is not None:
+                        # This pass IS contiguous and per-track by construction
+                        # (`for i in sorted(merged)` on one thread), which is
+                        # the condition the smoother's frame-contiguity guard
+                        # asks for -- so here it applies rather than declining.
+                        kps_s, lm_s, _ = coupled.smooth(
+                            kps, lm, track_id=t['id'], frame_index=i)
+                        f['kps'] = np.asarray(kps_s, np.float32)
+                        if lm is not None and lm_s is not None:
+                            f['landmark_2d_106'] = np.asarray(lm_s, np.float32)
+                    else:
+                        if kps is not None:
+                            f['kps'] = _smooth('kps', np.asarray(kps, np.float64), i).astype(np.float32)
+                        if lm is not None:
+                            f['landmark_2d_106'] = _smooth('lm106', np.asarray(lm, np.float64), i).astype(np.float32)
                     bb = getattr(f, 'bbox', None)
                     if bb is not None:
                         f['bbox'] = _smooth('bbox', np.asarray(bb, np.float64), i).astype(np.float32)
+                if coupled is not None:
+                    line = coupled.summary_line()
+                    if line:
+                        self._landmark_smooth_lines.append(
+                            'track %s %s' % (t['id'], line))
             # Resolve this track's in-plane roll along its own timeline, and
             # stamp it on each face for ProcessMgr.rotation_action.
             #

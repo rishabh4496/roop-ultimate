@@ -134,6 +134,12 @@ RUN_ONLY_TEMPORAL = {
     "stabilize_enhancer", "stabilize_enhancer_strength", "stabilize_beta",
     "stabilize_min_cutoff", "track_identities", "temporal_detection",
     "lipsync_enabled", "stabilize_mask", "stabilize_mask_strength",
+    # Both filters in roop/temporal_smoother.py refuse to act unless their
+    # stored state is frame_index - 1 for the same track, so on a single
+    # preview frame they are seeds and nothing else. Wiring them into preview()
+    # would show the user a frame in which they demonstrably did nothing,
+    # which is a worse answer than their absence.
+    "stabilize_landmarks", "stabilize_hf_texture", "stabilize_hf_texture_weight",
 }
 RUN_ONLY_OUTPUT = {
     "keep_frames", "skip_audio", "output_method", "video_method",

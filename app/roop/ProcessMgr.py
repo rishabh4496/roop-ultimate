@@ -595,6 +595,18 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
         self._temporal_occlusion = TemporalOcclusionEngine.from_env()
         from roop.temporal_expression import TemporalExpressionEngine
         self._temporal_expression = TemporalExpressionEngine.from_env()
+        # Boundary/texture stability (roop/temporal_smoother.py). Both are
+        # contiguity-GUARDED: out of frame order they decline and count it
+        # rather than producing wrong output, so unlike the identity/occlusion
+        # engines they must NOT join `_want_temporal_ordered` -- forcing
+        # `threads = 1` for a filter that degrades safely would cost ~3x
+        # throughput and buy nothing. They DO join the warm-up worst-case and
+        # the per-block clone list, because a block still has to prime them.
+        # Constructed disabled; `initialize()` turns them on from the options.
+        from roop.temporal_smoother import (AdaptiveLandmarkSmoother,
+                                            HighFrequencyFlowStabilizer)
+        self._landmark_smoother = AdaptiveLandmarkSmoother.from_env(enabled=False)
+        self._hf_stabilizer = HighFrequencyFlowStabilizer.from_env(enabled=False)
         # Target-conditioned appearance is a separate, lightweight ordered
         # recurrence. It shares the existing contiguous-block lifecycle, but it
         # never enables temporal identity output or changes the user's custom
@@ -936,6 +948,37 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
         else:
             self.mask_stabilizer = None
             self._mask_stab_factory = None
+
+        # ── Dense-landmark smoothing and flow-warped HF carry ────────────────
+        # `_apply_stab` above replaces `face.kps` only, so the ALIGNMENT was
+        # stabilised while `landmark_2d_106` -- the array `landmark_hull` draws
+        # the paste polygon from -- was left raw. The two then disagreed by a
+        # jittering pixel or two every frame, which IS the boundary crawl at
+        # the jaw/hairline rather than a symptom of it. This closes that, under
+        # a beta derived from the (already smoothed) 5-point velocity so the
+        # crop and its own outline cannot settle at different rates.
+        #
+        # Rides on `stabilize_face`: it is the same temporal-geometry feature,
+        # and a user who turned face stabilization off has said they do not want
+        # landmark filtering.
+        self._landmark_smoother.enabled = bool(
+            getattr(options, 'stabilize_face', False)
+            and getattr(options, 'stabilize_landmarks', True))
+        # The HF carry additionally needs an enhancer to have RUN, which cannot
+        # be decided here -- `self.processors` is not built until the loader
+        # below, and the small-card policy may still strip the enhancer. It is
+        # therefore switched on after that, at the `processors-ready` mark.
+        self._hf_stabilizer.enabled = False
+        self._want_hf_stabilize = bool(
+            getattr(options, 'stabilize_hf_texture', False))
+        try:
+            self._hf_stabilizer.weight = min(0.9, max(0.0, float(
+                getattr(options, 'stabilize_hf_texture_weight', 0.15))))
+        except (TypeError, ValueError):
+            pass
+        self._landmark_smoother.reset()
+        self._hf_stabilizer.reset()
+
         self._stab_active = False
         self._stab_t = 0
         self._stab_warmup = 0
@@ -1054,6 +1097,23 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                 print(f"Not using {module}")
         self.processors = newprocessors
         self._log_memory_stage('phase4:processors-ready')
+
+        # The flow-warped HF carry damps a generative restorer's per-frame
+        # texture hallucination, so it is meaningless without one. Decided here
+        # rather than from the requested settings because the small-card policy
+        # above can strip the enhancer after the user asked for it: reading the
+        # REQUEST would leave a filter enabled with nothing to filter, reporting
+        # activity while doing nothing -- the defect class this project keeps
+        # finding. `.type` is read off the constructed processors so it cannot
+        # drift from a hardcoded name list the way the small-card key set can.
+        if getattr(self, '_want_hf_stabilize', False):
+            _has_enhancer = any(getattr(p, 'type', None) == 'enhance'
+                                for p in newprocessors)
+            self._hf_stabilizer.enabled = _has_enhancer
+            if not _has_enhancer:
+                print('[HFStabilize] stabilize_hf_texture is on but no enhancer '
+                      'is in the chain; the filter has nothing to damp and '
+                      'stays off.', flush=True)
 
         # ── Parse manual mask JSON (written by the canvas masking modal) ──────
         # New format: {"0": {"exclude": "data:...", "canonical": true}, "1": {...}}
@@ -1851,6 +1911,16 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
         if self._temporal_mode:
             self.kps_stabilizer = None
             self._kps_stab_factory = None
+            # ...and with it the landmark smoother that hangs off `_apply_stab`,
+            # which is only reachable through the kps stabilizer just dropped.
+            # The tracking pre-pass owns the coupled kps+lm106 smoothing on this
+            # path (procmgr_tracking._build_temporal_faces) and reports its own
+            # per-track summary, so leaving this instance enabled would be a
+            # second, unreachable copy of the same feature -- and would make
+            # `_report_smoother_summaries` warn "enabled but never invoked" on
+            # every default render, which is a false alarm that would train a
+            # reader to ignore the one message that catches a real regression.
+            self._landmark_smoother.enabled = False
         _want_kps_stab = self.kps_stabilizer is not None
         _want_enh_stab = self.enh_stabilizer is not None
         _want_mask_stab = self.mask_stabilizer is not None
@@ -2551,6 +2621,44 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                 set_detailed_profiler(None)
         _prof_report()
         _audit_report()
+        self._report_smoother_summaries()
+
+    def _report_smoother_summaries(self):
+        """One line each for the landmark smoother and the HF carry.
+
+        Unconditional on success, and printed beside the SWAP AUDIT on purpose.
+        The audit counts INTENT -- which faces the pipeline decided to swap --
+        so it reads 100% whether these filters ran on every face or declined on
+        every face, and the two are indistinguishable in the rendered output
+        until something else goes wrong. The applied/non-contiguous split is
+        the only thing that separates them. (Session Log 2026-08-30 section 0:
+        four enhancers failed on 60 of 60 frames while the audit read 100%.)
+        """
+        for name in ('_landmark_smoother', '_hf_stabilizer'):
+            engine = getattr(self, name, None)
+            if engine is None or not getattr(engine, 'enabled', False):
+                continue
+            try:
+                line = engine.summary_line()
+            except Exception:
+                continue
+            if line:
+                print(line, flush=True)
+            else:
+                # ENABLED, and never called once. `summary_line` returns None
+                # only when the filter saw no faces at all, which is a
+                # different failure from "declined on all of them" and must not
+                # look the same as "switched off" -- silence in all three cases
+                # is how a feature reports success while not running. Naming
+                # the call site is deliberate: the reachable causes are that
+                # the run never took a stabilizing path, or that the engine the
+                # worker read was not this one.
+                print('[%s] ENABLED BUT NEVER INVOKED on this run: no face '
+                      'reached it. The filter had no effect; this is not the '
+                      'same as it declining. Check that the run took a '
+                      'stabilizing path (stabilize_face) and that the swap '
+                      'phase reached ProcessMgr._apply_stab.'
+                      % name.strip('_'), flush=True)
 
 
     def _make_swap_batcher(self, threads):
@@ -2638,11 +2746,19 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
         # part in the same worst-case. The expression engine is deliberately
         # absent -- its `plan()` is read-only and its state is written by the
         # sequential tracking pre-pass, so worker order cannot reach it.
+        # The landmark smoother and the HF carry are here for the same reason
+        # even though they do NOT force ordered execution: a block that starts
+        # mid-clip primes them from the wrong seed exactly as the kps/mask/
+        # enhancer filters are primed, so they take part in the worst-case. At
+        # their defaults they need 11 and 3 frames, i.e. neither widens the
+        # block beyond what `stabilize_face` already asks for.
         _temporal = [engine for engine in (getattr(self, '_temporal_identity', None),
                                            getattr(self, '_temporal_occlusion', None),
                                            getattr(self, '_target_appearance', None),
                                            getattr(self, '_temporal_compositing', None),
-                                           getattr(self, '_temporal_quality', None))
+                                           getattr(self, '_temporal_quality', None),
+                                           getattr(self, '_landmark_smoother', None),
+                                           getattr(self, '_hf_stabilizer', None))
                      if engine is not None and getattr(engine, 'enabled', False)]
         for stab in (self.kps_stabilizer, self.enh_stabilizer,
                      self.mask_stabilizer, *_temporal):
@@ -3142,9 +3258,16 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                     # advances in frame order within the block and cannot be
                     # interleaved with another block's. Read back through
                     # `_temporal_engine`, never off `self` directly.
+                    # `landmark_smoother` / `hf_stabilizer` are cloned here for
+                    # the state reason only, not the ordering one: both decline
+                    # when frames are non-contiguous, but two blocks sharing one
+                    # dict would still thrash a track's entry between two frame
+                    # indices, and the HF filter would additionally share cv2
+                    # DIS handles across threads (silent buffer corruption).
                     for _tname in ('temporal_identity', 'temporal_occlusion',
                                    'target_appearance', 'temporal_compositing',
-                                   'temporal_quality'):
+                                   'temporal_quality', 'landmark_smoother',
+                                   'hf_stabilizer'):
                         _shared = getattr(self, '_' + _tname, None)
                         setattr(self._tls, _tname,
                                 _shared.clone_for_block()
@@ -3559,8 +3682,51 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
         except (TypeError, ValueError):
             return 0.0
 
+    def _apply_landmark_stab(self, face):
+        """Smooth `landmark_2d_106` in step with the kps just smoothed above.
+
+        The 5 points handed in are the ALREADY-SMOOTHED ones, deliberately:
+        beta is derived from their velocity, and taking it from the raw kps
+        would read the detector's own jitter as head motion and pin beta at the
+        fast end -- no smoothing, exactly where it is needed most.
+
+        Declines (returns silently, having counted it) when the tracker gave no
+        track id or the frame index is unknown, and when the previous state is
+        not frame_index - 1. Under round-robin dispatch that last case is the
+        norm, not an error; `summary_line()` reports the split.
+        """
+        smoother = self._temporal_engine('landmark_smoother')
+        if smoother is None or not smoother.enabled:
+            return
+        dense = getattr(face, 'landmark_2d_106', None)
+        kps_out, dense_out, _beta = smoother.smooth(
+            face.kps, dense,
+            track_id=self._temporal_track_id(face),
+            frame_index=getattr(self._tls, 'frame_idx', None))
+        if kps_out is not None:
+            face.kps = np.asarray(kps_out, dtype=np.float32)
+        if dense is not None and dense_out is not None:
+            # insightface's Face is a dict subclass with attribute access; the
+            # dict entry is what `face['landmark_2d_106']` and several consumers
+            # read, so both have to be written or they disagree.
+            face.landmark_2d_106 = np.asarray(dense_out, dtype=np.float32)
+            try:
+                face['landmark_2d_106'] = face.landmark_2d_106
+            except (TypeError, KeyError):
+                pass
+
     def _apply_stab(self, face):
-        """Replace a face's 5-point kps with the temporally smoothed version."""
+        """Replace a face's 5-point kps with the temporally smoothed version,
+        and carry the same smoothing to its DENSE landmarks.
+
+        The dense pass is not decoration. `face.kps` drives the alignment
+        matrix; `face.landmark_2d_106` drives `landmark_hull`, which is the
+        paste matte's outline. Smoothing only the first left the crop steady
+        while its own outline jittered a pixel or two every frame -- the
+        boundary crawl at the jaw and hairline. Both now move under ONE beta
+        (see AdaptiveLandmarkSmoother, note (c)), so they cannot settle at
+        different rates and open a sliver of untouched plate during motion.
+        """
         ks = self._cur_kps_stab()
         if ks is None:
             return
@@ -3568,6 +3734,7 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
             if face is not None and getattr(face, 'kps', None) is not None:
                 with _prof('stabilize'):
                     face.kps = ks.apply(face.kps, self._cur_stab_t())
+                    self._apply_landmark_stab(face)
                 if self._stab_history is not None:
                     track_id = self._temporal_track_id(face)
                     if track_id is None:
@@ -5617,6 +5784,28 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                 and enhanced_frame is not None and rotation_action is None):
             with _prof('stabilize'):
                 enhanced_frame = _es.apply(enhanced_frame, target_face.kps, self._cur_stab_t())
+
+        # ── Anti-flicker, high-frequency band only ────────────────────────────
+        # `_es` above blends WHOLE crops with a scalar alpha and therefore has
+        # to back off on motion or it ghosts -- i.e. it switches itself off
+        # exactly when the restorer's texture boils most. This one warps the
+        # previous frame's HIGH band along dense optical flow first, so the
+        # head-motion term is removed and only the generative pore/lash noise is
+        # averaged. Illumination, colour and expression come wholly from the
+        # current frame's low band and cannot ghost.
+        #
+        # Same rotation guard and the same reason: after autorotate the crop
+        # space is not consistent frame to frame, so "the previous crop" is not
+        # registered to this one and the flow would be solved between two
+        # different frames of reference.
+        _hf = self._temporal_engine('hf_stabilizer')
+        if (_hf is not None and _hf.enabled and enhanced_frame is not None
+                and rotation_action is None):
+            with _prof('stabilize'):
+                enhanced_frame = _hf.stabilize(
+                    enhanced_frame,
+                    track_id=self._temporal_track_id(target_face),
+                    frame_index=getattr(self._tls, 'frame_idx', None))
 
         # ── Expression restore ────────────────────────────────────────────────
         # Put the target's own expression back on the swapped face. Runs AFTER
