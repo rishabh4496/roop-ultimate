@@ -512,6 +512,12 @@ export default function Settings({ meta, settings, setSettings, notify }) {
             step={0.05}
             {...bind('face_detector_nms', 0.40)}
           />
+          <Select
+            label="Detector scale pyramid"
+            info="Multi-scale dynamic pyramid levels for close-up faces (> 75% height or border-cut). 'auto' triggers pyramid dynamically when close-ups are encountered."
+            {...bind('detector_scale_pyramid', 'auto')}
+            options={['auto', '0.5,0.75,1.0', '0.5,1.0', '0.75,1.0', 'none']}
+          />
           {!(p.auto_thread_selection ?? true) && (
             <Slider label="Max threads" info="default 3 (Manual mode)" min={1} max={32} step={1} {...bind('max_threads', 3)} />
           )}

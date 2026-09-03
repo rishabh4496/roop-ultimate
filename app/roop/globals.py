@@ -50,6 +50,9 @@ default_det_size = True
 face_detector_size = '640'
 face_detector_threshold = 0.50  # Lowered from 0.60: insightface's SCRFD was missing faces at slight angles
 face_detector_nms = 0.40
+detector_scale_pyramid = 'auto'  # Multi-scale pyramid levels: 'auto', '0.5,0.75,1.0', or 'none'
+detector_padding_border = 64     # Frame boundary context padding (px) for close-ups and edge cuts
+detector_padding_mode = 'reflect' # Padding mode: 'reflect' or 'constant'
 sam2_model_size = 'tiny'   # SAM2 tracked-mask checkpoint: tiny|small|base_plus|large
 track_identities = False   # video: lock each tracked person to one source (anti identity-flip)
 # Skin-tone / lighting match of the swapped crop to the original crop.

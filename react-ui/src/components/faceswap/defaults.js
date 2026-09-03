@@ -22,6 +22,7 @@ export const FACESWAP_DEFAULTS = {
   default_det_size: true,
   face_detector_threshold: 0.5,
   face_detector_nms: 0.3,
+  detector_scale_pyramid: 'auto',
   refine_landmarks: true,
   // Angled-face alignment sits in the same alignment group as the two settings
   // either side of it and was the last Face Swap control missing here, so

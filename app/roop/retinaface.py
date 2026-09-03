@@ -383,15 +383,29 @@ def get_detector(model_type='10g'):
     return _ensure_pool(model_type)['items'][0]
 
 
-def detect(frame, det_size=640, det_thresh=0.5, model_type='10g'):
-    """Run detection; returns (bboxes (N,5) incl. score, kpss (N,5,2)) in
-    original frame coordinates — the same contract as yoloface.detect."""
+def _detect_single_instance(frame, det_size=640, det_thresh=0.5, model_type='10g'):
+    """Single-instance detection without pyramid or padding, leasing one session from the pool."""
     nms_thresh = getattr(roop.globals, 'face_detector_nms', 0.40)
     with lease_detector(model_type) as det:
         det.det_thresh = det_thresh
         if hasattr(det, 'nms_thresh'):
             det.nms_thresh = nms_thresh
         return det.detect(frame, input_size=(int(det_size), int(det_size)), max_num=0)
+
+
+def detect(frame, det_size=640, det_thresh=0.5, model_type='10g', scales=None):
+    """Run detection; returns (bboxes (N,5) incl. score, kpss (N,5,2)) in
+    original frame coordinates — the same contract as yoloface.detect.
+    Integrates multi-scale dynamic image pyramid, boundary context padding,
+    and DIoU-NMS to resolve close-up and border-intersecting face drops."""
+    from roop.face_detector import detect_faces
+    return detect_faces(
+        frame=frame,
+        det_size=det_size,
+        det_thresh=det_thresh,
+        model_type=model_type,
+        scales=scales,
+    )
 
 
 def release_detector():

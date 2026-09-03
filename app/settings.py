@@ -707,6 +707,7 @@ class Settings:
         self.expression_restore_region = self.default_get(data, 'expression_restore_region', 'all')
         self.rescue_small_faces = self.default_get(data, 'rescue_small_faces', True)
         self.detector_engine = self.default_get(data, 'detector_engine', 'retinaface_r50')
+        self.detector_scale_pyramid = self.default_get(data, 'detector_scale_pyramid', 'auto')
         # Temporal detection pre-pass (video anti-flicker): tracked detection with
         # gap-fill so the swap can't blink out on missed detections.
         self.temporal_detection = self.default_get(data, 'temporal_detection', True)
@@ -942,6 +943,7 @@ class Settings:
             'expression_restore_region': self.expression_restore_region,
             'rescue_small_faces': self.rescue_small_faces,
             'detector_engine': self.detector_engine,
+            'detector_scale_pyramid': self.detector_scale_pyramid,
             'face_detector_nms': self.face_detector_nms,
             'temporal_detection': self.temporal_detection,
             'perf_trt_pool': self.perf_trt_pool,
@@ -1056,6 +1058,7 @@ class Settings:
             ('enhancer', 'selected_enhancer'),
             ('mask_engine', 'mask_engine'),
             ('detector_engine', 'detector_engine'),
+            ('detector_scale_pyramid', 'detector_scale_pyramid'),
             ('subsample_upscale', 'subsample_upscale'),
             ('perf_trt_pool', 'perf_trt_pool'),
             ('perf_detmask_pool', 'perf_detmask_pool'),

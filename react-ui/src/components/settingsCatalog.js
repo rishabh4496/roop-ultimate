@@ -29,6 +29,7 @@ export const SETTINGS_CATALOG = [
   { key: 'auto_thread_selection', label: 'Auto thread selection', section: 'Performance' },
   { key: 'face_detector_threshold', label: 'Face detection threshold', section: 'Performance' },
   { key: 'face_detector_nms', label: 'Overlap NMS threshold', section: 'Performance' },
+  { key: 'detector_scale_pyramid', label: 'Detector scale pyramid', section: 'Performance' },
   { key: 'max_threads', label: 'Max threads', section: 'Performance' },
   { key: 'memory_limit', label: 'Max memory (GB)', section: 'Performance' },
 
