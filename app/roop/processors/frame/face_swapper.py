@@ -76,6 +76,13 @@ try:
         occlusion_state_for,
         symmetry_inpaint_landmarks,
     )
+    from roop.identity_manager import (
+        IdentityManager,
+        TrackedIdentity,
+        extract_face_embedding,
+        extract_face_bbox,
+        set_face_meta,
+    )
 except ImportError:
     try:
         import globals as roop_globals
@@ -95,7 +102,7 @@ except ImportError:
         pass
 
     try:
-        from face_analyser import (
+        from roop.face_analyser import (
             compute_canonical_roll_angle,
             build_canonical_rotation_matrix,
             estimate_head_pose_pnp,
@@ -104,12 +111,25 @@ except ImportError:
             compute_composite_inverse,
             compute_composite_forward,
         )
-        from utilities import (transform_points, CudaOrtIOBinding,
-                               cuda_warp_affine, cuda_laplacian_pyramid_blend)
+        from roop.utilities import (transform_points, CudaOrtIOBinding,
+                                    cuda_warp_affine, cuda_laplacian_pyramid_blend)
     except ImportError:
-        pass
+        try:
+            from face_analyser import (
+                compute_canonical_roll_angle,
+                build_canonical_rotation_matrix,
+                estimate_head_pose_pnp,
+                weighted_umeyama_alignment,
+                profile_aware_umeyama_alignment,
+                compute_composite_inverse,
+                compute_composite_forward,
+            )
+            from utilities import (transform_points, CudaOrtIOBinding,
+                                   cuda_warp_affine, cuda_laplacian_pyramid_blend)
+        except ImportError:
+            pass
     try:
-        from tracker import (
+        from roop.tracker import (
             FaceTracker,
             MAX_COAST_FRAMES,
             MAX_LOST_FRAMES,
@@ -121,7 +141,72 @@ except ImportError:
             symmetry_inpaint_landmarks,
         )
     except ImportError:
-        pass
+        try:
+            from tracker import (
+                FaceTracker,
+                MAX_COAST_FRAMES,
+                MAX_LOST_FRAMES,
+                STATE_PARTIAL,
+                STATE_VISIBLE,
+                _face_field as _field,
+                landmark_visibility,
+                occlusion_state_for,
+                symmetry_inpaint_landmarks,
+            )
+        except ImportError:
+            pass
+    try:
+        from roop.identity_manager import (
+            IdentityManager,
+            TrackedIdentity,
+            extract_face_embedding,
+            extract_face_bbox,
+            set_face_meta,
+        )
+    except ImportError:
+        try:
+            from identity_manager import (
+                IdentityManager,
+                TrackedIdentity,
+                extract_face_embedding,
+                extract_face_bbox,
+                set_face_meta,
+            )
+        except ImportError:
+            pass
+
+if 'compute_canonical_roll_angle' not in globals():
+    def compute_canonical_roll_angle(kps):
+        return 0.0, 0.0
+if 'build_canonical_rotation_matrix' not in globals():
+    def build_canonical_rotation_matrix(center, theta_deg, threshold_deg=45.0):
+        return None, None, False
+if 'estimate_head_pose_pnp' not in globals():
+    def estimate_head_pose_pnp(*args, **kwargs):
+        return 0.0, 0.0, 0.0
+if 'weighted_umeyama_alignment' not in globals():
+    def weighted_umeyama_alignment(*args, **kwargs):
+        return None
+if 'profile_aware_umeyama_alignment' not in globals():
+    def profile_aware_umeyama_alignment(*args, **kwargs):
+        return None, "fallback"
+if 'compute_composite_inverse' not in globals():
+    def compute_composite_inverse(inv_R, inv_M):
+        return inv_M
+if 'compute_composite_forward' not in globals():
+    def compute_composite_forward(M_warp, R):
+        return M_warp
+if 'transform_points' not in globals():
+    def transform_points(pts, M):
+        return pts
+if 'cuda_warp_affine' not in globals():
+    def cuda_warp_affine(*args, **kwargs):
+        return None
+if 'cuda_laplacian_pyramid_blend' not in globals():
+    def cuda_laplacian_pyramid_blend(*args, **kwargs):
+        return None
+if 'CudaOrtIOBinding' not in globals():
+    CudaOrtIOBinding = None
 
 NAME = 'ROOP.FACE-SWAPPER'
 PROCESSOR_NAME = 'face_swapper'
@@ -1026,8 +1111,11 @@ def get_face_swapper() -> Optional[onnxruntime.InferenceSession]:
             if os.path.isfile(model_path):
                 providers = getattr(roop.globals, 'execution_providers', ['CUDAExecutionProvider', 'CPUExecutionProvider'])
                 FACE_SWAPPER = onnxruntime.InferenceSession(model_path, providers=providers)
-                FACE_SWAPPER_IO = CudaOrtIOBinding(
-                    FACE_SWAPPER, int(getattr(roop.globals, 'cuda_device_id', 0) or 0))
+                if 'CudaOrtIOBinding' in globals() and CudaOrtIOBinding is not None:
+                    FACE_SWAPPER_IO = CudaOrtIOBinding(
+                        FACE_SWAPPER, int(getattr(roop.globals, 'cuda_device_id', 0) or 0))
+                else:
+                    FACE_SWAPPER_IO = None
     return FACE_SWAPPER
 
 
@@ -1218,6 +1306,9 @@ def clear_temporal_state(track_id: Optional[Any] = None) -> None:
     _GLOBAL_SMOOTHER.reset(track_id)
     if track_id is None:
         _GLOBAL_TRACKER.reset()
+        im = get_identity_manager()
+        if im is not None:
+            im.reset()
 
 
 def guided_filter_decompose(
@@ -1780,6 +1871,15 @@ def inject_film_grain(
 # guards rather than two that can drift.
 
 _GLOBAL_TRACKER = FaceTracker(max_age=MAX_LOST_FRAMES, max_coast=MAX_COAST_FRAMES)
+_GLOBAL_IDENTITY_MANAGER = IdentityManager() if 'IdentityManager' in globals() and IdentityManager is not None else None
+
+
+def get_identity_manager() -> Optional[Any]:
+    """Return the global IdentityManager instance."""
+    global _GLOBAL_IDENTITY_MANAGER
+    if _GLOBAL_IDENTITY_MANAGER is None and 'IdentityManager' in globals() and IdentityManager is not None:
+        _GLOBAL_IDENTITY_MANAGER = IdentityManager()
+    return _GLOBAL_IDENTITY_MANAGER
 
 
 def track_faces(detections: Sequence[Any], frame_index: Optional[int] = None,
@@ -1944,6 +2044,8 @@ def swap_face(
         if x2 <= x1 or y2 <= y1:
             return temp_frame
         crop_frame = temp_frame[y1:y2, x1:x2]
+        if crop_frame.shape[:2] != (crop_size, crop_size):
+            crop_frame = cv2.resize(crop_frame, (crop_size, crop_size))
         M = None
         T_final = None
 
@@ -2116,22 +2218,65 @@ def process_frame(source_face: Face, reference_face: Face, temp_frame: Frame) ->
 def process_frame_tracked(source_faces: Any, detections: Sequence[Any],
                           temp_frame: Frame,
                           frame_index: Optional[int] = None) -> Frame:
-    """Multi-face path with tracklet persistence through occlusion.
+    """Multi-face path with tracklet persistence through occlusion and Hungarian
+    bipartite identity matching.
 
-    `source_faces` is either one source face (applied to every target, the
-    single-source multi-face mode) or a sequence indexed by track id modulo its
-    length.  `detections` is this frame's raw detector output -- possibly empty,
-    which is the whole point: a frame where a hand hid the only face still
-    produces a swap, from the tracklet's Kalman prediction, for up to
-    MAX_COAST_FRAMES frames.
-
-    Faces are swapped in track-id order so that two people crossing cannot
-    exchange sources when the detector's left-to-right ordering flips.
+    `source_faces` is either:
+      - Single faceset / Face (e.g., 'mehak')
+      - Sequence of facesets / Faces (e.g., ['mehak', 'misbah'])
+      - Mapping of identity names to facesets / Faces
+    
+    `detections` is this frame's raw detector output -- possibly empty.
+    
+    Uses optimal Hungarian bipartite matching with Jonker-Volgenant algorithm
+    (linear_sum_assignment) over deep ArcFace identity embeddings and Generalized IoU
+    with a gating threshold of 0.45 to reject unmapped background faces and
+    prevent false-positive swaps.
+    
+    When tracks cross (IoU > 0.3), a hysteresis state machine locks identity
+    assignments and disables spatial weight (alpha = 1.0) until bounding boxes
+    separate by >= 1.5x average face width, completely eliminating identity flipping.
     """
     faces, _coasted = track_faces(detections, frame_index=frame_index,
                                   frame_shape=getattr(temp_frame, 'shape', None))
     if not faces:
         return temp_frame
+
+    im = get_identity_manager()
+    if im is not None and source_faces is not None:
+        needs_bind = False
+        if not im.identities:
+            needs_bind = True
+        elif isinstance(source_faces, (list, tuple)):
+            if len(im.identities) != len(source_faces) or any(
+                    im.identities[k].source_face is not source_faces[k] for k in range(len(source_faces))):
+                needs_bind = True
+        elif isinstance(source_faces, dict):
+            if len(im.identities) != len(source_faces) or set(
+                    id_obj.identity_id for id_obj in im.identities) != set(source_faces.keys()):
+                needs_bind = True
+        else:
+            if len(im.identities) != 1 or im.identities[0].source_face is not source_faces:
+                needs_bind = True
+
+        if needs_bind:
+            im.bind_facesets(source_faces)
+
+        assignments = im.assign(faces, frame_index=frame_index)
+        result = temp_frame
+        for face, assignment in zip(faces, assignments):
+            if assignment is None:
+                # Gated rejection: unmapped background face or low confidence match!
+                # Skip swapping this face, preventing false positive swap.
+                continue
+            ref_identity, cost = assignment
+            source = ref_identity.source_face
+            if source is None:
+                continue
+            track_id = int(_field(face, '_track_id', 0) or 0)
+            result = swap_face(source, face, result, track_id=track_id)
+        return result
+
     ordered = sorted(faces, key=lambda f: int(_field(f, '_track_id', 0) or 0))
     result = temp_frame
     for face in ordered:
