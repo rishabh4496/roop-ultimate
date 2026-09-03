@@ -27,6 +27,10 @@ Features:
    - Matches only skin-pixel LAB luminance distributions for low-light scenes.
    - Restores target and optional FaceSet V2 dermal residuals before a
      three-level Laplacian-pyramid composite.  No Poisson clone is used.
+6. Cinematic Relighting & Sensor Grain:
+   - Fits second-order spherical-harmonic scene lighting from the crop surround.
+   - Applies the irradiance field over landmark-informed facial normals.
+   - Reintroduces scene-matched Gaussian/Poisson sensor grain over skin only.
 """
 
 import os
@@ -79,6 +83,9 @@ DERMAL_GUIDED_EPSILON = 0.01
 DERMAL_TARGET_DETAIL_WEIGHT = 0.60
 DERMAL_SWAP_DETAIL_WEIGHT = 0.25
 DERMAL_PATCH_WEIGHT = 0.30
+SH_LIGHTING_MIN_SCALE = 0.55
+SH_LIGHTING_MAX_SCALE = 1.45
+GRAIN_POISSON_WEIGHT = 0.15
 
 # Facial dynamics thresholds
 EAR_BLINK_THRESHOLD = 0.21
@@ -1159,7 +1166,233 @@ def create_static_face_mask(shape: Tuple[int, int], radius_factor: float = 0.40)
 
 
 # ==============================================================================
-# 5. Core Swap Pipeline
+# 5. Cinematic Relighting & Sensor Grain
+# ==============================================================================
+
+def _as_float_bgr(image: np.ndarray) -> np.ndarray:
+    """Return a finite BGR image in display-scale float32 (0..255)."""
+    data = np.asarray(image, dtype=np.float32)
+    if data.ndim != 3 or data.shape[2] < 3:
+        raise ValueError('expected a BGR image')
+    return np.nan_to_num(data[..., :3], nan=0.0, posinf=255.0, neginf=0.0)
+
+
+def _normalise_mask(mask: Optional[np.ndarray], shape: Tuple[int, int]) -> np.ndarray:
+    """Resize and clamp a single-channel compositing mask."""
+    if mask is None:
+        return np.zeros(shape, dtype=np.float32)
+    out = np.asarray(mask, dtype=np.float32)
+    if out.ndim == 3:
+        out = out[..., 0]
+    if out.shape != shape:
+        out = cv2.resize(out, (shape[1], shape[0]), interpolation=cv2.INTER_LINEAR)
+    return np.clip(np.nan_to_num(out), 0.0, 1.0)
+
+
+def real_sh_basis(normals: np.ndarray) -> np.ndarray:
+    """Evaluate the nine real SH bases through band two for unit normals.
+
+    Column order is ``L00, L1-1, L10, L11, L2-2, L2-1, L20, L21, L22``.
+    Normalization constants are folded into the basis, so the fitted values are
+    directly usable lighting coefficients.
+    """
+    n = np.asarray(normals, dtype=np.float32)
+    if n.ndim < 2 or n.shape[-1] != 3:
+        raise ValueError('real_sh_basis expects normals with a final size of 3')
+    n = n / np.maximum(np.linalg.norm(n, axis=-1, keepdims=True), 1e-6)
+    x, y, z = n[..., 0], n[..., 1], n[..., 2]
+    return np.stack((
+        np.full_like(x, 0.282095),
+        0.488603 * y,
+        0.488603 * z,
+        0.488603 * x,
+        1.092548 * x * y,
+        1.092548 * y * z,
+        0.315392 * (3.0 * z * z - 1.0),
+        1.092548 * x * z,
+        0.546274 * (x * x - y * y),
+    ), axis=-1).astype(np.float32)
+
+
+def _plate_directions(shape: Tuple[int, int]) -> np.ndarray:
+    """Map crop pixels to a front-facing hemisphere for scene-light fitting."""
+    h, w = int(shape[0]), int(shape[1])
+    x = (np.arange(w, dtype=np.float32) + 0.5 - w * 0.5) / max(w * 0.5, 1.0)
+    y = (np.arange(h, dtype=np.float32) + 0.5 - h * 0.5) / max(h * 0.5, 1.0)
+    grid_x, grid_y = np.meshgrid(x, y)
+    grid_z = np.sqrt(np.clip(1.0 - grid_x * grid_x - grid_y * grid_y, 0.0, 1.0))
+    directions = np.stack((grid_x, grid_y, grid_z), axis=-1)
+    return directions / np.maximum(np.linalg.norm(directions, axis=-1, keepdims=True), 1e-6)
+
+
+def estimate_scene_sh_coefficients(
+    background_plate: np.ndarray,
+    face_exclusion_mask: Optional[np.ndarray] = None,
+) -> np.ndarray:
+    """Fit nine SH coefficients from background surrounding the face.
+
+    The crop border maps to a front-facing hemisphere and its luminance is
+    regularized with a low-order SH least-squares fit.  Face pixels are excluded
+    so source identity/albedo cannot be misread as an incident scene light.
+    This model-free route adds no ONNX session or GPU allocation.
+    """
+    plate = _as_float_bgr(background_plate)
+    h, w = plate.shape[:2]
+    exclusion = _normalise_mask(face_exclusion_mask, (h, w))
+    luminance = (0.0722 * plate[..., 0] + 0.7152 * plate[..., 1] +
+                 0.2126 * plate[..., 2]) / 255.0
+    sample = (exclusion < 0.10) & np.isfinite(luminance)
+    if int(np.count_nonzero(sample)) < 64:
+        sample = np.isfinite(luminance)
+    basis = real_sh_basis(_plate_directions((h, w))).reshape(-1, 9)
+    values = luminance.reshape(-1)
+    design = basis[sample.reshape(-1)]
+    observed = values[sample.reshape(-1)]
+    if design.shape[0] < 9:
+        return np.array([float(np.mean(luminance)) / 0.282095] + [0.0] * 8,
+                        dtype=np.float32)
+    gram = design.T @ design + np.eye(9, dtype=np.float32) * 1e-4
+    coefficients = np.linalg.solve(gram, design.T @ observed)
+    return np.nan_to_num(coefficients, nan=0.0, posinf=0.0, neginf=0.0).astype(np.float32)
+
+
+def estimate_face_normals(
+    shape: Tuple[int, int],
+    landmarks: Optional[np.ndarray] = None,
+) -> np.ndarray:
+    """Build fast ellipsoid normals, positioned from five/68-point landmarks.
+
+    Landmark plane geometry supplies face centre and inter-eye scale; the
+    ellipsoid's analytic normal approximates cheekbones and the jaw without a
+    per-frame monocular-depth model.
+    """
+    h, w = int(shape[0]), int(shape[1])
+    center_x, center_y = w * 0.5, h * 0.53
+    radius_x, radius_y = w * 0.43, h * 0.56
+    if landmarks is not None:
+        try:
+            points = np.asarray(landmarks, dtype=np.float32).reshape(-1, 2)
+            points = points[np.isfinite(points).all(axis=1)]
+            if points.shape[0] >= 5:
+                eye_distance = float(np.linalg.norm(points[0] - points[1]))
+                if eye_distance > 2.0:
+                    center_x = float(np.mean(points[:5, 0]))
+                    center_y = float(np.mean(points[:5, 1]))
+                    radius_x = np.clip(1.85 * eye_distance, w * 0.25, w * 0.55)
+                    radius_y = np.clip(2.45 * eye_distance, h * 0.35, h * 0.70)
+        except (TypeError, ValueError):
+            pass
+    grid_x, grid_y = np.meshgrid(np.arange(w, dtype=np.float32),
+                                 np.arange(h, dtype=np.float32))
+    x = (grid_x - center_x) / max(float(radius_x), 1.0)
+    y = (grid_y - center_y) / max(float(radius_y), 1.0)
+    z = np.sqrt(np.clip(1.0 - x * x - y * y, 0.0, 1.0))
+    normals = np.stack((x, y, z), axis=-1)
+    return normals / np.maximum(np.linalg.norm(normals, axis=-1, keepdims=True), 1e-6)
+
+
+def sh_irradiance(coefficients: np.ndarray, normals: np.ndarray) -> np.ndarray:
+    """Evaluate non-negative SH irradiance for each supplied normal."""
+    coeffs = np.asarray(coefficients, dtype=np.float32).reshape(-1)
+    if coeffs.size != 9:
+        raise ValueError('sh_irradiance expects exactly nine SH coefficients')
+    irradiance = np.tensordot(real_sh_basis(normals), coeffs, axes=([-1], [0]))
+    return np.clip(np.nan_to_num(irradiance), 0.01, None).astype(np.float32)
+
+
+def estimate_sh_lighting_scale(
+    coefficients: np.ndarray,
+    normals: np.ndarray,
+    skin_mask: np.ndarray,
+) -> np.ndarray:
+    """Normalize SH irradiance to a bounded face-luminance multiplier."""
+    irradiance = sh_irradiance(coefficients, normals)
+    skin = _normalise_mask(skin_mask, irradiance.shape)
+    sample = skin > 0.35
+    reference = (float(np.median(irradiance[sample])) if np.any(sample)
+                 else float(np.median(irradiance)))
+    scale = irradiance / max(reference, 1e-4)
+    return np.clip(scale, SH_LIGHTING_MIN_SCALE, SH_LIGHTING_MAX_SCALE).astype(np.float32)
+
+
+def apply_sh_lighting_transfer(
+    swap_crop: np.ndarray,
+    background_plate: np.ndarray,
+    skin_mask: np.ndarray,
+    face_exclusion_mask: Optional[np.ndarray] = None,
+    landmarks: Optional[np.ndarray] = None,
+) -> np.ndarray:
+    """Multiply swap luminance by scene SH irradiance over blended skin only."""
+    swap = _as_float_bgr(swap_crop)
+    plate = _as_float_bgr(background_plate)
+    if plate.shape[:2] != swap.shape[:2]:
+        plate = cv2.resize(plate, (swap.shape[1], swap.shape[0]), interpolation=cv2.INTER_AREA)
+    skin = _normalise_mask(skin_mask, swap.shape[:2])
+    coefficients = estimate_scene_sh_coefficients(
+        plate, skin if face_exclusion_mask is None else face_exclusion_mask)
+    normals = estimate_face_normals(swap.shape[:2], landmarks)
+    scale = estimate_sh_lighting_scale(coefficients, normals, skin)
+    weighted_scale = 1.0 + (scale - 1.0) * skin
+    return np.clip(swap * weighted_scale[..., None], 0.0, 255.0).astype(np.uint8)
+
+
+def estimate_background_grain(
+    background_plate: np.ndarray,
+    face_exclusion_mask: Optional[np.ndarray] = None,
+) -> Tuple[np.ndarray, float]:
+    """Return ``I - GaussianBlur(I, (5,5), 0)`` and its background sigma."""
+    plate = _as_float_bgr(background_plate)
+    residual = plate - cv2.GaussianBlur(plate, (5, 5), 0)
+    exclusion = _normalise_mask(face_exclusion_mask, plate.shape[:2])
+    sample = exclusion < 0.10
+    if int(np.count_nonzero(sample)) < 64:
+        sample = np.ones(plate.shape[:2], dtype=bool)
+    return residual.astype(np.float32), max(0.0, float(np.std(residual[sample])))
+
+
+def synthesize_sensor_noise(
+    shape: Tuple[int, int, int],
+    sigma_grain: float,
+    rng: Optional[np.random.Generator] = None,
+    image: Optional[np.ndarray] = None,
+) -> np.ndarray:
+    """Generate zero-mean Gaussian/Poisson grain at the target variance."""
+    sigma = max(0.0, float(sigma_grain))
+    if sigma <= 1e-6:
+        return np.zeros(shape, dtype=np.float32)
+    generator = rng if rng is not None else np.random.default_rng()
+    gaussian = generator.normal(0.0, 1.0, size=shape).astype(np.float32)
+    signal = (np.full(shape, 128.0, dtype=np.float32) if image is None else
+              np.clip(_as_float_bgr(image), 0.0, 255.0))
+    electrons = 32.0 + signal
+    poisson = ((generator.poisson(electrons).astype(np.float32) - electrons) /
+               np.sqrt(electrons))
+    noise = ((1.0 - GRAIN_POISSON_WEIGHT) * gaussian +
+             GRAIN_POISSON_WEIGHT * poisson)
+    noise *= sigma / max(float(np.std(noise)), 1e-6)
+    return noise.astype(np.float32)
+
+
+def inject_film_grain(
+    swap_crop: np.ndarray,
+    background_plate: np.ndarray,
+    skin_mask: np.ndarray,
+    face_exclusion_mask: Optional[np.ndarray] = None,
+    rng: Optional[np.random.Generator] = None,
+) -> np.ndarray:
+    """Inject scene-matched sensor grain into restored blended skin only."""
+    swap = _as_float_bgr(swap_crop)
+    plate = _as_float_bgr(background_plate)
+    if plate.shape[:2] != swap.shape[:2]:
+        plate = cv2.resize(plate, (swap.shape[1], swap.shape[0]), interpolation=cv2.INTER_AREA)
+    skin = _normalise_mask(skin_mask, swap.shape[:2])
+    _, sigma = estimate_background_grain(plate, face_exclusion_mask)
+    noise = synthesize_sensor_noise(swap.shape, sigma, rng=rng, image=swap)
+    return np.clip(swap + noise * skin[..., None], 0.0, 255.0).astype(np.uint8)
+
+
+# ==============================================================================
+# 6. Core Swap Pipeline
 # ==============================================================================
 
 def swap_face(
@@ -1254,6 +1487,16 @@ def swap_face(
     # Step 4: Occlusion Parsing Pipeline at 256x256
     occlusion_mask = compute_occlusion_mask(crop_frame, face_mask=face_mask)
     blend_mask = apply_occlusion_blend(face_mask, occlusion_mask)
+
+    # Step 4a: Match scene directionality and sensor texture before the final
+    # mask is temporally stabilized.  The target crop's surround is the scene
+    # plate; the static face mask excludes actor albedo from the SH/noise fit.
+    skin_mask = derive_skin_mask(crop_frame, blend_mask)
+    swapped_crop = apply_sh_lighting_transfer(
+        swapped_crop, crop_frame, skin_mask,
+        face_exclusion_mask=face_mask, landmarks=crop_kps)
+    swapped_crop = inject_film_grain(
+        swapped_crop, crop_frame, skin_mask, face_exclusion_mask=face_mask)
 
     # Step 5: Temporal Mask Smoothing (Optical Flow / EMA)
     smoothed_mask = smooth_temporal_mask(blend_mask, crop_frame, track_id=track_id)
