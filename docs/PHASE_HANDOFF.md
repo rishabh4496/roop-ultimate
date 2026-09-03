@@ -1,3 +1,97 @@
+# Handoff - execution providers (2026-09-03, PAUSED mid-benchmark)
+
+Device: physical RTX 4070, driver 616.56, TRT 10.9.0.34, ORT 1.23.2,
+i9-14900K, 31.7 GB RAM. Commits `97d562a`, `32b2ef7`, `fe91dee`.
+Suite 1986 -> 1989 green (29 provider tests, no skips).
+
+## State: SHIPPED code, UNFINISHED measurement
+
+Three things landed and are covered by tests. One measurement was started,
+found a bug in the code under test, and was stopped before producing numbers.
+
+**The end-to-end A/B has NO result yet.** Nothing about throughput is claimed.
+
+## Resume here
+
+    env/Scripts/python.exe tests/ab_shape_profile.py --reps 2 --end 600 --null
+
+Process per arm, both engine caches warmed first, counterbalanced, face counts
+printed as the guard. Expect ~35 min: the warm-up ON arm must build the three
+profiled engines (they exist only under the orphaned namespace below), the rest
+are cached.
+
+Read `faces_swapped/faces_seen` beside fps in every arm. Identical counts are
+the guard -- an arm that goes faster by finding fewer faces has not got faster.
+
+### What the aborted run already established
+
+* The profile IS applied in a real render, not just in unit tests: TensorRT
+  wrote a 57 MB engine plus a `.profile` sidecar into the production namespace
+  `..._sp12x512input8x3x1280x1280`.
+* **THREE models get a profile in the live stack, not one.** The render created
+  `_sp12x512input8x3x1280x1280` (retinaface_r50), `_spet8x3x256x256source8x512`
+  (hififace, the second net inside realswap -- batch-dynamic) and
+  `_spx512x512input8x3x512x512`. The commit message for `97d562a` says the
+  detector is the only profiled model in the render path; that was true of the
+  models sampled by hand and is WRONG for the running stack. Correct it when
+  the A/B is written up.
+* The 120-frame warm-up arm rendered correctly: 120 frames, 159 swaps,
+  `frame_total` 21.71 s. Everything else in its 1813 s wall clock was the
+  engine rebuild described below.
+
+## The bug the benchmark found (fixed in `fe91dee`)
+
+`97d562a` added `fp16_enable` and `fp8_eligible` to `builder_config`, which is
+hashed into the TensorRT engine cache directory name. Both are constant on
+every supported card, so the namespace moved
+`_c3b1a9752fee69034` -> `_cc3a4d61f058c77bc` and orphaned every engine.
+Cost, measured from the arm's own log: **27 minutes of rebuilding before the
+first frame**, swapper and enhancer included.
+
+The capability gate is now recorded only when it actually changed the outcome.
+Namespace verified back to the pre-existing `_c40b4a7d8494df527`.
+
+**A cache-identity field is not free.** One that cannot vary is
+indistinguishable from a correct invalidation: nothing errors, nothing warns,
+the app spends half an hour rebuilding and then runs normally.
+
+## Housekeeping decision owed
+
+`models/trt_cache/*cc3a4d61f058c77bc*` -- **886 MB** of engines built under the
+bad digest across four directories. Regenerable and now unreachable. Left in
+place rather than deleted without asking. Safe to remove.
+
+## OpenVINO offload: validated, and it fails OPEN
+
+Validated against a real `OpenVINOExecutionProvider` in an isolated venv
+(onnxruntime-openvino 1.23.0 + openvino 2025.3.0). That wheel conflicts with
+`onnxruntime-gpu`, so it must NEVER be installed into `app/env` -- it would
+take CUDA/TensorRT down. Throwaway venv only.
+
+Asking for a device the machine lacks does not raise:
+
+    device_type=CPU    build 0.4s  EP active   -> ran on OpenVINO
+    device_type=GPU    build 0.3s  EP ABSENT   -> ran on CPUExecutionProvider
+    device_type=NPU    build 0.3s  EP ABSENT   -> ran on CPUExecutionProvider
+    device_type=GPU.1  build 0.4s  EP ABSENT   -> ran on CPUExecutionProvider
+
+Working session, no exception, ORT logs to stderr and drops the provider. A
+mismatched OpenVINO runtime does the same (errors 126 then 127, both silent).
+So `build_session_with_fallback` cannot see it and `provider_available()` --
+which only asks whether the EP is LISTED -- would report detection as offloaded
+while it ran on CPU. `openvino_device_usable()` now probes a one-node graph and
+asks the CONSTRUCTED session what it got.
+
+This machine: i9-14900K, **no NPU, no Intel iGPU exposed**, so `auto` correctly
+declines. OpenVINO 2026.3 enumerates the RTX 4070 itself as `GPU`
+(`FULL_DEVICE_NAME` "NVIDIA GeForce RTX 4070 (dGPU)"), which is why `auto`
+skips GPU.0 -- written as a guess in `97d562a`, now a measured decision.
+
+Still owed: a machine with a real NPU or Intel iGPU. Detection feeds every
+identity gate, so the quality question is untouched by anything here.
+
+---
+
 # Phase Handoff - final validation campaign, RTX 4070 (2026-09-01, later)
 
 Device: physical RTX 4070, driver 616.56, TensorRT 10.9.0.34, ORT 1.23.2.
