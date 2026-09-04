@@ -83,6 +83,29 @@ try:
         extract_face_bbox,
         set_face_meta,
     )
+    from roop.motion_blur import (
+        compute_blur_metric,
+        calculate_optical_flow_vector,
+        construct_motion_blur_kernel,
+        construct_motion_blur_kernel_from_vector,
+        apply_motion_blur,
+        harmonize_motion_blur,
+        MotionBlurHarmonizer,
+        BLUR_THRESHOLD,
+    )
+    from roop.eyelid_preserver import (
+        calculate_ear,
+        compute_eye_aspect_ratios,
+        is_eye_blinking,
+        generate_eye_elliptical_mask,
+        build_blink_eyelid_mask,
+        blend_eyelid_preservation,
+        preserve_eyelids,
+        blend_eyelid_multiscale,
+        get_closed_eyes_attenuation,
+        EAR_BLINK_THRESHOLD,
+        EYELID_BLEND_OPACITY,
+    )
 except ImportError:
     try:
         import globals as roop_globals
@@ -175,6 +198,58 @@ except ImportError:
         except ImportError:
             pass
 
+    try:
+        from roop.motion_blur import (
+            compute_blur_metric,
+            calculate_optical_flow_vector,
+            construct_motion_blur_kernel,
+            construct_motion_blur_kernel_from_vector,
+            apply_motion_blur,
+            harmonize_motion_blur,
+            MotionBlurHarmonizer,
+            BLUR_THRESHOLD,
+        )
+        from roop.eyelid_preserver import (
+            calculate_ear,
+            compute_eye_aspect_ratios,
+            is_eye_blinking,
+            generate_eye_elliptical_mask,
+            build_blink_eyelid_mask,
+            blend_eyelid_preservation,
+            preserve_eyelids,
+            blend_eyelid_multiscale,
+            get_closed_eyes_attenuation,
+            EAR_BLINK_THRESHOLD,
+            EYELID_BLEND_OPACITY,
+        )
+    except ImportError:
+        try:
+            from motion_blur import (
+                compute_blur_metric,
+                calculate_optical_flow_vector,
+                construct_motion_blur_kernel,
+                construct_motion_blur_kernel_from_vector,
+                apply_motion_blur,
+                harmonize_motion_blur,
+                MotionBlurHarmonizer,
+                BLUR_THRESHOLD,
+            )
+            from eyelid_preserver import (
+                calculate_ear,
+                compute_eye_aspect_ratios,
+                is_eye_blinking,
+                generate_eye_elliptical_mask,
+                build_blink_eyelid_mask,
+                blend_eyelid_preservation,
+                preserve_eyelids,
+                blend_eyelid_multiscale,
+                get_closed_eyes_attenuation,
+                EAR_BLINK_THRESHOLD,
+                EYELID_BLEND_OPACITY,
+            )
+        except ImportError:
+            pass
+
 if 'compute_canonical_roll_angle' not in globals():
     def compute_canonical_roll_angle(kps):
         return 0.0, 0.0
@@ -234,8 +309,10 @@ SH_LIGHTING_MIN_SCALE = 0.55
 SH_LIGHTING_MAX_SCALE = 1.45
 GRAIN_POISSON_WEIGHT = 0.15
 
-# Facial dynamics thresholds
-EAR_BLINK_THRESHOLD = 0.21
+# Facial dynamics and motion blur thresholds
+EAR_BLINK_THRESHOLD = 0.18
+EYELID_BLEND_OPACITY = 0.95
+BLUR_THRESHOLD = 100.0
 MIN_LIP_SEPARATION_PX = 8.0
 MOUTH_FEATHER_PX = 3
 
@@ -574,6 +651,7 @@ class TemporalMaskSmoother:
 
 
 _GLOBAL_SMOOTHER = TemporalMaskSmoother(alpha=DEFAULT_EMA_ALPHA)
+_GLOBAL_MOTION_BLUR_HARMONIZER = MotionBlurHarmonizer(blur_threshold=BLUR_THRESHOLD)
 
 
 # ==============================================================================
@@ -784,7 +862,7 @@ def apply_facial_dynamics(
     landmarks_68: Optional[np.ndarray],
     blend_mask: Optional[np.ndarray] = None
 ) -> Tuple[np.ndarray, Dict[str, Any]]:
-    """Unified handler for eyelid blinks (EAR < 0.21) and inner-mouth retention (sep > 8px)."""
+    """Unified handler for eyelid blinks (EAR < 0.18) and inner-mouth retention (sep > 8px)."""
     meta = {
         'is_blinking': False,
         'left_ear': 0.30,
@@ -817,7 +895,7 @@ def apply_facial_dynamics(
     if is_blink:
         eyelid_mask = build_blink_eyelid_mask(pts, shape, ear_threshold=EAR_BLINK_THRESHOLD)
         meta['eyelid_mask'] = eyelid_mask
-        current_result = blend_eyelid_multiscale(target_crop, current_result, eyelid_mask)
+        current_result = blend_eyelid_preservation(target_crop, current_result, eyelid_mask, opacity=EYELID_BLEND_OPACITY)
 
     # 2. Teeth & Inner Mouth Passthrough
     sep = float(np.linalg.norm(pts[62] - pts[66]))
@@ -1304,6 +1382,7 @@ def clear_temporal_state(track_id: Optional[Any] = None) -> None:
     because a tracklet is not addressable by the smoother's key.
     """
     _GLOBAL_SMOOTHER.reset(track_id)
+    _GLOBAL_MOTION_BLUR_HARMONIZER.reset(track_id)
     if track_id is None:
         _GLOBAL_TRACKER.reset()
         im = get_identity_manager()
@@ -2148,6 +2227,12 @@ def swap_face(
         face_exclusion_mask=face_mask, landmarks=crop_kps)
     swapped_crop = inject_film_grain(
         swapped_crop, crop_frame, skin_mask, face_exclusion_mask=face_mask)
+
+    # Step 4b: Target Motion-Blur Estimation & Adaptive Convolution
+    # Fix the "sharp sticker" artifact on moving subjects by harmonizing
+    # swapped face sharpness with background motion blur prior to alpha compositing.
+    swapped_crop, _ = _GLOBAL_MOTION_BLUR_HARMONIZER.harmonize(
+        swapped_crop, crop_frame, track_id=track_id)
 
     # Step 5: Temporal Mask Smoothing (Optical Flow / EMA)
     smoothed_mask = smooth_temporal_mask(blend_mask, crop_frame, track_id=track_id)
