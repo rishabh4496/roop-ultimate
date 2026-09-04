@@ -646,12 +646,18 @@ class SearchSpace:
                  (0,) if small else (0, 2),
                  applies_to="detmask_pool_size",
                  env_var="ROOP_DETMASK_POOL", phase="B",
-                 reachable=bool(self.hardware.cuda_available)),
+                 reachable=bool(self.hardware.cuda_available),
+                 unreachable_reason=("" if self.hardware.cuda_available else
+                                     "no CUDA device: the detect/mask stages "
+                                     "have no GPU pool to size")),
             Axis("gpu_mem_limit_gb",
                  self._gpu_mem_limits(),
                  applies_to="gpu_mem_limit_gb",
                  env_var="ROOP_ORT_GPU_MEM_LIMIT_GB", phase="B",
                  reachable=bool(self.hardware.cuda_available),
+                 unreachable_reason=("" if self.hardware.cuda_available else
+                                     "no CUDA device: there is no GPU "
+                                     "allocator to cap"),
                  note="ORT CUDA/TRT allocator ceiling; caps arena growth"),
         ]
         faces = _number(self.workload.faces_per_frame, 1.0)
@@ -1192,6 +1198,12 @@ class Preset:
     constraints: Tuple[str, ...] = ()
     rationale: str = ""
     provisional: bool = False
+    # True when NO measured arm could satisfy this preset's own constraint, so
+    # the tuning below is the least-bad option rather than a compliant one. A
+    # preset that states "peak VRAM <= 80%" while sitting at 92% is lying; on a
+    # 4GB card that is the honest answer and it has to be said out loud.
+    constraint_violated: bool = False
+    violation: str = ""
 
     def as_dict(self) -> dict:
         return asdict(self)
@@ -1250,18 +1262,29 @@ class PresetBuilder:
         #    not allowed into the paging band.
         admissible = [(level, fps) for level, fps in thread_curve
                       if (vram_pct(level) or 0.0) <= VRAM_ADMISSION_CEILING * 100.0]
+        max_violation = ""
         if admissible:
             best_level, best_fps = max(admissible, key=lambda item: item[1])
         elif thread_curve:
-            best_level, best_fps = thread_curve[0]
+            # Nothing on this device fits under the ceiling. Take the smallest
+            # footprint rather than the fastest -- every arm is already in the
+            # paging band, so throughput here is not a meaningful ranking.
+            best_level, best_fps = min(thread_curve, key=lambda item: item[0])
+            max_violation = (
+                "no measured arm fits under %.0f%% of this device's %.1f GB: "
+                "the smallest footprint is offered instead, and this device is "
+                "under-provisioned for the configured models"
+                % (VRAM_ADMISSION_CEILING * 100, total_vram))
         else:
             best_level, best_fps = baseline.worker_count, 0.0
         presets["max_throughput"] = Preset(
             "Max Throughput", apply(best_level), best_fps, vram_pct(best_level),
             constraints=("peak VRAM <= %.0f%% of total" % (VRAM_ADMISSION_CEILING * 100),),
-            rationale=("highest measured sustained throughput among admissible "
-                       "arms (%d workers)" % best_level),
-            provisional=not noise.measured)
+            rationale=(max_violation or
+                       ("highest measured sustained throughput among admissible "
+                        "arms (%d workers)" % best_level)),
+            provisional=not noise.measured,
+            constraint_violated=bool(max_violation), violation=max_violation)
 
         # -- Balanced: the KNEE, not the argmax, and additionally capped at the
         #    80% VRAM bar. The knee is what the shipped pool tiers were chosen
@@ -1269,20 +1292,29 @@ class PresetBuilder:
         #    doubling of resources, and the next run's noise could reverse it.
         balanced_curve = [(level, fps) for level, fps in thread_curve
                           if (vram_pct(level) or 0.0) <= VRAM_BALANCED_CEILING * 100.0]
+        balanced_violation = ""
         if balanced_curve:
             knee_level = knee([fps for _, fps in balanced_curve],
                               [level for level, _ in balanced_curve], THREAD_GAIN)
             knee_fps = dict(balanced_curve).get(knee_level)
         else:
             knee_level, knee_fps = best_level, best_fps
+            balanced_violation = (
+                "no measured arm fits under %.0f%% of this device's %.1f GB, so "
+                "the Balanced VRAM contract cannot be met here; reduce the "
+                "enhancer tier or the mask engine before trusting this preset"
+                % (VRAM_BALANCED_CEILING * 100, total_vram))
         presets["balanced"] = Preset(
             "Balanced", apply(knee_level), knee_fps, vram_pct(knee_level),
             constraints=("peak VRAM <= %.0f%% of total" % (VRAM_BALANCED_CEILING * 100),
                          "worker knee within %.0f%% of best" % (THREAD_GAIN * 100)),
-            rationale=("smallest worker count within %.0f%% of the best "
-                       "admissible arm, so the thermal and VRAM cost is not "
-                       "paid for a fraction of a percent" % (THREAD_GAIN * 100)),
-            provisional=not noise.measured)
+            rationale=(balanced_violation or
+                       ("smallest worker count within %.0f%% of the best "
+                        "admissible arm, so the thermal and VRAM cost is not "
+                        "paid for a fraction of a percent" % (THREAD_GAIN * 100))),
+            provisional=not noise.measured,
+            constraint_violated=bool(balanced_violation),
+            violation=balanced_violation)
 
         # -- Stable / Low-Power.
         low_level = max(1, int(round(knee_level * self.LOW_POWER_THREAD_FRACTION)))
@@ -1548,6 +1580,22 @@ class GuidedOptimizer:
         accepted = dict(self.baseline.as_dict())
         accepted["worker_count"] = threads
 
+        if not axes:
+            # Nothing to search: a CPU-only or non-TensorRT device reaches none
+            # of these axes. Return BEFORE the reference arm -- measuring a
+            # reference for a comparison that will never happen is a whole
+            # 600-frame render spent on nothing.
+            self.log("    no reachable memory axis on this device; phase skipped")
+            return {
+                "total_vram_gb": round(total, 2),
+                "budget_gb": round(budget_gb, 2),
+                "admission_ceiling_pct": VRAM_ADMISSION_CEILING * 100.0,
+                "reference_fps": None,
+                "rows": [], "skipped_axes": skipped, "accepted": {},
+                "note": ("no memory axis is reachable on this device, so no "
+                         "arm was rendered for this phase"),
+            }
+
         # Phase A has already moved the worker count, so the phase-0 baseline is
         # no longer the right reference: comparing a memory axis against it
         # would credit that axis with the thread gain and promote it for an
@@ -1590,13 +1638,40 @@ class GuidedOptimizer:
                 # configuration currently in hand, and a promotion moves the
                 # reference so the next axis is judged against the new best.
                 if row["admitted"] and noise.beats(measurement.fps, reference_fps):
-                    self.log("    promoted %s=%s (+%.1f%% over the phase "
-                             "reference, clears the %.2f%% floor)"
-                             % (axis.name, value, row["vs_reference_pct"],
-                                noise.threshold_pct))
-                    accepted[axis.applies_to] = value
-                    reference_fps = measurement.fps
-                    reference = measurement
+                    # CONFIRM BEFORE PROMOTING. A single arm clearing the bar is
+                    # not enough: the spread estimated from a handful of
+                    # replicates is itself noisy (measured 1.64% on one run and
+                    # 3.92% on the next of the same search), and the low
+                    # estimate is exactly when a noise winner gets through. The
+                    # candidate has to do it twice.
+                    confirm = self._run(config, frames,
+                                        "confirm %s=%s" % (axis.name, value))
+                    confirm_ok, confirm_reason = confirm.comparable_to(reference)
+                    row["confirmation_fps"] = round(confirm.fps, 4)
+                    if confirm_ok and noise.beats(confirm.fps, reference_fps):
+                        self.log("    promoted %s=%s (+%.1f%% then +%.1f%% on "
+                                 "confirmation, clears the %.2f%% floor twice)"
+                                 % (axis.name, value, row["vs_reference_pct"],
+                                    (confirm.fps - reference_fps) / reference_fps * 100.0,
+                                    noise.threshold_pct))
+                        accepted[axis.applies_to] = value
+                        # Promote on the CONFIRMATION, not on the arm that won
+                        # the first draw: taking the luckier of two numbers as
+                        # the new reference biases every later axis against
+                        # itself.
+                        reference_fps = confirm.fps
+                        reference = confirm
+                        row["confirmed"] = True
+                    else:
+                        row["confirmed"] = False
+                        row["rejected"] = (
+                            confirm_reason or
+                            "cleared the floor once (%+.1f%%) but not on "
+                            "re-measurement (%+.1f%%): not separable from noise"
+                            % (row["vs_reference_pct"],
+                               (confirm.fps - reference_fps) / reference_fps * 100.0))
+                        self.log("    NOT promoted %s=%s -- %s"
+                                 % (axis.name, value, row["rejected"]))
         return {
             "total_vram_gb": round(total, 2),
             "budget_gb": round(budget_gb, 2),
@@ -1705,6 +1780,9 @@ class GuidedOptimizer:
             report.warnings.append(
                 "the thread curve is flat within this machine's noise floor: "
                 "the presets differ in footprint, not in measurable speed")
+        for preset in presets.values():
+            if preset.constraint_violated:
+                report.warnings.append("%s: %s" % (preset.name, preset.violation))
         if not any(m.work_verified for m in self._measurements):
             report.warnings.append(
                 "no arm reported faces_seen/faces_swapped, so the comparability "
