@@ -498,3 +498,21 @@ adaptive actions, and `ROOP_RUNTIME_ADAPTIVE=1` to enable the hysteretic
 safe-boundary controller. It only changes future work within profile bounds;
 active TensorRT contexts, in-flight inference, frame ordering, and explicit
 codec choices remain untouched.
+
+### Isolated Pinokio folder batch
+
+Use the root-level runner for the retained `G:\pinokio\roop-keep` media
+folders. It renders one video in a fresh Windows `spawn` process, then waits
+for that worker to exit before starting the next video. This prevents CUDA,
+ONNX Runtime, FFmpeg, and DirectShow state from accumulating across a batch.
+
+```powershell
+python pinokio_batch_runner.py --dry-run
+python pinokio_batch_runner.py
+```
+
+`single/*.mp4` is written to `single_results/` using the `rhythm` faceset;
+`double/*.mp4` is written to `double_results/` using `ashna,rhythm`. Existing
+outputs are retained unless `--overwrite` is supplied. Progress events include
+the frame index, FPS, and ETA; the parent writes them to
+`G:\pinokio\roop-keep\pinokio_batch_runner.log`.

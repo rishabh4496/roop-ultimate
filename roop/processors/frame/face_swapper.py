@@ -46,6 +46,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 import cv2
 import numpy as np
 import onnxruntime
+from .face_enhancer import sanitize_frame_output
 
 try:
     import roop.globals
@@ -2162,10 +2163,16 @@ def swap_face(
                 'source': source_emb
             })[0]
 
+        # FP16 TensorRT/ORT overflow is otherwise silently converted to black
+        # pixels by uint8(NaN).  A bad model output must never modify this frame.
+        if not np.isfinite(np.asarray(swapped_blob)).all():
+            print('[face_swapper] NaN/Inf from swap model; preserving original frame', flush=True)
+            return temp_frame
         swapped_crop = np.squeeze(swapped_blob, axis=0)
         swapped_crop = np.transpose(swapped_crop, (1, 2, 0))
         swapped_crop = swapped_crop[..., ::-1]  # RGB to BGR
-        swapped_crop = np.clip(swapped_crop * 255.0, 0, 255).astype(np.uint8)
+        swapped_crop = sanitize_frame_output(swapped_crop, crop_frame,
+                                             stage='face swapper', scale=255.0)
     else:
         swapped_crop = crop_frame.copy()
 
@@ -2233,6 +2240,9 @@ def swap_face(
     # swapped face sharpness with background motion blur prior to alpha compositing.
     swapped_crop, _ = _GLOBAL_MOTION_BLUR_HARMONIZER.harmonize(
         swapped_crop, crop_frame, track_id=track_id)
+    if not np.isfinite(np.asarray(swapped_crop)).all():
+        print('[face_swapper] NaN/Inf during post-processing; preserving original frame', flush=True)
+        return temp_frame
 
     # Step 5: Temporal Mask Smoothing (Optical Flow / EMA)
     smoothed_mask = smooth_temporal_mask(blend_mask, crop_frame, track_id=track_id)
@@ -2252,7 +2262,8 @@ def swap_face(
         valid = warped_mask > 1e-4
         pyramid_source[valid] = warped_crop[valid]
         gpu_blend = cuda_laplacian_pyramid_blend(temp_frame, pyramid_source, warped_mask, levels=3)
-        return gpu_blend if gpu_blend is not None else laplacian_pyramid_blend(temp_frame, pyramid_source, warped_mask, levels=3)
+        result = gpu_blend if gpu_blend is not None else laplacian_pyramid_blend(temp_frame, pyramid_source, warped_mask, levels=3)
+        return sanitize_frame_output(result, temp_frame, stage='face swap composite')
     elif M is not None:
         inv_M = cv2.invertAffineTransform(M)
         h, w = temp_frame.shape[:2]
@@ -2268,11 +2279,12 @@ def swap_face(
         valid = warped_mask > 1e-4
         pyramid_source[valid] = warped_crop[valid]
         gpu_blend = cuda_laplacian_pyramid_blend(temp_frame, pyramid_source, warped_mask, levels=3)
-        return gpu_blend if gpu_blend is not None else laplacian_pyramid_blend(temp_frame, pyramid_source, warped_mask, levels=3)
+        result = gpu_blend if gpu_blend is not None else laplacian_pyramid_blend(temp_frame, pyramid_source, warped_mask, levels=3)
+        return sanitize_frame_output(result, temp_frame, stage='face swap composite')
     else:
         blended_crop = blend_swap_buffer(crop_frame, swapped_crop, smoothed_mask)
         target_frame[y1:y2, x1:x2] = cv2.resize(blended_crop, (x2 - x1, y2 - y1))
-        return target_frame
+        return sanitize_frame_output(target_frame, temp_frame, stage='face swap composite')
 
 
 def pre_check() -> bool:
