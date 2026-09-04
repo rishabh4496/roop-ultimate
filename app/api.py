@@ -2813,12 +2813,31 @@ def preview(payload: dict = Body(...)):
         roop_globals.face_swap_mode = translate_swap_mode(payload.get("detection", "All faces"))
         roop_globals.selected_enhancer = payload.get("enhancer", "None")
         _apply_adaptive_enhancer_settings(payload)
-        roop_globals.codeformer_fidelity = float(payload.get("codeformer_fidelity", 0.5))
+        # FALL BACK TO CFG, NOT TO A LITERAL -- these five used to default to
+        # module constants while the run path (see `swap`, below) defaulted the
+        # same five to the user's config. A payload that omits a key therefore
+        # PREVIEWED A DIFFERENT STACK THAN IT WOULD RENDER, silently, and the
+        # UI omits a key whenever its settings value is undefined (JSON.stringify
+        # drops those) -- an older frontend, a partially-rehydrated settings
+        # object, a hand-built grid payload.
+        #
+        # The visible one was `autorotate`: it defaulted to True here against a
+        # config carrying False, so the preview could rotate the frame to stand a
+        # face up and the render would not, and the previewed face angle simply
+        # did not match what came out. The others were quieter but the same:
+        # fidelity 0.5 vs 0.55, blend 0.8 vs 1.0, and a no-face action of "Retry
+        # rotated" against a configured "Use untouched original frame".
+        roop_globals.codeformer_fidelity = float(payload.get(
+            "codeformer_fidelity", getattr(roop_globals.CFG, "codeformer_fidelity", 0.5)))
         roop_globals.distance_threshold = float(payload.get("face_distance", roop_globals.CFG.max_face_distance))
-        roop_globals.blend_ratio = float(payload.get("blend_ratio", 0.8))
-        roop_globals.no_face_action = index_of_no_face_action(payload.get("no_face_action", "Retry rotated"))
-        roop_globals.vr_mode = bool(payload.get("vr_mode", False))
-        roop_globals.autorotate_faces = bool(payload.get("autorotate", True))
+        roop_globals.blend_ratio = float(payload.get(
+            "blend_ratio", getattr(roop_globals.CFG, "blend_ratio", 0.8)))
+        roop_globals.no_face_action = index_of_no_face_action(payload.get(
+            "no_face_action", roop_globals.CFG.no_face_action))
+        roop_globals.vr_mode = bool(payload.get(
+            "vr_mode", getattr(roop_globals.CFG, "vr_mode", False)))
+        roop_globals.autorotate_faces = bool(payload.get(
+            "autorotate", getattr(roop_globals.CFG, "autorotate_faces", True)))
         roop_globals.subsample_size = int(str(payload.get("upscale", "256px"))[:3])
         roop_globals.execution_threads = roop_globals.CFG.max_threads
         roop_globals.color_transfer_mode = payload.get("color_transfer_mode", getattr(roop_globals.CFG, "color_transfer_mode", "rct"))

@@ -328,9 +328,10 @@ def _matching_benchmark_knee(model_key, input_shape=None):
                 if isinstance(current_hardware, dict) else None
         if not current_key:
             try:
-                from roop.runtime_optimizer import HardwareProfiler
-                current_key = HardwareProfiler().profile().as_dict().get(
-                    'hardware_profile_key')
+                from roop.runtime_optimizer import shared_hardware_profile
+                current_key = shared_hardware_profile(
+                    getattr(_globals, 'cuda_device_id', 0) or 0).as_dict().get(
+                        'hardware_profile_key')
             except Exception:
                 current_key = None
         if not current_key or str(recorded_key) != str(current_key):

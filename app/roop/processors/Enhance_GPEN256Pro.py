@@ -165,8 +165,36 @@ class Enhance_GPEN256Pro:
         if self.plugin_options is not None:
             if self.plugin_options.get("devicename") != plugin_options.get("devicename"):
                 self.Release()
+            # `pool_size` is the only other option that changes what gets built,
+            # so it is the only other one worth paying a rebuild for.
+            elif self.plugin_options.get("pool_size") != plugin_options.get("pool_size"):
+                self.Release()
         self.plugin_options = plugin_options
         self.devicename = plugin_options["devicename"].replace('mps', 'cpu')
+
+        # ALREADY BUILT -- reuse, do not rebuild.
+        #
+        # Every sibling restorer guards here (`Enhance_UltraMax`,
+        # `Enhance_GPENRealistic`: `if self.session is not None: return`); this
+        # one did not, so it re-ran the whole block below on every call:
+        # a fresh `InferenceSession`, a fresh `verify_and_warmup` (which pays
+        # TensorRT's engine load on a dummy tensor), and a fresh pool of `n - 1`
+        # MORE sessions -- then dropped the previous session and pool on the
+        # floor without releasing them, so each call also leaked a GPU context.
+        #
+        # `ProcessMgr.initialize` calls `Initialize` on every processor, and
+        # `live_swap` calls `initialize` on every `/api/preview`. Measured on an
+        # RTX 4070 / CUDA, repeat `Initialize()` on an unchanged option dict:
+        #
+        #     Enhance_GPEN256Pro     0.35 s   session id CHANGED (rebuilt)
+        #     Enhance_UltraMax       0.00 s   reused
+        #     Enhance_GPENRealistic  0.00 s   reused
+        #
+        # 0.35 s is the CUDA figure; under TensorRT the rebuild additionally
+        # re-reads and re-validates the engine cache for every pooled context,
+        # which is the expensive case this guard exists to prevent.
+        if self.session is not None:
+            return
 
         model_dir = resolve_relative_path('../models')
         conditional_download(model_dir, [self._MODEL_URL])

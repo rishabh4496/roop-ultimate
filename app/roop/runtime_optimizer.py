@@ -1011,6 +1011,68 @@ class HardwareProfiler:
         return self._profile
 
 
+# ── Process-wide hardware profile cache ──────────────────────────────────────
+# HardwareProfiler caches on the INSTANCE, and every hot caller constructed a
+# fresh instance -- so the cache never once fired in production. Measured on an
+# RTX 4070: `HardwareProfiler().profile()` costs 4.2-6.5 s, of which 4.43 s is
+# `_precision_capabilities`' TensorRT Builder probe (the module's own comment
+# calls that Builder "a heavyweight host allocation"); every other probe in the
+# function totals under 70 ms.
+#
+# `ProcessMgr.initialize` calls it, and `live_swap` calls `initialize` on EVERY
+# `/api/preview`. Measured cost of one warm repeat preview of an unchanged frame
+# with unchanged settings, RTX 4070 / CUDA / realswap+RealityUX+UltraMax:
+#
+#     initialize      5.31 - 5.58 s      <- essentially all of it this probe
+#     process_frame   0.63 - 0.66 s      <- the actual swap
+#
+# i.e. the preview spent ~89% of its wall clock re-deriving facts that cannot
+# change while the process is alive. This module-level cache is what makes the
+# instance cache's intent true.
+#
+# WHAT IS AND IS NOT SAFE TO CACHE. Every field this returns describes fixed
+# hardware or a fixed toolchain (GPU name, compute capability, precision
+# support, driver, CPU topology) EXCEPT `vram_free` and `ram_available`, which
+# are instantaneous readings. No consumer treats those as live: the small-card
+# policies tier on `vram_total`, and `session_pool` compares
+# `hardware_profile_key`. A caller that genuinely needs a fresh free-memory
+# reading must pass `refresh=True` and thereby pay the probe knowingly.
+_SHARED_PROFILE_LOCK = threading.Lock()
+_SHARED_PROFILES: Dict[int, HardwareProfile] = {}
+
+
+def shared_hardware_profile(device_id: int = 0,
+                            refresh: bool = False) -> HardwareProfile:
+    """The hardware profile for `device_id`, probed once per process.
+
+    Use this anywhere the profile is read on a per-call, per-frame or per-run
+    path. `HardwareProfiler(...).profile()` remains available for the callers
+    that deliberately want a fresh probe.
+    """
+    key = max(0, _integer(device_id, 0))
+    if not refresh:
+        cached = _SHARED_PROFILES.get(key)
+        if cached is not None:
+            return cached
+    with _SHARED_PROFILE_LOCK:
+        # Re-check: another thread may have probed while we queued for the lock,
+        # which is exactly what concurrent worker start-up looks like.
+        if not refresh:
+            cached = _SHARED_PROFILES.get(key)
+            if cached is not None:
+                return cached
+        profile = HardwareProfiler(key).profile(refresh=refresh)
+        _SHARED_PROFILES[key] = profile
+        return profile
+
+
+def reset_shared_hardware_profile() -> None:
+    """Drop the cache. For tests, and for a deliberate re-probe after a change
+    that can actually move the answer (a driver swap needs a restart anyway)."""
+    with _SHARED_PROFILE_LOCK:
+        _SHARED_PROFILES.clear()
+
+
 class WorkloadProfiler:
     """Collect workload facts without running a detector or model."""
 

@@ -858,9 +858,13 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
         # Operators can set ROOP_SMALL_CARD_ENHANCER=keep for an explicitly
         # accepted quality experiment. Larger cards are untouched.
         try:
-            from roop.runtime_optimizer import (HardwareProfiler,
+            from roop.runtime_optimizer import (shared_hardware_profile,
                                                  small_card_enhancer_policy)
-            _small_hw = HardwareProfiler().profile()
+            # Shared, not HardwareProfiler(): this runs on every /api/preview
+            # via live_swap, and a fresh probe costs 4-6 s of TensorRT Builder
+            # construction against a 0.65 s frame swap.
+            _small_hw = shared_hardware_profile(
+                getattr(roop.globals, 'cuda_device_id', 0) or 0)
             _requested_enhancer = getattr(roop.globals, 'selected_enhancer', None)
             _policy = small_card_enhancer_policy(_small_hw, _requested_enhancer)
             self._small_card_enhancer_policy = _policy
@@ -2076,12 +2080,13 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
             # file probes OK (no-op otherwise; ROOP_NVDEC=0 disables). Must use
             # the SOURCE dims, before any processed_resolution override.
             try:
-                from roop.runtime_optimizer import (HardwareProfiler,
+                from roop.runtime_optimizer import (shared_hardware_profile,
                                                      small_card_decode_policy)
                 self._small_card_decode_env_previous = os.environ.get('ROOP_NVDEC')
                 self._small_card_decode_env_present = 'ROOP_NVDEC' in os.environ
                 _decode_policy = small_card_decode_policy(
-                    HardwareProfiler().profile())
+                    shared_hardware_profile(
+                        getattr(roop.globals, 'cuda_device_id', 0) or 0))
                 self._small_card_decode_policy = _decode_policy
                 if _decode_policy.get('changed'):
                     os.environ['ROOP_NVDEC'] = '0'
