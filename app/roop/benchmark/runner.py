@@ -350,14 +350,16 @@ class BenchmarkRunResult:
     def save(self, storage_path: str | os.PathLike[str] | None = None) -> str:
         """Save this benchmark run atomically to persistent storage.
 
-        The persisted ``run_id`` is adopted back onto this object. Storage
-        enforces a UUID4 and silently substitutes one for any id that is not,
-        so without this the in-memory result and the history row could carry
-        DIFFERENT ids -- and every later correlation by run_id (marking a run
-        applied, re-applying it from the profiles list) would quietly match
-        nothing while reporting success. The real runner supplies a UUID, so
-        this normally changes nothing; it removes the silent-failure mode
-        rather than fixing a live bug.
+        The persisted ``run_id`` is adopted back onto this object, so the
+        in-memory result and the history row can never carry different ids --
+        every later correlation by run_id (marking a run accepted, re-applying
+        it from the profiles list) depends on them agreeing.
+
+        Storage now REJECTS a non-UUID4 id rather than substituting one, so
+        this no longer guards against a silent swap. It still matters for
+        canonicalisation: storage returns ``str(uuid.UUID(value))``, which
+        lower-cases and re-hyphenates, and an id that differs from the stored
+        one only in case would still fail an equality match.
         """
         persisted = save_benchmark_result(self.to_storage_record(), storage_path)
         self.run_id = persisted

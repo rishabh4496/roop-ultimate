@@ -239,10 +239,12 @@ class FullJourneyTests(unittest.TestCase):
             self.assertEqual(sandbox.snapshot(), before,
                              "Decline must not touch a single live setting")
             self.assertEqual(sandbox.cfg.max_threads, 4)
-            # ...but the run is kept.
+            # ...but the run is kept, and its status records the decision.
+            # Storage models this as three states rather than a boolean, so
+            # "declined" is distinguishable from "not decided yet".
             history = load_benchmark_history(sandbox.history_path)
             self.assertEqual(len(history), 1)
-            self.assertFalse(history[0]["applied"])
+            self.assertEqual(history[0]["status"], "declined")
 
             # 5. LOAD FROM HISTORY -----------------------------------------
             profiles = list_saved_profiles(storage_path=sandbox.history_path)
@@ -264,9 +266,9 @@ class FullJourneyTests(unittest.TestCase):
             self.assertTrue(os.path.exists(sandbox.config_path),
                             "the applied settings must be persisted")
 
-            # ...and the history records that it was applied.
+            # ...and the history records that it was accepted.
             history = load_benchmark_history(sandbox.history_path)
-            self.assertTrue(history[0]["applied"])
+            self.assertEqual(history[0]["status"], "accepted")
             self.assertTrue(list_saved_profiles(
                 storage_path=sandbox.history_path)[0]["applied"])
 
@@ -471,13 +473,20 @@ class RunIdConsistencyTests(unittest.TestCase):
         result.run_id = run_id
         return result
 
-    def test_a_non_uuid_id_is_adopted_from_storage_after_saving(self):
+    def test_a_non_uuid_id_is_REJECTED_rather_than_silently_replaced(self):
+        """Storage validates instead of substituting.
+
+        The earlier behaviour minted a fresh UUID for any unrecognised id,
+        which meant the in-memory result and the history row could disagree
+        and every later correlation by run_id matched nothing while reporting
+        success. Refusing the write surfaces the problem instead.
+        """
         with tempfile.TemporaryDirectory() as tmp:
             path = os.path.join(tmp, "history.json")
             result = self._result("not-a-uuid")
-            record = result.save(path)
-            self.assertEqual(result.run_id, record["run_id"])
-            self.assertNotEqual(result.run_id, "not-a-uuid")
+            with self.assertRaises(ValueError):
+                result.save(path)
+            self.assertEqual(load_benchmark_history(path), [])
 
     def test_a_uuid_id_survives_unchanged(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -487,13 +496,23 @@ class RunIdConsistencyTests(unittest.TestCase):
             result.save(path)
             self.assertEqual(result.run_id, original)
 
-    def test_marking_applied_finds_the_run_after_a_substitution(self):
+    def test_a_canonicalised_id_is_adopted_so_later_matches_still_work(self):
+        """What save()'s adoption is still worth now that storage validates.
+
+        Storage returns ``str(uuid.UUID(value))``, which lower-cases and
+        re-hyphenates. An id differing from the stored one only in case would
+        fail an equality match, so the result adopts the canonical form.
+        """
         with tempfile.TemporaryDirectory() as tmp:
             path = os.path.join(tmp, "history.json")
-            result = self._result("not-a-uuid")
-            result.save(path)
+            shouty = str(uuid.uuid4()).upper()
+            result = self._result(shouty)
+            persisted = result.save(path)
+            self.assertEqual(result.run_id, persisted)
+            self.assertEqual(result.run_id, shouty.lower())
             self.assertTrue(update_setting_status(result.run_id, True, path))
-            self.assertTrue(load_benchmark_history(path)[0]["applied"])
+            self.assertEqual(load_benchmark_history(path)[0]["status"],
+                             "accepted")
 
 
 class NormalizationTests(unittest.TestCase):
