@@ -106,6 +106,14 @@ class Enhance_GPEN():
                     f'gpen_{size}', providers, model_path)
             from roop.utilities import get_onnx_session_options
             session = onnxruntime.InferenceSession(model_path, get_onnx_session_options(), providers=providers)
+            # Assert the provider actually registered, then pay TensorRT's
+            # first-inference engine build on a dummy tensor. See
+            # roop/predictor.py for why a built session is not evidence the
+            # requested provider is running.
+            from roop import predictor
+            predictor.verify_and_warmup(session, providers,
+                                        f'enhancer:gpen_{size}',
+                                        default_hw=(size,))
             self.sessions[size] = session
 
         # replace Mac mps with cpu for the moment

@@ -80,22 +80,29 @@ def _fps_mode_args():
         return list(_fps_mode_flag)
 
 
-def _probe(video_path: str) -> bool:
-    """Can ffmpeg -hwaccel cuda decode one frame of this file? Cached per path."""
+def _probe(video_path: str, hwaccel: str = "cuda") -> bool:
+    """Can ffmpeg decode one frame of this file with *hwaccel*? Cached per path.
+
+    ``hwaccel=None`` probes plain software decode through the same pipe, which
+    is the colour-correct fallback when CUDA cannot take the file (see
+    ``wrap_capture``).
+    """
+    key = (video_path, hwaccel)
     with _probe_lock:
-        if video_path in _probe_cache:
-            return _probe_cache[video_path]
+        if key in _probe_cache:
+            return _probe_cache[key]
     ok = False
     try:
-        cmd = [FFMPEG_BINARY, "-hide_banner", "-loglevel", "error", "-nostdin",
-               "-hwaccel", "cuda", "-i", video_path,
-               "-frames:v", "1", "-f", "null", "-"]
+        cmd = [FFMPEG_BINARY, "-hide_banner", "-loglevel", "error", "-nostdin"]
+        if hwaccel:
+            cmd += ["-hwaccel", hwaccel]
+        cmd += ["-i", video_path, "-frames:v", "1", "-f", "null", "-"]
         proc = subprocess.run(cmd, capture_output=True, timeout=30, **_popen_kwargs())
         ok = proc.returncode == 0
     except Exception:
         ok = False
     with _probe_lock:
-        _probe_cache[video_path] = ok
+        _probe_cache[key] = ok
     return ok
 
 
@@ -413,17 +420,41 @@ def wrap_capture(cap, video_path, width, height, fps, tag="decode",
     object always supports set/read/get/release."""
     if not nvdec_wanted() or width <= 0 or height <= 0:
         return cap
-    if not _probe(video_path):
-        if os.environ.get("ROOP_NVDEC", "").strip() == "1":
+    hwaccel = "cuda"
+    if not _probe(video_path, "cuda"):
+        # CUDA can't take this file. Prefer SOFTWARE decode through this same
+        # pipe over handing the caller back its cv2 capture, because cv2 gets
+        # the colour matrix wrong. Measured on b1.mp4, a file tagged
+        # color_space=bt709, first frame, 1280x720:
+        #
+        #   ffmpeg pipe, tag-honouring        <- correct
+        #   ffmpeg pipe, in_color_matrix=601  == cv2 EXACTLY (mean 0.0000, max 0)
+        #
+        # i.e. cv2 inverts a BT.709-tagged stream with the BT.601 matrix, a
+        # 0.51 mean / 10 max BGR error on every decoded frame, biased in the
+        # green/magenta axis these renders are judged on. The pipe reads the
+        # stream's own tag and needs no filter to do it -- adding
+        # `scale=in_color_matrix=auto` was measured byte-identical to the
+        # shipping command, so it is deliberately NOT added.
+        #
+        # The software pipe also inherits the pipe's accurate input seeking,
+        # which is what fixes cv2's known long-HEVC wrong-frame behaviour.
+        if _probe(video_path, None):
+            hwaccel = None
             print(f"[NVDEC] -hwaccel cuda probe failed for {os.path.basename(video_path)} "
-                  f"— using CPU (cv2) decode for {tag}")
-        return cap
+                  f"— using ffmpeg SOFTWARE decode for {tag} (colour-correct; "
+                  f"cv2 would invert this stream with the BT.601 matrix)")
+        else:
+            print(f"[NVDEC] ffmpeg cannot decode {os.path.basename(video_path)} "
+                  f"— falling back to cv2 for {tag}")
+            return cap
     try:
         cap.release()
     except Exception:
         pass
-    reader = FFmpegVideoReader(video_path, width, height, fps,
+    reader = FFmpegVideoReader(video_path, width, height, fps, hwaccel=hwaccel,
                                prefetch_depth=prefetch_depth)
-    print(f"[NVDEC] GPU decode active for {tag} ({os.path.basename(video_path)}); "
+    print(f"[NVDEC] {'GPU' if hwaccel else 'software'} decode active for {tag} "
+          f"({os.path.basename(video_path)}); "
           f"host_format={reader.pix_fmt}, prefetch_depth={reader.prefetch_depth}")
     return reader

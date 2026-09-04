@@ -273,18 +273,51 @@ class FFMPEG_VideoWriter:
                 '-b', bitrate
             ])
 
-        # Scale odd dimensions when required. Keep the legacy colorspace
-        # conversion by default for quality compatibility, but permit an
-        # explicit no-conversion mode without attaching a redundant filter
-        # graph.
+        # Scale odd dimensions when required, and convert + TAG the output
+        # colour space.
+        #
+        # These were an if/elif, which meant an ODD-SIZED render took the scale
+        # branch and skipped the colour conversion entirely -- shipping a file
+        # with color_space / color_primaries / color_transfer / color_range all
+        # `unknown`, so the player picks the matrix by guesswork. Measured on a
+        # 1280x720 chart through real encode/decode
+        # (tests/measure_color_roundtrip.py):
+        #
+        #   arm              mean|d|  max|d|  skin|d|  container tags
+        #   even, converted    1.708       5    2.083  bt709 on all four
+        #   even, no filter    1.792       5    2.250  all unknown
+        #   ODD, scale only    1.139       5    1.734  all unknown   <- shipped
+        #   ODD, scale+convert 1.028       4    1.474  bt709 on all four
+        #
+        # So the two are chained now rather than alternated: the scale runs
+        # first and the conversion always follows it. The even-dimension path is
+        # unchanged (1.708 both ways, same tags) -- this only reaches the odd
+        # case, where it is better on all three axes.
         colorspace = self._colorspace
         if colorspace is None:
             colorspace = os.environ.get('ROOP_FFMPEG_COLORSPACE', 'bt709')
         colorspace = str(colorspace).strip().lower()
+        convert = colorspace not in ('off', 'none', 'passthrough', '0', 'false')
+        filters = []
         if w != size[0] or h != size[1]:
-            cmd.extend(['-vf', f'scale={w}:{h}'])
-        elif colorspace not in ('off', 'none', 'passthrough', '0', 'false'):
-            cmd.extend(['-vf', 'colorspace=bt709:iall=bt601-6-625:fast=1'])
+            filters.append(f'scale={w}:{h}')
+        if convert:
+            filters.append('colorspace=bt709:iall=bt601-6-625:fast=1')
+        if filters:
+            cmd.extend(['-vf', ','.join(filters)])
+        if convert:
+            # State the tags rather than relying on the filter to propagate
+            # frame metadata into the muxer. Measured free: with the filter
+            # present the round-trip error is identical to three decimals
+            # (1.708 either way) and the tags come out the same, so this only
+            # removes the dependency on that propagation -- which is exactly
+            # what the odd-dimension branch lost.
+            #
+            # `tv` is limited range, which is what yuv420p delivery and the
+            # legacy filter both already produce; a full-range ('pc') file
+            # would need the decode side to agree or every level shifts.
+            cmd.extend(['-colorspace', 'bt709', '-color_primaries', 'bt709',
+                        '-color_trc', 'bt709', '-color_range', 'tv'])
 
         if threads is not None:
             cmd.extend(["-threads", str(threads)])

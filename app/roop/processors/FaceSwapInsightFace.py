@@ -748,6 +748,16 @@ class FaceSwapInsightFace():
 
             self.model_swap_insightface = _build()
 
+            # Assert the provider actually registered, then pay TensorRT's
+            # first-inference engine build on a dummy tensor rather than on
+            # frame 0 of the render. See roop/predictor.py for why a built
+            # session is not evidence the requested provider is running.
+            from roop import predictor
+            predictor.verify_and_warmup(
+                self.model_swap_insightface, swap_providers,
+                f"swapper:{swap_model}",
+                default_hw=(spec["output_size"],))
+
             # Resolve input tensor names by rank instead of assuming names:
             # rank-4 = the image (NCHW), rank-2 = the identity embedding.
             for inp in self.model_swap_insightface.get_inputs():

@@ -191,6 +191,11 @@ class Enhance_GPEN256Pro:
         self.session, self.io_binding = _build()
         self.in_name = self.session.get_inputs()[0].name
         self.out_name = self.session.get_outputs()[0].name
+        # Assert the provider actually registered, then pay TensorRT's
+        # first-inference engine build on a dummy tensor. See roop/predictor.py.
+        from roop import predictor
+        predictor.verify_and_warmup(self.session, providers,
+                                    'enhancer:gpen256pro', default_hw=(256,))
         # uint8 -> float32 normalised to [-1, 1], in one gather.
         self._lut = ((np.arange(256, dtype=np.float32) / 127.5) - 1.0)
 
