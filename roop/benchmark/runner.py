@@ -1,0 +1,720 @@
+"""Real-video execution harness and multi-face workload benchmark runner.
+
+Hooks into roop-ultimate's native frame processing pipeline (swapping, masking,
+and face enhancement) to measure real-world performance on calibrated video frames.
+Processes a standardized 150-frame window, tracking per-frame latency, peak VRAM,
+CPU and GPU compute usage, 1% low frame times, and thermal/memory stability.
+
+CRITICAL INVARIANT: The runner MUST NOT alter the user's currently active models
+(e.g., CodeFormer, GPEN, Inswapper, RealityUX, XSeg).  The benchmark measures the
+exact models and configuration active in the environment.
+"""
+
+from __future__ import annotations
+
+import gc
+import logging
+import math
+import os
+import statistics
+import sys
+import threading
+import time
+import uuid
+from dataclasses import asdict, dataclass, field
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
+
+# Ensure APP_DIR and PROJECT_ROOT are in sys.path so app-level imports resolve cleanly
+_BENCHMARK_DIR = Path(__file__).resolve().parent
+_PROJECT_ROOT = _BENCHMARK_DIR.parents[1]
+_APP_DIR = _PROJECT_ROOT / "app"
+if str(_APP_DIR) not in sys.path and _APP_DIR.is_dir():
+    sys.path.insert(0, str(_APP_DIR))
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
+
+import cv2
+import numpy as np
+
+from roop.benchmark.asset_manager import (
+    STANDARDIZED_WINDOW_FRAMES,
+    BenchmarkAssetManager,
+    BenchmarkWorkload,
+    WorkloadMode,
+    WorkloadSelector,
+    get_default_asset_manager,
+)
+from roop.benchmark.hardware_probe import collect_hardware_profile
+from roop.benchmark.storage import save_benchmark_result
+
+LOGGER = logging.getLogger(__name__)
+
+
+def _optional_import(module_name: str) -> Any | None:
+    """Import optional telemetry modules without failing if absent."""
+    try:
+        import importlib
+        return importlib.import_module(module_name)
+    except Exception:
+        return None
+
+
+def _percentile(values: Sequence[float], pct: float) -> float:
+    """Calculate the p-th percentile of a sequence of numbers."""
+    if not values:
+        return 0.0
+    sorted_vals = sorted(values)
+    k = (len(sorted_vals) - 1) * (pct / 100.0)
+    f = math.floor(k)
+    c = math.ceil(k)
+    if f == c:
+        return sorted_vals[int(k)]
+    d0 = sorted_vals[int(f)] * (c - k)
+    d1 = sorted_vals[int(c)] * (k - f)
+    return d0 + d1
+
+
+class GpuTelemetrySampler:
+    """Non-intrusive asynchronous GPU engine and memory sampler thread."""
+
+    def __init__(self, period_sec: float = 0.05, device_index: int = 0) -> None:
+        self.period = max(0.01, float(period_sec))
+        self.device_index = int(device_index)
+        self.samples: list[tuple[float, float]] = []  # (utilization_pct, used_vram_mb)
+        self.stop_event = threading.Event()
+        self.thread = threading.Thread(
+            target=self._run,
+            name="benchmark_gpu_sampler",
+            daemon=True,
+        )
+        self._nvml = _optional_import("pynvml")
+        self._torch = _optional_import("torch")
+        self._nvml_handle = None
+        self._init_nvml()
+
+    def _init_nvml(self) -> None:
+        if self._nvml is None:
+            return
+        try:
+            init_fn = getattr(self._nvml, "nvmlInit", None) or getattr(
+                self._nvml, "nvmlInit_v2", None
+            )
+            if init_fn:
+                init_fn()
+                count = int(self._nvml.nvmlDeviceGetCount())
+                if count > 0:
+                    idx = min(max(self.device_index, 0), count - 1)
+                    self._nvml_handle = self._nvml.nvmlDeviceGetHandleByIndex(idx)
+        except Exception as exc:
+            LOGGER.debug("GPU sampler NVML initialization skipped: %s", exc)
+            self._nvml_handle = None
+
+    def _run(self) -> None:
+        while not self.stop_event.is_set():
+            util = None
+            mem_mb = None
+
+            # Attempt NVML first for hardware-level utilization and VRAM
+            if self._nvml and self._nvml_handle:
+                try:
+                    rates = self._nvml.nvmlDeviceGetUtilizationRates(self._nvml_handle)
+                    memory = self._nvml.nvmlDeviceGetMemoryInfo(self._nvml_handle)
+                    util = float(rates.gpu)
+                    mem_mb = float(memory.used) / (1024.0 * 1024.0)
+                except Exception:
+                    pass
+
+            # Fallback to torch.cuda if NVML read failed
+            if mem_mb is None and self._torch and self._torch.cuda.is_available():
+                try:
+                    free_b, total_b = self._torch.cuda.mem_get_info(self.device_index)
+                    mem_mb = (float(total_b) - float(free_b)) / (1024.0 * 1024.0)
+                    try:
+                        util = float(self._torch.cuda.utilization(self.device_index))
+                    except Exception:
+                        pass
+                except Exception:
+                    pass
+
+            if util is not None or mem_mb is not None:
+                self.samples.append((util or 0.0, mem_mb or 0.0))
+
+            self.stop_event.wait(self.period)
+
+    def start(self) -> None:
+        """Start the background sampler."""
+        self.thread.start()
+
+    def finish(self) -> dict[str, Any]:
+        """Stop sampling and return aggregated compute and VRAM metrics."""
+        self.stop_event.set()
+        self.thread.join(timeout=2.0)
+
+        # Cleanup NVML
+        if self._nvml and self._nvml_handle:
+            try:
+                self._nvml.nvmlShutdown()
+            except Exception:
+                pass
+
+        if not self.samples:
+            return {
+                "gpu_util_avg_pct": None,
+                "gpu_util_peak_pct": None,
+                "gpu_vram_peak_mb": None,
+            }
+
+        utils, mems = zip(*self.samples)
+        valid_utils = [u for u in utils if u > 0.0]
+        valid_mems = [m for m in mems if m > 0.0]
+
+        return {
+            "gpu_util_avg_pct": (
+                round(statistics.fmean(valid_utils), 2) if valid_utils else 0.0
+            ),
+            "gpu_util_peak_pct": (
+                round(max(valid_utils), 2) if valid_utils else 0.0
+            ),
+            "gpu_vram_peak_mb": (
+                round(max(valid_mems), 2) if valid_mems else 0.0
+            ),
+        }
+
+
+@dataclass
+class FrameTelemetry:
+    """Individual frame telemetry measurement."""
+
+    frame_index: int
+    duration_ms: float
+    fps: float
+    vram_used_mb: float
+    cpu_util_pct: float
+    gpu_util_pct: Optional[float] = None
+    faces_detected: int = 0
+    faces_swapped: int = 0
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class BenchmarkRunResult:
+    """Standardized benchmark execution report and metrics payload."""
+
+    run_id: str
+    timestamp: str
+    device_specs: dict[str, Any]
+    active_models: dict[str, str]
+    workload: dict[str, Any]
+    metrics: dict[str, float]
+    thermal_stability: dict[str, Any]
+    recommended_settings: dict[str, Any]
+    applied: bool = False
+    frame_telemetry: list[FrameTelemetry] = field(default_factory=list)
+
+    def to_dict(self, include_frames: bool = False) -> dict[str, Any]:
+        """Return the dictionary representation adhering to the storage schema."""
+        data = {
+            "run_id": self.run_id,
+            "timestamp": self.timestamp,
+            "device_specs": self.device_specs,
+            "active_models": self.active_models,
+            "workload": self.workload,
+            "metrics": self.metrics,
+            "thermal_stability": self.thermal_stability,
+            "recommended_settings": self.recommended_settings,
+            "applied": self.applied,
+        }
+        if include_frames:
+            data["frame_telemetry"] = [f.to_dict() for f in self.frame_telemetry]
+        return data
+
+    def save(self, storage_path: str | os.PathLike[str] | None = None) -> dict[str, Any]:
+        """Save this benchmark run atomically to persistent storage."""
+        return save_benchmark_result(self.to_dict(include_frames=False), storage_path)
+
+    def summary_text(self) -> str:
+        """Render a clean, human-readable terminal summary."""
+        m = self.metrics
+        t = self.thermal_stability
+        w = self.workload
+        mod = self.active_models
+        return (
+            f"\n{'=' * 64}\n"
+            f"roop-ultimate Real-Video Benchmark Report (Run {self.run_id[:8]})\n"
+            f"{'=' * 64}\n"
+            f"Workload      : {w.get('name', 'Calibrated')} (Target Faces: {w.get('target_faces', 1)})\n"
+            f"Active Models : Swapper={mod.get('swapper')}, Enhancer={mod.get('enhancer')}, Mask={mod.get('mask_engine')}\n"
+            f"Frames Tested : {int(m.get('frames_processed', 150))} frames (1080p full pipeline)\n"
+            f"{'-' * 64}\n"
+            f"Throughput    : {m.get('avg_fps', 0.0):.2f} FPS (Latency: {m.get('avg_latency_ms', 0.0):.2f} ms)\n"
+            f"1% Low Floor  : {m.get('p1_low_fps', 0.0):.2f} FPS (P99 Latency: {m.get('p99_latency_ms', 0.0):.2f} ms)\n"
+            f"Peak VRAM     : {m.get('peak_vram_mb', 0.0):.2f} MiB\n"
+            f"Peak CPU Load : {m.get('peak_cpu_pct', 0.0):.1f}%\n"
+            f"{'-' * 64}\n"
+            f"Thermal & Stability:\n"
+            f" - First 30 Frames : {t.get('fps_first_30', 0.0):.2f} FPS\n"
+            f" - Last 30 Frames  : {t.get('fps_last_30', 0.0):.2f} FPS\n"
+            f" - FPS Retention   : {t.get('retention_pct', 100.0):.1f}%\n"
+            f" - Frame Variance  : {t.get('frame_time_variance', 0.0):.2f} ms²\n"
+            f" - Saturation State: {'THROTTLING / SATURATION DETECTED' if t.get('throttling_detected') else 'STABLE (No throttling)'}\n"
+            f"{'=' * 64}\n"
+        )
+
+
+class BenchmarkRunner:
+    """Standardized video execution harness for roop-ultimate."""
+
+    def __init__(
+        self,
+        asset_manager: BenchmarkAssetManager | None = None,
+        device_index: int = 0,
+    ) -> None:
+        self.asset_manager = asset_manager or get_default_asset_manager()
+        self.device_index = int(device_index)
+        self._psutil = _optional_import("psutil")
+        self._torch = _optional_import("torch")
+
+    def inspect_active_models(self) -> dict[str, str]:
+        """Detect the user's currently active models without mutating them.
+
+        Returns a dictionary with 'swapper', 'enhancer', and 'mask_engine'.
+        """
+        import roop.globals
+
+        # Swapper model
+        swapper = (
+            getattr(roop.globals, "face_swap_mode", None)
+            or getattr(roop.globals, "swap_model", None)
+            or "inswapper"
+        )
+
+        # Enhancer model
+        enhancer = getattr(roop.globals, "selected_enhancer", "None") or "None"
+
+        # Masking engine
+        mask_engine = (
+            getattr(roop.globals, "mask_engine", None)
+            or getattr(roop.globals, "masking_engine", None)
+            or "RealityUX"
+        )
+
+        return {
+            "swapper": str(swapper),
+            "enhancer": str(enhancer),
+            "mask_engine": str(mask_engine),
+        }
+
+    def _prepare_source_faces(self) -> list[Any]:
+        """Resolve or prepare active source faces for the swap pipeline."""
+        import roop.face_analyser
+        import roop.globals
+
+        # 1. Use user's currently loaded facesets if available
+        if getattr(roop.globals, "INPUT_FACESETS", None) and len(roop.globals.INPUT_FACESETS) > 0:
+            return roop.globals.INPUT_FACESETS
+
+        # 2. Use user's currently loaded input faces if available
+        if getattr(roop.globals, "INPUT_FACES", None) and len(roop.globals.INPUT_FACES) > 0:
+            return roop.globals.INPUT_FACES
+
+        # 3. If no active source face is loaded, provision the calibrated reference face
+        ref_path = self.asset_manager.ensure_source_reference()
+        ref_img = cv2.imread(str(ref_path))
+        if ref_img is None:
+            raise RuntimeError(f"Could not read source reference face from {ref_path}")
+
+        faces = roop.face_analyser.get_all_faces(ref_img)
+        if not faces:
+            raise RuntimeError(
+                f"Face detector found no faces in benchmark reference image: {ref_path}"
+            )
+
+        from roop.FaceSet import FaceSet
+        fs = FaceSet()
+        face = faces[0]
+        blend_val = float(getattr(roop.globals, "blend_ratio", 0.85) or 0.85)
+        face.mask_offsets = [0, 0, 0, 0, blend_val]
+        fs.faces.append(face)
+        fs.ref_images.append(ref_img)
+        return [fs]
+
+    def _resolve_masking_plugin_key(self, display_or_key: str | None) -> str | None:
+        """Map UI display names (e.g. 'RealityUX') to ProcessMgr plugin keys."""
+        if not display_or_key or str(display_or_key).strip().lower() in ("none", "off", ""):
+            return None
+        normalized = str(display_or_key).strip().lower()
+        mapping = {
+            "realityux": "mask_realityux",
+            "mask_realityux": "mask_realityux",
+            "dfl xseg": "mask_xseg",
+            "xseg": "mask_xseg",
+            "mask_xseg": "mask_xseg",
+            "face occluder": "mask_occluder",
+            "occluder": "mask_occluder",
+            "mask_occluder": "mask_occluder",
+            "face occluder v3 (xseg-3)": "mask_xseg3",
+            "xseg-3": "mask_xseg3",
+            "mask_xseg3": "mask_xseg3",
+            "faceparser": "mask_faceparser",
+            "mask_faceparser": "mask_faceparser",
+            "clip2seg": "mask_clip2seg",
+            "mask_clip2seg": "mask_clip2seg",
+            "mobilesam": "mask_mobilesam",
+            "mask_mobilesam": "mask_mobilesam",
+            "fastsam": "mask_fastsam",
+            "mask_fastsam": "mask_fastsam",
+            "sam2": "mask_sam2",
+            "mask_sam2": "mask_sam2",
+        }
+        return mapping.get(normalized, str(display_or_key))
+
+    def _prepare_process_options(
+        self,
+        active_models: Mapping[str, str],
+        workload: BenchmarkWorkload,
+    ) -> Any:
+        """Construct native ProcessOptions reflecting active models and workload."""
+        import roop.core
+        import roop.globals
+        from roop.ProcessOptions import ProcessOptions
+
+        # Resolve internal plugin key for the active mask engine
+        mask_plugin_key = self._resolve_masking_plugin_key(active_models.get("mask_engine"))
+
+        # Resolve swap model key (e.g. inswapper)
+        raw_swapper = str(active_models.get("swapper", "inswapper")).lower()
+        if "inswapper" in raw_swapper or "dfl" in raw_swapper or raw_swapper in ("all", "first", "selected"):
+            resolved_swap_model = "inswapper"
+        else:
+            resolved_swap_model = str(active_models.get("swapper", "inswapper"))
+
+        # Query native plugin defines using roop's core routing logic
+        plugins = roop.core.get_processing_plugins(
+            masking_engine=mask_plugin_key,
+            swap_model=resolved_swap_model,
+        )
+
+        # Benchmark always swaps all detected target faces in the calibrated frame
+        swap_mode = "all"
+
+        options = ProcessOptions(
+            processordefines=plugins,
+            face_distance=getattr(roop.globals, "distance_threshold", 0.65) or 0.65,
+            blend_ratio=getattr(roop.globals, "blend_ratio", 0.85) or 0.85,
+            swap_mode=swap_mode,
+            selected_index=0,
+            masking_text="",
+            imagemask=None,
+            num_steps=1,
+            subsample_size=getattr(roop.globals, "subsample_size", 256) or 256,
+            show_face_area=False,
+            restore_original_mouth=False,
+            swap_model=resolved_swap_model,
+        )
+        return options
+
+    def run(
+        self,
+        workload: BenchmarkWorkload | WorkloadMode | str | int | None = None,
+        frame_window: int = STANDARDIZED_WINDOW_FRAMES,
+        video_path: Path | str | None = None,
+        warmup_frames: int = 2,
+        persist: bool = True,
+        storage_path: str | os.PathLike[str] | None = None,
+        progress_cb: Callable[..., None] | None = None,
+    ) -> BenchmarkRunResult:
+        """Execute the standardized real-video benchmark on the native pipeline.
+
+        Args:
+            workload: Target face scenario (Solo, Duo, Group, or Master).
+            frame_window: Number of frames to evaluate (default: 150).
+            video_path: Explicit video path, or None to resolve from AssetManager.
+            warmup_frames: Initial frames processed before measurement starts.
+            persist: Whether to atomically save the result to benchmark history.
+            storage_path: Optional custom destination for the history JSON file.
+            progress_cb: Optional progress callback ``(current_frame, total_frames, current_fps)``.
+
+        Returns:
+            A BenchmarkRunResult with comprehensive metrics and stability telemetry.
+        """
+        resolved_workload = WorkloadSelector.get_workload(workload)
+
+        # Resolve verified test video
+        if video_path is None:
+            resolved_video_path = self.asset_manager.ensure_benchmark_clip(
+                workload=resolved_workload
+            )
+        else:
+            resolved_video_path = Path(video_path).expanduser().resolve()
+
+        if not resolved_video_path.is_file():
+            raise FileNotFoundError(
+                f"Benchmark video not found at {resolved_video_path}"
+            )
+
+        # Step 1: Collect hardware profile and detect active models
+        hardware_profile = collect_hardware_profile(
+            include_disk_io=False,
+            device_index=self.device_index,
+        )
+        active_models = self.inspect_active_models()
+
+        LOGGER.info(
+            "Beginning benchmark run on '%s' (workload=%s, models=%s)...",
+            resolved_video_path.name,
+            resolved_workload.name,
+            active_models,
+        )
+
+        # Step 2: Initialize native ProcessMgr and ProcessOptions
+        from roop.ProcessMgr import ProcessMgr
+        import roop.globals
+
+        source_faces = self._prepare_source_faces()
+        options = self._prepare_process_options(active_models, resolved_workload)
+
+        process_mgr = ProcessMgr(progress=None)
+        process_mgr.is_preview = True
+        # Target faces reference list (initialized with source faces for similarity comparison)
+        process_mgr.initialize(source_faces, source_faces, options)
+
+        # Step 3: Open video stream
+        cap = cv2.VideoCapture(str(resolved_video_path))
+        if not cap.isOpened():
+            raise RuntimeError(f"Failed to open benchmark video: {resolved_video_path}")
+
+        # Setup telemetry samplers
+        gpu_sampler = GpuTelemetrySampler(period_sec=0.04, device_index=self.device_index)
+        gpu_sampler.start()
+
+        psutil_proc = None
+        if self._psutil:
+            try:
+                psutil_proc = self._psutil.Process(os.getpid())
+            except Exception:
+                pass
+
+        # Clean cache before run
+        gc.collect()
+        if self._torch and self._torch.cuda.is_available():
+            try:
+                self._torch.cuda.empty_cache()
+                self._torch.cuda.reset_peak_memory_stats(self.device_index)
+            except Exception:
+                pass
+
+        telemetry_records: list[FrameTelemetry] = []
+        frame_durations_ms: list[float] = []
+
+        prev_processing = getattr(roop.globals, "processing", False)
+        roop.globals.processing = True
+
+        try:
+            # Warmup pass (primes TensorRT engines, memory buffers, and CUDA kernels)
+            for w_idx in range(max(0, warmup_frames)):
+                ret, w_frame = cap.read()
+                if not ret or w_frame is None:
+                    cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                    ret, w_frame = cap.read()
+                if ret and w_frame is not None:
+                    process_mgr.process_frame(w_frame, frame_idx=w_idx)
+
+            # Standardized measurement loop (exactly frame_window frames)
+            for f_idx in range(frame_window):
+                ret, frame = cap.read()
+                if not ret or frame is None:
+                    # Loop video if test clip is shorter than requested window
+                    cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                    ret, frame = cap.read()
+                    if not ret or frame is None:
+                        break
+
+                # Pre-frame synchronization for exact latency capture
+                if self._torch and self._torch.cuda.is_available():
+                    self._torch.cuda.synchronize(self.device_index)
+
+                frame_start = time.perf_counter()
+
+                # Native frame swap + mask + enhancement execution
+                processed_frame = process_mgr.process_frame(frame, frame_idx=f_idx)
+
+                # Post-frame synchronization
+                if self._torch and self._torch.cuda.is_available():
+                    self._torch.cuda.synchronize(self.device_index)
+
+                frame_duration_ms = (time.perf_counter() - frame_start) * 1000.0
+                frame_durations_ms.append(frame_duration_ms)
+                current_fps = 1000.0 / max(1e-6, frame_duration_ms)
+
+                # Query per-frame VRAM usage
+                vram_used_mb = 0.0
+                if self._torch and self._torch.cuda.is_available():
+                    try:
+                        free_b, total_b = self._torch.cuda.mem_get_info(self.device_index)
+                        vram_used_mb = (float(total_b) - float(free_b)) / (1024.0 * 1024.0)
+                    except Exception:
+                        pass
+
+                # Query CPU utilization
+                cpu_pct = 0.0
+                if psutil_proc:
+                    try:
+                        cpu_pct = float(psutil_proc.cpu_percent(interval=None))
+                    except Exception:
+                        pass
+
+                record = FrameTelemetry(
+                    frame_index=f_idx,
+                    duration_ms=round(frame_duration_ms, 3),
+                    fps=round(current_fps, 2),
+                    vram_used_mb=round(vram_used_mb, 2),
+                    cpu_util_pct=round(cpu_pct, 2),
+                )
+                telemetry_records.append(record)
+
+                if progress_cb is not None:
+                    try:
+                        progress_cb(f_idx + 1, frame_window, current_fps, record)
+                    except TypeError:
+                        progress_cb(f_idx + 1, frame_window, current_fps)
+
+        finally:
+            roop.globals.processing = prev_processing
+            cap.release()
+            gpu_stats = gpu_sampler.finish()
+            gc.collect()
+
+        if not frame_durations_ms:
+            raise RuntimeError("Benchmark completed with 0 evaluated frames.")
+
+        # Step 4: Compute aggregate throughput and 1% low metrics
+        total_time_sec = sum(frame_durations_ms) / 1000.0
+        frames_count = len(frame_durations_ms)
+        avg_latency_ms = statistics.fmean(frame_durations_ms)
+        avg_fps = frames_count / max(1e-9, total_time_sec)
+
+        # 1% low FPS: calculated from the 99th percentile slowest frame latency
+        p99_latency_ms = _percentile(frame_durations_ms, 99.0)
+        p1_low_fps = 1000.0 / max(1e-6, p99_latency_ms)
+
+        # Peak resource consumption
+        peak_vram_mb = max(
+            gpu_stats.get("gpu_vram_peak_mb") or 0.0,
+            max((f.vram_used_mb for f in telemetry_records), default=0.0),
+        )
+        peak_cpu_pct = max((f.cpu_util_pct for f in telemetry_records), default=0.0)
+
+        # Step 5: Compute Thermal & Stability Metrics
+        # Compares FPS of the first 30 frames vs FPS of the last 30 frames
+        sample_win = min(30, max(1, frames_count // 3))
+        first_win = frame_durations_ms[:sample_win]
+        last_win = frame_durations_ms[-sample_win:]
+
+        t_first_win = sum(first_win) / 1000.0
+        t_last_win = sum(last_win) / 1000.0
+
+        fps_first_30 = len(first_win) / max(1e-6, t_first_win)
+        fps_last_30 = len(last_win) / max(1e-6, t_last_win)
+        retention_pct = (fps_last_30 / max(1e-6, fps_first_30)) * 100.0
+        fps_delta = fps_last_30 - fps_first_30
+
+        frame_time_variance = (
+            statistics.variance(frame_durations_ms)
+            if frames_count > 1
+            else 0.0
+        )
+
+        # Saturation or thermal throttling indicated by > 15% sustained throughput loss
+        throttling_detected = retention_pct < 85.0
+
+        # Step 6: Formulate recommendation settings based on workload & profile
+        recommended_threads = min(
+            8, int(hardware_profile["cpu"].get("logical_threads", 4))
+        )
+        recommended_settings = {
+            "execution_threads": recommended_threads,
+            "execution_provider": (
+                "CUDAExecutionProvider"
+                if hardware_profile["gpu"].get("available")
+                else "CPUExecutionProvider"
+            ),
+            "temp_format": "png",
+            "provider_options": {
+                "workload_mode": resolved_workload.mode.value,
+                "target_faces": resolved_workload.target_faces,
+            },
+        }
+
+        # Step 7: Build final result object
+        run_id = str(uuid.uuid4())
+        timestamp = datetime.now(timezone.utc).isoformat()
+
+        result = BenchmarkRunResult(
+            run_id=run_id,
+            timestamp=timestamp,
+            device_specs=hardware_profile,
+            active_models=active_models,
+            workload=resolved_workload.to_dict(),
+            metrics={
+                "avg_fps": round(avg_fps, 2),
+                "p1_low_fps": round(p1_low_fps, 2),
+                "peak_vram_mb": round(peak_vram_mb, 2),
+                "peak_cpu_pct": round(peak_cpu_pct, 2),
+                "avg_latency_ms": round(avg_latency_ms, 2),
+                "p99_latency_ms": round(p99_latency_ms, 2),
+                "total_duration_s": round(total_time_sec, 2),
+                "frames_processed": frames_count,
+            },
+            thermal_stability={
+                "fps_first_30": round(fps_first_30, 2),
+                "fps_last_30": round(fps_last_30, 2),
+                "retention_pct": round(retention_pct, 2),
+                "fps_delta": round(fps_delta, 2),
+                "frame_time_variance": round(frame_time_variance, 4),
+                "throttling_detected": throttling_detected,
+            },
+            recommended_settings=recommended_settings,
+            applied=False,
+            frame_telemetry=telemetry_records,
+        )
+
+        # Step 8: Persist to benchmark history if requested
+        if persist:
+            try:
+                result.save(storage_path)
+                LOGGER.info("Persisted benchmark run %s to storage.", run_id)
+            except Exception as exc:
+                LOGGER.warning("Could not persist benchmark run %s: %s", run_id, exc)
+
+        print(result.summary_text())
+        return result
+
+
+# Module-level convenience runner function
+def run_benchmark(
+    workload: BenchmarkWorkload | WorkloadMode | str | int | None = "solo",
+    frame_window: int = STANDARDIZED_WINDOW_FRAMES,
+    persist: bool = True,
+    progress_cb: Callable[..., None] | None = None,
+) -> BenchmarkRunResult:
+    """Execute a benchmark run with default parameters."""
+    runner = BenchmarkRunner()
+    return runner.run(
+        workload=workload,
+        frame_window=frame_window,
+        persist=persist,
+        progress_cb=progress_cb,
+    )
+
+
+__all__ = [
+    "BenchmarkRunResult",
+    "BenchmarkRunner",
+    "FrameTelemetry",
+    "GpuTelemetrySampler",
+    "run_benchmark",
+]
