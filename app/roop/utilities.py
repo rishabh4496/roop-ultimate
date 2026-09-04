@@ -1152,6 +1152,12 @@ def print_cuda_info():
        print('No CUDA device found!')
 
 
+# Knobs whose advisory has already been printed this process. The warning is
+# once per knob, not once per session -- 53 construction sites would otherwise
+# make it 53 identical lines.
+_ORT_THREAD_ADVISED = set()
+
+
 def get_onnx_session_options(optimization_level=None):
     """Return memory-bounded SessionOptions for ONNX Runtime.
 
@@ -1160,18 +1166,43 @@ def get_onnx_session_options(optimization_level=None):
     """
     import onnxruntime
 
-    def _session_threads(name, default, upper):
+    def _session_threads(name, default, advisory):
         # An explicit process environment value wins over the optimizer hint.
         # The defaults are intentionally serial per session: Python workers
         # provide the outer parallelism, so ORT must not create a hidden pool
         # for every worker.
+        #
+        # `advisory` is a WARNING threshold, not a clamp. It used to be a hard
+        # `min()` ceiling, which meant ROOP_ORT_INTRA_THREADS=6 silently ran as
+        # 4 -- a control that accepts a value and then does something else. That
+        # is the same defect the pool guards were carrying until they were
+        # removed (see session_pool._advisory_pool_size); it is fixed the same
+        # way here, so an explicit value now runs exactly as set at any size.
+        #
+        # The number is kept because the reasoning behind it is still true: ORT
+        # builds an intra-op pool PER SESSION, and this pipeline holds many
+        # concurrent sessions (53 construction sites; pooled processors hold one
+        # per slot). intra=6 across a 3-deep TRT pool plus detector/detmask
+        # pools asks for far more OS threads than this box has P-cores, so the
+        # pools contend rather than parallelise. Under TensorRT/CUDA the intra-op
+        # pool is close to inert anyway -- the kernels run on the GPU, and the
+        # CPU EP is only the fallback path.
         raw = os.environ.get(name)
         if raw is None or str(raw).strip().lower() in ('', 'auto', 'default'):
             raw = os.environ.get('ROOP_RUNTIME_' + name[5:])
         try:
-            return max(1, min(upper, int(raw)))
+            value = max(1, int(raw))
         except (TypeError, ValueError):
             return default
+        if value > advisory and name not in _ORT_THREAD_ADVISED:
+            _ORT_THREAD_ADVISED.add(name)
+            print('[ORT] %s=%d exceeds the measured-safe %d. Honoured exactly. '
+                  'ORT builds this pool PER SESSION and this pipeline holds '
+                  'many concurrent sessions, so an oversized value contends '
+                  'for cores rather than adding parallelism -- if throughput '
+                  'drops, lower this knob first.' % (name, value, advisory),
+                  flush=True)
+        return value
 
     try:
         opts = onnxruntime.SessionOptions()
