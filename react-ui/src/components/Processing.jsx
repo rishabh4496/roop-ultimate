@@ -36,7 +36,10 @@ export default function Processing({ progress, settings, notify, setTab,
   const pauseRequested = !!progress.pause_requested;
 
   const telemetry = useTelemetry();
-  const { renderLite, toggleRenderLite } = useRenderLite(processing);
+  const {
+    renderLite, mode: renderLiteMode, label: renderLiteLabel,
+    hint: renderLiteHint, toggleRenderLite,
+  } = useRenderLite(processing);
   // The alert itself is App's — it is the only component always mounted, so a
   // run finishing while this tab is closed still announces itself. This tab
   // only hosts the TOGGLE for it, which is why both arrive as props.
@@ -337,6 +340,9 @@ export default function Processing({ progress, settings, notify, setTab,
               desktopAlerts={desktopAlerts}
               onToggleDesktopAlerts={onToggleDesktopAlerts}
               renderLite={renderLite}
+              renderLiteMode={renderLiteMode}
+              renderLiteLabel={renderLiteLabel}
+              renderLiteHint={renderLiteHint}
               onToggleRenderLite={toggleRenderLite}
             />
 

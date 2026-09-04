@@ -242,23 +242,90 @@ export const Select = ({ label, info, value, onChange, options = [], modified, o
   </Field>
 );
 
-export const Slider = ({ label, info, value, onChange, min = 0, max = 1, step = 0.01, modified, onReset, settingKey }) => (
-  <Field label={label} info={info} modified={modified} onReset={onReset} settingKey={settingKey}>
-    <div className="flex items-center gap-3">
-      {/* The native range thumb uses `accent-[var(--accent)]`, not the literal
-          #E94560 it had before — that pinned it to Obsidian's crimson in all 38
-          themes. */}
-      <input
-        type="range"
-        min={min} max={max} step={step}
-        value={value ?? 0}
-        onChange={(e) => onChange(parseFloat(e.target.value))}
-        className="flex-1 accent-[var(--accent)] h-1.5 apple-transition"
-      />
-      <span className="w-12 text-right text-xs font-semibold tabular-nums text-white/60">{Number(value ?? 0).toFixed(step < 1 ? 2 : 0)}</span>
-    </div>
-  </Field>
-);
+// ── Slider ─────────────────────────────────────────────────────────────────
+// The thumb is driven by LOCAL state and only COMMITTED upward on a trailing
+// debounce (plus immediately on release), instead of calling `onChange` on
+// every input event.
+//
+// Why: a range input fires `onChange` on every pointer move — 60+ a second
+// during a drag — and in this app `onChange` is `set(key, value)`, which lands
+// in App's `settings` state. That is a prop of every screen, so one drag
+// re-rendered the entire tree sixty times a second: FaceSwap (3,300 lines of
+// JSX) plus InteractivePreview, Timeline and SliderTrackerBar under it, none of
+// which are memoised. That is the drag lag.
+//
+// NOTHING VISIBLE IS LOST by committing late. The value readout and the thumb
+// track `local`, so they are exactly as responsive as before. The preview is
+// already debounced 350 ms downstream (see FaceSwap's previewKey effect) and
+// the backend settings POST is debounced in App, so neither ever saw the
+// intermediate values anyway — they were only ever paid for in re-renders.
+//
+// COMMIT_MS is a safety net for the paths that have no release event: keyboard
+// arrows on a focused slider, and assistive tech. Release handlers commit
+// immediately so a drag still feels instant to everything downstream.
+const SLIDER_COMMIT_MS = 90;
+
+export const Slider = ({ label, info, value, onChange, min = 0, max = 1, step = 0.01, modified, onReset, settingKey }) => {
+  const [local, setLocal] = useState(value ?? 0);
+  const timerRef = useRef(null);
+  const pendingRef = useRef(null);
+  // `onChange` is an inline arrow at nearly every call site, so it is a new
+  // function each render; reading it through a ref keeps the commit effect from
+  // being torn down and rebuilt on every one of them.
+  const onChangeRef = useRef(onChange);
+  onChangeRef.current = onChange;
+
+  // Follow the prop when it moves for a reason that is not this drag — a preset
+  // being loaded, a Reset, a profile applied. `pendingRef` is the guard: while a
+  // commit of ours is in flight the incoming prop is still the OLD value, and
+  // adopting it would snap the thumb back under the user's finger.
+  useEffect(() => {
+    if (pendingRef.current === null) setLocal(value ?? 0);
+    else if (pendingRef.current === value) pendingRef.current = null;
+  }, [value]);
+
+  useEffect(() => () => { if (timerRef.current) clearTimeout(timerRef.current); }, []);
+
+  const commit = (v) => {
+    if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; }
+    pendingRef.current = v;
+    onChangeRef.current(v);
+  };
+
+  const handleInput = (e) => {
+    const v = parseFloat(e.target.value);
+    setLocal(v);
+    if (timerRef.current) clearTimeout(timerRef.current);
+    timerRef.current = setTimeout(() => { timerRef.current = null; commit(v); }, SLIDER_COMMIT_MS);
+  };
+
+  // Release: commit now rather than waiting out the debounce. `blur` is in the
+  // list so a value changed by keyboard and then tabbed away from is never left
+  // uncommitted.
+  const flush = () => { if (timerRef.current) commit(local); };
+
+  return (
+    <Field label={label} info={info} modified={modified} onReset={onReset} settingKey={settingKey}>
+      <div className="flex items-center gap-3">
+        {/* The native range thumb uses `accent-[var(--accent)]`, not the literal
+            #E94560 it had before — that pinned it to Obsidian's crimson in all 38
+            themes. */}
+        <input
+          type="range"
+          min={min} max={max} step={step}
+          value={local}
+          onChange={handleInput}
+          onPointerUp={flush}
+          onPointerCancel={flush}
+          onKeyUp={flush}
+          onBlur={flush}
+          className="flex-1 accent-[var(--accent)] h-1.5 apple-transition"
+        />
+        <span className="w-12 text-right text-xs font-semibold tabular-nums text-white/60">{Number(local ?? 0).toFixed(step < 1 ? 2 : 0)}</span>
+      </div>
+    </Field>
+  );
+};
 
 // The checkbox is `sr-only`, NOT `hidden`. Tailwind's `hidden` is display:none,
 // which takes an element out of the tab order entirely — and since the visible

@@ -26,6 +26,9 @@ import { Icon } from './icons';
 // A rejected prefetch is ignored — React.lazy retries on real render, and the
 // ErrorBoundary below owns the failure case.
 const loadHome = () => import('./components/Home');
+import useRenderLite, { cycleRenderLiteMode, RENDER_LITE_LABEL }
+  from './components/faceswap/useRenderLite';
+
 const loadFaceSwap = () => import('./components/FaceSwap');
 const loadBatchSwap = () => import('./components/BatchSwap');
 const loadProcessing = () => import('./components/Processing');
@@ -174,6 +177,12 @@ export default function App() {
   }, []);
 
   const [progress, setProgress] = useState({ processing: false, progress: 0, desc: '', output: null });
+
+  // Mounted HERE, not only in the Face Swap and Processing tabs, because App is
+  // the one component that is always mounted: 'always' mode has to hold on
+  // every screen, including Settings and Gallery, and the palette entry below
+  // has to be able to report the current mode from anywhere.
+  const { mode: liteMode } = useRenderLite(progress.processing);
   const [startTime, setStartTime] = useState(null);
   const [confetti, setConfetti] = useState(false);
   const pollRef = useRef(null);
@@ -581,6 +590,18 @@ export default function App() {
     cmds.push({ id: 'act-preview', section: 'Actions', icon: Icon.refresh, title: 'Refresh preview', run: () => runFaceswap('preview') });
     cmds.push({ id: 'act-shortcuts', section: 'Actions', icon: Icon.shortcuts, title: 'Show keyboard shortcuts', run: () => setShowShortcutsModal(true) });
     cmds.push({ id: 'act-hud', section: 'Actions', icon: Icon.settings, title: 'Toggle Hardware Telemetry HUD', run: () => setShowHud((v) => !v) });
+    // Lite UI is a performance control, and the only place it lived was the
+    // Processing tab's dock -- i.e. reachable only while a render was in
+    // flight, which is exactly when you are least likely to go looking for it.
+    // It matters just as much to the IDLE app (59 backdrop-blur panels, all
+    // re-composited on every state change), so it belongs somewhere reachable
+    // from anywhere. Cycles during-renders -> always -> off.
+    cmds.push({
+      id: 'act-render-lite', section: 'Actions', icon: Icon.lite,
+      title: 'Cycle Lite UI (panel blurs & animations)',
+      subtitle: RENDER_LITE_LABEL[liteMode],
+      run: () => cycleRenderLiteMode(),
+    });
 
     // Quality Preset Profiles
     cmds.push({ id: 'prof-fast', section: 'Profiles', icon: Icon.brand, title: 'Profile: ⚡ Ultra Fast', subtitle: '128px, No Enhancer, Max FPS', run: () => applyQualityProfile('fast') });
@@ -624,7 +645,7 @@ export default function App() {
     }));
 
     return cmds;
-  }, [applyTheme, applyQualityProfile, runFaceswap, customThemes, presets, visibleTabs]);
+  }, [applyTheme, applyQualityProfile, runFaceswap, customThemes, presets, visibleTabs, liteMode]);
 
   const registerFileListener = useCallback((cb) => {
     fileListenersRef.current.push(cb);

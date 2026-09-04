@@ -26,6 +26,9 @@ export default function ProcessingDock({
   desktopAlerts = false,
   onToggleDesktopAlerts,
   renderLite = true,
+  renderLiteMode = 'auto',
+  renderLiteLabel,
+  renderLiteHint,
   onToggleRenderLite,
 }) {
   return (
@@ -58,20 +61,29 @@ export default function ProcessingDock({
       </div>
 
       <div className="flex items-center gap-2">
-        {/* Lite UI — drop this window's own GPU cost while the render runs */}
+        {/* Lite UI — drop this window's own GPU cost. Three states, because the
+            same compositing cost is paid while idle: 'during renders' (the
+            default, idle appearance untouched), 'always' (for when the UI
+            itself feels sluggish) and 'off'. Cycles on click. */}
         <button
           onClick={onToggleRenderLite}
           className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border transition-all ${
-            renderLite
-              ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
-              : 'bg-white/5 text-neutral-400 border-white/10 hover:text-neutral-200'
+            renderLiteMode === 'always'
+              ? 'bg-emerald-500/30 text-emerald-200 border-emerald-400/50'
+              : renderLite
+                ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+                : 'bg-white/5 text-neutral-400 border-white/10 hover:text-neutral-200'
           }`}
-          title={renderLite
+          title={renderLiteHint || (renderLite
             ? 'Lite UI on — panel blurs and looping animations are off while rendering, so the browser leaves the GPU to the swap'
-            : 'Lite UI off — the full interface is being composited on the same GPU as the render'}
+            : 'Lite UI off — the full interface is being composited on the same GPU as the render')}
         >
           {renderLite ? <Icon.lite size={13} /> : <Icon.full size={13} />}
-          <span className="hidden sm:inline">{renderLite ? 'Lite UI' : 'Full UI'}</span>
+          <span className="hidden sm:inline">
+            {renderLiteLabel
+              ? renderLiteLabel.replace('Lite UI: ', 'Lite: ')
+              : (renderLite ? 'Lite UI' : 'Full UI')}
+          </span>
         </button>
 
         {/* Desktop Alert Notification Toggle */}
