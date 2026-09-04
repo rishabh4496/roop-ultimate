@@ -984,12 +984,11 @@ def decline_recommended_settings(result: Any = None, run_id: str = "",
     """
     saved_id = run_id
     if result is not None:
-        payload = (result.to_dict(include_frames=False)
-                   if hasattr(result, "to_dict") else dict(result))
-        payload["applied"] = False
+        payload = (result.to_storage_record()
+                   if hasattr(result, "to_storage_record") else dict(result))
+        payload["status"] = "declined"
         try:
-            record = save_benchmark_result(payload, storage_path)
-            saved_id = str(record.get("run_id", saved_id))
+            saved_id = save_benchmark_result(payload, storage_path)
         except Exception as exc:
             return {"status": "error", "applied": False,
                     "message": "The run could not be saved: %s: %s"
@@ -1012,7 +1011,7 @@ def list_saved_profiles(storage_path: Any = None,
         return []
     rows: List[Dict[str, Any]] = []
     for record in reversed(history[-max(1, int(limit)):]):
-        metrics = record.get("metrics") or {}
+        metrics = record.get("best_metrics") or {}
         workload = record.get("workload") or {}
         score, _ = compute_score(metrics, record.get("thermal_stability") or {},
                                  workload)
@@ -1023,9 +1022,13 @@ def list_saved_profiles(storage_path: Any = None,
             "avg_fps": round(_number(metrics.get("avg_fps")), 2),
             "p1_low_fps": round(_number(metrics.get("p1_low_fps")), 2),
             "workload": workload.get("name") or workload.get("mode", ""),
-            "applied": bool(record.get("applied")),
+            "applied": record.get("status") == "accepted",
             "active_models": record.get("active_models") or {},
-            "recommended_settings": record.get("recommended_settings") or {},
+            "recommended_settings": {
+                "execution_threads": (record.get("presets") or {}).get("balanced", {}).get("threads", 0),
+                "temp_format": (record.get("presets") or {}).get("balanced", {}).get("temp_format", ""),
+                "provider_options": (record.get("presets") or {}).get("balanced", {}).get("provider_options", {}),
+            },
         })
     return rows
 

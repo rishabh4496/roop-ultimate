@@ -235,7 +235,60 @@ class BenchmarkRunResult:
             data["frame_telemetry"] = [f.to_dict() for f in self.frame_telemetry]
         return data
 
-    def save(self, storage_path: str | os.PathLike[str] | None = None) -> dict[str, Any]:
+    def to_storage_record(self) -> dict[str, Any]:
+        """Project a detailed run into the durable strict profile schema."""
+        metric_keys = ("avg_fps", "p1_low_fps", "peak_vram_mb", "peak_cpu_pct")
+        metrics = {key: float(self.metrics.get(key, 0.0) or 0.0) for key in metric_keys}
+        settings = self.recommended_settings or {}
+        try:
+            balanced_threads = max(1, int(settings.get("execution_threads", 4)))
+        except (TypeError, ValueError):
+            balanced_threads = 4
+        options = settings.get("provider_options", {})
+        options = dict(options) if isinstance(options, Mapping) else {}
+        total_vram = float(self.device_specs.get("gpu", {}).get("total_vram_mb", 0.0) or 0.0)
+        if total_vram and metrics["peak_vram_mb"] >= total_vram * 0.9:
+            bottleneck = "GPU VRAM Bound"
+        elif metrics["peak_cpu_pct"] >= 85.0:
+            bottleneck = "CPU Bound"
+        else:
+            bottleneck = "GPU Compute Bound"
+        test_mode = self.workload.get("test_mode", "quick")
+        if test_mode not in {"quick", "full"}:
+            test_mode = "quick"
+        return {
+            "run_id": self.run_id,
+            "timestamp": self.timestamp,
+            "device_specs": self.device_specs,
+            "active_models": self.active_models,
+            "workload": {
+                "target_faces": max(1, int(self.workload.get("target_faces", 1))),
+                "test_mode": test_mode,
+            },
+            "baseline_metrics": metrics,
+            "best_metrics": metrics,
+            "presets": {
+                "max_throughput": {
+                    "threads": max(balanced_threads, 8),
+                    "provider_options": options,
+                    "temp_format": "jpg",
+                },
+                "balanced": {
+                    "threads": balanced_threads,
+                    "provider_options": options,
+                    "temp_format": str(settings.get("temp_format", "jpg") or "jpg"),
+                },
+                "quiet": {
+                    "threads": max(1, balanced_threads // 2),
+                    "provider_options": options,
+                    "temp_format": "png",
+                },
+            },
+            "bottleneck": bottleneck,
+            "status": "accepted" if self.applied else "pending",
+        }
+
+    def save(self, storage_path: str | os.PathLike[str] | None = None) -> str:
         """Save this benchmark run atomically to persistent storage.
 
         The persisted ``run_id`` is adopted back onto this object. Storage
@@ -247,12 +300,9 @@ class BenchmarkRunResult:
         this normally changes nothing; it removes the silent-failure mode
         rather than fixing a live bug.
         """
-        record = save_benchmark_result(self.to_dict(include_frames=False),
-                                       storage_path)
-        persisted = record.get("run_id")
-        if isinstance(persisted, str) and persisted:
-            self.run_id = persisted
-        return record
+        persisted = save_benchmark_result(self.to_storage_record(), storage_path)
+        self.run_id = persisted
+        return persisted
 
     def summary_text(self) -> str:
         """Render a clean, human-readable terminal summary."""

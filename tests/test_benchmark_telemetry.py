@@ -1,12 +1,11 @@
-"""Standalone Session 1 verification for benchmark telemetry and persistence.
+"""Standalone verification for benchmark telemetry and profile persistence.
 
-Run directly from the repository root:
+Run from the repository root:
 
     app\\env\\Scripts\\python.exe tests\\test_benchmark_telemetry.py
 
-The runner writes its mock benchmark history to a temporary directory and
-removes it on exit.  It does execute the production 100 MiB disk probe so the
-reported throughput reflects the configured roop temporary storage.
+The disk test writes, reads, and removes 100 MiB below the user's temporary
+directory. Benchmark history itself is isolated in a temporary test folder.
 """
 
 from __future__ import annotations
@@ -22,165 +21,148 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from roop.benchmark.hardware_probe import collect_hardware_profile  # noqa: E402
+from roop.benchmark.hardware_probe import (  # noqa: E402
+    collect_hardware_profile,
+    measure_disk_io_throughput,
+)
 from roop.benchmark.storage import (  # noqa: E402
+    get_latest_profile,
     load_benchmark_history,
     save_benchmark_result,
+    update_profile_status,
 )
 
 
-def _display(value: Any, fallback: str = "N/A") -> str:
-    """Render an optional telemetry value without cluttering the summary."""
-    if value is None or value == "":
-        return fallback
-    return str(value)
+METRIC_KEYS = {"avg_fps", "p1_low_fps", "peak_vram_mb", "peak_cpu_pct"}
+RECORD_KEYS = {
+    "run_id",
+    "timestamp",
+    "device_specs",
+    "active_models",
+    "workload",
+    "baseline_metrics",
+    "best_metrics",
+    "presets",
+    "bottleneck",
+    "status",
+}
 
 
 def _number(value: Any) -> float:
-    """Return a numeric report value, defaulting only for display safety."""
     try:
         return float(value)
     except (TypeError, ValueError):
         return 0.0
 
 
-def _print_summary(profile: Mapping[str, Any]) -> None:
-    """Print a compact, human-readable hardware telemetry report."""
+def _print_specs(profile: Mapping[str, Any], disk: Mapping[str, Any]) -> None:
     cpu = profile["cpu"]
     gpu = profile["gpu"]
     memory = profile["memory"]
-    disk = profile["disk_io"]
-
-    print("Session 1 - Benchmark Telemetry Verification")
+    print("Benchmark Telemetry Verification")
     print("=" * 48)
     print(
-        "CPU : {processor} | {physical} physical cores / {logical} threads | "
-        "{base} MHz current / {maximum} MHz max | {architecture}".format(
-            processor=_display(cpu.get("processor")),
-            physical=_display(cpu.get("physical_cores")),
-            logical=_display(cpu.get("logical_threads")),
-            base=_display(cpu.get("base_frequency_mhz")),
-            maximum=_display(cpu.get("max_frequency_mhz")),
-            architecture=_display(cpu.get("architecture")),
+        "CPU : {physical} physical cores / {logical} threads | "
+        "base {base} MHz | current {current} MHz | {architecture}".format(
+            physical=cpu["physical_cores"],
+            logical=cpu["logical_threads"],
+            base=cpu["base_frequency_mhz"],
+            current=cpu["current_frequency_mhz"],
+            architecture=cpu["architecture"],
         )
     )
     print(
-        "GPU : {name} | {vendor}/{backend} | driver {driver} | load {load}".format(
-            name=_display(gpu.get("name")),
-            vendor=_display(gpu.get("vendor")),
-            backend=_display(gpu.get("backend")),
-            driver=_display(gpu.get("driver_version")),
-            load=(
-                "{:.1f}%".format(_number(gpu.get("utilization_pct")))
-                if gpu.get("utilization_pct") is not None
-                else "N/A"
-            ),
+        "RAM : {total:.1f} MiB total | {available:.1f} MiB available | "
+        "{swap:.1f} MiB swap".format(
+            total=_number(memory["total_memory_mb"]),
+            available=_number(memory["available_memory_mb"]),
+            swap=_number(memory["swap_total_mb"]),
         )
     )
     print(
-        "VRAM: {used:.2f} / {total:.2f} MiB".format(
-            used=_number(gpu.get("used_vram_mb")),
-            total=_number(gpu.get("total_vram_mb")),
+        "GPU : {name} | {vendor}/{backend} | VRAM {used:.1f}/{total:.1f} MiB | "
+        "engine {util}%".format(
+            name=gpu["name"],
+            vendor=gpu["vendor"],
+            backend=gpu["backend"],
+            used=_number(gpu["used_vram_mb"]),
+            total=_number(gpu["total_vram_mb"]),
+            util=gpu["utilization_pct"] if gpu["utilization_pct"] is not None else "N/A",
         )
     )
     print(
-        "RAM : {used:.2f} / {total:.2f} MiB used | {available:.2f} MiB available | "
-        "swap {swap_used:.2f} / {swap_total:.2f} MiB".format(
-            used=_number(memory.get("used_memory_mb")),
-            total=_number(memory.get("total_memory_mb")),
-            available=_number(memory.get("available_memory_mb")),
-            swap_used=_number(memory.get("swap_used_mb")),
-            swap_total=_number(memory.get("swap_total_mb")),
+        "Disk: write {write:.2f} MB/s | read {read:.2f} MB/s | latency {latency:.3f} ms".format(
+            write=_number(disk["sequential_write_mb_s"]),
+            read=_number(disk["sequential_read_mb_s"]),
+            latency=_number(disk["access_latency_ms"]),
         )
     )
-    if disk.get("success"):
-        print(
-            "Disk: write {write:.2f} MB/s | read {read:.2f} MB/s | "
-            "{size:.0f} MiB probe".format(
-                write=_number(disk.get("write_mb_per_sec")),
-                read=_number(disk.get("read_mb_per_sec")),
-                size=_number(disk.get("bytes_tested")) / (1024 * 1024),
-            )
-        )
-    else:
-        print("Disk: probe failed - %s" % _display(disk.get("error")))
 
 
-def _assert_benchmark_schema(record: Mapping[str, Any]) -> None:
-    """Assert the complete public storage schema expected by Session 1."""
-    required_top_level = {
-        "run_id",
-        "timestamp",
-        "device_specs",
-        "active_models",
-        "workload",
-        "metrics",
-        "recommended_settings",
-        "applied",
+def _mock_profile(profile: Mapping[str, Any]) -> dict[str, Any]:
+    metrics = {
+        "avg_fps": 30.0,
+        "p1_low_fps": 24.0,
+        "peak_vram_mb": _number(profile["gpu"]["used_vram_mb"]),
+        "peak_cpu_pct": 50.0,
     }
-    assert required_top_level == set(record), "unexpected benchmark schema"
-    assert isinstance(record["run_id"], str) and record["run_id"]
-    assert isinstance(record["timestamp"], str) and record["timestamp"]
-    assert isinstance(record["device_specs"], Mapping)
+    return {
+        "device_specs": dict(profile),
+        "active_models": {
+            "swapper": "mock-inswapper",
+            "enhancer": "mock-enhancer",
+            "mask_engine": "mock-mask-engine",
+        },
+        "workload": {"target_faces": 1, "test_mode": "quick"},
+        "baseline_metrics": metrics,
+        "best_metrics": metrics,
+        "presets": {
+            "max_throughput": {"threads": 8, "provider_options": {}, "temp_format": "jpg"},
+            "balanced": {"threads": 6, "provider_options": {}, "temp_format": "jpg"},
+            "quiet": {"threads": 4, "provider_options": {}, "temp_format": "png"},
+        },
+        "bottleneck": "GPU Compute Bound",
+        "status": "pending",
+    }
+
+
+def _assert_strict_schema(record: Mapping[str, Any]) -> None:
+    assert set(record) == RECORD_KEYS
     assert set(record["active_models"]) == {"swapper", "enhancer", "mask_engine"}
-    assert record["workload"]["target_faces"] == 1
-    assert set(record["metrics"]) == {
-        "avg_fps",
-        "p1_low_fps",
-        "peak_vram_mb",
-        "peak_cpu_pct",
-    }
-    assert set(record["recommended_settings"]) == {
-        "execution_threads",
-        "execution_provider",
-        "temp_format",
-        "provider_options",
-    }
-    assert record["applied"] is False
+    assert record["workload"] == {"target_faces": 1, "test_mode": "quick"}
+    assert set(record["baseline_metrics"]) == METRIC_KEYS
+    assert set(record["best_metrics"]) == METRIC_KEYS
+    assert set(record["presets"]) == {"max_throughput", "balanced", "quiet"}
+    assert record["status"] in {"declined", "accepted", "pending"}
 
 
 def main() -> int:
-    """Execute telemetry collection and a save/reload schema verification."""
-    with tempfile.TemporaryDirectory(prefix="roop_benchmark_telemetry_") as temp_dir:
-        temp_path = Path(temp_dir)
-        profile = collect_hardware_profile(temp_path, include_disk_io=True)
-        _print_summary(profile)
-        assert profile["disk_io"]["success"], profile["disk_io"].get("error")
+    with tempfile.TemporaryDirectory(prefix="roop_benchmark_telemetry_") as directory:
+        test_directory = Path(directory)
+        profile = collect_hardware_profile(include_disk_io=False)
+        disk = measure_disk_io_throughput(str(test_directory))
+        assert disk["success"], disk.get("error")
+        profile["disk_io"] = disk
+        _print_specs(profile, disk)
 
-        mock_entry = {
-            "device_specs": profile,
-            "active_models": {
-                "swapper": "mock-inswapper",
-                "enhancer": "mock-enhancer",
-                "mask_engine": "mock-mask-engine",
-            },
-            "workload": {"target_faces": 1},
-            "metrics": {
-                "avg_fps": 30.0,
-                "p1_low_fps": 24.0,
-                "peak_vram_mb": _number(profile["gpu"].get("used_vram_mb")),
-                "peak_cpu_pct": 50.0,
-            },
-            "recommended_settings": {
-                "execution_threads": min(8, int(profile["cpu"]["logical_threads"])),
-                "execution_provider": "mock-provider",
-                "temp_format": "png",
-                "provider_options": {"mock": True},
-            },
-        }
-        history_path = temp_path / "benchmark_history.json"
-        saved = save_benchmark_result(mock_entry, history_path)
-        reloaded = load_benchmark_history(history_path)
-
-        assert len(reloaded) == 1, "expected exactly one reloaded benchmark entry"
-        assert reloaded[0] == saved, "reloaded entry differs from saved entry"
-        _assert_benchmark_schema(reloaded[0])
-        print(
-            "Persistence: mock run %s saved and reloaded without schema errors."
-            % saved["run_id"]
-        )
+        history_path = test_directory / "benchmark_history.json"
+        run_id = save_benchmark_result(_mock_profile(profile), history_path)
+        assert isinstance(run_id, str) and run_id
+        history = load_benchmark_history(history_path)
+        assert len(history) == 1
+        _assert_strict_schema(history[0])
+        assert history[0]["run_id"] == run_id
+        assert update_profile_status(run_id, "accepted", history_path)
+        latest = get_latest_profile(history_path)
+        assert latest is not None and latest["status"] == "accepted"
+        print("Persistence: mock run saved, reloaded, and accepted without schema errors.")
         print("Result: PASS")
     return 0
+
+
+def test_benchmark_telemetry() -> None:
+    """Make the standalone verification discoverable by pytest as well."""
+    assert main() == 0
 
 
 if __name__ == "__main__":

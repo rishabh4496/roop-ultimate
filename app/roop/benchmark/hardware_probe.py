@@ -12,6 +12,7 @@ import importlib
 import logging
 import os
 import platform
+import subprocess
 import tempfile
 import time
 import uuid
@@ -65,9 +66,24 @@ def _empty_gpu_info() -> dict[str, Any]:
         "device_index": None,
         "total_vram_mb": 0.0,
         "used_vram_mb": 0.0,
+        "allocated_vram_mb": 0.0,
+        "reserved_vram_mb": 0.0,
+        "cuda_capability": None,
         "utilization_pct": None,
         "telemetry_available": False,
+        "system_memory_limit_mb": _system_memory_limit_mb(),
     }
+
+
+def _system_memory_limit_mb() -> float:
+    """Return the RAM currently available to the CPU execution provider."""
+    psutil = _optional_import("psutil")
+    if psutil is None:
+        return 0.0
+    try:
+        return _mb(psutil.virtual_memory().available)
+    except Exception:
+        return 0.0
 
 
 def get_cpu_info() -> dict[str, Any]:
@@ -80,6 +96,7 @@ def get_cpu_info() -> dict[str, Any]:
     psutil = _optional_import("psutil")
     physical_cores: int | None = None
     logical_threads: int | None = None
+    current_frequency_mhz: float | None = None
     base_frequency_mhz: float | None = None
     max_frequency_mhz: float | None = None
 
@@ -89,7 +106,10 @@ def get_cpu_info() -> dict[str, Any]:
             logical_threads = psutil.cpu_count(logical=True)
             frequency = psutil.cpu_freq()
             if frequency is not None:
-                base_frequency_mhz = round(float(frequency.current), 2)
+                current_frequency_mhz = round(float(frequency.current), 2)
+                # psutil has no cross-platform "base" clock.  ``min`` is the
+                # closest firmware-reported baseline; retain max separately.
+                base_frequency_mhz = round(float(frequency.min), 2) or None
                 max_frequency_mhz = round(float(frequency.max), 2)
         except Exception as exc:
             LOGGER.debug("psutil CPU probe failed: %s", exc)
@@ -100,11 +120,17 @@ def get_cpu_info() -> dict[str, Any]:
         # There is no portable standard-library physical-core API.  Returning
         # the logical count is a clearer fallback than returning no capacity.
         physical_cores = logical_threads
+    if base_frequency_mhz is None:
+        # Several Windows and Linux drivers expose only a current and maximum
+        # clock.  The maximum reported clock is a more useful stable baseline
+        # than leaving a required telemetry field blank.
+        base_frequency_mhz = max_frequency_mhz or current_frequency_mhz
 
     return {
         "physical_cores": int(physical_cores),
         "logical_threads": int(logical_threads),
         "base_frequency_mhz": base_frequency_mhz,
+        "current_frequency_mhz": current_frequency_mhz,
         "max_frequency_mhz": max_frequency_mhz,
         "architecture": platform.machine() or "unknown",
         "processor": platform.processor() or "unknown",
@@ -177,6 +203,13 @@ def _probe_nvml(device_index: int) -> dict[str, Any] | None:
         handle = nvml.nvmlDeviceGetHandleByIndex(index)
         memory = nvml.nvmlDeviceGetMemoryInfo(handle)
         utilization = nvml.nvmlDeviceGetUtilizationRates(handle)
+        capability: str | None = None
+        try:
+            major, minor = nvml.nvmlDeviceGetCudaComputeCapability(handle)
+            capability = "%d.%d" % (int(major), int(minor))
+        except Exception:
+            pass
+        allocated, reserved = _torch_memory_usage(index)
         return {
             "available": True,
             "vendor": "nvidia",
@@ -186,6 +219,9 @@ def _probe_nvml(device_index: int) -> dict[str, Any] | None:
             "device_index": index,
             "total_vram_mb": _mb(memory.total),
             "used_vram_mb": _mb(memory.used),
+            "allocated_vram_mb": allocated,
+            "reserved_vram_mb": reserved,
+            "cuda_capability": capability,
             "utilization_pct": round(float(utilization.gpu), 2),
             "telemetry_available": True,
         }
@@ -233,17 +269,28 @@ def _probe_torch_cuda(device_index: int) -> dict[str, Any] | None:
             utilization = round(float(value), 2)
         except Exception:
             pass
+        capability: str | None = None
+        if not hip_version:
+            try:
+                major, minor = torch.cuda.get_device_capability(index)
+                capability = "%d.%d" % (int(major), int(minor))
+            except Exception:
+                pass
+        smi = _probe_nvidia_smi(index) if vendor == "nvidia" else {}
         return {
             "available": True,
             "vendor": vendor,
             "backend": "rocm" if hip_version else "torch_cuda",
             "name": _as_text(torch.cuda.get_device_name(index)),
-            "driver_version": _as_text(hip_version or cuda_version, ""),
+            "driver_version": _as_text(smi.get("driver_version") or hip_version or cuda_version, ""),
             "device_index": index,
             "total_vram_mb": _mb(total),
             "used_vram_mb": _mb(used),
-            "utilization_pct": utilization,
-            "telemetry_available": utilization is not None,
+            "allocated_vram_mb": _mb(torch.cuda.memory_allocated(index)),
+            "reserved_vram_mb": _mb(torch.cuda.memory_reserved(index)),
+            "cuda_capability": capability,
+            "utilization_pct": smi.get("utilization_pct", utilization),
+            "telemetry_available": smi.get("utilization_pct", utilization) is not None,
         }
     except Exception as exc:
         LOGGER.debug("PyTorch CUDA/ROCm GPU probe failed: %s", exc)
@@ -272,6 +319,9 @@ def _probe_directml() -> dict[str, Any] | None:
             "device_index": 0,
             "total_vram_mb": 0.0,
             "used_vram_mb": 0.0,
+            "allocated_vram_mb": 0.0,
+            "reserved_vram_mb": 0.0,
+            "cuda_capability": None,
             "utilization_pct": None,
             "telemetry_available": False,
         }
@@ -298,6 +348,9 @@ def _probe_mps() -> dict[str, Any] | None:
             "device_index": 0,
             "total_vram_mb": 0.0,
             "used_vram_mb": 0.0,
+            "allocated_vram_mb": 0.0,
+            "reserved_vram_mb": 0.0,
+            "cuda_capability": None,
             "utilization_pct": None,
             "telemetry_available": False,
         }
@@ -341,6 +394,9 @@ def _probe_openvino() -> dict[str, Any] | None:
             "device_index": 0,
             "total_vram_mb": 0.0,
             "used_vram_mb": 0.0,
+            "allocated_vram_mb": 0.0,
+            "reserved_vram_mb": 0.0,
+            "cuda_capability": None,
             "utilization_pct": None,
             "telemetry_available": False,
             "openvino_devices": list(devices),
@@ -361,6 +417,7 @@ def get_gpu_info(device_index: int = 0) -> dict[str, Any]:
         lambda: _probe_nvml(device_index),
         lambda: _probe_torch_cuda(device_index),
         _probe_directml,
+        _probe_windows_adapter,
         _probe_mps,
         _probe_openvino,
     ):
@@ -368,6 +425,99 @@ def get_gpu_info(device_index: int = 0) -> dict[str, Any]:
         if result is not None:
             return result
     return _empty_gpu_info()
+
+
+def _torch_memory_usage(device_index: int) -> tuple[float, float]:
+    """Return process-local allocated and reserved CUDA memory in MiB."""
+    torch = _optional_import("torch")
+    if torch is None:
+        return 0.0, 0.0
+    try:
+        if not torch.cuda.is_available():
+            return 0.0, 0.0
+        return (
+            _mb(torch.cuda.memory_allocated(device_index)),
+            _mb(torch.cuda.memory_reserved(device_index)),
+        )
+    except Exception:
+        return 0.0, 0.0
+
+
+def _probe_nvidia_smi(device_index: int) -> dict[str, Any]:
+    """Supplement torch fallback with card-wide NVIDIA engine utilisation."""
+    try:
+        completed = subprocess.run(
+            [
+                "nvidia-smi",
+                "--query-gpu=driver_version,utilization.gpu",
+                "--format=csv,noheader,nounits",
+                "--id=%d" % device_index,
+            ],
+            capture_output=True,
+            check=False,
+            text=True,
+            timeout=3,
+        )
+        values = [value.strip() for value in completed.stdout.strip().split(",")]
+        if completed.returncode or len(values) != 2:
+            return {}
+        return {"driver_version": values[0], "utilization_pct": float(values[1])}
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return {}
+
+
+def _probe_windows_adapter() -> dict[str, Any] | None:
+    """Use WMI/DXGI-backed Win32 data when no vendor runtime is available."""
+    if platform.system().lower() != "windows":
+        return None
+    try:
+        completed = subprocess.run(
+            [
+                "powershell",
+                "-NoProfile",
+                "-Command",
+                "Get-CimInstance Win32_VideoController | "
+                "Select-Object Name,AdapterRAM,DriverVersion | ConvertTo-Json -Compress",
+            ],
+            capture_output=True,
+            check=False,
+            text=True,
+            timeout=3,
+        )
+        if completed.returncode or not completed.stdout.strip():
+            return None
+        import json
+
+        adapters = json.loads(completed.stdout)
+        if isinstance(adapters, dict):
+            adapters = [adapters]
+        if not isinstance(adapters, list) or not adapters:
+            return None
+        adapter = next(
+            (item for item in adapters if "microsoft basic" not in str(item.get("Name", "")).lower()),
+            adapters[0],
+        )
+        name = _as_text(adapter.get("Name"), "Windows display adapter")
+        lowered = name.lower()
+        vendor = "amd" if "amd" in lowered or "radeon" in lowered else "intel" if "intel" in lowered else "directml"
+        return {
+            "available": True,
+            "vendor": vendor,
+            "backend": "wmi",
+            "name": name,
+            "driver_version": _as_text(adapter.get("DriverVersion"), ""),
+            "device_index": 0,
+            "total_vram_mb": _mb(adapter.get("AdapterRAM")),
+            "used_vram_mb": 0.0,
+            "allocated_vram_mb": 0.0,
+            "reserved_vram_mb": 0.0,
+            "cuda_capability": None,
+            "utilization_pct": None,
+            "telemetry_available": False,
+        }
+    except Exception as exc:
+        LOGGER.debug("Windows adapter probe failed: %s", exc)
+        return None
 
 
 def _configured_temp_directory(temp_directory: str | os.PathLike[str] | None) -> Path:
@@ -402,6 +552,9 @@ def probe_disk_io(
         "bytes_tested": 0,
         "write_mb_per_sec": 0.0,
         "read_mb_per_sec": 0.0,
+        "sequential_write_mb_s": 0.0,
+        "sequential_read_mb_s": 0.0,
+        "access_latency_ms": 0.0,
         "write_seconds": 0.0,
         "read_seconds": 0.0,
         "success": False,
@@ -419,7 +572,19 @@ def probe_disk_io(
         total_bytes = int(size_mb) * _MEBIBYTE
         chunk_size = min(int(chunk_mb) * _MEBIBYTE, total_bytes)
         path = directory / ("roop-benchmark-" + uuid.uuid4().hex + ".bin")
-        chunk = b"\0" * chunk_size
+        # A pre-generated binary block models image-frame writes while keeping
+        # random-data generation outside the write-throughput measurement.
+        chunk = os.urandom(chunk_size)
+
+        latency_started = time.perf_counter()
+        with path.open("xb", buffering=0) as handle:
+            handle.write(chunk[:4096])
+            handle.flush()
+            os.fsync(handle.fileno())
+        with path.open("rb", buffering=0) as handle:
+            handle.read(4096)
+        access_latency_ms = (time.perf_counter() - latency_started) * 1000.0
+        path.unlink()
 
         write_started = time.perf_counter()
         remaining = total_bytes
@@ -449,6 +614,13 @@ def probe_disk_io(
                 "read_mb_per_sec": round(
                     (total_bytes / _MEBIBYTE) / max(read_seconds, 1e-9), 2
                 ),
+                "sequential_write_mb_s": round(
+                    (total_bytes / _MEBIBYTE) / max(write_seconds, 1e-9), 2
+                ),
+                "sequential_read_mb_s": round(
+                    (total_bytes / _MEBIBYTE) / max(read_seconds, 1e-9), 2
+                ),
+                "access_latency_ms": round(access_latency_ms, 3),
                 "success": True,
             }
         )
@@ -493,6 +665,11 @@ inspect_ram = get_memory_info
 inspect_hardware = collect_hardware_profile
 
 
+def measure_disk_io_throughput(target_dir: str) -> dict[str, Any]:
+    """Run the standard 100 MiB temporary-volume throughput and latency test."""
+    return probe_disk_io(target_dir)
+
+
 __all__ = [
     "DEFAULT_DISK_PROBE_CHUNK_MB",
     "DEFAULT_DISK_PROBE_SIZE_MB",
@@ -504,5 +681,6 @@ __all__ = [
     "inspect_gpu",
     "inspect_hardware",
     "inspect_ram",
+    "measure_disk_io_throughput",
     "probe_disk_io",
 ]

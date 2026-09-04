@@ -39,6 +39,7 @@ from roop.benchmark.hardware_probe import (
     inspect_gpu,
     inspect_hardware,
     inspect_ram,
+    measure_disk_io_throughput,
     probe_disk_io,
 )
 from roop.benchmark.runner import (
@@ -73,10 +74,12 @@ from roop.benchmark.ui_dashboard import (
 from roop.benchmark.storage import (
     BENCHMARK_HISTORY_PATH,
     BenchmarkStorageError,
+    get_latest_profile,
     get_latest_optimal_settings,
     load_benchmark_history,
     save_benchmark_result,
     update_setting_status,
+    update_profile_status,
 )
 
 __all__ = [
@@ -91,14 +94,17 @@ __all__ = [
     "inspect_gpu",
     "inspect_hardware",
     "inspect_ram",
+    "measure_disk_io_throughput",
     "probe_disk_io",
     # History and Storage
     "BENCHMARK_HISTORY_PATH",
     "BenchmarkStorageError",
+    "get_latest_profile",
     "get_latest_optimal_settings",
     "load_benchmark_history",
     "save_benchmark_result",
     "update_setting_status",
+    "update_profile_status",
     # Asset Management and Workloads
     "DEFAULT_ASSET_DIR",
     "DEFAULT_CLIP_DURATION_SEC",

@@ -20,12 +20,11 @@ from typing import Any, Mapping
 
 
 LOGGER = logging.getLogger(__name__)
-# The application root -- the directory holding config.yaml, run_history.json
-# and facesets/. History sits beside the app's other machine-local state so a
-# benchmark measured here cannot be confused with one from another checkout.
-APP_ROOT = Path(__file__).resolve().parents[2]
-PROJECT_ROOT = APP_ROOT           # retained: external callers import this name
-BENCHMARK_HISTORY_PATH = APP_ROOT / ".roop" / "benchmark_history.json"
+# Keep this checkout's profiles separate from every other roop installation.
+# ``app/roop/benchmark/storage.py`` -> project root is three parents upward.
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
+APP_ROOT = PROJECT_ROOT           # backwards-compatible public name
+BENCHMARK_HISTORY_PATH = PROJECT_ROOT / ".roop" / "benchmark_history.json"
 _LOCK_TIMEOUT_SECONDS = 5.0
 _LOCK_POLL_SECONDS = 0.05
 
@@ -97,12 +96,17 @@ def _load_history_unlocked(history_path: Path) -> list[dict[str, Any]]:
         raise BenchmarkStorageError(
             "Benchmark history could not be read: %s" % exc
         ) from exc
-    if not isinstance(payload, list) or not all(
-        isinstance(item, dict) for item in payload
-    ):
+    if not isinstance(payload, list) or not all(isinstance(item, dict) for item in payload):
         raise BenchmarkStorageError(
             "Benchmark history has an invalid schema; it was not modified."
         )
+    try:
+        for item in payload:
+            _normalise_result(item, generate_metadata=False)
+    except ValueError as exc:
+        raise BenchmarkStorageError(
+            "Benchmark history has an invalid benchmark record: %s" % exc
+        ) from exc
     return payload
 
 
@@ -137,13 +141,47 @@ def _write_history_unlocked(history_path: Path, history: list[dict[str, Any]]) -
             pass
 
 
+_METRIC_KEYS = {"avg_fps", "p1_low_fps", "peak_vram_mb", "peak_cpu_pct"}
+_MODEL_KEYS = {"swapper", "enhancer", "mask_engine"}
+_PRESET_KEYS = {"max_throughput", "balanced", "quiet"}
+_PRESET_VALUE_KEYS = {"threads", "provider_options", "temp_format"}
+_BOTTLE_NECKS = {
+    "GPU Compute Bound",
+    "GPU VRAM Bound",
+    "CPU Bound",
+    "Disk I/O Bound",
+}
+_STATUSES = {"declined", "accepted", "pending"}
+_RECORD_KEYS = {
+    "run_id",
+    "timestamp",
+    "device_specs",
+    "active_models",
+    "workload",
+    "baseline_metrics",
+    "best_metrics",
+    "presets",
+    "bottleneck",
+    "status",
+}
+
+
 def _mapping(value: Any, field_name: str) -> dict[str, Any]:
-    """Copy a JSON object field or raise a concise caller-facing error."""
-    if value is None:
-        return {}
+    """Copy one required JSON object field."""
     if not isinstance(value, Mapping):
         raise ValueError("%s must be a mapping" % field_name)
     return dict(value)
+
+
+def _exact_mapping(
+    value: Any, field_name: str, expected_keys: set[str]
+) -> dict[str, Any]:
+    mapping = _mapping(value, field_name)
+    if set(mapping) != expected_keys:
+        raise ValueError(
+            "%s must contain exactly: %s" % (field_name, ", ".join(sorted(expected_keys)))
+        )
+    return mapping
 
 
 def _finite_float(value: Any, field_name: str, default: float = 0.0) -> float:
@@ -161,9 +199,9 @@ def _finite_float(value: Any, field_name: str, default: float = 0.0) -> float:
     return number
 
 
-def _timestamp(value: Any) -> str:
+def _timestamp(value: Any, *, generate: bool) -> str:
     """Return a timezone-aware ISO-8601 run timestamp."""
-    if value is None:
+    if value is None and generate:
         return datetime.now(timezone.utc).isoformat()
     if not isinstance(value, str):
         raise ValueError("timestamp must be an ISO-8601 string")
@@ -176,25 +214,78 @@ def _timestamp(value: Any) -> str:
     return parsed.isoformat()
 
 
-def _run_id(value: Any) -> str:
-    """Use a supplied UUID when valid, otherwise create the required UUID4."""
-    if isinstance(value, str):
+def _run_id(value: Any, *, generate: bool) -> str:
+    """Validate a UUID4, or allocate one only for a newly saved record."""
+    if value is None and generate:
+        return str(uuid.uuid4())
+    if not isinstance(value, str):
+        raise ValueError("run_id must be a UUID4 string")
+    try:
+        parsed = uuid.UUID(value)
+    except ValueError as exc:
+        raise ValueError("run_id must be a UUID4 string") from exc
+    if parsed.version != 4:
+        raise ValueError("run_id must be a UUID4 string")
+    return str(parsed)
+
+
+def _normalise_metrics(value: Any, field_name: str) -> dict[str, float]:
+    metrics = _exact_mapping(value, field_name, _METRIC_KEYS)
+    normalised = {
+        key: _finite_float(metrics[key], "%s.%s" % (field_name, key))
+        for key in sorted(_METRIC_KEYS)
+    }
+    if any(number < 0.0 for number in normalised.values()):
+        raise ValueError("%s values cannot be negative" % field_name)
+    return normalised
+
+
+def _normalise_presets(value: Any) -> dict[str, dict[str, Any]]:
+    presets = _exact_mapping(value, "presets", _PRESET_KEYS)
+    normalised: dict[str, dict[str, Any]] = {}
+    for name in sorted(_PRESET_KEYS):
+        preset = _exact_mapping(presets[name], "presets.%s" % name, _PRESET_VALUE_KEYS)
+        threads = preset["threads"]
+        if isinstance(threads, bool):
+            raise ValueError("presets.%s.threads must be an integer" % name)
         try:
-            return str(uuid.UUID(value))
-        except ValueError:
-            pass
-    return str(uuid.uuid4())
+            threads = int(threads)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("presets.%s.threads must be an integer" % name) from exc
+        if threads < 1:
+            raise ValueError("presets.%s.threads must be at least one" % name)
+        if not isinstance(preset["provider_options"], Mapping):
+            raise ValueError("presets.%s.provider_options must be a mapping" % name)
+        if not isinstance(preset["temp_format"], str) or not preset["temp_format"]:
+            raise ValueError("presets.%s.temp_format must be a non-empty string" % name)
+        normalised[name] = {
+            "threads": threads,
+            "provider_options": dict(preset["provider_options"]),
+            "temp_format": preset["temp_format"],
+        }
+    return normalised
 
 
-def _normalise_result(data: Mapping[str, Any]) -> dict[str, Any]:
-    """Apply the public benchmark-record schema and safe defaults."""
+def _normalise_result(
+    data: Mapping[str, Any], *, generate_metadata: bool = True
+) -> dict[str, Any]:
+    """Validate and normalise the public, strict benchmark-profile schema."""
+    if not isinstance(data, Mapping):
+        raise ValueError("data must be a mapping")
+    unexpected = set(data) - _RECORD_KEYS
+    missing = (_RECORD_KEYS - {"run_id", "timestamp"}) - set(data)
+    if unexpected or missing:
+        details = []
+        if unexpected:
+            details.append("unexpected: %s" % ", ".join(sorted(unexpected)))
+        if missing:
+            details.append("missing: %s" % ", ".join(sorted(missing)))
+        raise ValueError("invalid benchmark record keys (%s)" % "; ".join(details))
+
     device_specs = _mapping(data.get("device_specs"), "device_specs")
-    active_models = _mapping(data.get("active_models"), "active_models")
-    workload = _mapping(data.get("workload"), "workload")
-    metrics = _mapping(data.get("metrics"), "metrics")
-    settings = _mapping(data.get("recommended_settings"), "recommended_settings")
-
-    target_faces = workload.get("target_faces", 1)
+    active_models = _exact_mapping(data.get("active_models"), "active_models", _MODEL_KEYS)
+    workload = _exact_mapping(data.get("workload"), "workload", {"target_faces", "test_mode"})
+    target_faces = workload["target_faces"]
     if isinstance(target_faces, bool):
         raise ValueError("workload.target_faces must be an integer")
     try:
@@ -203,62 +294,42 @@ def _normalise_result(data: Mapping[str, Any]) -> dict[str, Any]:
         raise ValueError("workload.target_faces must be an integer") from exc
     if target_faces < 1:
         raise ValueError("workload.target_faces must be at least 1")
+    if workload["test_mode"] not in {"quick", "full"}:
+        raise ValueError("workload.test_mode must be 'quick' or 'full'")
+    if data["bottleneck"] not in _BOTTLE_NECKS:
+        raise ValueError("bottleneck is not a recognised benchmark bottleneck")
+    if data["status"] not in _STATUSES:
+        raise ValueError("status must be declined, accepted, or pending")
+    for name, model in active_models.items():
+        if not isinstance(model, str):
+            raise ValueError("active_models.%s must be a string" % name)
 
-    execution_threads = settings.get("execution_threads", 0)
-    if isinstance(execution_threads, bool):
-        raise ValueError("recommended_settings.execution_threads must be an integer")
-    try:
-        execution_threads = int(execution_threads)
-    except (TypeError, ValueError) as exc:
-        raise ValueError(
-            "recommended_settings.execution_threads must be an integer"
-        ) from exc
-    if execution_threads < 0:
-        raise ValueError("recommended_settings.execution_threads cannot be negative")
-
-    provider_options = _mapping(
-        settings.get("provider_options"), "recommended_settings.provider_options"
-    )
-    return {
-        "run_id": _run_id(data.get("run_id")),
-        "timestamp": _timestamp(data.get("timestamp")),
+    record = {
+        "run_id": _run_id(data.get("run_id"), generate=generate_metadata),
+        "timestamp": _timestamp(data.get("timestamp"), generate=generate_metadata),
         "device_specs": device_specs,
-        "active_models": {
-            "swapper": str(active_models.get("swapper", "")),
-            "enhancer": str(active_models.get("enhancer", "")),
-            "mask_engine": str(active_models.get("mask_engine", "")),
-        },
-        "workload": {"target_faces": target_faces},
-        "metrics": {
-            "avg_fps": _finite_float(metrics.get("avg_fps"), "metrics.avg_fps"),
-            "p1_low_fps": _finite_float(
-                metrics.get("p1_low_fps"), "metrics.p1_low_fps"
-            ),
-            "peak_vram_mb": _finite_float(
-                metrics.get("peak_vram_mb"), "metrics.peak_vram_mb"
-            ),
-            "peak_cpu_pct": _finite_float(
-                metrics.get("peak_cpu_pct"), "metrics.peak_cpu_pct"
-            ),
-        },
-        "recommended_settings": {
-            "execution_threads": execution_threads,
-            "execution_provider": str(settings.get("execution_provider", "")),
-            "temp_format": str(settings.get("temp_format", "")),
-            "provider_options": provider_options,
-        },
-        "applied": bool(data.get("applied", False)),
+        "active_models": dict(active_models),
+        "workload": {"target_faces": target_faces, "test_mode": workload["test_mode"]},
+        "baseline_metrics": _normalise_metrics(data["baseline_metrics"], "baseline_metrics"),
+        "best_metrics": _normalise_metrics(data["best_metrics"], "best_metrics"),
+        "presets": _normalise_presets(data["presets"]),
+        "bottleneck": data["bottleneck"],
+        "status": data["status"],
     }
+    try:
+        json.dumps(record, allow_nan=False)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("benchmark record must be JSON serialisable") from exc
+    return record
 
 
 def save_benchmark_result(
     data: Mapping[str, Any],
     storage_path: str | os.PathLike[str] | None = None,
-) -> dict[str, Any]:
+) -> str:
     """Validate and atomically append one benchmark run to local history.
 
-    The persisted, normalised record is returned so callers can immediately
-    keep its generated ``run_id`` for a later applied-status update.
+    Returns the generated or validated UUID4 run identifier.
     """
     if not isinstance(data, Mapping):
         raise ValueError("data must be a mapping")
@@ -268,7 +339,7 @@ def save_benchmark_result(
         history = _load_history_unlocked(history_path)
         history.append(record)
         _write_history_unlocked(history_path, history)
-    return record
+    return record["run_id"]
 
 
 def load_benchmark_history(
@@ -290,15 +361,28 @@ def load_benchmark_history(
         return []
 
 
+def get_latest_profile(
+    storage_path: str | os.PathLike[str] | None = None,
+) -> dict[str, Any] | None:
+    """Return the latest complete profile, or ``None`` before the first run."""
+    history = load_benchmark_history(storage_path)
+    return dict(history[-1]) if history else None
+
+
 def get_latest_optimal_settings(
     storage_path: str | os.PathLike[str] | None = None,
 ) -> dict[str, Any] | None:
     """Return a copy of the most recent recommendation, if one exists."""
-    for record in reversed(load_benchmark_history(storage_path)):
-        settings = record.get("recommended_settings")
-        if isinstance(settings, Mapping):
-            return dict(settings)
-    return None
+    profile = get_latest_profile(storage_path)
+    if profile is None:
+        return None
+    preset = profile["presets"]["balanced"]
+    return {
+        "execution_threads": preset["threads"],
+        "execution_provider": "",
+        "temp_format": preset["temp_format"],
+        "provider_options": dict(preset["provider_options"]),
+    }
 
 
 def update_setting_status(
@@ -306,19 +390,27 @@ def update_setting_status(
     applied: bool = True,
     storage_path: str | os.PathLike[str] | None = None,
 ) -> bool:
-    """Set whether a run's recommended settings were applied.
+    """Compatibility alias for applying or declining a stored profile."""
+    return update_profile_status(
+        run_id, "accepted" if applied else "declined", storage_path
+    )
 
-    Returns ``True`` only when a matching run was persisted.  An unknown run ID
-    is not an error because history may have been rotated by another process.
-    """
-    if not isinstance(run_id, str) or not run_id:
-        raise ValueError("run_id must be a non-empty string")
+
+def update_profile_status(
+    run_id: str,
+    status: str,
+    storage_path: str | os.PathLike[str] | None = None,
+) -> bool:
+    """Persist a user's accepted, declined, or pending-profile decision."""
+    _run_id(run_id, generate=False)
+    if status not in _STATUSES:
+        raise ValueError("status must be declined, accepted, or pending")
     history_path = _history_path(storage_path)
     with _HistoryLock(history_path):
         history = _load_history_unlocked(history_path)
         for record in history:
             if record.get("run_id") == run_id:
-                record["applied"] = bool(applied)
+                record["status"] = status
                 _write_history_unlocked(history_path, history)
                 return True
     return False
@@ -327,6 +419,7 @@ def update_setting_status(
 __all__ = [
     "BENCHMARK_HISTORY_PATH",
     "BenchmarkStorageError",
+    "get_latest_profile",
     "get_latest_optimal_settings",
     "load_benchmark_history",
     "save_benchmark_result",

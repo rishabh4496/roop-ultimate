@@ -219,6 +219,32 @@ stage throughput, VRAM, CPU/GPU utilization, latency, stability, and output
 quality. Hardware not physically present remains `PENDING` in the report.
 The maintained acceptance record is [`docs/HARDWARE_VALIDATION_MATRIX.md`](docs/HARDWARE_VALIDATION_MATRIX.md).
 
+### Local benchmark telemetry API
+
+The benchmark engine also exposes a Python-only, machine-local probe. It uses
+NVML when available, falls back through CUDA/ROCm, DirectML/WMI and MPS, then
+reports the CPU execution provider. `measure_disk_io_throughput()` writes,
+reads, and removes a 100 MiB temporary binary payload; do not call it on a
+network share unless that is the volume being benchmarked.
+
+```python
+from roop.benchmark.hardware_probe import collect_hardware_profile, measure_disk_io_throughput
+from roop.benchmark.storage import save_benchmark_result, get_latest_profile
+
+specs = collect_hardware_profile(include_disk_io=False)
+disk = measure_disk_io_throughput("C:/Users/me/AppData/Local/Temp")
+# save_benchmark_result(profile_record) returns its UUID4 run_id.
+latest = get_latest_profile()
+```
+
+Use the HTTP API above from JavaScript or curl; benchmark-history storage is
+intentionally not an HTTP endpoint because it is machine-local user state. A
+complete Python verification (including persistence) is available with:
+
+```bash
+app/env/Scripts/python.exe -m pytest -q -s tests/test_benchmark_telemetry.py
+```
+
 Benchmark identity is runtime-derived and includes the detected GPU, compute
 capability, total/available VRAM, driver, CUDA, TensorRT, ONNX Runtime, Tensor
 Core/precision capabilities, NVDEC/NVENC capabilities, model/workload facts,
