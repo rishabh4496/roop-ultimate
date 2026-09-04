@@ -26,14 +26,17 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
-# Ensure APP_DIR and PROJECT_ROOT are in sys.path so app-level imports resolve cleanly
+# Ensure the application root is importable so app-level modules (settings,
+# roop.globals, roop.core) resolve when the benchmark is driven from a test or
+# a CLI entry point rather than from the running server.
+#
+# This package used to live one level higher, where the application lived in a
+# nested `app/` directory. It now lives INSIDE that directory, so the app root
+# is simply the package's grandparent -- there is no second hop.
 _BENCHMARK_DIR = Path(__file__).resolve().parent
-_PROJECT_ROOT = _BENCHMARK_DIR.parents[1]
-_APP_DIR = _PROJECT_ROOT / "app"
-if str(_APP_DIR) not in sys.path and _APP_DIR.is_dir():
-    sys.path.insert(0, str(_APP_DIR))
-if str(_PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(_PROJECT_ROOT))
+_APP_ROOT = _BENCHMARK_DIR.parents[1]
+if str(_APP_ROOT) not in sys.path:
+    sys.path.insert(0, str(_APP_ROOT))
 
 import cv2
 import numpy as np

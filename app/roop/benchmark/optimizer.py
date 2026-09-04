@@ -69,10 +69,7 @@ be able to mistake an isolated GPU probe for an end-to-end pipeline result.
 from __future__ import annotations
 
 import math
-import os
-import shutil
 import statistics
-import tempfile
 import time
 from dataclasses import asdict, dataclass, field, replace
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
@@ -733,75 +730,47 @@ def temp_path_triggers(settings: Any = None) -> Dict[str, bool]:
 
 
 def probe_temp_volume(path: Optional[str] = None, payload_mb: int = 64,
-                      clock: Callable[[], float] = time.perf_counter) -> dict:
-    """Measure sequential write/read throughput of the volume temp frames land on.
+                      probe=None) -> dict:
+    """Measure write/read throughput of the volume temp frames land on.
 
-    The temp directory is NOT the system temp directory: ``get_temp_directory_path``
-    places it beside the *target file*, so this is a property of whichever drive
-    the user's footage sits on and must be probed at that path.
+    THE MEASUREMENT IS NOT DONE HERE.  ``hardware_probe.probe_disk_io`` already
+    performs it -- same sequential write, read-back and guaranteed cleanup --
+    and this is the one place in the package that needs its answer reshaped for
+    the search.  Re-implementing it was a duplicate that only existed because
+    this module was written against a different package layout.
 
-    Writes are flushed and fsynced before the clock stops -- without that this
-    measures the OS page cache, which on a 64 MB payload is most of the answer
-    and makes every volume look like RAM.
+    What this adds is the two things the search needs and the probe does not
+    provide: a ``class`` for the storage tier, and key names the rest of this
+    module already speaks.
+
+    The temp directory is NOT the system temp directory:
+    ``get_temp_directory_path`` places it beside the *target file*, so this is a
+    property of whichever drive the user's footage sits on.
     """
-    target_dir = path or tempfile.gettempdir()
-    result: Dict[str, Any] = {
-        "path": target_dir,
-        "write_mb_s": None,
-        "read_mb_s": None,
-        "payload_mb": payload_mb,
-        "note": "",
+    if probe is None:
+        from roop.benchmark.hardware_probe import probe_disk_io as probe
+    try:
+        raw = probe(path, size_mb=max(1, int(payload_mb)))
+    except Exception as exc:                      # a probe must never abort a run
+        return {"path": path or "", "write_mb_s": None, "read_mb_s": None,
+                "payload_mb": payload_mb, "class": "unknown",
+                "note": "probe failed: %s: %s" % (type(exc).__name__, exc)}
+    raw = dict(raw or {})
+    ok = bool(raw.get("success"))
+    write = _number(raw.get("write_mb_per_sec")) if ok else None
+    read = _number(raw.get("read_mb_per_sec")) if ok else None
+    return {
+        "path": raw.get("temp_directory", "") or (path or ""),
+        "write_mb_s": round(write, 1) if write else None,
+        "read_mb_s": round(read, 1) if read else None,
+        "payload_mb": round(_number(raw.get("bytes_tested")) / (1024.0 ** 2), 1)
+                      or payload_mb,
+        "class": classify_volume(write),
+        # Read-back is warm in the page cache by construction, so it is an
+        # upper bound on the medium rather than its cold-read speed.
+        "read_is_cached": True,
+        "note": "" if ok else str(raw.get("error") or "probe reported failure"),
     }
-    try:
-        os.makedirs(target_dir, exist_ok=True)
-    except OSError as exc:
-        result["note"] = "temp path not writable: %s" % exc
-        return result
-
-    free_gb = 0.0
-    try:
-        free_gb = shutil.disk_usage(target_dir).free / (1024.0 ** 3)
-    except OSError:
-        pass
-    result["free_gb"] = round(free_gb, 2)
-    if free_gb and free_gb < (payload_mb / 1024.0) * 4:
-        result["note"] = "insufficient free space to probe safely"
-        return result
-
-    block = b"\x5a" * (1024 * 1024)
-    handle = None
-    probe_path = ""
-    try:
-        fd, probe_path = tempfile.mkstemp(prefix="roop_iotest_", dir=target_dir)
-        os.close(fd)
-        start = clock()
-        with open(probe_path, "wb") as handle:
-            for _ in range(payload_mb):
-                handle.write(block)
-            handle.flush()
-            os.fsync(handle.fileno())
-        elapsed = max(1e-6, clock() - start)
-        result["write_mb_s"] = round(payload_mb / elapsed, 1)
-
-        start = clock()
-        with open(probe_path, "rb") as handle:
-            while handle.read(1024 * 1024):
-                pass
-        elapsed = max(1e-6, clock() - start)
-        # Read-back is warm in the page cache by construction. It is reported
-        # as an upper bound, not as the cold-read speed of the medium.
-        result["read_mb_s"] = round(payload_mb / elapsed, 1)
-        result["read_is_cached"] = True
-    except OSError as exc:
-        result["note"] = "probe failed: %s" % exc
-    finally:
-        if probe_path:
-            try:
-                os.unlink(probe_path)
-            except OSError:
-                pass
-    result["class"] = classify_volume(result.get("write_mb_s"))
-    return result
 
 
 def classify_volume(write_mb_s: Optional[float]) -> str:

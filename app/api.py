@@ -3879,6 +3879,7 @@ import routes_queue as _routes_queue
 import routes_projects as _routes_projects
 import routes_export as _routes_export
 import routes_storage as _routes_storage
+import routes_benchmark as _routes_benchmark
 app.include_router(_routes_diagnostics.router)
 app.include_router(_routes_livecam.router)
 app.include_router(_routes_quality.router)
@@ -3887,11 +3888,13 @@ app.include_router(_routes_queue.router)
 app.include_router(_routes_projects.router)
 app.include_router(_routes_export.router)
 app.include_router(_routes_storage.router)
+app.include_router(_routes_benchmark.router)
 
 # Shared objects the route modules read. All are mutated in place and never
 # rebound here, so these bind one object rather than copying a value.
 _api_media.API_TEMP = API_TEMP
 _routes_diagnostics._progress = _progress
+_routes_benchmark.bind_progress(_progress)
 _routes_diagnostics.list_files_process = list_files_process
 _routes_livecam._progress = _progress
 _routes_quality._last_output = _last_output

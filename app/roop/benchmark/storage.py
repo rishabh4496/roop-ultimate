@@ -20,8 +20,12 @@ from typing import Any, Mapping
 
 
 LOGGER = logging.getLogger(__name__)
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-BENCHMARK_HISTORY_PATH = PROJECT_ROOT / ".roop" / "benchmark_history.json"
+# The application root -- the directory holding config.yaml, run_history.json
+# and facesets/. History sits beside the app's other machine-local state so a
+# benchmark measured here cannot be confused with one from another checkout.
+APP_ROOT = Path(__file__).resolve().parents[2]
+PROJECT_ROOT = APP_ROOT           # retained: external callers import this name
+BENCHMARK_HISTORY_PATH = APP_ROOT / ".roop" / "benchmark_history.json"
 _LOCK_TIMEOUT_SECONDS = 5.0
 _LOCK_POLL_SECONDS = 0.05
 

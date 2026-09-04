@@ -4,6 +4,7 @@ import { Section, Select, Slider, Toggle, TextInput } from './ui';
 import ThemeGallery from './ThemeGallery';
 import ThemeStudio from './ThemeStudio';
 import BenchmarkPanel from './BenchmarkPanel';
+import OptimizationBenchmark from './OptimizationBenchmark';
 import { allThemes } from '../themes';
 import { fmtVal } from './settingsDiff';
 import { FOCUS_SETTING_EVENT } from './settingsCatalog';
@@ -523,6 +524,7 @@ export default function Settings({ meta, settings, setSettings, notify }) {
           )}
           <Slider label="Max memory (GB)" info="0 = no limit" min={0} max={128} step={1} {...bind('memory_limit', 0)} />
 
+          <OptimizationBenchmark />
           <BenchmarkPanel saved={p.benchmark_results} currentSettings={p} onResult={onBenchmarkResult} notify={notify} />
         </FilterSection>
 

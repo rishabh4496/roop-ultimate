@@ -136,6 +136,22 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--execution-provider', default='cuda', help='Execution provider: cpu or cuda')
 parser.add_argument('--source', '--source-path', dest='source_reference_path', default=None,
                     help='source image or folder of same-identity reference images')
+# Headless benchmark. Runs the same engine, scoring and recommendation the
+# React panel drives -- the CLI renders the dashboard as text rather than
+# computing anything of its own.
+parser.add_argument('--benchmark', action='store_true',
+                    help='run the hardware benchmark and print the results '
+                         'dashboard, then exit without starting the UI')
+parser.add_argument('--benchmark-faces', dest='benchmark_faces',
+                    choices=['1', '2', 'all'], default='1',
+                    help='target face complexity: 1 face, 2 faces, or a crowd')
+parser.add_argument('--benchmark-mode', dest='benchmark_mode',
+                    choices=['quick', 'full'], default='quick',
+                    help='quick profile (~30s) or full stress and thermal test (~90s)')
+parser.add_argument('--benchmark-apply', dest='benchmark_apply',
+                    action='store_true',
+                    help='apply the recommended settings when the run finishes '
+                         '(without this the run is saved but nothing changes)')
 args = parser.parse_args()
 from roop import globals
 # Normalize to onnxruntime's exact provider names — naive concatenation makes
@@ -151,7 +167,78 @@ _PROVIDER_NAMES = {
 globals.execution_providers = [_PROVIDER_NAMES.get(
     args.execution_provider.lower(), args.execution_provider + 'ExecutionProvider')]
 
+def _run_cli_benchmark(faces: str, mode: str, apply_result: bool) -> int:
+    """Headless benchmark: same engine, same dashboard, rendered as text.
+
+    Deliberately does NOT start the API or the Gradio UI. A benchmark shares
+    the GPU with whatever else this process is doing, so a run that also served
+    a render would be measuring a busy card.
+    """
+    from roop.benchmark.ui_dashboard import (
+        DashboardReport, PreBenchmarkPrompt, apply_recommended_settings,
+        decline_recommended_settings, resolve_selection)
+    from roop.benchmark.runner import BenchmarkRunner
+
+    selection = resolve_selection(faces, mode)
+    runner = BenchmarkRunner()
+    prompt = PreBenchmarkPrompt.build(runner)
+    print("")
+    print(prompt.model_summary)
+    for warning in prompt.warnings:
+        print("  ! " + warning)
+    print("Workload: %s | %s | %d frames"
+          % (selection["face_label"], selection["mode_label"],
+             selection["frame_window"]))
+    print("")
+
+    state = {"last": 0.0}
+
+    def progress(current=0, total=0, fps=0.0, **_extra):
+        # One line every ~2 seconds. A per-frame print would dominate the
+        # measurement it is reporting on.
+        now = time.time()
+        if now - state["last"] < 2.0 and current < total:
+            return
+        state["last"] = now
+        pct = (100.0 * current / total) if total else 0.0
+        print("  [%5.1f%%] frame %d/%d  %.2f FPS"
+              % (pct, current, total, fps), flush=True)
+
+    try:
+        result = runner.run(workload=selection["workload_mode"],
+                            frame_window=selection["frame_window"],
+                            persist=True, progress_cb=progress)
+    except KeyboardInterrupt:
+        print("\nBenchmark cancelled.")
+        return 130
+    except Exception as exc:
+        print("\nBenchmark failed: %s: %s" % (type(exc).__name__, exc))
+        return 1
+
+    report = DashboardReport.from_result(result, selection)
+    print(report.summary_text())
+
+    if apply_result:
+        outcome = apply_recommended_settings(
+            recommended=report.recommended_settings, run_id=report.run_id)
+        print("  " + str(outcome.get("message", "")))
+        for key, value in (outcome.get("pending") or {}).items():
+            print("    pending (needs a restart): %s = %s" % (key, value))
+        for key, reason in (outcome.get("skipped") or {}).items():
+            print("    skipped: %s — %s" % (key, reason))
+    else:
+        outcome = decline_recommended_settings(run_id=report.run_id)
+        print("  " + str(outcome.get("message", "")))
+    print("")
+    return 0
+
+
 if __name__ == '__main__':
+    if getattr(args, 'benchmark', False):
+        import time
+        sys.exit(_run_cli_benchmark(args.benchmark_faces, args.benchmark_mode,
+                                    args.benchmark_apply))
+
     # Opt out of Windows background throttling (EcoQoS) and raise process
     # priority so analysis/processing speed is identical whether the app
     # window is foreground or covered by other windows.
