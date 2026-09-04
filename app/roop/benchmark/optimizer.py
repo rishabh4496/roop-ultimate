@@ -118,9 +118,12 @@ POOL_GAIN = 0.04
 # card sits near 100% "utilisation" at a third of its power limit, and
 # throughput collapses from 45.3 fps to 2-2.5 without ever raising an error.
 # A hang, not an OOM, is what this ceiling exists to prevent.
-VRAM_ADMISSION_CEILING = 0.85
+VRAM_ADMISSION_CEILING = 0.82
 # Balanced additionally refuses anything above this, per the preset spec.
 VRAM_BALANCED_CEILING = 0.80
+# Balanced targets this share of the best admissible arm: enough of the peak to
+# be worth having, cheap enough to be quiet and OOM-free on a long render.
+BALANCED_FPS_BAND = (0.90, 0.95)
 
 # TensorRT allocates context memory on the FIRST INFERENCE, not at session
 # build time, so a build-time free-VRAM check sees nothing.  Leave this much
@@ -534,6 +537,14 @@ class Axis:
     reachable: bool = True
     unreachable_reason: str = ""
     note: str = ""
+    # True when this axis can change OUTPUT rather than only speed, so
+    # throughput alone must not promote it. The faces_seen/faces_swapped guard
+    # does NOT cover this case: when cuDNN planning fails, the SWAP still
+    # succeeds and only the enhancer silently falls back to the original
+    # frame, so every count and every integrity check reads clean while the
+    # picture is wrong -- and the broken arm is the FASTEST, because not
+    # enhancing is cheap.
+    requires_output_check: bool = False
 
     def as_dict(self) -> dict:
         return asdict(self)
@@ -567,6 +578,11 @@ class SearchSpace:
     # which is what turns a 12 GB card into a paging one when several pooled
     # contexts each hold their own arena.
     ARENA_STRATEGIES = ("kNextPowerOfTwo", "kSameAsRequested")
+
+    # Ordered cheapest-to-verify first. DEFAULT is the safe fallback the
+    # per-model probe uses, so it leads: if the sweep never gets further, the
+    # device is left on the mode that is known to work everywhere.
+    CUDNN_ALGOS = ("DEFAULT", "HEURISTIC", "EXHAUSTIVE")
 
     # The three formats the application actually offers (ui/tabs/settings_tab.py
     # ``image_formats``).  Anything else would not be selectable by a user.
@@ -603,23 +619,94 @@ class SearchSpace:
                  tuple(v for v in self.ORT_INTRA
                        if v <= max(1, self.hardware.cpu_physical_cores)),
                  applies_to="ort_intra_threads",
-                 env_var="ROOP_ORT_INTRA_THREADS", phase="A",
+                 env_var="ROOP_ORT_INTRA_THREADS", phase="B",
                  note="threads inside one op; multiplies against worker_count"),
             Axis("ort_inter_threads", self.ORT_INTER,
                  applies_to="ort_inter_threads",
-                 env_var="ROOP_ORT_INTER_THREADS", phase="A",
+                 env_var="ROOP_ORT_INTER_THREADS", phase="B",
                  note="ops in parallel within one session"),
             Axis("opencv_threads",
                  tuple(v for v in (1, 2, 4)
                        if v <= max(1, self.hardware.cpu_physical_cores)),
                  applies_to="opencv_threads",
-                 env_var="ROOP_CV_THREADS", phase="A",
+                 env_var="ROOP_CV_THREADS", phase="B",
                  note="host pre/post-processing; competes with the workers"),
             Axis("arena_extend_strategy", self.ARENA_STRATEGIES,
                  applies_to="arena_extend_strategy",
                  env_var="ROOP_ORT_ARENA_STRATEGY", phase="B",
                  note="kSameAsRequested caps arena growth under pooled contexts"),
+            self.cudnn_axis(),
         ]
+
+    # The most dangerous axis in this package, and the reason it is not a
+    # plain throughput sweep.
+    #
+    # `cudnn_conv_algo_search` selects how ORT's CUDA EP plans convolutions.
+    # HEURISTIC (the shipped default) and EXHAUSTIVE both go through cuDNN's
+    # frontend graph API; DEFAULT uses the legacy path. Measured on an RTX 3060
+    # Laptop, HEURISTIC is 55-241% FASTER than DEFAULT across this app's
+    # models -- and on that same device it makes the CodeFormer family
+    # (Codeformer, Codeformer fp16, UltraMax, Restoreformer++) fail every
+    # convolution with CUDNN_FE HEURISTIC_QUERY_FAILED.
+    #
+    # The failure does not raise anywhere a benchmark would see it: ProcessMgr
+    # catches the per-frame GPU error and writes the ORIGINAL frame, and the
+    # swap audit still reports "swapped 100.0%". Four enhancers produced 60/60
+    # unswapped frames while every throughput and integrity check passed.
+    #
+    # So a sweep scored on FPS would pick HEURISTIC on exactly the machine
+    # where it silently disables the enhancer -- and it would be the FASTEST
+    # arm, because not enhancing is cheap. This axis is therefore:
+    #
+    #   * gated on `roop.cudnn_algo`'s per-device probe rather than measured
+    #     here. That probe already runs on the live device, tests only the
+    #     suspect models, and lowers just those -- a strictly better answer
+    #     than any single global value this search could promote;
+    #   * offered for measurement ONLY when the probe reports the device
+    #     healthy, so the sweep can never re-enable a mode the probe rejected.
+    def cudnn_axis(self) -> Axis:
+        healthy, reason = self.cudnn_probe_state()
+        return Axis(
+            "cudnn_conv_algo_search",
+            self.CUDNN_ALGOS if healthy else (),
+            applies_to="cudnn_conv_algo_search",
+            env_var="ROOP_CUDNN_CONV_ALGO", phase="B",
+            reachable=bool(healthy and self.hardware.cuda_available),
+            unreachable_reason=reason if not healthy else (
+                "" if self.hardware.cuda_available else
+                "no CUDA device: cuDNN convolution planning does not apply"),
+            requires_output_check=True,
+            note=("correctness-gated: scored on output equivalence first, "
+                  "throughput second"))
+
+    def cudnn_probe_state(self) -> Tuple[bool, str]:
+        """Ask the live-device probe whether the frontend path is usable.
+
+        Returns ``(healthy, reason)``.  A device where the probe has lowered
+        any model is NOT offered this axis: promoting a global value there
+        would either re-break the lowered model or force every other model
+        onto the slow path.
+        """
+        try:
+            from roop import cudnn_algo
+        except Exception as exc:
+            return False, ("cuDNN policy module unavailable (%s); the axis is "
+                           "not swept blind" % type(exc).__name__)
+        lowered = ()
+        for name in ("lowered_models", "downgraded_models", "unsafe_models"):
+            getter = getattr(cudnn_algo, name, None)
+            if callable(getter):
+                try:
+                    lowered = tuple(getter() or ())
+                    break
+                except Exception:
+                    continue
+        if lowered:
+            return False, (
+                "this device's cuDNN probe already lowered %s to DEFAULT; a "
+                "global value here would either re-break it or slow every "
+                "other model down" % ", ".join(sorted(map(str, lowered))))
+        return True, ""
 
     # -- memory ----------------------------------------------------------
     def memory_axes(self) -> List[Axis]:
@@ -943,8 +1030,25 @@ class BottleneckVerdict:
     dominant_stage: str = ""
     recommendation: str = ""
 
+    def badge_headline(self) -> str:
+        """A one-line label for the results screen.
+
+        States the limiter AND whether that is a healthy place to be, because
+        "GPU Bound" on its own reads as a fault when it is usually the goal.
+        """
+        return {
+            "GPU compute bound": "GPU Bound - Optimum VRAM Utilization",
+            "GPU VRAM bound": "VRAM Limited - Reduce Memory Pressure",
+            "CPU bound": "CPU Bound - GPU Underfed",
+            "Disk I/O bound": "Storage Bound - Slow Temp Volume",
+            "synchronization bound": "Sync Bound - Concurrency Limited",
+            "unknown": "Not Determined",
+        }.get(self.kind, self.kind)
+
     def as_dict(self) -> dict:
-        return asdict(self)
+        result = asdict(self)
+        result["headline"] = self.badge_headline()
+        return result
 
 
 class BottleneckAnalyzer:
@@ -966,12 +1070,30 @@ class BottleneckAnalyzer:
       not simultaneously collapsing, which is why VRAM pressure is tested first.
     """
 
-    GPU_COMPUTE_PCT = 92.0
-    GPU_COMPUTE_CPU_CEILING = 60.0
-    VRAM_PRESSURE_PCT = 90.0
+    GPU_COMPUTE_PCT = 90.0
+    GPU_COMPUTE_CPU_CEILING = 65.0
+    VRAM_PRESSURE_PCT = 85.0
     CPU_CORE_SATURATED_PCT = 99.0
     CPU_BOUND_GPU_CEILING = 70.0
     DISK_WAIT_PCT = 20.0
+
+    # The persisted vocabulary. `storage._BOTTLE_NECKS` accepts exactly these
+    # four, so a record carrying anything else is refused outright.
+    #
+    # The internal verdicts are deliberately RICHER than the four -- this
+    # analyzer also returns "unknown" and "synchronization bound", and those
+    # exist for a reason: the previous classifier fell through to a confident
+    # "I/O-bound" whenever telemetry was missing, and both validation GPUs
+    # reported it on runs whose decode cost 3.3 ms of a 244.8 ms frame.
+    # ``storage_name`` therefore refuses to invent one of the four for an
+    # undetermined verdict rather than rounding "I do not know" up to a
+    # diagnosis that will be shown to a user as fact.
+    STORAGE_NAMES = {
+        "GPU compute bound": "GPU Compute Bound",
+        "GPU VRAM bound": "GPU VRAM Bound",
+        "CPU bound": "CPU Bound",
+        "Disk I/O bound": "Disk I/O Bound",
+    }
     # A frame-time p99 this many times the median is hitching, not jitter.
     HITCH_RATIO = 3.0
 
@@ -1137,6 +1259,105 @@ class BottleneckAnalyzer:
                 or bool(measurement.queue_depths)
                 or measurement.cpu_utilization_pct > 0.0)
 
+    @classmethod
+    def storage_name(cls, verdict: "BottleneckVerdict") -> Optional[str]:
+        """The persisted name, or None when the verdict is undetermined.
+
+        Returning None is the point: a run whose limiter could not be
+        established must not be filed under one of the four as though it had
+        been. The caller decides what to do about an unstorable verdict; it
+        does not get silently rounded to the nearest label.
+        """
+        return cls.STORAGE_NAMES.get(verdict.kind)
+
+    def advise(self, verdict: "BottleneckVerdict", measurement: Measurement,
+               hardware: Optional[HardwareProfile] = None,
+               disk: Optional[Mapping[str, Any]] = None) -> Dict[str, Any]:
+        """Turn a verdict into advice, with the size of the win BOUNDED.
+
+        A results screen that says "+35% FPS" is making a promise, and this
+        project's rule is that an unmeasured number is labelled as one. So the
+        estimate here is not a guess: it is an UPPER BOUND derived from the
+        share of frame time the bottleneck actually consumed. Removing a
+        bottleneck cannot return more than the time it was taking, and it
+        usually returns less because something else becomes the limit -- three
+        stage-level wins here measured well in isolation and NEUTRAL end to
+        end, so the ceiling is reported as a ceiling.
+        """
+        advice: Dict[str, Any] = {
+            "headline": verdict.badge_headline(),
+            "action": verdict.recommendation,
+            "estimated_gain_pct": None,
+            "estimate_basis": "not estimated",
+            "confidence": verdict.confidence,
+        }
+        if verdict.kind == "Disk I/O bound":
+            wait = _number(measurement.disk_wait_pct)
+            current = classify_volume((disk or {}).get("write_mb_s"))
+            # The ceiling: if frames stopped waiting on disk entirely, the run
+            # gets back exactly the share of frame time it spent waiting.
+            ceiling = wait / max(1e-9, 100.0 - wait) * 100.0 if wait < 100 else None
+            advice["estimated_gain_pct"] = round(ceiling, 1) if ceiling else None
+            advice["estimate_basis"] = (
+                "upper bound: frame time spent waiting on disk was %.1f%%, so "
+                "eliminating that wait returns at most %.1f%%. A faster volume "
+                "reduces the wait, it does not remove it."
+                % (wait, ceiling or 0.0))
+            advice["action"] = (
+                "Move the target file and its temp directory off this %s volume "
+                "onto an NVMe drive, or keep the render on the zero-disk path "
+                "(leave keep_frames off)." % current)
+        elif verdict.kind == "GPU VRAM bound":
+            advice["action"] = (
+                "Reduce memory pressure before anything else: a smaller "
+                "context/pool size, or a lighter enhancer tier. Above this "
+                "line the driver pages over PCIe, which presents as a "
+                "slowdown rather than an error.")
+            advice["estimate_basis"] = (
+                "not estimated: a paging run's throughput is not a stable "
+                "baseline to project from")
+        elif verdict.kind == "CPU bound":
+            has_gpu = bool(hardware and (hardware.cuda_available
+                                         or hardware.vram_total_gb))
+            if not has_gpu:
+                # "The GPU is being starved" is nonsense on a machine that has
+                # none, and advice a user can see must not describe hardware
+                # they do not own.
+                advice["action"] = (
+                    "Every model is running on the CPU, so the CPU is the "
+                    "pipeline. ONNX intra/inter-op threading is the lever "
+                    "Stage B tunes here; beyond that, the only large win is a "
+                    "CUDA-capable GPU.")
+                advice["estimate_basis"] = (
+                    "not estimated: there is no idle accelerator to reclaim "
+                    "time from")
+                return advice
+            advice["action"] = (
+                "The GPU is being starved by host-side per-face work. Raise "
+                "worker threads toward the Stage A knee; if it is already "
+                "there, the remaining lever is reducing per-face host work on "
+                "the %s stage." % (verdict.dominant_stage or "dominant"))
+            gpu = measurement.gpu_utilization_pct
+            if gpu is not None and gpu > 0:
+                # If the GPU could be fed continuously it would do at most
+                # 100/gpu times the work it is doing now.
+                advice["estimated_gain_pct"] = round(
+                    (100.0 / max(1.0, gpu) - 1.0) * 100.0, 1)
+                advice["estimate_basis"] = (
+                    "upper bound: the GPU idled at %.0f%% utilization, so "
+                    "feeding it perfectly could not exceed %.0fx the current "
+                    "rate" % (gpu, 100.0 / max(1.0, gpu)))
+        elif verdict.kind == "GPU compute bound":
+            advice["action"] = (
+                "This is the healthy state. Only REMOVING GPU work moves it "
+                "further: a cheaper enhancer tier, a smaller detector canvas, "
+                "or fewer per-face passes. More threads, deeper queues and "
+                "larger pools redistribute thread time and have measured "
+                "neutral here.")
+            advice["estimate_basis"] = (
+                "not estimated: no idle resource to reclaim")
+        return advice
+
     @staticmethod
     def dominant_stage(measurement: Measurement) -> str:
         """The costliest non-aggregate stage.
@@ -1192,6 +1413,12 @@ class PresetBuilder:
     # 4 / 10 / 20 workers, trending slightly DOWN), so giving them up costs
     # very little and buys a quiet machine.
     LOW_POWER_THREAD_FRACTION = 0.5
+
+    # Balanced accepts the smallest footprint still inside this share of the
+    # best admissible arm. The band's floor (0.90) is what decides it: a
+    # tighter bar just reproduces Max Throughput, and the whole point of the
+    # preset is to trade a few percent for headroom and quiet.
+    BALANCED_GAIN = 1.0 - BALANCED_FPS_BAND[0]
 
     def build(self, baseline: RuntimeTuning, hardware: HardwareProfile,
               thread_curve: Sequence[Tuple[int, float]],
@@ -1264,7 +1491,8 @@ class PresetBuilder:
         balanced_violation = ""
         if balanced_curve:
             knee_level = knee([fps for _, fps in balanced_curve],
-                              [level for level, _ in balanced_curve], THREAD_GAIN)
+                              [level for level, _ in balanced_curve],
+                              self.BALANCED_GAIN)
             knee_fps = dict(balanced_curve).get(knee_level)
         else:
             knee_level, knee_fps = best_level, best_fps
@@ -1276,11 +1504,13 @@ class PresetBuilder:
         presets["balanced"] = Preset(
             "Balanced", apply(knee_level), knee_fps, vram_pct(knee_level),
             constraints=("peak VRAM <= %.0f%% of total" % (VRAM_BALANCED_CEILING * 100),
-                         "worker knee within %.0f%% of best" % (THREAD_GAIN * 100)),
+                         "within %.0f-%.0f%% of the best admissible arm"
+                         % (BALANCED_FPS_BAND[0] * 100, BALANCED_FPS_BAND[1] * 100)),
             rationale=(balanced_violation or
-                       ("smallest worker count within %.0f%% of the best "
-                        "admissible arm, so the thermal and VRAM cost is not "
-                        "paid for a fraction of a percent" % (THREAD_GAIN * 100))),
+                       ("smallest worker count still delivering %.0f%% of the "
+                        "best admissible arm, so the thermal and VRAM cost is "
+                        "not paid for a few percent of throughput"
+                        % (BALANCED_FPS_BAND[0] * 100))),
             provisional=not noise.measured,
             constraint_violated=bool(balanced_violation),
             violation=balanced_violation)
@@ -1297,7 +1527,7 @@ class PresetBuilder:
         if low_fps and knee_fps:
             cost_pct = (knee_fps - low_fps) / knee_fps * 100.0
         presets["stable_low_power"] = Preset(
-            "Stable / Low-Power", low_tuning, low_fps, vram_pct(low_level),
+            "Quiet / Low Power", low_tuning, low_fps, vram_pct(low_level),
             constraints=("worker count halved from the knee",
                          "queue depth and in-flight frames capped at 2"),
             rationale=("reduced thread and buffer footprint for background "
@@ -1308,6 +1538,51 @@ class PresetBuilder:
             provisional=not noise.measured)
 
         return presets
+
+
+# Internal preset key -> the key `storage._PRESET_KEYS` requires.
+#
+# The internal name is kept because the React panel, the dashboard and the
+# existing tests all address it; renaming it there to satisfy a storage schema
+# would be the schema dictating the UI's vocabulary. The translation lives
+# here, at the one boundary that needs it.
+_STORAGE_PRESET_KEYS = {
+    "max_throughput": "max_throughput",
+    "balanced": "balanced",
+    "stable_low_power": "quiet",
+}
+
+
+def to_storage_presets(presets: Mapping[str, Any],
+                       temp_format: str = "png") -> Dict[str, Dict[str, Any]]:
+    """Reshape presets into the exact record `storage` accepts.
+
+    Storage requires all three keys, each holding exactly ``threads``,
+    ``provider_options`` and ``temp_format``. Anything else -- including the
+    measured FPS and the rationale this package cares about -- is refused, so
+    the richer Preset stays in memory and only these three fields are filed.
+    """
+    result: Dict[str, Dict[str, Any]] = {}
+    for internal, stored in _STORAGE_PRESET_KEYS.items():
+        preset = presets.get(internal)
+        tuning = {}
+        if isinstance(preset, Mapping):
+            tuning = preset.get("tuning") or {}
+        elif preset is not None:
+            tuning = getattr(preset, "tuning", {}) or {}
+        provider_options = {
+            name: tuning[name] for name in
+            ("ort_intra_threads", "ort_inter_threads", "opencv_threads",
+             "arena_extend_strategy", "cudnn_conv_algo_search",
+             "gpu_mem_limit_gb", "trt_context_count")
+            if name in tuning and tuning[name] is not None}
+        result[stored] = {
+            "threads": max(1, _integer(tuning.get("worker_count"), 1)),
+            "provider_options": provider_options,
+            "temp_format": str(tuning.get("output_image_format")
+                               or temp_format or "png"),
+        }
+    return result
 
 
 # --------------------------------------------------------------------------
@@ -1541,9 +1816,16 @@ class GuidedOptimizer:
         self.log("Phase B: VRAM headroom -- budget %.2f GB of %.2f GB total"
                  % (budget_gb, total))
 
-        axes = [axis for axis in self.space.memory_axes() if axis.reachable]
-        skipped = [{"axis": axis.name, "reason": axis.unreachable_reason}
-                   for axis in self.space.memory_axes() if not axis.reachable]
+        # Stage B is the deep provider pass: ONNX threading and the arena
+        # allocator are tuned HERE, at the thread tier Stage A settled on,
+        # because their effect is conditional on the worker count they compete
+        # with. Memory axes ride along in the same staged loop.
+        candidate_axes = list(self.space.ort_axes()) + list(self.space.memory_axes())
+        axes = [axis for axis in candidate_axes if axis.reachable and axis.values]
+        skipped = [{"axis": axis.name,
+                    "reason": axis.unreachable_reason or "no values to try"}
+                   for axis in candidate_axes
+                   if not (axis.reachable and axis.values)]
 
         rows: List[Dict[str, Any]] = []
         accepted = dict(self.baseline.as_dict())
@@ -1606,6 +1888,15 @@ class GuidedOptimizer:
                 # Staged, not competitive: each axis is judged against the
                 # configuration currently in hand, and a promotion moves the
                 # reference so the next axis is judged against the new best.
+                if axis.requires_output_check and not _output_verified(measurement):
+                    row["admitted"] = False
+                    row["rejected"] = (
+                        "this axis can change the OUTPUT, and the measure "
+                        "callback reported no output-equivalence signal. It is "
+                        "not promoted on throughput alone: the failure mode is "
+                        "a silently unenhanced frame on the FASTEST arm.")
+                    self.log("    NOT promoted %s=%s -- unverified output"
+                             % (axis.name, value))
                 if row["admitted"] and noise.beats(measurement.fps, reference_fps):
                     # CONFIRM BEFORE PROMOTING. A single arm clearing the bar is
                     # not enough: the spread estimated from a handful of
@@ -1769,6 +2060,26 @@ class GuidedOptimizer:
         if not arms:
             return self._measurements[-1] if self._measurements else Measurement()
         return max(arms, key=lambda m: m.fps)
+
+
+def _output_verified(measurement: Measurement) -> bool:
+    """Did the measure callback prove this arm produced the RIGHT pixels?
+
+    Accepts any of the signals the harnesses in this repo already produce. An
+    absent signal is not a pass -- that is the whole lesson of the cuDNN
+    finding, where every count and integrity check read clean while four
+    enhancers wrote unenhanced frames.
+    """
+    raw = measurement.raw or {}
+    for key in ("output_equivalent", "output_verified", "identity_ok"):
+        if key in raw:
+            return _bool(raw[key], False)
+    for key in ("identity_cosine", "identity"):
+        if key in raw:
+            # A good swap sits near 0.41-0.45 here; an unswapped/unenhanced
+            # frame re-detects against its own original at ~0.96.
+            return _number(raw[key], 1.0) < 0.7
+    return False
 
 
 def _setting(settings: Any, name: str, default: Any = None) -> Any:

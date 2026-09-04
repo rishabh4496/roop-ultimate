@@ -553,16 +553,26 @@ class MemorySelectionTests(unittest.TestCase):
                    if row["admitted"])
         self.assertLessEqual(peak, MID_RANGE.vram_total_gb * VRAM_ADMISSION_CEILING)
 
-    def test_the_cpu_only_profile_searches_no_memory_axis_and_renders_nothing(self):
-        """A phase with nothing to compare must not spend an arm on a reference."""
+    def test_the_cpu_only_profile_skips_gpu_axes_but_still_tunes_onnx(self):
+        """No GPU memory to search -- but ONNX threading matters MORE here.
+
+        An earlier version of this test asserted Stage B did nothing at all on
+        a CPU-only box. That was wrong in a costly direction: intra/inter-op
+        threading is the main lever without a GPU, so skipping it would leave
+        the one machine that needs tuning untuned.
+        """
         machine = cpu_only_machine()
         report = optimize(machine)
-        self.assertEqual(report.phase_b["rows"], [])
-        self.assertEqual(report.phase_b["accepted"], {})
-        self.assertIsNone(report.phase_b["reference_fps"])
-        self.assertTrue(report.phase_b["skipped_axes"])
-        for call, _ in machine.calls:
-            self.assertNotIn("phase B", str(call))
+        searched = {row["axis"] for row in report.phase_b["rows"]}
+        self.assertTrue(searched, "Stage B searched nothing on a CPU-only box")
+        self.assertTrue(
+            {"ort_intra_threads", "ort_inter_threads"} & searched,
+            "ONNX threading was not tuned on the machine that needs it most")
+        skipped = {row["axis"] for row in report.phase_b["skipped_axes"]}
+        for gpu_axis in ("trt_context_count", "detmask_pool_size",
+                         "gpu_mem_limit_gb", "cudnn_conv_algo_search"):
+            self.assertIn(gpu_axis, skipped)
+        self.assertIsNotNone(report.phase_b["reference_fps"])
 
     def test_unreachable_axes_are_reported_with_a_reason(self):
         report = optimize(cpu_only_machine())
@@ -570,6 +580,109 @@ class MemorySelectionTests(unittest.TestCase):
                    for row in report.phase_b["skipped_axes"]}
         self.assertIn("trt_context_count", reasons)
         self.assertTrue(all(reasons.values()), "a skip with no reason is a mystery")
+
+
+class SpecComplianceTests(unittest.TestCase):
+    """The contracts this optimizer owes its two consumers."""
+
+    def test_the_safe_vram_ceiling_is_82_percent(self):
+        from roop.benchmark.optimizer import VRAM_ADMISSION_CEILING
+        self.assertAlmostEqual(VRAM_ADMISSION_CEILING, 0.82)
+
+    def test_every_verdict_maps_to_a_name_storage_accepts(self):
+        """A record carrying an unlisted bottleneck is rejected outright."""
+        import roop.benchmark.storage as storage
+        self.assertTrue(
+            set(BottleneckAnalyzer.STORAGE_NAMES.values())
+            <= storage._BOTTLE_NECKS)
+
+    def test_an_undetermined_verdict_is_not_rounded_to_a_diagnosis(self):
+        """`unknown` must not be filed as one of the four."""
+        verdict = BottleneckAnalyzer().classify(Measurement(), MID_RANGE)
+        self.assertEqual(verdict.kind, "unknown")
+        self.assertIsNone(BottleneckAnalyzer.storage_name(verdict))
+
+    def test_presets_serialise_into_the_exact_storage_shape(self):
+        import roop.benchmark.storage as storage
+        from roop.benchmark.optimizer import to_storage_presets
+        presets = optimize(mid_range_machine()).presets
+        stored = to_storage_presets(presets, "png")
+        self.assertEqual(set(stored), storage._PRESET_KEYS)
+        for name, value in stored.items():
+            with self.subTest(preset=name):
+                self.assertEqual(set(value), storage._PRESET_VALUE_KEYS)
+                self.assertGreaterEqual(value["threads"], 1)
+                self.assertTrue(value["temp_format"])
+
+    def test_balanced_lands_inside_the_declared_fps_band(self):
+        from roop.benchmark.optimizer import BALANCED_FPS_BAND
+        presets = optimize(mid_range_machine()).presets
+        best = presets["max_throughput"]["measured_fps"]
+        balanced = presets["balanced"]["measured_fps"]
+        if best and balanced:
+            self.assertGreaterEqual(balanced, best * BALANCED_FPS_BAND[0])
+
+    def test_a_cpu_only_machine_is_not_told_about_its_gpu(self):
+        """Advice a user reads must not describe hardware they do not own."""
+        machine = cpu_only_machine()
+        report = optimize(machine)
+        best = max((m for m in report.measurements if m["stable"]),
+                   key=lambda m: m["fps"])
+        measurement = Measurement.from_mapping(best)
+        analyzer = BottleneckAnalyzer()
+        verdict = analyzer.classify(measurement, machine.hardware)
+        advice = analyzer.advise(verdict, measurement, machine.hardware)
+        self.assertNotIn("GPU is being starved", advice["action"])
+        self.assertIn("CPU", advice["action"])
+
+    def test_disk_advice_is_bounded_by_the_measured_wait(self):
+        """The estimate is a ceiling derived from measured wait, not a guess."""
+        analyzer = BottleneckAnalyzer()
+        measurement = Measurement.from_mapping(
+            {"fps": 5.0, "gpu_utilization_pct": 30.0, "cpu_utilization_pct": 25.0,
+             "peak_vram_gb": 5.0, "disk_wait_pct": 35.0, "disk_write_mb_s": 95.0})
+        verdict = analyzer.classify(measurement, MID_RANGE,
+                                    {"write_mb_s": 95.0, "class": "fast-hdd-or-network"})
+        advice = analyzer.advise(verdict, measurement, MID_RANGE,
+                                 {"write_mb_s": 95.0})
+        self.assertEqual(verdict.kind, "Disk I/O bound")
+        # 35% of frame time waiting -> at most 35/65 = 53.8% back.
+        self.assertAlmostEqual(advice["estimated_gain_pct"], 53.8, places=1)
+        self.assertIn("upper bound", advice["estimate_basis"])
+
+    def test_an_output_affecting_axis_is_not_promoted_on_speed_alone(self):
+        """The cuDNN failure mode: the broken arm is also the fastest.
+
+        When cuDNN planning fails the SWAP still succeeds and only the enhancer
+        silently falls back to the original frame, so face counts and integrity
+        checks all read clean while the picture is wrong.
+        """
+        from roop.benchmark.optimizer import SearchSpace
+        space = SearchSpace(MID_RANGE)
+        cudnn = [a for a in space.ort_axes()
+                 if a.name == "cudnn_conv_algo_search"][0]
+        self.assertTrue(cudnn.requires_output_check)
+
+        def measure(config, frames):
+            faster = config.get("cudnn_conv_algo_search") == "HEURISTIC"
+            return {"fps": 30.0 if faster else 10.0, "frames": frames,
+                    "faces_seen": 100, "faces_swapped": 99,
+                    "peak_vram_gb": 5.0}          # no output signal at all
+
+        optimizer = GuidedOptimizer(
+            measure, hardware=MID_RANGE, workload=WORKLOAD,
+            settings=dict(SETTINGS),
+            baseline=RuntimeTuning(worker_count=4, trt_context_count=1))
+        report = optimizer.phase_b_vram(
+            4, NoiseFloor.from_replicates([10.0, 10.1, 10.05]), frames=600)
+        rows = [r for r in report["rows"]
+                if r["axis"] == "cudnn_conv_algo_search"]
+        self.assertTrue(rows, "the axis was never offered")
+        self.assertTrue(all(not r["admitted"] for r in rows))
+        self.assertTrue(any("change the OUTPUT" in r.get("rejected", "")
+                            for r in rows))
+        self.assertNotEqual(
+            report["accepted"].get("cudnn_conv_algo_search"), "HEURISTIC")
 
 
 class PresetTests(unittest.TestCase):
