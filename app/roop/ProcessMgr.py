@@ -15,7 +15,8 @@ from roop.face_util import get_first_face, get_all_faces, rotate_anticlockwise, 
 from roop.face_util import face_rotation_action, rotation_improves_upright
 from roop.face_util import swap_moved_the_face
 from roop import face_util
-from roop.processors.FaceSwapInsightFace import verify_tol_for as _swap_verify_tol_for
+from roop.processors.FaceSwapInsightFace import (verify_tol_for as _swap_verify_tol_for,
+                                                  batch_swap_enabled as _batch_swap_enabled)
 from roop import orientation
 from roop.face_util import estimate_norm, solve_pose_5pt, solve_pose_jaw_5pt
 from roop.face_util import offaxis_deg, swap_template_points
@@ -131,7 +132,7 @@ _DEBUG_POSE_LOG = False
 # cost. Zero overhead when disabled, so it never affects normal runs. A report
 # is printed once per video at the end of run_batch_inmem.
 # Opt-in batched swap: run the pixel-boost tiles through one inference call.
-_BATCH_SWAP = os.environ.get('ROOP_BATCH_SWAP', '0') == '1'
+_BATCH_SWAP = _batch_swap_enabled()
 
 # On by default: when the full-frame detect pass in the multi-face branch
 # below finds SOME faces but fewer than last frame had (one person went
@@ -2665,7 +2666,7 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
         """Build the cross-frame swap batcher when opted in. Requires >1 thread,
         a swapper exposing RunBatchMulti, and the batch-dynamic session
         (ROOP_BATCH_SWAP). Returns None otherwise (→ normal per-call swap)."""
-        if not swap_batcher.xframe_enabled() or threads <= 1:
+        if not swap_batcher.xframe_enabled(default=_BATCH_SWAP) or threads <= 1:
             return None
         if not _BATCH_SWAP:
             print("[BatchSwap] ROOP_BATCH_SWAP_XFRAME needs ROOP_BATCH_SWAP=1 "
@@ -2674,9 +2675,11 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
         swap_p = next((p for p in self.processors if getattr(p, 'type', None) == 'swap'), None)
         if swap_p is None or not hasattr(swap_p, 'RunBatchMulti'):
             return None
-        if getattr(swap_p, '_batch_unsupported', False) or getattr(swap_p, 'secondary', None) is not None:
-            # Composite swappers (like realswap) or fixed-batch models cannot batch across threads;
-            # running them through the batcher would serialize all workers into a single thread.
+        if getattr(swap_p, '_batch_unsupported', False):
+            # A model can explicitly reject batching after its first failed
+            # dynamic-shape inference. RealSwap is no longer included here:
+            # FaceSwapInsightFace.RunBatchMulti coalesces both its HyperSwap and
+            # HifiFace branches before performing the existing per-face mix.
             return None
         # The cross-frame batcher coalesces tiles from several worker threads
         # into one inference, so a mask cannot be attributed back to the request
@@ -2703,11 +2706,15 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
             max_b = _auto_batch_cap
         if 'ROOP_BATCH_SWAP_MAX' not in os.environ:
             # Cross-frame batching and independent contexts are alternatives
-            # for the same swap stage.  The automatic batch cap follows the
-            # measured/profiled face-concurrency budget instead of allowing
-            # both knobs to expand to the worker count.
-            max_b = min(max_b, max(2, int(
-                getattr(self, '_runtime_face_concurrency', max_b) or max_b)))
+            # for the same swap stage. Once the desktop batch path is enabled,
+            # the single batcher owns that stage, so its B=4 default need not
+            # be limited by the two independent TRT contexts in the normal
+            # pool. ROOP_BATCH_SWAP_MAX=8 remains the measured 4070 override.
+            if _BATCH_SWAP:
+                max_b = max(4, max_b)
+            else:
+                max_b = min(max_b, max(2, int(
+                    getattr(self, '_runtime_face_concurrency', max_b) or max_b)))
         max_b = max(2, min(max_b, threads))
         try:
             wait_ms = float(os.environ.get('ROOP_BATCH_SWAP_WAIT_MS', '2.0'))

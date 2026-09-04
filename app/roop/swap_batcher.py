@@ -24,8 +24,12 @@ import time
 import threading
 
 
-def xframe_enabled() -> bool:
-    return os.environ.get('ROOP_BATCH_SWAP_XFRAME', '0') == '1'
+def xframe_enabled(default: bool = False) -> bool:
+    """Use an explicit setting when supplied, otherwise follow the GPU profile."""
+    configured = os.environ.get('ROOP_BATCH_SWAP_XFRAME')
+    if configured is None:
+        return bool(default)
+    return configured.strip().lower() in ('1', 'true', 'yes', 'on')
 
 
 class _Request:

@@ -18,6 +18,34 @@ import signal
 import torch
 
 
+def _configure_torch_cuda_acceleration() -> None:
+    """Enable stable Tensor Core defaults for the desktop CUDA profile.
+
+    TF32 applies to PyTorch matmul/convolution kernels only; ONNX Runtime has
+    its own CUDA EP setting.  Keep the sub-7 GB profile unchanged and require
+    Ampere-or-newer Tensor Cores, so CPU, MPS, and older CUDA installations
+    retain their established numerical behavior.
+    """
+    try:
+        if not torch.cuda.is_available():
+            return
+        device_id = int(os.environ.get('ROOP_CUDA_DEVICE_ID', '0'))
+        if torch.cuda.get_device_capability(device_id) < (8, 0):
+            return
+        total_memory = torch.cuda.get_device_properties(device_id).total_memory
+        if total_memory < 10 * 1024 ** 3:
+            return
+        torch.backends.cuda.matmul.allow_tf32 = True
+        torch.backends.cudnn.allow_tf32 = True
+        torch.backends.cudnn.benchmark = True
+    except Exception:
+        # Backend selection remains functional even if a CUDA runtime is only
+        # partially initialised at import time.
+        pass
+
+
+_configure_torch_cuda_acceleration()
+
 import onnxruntime as ort
 available_providers = ort.get_available_providers()
 print("Available ONNX providers at startup:", available_providers)  # Debug

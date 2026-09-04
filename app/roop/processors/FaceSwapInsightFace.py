@@ -413,22 +413,72 @@ def verify_tol_for(swap_processor):
     return getattr(swap_processor, 'model_verify_tol', None)
 
 
-# Opt-in batched swap (ROOP_BATCH_SWAP=1): runs multiple face crops through one
-# inference call instead of one-at-a-time, to better saturate the GPU. The stock
-# swap ONNX is fixed batch-1; we relax the input/output batch dim to symbolic so
-# the session (and TensorRT engine) accept batches. Verified to produce output
-# numerically identical to per-crop runs.
-_BATCH_SWAP = os.environ.get('ROOP_BATCH_SWAP', '0') == '1'
+# Batch the desktop profile by default, while retaining an explicit override
+# and the conservative batch-1 laptop profile.  The transformed RealSwap graph
+# is measured safe at B=8 on the 12 GB RTX 4070; B=4 is the normal cap so the
+# rest of the pipeline still has room for detection, GPEN, and UltraMax.
+def batch_swap_enabled() -> bool:
+    configured = os.environ.get('ROOP_BATCH_SWAP')
+    if configured is not None:
+        return configured.strip().lower() in ('1', 'true', 'yes', 'on')
+    try:
+        import torch
+        return (torch.cuda.is_available() and
+                torch.cuda.get_device_properties(0).total_memory >= 10 * 1024 ** 3)
+    except Exception:
+        return False
+
+
+_BATCH_SWAP = batch_swap_enabled()
 
 
 def _relax_batch_dim(model):
-    """Mutate `model` in place, giving every graph input/output a symbolic
-    batch dimension so the session accepts batches > 1."""
+    """Make an exported swap graph genuinely batch-dynamic.
+
+    Setting only the public input/output dimensions is not enough for the
+    HyperSwap export used by RealSwap.  Its generator contains Constant ->
+    Reshape nodes such as ``[1, 1024, 1, 1]``.  Those constants collapse an
+    otherwise dynamic batch into the channel axis, so the next convolution sees
+    ``B * C`` channels (4096 at B=8) and fails.  In ONNX Reshape, a zero means
+    "copy the input dimension at this position".  Replacing *only the leading
+    batch axis of shapes consumed by Reshape nodes preserves every spatial and
+    channel dimension while carrying the actual batch through the graph.
+    """
+    # Some older exporters (notably GPEN) also list initializers as graph
+    # inputs.  They are weights, not runtime tensors, and assigning them a
+    # symbolic leading dimension corrupts the graph's declared convolution
+    # shapes.  Only genuine runtime inputs participate in batching.
+    initializer_names = {initializer.name for initializer in model.graph.initializer}
     for t in list(model.graph.input) + list(model.graph.output):
+        if t.name in initializer_names:
+            continue
         dims = t.type.tensor_type.shape.dim
         if len(dims):
             dims[0].dim_param = 'N'
             dims[0].ClearField('dim_value')
+
+    constants = {
+        node.output[0]: node for node in model.graph.node
+        if node.op_type == 'Constant' and node.output and node.attribute
+    }
+    for node in model.graph.node:
+        if node.op_type != 'Reshape' or len(node.input) < 2:
+            continue
+        constant = constants.get(node.input[1])
+        if constant is None:
+            continue
+        tensor_attr = next((attr for attr in constant.attribute
+                            if attr.name == 'value' and attr.HasField('t')),
+                           None)
+        if tensor_attr is None:
+            continue
+        shape = onnx.numpy_helper.to_array(tensor_attr.t)
+        if shape.ndim != 1 or shape.size < 2 or int(shape[0]) != 1:
+            continue
+        dynamic_shape = np.array(shape, copy=True)
+        dynamic_shape[0] = 0  # ONNX Reshape: copy input dimension zero.
+        tensor_attr.t.CopyFrom(onnx.numpy_helper.from_array(
+            dynamic_shape, tensor_attr.t.name))
 
 
 def _freeze_convtranspose_reshape(model):
@@ -766,13 +816,13 @@ class FaceSwapInsightFace():
                 self.secondary = sub
                 self.secondary_template = SWAP_MODELS[secondary_key].get(
                     "template", "arcface")
-                # Batching would have to coalesce two nets' crops in step, and
-                # the primary here (hyperswap) cannot batch anyway — its export
-                # has an internal reshape baked to batch=1. Declaring it up
-                # front means RunBatch/RunBatchMulti route straight to the
-                # sequential path, which mixes correctly, instead of each run
-                # paying for one doomed inference to discover the same thing.
-                self._batch_unsupported = True
+                # Both branches are batch-capable when ROOP_BATCH_SWAP is on.
+                # `_relax_batch_dim` also patches HyperSwap's internal
+                # Constant->Reshape batch axes; merely relaxing its public I/O
+                # dimensions is insufficient.  RunBatchMulti keeps the two
+                # nets' results indexed together before applying the existing
+                # per-face affine and eyelid-band composite.
+                self._batch_unsupported = False
 
     @staticmethod
     def _graph_emits_mask(session, output_size):
@@ -1784,6 +1834,54 @@ class FaceSwapInsightFace():
             self.secondary = None
             return None
 
+    def _prepare_secondary_batch_item(self, target_face: Face, temp_frame):
+        """Prepare one RealSwap secondary request without invoking its session.
+
+        Alignment remains per-face because the plate-space affine and the
+        profile safety gate are face-specific.  The expensive HifiFace inference
+        is deliberately deferred so ``RunBatchMulti`` can submit all valid
+        crops together.  ``None`` has the same meaning as `_run_secondary`:
+        retain the HyperSwap primary for that one face.
+        """
+        sec = self.secondary
+        kps = getattr(target_face, 'kps', None)
+        if sec is None or kps is None:
+            return None
+        yaw = self._target_yaw_deg(target_face)
+        if yaw is not None and abs(yaw) >= self._LATERAL_SKIP_DEG:
+            with self._route_lock:
+                self._lateral_skips += 1
+            return None
+        size = int(temp_frame.shape[-1])
+        try:
+            ctx = getattr(self._plate_tls, 'ctx', None)
+            if ctx is None and target_face is not None:
+                ctx = (getattr(target_face, 'plate_ctx', None) if hasattr(target_face, 'plate_ctx')
+                       else target_face.get('plate_ctx') if isinstance(target_face, dict) else None)
+            with self._route_lock:
+                if ctx is not None:
+                    self._plate_crops += 1
+                else:
+                    self._derived_crops += 1
+            if ctx is not None:
+                from roop.face_util import align_crop
+                plate, M_a = ctx
+                crop_b, M_b = align_crop(plate, kps, size,
+                                         mode=self.secondary_template)
+                blob_b = self._prepare_blob(crop_b, sec)
+                back = self._compose_affine(M_a, cv2.invertAffineTransform(M_b))
+            else:
+                to_b = self._crop_to_crop(kps, size, self.model_template,
+                                          self.secondary_template)
+                blob = self._renormalize(temp_frame, self, sec)
+                blob_b = self._warp_chw(blob[0], to_b, size)[np.newaxis]
+                back = cv2.invertAffineTransform(to_b)
+            return np.ascontiguousarray(blob_b, dtype=np.float32), back
+        except Exception as exc:
+            print(f"[swap] realswap: could not prepare secondary batch item "
+                  f"({exc!r}); using primary for that face.", flush=True)
+            return None
+
     def Run(self, source_face: Face, target_face: Face, temp_frame: Frame) -> Frame:
         # RealSwap runs BOTH of its nets on EVERY face and composites them by
         # region (see "The composition rule" above): hyperswap is the base, and
@@ -1908,39 +2006,12 @@ class FaceSwapInsightFace():
         # getattr, not attribute access: `Run` guards the same way, because a
         # subclass that drives these methods over a stub session (the batch
         # fallback tests) never runs __init__.
-        if self._batch_unsupported or getattr(self, 'secondary', None) is not None:
+        if self._batch_unsupported:
             return self._sequential_fallback(
                 [(source_face, target_face, t) for t in temp_frames])
-        latent = self._compute_source_input(source_face)
-        if latent is None:
-            # Image-source model with no source crop → no-op (return the input
-            # target crops unchanged), matching Run's fallback.
-            return [t[0] for t in temp_frames]
-        img_batch = np.concatenate(temp_frames, axis=0).astype(np.float32)   # [B,3,H,W]
-        latent_batch = np.repeat(latent, img_batch.shape[0], axis=0)         # [B,512] or [B,3,Hs,Ws]
-        feed = {self.image_input_name: img_batch, self.embed_input_name: latent_batch}
-        try:
-            ort_outs = self._infer(feed)
-            out = ort_outs[0]   # [B,3,H,W]
-            self._stash_masks(ort_outs, out.shape[0])
-            return [out[i] for i in range(out.shape[0])]
-        except Exception as batch_err:
-            # If batch inference fails (e.g. TRT shape restriction or a model
-            # whose graph has an internal reshape baked to batch=1 — some
-            # exports can't be made batch-dynamic just by relaxing the graph's
-            # declared input/output shapes), fall back gracefully to running
-            # single face swaps sequentially. This is a property of the loaded
-            # MODEL, not a transient condition, so remember it and stop
-            # attempting the batched path for the rest of this model's
-            # lifetime — otherwise every remaining frame pays for a doomed
-            # inference call (and a matching TensorRT/CUDA error) before
-            # falling back anyway.
-            self._batch_unsupported = True
-            print(f"[swap] '{self.loaded_model_key}' does not support batched inference "
-                  f"({batch_err!r}); disabling batching for the rest of this run "
-                  f"(falling back to sequential single-frame swaps).")
-            return self._sequential_fallback(
-                [(source_face, target_face, t) for t in temp_frames])
+        return self.RunBatchMulti([
+            (source_face, target_face, frame) for frame in temp_frames
+        ])
 
     def RunBatchMulti(self, requests: list) -> list:
         """Like RunBatch but each crop carries its OWN source identity (for
@@ -1950,7 +2021,7 @@ class FaceSwapInsightFace():
         # getattr, not attribute access: `Run` guards the same way, because a
         # subclass that drives these methods over a stub session (the batch
         # fallback tests) never runs __init__.
-        if self._batch_unsupported or getattr(self, 'secondary', None) is not None:
+        if self._batch_unsupported:
             return self._sequential_fallback(requests)
         latents = [self._compute_source_input(src) for src, _tgt, _blob in requests]
         if any(l is None for l in latents):
@@ -1963,7 +2034,40 @@ class FaceSwapInsightFace():
             ort_outs = self._infer(feed)
             out = ort_outs[0]
             self._stash_masks(ort_outs, out.shape[0])
-            return [out[i] for i in range(out.shape[0])]
+            primary = [out[i] for i in range(out.shape[0])]
+
+            # RealSwap is a paired composite.  Run HifiFace over every eligible
+            # crop in one inference, then reapply the established per-face
+            # plate/template transform and band mask.  The primary masks above
+            # remain published; secondary masks are intentionally drained and
+            # discarded, exactly as `_run_secondary` does for the B=1 path.
+            sec = getattr(self, 'secondary', None)
+            if sec is None:
+                return primary
+            prepared = [self._prepare_secondary_batch_item(tgt, blob)
+                        for _src, tgt, blob in requests]
+            indexed = [(index, item) for index, item in enumerate(prepared)
+                       if item is not None]
+            if not indexed:
+                return primary
+            secondary_requests = [
+                (requests[index][0], requests[index][1], item[0])
+                for index, item in indexed
+            ]
+            secondary_out = sec.RunBatchMulti(secondary_requests)
+            sec.take_masks()
+            for (index, item), other in zip(indexed, secondary_out):
+                if other is None:
+                    continue
+                other = np.asarray(other, dtype=np.float32)
+                if bool(sec.model_denormalize) != bool(self.model_denormalize):
+                    other = ((other + 1.0) / 2.0 if sec.model_denormalize
+                             else other * 2.0 - 1.0)
+                other = self._warp_chw(other, item[1], int(requests[index][2].shape[-1]))
+                primary[index] = self._mix_outputs(
+                    primary[index], other, int(requests[index][2].shape[-1]),
+                    target_face=requests[index][1])
+            return primary
         except Exception as batch_err:
             # See RunBatch above: a model-level incompatibility, not transient.
             self._batch_unsupported = True

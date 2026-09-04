@@ -371,6 +371,13 @@ class _FakeSecondary:
         self.masks = [np.full((256, 256), 0.25, np.float32)]   # "my" face mask
         return np.zeros((3, 256, 256), np.float32)
 
+    def RunBatchMulti(self, requests):
+        self.runs += 1
+        self.masks = [np.full((256, 256), 0.25, np.float32)
+                      for _ in requests]
+        return [np.full((3, 256, 256), 2.0, np.float32)
+                for _ in requests]
+
     def take_masks(self):
         m, self.masks = self.masks, None
         return m
@@ -428,39 +435,55 @@ class TestPublishedMaskIsThePrimarySown(unittest.TestCase):
 
 
 class TestBatchedPathsStillComposite(unittest.TestCase):
-    """A batched path that runs only the primary would BE a different swap model.
+    """A RealSwap batch must coalesce both nets and preserve primary masks.
 
-    Note this pins a property, not a fix: `Load` already sets
-    `_batch_unsupported = True` whenever a secondary is configured, so the
-    composite has always taken the sequential fallback. These tests exist so
-    that if that flag is ever cleared — it means "this model cannot batch",
-    which is a different proposition and could legitimately change — the eye
-    band does not start disappearing silently. `mix_summary` could not report
-    it either: it counts only faces that reached `_mix_outputs`, so it would
-    print nothing rather than "0 of N".
+    Scheduling is isolated from separately-tested affine/mask geometry. The
+    regression guard catches both primary-only batching and secondary-mask
+    leakage, which otherwise look correct in a final pasted frame.
     """
 
-    def _spy(self):
+    def _batched_processor(self):
         p = _proc()
         p.secondary = _FakeSecondary()
-        calls = []
-        p._sequential_fallback = lambda reqs: calls.append(reqs) or [
-            r[2][0] for r in reqs]
-        return p, calls
+        p._batch_unsupported = False
+        p.image_input_name = 'target'
+        p.embed_input_name = 'source'
+        p._compute_source_input = lambda _src: np.zeros((1, 512), np.float32)
+        p._infer = lambda feed: [
+            np.ones((feed['target'].shape[0], 3, 256, 256), np.float32),
+            np.full((feed['target'].shape[0], 1, 256, 256), 0.75, np.float32),
+        ]
+        p._prepare_secondary_batch_item = lambda _tgt, blob: (
+            blob, np.array([[1., 0., 0.], [0., 1., 0.]], np.float32))
+        p._warp_chw = lambda image, _back, _size: image
+        p._mix_outputs = lambda base, other, _size, target_face=None: base + other
+        return p
 
-    def test_runbatch_defers_to_the_compositing_path(self):
-        p, calls = self._spy()
-        crops = [np.zeros((1, 3, 256, 256), np.float32) for _ in range(3)]
-        p.RunBatch(_Face(), _Face(), crops)
-        self.assertEqual(len(calls), 1, 'RunBatch ran the primary alone')
-        self.assertEqual(len(calls[0]), 3)
+    def test_runbatchmulti_coalesces_primary_and_secondary(self):
+        p = self._batched_processor()
+        requests = [(_Face(), _Face(), np.zeros((1, 3, 256, 256), np.float32))
+                    for _ in range(3)]
+        out = p.RunBatchMulti(requests)
+        self.assertEqual(p.secondary.runs, 1,
+                         'RealSwap must submit HifiFace crops as one batch')
+        self.assertEqual(len(out), 3)
+        # Fake HifiFace is normalized differently from the primary, so its
+        # value 2.0 is converted to 1.5 before the test compositor adds it.
+        self.assertTrue(all(np.allclose(item, 2.5) for item in out),
+                        'a batched RealSwap result lost one branch')
+        masks = p.take_masks()
+        self.assertEqual(len(masks), 3)
+        self.assertTrue(all(np.allclose(mask, 0.75) for mask in masks),
+                        'secondary masks must not replace the primary paste mask')
+        self.assertIsNone(p.secondary.masks,
+                          'secondary masks must be drained after a batched run')
 
-    def test_runbatchmulti_defers_to_the_compositing_path(self):
-        p, calls = self._spy()
-        reqs = [(_Face(), _Face(), np.zeros((1, 3, 256, 256), np.float32))
-                for _ in range(2)]
-        p.RunBatchMulti(reqs)
-        self.assertEqual(len(calls), 1, 'RunBatchMulti ran the primary alone')
+    def test_runbatch_delegates_to_the_paired_batch_path(self):
+        p = self._batched_processor()
+        crops = [np.zeros((1, 3, 256, 256), np.float32) for _ in range(2)]
+        out = p.RunBatch(_Face(), _Face(), crops)
+        self.assertEqual(p.secondary.runs, 1)
+        self.assertEqual(len(out), 2)
 
     def test_single_net_models_keep_their_batching(self):
         # The opt-out is the composite's, not every model's: batching is a real
