@@ -544,23 +544,22 @@ def face_roll_degrees(face: Any) -> float:
 
 
 def face_yaw_pitch(face: Any) -> Tuple[float, float]:
-    """Read target pose stamped by tracker, with PnP solver fallback."""
+    """Read pose in the same convention as preview overlays and mask gates."""
     def _value(name):
         return face.get(name) if isinstance(face, dict) else getattr(face, name, None)
     try:
         yaw, pitch = _value('_adaptive_yaw'), _value('_adaptive_pitch')
-        if yaw is not None and pitch is not None:
+        if (yaw is not None and pitch is not None
+                and np.isfinite([float(yaw), float(pitch)]).all()):
             return float(yaw), float(pitch)
     except (TypeError, ValueError):
         pass
-    kps = _value('kps')
-    lm68 = _value('landmark_3d_68')
-    if lm68 is None:
-        lm68 = _value('landmarks_68')
-    if lm68 is None:
-        lm68 = _value('landmarks')
-    yaw, pitch, _ = estimate_head_pose_pnp(lm68 if lm68 is not None else kps)
-    return yaw, pitch
+    # Dense detector landmarks have a different geometry/convention from the
+    # PnP reference. On b1.mp4 that fit reported ~90-degree profiles for frontal
+    # faces. Use the established five-point solver, also used by ProcessMgr.
+    from roop.face_util import solve_pose_5pt
+    pose = solve_pose_5pt(_value('kps'))
+    return (float(pose[0]), float(pose[1])) if pose is not None else (0.0, 0.0)
 
 
 def profile_anchors(face: Any, yaw_degrees: float) -> Optional[np.ndarray]:
@@ -653,91 +652,44 @@ def adaptive_alignment_matrix(kps: np.ndarray, image_size: int, mode: str = "arc
 
 def canonicalize_face_alignment(image: Frame, face: Any, image_size: int, mode: str,
                                 dst: Optional[np.ndarray] = None):
-    """Pre-upright a rolled face and return its canonical crop plus paste affine.
+    """Align once to the swap model's training template, at every head angle.
 
-    Applies:
-    1. Roll pre-rotation when abs(roll) > 45°.
-    2. Adaptive alignment solver:
-       - |yaw| < 45 and |pitch| < 30: standard 5-point ArcFace/Umeyama affine transform
-       - |yaw| >= 45 (profile): 3-point stable anchor with virtual landmark synthesis
-         maintaining strict 112x112 (RealSwap) and 256x256 (GPEN) crop geometry.
-    3. Exponential Moving Average (EMA) / Kalman filter (alpha = 0.85) across sequential
-       video frames to eliminate micro-jitter without adding temporal lag.
+    A similarity fit already removes roll without squeezing either axis.
+    Replacing it with an estimated ear/nose/chin template displaced the eyes
+    and mouth, leaving doubled features after masking on b1.mp4. Keep the
+    detector's five points and the requested model template for profiles too.
+
+    Temporal smoothing belongs to ProcessMgr's run/track-scoped landmark
+    stabilizers. A global affine EMA mixed unrelated previews, crop sizes and
+    parallel workers sharing a numeric track ID.
     """
     def _value(name):
         return face.get(name) if isinstance(face, dict) else getattr(face, name, None)
     kps = np.asarray(_value('kps'), dtype=np.float32).reshape(5, 2)
     bbox = np.asarray(_value('bbox'), dtype=np.float32).reshape(4)
-    lm68 = _value('landmark_3d_68')
-    if lm68 is None:
-        lm68 = _value('landmarks_68')
-    if lm68 is None:
-        lm68 = _value('landmarks')
-    if lm68 is not None:
-        lm68_arr = np.asarray(lm68, dtype=np.float32)
-        lm68 = lm68_arr[:, :2] if lm68_arr.ndim == 2 and lm68_arr.shape[1] >= 2 else None
     _, roll_deg = compute_canonical_roll_angle(kps)
     center = ((float(bbox[0]) + float(bbox[2])) * 0.5,
               (float(bbox[1]) + float(bbox[3])) * 0.5)
 
+    # Preserve the diagnostic rotation factors. They describe the equivalent
+    # upright coordinate system; pixels are sampled only by paste_matrix below.
     R, inv_R, applied = build_canonical_rotation_matrix(center, roll_deg, threshold_deg=45.0)
 
-    h, w = image.shape[:2]
-    if applied:
-        upright = cv2.warpAffine(image, R, (w, h), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
-        upright_kps = transform_points(kps, R)
-        # On a rolled face (>45 deg), the 2D/3D-68 model running on the unrotated crop hallucinates an upright
-        # orientation, making its landmarks inverted. Do not use unrotated 68-pt landmarks for upright alignment.
-        upright_68 = None
-    else:
-        upright = image
-        upright_kps = kps
-        upright_68 = lm68
-
-    # Read target pose stamped by tracker or estimate via PnP
     yaw, pitch = face_yaw_pitch(face)
-    if yaw == 0.0 and pitch == 0.0 and _value('_adaptive_yaw') is None and _value('yaw') is None:
-        yaw, pitch, _ = estimate_head_pose_pnp(upright_68 if upright_68 is not None else upright_kps, (h, w))
-
-    # Check for explicit profile anchors on face
-    raw_anchors = _value('profile_anchors')
-    if raw_anchors is None:
-        raw_anchors = profile_anchors(face, yaw)
-    anchors = None
-    if raw_anchors is not None:
-        try:
-            anch_arr = np.asarray(raw_anchors, dtype=np.float32).reshape(3, 2)
-            if np.all(np.isfinite(anch_arr)):
-                anchors = transform_points(anch_arr, R) if applied else anch_arr
-        except Exception:
-            anchors = None
-
-    local_matrix, alignment_kind = adaptive_alignment_matrix(
-        upright_kps, image_size=image_size, mode=mode,
-        yaw_degrees=yaw, pitch_degrees=pitch, anchors=anchors,
-        landmarks_68=upright_68, face=face)
-
-    # Apply Exponential Moving Average (EMA) filter (alpha = 0.85) to eliminate micro-jitter
-    track_id = _face_field(face, '_track_id', _face_field(face, 'track_id'))
-    frame_idx = _face_field(face, 'frame_idx', _face_field(face, 'last_seen_frame'))
-    if track_id is not None:
-        local_matrix = DEFAULT_AFFINE_EMA.filter(local_matrix, track_id=track_id, frame_index=frame_idx)
-
-    paste_matrix = compute_composite_forward(local_matrix, R)
-    inv_local = cv2.invertAffineTransform(local_matrix).astype(np.float32)
-    inv_paste = compute_composite_inverse(inv_R, inv_local)
+    paste_matrix = estimate_norm(kps, image_size, mode)
+    inv_paste = cv2.invertAffineTransform(paste_matrix)
 
     if dst is not None:
-        cv2.warpAffine(upright, local_matrix, (image_size, image_size), dst=dst,
+        cv2.warpAffine(image, paste_matrix, (image_size, image_size), dst=dst,
                        flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
         aligned = dst
     else:
-        aligned = cv2.warpAffine(upright, local_matrix, (image_size, image_size),
+        aligned = cv2.warpAffine(image, paste_matrix, (image_size, image_size),
                                  flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
     return aligned, paste_matrix, {
         'yaw': yaw, 'pitch': pitch, 'roll': roll_deg, 'pre_rotation': R,
         'inverse_pre_rotation': inv_R, 'applied_roll_prerotation': applied,
-        'alignment_kind': alignment_kind, 'inv_paste_matrix': inv_paste,
+        'alignment_kind': 'five_point', 'inv_paste_matrix': inv_paste,
     }
 
 

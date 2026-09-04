@@ -67,6 +67,15 @@ verified. The audit and the per-feature decisions are in
 - **Diagnostics:** a live GPU/VRAM/CPU HUD, a structured runtime report with 14 named sections, a thread/pool benchmark runner, a standing environment-health card and a read-only update compatibility check.
 - **Screens:** Home (`#/home`), Face Swap (`#/faceswap`), Batch Matrix (`#/batch`), Processing (`#/processing`), Face Manager (`#/facemgr`), Editor (`#/extras`), Outputs (`#/gallery`), History (`#/history`), Settings (`#/settings`). Each is a deep link, so a Pinokio tab switch returns you where you were.
 
+### Preview face alignment
+
+Preview and export align faces to the selected swap model's five-point training
+template at every angle. Profile estimates do not replace that template with
+ear/chin anchors, which can displace eyes and mouths and produce doubled features.
+Roll correction uses one image resample; video stabilization stays scoped to each
+render's tracks. After an alignment update, restart the app and refresh the preview
+to discard images cached by the previous version. Existing look settings are retained.
+
 ### Offline
 The client has no external URLs at all: fonts are self-hosted and nothing is
 fetched from a CDN. Every processing feature runs against the loopback backend.

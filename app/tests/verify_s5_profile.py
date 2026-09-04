@@ -75,8 +75,8 @@ class S5ProfileVerificationTest(unittest.TestCase):
 
                 if abs(yaw) >= 45.0:
                     profile_faces_found += 1
-                    self.assertEqual(info_112['alignment_kind'], 'profile_3pt')
-                    self.assertEqual(info_256['alignment_kind'], 'profile_3pt')
+                    self.assertEqual(info_112['alignment_kind'], 'five_point')
+                    self.assertEqual(info_256['alignment_kind'], 'five_point')
                     print(f"  Frame {frame_idx}: Profile detected! Yaw={yaw:.1f}°, Pitch={pitch:.1f}°, kind={info_112['alignment_kind']}, AR={ar_112:.3f}")
 
         cap.release()
