@@ -21,6 +21,7 @@ import contextlib
 import threading
 from dataclasses import dataclass
 from queue import Empty, Queue
+import roop.globals
 
 
 def _detect_vram_gb() -> float:
@@ -593,6 +594,8 @@ def _resolve_pools():
 
 
 def pool_size(model_key=None, input_shape=None, batch_size=1) -> int:
+    if getattr(roop.globals, 'is_preview', False):
+        return 1
     requested = _resolve_pools()['trt']
     if not model_key:
         return requested
@@ -621,6 +624,8 @@ def providers_without_tensorrt(providers):
 
 
 def pooling_enabled() -> bool:
+    if getattr(roop.globals, 'is_preview', False):
+        return False
     return pool_size() >= 2
 
 
@@ -637,6 +642,8 @@ def pooling_enabled() -> bool:
 # _auto_pool_defaults): 0 on small cards = original single-instance + global lock
 # behaviour, byte-for-byte. Set ROOP_DETMASK_POOL explicitly to override.
 def detmask_pool_size(model_key=None, input_shape=None, batch_size=1) -> int:
+    if getattr(roop.globals, 'is_preview', False):
+        return 1
     requested = _resolve_pools()['detmask']
     if not model_key:
         return requested
@@ -647,6 +654,8 @@ def detmask_pool_size(model_key=None, input_shape=None, batch_size=1) -> int:
 
 
 def detmask_pooling_enabled() -> bool:
+    if getattr(roop.globals, 'is_preview', False):
+        return False
     return detmask_pool_size() >= 2
 
 
@@ -662,6 +671,8 @@ def detector_pool_size(model_key=None, input_shape=None, batch_size=1) -> int:
     tight: retinaface_r50.onnx is ~104MB per instance (yoloface_8n is ~9MB and
     yunet ~350KB, so those are close to free).
     """
+    if getattr(roop.globals, 'is_preview', False):
+        return 1
     raw = os.environ.get('ROOP_DETECTOR_POOL')
     runtime_raw = raw is None or raw == ''
     if runtime_raw:
@@ -749,6 +760,8 @@ def _auto_expression_pool() -> int:
 
 
 def expression_pool_size(model_key=None, input_shape=None, batch_size=1) -> int:
+    if getattr(roop.globals, 'is_preview', False):
+        return 1
     # `_resolve` takes (env_name, auto_value, gb). This passed only two for as
     # long as it has existed, so ANY call raised TypeError -- which nothing
     # caught. It stayed hidden because the expression stage only initialises
@@ -763,6 +776,8 @@ def expression_pool_size(model_key=None, input_shape=None, batch_size=1) -> int:
 
 
 def expression_pooling_enabled() -> bool:
+    if getattr(roop.globals, 'is_preview', False):
+        return False
     return expression_pool_size() >= 2
 
 

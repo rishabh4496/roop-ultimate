@@ -1047,6 +1047,7 @@ def live_swap(frame, options, input_facesets=None):
     if frame is None:
         return frame
 
+    roop.globals.is_preview = True
     if not getattr(options, 'show_face_masking', False):
         if fast_path_bypass(frame, target_faces=roop.globals.TARGET_FACES,
                             threshold=getattr(options, 'face_distance_threshold', None)):
@@ -1177,9 +1178,12 @@ def batch_process_regular(output_method, files:list[ProcessEntry], masking_engin
                           stabilize_face=False, stabilize_method='one_euro', stabilize_min_cutoff=0.05, stabilize_beta=0.02,
                           stabilize_enhancer=False, stabilize_enhancer_strength=0.5,
                           stabilize_mask=False, stabilize_mask_strength=0.5,
-                          input_facesets=None) -> None:
+                          stabilize_landmarks=True, stabilize_hf_texture=False,
+                          stabilize_hf_texture_weight=0.15,
+                          input_facesets=None, **kwargs) -> None:
     global clip_text, process_mgr
 
+    roop.globals.is_preview = False
     release_resources()
     limit_resources()
     if progress is None:
@@ -1210,7 +1214,10 @@ def batch_process_regular(output_method, files:list[ProcessEntry], masking_engin
                               stabilize_enhancer=stabilize_enhancer,
                               stabilize_enhancer_strength=stabilize_enhancer_strength,
                               stabilize_mask=stabilize_mask,
-                              stabilize_mask_strength=stabilize_mask_strength)
+                              stabilize_mask_strength=stabilize_mask_strength,
+                              stabilize_landmarks=stabilize_landmarks,
+                              stabilize_hf_texture=stabilize_hf_texture,
+                              stabilize_hf_texture_weight=stabilize_hf_texture_weight)
     process_mgr.initialize(facesets, roop.globals.TARGET_FACES, options)
 
     # Stash per-frame mask map and batch options on globals so batch_process can access them
@@ -1224,6 +1231,9 @@ def batch_process_regular(output_method, files:list[ProcessEntry], masking_engin
     roop.globals._batch_use_frontalization= use_frontalization
     roop.globals._batch_front_threshold   = frontalization_threshold
     roop.globals._batch_swap_model        = swap_model
+    roop.globals._batch_stabilize_landmarks = stabilize_landmarks
+    roop.globals._batch_stabilize_hf_texture = stabilize_hf_texture
+    roop.globals._batch_stabilize_hf_texture_weight = stabilize_hf_texture_weight
 
     batch_process(output_method, files, use_new_method)
     return

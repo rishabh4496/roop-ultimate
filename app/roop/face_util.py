@@ -194,6 +194,38 @@ def _build_face_analyser():
     return fa
 
 
+def _cleanup_fa_pool(pool):
+    if not pool:
+        return
+    for fa in pool:
+        try:
+            models = getattr(fa, 'models', None)
+            if isinstance(models, dict):
+                for m in list(models.values()):
+                    if hasattr(m, 'session'):
+                        m.session = None
+                models.clear()
+            if getattr(fa, 'lm68_model', None) is not None:
+                if hasattr(fa.lm68_model, 'session'):
+                    fa.lm68_model.session = None
+                fa.lm68_model = None
+            if getattr(fa, 'det_model', None) is not None:
+                if hasattr(fa.det_model, 'session'):
+                    fa.det_model.session = None
+                fa.det_model = None
+        except Exception:
+            pass
+    import gc
+    gc.collect()
+    try:
+        import torch
+        if torch.cuda.is_available():
+            with torch.cuda.device(roop.globals.cuda_device_id):
+                torch.cuda.empty_cache()
+    except Exception:
+        pass
+
+
 def _ensure_face_analyser():
     """(Re)build the FaceAnalysis pool when missing, when the requested module set
     changed, or when the detection resolution (face_detector_size) or threshold changed. Returns
@@ -205,7 +237,12 @@ def _ensure_face_analyser():
     cur_det_thresh = getattr(roop.globals, 'face_detector_threshold', 0.60)
     cur_engine = _current_engine()
     cur_lm68_lazy = bool(getattr(roop.globals, 'lm68_lazy', False))
+    target_pool_size = (session_pool.detmask_pool_size(
+        model_key='detector:face-analysis',
+        input_shape=(1, 3, _desired_det_size(), _desired_det_size()))
+        if session_pool.detmask_pooling_enabled() else 1)
     if (FACE_ANALYSER_POOL
+            and len(FACE_ANALYSER_POOL) == target_pool_size
             and roop.globals.g_current_face_analysis == roop.globals.g_desired_face_analysis
             and _ANALYSER_DET_SIZE == _desired_det_size()
             and _ANALYSER_DET_THRESH == cur_det_thresh
@@ -214,11 +251,18 @@ def _ensure_face_analyser():
         return FACE_ANALYSER
     with THREAD_LOCK_ANALYSER:
         if (not FACE_ANALYSER_POOL
+                or len(FACE_ANALYSER_POOL) != target_pool_size
                 or roop.globals.g_current_face_analysis != roop.globals.g_desired_face_analysis
                 or _ANALYSER_DET_SIZE != _desired_det_size()
                 or _ANALYSER_DET_THRESH != cur_det_thresh
                 or _ANALYSER_ENGINE != cur_engine
                 or _ANALYSER_LM68_LAZY != cur_lm68_lazy):
+            if FACE_ANALYSER_POOL:
+                old_pool = list(FACE_ANALYSER_POOL)
+                FACE_ANALYSER_POOL = []
+                FACE_ANALYSER = None
+                _ANALYSER_Q = None
+                _cleanup_fa_pool(old_pool)
             roop.globals.g_current_face_analysis = roop.globals.g_desired_face_analysis
             _ANALYSER_DET_SIZE = _desired_det_size()
             _ANALYSER_DET_THRESH = cur_det_thresh
@@ -226,10 +270,7 @@ def _ensure_face_analyser():
             _ANALYSER_LM68_LAZY = cur_lm68_lazy
             if roop.globals.CFG is not None and roop.globals.CFG.force_cpu:
                 print("Forcing CPU for Face Analysis")
-            n = (session_pool.detmask_pool_size(
-                model_key='detector:face-analysis',
-                input_shape=(1, 3, _ANALYSER_DET_SIZE, _ANALYSER_DET_SIZE))
-                 if session_pool.detmask_pooling_enabled() else 1)
+            n = target_pool_size
             FACE_ANALYSER_POOL = [_build_face_analyser() for _ in range(n)]
             FACE_ANALYSER = FACE_ANALYSER_POOL[0]
             q = Queue()
@@ -244,9 +285,11 @@ def _ensure_face_analyser():
 def release_face_analyser():
     global FACE_ANALYSER, FACE_ANALYSER_POOL, _ANALYSER_Q
     with THREAD_LOCK_ANALYSER:
+        old_pool = list(FACE_ANALYSER_POOL)
         FACE_ANALYSER = None
         FACE_ANALYSER_POOL = []
         _ANALYSER_Q = None
+    _cleanup_fa_pool(old_pool)
     try:
         from roop.yoloface import release_detector
         release_detector()

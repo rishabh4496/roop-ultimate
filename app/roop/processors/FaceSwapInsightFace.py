@@ -973,7 +973,8 @@ class FaceSwapInsightFace():
             return onnxruntime.InferenceSession(
                 self._model_arg, get_onnx_session_options(), providers=providers)
         self.model_swap_insightface = _build()
-        self._io_bindings.clear()
+        if getattr(self, '_io_bindings', None) is not None:
+            self._io_bindings.clear()
         if self.pool is not None:
             old_pool = self.pool
             self.pool = None
@@ -1077,6 +1078,8 @@ class FaceSwapInsightFace():
             # keeps the preallocated CUDA buffers associated with the exact ORT
             # / TensorRT execution context that owns the call.
             if os.environ.get('ROOP_ORT_IO_BINDING', '1') != '0':
+                if getattr(self, '_io_bindings', None) is None:
+                    self._io_bindings = {}
                 key = id(session)
                 binding = self._io_bindings.get(key)
                 if binding is None:
@@ -2097,7 +2100,8 @@ class FaceSwapInsightFace():
         if self.pool is not None:
             self.pool.release()
             self.pool = None
-        self._io_bindings.clear()
+        if getattr(self, '_io_bindings', None) is not None:
+            self._io_bindings.clear()
         del self.model_swap_insightface
         self.model_swap_insightface = None
         self.emap = None

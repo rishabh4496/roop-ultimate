@@ -80,6 +80,43 @@ class AuditRegressionTests(unittest.TestCase):
         self.assertIn('self._lateral_skips += 1', source)
         self.assertIn('if yaw is not None and abs(yaw) >= self._LATERAL_SKIP_DEG:', source)
 
+    def test_batch_process_regular_accepts_stabilization_parameters(self):
+        tree = ast.parse(_read('roop', 'core.py'))
+        fn = next(node for node in ast.walk(tree)
+                  if isinstance(node, ast.FunctionDef) and node.name == 'batch_process_regular')
+        arg_names = [arg.arg for arg in fn.args.args]
+        for param in ('stabilize_landmarks', 'stabilize_hf_texture', 'stabilize_hf_texture_weight'):
+            self.assertIn(param, arg_names, f'batch_process_regular must accept {param}')
+        self.assertIsNotNone(fn.args.kwarg, 'batch_process_regular must accept **kwargs')
+
+    def test_preview_mode_disables_session_pools(self):
+        import roop.globals
+        from roop import session_pool as sp
+        orig = getattr(roop.globals, 'is_preview', False)
+        try:
+            roop.globals.is_preview = True
+            self.assertFalse(sp.pooling_enabled())
+            self.assertFalse(sp.detmask_pooling_enabled())
+            self.assertFalse(sp.expression_pooling_enabled())
+            self.assertEqual(sp.pool_size(), 1)
+            self.assertEqual(sp.detmask_pool_size(), 1)
+            self.assertEqual(sp.detector_pool_size(), 1)
+            self.assertEqual(sp.expression_pool_size(), 1)
+        finally:
+            roop.globals.is_preview = orig
+
+    def test_release_face_analyser_resets_pool(self):
+        source = _read('roop', 'face_util.py')
+        self.assertIn('_cleanup_fa_pool(old_pool)', source)
+        self.assertIn('FACE_ANALYSER_POOL = []', source)
+        try:
+            from roop import face_util
+            face_util.release_face_analyser()
+            self.assertIsNone(face_util.FACE_ANALYSER)
+            self.assertEqual(len(face_util.FACE_ANALYSER_POOL), 0)
+        except ImportError:
+            pass
+
 
 if __name__ == '__main__':
     unittest.main()

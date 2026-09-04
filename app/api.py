@@ -2729,104 +2729,55 @@ def _apply_parser_region_settings(payload):
 @app.post("/api/preview")
 def preview(payload: dict = Body(...)):
     """Render the selected target frame, optionally with a live face swap."""
-    _update_mask_offsets_from_payload(payload)
-    idx = int(payload.get("index", state.selected_target_index))
-    frame = int(payload.get("frame", 1))
-    fake = bool(payload.get("fake_preview", False))
-
-    if idx >= len(list_files_process):
-        return JSONResponse(status_code=404, content={"message": "no target"})
-
-    filename = list_files_process[idx].filename
-    if util.is_video(filename) or filename.lower().endswith("gif") or util.is_animated_webp(filename):
-        current_frame = get_video_frame(filename, frame)
-    else:
-        current_frame = get_image_frame(filename)
-    if current_frame is None:
-        return JSONResponse(status_code=404, content={"message": "no frame"})
-
-    # Apply detection resolution before any detection so the face-box overlay and
-    # the swap both use the chosen det_size (640 accurate / 320 fast).
-    roop_globals.default_det_size = bool(payload.get("default_det_size", roop_globals.CFG.default_det_size))
-    roop_globals.face_detector_size = str(payload.get("face_detector_size", roop_globals.CFG.face_detector_size))
-    roop_globals.face_detector_threshold = float(payload.get("face_detector_threshold", roop_globals.CFG.face_detector_threshold))
-    roop_globals.face_detector_nms = float(payload.get("face_detector_nms", roop_globals.CFG.face_detector_nms))
-    roop_globals.refine_landmarks = bool(payload.get("refine_landmarks", getattr(roop_globals.CFG, "refine_landmarks", False)))
-    roop_globals.swap_model_mask_strength = float(payload.get("swap_model_mask_strength", getattr(roop_globals.CFG, "swap_model_mask_strength", 0.0)))
-    roop_globals.jaw_reshape = bool(payload.get("jaw_reshape", getattr(roop_globals.CFG, "jaw_reshape", False)))
-    roop_globals.jaw_reshape_strength = float(payload.get("jaw_reshape_strength", getattr(roop_globals.CFG, "jaw_reshape_strength", 0.5)))
-    roop_globals.detail_transfer_strength = float(payload.get("detail_transfer_strength", getattr(roop_globals.CFG, "detail_transfer_strength", 0.0)))
-    roop_globals.mask_edge_mode = payload.get("mask_edge_mode", getattr(roop_globals.CFG, "mask_edge_mode", "gaussian"))
-    roop_globals.boundary_illumination_strength = float(payload.get("boundary_illumination_strength", getattr(roop_globals.CFG, "boundary_illumination_strength", 0.0)))
-    roop_globals.identity_detail_strength = float(payload.get("identity_detail_strength", getattr(roop_globals.CFG, "identity_detail_strength", 0.0)))
-    roop_globals.expression_restore_strength = float(payload.get("expression_restore_strength", getattr(roop_globals.CFG, "expression_restore_strength", 0.0)))
-    roop_globals.expression_restore_region = payload.get("expression_restore_region", getattr(roop_globals.CFG, "expression_restore_region", "all"))
-    roop_globals.rescue_small_faces = bool(payload.get("rescue_small_faces", getattr(roop_globals.CFG, "rescue_small_faces", False)))
-    roop_globals.detector_engine = payload.get("detector_engine", getattr(roop_globals.CFG, "detector_engine", "scrfd"))
-    roop_globals.detector_scale_pyramid = payload.get("detector_scale_pyramid", getattr(roop_globals.CFG, "detector_scale_pyramid", "auto"))
-    _apply_merger_settings(payload)
-    _apply_eye_restore_settings(payload)
-    _apply_parser_region_settings(payload)
-    _apply_enhancer_settings(payload)
-    _apply_target_appearance_settings(payload)
-    _apply_temporal_compositing_settings(payload)
-    _apply_temporal_quality_settings(payload)
-    _apply_lipsync_settings(payload)
-
-    faces_list = []
-    person_ids = []
-    kps_list = []
-    pose_list = []
+    roop_globals.is_preview = True
     try:
-        from roop.face_util import get_all_faces, solve_pose_5pt
-        faces = get_all_faces(current_frame)
-        if faces:
-            for f in faces:
-                bbox = f["bbox"].astype(int).tolist()
-                faces_list.append(bbox)
-                # 5-point keypoints, so a mask painted in frame space can carry
-                # ref_kps and be warped into the aligned face crop.
-                k = f.get("kps") if isinstance(f, dict) else getattr(f, "kps", None)
-                kps = np.asarray(k).astype(float).tolist() if k is not None else None
-                kps_list.append(kps)
-                # Head pose for the debug overlay.
-                #
-                # Solved HERE rather than in the browser on purpose. The whole
-                # value of showing an angle is that it is the same number the
-                # pipeline gates on — the non-frontal mask router and the
-                # angle-bank intake. A second implementation in
-                # JS would drift from this one and quietly become a liar, which
-                # is worse than showing nothing.
-                pose = solve_pose_5pt(k) if k is not None else None
-                pose_list.append([round(float(v), 1) for v in pose] if pose is not None else None)
-            person_ids = _preview_person_ids(idx, faces)
-    except Exception:
-        pass
+        _update_mask_offsets_from_payload(payload)
+        idx = int(payload.get("index", state.selected_target_index))
+        frame = int(payload.get("frame", 1))
+        fake = bool(payload.get("fake_preview", False))
 
-    if not fake or len(roop_globals.INPUT_FACESETS) < 1:
-        return {"image": _bgr_to_preview_dataurl(current_frame), "faces": faces_list, "person_ids": person_ids, "kps": kps_list, "pose": pose_list}
+        if idx >= len(list_files_process):
+            return JSONResponse(status_code=404, content={"message": "no target"})
 
-    try:
-        from roop.core import live_swap, get_processing_plugins
-        from roop.ProcessOptions import ProcessOptions
+        filename = list_files_process[idx].filename
+        if util.is_video(filename) or filename.lower().endswith("gif") or util.is_animated_webp(filename):
+            current_frame = get_video_frame(filename, frame)
+        else:
+            current_frame = get_image_frame(filename)
+        if current_frame is None:
+            return JSONResponse(status_code=404, content={"message": "no frame"})
+
+        # Apply detection resolution before any detection so the face-box overlay and
+        # the swap both use the chosen det_size (640 accurate / 320 fast).
+        roop_globals.default_det_size = bool(payload.get("default_det_size", roop_globals.CFG.default_det_size))
+        roop_globals.face_detector_size = str(payload.get("face_detector_size", roop_globals.CFG.face_detector_size))
+        roop_globals.face_detector_threshold = float(payload.get("face_detector_threshold", roop_globals.CFG.face_detector_threshold))
+        roop_globals.face_detector_nms = float(payload.get("face_detector_nms", roop_globals.CFG.face_detector_nms))
+        roop_globals.refine_landmarks = bool(payload.get("refine_landmarks", getattr(roop_globals.CFG, "refine_landmarks", False)))
+        roop_globals.swap_model_mask_strength = float(payload.get("swap_model_mask_strength", getattr(roop_globals.CFG, "swap_model_mask_strength", 0.0)))
+        roop_globals.jaw_reshape = bool(payload.get("jaw_reshape", getattr(roop_globals.CFG, "jaw_reshape", False)))
+        roop_globals.jaw_reshape_strength = float(payload.get("jaw_reshape_strength", getattr(roop_globals.CFG, "jaw_reshape_strength", 0.5)))
+        roop_globals.detail_transfer_strength = float(payload.get("detail_transfer_strength", getattr(roop_globals.CFG, "detail_transfer_strength", 0.0)))
+        roop_globals.mask_edge_mode = payload.get("mask_edge_mode", getattr(roop_globals.CFG, "mask_edge_mode", "gaussian"))
+        roop_globals.boundary_illumination_strength = float(payload.get("boundary_illumination_strength", getattr(roop_globals.CFG, "boundary_illumination_strength", 0.0)))
+        roop_globals.identity_detail_strength = float(payload.get("identity_detail_strength", getattr(roop_globals.CFG, "identity_detail_strength", 0.0)))
+        roop_globals.expression_restore_strength = float(payload.get("expression_restore_strength", getattr(roop_globals.CFG, "expression_restore_strength", 0.0)))
+        roop_globals.expression_restore_region = payload.get("expression_restore_region", getattr(roop_globals.CFG, "expression_restore_region", "all"))
+        roop_globals.rescue_small_faces = bool(payload.get("rescue_small_faces", getattr(roop_globals.CFG, "rescue_small_faces", False)))
+        roop_globals.detector_engine = payload.get("detector_engine", getattr(roop_globals.CFG, "detector_engine", "scrfd"))
+        roop_globals.detector_scale_pyramid = payload.get("detector_scale_pyramid", getattr(roop_globals.CFG, "detector_scale_pyramid", "auto"))
+        _apply_merger_settings(payload)
+        _apply_eye_restore_settings(payload)
+        _apply_parser_region_settings(payload)
+        _apply_enhancer_settings(payload)
+        _apply_target_appearance_settings(payload)
+        _apply_temporal_compositing_settings(payload)
+        _apply_temporal_quality_settings(payload)
+        _apply_lipsync_settings(payload)
 
         roop_globals.face_swap_mode = translate_swap_mode(payload.get("detection", "All faces"))
         roop_globals.selected_enhancer = payload.get("enhancer", "None")
         _apply_adaptive_enhancer_settings(payload)
-        # FALL BACK TO CFG, NOT TO A LITERAL -- these five used to default to
-        # module constants while the run path (see `swap`, below) defaulted the
-        # same five to the user's config. A payload that omits a key therefore
-        # PREVIEWED A DIFFERENT STACK THAN IT WOULD RENDER, silently, and the
-        # UI omits a key whenever its settings value is undefined (JSON.stringify
-        # drops those) -- an older frontend, a partially-rehydrated settings
-        # object, a hand-built grid payload.
-        #
-        # The visible one was `autorotate`: it defaulted to True here against a
-        # config carrying False, so the preview could rotate the frame to stand a
-        # face up and the render would not, and the previewed face angle simply
-        # did not match what came out. The others were quieter but the same:
-        # fidelity 0.5 vs 0.55, blend 0.8 vs 1.0, and a no-face action of "Retry
-        # rotated" against a configured "Use untouched original frame".
         roop_globals.codeformer_fidelity = float(payload.get(
             "codeformer_fidelity", getattr(roop_globals.CFG, "codeformer_fidelity", 0.5)))
         roop_globals.distance_threshold = float(payload.get("face_distance", roop_globals.CFG.max_face_distance))
@@ -2842,45 +2793,95 @@ def preview(payload: dict = Body(...)):
         roop_globals.execution_threads = roop_globals.CFG.max_threads
         roop_globals.color_transfer_mode = payload.get("color_transfer_mode", getattr(roop_globals.CFG, "color_transfer_mode", "rct"))
         roop_globals.sam2_model_size = payload.get("sam2_model_size", getattr(roop_globals.CFG, "sam2_model_size", "tiny"))
-        # refine_landmarks / rescue_small_faces / detector_engine already set
-        # above (before the box-overlay detection) so both paths agree.
 
-        swap_model = payload.get("swap_model", "inswapper")
-        mask_engine = map_mask_engines(payload.get("mask_engine", "None"),
-                                       payload.get("mask_engine_2", "None"),
-                                       payload.get("clip_text", ""))
-        face_index = state.selected_input_face_index
-        if len(roop_globals.INPUT_FACESETS) <= face_index:
-            face_index = 0
-        face_mapping = payload.get("face_mapping")
-        mapped = mapped_facesets(face_mapping, roop_globals.face_swap_mode)
-        face_index = mapped_selected_index(face_mapping, mapped, face_index)
+        # Pre-align analysis modules so get_all_faces and live_swap build the exact same FaceAnalysis set
+        pose_features_need_68 = (bool(payload.get("use_3d_recon", False))
+                                 or bool(payload.get("use_source_bank", False))
+                                 or bool(payload.get("use_frontalization", False))
+                                 or getattr(roop_globals, 'refine_landmarks', False))
+        modules = ["landmark_2d_106", "detection", "recognition"]
+        if pose_features_need_68 or getattr(roop_globals, 'autorotate_faces', False):
+            modules.insert(0, "landmark_3d_68")
+        roop_globals.lm68_lazy = (not pose_features_need_68
+                                  and bool(getattr(roop_globals, 'autorotate_faces', False)))
+        if roop_globals.face_swap_mode in ("all_female", "all_male"):
+            modules.append("genderage")
+        roop_globals.g_desired_face_analysis = modules
 
-        options = ProcessOptions(
-            get_processing_plugins(mask_engine, swap_model=swap_model),
-            roop_globals.distance_threshold, roop_globals.blend_ratio,
-            roop_globals.face_swap_mode, face_index, payload.get("clip_text", ""),
-            # Manual brush mask from the preview box. ProcessMgr parses this JSON
-            # ({"<faceset>": {exclude, canonical, ref_kps}}); '' means none.
-            payload.get("imagemask") or None,
-            int(payload.get("num_swap_steps", 1)), roop_globals.subsample_size,
-            bool(payload.get("show_mask_offsets", False)),
-            bool(payload.get("restore_original_mouth", False)),
-            use_3d_recon=bool(payload.get("use_3d_recon", False)),
-            use_source_bank=bool(payload.get("use_source_bank", False)),
-            use_frontalization=bool(payload.get("use_frontalization", False)),
-            frontalization_threshold=float(payload.get("frontalization_threshold", 30.0)),
-            swap_model=swap_model,
-            stabilize_method=payload.get("stabilize_method", "one_euro"),
-            stabilize_face=bool(payload.get("stabilize_face", False)))
+        faces_list = []
+        person_ids = []
+        kps_list = []
+        pose_list = []
+        try:
+            from roop.face_util import get_all_faces, solve_pose_5pt
+            faces = get_all_faces(current_frame)
+            if faces:
+                for f in faces:
+                    bbox = f["bbox"].astype(int).tolist()
+                    faces_list.append(bbox)
+                    # 5-point keypoints, so a mask painted in frame space can carry
+                    # ref_kps and be warped into the aligned face crop.
+                    k = f.get("kps") if isinstance(f, dict) else getattr(f, "kps", None)
+                    kps = np.asarray(k).astype(float).tolist() if k is not None else None
+                    kps_list.append(kps)
+                    # Head pose for the debug overlay.
+                    pose = solve_pose_5pt(k) if k is not None else None
+                    pose_list.append([round(float(v), 1) for v in pose] if pose is not None else None)
+                person_ids = _preview_person_ids(idx, faces)
+        except Exception:
+            pass
 
-        swapped = live_swap(current_frame, options, input_facesets=mapped)
-        if swapped is None:
+        if not fake or len(roop_globals.INPUT_FACESETS) < 1:
             return {"image": _bgr_to_preview_dataurl(current_frame), "faces": faces_list, "person_ids": person_ids, "kps": kps_list, "pose": pose_list}
-        return {"image": _bgr_to_preview_dataurl(swapped), "faces": faces_list, "person_ids": person_ids, "kps": kps_list, "pose": pose_list}
-    except Exception:
-        traceback.print_exc()
-        return {"image": _bgr_to_preview_dataurl(current_frame), "faces": faces_list, "person_ids": person_ids, "kps": kps_list, "pose": pose_list, "error": "swap failed"}
+
+        try:
+            from roop.core import live_swap, get_processing_plugins
+            from roop.ProcessOptions import ProcessOptions
+
+            swap_model = payload.get("swap_model", "inswapper")
+            mask_engine = map_mask_engines(payload.get("mask_engine", "None"),
+                                           payload.get("mask_engine_2", "None"),
+                                           payload.get("clip_text", ""))
+            face_index = state.selected_input_face_index
+            if len(roop_globals.INPUT_FACESETS) <= face_index:
+                face_index = 0
+            face_mapping = payload.get("face_mapping")
+            mapped = mapped_facesets(face_mapping, roop_globals.face_swap_mode)
+            face_index = mapped_selected_index(face_mapping, mapped, face_index)
+
+            options = ProcessOptions(
+                get_processing_plugins(mask_engine, swap_model=swap_model),
+                roop_globals.distance_threshold, roop_globals.blend_ratio,
+                roop_globals.face_swap_mode, face_index, payload.get("clip_text", ""),
+                # Manual brush mask from the preview box. ProcessMgr parses this JSON
+                # ({"<faceset>": {exclude, canonical, ref_kps}}); '' means none.
+                payload.get("imagemask") or None,
+                int(payload.get("num_swap_steps", 1)), roop_globals.subsample_size,
+                bool(payload.get("show_mask_offsets", False)),
+                bool(payload.get("restore_original_mouth", False)),
+                use_3d_recon=bool(payload.get("use_3d_recon", False)),
+                use_source_bank=bool(payload.get("use_source_bank", False)),
+                use_frontalization=bool(payload.get("use_frontalization", False)),
+                frontalization_threshold=float(payload.get("frontalization_threshold", 30.0)),
+                swap_model=swap_model,
+                stabilize_method=payload.get("stabilize_method", "one_euro"),
+                stabilize_face=bool(payload.get("stabilize_face", False)))
+
+            swapped = live_swap(current_frame, options, input_facesets=mapped)
+            if swapped is None:
+                return {"image": _bgr_to_preview_dataurl(current_frame), "faces": faces_list, "person_ids": person_ids, "kps": kps_list, "pose": pose_list}
+            return {"image": _bgr_to_preview_dataurl(swapped), "faces": faces_list, "person_ids": person_ids, "kps": kps_list, "pose": pose_list}
+        except Exception:
+            traceback.print_exc()
+            return {"image": _bgr_to_preview_dataurl(current_frame), "faces": faces_list, "person_ids": person_ids, "kps": kps_list, "pose": pose_list, "error": "swap failed"}
+    finally:
+        roop_globals.is_preview = False
+        try:
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except Exception:
+            pass
 
 
 @app.post("/api/preview_upscale")
@@ -3199,6 +3200,7 @@ def _run_swap(payload):
 
         run_mapping = payload.get("face_mapping")
         run_facesets = mapped_facesets(run_mapping, roop_globals.face_swap_mode)
+        roop_globals.is_preview = False
         batch_process_regular(
             output_method, files_to_process, mask_engine, clip_text,
             processing_method == "In-Memory processing",
