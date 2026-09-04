@@ -41,6 +41,8 @@ react-ui-v2/dist/
 app/runtime_calibration.json
 app/run_history.json
 app/profiles.json
+# Machine-local benchmark history and recommendation state.
+/.roop/
 # Persisted batch queue (per-machine; jobs reference locally loaded targets)
 app/queue.json
 app/projects/
