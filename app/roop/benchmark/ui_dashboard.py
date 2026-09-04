@@ -57,6 +57,19 @@ from roop.benchmark.storage import (
 
 SCHEMA_VERSION = 1
 
+# Frame windows for the two offered durations.
+#
+# These are PRODUCT choices -- what a user is willing to wait for -- not
+# acceptance windows. This pipeline runs at roughly 3-6 fps on the validation
+# hardware, so 90 frames is about the promised 30 seconds and 270 about 90.
+#
+# Read the caveat in the mode detail text and mean it: this project's own rule
+# puts the floor for an ACCEPTANCE claim at 600 frames, because a short window
+# is dominated by warm-up and has reversed the sign of a result on both
+# validation GPUs. These windows rank configurations; they do not settle them.
+QUICK_WINDOW_FRAMES = 90
+FULL_WINDOW_FRAMES = 270
+
 
 # --------------------------------------------------------------------------
 # choices presented by the pre-benchmark modal
@@ -80,12 +93,12 @@ FACE_COMPLEXITY_CHOICES: Tuple[Dict[str, Any], ...] = (
 # windows are derived from them and from the standardized clip's own rate --
 # not typed in twice.
 BENCHMARK_MODE_CHOICES: Tuple[Dict[str, Any], ...] = (
-    {"value": "quick", "label": "Quick Profile (30s)", "seconds": 30,
-     "frames": STANDARDIZED_WINDOW_FRAMES,
+    {"value": "quick", "label": "Quick Profile (30s / 90 frames)", "seconds": 30,
+     "frames": QUICK_WINDOW_FRAMES,
      "detail": "One standardized window. Enough to rank settings; a short "
                "window measures warm-up, so it is not an acceptance claim."},
-    {"value": "full", "label": "Full Stress & Thermal Test (90s)", "seconds": 90,
-     "frames": STANDARDIZED_WINDOW_FRAMES * 3,
+    {"value": "full", "label": "Full Stress & Thermal Test (90s / 270 frames)",
+     "seconds": 90, "frames": FULL_WINDOW_FRAMES,
      "detail": "Three windows back to back, so sustained clocks and thermal "
                "retention become visible rather than the first-window peak."},
 )
@@ -735,6 +748,8 @@ _COMPARISON_FIELDS: Tuple[Tuple[str, str, str, bool], ...] = (
     ("Execution Threads", "max_threads", "execution_threads", False),
     ("Temp Image Format", "output_image_format", "temp_frame_format", False),
     ("Provider Memory Limit", "perf_gpu_mem_limit", "gpu_memory_limit_mb", True),
+    ("ONNX Memory Arena", "perf_ort_arena_strategy", "arena_extend_strategy", True),
+    ("cudnn_conv_search", "perf_cudnn_conv_algo", "cudnn_conv_algo_search", True),
     ("Execution Provider", "provider", "execution_provider", True),
     ("Video Encoder", "output_video_codec", "output_video_encoder", False),
 )
@@ -896,11 +911,53 @@ _APPLY_MAP: Dict[str, str] = {
     "gpu_memory_limit_mb": "perf_gpu_mem_limit",
     "execution_provider": "provider",
     "output_video_encoder": "output_video_codec",
+    "arena_extend_strategy": "perf_ort_arena_strategy",
+    "cudnn_conv_algo_search": "perf_cudnn_conv_algo",
 }
+
+# Applied settings that ALSO have a live runtime mirror in roop.globals.
+#
+# CFG is the durable truth and the next render reads it (core.py sets
+# execution_threads from CFG.max_threads at render start), but a user who
+# accepts a recommendation expects it to be live now, not after a restart --
+# and a `--benchmark-apply` CLI session has no later render to pick it up. So
+# the applicable subset is mirrored immediately.
+#
+# `provider` needs translating on the way out: CFG stores the short name and
+# roop.globals.execution_providers holds onnxruntime's class names.
+_PROVIDER_ORT_NAMES = {
+    "cpu": "CPUExecutionProvider",
+    "cuda": "CUDAExecutionProvider",
+    "tensorrt": "TensorrtExecutionProvider",
+    "rocm": "ROCMExecutionProvider",
+    "dml": "DmlExecutionProvider",
+}
+
+
+def _mirror_to_globals(config_key: str, value: Any) -> Optional[Tuple[str, Any]]:
+    """Return the ``(globals attribute, value)`` this setting drives, if any."""
+    try:
+        import roop.globals as runtime
+    except Exception:
+        return None
+    if config_key == "max_threads":
+        threads = _integer(value, 0)
+        if threads > 0:
+            runtime.execution_threads = threads
+            return "execution_threads", threads
+    elif config_key == "output_video_codec" and value:
+        runtime.video_encoder = str(value)
+        return "video_encoder", str(value)
+    # `provider` is deliberately absent. ORT sessions already built keep the
+    # provider they were built with, so mirroring it would leave this process
+    # running two providers at once -- worse than a clean "takes effect on the
+    # next launch", which is what _RESTART_REQUIRED reports for it.
+    return None
 # These are read once at process start (run.py exports them as ROOP_* env), so
 # writing them changes the NEXT launch, not this one. Saying "applied" for them
 # would have the user measure a change that has not happened.
-_RESTART_REQUIRED = {"perf_gpu_mem_limit", "provider"}
+_RESTART_REQUIRED = {"perf_gpu_mem_limit", "provider", "perf_ort_arena_strategy",
+                     "perf_cudnn_conv_algo"}
 
 
 def apply_recommended_settings(recommended: Optional[Mapping[str, Any]] = None,
@@ -921,6 +978,7 @@ def apply_recommended_settings(recommended: Optional[Mapping[str, Any]] = None,
     applied: Dict[str, Any] = {}
     pending: Dict[str, Any] = {}
     skipped: Dict[str, str] = {}
+    live: Dict[str, Any] = {}          # what changed in roop.globals right now
 
     if config is None:
         return {"status": "error", "applied": {}, "pending": {}, "skipped": {},
@@ -948,13 +1006,19 @@ def apply_recommended_settings(recommended: Optional[Mapping[str, Any]] = None,
             skipped[config_key] = "already set to the recommended value"
             continue
         setattr(config, config_key, value)
-        (pending if config_key in _RESTART_REQUIRED else applied)[config_key] = value
+        if config_key in _RESTART_REQUIRED:
+            pending[config_key] = value
+        else:
+            applied[config_key] = value
+            mirrored = _mirror_to_globals(config_key, value)
+            if mirrored:
+                live[mirrored[0]] = mirrored[1]
 
     try:
         config.save()
     except Exception as exc:
         return {"status": "error", "applied": applied, "pending": pending,
-                "skipped": skipped,
+                "skipped": skipped, "live_globals": live,
                 "message": "Settings could not be saved: %s: %s"
                            % (type(exc).__name__, exc)}
 
@@ -970,7 +1034,8 @@ def apply_recommended_settings(recommended: Optional[Mapping[str, Any]] = None,
         message += (" %d more were saved and take effect on the next "
                     "application start." % len(pending))
     return {"status": "applied", "applied": applied, "pending": pending,
-            "skipped": skipped, "restart_required": bool(pending),
+            "skipped": skipped, "live_globals": live,
+            "restart_required": bool(pending),
             "history_updated": marked, "message": message}
 
 
@@ -1007,6 +1072,203 @@ def decline_recommended_settings(result: Any = None, run_id: str = "",
             pass
     return {"status": "declined", "applied": False, "run_id": saved_id,
             "message": DECLINE_NOTICE, "notice": DECLINE_NOTICE}
+
+
+# Every setting the benchmark is allowed to write. Revert restores exactly
+# these and nothing else: a user clearing benchmark overrides has not asked to
+# lose their theme, their faceset, or any of the other ~200 settings.
+BENCHMARK_OWNED_SETTINGS: Tuple[str, ...] = tuple(sorted(set(_APPLY_MAP.values())))
+
+
+def stock_defaults(keys: Sequence[str] = ()) -> Dict[str, Any]:
+    """The shipped default for each benchmark-owned setting.
+
+    Read from a throwaway ``Settings`` built on a path that does not exist, so
+    the values are the ones a fresh install would have. That instance is never
+    saved -- bringing the file into being would create a second config beside
+    the user's.
+    """
+    keys = tuple(keys or BENCHMARK_OWNED_SETTINGS)
+    try:
+        import os
+        import tempfile
+        import settings as settings_module
+        with tempfile.TemporaryDirectory(prefix="roop_defaults_") as tmp:
+            probe = settings_module.Settings(
+                os.path.join(tmp, "does-not-exist.yaml"))
+            return {name: getattr(probe, name) for name in keys
+                    if hasattr(probe, name)}
+    except Exception:
+        return {}
+
+
+def revert_to_default_settings(config: Any = None,
+                               keys: Sequence[str] = ()) -> Dict[str, Any]:
+    """Clear benchmark overrides, restoring the shipped defaults.
+
+    Scoped deliberately to ``BENCHMARK_OWNED_SETTINGS``. "Revert to default"
+    on a results screen means "undo what this benchmark changed", not "reset
+    the application", and the second reading would be a destructive surprise.
+    """
+    config = config if config is not None else _live_config()
+    if config is None:
+        return {"status": "error", "reverted": {}, "unchanged": {},
+                "message": "No live configuration is loaded; nothing changed."}
+
+    defaults = stock_defaults(keys)
+    if not defaults:
+        return {"status": "error", "reverted": {}, "unchanged": {},
+                "message": "The shipped defaults could not be read; nothing "
+                           "was changed rather than guessing at them."}
+
+    reverted: Dict[str, Any] = {}
+    unchanged: Dict[str, Any] = {}
+    live: Dict[str, Any] = {}
+    for name, default in defaults.items():
+        if not hasattr(config, name):
+            continue
+        current = getattr(config, name)
+        if _format_value(current) == _format_value(default):
+            unchanged[name] = current
+            continue
+        setattr(config, name, default)
+        reverted[name] = default
+        mirrored = _mirror_to_globals(name, default)
+        if mirrored:
+            live[mirrored[0]] = mirrored[1]
+    try:
+        config.save()
+    except Exception as exc:
+        return {"status": "error", "reverted": reverted, "unchanged": unchanged,
+                "live_globals": live,
+                "message": "Defaults could not be saved: %s: %s"
+                           % (type(exc).__name__, exc)}
+    return {
+        "status": "reverted", "reverted": reverted, "unchanged": unchanged,
+        "live_globals": live,
+        "message": ("Restored %d benchmark setting(s) to their shipped "
+                    "defaults." % len(reverted) if reverted else
+                    "Already at the shipped defaults; nothing changed."),
+    }
+
+
+def _bootstrap_config(log: Callable[[str], None] = print) -> Any:
+    """Ensure roop.globals.CFG exists before anything reads the configuration.
+
+    Idempotent: an entry point that already built CFG (core.run does) keeps
+    its instance untouched. Only a path that has not -- run.py's benchmark
+    branch -- gets one created here, pointed at the same config.yaml the
+    application uses.
+    """
+    try:
+        import roop.globals as runtime
+    except Exception:
+        return None
+    if getattr(runtime, "CFG", None) is not None:
+        return runtime.CFG
+    try:
+        from settings import Settings
+        runtime.CFG = Settings("config.yaml")
+        # Mirror the same runtime globals core.run() derives from CFG, so the
+        # benchmark measures the configured thread count rather than None.
+        if getattr(runtime, "execution_threads", None) in (None, 0):
+            runtime.execution_threads = runtime.CFG.max_threads
+        if getattr(runtime, "video_encoder", None) in (None, ""):
+            runtime.video_encoder = runtime.CFG.output_video_codec
+        if getattr(runtime, "video_quality", None) is None:
+            runtime.video_quality = runtime.CFG.video_quality
+        return runtime.CFG
+    except Exception as exc:
+        log("  ! could not load config.yaml (%s: %s); the benchmark would be "
+            "measuring module defaults rather than your configuration"
+            % (type(exc).__name__, exc))
+        return None
+
+
+def run_cli_benchmark(faces: str = "1", mode: str = "quick",
+                      apply_result: bool = False,
+                      log: Callable[[str], None] = print) -> int:
+    """Headless benchmark: the same engine and dashboard, rendered as text.
+
+    Shared by both entry points (`run.py` for the React launcher, `core.py`
+    for the classic CLI) so the terminal cannot disagree with the panel about
+    a score, a badge or a recommendation.
+
+    Deliberately does NOT start the API or the Gradio UI: a benchmark shares
+    the GPU with whatever else the process is doing, and a run that also
+    served a render would be measuring a busy card.
+    """
+    from roop.benchmark.runner import BenchmarkRunner
+
+    # Load the configuration if this entry point has not already.
+    #
+    # MEASURED, 2026-09-05: `run.py --benchmark` reported
+    # "Swapper: inswapper, Enhancer: None, Mask: None" against a config.yaml
+    # holding realswap / UltraMax / RealityUX. Only `core.run()` creates
+    # roop.globals.CFG, and run.py's benchmark branch fires before it, so the
+    # model readback and every "Current Value" cell fell through to module
+    # defaults -- the same silent wrong-source failure the readback was fixed
+    # for once already, arriving by a different route.
+    _bootstrap_config(log)
+
+    selection = resolve_selection(faces, mode)
+    try:
+        runner = BenchmarkRunner()
+    except Exception as exc:
+        log("Benchmark could not start: %s: %s" % (type(exc).__name__, exc))
+        return 1
+
+    prompt = PreBenchmarkPrompt.build(runner)
+    log("")
+    log(prompt.model_summary)
+    for warning in prompt.warnings:
+        log("  ! " + warning)
+    log("Workload: %s | %s | %d frames"
+        % (selection["face_label"], selection["mode_label"],
+           selection["frame_window"]))
+    log("")
+
+    state = {"last": 0.0}
+
+    def progress(current=0, total=0, fps=0.0, **_extra):
+        # One line every ~2 seconds. A per-frame print would cost more than
+        # the thing it is reporting on.
+        now = time.time()
+        if now - state["last"] < 2.0 and current < total:
+            return
+        state["last"] = now
+        pct = (100.0 * current / total) if total else 0.0
+        log("  [%5.1f%%] frame %d/%d  %.2f FPS" % (pct, current, total, fps))
+
+    try:
+        result = runner.run(workload=selection["workload_mode"],
+                            frame_window=selection["frame_window"],
+                            persist=True, progress_cb=progress)
+    except KeyboardInterrupt:
+        log("\nBenchmark cancelled.")
+        return 130
+    except Exception as exc:
+        log("\nBenchmark failed: %s: %s" % (type(exc).__name__, exc))
+        return 1
+
+    report = DashboardReport.from_result(result, selection)
+    log(report.summary_text())
+
+    if apply_result:
+        outcome = apply_recommended_settings(
+            recommended=report.recommended_settings, run_id=report.run_id)
+        log("  " + str(outcome.get("message", "")))
+        for key, value in (outcome.get("live_globals") or {}).items():
+            log("    live now: roop.globals.%s = %s" % (key, value))
+        for key, value in (outcome.get("pending") or {}).items():
+            log("    pending (needs a restart): %s = %s" % (key, value))
+        for key, reason in (outcome.get("skipped") or {}).items():
+            log("    skipped: %s -- %s" % (key, reason))
+    else:
+        outcome = decline_recommended_settings(run_id=report.run_id)
+        log("  " + str(outcome.get("message", "")))
+    log("")
+    return 0
 
 
 def list_saved_profiles(storage_path: Any = None,
@@ -1057,6 +1319,10 @@ __all__ = [
     "compute_score",
     "decline_recommended_settings",
     "get_session",
+    "revert_to_default_settings",
+    "run_cli_benchmark",
+    "stock_defaults",
+    "BENCHMARK_OWNED_SETTINGS",
     "normalize_recommendation",
     "list_saved_profiles",
     "resolve_selection",

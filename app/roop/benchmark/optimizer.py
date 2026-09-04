@@ -633,7 +633,7 @@ class SearchSpace:
                  note="host pre/post-processing; competes with the workers"),
             Axis("arena_extend_strategy", self.ARENA_STRATEGIES,
                  applies_to="arena_extend_strategy",
-                 env_var="ROOP_ORT_ARENA_STRATEGY", phase="B",
+                 env_var="ROOP_CUDA_ARENA_STRATEGY", phase="B",
                  note="kSameAsRequested caps arena growth under pooled contexts"),
             self.cudnn_axis(),
         ]
@@ -737,7 +737,7 @@ class SearchSpace:
             Axis("gpu_mem_limit_gb",
                  self._gpu_mem_limits(),
                  applies_to="gpu_mem_limit_gb",
-                 env_var="ROOP_ORT_GPU_MEM_LIMIT_GB", phase="B",
+                 env_var="ROOP_CUDA_MEM_LIMIT", phase="B",
                  reachable=bool(self.hardware.cuda_available),
                  unreachable_reason=("" if self.hardware.cuda_available else
                                      "no CUDA device: there is no GPU "

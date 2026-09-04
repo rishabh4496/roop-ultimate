@@ -774,6 +774,15 @@ class Settings:
         # 'expression' needing more concurrent threads than the pool has slots.
         self.perf_expr_pool = self._hw_get(data, 'perf_expr_pool', 'auto')
         self.perf_encoder_preset = self.default_get(data, 'perf_encoder_preset', 'auto')
+        # ONNX Runtime CUDA provider options the benchmark tunes. 'auto' means
+        # "leave core.py's own default alone"; a concrete value is an operator
+        # (or benchmark) choice and is exported to the environment core.py
+        # reads, so it survives a restart instead of living for one session.
+        self.perf_gpu_mem_limit = self.default_get(data, 'perf_gpu_mem_limit', 'auto')
+        self.perf_ort_arena_strategy = self.default_get(
+            data, 'perf_ort_arena_strategy', 'auto')   # auto|kNextPowerOfTwo|kSameAsRequested
+        self.perf_cudnn_conv_algo = self.default_get(
+            data, 'perf_cudnn_conv_algo', 'auto')      # auto|DEFAULT|HEURISTIC|EXHAUSTIVE
         self.perf_profile = self.default_get(data, 'perf_profile', 'auto')       # auto|on|off
         self.perf_batch_swap = self.default_get(data, 'perf_batch_swap', 'auto')  # auto|on|off
 
@@ -982,6 +991,9 @@ class Settings:
             'perf_detector_pool': self.perf_detector_pool,
             'perf_expr_pool': self.perf_expr_pool,
             'perf_encoder_preset': self.perf_encoder_preset,
+            'perf_gpu_mem_limit': self.perf_gpu_mem_limit,
+            'perf_ort_arena_strategy': self.perf_ort_arena_strategy,
+            'perf_cudnn_conv_algo': self.perf_cudnn_conv_algo,
             'perf_profile': self.perf_profile,
             'perf_batch_swap': self.perf_batch_swap,
             'recognizer': self.recognizer,

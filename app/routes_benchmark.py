@@ -14,11 +14,14 @@ from fastapi import APIRouter, Body
 from fastapi.responses import JSONResponse
 
 from roop.benchmark.ui_dashboard import (
+    BENCHMARK_OWNED_SETTINGS,
     PreBenchmarkPrompt,
     apply_recommended_settings,
     decline_recommended_settings,
     get_session,
     list_saved_profiles,
+    revert_to_default_settings,
+    stock_defaults,
 )
 
 router = APIRouter(prefix="/api/benchmark")
@@ -123,6 +126,28 @@ def benchmark_decline(payload: dict = Body(default=None)):
     # The run was already persisted by the runner (persist=True), so this
     # records the decision rather than writing a duplicate record.
     return decline_recommended_settings(result=None, run_id=run_id)
+
+
+@router.post("/revert")
+def benchmark_revert():
+    """Clear benchmark overrides, restoring the shipped defaults.
+
+    Scoped to the settings the benchmark is allowed to write. "Revert to
+    default" on a results screen means "undo what this benchmark changed", not
+    "reset the application" -- the second reading would be a destructive
+    surprise for someone clearing a thread count.
+    """
+    result = revert_to_default_settings()
+    if result.get("status") == "error":
+        return JSONResponse(status_code=400, content=result)
+    return result
+
+
+@router.get("/defaults")
+def benchmark_defaults():
+    """What Revert would restore, so the UI can show it before acting."""
+    return {"owned_settings": list(BENCHMARK_OWNED_SETTINGS),
+            "defaults": stock_defaults()}
 
 
 @router.get("/profiles")

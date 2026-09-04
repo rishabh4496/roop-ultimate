@@ -76,6 +76,21 @@ def _apply_perf_env():
     _set('ROOP_DETECTOR_POOL', cfg.get('perf_detector_pool'))
     _set('ROOP_EXPR_POOL', cfg.get('perf_expr_pool'))
     _set('ROOP_ENCODER_PRESET', cfg.get('perf_encoder_preset'))
+    # These three names are core.py's, not invented here: it reads
+    # ROOP_CUDA_ARENA_STRATEGY and ROOP_CUDA_MEM_LIMIT directly when building
+    # the CUDA provider options, and ROOP_CUDNN_CONV_ALGO overrides the
+    # otherwise-hardcoded conv planner. Exporting under any other name would
+    # produce a setting that saves, displays, and does nothing.
+    _set('ROOP_CUDA_ARENA_STRATEGY', cfg.get('perf_ort_arena_strategy'))
+    _set('ROOP_CUDNN_CONV_ALGO', cfg.get('perf_cudnn_conv_algo'))
+    _mem_limit = cfg.get('perf_gpu_mem_limit')
+    if _mem_limit is not None and str(_mem_limit).strip().lower() not in ('', 'auto'):
+        # core.py wants BYTES; the benchmark and the UI both speak MiB.
+        try:
+            os.environ['ROOP_CUDA_MEM_LIMIT'] = str(
+                int(float(str(_mem_limit).strip()) * 1024 * 1024))
+        except (TypeError, ValueError):
+            pass
     for var, key in (('ROOP_PROFILE', 'perf_profile'), ('ROOP_BATCH_SWAP', 'perf_batch_swap'),
                      ('ROOP_NVDEC', 'perf_nvdec'),
                      # Identity/tracking features that used to be reachable only
@@ -168,69 +183,14 @@ globals.execution_providers = [_PROVIDER_NAMES.get(
     args.execution_provider.lower(), args.execution_provider + 'ExecutionProvider')]
 
 def _run_cli_benchmark(faces: str, mode: str, apply_result: bool) -> int:
-    """Headless benchmark: same engine, same dashboard, rendered as text.
+    """Delegate to the one shared implementation.
 
-    Deliberately does NOT start the API or the Gradio UI. A benchmark shares
-    the GPU with whatever else this process is doing, so a run that also served
-    a render would be measuring a busy card.
+    The renderer lives in roop.benchmark.ui_dashboard so this entry point and
+    roop/core.py's `--benchmark` cannot drift into printing different numbers
+    for the same run.
     """
-    from roop.benchmark.ui_dashboard import (
-        DashboardReport, PreBenchmarkPrompt, apply_recommended_settings,
-        decline_recommended_settings, resolve_selection)
-    from roop.benchmark.runner import BenchmarkRunner
-
-    selection = resolve_selection(faces, mode)
-    runner = BenchmarkRunner()
-    prompt = PreBenchmarkPrompt.build(runner)
-    print("")
-    print(prompt.model_summary)
-    for warning in prompt.warnings:
-        print("  ! " + warning)
-    print("Workload: %s | %s | %d frames"
-          % (selection["face_label"], selection["mode_label"],
-             selection["frame_window"]))
-    print("")
-
-    state = {"last": 0.0}
-
-    def progress(current=0, total=0, fps=0.0, **_extra):
-        # One line every ~2 seconds. A per-frame print would dominate the
-        # measurement it is reporting on.
-        now = time.time()
-        if now - state["last"] < 2.0 and current < total:
-            return
-        state["last"] = now
-        pct = (100.0 * current / total) if total else 0.0
-        print("  [%5.1f%%] frame %d/%d  %.2f FPS"
-              % (pct, current, total, fps), flush=True)
-
-    try:
-        result = runner.run(workload=selection["workload_mode"],
-                            frame_window=selection["frame_window"],
-                            persist=True, progress_cb=progress)
-    except KeyboardInterrupt:
-        print("\nBenchmark cancelled.")
-        return 130
-    except Exception as exc:
-        print("\nBenchmark failed: %s: %s" % (type(exc).__name__, exc))
-        return 1
-
-    report = DashboardReport.from_result(result, selection)
-    print(report.summary_text())
-
-    if apply_result:
-        outcome = apply_recommended_settings(
-            recommended=report.recommended_settings, run_id=report.run_id)
-        print("  " + str(outcome.get("message", "")))
-        for key, value in (outcome.get("pending") or {}).items():
-            print("    pending (needs a restart): %s = %s" % (key, value))
-        for key, reason in (outcome.get("skipped") or {}).items():
-            print("    skipped: %s — %s" % (key, reason))
-    else:
-        outcome = decline_recommended_settings(run_id=report.run_id)
-        print("  " + str(outcome.get("message", "")))
-    print("")
-    return 0
+    from roop.benchmark.ui_dashboard import run_cli_benchmark
+    return run_cli_benchmark(faces=faces, mode=mode, apply_result=apply_result)
 
 
 if __name__ == '__main__':

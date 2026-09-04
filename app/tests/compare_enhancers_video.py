@@ -75,6 +75,19 @@ def _apply_perf_env():
     _set('ROOP_DETECTOR_POOL', cfg.get('perf_detector_pool'))
     _set('ROOP_EXPR_POOL', cfg.get('perf_expr_pool'))
     _set('ROOP_ENCODER_PRESET', cfg.get('perf_encoder_preset'))
+    # The ONNX provider options the benchmark tunes. core.py reads these exact
+    # names when it builds the CUDA provider, so a bench that omitted them
+    # would compare enhancers under a different allocator and conv planner
+    # than production uses.
+    _set('ROOP_CUDA_ARENA_STRATEGY', cfg.get('perf_ort_arena_strategy'))
+    _set('ROOP_CUDNN_CONV_ALGO', cfg.get('perf_cudnn_conv_algo'))
+    _mem_limit = cfg.get('perf_gpu_mem_limit')
+    if _mem_limit is not None and str(_mem_limit).strip().lower() not in ('', 'auto'):
+        try:
+            os.environ['ROOP_CUDA_MEM_LIMIT'] = str(
+                int(float(str(_mem_limit).strip()) * 1024 * 1024))
+        except (TypeError, ValueError):
+            pass
     # Same tri-state list run.py carries. `tests/test_bench_perf_env.py` asserts
     # the two agree, because a key that is here but not there (or the reverse) is
     # a bench measuring a different machine than the app — which is exactly how

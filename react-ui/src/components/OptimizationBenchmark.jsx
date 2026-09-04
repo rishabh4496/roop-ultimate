@@ -274,7 +274,7 @@ function ComparisonTable({ rows }) {
   );
 }
 
-function ResultsDashboard({ report, onApply, onDecline, busy, notice }) {
+function ResultsDashboard({ report, onApply, onDecline, onRevert, busy, notice }) {
   const [preset, setPreset] = useState('balanced');
   const presets = report.presets || {};
   const presetOrder = ['max_throughput', 'balanced', 'stable_low_power'];
@@ -356,6 +356,11 @@ function ResultsDashboard({ report, onApply, onDecline, busy, notice }) {
         </Button>
         <Button variant="ghost" onClick={onDecline} disabled={busy}>
           Decline / Keep Current
+        </Button>
+        {/* Scoped to the settings the benchmark writes — not an app reset. */}
+        <Button variant="ghost" onClick={onRevert} disabled={busy}
+          title="Restore the shipped defaults for the settings this benchmark can change">
+          Revert to Default
         </Button>
       </div>
     </Card>
@@ -463,6 +468,16 @@ export default function OptimizationBenchmark() {
     } finally { setBusy(false); }
   };
 
+  const revert = async () => {
+    setBusy(true); setError('');
+    try {
+      const r = await postJSON('/api/benchmark/revert', {});
+      setNotice(r.message || 'Restored defaults.');
+    } catch (e) {
+      setError(e.message || 'Could not restore the defaults.');
+    } finally { setBusy(false); }
+  };
+
   const decline = async () => {
     setBusy(true); setError('');
     try {
@@ -495,7 +510,7 @@ export default function OptimizationBenchmark() {
 
       {!running && report ? (
         <ResultsDashboard report={report} onApply={apply} onDecline={decline}
-          busy={busy} notice={notice} />
+          onRevert={revert} busy={busy} notice={notice} />
       ) : null}
 
       <AnimatePresence>

@@ -50,6 +50,7 @@ from roop.benchmark.storage import (
     update_setting_status,
 )
 from roop.benchmark.ui_dashboard import (
+    BENCHMARK_OWNED_SETTINGS,
     BenchmarkSession,
     DashboardReport,
     PreBenchmarkPrompt,
@@ -58,6 +59,9 @@ from roop.benchmark.ui_dashboard import (
     list_saved_profiles,
     normalize_recommendation,
     resolve_selection,
+    revert_to_default_settings,
+    run_cli_benchmark,
+    stock_defaults,
 )
 
 REAL_RUN = os.environ.get("ROOP_E2E_REAL_BENCHMARK", "").strip().lower() in (
@@ -513,6 +517,176 @@ class RunIdConsistencyTests(unittest.TestCase):
             self.assertTrue(update_setting_status(result.run_id, True, path))
             self.assertEqual(load_benchmark_history(path)[0]["status"],
                              "accepted")
+
+
+class NativeConfigBindingTests(unittest.TestCase):
+    """Apply must reach the RUNTIME, not just the config file."""
+
+    def test_apply_mirrors_thread_count_into_roop_globals(self):
+        """A user who accepts a recommendation expects it live now.
+
+        CFG is the durable truth and the next render reads it, but a
+        `--benchmark-apply` CLI session has no later render to pick it up.
+        """
+        with _SandboxedConfig() as sandbox:
+            sandbox.cfg.max_threads = 4
+            roop.globals.execution_threads = 4
+            result = apply_recommended_settings({"execution_threads": 9},
+                                                config=sandbox.cfg)
+            self.assertEqual(roop.globals.CFG.max_threads, 9)
+            self.assertEqual(roop.globals.execution_threads, 9)
+            self.assertEqual(result["live_globals"]["execution_threads"], 9)
+
+    def test_applied_settings_survive_a_restart(self):
+        """Persistence is the whole point of writing the config file."""
+        with _SandboxedConfig() as sandbox:
+            apply_recommended_settings({"execution_threads": 11},
+                                       config=sandbox.cfg)
+            reloaded = settings_module.Settings(sandbox.config_path)
+            self.assertEqual(reloaded.max_threads, 11)
+
+    def test_restart_only_settings_are_persisted_but_not_mirrored(self):
+        """An ORT session already built keeps the provider it was built with,
+        so a half-applied provider would be worse than a clean next launch."""
+        with _SandboxedConfig() as sandbox:
+            sandbox.cfg.provider = "cpu"
+            result = apply_recommended_settings({"execution_provider": "cuda"},
+                                                config=sandbox.cfg)
+            self.assertIn("provider", result["pending"])
+            self.assertNotIn("execution_providers", result["live_globals"])
+            reloaded = settings_module.Settings(sandbox.config_path)
+            self.assertEqual(reloaded.provider, "cuda")
+
+    def test_the_provider_option_settings_actually_exist(self):
+        """The arena/cuDNN/memory rows had no setting behind them.
+
+        A comparison row for a key nothing can store is decorative: it
+        displays, it never applies, and the failure is silent.
+        """
+        with _SandboxedConfig() as sandbox:
+            for name in ("perf_ort_arena_strategy", "perf_cudnn_conv_algo",
+                         "perf_gpu_mem_limit"):
+                self.assertTrue(hasattr(sandbox.cfg, name), name)
+            applied = apply_recommended_settings(
+                {"arena_extend_strategy": "kNextPowerOfTwo",
+                 "cudnn_conv_algo_search": "EXHAUSTIVE"}, config=sandbox.cfg)
+            self.assertIn("perf_ort_arena_strategy", applied["pending"])
+            self.assertIn("perf_cudnn_conv_algo", applied["pending"])
+            reloaded = settings_module.Settings(sandbox.config_path)
+            self.assertEqual(reloaded.perf_ort_arena_strategy, "kNextPowerOfTwo")
+            self.assertEqual(reloaded.perf_cudnn_conv_algo, "EXHAUSTIVE")
+
+
+class RevertToDefaultTests(unittest.TestCase):
+    """The third action: clear benchmark overrides."""
+
+    def test_revert_restores_the_shipped_defaults(self):
+        with _SandboxedConfig() as sandbox:
+            defaults = stock_defaults()
+            apply_recommended_settings({"execution_threads": 15},
+                                       config=sandbox.cfg)
+            self.assertEqual(sandbox.cfg.max_threads, 15)
+            result = revert_to_default_settings(config=sandbox.cfg)
+            self.assertEqual(result["status"], "reverted")
+            self.assertEqual(sandbox.cfg.max_threads, defaults["max_threads"])
+            self.assertEqual(roop.globals.execution_threads,
+                             defaults["max_threads"])
+
+    def test_revert_is_scoped_to_what_the_benchmark_can_write(self):
+        """"Revert to default" must not read as "reset the application"."""
+        with _SandboxedConfig() as sandbox:
+            sandbox.cfg.selected_theme = "a-theme-the-user-picked"
+            sandbox.cfg.selected_enhancer = "GPEN 256 Pro"
+            apply_recommended_settings({"execution_threads": 15},
+                                       config=sandbox.cfg)
+            revert_to_default_settings(config=sandbox.cfg)
+            self.assertEqual(sandbox.cfg.selected_theme,
+                             "a-theme-the-user-picked")
+            self.assertEqual(sandbox.cfg.selected_enhancer, "GPEN 256 Pro")
+            for name in ("selected_theme", "selected_enhancer"):
+                self.assertNotIn(name, BENCHMARK_OWNED_SETTINGS)
+
+    def test_revert_persists_so_the_override_is_really_gone(self):
+        with _SandboxedConfig() as sandbox:
+            apply_recommended_settings({"execution_threads": 15},
+                                       config=sandbox.cfg)
+            revert_to_default_settings(config=sandbox.cfg)
+            reloaded = settings_module.Settings(sandbox.config_path)
+            self.assertEqual(reloaded.max_threads, stock_defaults()["max_threads"])
+
+    def test_reverting_twice_is_a_no_op_not_an_error(self):
+        with _SandboxedConfig() as sandbox:
+            revert_to_default_settings(config=sandbox.cfg)
+            second = revert_to_default_settings(config=sandbox.cfg)
+            self.assertEqual(second["status"], "reverted")
+            self.assertEqual(second["reverted"], {})
+            self.assertIn("Already at the shipped defaults", second["message"])
+
+
+class CliBootstrapTests(unittest.TestCase):
+    """The CLI entry point must load the config before reading it.
+
+    Found on hardware 2026-09-05: `run.py --benchmark` reported
+    "Swapper: inswapper, Enhancer: None, Mask: None" against a config.yaml
+    holding realswap / UltraMax / RealityUX. Only core.run() creates
+    roop.globals.CFG, and run.py's benchmark branch fires before it, so the
+    model readback and every "Current Value" cell fell through to module
+    defaults.
+    """
+
+    def test_bootstrap_creates_a_config_when_the_entry_point_has_not(self):
+        from roop.benchmark.ui_dashboard import _bootstrap_config
+        previous = roop.globals.CFG
+        roop.globals.CFG = None
+        try:
+            config = _bootstrap_config(log=lambda _m: None)
+            self.assertIsNotNone(config, "the CLI would read module defaults")
+            self.assertIs(roop.globals.CFG, config)
+        finally:
+            roop.globals.CFG = previous
+
+    def test_bootstrap_leaves_an_existing_config_alone(self):
+        """core.run() already built one; replacing it would discard live state."""
+        from roop.benchmark.ui_dashboard import _bootstrap_config
+        with _SandboxedConfig() as sandbox:
+            same = _bootstrap_config(log=lambda _m: None)
+            self.assertIs(same, sandbox.cfg)
+            self.assertIs(roop.globals.CFG, sandbox.cfg)
+
+    def test_both_entry_points_share_one_cli_renderer(self):
+        """run.py and core.py must not print different numbers for one run.
+
+        Source-level, deliberately: run.py parses sys.argv at module scope, so
+        importing it dies under any test runner's arguments -- the same reason
+        tests/test_bench_perf_env.py reads source rather than importing.
+        """
+        run_source = io_read("run.py")
+        self.assertIn("from roop.benchmark.ui_dashboard import run_cli_benchmark",
+                      run_source,
+                      "run.py has its own copy of the CLI renderer again")
+        core_source = io_read("roop/core.py")
+        self.assertIn("from roop.benchmark.ui_dashboard import run_cli_benchmark",
+                      core_source)
+        for flag in ("--benchmark", "--benchmark-faces", "--benchmark-mode",
+                     "--benchmark-apply"):
+            self.assertIn(flag, core_source, "core.py is missing %s" % flag)
+
+
+def io_read(relative):
+    import os
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    with open(os.path.join(root, relative), encoding="utf-8") as handle:
+        return handle.read()
+
+
+class DurationTests(unittest.TestCase):
+    def test_the_two_durations_match_what_the_labels_promise(self):
+        quick = resolve_selection("1", "quick")
+        full = resolve_selection("1", "full")
+        self.assertEqual(quick["frame_window"], 90)
+        self.assertEqual(full["frame_window"], 270)
+        self.assertIn("90 frames", quick["mode_label"])
+        self.assertIn("270 frames", full["mode_label"])
 
 
 class NormalizationTests(unittest.TestCase):

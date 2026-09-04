@@ -121,6 +121,15 @@ def parse_args() -> None:
     program.add_argument('--enable-occlusion-mask', help='Enable foreground occlusion masking', dest='enable_occlusion_mask', action='store_true', default=True)
     program.add_argument('--disable-occlusion-mask', help='Disable foreground occlusion masking', dest='enable_occlusion_mask', action='store_false')
     program.add_argument('--detector-scale-pyramid', help='Multi-scale detector pyramid levels (e.g. "0.5,0.75,1.0", "auto", or "none")', dest='detector_scale_pyramid', default=None)
+    # Benchmark mode. The same engine, scoring and recommendation the UI
+    # drives -- the CLI renders the dashboard as text rather than computing
+    # anything of its own. run.py carries the same four flags for the React
+    # launcher's entry point; both resolve through roop.benchmark.ui_dashboard,
+    # so they cannot disagree.
+    program.add_argument('--benchmark', help='Run the hardware benchmark and print the results dashboard, then exit', dest='benchmark', action='store_true', default=False)
+    program.add_argument('--benchmark-faces', help='Target face complexity for the benchmark', dest='benchmark_faces', choices=['1', '2', 'all'], default='1')
+    program.add_argument('--benchmark-mode', help='Benchmark duration: quick (~30s) or full stress and thermal (~90s)', dest='benchmark_mode', choices=['quick', 'full'], default='quick')
+    program.add_argument('--benchmark-apply', help='Apply the recommended settings when the benchmark finishes', dest='benchmark_apply', action='store_true', default=False)
     program.add_argument('--source', '--source-path', dest='source_reference_path', default=None,
                          help='Source image or folder of same-identity reference images')
     roop.globals.startup_args = program.parse_args()
@@ -163,9 +172,23 @@ def decode_execution_providers(execution_providers: List[str]) -> List[str]:
     try:
         for i in range(len(list_providers)):
             if list_providers[i] == 'CUDAExecutionProvider':
+                # HEURISTIC stays the default: it is 55-241% faster than
+                # DEFAULT across this app's models. The override exists so the
+                # benchmark can propose a different planner on a device where
+                # that pays, and so an operator can pin one.
+                #
+                # It does NOT bypass the per-model safety policy. cudnn_algo
+                # probes this device and lowers only the models whose
+                # convolutions fail under the frontend path; that runs after
+                # this and still wins, because the alternative is four
+                # enhancers silently writing unenhanced frames.
+                _cudnn_algo = str(os.environ.get(
+                    'ROOP_CUDNN_CONV_ALGO', 'HEURISTIC') or 'HEURISTIC').strip().upper()
+                if _cudnn_algo not in ('DEFAULT', 'HEURISTIC', 'EXHAUSTIVE'):
+                    _cudnn_algo = 'HEURISTIC'
                 cuda_opts = {
                     'device_id': roop.globals.cuda_device_id,
-                    'cudnn_conv_algo_search': 'HEURISTIC',
+                    'cudnn_conv_algo_search': _cudnn_algo,
                     'do_copy_in_default_stream': True,
                     'arena_extend_strategy': os.environ.get('ROOP_CUDA_ARENA_STRATEGY', 'kSameAsRequested'),
                 }
@@ -1737,6 +1760,15 @@ def run() -> None:
     roop.globals.video_encoder = roop.globals.CFG.output_video_codec
     roop.globals.video_quality = roop.globals.CFG.video_quality
     roop.globals.max_memory = roop.globals.CFG.memory_limit if roop.globals.CFG.memory_limit > 0 else None
+    if getattr(roop.globals.startup_args, 'benchmark', False):
+        # Placed AFTER CFG and the runtime globals are established, so the
+        # benchmark measures the user's real configuration -- and BEFORE the
+        # UI starts, so it is not sharing the GPU with a server.
+        from roop.benchmark.ui_dashboard import run_cli_benchmark
+        raise SystemExit(run_cli_benchmark(
+            faces=getattr(roop.globals.startup_args, 'benchmark_faces', '1'),
+            mode=getattr(roop.globals.startup_args, 'benchmark_mode', 'quick'),
+            apply_result=getattr(roop.globals.startup_args, 'benchmark_apply', False)))
     if roop.globals.startup_args.server_share:
         roop.globals.CFG.server_share = True
     source_reference_path = getattr(roop.globals.startup_args, 'source_reference_path', None)
