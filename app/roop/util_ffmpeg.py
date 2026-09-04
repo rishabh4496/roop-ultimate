@@ -496,6 +496,8 @@ def restore_audio(intermediate_video: str, original_video: str, trim_frame_start
     the original source, optional so it silently succeeds on source-less files).
     trim_frame_start / trim_frame_end are used to seek the audio source to the
     correct position when the original was trimmed before processing.
+    Also carries the original container's GLOBAL metadata (-map_metadata 1);
+    stream-level rotation side data is deliberately left alone, see below.
     Returns True on success, False on failure.
     """
     fps = util.constant_frame_rate(util.detect_fps(original_video))
@@ -520,6 +522,21 @@ def restore_audio(intermediate_video: str, original_video: str, trim_frame_start
         + ['-i', original_video,
            '-map', '0:v:0',
            '-map', '1:a:0?',
+           # Carry the ORIGINAL container's global metadata (creation_time,
+           # title, artist, ...) onto the render. Input 1 is the original, so
+           # this is `1` and not `0` -- input 0 is the freshly encoded video,
+           # whose only tags are the ones ffmpeg just invented for it, and
+           # ffmpeg's default (map from input 0) is what silently dropped
+           # creation_time on every render before this.
+           #
+           # GLOBAL metadata only, deliberately. Stream-level side data --
+           # in particular the display matrix that encodes rotation -- is NOT
+           # touched by this flag. That matters: the decode pipe runs
+           # `-noautorotate` (see nvdec_reader) so frames are processed in
+           # RAW orientation, and stamping the source's rotation onto them
+           # would make a player rotate footage that was never un-rotated.
+           # Do not widen this to `-map_metadata:s:v`.
+           '-map_metadata', '1',
            '-c:v', 'copy', '-c:a', 'copy',
            '-vsync', 'cfr', '-fps_mode', 'cfr',
            '-avoid_negative_ts', 'make_zero',
