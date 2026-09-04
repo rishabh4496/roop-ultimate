@@ -34,6 +34,8 @@ ROOP_DIR = BENCHMARK_DIR.parent
 PROJECT_ROOT = ROOP_DIR.parent
 DEFAULT_ASSET_DIR = ROOP_DIR / "assets" / "benchmark"
 DEFAULT_FACESETS_DIR = PROJECT_ROOT / "facesets"
+if not DEFAULT_FACESETS_DIR.is_dir():
+    DEFAULT_FACESETS_DIR = PROJECT_ROOT.parent / "facesets"
 
 # Calibrated video specifications
 DEFAULT_WIDTH = 1920
@@ -244,27 +246,41 @@ class BenchmarkAssetManager:
         size = 512
         img = np.full((size, size, 3), (210, 220, 230), dtype=np.uint8)
 
-        # Draw head oval
+        # Draw head oval with realistic skin tone
         center = (size // 2, size // 2)
         axes = (size // 4, int(size // 2.8))
         cv2.ellipse(img, center, axes, 0, 0, 360, (180, 195, 215), -1, cv2.LINE_AA)
 
-        # Eyes
-        eye_y = int(size * 0.45)
+        # Eyebrows
+        brow_y = int(size * 0.40)
         eye_offset = int(size * 0.12)
-        eye_r = int(size * 0.035)
-        cv2.circle(img, (center[0] - eye_offset, eye_y), eye_r, (40, 40, 40), -1, cv2.LINE_AA)
-        cv2.circle(img, (center[0] + eye_offset, eye_y), eye_r, (40, 40, 40), -1, cv2.LINE_AA)
+        cv2.ellipse(img, (center[0] - eye_offset, brow_y), (int(size * 0.06), 6), -10, 180, 360, (30, 25, 20), -1, cv2.LINE_AA)
+        cv2.ellipse(img, (center[0] + eye_offset, brow_y), (int(size * 0.06), 6), 10, 180, 360, (30, 25, 20), -1, cv2.LINE_AA)
 
-        # Nose bridge and tip
-        nose_top = (center[0], eye_y + 10)
+        # Eye sockets / sclera (white)
+        eye_y = int(size * 0.46)
+        cv2.ellipse(img, (center[0] - eye_offset, eye_y), (int(size * 0.05), int(size * 0.03)), 0, 0, 360, (245, 245, 245), -1, cv2.LINE_AA)
+        cv2.ellipse(img, (center[0] + eye_offset, eye_y), (int(size * 0.05), int(size * 0.03)), 0, 0, 360, (245, 245, 245), -1, cv2.LINE_AA)
+
+        # Irises and pupils
+        eye_r = int(size * 0.022)
+        cv2.circle(img, (center[0] - eye_offset, eye_y), eye_r, (70, 45, 30), -1, cv2.LINE_AA)
+        cv2.circle(img, (center[0] + eye_offset, eye_y), eye_r, (70, 45, 30), -1, cv2.LINE_AA)
+        cv2.circle(img, (center[0] - eye_offset, eye_y), eye_r // 2, (15, 15, 15), -1, cv2.LINE_AA)
+        cv2.circle(img, (center[0] + eye_offset, eye_y), eye_r // 2, (15, 15, 15), -1, cv2.LINE_AA)
+
+        # Nose bridge and nostrils
+        nose_top = (center[0], eye_y + 8)
         nose_tip = (center[0], int(size * 0.58))
         cv2.line(img, nose_top, nose_tip, (140, 150, 170), 3, cv2.LINE_AA)
-        cv2.circle(img, nose_tip, 8, (130, 140, 160), -1, cv2.LINE_AA)
+        cv2.circle(img, nose_tip, 10, (145, 155, 175), -1, cv2.LINE_AA)
+        cv2.circle(img, (center[0] - 12, int(size * 0.60)), 5, (80, 75, 70), -1, cv2.LINE_AA)
+        cv2.circle(img, (center[0] + 12, int(size * 0.60)), 5, (80, 75, 70), -1, cv2.LINE_AA)
 
-        # Mouth
-        mouth_center = (center[0], int(size * 0.70))
-        cv2.ellipse(img, mouth_center, (int(size * 0.08), int(size * 0.03)), 0, 0, 360, (80, 90, 180), -1, cv2.LINE_AA)
+        # Mouth and lips
+        mouth_center = (center[0], int(size * 0.72))
+        cv2.ellipse(img, mouth_center, (int(size * 0.09), int(size * 0.035)), 0, 0, 360, (80, 90, 180), -1, cv2.LINE_AA)
+        cv2.line(img, (center[0] - int(size * 0.08), mouth_center[1]), (center[0] + int(size * 0.08), mouth_center[1]), (50, 50, 110), 2, cv2.LINE_AA)
 
         cv2.imwrite(str(target_path), img)
 

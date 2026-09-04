@@ -71,3 +71,4 @@ app/sidecar_keep/weights/
 
 # Generated benchmark video assets
 roop/assets/benchmark/*.mp4
+app/roop/assets/benchmark/*.mp4

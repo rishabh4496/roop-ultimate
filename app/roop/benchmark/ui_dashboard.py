@@ -984,8 +984,15 @@ def decline_recommended_settings(result: Any = None, run_id: str = "",
     """
     saved_id = run_id
     if result is not None:
-        payload = (result.to_storage_record()
-                   if hasattr(result, "to_storage_record") else dict(result))
+        if hasattr(result, "to_storage_record"):
+            payload = result.to_storage_record()
+        elif isinstance(result, dict) and "best_metrics" in result and "baseline_metrics" in result:
+            payload = dict(result)
+        elif isinstance(result, dict):
+            from roop.benchmark.runner import BenchmarkRunResult
+            payload = BenchmarkRunResult.from_dict(result).to_storage_record()
+        else:
+            payload = dict(result)
         payload["status"] = "declined"
         try:
             saved_id = save_benchmark_result(payload, storage_path)

@@ -260,8 +260,10 @@ def test_dry_run_60_frames(temp_dir: Path) -> BenchmarkRunResult:
     assert len(history) >= 1, f"Expected at least 1 persisted record, got {len(history)}"
     saved = history[0]
     assert saved["run_id"] == result.run_id, f"Persisted run_id mismatch"
-    assert saved["metrics"]["avg_fps"] == result.metrics["avg_fps"]
-    assert saved["metrics"]["peak_vram_mb"] == result.metrics["peak_vram_mb"]
+    saved_metrics = saved.get("best_metrics") or saved.get("metrics") or saved.get("baseline_metrics")
+    assert saved_metrics is not None, "Expected metrics block in persisted storage record"
+    assert saved_metrics["avg_fps"] == result.metrics["avg_fps"]
+    assert saved_metrics["peak_vram_mb"] == result.metrics["peak_vram_mb"]
     assert saved["workload"]["target_faces"] == 1
     print("Storage Persistence:")
     print(f"  -> PASS: Run {result.run_id[:8]} persisted and re-loaded cleanly.")
@@ -293,14 +295,95 @@ def test_dry_run_60_frames(temp_dir: Path) -> BenchmarkRunResult:
     return result
 
 
+def test_subprocess_failure_handling(temp_dir: Path) -> None:
+    """Verify worker isolation and failure handling during aggressive thread counts.
+
+    Asserts that:
+    1. Isolated spawned worker processes return metrics cleanly to the parent process.
+    2. Intentional aggressive thread allocation causes clean failure reporting without terminating main application.
+    3. The parent application process state (roop.globals) remains completely intact.
+    4. Pass 0 (Mandatory Baseline Pass) records existing settings without mutating them.
+    """
+    print("=" * 78)
+    print("Testing Subprocess Worker Isolation & Aggressive Thread Count Failure Handling")
+    print("=" * 78)
+
+    runner = BenchmarkRunner()
+    initial_processing = getattr(roop.globals, "processing", False)
+    initial_threads = getattr(roop.globals, "execution_threads", None)
+
+    # Part A: Normal isolated run in spawned worker process
+    print("\n[Part A] Testing Normal Isolated Subprocess Execution...")
+    workload = WorkloadSelector.get_workload("solo")
+    normal_result = runner.run(
+        workload=workload,
+        frame_window=10,
+        warmup_frames=1,
+        persist=False,
+        isolated=True,
+    )
+    assert normal_result.success is True, f"Expected successful run, got error: {normal_result.error}"
+    assert normal_result.metrics["avg_fps"] > 0.0, "Expected positive FPS from isolated runner"
+    assert normal_result.metrics["frames_processed"] == 10
+    print(f"  -> PASS: Isolated worker completed 10 frames at {normal_result.metrics['avg_fps']:.2f} FPS.")
+
+    # Part B: Aggressive thread count test (simulating aggressive thread count e.g. 256)
+    print("\n[Part B] Testing Simulated Aggressive Thread Count (256 threads)...")
+    aggressive_settings = {"execution_threads": 256}
+    failed_result = runner.run_parameter_variation(
+        override_settings=aggressive_settings,
+        workload=workload,
+        frame_window=10,
+        warmup_frames=0,
+        raise_on_error=False,
+    )
+
+    # Assert that the error returned cleanly to the parent process without crashing the application
+    assert failed_result.success is False, "Expected aggressive thread count run to fail"
+    assert failed_result.error is not None, "Expected descriptive error in failed_result"
+    assert (
+        "out of memory" in failed_result.error.lower()
+        or "aggressive thread count" in failed_result.error.lower()
+        or failed_result.is_oom
+    ), f"Expected CUDA OOM or aggressive thread count error message, got: {failed_result.error}"
+    print(f"  -> PASS: Aggressive thread count caught cleanly: {failed_result.error}")
+    print(f"  -> OOM detected flag: {failed_result.is_oom}")
+
+    # Part C: Verify parent process state was NOT corrupted
+    assert getattr(roop.globals, "processing", False) == initial_processing, "Parent processing state was corrupted"
+    assert getattr(roop.globals, "execution_threads", None) == initial_threads, "Parent execution_threads was mutated"
+    print("  -> PASS: Parent process roop.globals and state completely preserved.")
+
+    # Part D: Test Pass 0 (Mandatory Baseline Pass)
+    print("\n[Part D] Testing Mandatory Baseline Pass (Pass 0)...")
+    baseline_result = runner.run_baseline_pass(
+        workload="solo",
+        frame_window=10,
+        warmup_frames=1,
+        persist=False,
+        isolated=True,
+    )
+    assert baseline_result.success is True
+    assert baseline_result.metrics["avg_fps"] > 0.0
+    assert baseline_result.metrics["peak_vram_mb"] > 0.0
+    print(
+        f"  -> PASS: Baseline pass completed (FPS: {baseline_result.metrics['avg_fps']:.2f}, "
+        f"Peak VRAM: {baseline_result.metrics['peak_vram_mb']:.2f} MiB)."
+    )
+    print("=" * 78)
+
+
 def main() -> int:
     """Main verification routine."""
-    with tempfile.TemporaryDirectory(prefix="roop_bench_60f_") as td:
+    with tempfile.TemporaryDirectory(prefix="roop_bench_test_") as td:
         temp_dir = Path(td)
-        result = test_dry_run_60_frames(temp_dir)
+        print("Starting Benchmark Runner Test Suite...\n")
+        dry_run_result = test_dry_run_60_frames(temp_dir)
         print("\nSUMMARY REPORT:")
-        print(result.summary_text())
-        print(">>> 60-FRAME DRY-RUN BENCHMARK VERIFIED SUCCESSFULLY! <<<")
+        print(dry_run_result.summary_text())
+
+        test_subprocess_failure_handling(temp_dir)
+        print("\n>>> ALL BENCHMARK RUNNER TESTS VERIFIED SUCCESSFULLY! <<<")
     return 0
 
 
