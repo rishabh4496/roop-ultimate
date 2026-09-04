@@ -740,6 +740,52 @@ _COMPARISON_FIELDS: Tuple[Tuple[str, str, str, bool], ...] = (
 )
 
 
+# The engine and the settings layer were written in different sessions and do
+# not agree on every spelling. Translating here -- once, at the boundary --
+# beats teaching either side about the other, and beats the alternative that
+# was actually happening: an unrecognised key is simply absent from the table
+# and never applied, which is indistinguishable from a successful run that
+# changed nothing.
+_REC_KEY_ALIASES = {
+    "temp_format": "temp_frame_format",
+    "temp_image_format": "temp_frame_format",
+    "threads": "execution_threads",
+    "provider": "execution_provider",
+    "gpu_mem_limit_mb": "gpu_memory_limit_mb",
+    "video_encoder": "output_video_encoder",
+}
+
+# ``roop.globals.CFG.provider`` stores the SHORT name and is tested by
+# membership (`if self.provider in ['cuda', 'tensorrt']`), while the runner
+# recommends the onnxruntime class name. Writing the latter into the config
+# does not raise -- it just quietly fails that test and turns the accelerated
+# paths off.
+_PROVIDER_SHORT_NAMES = {
+    "cudaexecutionprovider": "cuda",
+    "cpuexecutionprovider": "cpu",
+    "tensorrtexecutionprovider": "tensorrt",
+    "rocmexecutionprovider": "rocm",
+    "dmlexecutionprovider": "dml",
+}
+
+
+def normalize_recommendation(recommended: Optional[Mapping[str, Any]]) -> Dict[str, Any]:
+    """Canonicalize an engine recommendation for the settings layer.
+
+    Returns a new mapping; the input is never mutated. An unknown provider is
+    passed through untouched rather than guessed at -- a value the application
+    rejects loudly is better than one silently rewritten into something else.
+    """
+    result: Dict[str, Any] = {}
+    for key, value in dict(recommended or {}).items():
+        result[_REC_KEY_ALIASES.get(str(key), str(key))] = value
+    provider = result.get("execution_provider")
+    if isinstance(provider, str):
+        result["execution_provider"] = _PROVIDER_SHORT_NAMES.get(
+            provider.strip().lower(), provider)
+    return result
+
+
 def _format_value(value: Any) -> str:
     if value is None or value == "":
         return "Unset"
@@ -753,6 +799,7 @@ def _format_value(value: Any) -> str:
 def build_comparison(recommended: Mapping[str, Any], config: Any,
                      metrics: Mapping[str, Any]) -> List[ComparisonRow]:
     """Build the current-vs-recommended table from the LIVE configuration."""
+    recommended = normalize_recommendation(recommended)
     rows: List[ComparisonRow] = []
     for label, config_key, rec_key, restart in _COMPARISON_FIELDS:
         if rec_key not in recommended:
@@ -807,6 +854,7 @@ def build_presets(recommended: Mapping[str, Any],
     otherwise derived here so the buttons always exist -- a results screen with
     a dead button is worse than one with a conservative answer.
     """
+    recommended = normalize_recommendation(recommended)
     supplied = recommended.get("presets")
     if isinstance(supplied, Mapping) and supplied:
         return {str(key): dict(value) if isinstance(value, Mapping) else value
@@ -868,7 +916,7 @@ def apply_recommended_settings(recommended: Optional[Mapping[str, Any]] = None,
     """
     if recommended is None:
         recommended = get_latest_optimal_settings(storage_path) or {}
-    recommended = dict(recommended)
+    recommended = normalize_recommendation(recommended)
     config = config if config is not None else _live_config()
     applied: Dict[str, Any] = {}
     pending: Dict[str, Any] = {}
@@ -999,6 +1047,7 @@ __all__ = [
     "compute_score",
     "decline_recommended_settings",
     "get_session",
+    "normalize_recommendation",
     "list_saved_profiles",
     "resolve_selection",
 ]

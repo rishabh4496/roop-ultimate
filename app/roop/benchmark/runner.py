@@ -236,8 +236,23 @@ class BenchmarkRunResult:
         return data
 
     def save(self, storage_path: str | os.PathLike[str] | None = None) -> dict[str, Any]:
-        """Save this benchmark run atomically to persistent storage."""
-        return save_benchmark_result(self.to_dict(include_frames=False), storage_path)
+        """Save this benchmark run atomically to persistent storage.
+
+        The persisted ``run_id`` is adopted back onto this object. Storage
+        enforces a UUID4 and silently substitutes one for any id that is not,
+        so without this the in-memory result and the history row could carry
+        DIFFERENT ids -- and every later correlation by run_id (marking a run
+        applied, re-applying it from the profiles list) would quietly match
+        nothing while reporting success. The real runner supplies a UUID, so
+        this normally changes nothing; it removes the silent-failure mode
+        rather than fixing a live bug.
+        """
+        record = save_benchmark_result(self.to_dict(include_frames=False),
+                                       storage_path)
+        persisted = record.get("run_id")
+        if isinstance(persisted, str) and persisted:
+            self.run_id = persisted
+        return record
 
     def summary_text(self) -> str:
         """Render a clean, human-readable terminal summary."""
@@ -288,22 +303,49 @@ class BenchmarkRunner:
         """
         import roop.globals
 
-        # Swapper model
-        swapper = (
-            getattr(roop.globals, "face_swap_mode", None)
-            or getattr(roop.globals, "swap_model", None)
-            or "inswapper"
-        )
+        # THE LIVE CONFIG IS THE SOURCE, not roop.globals.
+        #
+        # Measured on an RTX 4070, 2026-09-05: this method reported
+        # "Swapper=DFL XSeg, Enhancer=None" while config.yaml held
+        # swap_model: realswap and selected_enhancer: UltraMax. Three separate
+        # reasons, and every one of them produced a plausible-looking string
+        # rather than an error:
+        #
+        #  * `face_swap_mode` is the face SELECTION mode ("selected"/"all"),
+        #    set from the UI's `detection` field -- not a model. It was read
+        #    FIRST and is always truthy, so `swap_model` was never consulted.
+        #    Its module default in globals.py happens to be the string
+        #    'DFL XSeg', which is a MASK engine, which is why the swapper field
+        #    read as one.
+        #  * `selected_enhancer` is only assigned on globals transiently by
+        #    api.py while serving a render; outside that window it is None.
+        #  * `swap_model` and `mask_engine` are never assigned on globals at
+        #    all, so the previous mask_engine answer came from the hardcoded
+        #    "RealityUX" fallback and was right only by coincidence.
+        #
+        # This method's entire job is telling the user which models the run is
+        # locked to. Reading anything but what the application renders with
+        # defeats it.
+        config = getattr(roop.globals, "CFG", None)
 
-        # Enhancer model
-        enhancer = getattr(roop.globals, "selected_enhancer", "None") or "None"
+        def resolve(*candidates, default=""):
+            for source, name in candidates:
+                value = (getattr(source, name, None) if source is not None
+                         else None)
+                if value:
+                    return str(value)
+            return default
 
-        # Masking engine
-        mask_engine = (
-            getattr(roop.globals, "mask_engine", None)
-            or getattr(roop.globals, "masking_engine", None)
-            or "RealityUX"
-        )
+        swapper = resolve((config, "swap_model"),
+                          (roop.globals, "swap_model"),
+                          default="inswapper")
+        enhancer = resolve((config, "selected_enhancer"),
+                           (roop.globals, "selected_enhancer"),
+                           default="None")
+        mask_engine = resolve((config, "mask_engine"),
+                              (roop.globals, "mask_engine"),
+                              (roop.globals, "masking_engine"),
+                              default="None")
 
         return {
             "swapper": str(swapper),
@@ -389,9 +431,25 @@ class BenchmarkRunner:
         mask_plugin_key = self._resolve_masking_plugin_key(active_models.get("mask_engine"))
 
         # Resolve swap model key (e.g. inswapper)
+        #
+        # The `("all", "first", "selected")` arm below is a guard against a
+        # face-SELECTION mode arriving here in place of a model. That leak was
+        # real -- `inspect_active_models` used to read `face_swap_mode` -- and
+        # because this arm quietly substituted `inswapper`, every benchmark run
+        # rendered a pipeline the user does not have while reporting success.
+        # The substitution is kept (a benchmark should not die on a bad label)
+        # but it is no longer SILENT: this project's standing rule is to bench
+        # the models the user actually runs, and a quiet fallback is how that
+        # rule gets broken without anyone noticing.
         raw_swapper = str(active_models.get("swapper", "inswapper")).lower()
         if "inswapper" in raw_swapper or "dfl" in raw_swapper or raw_swapper in ("all", "first", "selected"):
             resolved_swap_model = "inswapper"
+            if raw_swapper != "inswapper":
+                LOGGER.warning(
+                    "Benchmark swap model %r is not a swapper; falling back to "
+                    "'inswapper'. This run measures a DIFFERENT pipeline from "
+                    "the configured one and its recommendation should not be "
+                    "trusted.", active_models.get("swapper"))
         else:
             resolved_swap_model = str(active_models.get("swapper", "inswapper"))
 
