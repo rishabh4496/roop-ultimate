@@ -15,7 +15,8 @@ APP = os.path.dirname(HERE)
 if APP not in sys.path:
     sys.path.insert(0, APP)
 
-from roop.face_reference import (ReferenceSample, cluster_references,
+from roop.face_reference import (PersistentReferenceEmbeddingCache,
+                                 ReferenceSample, cluster_references,
                                  clustered_faceset, normalized_arcface_embedding)
 
 
@@ -54,6 +55,22 @@ class FaceReferenceTest(unittest.TestCase):
         blend = cluster.embedding_for_pose(0, 0)
         self.assertGreater(float(blend[0]), 0.6)
         self.assertGreater(float(blend[1]), 0.6)
+
+    def test_persistent_cuda_bank_uses_one_matrix_multiply(self):
+        """The matching hot path must not renormalize reference vectors."""
+        cache = PersistentReferenceEmbeddingCache()
+        matrix, names = cache.register({"mehak": vector(0, 5.0),
+                                        "misbah": vector(1, 3.0)})
+        self.assertEqual(names, ("mehak", "misbah"))
+        # This is a CPU-only CI-safe assertion.  On the 4070 the same public
+        # call returns a resident CUDA float32 tensor and torch.mm scores.
+        if matrix is None:
+            self.assertIsNone(cache.similarities([vector(0)], names))
+            return
+        self.assertTrue(matrix.is_cuda)
+        self.assertEqual(str(matrix.dtype), "torch.float32")
+        scores = cache.similarities([vector(0), vector(1)], names)
+        np.testing.assert_allclose(scores, np.eye(2, dtype=np.float32), atol=1e-6)
 
 
 if __name__ == "__main__":

@@ -1200,7 +1200,16 @@ def get_face_swapper() -> Optional[onnxruntime.InferenceSession]:
 
 def _run_swapper_bound(swapper: onnxruntime.InferenceSession,
                        feed: Dict[str, np.ndarray]) -> List[np.ndarray]:
-    """Use persistent CUDA I/O buffers, or retain the portable ORT route."""
+    """Replay static CUDA I/O buffers, or retain the portable ORT route.
+
+    RealSwap/inswapper here is an ONNX Runtime graph.  A PyTorch
+    ``torch.cuda.CUDAGraph`` cannot capture an ORT/TensorRT-owned stream, so
+    attempting to wrap ``session.run`` in a PyTorch capture would be invalid.
+    ``CudaOrtIOBinding`` is the supported equivalent for this execution path:
+    it owns static CUDA input/output tensors and rebinds the fixed shape on
+    every frame without allocator churn.  PyTorch graph replay is reserved for
+    the native GPEN filter path via ``CUDAGraphRunner``.
+    """
     binding = FACE_SWAPPER_IO if swapper is FACE_SWAPPER else None
     if binding is not None:
         outputs = binding.run(feed)

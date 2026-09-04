@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 
 import os
+# Keep long-lived graph/static buffers in expandable segments.  This must be
+# configured before importing torch so the CUDA caching allocator sees it.
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+
 import sys
 import shutil
 import threading as _threading

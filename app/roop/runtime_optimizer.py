@@ -1334,6 +1334,8 @@ class CUDAGraphRunner:
         self.graph = None
         self.static_inputs = None
         self.static_output = None
+        self.stream = None
+        self.device = None
         self.captured = False
         self.invalidation_reason = ""
 
@@ -1359,19 +1361,36 @@ class CUDAGraphRunner:
             raise TypeError("CUDA Graph inputs must be on CUDA")
         if any(not value.is_contiguous() for value in values):
             raise TypeError("CUDA Graph inputs must be contiguous")
-        self.static_inputs = tuple(torch.empty_like(value) for value in values)
-        for static, value in zip(self.static_inputs, values):
-            static.copy_(value)
-        for _ in range(self.warmup):
-            function(*self.static_inputs)
-        torch.cuda.synchronize(device=values[0].device)
+        device = values[0].device
+        if any(value.device != device for value in values):
+            raise TypeError("CUDA Graph inputs must share one CUDA device")
+
+        # A graph has fixed addresses and must not share the caller's default
+        # stream.  The dedicated stream owns static input/output allocation,
+        # exactly three warm-up launches by default, capture, and every replay.
+        # Stream waits preserve dependency ordering without a device-wide sync
+        # on the per-frame fast path.
+        stream = torch.cuda.Stream(device=device)
+        caller_stream = torch.cuda.current_stream(device=device)
+        stream.wait_stream(caller_stream)
+        with torch.cuda.stream(stream):
+            static_inputs = tuple(torch.empty_like(value) for value in values)
+            for static, value in zip(static_inputs, values):
+                static.copy_(value)
+            for _ in range(self.warmup):
+                function(*static_inputs)
+        stream.synchronize()
+
         graph = torch.cuda.CUDAGraph()
-        with torch.cuda.graph(graph):
-            output = function(*self.static_inputs)
+        with torch.cuda.graph(graph, stream=stream):
+            output = function(*static_inputs)
         if not isinstance(output, torch.Tensor):
             raise TypeError("CUDA Graph runner currently requires one tensor output")
+        self.static_inputs = static_inputs
         self.graph = graph
         self.static_output = output
+        self.stream = stream
+        self.device = device
         self.captured = True
         return self
 
@@ -1385,11 +1404,18 @@ class CUDAGraphRunner:
         values = tuple(inputs)
         if len(values) != len(self.static_inputs):
             raise CUDAGraphInvalidation("CUDA Graph input count changed")
-        for static, value in zip(self.static_inputs, values):
-            if tuple(static.shape) != tuple(value.shape) or static.dtype != value.dtype:
-                raise CUDAGraphInvalidation("CUDA Graph input shape or dtype changed")
-            static.copy_(value)
-        self.graph.replay()
+        if any(value.device != self.device for value in values):
+            raise CUDAGraphInvalidation("CUDA Graph input device changed")
+        import torch
+        caller_stream = torch.cuda.current_stream(device=self.device)
+        self.stream.wait_stream(caller_stream)
+        with torch.cuda.stream(self.stream):
+            for static, value in zip(self.static_inputs, values):
+                if tuple(static.shape) != tuple(value.shape) or static.dtype != value.dtype:
+                    raise CUDAGraphInvalidation("CUDA Graph input shape or dtype changed")
+                static.copy_(value)
+            self.graph.replay()
+        caller_stream.wait_stream(self.stream)
         return self.static_output
 
     def invalidate(self, reason: str = "configuration changed") -> None:
@@ -1397,6 +1423,8 @@ class CUDAGraphRunner:
         self.graph = None
         self.static_inputs = None
         self.static_output = None
+        self.stream = None
+        self.device = None
         self.captured = False
         self.invalidation_reason = str(reason)
 

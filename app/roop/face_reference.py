@@ -10,10 +10,16 @@ from __future__ import annotations
 
 from collections import deque
 from dataclasses import dataclass, field
+import os
 from threading import RLock
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple, Union
 
 import numpy as np
+
+try:
+    import torch
+except ImportError:  # Keep the detector/session-agnostic CPU path importable.
+    torch = None
 
 
 ARCFACE_DIMENSION = 512
@@ -24,6 +30,103 @@ HIGH_ACCEPTANCE_THRESHOLD: float = 0.62  # S_match >= 0.62
 LOW_TRACKING_THRESHOLD: float = 0.50     # S_track >= 0.50
 SPATIAL_IOU_THRESHOLD: float = 0.50      # Spatial IoU >= 0.50
 CROSSING_IOU_THRESHOLD: float = 0.30     # Overlap indicating crossing tracks
+
+
+class PersistentReferenceEmbeddingCache:
+    """Own one normalized ArcFace reference matrix on the active CUDA device.
+
+    Reference images are analysed while a faceset is ingested, not while a
+    video frame is matched.  This cache accepts those already-normalized
+    512-D results once, retains their CUDA ``float32`` matrix, and exposes
+    ``torch.mm(frame_faces_emb, ref_emb.T)`` for every later frame.  It is
+    intentionally a small, process-wide cache: one Mehak/Misbah bank is
+    shared rather than copied into every inner detection loop.
+    """
+
+    def __init__(self):
+        self._lock = RLock()
+        self._names: Tuple[str, ...] = ()
+        self._fingerprint: Tuple[Tuple[str, bytes], ...] = ()
+        self._matrix = None
+
+    @staticmethod
+    def _cuda_device():
+        if torch is None:
+            return None
+        try:
+            if torch.cuda.is_available():
+                return torch.device("cuda", int(os.environ.get(
+                    "ROOP_CUDA_DEVICE_ID", "0")))
+        except Exception:
+            pass
+        return None
+
+    def register(self, identities: Dict[str, Any]):
+        """Normalize and upload a complete named reference bank once.
+
+        ``identities`` may contain face objects, FaceSets, or raw embeddings.
+        A byte fingerprint makes repeated initialization idempotent and avoids
+        reallocating the persistent CUDA tensor for every frame/job.
+        """
+        rows: List[Tuple[str, np.ndarray]] = []
+        for name in sorted(identities):
+            value = identities[name]
+            if isinstance(value, dict):
+                value = value.get("embedding", value.get("normed_embedding", value))
+            elif hasattr(value, "identity_embedding"):
+                value = getattr(value, "identity_embedding")
+            elif hasattr(value, "normalized_embedding"):
+                value = getattr(value, "normalized_embedding")
+            elif hasattr(value, "embedding"):
+                value = getattr(value, "embedding")
+            embedding = normalized_arcface_embedding(value)
+            if embedding is not None:
+                rows.append((str(name), embedding))
+        names = tuple(name for name, _ in rows)
+        fingerprint = tuple((name, embedding.tobytes()) for name, embedding in rows)
+        with self._lock:
+            if fingerprint == self._fingerprint:
+                return self._matrix, self._names
+            self._names = names
+            self._fingerprint = fingerprint
+            matrix = (np.ascontiguousarray(np.stack([row for _, row in rows]))
+                      if rows else None)
+            device = self._cuda_device()
+            self._matrix = (torch.as_tensor(matrix, dtype=torch.float32,
+                                            device=device).contiguous()
+                            if matrix is not None and device is not None else None)
+            return self._matrix, self._names
+
+    def similarities(self, frame_embeddings: Sequence[Optional[np.ndarray]],
+                     identity_names: Sequence[str]) -> Optional[np.ndarray]:
+        """Return cosine scores using one GPU matrix multiply, or ``None``.
+
+        Inputs are normalized at face-detection extraction time; references
+        were normalized/uploaded at initialization.  The matching operation is
+        therefore exactly ``torch.mm(frame_faces_emb, ref_emb.T)`` with no
+        reference re-normalization or CPU pairwise dot-product loop.
+        """
+        with self._lock:
+            if (self._matrix is None or tuple(identity_names) != self._names
+                    or torch is None):
+                return None
+            valid = [(i, emb) for i, emb in enumerate(frame_embeddings)
+                     if emb is not None]
+            if not valid:
+                return np.full((len(frame_embeddings), len(self._names)), -1.0,
+                               dtype=np.float32)
+            indices, embeddings = zip(*valid)
+            frame_faces_emb = torch.as_tensor(
+                np.ascontiguousarray(np.stack(embeddings)), dtype=torch.float32,
+                device=self._matrix.device)
+            scores = torch.mm(frame_faces_emb, self._matrix.T)
+            result = np.full((len(frame_embeddings), len(self._names)), -1.0,
+                             dtype=np.float32)
+            result[list(indices)] = scores.detach().cpu().numpy()
+            return result
+
+
+PERSISTENT_REFERENCE_EMBEDDINGS = PersistentReferenceEmbeddingCache()
 
 
 def _field(face: Any, name: str, default=None):
@@ -237,6 +340,7 @@ __all__ = ["ARCFACE_DIMENSION", "DEFAULT_MIN_COSINE", "HIGH_ACCEPTANCE_THRESHOLD
            "LOW_TRACKING_THRESHOLD", "SPATIAL_IOU_THRESHOLD", "CROSSING_IOU_THRESHOLD",
            "ReferenceSample", "ClusteredReferences", "EmbeddingSlidingWindow",
            "IdentityTrackState", "MultiIdentityReferenceRouter",
+           "PersistentReferenceEmbeddingCache", "PERSISTENT_REFERENCE_EMBEDDINGS",
            "normalized_arcface_embedding", "face_pose", "reference_weight",
            "cluster_references", "clustered_faceset", "dual_threshold_match"]
 
@@ -285,9 +389,12 @@ class EmbeddingSlidingWindow:
                 return None
             return (mean_vec / norm).astype(np.float32)
 
-    def max_similarity(self, query_emb: Any) -> float:
+    def max_similarity(self, query_emb: Any, normalized: bool = False) -> float:
         """Return maximum cosine similarity between query and any embedding in the window."""
-        q = normalized_arcface_embedding(query_emb)
+        q = (np.asarray(query_emb, dtype=np.float32).reshape(-1)
+             if normalized else normalized_arcface_embedding(query_emb))
+        if q is not None and q.size != ARCFACE_DIMENSION:
+            q = None
         if q is None:
             return 0.0
         with self._lock:
@@ -296,12 +403,15 @@ class EmbeddingSlidingWindow:
             sims = [float(np.dot(q, entry)) for entry in self._window]
             return float(np.clip(max(sims), -1.0, 1.0))
 
-    def mean_similarity(self, query_emb: Any) -> float:
+    def mean_similarity(self, query_emb: Any, normalized: bool = False) -> float:
         """Return cosine similarity between query and the window centroid."""
         c = self.centroid()
         if c is None:
             return 0.0
-        q = normalized_arcface_embedding(query_emb)
+        q = (np.asarray(query_emb, dtype=np.float32).reshape(-1)
+             if normalized else normalized_arcface_embedding(query_emb))
+        if q is not None and q.size != ARCFACE_DIMENSION:
+            q = None
         if q is None:
             return 0.0
         return float(np.clip(np.dot(q, c), -1.0, 1.0))
@@ -329,7 +439,10 @@ def dual_threshold_match(
     previous_bbox: Optional[Sequence[float]] = None,
     high_threshold: float = HIGH_ACCEPTANCE_THRESHOLD,
     low_threshold: float = LOW_TRACKING_THRESHOLD,
-    iou_threshold: float = SPATIAL_IOU_THRESHOLD
+    iou_threshold: float = SPATIAL_IOU_THRESHOLD,
+    reference_similarity: Optional[float] = None,
+    embedding_is_normalized: bool = False,
+    reference_is_normalized: bool = False,
 ) -> Tuple[bool, float, float, str]:
     """Evaluate dual-threshold hysteresis matching for a candidate face.
 
@@ -341,18 +454,23 @@ def dual_threshold_match(
     Returns:
         (matched: bool, best_cosine: float, spatial_iou: float, reason: str)
     """
-    q = normalized_arcface_embedding(embedding)
+    q = (np.asarray(embedding, dtype=np.float32).reshape(-1)
+         if embedding_is_normalized else normalized_arcface_embedding(embedding))
+    if q is not None and q.size != ARCFACE_DIMENSION:
+        q = None
     if q is None:
         return False, 0.0, 0.0, "no_embedding"
 
-    best_sim = -1.0
-    ref_u = normalized_arcface_embedding(ref_embedding)
-    if ref_u is not None:
-        best_sim = float(np.dot(q, ref_u))
+    best_sim = float(reference_similarity) if reference_similarity is not None else -1.0
+    if reference_similarity is None:
+        ref_u = (np.asarray(ref_embedding, dtype=np.float32).reshape(-1)
+                 if reference_is_normalized else normalized_arcface_embedding(ref_embedding))
+        if ref_u is not None and ref_u.size == ARCFACE_DIMENSION:
+            best_sim = float(np.dot(q, ref_u))
 
     if sliding_window is not None and len(sliding_window) > 0:
-        win_max = sliding_window.max_similarity(q)
-        win_mean = sliding_window.mean_similarity(q)
+        win_max = sliding_window.max_similarity(q, normalized=True)
+        win_mean = sliding_window.mean_similarity(q, normalized=True)
         best_sim = max(best_sim, win_max, win_mean)
 
     iou = 0.0
@@ -436,6 +554,12 @@ class MultiIdentityReferenceRouter:
                         reference_embedding=normed,
                         sliding_window=sw,
                     )
+            # This is the only upload path for reference vectors.  A video
+            # frame never causes reference normalization or a new CUDA tensor.
+            PERSISTENT_REFERENCE_EMBEDDINGS.register({
+                name: state.reference_embedding
+                for name, state in self.identities.items()
+            })
 
     def route(
         self,
@@ -462,7 +586,10 @@ class MultiIdentityReferenceRouter:
             face_bboxes = []
             face_embs = []
 
-            for i, face in enumerate(detected_faces):
+            # Each frame embedding is validated/normalized exactly once.  The
+            # reference bank is persistent on CUDA, so its full MxN cosine
+            # matrix is calculated in one torch.mm instead of nested CPU dots.
+            for face in detected_faces:
                 bbox = _field(face, "bbox")
                 emb = normalized_arcface_embedding(face)
                 face_bboxes.append(
@@ -471,17 +598,29 @@ class MultiIdentityReferenceRouter:
                 )
                 face_embs.append(emb)
 
+            gpu_similarities = PERSISTENT_REFERENCE_EMBEDDINGS.similarities(
+                face_embs, id_names)
+
+            for i, face in enumerate(detected_faces):
                 for j, name in enumerate(id_names):
                     state = self.identities[name]
+                    reference_similarity = (
+                        float(gpu_similarities[i, j])
+                        if gpu_similarities is not None and face_embs[i] is not None
+                        else None
+                    )
                     matched, sim, iou, _ = dual_threshold_match(
-                        emb,
+                        face_embs[i],
                         state.reference_embedding,
                         sliding_window=state.sliding_window,
-                        current_bbox=face_bboxes[-1],
+                        current_bbox=face_bboxes[i],
                         previous_bbox=state.previous_bbox,
                         high_threshold=self.high_threshold,
                         low_threshold=self.low_threshold,
                         iou_threshold=self.iou_threshold,
+                        reference_similarity=reference_similarity,
+                        embedding_is_normalized=True,
+                        reference_is_normalized=True,
                     )
                     sim_matrix[i, j] = sim
                     iou_matrix[i, j] = iou
