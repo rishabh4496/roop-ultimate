@@ -109,6 +109,78 @@ class ChunkedOutputTest(ProgressEnv):
         self.assertGreater(len(lines), 1,
                            "the time-based fallback never fired")
 
+    def _drive(self, schedule, total=None):
+        """Feed a bar an exact arrival schedule on a fake clock.
+
+        Returns (reported_rate, true_rate). The schedule is a list of gaps in
+        seconds between successive update(1) calls, so the true aggregate rate
+        is len(schedule) / sum(schedule) by construction.
+        """
+        clock = [0.0]
+        with redirect_stdout(io.StringIO()),                 patch("roop.procmgr_runtime.time.perf_counter", lambda: clock[0]):
+            p = ChunkedProgress(total=total or len(schedule), desc="Processing",
+                                unit="frames")
+            p._last_t = 0.0
+            p._completion_times = deque([(0.0, 0)])
+            for gap in schedule:
+                clock[0] += gap
+                p.update(1)
+            p._refresh_rate()
+            reported = p.rolling_rate or 0.0
+        return reported, len(schedule) / clock[0]
+
+    def test_rate_ignores_how_arrivals_are_spaced(self):
+        """Bursty and evenly-spaced arrivals at one true rate must agree.
+
+        Both stages that own a bar here are fed by a worker POOL: a batch of
+        detections lands within microseconds, then the loop blocks on the
+        dispatch cap. Averaging per-update `n / dt` samples let those
+        microsecond gaps dominate (E[1/dt] >> 1/E[dt]) and reported a real
+        pre-pass running at 42.8 frames/s as 230.34, with "02:17 left" against
+        a true ~12 minutes. On this synthetic 50 f/s schedule it read 39,692.
+        """
+        bursty = []
+        for _ in range(400):
+            bursty += [0.00002] * 7 + [0.16]        # 8 workers, then a block
+        smooth = [sum(bursty) / len(bursty)] * len(bursty)
+
+        burst_rate, burst_true = self._drive(bursty)
+        smooth_rate, smooth_true = self._drive(smooth)
+
+        self.assertAlmostEqual(burst_true, smooth_true, places=6)
+        for reported, true in ((burst_rate, burst_true), (smooth_rate, smooth_true)):
+            self.assertAlmostEqual(reported, true, delta=true * 0.05)
+        self.assertAlmostEqual(burst_rate, smooth_rate, delta=smooth_rate * 0.05)
+
+    def test_rate_ignores_free_skip_frames(self):
+        """ROOP_TEMPORAL_STEP > 1 calls update(1) with no work in between.
+
+        Those cost microseconds and used to report ~1000x the true rate.
+        """
+        schedule = []
+        for _ in range(400):
+            schedule += [0.00001, 0.00001, 0.05]    # two skips, one real frame
+        reported, true = self._drive(schedule)
+        self.assertAlmostEqual(reported, true, delta=true * 0.05)
+
+    def test_eta_is_derived_from_the_honest_rate(self):
+        """The published ETA divides by the rate, so it inherits its accuracy."""
+        from roop.procmgr_runtime import _bar_eta_seconds
+        clock = [0.0]
+        with redirect_stdout(io.StringIO()),                 patch("roop.procmgr_runtime.time.perf_counter", lambda: clock[0]):
+            p = ChunkedProgress(total=1000, desc="Processing", unit="frames")
+            p._last_t = 0.0
+            p._completion_times = deque([(0.0, 0)])
+            for _ in range(50):                      # bursts of 8 at 50 f/s
+                for gap in ([0.00002] * 7 + [0.16]):
+                    clock[0] += gap
+                    p.update(1)
+            p._refresh_rate()
+            eta = _bar_eta_seconds(p)
+        # 600 frames remain at ~50 f/s: ~12 s, not the fraction of a second the
+        # old rate implied.
+        self.assertAlmostEqual(eta, (1000 - p.n) / 50.0, delta=1.0)
+
     def test_rate_uses_the_rolling_completion_ema(self):
         """``display = .15 * current + .85 * previous`` exactly."""
         with redirect_stdout(io.StringIO()):

@@ -1306,6 +1306,24 @@ class ChunkedProgress(tqdm):
     RATE_WINDOW_SECONDS = 3.0
     EMA_ALPHA = 0.15
 
+    # The rate is COMPLETED / ELAPSED over a trailing window, never a mean of
+    # per-update instantaneous rates. That distinction is the whole reason this
+    # displayed 230 frames/s on a pre-pass whose own bar read 36,950 frames in
+    # 14:24 -- 42.8 frames/s -- and quoted "02:17 left" against a real ~12 min.
+    #
+    # update() used to compute `n / (now - previous_update)` and EMA those. Both
+    # stages here feed the bar from a worker POOL, so arrivals are bursty: a
+    # batch lands within microseconds, then the loop blocks on the dispatch cap.
+    # Each microsecond-apart arrival reports tens of thousands of frames/s, and
+    # averaging rates instead of dividing totals lets those dominate (Jensen:
+    # E[1/dt] >> 1/E[dt]). Measured against a known-rate synthetic schedule, the
+    # old estimator was exact on evenly-spaced arrivals and overstated a bursty
+    # 50 f/s as 39,692 f/s -- 795x. The skip path (ROOP_TEMPORAL_STEP > 1), which
+    # calls update(1) with no work between calls, measured 1019x.
+    #
+    # Dividing totals is immune to arrival shape, which is what makes the window
+    # correct for a pooled producer and for a chunk finishing all at once alike.
+
     def __init__(self, *args, **kwargs):
         style = _progress_style()
         self._chunked = style == "chunk" or (style == "auto" and not _stream_is_terminal())
@@ -1314,10 +1332,6 @@ class ChunkedProgress(tqdm):
         started = time.perf_counter()
         self._last_n = 0
         self._last_t = started
-        self._last_emission_t = started
-        self._last_heartbeat_t = started
-        self._prev_fps = 0.0
-        self._fps_display = 0.0
         self._last_rate = None
         self._completion_times = deque([(started, 0)])
         self._ema_rate = None
@@ -1337,16 +1351,14 @@ class ChunkedProgress(tqdm):
 
     @property
     def rolling_rate(self):
-        """Completion-rate EMA on actual frame emission timestamps."""
-        fps = getattr(self, "_fps_display", 0.0)
-        return fps if fps > 0.0 else getattr(self, "_ema_rate", None)
+        """Frames completed per second, over the trailing RATE_WINDOW_SECONDS."""
+        return getattr(self, "_ema_rate", None)
 
     @property
     def format_dict(self):
-        """Expose the displayed EMA to tqdm, ETA, and existing UI callers."""
+        """Expose the displayed rate to tqdm, ETA, and existing UI callers."""
         values = super().format_dict
-        fps = getattr(self, "_fps_display", 0.0)
-        rate = fps if fps > 0.0 else getattr(self, "_ema_rate", None)
+        rate = getattr(self, "_ema_rate", None)
         if rate is not None and rate > 0.0:
             values["rate"] = rate
         return values
@@ -1359,9 +1371,6 @@ class ChunkedProgress(tqdm):
 
     def _refresh_rate(self):
         """Sample the rolling window and apply the fixed requested EMA."""
-        if self._fps_display > 0.0:
-            self._ema_rate = self._fps_display
-            return
         if len(self._completion_times) < 2:
             return
         then, previous_n = self._completion_times[0]
@@ -1383,24 +1392,16 @@ class ChunkedProgress(tqdm):
     # is what a monotonic clock is for.
     def update(self, n=1):
         now = time.perf_counter()
-        dt = now - self._last_emission_t
-        if dt > 1e-6:
-            instant_fps = n / dt
-            if self._fps_display <= 0.0:
-                self._fps_display = instant_fps
-            else:
-                self._fps_display = (self.EMA_ALPHA * instant_fps) + ((1.0 - self.EMA_ALPHA) * self._prev_fps)
-            self._prev_fps = self._fps_display
-            self._last_emission_t = now
-            self._ema_rate = self._fps_display
-
         ret = super().update(n)
         self._record_completion(now)
-        # Fixed 500 ms heartbeat display interval
+        # Fixed 500 ms heartbeat display interval. The rate is resampled on the
+        # same tick in BOTH paths: the bar draws from format_dict, so leaving it
+        # to _emit() would have left an interactive terminal on tqdm's own rate.
         if (now - self._last_t) >= self.DISPLAY_INTERVAL_SECONDS or (self.total is not None and self.n >= self.total):
             if self._chunked:
                 self._emit(now)
             else:
+                self._refresh_rate()
                 self._last_t = now
                 self.refresh()
         return ret

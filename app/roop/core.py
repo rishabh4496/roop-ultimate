@@ -8,6 +8,7 @@ os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 import sys
 import shutil
 import threading as _threading
+from collections import deque as _deque
 import time as _time
 # single thread doubles cuda performance - needs to be set before torch import
 if any(arg.startswith('--execution-provider') for arg in sys.argv):
@@ -582,14 +583,21 @@ def set_display_ui(function):
 
 
 class TerminalThroughputMeter:
-    """Smooth Terminal Throughput Meter using Exponential Moving Average (EMA).
+    """Terminal throughput meter: completed / elapsed over a trailing window.
 
-    Calculates EMA on actual frame emission timestamps:
-        fps_display = (alpha * instant_fps) + ((1.0 - alpha) * prev_fps) with alpha = 0.15.
-    Updates the terminal display at a fixed 500 ms heartbeat interval.
+    The rate is TOTAL FRAMES divided by TOTAL SECONDS across the last
+    RATE_WINDOW_SECONDS, then EMA-smoothed at the heartbeat. It is never a mean
+    of per-update instantaneous rates -- see ChunkedProgress in
+    procmgr_runtime.py, which carried the identical defect and the measurements
+    that condemn it. In short: this meter is fed by pooled workers and by a
+    caller that reports every 10 frames, so updates arrive in bursts, and
+    averaging `n / dt` samples lets the microsecond-apart ones dominate
+    (E[1/dt] >> 1/E[dt]). A single pair of back-to-back update(1) calls used to
+    report 190,669 frames/s here, and the ETA divides by exactly this number.
     """
     ALPHA = 0.15
     HEARTBEAT_INTERVAL = 0.5
+    RATE_WINDOW_SECONDS = 3.0
 
     def __init__(self, total=None, desc="Processing", unit="frames"):
         self.total = total
@@ -599,25 +607,35 @@ class TerminalThroughputMeter:
         self.prev_fps = 0.0
         self.fps_display = 0.0
         self.start_t = _time.perf_counter()
-        self.last_emission_t = self.start_t
         self.last_heartbeat_t = self.start_t
+        self._completion_times = _deque([(self.start_t, 0)])
         self._lock = _threading.Lock()
+
+    def _refresh_rate(self, now):
+        """Resample the trailing window. Caller holds the lock."""
+        cutoff = now - self.RATE_WINDOW_SECONDS
+        while len(self._completion_times) > 1 and self._completion_times[0][0] < cutoff:
+            self._completion_times.popleft()
+        then, previous_n = self._completion_times[0]
+        elapsed = now - then
+        completed = self.n - previous_n
+        if elapsed <= 0.0 or completed <= 0:
+            return
+        window_rate = completed / elapsed
+        if self.fps_display <= 0.0:
+            self.fps_display = window_rate
+        else:
+            self.fps_display = ((self.ALPHA * window_rate) +
+                                ((1.0 - self.ALPHA) * self.prev_fps))
+        self.prev_fps = self.fps_display
 
     def update(self, n=1):
         now = _time.perf_counter()
         with self._lock:
-            dt = now - self.last_emission_t
             self.n += n
-            if dt > 1e-6:
-                instant_fps = n / dt
-                if self.fps_display <= 0.0:
-                    self.fps_display = instant_fps
-                else:
-                    self.fps_display = (self.ALPHA * instant_fps) + ((1.0 - self.ALPHA) * self.prev_fps)
-                self.prev_fps = self.fps_display
-                self.last_emission_t = now
-
+            self._completion_times.append((now, self.n))
             if (now - self.last_heartbeat_t) >= self.HEARTBEAT_INTERVAL or (self.total and self.n >= self.total):
+                self._refresh_rate(now)
                 self._render(now)
                 self.last_heartbeat_t = now
 
@@ -663,7 +681,10 @@ class TerminalThroughputMeter:
             self.unit = unit
 
     def close(self):
-        self._render(_time.perf_counter())
+        now = _time.perf_counter()
+        with self._lock:
+            self._refresh_rate(now)
+        self._render(now)
         import sys
         sys.stderr.write("\n")
         sys.stderr.flush()

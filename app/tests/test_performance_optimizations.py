@@ -4,9 +4,13 @@
 3. Frame Buffer Pre-Allocation with Pinned Memory
 """
 
+import collections
+import contextlib
 import gc
+import io
 import unittest
 from types import SimpleNamespace
+from unittest import mock
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -163,31 +167,68 @@ class TestGCLifecycleAndCoreFastPath(unittest.TestCase):
         gc.enable()
         self.assertTrue(gc.isenabled())
 
-    def test_terminal_throughput_meter_ema(self):
+    def test_terminal_throughput_meter_rate_is_completed_over_elapsed(self):
+        """The rate divides totals; it never averages per-update rates.
+
+        Two back-to-back update(1) calls are microseconds apart. Reporting
+        `n / dt` for those reported 190,669 frames/s, and the printed ETA
+        divides by exactly that.
+        """
         meter = roop.core.create_throughput_progress(total=10, desc="TestEMA", unit="frames")
         self.assertEqual(meter.ALPHA, 0.15)
         self.assertEqual(meter.HEARTBEAT_INTERVAL, 0.5)
 
-        # First frame emission: initializes EMA
+        # A single frame in ~no time is not a rate. Nothing is claimed yet.
         meter.update(1)
-        self.assertGreater(meter.fps_display, 0.0)
         self.assertEqual(meter.n, 1)
+        self.assertEqual(meter.fps_display, 0.0)
 
-        # Second frame emission: applies EMA formula
-        prev_fps = meter.fps_display
         meter.update(1)
-        # fps_display = 0.15 * instant + 0.85 * prev
-        self.assertGreater(meter.fps_display, 0.0)
-        meter.close()
+        self.assertEqual(meter.n, 2)
+        self.assertEqual(meter.fps_display, 0.0)
 
-    def test_chunked_progress_ema_rate(self):
+        # Drive the window explicitly: 20 frames over 2 s is 10 frames/s, no
+        # matter how those 20 arrivals were spaced.
+        meter.n = 20
+        meter._completion_times = collections.deque([(0.0, 0)])
+        meter._refresh_rate(2.0)
+        self.assertAlmostEqual(meter.fps_display, 10.0)
+        with contextlib.redirect_stderr(io.StringIO()):
+            meter.close()
+
+    def test_terminal_throughput_meter_survives_bursty_arrivals(self):
+        """A pooled producer delivers bursts. The reported rate must not care."""
+        meter = roop.core.create_throughput_progress(total=1200, desc="Burst", unit="frames")
+        clock = [0.0]
+        with mock.patch.object(roop.core._time, "perf_counter", lambda: clock[0]),                 contextlib.redirect_stderr(io.StringIO()):
+            meter.start_t = meter.last_heartbeat_t = 0.0
+            meter._completion_times = collections.deque([(0.0, 0)])
+            # 8 workers: 7 arrivals microseconds apart, then the dispatch cap
+            # blocks. True aggregate rate is 50 frames/s.
+            for _ in range(400):
+                for dt in ([0.00002] * 7 + [0.16]):
+                    clock[0] += dt
+                    meter.update(1)
+            meter._refresh_rate(clock[0])
+        # Within a couple of percent of truth; the residual is the window
+        # boundary landing inside a burst. The estimator this replaced reported
+        # 39,692 frames/s for this exact schedule -- 795x over.
+        self.assertAlmostEqual(meter.fps_display, 50.0, delta=2.0)
+
+    def test_chunked_progress_rate_needs_a_measurable_window(self):
         from roop.procmgr_runtime import ChunkedProgress
         prog = ChunkedProgress(total=5, desc="TestChunked", unit="frames", disable=True)
         self.assertEqual(prog.EMA_ALPHA, 0.15)
         self.assertEqual(prog.DISPLAY_INTERVAL_SECONDS, 0.5)
+        # One frame, no elapsed time: no rate is claimed, and format_dict is
+        # left carrying tqdm's own figure rather than an invented one.
         prog.update(1)
-        self.assertGreater(prog.rolling_rate, 0.0)
-        self.assertIn("rate", prog.format_dict)
+        self.assertIsNone(prog.rolling_rate)
+        # Once there is a window, the rate is completed / elapsed.
+        prog._completion_times = collections.deque([(0.0, 0), (4.0, 60)])
+        prog._refresh_rate()
+        self.assertAlmostEqual(prog.rolling_rate, 15.0)
+        self.assertAlmostEqual(prog.format_dict["rate"], 15.0)
         prog.close()
 
 
