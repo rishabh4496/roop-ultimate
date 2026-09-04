@@ -46,6 +46,12 @@ export const SETTINGS_CATALOG = [
   { key: 'perf_nvdec', label: 'GPU video decode (NVDEC)', section: 'Advanced performance' },
   { key: 'perf_batch_swap', label: 'Batched swap', section: 'Advanced performance' },
   { key: 'perf_profile', label: 'Stage profiling (terminal)', section: 'Advanced performance' },
+  { key: 'cpu_ort_intra_threads', label: 'ONNX intra-op threads', section: 'Advanced performance' },
+  { key: 'cpu_ort_inter_threads', label: 'ONNX inter-op threads', section: 'Advanced performance' },
+  { key: 'cpu_ffmpeg_threads', label: 'FFmpeg encoder threads', section: 'Advanced performance' },
+  { key: 'perf_ort_arena_strategy', label: 'ONNX memory arena', section: 'Advanced performance' },
+  { key: 'perf_cudnn_conv_algo', label: 'cuDNN conv algorithm search', section: 'Advanced performance' },
+  { key: 'perf_gpu_mem_limit', label: 'Provider memory limit (MiB)', section: 'Advanced performance' },
 
   // Identity & tracking
   { key: 'recognizer', label: 'Recognition model', section: 'Identity & tracking' },
