@@ -193,7 +193,13 @@ class StabChunkBudget(unittest.TestCase):
         import roop.ProcessMgr as pmmod
 
         class _NS:
+            # No scheduler: `_stab_live_chunks` falls back to the historical
+            # constant, which is the world these budget assertions were written
+            # for. The scheduler-driven counts are covered by
+            # tests/test_stab_live_chunk_accounting.py.
             _STAB_LIVE_CHUNKS = self.PM._STAB_LIVE_CHUNKS
+            _stab_live_chunks = self.PM._stab_live_chunks
+            _runtime_scheduler = None
 
         class _FakeVM:
             available = int(avail_gb * 1024 ** 3)
@@ -262,14 +268,43 @@ class StabChunkBudget(unittest.TestCase):
         self.assertNotIn("min(budget_mb", body,
                          "an explicit ROOP_STAB_CHUNK_MB must not be clamped")
 
-    def test_the_live_chunk_count_matches_the_code(self):
-        """The constant is only worth having if it tracks reality. These are the
-        queues whose depths it sums; if one changes, this number must too."""
+    def test_the_live_chunk_count_is_derived_from_the_real_queues(self):
+        """This guard used to scan for `prefetch_q = Queue(2)` and
+        `_write_q = Queue(1)`, and it PASSED for as long as those strings
+        survived -- as COMMENTS. Both queues had been changed to size
+        themselves from the scheduler's `queue_capacity`, one line below a
+        comment reading "Historical reference retained for the live-chunk
+        contract: prefetch_q = Queue(2)". The divisor stayed at 6 while the
+        real count reached 9, so the budget under-reserved by half again.
+
+        Source scanning passes on prose. Comments are stripped before the
+        scan, and the arithmetic is asserted against the derivation.
+        """
         body = PM_SRC.split('def _run_stab_parallel', 1)[1]
-        self.assertIn('prefetch_q = Queue(2)', body)
-        self.assertIn('_write_q = Queue(1)', body)
-        # reader-in-progress 1 + prefetch 2 + in-hand 1 + results 1 + write_q 1
-        self.assertEqual(self.PM._STAB_LIVE_CHUNKS, 1 + 2 + 1 + 1 + 1)
+        code = chr(10).join(line.split('#', 1)[0] for line in body.splitlines())
+
+        # Both queues take their depth from the same scheduler capacity...
+        self.assertIn('prefetch_q = Queue(max(1, int(_scheduler_capacity)))', code)
+        self.assertIn('_write_q = Queue(max(1, int(_scheduler_capacity)))', code)
+        # ...so the count is the three working buffers plus both depths.
+        for capacity in (1, 2, 3, 5):
+            class _S:
+                queue_capacity = capacity
+
+            class _NS:
+                _STAB_LIVE_CHUNKS = self.PM._STAB_LIVE_CHUNKS
+                _stab_live_chunks = self.PM._stab_live_chunks
+                _runtime_scheduler = _S()
+
+            self.assertEqual(_NS()._stab_live_chunks(), 3 + 2 * capacity,
+                             f'capacity {capacity}')
+
+    def test_the_old_queue_literals_are_not_reintroduced_as_code(self):
+        """If someone hard-codes the depths again, the derivation is a lie."""
+        body = PM_SRC.split('def _run_stab_parallel', 1)[1]
+        code = chr(10).join(line.split('#', 1)[0] for line in body.splitlines())
+        self.assertNotIn('prefetch_q = Queue(2)', code)
+        self.assertNotIn('_write_q = Queue(1)', code)
 
 
 if __name__ == '__main__':

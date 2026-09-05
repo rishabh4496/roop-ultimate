@@ -2783,20 +2783,41 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
     # A chunk is NOT the only copy of itself. Live at the same moment in
     # _run_stab_parallel, every one of them chunk-sized:
     #     the reader filling the next chunk              1
-    #     prefetch_q = Queue(2)                          2
+    #     prefetch_q                                     its capacity
     #     the chunk currently being processed            1
     #     `results`, that chunk's processed output       1
-    #     _write_q = Queue(1), the previous results      1
-    # So decoded frames alone reach SIX times the per-chunk budget. The old flat
-    # 1536 MB default therefore reserved ~9 GB, which is unremarkable on 32 GB
-    # and fatal on 16 GB — measured on a 16 GB / RTX 3060 box, a 40934-frame
-    # render died at 12% with ffmpeg's own threads failing malloc
-    # (AVERROR(ENOMEM)) and numpy unable to allocate a 1.5 MB array.
-    _STAB_LIVE_CHUNKS = 6
+    #     _write_q                                       its capacity
+    # So decoded frames alone reach several times the per-chunk budget. The old
+    # flat 1536 MB default reserved ~9 GB, which is unremarkable on 32 GB and
+    # fatal on 16 GB — measured on a 16 GB / RTX 3060 box, a 40934-frame render
+    # died at 12% with ffmpeg's own threads failing malloc (AVERROR(ENOMEM))
+    # and numpy unable to allocate a 1.5 MB array.
+    #
+    # This WAS the constant 6, correct when the queues were literally Queue(2)
+    # and Queue(1). Both are now sized from the unified scheduler's
+    # `queue_capacity`, and nothing updated the divisor: at the capacity of 3
+    # this 12GB/32GB box profiles, the real count is 3 + 2*3 = NINE, so the
+    # budget reserved for six and the render held half as much again. On a
+    # machine already near its RAM ceiling that difference is the ceiling.
+    # Derive it, so the two can never drift again.
+    _STAB_LIVE_CHUNKS = 6          # fallback only; see _stab_live_chunks()
+
+    def _stab_live_chunks(self):
+        """How many chunk-sized frame buffers _run_stab_parallel holds at once."""
+        capacity = getattr(self._runtime_scheduler, 'queue_capacity', None)
+        try:
+            capacity = max(1, int(capacity))
+        except (TypeError, ValueError):
+            return self._STAB_LIVE_CHUNKS
+        # reader + processing + results, plus both bounded queues.
+        return 3 + 2 * capacity
 
     def _default_stab_chunk_mb(self, hard_cap=None):
-        """Per-chunk budget that keeps all six live copies inside a share of the
+        """Per-chunk budget that keeps every live copy inside a share of the
         RAM this machine actually has free.
+
+        "Every" is counted by `_stab_live_chunks()` from the queue capacities
+        in force, not from a constant -- see the note on `_STAB_LIVE_CHUNKS`.
         """
         try:
             memory = psutil.virtual_memory()
@@ -2840,12 +2861,13 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
         except ValueError:
             share = default_share
         share = min(0.90, max(0.05, share))
-        budget = max(96.0, min(hard_cap, (avail_mb * share) / self._STAB_LIVE_CHUNKS))
+        live = self._stab_live_chunks()
+        budget = max(96.0, min(hard_cap, (avail_mb * share) / live))
         if not getattr(self, '_stab_budget_notified', False):
             self._stab_budget_notified = True
             print(f"[Stabilize] {avail_mb / 1024.0:.1f} GB RAM free of {total_mb / 1024.0:.1f} GB: chunk budget "
-                  f"{budget:.0f} MB (cap {hard_cap:.0f} MB), holding {self._STAB_LIVE_CHUNKS} live copies "
-                  f"(~{budget * self._STAB_LIVE_CHUNKS / 1024.0:.1f} GB of frames). "
+                  f"{budget:.0f} MB (cap {hard_cap:.0f} MB), holding {live} live copies "
+                  f"(~{budget * live / 1024.0:.1f} GB of frames). "
                   f"ROOP_STAB_CHUNK_MB overrides this exactly.")
         return budget
 
