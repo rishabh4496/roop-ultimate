@@ -1338,6 +1338,7 @@ class ChunkedProgress(tqdm):
 
         # tqdm otherwise defaults to a 100-ms redraw. Make an interactive
         # terminal and Pinokio's captured log agree on exactly the same cadence.
+        self._rate_lock = Lock()
         kwargs["mininterval"] = self.DISPLAY_INTERVAL_SECONDS
         if self._chunked:
             # Draw nowhere. Everything tqdm computes stays available; only the
@@ -1391,20 +1392,21 @@ class ChunkedProgress(tqdm):
     # and its rate is unreportable. Both uses here are elapsed intervals, which
     # is what a monotonic clock is for.
     def update(self, n=1):
-        now = time.perf_counter()
-        ret = super().update(n)
-        self._record_completion(now)
-        # Fixed 500 ms heartbeat display interval. The rate is resampled on the
-        # same tick in BOTH paths: the bar draws from format_dict, so leaving it
-        # to _emit() would have left an interactive terminal on tqdm's own rate.
-        if (now - self._last_t) >= self.DISPLAY_INTERVAL_SECONDS or (self.total is not None and self.n >= self.total):
-            if self._chunked:
-                self._emit(now)
-            else:
-                self._refresh_rate()
-                self._last_t = now
-                self.refresh()
-        return ret
+        with self._rate_lock:
+            now = time.perf_counter()
+            ret = super().update(n)
+            self._record_completion(now)
+            # Fixed 500 ms heartbeat display interval. The rate is resampled on the
+            # same tick in BOTH paths: the bar draws from format_dict, so leaving it
+            # to _emit() would have left an interactive terminal on tqdm's own rate.
+            if (now - self._last_t) >= self.DISPLAY_INTERVAL_SECONDS or (self.total is not None and self.n >= self.total):
+                if self._chunked:
+                    self._emit(now)
+                else:
+                    self._refresh_rate()
+                    self._last_t = now
+                    self.refresh()
+            return ret
 
     def close(self):
         # Always land on a final line, without duplicating an update that already

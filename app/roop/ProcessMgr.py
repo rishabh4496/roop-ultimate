@@ -3211,12 +3211,8 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                                 self.videowriter.write_frame(fr)
                         if self.output_to_cam:
                             self.streamwriter.WriteToStream(fr)
-                        # Progress represents output the user can consume, not
-                        # work handed to a stabilization block.  Counting here
-                        # makes the completion timestamps continuous and prevents
-                        # a whole ~230-frame chunk from appearing as an FPS burst.
-                        if progress_cb:
-                            progress_cb()
+                        # Real-time progress is reported directly by worker threads in _process_block
+                        # as frames complete on GPU, avoiding bursty FPS and frozen terminal bars.
                         if self._temporal_faces is not None:
                             self._temporal_faces.pop(gi, None)
                         if hasattr(self, '_track_assignments') and self._track_assignments is not None:
@@ -3281,7 +3277,8 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                 # Binding them as default args freezes the values per chunk.
                 def _process_block(a, b,
                                     _combined=combined, _base=base,
-                                    _base_global=base_global, _results=results):
+                                    _base_global=base_global, _results=results,
+                                    _progress_cb=progress_cb):
                     self._tls.kps = self._kps_stab_factory() if self._kps_stab_factory else None
                     self._tls.enh = self._enh_stab_factory() if self._enh_stab_factory else None
                     self._tls.mask = self._mask_stab_factory() if self._mask_stab_factory else None
@@ -3335,6 +3332,8 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                             out = _combined[ci]
                         _results[gi] = out if out is not None else _combined[ci]
                         del out
+                        if _progress_cb:
+                            _progress_cb()
 
                 # ── Work-stealing block dispatch ──────────────────────────────
                 # Per-frame cost varies a lot (face count/size, masking, close-up
@@ -3474,12 +3473,21 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
 
 
     def update_progress(self, progress: Any = None) -> None:
-        # Reuse one Process handle instead of rebuilding it every frame.
-        process = self._psutil_proc
-        if process is None:
-            process = self._psutil_proc = psutil.Process(os.getpid())
-        memory_usage = process.memory_info().rss / 1024 / 1024 / 1024
-        mem_str = f"{COLOR_CYAN}{memory_usage:.2f}GB{COLOR_RESET}"
+        if progress is None:
+            return
+        # Throttle psutil memory probe to 500ms to avoid Windows syscall overhead in worker loops
+        _now = time.perf_counter()
+        if _now - getattr(self, '_last_mem_probe_t', 0.0) >= 0.5:
+            self._last_mem_probe_t = _now
+            process = self._psutil_proc
+            if process is None:
+                process = self._psutil_proc = psutil.Process(os.getpid())
+            try:
+                mem_gb = process.memory_info().rss / 1024 / 1024 / 1024
+                self._cached_mem_str = f"{COLOR_CYAN}{mem_gb:.2f}GB{COLOR_RESET}"
+            except Exception:
+                pass
+        mem_str = getattr(self, '_cached_mem_str', f"{COLOR_CYAN}0.00GB{COLOR_RESET}")
         active_workers = getattr(self, '_active_inference_workers', None)
         thread_str = f"{COLOR_YELLOW}{active_workers or self.num_threads}{COLOR_RESET}"
         # refresh=False: this fires once per FRAME, and a refreshing set_postfix

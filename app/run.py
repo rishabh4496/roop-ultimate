@@ -76,6 +76,8 @@ def _apply_perf_env():
     _set('ROOP_DETECTOR_POOL', cfg.get('perf_detector_pool'))
     _set('ROOP_EXPR_POOL', cfg.get('perf_expr_pool'))
     _set('ROOP_ENCODER_PRESET', cfg.get('perf_encoder_preset'))
+    _set('ROOP_STAB_CHUNK_MB', cfg.get('perf_stab_chunk_mb'))
+    _set('ROOP_STAB_STREAMING', cfg.get('perf_stab_streaming'))
     # These three names are core.py's, not invented here: it reads
     # ROOP_CUDA_ARENA_STRATEGY and ROOP_CUDA_MEM_LIMIT directly when building
     # the CUDA provider options, and ROOP_CUDNN_CONV_ALGO overrides the
