@@ -2,7 +2,10 @@ module.exports = {
   run: [{
     method: "shell.run",
     params: {
-      message: "git pull"
+      message: [
+        "git checkout main",
+        "git pull origin main"
+      ]
     }
   }, {
     method: "shell.run",

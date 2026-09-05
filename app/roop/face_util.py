@@ -314,17 +314,39 @@ def release_face_analyser_aux():
     every frame.  The main pass may still need detector-only ROI checks for
     autorotation or swap verification, so dropping the whole FaceAnalysis
     object would be unsafe.  Removing only the auxiliary models preserves
-    those detector-only calls and lets the 6GB tier reclaim their host RSS.
+    those detector-only calls and lets all device tiers reclaim their VRAM and host RSS.
     """
     with THREAD_LOCK_ANALYSER:
-        for fa in list(FACE_ANALYSER_POOL):
+        targets = list(FACE_ANALYSER_POOL)
+        if FACE_ANALYSER is not None and FACE_ANALYSER not in targets:
+            targets.append(FACE_ANALYSER)
+        for fa in targets:
             models = getattr(fa, 'models', None)
             if isinstance(models, dict):
                 for name in ('recognition', 'landmark_2d_106',
                              'landmark_3d_68', 'genderage'):
-                    models.pop(name, None)
-            if hasattr(fa, 'lm68_model'):
+                    m = models.pop(name, None)
+                    if m is not None and hasattr(m, 'session'):
+                        try:
+                            m.session = None
+                        except Exception:
+                            pass
+            if getattr(fa, 'lm68_model', None) is not None:
+                if hasattr(fa.lm68_model, 'session'):
+                    try:
+                        fa.lm68_model.session = None
+                    except Exception:
+                        pass
                 fa.lm68_model = None
+    import gc
+    gc.collect()
+    try:
+        import torch
+        if torch.cuda.is_available():
+            with torch.cuda.device(getattr(roop.globals, 'cuda_device_id', 0)):
+                torch.cuda.empty_cache()
+    except Exception:
+        pass
 
 
 def get_face_analyser() -> Any:

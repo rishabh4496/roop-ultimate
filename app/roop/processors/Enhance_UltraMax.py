@@ -1209,25 +1209,19 @@ class Enhance_UltraMax:
                 '0', 'off', 'false', 'no'):
             self._cuda_iob_available = False
             return None
-        # HISTORY, BECAUSE THIS BLOCK USED TO DISABLE ITSELF HERE. UltraMax
-        # originally bound a TORCH-owned allocation as the model output. On
-        # ORT 1.23 / TRT 10 that allocation's ownership and stream contract is
-        # not honoured for this dynamic CodeFormer output: the result is finite
-        # and non-flat yet spatially corrupt (striped/ghosted), which no
-        # numerical guard can catch. The response was to refuse the whole CUDA
-        # post-process whenever TensorRT was the provider -- and since
-        # TensorRT is this project's shipped provider, the consequence was that
-        # NOT ONE FACE ever took this path. Every render in the logs, including
-        # 58,887- and 52,569-face production runs, reports the host path.
-        #
-        # The fix is to stop handing ORT foreign memory. Binding the output
-        # with `bind_output(name, 'cuda', 0)` lets ORT allocate AND own it; the
-        # tensor is then copied device-to-device into Torch. Measured against
-        # the host path on this TensorRT build over four trials at 512: max
-        # difference 0.0, bit-identical. See `ort_cuda_output_to_torch`.
+        # TensorRT dynamic CodeFormer: multi-worker execution with external PyTorch
+        # CUDA I/O binding can deadlock the CUDA driver / TRT execution stream.
+        # Use the verified, artifact-free host I/O binding path under TensorRT EP.
+        try:
+            uses_tensorrt = 'TensorrtExecutionProvider' in self.session.get_providers()
+        except (AttributeError, TypeError):
+            uses_tensorrt = False
+        if uses_tensorrt:
+            self._cuda_iob_available = False
+            return None
         try:
             dtype = torch.float16 if self.in_dtype == np.float16 else torch.float32
-            source = torch.from_numpy(src512).to('cuda', dtype=torch.float32, non_blocking=True)
+            source = torch.from_numpy(src512).to('cuda', dtype=torch.float32, non_blocking=False)
             # `.contiguous()` IS LOAD-BEARING. `permute` + `flip` leave a
             # non-contiguous view, and `bind_input` is handed a raw
             # `data_ptr()` -- ORT reads that pointer as though the tensor were
@@ -1243,6 +1237,8 @@ class Enhance_UltraMax:
             input_element = np.float16 if dtype == torch.float16 else np.float32
             out_dtype = (torch.float16 if 'float16' in self.model_outputs[0].type
                          else torch.float32)
+            if torch.cuda.is_available():
+                torch.cuda.current_stream().synchronize()
             with exclusive(self.pool, self._session_lock,
                            (self.session, self.io_binding)) as (sess, iob):
                 if hasattr(iob, 'clear_binding_inputs'):

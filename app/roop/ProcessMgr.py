@@ -775,16 +775,14 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
         """Drop the analysis sessions once a complete temporal replay exists.
 
         The temporal pre-pass has already materialized the detector,
-        recognition, and landmark results that the swap pass consumes.  On a
-        small device, retaining those sessions while also loading the mask and
-        enhancer sessions is enough to cross the host-RSS gate.  Release is
+        recognition, and landmark results that the swap pass consumes. Releasing
+        auxiliary analysis sessions (recognition, landmark, genderage) reclaims
+        substantial VRAM and host RAM before main processing begins. Release is
         allowed only when the replay covers the whole clip and 3D or
         frontalization work is not active. Verification and autorotation keep
         the detector-only portion of the analyser, while recognition and
         landmark sessions are released.
         """
-        if not getattr(self, '_runtime_stab_small', False):
-            return False
         if not getattr(self, '_temporal_mode', False) or self._temporal_faces is None:
             return False
         if int(getattr(self, '_temporal_covered', 0) or 0) < int(frame_count or 0):
