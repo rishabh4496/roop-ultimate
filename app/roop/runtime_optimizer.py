@@ -1104,7 +1104,11 @@ class WorkloadProfiler:
         out_w, out_h = output_resolution or (width, height)
         enhancer = _short(_value(settings, "selected_enhancer", ""))
         enhancement = bool(enhancer and enhancer.lower() not in ("none", "keep"))
-        stabilization = _bool(_value(settings, "stabilize_face", False))
+        # Mask and enhancer filters also select ProcessMgr's ordered block
+        # path. Looking only at face-position smoothing silently capped that
+        # path at one worker when either of the other filters was enabled.
+        stabilization = any(_bool(_value(settings, name, False)) for name in
+                            ("stabilize_face", "stabilize_mask", "stabilize_enhancer"))
         upscale = _bool(_value(settings, "upscale_after_swap", False))
         temporal = _bool(_value(settings, "temporal_detection", False))
         tracking = _bool(_value(settings, "track_identities", False))
@@ -1210,6 +1214,10 @@ class TensorRTEngineManager:
     def cache_key(self, hardware: HardwareProfile, workload: WorkloadProfile,
                   settings: Any, precision: str) -> str:
         identity = {
+            # Invalidate older automatic profiles with a three-context 12GB
+            # default or the face-only stabilization worker decision. This
+            # changes tuning identity, not the ORT/TensorRT engine cache.
+            "tuning_policy": "bounded-pools-all-stabilizers-v2",
             # Keep the complete runtime identity in the key.  In particular,
             # total VRAM and architecture are required: the same model graph
             # must not inherit a tuning profile from a different card merely
@@ -1566,12 +1574,14 @@ class AutoTuner:
         contexts = 1 if small or not hardware.tensorrt_available else 2
         detector_pool = 0 if small or not hardware.cuda_available else 2
         detmask_pool = 0 if small or not hardware.cuda_available else 2
-        # The available 12GB profile's two-face benchmark found the swapper
-        # knee at three contexts; the sub-7GB profile remains explicitly
-        # single-context.  This is a bounded workload-aware choice, not a
-        # universal desktop default.
+        # A second face does not add VRAM capacity. Preserve the validated
+        # 2/2/2 tier on 12GB cards even for multi-face workloads: extra swapper
+        # and enhancer contexts can spill into shared GPU memory on first use.
+        # Wider candidates remain available on larger cards and via explicit
+        # operator settings; the sub-7GB tier stays single-context.
         swapper_pool = (0 if small or not hardware.tensorrt_available else
-                        (3 if workload.faces_per_frame >= 2 else 2))
+                        (3 if hardware.vram_total_gb >= 15.5
+                         and workload.faces_per_frame >= 2 else 2))
         enhancer_pool = 0 if small or not hardware.cuda_available else (2 if workload.enhancement_enabled else 1)
         expression_pool = 0 if small or not hardware.cuda_available else 2
         # Stabilization is a host-side stateful stage, not a second GPU context.

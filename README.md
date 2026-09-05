@@ -87,17 +87,17 @@ The legacy Gradio interface is preserved under `app/ui/` and can be started with
 
 ### Video performance pipeline
 
-Video renders use bounded decode → inference → encode queues. FFmpeg remains the
-hardware decode/encode process, while one ordered CUDA owner advances temporal
-filters continuously; this avoids repeatedly evaluating the old block warm-up
-prefix. A single aggregate lease permits at most four full-resolution frames
-across decode, CUDA work, and encode; frame references are released at the
-encode boundary while generational GC is disabled during active rendering.
-The normal mode is `ROOP_STAB_STREAMING=1` (default). Set
-`ROOP_STAB_STREAMING=0` only to return to the previous block scheduler for an
-investigation. Its bounded FIFO retains landmark, affine, and decimated mask
-history and resets all temporal state at a hard scene cut, so state never
-bleeds between shots. Progress FPS and ETA use a three-second completion-time
+Video renders use bounded decode → inference → encode queues. FFmpeg provides
+hardware decode/encode. Stabilized renders use parallel, ordered blocks with
+warm-up overlap by default (`ROOP_STAB_STREAMING=0`); available RAM limits the
+block width and chunk size. Face, mask, and enhancer smoothing all count as
+stabilization when assigning workers. Turning off face-position smoothing alone
+must not reduce enabled mask/enhancer smoothing to one worker.
+
+`ROOP_STAB_STREAMING=1` selects the alternative continuous pipeline with one
+CUDA owner and at most four in-flight full-resolution frames. It avoids block
+warm-up recomputation, but can reduce inference concurrency. Both paths reset
+temporal state at scene cuts. Progress FPS and ETA use a three-second completion-time
 window, sampled every 500 ms with a fixed 0.15 EMA; only frames emitted by the
 writer advance that meter.
 
@@ -106,6 +106,22 @@ then completes chroma transfer and eye protection on that tensor. This also
 works on ONNX Runtime builds without CUDA DLPack support. Providers that reject
 the binding automatically retain the established CPU-compatible path; no UI,
 CLI, or resume setting changes are required.
+
+### GPU memory pressure
+
+A busy GPU with very low frame throughput can be paging into shared system
+memory. Check dedicated **and shared** GPU memory along with available RAM;
+the free-VRAM reading before inference does not capture later context
+allocations. On the 12 GB RTX 4070, the automatic swapper, detect/mask, and
+detector pools stay at **2/2/2**, including multi-face workloads. Saved explicit
+pool settings override automatic defaults, so restore these three values when
+diagnosing an oversized pool. Restart the app to release resident contexts and
+apply the saved settings. Appearance settings do not need to change.
+
+The sub-7 GB tier retains its single-context policy, and stabilization keeps
+the existing 4096 MB desktop / 1536 MB laptop chunk caps and available-RAM
+limits. Runtime profiles from the old worker/pool policy are invalidated
+automatically; TensorRT model-engine caches are retained.
 
 ## Updates
 

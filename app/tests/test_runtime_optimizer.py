@@ -20,6 +20,7 @@ from roop.runtime_optimizer import (
     PrecisionSelector,
     TensorRTEngineManager,
     WorkloadProfile,
+    WorkloadProfiler,
     _cpu_name,
     apply_cpu_affinity,
     small_card_decode_policy,
@@ -70,6 +71,35 @@ def _workload(faces=1, enhanced=True, stabilized=True, width=1280, height=720):
 
 
 class RuntimeOptimizerTests(unittest.TestCase):
+    def test_mask_and_enhancer_smoothing_receive_stabilization_workers(self):
+        # Face-position smoothing can be off while mask/enhancer smoothing
+        # still needs the ordered parallel-block scheduler.
+        for enabled in ('stabilize_face', 'stabilize_mask', 'stabilize_enhancer'):
+            with self.subTest(enabled=enabled):
+                settings = {name: name == enabled for name in
+                            ('stabilize_face', 'stabilize_mask', 'stabilize_enhancer')}
+                workload = WorkloadProfiler().profile(
+                    settings=settings, resolution=(1280, 720), faces_per_frame=2)
+                self.assertTrue(workload.stabilization_enabled)
+                for vram in (6.0, 12.0):
+                    tuning, *_ = AutoTuner().tune(_hardware(vram), workload)
+                    self.assertGreater(tuning.stabilization_workers, 1)
+                    self.assertLessEqual(tuning.stabilization_workers, tuning.worker_count)
+
+    def test_no_smoothing_does_not_allocate_stabilization_workers(self):
+        workload = WorkloadProfiler().profile(settings={}, resolution=(1280, 720))
+        self.assertFalse(workload.stabilization_enabled)
+        tuning, *_ = AutoTuner().tune(_hardware(12.0), workload)
+        self.assertEqual(tuning.stabilization_workers, 1)
+
+    def test_two_face_default_preserves_both_vram_tiers(self):
+        for vram, expected in ((6.0, 0), (11.99, 2), (12.0, 2)):
+            with self.subTest(vram=vram):
+                tuning, *_ = AutoTuner().tune(_hardware(vram), _workload(faces=2))
+                self.assertEqual(tuning.swapper_pool_size, expected)
+                self.assertEqual(tuning.detmask_pool_size, expected)
+                self.assertEqual(tuning.detector_pool_size, expected)
+
     def test_cpu_name_uses_available_os_brand_string(self):
         with patch("roop.runtime_optimizer.platform.system", return_value="Linux"), \
                 patch("roop.runtime_optimizer.platform.processor", return_value="Intel test CPU"):
