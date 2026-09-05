@@ -89,12 +89,25 @@ class _FakeSession:
 
 class EnhancerPoolCase(unittest.TestCase):
     """Swaps in a stub onnxruntime and restores the module-level pool cache, so
-    one test can never leak a pool size into another."""
+    one test can never leak a pool size into another.
+
+    The process-wide TensorRT resource manager is reset for the same reason,
+    and it is NOT optional. Every pool built here registers itself with that
+    manager, and these stubbed sessions hold no real VRAM — so the manager sees
+    its tracked budget grow by ~920MB per context while the card's free memory
+    never moves, and charges the difference to the next test as
+    `_resident_unobserved_mb`. After a few tests that phantom debt exceeds the
+    card and later pools get admitted at 1 context, failing assertions about
+    concurrency that pass perfectly well in isolation. Reset per test, so what
+    a test measures is its own pool rather than the sum of the ones before it.
+    """
 
     def setUp(self):
         self._ort = CF.onnxruntime
         self._resolve = CF.resolve_relative_path
         self._cache = dict(session_pool._pool_cache)
+        self._manager = session_pool._resource_manager
+        session_pool._resource_manager = session_pool.TensorRTResourceManager()
         CF.onnxruntime = type("ort", (), {
             "InferenceSession": _FakeSession,
             "SessionOptions": lambda: type("o", (), {
@@ -107,6 +120,7 @@ class EnhancerPoolCase(unittest.TestCase):
     def tearDown(self):
         CF.onnxruntime = self._ort
         CF.resolve_relative_path = self._resolve
+        session_pool._resource_manager = self._manager
         session_pool._pool_cache.clear()
         session_pool._pool_cache.update(self._cache)
 

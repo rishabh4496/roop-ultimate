@@ -224,6 +224,52 @@ def _env_float(name, default):
         return default
 
 
+# Cards below this hold ONE structural context. Same threshold the detail
+# stream applies, for the same reason -- this is a resident 512 graph sharing
+# the card with realswap's two nets, RealityUX and the detector/detmask pools.
+_POOL_SINGLE_CONTEXT_BELOW_GB = 15.5
+
+
+def _structural_pool_size(requested):
+    """How many CodeFormer-512 contexts to build for the structural stream.
+
+    `tests/diag_ultramax_pool_scaling.py`, RTX 4070, 10 threads, 240 real
+    crops, TensorRT -- a deeper pool is monotonically WORSE:
+
+        contexts   faces/s   VRAM
+        1          40.0      +1136 MB
+        2          38.4      +1519 MB
+        4          36.6      +2704 MB
+
+    40 faces/s is 25 ms/face, which is the network's own time. The card is
+    already the floor, so extra contexts buy nothing but memory pressure and
+    scheduling overhead -- and this stage shares a 12GB card with realswap's
+    two nets, RealityUX and the detector/detmask pools, where over-committing
+    does not degrade gracefully: the driver pages contexts over PCIe and the
+    render wedges while reporting ~100% GPU utilisation.
+
+    Returns at least 1, never 0: a size-1 SessionPool is still a pool, and
+    `_gpu_guard` waives the global TensorRT lock only for a processor that owns
+    one. Dropping to no pool would hand the most expensive stage in a render
+    back to a one-thread-at-a-time lock -- a much larger regression than the
+    one being avoided here.
+
+    ROOP_ULTRAMAX_POOL overrides, for re-measuring the table above.
+    """
+    n = max(1, int(requested or 1))
+    try:
+        gb = session_pool._detect_vram_gb()
+    except Exception:
+        gb = 0
+    if 0 < gb < _POOL_SINGLE_CONTEXT_BELOW_GB:
+        n = 1
+    try:
+        forced = int(os.environ.get('ROOP_ULTRAMAX_POOL', '') or 0)
+    except ValueError:
+        forced = 0
+    return max(1, forced) if forced else n
+
+
 class Enhance_UltraMax:
     processorname = 'ultramax'
     # Every session call goes through `exclusive()`, so no context of
@@ -474,6 +520,7 @@ class Enhance_UltraMax:
             cap = plugin_options.get('pool_size')
             if cap:
                 n = max(1, min(int(n), int(cap)))
+            n = _structural_pool_size(n)
             extras = []
             try:
                 extras = [_build(i + 1) for i in range(n - 1)]

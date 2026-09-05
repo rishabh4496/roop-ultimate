@@ -398,5 +398,70 @@ class TestUltraMaxRun(unittest.TestCase):
         self.assertEqual(p._textured, 1)
 
 
+class StructuralPoolIsCappedOnNormalCards(unittest.TestCase):
+    """One context below 15.5GB — the same guard the detail stream applies.
+
+    Measured with `tests/diag_ultramax_pool_scaling.py` on an RTX 4070, 10
+    threads, 240 real crops: a deeper pool is monotonically WORSE, 40.0 faces/s
+    at one context against 38.4 at two and 36.6 at four, while VRAM climbs
+    +1136 / +1519 / +2704 MB. 40 faces/s is 25 ms/face, which is the network's
+    own time, so the card is already the floor and the extra contexts buy only
+    memory pressure on a card that also holds realswap's two nets, RealityUX
+    and the detector/detmask pools.
+
+    The size-1 pool is still a pool. That matters: `_gpu_guard` waives the
+    global TensorRT lock only for a processor that owns one, so capping to a
+    single context must not be allowed to collapse into no pool at all — that
+    would hand the most expensive stage in a render back to a one-at-a-time
+    global lock, which is a far larger regression than the one being avoided.
+    """
+
+    def _n_for(self, gb, requested=4, forced=None):
+        env = {k: v for k, v in os.environ.items() if k != 'ROOP_ULTRAMAX_POOL'}
+        if forced is not None:
+            env['ROOP_ULTRAMAX_POOL'] = forced
+        with patch.dict(os.environ, env, clear=True), \
+                patch.object(UM.session_pool, '_detect_vram_gb', return_value=gb):
+            return UM._structural_pool_size(requested)
+
+    def test_twelve_gb_card_gets_one_context(self):
+        self.assertEqual(self._n_for(12.0), 1)
+
+    def test_six_gb_card_gets_one_context(self):
+        self.assertEqual(self._n_for(6.0), 1)
+
+    def test_large_card_keeps_the_requested_pool(self):
+        self.assertEqual(self._n_for(24.0), 4)
+
+    def test_unknown_vram_does_not_silently_cap(self):
+        """A failed probe is not evidence the card is small."""
+        self.assertEqual(self._n_for(0), 4)
+
+    def test_env_override_wins_for_measurement(self):
+        self.assertEqual(self._n_for(12.0, forced='3'), 3)
+
+    def test_never_returns_zero(self):
+        """0 would mean no SessionPool at all, and `_gpu_guard` waives the
+        global TensorRT lock only for a processor that owns one -- so a 0 here
+        would serialise the most expensive stage in a render behind that lock.
+        That is a far bigger regression than the context it saves."""
+        for requested in (0, None, -3, 1):
+            self.assertGreaterEqual(self._n_for(12.0, requested=requested), 1)
+
+    def test_the_cap_is_actually_wired_into_initialize(self):
+        """A helper nothing calls would pass every test above.
+
+        Asserts the sizing branch in `Initialize` routes through the helper,
+        by making the helper the only thing that can decide the pool width.
+        """
+        import inspect
+        src = inspect.getsource(UM.Enhance_UltraMax.Initialize)
+        self.assertIn('_structural_pool_size(', src)
+        # ...and that the raw pool_size result is not what reaches SessionPool.
+        structural = src.split("model_key='enhancer:ultramax'", 1)[1]
+        self.assertLess(structural.index('_structural_pool_size('),
+                        structural.index('SessionPool('))
+
+
 if __name__ == '__main__':
     unittest.main()

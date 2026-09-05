@@ -479,8 +479,31 @@ class TensorRTResourceManager:
 
     def select_pool_size(self, requested, model_key, input_shape=None,
                          batch_size=1, explicit=False):
+        """Choose a buildable pool size.
+
+        Two separate caps are applied here, and they are NOT the same kind of
+        thing:
+
+        * a POLICY cap (``spec.max_contexts`` / a measured benchmark knee) is an
+          opinion about what is worth building. Commit ``0382a70`` removed the
+          static per-tier ceiling so an operator who asks for 8 gets 8, and that
+          decision stands: an explicit value is exempt from every policy cap.
+        * a PHYSICAL cap (what live free VRAM can actually hold) is not an
+          opinion. Exceeding it does not run slower in a tunable way -- the
+          driver starts paging contexts over PCIe and the render WEDGES, with
+          the card reporting ~100% "utilisation" at a third of its power limit.
+          It presents as a hang, not an OOM, so nothing else catches it.
+
+        Explicit values were previously exempt from BOTH, which quietly disabled
+        this guard on any install whose pool knobs are set (a UI save is enough
+        to make every value explicit, even when it is identical to the auto
+        default). Callers that document themselves as capped by ``pool_size``
+        -- ``Enhance_UltraMax`` says outright that "a fourth context collapses
+        the render to 0.2 fps" -- were therefore not capped at all. Explicit
+        now keeps its policy exemption and loses the physics exemption.
+        """
         requested = max(0, int(requested or 0))
-        if requested < 2 or explicit:
+        if requested < 2:
             return requested
         spec = _resource_spec(model_key, input_shape)
         slot_mb = spec.slot_mb(input_shape, batch_size)
@@ -489,11 +512,25 @@ class TensorRTResourceManager:
             if free_mb and not self._baseline_free_mb:
                 self._baseline_free_mb = free_mb
             if not free_mb:
-                # Unknown VRAM is not permission to allocate a wide pool.
-                return 1
+                # Unknown VRAM is not permission to allocate a wide pool -- but
+                # it is not grounds to overrule an operator either, since the
+                # reading being unavailable says nothing about the card.
+                return requested if explicit else 1
             safety = max(self._safety_mb(total_mb), spec.safety_mb)
             usable = free_mb - safety - self._resident_unobserved_mb(free_mb)
             affordable = int(max(0.0, usable) // max(1.0, slot_mb))
+            if explicit:
+                selected = min(requested, max(1, affordable))
+                if selected != requested:
+                    print(f"[SessionPool] {model_key}: explicit context count "
+                          f"{requested} -> {selected}: only ~{max(0.0, usable):.0f}MB "
+                          f"is free for this model (slot~{slot_mb:.0f}MB, "
+                          f"free~{free_mb:.0f}MB, safety~{safety:.0f}MB, resident "
+                          f"pools={len(self._pools)}). The explicit value is kept "
+                          f"for every policy purpose; only what physically fits "
+                          f"right now is built, because an over-committed pool "
+                          f"thrashes over PCIe and reads as a hang.", flush=True)
+                return selected
             measured_knee = _matching_benchmark_knee(model_key, input_shape)
             policy_cap = min(spec.max_contexts, measured_knee) if measured_knee else spec.max_contexts
             selected = min(requested, policy_cap, max(1, affordable))

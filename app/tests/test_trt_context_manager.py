@@ -39,11 +39,52 @@ class TensorRTResourceManagerTests(unittest.TestCase):
             self.assertEqual(manager.select_pool_size(
                 4, 'enhancer:ultramax', (1, 3, 512, 512), explicit=False), 1)
 
-    def test_explicit_selection_is_not_overridden(self):
+    def test_explicit_selection_is_exempt_from_policy_caps(self):
+        """Commit 0382a70's contract: no static tier ceiling, no measured knee.
+
+        An operator who asks for more contexts than the automatic policy would
+        pick gets them, provided the memory is there. A control that offers a
+        value the backend quietly refuses to use is the defect that commit
+        removed, and this asserts it stays removed.
+        """
+        manager = session_pool.TensorRTResourceManager()
+        spec = session_pool._resource_spec('enhancer:ultramax', (1, 3, 512, 512))
+        with mock.patch.object(session_pool, '_live_vram_mb', return_value=(11000, 12000)):
+            # Above what the auto path would choose, and above any knee.
+            with mock.patch.object(session_pool, '_matching_benchmark_knee', return_value=2):
+                self.assertEqual(manager.select_pool_size(
+                    4, 'enhancer:ultramax', (1, 3, 512, 512), explicit=True), 4)
+                # ...and the auto path, same call, IS held to that knee.
+                self.assertEqual(
+                    session_pool.TensorRTResourceManager().select_pool_size(
+                        4, 'enhancer:ultramax', (1, 3, 512, 512), explicit=False), 2)
+        self.assertLessEqual(spec.slot_mb((1, 3, 512, 512)) * 4, 11000)
+
+    def test_explicit_selection_is_still_bounded_by_physical_vram(self):
+        """Explicit overrules POLICY, not physics.
+
+        Building 4 x ~920MB of contexts with 100MB free does not run slower in
+        a tunable way: the driver pages contexts over PCIe and the render
+        wedges, reporting ~100% GPU "utilisation" at a third of the power limit
+        with the memory bus near idle. It presents as a hang rather than an
+        OOM, so no other guard catches it — which is exactly how a 12GB card
+        reached 0.0GB free mid-render with every pool knob set explicitly.
+        """
         manager = session_pool.TensorRTResourceManager()
         with mock.patch.object(session_pool, '_live_vram_mb', return_value=(100, 12000)):
             self.assertEqual(manager.select_pool_size(
+                4, 'enhancer:ultramax', (1, 3, 512, 512), explicit=True), 1)
+
+    def test_explicit_selection_survives_an_unreadable_vram_probe(self):
+        """A missing reading says nothing about the card, so it must not be
+        treated as pressure and used to overrule the operator. Only the
+        automatic path falls back to one context there."""
+        manager = session_pool.TensorRTResourceManager()
+        with mock.patch.object(session_pool, '_live_vram_mb', return_value=(0, 0)):
+            self.assertEqual(manager.select_pool_size(
                 4, 'enhancer:ultramax', (1, 3, 512, 512), explicit=True), 4)
+            self.assertEqual(manager.select_pool_size(
+                4, 'enhancer:ultramax', (1, 3, 512, 512), explicit=False), 1)
 
 
 class SessionPoolLifecycleTests(unittest.TestCase):
