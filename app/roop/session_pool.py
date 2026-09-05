@@ -464,6 +464,22 @@ class TensorRTResourceManager:
         self._lock = threading.RLock()
         self._pools = {}
         self._baseline_free_mb = 0.0
+        # How wide a pool to build is a BUILD-TIME decision, and it has to be
+        # STABLE for the life of that pool. Several callers re-ask on their hot
+        # path -- `face_util._ensure_face_analyser` recomputes it per frame and
+        # compares it against `len(FACE_ANALYSER_POOL)` as a cache key -- so an
+        # answer that moves with live free VRAM does not merely cost a probe:
+        # it tears the pool down and rebuilds every FaceAnalysis instance (five
+        # models each) mid-render, frees the memory that made it shrink, and
+        # then rebuilds wider on the next frame. That oscillation is far more
+        # expensive than whatever it was trying to save, and under real memory
+        # pressure it fires continuously.
+        #
+        # Re-deciding is meaningless anyway once the contexts exist: the memory
+        # is already committed, so a smaller answer frees nothing until
+        # something releases the pool. Memoise per model, and let `unregister`
+        # -- the actual release -- be what invalidates it.
+        self._decisions = {}
 
     def _safety_mb(self, total_mb):
         return max(self.SAFETY_FLOOR_MB,
@@ -507,6 +523,12 @@ class TensorRTResourceManager:
             return requested
         spec = _resource_spec(model_key, input_shape)
         slot_mb = spec.slot_mb(input_shape, batch_size)
+        decision_key = (str(model_key or 'unknown'), round(slot_mb),
+                        requested, bool(explicit))
+        with self._lock:
+            cached = self._decisions.get(decision_key)
+        if cached is not None:
+            return cached
         free_mb, total_mb = _live_vram_mb()
         with self._lock:
             if free_mb and not self._baseline_free_mb:
@@ -514,7 +536,9 @@ class TensorRTResourceManager:
             if not free_mb:
                 # Unknown VRAM is not permission to allocate a wide pool -- but
                 # it is not grounds to overrule an operator either, since the
-                # reading being unavailable says nothing about the card.
+                # reading being unavailable says nothing about the card. Not
+                # memoised: a probe that failed once may well answer next time,
+                # and this branch guessed rather than measured.
                 return requested if explicit else 1
             safety = max(self._safety_mb(total_mb), spec.safety_mb)
             usable = free_mb - safety - self._resident_unobserved_mb(free_mb)
@@ -530,6 +554,7 @@ class TensorRTResourceManager:
                           f"for every policy purpose; only what physically fits "
                           f"right now is built, because an over-committed pool "
                           f"thrashes over PCIe and reads as a hang.", flush=True)
+                self._decisions[decision_key] = selected
                 return selected
             measured_knee = _matching_benchmark_knee(model_key, input_shape)
             policy_cap = min(spec.max_contexts, measured_knee) if measured_knee else spec.max_contexts
@@ -539,6 +564,7 @@ class TensorRTResourceManager:
                       f" -> {selected} (slot~{slot_mb:.0f}MB, free~{free_mb:.0f}MB,"
                       f" safety~{safety:.0f}MB, resident pools={len(self._pools)},"
                       f" measured knee={measured_knee or 'none'})")
+            self._decisions[decision_key] = selected
             return selected
 
     def register(self, pool, model_key, size, input_shape=None, batch_size=1):
@@ -554,8 +580,24 @@ class TensorRTResourceManager:
             }
 
     def unregister(self, pool):
+        """Release a pool and let its model be re-sized from scratch.
+
+        This -- not the passage of time and not a dip in free VRAM -- is what
+        invalidates a memoised decision. While the contexts are alive the
+        memory is committed and a smaller answer would free nothing; once they
+        are gone the next build should measure the card as it is now.
+        """
         with self._lock:
-            self._pools.pop(id(pool), None)
+            rec = self._pools.pop(id(pool), None)
+            if rec is not None:
+                model_key = rec.get('model_key')
+                for key in [k for k in self._decisions if k[0] == model_key]:
+                    self._decisions.pop(key, None)
+
+    def reset_decisions(self):
+        """Forget every memoised pool width (run boundaries and tests)."""
+        with self._lock:
+            self._decisions.clear()
 
     def pressure(self, pool):
         with self._lock:

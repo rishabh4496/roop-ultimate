@@ -31,10 +31,18 @@ class TensorRTResourceManagerTests(unittest.TestCase):
         self.assertGreater(large, small)
 
     def test_auto_selection_uses_live_free_memory_and_safety_margin(self):
+        """The sizing FORMULA at two memory levels.
+
+        Each level gets a fresh decision (`reset_decisions`) because a width is
+        memoised once taken -- deliberately, so a mid-render VRAM dip cannot
+        resize a live pool. Asking one manager the same question twice would
+        measure the cache, not the formula.
+        """
         manager = session_pool.TensorRTResourceManager()
         with mock.patch.object(session_pool, '_live_vram_mb', return_value=(9000, 12000)):
             self.assertEqual(manager.select_pool_size(
                 4, 'enhancer:ultramax', (1, 3, 512, 512), explicit=False), 4)
+        manager.reset_decisions()
         with mock.patch.object(session_pool, '_live_vram_mb', return_value=(1200, 12000)):
             self.assertEqual(manager.select_pool_size(
                 4, 'enhancer:ultramax', (1, 3, 512, 512), explicit=False), 1)
@@ -74,6 +82,54 @@ class TensorRTResourceManagerTests(unittest.TestCase):
         with mock.patch.object(session_pool, '_live_vram_mb', return_value=(100, 12000)):
             self.assertEqual(manager.select_pool_size(
                 4, 'enhancer:ultramax', (1, 3, 512, 512), explicit=True), 1)
+
+    def test_a_pool_width_is_decided_once_and_then_held(self):
+        """A width that moves with live VRAM tears the pool down mid-render.
+
+        `face_util._ensure_face_analyser` re-asks on its HOT PATH and compares
+        the answer against `len(FACE_ANALYSER_POOL)` as a cache key. So a
+        smaller answer does not merely cost a probe -- it rebuilds every
+        FaceAnalysis instance (five models each), which frees the memory that
+        caused the shrink, so the next frame rebuilds wider again. Under real
+        pressure that oscillates continuously and costs far more than the
+        context it was trying to save. Re-deciding is meaningless anyway while
+        the contexts are alive: the memory is already committed.
+        """
+        manager = session_pool.TensorRTResourceManager()
+        with mock.patch.object(session_pool, '_live_vram_mb', return_value=(11000, 12000)):
+            self.assertEqual(manager.select_pool_size(
+                2, 'detector:face-analysis', (1, 3, 512, 512), explicit=True), 2)
+        with mock.patch.object(session_pool, '_live_vram_mb', return_value=(50, 12000)) as probe:
+            self.assertEqual(manager.select_pool_size(
+                2, 'detector:face-analysis', (1, 3, 512, 512), explicit=True), 2)
+            probe.assert_not_called()  # not even probed: the answer is settled
+            # A model that has NOT been decided is still measured live, so the
+            # guard keeps working for pools built later in the same run.
+            self.assertEqual(manager.select_pool_size(
+                2, 'enhancer:ultramax', (1, 3, 512, 512), explicit=True), 1)
+
+    def test_releasing_a_pool_lets_its_model_be_re_measured(self):
+        """Release is what invalidates the decision -- not time, not a VRAM dip."""
+        manager = session_pool.TensorRTResourceManager()
+        pool = object()
+        with mock.patch.object(session_pool, '_live_vram_mb', return_value=(11000, 12000)):
+            self.assertEqual(manager.select_pool_size(
+                2, 'enhancer:ultramax', (1, 3, 512, 512), explicit=True), 2)
+            manager.register(pool, 'enhancer:ultramax', 2, (1, 3, 512, 512))
+        manager.unregister(pool)
+        with mock.patch.object(session_pool, '_live_vram_mb', return_value=(50, 12000)):
+            self.assertEqual(manager.select_pool_size(
+                2, 'enhancer:ultramax', (1, 3, 512, 512), explicit=True), 1)
+
+    def test_reset_decisions_clears_every_memoised_width(self):
+        manager = session_pool.TensorRTResourceManager()
+        with mock.patch.object(session_pool, '_live_vram_mb', return_value=(11000, 12000)):
+            self.assertEqual(manager.select_pool_size(
+                2, 'enhancer:ultramax', (1, 3, 512, 512), explicit=True), 2)
+        manager.reset_decisions()
+        with mock.patch.object(session_pool, '_live_vram_mb', return_value=(50, 12000)):
+            self.assertEqual(manager.select_pool_size(
+                2, 'enhancer:ultramax', (1, 3, 512, 512), explicit=True), 1)
 
     def test_explicit_selection_survives_an_unreadable_vram_probe(self):
         """A missing reading says nothing about the card, so it must not be

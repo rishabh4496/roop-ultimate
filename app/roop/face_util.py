@@ -241,6 +241,22 @@ def _ensure_face_analyser():
         model_key='detector:face-analysis',
         input_shape=(1, 3, _desired_det_size(), _desired_det_size()))
         if session_pool.detmask_pooling_enabled() else 1)
+    # A preview wants ONE instance, but it must not SHRINK a pool a render
+    # built. `detmask_pooling_enabled()` is False whenever `is_preview` is set,
+    # so without this the width flips 2 -> 1 on entering the preview and 1 -> 2
+    # on leaving it, and each flip is a full teardown plus rebuild of every
+    # FaceAnalysis instance (det_10g + landmark_2d_106 + w600k_r50 apiece, with
+    # their TensorRT engines). `live_swap` runs on every /api/preview, so a
+    # normal tweak-then-render loop pays that round trip continuously -- it is
+    # most of what "the pre-pass is slow" looks like from the UI.
+    #
+    # A wider pool is strictly fine for a preview: it leases one instance and
+    # returns it. So accept whatever is already resident and only build the
+    # narrow pool when there is nothing to reuse.
+    if (getattr(roop.globals, 'is_preview', False)
+            and FACE_ANALYSER_POOL
+            and target_pool_size < len(FACE_ANALYSER_POOL)):
+        target_pool_size = len(FACE_ANALYSER_POOL)
     if (FACE_ANALYSER_POOL
             and len(FACE_ANALYSER_POOL) == target_pool_size
             and roop.globals.g_current_face_analysis == roop.globals.g_desired_face_analysis
