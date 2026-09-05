@@ -118,6 +118,47 @@ class LauncherServesTheBuild(unittest.TestCase):
             events = [o['event'] for o in step['params']['on']]
             self.assertIn('/(http:\\/\\/[0-9.:]+)/', events)
 
+    def test_a_url_capture_is_read_by_the_very_next_step(self):
+        """`input` is the return value of the IMMEDIATELY PREVIOUS step.
+
+        A `when` that evaluates false makes Pinokio skip the step and pass
+        nothing on, so a `local.set` placed after TWO conditional branches
+        reads whichever one was skipped and leaves `{{input.event[1]}}`
+        unresolved. Pinokio then treats the literal template as a path:
+
+            ENOENT: no such file or directory, stat '<app>\\{{input.event[1]}}'
+
+        That is a real regression this launcher shipped once. So: every step
+        that reads `input.event` must sit directly after a step that captures
+        it, under the SAME `when`.
+        """
+        run = self.cfg['run']
+        readers = [(i, s) for i, s in enumerate(run)
+                   if 'input.event' in json.dumps(s.get('params', {}))]
+        self.assertTrue(readers, 'nothing captures the UI url any more')
+        for i, step in readers:
+            self.assertGreater(i, 0, 'a capture reader cannot be the first step')
+            prev = run[i - 1]
+            self.assertEqual(prev.get('method'), 'shell.run',
+                             f'step {i} reads input.event but follows '
+                             f'{prev.get("method")!r}, which captures nothing')
+            events = [o.get('event') for o in prev.get('params', {}).get('on', [])]
+            self.assertTrue(any(e and '(http' in e for e in events),
+                            f'step {i} reads input.event but the step before '
+                            f'it has no capturing pattern')
+            self.assertEqual(step.get('when'), prev.get('when'),
+                             f'step {i} and its capture run under different '
+                             f'conditions, so one can be skipped alone')
+
+    def test_each_branch_sets_both_url_and_api_url(self):
+        """Exactly one local.set runs per launch, so each must be complete."""
+        sets = [s for s in self.cfg['run'] if s.get('method') == 'local.set']
+        self.assertTrue(sets)
+        for step in sets:
+            self.assertIn('url', step['params'])
+            self.assertIn('api_url', step['params'])
+            self.assertIn('42003', step['params']['api_url'])
+
 
 @unittest.skipUnless(NODE, 'node is not on PATH')
 class BothViteServersProxyTheApi(unittest.TestCase):

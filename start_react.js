@@ -56,6 +56,19 @@ module.exports = async (kernel) => {
       // Set ROOP_UI_DEV=1 for the dev server when working ON the UI (HMR,
       // readable stacks). It is the right tool for that and the wrong one for
       // running renders.
+      //
+      // EACH BRANCH CAPTURES ITS OWN URL, and that is not stylistic. `input` is
+      // the return value of the IMMEDIATELY PREVIOUS step, and a `when` that
+      // evaluates false makes Pinokio "ignore the step and go to the next one
+      // immediately" — passing nothing on. So a single shared `local.set`
+      // placed after both branches reads the SKIPPED one and leaves the
+      // template unresolved, which Pinokio then treats as a literal path:
+      //
+      //   ENOENT: no such file or directory, stat '<app>\{{input.event[1]}}'
+      //
+      // Keep every capturing `shell.run` adjacent to the `local.set` that
+      // reads it. Both keys are set together in each branch so exactly one
+      // `local.set` runs per launch and nothing depends on merge order.
       {
         when: "{{!envs.ROOP_UI_DEV}}",
         method: "shell.run",
@@ -73,6 +86,18 @@ module.exports = async (kernel) => {
             "event": "/(http:\\/\\/[0-9.:]+)/",
             "done": true
           }]
+        }
+      },
+      {
+        when: "{{!envs.ROOP_UI_DEV}}",
+        method: "local.set",
+        params: {
+          url: "{{input.event[1]}}",
+          // Direct address of the FastAPI backend (api.py binds 127.0.0.1:ROOP_API_PORT).
+          // Surfaced so pinokio.js can offer a graceful "Stop Swap" that POSTs
+          // /api/stop — which finalizes the output video (moov atom) instead of
+          // the hard process-kill the Terminal square does.
+          api_url: `http://127.0.0.1:${API_PORT}`
         }
       },
       {
@@ -94,13 +119,10 @@ module.exports = async (kernel) => {
         }
       },
       {
+        when: "{{envs.ROOP_UI_DEV}}",
         method: "local.set",
         params: {
           url: "{{input.event[1]}}",
-          // Direct address of the FastAPI backend (api.py binds 127.0.0.1:ROOP_API_PORT).
-          // Surfaced so pinokio.js can offer a graceful "Stop Swap" that POSTs
-          // /api/stop — which finalizes the output video (moov atom) instead of
-          // the hard process-kill the Terminal square does.
           api_url: `http://127.0.0.1:${API_PORT}`
         }
       }
