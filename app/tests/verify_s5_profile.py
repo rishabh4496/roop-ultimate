@@ -5,6 +5,12 @@ import cv2
 import numpy as np
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+if HERE not in sys.path:
+    sys.path.insert(0, HERE)
+
+import fixtures
+
+HERE = os.path.dirname(os.path.abspath(__file__))
 APP = os.path.dirname(HERE)
 if APP not in sys.path:
     sys.path.insert(0, APP)
@@ -23,7 +29,7 @@ def _aspect_ratio(matrix):
 
 class S5ProfileVerificationTest(unittest.TestCase):
     def test_s5_frames_alignment(self):
-        video_path = r"G:\pinokio\roop-keep\single\s5.mp4"
+        video_path = fixtures.clip("single/s5.mp4")
         if not os.path.exists(video_path):
             self.skipTest(f"Video not found: {video_path}")
 

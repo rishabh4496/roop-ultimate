@@ -2,20 +2,14 @@
 
 `_run_stab_parallel` keeps several chunk-sized frame buffers alive at once, and
 `_default_stab_chunk_mb` divides the RAM share by that count so the total stays
-inside what the machine has free. The divisor was the constant 6, which was
-right when the queues were literally `Queue(2)` and `Queue(1)`.
+inside what the machine has free. The production queues use one slot each;
+the historical six-buffer value remains only as a helper fallback.
 
-Both are now sized from the unified scheduler's `queue_capacity`:
-
-    prefetch_q = Queue(max(1, int(_scheduler_capacity)))
-    _write_q   = Queue(max(1, int(_scheduler_capacity)))
-
-and nothing updated the divisor. At the capacity of 3 a 12GB/32GB box profiles,
-the real count is 3 + 2*3 = NINE, so the budget reserved for six while the
-render held half as much again -- on a machine already at its RAM ceiling, that
-difference IS the ceiling. Host RAM is the binding constraint on both target
-machines (a 16GB box died at 12% of a 40934-frame render with ffmpeg's threads
-failing malloc), so an under-count here is not a rounding error.
+The stabilized path now uses a dedicated one-slot depth for both whole-chunk
+queues, while the scheduler remains a fallback for helper calls made before a
+render has selected its geometry. The production count is therefore
+3 + 2*1 = FIVE, and a direct override is tested below so a future scheduler
+change cannot silently reintroduce the large queue fan-out.
 
 These pin the arithmetic to the queues rather than to a number.
 """
@@ -43,9 +37,10 @@ class _Bare:
     _stab_live_chunks = ProcessMgr._stab_live_chunks
     _default_stab_chunk_mb = ProcessMgr._default_stab_chunk_mb
 
-    def __init__(self, queue_capacity):
+    def __init__(self, queue_capacity, stab_capacity=None):
         self._runtime_scheduler = (_Scheduler(queue_capacity)
                                    if queue_capacity is not None else None)
+        self._stab_chunk_queue_capacity = stab_capacity
 
 
 class LiveChunkCountFollowsTheQueues(unittest.TestCase):
@@ -61,6 +56,9 @@ class LiveChunkCountFollowsTheQueues(unittest.TestCase):
         it is what runs when no scheduler is present."""
         self.assertEqual(_Bare(None)._stab_live_chunks(), 6)
         self.assertEqual(ProcessMgr._STAB_LIVE_CHUNKS, 6)
+
+    def test_parallel_chunk_depth_overrides_the_frame_scheduler(self):
+        self.assertEqual(_Bare(3, stab_capacity=1)._stab_live_chunks(), 5)
 
     def test_a_junk_capacity_falls_back_rather_than_dividing_by_nonsense(self):
         for bad in (None, 'three', object()):

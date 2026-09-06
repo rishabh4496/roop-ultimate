@@ -179,9 +179,9 @@ class StabChunkBudget(unittest.TestCase):
     """The chunk budget must count every live copy of a chunk, not one.
 
     ROOP_STAB_CHUNK_MB reads as "the decoded-frame memory budget", and at its
-    1536 MB default that sounds like 1.5 GB. _run_stab_parallel actually holds
-    SIX chunk-sized buffers at once, so the real reservation was ~9 GB — fine on
-    32 GB, impossible on 16 GB alongside models, CUDA host memory and ffmpeg.
+    1536 MB default that sounds like 1.5 GB. The production path uses a
+    dedicated one-slot depth for both chunk queues; the helper fallback remains
+    six buffers when no render geometry has been selected.
     """
 
     def setUp(self):
@@ -283,10 +283,10 @@ class StabChunkBudget(unittest.TestCase):
         body = PM_SRC.split('def _run_stab_parallel', 1)[1]
         code = chr(10).join(line.split('#', 1)[0] for line in body.splitlines())
 
-        # Both queues take their depth from the same scheduler capacity...
-        self.assertIn('prefetch_q = Queue(max(1, int(_scheduler_capacity)))', code)
-        self.assertIn('_write_q = Queue(max(1, int(_scheduler_capacity)))', code)
-        # ...so the count is the three working buffers plus both depths.
+        self.assertIn('_stab_queue_capacity = getattr(self,', code)
+        self.assertIn('prefetch_q = Queue(_stab_queue_capacity)', code)
+        self.assertIn('_write_q = Queue(_stab_queue_capacity)', code)
+        # The fallback count is still the three working buffers plus both depths.
         for capacity in (1, 2, 3, 5):
             class _S:
                 queue_capacity = capacity

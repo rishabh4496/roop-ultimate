@@ -81,6 +81,8 @@ def _apply_perf_env():
     # than production uses.
     _set('ROOP_CUDA_ARENA_STRATEGY', cfg.get('perf_ort_arena_strategy'))
     _set('ROOP_CUDNN_CONV_ALGO', cfg.get('perf_cudnn_conv_algo'))
+    _set('ROOP_STAB_CHUNK_MB', cfg.get('perf_stab_chunk_mb'))
+    _set('ROOP_STAB_STREAMING', cfg.get('perf_stab_streaming'))
     _mem_limit = cfg.get('perf_gpu_mem_limit')
     if _mem_limit is not None and str(_mem_limit).strip().lower() not in ('', 'auto'):
         try:

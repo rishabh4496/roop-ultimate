@@ -475,12 +475,18 @@ class ThreadSelectionTests(unittest.TestCase):
 
     def test_the_selected_thread_count_is_at_or_below_the_inflection(self):
         """Selecting past the inflection would buy contention with watts."""
-        for name, (factory, _, _contention) in ALL_PROFILES.items():
+        for name, (factory, _, contention_expected) in ALL_PROFILES.items():
             with self.subTest(profile=name):
                 report = optimize(factory())
                 inflection = report.phase_a["inflection"]["level"]
                 if inflection is None:
-                    self.skipTest("no contention on this profile")
+                    self.assertFalse(
+                        contention_expected,
+                        "a contention profile must produce an inflection")
+                    continue
+                self.assertTrue(
+                    contention_expected,
+                    "a non-contention profile must not produce an inflection")
                 for preset in report.presets.values():
                     self.assertLessEqual(preset["tuning"]["worker_count"],
                                          inflection)

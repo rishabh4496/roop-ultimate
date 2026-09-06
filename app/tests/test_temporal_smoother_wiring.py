@@ -393,14 +393,15 @@ class DefaultsAreNoOps(unittest.TestCase):
 
     def test_hf_texture_is_opt_in(self):
         import settings
-        cfg = settings.Settings(str(APP / 'config.yaml'))
+        # Defaults must be tested independently of the user's persisted config.
+        cfg = settings.Settings(str(APP / '__missing_defaults_test__.yaml'))
         self.assertFalse(cfg.stabilize_hf_texture)
 
     def test_landmark_smoothing_ships_on(self):
         """It IS the boundary-crawl fix rather than an experiment, and it
         declines safely wherever frames are non-contiguous."""
         import settings
-        cfg = settings.Settings(str(APP / 'config.yaml'))
+        cfg = settings.Settings(str(APP / '__missing_defaults_test__.yaml'))
         self.assertTrue(cfg.stabilize_landmarks)
 
     def test_react_defaults_agree_with_the_backend(self):

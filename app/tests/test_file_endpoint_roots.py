@@ -16,6 +16,7 @@ So: name directories of media, never an ancestor of the project.
 """
 import os
 import sys
+import tempfile
 import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
@@ -64,8 +65,21 @@ class FileEndpointRoots(unittest.TestCase):
 
     def test_a_neighbouring_app_is_not_served(self):
         """cwd's parent is other Pinokio apps when launched from api/<name>."""
-        outside = os.path.join(os.path.dirname(_PROJECT), 'CLAUDE.md')
-        self._assert_forbidden(outside, 'sibling installs are out of bounds')
+        # Do not depend on a particular sibling app or user file existing. The
+        # security property is about the parent directory, so create a
+        # disposable file there and remove it after checking the endpoint.
+        with tempfile.NamedTemporaryFile(
+                prefix='_roop_endpoint_sibling_', dir=os.path.dirname(_PROJECT),
+                delete=False) as fh:
+            outside = fh.name
+        try:
+            self.assertEqual(self._status(outside), 403,
+                             'sibling installs are out of bounds')
+        finally:
+            try:
+                os.remove(outside)
+            except OSError:
+                pass
 
     def test_pinokio_temp_media_is_still_served(self):
         """The fix must not re-break what it was reaching for."""

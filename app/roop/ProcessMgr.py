@@ -52,7 +52,7 @@ from roop.stage_profiler import StageProfiler
 from roop.runtime_optimizer import RuntimeOptimizer, RuntimeMonitor, SafeAdaptiveController
 from roop.runtime_scheduler import UnifiedRuntimeScheduler
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from threading import Thread, Lock, local, get_ident
+from threading import Thread, Lock, local, get_ident, Event
 
 # Guards the one-time build of the expression restorer (see _expression_restorer).
 _EXPR_BUILD_LOCK = Lock()
@@ -578,6 +578,9 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
         # the site that DECIDES to go parallel and the site that EXECUTES the
         # blocks cannot be given different values -- they read the same field.
         self._stab_min_block_multiple = 1
+        # Chunk-sized stabilization buffers use a dedicated bounded depth. The
+        # frame scheduler's queue depth is not safe to reuse for whole chunks.
+        self._stab_chunk_queue_capacity = None
         # Latches the non-frontal mask-routing verdict per face across frames so
         # it cannot chatter on detector noise. Unlike the stabilizers above this
         # is NOT opt-in and NOT per-thread: the routing decision has to agree
@@ -1797,6 +1800,7 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
         self._precomputed_kps = None
         self._stab_active = False
         self._parallel_stab = False
+        self._stab_chunk_queue_capacity = None
         # fps is otherwise a local parameter never retained on self — lip-sync
         # needs it alongside self._tls.frame_idx to map a frame to a timestamp
         # in the driving audio (see roop.lipsync_audio.frame_time).
@@ -2259,6 +2263,9 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
         # go — so the parallel/sequential choice made above gets one last look.
         self._stab_frame_bytes = int(width) * int(height) * 3
         if use_parallel_stab:
+            # The stabilization path owns its chunk queues. Never reuse the
+            # frame scheduler's depth for whole decoded chunks.
+            self._stab_chunk_queue_capacity = 1
             _wu, _blk, _width, _bpc = self._stab_parallel_geometry(threads)
             if _width < 2:
                 # 1-wide is single-threaded anyway, and paying the chunk
@@ -2310,6 +2317,16 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                         self.enh_stabilizer.reset()
                     if self.mask_stabilizer is not None:
                         self.mask_stabilizer.reset()
+            else:
+                # The initial capture was opened for the generic path. The
+                # parallel path opens its own sequential decoder below, so do
+                # not keep two FFmpeg/NVDEC readers alive for the same clip.
+                if cap is not None:
+                    try:
+                        cap.release()
+                    except Exception:
+                        pass
+                    cap = None
 
         self.output_to_file = output_method != "Virtual Camera"
         self.output_to_cam = output_method == "Virtual Camera" or output_method == "Both"
@@ -2793,18 +2810,19 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
     # died at 12% with ffmpeg's own threads failing malloc (AVERROR(ENOMEM))
     # and numpy unable to allocate a 1.5 MB array.
     #
-    # This WAS the constant 6, correct when the queues were literally Queue(2)
-    # and Queue(1). Both are now sized from the unified scheduler's
-    # `queue_capacity`, and nothing updated the divisor: at the capacity of 3
-    # this 12GB/32GB box profiles, the real count is 3 + 2*3 = NINE, so the
-    # budget reserved for six and the render held half as much again. On a
-    # machine already near its RAM ceiling that difference is the ceiling.
-    # Derive it, so the two can never drift again.
+    # The two chunk queues now use one dedicated slot each. Keep the formula
+    # derived from that capacity so the RAM budget and actual queue geometry
+    # cannot drift apart again. The scheduler fallback remains for helper
+    # calls made before a render has selected the stabilization path.
     _STAB_LIVE_CHUNKS = 6          # fallback only; see _stab_live_chunks()
 
     def _stab_live_chunks(self):
         """How many chunk-sized frame buffers _run_stab_parallel holds at once."""
-        capacity = getattr(self._runtime_scheduler, 'queue_capacity', None)
+        capacity = getattr(self, '_stab_chunk_queue_capacity', None)
+        if capacity is None:
+            # Keep the scheduler fallback for callers/tests that invoke the
+            # geometry helpers outside a fully profiled render.
+            capacity = getattr(self._runtime_scheduler, 'queue_capacity', None)
         try:
             capacity = max(1, int(capacity))
         except (TypeError, ValueError):
@@ -3027,8 +3045,9 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
         LENGTH solved from the filter's smoothing factor rather than fixed, which
         is what makes that claim true at every strength setting rather than only
         the weak ones. Frames are written in order through the already-open
-        videowriter. Deadlock-free fork-join (plain thread start/join, no
-        queues)."""
+        videowriter. Uses bounded chunk queues with cancellation-aware handoffs
+        so decode, processing, and encode overlap without unbounded buffering
+        or shutdown hangs."""
         # NOT `n_blocks`: the per-chunk dispatch below binds that name itself, and
         # this value has to survive the whole run.
         WU, block, stab_width, blocks_per_chunk = self._stab_parallel_geometry(threads)
@@ -3080,7 +3099,10 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                 cap = wrap_capture(cap, source_video,
                                    int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)),
                                    int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)),
-                                   cap.get(cv2.CAP_PROP_FPS), tag='stabilized decode')
+                                   cap.get(cv2.CAP_PROP_FPS), tag='stabilized decode',
+                                   # _read_loop already owns the only bounded
+                                   # chunk buffer; do not add a hidden frame queue.
+                                   prefetch_depth=0)
                 if frame_start > 0:
                     cap.set(cv2.CAP_PROP_POS_FRAMES, frame_start)
                 produced = 0
@@ -3100,16 +3122,26 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
         gen = _gen_frames()
         carry = []
         chunk_start = 0
-        # Queue(2): reader can pre-fill one extra chunk so GPU never waits.
-        # Using 2 (not 1) also avoids deadlock on cancel — reader won't block
-        # on put() if the consumer has stopped and we drain below before join().
-        # The unified scheduler owns this capacity from detected hardware and
-        # workload memory. The fallback only applies if profiling failed.
-        # Historical reference retained for the live-chunk contract:
-        # prefetch_q = Queue(2)
+        # One bounded slot lets decode overlap the current processing chunk
+        # without multiplying the multi-hundred-MB chunk buffers.
+        # Cancellation is handled by timed puts plus explicit queue draining
+        # during shutdown, so the reader cannot be stranded on a full queue.
+        # The scheduler depth is only a fallback for direct helper calls; a
+        # profiled stabilized render sets this capacity to one at the geometry
+        # decision point above.
         _scheduler_capacity = getattr(self._runtime_scheduler, 'queue_capacity', 2)
-        prefetch_q = Queue(max(1, int(_scheduler_capacity)))
+        _stab_queue_capacity = getattr(self, '_stab_chunk_queue_capacity', None)
+        if _stab_queue_capacity is None:
+            _stab_queue_capacity = _scheduler_capacity
+        try:
+            _stab_queue_capacity = max(1, int(_stab_queue_capacity))
+        except (TypeError, ValueError):
+            _stab_queue_capacity = 1
+        prefetch_q = Queue(_stab_queue_capacity)
         self._runtime_read_queue = prefetch_q
+        _reader_exc = [None]
+        _reader_done = Event()
+        _consumer_done = Event()
 
         def _reader():
             # Everything below is wrapped so the sentinel in the finally is sent
@@ -3121,11 +3153,13 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
             try:
                 _read_loop()
             except Exception as exc:
+                _reader_exc[0] = exc
                 bar_write(f'[Stabilize] frame reader failed: '
                           f'{type(exc).__name__}: {exc}')
                 roop.globals.processing = False
             finally:
                 _send_sentinel()
+                _reader_done.set()
 
         def _read_loop():
             while roop.globals.processing:
@@ -3166,13 +3200,17 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
             # Retrying forever is safe here precisely because the consumer is the
             # one draining this queue: it frees a slot every chunk. `processing`
             # going false is the only way out, which is what cancel sets.
-            while True:
+            while not _consumer_done.is_set():
                 try:
                     prefetch_q.put(None, timeout=0.5)
-                    break
+                    return
                 except _QueueFull:
                     if not roop.globals.processing:
-                        break
+                        try:
+                            while True:
+                                prefetch_q.get_nowait()
+                        except _QueueEmpty:
+                            pass
 
         rt = Thread(target=_reader, name='stab_reader', daemon=True)
         rt.start()
@@ -3180,21 +3218,25 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
         # Background write thread: chunk N results are queued here immediately
         # after workers join, so the sequential FFMPEG write overlaps with workers
         # processing chunk N+1 instead of stalling between chunks.
-        # Queue(1): one chunk can be in-flight; main blocks only when write is
+        # One chunk can be in-flight; main blocks only when write is
         # slower than processing (correct back-pressure; prevents unbounded RAM).
-        _write_q = Queue(max(1, int(_scheduler_capacity)))
-        # Historical reference retained for the live-chunk contract:
-        # _write_q = Queue(1)
+        _write_q = Queue(_stab_queue_capacity)
         # Expose it so runtime telemetry can report a real output-queue depth
         # on this path instead of the sequential path's absent queues.
         self._runtime_write_queue = _write_q
 
         _writer_exc = [None]  # propagate write errors back to the main thread
+        _writer_stop = Event()
 
         def _writer():
             try:
                 while True:
-                    item = _write_q.get()
+                    try:
+                        item = _write_q.get(timeout=0.25)
+                    except _QueueEmpty:
+                        if _writer_stop.is_set():
+                            return
+                        continue
                     if item is None:
                         break
                     cs, res, clen = item
@@ -3251,7 +3293,12 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
         try:
             while True:
                 _t_get0 = time.perf_counter()
-                chunk = prefetch_q.get()
+                try:
+                    chunk = prefetch_q.get(timeout=0.25)
+                except _QueueEmpty:
+                    if not roop.globals.processing or _reader_done.is_set():
+                        break
+                    continue
                 _t_get = time.perf_counter() - _t_get0   # read-starvation wait
                 if chunk is None:
                     break
@@ -3389,7 +3436,7 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                 # (correct back-pressure; prevents unbounded memory growth).
                 # Bounded, and aware of whether anyone is still draining.
                 #
-                # _write_q is Queue(1), so a writer that has stopped consuming
+                # A bounded _write_q can fill when a writer has stopped consuming
                 # blocks this put forever — and the `_wt.is_alive()` guard in the
                 # finally below is then unreachable, because reaching a finally
                 # requires leaving the try. A writer that raised recorded its
@@ -3438,19 +3485,42 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                 chunk_start += len(chunk)
                 del combined, chunk, results, workers
         finally:
+            # Tell the reader's sentinel loop that the consumer is leaving.
+            # Set this before draining so shutdown cannot race back into a
+            # blocked sentinel put.
+            _consumer_done.set()
             # Drain _write_q before sending the sentinel when:
             #  - cancel: discard queued frames so the writer exits promptly.
             #  - writer died (IOError / broken pipe): the queue may still hold an
             #    item that nobody will ever consume; put(None) would block forever
-            #    on the full Queue(1) without this drain.
+            #    on a full queue without this drain.
+            if _writer_exc[0] is not None or not _wt.is_alive():
+                roop.globals.processing = False
             if not roop.globals.processing or not _wt.is_alive():
                 try:
                     while True:
                         _write_q.get_nowait()
                 except Exception:
                     pass
-            _write_q.put(None)   # sentinel — always signals writer to stop
+            if _wt.is_alive():
+                try:
+                    _write_q.put(None, timeout=1.0)   # sentinel
+                except _QueueFull:
+                    _writer_stop.set()
+            else:
+                _writer_stop.set()
             _wt.join(timeout=15)
+
+            # Interrupt a decode call before waiting for the reader. This is
+            # important on cancellation and writer failure: a pipe read can
+            # otherwise outlive the queue handoff and consume the whole join
+            # timeout while holding its current frame.
+            if cap is not None:
+                try:
+                    cap.release()
+                except Exception:
+                    pass
+                cap = None
 
             # Drain the prefetch queue so _reader's put() can't block
             try:
@@ -3460,16 +3530,17 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                 pass
             rt.join(timeout=5)
             self._parallel_stab = False
+            self._stab_chunk_queue_capacity = None
             self._runtime_read_queue = None
             self._runtime_write_queue = None
             for _a in ('kps', 'enh', 't'):
                 if hasattr(self._tls, _a):
                     delattr(self._tls, _a)
-            if cap is not None:
-                cap.release()
             # Re-raise write error AFTER all cleanup so cap/prefetch are always freed
             if _writer_exc[0] is not None:
                 raise _writer_exc[0]
+            if _reader_exc[0] is not None:
+                raise _reader_exc[0]
 
 
     def update_progress(self, progress: Any = None) -> None:

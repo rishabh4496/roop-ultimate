@@ -6,6 +6,12 @@ import cv2
 import numpy as np
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+if HERE not in sys.path:
+    sys.path.insert(0, HERE)
+
+import fixtures
+
+HERE = os.path.dirname(os.path.abspath(__file__))
 APP = os.path.dirname(HERE)
 if APP not in sys.path:
     sys.path.insert(0, APP)
@@ -22,7 +28,7 @@ from roop.face_util import get_all_faces
 class VerifyTemporalOptimizationCorpusTest(unittest.TestCase):
 
     def test_s5_single_face_stability_and_speedup(self):
-        video_path = r"G:\pinokio\roop-keep\single\s5.mp4"
+        video_path = fixtures.clip("single/s5.mp4")
         if not os.path.exists(video_path):
             self.skipTest(f"Video not found: {video_path}")
 
@@ -75,7 +81,7 @@ class VerifyTemporalOptimizationCorpusTest(unittest.TestCase):
         print(f"  Verified: 0 lost faces across all {len(frames)} frames!")
 
     def test_double_d1_multi_face_stability(self):
-        video_path = r"G:\pinokio\roop-keep\double\d1.mp4"
+        video_path = fixtures.clip("double/d1.mp4")
         if not os.path.exists(video_path):
             self.skipTest(f"Video not found: {video_path}")
 
