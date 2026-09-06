@@ -398,7 +398,11 @@ class ResourceManager:
         "in_flight_frames": (1, 8),
         "detector_resolution": (320, 1280),
         "queue_depth": (1, 4),
-        "stabilization_workers": (1, 8),
+        # The 4070 profile is validated up to 12 parallel host workers. The
+        # actual stabilized width is still reduced by ProcessMgr's RAM/frame
+        # geometry, while the sub-7GB profile keeps its single-context GPU
+        # guard and bounded host budget.
+        "stabilization_workers": (1, 12),
         "stabilization_chunk_size": (16, 288),
         "ort_intra_threads": (1, 4),
         "ort_inter_threads": (1, 2),
@@ -1750,6 +1754,12 @@ class AutoTuner:
                 raw, hardware)
 
         values["worker_count"] = _explicit_int("max_threads", values["worker_count"])
+        # Stabilization uses the same host worker budget. Recompute it after
+        # resolving an explicit max_threads value; deriving it before this
+        # override left a 4070 configured for 12 workers stabilized at the
+        # automatic 8/10-worker value instead.
+        values["stabilization_workers"] = (
+            values["worker_count"] if workload.stabilization_enabled else 1)
         values["detector_pool_size"] = _explicit_int("perf_detector_pool", values["detector_pool_size"])
         values["detmask_pool_size"] = _explicit_int("perf_detmask_pool", values["detmask_pool_size"])
         values["swapper_pool_size"] = _explicit_int("perf_trt_pool", values["swapper_pool_size"])
@@ -1810,6 +1820,12 @@ class TuneMeasurement:
     gpu_utilization_pct: float = 0.0
     stable: bool = True
     quality_regression: bool = False
+    # Optional in the injected-test API, required from real Phase 14 child
+    # runs. Without these counts, a faster arm that skipped face work is
+    # indistinguishable from a genuine optimization.
+    frames: Optional[int] = None
+    faces_seen: Optional[int] = None
+    faces_swapped: Optional[int] = None
     metrics: dict = field(default_factory=dict)
 
     @classmethod
@@ -1838,6 +1854,12 @@ class TuneMeasurement:
                 data.get("gpu_utilization_pct", data.get("mean_gpu_util_pct", 0.0)))),
             stable=bool(stable),
             quality_regression=_bool(data.get("quality_regression", False)),
+            frames=(max(0, _integer(data["frames"]))
+                    if data.get("frames") is not None else None),
+            faces_seen=(max(0, _integer(data["faces_seen"]))
+                        if data.get("faces_seen") is not None else None),
+            faces_swapped=(max(0, _integer(data["faces_swapped"]))
+                           if data.get("faces_swapped") is not None else None),
             metrics=data,
         )
 
@@ -1889,10 +1911,11 @@ class RuntimeAutotuner:
                for name in self._SETTING_FOR_STAGE.get(stage, ())):
             return True
         env_pins = {
-            "trt_concurrency": ("ROOP_TRT_POOL", "ROOP_DETMASK_POOL"),
+            "trt_concurrency": ("ROOP_TRT_POOL", "ROOP_DETMASK_POOL",
+                                 "ROOP_DETECTOR_POOL", "ROOP_EXPR_POOL"),
             "queue_buffer": ("ROOP_OUTPUT_QUEUE_DEPTH", "ROOP_STAB_CHUNK",
                               "ROOP_STAB_CHUNK_MB"),
-            "encoder": ("ROOP_ENCODER_PRESET",),
+            "encoder": ("ROOP_ENCODER_PRESET", "ROOP_NVENC_PRESET"),
             "backend_precision": ("ROOP_TRT_AUX_STREAMS", "ROOP_TRT_CUDA_GRAPH",
                                    "ROOP_SWAP_FP32"),
         }
@@ -2019,6 +2042,38 @@ class RuntimeAutotuner:
                        max(1.0, measurement.startup_seconds + 60.0))
         return max(0.0, fps * (1.0 - min(0.90, penalty)))
 
+    @staticmethod
+    def _comparable(measurement: TuneMeasurement,
+                    baseline: TuneMeasurement,
+                    tolerance: float = 0.02) -> Tuple[bool, str]:
+        """Reject a speed result that did not perform the baseline's work.
+
+        The controlled Phase 14 child reports frame, detected-face, and
+        swapped-face counts. Missing counts are tolerated only when both sides
+        are missing, preserving the lightweight injected-measure API.
+        """
+        if not measurement.stable:
+            return False, "candidate did not complete"
+        if baseline.frames is not None:
+            if measurement.frames is None:
+                return False, "candidate omitted frame count"
+            if measurement.frames != baseline.frames:
+                return False, "frames %d vs baseline %d" % (
+                    measurement.frames, baseline.frames)
+        for label in ("faces_seen", "faces_swapped"):
+            expected = getattr(baseline, label)
+            actual = getattr(measurement, label)
+            if expected is None:
+                continue
+            if actual is None:
+                return False, "candidate omitted %s" % label
+            denominator = max(1, expected)
+            drift = abs(actual - expected) / denominator
+            if drift > tolerance:
+                return False, "%s %d vs baseline %d (%.1f%%)" % (
+                    label, actual, expected, drift * 100.0)
+        return True, ""
+
     def tune(self, baseline: RuntimeTuning, hardware: HardwareProfile,
               workload: WorkloadProfile, settings: Any = None,
               measure=None, warmup_frames: int = DEFAULT_WARMUP_FRAMES,
@@ -2095,8 +2150,12 @@ class RuntimeAutotuner:
                 if "precision" in item:
                     trial["precision"] = item["precision"]
                 measurement = safe_measure(trial)
-                score = self.score(measurement, hardware)
-                tested.append(self._result(trial, measurement, score))
+                comparable, comparison_reason = self._comparable(
+                    measurement, baseline_measurement)
+                score = (self.score(measurement, hardware)
+                         if comparable else 0.0)
+                tested.append(self._result(
+                    trial, measurement, score, comparable, comparison_reason))
                 if score > best_score * (1.0 + min_improvement):
                     best, best_measurement, best_score = trial, measurement, score
                     stage_improved = True
@@ -2112,14 +2171,22 @@ class RuntimeAutotuner:
         confirmation = None
         if best is not current and best != current:
             confirmation_measurement = safe_measure(best)
-            confirmation_score = self.score(confirmation_measurement, hardware)
-            tested.append(self._result(best, confirmation_measurement,
-                                       confirmation_score))
-            confirmed = confirmation_score > baseline_score * (1.0 + min_improvement)
+            comparable, comparison_reason = self._comparable(
+                confirmation_measurement, baseline_measurement)
+            confirmation_score = (self.score(confirmation_measurement, hardware)
+                                  if comparable else 0.0)
+            tested.append(self._result(
+                best, confirmation_measurement, confirmation_score,
+                comparable, comparison_reason))
+            confirmed = (comparable and
+                         confirmation_score > baseline_score *
+                         (1.0 + min_improvement))
             confirmation = {
                 "fps": confirmation_measurement.end_to_end_fps,
                 "score": round(confirmation_score, 6),
                 "confirmed": bool(confirmed),
+                "comparable": bool(comparable),
+                "reason": comparison_reason,
             }
             if not confirmed:
                 best, best_measurement = current, baseline_measurement
@@ -2152,7 +2219,8 @@ class RuntimeAutotuner:
 
     @staticmethod
     def _result(candidate: Mapping[str, Any], measurement: TuneMeasurement,
-                score: float) -> dict:
+                score: float, comparable: bool = True,
+                comparison_reason: str = "") -> dict:
         return {"stage": candidate.get("stage", "trial"),
                 "configuration": dict(candidate),
                 "measurement": {
@@ -2164,8 +2232,13 @@ class RuntimeAutotuner:
                     "gpu_utilization_pct": measurement.gpu_utilization_pct,
                     "stable": measurement.stable,
                     "quality_regression": measurement.quality_regression,
+                    "frames": measurement.frames,
+                    "faces_seen": measurement.faces_seen,
+                    "faces_swapped": measurement.faces_swapped,
                     "score": score,
-                }}
+                },
+                "comparable": bool(comparable),
+                "comparison_reason": comparison_reason}
 
 
 class ProfileStore:

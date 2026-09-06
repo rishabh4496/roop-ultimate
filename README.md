@@ -534,10 +534,21 @@ env/Scripts/python.exe tests/phase14_autotune.py --target "RTX 3060" --force
 env/Scripts/python.exe tests/phase14_autotune.py --target "RTX 4070" --force
 ```
 
-It evaluates at most 12 short end-to-end candidates in staged order, selects by
-end-to-end FPS after VRAM/RAM/stability/quality/startup penalties, and prints
-the selected configuration, candidates, baseline/best FPS, improvement, and
-resource usage. Explicit settings remove the corresponding autotune stage.
+It evaluates at most 12 end-to-end candidates on a 600-frame acceptance window
+in staged order, selects by end-to-end FPS after VRAM/RAM/stability/quality/
+startup penalties, and verifies frame/face work counts before promotion. The
+report includes the selected configuration, candidates, baseline/best FPS,
+improvement, and resource usage. Explicit settings remove the corresponding
+autotune stage; shorter windows are rejected to avoid warm-up noise.
+
+To queue a representative RTX 4070 retune behind an active render, use the
+Windows helper from the project root. It waits for the render process's FFmpeg
+children to be idle for one minute, then runs the same forced search and writes
+the live output to `logs/shell/phase14-autotune.latest.log`:
+
+```text
+powershell -ExecutionPolicy Bypass -File .\phase14-after-render.ps1 -RenderOwnerPid <render-pid> -Target "RTX 4070"
+```
 
 ### Phase 15 runtime monitoring
 

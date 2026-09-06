@@ -1,10 +1,11 @@
+import json
 import os
 import sys
 import tempfile
 import unittest
 
 sys.path.insert(0, os.path.dirname(__file__))
-from phase14_autotune import _apply_candidate_environment
+from phase14_autotune import _apply_candidate_environment, _result_metrics
 from roop.runtime_optimizer import (
     HardwareProfile,
     ProfileStore,
@@ -52,6 +53,44 @@ class Phase14AutotunerTests(unittest.TestCase):
             {"encoder_preset": "fast", "precision": "fp32"}, {}, "libx264")
         self.assertEqual(env["ROOP_ENCODER_PRESET"], "fast")
         self.assertNotIn("ROOP_NVENC_PRESET", env)
+
+    def test_result_metrics_carries_work_counts_for_comparability(self):
+        with tempfile.TemporaryDirectory() as root:
+            path = os.path.join(root, "arm.json")
+            with open(path, "w", encoding="utf-8") as fh:
+                json.dump({"run": {"fps": 12.0, "frames": 600,
+                                   "faces_seen": 1200,
+                                   "faces_swapped": 1190,
+                                   "wrong_faceset": 0},
+                           "telemetry": {}}, fh)
+            result = _result_metrics(path, 0, 1.0)
+        self.assertEqual(result["frames"], 600)
+        self.assertEqual(result["faces_seen"], 1200)
+        self.assertEqual(result["faces_swapped"], 1190)
+
+    def test_faster_candidate_with_less_face_work_is_not_promoted(self):
+        tuner = RuntimeAutotuner()
+        base = RuntimeTuning(worker_count=4, queue_depth=2, ram_buffer_mb=1024)
+        workload = WorkloadProfile(input_width=1280, input_height=720,
+                                   faces_per_frame=2)
+
+        def measure(candidate, _warmup):
+            if candidate.get("stage"):
+                return {"end_to_end_fps": 30, "frames": 600,
+                        "faces_seen": 1200, "faces_swapped": 0,
+                        "peak_vram_gb": 4, "peak_ram_gb": 8,
+                        "stable": True}
+            return {"end_to_end_fps": 10, "frames": 600,
+                    "faces_seen": 1200, "faces_swapped": 1200,
+                    "peak_vram_gb": 4, "peak_ram_gb": 8,
+                    "stable": True}
+
+        tuning, report = tuner.tune(
+            base, _hardware(), workload, {}, measure, max_candidates=2)
+        self.assertEqual(tuning.queue_depth, base.queue_depth)
+        self.assertEqual(report["best_fps"], 10)
+        self.assertTrue(any(item["comparable"] is False
+                            for item in report["candidates_tested"]))
 
     def test_staged_search_is_bounded_and_uses_end_to_end_score(self):
         tuner = RuntimeAutotuner()

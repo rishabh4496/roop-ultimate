@@ -2491,6 +2491,14 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                       f"mode={'frame' if use_unified_scheduler else 'ordered-chunk'}, "
                       f"workers={threads}, queue={self._runtime_scheduler.queue_capacity}, "
                       f"in_flight={self._runtime_scheduler.effective_inflight}", flush=True)
+            # Cross-frame swap batching must also serve the ordered-chunk
+            # stabilisation path. Construction used to live only inside the
+            # sequential fallback, so perf_batch_swap was exported and then
+            # silently ignored for the production stabilised render.
+            # Keep the unified scheduler unchanged: it owns its own inference
+            # coordination and may use a single inference worker.
+            if not use_unified_scheduler:
+                self._swap_batcher = self._make_swap_batcher(threads)
             if use_unified_scheduler:
                 _inference_workers = 1
                 self._active_inference_workers = _inference_workers
@@ -2537,11 +2545,6 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                 writethread.daemon = True
                 writethread.start()
 
-                # Cross-frame swap batcher (opt-in): coalesce concurrent swap calls from
-                # the worker threads into one batched inference. Needs >1 thread and the
-                # batch-dynamic swap session (ROOP_BATCH_SWAP). Off → unchanged behavior.
-                self._swap_batcher = self._make_swap_batcher(threads)
-
                 try:
                     with ChunkedProgress(total=self.total_frames, desc='Processing', unit='frames', dynamic_ncols=True, bar_format=progress_bar_format) as progress:
                         with ThreadPoolExecutor(thread_name_prefix='swap_proc', max_workers=self.num_threads) as executor:
@@ -2563,6 +2566,10 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                     readthread.join(timeout=5)
                     writethread.join(timeout=10)
         finally:
+            if self._swap_batcher is not None:
+                self._swap_batcher.stop()
+                self._swap_batcher.report()
+                self._swap_batcher = None
             # Always release the capture and close writers regardless of which path ran
             # and whether it raised.  The write thread MUST be joined (above) before we
             # close videowriter, otherwise the pipe stdin close races with an in-flight
@@ -2846,7 +2853,15 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
             # before applying the available-memory guard.
             total_mb = float(getattr(memory, 'total', 0) or 0) / (1024.0 ** 2)
         except Exception:
-            return 1536.0
+            # If memory telemetry is unavailable, keep the fallback cap as a
+            # TOTAL live-buffer budget rather than handing every live chunk a
+            # full 1536 MB.  The latter silently multiplies to ~9 GB on the
+            # historical six-buffer path and can recreate the 16 GB laptop
+            # allocation failure this guard is meant to prevent.
+            try:
+                return 1536.0 / max(1, int(self._stab_live_chunks()))
+            except Exception:
+                return 1536.0 / self._STAB_LIVE_CHUNKS
 
         if hard_cap is None:
             # Scale budget cap dynamically with system RAM:
@@ -2880,7 +2895,15 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
             share = default_share
         share = min(0.90, max(0.05, share))
         live = self._stab_live_chunks()
-        budget = max(96.0, min(hard_cap, (avail_mb * share) / live))
+        # The floor is useful only while the requested RAM share can afford it.
+        # Applying an unconditional 96 MB floor makes queue depth part of the
+        # memory limit in name only: under pressure, 7 live chunks reserve
+        # 672 MB and 11 reserve 1056 MB even when the share is below either
+        # amount.  Keep the per-chunk budget proportional to the live-buffer
+        # count; geometry already falls back to a sequential path when the
+        # resulting budget cannot fund a parallel block.  The one-MB floor is
+        # only a finite-value guard and is not a RAM reservation.
+        budget = max(1.0, min(hard_cap, (avail_mb * share) / live))
         if not getattr(self, '_stab_budget_notified', False):
             self._stab_budget_notified = True
             print(f"[Stabilize] {avail_mb / 1024.0:.1f} GB RAM free of {total_mb / 1024.0:.1f} GB: chunk budget "

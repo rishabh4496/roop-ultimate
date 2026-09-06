@@ -49,6 +49,9 @@ def _result_metrics(path, returncode, elapsed):
         "startup_seconds": 0.0,
         "stable": returncode == 0 and int(run.get("frames", 0) or 0) > 0,
         "quality_regression": wrong > 0,
+        "frames": run.get("frames"),
+        "faces_seen": run.get("faces_seen"),
+        "faces_swapped": run.get("faces_swapped"),
         "wrong_faceset": wrong,
     }
 
@@ -100,8 +103,8 @@ def main():
     ap.add_argument("--video", default=fixtures.clip("double/d4.mp4"))
     ap.add_argument("--sources", default="harjot,gargee")
     ap.add_argument("--start", type=int, default=0)
-    ap.add_argument("--end", type=int, default=60,
-                    help="short representative run length; not full production video")
+    ap.add_argument("--end", type=int, default=600,
+                    help="end frame; Phase 14 requires a 600-frame acceptance window")
     ap.add_argument("--codec", default="auto",
                     help="explicit codec pins the encoder stage; auto permits codec trials")
     ap.add_argument("--enhancer", default="None")
@@ -113,6 +116,8 @@ def main():
     ap.add_argument("--force", action="store_true",
                     help="ignore an existing measured profile and retune")
     args = ap.parse_args()
+    if args.end - args.start < 600:
+        ap.error("Phase 14 requires at least 600 frames; use --end >= --start + 600")
     args.out = os.path.abspath(args.out)
     os.makedirs(args.out, exist_ok=True)
 

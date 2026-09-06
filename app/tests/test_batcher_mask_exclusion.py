@@ -20,6 +20,7 @@ by name — so batching is what has to yield.
 import os
 import sys
 import unittest
+import inspect
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
@@ -94,6 +95,15 @@ class BatcherYieldsToTheMask(unittest.TestCase):
     def test_xframe_off_never_batches(self):
         os.environ['ROOP_BATCH_SWAP_XFRAME'] = '0'
         self.assertIsNone(self._make(has_mask=False, strength=0.0))
+
+    def test_batcher_is_reachable_on_stabilized_production_path(self):
+        """The stabilized branch must not bypass the configured batcher."""
+        source = inspect.getsource(ProcessMgr.run_batch_inmem)
+        build = 'self._swap_batcher = self._make_swap_batcher(threads)'
+        self.assertEqual(source.count(build), 1)
+        self.assertLess(source.index(build), source.index('elif use_parallel_stab:'))
+        cleanup = source.rfind('if self._swap_batcher is not None:')
+        self.assertGreater(cleanup, source.index('elif use_parallel_stab:'))
 
 
 if __name__ == '__main__':

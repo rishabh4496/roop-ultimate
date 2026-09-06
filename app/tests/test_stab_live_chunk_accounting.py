@@ -80,9 +80,24 @@ class LiveChunkCountFollowsTheQueues(unittest.TestCase):
         """budget x live is the quantity the share actually bounds."""
         totals = [_Bare(c)._default_stab_chunk_mb() * _Bare(c)._stab_live_chunks()
                   for c in (2, 3, 4)]
-        # Allow for the hard cap and the 96 MB floor clamping an extreme.
+        # Allow for the hard cap clamping an extreme.
         for other in totals[1:]:
             self.assertAlmostEqual(other, totals[0], delta=totals[0] * 0.02)
+
+    def test_missing_memory_telemetry_keeps_the_fallback_total_bounded(self):
+        """Telemetry failure must not multiply the fallback by live queues."""
+        import roop.ProcessMgr as pmmod
+
+        real = pmmod.psutil.virtual_memory
+        pmmod.psutil.virtual_memory = lambda: (_ for _ in ()).throw(
+            RuntimeError('telemetry unavailable'))
+        try:
+            bare = _Bare(4)
+            budget = bare._default_stab_chunk_mb()
+            self.assertAlmostEqual(
+                budget * bare._stab_live_chunks(), 1536.0, places=5)
+        finally:
+            pmmod.psutil.virtual_memory = real
 
 
 if __name__ == '__main__':

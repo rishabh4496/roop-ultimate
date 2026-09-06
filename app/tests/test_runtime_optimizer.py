@@ -92,6 +92,20 @@ class RuntimeOptimizerTests(unittest.TestCase):
         tuning, *_ = AutoTuner().tune(_hardware(12.0), workload)
         self.assertEqual(tuning.stabilization_workers, 1)
 
+    def test_explicit_4070_twelve_thread_profile_reaches_stabilization(self):
+        settings = {
+            'max_threads': 12,
+            '_threads_auto': False,
+            'auto_thread_selection': False,
+            'stabilize_face': False,
+            'stabilize_mask': True,
+            'stabilize_enhancer': True,
+        }
+        tuning, *_ = AutoTuner().tune(
+            _hardware(12.0), _workload(), settings)
+        self.assertEqual(tuning.worker_count, 12)
+        self.assertEqual(tuning.stabilization_workers, 12)
+
     def test_two_face_default_preserves_both_vram_tiers(self):
         for vram, expected in ((6.0, 0), (11.99, 2), (12.0, 2)):
             with self.subTest(vram=vram):
