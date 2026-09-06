@@ -79,3 +79,16 @@ def test_v2_dermal_patch_is_warped_from_its_uv_anchors():
     assert residual is not None and weight is not None
     assert float(residual[64, 64]) > 4.0
     assert float(weight[64, 64]) > 0.95
+
+
+def load_tests(loader, tests, pattern):
+    """Expose this module's bare `test_*` functions to `unittest discover`.
+
+    Without this, `unittest` collects nothing here and reports OK; see
+    tests/unittest_shim.py. pytest never calls load_tests, so it is unaffected.
+    """
+    try:
+        from tests.unittest_shim import load_tests_for
+    except ImportError:  # discovery started from inside tests/
+        from unittest_shim import load_tests_for
+    return load_tests_for(globals())

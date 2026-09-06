@@ -141,10 +141,19 @@ def _rotation_count(result):
 
 
 def _table(results):
+    # The reference row is libx264 @ auto. When it is missing (the encoder
+    # was unavailable, or its arm failed) the table used to fall back to
+    # results[0] SILENTLY, so `baseline_fps` and `improvement_pct` were
+    # quoted against a different codec under column names that still say
+    # "baseline". Name the substitute instead of hiding it.
     baseline = next((r for r in results
                      if r.get("phase13", {}).get("codec") == "libx264"
                      and r.get("phase13", {}).get("segment_size") == "auto"),
-                    results[0] if results else {})
+                    None)
+    baseline_is_reference = baseline is not None
+    if baseline is None:
+        baseline = results[0] if results else {}
+    baseline_codec = baseline.get("phase13", {}).get("codec")
     base_fps = baseline.get("run", {}).get("fps")
     rows = []
     for result in results:
@@ -161,6 +170,8 @@ def _table(results):
             "codec": result.get("phase13", {}).get("codec"),
             "segment_size": result.get("phase13", {}).get("segment_size"),
             "baseline_fps": base_fps,
+            "baseline_codec": baseline_codec,
+            "baseline_is_reference_codec": baseline_is_reference,
             "final_fps": fps,
             "improvement_pct": ((fps - base_fps) / base_fps * 100.0
                                  if fps is not None and base_fps else None),
@@ -171,9 +182,11 @@ def _table(results):
             "encode_total_seconds": encode_seconds + finalize_seconds,
             "encode_share_pct": ((encode_seconds + finalize_seconds) / wall * 100.0
                                   if wall > 0 else None),
-            "encode_throughput_fps": (encode.get("calls", 0) /
-                                       max(1e-9, encode.get("total_s", 1))
-                                       if encode else None),
+            # A zero-length encode stage has NO throughput. The old
+            # `max(1e-9, ...)` floor turned it into ~1e12 fps, which is a
+            # fabricated number that reads as a spectacular encoder.
+            "encode_throughput_fps": (encode.get("calls", 0) / encode_seconds
+                                       if encode_seconds > 0 else None),
             "rotation_count": _rotation_count(result),
             "peak_vram_mb": telemetry.get("peak_gpu_memory_mb"),
             "average_vram_mb": telemetry.get("mean_gpu_memory_mb"),

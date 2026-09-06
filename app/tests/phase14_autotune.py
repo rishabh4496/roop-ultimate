@@ -30,6 +30,32 @@ def _detected_target(target, device_id=0):
     return target_on_device(target, rows, device_id)[0], format_selected(rows, raw, device_id)
 
 
+def _startup_seconds(run, elapsed):
+    """Child wall clock minus the time it spent rendering.
+
+    `RuntimeOptimizer.score` charges a real penalty for startup (up to 20% of a
+    candidate's throughput), so a hardcoded 0.0 does not mean "no penalty" --
+    it means the term is INERT and every candidate ties on it. That is the
+    "a default standing in for a measurement that was never taken" shape this
+    project keeps finding.
+
+    `elapsed` on its own is the wrong value: it is startup PLUS the render, so
+    charging it would penalise arms in proportion to clip length. The render
+    portion is frames / fps, which the child reports, so what is left is the
+    engine build, model load and process start. Returns None when the child did
+    not report enough to derive it, so the caller can leave it unstated rather
+    than assert a zero.
+    """
+    try:
+        fps = float(run.get("fps") or 0.0)
+        frames = float(run.get("frames") or 0.0)
+    except (TypeError, ValueError):
+        return None
+    if fps <= 0.0 or frames <= 0.0 or elapsed is None:
+        return None
+    return max(0.0, float(elapsed) - frames / fps)
+
+
 def _result_metrics(path, returncode, elapsed):
     try:
         with open(path, encoding="utf-8") as fh:
@@ -40,13 +66,16 @@ def _result_metrics(path, returncode, elapsed):
     run = data.get("run", {})
     telemetry = data.get("telemetry", {})
     wrong = int(run.get("wrong_faceset", 0) or 0)
+    startup = _startup_seconds(run, elapsed)
     return {
         "end_to_end_fps": run.get("fps", 0),
         "peak_vram_mb": telemetry.get("peak_gpu_memory_mb", 0),
         "peak_rss_gb": telemetry.get("peak_rss_gb", 0),
         "cpu_utilization_pct": telemetry.get("mean_cpu_pct", 0),
         "gpu_utilization_pct": telemetry.get("mean_gpu_util_pct", 0),
-        "startup_seconds": 0.0,
+        "startup_seconds": 0.0 if startup is None else round(startup, 3),
+        "startup_measured": startup is not None,
+        "child_wall_seconds": None if elapsed is None else round(float(elapsed), 3),
         "stable": returncode == 0 and int(run.get("frames", 0) or 0) > 0,
         "quality_regression": wrong > 0,
         "frames": run.get("frames"),
@@ -77,9 +106,9 @@ def _apply_candidate_environment(candidate, env, codec):
     env["ROOP_DETMASK_POOL"] = str(candidate.get("detmask_pool_size", 0))
     env["ROOP_EXPR_POOL"] = str(candidate.get("expression_pool_size", 0))
 
-    # The enhancer pool shares the TRT session pool in the current runtime;
-    # there is no independent public enhancer-pool environment variable.
-    env["ROOP_TRT_POOL"] = str(candidate.get("swapper_pool_size", 0))
+    # NOTE: the enhancer pool shares ROOP_TRT_POOL, set above -- there is no
+    # independent public enhancer-pool environment variable. This used to be a
+    # second, identical assignment, which reads as if the two were separate.
 
     precision = str(candidate.get("precision", "")).lower()
     if precision == "fp32":

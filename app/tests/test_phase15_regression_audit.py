@@ -101,3 +101,16 @@ def test_report_keeps_cache_and_execution_gaps_explicit(tmp_path: Path):
     assert report["enhancers"]["status"] == "not_run"
     assert report["enhancers"]["missing_from_audit"] == []
     assert report["quality_modes"]["status"] == "not_run"
+
+
+def load_tests(loader, tests, pattern):
+    """Expose this module's bare `test_*` functions to `unittest discover`.
+
+    Without this, `unittest` collects nothing here and reports OK; see
+    tests/unittest_shim.py. pytest never calls load_tests, so it is unaffected.
+    """
+    try:
+        from tests.unittest_shim import load_tests_for
+    except ImportError:  # discovery started from inside tests/
+        from unittest_shim import load_tests_for
+    return load_tests_for(globals())

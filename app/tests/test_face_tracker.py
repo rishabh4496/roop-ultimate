@@ -50,3 +50,16 @@ def test_crossing_faces_keep_their_original_track_ids():
 
     assert len(tracker.tracks) == 2
     assert all(track.state.shape == (8,) for track in tracker.tracks.values())
+
+
+def load_tests(loader, tests, pattern):
+    """Expose this module's bare `test_*` functions to `unittest discover`.
+
+    Without this, `unittest` collects nothing here and reports OK; see
+    tests/unittest_shim.py. pytest never calls load_tests, so it is unaffected.
+    """
+    try:
+        from tests.unittest_shim import load_tests_for
+    except ImportError:  # discovery started from inside tests/
+        from unittest_shim import load_tests_for
+    return load_tests_for(globals())

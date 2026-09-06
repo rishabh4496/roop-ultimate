@@ -263,10 +263,20 @@ def main():
               "independent evidence): %s" % ", ".join(inert))
 
     print("\n  wrote %s" % js)
+    # PASS and FAIL are both RESULTS. Anything else (ERROR, timeout, "?") means
+    # the arm produced no quality answer at all, and the matrix is incomplete.
+    # This used to print that line and still exit 0, so a caller or a CI step
+    # could not tell a completed matrix from one where every arm errored.
     bad = [k for k, r in rows.items()
            if r["warm"].get("verdict") not in ("PASS", "FAIL")]
     if bad:
         print("  arms without a valid quality result: %s" % ", ".join(bad))
+        print("  MATRIX INCOMPLETE -- these arms were not measured, so this run "
+              "is not evidence for or against any precision.")
+        return 1
+    if not rows:
+        print("  MATRIX EMPTY -- no arm ran.")
+        return 1
     return 0
 
 

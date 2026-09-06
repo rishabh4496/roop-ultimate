@@ -130,9 +130,12 @@ def grade(target_video, output_video, max_frames=0):
         ok_output, output_frame = output_cap.read()
         if not (ok_target and ok_output):
             break
-        total += 1
-        if max_frames and total > max_frames:
+        # Stop BEFORE counting the frame that trips the limit. Counting first
+        # left `total` one above the number actually considered, so `coverage`
+        # (detected / total) was reported against an inflated denominator.
+        if max_frames and total >= max_frames:
             break
+        total += 1
         target_faces = get_all_faces(target_frame) or []
         output_faces = get_all_faces(output_frame) or []
         target_face = _face(target_faces, reference)
@@ -192,12 +195,18 @@ def main():
             from settings import Settings
             provider = str(Settings(os.path.join(APP, "config.yaml")).provider)
         _init_detector(provider, args.cuda_device_id)
+        metrics = grade(args.target_video, args.output_video, args.max_frames)
+        # The status has to live on the object the exit code is read from. It
+        # used to sit ONLY at result["metrics"]["status"], so the
+        # `result.get("status")` below was always None and a fully successful
+        # grading run exited 1 -- a harness that reports failure exactly when
+        # it worked, and success ("pending") only when it measured nothing.
         result = {"scenario": args.scenario,
                   "provider": provider,
                   "target_video": os.path.abspath(args.target_video),
                   "output_video": os.path.abspath(args.output_video),
-                  "metrics": grade(args.target_video, args.output_video,
-                                    args.max_frames)}
+                  "status": metrics.get("status", "error"),
+                  "metrics": metrics}
     rendered = json.dumps(result, indent=2, sort_keys=True)
     print(rendered)
     if args.json_path:

@@ -94,6 +94,13 @@ def inspect(path, black_floor=6.0, uniform_floor=1.0):
             "uniform": uniform, "nan": nan, "duplicate": dup}
 
 
+def _label(path, width=52):
+    """Directory + file, trimmed from the LEFT so the filename always survives."""
+    parent = os.path.basename(os.path.dirname(path))
+    label = os.path.join(parent, os.path.basename(path)) if parent else os.path.basename(path)
+    return label if len(label) <= width else "..." + label[-(width - 3):]
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--glob", action="append", required=True,
@@ -146,18 +153,31 @@ def main():
             problems.append("frames %s != %d" % (r.get("frames"), args.expect_frames))
         r["verdict"] = "PASS" if not problems else "; ".join(problems)
         rows.append(r)
+        # Label the row with the FILE, keeping enough of the parent directory
+        # to tell arms apart. Printing only basename(dirname(p)) rendered every
+        # output under one arm's work/ directory as the same row, so two
+        # different files were indistinguishable in the table.
         print("%-52s %6s %6s %7s %4s %5s %s" %
-              (os.path.basename(os.path.dirname(p))[:52],
-               r.get("frames"), r.get("black"), r.get("uniform"),
+              (_label(p), r.get("frames"), r.get("black"), r.get("uniform"),
                r.get("nan"), r.get("duplicate"), r["verdict"]))
 
     npass = sum(1 for r in rows if r["verdict"] == "PASS")
     print("\n%d of %d files PASS" % (npass, len(rows)))
     if args.out:
-        os.makedirs(os.path.dirname(args.out), exist_ok=True)
+        os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
         with open(args.out, "w", encoding="utf-8") as fh:
-            json.dump({"rows": rows, "passed": npass, "total": len(rows)}, fh, indent=2)
+            json.dump({"rows": rows, "passed": npass, "total": len(rows),
+                       "globs": list(args.glob)}, fh, indent=2)
         print("wrote %s" % args.out)
+    # A sweep that inspected NOTHING is not a pass. `npass == len(rows)` is
+    # trivially true at 0 == 0, so a typo'd or stale --glob printed an empty
+    # table and exited 0 -- the same "reported success while doing no work"
+    # shape this file exists to catch in the render itself.
+    if not rows:
+        print("NO FILES MATCHED: %s -- nothing was inspected, so this is NOT a "
+              "pass. Check the --glob; it is resolved against the current "
+              "working directory." % ", ".join(args.glob))
+        return 2
     return 0 if npass == len(rows) else 1
 
 

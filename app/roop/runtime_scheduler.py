@@ -221,6 +221,19 @@ class _FramePacketPool:
                 self._free.append(packet)
 
 
+def _queue_depth(queue_depths, names):
+    """Depth of the first reported queue among `names`, or None if none was.
+
+    A queue that nobody measured has no depth. Returning 0 for it lets an
+    unreported queue be read as an empty one, which is how the classifier came
+    to answer questions it had no data for.
+    """
+    for name in names:
+        if name in queue_depths:
+            return _number(queue_depths[name])
+    return None
+
+
 class UnifiedRuntimeScheduler:
     """Coordinate bounded pipeline work and safe adaptive control.
 
@@ -469,9 +482,20 @@ class UnifiedRuntimeScheduler:
                 _number(latest.get("ram_total_gb")) * self.budget.ram_margin_ratio):
             return "RAM-bound"
         queues = latest.get("queue_depths") or {}
-        if _number(queues.get("encode", 0)) >= self.queue_capacity:
+        # Two callers, two vocabularies. `run_stream` reports its own queues as
+        # "decode"/"encode"; `ProcessMgr._runtime_queue_snapshot` -- the path a
+        # real render takes -- reports the same two ends as "input"/"output".
+        # Reading only the first spelling made BOTH queue branches structurally
+        # unreachable on the production path: an absent key returned the
+        # default 0, which is indistinguishable from a measured empty queue.
+        # That is the recurring shape here (a default standing in for a
+        # measurement that was never taken), so read the aliases and keep an
+        # unreported queue unreported.
+        encode_depth = _queue_depth(queues, ("encode", "output"))
+        decode_depth = _queue_depth(queues, ("decode", "input"))
+        if encode_depth is not None and encode_depth >= self.queue_capacity:
             return "encode-bound"
-        if _number(queues.get("decode", 0)) <= 0 and self.metrics.decoded:
+        if decode_depth is not None and decode_depth <= 0 and self.metrics.decoded:
             return "decode-bound"
         gpu = latest.get("gpu_utilization_pct")
         cpu = latest.get("cpu_utilization_pct")

@@ -88,6 +88,30 @@ def _run_arm(args, target, arm):
     return result
 
 
+def _stage_fps(stages, name):
+    """Calls per second for one profiled stage, or None when unmeasured.
+
+    A stage that never ran has no throughput -- it does not have a throughput
+    of zero. The swap row used to read `calls / total_s` with a default
+    denominator of 1, so a missing swap stage reported a confident 0.0 fps
+    (a fabricated measurement) while the sibling enhancement row correctly
+    reported None for the same situation. A stage whose profile rounds to
+    0.000s divided by zero and crashed report generation after every arm had
+    already been rendered.
+    """
+    stage = stages.get(name)
+    if not isinstance(stage, dict):
+        return None
+    try:
+        total_s = float(stage.get("total_s") or 0.0)
+        calls = float(stage.get("calls") or 0.0)
+    except (TypeError, ValueError):
+        return None
+    if total_s <= 0.0:
+        return None
+    return calls / total_s
+
+
 def _table(results):
     baseline = next((r for r in results if r.get("phase12_arm", {}).get("name") == "baseline"), {})
     base_fps = baseline.get("run", {}).get("fps")
@@ -109,8 +133,8 @@ def _table(results):
             "cpu_utilization_pct": telemetry.get("mean_cpu_pct"),
             "gpu_utilization_pct": telemetry.get("mean_gpu_util_pct"),
             "decode_throughput_fps": result.get("decode_fps"),
-            "inference_throughput_fps": (stages.get("swap") or {}).get("calls", 0) / (stages.get("swap") or {}).get("total_s", 1),
-            "enhancement_throughput_fps": (stages.get("enhance") or {}).get("calls", 0) / (stages.get("enhance") or {}).get("total_s", 1) if stages.get("enhance") else None,
+            "inference_throughput_fps": _stage_fps(stages, "swap"),
+            "enhancement_throughput_fps": _stage_fps(stages, "enhance"),
             "encode_throughput_fps": result.get("encode_fps"),
             "latency_ms": run.get("mean_frame_latency_ms", result.get("mean_frame_latency_ms")),
             "stability": "pass" if result.get("returncode") == 0 else "failed",

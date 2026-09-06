@@ -50,3 +50,16 @@ def test_matrix_has_video_quality_and_identity_measurement_columns():
     for key in ("Quality", "Temporal", "Identity", "Detail"):
         assert key in row
         assert row[key] is None
+
+
+def load_tests(loader, tests, pattern):
+    """Expose this module's bare `test_*` functions to `unittest discover`.
+
+    Without this, `unittest` collects nothing here and reports OK; see
+    tests/unittest_shim.py. pytest never calls load_tests, so it is unaffected.
+    """
+    try:
+        from tests.unittest_shim import load_tests_for
+    except ImportError:  # discovery started from inside tests/
+        from unittest_shim import load_tests_for
+    return load_tests_for(globals())

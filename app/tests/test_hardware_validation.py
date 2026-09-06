@@ -100,3 +100,16 @@ def test_classification_requires_both_physical_results():
         {"status": "measured", "improvement_pct": 10},
         {"status": "measured", "improvement_pct": 0},
     ) == "B. RTX 3060-SPECIFIC"
+
+
+def load_tests(loader, tests, pattern):
+    """Expose this module's bare `test_*` functions to `unittest discover`.
+
+    Without this, `unittest` collects nothing here and reports OK; see
+    tests/unittest_shim.py. pytest never calls load_tests, so it is unaffected.
+    """
+    try:
+        from tests.unittest_shim import load_tests_for
+    except ImportError:  # discovery started from inside tests/
+        from unittest_shim import load_tests_for
+    return load_tests_for(globals())
