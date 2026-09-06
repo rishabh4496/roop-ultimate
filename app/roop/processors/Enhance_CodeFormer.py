@@ -93,6 +93,7 @@ class Enhance_CodeFormer():
             self.model_inputs = self.model_codeformer.get_inputs()
             self.model_outputs = self.model_codeformer.get_outputs()
             self.in_dtype = np.float16 if 'float16' in self.model_inputs[0].type else np.float32
+            self._lut = ((np.arange(256, dtype=np.float32) / 127.5) - 1.0).astype(self.in_dtype)
 
             # Optional TensorRT multi-context pool: the primary session plus
             # (N-1) independent extras, so N workers can enhance concurrently.
@@ -177,14 +178,18 @@ class Enhance_CodeFormer():
 
 
     def Run(self, source_faceset: FaceSet, target_face: Face, temp_frame: Frame) -> Frame:
+        if temp_frame is None or getattr(temp_frame, 'size', 0) == 0:
+            return temp_frame, 1
         input_size = temp_frame.shape[1]
         # preprocess
-        temp_frame = cv2.resize(temp_frame, (512, 512), interpolation=cv2.INTER_CUBIC)
-        fallback_bgr = temp_frame   # resized input, kept for the non-finite guard
-        temp_frame = cv2.cvtColor(temp_frame, cv2.COLOR_BGR2RGB)
-        temp_frame = temp_frame.astype('float32') / 255.0
-        temp_frame = (temp_frame - 0.5) / 0.5
-        temp_frame = np.expand_dims(temp_frame, axis=0).transpose(0, 3, 1, 2)
+        if temp_frame.shape[0] != 512 or temp_frame.shape[1] != 512:
+            src = cv2.resize(temp_frame, (512, 512), interpolation=cv2.INTER_CUBIC)
+        else:
+            src = temp_frame
+        fallback_bgr = src
+
+        # One gather: uint8 BGR HWC -> model dtype RGB CHW in [-1, 1].
+        x = self._lut[src.transpose(2, 0, 1)[::-1]][None]
 
         # Fresh io_binding per call: a shared binding is not thread-safe, and
         # this graph needs one anyway because the fidelity weight `w` is a
@@ -194,8 +199,7 @@ class Enhance_CodeFormer():
 
         def _infer(sess):
             iob = sess.io_binding()
-            iob.bind_cpu_input(self.model_inputs[0].name,
-                               temp_frame.astype(self.in_dtype))
+            iob.bind_cpu_input(self.model_inputs[0].name, x)
             iob.bind_cpu_input(self.model_inputs[1].name,
                                np.array([cf_fidelity], dtype=np.float64))
             iob.bind_output(self.model_outputs[0].name, self.devicename)
@@ -225,16 +229,10 @@ class Enhance_CodeFormer():
             return sized(fallback_bgr.astype(np.uint8), input_size)
 
         # post-process
-        result = result.transpose((1, 2, 0))
-
-        un_min = -1.0
-        un_max = 1.0
-        result = np.clip(result, un_min, un_max)
-        result = (result - un_min) / (un_max - un_min)
-
-        result = cv2.cvtColor(result, cv2.COLOR_RGB2BGR)
-        result = (result * 255.0).round()
-        return sized(result.astype(np.uint8), input_size)
+        hwc = np.ascontiguousarray(result[::-1].transpose(1, 2, 0), dtype=np.float32)
+        np.maximum(hwc, -1.0, out=hwc)
+        res = cv2.convertScaleAbs(hwc, alpha=127.5, beta=127.5)
+        return sized(res, input_size)
 
 
     def Release(self):
@@ -246,4 +244,5 @@ class Enhance_CodeFormer():
             self.pool = None
         del self.model_codeformer
         self.model_codeformer = None
+        self._lut = None
 

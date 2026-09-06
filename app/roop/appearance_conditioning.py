@@ -224,9 +224,7 @@ def protect_restorer_output(enhanced, pre_restore, tier):
         reference = cv2.resize(reference, (enhanced.shape[1], enhanced.shape[0]),
                                 interpolation=cv2.INTER_AREA)
     factor = restoration_factor(tier)
-    out = (enhanced.astype(np.float32) * factor
-           + reference.astype(np.float32) * (1.0 - factor))
-    return np.clip(out, 0, 255).astype(np.uint8)
+    return cv2.addWeighted(enhanced, factor, reference, 1.0 - factor, 0.0)
 
 
 __all__ = [

@@ -10,6 +10,7 @@ from roop.typing import Face, Frame, FaceSet
 from roop.utilities import resolve_relative_path, conditional_download
 from roop.processors.enhance_common import is_usable, sized, fp32_trt_providers, exclusive
 from roop.precision_policy import providers_for
+from roop import session_pool
 
 
 def _fp32_trt_providers(providers):
@@ -73,12 +74,11 @@ class Enhance_GPEN():
 
     def __init__(self):
         self.model_size = 512
-        # One live session per resolution. Sessions are kept resident instead of
-        # released on size switch: the enhancer comparison grid renders 512/1024/
-        # 2048 back-to-back, and releasing mid-cycle both thrashes TensorRT
-        # engine loads and yanks the session out from under a Run() in flight
-        # (NoneType io_binding / NaN → black face).
         self.sessions = {}
+        self.pools = {}
+        self.io_bindings = {}
+        self.pool = None
+        self._lut = ((np.arange(256, dtype=np.float32) / 127.5) - 1.0)
 
     def Initialize(self, plugin_options:dict):
         if self.plugin_options is not None:
@@ -90,6 +90,8 @@ class Enhance_GPEN():
         size = int(plugin_options.get("size", 512))
         if size not in GPEN_MODELS:
             size = 512
+
+        devicename = self.plugin_options["devicename"].replace('mps', 'cpu')
 
         if size not in self.sessions:
             spec = GPEN_MODELS[size]
@@ -105,46 +107,77 @@ class Enhance_GPEN():
                 providers, _precision = providers_for(
                     f'gpen_{size}', providers, model_path)
             from roop.utilities import get_onnx_session_options
-            session = onnxruntime.InferenceSession(model_path, get_onnx_session_options(), providers=providers)
-            # Assert the provider actually registered, then pay TensorRT's
-            # first-inference engine build on a dummy tensor. See
-            # roop/predictor.py for why a built session is not evidence the
-            # requested provider is running.
+            opts = get_onnx_session_options()
+
+            def _build(_i=0):
+                sess = onnxruntime.InferenceSession(model_path, opts, providers=providers)
+                iob = sess.io_binding()
+                iob.bind_output(sess.get_outputs()[0].name, devicename)
+                return (sess, iob)
+
+            session, iob = _build()
             from roop import predictor
             predictor.verify_and_warmup(session, providers,
                                         f'enhancer:gpen_{size}',
                                         default_hw=(size,))
             self.sessions[size] = session
+            self.io_bindings[size] = iob
 
-        # replace Mac mps with cpu for the moment
-        self.devicename = self.plugin_options["devicename"].replace('mps', 'cpu')
+            if session_pool.pooling_enabled():
+                n = session_pool.pool_size(
+                    model_key=f'enhancer:gpen_{size}',
+                    input_shape=(1, 3, size, size))
+                cap = plugin_options.get('pool_size')
+                if cap:
+                    n = max(1, min(int(n), int(cap)))
+                gb = session_pool._detect_vram_gb()
+                if 0 < gb < 11.5 or size >= 1024:
+                    n = 1
+                elif 11.5 <= gb < 15.5:
+                    n = min(n, 2 if size >= 512 else 4)
+                if n > 1:
+                    extras = []
+                    try:
+                        extras = [_build(i + 1) for i in range(n - 1)]
+                        primary = (session, iob)
+                        self.pools[size] = session_pool.SessionPool(
+                            lambda i, _e=([primary] + extras): _e[i], n,
+                            model_key=f'enhancer:gpen_{size}',
+                            input_shape=(1, 3, size, size))
+                    except Exception as e:
+                        extras.clear()
+                        self.pools[size] = None
+                        print(f"[GPEN] multi-context pool unavailable ({e}); "
+                              f"falling back to one session behind the lock")
+
+        self.devicename = devicename
         self.model_size = size
         self.model_gpen = self.sessions[size]
+        self.pool = self.pools.get(size)
         self.name = self.model_gpen.get_inputs()[0].name
         self.output_name = self.model_gpen.get_outputs()[0].name
 
     def Run(self, source_faceset: FaceSet, target_face: Face, temp_frame: Frame) -> Frame:
-        # preprocess
+        if temp_frame is None or getattr(temp_frame, 'size', 0) == 0:
+            return temp_frame, 1
         input_size = temp_frame.shape[1]
         sz = self.model_size
-        temp_frame = cv2.resize(temp_frame, (sz, sz), interpolation=cv2.INTER_CUBIC)
-        fallback_bgr = temp_frame   # resized input, kept for the non-finite guard
+        if temp_frame.shape[0] != sz or temp_frame.shape[1] != sz:
+            src = cv2.resize(temp_frame, (sz, sz), interpolation=cv2.INTER_CUBIC)
+        else:
+            src = temp_frame
+        fallback_bgr = src
 
-        temp_frame = cv2.cvtColor(temp_frame, cv2.COLOR_BGR2RGB)
-        temp_frame = temp_frame.astype('float32') / 255.0
-        temp_frame = (temp_frame - 0.5) / 0.5
-        temp_frame = np.expand_dims(temp_frame, axis=0).transpose(0, 3, 1, 2)
+        # One gather: uint8 BGR HWC -> float32 RGB CHW in [-1, 1].
+        x = self._lut[src.transpose(2, 0, 1)[::-1]][None]
 
-        # Exclusive use of the one shared session -- and nothing wider. The
-        # binding is per call; the context behind the session is not.
-        with exclusive(None, self._session_lock, self.model_gpen) as sess:
-            io_binding = sess.io_binding()
-            io_binding.bind_cpu_input(self.name, temp_frame)
-            io_binding.bind_output(self.output_name, self.devicename)
-            sess.run_with_iobinding(io_binding)
-            ort_outs = io_binding.copy_outputs_to_cpu()
+        with exclusive(self.pools.get(sz), self._session_lock,
+                       (self.model_gpen, self.io_bindings.get(sz))) as (sess, iob):
+            iob.bind_cpu_input(self.name, x)
+            sess.run_with_iobinding(iob)
+            ort_outs = iob.copy_outputs_to_cpu()
         result = ort_outs[0][0]
-        del temp_frame, io_binding, ort_outs
+        del ort_outs
 
         # Defense-in-depth: FP16 overflow or a torn session can yield non-finite
         # output; np.clip would keep the NaN and uint8(NaN)=0 paints a solid black
@@ -157,13 +190,18 @@ class Enhance_GPEN():
             return sized(fallback_bgr.astype(np.uint8), input_size)
 
         # post-process
-        result = np.clip(result, -1, 1)
-        result = (result + 1) / 2
-        result = result.transpose(1, 2, 0) * 255.0
-        result = cv2.cvtColor(result, cv2.COLOR_RGB2BGR)
-        return sized(result.astype(np.uint8), input_size)
+        hwc = np.ascontiguousarray(result[::-1].transpose(1, 2, 0), dtype=np.float32)
+        np.maximum(hwc, -1.0, out=hwc)
+        res = cv2.convertScaleAbs(hwc, alpha=127.5, beta=127.5)
+        return sized(res, input_size)
 
 
     def Release(self):
+        for pool in self.pools.values():
+            if pool is not None:
+                pool.release()
+        self.pools.clear()
+        self.io_bindings.clear()
         self.sessions.clear()
+        self.pool = None
         self.model_gpen = None

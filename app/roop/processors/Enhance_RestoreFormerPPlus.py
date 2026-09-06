@@ -58,6 +58,7 @@ class Enhance_RestoreFormerPPlus():
 
             self.model_restoreformerpplus, self.io_binding = _build()
             self.model_inputs = self.model_restoreformerpplus.get_inputs()
+            self._lut = ((np.arange(256, dtype=np.float32) / 127.5) - 1.0)
 
             # Optional TensorRT multi-context pool: primary (session, io_binding)
             # plus (N-1) independent extras so N workers can enhance concurrently.
@@ -73,21 +74,24 @@ class Enhance_RestoreFormerPPlus():
                     model_key='enhancer:restoreformer', input_shape=(1, 3, 512, 512))
 
     def Run(self, source_faceset: FaceSet, target_face: Face, temp_frame: Frame) -> Frame:
-        # preprocess
+        if temp_frame is None or getattr(temp_frame, 'size', 0) == 0:
+            return temp_frame, 1
         input_size = temp_frame.shape[1]
-        temp_frame = cv2.resize(temp_frame, (512, 512), interpolation=cv2.INTER_CUBIC)
-        fallback_bgr = temp_frame   # resized input, kept for the non-finite guard
-        temp_frame = cv2.cvtColor(temp_frame, cv2.COLOR_BGR2RGB)
-        temp_frame = temp_frame.astype('float32') / 255.0
-        temp_frame = (temp_frame - 0.5) / 0.5
-        temp_frame = np.expand_dims(temp_frame, axis=0).transpose(0, 3, 1, 2)
+        if temp_frame.shape[0] != 512 or temp_frame.shape[1] != 512:
+            src = cv2.resize(temp_frame, (512, 512), interpolation=cv2.INTER_CUBIC)
+        else:
+            src = temp_frame
+        fallback_bgr = src
+
+        # One gather: uint8 BGR HWC -> float32 RGB CHW in [-1, 1].
+        x = self._lut[src.transpose(2, 0, 1)[::-1]][None]
         
         # An independent (session, io_binding) per worker when pooled, else
         # this class's own lock over the single shared pair -- either way
         # exclusive, and no wider than the model call.
         with exclusive(self.pool, self._session_lock,
                        (self.model_restoreformerpplus, self.io_binding)) as (sess, iob):
-            iob.bind_cpu_input(self.model_inputs[0].name, temp_frame)
+            iob.bind_cpu_input(self.model_inputs[0].name, x)
             sess.run_with_iobinding(iob)
             ort_outs = iob.copy_outputs_to_cpu()
         result = ort_outs[0][0]
@@ -101,11 +105,10 @@ class Enhance_RestoreFormerPPlus():
                   "(FP16 overflow? try an fp32 provider)")
             return sized(fallback_bgr.astype(np.uint8), input_size)
 
-        result = np.clip(result, -1, 1)
-        result = (result + 1) / 2
-        result = result.transpose(1, 2, 0) * 255.0
-        result = cv2.cvtColor(result, cv2.COLOR_RGB2BGR)
-        return sized(result.astype(np.uint8), input_size)
+        hwc = np.ascontiguousarray(result[::-1].transpose(1, 2, 0), dtype=np.float32)
+        np.maximum(hwc, -1.0, out=hwc)
+        res = cv2.convertScaleAbs(hwc, alpha=127.5, beta=127.5)
+        return sized(res, input_size)
 
 
     def Release(self):
@@ -116,4 +119,4 @@ class Enhance_RestoreFormerPPlus():
         self.model_restoreformerpplus = None
         del self.io_binding
         self.io_binding = None
-
+        self._lut = None

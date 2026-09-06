@@ -354,6 +354,8 @@ class Enhance_UltraMax:
     # blurring them in every restorer invocation.
     _eye_mask_cache = {}
     _rebalance_mask_cache = {}
+    _eye_mask_cpu_cache = {}
+    _rebalance_mask_cpu_cache = {}
     _gaussian_1d_cache = {}
 
     # ── DUAL-STREAM FREQUENCY-SPLIT ENGINE ───────────────────────────────────
@@ -872,14 +874,10 @@ class Enhance_UltraMax:
                          vertical, groups=channels)[0].permute(1, 2, 0)
 
     @classmethod
-    def _eye_masks_gpu(cls, image):
-        """Return feathered outer/core eye masks entirely on the active GPU."""
-        cache_key = (str(image.device), image.shape[0], image.shape[1],
-                     cls.model_template, cls._PROTECT_EYE_OUTER_X,
-                     cls._PROTECT_EYE_OUTER_Y, cls._PROTECT_EYE_CORE_X,
-                     cls._PROTECT_EYE_CORE_Y, cls._PROTECT_EYE_LIFT,
-                     cls._PROTECT_EYE_FEATHER)
-        cached = cls._eye_mask_cache.get(cache_key)
+    def _eye_masks_cpu(cls, shape):
+        """Return feathered outer/core eye masks on CPU, cached by shape and template."""
+        cache_key = (shape[0], shape[1], cls.model_template, cls._SIZE)
+        cached = cls._eye_mask_cpu_cache.get(cache_key)
         if cached is not None:
             return cached
         from roop.face_util import swap_template_points
@@ -889,23 +887,11 @@ class Enhance_UltraMax:
         sep = float(np.linalg.norm(pts[1] - pts[0]))
         if not np.isfinite(sep) or sep < 2.0:
             return None, None
-        # BUILD THE MASK WITH THE SAME cv2 CALLS THE CPU OPERATOR USES, then
-        # upload it once. `cv2.ellipse(..., -1)` fills a POLYGON APPROXIMATION
-        # of the ellipse, not the analytic `(dx^2 + dy^2 <= 1)` region, so an
-        # analytic meshgrid rasterisation disagrees with it by up to a pixel at
-        # the rim -- which survives the feather as a ~0.197 difference in a
-        # mask that multiplies every term downstream. It was the single largest
-        # remaining source of disagreement between the two paths.
-        #
-        # There is no recurring cost to doing it this way: these masks depend
-        # only on the template and the crop size, so they are built once per
-        # run and served from `_eye_mask_cache` for every face after the first.
         outer_x = max(1, int(round(cls._PROTECT_EYE_OUTER_X * sep)))
         outer_y = max(1, int(round(cls._PROTECT_EYE_OUTER_Y * sep)))
         core_x = max(1, int(round(cls._PROTECT_EYE_CORE_X * sep)))
         core_y = max(1, int(round(cls._PROTECT_EYE_CORE_Y * sep)))
         lift = cls._PROTECT_EYE_LIFT * sep
-        shape = (int(image.shape[0]), int(image.shape[1]))
         outer_np = np.zeros(shape, dtype=np.float32)
         core_np = np.zeros(shape, dtype=np.float32)
         for eye in pts[:2]:
@@ -918,6 +904,52 @@ class Enhance_UltraMax:
             k += 1
         outer_np = cv2.GaussianBlur(outer_np, (k, k), 0)
         core_np = cv2.GaussianBlur(core_np, (k, k), 0)
+        cached = (outer_np, core_np)
+        cls._eye_mask_cpu_cache[cache_key] = cached
+        return cached
+
+    @classmethod
+    def _rebalance_masks_cpu(cls, shape):
+        """Return selection and feathered masks for eye rebalancing on CPU, cached."""
+        cache_key = (shape[0], shape[1], cls.model_template, cls._SIZE)
+        cached = cls._rebalance_mask_cpu_cache.get(cache_key)
+        if cached is not None:
+            return cached
+        from roop.face_util import swap_template_points
+        pts = np.asarray(swap_template_points(cls._SIZE, cls.model_template), dtype=np.float32)
+        if pts.shape[0] < 2:
+            return None, None
+        sep = float(np.linalg.norm(pts[1] - pts[0]))
+        if not np.isfinite(sep) or sep < 2.0:
+            return None, None
+        rx = max(1, int(round(0.28 * sep)))
+        ry = max(1, int(round(0.15 * sep)))
+        selects, masks = [], []
+        for eye in pts[:2]:
+            m = np.zeros(shape, dtype=np.float32)
+            center = (int(round(float(eye[0]))),
+                      int(round(float(eye[1] - cls._PROTECT_EYE_LIFT * sep))))
+            cv2.ellipse(m, center, (rx, ry), 0, 0, 360, 1.0, -1)
+            selects.append(m > 0.5)
+            masks.append(cv2.GaussianBlur(m, (0, 0), max(1.0, 0.035 * sep)))
+        cached = (selects, masks)
+        cls._rebalance_mask_cpu_cache[cache_key] = cached
+        return cached
+
+    @classmethod
+    def _eye_masks_gpu(cls, image):
+        """Return feathered outer/core eye masks entirely on the active GPU."""
+        cache_key = (str(image.device), image.shape[0], image.shape[1],
+                     cls.model_template, cls._PROTECT_EYE_OUTER_X,
+                     cls._PROTECT_EYE_OUTER_Y, cls._PROTECT_EYE_CORE_X,
+                     cls._PROTECT_EYE_CORE_Y, cls._PROTECT_EYE_LIFT,
+                     cls._PROTECT_EYE_FEATHER)
+        cached = cls._eye_mask_cache.get(cache_key)
+        if cached is not None:
+            return cached
+        outer_np, core_np = cls._eye_masks_cpu((int(image.shape[0]), int(image.shape[1])))
+        if outer_np is None:
+            return None, None
         masks = (torch.from_numpy(outer_np).to(image.device).clamp(0, 1),
                  torch.from_numpy(core_np).to(image.device).clamp(0, 1))
         cls._eye_mask_cache[cache_key] = masks
@@ -993,30 +1025,9 @@ class Enhance_UltraMax:
         if restored.shape != source.shape or restored.ndim != 3:
             return restored
         try:
-            from roop.face_util import swap_template_points
-            pts = np.asarray(swap_template_points(cls._SIZE, cls.model_template),
-                             dtype=np.float32)
-            if pts.shape[0] < 2:
+            outer, core = cls._eye_masks_cpu(restored.shape[:2])
+            if outer is None:
                 return restored
-            sep = float(np.linalg.norm(pts[1] - pts[0]))
-            if not np.isfinite(sep) or sep < 2.0:
-                return restored
-            outer_x = max(1, int(round(cls._PROTECT_EYE_OUTER_X * sep)))
-            outer_y = max(1, int(round(cls._PROTECT_EYE_OUTER_Y * sep)))
-            core_x = max(1, int(round(cls._PROTECT_EYE_CORE_X * sep)))
-            core_y = max(1, int(round(cls._PROTECT_EYE_CORE_Y * sep)))
-            lift = cls._PROTECT_EYE_LIFT * sep
-            outer = np.zeros(restored.shape[:2], dtype=np.float32)
-            core = np.zeros(restored.shape[:2], dtype=np.float32)
-            for eye in pts[:2]:
-                center = (int(round(eye[0])), int(round(eye[1] - lift)))
-                cv2.ellipse(outer, center, (outer_x, outer_y), 0, 0, 360, 1.0, -1)
-                cv2.ellipse(core, center, (core_x, core_y), 0, 0, 360, 1.0, -1)
-            k = max(1, int(round(cls._PROTECT_EYE_FEATHER * sep)))
-            if k % 2 == 0:
-                k += 1
-            outer = cv2.GaussianBlur(outer, (k, k), 0)
-            core = cv2.GaussianBlur(core, (k, k), 0)
             # Keep the swapped crop's geometry, but do not simply paste its
             # low-resolution pixels back: that was halo-safe yet visibly soft.
             # A small source-only high-pass lift restores lash/catchlight
@@ -1166,27 +1177,15 @@ class Enhance_UltraMax:
         if image.ndim != 3 or image.shape[0] != cls._SIZE or image.shape[1] != cls._SIZE:
             return image
         try:
-            from roop.face_util import swap_template_points
-            pts = np.asarray(swap_template_points(cls._SIZE, cls.model_template),
-                             dtype=np.float32)
-            if pts.shape[0] < 2:
-                return image
-            sep = float(np.linalg.norm(pts[1] - pts[0]))
-            if not np.isfinite(sep) or sep < 2.0:
-                return image
             gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY).astype(np.float32)
+            selects, masks = cls._rebalance_masks_cpu(gray.shape)
+            if selects is None:
+                return image
             lap = np.abs(cv2.Laplacian(gray, cv2.CV_32F, ksize=3))
-            rx = max(1, int(round(0.28 * sep)))
-            ry = max(1, int(round(0.15 * sep)))
             scores = []
-            masks = []
-            for eye in pts[:2]:
-                m = np.zeros(gray.shape, dtype=np.float32)
-                center = (int(round(eye[0])), int(round(eye[1] - cls._PROTECT_EYE_LIFT * sep)))
-                cv2.ellipse(m, center, (rx, ry), 0, 0, 360, 1.0, -1)
-                values = lap[m > 0.5]
+            for sel in selects:
+                values = lap[sel]
                 scores.append(float(values.mean()) if values.size else 0.0)
-                masks.append(cv2.GaussianBlur(m, (0, 0), max(1.0, 0.035 * sep)))
             lo = int(np.argmin(scores))
             hi = int(np.argmax(scores))
             if scores[lo] <= 0.0 or scores[hi] <= scores[lo] * cls._EYE_BALANCE_TRIGGER:

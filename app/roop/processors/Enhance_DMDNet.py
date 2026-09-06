@@ -39,6 +39,9 @@ _LM_MISS = {'target': 0, 'ref': 0, 'ok': 0}
 class Enhance_DMDNet():
     # FIX: processorname and type are intentionally class-level (read-only identity constants)
     processorname = 'dmdnet'
+    # Forward pass is protected by THREAD_LOCK_DMDNET, so ProcessMgr should not
+    # wrap the entire host Run() in the global GPU lock.
+    self_excluding = True
     type = 'enhance'
 
     def __init__(self):
@@ -233,7 +236,7 @@ class Enhance_DMDNet():
             # generic
             SpMem256Para, SpMem128Para, SpMem64Para = None, None, None
 
-        with torch.no_grad():
+        with torch.inference_mode():
             with THREAD_LOCK_DMDNET:
                 try:
                     GenericResult, SpecificResult = self.model_dmdnet(lq = lq.to(self.torchdevice), loc = LQLocs.unsqueeze(0), sp_256 = SpMem256Para, sp_128 = SpMem128Para, sp_64 = SpMem64Para)

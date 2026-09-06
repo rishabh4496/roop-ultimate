@@ -10,9 +10,7 @@ from roop.utilities import resolve_relative_path
 from roop.processors.enhance_common import (is_usable, sized, exclusive,
                                             fp32_trt_providers,
                                             looks_collapsed)
-
-
-# THREAD_LOCK = threading.Lock()
+from roop import session_pool
 
 
 class Enhance_GFPGAN():
@@ -21,6 +19,9 @@ class Enhance_GFPGAN():
     model_gfpgan = None
     name = None
     devicename = None
+    pool = None
+    io_binding = None
+    _lut = None
 
     processorname = 'gfpgan'
     # Every session call goes through `exclusive()`, so no context of
@@ -29,9 +30,7 @@ class Enhance_GFPGAN():
     # stage skip the lock, so this class's HOST work stops serialising
     # against every other worker thread. See enhance_common.exclusive.
     self_excluding = True
-    # Guards the single shared session. These two build a fresh io_binding
-    # per call, but the SESSION (and so its TensorRT context) is shared,
-    # and that is what must not be entered twice at once.
+    # Guards the single shared session when there is no pool.
     _session_lock = threading.Lock()
     type = 'enhance'
     _warned_collapse = False
@@ -66,34 +65,66 @@ class Enhance_GFPGAN():
             providers = fp32_trt_providers(roop.globals.execution_providers,
                                            'gfpgan')
             from roop.utilities import get_onnx_session_options
-            self.model_gfpgan = onnxruntime.InferenceSession(model_path, get_onnx_session_options(), providers=providers)
-            # replace Mac mps with cpu for the moment
+            opts = get_onnx_session_options()
             self.devicename = self.plugin_options["devicename"].replace('mps', 'cpu')
 
-        self.name = self.model_gfpgan.get_inputs()[0].name
-        self.output_name = self.model_gfpgan.get_outputs()[0].name
+            def _build(_i=0):
+                sess = onnxruntime.InferenceSession(model_path, opts, providers=providers)
+                iob = sess.io_binding()
+                iob.bind_output(sess.get_outputs()[0].name, self.devicename)
+                return (sess, iob)
+
+            self.model_gfpgan, self.io_binding = _build()
+            self.name = self.model_gfpgan.get_inputs()[0].name
+            self.output_name = self.model_gfpgan.get_outputs()[0].name
+            self._lut = ((np.arange(256, dtype=np.float32) / 127.5) - 1.0)
+
+            if session_pool.pooling_enabled():
+                n = session_pool.pool_size(
+                    model_key='enhancer:gfpgan', input_shape=(1, 3, 512, 512))
+                cap = plugin_options.get('pool_size')
+                if cap:
+                    n = max(1, min(int(n), int(cap)))
+                gb = session_pool._detect_vram_gb()
+                if 0 < gb < 11.5:
+                    n = 1
+                elif 11.5 <= gb < 15.5:
+                    n = min(n, 2)
+                if n > 1:
+                    extras = []
+                    try:
+                        extras = [_build(i + 1) for i in range(n - 1)]
+                        primary = (self.model_gfpgan, self.io_binding)
+                        self.pool = session_pool.SessionPool(
+                            lambda i, _e=([primary] + extras): _e[i], n,
+                            model_key='enhancer:gfpgan', input_shape=(1, 3, 512, 512))
+                    except Exception as e:
+                        extras.clear()
+                        self.pool = None
+                        print(f"[GFPGAN] multi-context pool unavailable ({e}); "
+                              f"falling back to one session behind the lock")
 
     def Run(self, source_faceset: FaceSet, target_face: Face, temp_frame: Frame) -> Frame:
-        # preprocess
+        if temp_frame is None or getattr(temp_frame, 'size', 0) == 0:
+            return temp_frame, 1
         input_size = temp_frame.shape[1]
-        temp_frame = cv2.resize(temp_frame, (512, 512), interpolation=cv2.INTER_CUBIC)
-        fallback_bgr = temp_frame   # resized input, kept for the non-finite guard
+        if temp_frame.shape[0] != 512 or temp_frame.shape[1] != 512:
+            src = cv2.resize(temp_frame, (512, 512), interpolation=cv2.INTER_CUBIC)
+        else:
+            src = temp_frame
+        fallback_bgr = src
 
-        temp_frame = cv2.cvtColor(temp_frame, cv2.COLOR_BGR2RGB)
-        temp_frame = temp_frame.astype('float32') / 255.0
-        temp_frame = (temp_frame - 0.5) / 0.5
-        temp_frame = np.expand_dims(temp_frame, axis=0).transpose(0, 3, 1, 2)
+        # One gather: uint8 BGR HWC -> float32 RGB CHW in [-1, 1].
+        x = self._lut[src.transpose(2, 0, 1)[::-1]][None]
 
-        # Exclusive use of the one shared session -- and nothing wider. The
-        # binding is per call; the context behind the session is not.
-        with exclusive(None, self._session_lock, self.model_gfpgan) as sess:
-            io_binding = sess.io_binding()
-            io_binding.bind_cpu_input(self.name, temp_frame)
-            io_binding.bind_output(self.output_name, self.devicename)
-            sess.run_with_iobinding(io_binding)
-            ort_outs = io_binding.copy_outputs_to_cpu()
+        # Exclusive use of session and io_binding.
+        with exclusive(self.pool, self._session_lock,
+                       (self.model_gfpgan, self.io_binding)) as (sess, iob):
+            iob.bind_cpu_input(self.name, x)
+            sess.run_with_iobinding(iob)
+            ort_outs = iob.copy_outputs_to_cpu()
         result = ort_outs[0][0]
-        del temp_frame, io_binding, ort_outs
+        del ort_outs
 
         # np.clip does not remove NaN and uint8(NaN) is 0, so a single
         # overflowed value paints black and a saturated graph paints a black
@@ -104,17 +135,15 @@ class Enhance_GFPGAN():
             return sized(fallback_bgr.astype(np.uint8), input_size)
 
         # post-process
-        result = np.clip(result, -1, 1)
-        result = (result + 1) / 2
-        result = result.transpose(1, 2, 0) * 255.0
-        result = cv2.cvtColor(result, cv2.COLOR_RGB2BGR)
-        result = result.astype(np.uint8)
+        hwc = np.ascontiguousarray(result[::-1].transpose(1, 2, 0), dtype=np.float32)
+        np.maximum(hwc, -1.0, out=hwc)
+        res = cv2.convertScaleAbs(hwc, alpha=127.5, beta=127.5)
 
         # The guard `is_usable` cannot provide: a finite but COLLAPSED output.
         # The FP32 provider above is the real fix; this is the net that would
         # have caught the failure in the first place instead of letting a flat
         # grey face render for months.
-        if looks_collapsed(result, fallback_bgr):
+        if looks_collapsed(res, fallback_bgr):
             if not Enhance_GFPGAN._warned_collapse:
                 Enhance_GFPGAN._warned_collapse = True
                 print("[GFPGAN] output has collapsed to a near-uniform image "
@@ -123,12 +152,17 @@ class Enhance_GFPGAN():
                       "ROOP_GFPGAN_FP16 to get the forced-FP32 engine back.")
             return sized(fallback_bgr.astype(np.uint8), input_size)
 
-        return sized(result, input_size)
+        return sized(res, input_size)
 
 
     def Release(self):
+        if self.pool is not None:
+            self.pool.release()
+            self.pool = None
         del self.model_gfpgan
         self.model_gfpgan = None
+        self.io_binding = None
+        self._lut = None
 
 
 
