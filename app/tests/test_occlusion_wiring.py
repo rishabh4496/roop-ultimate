@@ -124,7 +124,10 @@ class CoastingIsReachedTest(unittest.TestCase):
         a test that only asked whether it was called.
         """
         source = (APP / 'roop' / 'ProcessMgr.py').read_text(encoding='utf-8')
-        coast_at = source.index('self._dispatch_face_tracker.coast(')
+        # The tracker is reached through `_dispatch_tracker()` since the shared
+        # instance was found coasting off another worker's frame; see
+        # tests/test_dispatch_tracker_ordering.py.
+        coast_at = source.index('_tracker.coast(')
         bail_at = source.index("_audit_hit('frames with no face detected at all')")
         self.assertLess(coast_at, bail_at)
 

@@ -645,6 +645,36 @@ class FaceTracker:
             for key in self.stats:
                 self.stats[key] = 0
 
+    def clone_for_block(self) -> "FaceTracker":
+        """A tracker with this one's configuration and none of its state.
+
+        Same contract as the temporal engines' `clone_for_block`, and for the
+        same reason. This tracker is only correct while ONE thread advances it
+        in frame order: `update` predicts every track forward by `dt`, then
+        increments `missed` on all of them and clears it only on the ones IT
+        matched. Share one instance across workers sitting on different frames
+        and each worker reads every other worker's matches as a miss, so
+        `coast` fires for tracks that WERE detected, off a Kalman state
+        belonging to a frame far from the one being rendered -- an invented
+        face painted onto empty background. The shared `coasted_run` is reset
+        by any worker's real match too, so MAX_COAST_FRAMES stops bounding
+        anything.
+
+        Nothing is carried over: a contiguous block is primed by the same
+        warm-up frames the stabilizers use, so its tracks re-establish from the
+        frames just before it rather than from another block's.
+        """
+        return FaceTracker(
+            max_age=self.max_age,
+            max_cost=self.max_cost,
+            process_noise=self.process_noise,
+            measurement_noise=self.measurement_noise,
+            max_coast=self.max_coast,
+            min_hits_to_coast=self.min_hits_to_coast,
+            history=self.history,
+            max_outside=self.max_outside,
+        )
+
 
 # =============================================================================
 # Occlusion-aware landmark symmetry inpainting

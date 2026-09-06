@@ -545,7 +545,20 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
         # Per-frame detector output is not guaranteed to retain a stable order.
         # This light CPU-only tracker supplies persistent IDs before source
         # dispatch; temporal pre-pass faces already arrive stamped and bypass it.
+        #
+        # NEVER read this attribute from a worker. It is only correct while ONE
+        # thread advances it in frame order; every reader goes through
+        # `_dispatch_tracker()`, which hands a block or a round-robin worker its
+        # own instance. See that method for what sharing it does.
         self._dispatch_face_tracker = FaceTracker(max_age=30)
+        # Bumped whenever the tracker above is replaced, so a worker thread that
+        # outlives a run cannot keep using the previous run's per-thread clone.
+        self._dispatch_epoch = 0
+        # Does the frame dispatch for this run hand each worker CONTIGUOUS frames
+        # in order? True for the sequential encoder loop and for a parallel
+        # stabilization block; False for round-robin, where worker i sees frames
+        # i, i+N, i+2N and a Kalman prediction across that stride is fiction.
+        self._dispatch_ordered = True
         # One Euro stabilizers (video only); active flag is set per-run.
         self.kps_stabilizer = None    # smooths face keypoints (anti-wobble)
         self.enh_stabilizer = None    # smooths enhancer output (anti-flicker)
@@ -838,8 +851,10 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
             self.target_face_groups = list(range(len(target_faces)))
         self.num_frames_no_face = 0
         self.last_swapped_frame = None
-        self.last_found_bboxes = None
-        self._dispatch_face_tracker = FaceTracker(max_age=30)
+        # No `last_found_bboxes` here: the ROI-rescue cache is per worker and
+        # lives in `self._tls`. A ProcessMgr-level attribute would look wired
+        # and be read by nobody.
+        self._reset_dispatch_tracker()
         self.options = options
         from roop.temporal_identity import TemporalIdentityStabilizer
         self._temporal_identity = TemporalIdentityStabilizer.from_env()
@@ -1303,6 +1318,9 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
         _hot_loop_gc_was_enabled = gc.isenabled()
         if _hot_loop_gc_was_enabled:
             gc.disable()
+        # Files are handed to workers in slices, so a worker's frames are not
+        # the video's consecutive frames; see `_dispatch_tracker`.
+        self._dispatch_ordered = (threads <= 1)
         try:
             with ChunkedProgress(total=self.total_frames, desc='Processing', unit='frame', dynamic_ncols=True, bar_format=progress_bar_format) as progress:
                 with ThreadPoolExecutor(max_workers=threads) as executor:
@@ -1476,6 +1494,71 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
         if local is not None:
             return local
         return getattr(self, '_' + name, None)
+
+    def _reset_dispatch_tracker(self):
+        """Start a fresh dispatch tracker and invalidate every per-thread clone.
+
+        Worker threads outlive a single run on some paths, and their clones live
+        in thread-local storage that nothing else clears. The epoch is what makes
+        a stale clone detectable without having to reach into other threads.
+        """
+        self._dispatch_face_tracker = FaceTracker(max_age=30)
+        self._dispatch_epoch = getattr(self, '_dispatch_epoch', 0) + 1
+        # Assume ordered until a dispatch loop says otherwise, so a previous
+        # round-robin run cannot leave the next one permanently un-coasted.
+        self._dispatch_ordered = True
+
+    def _dispatch_tracker(self):
+        """Return ``(tracker, may_coast)`` for the worker calling this.
+
+        THE TRACKER IS ORDER-DEPENDENT AND WAS BEING SHARED. `update` predicts
+        every track forward by `dt`, then increments `missed` on all of them and
+        clears it only on the tracks IT matched; `coast` then invents a face for
+        every track whose `missed` is above zero. One instance shared by N
+        workers sitting on N different frames therefore means:
+
+          * the Kalman state is stepped N times per frame index, so a track's
+            velocity is extrapolated N-fold;
+          * every worker reads the other N-1 workers' matches as misses, so
+            `coast` fires on frames where the face WAS detected, off a state
+            belonging to a frame hundreds of frames away;
+          * `coasted_run` is reset by any worker's real match, so
+            MAX_COAST_FRAMES stops bounding the run at all.
+
+        The result is a swapped face pasted onto empty background at an
+        arbitrary position -- and, because each phantom is a real face to the
+        rest of the pipeline, a full swap + mask + enhance paid for it.
+        Reproduced in `tests/test_dispatch_tracker_ordering.py`: four
+        interleaved block workers produce 78 phantoms on face-free frames from
+        the same detections that produce none once each block owns a tracker.
+
+        So the instance follows the dispatch:
+
+          parallel block   its own clone, primed by the block's warm-up frames
+                           exactly as the stabilizers are. Coasting allowed --
+                           the block's frames are contiguous and in order.
+          sequential loop  the shared instance; there is only one worker.
+          round-robin      a per-thread clone, coasting REFUSED. Worker i sees
+                           frames i, i+N, i+2N; association over that subsample
+                           is still coherent for that thread, but a prediction
+                           across a stride of N frames is a guess, and the guard
+                           set that makes coasting safe assumes consecutive
+                           frames.
+        """
+        shared = getattr(self, '_dispatch_face_tracker', None)
+        if shared is None:
+            return None, False
+        ordered = bool(getattr(self._tls, 'temporal_block', False)) or bool(
+            getattr(self, '_dispatch_ordered', True))
+        if ordered and not getattr(self._tls, 'temporal_block', False):
+            return shared, True
+        epoch = getattr(self, '_dispatch_epoch', 0)
+        local = getattr(self._tls, 'dispatch_tracker', None)
+        if local is None or getattr(self._tls, 'dispatch_tracker_epoch', None) != epoch:
+            local = shared.clone_for_block()
+            self._tls.dispatch_tracker = local
+            self._tls.dispatch_tracker_epoch = epoch
+        return local, ordered
 
     def _worker_done(self, threadindex):
         """Retire this worker: tell the writer, and never block doing it.
@@ -2545,6 +2628,11 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                 writethread.daemon = True
                 writethread.start()
 
+                # Round-robin dispatch: worker i gets frames i, i+N, i+2N, so no
+                # worker sees adjacent frames. Say so before the workers start —
+                # `_dispatch_tracker` reads this to give each thread its own
+                # tracker and to refuse coasting across the stride.
+                self._dispatch_ordered = (threads <= 1)
                 try:
                     with ChunkedProgress(total=self.total_frames, desc='Processing', unit='frames', dynamic_ncols=True, bar_format=progress_bar_format) as progress:
                         with ThreadPoolExecutor(thread_name_prefix='swap_proc', max_workers=self.num_threads) as executor:
@@ -3371,6 +3459,19 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                         setattr(self._tls, _tname,
                                 _shared.clone_for_block()
                                 if _shared is not None and _shared.enabled else None)
+                    # Same contract, no `enabled` flag: the dispatch tracker is
+                    # always live. A block owns its own so `coast` cannot invent
+                    # a face from another block's Kalman state -- see
+                    # `_dispatch_tracker`. Re-cloned per block, so a stolen block
+                    # starts from its own warm-up rather than the previous one.
+                    _dt_shared = getattr(self, '_dispatch_face_tracker', None)
+                    self._tls.dispatch_tracker = (
+                        _dt_shared.clone_for_block() if _dt_shared is not None else None)
+                    self._tls.dispatch_tracker_epoch = getattr(self, '_dispatch_epoch', 0)
+                    # The ROI-rescue cache is "the frame before this one"; the
+                    # frame before a block's first frame is its warm-up, not the
+                    # last frame of whatever block this thread ran previously.
+                    self._tls.last_found_bboxes = None
                     self._tls.temporal_block = True
                     ca = _base + a
                     for ci in range(max(0, ca - WU), ca):   # warm-up: prime filter, discard
@@ -3895,6 +3996,15 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
         audit_frame_seen()
         audit_detect_frame_begin()
 
+        # PER WORKER, not per ProcessMgr. This is the previous frame's boxes,
+        # used to re-detect inside a region-of-interest when the full-frame pass
+        # comes back short. Shared across workers it is the previous frame of
+        # WHICHEVER worker wrote it last — a region from another part of the clip
+        # entirely — so every face-free frame paid an extra detector pass over an
+        # arbitrary rectangle, and the rescue could hand back a face found
+        # nowhere near where this frame's face was.
+        _last_bboxes = getattr(self._tls, 'last_found_bboxes', None)
+
         # Tick once per frame if any stabilizer is active. Parallel path uses a
         # per-thread frame index (TLS) instead of this shared counter.
         if (stabilize and self._stab_active and not self._parallel_stab
@@ -3936,12 +4046,12 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
             else:
                 with _prof('detect'), _gpu_guard(pooled=analysis_pooled(), owner='analysis'):  # detect: lock-free when pooled
                     face = get_first_face(frame)
-                    if face is None and self.last_found_bboxes is not None:
-                        face = _detect_face_in_roi(frame, self.last_found_bboxes[0])
+                    if face is None and _last_bboxes is not None:
+                        face = _detect_face_in_roi(frame, _last_bboxes[0])
             self._tls.retry_detected_faces = [face] if face is not None else None
             if face is None:
                 return num_faces_found, frame
-            self.last_found_bboxes = np.array([face.bbox])   # cache for next frame
+            self._tls.last_found_bboxes = np.array([face.bbox])   # cache for next frame
             if temp_frame is None:
                 temp_frame = frame.copy()
             if precomp:
@@ -3965,16 +4075,16 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
             else:
                 with _prof('detect'), _gpu_guard(pooled=analysis_pooled(), owner='analysis'):  # detect: lock-free when pooled
                     faces = get_all_faces(frame)
-                    if not faces and self.last_found_bboxes is not None:
+                    if not faces and _last_bboxes is not None:
                         recovered = []
-                        for bbox in self.last_found_bboxes:
+                        for bbox in _last_bboxes:
                             f = _detect_face_in_roi(frame, bbox)
                             if f is not None:
                                 recovered.append(f)
                         if recovered:
                             faces = recovered
-                    elif (_PARTIAL_MISS_RESCUE and faces and self.last_found_bboxes is not None
-                          and len(faces) < len(self.last_found_bboxes)):
+                    elif (_PARTIAL_MISS_RESCUE and faces and _last_bboxes is not None
+                          and len(faces) < len(_last_bboxes)):
                         # Full-frame pass found SOME faces but fewer than last frame
                         # had — one person is small/lateral/partly occluded (by
                         # another tracked face or a moving object), exactly the
@@ -3983,7 +4093,7 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                         # last-known box(es) instead of re-detecting everything —
                         # same cost as the single-face rescue above, paid only on
                         # frames that are already a miss.
-                        for bbox in self.last_found_bboxes:
+                        for bbox in _last_bboxes:
                             if max((self._bbox_iou(bbox, f.bbox) for f in faces), default=0.0) >= 0.2:
                                 continue
                             f = _detect_face_in_roi(frame, bbox)
@@ -3996,7 +4106,8 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                             faces.append(f)
                             _audit_hit('recovered via ROI redetect (partial miss)')
             self._tls.retry_detected_faces = list(faces) if faces else None
-            if _tfaces is None and self._dispatch_face_tracker is not None:
+            _tracker, _may_coast = self._dispatch_tracker()
+            if _tfaces is None and _tracker is not None:
                 # Detector order commonly follows x-coordinate.  Once two faces
                 # cross, that order swaps and ``all_input`` would otherwise paste
                 # each source onto the other person.  Hungarian association keeps
@@ -4012,10 +4123,13 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                 # itself and drift indefinitely -- and `coast` then emits nothing
                 # unless the track is established, its prediction is still on
                 # screen, and it does not land on another face. See roop/tracker.py.
-                faces = self._dispatch_face_tracker.update(faces, frame_idx)
-                _coasted = self._dispatch_face_tracker.coast(
+                faces = _tracker.update(faces, frame_idx)
+                # `_may_coast` is False under round-robin dispatch: association
+                # over that thread's subsample is still coherent, but inventing
+                # a face from a prediction across the stride is not.
+                _coasted = _tracker.coast(
                     frame_idx, frame_shape=getattr(frame, 'shape', None),
-                    occupied=faces)
+                    occupied=faces) if _may_coast else []
                 if _coasted:
                     faces = list(faces) + list(_coasted)
                     _audit_hit('recovered on Kalman prediction (occluded)',
@@ -4032,7 +4146,7 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                 _audit_hit('frames with no face detected at all')
                 audit_detect_miss(getattr(roop.globals, 'face_detector_threshold', 0.5))
                 return num_faces_found, frame
-            self.last_found_bboxes = np.array([f.bbox for f in faces])   # cache for next frame
+            self._tls.last_found_bboxes = np.array([f.bbox for f in faces])   # cache for next frame
             if os.environ.get('ROOP_DEBUG_FACELIST') == '1' and frame_idx is not None:
                 bar_write(f"[FaceList] f={frame_idx} n={len(faces)} " +
                           str([(round(float(f.bbox[0]),0), round(float(f.bbox[1]),0),
@@ -6603,7 +6717,7 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
         self.last_swapped_frame = None
         self.face_masks = {}
         self._temporal_faces = None
-        self._dispatch_face_tracker = FaceTracker(max_age=30)
+        self._reset_dispatch_tracker()
         if getattr(self, '_temporal_identity', None) is not None:
             self._temporal_identity.reset()
         if getattr(self, '_temporal_occlusion', None) is not None:
