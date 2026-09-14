@@ -123,6 +123,46 @@ class _Mgr:
         self._dispatch_ordered = ordered
 
 
+class ThreadTrackerAccessor(unittest.TestCase):
+    """`get_thread_tracker` is the only store a worker's tracker lives in."""
+
+    def test_bare_call_gives_each_thread_its_own_tracker(self):
+        from roop.ProcessMgr import get_thread_tracker
+        seen = {}
+
+        def worker(name):
+            seen[name] = get_thread_tracker()
+            # Stable for the life of the thread.
+            assert get_thread_tracker() is seen[name]
+
+        threads = [threading.Thread(target=worker, args=(i,)) for i in range(4)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        self.assertEqual(len({id(t) for t in seen.values()}), 4)
+
+    def test_keyed_call_clones_the_shared_tracker_once_per_epoch(self):
+        from roop.ProcessMgr import get_thread_tracker
+        from roop.tracker import FaceTracker
+        shared = FaceTracker(max_age=30)
+        first = get_thread_tracker(shared, 1)
+        self.assertIsNot(first, shared)
+        self.assertIs(get_thread_tracker(shared, 1), first)
+        # A new epoch (a new run) invalidates the clone ...
+        self.assertIsNot(get_thread_tracker(shared, 2), first)
+        # ... and so does a new shared instance under the same epoch.
+        second = get_thread_tracker(shared, 2)
+        self.assertIsNot(get_thread_tracker(FaceTracker(max_age=30), 2), second)
+
+    def test_fresh_reclones_even_when_the_key_matches(self):
+        from roop.ProcessMgr import get_thread_tracker
+        from roop.tracker import FaceTracker
+        shared = FaceTracker(max_age=30)
+        first = get_thread_tracker(shared, 1)
+        self.assertIsNot(get_thread_tracker(shared, 1, fresh=True), first)
+
+
 class DispatchTrackerSelection(unittest.TestCase):
     def test_sequential_run_uses_the_shared_instance(self):
         mgr = _Mgr(ordered=True)
@@ -199,9 +239,11 @@ class CallSitesGoThroughTheAccessor(unittest.TestCase):
         self.assertNotIn('self._dispatch_face_tracker', source)
 
     def test_a_parallel_block_clones_the_tracker(self):
+        # A block must start from ITS warm-up: the accessor is asked for a
+        # fresh clone, not whatever this thread's previous block left behind.
         source = self._source_of('_run_stab_parallel')
-        self.assertIn('self._tls.dispatch_tracker', source)
-        self.assertIn('clone_for_block()', source)
+        self.assertIn('get_thread_tracker(', source)
+        self.assertIn('fresh=True', source)
 
     def test_swap_faces_reads_the_roi_cache_per_worker(self):
         source = self._source_of('swap_faces')

@@ -7,6 +7,8 @@ except Exception:
     pass
 import time
 import numpy as np
+if int(np.__version__.split(".")[0]) >= 2:
+    raise RuntimeError(f"Unsupported NumPy version {np.__version__}. roop-ultimate requires numpy<2.0.0")
 import psutil
 
 from roop.ProcessOptions import ProcessOptions
@@ -53,6 +55,45 @@ from roop.runtime_optimizer import RuntimeOptimizer, RuntimeMonitor, SafeAdaptiv
 from roop.runtime_scheduler import UnifiedRuntimeScheduler
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from threading import Thread, Lock, local, get_ident, Event
+import threading
+
+# Per-worker FaceTracker storage. Module-level rather than on the ProcessMgr
+# so no instance attribute can be mistaken for the tracker a worker should
+# read; the ONLY way to a tracker from a worker is `get_thread_tracker()`.
+_local_tracking_context = threading.local()
+
+
+def get_thread_tracker(shared=None, epoch=None, fresh=False):
+    """Return the calling thread's own ``FaceTracker``, never another worker's.
+
+    The tracker is order-dependent (Kalman predict + missed-count per call),
+    so one instance read by N workers on N different frames extrapolates
+    velocity N-fold and coasts phantom faces onto empty background -- see
+    `ProcessMgr._dispatch_tracker` for the full account. Every worker
+    therefore gets its own instance here, keyed on:
+
+      shared  the run's authority tracker; the thread's copy is a
+              `clone_for_block()` of it, so a block starts primed by its
+              warm-up frames instead of cold. ``None`` -> a fresh tracker.
+      epoch   `ProcessMgr._dispatch_epoch`, bumped per run. Worker threads
+              outlive runs and thread-local storage is never cleared, so
+              without this a thread would carry last run's tracks into this
+              one. A strong ref to `shared` is kept alongside, so its id
+              cannot be recycled onto a new run's tracker.
+      fresh   force a re-clone even if the key matches: a parallel block
+              must start from ITS warm-up, not the previous block's state.
+    """
+    ctx = _local_tracking_context
+    tracker = getattr(ctx, "tracker", None)
+    stale = (tracker is None or fresh
+             or getattr(ctx, "shared", None) is not shared
+             or getattr(ctx, "epoch", None) != epoch)
+    if stale:
+        tracker = shared.clone_for_block() if shared is not None else FaceTracker(max_age=30)
+        ctx.tracker = tracker
+        ctx.shared = shared
+        ctx.epoch = epoch
+    return tracker
 
 # Guards the one-time build of the expression restorer (see _expression_restorer).
 _EXPR_BUILD_LOCK = Lock()
@@ -549,7 +590,8 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
         # NEVER read this attribute from a worker. It is only correct while ONE
         # thread advances it in frame order; every reader goes through
         # `_dispatch_tracker()`, which hands a block or a round-robin worker its
-        # own instance. See that method for what sharing it does.
+        # own instance from `get_thread_tracker()`. See that method for what
+        # sharing it does.
         self._dispatch_face_tracker = FaceTracker(max_age=30)
         # Bumped whenever the tracker above is replaced, so a worker thread that
         # outlives a run cannot keep using the previous run's per-thread clone.
@@ -1553,12 +1595,7 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
         if ordered and not getattr(self._tls, 'temporal_block', False):
             return shared, True
         epoch = getattr(self, '_dispatch_epoch', 0)
-        local = getattr(self._tls, 'dispatch_tracker', None)
-        if local is None or getattr(self._tls, 'dispatch_tracker_epoch', None) != epoch:
-            local = shared.clone_for_block()
-            self._tls.dispatch_tracker = local
-            self._tls.dispatch_tracker_epoch = epoch
-        return local, ordered
+        return get_thread_tracker(shared, epoch), ordered
 
     def _worker_done(self, threadindex):
         """Retire this worker: tell the writer, and never block doing it.
@@ -3465,9 +3502,8 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                     # `_dispatch_tracker`. Re-cloned per block, so a stolen block
                     # starts from its own warm-up rather than the previous one.
                     _dt_shared = getattr(self, '_dispatch_face_tracker', None)
-                    self._tls.dispatch_tracker = (
-                        _dt_shared.clone_for_block() if _dt_shared is not None else None)
-                    self._tls.dispatch_tracker_epoch = getattr(self, '_dispatch_epoch', 0)
+                    if _dt_shared is not None:
+                        get_thread_tracker(_dt_shared, getattr(self, '_dispatch_epoch', 0), fresh=True)
                     # The ROI-rescue cache is "the frame before this one"; the
                     # frame before a block's first frame is its warm-up, not the
                     # last frame of whatever block this thread ran previously.
