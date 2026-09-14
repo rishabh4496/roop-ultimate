@@ -28,6 +28,11 @@ app/config.yaml
 app/saved_configs
 app/facesets
 
+# Repo-root runtime scratch. The backend writes uploads to temp/api_uploads,
+# and the browser verification scripts use temp/ for a writable Chromium
+# profile dir. Both are generated at runtime and never belong in the repo.
+temp/
+
 # app/output and app/temp are already ignored above as directories
 
 # Local snapshot of the v1 React UI (canonical backup is the react-ui-v1 git tag)
