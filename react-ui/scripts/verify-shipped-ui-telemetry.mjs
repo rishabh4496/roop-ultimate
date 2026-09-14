@@ -57,6 +57,7 @@ import os, sys, time
 sys.path.insert(0, r"${path.join(REPO, 'app').replace(/\\/g, '\\\\')}")
 os.environ["ROOP_REACT_CLIENT"] = "1"
 import api
+import routes_telemetry
 from fastapi import Request
 
 @api.app.post("/api/__test__/advance")
@@ -66,6 +67,14 @@ async def _advance(request: Request):
                           "desc": b["desc"], "error": ""})
     api._run_stats.update({"start": time.time() - 30,
                            "frames_done": b["done"], "frames_total": b["total"]})
+    return {"ok": True}
+
+@api.app.post("/api/__test__/drop")
+async def _drop():
+    # Test-only transport fault. Closing the actual hub clients forces the
+    # shipped hook's onclose/backoff path instead of merely inspecting it.
+    for websocket in list(routes_telemetry.hub._clients):
+        await websocket.close(code=1012)
     return {"ok": True}
 
 import uvicorn
@@ -158,6 +167,35 @@ check('a server-side change reaches the shipped client',
 const shown = await page.evaluate(() => document.body.innerText);
 check('the UI renders the pushed progress', /165\s*\/\s*300|55\s*%|5[0-9]%/.test(shown),
   shown.match(/\d+\s*\/\s*300|\d+%/)?.[0] ?? '(no counter found in DOM)');
+
+// Force the real server-side client transport closed. The page must create a
+// second socket through the shipped hook, receive a fresh hello, and continue
+// rendering pushed state after recovery.
+const socketCountBeforeDrop = sockets.length;
+await fetch(`http://127.0.0.1:${API_PORT}/api/__test__/drop`, { method: 'POST' });
+let reconnected = false;
+for (let i = 0; i < 80; i++) {
+  if (sockets.length > socketCountBeforeDrop) { reconnected = true; break; }
+  await wait(100);
+}
+check('the shipped hook reconnects after a server-side drop', reconnected,
+  `${sockets.length} socket(s)`);
+
+const recoveredSocket = sockets[sockets.length - 1];
+check('the reconnected socket receives hello',
+  Boolean(recoveredSocket && recoveredSocket.frames.some((f) => f.event === 'hello')),
+  recoveredSocket ? `${recoveredSocket.frames.length} frame(s)` : 'no replacement socket');
+
+await fetch(`http://127.0.0.1:${API_PORT}/api/__test__/advance`, {
+  method: 'POST',
+  headers: { 'content-type': 'application/json' },
+  body: JSON.stringify({ progress: 0.72, desc: '216 / 300', done: 216, total: 300 }),
+});
+await wait(2500);
+const recovered = sockets.some((s) => s !== tele && s.frames.some((f) => f.current_frame === 216));
+const shownRecovered = await page.evaluate(() => document.body.innerText);
+check('telemetry continues after reconnect', recovered && /216\s*\/\s*300|72\s*%|7[0-9]%/.test(shownRecovered),
+  shownRecovered.match(/\d+\s*\/\s*300|\d+%/)?.[0] ?? '(no recovered counter)');
 
 check('no page errors', errors.length === 0, errors.slice(0, 2).join(' | '));
 
