@@ -1,0 +1,7 @@
+{
+  "name": "roop-ultimate-tools",
+  "private": true,
+  "scripts": {
+    "build:engines": "python tools/build_trt_engines.py"
+  }
+}

@@ -131,6 +131,26 @@ batch dimension. TensorRT engine, profile, and timing artifacts live under
 `app/models/trt_cache/`; decoded/intermediate video frames are never written
 there.
 
+#### Offline TensorRT engine builder
+
+The explicit preparation command downloads the calibrated model set and builds
+TensorRT engine and timing caches before a render:
+
+```bash
+python tools/build_trt_engines.py
+# or, from the repository root:
+npm run build:engines
+```
+
+It stages `inswapper_128.onnx`, `GPEN-BFR-512.onnx`, and
+`scrfd_2.5g_kps.onnx` under `models/`, then creates machine-specific cache
+artifacts under `models/trt_cache/`. Re-running with `--offline` performs no
+network access and requires all three selected model files to already exist.
+The builder uses a 4096 MiB workspace on the RTX 4070 tier and 1536 MiB on the
+sub-7 GiB RTX 3060 laptop tier. Use `--model <name>` to build one registered
+model, or set `ROOP_TRT_WORKSPACE_BYTES` only when deliberately overriding the
+hardware default.
+
 The lower-level zero-pickle implementation is split into
 `app/roop/hardware_streamer.py`, `app/roop/optimized_trt_engine.py`, and
 `app/roop/vectorized_pipeline.py`. `SharedMemoryFrameRing` is a bounded
