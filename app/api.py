@@ -17,6 +17,8 @@ import sys
 import json
 import shutil
 import subprocess
+import asyncio
+import contextlib
 import threading
 import time
 import traceback
@@ -3749,6 +3751,7 @@ import routes_projects as _routes_projects
 import routes_export as _routes_export
 import routes_storage as _routes_storage
 import routes_benchmark as _routes_benchmark
+import routes_telemetry as _routes_telemetry
 app.include_router(_routes_diagnostics.router)
 app.include_router(_routes_livecam.router)
 app.include_router(_routes_quality.router)
@@ -3758,6 +3761,7 @@ app.include_router(_routes_projects.router)
 app.include_router(_routes_export.router)
 app.include_router(_routes_storage.router)
 app.include_router(_routes_benchmark.router)
+app.include_router(_routes_telemetry.router)
 
 # Backwards-compatible Python imports for callers that used these handlers
 # directly. Route ownership stays in routes_output.router, so these aliases do
@@ -3820,6 +3824,88 @@ from routes_faceset import (  # noqa: E402
 # must observe one dict — now that the whole module exists.
 _post_swap._progress = _progress
 _post_swap._make_frame_processor = _make_frame_processor
+
+# ── WebSocket telemetry wiring ───────────────────────────────────────────────
+# routes_telemetry pushes live run state to attached clients instead of having
+# them poll /api/progress once a second (measured: 17.4 KB per poll mid-render
+# against a 108-byte telemetry frame -- see app/tests/probe_progress_cost.py).
+#
+# The snapshot below is deliberately NOT get_progress(). That endpoint is not a
+# pure read: it syncs pause state, appends to the rolling log, announces
+# finalized parts and advances _run_stats. Sampling it 4x a second would run
+# those side effects 4x a second and multiply log churn. This reads the same
+# state and derives only the numbers that change, with no side effects at all,
+# so /api/progress remains the single writer and the single source of truth.
+def _telemetry_snapshot():
+    """Side-effect-free view of the live run, for the telemetry sampler."""
+    desc = _progress.get('desc', '') or ''
+    done = total = 0
+    m = _FRAME_RE.search(desc)
+    if m:
+        try:
+            done = int(m.group(1).replace(',', ''))
+            total = int(m.group(2).replace(',', ''))
+        except ValueError:
+            done = total = 0
+    # Fall back to the run accumulator between stages, where the status line
+    # carries no counter (encode/mux) and the frame numbers would otherwise
+    # drop to zero mid-render.
+    if not total:
+        done = int(_run_stats.get('frames_done') or 0)
+        total = int(_run_stats.get('frames_total') or 0)
+    started = float(_run_stats.get('start') or 0.0)
+    elapsed = (time.time() - started) if started else 0.0
+    # Average fps over the run. The per-frame instantaneous rate lives in the
+    # status line; this is the number the UI actually displays.
+    fps = (done / elapsed) if (done and elapsed > 0) else 0.0
+    try:
+        eta = _procmgr_runtime.eta_seconds()
+    except Exception as _degrade_error:
+        _swallowed('api.py:_telemetry_snapshot', _degrade_error,
+                   'telemetry frame sent without an ETA')
+        eta = None
+    return {
+        'processing': bool(_progress.get('processing')),
+        'paused': bool(_progress.get('paused')),
+        'progress': round(float(_progress.get('progress') or 0.0), 4),
+        'desc': desc,
+        'error': _progress.get('error', '') or '',
+        'current_frame': done,
+        'total_frames': total,
+        'fps': round(fps, 1),
+        'eta_s': eta,
+        'started_at': started,
+        'live_seq': live_preview.seq(),
+    }
+
+
+_routes_telemetry.progress_snapshot = _telemetry_snapshot
+
+
+@contextlib.asynccontextmanager
+async def _telemetry_lifespan(_app):
+    """Start/stop the telemetry sampler with the server.
+
+    The event loop has to be captured from INSIDE it. The swap pipeline is a
+    plain threading.Thread with no loop of its own, so a worker thread can only
+    reach a connected client via run_coroutine_threadsafe against this loop
+    (verified end to end in app/tests/probe_ws_feasibility.py).
+
+    lifespan rather than @app.on_event: on_event is deprecated in this FastAPI
+    version and warns on import.
+    """
+    _routes_telemetry.hub.bind_loop(asyncio.get_running_loop())
+    _routes_telemetry.hub.start_sampler(_telemetry_snapshot)
+    try:
+        yield
+    finally:
+        await _routes_telemetry.hub.stop_sampler()
+
+
+# The app was constructed far above, so `lifespan=` could not be passed to the
+# constructor; assigning the context here is exactly what that argument sets.
+app.router.lifespan_context = _telemetry_lifespan
+
 
 def run_api():
     try:

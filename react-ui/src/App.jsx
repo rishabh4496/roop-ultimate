@@ -8,6 +8,7 @@ import { ConfirmHost, confirmDialog } from './components/confirm';
 import { fmtTime } from './components/faceswap/utils';
 import useRunCompleteAlert from './components/faceswap/useRunCompleteAlert';
 import useJobRecovery from './components/faceswap/useJobRecovery';
+import useTelemetrySocket from './useTelemetrySocket';
 import { useJobStore } from './store/jobStore';
 import { themeByName, allThemes, applyThemeToDom } from './themes';
 import { SETTINGS_CATALOG, focusSetting } from './components/settingsCatalog';
@@ -116,6 +117,16 @@ const tabFromHash = (hash, valid) => {
   return valid.includes(id) ? id : null;
 };
 
+// Poll cadence. The fast rate is the historical 1 Hz, used whenever the
+// telemetry socket is NOT connected and the poll is the only source of live
+// state. When the socket IS connected it carries the per-frame numbers, and
+// the poll drops to the slow rate because it is then only refreshing the bulky
+// context a telemetry frame does not include: the rolling log, the finalized
+// parts and the runtime/HUD block. Measured in app/tests/probe_telemetry_gap.py
+// -- cutting the poll entirely froze all three for the length of the render.
+const FAST_POLL_MS = 1000;
+const SLOW_POLL_MS = 5000;
+
 export default function App() {
   const [tab, setTabState] = useState(
     () => tabFromHash(window.location.hash, ALL_TABS.map((t) => t.id)) || 'faceswap');
@@ -186,6 +197,7 @@ export default function App() {
   const [startTime, setStartTime] = useState(null);
   const [confetti, setConfetti] = useState(false);
   const pollRef = useRef(null);
+  const pollIntervalRef = useRef(1000);
 
   // ── Connection health ────────────────────────────────────────────────────
   // Every backend call in this shell reports its outcome here. This is the
@@ -206,8 +218,9 @@ export default function App() {
     }
   }, []);
 
-  const startPolling = useCallback(() => {
+  const startPolling = useCallback((intervalMs = FAST_POLL_MS) => {
     if (pollRef.current) clearInterval(pollRef.current);
+    pollIntervalRef.current = intervalMs;
     pollRef.current = setInterval(async () => {
       try {
         const pr = await getJSON('/api/progress', { timeout: 8000 });
@@ -222,7 +235,7 @@ export default function App() {
         // health banner tells the user what is happening meanwhile.
         reportNet(false);
       }
-    }, 1000);
+    }, intervalMs);
   }, [reportNet]);
 
   // ── Catch up the moment this view is looked at again ─────────────────────
@@ -275,9 +288,52 @@ export default function App() {
     return () => { if (beatRef.current) { clearInterval(beatRef.current); beatRef.current = null; } };
   }, [offline, reportNet]);
 
+  // ── Live telemetry ───────────────────────────────────────────────────────
+  // The backend pushes run state over a WebSocket. Measured, the poll ships
+  // 17.4 KB per tick mid-render against a 108-byte frame: ~161x less data per
+  // update, and a far smoother fps readout than a 1 Hz sample can give.
+  //
+  // The poll does NOT go away. It drops to SLOW_POLL_MS and keeps refreshing
+  // the log/parts/runtime block a telemetry frame omits, and returns to
+  // FAST_POLL_MS whenever the socket is down (backend restarting, a proxy
+  // that blocks Upgrade), so a blocked WebSocket degrades to exactly the
+  // behaviour that shipped before this.
+  //
+  // Telemetry frames are a SUBSET of /api/progress: they carry the numbers
+  // that change, not the rolling log or the parts snapshot. So they are
+  // merged into existing state rather than replacing it, or a pushed frame
+  // would blank the console mid-render.
+  const onTelemetry = useCallback((frame) => {
+    if (!frame || (frame.event !== 'progress' && frame.event !== 'hello'
+        && frame.event !== 'heartbeat')) return;
+    reportNet(true);
+    setProgress((prev) => ({
+      ...prev,
+      processing: frame.processing,
+      paused: frame.paused,
+      progress: frame.progress,
+      desc: frame.desc,
+      error: frame.error,
+      eta_s: frame.eta_s,
+      started_at: frame.started_at,
+      live_seq: frame.live_seq,
+      // Derived counters the poll never carried on their own.
+      current_frame: frame.current_frame,
+      total_frames: frame.total_frames,
+      fps: frame.fps,
+    }));
+  }, [reportNet]);
+
+  const { connected: telemetryLive } = useTelemetrySocket(onTelemetry, true);
+
   useEffect(() => {
-    if (progress.processing && !pollRef.current) {
-      startPolling();
+    // The socket carries the fast numbers; the poll still carries the log,
+    // the parts and the runtime block, which a telemetry frame omits. So the
+    // poll SLOWS when the socket is live rather than stopping -- stopping it
+    // froze the console, the part tabs and the HUD.
+    const want = telemetryLive ? SLOW_POLL_MS : FAST_POLL_MS;
+    if (progress.processing) {
+      if (!pollRef.current || pollIntervalRef.current !== want) startPolling(want);
     }
     return () => {
       if (!progress.processing && pollRef.current) {
@@ -285,7 +341,7 @@ export default function App() {
         pollRef.current = null;
       }
     };
-  }, [progress.processing, startPolling]);
+  }, [progress.processing, startPolling, telemetryLive]);
 
   // ── Reattach to a render that was already running ────────────────────────
   // Pinokio reloads this webview on every tab switch and a render can run for

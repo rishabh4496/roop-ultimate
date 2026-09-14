@@ -14,6 +14,17 @@ const proxy = {
     target: `http://127.0.0.1:${apiPort}`,
     changeOrigin: true,
   },
+  // The telemetry socket needs its OWN entry: a proxy rule matches by path
+  // prefix, so '/api' above does not cover '/ws/telemetry', and `ws: true` is
+  // required for Vite to forward the HTTP Upgrade handshake at all. Without
+  // both, the socket 404s against the static server and the UI drops back to
+  // polling while the backend is perfectly healthy -- exactly the silent
+  // degradation this transport exists to remove.
+  '/ws': {
+    target: `ws://127.0.0.1:${apiPort}`,
+    ws: true,
+    changeOrigin: true,
+  },
 }
 
 // https://vite.dev/config/
