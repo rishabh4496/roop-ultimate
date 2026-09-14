@@ -1,8 +1,34 @@
-from roop.degrade import swallowed as _swallowed
 #!/usr/bin/env python3
 
 import os
 import sys
+
+import numpy as np
+import onnxruntime as ort
+
+from roop.degrade import swallowed as _swallowed
+
+
+def run_preflight_checks():
+    np_major = int(np.__version__.split(".")[0])
+    if np_major >= 2:
+        sys.exit(
+            f"[FATAL] NumPy version {np.__version__} detected. "
+            "InsightFace C-bindings require numpy<2.0.0."
+        )
+
+    providers = ort.get_available_providers()
+    if "TensorrtExecutionProvider" not in providers:
+        print(
+            "[WARNING] TensorrtExecutionProvider not found in ONNX Runtime. "
+            "Falling back to CUDA."
+        )
+    else:
+        print("[OK] TensorrtExecutionProvider registered.")
+
+
+if __name__ == "__main__":
+    run_preflight_checks()
 
 # Force UTF-8 encoding for standard streams to avoid UnicodeEncodeError on Windows terminals with non-UTF-8 locale
 if sys.platform == 'win32':
