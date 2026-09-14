@@ -34,6 +34,12 @@ import numpy as np
 from numpy.typing import NDArray
 
 from .optimized_prepass import FacePrepass, FrameAnalysis
+from .trt_session_builder import (
+    TensorRTSessionConfig,
+    assert_strict_tensorrt_session,
+    build_tensorrt_session,
+    prepare_tensorrt_runtime,
+)
 
 
 Float32Array = NDArray[np.float32]
@@ -46,6 +52,8 @@ try:
     import torch as _torch_module
 except Exception:  # pragma: no cover - CPU-only/minimal installations
     _torch_module = None
+
+prepare_tensorrt_runtime()
 
 try:
     import onnxruntime as ort
@@ -667,6 +675,9 @@ def _is_batch_axis_error(error: BaseException) -> bool:
         token in message
         for token in (
             "out of memory",
+            "outofmemory",
+            "failed to allocate",
+            "memory allocation",
             "cudaerror",
             "cudnn_status_alloc_failed",
             "shape",
@@ -675,6 +686,99 @@ def _is_batch_axis_error(error: BaseException) -> bool:
             "reshape",
         )
     )
+
+
+def _torch_dtype_for_ort(ort_type: str) -> Any:
+    """Map an ONNX Runtime tensor type to a PyTorch dtype."""
+
+    if _torch_module is None:
+        raise RuntimeError("PyTorch is required for GPU TensorRT I/O binding")
+    mapping = {
+        "tensor(float)": _torch_module.float32,
+        "tensor(float16)": _torch_module.float16,
+        "tensor(double)": _torch_module.float64,
+        "tensor(int64)": _torch_module.int64,
+        "tensor(int32)": _torch_module.int32,
+        "tensor(int16)": _torch_module.int16,
+        "tensor(int8)": _torch_module.int8,
+        "tensor(uint8)": _torch_module.uint8,
+        "tensor(bool)": _torch_module.bool,
+    }
+    try:
+        return mapping[str(ort_type)]
+    except KeyError as error:
+        raise TypeError(f"unsupported TensorRT output type {ort_type!r}") from error
+
+
+def _numpy_dtype_for_torch(dtype: Any) -> np.dtype[Any]:
+    """Map a CUDA tensor dtype to the dtype expected by ``bind_input``."""
+
+    if _torch_module is None:
+        raise RuntimeError("PyTorch is required for GPU TensorRT I/O binding")
+    mapping = {
+        _torch_module.float32: np.dtype(np.float32),
+        _torch_module.float16: np.dtype(np.float16),
+        _torch_module.float64: np.dtype(np.float64),
+        _torch_module.int64: np.dtype(np.int64),
+        _torch_module.int32: np.dtype(np.int32),
+        _torch_module.int16: np.dtype(np.int16),
+        _torch_module.int8: np.dtype(np.int8),
+        _torch_module.uint8: np.dtype(np.uint8),
+        _torch_module.bool: np.dtype(np.bool_),
+    }
+    try:
+        return mapping[dtype]
+    except KeyError as error:
+        raise TypeError(f"unsupported CUDA input dtype {dtype!r}") from error
+
+
+def _resolved_output_shape(
+    output_shape: Sequence[Any],
+    input_metas: Mapping[str, Any],
+    feeds: Mapping[str, Any],
+    override: Optional[Sequence[int]] = None,
+) -> Tuple[int, ...]:
+    """Resolve symbolic output dimensions from bound input dimensions."""
+
+    if override is not None:
+        resolved = tuple(int(value) for value in override)
+        if any(value <= 0 for value in resolved):
+            raise ValueError(f"output shape override must be positive: {resolved!r}")
+        return resolved
+    symbol_values: Dict[str, int] = {}
+    first_batch: Optional[int] = None
+    for name, meta in input_metas.items():
+        tensor = feeds[name]
+        if first_batch is None:
+            first_batch = int(tensor.shape[0])
+        for declared, actual in zip(getattr(meta, "shape", ()), tensor.shape):
+            if isinstance(declared, str) and not declared.isdigit():
+                symbol_values.setdefault(declared, int(actual))
+    if first_batch is None:
+        raise ValueError("at least one bound input is required")
+    values: List[int] = []
+    for dimension in output_shape:
+        if isinstance(dimension, int) and dimension > 0:
+            values.append(int(dimension))
+            continue
+        try:
+            parsed = int(str(dimension))
+        except (TypeError, ValueError):
+            parsed = 0
+        if parsed > 0:
+            values.append(parsed)
+            continue
+        symbol = str(dimension)
+        if symbol.lower() in {"b", "batch", "batch_size"}:
+            values.append(first_batch)
+        elif symbol in symbol_values:
+            values.append(symbol_values[symbol])
+        else:
+            raise RuntimeError(
+                f"cannot preallocate dynamic output dimension {symbol!r}; "
+                "provide output_shapes to the strict TensorRT runner"
+            )
+    return tuple(values)
 
 
 class CudaIOBinding:
@@ -765,6 +869,97 @@ class CudaIOBinding:
                 self._reported_failure = True
                 print(f"[optimized-io-binding] disabled for session: {error}", flush=True)
             return None
+
+    def run_gpu(
+        self,
+        feeds: Mapping[str, Any],
+        output_shapes: Optional[Mapping[str, Sequence[int]]] = None,
+    ) -> List[Any]:
+        """Run with CUDA tensor inputs and CUDA tensor outputs only.
+
+        Unlike :meth:`run`, this method never calls ``copy_outputs_to_cpu``
+        and never retries through ``session.run``.  Output buffers are
+        preallocated from the declared symbolic shapes so PyTorch can consume
+        them without an intermediate host array.  Models with runtime-sized
+        data-dependent outputs must provide ``output_shapes`` or use a
+        detector-specific GPU postprocessor that binds its own output OrtValue.
+        """
+
+        if not self.enabled or self._torch is None:
+            reason = self._disabled_reason or "CUDA I/O binding is unavailable"
+            raise RuntimeError(reason)
+        torch = self._torch
+        if not feeds:
+            raise ValueError("GPU ONNX feed is empty")
+        output_overrides = dict(output_shapes or {})
+        with self._lock, torch.cuda.device(self.device_id):
+            binding = self.session.io_binding()
+            input_metas = {meta.name: meta for meta in self.session.get_inputs()}
+            missing = sorted(set(input_metas) - set(feeds))
+            if missing:
+                raise ValueError(f"strict TensorRT feed is missing inputs: {missing!r}")
+            device_refs: List[Any] = []
+            batch: Optional[int] = None
+            for name, value in feeds.items():
+                if name not in input_metas:
+                    raise ValueError(f"unknown ONNX input {name!r}")
+                if not isinstance(value, torch.Tensor):
+                    raise TypeError(
+                        f"strict TensorRT input {name!r} must be a torch.Tensor"
+                    )
+                tensor = value
+                if not tensor.is_cuda or tensor.device.index != self.device_id:
+                    raise ValueError(
+                        f"input {name!r} must be on cuda:{self.device_id}, got {tensor.device}"
+                    )
+                if tensor.ndim == 0:
+                    raise ValueError(f"input {name!r} has no batch axis")
+                if batch is None:
+                    batch = int(tensor.shape[0])
+                elif int(tensor.shape[0]) != batch:
+                    raise ValueError("all strict TensorRT inputs must share batch size")
+                expected = _torch_dtype_for_ort(getattr(input_metas[name], "type", "tensor(float)"))
+                if tensor.dtype != expected:
+                    tensor = tensor.to(dtype=expected)
+                if not tensor.is_contiguous():
+                    tensor = tensor.contiguous()
+                device_refs.append(tensor)
+                binding.bind_input(
+                    name,
+                    "cuda",
+                    self.device_id,
+                    _numpy_dtype_for_torch(tensor.dtype),
+                    tuple(int(item) for item in tensor.shape),
+                    int(tensor.data_ptr()),
+                )
+            if batch is None or batch <= 0:
+                raise ValueError("strict TensorRT input batch is empty")
+
+            output_tensors: List[Any] = []
+            for output in self.session.get_outputs():
+                shape = _resolved_output_shape(
+                    getattr(output, "shape", ()),
+                    input_metas,
+                    feeds,
+                    output_overrides.get(output.name),
+                )
+                tensor = torch.empty(
+                    shape,
+                    dtype=_torch_dtype_for_ort(getattr(output, "type", "tensor(float)")),
+                    device=f"cuda:{self.device_id}",
+                )
+                output_tensors.append(tensor)
+                binding.bind_output(
+                    output.name,
+                    "cuda",
+                    self.device_id,
+                    _numpy_dtype_for_torch(tensor.dtype),
+                    shape,
+                    int(tensor.data_ptr()),
+                )
+            self.session.run_with_iobinding(binding)
+            binding.synchronize_outputs()
+            return output_tensors
 
 
 def create_onnx_session(
@@ -865,6 +1060,15 @@ def create_onnx_session(
     raise RuntimeError(
         f"unable to create ONNX Runtime session for {model_path}"
     ) from last_error
+
+
+def create_strict_tensorrt_session(
+    model_path: str | os.PathLike[str],
+    config: Optional[TensorRTSessionConfig] = None,
+) -> Any:
+    """Create a TensorRT-only session and reject every provider fallback."""
+
+    return build_tensorrt_session(model_path, config=config)
 
 
 class OnnxBatchRunner:
@@ -978,6 +1182,468 @@ class OnnxBatchRunner:
             return merged
 
 
+class TrtOnnxBatchRunner:
+    """Strict GPU-only ORT runner with dynamic-batch tail padding.
+
+    The runner never reduces a failed request to batch one.  It shrinks a
+    dynamic request from 16 to 8 to 4 to 2, and raises if two items still do
+    not fit the configured VRAM budget.  A one-item tail is padded with its
+    last tensor and trimmed after GPU inference, so TensorRT sees a valid
+    batched profile for every enqueue.
+    """
+
+    def __init__(
+        self,
+        model_path: str | os.PathLike[str],
+        config: Optional[TensorRTSessionConfig] = None,
+        session: Any = None,
+        output_shapes: Optional[Mapping[str, Sequence[int]]] = None,
+        per_item_vram_mb: float = 96.0,
+    ) -> None:
+        self.config = config or TensorRTSessionConfig.from_environment()
+        _minimum, optimal, maximum = self.config.resolved_batches()
+        if maximum < 2:
+            raise ValueError(
+                "TrtOnnxBatchRunner requires a dynamic profile with max_batch >= 2"
+            )
+        self.session = session or build_tensorrt_session(model_path, config=self.config)
+        assert_strict_tensorrt_session(self.session, model_path)
+        self.device_id = int(self.config.device_id)
+        self.requested_batch = max(2, int(optimal), min(16, int(maximum)))
+        self.max_batch = int(maximum)
+        self.output_shapes = dict(output_shapes or {})
+        self.per_item_vram_mb = max(1.0, float(per_item_vram_mb))
+        self.governor = VramGovernor.from_environment(
+            device_id=self.device_id,
+            requested_batch=self.max_batch,
+        )
+        self.binding = CudaIOBinding(self.session, device_id=self.device_id)
+        if not self.binding.enabled:
+            raise RuntimeError(
+                "strict TensorRT runner could not enable CUDA I/O binding: "
+                f"{self.binding._disabled_reason or 'unknown reason'}"
+            )
+        self._lock = threading.RLock()
+
+    @property
+    def active_providers(self) -> List[str]:
+        """Return the validated active provider chain."""
+
+        return [str(name) for name in self.session.get_providers()]
+
+    @staticmethod
+    def _validate_feeds(feeds: Mapping[str, Any]) -> Tuple[int, Any]:
+        """Validate a non-empty CUDA tensor feed and return batch/device."""
+
+        if _torch_module is None:
+            raise RuntimeError("PyTorch is required for strict TensorRT inference")
+        batch: Optional[int] = None
+        device: Optional[Any] = None
+        for name, value in feeds.items():
+            if not isinstance(value, _torch_module.Tensor):
+                raise TypeError(f"strict TensorRT input {name!r} must be a torch.Tensor")
+            if not value.is_cuda or value.ndim == 0:
+                raise ValueError(f"strict TensorRT input {name!r} must be a CUDA batch tensor")
+            if batch is None:
+                batch = int(value.shape[0])
+                device = value.device
+            elif int(value.shape[0]) != batch:
+                raise ValueError("all strict TensorRT inputs must share the batch dimension")
+            elif value.device != device:
+                raise ValueError("all strict TensorRT inputs must share the CUDA device")
+        if batch is None or batch <= 0 or device is None:
+            raise ValueError("strict TensorRT feed is empty")
+        return batch, device
+
+    @staticmethod
+    def _slice_feeds(feeds: Mapping[str, Any], start: int, end: int) -> Dict[str, Any]:
+        """Slice CUDA tensors without creating host arrays."""
+
+        return {name: value[start:end] for name, value in feeds.items()}
+
+    @staticmethod
+    def _pad_feeds(feeds: Mapping[str, Any], target_size: int) -> Dict[str, Any]:
+        """Pad a CUDA feed by repeating its final item on device."""
+
+        result: Dict[str, Any] = {}
+        for name, value in feeds.items():
+            current = int(value.shape[0])
+            if current >= target_size:
+                result[name] = value
+                continue
+            repeats = target_size - current
+            tail = value[-1:].expand((repeats,) + tuple(value.shape[1:]))
+            result[name] = _torch_module.cat((value, tail), dim=0)
+        return result
+
+    def run_gpu(
+        self,
+        feeds: Mapping[str, Any],
+        batch_size: Optional[int] = None,
+        pad_to_batch: bool = True,
+    ) -> List[Any]:
+        """Run all items on TRT, shrinking only down to dynamic batch two."""
+
+        total, _device = self._validate_feeds(feeds)
+        with self._lock:
+            requested = min(self.max_batch, max(2, int(batch_size or self.requested_batch)))
+            safe = self.governor.safe_batch(
+                requested,
+                per_item_mb=self.per_item_vram_mb,
+            )
+            chunk_size = max(2, min(self.max_batch, safe))
+            chunks: List[List[Any]] = []
+            start = 0
+            while start < total:
+                item_count = min(chunk_size, total - start)
+                run_size = item_count
+                if pad_to_batch and run_size < 2:
+                    run_size = 2
+                current = self._slice_feeds(feeds, start, start + item_count)
+                while True:
+                    if run_size < item_count:
+                        item_count = run_size
+                        current = self._slice_feeds(feeds, start, start + item_count)
+                    padded = self._pad_feeds(current, run_size) if run_size > item_count else current
+                    try:
+                        outputs = self.binding.run_gpu(
+                            padded,
+                            output_shapes=self.output_shapes,
+                        )
+                        trimmed: List[Any] = []
+                        for output in outputs:
+                            if output.ndim == 0 or int(output.shape[0]) != run_size:
+                                raise RuntimeError(
+                                    "strict batched output does not expose the same leading batch "
+                                    f"dimension as the input: {tuple(output.shape)} vs {run_size}"
+                                )
+                            trimmed.append(output[:item_count])
+                        chunks.append(trimmed)
+                        break
+                    except BaseException as error:
+                        if not _is_batch_axis_error(error) or run_size <= 2:
+                            raise RuntimeError(
+                                "TensorRT dynamic batch execution failed at the minimum "
+                                f"batch size {run_size}; no CPU/CUDA fallback was attempted"
+                            ) from error
+                        self.governor.note_oom(run_size)
+                        run_size = max(2, run_size // 2)
+                        chunk_size = min(chunk_size, run_size)
+                start += item_count
+            if not chunks:
+                return []
+            merged: List[Any] = []
+            for output_index in range(len(chunks[0])):
+                merged.append(_torch_module.cat([chunk[output_index] for chunk in chunks], dim=0))
+            return merged
+
+
+class CudaAffineBatch:
+    """GPU affine sampler that preserves the prepass's OpenCV matrix meaning."""
+
+    @staticmethod
+    def _matrix3(matrices: Any) -> Any:
+        """Convert N x 2 x 3 matrices to homogeneous N x 3 x 3 tensors."""
+
+        if _torch_module is None:
+            raise RuntimeError("PyTorch is required for CUDA affine transforms")
+        rows = _torch_module.zeros(
+            (int(matrices.shape[0]), 1, 3), dtype=matrices.dtype, device=matrices.device
+        )
+        rows[:, :, 2] = 1.0
+        return _torch_module.cat((matrices, rows), dim=1)
+
+    @staticmethod
+    def _grid(
+        matrices: Any,
+        input_height: int,
+        input_width: int,
+        output_height: int,
+        output_width: int,
+    ) -> Any:
+        """Build an align-corners-false pixel grid entirely on CUDA."""
+
+        torch = _torch_module
+        if torch is None:
+            raise RuntimeError("PyTorch is required for CUDA affine transforms")
+        y, x = torch.meshgrid(
+            torch.arange(output_height, device=matrices.device, dtype=matrices.dtype),
+            torch.arange(output_width, device=matrices.device, dtype=matrices.dtype),
+            indexing="ij",
+        )
+        homogeneous = torch.stack(
+            (x.reshape(-1), y.reshape(-1), torch.ones_like(x).reshape(-1)), dim=0
+        )
+        points = torch.bmm(
+            matrices,
+            homogeneous.unsqueeze(0).expand(int(matrices.shape[0]), -1, -1),
+        ).transpose(1, 2)
+        normalized_x = ((points[..., 0] + 0.5) / float(input_width)) * 2.0 - 1.0
+        normalized_y = ((points[..., 1] + 0.5) / float(input_height)) * 2.0 - 1.0
+        return torch.stack((normalized_x, normalized_y), dim=-1).reshape(
+            int(matrices.shape[0]), output_height, output_width, 2
+        )
+
+    @classmethod
+    def warp_frames(cls, frames: Any, matrices: Any, output_size: int) -> Any:
+        """Apply source-to-aligned matrices to a CUDA NCHW frame batch."""
+
+        if _torch_module is None:
+            raise RuntimeError("PyTorch is required for CUDA affine transforms")
+        import torch.nn.functional as functional
+
+        if frames.ndim != 4 or matrices.ndim != 3 or matrices.shape[1:] != (2, 3):
+            raise ValueError("warp_frames expects NCHW frames and N x 2 x 3 matrices")
+        height = int(frames.shape[2])
+        width = int(frames.shape[3])
+        inverse = torch_linalg_inverse(cls._matrix3(matrices))[:, :2, :]
+        grid = cls._grid(
+            inverse,
+            input_height=height,
+            input_width=width,
+            output_height=int(output_size),
+            output_width=int(output_size),
+        )
+        return functional.grid_sample(
+            frames,
+            grid,
+            mode="bicubic",
+            padding_mode="border",
+            align_corners=False,
+        )
+
+    @classmethod
+    def paste_faces(
+        cls,
+        frames: Any,
+        aligned_faces: Any,
+        frame_ids: Any,
+        matrices: Any,
+        masks: Optional[Any] = None,
+        blend_ratio: float = 1.0,
+    ) -> Any:
+        """Reverse-warp aligned faces and alpha-composite them on CUDA."""
+
+        if _torch_module is None:
+            raise RuntimeError("PyTorch is required for CUDA face compositing")
+        import torch.nn.functional as functional
+
+        if aligned_faces.ndim != 4:
+            raise ValueError("aligned_faces must be NCHW")
+        frame_height = int(frames.shape[2])
+        frame_width = int(frames.shape[3])
+        crop_size = int(aligned_faces.shape[2])
+        grid = cls._grid(
+            cls._matrix3(matrices)[:, :2, :],
+            input_height=crop_size,
+            input_width=crop_size,
+            output_height=frame_height,
+            output_width=frame_width,
+        )
+        patches = functional.grid_sample(
+            aligned_faces,
+            grid,
+            mode="bicubic",
+            padding_mode="zeros",
+            align_corners=False,
+        )
+        if masks is None:
+            alpha = _torch_module.ones(
+                (int(aligned_faces.shape[0]), 1, crop_size, crop_size),
+                dtype=aligned_faces.dtype,
+                device=aligned_faces.device,
+            )
+        else:
+            alpha = masks
+            if alpha.ndim == 3:
+                alpha = alpha.unsqueeze(1)
+            alpha = alpha.to(dtype=aligned_faces.dtype)
+        alpha = functional.grid_sample(
+            alpha,
+            grid,
+            mode="bilinear",
+            padding_mode="zeros",
+            align_corners=False,
+        ).clamp(0.0, 1.0) * float(max(0.0, min(1.0, blend_ratio)))
+        composite = frames.clone()
+        for index in range(int(patches.shape[0])):
+            frame_index = int(frame_ids[index])
+            weight = alpha[index]
+            composite[frame_index] = (
+                patches[index] * weight + composite[frame_index] * (1.0 - weight)
+            )
+        return composite
+
+
+def torch_linalg_inverse(matrix: Any) -> Any:
+    """Keep the affine helper import-safe on installations without Torch."""
+
+    if _torch_module is None:
+        raise RuntimeError("PyTorch is required for CUDA affine transforms")
+    return _torch_module.linalg.inv(matrix)
+
+
+class CudaFrameBridge:
+    """Upload/download one batched frame boundary around the raw FFmpeg pipe."""
+
+    def __init__(self, device_id: int = 0, pin_memory: bool = True) -> None:
+        if _torch_module is None or not _torch_module.cuda.is_available():
+            raise RuntimeError("CUDA is required for CudaFrameBridge")
+        self.torch = _torch_module
+        self.device_id = int(device_id)
+        self.pin_memory = bool(pin_memory)
+        self.device = self.torch.device(f"cuda:{self.device_id}")
+
+    def upload_bgr(self, frames: Sequence[UInt8Array]) -> Any:
+        """Upload packed BGR frames once and return normalized CUDA NCHW tensors."""
+
+        if not frames:
+            raise ValueError("cannot upload an empty frame batch")
+        host = np.ascontiguousarray(np.stack(frames, axis=0))
+        cpu_tensor = self.torch.from_numpy(host).permute(0, 3, 1, 2).contiguous()
+        if self.pin_memory:
+            cpu_tensor = cpu_tensor.pin_memory()
+        return cpu_tensor.to(self.device, dtype=self.torch.float32, non_blocking=self.pin_memory) / 255.0
+
+    def download_bgr(self, frames: Any) -> List[UInt8Array]:
+        """Download one packed BGR batch after all GPU work has completed."""
+
+        if not isinstance(frames, self.torch.Tensor) or frames.ndim != 4:
+            raise ValueError("download_bgr expects a CUDA NCHW tensor")
+        normalized = frames.detach().clamp(0.0, 1.0).mul(255.0).round().to(self.torch.uint8)
+        host = normalized.permute(0, 2, 3, 1).contiguous().to(
+            "cpu", non_blocking=self.pin_memory
+        )
+        if self.pin_memory:
+            self.torch.cuda.current_stream(self.device_id).synchronize()
+        array = np.ascontiguousarray(host.numpy())
+        return [array[index] for index in range(int(array.shape[0]))]
+
+
+class GpuFaceSwapProcessor:
+    """Batch all aligned faces across frames and keep swap/composite on CUDA.
+
+    This adapter is deliberately model-contract driven.  It handles the
+    common ``target``/``source`` 512-D embedding interface used by the
+    dynamic face-swap exports; model-specific color correction and mask
+    preparation remain injectable so the existing roop look settings are not
+    overwritten by a generic compositor.
+    """
+
+    def __init__(
+        self,
+        runner: TrtOnnxBatchRunner,
+        source_embedding: Any,
+        input_size: int,
+        target_input: str = "target",
+        source_input: str = "source",
+        output_index: int = 0,
+        mask_output_index: Optional[int] = 1,
+        model_channel_order: str = "rgb",
+        model_mean: Sequence[float] = (0.0, 0.0, 0.0),
+        model_standard_deviation: Sequence[float] = (1.0, 1.0, 1.0),
+        model_denormalize: bool = False,
+        blend_ratio: float = 1.0,
+        bridge: Optional[CudaFrameBridge] = None,
+    ) -> None:
+        if _torch_module is None:
+            raise RuntimeError("PyTorch is required for GpuFaceSwapProcessor")
+        self.torch = _torch_module
+        self.runner = runner
+        self.input_size = int(input_size)
+        if self.input_size <= 0:
+            raise ValueError("input_size must be positive")
+        embedding = source_embedding
+        if not isinstance(embedding, self.torch.Tensor):
+            embedding = self.torch.as_tensor(embedding, dtype=self.torch.float32)
+        if not embedding.is_cuda or embedding.device.index != runner.device_id:
+            embedding = embedding.to(f"cuda:{runner.device_id}")
+        if embedding.ndim == 1:
+            embedding = embedding.unsqueeze(0)
+        if embedding.ndim != 2 or int(embedding.shape[0]) != 1:
+            raise ValueError("source_embedding must have shape [1, embedding_dim]")
+        self.source_embedding = embedding.contiguous()
+        self.target_input = str(target_input)
+        self.source_input = str(source_input)
+        self.output_index = int(output_index)
+        self.mask_output_index = mask_output_index
+        self.model_channel_order = str(model_channel_order).strip().lower()
+        if self.model_channel_order not in {"bgr", "rgb"}:
+            raise ValueError("model_channel_order must be 'bgr' or 'rgb'")
+        if len(model_mean) != 3 or len(model_standard_deviation) != 3:
+            raise ValueError("model mean and standard deviation must have three channels")
+        self.model_mean = self.torch.tensor(
+            tuple(float(value) for value in model_mean),
+            dtype=self.torch.float32,
+            device=f"cuda:{runner.device_id}",
+        ).reshape(1, 3, 1, 1)
+        self.model_standard_deviation = self.torch.tensor(
+            tuple(float(value) for value in model_standard_deviation),
+            dtype=self.torch.float32,
+            device=f"cuda:{runner.device_id}",
+        ).reshape(1, 3, 1, 1)
+        if bool(self.torch.any(self.model_standard_deviation == 0)):
+            raise ValueError("model standard deviation cannot contain zero")
+        self.model_denormalize = bool(model_denormalize)
+        self.blend_ratio = float(max(0.0, min(1.0, blend_ratio)))
+        self.bridge = bridge or CudaFrameBridge(device_id=runner.device_id)
+
+    def __call__(
+        self,
+        frames: Sequence[UInt8Array],
+        analyses: Sequence[FrameAnalysis],
+    ) -> List[UInt8Array]:
+        """Process a host frame batch with one or more padded TRT enqueues."""
+
+        if len(frames) != len(analyses):
+            raise ValueError("frames and analyses must have equal lengths")
+        gpu_frames = self.bridge.upload_bgr(frames)
+        frame_ids: List[int] = []
+        matrices: List[Float32Array] = []
+        for frame_index, analysis in enumerate(analyses):
+            for face in analysis.faces:
+                frame_ids.append(frame_index)
+                matrices.append(face.matrix)
+        if not matrices:
+            return [np.ascontiguousarray(frame) for frame in frames]
+        matrix_tensor = self.torch.as_tensor(
+            np.ascontiguousarray(np.stack(matrices), dtype=np.float32),
+            device=gpu_frames.device,
+        )
+        frame_index_tensor = self.torch.as_tensor(
+            frame_ids, dtype=self.torch.long, device=gpu_frames.device
+        )
+        face_frames = gpu_frames.index_select(0, frame_index_tensor)
+        aligned = CudaAffineBatch.warp_frames(face_frames, matrix_tensor, self.input_size)
+        if self.model_channel_order == "rgb":
+            aligned = aligned[:, [2, 1, 0], :, :]
+        aligned = (aligned - self.model_mean) / self.model_standard_deviation
+        source = self.source_embedding.expand(int(aligned.shape[0]), -1).contiguous()
+        outputs = self.runner.run_gpu(
+            {self.target_input: aligned, self.source_input: source},
+            pad_to_batch=True,
+        )
+        swapped = outputs[self.output_index]
+        if swapped.ndim != 4:
+            raise RuntimeError(f"swap output must be NCHW, got {tuple(swapped.shape)}")
+        if self.model_denormalize:
+            swapped = (swapped + 1.0) / 2.0
+        if self.model_channel_order == "rgb":
+            swapped = swapped[:, [2, 1, 0], :, :]
+        masks = None
+        if self.mask_output_index is not None and self.mask_output_index < len(outputs):
+            masks = outputs[self.mask_output_index]
+        composite = CudaAffineBatch.paste_faces(
+            gpu_frames,
+            swapped,
+            frame_index_tensor,
+            matrix_tensor,
+            masks=masks,
+            blend_ratio=self.blend_ratio,
+        )
+        return self.bridge.download_bgr(composite)
+
+
 @dataclass
 class PipelineStats:
     """Counters returned by :class:`MemoryStreamingProcessor`."""
@@ -1010,6 +1676,10 @@ class MemoryStreamingProcessor:
     existing ``ProcessMgr.process_frame`` path.  ``batch_processor`` is an
     optional adapter for a model-aware implementation that collects aligned
     crops across consecutive frames and calls :class:`OnnxBatchRunner` once.
+    ``gpu_batch_processor`` is the strict TensorRT path.  It receives host
+    frames only at the raw FFmpeg boundary, performs upload, alignment,
+    inference, reverse warp, and blend as one CUDA batch, then downloads one
+    output batch for NVENC.
     When a batch callback fails on a batch larger than one, the processor falls
     back to the single-frame callback if supplied; this preserves output
     continuity while leaving the model's failure visible to the caller.
@@ -1022,18 +1692,26 @@ class MemoryStreamingProcessor:
         batch_processor: Optional[
             Callable[[Sequence[UInt8Array], Sequence[FrameAnalysis]], Sequence[UInt8Array]]
         ] = None,
+        gpu_batch_processor: Optional[
+            Callable[[Sequence[UInt8Array], Sequence[FrameAnalysis]], Sequence[UInt8Array]]
+        ] = None,
         queue_depth: int = 3,
         batch_size: Optional[int] = None,
         hwaccel: Optional[str] = None,
+        strict_trt: bool = False,
     ) -> None:
         self.prepass = prepass
         self.frame_processor = frame_processor
         self.batch_processor = batch_processor
+        self.gpu_batch_processor = gpu_batch_processor
+        self.strict_trt = bool(strict_trt)
         self.queue_depth = max(1, int(queue_depth))
         requested = batch_size or (
             prepass.config.detector_batch_size if prepass is not None else 1
         )
-        self.batch_size = max(1, int(requested))
+        self.batch_size = max(2 if self.strict_trt else 1, int(requested))
+        if self.strict_trt and self.gpu_batch_processor is None:
+            raise ValueError("strict_trt requires gpu_batch_processor")
         self.hwaccel = hwaccel
         self._failure: Optional[BaseException] = None
         self._stop = threading.Event()
@@ -1075,6 +1753,12 @@ class MemoryStreamingProcessor:
             requested_batch=self.batch_size
         )
         effective_batch = governor.safe_batch(self.batch_size)
+        if self.strict_trt:
+            # A dynamic TensorRT profile is mandatory.  If the laptop guard
+            # reports one item, retain one TRT context but still enqueue two
+            # items by padding inside TrtOnnxBatchRunner; never use a batch-one
+            # model call or silently switch execution providers.
+            effective_batch = max(2, effective_batch)
         reader = FFmpegRawReader(
             input_video,
             spec=video_spec,
@@ -1153,7 +1837,9 @@ class MemoryStreamingProcessor:
                     stats.detection_frames += sum(
                         1 for analysis in analyses if analysis.detection_run
                     )
-                    if self.batch_processor is not None and len(frames) > 1:
+                    if self.gpu_batch_processor is not None:
+                        output_frames = list(self.gpu_batch_processor(frames, analyses))
+                    elif self.batch_processor is not None and len(frames) > 1:
                         try:
                             output_frames = list(self.batch_processor(frames, analyses))
                         except BaseException:
@@ -1212,14 +1898,19 @@ class MemoryStreamingProcessor:
 
 __all__ = [
     "AsyncRawVideoWriter",
+    "CudaAffineBatch",
+    "CudaFrameBridge",
     "CudaIOBinding",
     "FFmpegRawReader",
     "FFmpegRawWriter",
+    "GpuFaceSwapProcessor",
     "MemoryStreamingProcessor",
     "OnnxBatchRunner",
     "PipelineStats",
+    "TrtOnnxBatchRunner",
     "VideoSpec",
     "VramGovernor",
     "create_onnx_session",
+    "create_strict_tensorrt_session",
     "probe_video",
 ]

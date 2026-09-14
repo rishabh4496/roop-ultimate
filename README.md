@@ -107,6 +107,30 @@ works on ONNX Runtime builds without CUDA DLPack support. Providers that reject
 the binding automatically retain the established CPU-compatible path; no UI,
 CLI, or resume setting changes are required.
 
+#### Strict TensorRT throughput harness
+
+The opt-in strict path is exposed by `app/roop/trt_session_builder.py`,
+`app/roop/optimized_prepass.py`, and `app/roop/optimized_processor.py`. It
+registers the packaged TensorRT/CUDA DLLs on Windows, creates a TensorRT-only
+ONNX Runtime session with explicit min/opt/max profiles and engine/timing
+caches, batches faces across frames, performs affine sampling and compositing
+on CUDA, and sends one rawvideo stream to NVENC. It raises if ORT adds CUDA or
+CPU as a fallback. Run the verifier from `app/` after installing matching
+TensorRT libraries:
+
+```bash
+python verify_trt_fps.py --model models/hififace_unofficial_256.onnx \
+  --batch-size 8 --warmup 10 --iterations 100
+```
+
+The strict path requires a dynamic-batch ONNX export. The shipped
+`inswapper_128.onnx` and SCRFD `det_10g.onnx` files are batch-one exports and
+are rejected rather than repeatedly invoked at batch one; use the existing
+quality-preserving runtime for those models or re-export them with a dynamic
+batch dimension. TensorRT engine, profile, and timing artifacts live under
+`app/models/trt_cache/`; decoded/intermediate video frames are never written
+there.
+
 ### GPU memory pressure
 
 A busy GPU with very low frame throughput can be paging into shared system

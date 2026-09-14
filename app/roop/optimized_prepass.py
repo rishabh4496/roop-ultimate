@@ -23,7 +23,7 @@ import math
 import os
 from dataclasses import dataclass, field
 from threading import RLock
-from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 import cv2
 import numpy as np
@@ -105,12 +105,17 @@ class PrepassConfig:
     detector_batch_size: int = 8
     min_detection_score: float = 0.0
     enable_scene_cuts: bool = True
+    strict_trt: bool = False
 
     @classmethod
     def from_environment(cls) -> "PrepassConfig":
         """Resolve settings while preserving the sub-7 GB safety profile."""
 
         batch = _env_int("ROOP_OPT_PREPASS_BATCH", 8)
+        strict_trt = (
+            os.environ.get("ROOP_OPT_STRICT_TRT", "0").strip().lower()
+            not in ("0", "false", "no", "off", "")
+        )
         try:
             import torch
 
@@ -124,6 +129,9 @@ class PrepassConfig:
             # CPU-only environments can still use detector batching when their
             # adapter supports it; the memory governor handles the GPU case.
             pass
+
+        if strict_trt:
+            batch = max(2, batch)
 
         return cls(
             detection_interval=_env_int("ROOP_OPT_DETECT_INTERVAL", 5),
@@ -142,6 +150,7 @@ class PrepassConfig:
             .strip()
             .lower()
             not in ("0", "false", "no", "off"),
+            strict_trt=strict_trt,
         )
 
 
@@ -553,6 +562,170 @@ class PrepassResult:
             embedding_valid=embedding_valid,
         )
 
+    def to_torch(
+        self,
+        device: str = "cuda",
+        pin_memory: bool = True,
+    ) -> Dict[str, Any]:
+        """Copy compact trajectory arrays to one device in one transfer each.
+
+        The prepass never stores decoded frames.  A compositor that consumes
+        many faces can call this once per scan chunk and reuse the returned
+        tensors for all alignment and paste operations.  Pinned staging is
+        used for CUDA transfers when requested, which lets the caller overlap
+        the copy with the previous TensorRT enqueue on a non-default stream.
+        """
+
+        try:
+            import torch
+        except ImportError as error:
+            raise RuntimeError("PyTorch is required for GPU prepass tensors") from error
+        if device.startswith("cuda") and not torch.cuda.is_available():
+            raise RuntimeError("CUDA prepass tensors requested but CUDA is unavailable")
+
+        def transfer(array: NDArray[Any]) -> Any:
+            source = torch.from_numpy(np.ascontiguousarray(array))
+            if device.startswith("cuda") and pin_memory:
+                source = source.pin_memory()
+            return source.to(device=device, non_blocking=bool(pin_memory))
+
+        tensors: Dict[str, Any] = {
+            "frame_indices": transfer(self.frame_indices),
+            "frame_offsets": transfer(self.frame_offsets),
+            "boxes": transfer(self.boxes),
+            "landmarks": transfer(self.landmarks),
+            "matrices": transfer(self.matrices),
+            "track_ids": transfer(self.track_ids),
+            "scores": transfer(self.scores),
+            "detected": transfer(self.detected),
+            "scene_cuts": transfer(self.scene_cuts),
+        }
+        if self.embeddings is not None:
+            tensors["embeddings"] = transfer(self.embeddings)
+        if self.embedding_valid is not None:
+            tensors["embedding_valid"] = transfer(self.embedding_valid)
+        return tensors
+
+
+class PinnedPrepassCache:
+    """Reusable device cache for trajectory and alignment tensors.
+
+    Updating the cache replaces only the arrays whose shape changed.  This is
+    useful for ordered video chunks: the detector state remains on the CPU,
+    while the compositor sees already-contiguous GPU matrices without a
+    per-face allocation or a per-frame serialization roundtrip.
+    """
+
+    def __init__(self, device: str = "cuda", pin_memory: bool = True) -> None:
+        self.device = str(device)
+        self.pin_memory = bool(pin_memory)
+        self.tensors: Dict[str, Any] = {}
+        self._shapes: Dict[str, Tuple[int, ...]] = {}
+
+    def update(self, result: PrepassResult) -> Mapping[str, Any]:
+        """Upload a packed result and return the persistent tensor mapping."""
+
+        try:
+            import torch
+        except ImportError as error:
+            raise RuntimeError("PyTorch is required for the prepass device cache") from error
+        if self.device.startswith("cuda") and not torch.cuda.is_available():
+            raise RuntimeError("CUDA prepass cache requested but CUDA is unavailable")
+
+        arrays: Dict[str, Optional[NDArray[Any]]] = {
+            "frame_indices": result.frame_indices,
+            "frame_offsets": result.frame_offsets,
+            "boxes": result.boxes,
+            "landmarks": result.landmarks,
+            "matrices": result.matrices,
+            "track_ids": result.track_ids,
+            "scores": result.scores,
+            "detected": result.detected,
+            "scene_cuts": result.scene_cuts,
+            "embeddings": result.embeddings,
+            "embedding_valid": result.embedding_valid,
+        }
+        for name, array in arrays.items():
+            if array is None:
+                self.tensors.pop(name, None)
+                self._shapes.pop(name, None)
+                continue
+            contiguous = np.ascontiguousarray(array)
+            shape = tuple(int(item) for item in contiguous.shape)
+            if self._shapes.get(name) == shape and name in self.tensors:
+                target = self.tensors[name]
+                source = torch.from_numpy(contiguous)
+                if self.device.startswith("cuda"):
+                    if self.pin_memory:
+                        source = source.pin_memory()
+                    target.copy_(source, non_blocking=self.pin_memory)
+                else:
+                    target.copy_(source)
+                continue
+            source = torch.from_numpy(contiguous)
+            if self.device.startswith("cuda"):
+                if self.pin_memory:
+                    source = source.pin_memory()
+                target = source.to(self.device, non_blocking=self.pin_memory)
+            else:
+                target = source.to(self.device)
+            self.tensors[name] = target
+            self._shapes[name] = shape
+        return dict(self.tensors)
+
+    def clear(self) -> None:
+        """Release cached device references before a new video or model tier."""
+
+        self.tensors.clear()
+        self._shapes.clear()
+
+
+class BatchedTensorDetector:
+    """Adapter that connects a GPU TensorRT runner to :class:`FacePrepass`.
+
+    ``preprocess`` must return one CUDA tensor per input frame and
+    ``postprocess`` may perform model-specific decode/NMS.  The adapter does
+    not call the runner once per face: it pads only at the runner boundary and
+    returns one detection sequence per original frame.
+    """
+
+    def __init__(
+        self,
+        runner: Any,
+        input_name: str,
+        preprocess: Callable[[Sequence[UInt8Array]], Any],
+        postprocess: Callable[[Sequence[Any], Sequence[UInt8Array]], Sequence[Sequence[Any]]],
+        batch_size: int = 8,
+    ) -> None:
+        self.runner = runner
+        self.input_name = str(input_name)
+        self.preprocess = preprocess
+        self.postprocess = postprocess
+        self.batch_size = max(1, int(batch_size))
+
+    def detect_batch(self, frames: Sequence[UInt8Array]) -> List[Sequence[Any]]:
+        """Run one dynamic-batch inference for a detector frame group."""
+
+        if not frames:
+            return []
+        inputs = self.preprocess(frames)
+        shape = getattr(inputs, "shape", None)
+        if shape is None or len(shape) == 0 or int(shape[0]) != len(frames):
+            raise ValueError("detector preprocess must return a batch matching frames")
+        run_gpu = getattr(self.runner, "run_gpu", None)
+        if not callable(run_gpu):
+            raise TypeError("TensorRT detector runner must expose run_gpu")
+        outputs = run_gpu(
+            {self.input_name: inputs},
+            batch_size=self.batch_size,
+            pad_to_batch=True,
+        )
+        decoded = self.postprocess(outputs, frames)
+        result = [list(item or []) for item in decoded]
+        if len(result) != len(frames):
+            raise ValueError("detector postprocess returned the wrong frame count")
+        return result
+
 
 @dataclass
 class _Track:
@@ -661,8 +834,18 @@ class FacePrepass:
 
         one_method = getattr(self.detector, "detect", None)
         if callable(one_method):
+            if self.config.strict_trt:
+                raise RuntimeError(
+                    "strict TensorRT prepass requires detector.detect_batch; "
+                    "detector.detect would execute a batch-one loop"
+                )
             return [list(one_method(frame) or []) for frame in frames]
         if callable(self.detector):
+            if self.config.strict_trt:
+                raise RuntimeError(
+                    "strict TensorRT prepass requires a detector.detect_batch adapter; "
+                    "the repository's legacy callable detector is batch-one"
+                )
             return [list(self.detector(frame) or []) for frame in frames]
         raise TypeError("detector must be callable or expose detect/detect_batch")
 
@@ -952,9 +1135,11 @@ class FacePrepass:
 
 
 __all__ = [
+    "BatchedTensorDetector",
     "FaceObservation",
     "FacePrepass",
     "FrameAnalysis",
+    "PinnedPrepassCache",
     "PrepassConfig",
     "PrepassResult",
 ]
