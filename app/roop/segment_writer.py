@@ -444,6 +444,36 @@ class SegmentedVideoWriter:
             pass
         self.segments = []
 
+    def abort(self):
+        """Stop after a processing failure without publishing a partial video.
+
+        Finalized segments remain in the manifest for resume. Only the active
+        segment is untrusted and is removed after its child encoder is closed.
+        The caller retains the original processing exception, so cleanup errors
+        are reported but never mask the failure that caused the abort.
+        """
+        global _current
+        with self._write_lock:
+            writer = self._writer
+            failed_file = self._cur_seg_file
+            self._writer = None
+            self._cur_seg_file = None
+            self._cur_frames = 0
+            _current = None
+            if writer is not None:
+                try:
+                    if hasattr(writer, "abort"):
+                        writer.abort()
+                    else:
+                        writer.close()
+                except Exception as exc:
+                    bar_write(f"[Resume] aborted active segment after render failure: {exc}")
+            try:
+                if failed_file:
+                    os.remove(os.path.join(self._dir, failed_file))
+            except OSError:
+                pass
+
     def flush_checkpoint(self):
         """Finalize only the current segment, keeping resumable parts intact.
 

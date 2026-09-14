@@ -531,16 +531,47 @@ class FFMPEG_VideoWriter:
                     _swallowed("roop/ffmpeg_writer.py:528", _degrade_error, "fallback continued")
 
         if communication_error is not None:
+            self._remove_failed_output()
             raise IOError(
                 f"Roop Ultimate error: could not finalize the ffmpeg encoder "
                 f"for {self.filename}: {communication_error}\n\nffmpeg said:\n"
                 + (err or b"").decode("utf-8", "replace")) from communication_error
         if proc.returncode != 0:
             detail = (err or b"").decode("utf-8", "replace").strip()
+            self._remove_failed_output()
             raise IOError(
                 f"Roop Ultimate error: the ffmpeg encoder '{self.codec}' exited "
                 f"with code {proc.returncode} while finalizing {self.filename}.\n\n"
                 "ffmpeg said:\n" + detail)
+
+    def _remove_failed_output(self):
+        """Remove an output whose encoder did not finalize successfully."""
+        try:
+            os.remove(self.filename)
+        except OSError:
+            pass
+
+    def abort(self):
+        """Close the child and discard this writer's untrusted output.
+
+        A processing exception is different from a deliberate Stop: the caller
+        must not publish the frames that happened to reach ffmpeg before the
+        exception. Closing still matters because it releases the pipe and child
+        process, while the final removal prevents a partial temp video from
+        being mistaken for a successful batch by callers.
+        """
+        try:
+            self.close()
+        except Exception as exc:
+            try:
+                from roop.procmgr_runtime import bar_write
+                bar_write(f"[Encoder] aborted output after render failure: {exc}")
+            except Exception as _degrade_error:
+                _swallowed("roop/ffmpeg_writer.py:569", _degrade_error,
+                           "fallback continued")
+                pass
+        finally:
+            self._remove_failed_output()
 
     # Support the Context Manager protocol, to ensure that resources are cleaned up.
 

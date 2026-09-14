@@ -13,12 +13,14 @@ class BatchProcessingMixin:
     """Own the per-clip batch lifecycle separately from face operations."""
 
     def run_batch_inmem(self, output_method, source_video, target_video, frame_start, frame_end, fps, threads: int = 1, skip_audio=False):
+        self._writer_error = None
         # Dependencies are bound at call time because ProcessMgr owns the
         # shared runtime instrumentation and scheduler singletons. This keeps
         # the extracted batch boundary explicit without creating a second copy
         # of those process-wide authorities.
         import gc
         import os
+        import sys
         import cv2
         import roop
         from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -822,6 +824,10 @@ class BatchProcessingMixin:
                     # already set roop.globals.processing=False and sent their sentinels.
                     readthread.join(timeout=5)
                     writethread.join(timeout=10)
+                    if self._writer_error is not None:
+                        raise IOError(
+                            "Roop Ultimate error: the frame output thread failed: "
+                            f"{self._writer_error}") from self._writer_error
         finally:
             if self._swap_batcher is not None:
                 self._swap_batcher.stop()
@@ -836,8 +842,19 @@ class BatchProcessingMixin:
             if self.output_to_file and self.videowriter is not None:
                 # Include encoder trailer/segment concat in the measured
                 # encode cost; write_frame alone misses the final lifecycle.
-                with _prof('encode_finalize'):
-                    self.videowriter.close()
+                writer = self.videowriter
+                failed = self._writer_error is not None or sys.exc_info()[1] is not None
+                try:
+                    with _prof('encode_finalize'):
+                        if failed and hasattr(writer, 'abort'):
+                            writer.abort()
+                        else:
+                            writer.close()
+                except Exception as exc:
+                    if failed:
+                        bar_write(f'[ProcessMgr] output cleanup failed after render error: {exc}')
+                    else:
+                        raise
                 self.videowriter = None
             if self.output_to_cam and self.streamwriter is not None:
                 self.streamwriter.Close()

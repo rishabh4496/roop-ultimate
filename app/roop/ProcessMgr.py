@@ -564,6 +564,11 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
         self.processed_queue = None
         self.videowriter = None
         self.streamwriter = None
+        # Exceptions raised by the sole output consumer happen on its daemon
+        # thread, so they must be handed back to run_batch_inmem explicitly.
+        # Otherwise workers stop on processing=False and a valid-looking partial
+        # temp video is left for core.py to publish.
+        self._writer_error = None
         self.progress_gradio = None
         self.total_frames = 0
         # Cumulative count of target faces handed to process_face — used by the
@@ -1797,6 +1802,7 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
             # it, at 58% of a 2400-frame clip.
             bar_write(f'[ProcessMgr] write thread failed: '
                       f'{type(exc).__name__}: {exc}')
+            self._writer_error = exc
             roop.globals.processing = False
             # Unblock the producers rather than leave them parked forever. They
             # check `processing` and exit; draining is what lets them get there.

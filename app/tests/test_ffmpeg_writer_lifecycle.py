@@ -63,6 +63,23 @@ class FfmpegWriterLifecycleTests(unittest.TestCase):
         self.assertTrue(proc.communicated)
         self.assertIsNone(writer.proc)
 
+    def test_abort_removes_a_direct_partial_output(self):
+        from roop.ffmpeg_writer import FFMPEG_VideoWriter
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "partial.mp4")
+            with open(path, "wb") as handle:
+                handle.write(b"partial")
+            writer = object.__new__(FFMPEG_VideoWriter)
+            writer.proc = _Process(0)
+            writer.codec = "libx264"
+            writer.filename = path
+
+            writer.abort()
+
+            self.assertTrue(writer.proc is None)
+            self.assertFalse(os.path.exists(path))
+
 
 class SegmentedWriterLifecycleTests(unittest.TestCase):
     def test_finalize_discards_uncommitted_active_segment(self):
@@ -101,6 +118,37 @@ class SegmentedWriterLifecycleTests(unittest.TestCase):
 
         with self.assertRaisesRegex(IOError, "partial segment"):
             writer.close()
+
+    def test_abort_keeps_committed_prefix_and_removes_active_segment(self):
+        from roop.segment_writer import SegmentedVideoWriter, reset_parts
+
+        class _CleanWriter:
+            def close(self):
+                return None
+
+        with tempfile.TemporaryDirectory() as directory:
+            committed = ".target.seg0000.mp4"
+            active = ".target.seg0001.mp4"
+            for filename in (committed, active):
+                with open(os.path.join(directory, filename), "wb") as handle:
+                    handle.write(b"segment")
+            writer = object.__new__(SegmentedVideoWriter)
+            writer._write_lock = RLock()
+            writer._writer = _CleanWriter()
+            writer._dir = directory
+            writer._cur_seg_file = active
+            writer._cur_frames = 2
+            writer.segments = [{"file": committed, "frames": 4}]
+            reset_parts()
+
+            writer.abort()
+
+            self.assertTrue(os.path.exists(os.path.join(directory, committed)))
+            self.assertFalse(os.path.exists(os.path.join(directory, active)))
+            self.assertIsNone(writer._writer)
+            self.assertIsNone(writer._cur_seg_file)
+            self.assertEqual(writer._cur_frames, 0)
+            self.assertEqual(writer.segments, [{"file": committed, "frames": 4}])
 
 
 if __name__ == "__main__":
