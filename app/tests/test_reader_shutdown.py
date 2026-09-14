@@ -38,6 +38,7 @@ import roop.globals                                    # noqa: E402
 from roop.ProcessMgr import ProcessMgr                 # noqa: E402
 
 SRC = Path(APP, 'roop', 'ProcessMgr.py').read_text(encoding='utf-8')
+BATCH_SRC = Path(APP, 'roop', 'procmgr_batch.py').read_text(encoding='utf-8')
 
 
 def _code(text):
@@ -45,7 +46,7 @@ def _code(text):
     return '\n'.join(re.sub(r'#.*$', '', ln) for ln in text.splitlines())
 
 
-CODE = _code(SRC)
+CODE = _code(SRC) + '\n' + _code(BATCH_SRC)
 
 
 class _Fake:

@@ -102,7 +102,13 @@ def swallowed(site: str, error: BaseException,
 
     if first:
         suffix = f" -- {detail}" if detail else ""
-        print(f"[Fallback] {site}: {entry['first_error']}{suffix}")
+        try:
+            print(f"[Fallback] {site}: {entry['first_error']}{suffix}")
+        except (OSError, UnicodeError):
+            # Reporting must never turn a load-bearing fallback into a hard
+            # failure. This occurs when Pinokio's terminal pipe closes during
+            # shutdown, or when a platform stream cannot encode the message.
+            pass
 
 
 def report() -> List[dict]:
