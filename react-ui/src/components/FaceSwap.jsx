@@ -7,6 +7,7 @@ import PersonGroups from './PersonGroups';
 import QualityReport from './QualityReport';
 import FileDrop from './faceswap/FileDrop';
 import CompareGrid from './faceswap/CompareGrid';
+import ComparisonGridPanel from './faceswap/ComparisonGridPanel';
 import ParserRegions from './faceswap/ParserRegions';
 import InteractivePreview from './faceswap/InteractivePreview';
 import useQueue, {
@@ -2771,200 +2772,58 @@ export default function FaceSwap({
                 />
 
                 {previewSrc ? (
-                  comparingEnhancers ? (() => {
-                const activeList = selectedGridEnhancers.filter(e => meta.enhancers?.includes(e));
-                const gridColsClass = activeList.length === 1 ? 'grid-cols-1' : 'grid-cols-2';
-                return (
-                  <div className="space-y-4">
-                    {/* Enhancer selector row */}
-                    <div className="p-3.5 rounded-xl bg-black/45 border border-white/5 space-y-2 select-none">
-                      <span className="text-micro font-semibold uppercase tracking-[0.14em] text-white/45 block">Compare Enhancers (Select up to 4)</span>
-                      <div className="flex flex-wrap gap-2">
-                        {meta.enhancers?.map((enh) => {
-                          const isSelected = selectedGridEnhancers.includes(enh);
-                          return (
-                            <button
-                              key={enh}
-                              type="button"
-                              onClick={() => {
-                                if (isSelected) {
-                                  if (selectedGridEnhancers.length > 1) {
-                                    setSelectedGridEnhancers(prev => prev.filter(x => x !== enh));
-                                  }
-                                } else {
-                                  if (selectedGridEnhancers.length >= 4) {
-                                    notify('You can select a maximum of 4 enhancers for grid comparison.', 'warning');
-                                  } else {
-                                    setSelectedGridEnhancers(prev => [...prev, enh]);
-                                  }
-                                }
-                              }}
-                              className={`px-3 py-1.5 rounded-lg text-mini font-semibold border transition-all duration-200 ${isSelected ? 'bg-[var(--accent)]/15 border-[var(--accent)]/40 text-white' : 'bg-white/[0.02] border-white/10 text-white/50 hover:border-white/20 hover:text-white/85'}`}
-                            >
-                              {enh}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </div>
-
-                    <CompareGrid
-                      items={activeList}
-                      gridColsClass={gridColsClass}
+                  comparingEnhancers ? (
+                    <ComparisonGridPanel
+                      title="Compare Enhancers (Select up to 4)"
+                      availableItems={meta.enhancers || []}
+                      selectedItems={selectedGridEnhancers}
+                      setSelectedItems={setSelectedGridEnhancers}
                       previews={enhancerPreviews}
                       times={enhancerTimes}
                       timers={liveRenderingTimers}
+                      notify={notify}
+                      itemNoun="enhancers"
                     />
-                  </div>
-                );
-              })() : comparingMasks ? (() => {
-                const activeMasks = selectedGridMasks.filter(m => meta.mask_engines?.includes(m));
-                const gridColsClass = activeMasks.length === 1 ? 'grid-cols-1' : 'grid-cols-2';
-                return (
-                  <div className="space-y-4">
-                    {/* Mask-engine selector row */}
-                    <div className="p-3.5 rounded-xl bg-black/45 border border-white/5 space-y-2 select-none">
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="text-micro font-semibold uppercase tracking-[0.14em] text-white/45 block">Compare Mask Engines (Select up to 4)</span>
-                        <span className="text-micro text-white/45">Enhancer: <span className="text-white/55 font-semibold">{p.selected_enhancer || 'None'}</span></span>
-                      </div>
-                      <div className="flex flex-wrap gap-2">
-                        {meta.mask_engines?.map((mE) => {
-                          const isSelected = selectedGridMasks.includes(mE);
-                          return (
-                            <button
-                              key={mE}
-                              type="button"
-                              onClick={() => {
-                                if (isSelected) {
-                                  if (selectedGridMasks.length > 1) {
-                                    setSelectedGridMasks(prev => prev.filter(x => x !== mE));
-                                  }
-                                } else {
-                                  if (selectedGridMasks.length >= 4) {
-                                    notify('You can select a maximum of 4 mask engines for grid comparison.', 'warning');
-                                  } else {
-                                    setSelectedGridMasks(prev => [...prev, mE]);
-                                  }
-                                }
-                              }}
-                              className={`px-3 py-1.5 rounded-lg text-mini font-semibold border transition-all duration-200 ${isSelected ? 'bg-[var(--accent)]/15 border-[var(--accent)]/40 text-white' : 'bg-white/[0.02] border-white/10 text-white/50 hover:border-white/20 hover:text-white/85'}`}
-                            >
-                              {mE}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </div>
-
-                    <CompareGrid
-                      items={activeMasks}
-                      gridColsClass={gridColsClass}
+                  ) : comparingMasks ? (
+                    <ComparisonGridPanel
+                      title="Compare Mask Engines (Select up to 4)"
+                      subtitle={<>Enhancer: <span className="text-white/55 font-semibold">{p.selected_enhancer || 'None'}</span></>}
+                      availableItems={meta.mask_engines || []}
+                      selectedItems={selectedGridMasks}
+                      setSelectedItems={setSelectedGridMasks}
                       previews={maskPreviews}
                       times={maskTimes}
                       timers={maskRenderTimers}
+                      notify={notify}
+                      itemNoun="mask engines"
                     />
-                  </div>
-                );
-              })() : comparingSwappers ? (() => {
-                const activeSwappers = selectedGridSwappers.filter(m => meta.swap_models?.includes(m));
-                const gridColsClass = activeSwappers.length === 1 ? 'grid-cols-1' : 'grid-cols-2';
-                return (
-                  <div className="space-y-4">
-                    {/* Swapper-model selector row */}
-                    <div className="p-3.5 rounded-xl bg-black/45 border border-white/5 space-y-2 select-none">
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="text-micro font-semibold uppercase tracking-[0.14em] text-white/45 block">Compare Swapper Models (Select up to 4)</span>
-                        <span className="text-micro text-white/45">Enhancer: <span className="text-white/55 font-semibold">{p.selected_enhancer || 'None'}</span></span>
-                      </div>
-                      <div className="flex flex-wrap gap-2">
-                        {meta.swap_models?.map((sM) => {
-                          const isSelected = selectedGridSwappers.includes(sM);
-                          return (
-                            <button
-                              key={sM}
-                              type="button"
-                              onClick={() => {
-                                if (isSelected) {
-                                  if (selectedGridSwappers.length > 1) {
-                                    setSelectedGridSwappers(prev => prev.filter(x => x !== sM));
-                                  }
-                                } else {
-                                  if (selectedGridSwappers.length >= 4) {
-                                    notify('You can select a maximum of 4 swapper models for grid comparison.', 'warning');
-                                  } else {
-                                    setSelectedGridSwappers(prev => [...prev, sM]);
-                                  }
-                                }
-                              }}
-                              className={`px-3 py-1.5 rounded-lg text-mini font-semibold border transition-all duration-200 ${isSelected ? 'bg-[var(--accent)]/15 border-[var(--accent)]/40 text-white' : 'bg-white/[0.02] border-white/10 text-white/50 hover:border-white/20 hover:text-white/85'}`}
-                            >
-                              {sM}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </div>
-
-                    <CompareGrid
-                      items={activeSwappers}
-                      gridColsClass={gridColsClass}
+                  ) : comparingSwappers ? (
+                    <ComparisonGridPanel
+                      title="Compare Swapper Models (Select up to 4)"
+                      subtitle={<>Enhancer: <span className="text-white/55 font-semibold">{p.selected_enhancer || 'None'}</span></>}
+                      availableItems={meta.swap_models || []}
+                      selectedItems={selectedGridSwappers}
+                      setSelectedItems={setSelectedGridSwappers}
                       previews={swapperPreviews}
                       times={swapperTimes}
                       timers={swapperRenderTimers}
+                      notify={notify}
+                      itemNoun="swapper models"
                     />
-                  </div>
-                );
-              })() : comparingUpscalers ? (() => {
-                const activeUpscalers = selectedGridUpscalers.filter(l => AI_UPSCALE_MODELS.some(m => m.label === l));
-                const gridColsClass = activeUpscalers.length === 1 ? 'grid-cols-1' : 'grid-cols-2';
-                return (
-                  <div className="space-y-4">
-                    {/* AI-upscaler selector row */}
-                    <div className="p-3.5 rounded-xl bg-black/45 border border-white/5 space-y-2 select-none">
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="text-micro font-semibold uppercase tracking-[0.14em] text-white/45 block">Compare AI Upscalers (Select up to 4)</span>
-                        <span className="text-micro text-white/45">Swaps once, then upscales each</span>
-                      </div>
-                      <div className="flex flex-wrap gap-2">
-                        {AI_UPSCALE_MODELS.map((m) => {
-                          const isSelected = selectedGridUpscalers.includes(m.label);
-                          return (
-                            <button
-                              key={m.value}
-                              type="button"
-                              onClick={() => {
-                                if (isSelected) {
-                                  if (selectedGridUpscalers.length > 1) {
-                                    setSelectedGridUpscalers(prev => prev.filter(x => x !== m.label));
-                                  }
-                                } else {
-                                  if (selectedGridUpscalers.length >= 4) {
-                                    notify('You can select a maximum of 4 upscalers for grid comparison.', 'warning');
-                                  } else {
-                                    setSelectedGridUpscalers(prev => [...prev, m.label]);
-                                  }
-                                }
-                              }}
-                              className={`px-3 py-1.5 rounded-lg text-mini font-semibold border transition-all duration-200 ${isSelected ? 'bg-[var(--accent)]/15 border-[var(--accent)]/40 text-white' : 'bg-white/[0.02] border-white/10 text-white/50 hover:border-white/20 hover:text-white/85'}`}
-                            >
-                              {m.label}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </div>
-
-                    <CompareGrid
-                      items={activeUpscalers}
-                      gridColsClass={gridColsClass}
+                  ) : comparingUpscalers ? (
+                    <ComparisonGridPanel
+                      title="Compare AI Upscalers (Select up to 4)"
+                      subtitle="Swaps once, then upscales each"
+                      availableItems={AI_UPSCALE_MODELS.map((model) => model.label)}
+                      selectedItems={selectedGridUpscalers}
+                      setSelectedItems={setSelectedGridUpscalers}
                       previews={upscalePreviews}
                       times={upscaleTimes}
                       timers={upscaleRenderTimers}
+                      notify={notify}
+                      itemNoun="upscalers"
                     />
-                  </div>
-                );
-              })() : (
+              ) : (
                 <div className="relative rounded-2xl">
                   <AmbilightGlow
                     previewSrc={previewSrc || rawUrl}
