@@ -32,6 +32,8 @@ if APP not in sys.path:
 FW_SRC = open(os.path.join(APP, 'roop', 'ffmpeg_writer.py'), encoding='utf-8').read()
 SEG_SRC = open(os.path.join(APP, 'roop', 'segment_writer.py'), encoding='utf-8').read()
 PM_SRC = open(os.path.join(APP, 'roop', 'ProcessMgr.py'), encoding='utf-8').read()
+PM_SRC += open(os.path.join(APP, 'roop', 'procmgr_stabilization.py'), encoding='utf-8').read()
+PM_SRC += open(os.path.join(APP, 'roop', 'procmgr_batch.py'), encoding='utf-8').read()
 API_SRC = open(os.path.join(APP, 'api.py'), encoding='utf-8').read()
 
 

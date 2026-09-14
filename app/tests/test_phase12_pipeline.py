@@ -6,6 +6,8 @@ from pathlib import Path
 
 APP = Path(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 PM = (APP / "roop" / "ProcessMgr.py").read_text(encoding="utf-8")
+PM += (APP / "roop" / "procmgr_stabilization.py").read_text(encoding="utf-8")
+PM += (APP / "roop" / "procmgr_batch.py").read_text(encoding="utf-8")
 OPT = (APP / "roop" / "runtime_optimizer.py").read_text(encoding="utf-8")
 MASK = (APP / "roop" / "procmgr_masking.py").read_text(encoding="utf-8")
 BENCH = (APP / "tests" / "phase12_benchmark.py").read_text(encoding="utf-8")

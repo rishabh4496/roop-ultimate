@@ -43,6 +43,8 @@ from roop.one_euro import (                                    # noqa: E402
 )
 
 PM = Path(APP, 'roop', 'ProcessMgr.py').read_text(encoding='utf-8')
+PM += Path(APP, 'roop', 'procmgr_stabilization.py').read_text(encoding='utf-8')
+PM += Path(APP, 'roop', 'procmgr_batch.py').read_text(encoding='utf-8')
 
 
 def _code(text):

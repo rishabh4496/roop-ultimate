@@ -162,7 +162,7 @@ class BlockLifecycleIsRegistered(unittest.TestCase):
         """These decline safely out of order, so they must NOT join the ordered
         set -- that would pin threads=1 and cost ~3x for nothing (Session Log
         2026-08-25 Part 3)."""
-        src = _source(PM.ProcessMgr)
+        src = _source(PM.ProcessMgr) + _source(PM.ProcessMgr.run_batch_inmem)
         ordered = src[src.index("_want_temporal_ordered = "):]
         ordered = ordered[:ordered.index("\n\n")]
         self.assertNotIn("landmark_smoother", ordered)
@@ -183,7 +183,7 @@ class TheSummaryIsActuallyPrinted(unittest.TestCase):
     nothing, which is the state these counters exist to prevent."""
 
     def test_report_is_invoked_at_the_end_of_a_run(self):
-        src = _source(PM.ProcessMgr)
+        src = _source(PM.ProcessMgr) + _source(PM.ProcessMgr.run_batch_inmem)
         self.assertIn("self._report_smoother_summaries()", src)
 
     def test_an_enabled_engine_prints_its_line(self):
