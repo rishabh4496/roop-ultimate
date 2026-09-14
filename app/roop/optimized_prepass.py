@@ -29,6 +29,16 @@ import cv2
 import numpy as np
 from numpy.typing import NDArray
 
+from .env import env_bool
+
+# OFF here, deliberately. This prepass is the general-purpose path and must keep
+# working against a batch-one detector; strict mode RAISES rather than falling
+# back (see _detect_batch below). `roop.vectorized_pipeline` reads the same
+# ROOP_OPT_STRICT_TRT flag with STRICT_TRT_DEFAULT = True because it is the
+# strict-only pipeline. Both defaults are named so the divergence is explicit;
+# tests/test_env_flags.py pins that they are declared, not inlined.
+STRICT_TRT_DEFAULT = False
+
 
 Float32Array = NDArray[np.float32]
 Int32Array = NDArray[np.int32]
@@ -112,10 +122,7 @@ class PrepassConfig:
         """Resolve settings while preserving the sub-7 GB safety profile."""
 
         batch = _env_int("ROOP_OPT_PREPASS_BATCH", 8)
-        strict_trt = (
-            os.environ.get("ROOP_OPT_STRICT_TRT", "0").strip().lower()
-            not in ("0", "false", "no", "off", "")
-        )
+        strict_trt = env_bool("ROOP_OPT_STRICT_TRT", STRICT_TRT_DEFAULT)
         try:
             import torch
 

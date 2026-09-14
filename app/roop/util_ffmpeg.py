@@ -3,7 +3,9 @@ import os
 import subprocess
 import roop.globals
 import roop.utilities as util
-from roop.ffmpeg_path import ffmpeg_binary
+from roop.ffmpeg_path import (NVENC_PRESET_DEFAULT, NVENC_PRESETS,
+                              ffmpeg_binary)
+from roop.env import env_str
 
 from typing import List, Any
 
@@ -77,9 +79,9 @@ def _rate_control(codec: str, quality) -> List[str]:
     """
     q = clamp_quality(codec, quality)
     if codec in ('h264_nvenc', 'hevc_nvenc'):
-        preset = os.environ.get('ROOP_NVENC_PRESET', 'p5').strip().lower()
-        if preset not in {f'p{i}' for i in range(1, 8)}:
-            preset = 'p5'
+        preset = env_str('ROOP_NVENC_PRESET', NVENC_PRESET_DEFAULT)
+        if preset not in NVENC_PRESETS:
+            preset = NVENC_PRESET_DEFAULT
         return ['-rc', 'vbr', '-cq', str(q), '-preset', preset, '-tune', 'hq']
     return ['-crf', str(q)]
 

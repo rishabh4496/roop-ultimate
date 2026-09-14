@@ -29,6 +29,21 @@ from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 import numpy as np
 from numpy.typing import NDArray
 
+from .env import env_bool, env_str
+from .ffmpeg_path import NVENC_PRESET_DEFAULT, NVENC_PRESETS
+
+# This pipeline is the STRICT path: it exists to prove the NVDEC -> CUDA -> TRT
+# -> NVENC route runs end to end with no silent fallback, so both strict flags
+# default ON here and a missing stage raises instead of degrading.
+#
+# `roop.optimized_prepass` reads the SAME ROOP_OPT_STRICT_TRT flag and
+# deliberately defaults it OFF, because it is the general-purpose prepass and
+# must still run on a batch-one detector. The difference is intentional; naming
+# both defaults keeps it visible instead of buried in an inline string literal.
+# See tests/test_env_flags.py.
+STRICT_TRT_DEFAULT = True
+STRICT_NVDEC_DEFAULT = True
+
 from .hardware_streamer import (
     FramePacket,
     NvdecFrameSource,
@@ -107,9 +122,9 @@ class PipelineConfig:
         laptop = 0.0 < total_gb < 7.0
         default_batch = 2 if laptop else 8
         default_ring = 2 if laptop else 4
-        preset = os.environ.get("ROOP_NVENC_PRESET", "p4").strip().lower()
-        if preset not in {f"p{index}" for index in range(1, 8)}:
-            preset = "p4"
+        preset = env_str("ROOP_NVENC_PRESET", NVENC_PRESET_DEFAULT)
+        if preset not in NVENC_PRESETS:
+            preset = NVENC_PRESET_DEFAULT
         return cls(
             batch_size=_positive_int(
                 os.environ.get("ROOP_PIPELINE_BATCH", default_batch), default_batch
@@ -118,10 +133,8 @@ class PipelineConfig:
                 os.environ.get("ROOP_PIPELINE_RING", default_ring), default_ring
             ),
             device_id=int(device_id),
-            strict_nvdec=os.environ.get("ROOP_STRICT_NVDEC", "1").strip().lower()
-            not in {"0", "false", "no", "off"},
-            strict_trt=os.environ.get("ROOP_OPT_STRICT_TRT", "1").strip().lower()
-            not in {"0", "false", "no", "off"},
+            strict_nvdec=env_bool("ROOP_STRICT_NVDEC", STRICT_NVDEC_DEFAULT),
+            strict_trt=env_bool("ROOP_OPT_STRICT_TRT", STRICT_TRT_DEFAULT),
             encoder=os.environ.get("ROOP_NVENC_CODEC", "h264_nvenc"),
             encoder_preset=preset,
             quality=_positive_int(os.environ.get("ROOP_NVENC_CQ", 18), 18),

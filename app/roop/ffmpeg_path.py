@@ -34,6 +34,20 @@ import shutil
 
 _CACHED = None
 
+# The NVENC quality preset used when ROOP_NVENC_PRESET is unset.
+#
+# Declared HERE, once, because it was previously inlined at three call sites
+# and they did not agree: ffmpeg_writer and util_ffmpeg defaulted to "p5" while
+# vectorized_pipeline defaulted to "p4". The same unset flag therefore produced
+# a different encoder preset depending on which path wrote the video.
+#
+# p1 is fastest, p7 slowest/best; p5 with "-tune hq" under VBR is the balanced
+# default the encoder settings were validated against.
+NVENC_PRESET_DEFAULT = "p5"
+
+# Valid NVENC preset tokens, for rejecting a malformed override.
+NVENC_PRESETS = frozenset(f"p{i}" for i in range(1, 8))
+
 
 def _pinokio_home():
     """PINOKIO_HOME, in the order the project guide requires."""

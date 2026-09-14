@@ -19,7 +19,9 @@ PIPE = -1
 STDOUT = -2
 DEVNULL = -3
 
-from roop.ffmpeg_path import ffmpeg_binary
+from roop.ffmpeg_path import (NVENC_PRESET_DEFAULT, NVENC_PRESETS,
+                              ffmpeg_binary)
+from roop.env import env_str
 
 # Resolved rather than assumed: a bare "ffmpeg" only works inside a
 # Pinokio-managed shell, and outside one the encoder pre-flight aborted
@@ -243,9 +245,9 @@ class FFMPEG_VideoWriter:
             # ..p7(slowest/best); p5 + "-tune hq" under VBR is a balanced default.
             # Encoding runs on the GPU's dedicated NVENC engine — off the CPU and
             # separate from CUDA inference. Override the preset with ROOP_NVENC_PRESET.
-            nvenc_preset = os.environ.get('ROOP_NVENC_PRESET', 'p5').strip().lower()
-            if nvenc_preset not in {f'p{i}' for i in range(1, 8)}:
-                nvenc_preset = 'p5'
+            nvenc_preset = env_str('ROOP_NVENC_PRESET', NVENC_PRESET_DEFAULT)
+            if nvenc_preset not in NVENC_PRESETS:
+                nvenc_preset = NVENC_PRESET_DEFAULT
             cmd.extend(['-rc', 'vbr', '-cq', str(crf), '-preset', nvenc_preset, '-tune', 'hq'])
         else:
             cmd.extend(['-crf', str(crf)])
