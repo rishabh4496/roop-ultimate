@@ -1520,6 +1520,77 @@ class CudaFrameBridge:
         return [array[index] for index in range(int(array.shape[0]))]
 
 
+class GpuFaceRestorer:
+    """Batch face restoration on CUDA between swap and reverse compositing."""
+
+    def __init__(
+        self,
+        runner: TrtOnnxBatchRunner,
+        input_size: int = 512,
+        input_name: str = "input",
+        output_index: int = 0,
+        model_mean: Sequence[float] = (0.0, 0.0, 0.0),
+        model_standard_deviation: Sequence[float] = (1.0, 1.0, 1.0),
+        model_denormalize: bool = False,
+    ) -> None:
+        if _torch_module is None:
+            raise RuntimeError("PyTorch is required for GpuFaceRestorer")
+        if int(input_size) <= 0:
+            raise ValueError("restorer input_size must be positive")
+        if len(model_mean) != 3 or len(model_standard_deviation) != 3:
+            raise ValueError("restorer mean and standard deviation need three channels")
+        self.torch = _torch_module
+        self.runner = runner
+        self.input_size = int(input_size)
+        self.input_name = str(input_name)
+        self.output_index = int(output_index)
+        self.mean = self.torch.tensor(
+            tuple(float(value) for value in model_mean),
+            dtype=self.torch.float32,
+            device=f"cuda:{runner.device_id}",
+        ).reshape(1, 3, 1, 1)
+        self.standard_deviation = self.torch.tensor(
+            tuple(float(value) for value in model_standard_deviation),
+            dtype=self.torch.float32,
+            device=f"cuda:{runner.device_id}",
+        ).reshape(1, 3, 1, 1)
+        if bool(self.torch.any(self.standard_deviation == 0)):
+            raise ValueError("restorer standard deviation cannot contain zero")
+        self.denormalize = bool(model_denormalize)
+
+    def __call__(self, faces: Any) -> Any:
+        """Restore every swapped crop with one dynamic-batch TRT enqueue."""
+
+        import torch.nn.functional as functional
+
+        height = int(faces.shape[2])
+        width = int(faces.shape[3])
+        model_input = functional.interpolate(
+            faces,
+            size=(self.input_size, self.input_size),
+            mode="bicubic",
+            align_corners=False,
+        )
+        model_input = (model_input - self.mean) / self.standard_deviation
+        outputs = self.runner.run_gpu(
+            {self.input_name: model_input},
+            pad_to_batch=True,
+        )
+        restored = outputs[self.output_index]
+        if restored.ndim != 4:
+            raise RuntimeError(f"restorer output must be NCHW, got {tuple(restored.shape)}")
+        if self.denormalize:
+            restored = (restored + 1.0) / 2.0
+        if int(restored.shape[2]) != height or int(restored.shape[3]) != width:
+            restored = functional.interpolate(
+                restored,
+                size=(height, width),
+                mode="bicubic",
+                align_corners=False,
+            )
+        return restored.clamp(0.0, 1.0)
+
+
 class GpuFaceSwapProcessor:
     """Batch all aligned faces across frames and keep swap/composite on CUDA.
 
@@ -1544,6 +1615,7 @@ class GpuFaceSwapProcessor:
         model_standard_deviation: Sequence[float] = (1.0, 1.0, 1.0),
         model_denormalize: bool = False,
         blend_ratio: float = 1.0,
+        restorer: Optional[Callable[[Any], Any]] = None,
         bridge: Optional[CudaFrameBridge] = None,
     ) -> None:
         if _torch_module is None:
@@ -1586,6 +1658,7 @@ class GpuFaceSwapProcessor:
             raise ValueError("model standard deviation cannot contain zero")
         self.model_denormalize = bool(model_denormalize)
         self.blend_ratio = float(max(0.0, min(1.0, blend_ratio)))
+        self.restorer = restorer
         self.bridge = bridge or CudaFrameBridge(device_id=runner.device_id)
 
     def __call__(
@@ -1630,6 +1703,8 @@ class GpuFaceSwapProcessor:
             swapped = (swapped + 1.0) / 2.0
         if self.model_channel_order == "rgb":
             swapped = swapped[:, [2, 1, 0], :, :]
+        if self.restorer is not None:
+            swapped = self.restorer(swapped)
         masks = None
         if self.mask_output_index is not None and self.mask_output_index < len(outputs):
             masks = outputs[self.mask_output_index]
@@ -1904,6 +1979,7 @@ __all__ = [
     "FFmpegRawReader",
     "FFmpegRawWriter",
     "GpuFaceSwapProcessor",
+    "GpuFaceRestorer",
     "MemoryStreamingProcessor",
     "OnnxBatchRunner",
     "PipelineStats",
