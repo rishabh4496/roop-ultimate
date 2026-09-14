@@ -131,6 +131,17 @@ batch dimension. TensorRT engine, profile, and timing artifacts live under
 `app/models/trt_cache/`; decoded/intermediate video frames are never written
 there.
 
+The lower-level zero-pickle implementation is split into
+`app/roop/hardware_streamer.py`, `app/roop/optimized_trt_engine.py`, and
+`app/roop/vectorized_pipeline.py`. `SharedMemoryFrameRing` is a bounded
+`multiprocessing.shared_memory` transport for fixed-size host frames and
+metadata; it is not CUDA IPC, because Python shared memory is system RAM.
+`NvdecFrameSource` therefore keeps decode on NVDEC until one explicit
+`hwdownload` at that boundary, while persistent CUDA buffers, GPU affine
+sampling, TensorRT I/O binding, and NVENC remain on device. Set
+`ROOP_STRICT_NVDEC=1` and `ROOP_OPT_STRICT_TRT=1` to fail loudly if either
+hardware path is unavailable.
+
 ### GPU memory pressure
 
 A busy GPU with very low frame throughput can be paging into shared system
