@@ -396,7 +396,13 @@ export default function DiagnosticsPanel({ desc = '', telemetry, processing, pau
           ) : config.map(([k, v]) => (
             <div key={k} className="flex items-baseline justify-between gap-2 font-mono text-micro">
               <span className="text-white/30">{k}</span>
-              <span className="truncate text-right font-semibold text-white/60">{v}</span>
+              {/* title: measured, this value really is ellipsised at the card
+                  width -- a provider/device string needs 331px and is given
+                  190px -- so without a tooltip its tail is unreadable. No
+                  min-w-0 is needed: `truncate` sets overflow:hidden, which per
+                  CSS flexbox 4.5 already floors this flex item's automatic
+                  minimum size at 0. Verified in Chromium: no overflow either way. */}
+              <span className="truncate text-right font-semibold text-white/60" title={String(v)}>{v}</span>
             </div>
           ))}
         </div>

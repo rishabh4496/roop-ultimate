@@ -205,7 +205,7 @@ export default function RunHistory({ notify, setSettings, setTab }) {
               const maxFps = Math.max(...recentRunsForGraph.map((x) => x.fps || 1), 60);
               const hPct = Math.min(100, Math.max(12, ((r.fps || 1) / maxFps) * 100));
               return (
-                <div key={idx} className="flex-1 flex flex-col items-center gap-1 group relative">
+                <div key={idx} className="flex-1 min-w-0 flex flex-col items-center gap-1 group relative">
                   {/* Tooltip */}
                   <div className="absolute bottom-full mb-1 hidden group-hover:flex flex-col items-center bg-black/90 p-1.5 rounded-lg border border-white/10 text-nano text-white z-20 whitespace-nowrap shadow-xl">
                     <span className="font-bold">{r.outputs?.[0] || `Run #${idx + 1}`}</span>
