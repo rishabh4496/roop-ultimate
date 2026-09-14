@@ -483,13 +483,64 @@ class FFMPEG_VideoWriter:
             raise IOError(error)
 
     def close(self):
-        if self.proc:
-            self.proc.stdin.close()
-            if self.proc.stderr is not None:
-                self.proc.stderr.close()
-            self.proc.wait()
-
+        proc = self.proc
         self.proc = None
+        if proc is None:
+            return
+
+        # ``stdin.close(); wait()`` used to discard the encoder's exit status.
+        # When ffmpeg died after accepting some frames, that promoted a playable
+        # but truncated segment to the final output and made the render look
+        # successful. ``communicate`` closes stdin, drains stderr, and waits as
+        # one operation, so a late encoder failure remains observable without a
+        # pipe-deadlock risk.
+        communication_error = None
+        err = b""
+        try:
+            _, err = proc.communicate()
+        except Exception as exc:
+            communication_error = exc
+            # A prior broken-pipe path may already have closed stdin or called
+            # communicate once. Make the cleanup idempotent and still collect
+            # whatever diagnostic the child left behind.
+            try:
+                if proc.stdin is not None and not proc.stdin.closed:
+                    proc.stdin.close()
+            except Exception as _degrade_error:
+                _swallowed("roop/ffmpeg_writer.py:508", _degrade_error, "fallback continued")
+            try:
+                proc.wait(timeout=5)
+            except Exception as _degrade_error:
+                _swallowed("roop/ffmpeg_writer.py:513", _degrade_error, "fallback continued")
+                try:
+                    proc.kill()
+                    proc.wait(timeout=5)
+                except Exception as _degrade_error:
+                    _swallowed("roop/ffmpeg_writer.py:517", _degrade_error, "fallback continued")
+            try:
+                if proc.stderr is not None and not proc.stderr.closed:
+                    err = proc.stderr.read() or b""
+            except Exception as _degrade_error:
+                _swallowed("roop/ffmpeg_writer.py:522", _degrade_error, "fallback continued")
+        finally:
+            for stream in (getattr(proc, "stdin", None), getattr(proc, "stderr", None)):
+                try:
+                    if stream is not None and not stream.closed:
+                        stream.close()
+                except Exception as _degrade_error:
+                    _swallowed("roop/ffmpeg_writer.py:528", _degrade_error, "fallback continued")
+
+        if communication_error is not None:
+            raise IOError(
+                f"Roop Ultimate error: could not finalize the ffmpeg encoder "
+                f"for {self.filename}: {communication_error}\n\nffmpeg said:\n"
+                + (err or b"").decode("utf-8", "replace")) from communication_error
+        if proc.returncode != 0:
+            detail = (err or b"").decode("utf-8", "replace").strip()
+            raise IOError(
+                f"Roop Ultimate error: the ffmpeg encoder '{self.codec}' exited "
+                f"with code {proc.returncode} while finalizing {self.filename}.\n\n"
+                "ffmpeg said:\n" + detail)
 
     # Support the Context Manager protocol, to ensure that resources are cleaned up.
 

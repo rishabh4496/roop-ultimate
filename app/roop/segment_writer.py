@@ -285,7 +285,23 @@ class SegmentedVideoWriter:
         global _current
         if self._writer is None:
             return
-        self._writer.close()
+        try:
+            self._writer.close()
+        except Exception:
+            # The active file may contain a playable prefix, but it is not a
+            # committed segment unless the encoder closed cleanly. Remove that
+            # untrusted file and leave only the durable prefix in the manifest.
+            failed_file = self._cur_seg_file
+            self._writer = None
+            _current = None
+            self._cur_seg_file = None
+            self._cur_frames = 0
+            try:
+                if failed_file:
+                    os.remove(os.path.join(self._dir, failed_file))
+            except OSError:
+                pass
+            raise
         self._writer = None
         _current = None
         # Committing is a claim that these frames survive a crash, so it has to be
@@ -333,11 +349,20 @@ class SegmentedVideoWriter:
 
     # ── finish ───────────────────────────────────────────────────────────────
     def close(self):
+        finalize_error = None
         with self._write_lock:
             try:
                 self._finalize_segment()
             except Exception as e:
+                finalize_error = e
                 bar_write(f"[Resume] finalizing last segment failed: {e}")
+        # Do not concatenate or clean up previously committed parts after the
+        # active encoder failed. Doing so turns a late ffmpeg exit into a
+        # truncated "successful" temp video and destroys the only resumable
+        # prefix. The caller must see the failure, while the committed manifest
+        # remains available for a later retry.
+        if finalize_error is not None:
+            raise finalize_error
         if not self.segments:
             return
         # Completed run (nothing signalled a stop) → concat, then clean up.

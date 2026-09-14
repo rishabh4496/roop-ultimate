@@ -16,7 +16,10 @@ class Phase13WriterContract(unittest.TestCase):
     def setUp(self):
         self.fw = _read("ffmpeg_writer.py")
         self.seg = _read("segment_writer.py")
-        self.pm = _read("ProcessMgr.py")
+        # Batch lifecycle moved out of ProcessMgr into its focused mixin. Keep
+        # the contract scan over both owners so the extraction cannot make a
+        # production invariant disappear from the test merely by moving it.
+        self.pm = _read("ProcessMgr.py") + _read("procmgr_batch.py")
         with open(os.path.join(HERE, "phase13_benchmark.py"), encoding="utf-8") as fh:
             self.bench = fh.read()
 
