@@ -221,13 +221,14 @@ def _recover_undersized_mask(img_mask, kps, M):
     if not _MASK_RECOVER:
         return img_mask
     orig_shape = img_mask.shape
-    flat = img_mask
-    if flat.ndim == 3 and flat.shape[-1] == 1:
-        flat = flat[..., 0]
+    flat = np.squeeze(img_mask)
     if flat.ndim != 2:
         return img_mask
     ref = _face_floor_ellipse(kps, M, flat.shape)
     if ref is None:
+        return img_mask
+    ref = np.squeeze(ref)
+    if ref.ndim != 2 or ref.shape != flat.shape:
         return img_mask
     floor_area = float((ref > 0.5).sum())
     if floor_area <= 0:

@@ -1532,17 +1532,38 @@ class Enhance_UltraMax:
         # The diagnostic chroma=1 mode is intentionally bit-faithful to the
         # raw CodeFormer output for precision comparisons; do not apply the
         # visual eye-protection/rebalance operators in that mode.
-        if _env_float('ROOP_ULTRAMAX_CHROMA', self._CHROMA) != 1.0:
-            restored = self._protect_swapped_eyes(restored, src512)
-            restored = self._rebalance_eye_detail(restored)
+        did_gpu_post = False
+        if _TORCH_CUDA and getattr(self, 'devicename', '') == 'cuda':
+            try:
+                res_t = torch.from_numpy(restored).to('cuda', dtype=torch.float32, non_blocking=False)
+                src_t = torch.from_numpy(src512).to('cuda', dtype=torch.float32, non_blocking=False)
+                if _env_float('ROOP_ULTRAMAX_CHROMA', self._CHROMA) != 1.0:
+                    res_t = self._protect_swapped_eyes_gpu(res_t, src_t)
+                    res_t = self._rebalance_eye_detail_gpu(res_t)
+                gain = _env_float('ROOP_ULTRAMAX_TEXTURE', self._TEXTURE_GAIN)
+                if gain > 0.0:
+                    high = (src_t - self._blur_gpu(src_t, self._SIGMA)).clamp(
+                        -11.0 * self._SIGMA, 11.0 * self._SIGMA)
+                    res_t = (res_t + high * gain).clamp(0, 255)
+                    with self._lock:
+                        self._textured += 1
+                restored = res_t.clamp(0, 255).round().to(torch.uint8).cpu().numpy()
+                did_gpu_post = True
+            except Exception as _gpu_err:
+                did_gpu_post = False
 
-        gain = _env_float('ROOP_ULTRAMAX_TEXTURE', self._TEXTURE_GAIN)
-        if gain > 0.0:
-            restored = self._restore_texture(
-                restored, src512, gain,
-                _env_float('ROOP_ULTRAMAX_TEXTURE_SIGMA', self._SIGMA))
-            with self._lock:
-                self._textured += 1
+        if not did_gpu_post:
+            if _env_float('ROOP_ULTRAMAX_CHROMA', self._CHROMA) != 1.0:
+                restored = self._protect_swapped_eyes(restored, src512)
+                restored = self._rebalance_eye_detail(restored)
+
+            gain = _env_float('ROOP_ULTRAMAX_TEXTURE', self._TEXTURE_GAIN)
+            if gain > 0.0:
+                restored = self._restore_texture(
+                    restored, src512, gain,
+                    _env_float('ROOP_ULTRAMAX_TEXTURE_SIGMA', self._SIGMA))
+                with self._lock:
+                    self._textured += 1
 
         with self._lock:
             self._faces += 1

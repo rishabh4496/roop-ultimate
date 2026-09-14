@@ -81,6 +81,9 @@ _EPS = 1e-6
 # residuals at this sigma are single-digit, so the clamp is inactive there.
 _SHARPEN_CLAMP = 18.0
 
+# Precomputed 256-entry sin LUT for L-channel midtone weighting in apply_clarity
+_MIDTONE_LUT = np.sin(np.pi * np.arange(256, dtype=np.float32) / 255.0).astype(np.float32)
+
 
 def _cfg(name, default=0.0):
     try:
@@ -176,25 +179,28 @@ class MergerMixin:
         if abs(s) < _EPS:
             return face_img
         try:
-            lab = cv2.cvtColor(face_img, cv2.COLOR_BGR2LAB).astype(np.float32)
-            L, A, B = lab[:, :, 0], lab[:, :, 1], lab[:, :, 2]
+            lab = cv2.cvtColor(face_img, cv2.COLOR_BGR2LAB)
+            L_u8, A_u8, B_u8 = lab[:, :, 0], lab[:, :, 1], lab[:, :, 2]
+            L = L_u8.astype(np.float32)
 
             blur_L = cv2.GaussianBlur(L, (0, 0), sigmaX=1.0)
             clarity = np.clip(L - blur_L, -18.0, 18.0)
-            midtone = np.clip(np.sin(np.pi * np.clip(L / 255.0, 0.0, 1.0)), 0.0, 1.0)
-            lab[:, :, 0] = np.clip(L + 0.32 * s * clarity * (0.65 + 0.35 * midtone),
-                                   0.0, 255.0)
+            midtone = _MIDTONE_LUT[L_u8]
+            L_out = np.clip(L + 0.32 * s * clarity * (0.65 + 0.35 * midtone),
+                            0.0, 255.0).astype(np.uint8)
 
             # Lerped rather than applied outright, so the op fades to identity
             # as strength -> 0 like every other knob in this chain.
+            # Using 256-entry LUTs for A and B channels removes 524,000 transcendentals per face.
+            A = A_u8.astype(np.float32)
+            B = B_u8.astype(np.float32)
             a_mean, b_mean = float(A.mean()), float(B.mean())
-            a_soft = a_mean + np.tanh((A - a_mean) / 16.0) * 14.5
-            b_soft = b_mean + np.tanh((B - b_mean) / 18.0) * 16.0
-            lab[:, :, 1] = A + s * (a_soft - A)
-            lab[:, :, 2] = B + s * (b_soft - B)
+            lut_256 = np.arange(256, dtype=np.float32)
+            lut_a = np.clip(lut_256 + s * (a_mean + np.tanh((lut_256 - a_mean) / 16.0) * 14.5 - lut_256), 0, 255).astype(np.uint8)
+            lut_b = np.clip(lut_256 + s * (b_mean + np.tanh((lut_256 - b_mean) / 18.0) * 16.0 - lut_256), 0, 255).astype(np.uint8)
 
-            return cv2.cvtColor(np.clip(lab, 0.0, 255.0).astype(np.uint8),
-                                cv2.COLOR_LAB2BGR)
+            out_lab = cv2.merge([L_out, lut_a[A_u8], lut_b[B_u8]])
+            return cv2.cvtColor(out_lab, cv2.COLOR_LAB2BGR)
         except cv2.error:
             return face_img
 
@@ -364,9 +370,9 @@ class MergerMixin:
         if sigma < 0.05:
             return face_img
 
-        # dtype=float32 rather than generating float64 and casting: the RNG is
-        # the whole cost of this op and the cast doubles it for no benefit.
-        noise = _RNG.standard_normal(face_img.shape[:2], dtype=np.float32) * sigma
+        # cv2.randn runs in optimized C++ SIMD, replacing numpy RNG overhead
+        noise = np.empty(face_img.shape[:2], dtype=np.float32)
+        cv2.randn(noise, 0.0, float(sigma))
         out = face_img.astype(np.float32) + noise[:, :, np.newaxis]
         return np.clip(out, 0, 255).astype(np.uint8)
 
