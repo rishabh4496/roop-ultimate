@@ -35,6 +35,7 @@ import threading
 
 import roop.globals
 from roop.ffmpeg_writer import FFMPEG_VideoWriter, FFMPEG_BINARY
+from roop.video_stream import NVHardwareVideoWriter, hardware_stream_enabled
 # These lines are emitted from INSIDE the encode thread, where a raised
 # exception is not a bad log line but a dead writer — and a dead writer leaves
 # every producer blocked on a bounded queue. bar_write already exists for
@@ -138,6 +139,7 @@ class SegmentedVideoWriter:
         self.size = size
         self.fps = float(fps)
         self.codec = codec
+        self._effective_codec = None
         self.crf = crf
         self._dir = os.path.dirname(target_video) or "."
         base, ext = os.path.splitext(os.path.basename(target_video))
@@ -223,7 +225,10 @@ class SegmentedVideoWriter:
                         return [], 0
                 elif have != want:
                     return [], 0
-            return _segments_that_exist(m, self._dir)
+            segments, done = _segments_that_exist(m, self._dir)
+            stored_codec = str(m.get("effective_codec") or "").strip()
+            self._effective_codec = stored_codec or (self.codec if segments else None)
+            return segments, done
         except Exception as _degrade_error:
             _swallowed("roop/segment_writer.py:226", _degrade_error, "fallback continued")
             return [], 0
@@ -231,6 +236,7 @@ class SegmentedVideoWriter:
     def _write_manifest(self):
         try:
             m = dict(self._identity)
+            m["effective_codec"] = self._effective_codec or ""
             m["segments"] = self.segments
             tmp = manifest_path(self.target_video) + ".tmp"
             with open(tmp, "w", encoding="utf-8") as fh:
@@ -260,10 +266,24 @@ class SegmentedVideoWriter:
         global _current
         self._cur_seg_file = f"{self._seg_prefix}{self._seg_index:04d}{self._seg_ext}"
         path = os.path.join(self._dir, self._cur_seg_file)
-        self._writer = FFMPEG_VideoWriter(path, self.size, self.fps,
-                                          codec=self.codec, crf=self.crf,
-                                          audiofile=None,
-                                          **self._writer_options)
+        active_codec = self._effective_codec or self.codec
+        if (hardware_stream_enabled() and
+                active_codec in {"h264_nvenc", "hevc_nvenc", "av1_nvenc"}):
+            self._writer = NVHardwareVideoWriter(
+                path,
+                self.size[0],
+                self.size[1],
+                self.fps,
+                audio_source=None,
+                codec=active_codec,
+                crf=self.crf,
+                **self._writer_options,
+            )
+        else:
+            self._writer = FFMPEG_VideoWriter(path, self.size, self.fps,
+                                              codec=active_codec, crf=self.crf,
+                                              audiofile=None,
+                                              **self._writer_options)
         self._cur_frames = 0
         _current = {"index": len(self.segments) + 1, "file": self._cur_seg_file,
                     "first": self._next_first, "_written": 0, "bytes": 0,
@@ -272,7 +292,25 @@ class SegmentedVideoWriter:
     def write_frame(self, img_array):
         if self._writer is None:
             self._open_next_segment()
-        self._writer.write_frame(img_array)
+        writer = self._writer
+        writer.write_frame(img_array)
+        actual_codec = str(getattr(writer, "codec", self.codec))
+        if self._effective_codec is None:
+            self._effective_codec = actual_codec
+        elif actual_codec != self._effective_codec:
+            try:
+                writer.abort()
+            finally:
+                self._writer = None
+                self._cur_seg_file = None
+                self._cur_frames = 0
+                global _current
+                _current = None
+            raise IOError(
+                "segmented video encoder changed from "
+                f"{self._effective_codec} to {actual_codec}; refusing to "
+                "concat mixed-codec segments"
+            )
         self._cur_frames += 1
         if _current is not None:
             _current["_written"] = self._cur_frames

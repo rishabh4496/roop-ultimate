@@ -35,6 +35,11 @@ class BatchProcessingMixin:
             StageProfiler, StreamingStabilizationHistory,
             StreamWriter, UnifiedRuntimeScheduler,
         )
+        from roop.video_stream import (
+            NVHardwareVideoWriter,
+            hardware_stream_enabled,
+            open_video_capture,
+        )
         from roop import face_util
         import roop.util_ffmpeg as util_ffmpeg
         from roop.degrade import swallowed as _swallowed
@@ -351,14 +356,14 @@ class BatchProcessingMixin:
             except Exception as _exc:
                 print(f'[RuntimeOptimizer] small-card decode policy unavailable: {_exc}',
                       flush=True)
-            from roop.nvdec_reader import wrap_capture
-            # The unified stream owns one aggregate four-frame lease budget.
-            # Do not add a hidden reader-prefetch queue outside that budget;
-            # FFmpeg remains a separate decode process and the scheduler's
-            # decode thread still overlaps pipe I/O with CUDA/encode work.
-            _stream_prefetch = (0 if self._runtime_scheduler is not None else None)
-            cap = wrap_capture(cap, source_video, width, height, fps,
-                               tag='swap decode', prefetch_depth=_stream_prefetch)
+            cap = open_video_capture(
+                source_video,
+                width,
+                height,
+                fps,
+                fallback_capture=cap,
+                tag='swap decode',
+            )
 
         processed_resolution = None
         for p in self.processors:
@@ -619,7 +624,27 @@ class BatchProcessingMixin:
                     frame_start += skip
                     frame_count -= skip
             else:
-                self.videowriter = FFMPEG_VideoWriter(target_video, (width, height), fps, codec=roop.globals.video_encoder, crf=roop.globals.video_quality, audiofile=None)
+                codec = roop.globals.video_encoder
+                if (hardware_stream_enabled() and
+                        codec in {'h264_nvenc', 'hevc_nvenc', 'av1_nvenc'}):
+                    self.videowriter = NVHardwareVideoWriter(
+                        target_video,
+                        width,
+                        height,
+                        fps,
+                        audio_source=None,
+                        codec=codec,
+                        crf=roop.globals.video_quality,
+                    )
+                else:
+                    self.videowriter = FFMPEG_VideoWriter(
+                        target_video,
+                        (width, height),
+                        fps,
+                        codec=codec,
+                        crf=roop.globals.video_quality,
+                        audiofile=None,
+                    )
         if self.output_to_cam:
             self.streamwriter = StreamWriter((width, height), int(fps))
 

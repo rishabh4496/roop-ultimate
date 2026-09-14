@@ -57,6 +57,7 @@ from roop.procmgr_runtime import _PROFILE, _TRACK_VETO_DIST, _TRACK_VETO_MARGIN,
 from roop.stage_profiler import StageProfiler
 from roop.runtime_optimizer import RuntimeOptimizer, RuntimeMonitor, SafeAdaptiveController
 from roop.runtime_scheduler import UnifiedRuntimeScheduler
+from roop.video_stream import NVHardwareVideoReader, open_video_capture
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from threading import Thread, Lock, local, get_ident, Event
 import threading
@@ -65,6 +66,15 @@ import threading
 # so no instance attribute can be mistaken for the tracker a worker should
 # read; the ONLY way to a tracker from a worker is `get_thread_tracker()`.
 _local_tracking_context = threading.local()
+
+
+def _owned_fallback_frame(frame):
+    """Snapshot the unswapped target before processors can mutate it in place."""
+    try:
+        return np.ascontiguousarray(frame).copy()
+    except Exception as _degrade_error:
+        _swallowed("roop/ProcessMgr.py:71", _degrade_error, "fallback continued")
+        return frame
 
 
 def get_thread_tracker(shared=None, epoch=None, fresh=False):
@@ -1663,6 +1673,7 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                 frame_idx, frame = item
                 del item
                 resimg = None
+                fallback_frame = _owned_fallback_frame(frame)
                 self._runtime_worker_enter(threadindex)
                 try:
                     with _prof('frame_total'):
@@ -1672,42 +1683,33 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                                 for p in self.processors:
                                     out = p.Run(out)
                                 resimg = out
+                            if resimg is not None:
+                                pause_controller.pending_output(1)
                         else:
                             # process_frame serialises only its GPU primitives (under
                             # TensorRT), so CPU work overlaps across threads.
                             resimg = self.process_frame(frame, frame_idx=frame_idx,
                                                          output_pending=True)
-                except RuntimeError as exc:
+                except Exception as exc:
+                    # A bad frame must not discard the rest of a long video.  The
+                    # processor may have mutated `frame` before failing, so use
+                    # the snapshot taken above rather than the partially swapped
+                    # array. This also covers CUDA/ORT, OpenCV, and model errors.
                     err_str = str(exc)
-                    if 'CUDA' in err_str or 'cuda' in err_str or 'onnxruntime' in err_str.lower():
-                        bar_write(f'[ProcessMgr] GPU error on video frame {threadindex} — writing original: {err_str[:200]}')
-                        resimg = frame  # fall back to unmodified frame
-                    else:
-                        # Fatal non-GPU RuntimeError: drain our input queue and post
-                        # sentinel so write_frames_thread doesn't hang forever.
-                        try:
-                            while True:
-                                self.frames_queue[threadindex].get_nowait()
-                        except Exception as _degrade_error:
-                            _swallowed("roop/ProcessMgr.py:1670", _degrade_error, "fallback continued")
-                            pass
-                        self._runtime_worker_exit(threadindex)
-                        self._worker_done(threadindex)
-                        roop.globals.processing = False
-                        raise
-                except Exception:
-                    # Any other exception (cv2.error, MemoryError, etc.) — same
-                    # drain-and-signal so write_frames_thread unblocks.
-                    try:
-                        while True:
-                            self.frames_queue[threadindex].get_nowait()
-                    except Exception as _degrade_error:
-                        _swallowed("roop/ProcessMgr.py:1682", _degrade_error, "fallback continued")
-                        pass
-                    self._runtime_worker_exit(threadindex)
-                    self._worker_done(threadindex)
-                    roop.globals.processing = False
-                    raise
+                    bar_write(
+                        f'[ProcessMgr] frame {frame_idx} processing failed '
+                        f'({type(exc).__name__}): {err_str[:200]} — '
+                        'writing original/interpolated target frame'
+                    )
+                    resimg = fallback_frame
+                    pause_controller.pending_output(1)
+                if resimg is None:
+                    bar_write(
+                        f'[ProcessMgr] frame {frame_idx} produced no output — '
+                        'writing original/interpolated target frame'
+                    )
+                    resimg = fallback_frame
+                    pause_controller.pending_output(1)
                 # Bounded: the writer is the only consumer, and if it has died
                 # this is where every worker would otherwise park forever.
                 pending = resimg is not None
@@ -1862,6 +1864,7 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                 gc.disable()
             worker_id = get_ident()
             self._runtime_worker_enter(worker_id)
+            fallback_frame = _owned_fallback_frame(frame)
             try:
                 with _prof('frame_total'):
                     if self.options.frame_processing:
@@ -1879,15 +1882,19 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                             pause_controller.end()
                     result = self.process_frame(frame, frame_idx=frame_idx,
                                                 output_pending=True)
-                    return result
-            except RuntimeError as exc:
-                message = str(exc)
-                if 'CUDA' in message or 'cuda' in message or 'onnxruntime' in message.lower():
-                    bar_write('[ProcessMgr] scheduler GPU error on frame %s — '
-                              'writing original: %s' % (frame_idx, message[:200]))
+                    if result is not None:
+                        return result
+                    bar_write('[ProcessMgr] scheduler frame %s produced no output — '
+                              'writing original/interpolated target frame' % frame_idx)
                     pause_controller.pending_output(1)
-                    return frame
-                raise
+                    return fallback_frame
+            except Exception as exc:
+                message = str(exc)
+                bar_write('[ProcessMgr] scheduler frame %s processing failed '
+                          '(%s): %s — writing original/interpolated target frame'
+                          % (frame_idx, type(exc).__name__, message[:200]))
+                pause_controller.pending_output(1)
+                return fallback_frame
             finally:
                 self._runtime_worker_exit(worker_id)
 
@@ -2097,14 +2104,17 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                     yield fr
             else:
                 cap = cv2.VideoCapture(source_video)
-                from roop.nvdec_reader import wrap_capture
-                cap = wrap_capture(cap, source_video,
-                                   int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)),
-                                   int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)),
-                                   cap.get(cv2.CAP_PROP_FPS), tag='stabilized decode',
-                                   # _read_loop already owns the only bounded
-                                   # chunk buffer; do not add a hidden frame queue.
-                                   prefetch_depth=0)
+                source_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+                source_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+                source_fps = cap.get(cv2.CAP_PROP_FPS)
+                cap = open_video_capture(
+                    source_video,
+                    source_width,
+                    source_height,
+                    source_fps,
+                    fallback_capture=cap,
+                    tag='stabilized decode',
+                )
                 if frame_start > 0:
                     cap.set(cv2.CAP_PROP_POS_FRAMES, frame_start)
                 produced = 0
@@ -2380,6 +2390,7 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                             return
                         gi = _base_global + ci
                         self._tls.t = gi
+                        fallback_frame = _owned_fallback_frame(_combined[ci])
                         try:
                             # The counted per-frame unit on this path, matching
                             # _prof('frame_total') in the sequential encoder loop.
@@ -2391,9 +2402,22 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                                 out = self.process_frame(_combined[ci], frame_idx=gi,
                                                           output_pending=True)
                         except Exception as _degrade_error:
-                            _swallowed("roop/ProcessMgr.py:3538", _degrade_error, "fallback continued")
-                            out = _combined[ci]
-                        _results[gi] = out if out is not None else _combined[ci]
+                            bar_write(
+                                f'[ProcessMgr] stabilization frame {gi} processing '
+                                f'failed ({type(_degrade_error).__name__}): '
+                                f'{_degrade_error} — writing original/interpolated '
+                                'target frame'
+                            )
+                            out = fallback_frame
+                            pause_controller.pending_output(1)
+                        if out is None:
+                            bar_write(
+                                f'[ProcessMgr] stabilization frame {gi} produced no '
+                                'output — writing original/interpolated target frame'
+                            )
+                            out = fallback_frame
+                            pause_controller.pending_output(1)
+                        _results[gi] = out
                         del out
                         if _progress_cb:
                             _progress_cb()
