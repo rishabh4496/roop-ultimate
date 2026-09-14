@@ -5,6 +5,9 @@ from @app to @router. Registered via app.include_router() in api.py, which is
 safe here because every /api route is a literal path with no path parameters,
 so declaration order cannot change which handler matches.
 """
+from roop.degrade import (report as _fallback_report,
+                          swallowed as _swallowed,
+                          total_swallowed as _fallback_total)
 
 from fastapi import APIRouter, Body
 import os
@@ -52,7 +55,8 @@ def _hardware_profile(refresh=False):
         if _HARDWARE_PROFILER is None:
             _HARDWARE_PROFILER = HardwareProfiler()
         return _HARDWARE_PROFILER.profile(refresh=refresh)
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("routes_diagnostics.py:55", _degrade_error, "fallback continued")
         return None
 
 def _gpu_name():
@@ -66,7 +70,8 @@ def _gpu_name():
         import torch
         if torch.cuda.is_available():
             name = torch.cuda.get_device_name(0)
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("routes_diagnostics.py:69", _degrade_error, "fallback continued")
         name = ""
     _GPU_NAME_CACHE = name
     return name
@@ -280,7 +285,8 @@ def _nvidia_smi_stats():
                 data[k] = round(float(v), 1)
             except ValueError:
                 pass
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("routes_diagnostics.py:283", _degrade_error, "fallback continued")
         with _nvsmi_lock:
             _nvsmi_cache["fails"] += 1
         return {}
@@ -315,10 +321,12 @@ def _vram_stats():
                 free_bytes, total_bytes = torch.cuda.mem_get_info(0)
                 data["vram_total"] = round(total_bytes / (1024 ** 3), 2)
                 data["vram_used"] = round((total_bytes - free_bytes) / (1024 ** 3), 2)
-            except Exception:
+            except Exception as _degrade_error:
+                _swallowed("routes_diagnostics.py:318", _degrade_error, "fallback continued")
                 data["vram_total"] = round(torch.cuda.get_device_properties(0).total_memory / (1024 ** 3), 2)
                 data["vram_used"] = round(torch.cuda.memory_allocated(0) / (1024 ** 3), 2)
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("routes_diagnostics.py:321", _degrade_error, "fallback continued")
         return {}
     with _vram_lock:
         _vram_cache.update({"t": time.time(), "data": dict(data)})
@@ -356,6 +364,7 @@ def get_stage_profile():
         } for k in sorted(times, key=lambda x: -times[x])]
         return {"enabled": True, "stages": stages}
     except Exception as e:
+        _swallowed("routes_diagnostics.py:358", e, "fallback continued")
         return {"enabled": False, "stages": [], "message": str(e)}
 
 
@@ -411,7 +420,8 @@ def get_telemetry():
         telemetry["ram_commit_limit"] = round(
             (ram.total + swap.total) / (1024 ** 3), 2)
         telemetry["ram_commit_source"] = "physical_used_plus_swap_used"
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("routes_diagnostics.py:414", _degrade_error, "fallback continued")
         pass
 
     telemetry.update(_vram_stats())
@@ -434,7 +444,8 @@ def get_telemetry():
             telemetry["runtime_scheduler"] = scheduler.snapshot()
         elif scheduler_summary is not None:
             telemetry["runtime_scheduler"] = dict(scheduler_summary)
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("routes_diagnostics.py:437", _degrade_error, "fallback continued")
         pass
 
     # Free space on the output drive. A long render writes tens of GB of frames
@@ -446,7 +457,8 @@ def get_telemetry():
         usage = shutil.disk_usage(probe)
         telemetry["disk_free"] = round(usage.free / (1024 ** 3), 1)
         telemetry["disk_total"] = round(usage.total / (1024 ** 3), 1)
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("routes_diagnostics.py:449", _degrade_error, "fallback continued")
         pass
 
     telemetry["threads"] = threading.active_count()
@@ -471,7 +483,8 @@ def get_telemetry():
             batch_swap_active and
             (nvenc_active or codec == '')
         )
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("routes_diagnostics.py:474", _degrade_error, "fallback continued")
         pass
 
     # ── What the pools ACTUALLY are, not what config.yaml asks for ───────────
@@ -495,8 +508,17 @@ def get_telemetry():
             "expr": session_pool.expression_pool_size(),
             "vram_gb": round(session_pool._detect_vram_gb(), 1),
         }
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("routes_diagnostics.py:498", _degrade_error, "fallback continued")
         pass
+
+    # Instrumented broad-exception fallbacks remain load-bearing by default,
+    # but their count is part of the runtime health surface. A feature that
+    # falls back on every frame should not look like a successful render.
+    telemetry["fallbacks"] = {
+        "total": _fallback_total(),
+        "sites": _fallback_report(),
+    }
 
     return telemetry
 
@@ -538,6 +560,7 @@ def update_check(refresh: bool = False):
         report = update_manager.check()
     except Exception as exc:
         # A broken check must not read as "no update available".
+        _swallowed("routes_diagnostics.py:539", exc, "fallback continued")
         return {"classification": "UNVERIFIED", "available": False,
                 "reasons": [f"compatibility evidence could not be collected: {exc}"],
                 "apply_channel": "pinokio"}

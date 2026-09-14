@@ -1,6 +1,7 @@
 """HTTP boundary for persistent processing projects."""
 
 from __future__ import annotations
+from roop.degrade import swallowed as _swallowed
 
 import os
 import json
@@ -113,7 +114,8 @@ def _load_into_runtime(record):
                 ui_globals.ui_target_thumbs.append(
                     api.util.convert_to_gradio(api._dataurl_to_bgr(thumbnail)))
                 continue
-            except Exception:
+            except Exception as _degrade_error:
+                _swallowed("routes_projects.py:116", _degrade_error, "fallback continued")
                 pass
         # Older records have no thumbnail. It is display-only; processing uses
         # the restored detector object above, so do not run a detector here.
@@ -180,6 +182,7 @@ def project_load(project_id: str):
                 "message": "project is already active; use Resume on the live job"})
         state = _load_into_runtime(record)
     except Exception as exc:
+        _swallowed("routes_projects.py:182", exc, "fallback continued")
         return _failure(record, [f"project inputs could not be reloaded: {exc}"])
     return {"project": checkpoints.summarize(record), "state": state}
 
@@ -209,4 +212,5 @@ def project_resume(project_id: str):
         payload = dict((record.get("settings") or {}).get("payload") or {})
         return _api()._start_existing_project(project_id, payload)
     except Exception as exc:
+        _swallowed("routes_projects.py:211", exc, "fallback continued")
         return _failure(record, [f"project could not be loaded: {exc}"])

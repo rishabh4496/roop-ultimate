@@ -7,6 +7,7 @@ explicit sentinel instead of a made-up zero or empty label.
 """
 
 from __future__ import annotations
+from roop.degrade import swallowed as _swallowed
 
 import re
 import os
@@ -132,7 +133,8 @@ def _active_provider() -> str:
             return _provider_name(providers)
         cfg = getattr(roop_globals, "CFG", None)
         return _provider_name(getattr(cfg, "provider", None))
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/runtime_state.py:135", _degrade_error, "fallback continued")
         return UNKNOWN
 
 
@@ -182,7 +184,8 @@ def _resource_snapshot() -> dict:
             _resource_cache["process"] = process
         value["memory"]["process_rss_gb"] = round(
             process.memory_info().rss / 2**30, 3)
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/runtime_state.py:185", _degrade_error, "fallback continued")
         pass
 
     # Torch is already loaded by the processing application before a real run.
@@ -191,7 +194,8 @@ def _resource_snapshot() -> dict:
     if "torch" in sys.modules:
         try:
             import torch
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("roop/runtime_state.py:194", _degrade_error, "fallback continued")
             torch = None
     else:
         torch = None
@@ -207,7 +211,8 @@ def _resource_snapshot() -> dict:
                 "free_gb": round(free_bytes / 2**30, 2),
                 "total_gb": round(total_bytes / 2**30, 2),
             }
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/runtime_state.py:210", _degrade_error, "fallback continued")
         pass
 
     with _resource_lock:
@@ -223,7 +228,8 @@ def _monitor_sample(manager) -> Mapping[str, Any]:
         with monitor._lock:
             samples = list(monitor._samples)
         return samples[-1] if samples else {}
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/runtime_state.py:226", _degrade_error, "fallback continued")
         return {}
 
 
@@ -233,7 +239,8 @@ def _profile_data(manager) -> tuple[Mapping[str, Any], Any]:
         return {}, None
     try:
         return profile.as_dict(), profile
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/runtime_state.py:236", _degrade_error, "fallback continued")
         return {}, profile
 
 
@@ -272,7 +279,8 @@ def _queue_snapshot() -> Optional[dict]:
             "job_count": len(jobs),
             "state_counts": counts,
         }
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/runtime_state.py:275", _degrade_error, "fallback continued")
         return None
     finally:
         if lock is not None:
@@ -310,7 +318,8 @@ def _project_snapshot(project_id: str) -> tuple[Optional[dict], Optional[dict]]:
             "written_at": checkpoint.get("written_at", UNKNOWN),
         }
         return project, checkpoint_view
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/runtime_state.py:313", _degrade_error, "fallback continued")
         return {
             "id": str(project_id),
             "name": UNKNOWN,
@@ -326,7 +335,8 @@ def _pause_state(progress: Mapping[str, Any]) -> dict:
     if controller is not None:
         try:
             return dict(controller.snapshot())
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("roop/runtime_state.py:329", _degrade_error, "fallback continued")
             pass
     return {
         "requested": bool(progress.get("pause_requested")),
@@ -464,7 +474,8 @@ def snapshot(progress: Optional[Mapping[str, Any]] = None,
             configured_precision = _text(getattr(cfg, "trt_precision", None))
         elif provider != UNKNOWN:
             configured_precision = NOT_APPLICABLE
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/runtime_state.py:467", _degrade_error, "fallback continued")
         pass
 
     effective_precision = _text(profile_data.get("precision")) if profile_data else configured_precision
@@ -503,7 +514,8 @@ def snapshot(progress: Optional[Mapping[str, Any]] = None,
             depths = manager._runtime_queue_snapshot()
             queue.update({"input": depths.get("input", UNKNOWN),
                           "output": depths.get("output", UNKNOWN)})
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("roop/runtime_state.py:506", _degrade_error, "fallback continued")
             pass
 
     errors = [error] if error else []
@@ -543,7 +555,8 @@ def snapshot(progress: Optional[Mapping[str, Any]] = None,
                      "recognizer"):
             if cfg is not None and hasattr(cfg, name):
                 model_values[name] = _text(getattr(cfg, name, None))
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/runtime_state.py:546", _degrade_error, "fallback continued")
         pass
 
     available_provider_values = UNKNOWN
@@ -552,7 +565,8 @@ def snapshot(progress: Optional[Mapping[str, Any]] = None,
         providers = getattr(roop_globals, "execution_providers", None) if roop_globals else None
         if providers:
             available_provider_values = [str(item) for item in providers]
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/runtime_state.py:555", _degrade_error, "fallback continued")
         pass
 
     runtime_summary = getattr(manager, "_runtime_summary", None) if manager is not None else None

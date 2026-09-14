@@ -37,6 +37,7 @@ Features:
    - Evaluates gaze displacement vectors and projects pupil position onto swapped face
      before final blend, preventing mismatched eye gaze and artificial stares.
 """
+from roop.degrade import swallowed as _swallowed
 
 import os
 import sys
@@ -928,7 +929,8 @@ def _create_default_gaze_model(path: str) -> None:
         graph = oh.make_graph([node], 'liveportrait_gaze_retargeter', [x], [y], [w, b])
         model = oh.make_model(graph, producer_name='roop_liveportrait_gaze', opset_imports=[oh.make_opsetid('', 17)])
         onnx.save(model, path)
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/processors/frame/face_swapper.py:931", _degrade_error, "fallback continued")
         pass
 
 
@@ -1104,7 +1106,8 @@ def retarget_eye_gaze(
             if out_f32.size >= 4:
                 adj_disp_left = out_f32[:2]
                 adj_disp_right = out_f32[2:4]
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("roop/processors/frame/face_swapper.py:1107", _degrade_error, "fallback continued")
             pass
 
     meta['adjusted_left'] = adj_disp_left
@@ -1263,10 +1266,12 @@ def get_gaze_retargeter() -> Optional[onnxruntime.InferenceSession]:
                 providers = getattr(roop.globals, 'execution_providers', ['CUDAExecutionProvider', 'CPUExecutionProvider'])
                 try:
                     GAZE_RETARGETER = onnxruntime.InferenceSession(model_path, providers=providers)
-                except Exception:
+                except Exception as _degrade_error:
+                    _swallowed("roop/processors/frame/face_swapper.py:1266", _degrade_error, "fallback continued")
                     try:
                         GAZE_RETARGETER = onnxruntime.InferenceSession(model_path, providers=['CPUExecutionProvider'])
-                    except Exception:
+                    except Exception as _degrade_error:
+                        _swallowed("roop/processors/frame/face_swapper.py:1269", _degrade_error, "fallback continued")
                         GAZE_RETARGETER = None
     return GAZE_RETARGETER
 
@@ -1308,7 +1313,8 @@ def compute_occlusion_mask(
     if sess is None:
         try:
             sess = get_face_occluder()
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("roop/processors/frame/face_swapper.py:1311", _degrade_error, "fallback continued")
             sess = None
 
     if sess is not None:
@@ -1341,7 +1347,8 @@ def compute_occlusion_mask(
             else:
                 occlusion_mask = occ_256
             return np.clip(occlusion_mask, 0.0, 1.0).astype(np.float32)
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("roop/processors/frame/face_swapper.py:1344", _degrade_error, "fallback continued")
             pass
 
     return _heuristic_occlusion_mask(crop_frame, face_mask)

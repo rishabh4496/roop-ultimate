@@ -30,6 +30,7 @@ The runner supplies only what it alone knows: `target_index`, resolved from
 goes stale as soon as a target is removed after queueing, and the job then
 silently swaps the wrong file.
 """
+from roop.degrade import swallowed as _swallowed
 
 from fastapi import APIRouter, Body
 from fastapi.responses import JSONResponse
@@ -207,6 +208,7 @@ def _save():
             json.dump({"jobs": _queue["jobs"]}, fh, indent=1)
         os.replace(tmp, QUEUE_FILE)      # atomic: a crash mid-write keeps the old file
     except Exception as e:
+        _swallowed("routes_queue.py:209", e, "fallback continued")
         _say(f"[Queue] could not save {QUEUE_FILE}: {e}")
 
 
@@ -231,6 +233,7 @@ def load():
             _say(f"[Queue] restored {len(jobs)} job(s) from queue.json "
                  f"({pending} still to run)")
     except Exception as e:
+        _swallowed("routes_queue.py:233", e, "fallback continued")
         _say(f"[Queue] could not load {QUEUE_FILE}: {e}")
 
 
@@ -490,6 +493,7 @@ def _run_one(job):
         try:
             reasons = list(_validate_project(project_id, payload) or [])
         except Exception as exc:
+            _swallowed("routes_queue.py:492", exc, "fallback continued")
             reasons = [f"checkpoint validation failed: {exc}"]
         if reasons:
             return "RECOVERABLE", "cannot safely resume: " + "; ".join(reasons)
@@ -502,6 +506,7 @@ def _run_one(job):
             with _lock:
                 _save()
         except Exception as exc:
+            _swallowed("routes_queue.py:504", exc, "fallback continued")
             return "FAILED", f"could not create processing checkpoint: {exc}"
     if project_id:
         payload["_project_id"] = project_id
@@ -531,7 +536,8 @@ def _run_one(job):
     if before is not None and _outputs_since:
         try:
             job["outputs"] = list(_outputs_since(before))
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("routes_queue.py:534", _degrade_error, "fallback continued")
             job["outputs"] = []
 
     if job.get("cancel_requested") or job["id"] in _cancel_requested:
@@ -556,7 +562,8 @@ def _say(msg):
     already been saved, so the only symptom is a queue that silently stops."""
     try:
         print(msg.encode("ascii", "replace").decode("ascii"), flush=True)
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("routes_queue.py:559", _degrade_error, "fallback continued")
         pass
 
 
@@ -630,7 +637,8 @@ def _loop(gen):
                     if _set_project_state and live.get("project_id"):
                         try:
                             _set_project_state(live["project_id"], status, error)
-                        except Exception:
+                        except Exception as _degrade_error:
+                            _swallowed("routes_queue.py:633", _degrade_error, "fallback continued")
                             pass
                 _cancel_requested.discard(job["id"])
                 _queue["current"] = None
@@ -688,7 +696,8 @@ def queue_pause():
             if pause["acknowledged"] and _set_project_state and current.get("project_id"):
                 try:
                     _set_project_state(current["project_id"], "PAUSED")
-                except Exception:
+                except Exception as _degrade_error:
+                    _swallowed("routes_queue.py:691", _degrade_error, "fallback continued")
                     pass
         _save()
     return _snapshot()
@@ -711,6 +720,7 @@ def queue_resume(payload: dict | None = Body(default=None)):
             try:
                 reasons = list(_validate_project(project_id, selected.get("payload") or {}) or [])
             except Exception as exc:
+                _swallowed("routes_queue.py:713", exc, "fallback continued")
                 reasons = [f"checkpoint validation failed: {exc}"]
             if reasons:
                 if _set_project_state:
@@ -861,6 +871,7 @@ def queue_join(payload: dict = Body(...)):
             return JSONResponse(status_code=500, content={
                 "message": f"ffmpeg concat failed (exit {proc.returncode}) — see the terminal log"})
     except Exception as e:
+        _swallowed("routes_queue.py:863", e, "fallback continued")
         return JSONResponse(status_code=500, content={"message": str(e)})
     finally:
         try:

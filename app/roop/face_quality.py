@@ -21,6 +21,7 @@ Weights are env-overridable (ROOP_FIQA_W_*) and any missing component (e.g. no
 embedding when recognition is disabled) drops out and the rest renormalise, so
 the score stays meaningful in every module configuration.
 """
+from roop.degrade import swallowed as _swallowed
 
 import os
 import statistics
@@ -56,7 +57,8 @@ def _sharpness_score(crop_bgr):
         var = float(cv2.Laplacian(g, cv2.CV_64F).var())
         # ~<50 reads blurry, ~>350 crisp after the fixed-size resize.
         return _clamp01(var / 350.0), var
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/face_quality.py:59", _degrade_error, "fallback continued")
         return 0.5, 0.0
 
 
@@ -64,7 +66,8 @@ def _resolution_score(face):
     try:
         x1, y1, x2, y2 = [float(v) for v in face.bbox]
         side = min(x2 - x1, y2 - y1)
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/face_quality.py:67", _degrade_error, "fallback continued")
         return 0.5, 0.0
     # <64px is too small to contribute detail; >=192px is plenty.
     return _clamp01((side - 64.0) / (192.0 - 64.0)), side
@@ -86,7 +89,8 @@ def _pose_score(face):
             iod = float(np.linalg.norm(re - le)) + 1e-6
             off = abs(float(no[0]) - float(eye_mid[0])) / iod  # 0 frontal, grows toward profile
             return _clamp01(1.0 - off / 0.5)
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("roop/face_quality.py:89", _degrade_error, "fallback continued")
             pass
     return 0.6  # unknown — neutral-ish, never a hard reject on its own
 
@@ -97,7 +101,8 @@ def _norm_score(face):
         return None
     try:
         n = float(np.linalg.norm(np.asarray(emb, dtype=np.float32)))
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/face_quality.py:100", _degrade_error, "fallback continued")
         return None
     # buffalo_l ArcFace norms cluster ~14 (poor) .. ~26 (strong); soft-map.
     return _clamp01((n - 14.0) / (26.0 - 14.0))

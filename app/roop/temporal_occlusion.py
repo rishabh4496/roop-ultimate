@@ -6,6 +6,7 @@ not add a segmentation model: ordinary frames use the configured mask engine,
 stable occlusion frames propagate the last trusted mask, and a change in the
 occlusion evidence re-enters the configured engine.
 """
+from roop.degrade import swallowed as _swallowed
 
 import copy as _copy_module
 from dataclasses import dataclass
@@ -57,7 +58,8 @@ def _observation(value):
             image = cv2.cvtColor(image.astype(np.uint8), cv2.COLOR_BGR2GRAY)
         image = cv2.resize(image, (64, 64), interpolation=cv2.INTER_AREA)
         return image.astype(np.float32) / 255.0
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/temporal_occlusion.py:60", _degrade_error, "fallback continued")
         return None
 
 
@@ -91,7 +93,8 @@ def build_face_support(landmarks=None, kps=None, matrix=None, shape=None):
         if k > 1:
             support = cv2.GaussianBlur(support, (k, k), 0)
         return np.clip(support, 0.0, 1.0)
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/temporal_occlusion.py:94", _degrade_error, "fallback continued")
         return None
 
 
@@ -132,7 +135,8 @@ class TemporalOcclusionState:
                 return list(value)
             try:
                 return np.asarray(value).copy()
-            except Exception:
+            except Exception as _degrade_error:
+                _swallowed("roop/temporal_occlusion.py:135", _degrade_error, "fallback continued")
                 return value
 
         return {

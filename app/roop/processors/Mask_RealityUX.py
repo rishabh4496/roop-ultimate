@@ -1,3 +1,4 @@
+from roop.degrade import swallowed as _swallowed
 import threading
 
 import cv2
@@ -39,9 +40,10 @@ def _small_card_parser_enabled():
         total_gb = (torch.cuda.get_device_properties(device_id).total_memory
                     / (1024 ** 3))
         return total_gb >= 7.0
-    except Exception:
+    except Exception as _degrade_error:
         # An unreadable capability probe must not disable a requested quality
         # component on an unknown/non-CUDA device.
+        _swallowed("roop/processors/Mask_RealityUX.py:42", _degrade_error, "fallback continued")
         return True
 
 # Classes BiSeNet is allowed to subtract from XSeg's swap region: only
@@ -174,6 +176,7 @@ class Mask_RealityUX():
             try:
                 out[key] = fn()
             except Exception as e:
+                _swallowed("roop/processors/Mask_RealityUX.py:176", e, "fallback continued")
                 errors[key] = e
 
         t_parser = threading.Thread(

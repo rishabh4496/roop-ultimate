@@ -16,6 +16,7 @@ Enable with the env var ROOP_TRT_POOL=<N> (N>=2). Default (unset / <2) keeps the
 original single-session behaviour byte-for-byte, so this is a no-op unless opted
 in. VRAM cost scales ~N x per pooled model, so keep N small on limited GPUs.
 """
+from roop.degrade import swallowed as _swallowed
 import os
 import contextlib
 import threading
@@ -53,7 +54,8 @@ def _detect_vram_gb() -> float:
         elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
             import psutil
             return (psutil.virtual_memory().total / (1024 ** 3)) * 0.5
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/session_pool.py:56", _degrade_error, "fallback continued")
         pass
     return 0.0
 
@@ -333,7 +335,8 @@ def _matching_benchmark_knee(model_key, input_shape=None):
                 current_key = shared_hardware_profile(
                     getattr(_globals, 'cuda_device_id', 0) or 0).as_dict().get(
                         'hardware_profile_key')
-            except Exception:
+            except Exception as _degrade_error:
+                _swallowed("roop/session_pool.py:336", _degrade_error, "fallback continued")
                 current_key = None
         if not current_key or str(recorded_key) != str(current_key):
             return None
@@ -430,8 +433,9 @@ def _matching_benchmark_knee(model_key, input_shape=None):
                     return knee
             except (TypeError, ValueError):
                 continue
-    except Exception:
+    except Exception as _degrade_error:
         # A persisted diagnostic must never make model startup fail.
+        _swallowed("roop/session_pool.py:433", _degrade_error, "fallback continued")
         return None
     return None
 
@@ -443,7 +447,8 @@ def _live_vram_mb():
         if torch.cuda.is_available():
             free, total = torch.cuda.mem_get_info()
             return free / (1024 ** 2), total / (1024 ** 2)
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/session_pool.py:446", _degrade_error, "fallback continued")
         pass
     return 0.0, 0.0
 
@@ -784,7 +789,8 @@ def detector_pool_size(model_key=None, input_shape=None, batch_size=1) -> int:
             requested, model_key, input_shape, batch_size,
             explicit=_pool_explicit('detmask') or
             not _pool_cache.get('_auto_detmask', False))
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/session_pool.py:787", _degrade_error, "fallback continued")
         return 1
 
 

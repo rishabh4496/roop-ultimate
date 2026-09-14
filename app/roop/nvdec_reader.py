@@ -25,6 +25,7 @@ Rollout: ROOP_NVDEC=0 disables, =1 or unset (auto) enables behind a one-time
 per-file probe — if `-hwaccel cuda` can't decode the first frame, the caller
 keeps its cv2 reader, so this can never break a run.
 """
+from roop.degrade import swallowed as _swallowed
 
 import os
 import queue
@@ -75,7 +76,8 @@ def _fps_mode_args():
                                       capture_output=True, timeout=30, **_popen_kwargs())
                 blob = (proc.stdout or b"") + (proc.stderr or b"")
                 _fps_mode_flag = ["-fps_mode", "passthrough"] if b"-fps_mode" in blob else ["-vsync", "0"]
-            except Exception:
+            except Exception as _degrade_error:
+                _swallowed("roop/nvdec_reader.py:78", _degrade_error, "fallback continued")
                 _fps_mode_flag = ["-vsync", "0"]
         return list(_fps_mode_flag)
 
@@ -99,7 +101,8 @@ def _probe(video_path: str, hwaccel: str = "cuda") -> bool:
         cmd += ["-i", video_path, "-frames:v", "1", "-f", "null", "-"]
         proc = subprocess.run(cmd, capture_output=True, timeout=30, **_popen_kwargs())
         ok = proc.returncode == 0
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/nvdec_reader.py:102", _degrade_error, "fallback continued")
         ok = False
     with _probe_lock:
         _probe_cache[key] = ok
@@ -187,7 +190,8 @@ def _auto_prefetch_depth() -> int:
         if torch.cuda.is_available():
             total = float(torch.cuda.get_device_properties(0).total_memory) / (1024 ** 3)
             return 1 if total < 7.0 else 2
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/nvdec_reader.py:190", _degrade_error, "fallback continued")
         pass
     return 1
 
@@ -342,6 +346,7 @@ class FFmpegVideoReader:
                     if not self._put_prefetched(bgr_buf):
                         return
         except Exception as exc:
+            _swallowed("roop/nvdec_reader.py:344", exc, "fallback continued")
             self._prefetch_error = exc
             self._eof = True
             self._put_prefetched(_END_OF_STREAM)
@@ -391,15 +396,18 @@ class FFmpegVideoReader:
         if self.proc is not None:
             try:
                 self.proc.stdout.close()
-            except Exception:
+            except Exception as _degrade_error:
+                _swallowed("roop/nvdec_reader.py:394", _degrade_error, "fallback continued")
                 pass
             try:
                 self.proc.terminate()
                 self.proc.wait(timeout=3)
-            except Exception:
+            except Exception as _degrade_error:
+                _swallowed("roop/nvdec_reader.py:399", _degrade_error, "fallback continued")
                 try:
                     self.proc.kill()
-                except Exception:
+                except Exception as _degrade_error:
+                    _swallowed("roop/nvdec_reader.py:402", _degrade_error, "fallback continued")
                     pass
             self.proc = None
         if self._prefetch_thread is not None:
@@ -450,7 +458,8 @@ def wrap_capture(cap, video_path, width, height, fps, tag="decode",
             return cap
     try:
         cap.release()
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/nvdec_reader.py:453", _degrade_error, "fallback continued")
         pass
     reader = FFmpegVideoReader(video_path, width, height, fps, hwaccel=hwaccel,
                                prefetch_depth=prefetch_depth)

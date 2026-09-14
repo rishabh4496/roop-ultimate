@@ -16,6 +16,7 @@ head under 1 px of keypoint noise, the bare threshold flips the verdict up to
 123 times in 400 frames (yaw 0 / pitch +30, i.e. an ordinary head tilted up).
 Hysteresis takes that to 0.
 """
+from roop.degrade import swallowed as _swallowed
 
 import threading
 from bisect import bisect_right
@@ -130,7 +131,8 @@ def nonfrontal_score(kps, tgt_pitch_deg=0.0):
         margins.append(abs(float(tgt_pitch_deg)) / _TGT_PITCH_MAX)
         value = max(margins)
         return float(value) if np.isfinite(value) else 0.0
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/nonfrontal.py:133", _degrade_error, "fallback continued")
         return 0.0
 
 
@@ -268,7 +270,8 @@ class NonFrontalRouter:
             return bare
         try:
             centroid, size = self._geometry(kps)
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("roop/nonfrontal.py:271", _degrade_error, "fallback continued")
             return bare
         if centroid is None:
             return bare

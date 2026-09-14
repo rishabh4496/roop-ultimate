@@ -6,6 +6,7 @@ in core video processing worker loops.
 """
 
 from __future__ import annotations
+from roop.degrade import swallowed as _swallowed
 
 import os
 import queue
@@ -28,7 +29,8 @@ def is_pinned_supported() -> bool:
         return False
     try:
         return bool(torch.cuda.is_available())
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/buffer_pool.py:31", _degrade_error, "fallback continued")
         return False
 
 
@@ -42,7 +44,8 @@ def allocate_pinned_buffer(shape: Tuple[int, ...], dtype: Any = np.uint8) -> np.
         try:
             tensor = torch.empty(shape, dtype=torch.uint8, pin_memory=True)
             return tensor.numpy()
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("roop/buffer_pool.py:45", _degrade_error, "fallback continued")
             pass
     return np.empty(shape, dtype=dtype)
 

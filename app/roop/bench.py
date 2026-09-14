@@ -57,6 +57,7 @@ models instead of the selected ones):
 
     env/Scripts/python.exe -m roop.bench --profile full
 """
+from roop.degrade import swallowed as _swallowed
 
 import os
 import platform
@@ -192,7 +193,8 @@ def vram_free_total_gb():
             return 0.0, 0.0
         free, total = torch.cuda.mem_get_info()
         return free / (1024 ** 3), total / (1024 ** 3)
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/bench.py:195", _degrade_error, "fallback continued")
         return 0.0, 0.0
 
 
@@ -244,16 +246,18 @@ def probe_device():
             'platform': hardware.platform or info['platform'],
             'hardware_profile_key': hardware.as_dict().get('hardware_profile_key'),
         })
-    except Exception:
+    except Exception as _degrade_error:
         # Keep the legacy lightweight probe as a fallback for partial installs.
         # It still reports unknown fields as unknown; it never substitutes a
         # result from another GPU.
+        _swallowed("roop/bench.py:247", _degrade_error, "fallback continued")
         pass
     try:
         import psutil
         info['cpu_physical'] = info['cpu_physical'] or psutil.cpu_count(logical=False) or 0
         info['cpu_logical'] = info['cpu_logical'] or psutil.cpu_count(logical=True) or 0
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/bench.py:256", _degrade_error, "fallback continued")
         info['cpu_logical'] = os.cpu_count() or 4
         info['cpu_physical'] = max(1, info['cpu_logical'] // 2)
     try:
@@ -262,7 +266,8 @@ def probe_device():
             props = torch.cuda.get_device_properties(0)
             info['gpu_name'] = props.name
             info['cuda_ok'] = True
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/bench.py:265", _degrade_error, "fallback continued")
         pass
     free, total = vram_free_total_gb()
     info['free_vram_gb'] = info['free_vram_gb'] or round(free, 2)
@@ -275,11 +280,13 @@ def probe_device():
         try:
             from roop.hardware_validation import hardware_profile_key
             info['hardware_profile_key'] = hardware_profile_key(info)
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("roop/bench.py:278", _degrade_error, "fallback continued")
             info['hardware_profile_key'] = None
     try:
         info['ort_providers'] = list(onnxruntime.get_available_providers())
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/bench.py:282", _degrade_error, "fallback continued")
         pass
     cfg = roop.globals.CFG
     info['provider'] = getattr(cfg, 'provider', '') if cfg else ''
@@ -464,7 +471,8 @@ def _detector_model(engine):
     try:
         size = int(str(getattr(roop.globals, 'face_detector_size', None)
                        or getattr(roop.globals.CFG, 'face_detector_size', 640)))
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/bench.py:467", _degrade_error, "fallback continued")
         size = 640
     table = {
         'scrfd': ('SCRFD det_10g', 'buffalo_l/det_10g.onnx'),
@@ -527,7 +535,8 @@ def build_catalogue(faces_per_frame=1.0):
     swap_path = _exists(spec['file'])
     try:
         subsample = int(str(getattr(cfg, 'subsample_upscale', '256px'))[:3])
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/bench.py:530", _degrade_error, "fallback continued")
         subsample = 256
     out_size = int(spec.get('output_size', 128))
     tiles = max(1, (subsample // out_size) ** 2)
@@ -606,7 +615,8 @@ def build_catalogue(faces_per_frame=1.0):
         try:
             from roop.gridsample5d import ensure_patched_model
             warp = ensure_patched_model(warp, verbose=False) or warp
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("roop/bench.py:609", _degrade_error, "fallback continued")
             pass
         stages.append(Stage(
             'expression', 'Expression — warping_spade', warp, prov,
@@ -684,7 +694,8 @@ def _build_session(stage, providers=None):
                 changed = True
             if changed:
                 model_arg = m.SerializeToString()
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("roop/bench.py:687", _degrade_error, "fallback continued")
             model_arg = stage.path
     return onnxruntime.InferenceSession(model_arg, opts, providers=providers)
 
@@ -734,6 +745,7 @@ def throughput(sessions, feeds_list, out_names, workers, seconds, warm,
                 finally:
                     q.put(sess)
         except Exception as e:                      # noqa: BLE001 - reported, not raised
+            _swallowed("roop/bench.py:736", e, "fallback continued")
             errors.append(e)
         if not clock.ready():
             return
@@ -746,6 +758,7 @@ def throughput(sessions, feeds_list, out_names, workers, seconds, warm,
                 finally:
                     q.put(sess)
             except Exception as e:                  # noqa: BLE001
+                _swallowed("roop/bench.py:748", e, "fallback continued")
                 errors.append(e)
                 break
             n += 1
@@ -854,6 +867,7 @@ def measure_stage(stage, cfg, report, cancelled, sweep_pools, max_level):
                 try:
                     sess = _build_session(stage)
                 except Exception as e:              # noqa: BLE001
+                    _swallowed("roop/bench.py:856", e, "fallback continued")
                     if not sessions:
                         stage.error = f'{type(e).__name__}: {str(e)[:120]}'
                         return
@@ -890,6 +904,7 @@ def measure_stage(stage, cfg, report, cancelled, sweep_pools, max_level):
                 # refuses, a shape the harness guessed wrong — is one stage's
                 # problem. Recording it and carrying on is the difference between
                 # a report with a gap in it and no report at all.
+                _swallowed("roop/bench.py:888", e, "fallback continued")
                 stage.error = f'{type(e).__name__}: {str(e)[:120]}'
                 report(log=f'  ! {stage.label} did not run: {stage.error}')
                 return
@@ -988,7 +1003,8 @@ def _release_vram():
     try:
         torch = _torch()
         torch.cuda.empty_cache()
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/bench.py:991", _degrade_error, "fallback continued")
         pass
 
 
@@ -1087,6 +1103,7 @@ def measure_composite(stages, pools, modes, thread_levels, cfg, report, cancelle
                 try:
                     sess = _build_session(st)
                 except Exception as e:              # noqa: BLE001
+                    _swallowed("roop/bench.py:1089", e, "fallback continued")
                     report(log=f'  composite: {st.label} stopped at {i} '
                                f'({type(e).__name__})')
                     break
@@ -1183,7 +1200,8 @@ def measure_composite(stages, pools, modes, thread_levels, cfg, report, cancelle
             while not q.empty():
                 try:
                     q.get_nowait()
-                except Exception:
+                except Exception as _degrade_error:
+                    _swallowed("roop/bench.py:1186", _degrade_error, "fallback continued")
                     break
         built.clear()
         keep.clear()
@@ -1228,12 +1246,14 @@ def _allocate_contexts(built):
         while not q.empty():
             try:
                 held.append(q.get_nowait())
-            except Exception:
+            except Exception as _degrade_error:
+                _swallowed("roop/bench.py:1231", _degrade_error, "fallback continued")
                 break
         for i, sess in enumerate(held):
             try:
                 sess.run(outs, feeds[i % len(feeds)])
-            except Exception:                       # noqa: BLE001
+            except Exception as _degrade_error:                       # noqa: BLE001
+                _swallowed("roop/bench.py:1236", _degrade_error, "fallback continued")
                 pass                                # the timed pass will report it
         for sess in held:
             q.put(sess)
@@ -1251,6 +1271,7 @@ def _composite_run(built, workers, seconds, warm, global_lock, cpu_work):
             while time.perf_counter() < t_end:
                 _one_frame(built, w, acc, global_lock, cpu_work)
         except Exception as e:                      # noqa: BLE001
+            _swallowed("roop/bench.py:1253", e, "fallback continued")
             errors.append(e)
         if not clock.ready():
             return
@@ -1259,6 +1280,7 @@ def _composite_run(built, workers, seconds, warm, global_lock, cpu_work):
             try:
                 _one_frame(built, w, acc, global_lock, cpu_work)
             except Exception as e:                  # noqa: BLE001
+                _swallowed("roop/bench.py:1261", e, "fallback continued")
                 errors.append(e)
                 break
             n += 1
@@ -1360,6 +1382,7 @@ def measure_provider_ab(stages, cfg, report, cancelled):
             # Recorded, not skipped. "This model does not run on CUDA here" is
             # the strongest possible argument for the TensorRT setting, and a
             # silently missing row reads as "not measured".
+            _swallowed("roop/bench.py:1359", e, "fallback continued")
             rows.append({
                 'stage': st.label,
                 'trt_ms': round(st.ms_call, 3),
@@ -1416,6 +1439,7 @@ def measure_batch_swap(stages, cfg, report, cancelled):
                            f'{1000.0 / max(calls, 1e-9):.2f} ms/batch, '
                            f'free VRAM {free_after:.2f} GB')
             except Exception as e:                  # noqa: BLE001
+                _swallowed("roop/bench.py:1418", e, "fallback continued")
                 rows.append({
                     'batch_size': candidate,
                     'error': f'{type(e).__name__}: {str(e)[:100]}',
@@ -1449,6 +1473,7 @@ def measure_batch_swap(stages, cfg, report, cancelled):
     except Cancelled:
         raise
     except Exception as e:                          # noqa: BLE001
+        _swallowed("roop/bench.py:1451", e, "fallback continued")
         return {'error': f'{type(e).__name__}: {str(e)[:100]}'}
 
 
@@ -1528,6 +1553,7 @@ def measure_tile_upscale(cfg, report, cancelled):
                            f"effective={rows[-1]['effective_batch_size']}, "
                            f"max diff={max_diff}, free VRAM {free_after:.2f} GB")
             except Exception as e:                  # noqa: BLE001
+                _swallowed("roop/bench.py:1530", e, "fallback continued")
                 rows.append({'batch_size': candidate,
                              'error': f'{type(e).__name__}: {str(e)[:120]}'})
                 report(log=f'  upscale tile batch {candidate}: rejected '
@@ -1550,12 +1576,14 @@ def measure_tile_upscale(cfg, report, cancelled):
     except Cancelled:
         raise
     except Exception as e:                          # noqa: BLE001
+        _swallowed("roop/bench.py:1552", e, "fallback continued")
         return {'error': f'{type(e).__name__}: {str(e)[:120]}'}
     finally:
         if proc is not None:
             try:
                 proc.Release()
-            except Exception:
+            except Exception as _degrade_error:
+                _swallowed("roop/bench.py:1558", _degrade_error, "fallback continued")
                 pass
         _release_vram()
         if old_tile is None:
@@ -1647,7 +1675,8 @@ def measure_io(report, cancelled, seconds_of_video=2.0, width=1920, height=1080,
                 proc.stdin.write(buf)
             proc.stdin.close()
             proc.wait(timeout=300)
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("roop/bench.py:1650", _degrade_error, "fallback continued")
             proc.kill()
             return None
         if proc.returncode != 0:
@@ -1683,7 +1712,8 @@ def measure_io(report, cancelled, seconds_of_video=2.0, width=1920, height=1080,
             try:
                 import shutil as _sh
                 _sh.copyfile(path, raw)
-            except Exception:
+            except Exception as _degrade_error:
+                _swallowed("roop/bench.py:1686", _degrade_error, "fallback continued")
                 pass
 
     payload.clear()          # ~370 MB of raw frames; the decode half does not need them
@@ -1706,7 +1736,8 @@ def measure_io(report, cancelled, seconds_of_video=2.0, width=1920, height=1080,
                             '-c', 'copy', long_path],
                            check=True, timeout=120)
             long_frames = n_frames * loops
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("roop/bench.py:1709", _degrade_error, "fallback continued")
             long_path = raw
 
     def _passes(fn):
@@ -1774,12 +1805,14 @@ def measure_io(report, cancelled, seconds_of_video=2.0, width=1920, height=1080,
                 else:
                     out['notes'].append(f'{name} produced no frames')
             except Exception as exc:
+                _swallowed("roop/bench.py:1776", exc, "fallback continued")
                 out['notes'].append(f'{name} failed: {type(exc).__name__}')
 
     try:
         import shutil as _sh
         _sh.rmtree(tmp, ignore_errors=True)
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/bench.py:1782", _degrade_error, "fallback continued")
         pass
     return out
 
@@ -2099,7 +2132,8 @@ def run_benchmark(profile='full', faces_per_frame=1.0, report=None,
     # they bury the benchmark's own output in the console it shares with the app.
     try:
         onnxruntime.set_default_logger_severity(3)
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/bench.py:2102", _degrade_error, "fallback continued")
         pass
 
     device = probe_device()
@@ -2344,7 +2378,8 @@ def apply_recommendation(result):
         small_gpu = bool(torch.cuda.is_available() and
                          torch.cuda.get_device_properties(0).total_memory /
                          (1024 ** 3) < 7.0)
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/bench.py:2347", _degrade_error, "fallback continued")
         pass
     for knob, key in pool_keys.items():
         val = (rec.get('pools') or {}).get(knob)
@@ -2409,6 +2444,7 @@ def apply_recommendation(result):
     try:
         cfg.save()
     except Exception as e:                          # noqa: BLE001
+        _swallowed("roop/bench.py:2411", e, "fallback continued")
         return {'error': f'could not save config: {e}'}
     return {'applied_now': applied, 'pending_restart': pending}
 

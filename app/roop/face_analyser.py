@@ -7,6 +7,7 @@ stabilizer matrices, and GPU tensor allocations.
 """
 
 from __future__ import annotations
+from roop.degrade import swallowed as _swallowed
 
 import os
 from threading import RLock
@@ -99,7 +100,8 @@ def compute_canonical_roll_angle(landmarks: Any) -> Tuple[float, float]:
         theta_rad = float((theta_rad + np.pi) % (2.0 * np.pi) - np.pi)
         theta_deg = float(np.degrees(theta_rad))
         return theta_rad, theta_deg
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/face_analyser.py:102", _degrade_error, "fallback continued")
         return 0.0, 0.0
 
 
@@ -189,7 +191,8 @@ def estimate_head_pose_pnp(
                 )
                 if ok and np.isfinite(rvec).all():
                     break
-            except Exception:
+            except Exception as _degrade_error:
+                _swallowed("roop/face_analyser.py:192", _degrade_error, "fallback continued")
                 pass
 
         if not ok or rvec is None or not np.isfinite(rvec).all():
@@ -214,13 +217,15 @@ def estimate_head_pose_pnp(
         pitch = float((pitch + 180.0) % 360.0 - 180.0)
         roll = float((roll + 180.0) % 360.0 - 180.0)
         return yaw, pitch, roll
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/face_analyser.py:217", _degrade_error, "fallback continued")
         try:
             from roop.face_util import solve_pose_5pt
             pose = solve_pose_5pt(np.asarray(landmarks, dtype=np.float32).reshape(-1, 2)[:5])
             if pose is not None:
                 return float(pose[0]), float(pose[1]), float(pose[2])
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("roop/face_analyser.py:223", _degrade_error, "fallback continued")
             pass
         return 0.0, 0.0, 0.0
 
@@ -382,7 +387,8 @@ def profile_stable_anchor_alignment(
             arr = np.asarray(landmarks_68, dtype=np.float32).reshape(-1, 2)
             if arr.shape[0] >= 68 and np.all(np.isfinite(arr[:68])):
                 lm68 = arr
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("roop/face_analyser.py:385", _degrade_error, "fallback continued")
             lm68 = None
 
     if lm68 is not None:
@@ -400,7 +406,8 @@ def profile_stable_anchor_alignment(
                 refined = np.asarray(_face_field(face, 'landmark_2d_106'), dtype=np.float32).reshape(-1, 2)
                 if refined.shape[0] >= 20 and np.all(np.isfinite(refined)):
                     refined_chin = refined[np.argmax(refined[:, 1])]
-            except Exception:
+            except Exception as _degrade_error:
+                _swallowed("roop/face_analyser.py:403", _degrade_error, "fallback continued")
                 refined_chin = None
 
         if refined_chin is not None:
@@ -893,7 +900,8 @@ def openvino_available() -> bool:
     try:
         from roop.backend_manager import provider_available
         return provider_available("OpenVINOExecutionProvider")
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/face_analyser.py:896", _degrade_error, "fallback continued")
         return False
 
 
@@ -941,7 +949,8 @@ def openvino_device_usable(device: str) -> bool:
             providers=[("OpenVINOExecutionProvider", {"device_type": device}),
                        "CPUExecutionProvider"])
         usable = "OpenVINOExecutionProvider" in session.get_providers()
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/face_analyser.py:944", _degrade_error, "fallback continued")
         usable = False
     with _openvino_lock:
         _openvino_state[key] = usable
@@ -963,7 +972,8 @@ def openvino_devices() -> Tuple[str, ...]:
     try:
         import openvino as ov
         devices = tuple(str(d) for d in ov.Core().available_devices)
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/face_analyser.py:966", _degrade_error, "fallback continued")
         devices = ()
     with _openvino_lock:
         _openvino_state["devices"] = devices
@@ -1091,7 +1101,8 @@ def compute_histogram_signature(frame: Frame) -> Optional[np.ndarray]:
         hist = cv2.calcHist([small], [0, 1, 2], None, [8, 8, 8], [0, 256, 0, 256, 0, 256])
         cv2.normalize(hist, hist, 1, 0, cv2.NORM_L1)
         return hist.astype(np.float32)
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/face_analyser.py:1094", _degrade_error, "fallback continued")
         return None
 
 
@@ -1101,7 +1112,8 @@ def compare_histogram_difference(hist1: Optional[np.ndarray], hist2: Optional[np
         return 1.0
     try:
         return float(cv2.compareHist(hist1, hist2, cv2.HISTCMP_BHATTACHARYYA))
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/face_analyser.py:1104", _degrade_error, "fallback continued")
         return 1.0
 
 
@@ -1113,7 +1125,8 @@ def scale_face_coordinates(face: Any, inv_scale: float) -> None:
             try:
                 scaled = (np.asarray(v, dtype=np.float32) * inv_scale).copy()
                 _set_face_field(face, attr, scaled)
-            except Exception:
+            except Exception as _degrade_error:
+                _swallowed("roop/face_analyser.py:1116", _degrade_error, "fallback continued")
                 pass
     lm68 = _face_field(face, 'landmark_3d_68')
     if lm68 is not None:
@@ -1121,7 +1134,8 @@ def scale_face_coordinates(face: Any, inv_scale: float) -> None:
             lm68_s = np.asarray(lm68, dtype=np.float32).copy()
             lm68_s[:, :2] *= inv_scale
             _set_face_field(face, 'landmark_3d_68', lm68_s)
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("roop/face_analyser.py:1124", _degrade_error, "fallback continued")
             pass
 
 

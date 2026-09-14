@@ -45,6 +45,7 @@ cached under the same GPU/driver/CUDA/ORT identity used for engine caches. A
 device where HEURISTIC works keeps HEURISTIC and is completely unaffected.
 """
 from __future__ import annotations
+from roop.degrade import swallowed as _swallowed
 
 import json
 import os
@@ -99,7 +100,8 @@ def _device_key(device_id=0):
         # CUDA, driver and ORT version, and is exactly what must invalidate
         # this verdict too.
         return backend_manager.cache_namespace('cudnnalgo', device_id)
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/cudnn_algo.py:102", _degrade_error, "fallback continued")
         return 'unknown-device'
 
 
@@ -114,7 +116,8 @@ def _load(device_id=0):
         with open(_cache_path(device_id), 'r', encoding='utf-8') as fh:
             data = json.load(fh)
         return data if isinstance(data, dict) else {}
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/cudnn_algo.py:117", _degrade_error, "fallback continued")
         return {}
 
 
@@ -134,7 +137,8 @@ def _store(model_key, algo, device_id=0):
         finally:
             if os.path.exists(tmp):
                 os.unlink(tmp)
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/cudnn_algo.py:137", _degrade_error, "fallback continued")
         pass  # a cache we cannot write is a slow probe, never a failed render
 
 
@@ -215,7 +219,8 @@ def probe(model_key, model_path, providers, session_options=None, device_id=0):
         # records nothing. Keep the original EP error.
         try:
             sess.disable_fallback()
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("roop/cudnn_algo.py:218", _degrade_error, "fallback continued")
             pass
         feed = {}
         for spec in sess.get_inputs():
@@ -243,7 +248,8 @@ def probe(model_key, model_path, providers, session_options=None, device_id=0):
                 # An unrelated failure says nothing about the algo search, so
                 # do not cache a verdict off it.
                 return None
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/cudnn_algo.py:246", _degrade_error, "fallback continued")
         return None
     finally:
         del sess

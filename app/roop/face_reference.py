@@ -7,6 +7,7 @@ identity-bank contract usable by the API, legacy UI and command-line callers.
 """
 
 from __future__ import annotations
+from roop.degrade import swallowed as _swallowed
 
 from collections import deque
 from dataclasses import dataclass, field
@@ -57,7 +58,8 @@ class PersistentReferenceEmbeddingCache:
             if torch.cuda.is_available():
                 return torch.device("cuda", int(os.environ.get(
                     "ROOP_CUDA_DEVICE_ID", "0")))
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("roop/face_reference.py:60", _degrade_error, "fallback continued")
             pass
         return None
 
@@ -135,7 +137,8 @@ def _field(face: Any, name: str, default=None):
     try:
         val = getattr(face, name, default)
         return default if val is None else val
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/face_reference.py:138", _degrade_error, "fallback continued")
         return default
 
 
@@ -150,7 +153,8 @@ def _set_field(face: Any, name: str, value: Any) -> None:
         pass
     try:
         setattr(face, name, value)
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/face_reference.py:153", _degrade_error, "fallback continued")
         pass
 
 
@@ -213,7 +217,8 @@ def face_pose(face: Any) -> Tuple[float, float]:
             yaw, pitch = float(result[0]), float(result[1])
             if np.isfinite((yaw, pitch)).all():
                 return yaw, pitch
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/face_reference.py:216", _degrade_error, "fallback continued")
         pass
     return 0.0, 0.0
 
@@ -651,7 +656,8 @@ class MultiIdentityReferenceRouter:
             try:
                 from scipy.optimize import linear_sum_assignment
                 rows, cols = linear_sum_assignment(cost_matrix)
-            except Exception:
+            except Exception as _degrade_error:
+                _swallowed("roop/face_reference.py:654", _degrade_error, "fallback continued")
                 used_r, used_c = set(), set()
                 flat_order = np.argsort(cost_matrix, axis=None)
                 for idx in flat_order:

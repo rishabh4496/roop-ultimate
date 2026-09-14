@@ -40,6 +40,7 @@ into each other, and the plate never shows through.
 not interact at all — which is the common case and costs two bounding-box
 tests. Nothing is computed for frames where nobody overlaps.
 """
+from roop.degrade import swallowed as _swallowed
 
 import os
 
@@ -214,7 +215,8 @@ def _claim_polygon(face):
         try:
             hull, _, _ = landmark_hull(lm, getattr(face, 'kps', None))
             return hull.reshape(-1, 2).astype(np.int32)
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("roop/face_overlap.py:217", _degrade_error, "fallback continued")
             pass
     bbox = getattr(face, 'bbox', None)
     if bbox is None:

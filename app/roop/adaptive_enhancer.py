@@ -8,6 +8,7 @@ guards, and output validation remain in the established processor classes.
 """
 
 from __future__ import annotations
+from roop.degrade import swallowed as _swallowed
 
 from collections import OrderedDict, defaultdict
 from dataclasses import dataclass, asdict
@@ -55,7 +56,8 @@ def _face_value(face, key, default=None):
     try:
         if hasattr(face, "get"):
             return face.get(key, default)
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/adaptive_enhancer.py:58", _degrade_error, "fallback continued")
         pass
     return getattr(face, key, default)
 
@@ -67,7 +69,8 @@ def _sharpness(crop):
             gray = cv2.resize(gray, (160, 160), interpolation=cv2.INTER_AREA)
         variance = float(cv2.Laplacian(gray, cv2.CV_32F).var())
         return _clamp(variance / 350.0), variance
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/adaptive_enhancer.py:70", _degrade_error, "fallback continued")
         return 0.0, 0.0
 
 
@@ -75,7 +78,8 @@ def _resolution(face, crop):
     try:
         box = np.asarray(face.bbox, dtype=np.float32)
         side = float(min(box[2] - box[0], box[3] - box[1]))
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/adaptive_enhancer.py:78", _degrade_error, "fallback continued")
         side = float(min(np.asarray(crop).shape[:2])) if crop is not None else 0.0
     return _clamp((side - 48.0) / 208.0), side
 
@@ -92,7 +96,8 @@ def _pose(face):
             iod = max(float(np.linalg.norm(kps[1] - kps[0])), 1e-3)
             eye_mid = (kps[0] + kps[1]) * 0.5
             yaw = abs(float(kps[2, 0] - eye_mid[0])) / iod * 45.0
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("roop/adaptive_enhancer.py:95", _degrade_error, "fallback continued")
             pass
     offaxis = max(abs(yaw), abs(pitch))
     return _clamp(1.0 - offaxis / 65.0), float(yaw), float(pitch)
@@ -132,7 +137,8 @@ def evaluate_face_frame(face, crop, appearance=None, previous=None,
             current = float(cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY).mean())
             prior = _number(previous.get("luma"), current)
             temporal *= _clamp(1.0 - abs(current - prior) / 80.0)
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("roop/adaptive_enhancer.py:135", _degrade_error, "fallback continued")
             pass
     quality = (0.24 * resolution + 0.24 * sharp + 0.14 * pose
                + 0.14 * illumination + 0.12 * confidence
@@ -236,7 +242,8 @@ def output_quality(result, source):
         src_spread = max(float(cv2.meanStdDev(src)[1].mean()), 1.0)
         detail = _clamp(spread / (src_spread * 1.8))
         return _clamp(0.65 + 0.35 * detail)
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/adaptive_enhancer.py:239", _degrade_error, "fallback continued")
         return 0.0
 
 
@@ -375,6 +382,7 @@ class AdaptiveEnhancer:
         try:
             proc = self._candidate(path)
         except Exception as exc:
+            _swallowed("roop/adaptive_enhancer.py:377", exc, "fallback continued")
             self._report_fallback(path, "unavailable", exc)
             self._last_path[key] = NONE
             return None, 0
@@ -387,10 +395,12 @@ class AdaptiveEnhancer:
             try:
                 target_face["_adaptive_output_quality"] = quality
                 target_face["_adaptive_path"] = path
-            except Exception:
+            except Exception as _degrade_error:
+                _swallowed("roop/adaptive_enhancer.py:390", _degrade_error, "fallback continued")
                 pass
             return result, scale
         except Exception as exc:
+            _swallowed("roop/adaptive_enhancer.py:393", exc, "fallback continued")
             self._report_fallback(path, "failed", exc)
             self._last_path[key] = NONE
             return None, 0

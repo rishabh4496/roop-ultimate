@@ -12,6 +12,7 @@ it is not converted into a false pass and no result is copied between hosts.
 """
 
 from __future__ import annotations
+from roop.degrade import swallowed as _swallowed
 
 import json
 import os
@@ -69,7 +70,8 @@ def _import_ort():
     try:
         import onnxruntime as ort
         return ort
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/regression_audit.py:72", _degrade_error, "fallback continued")
         return None
 
 
@@ -77,7 +79,8 @@ def _import_torch():
     try:
         import torch
         return torch
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/regression_audit.py:80", _degrade_error, "fallback continued")
         return None
 
 
@@ -126,7 +129,8 @@ def _torch_facts(torch_module) -> dict:
         cuda = bool(cuda_api.is_available())
         devices = int(cuda_api.device_count()) if cuda else 0
         names = [str(cuda_api.get_device_name(i)) for i in range(devices)]
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/regression_audit.py:129", _degrade_error, "fallback continued")
         pass
     return {
         "imported": True,
@@ -155,6 +159,7 @@ def _status_for_backend(row: Mapping[str, Any], available: Iterable[str], torch_
             if not bool(provider_usable(row["execution_provider"], 0, available)):
                 return "unavailable", "provider capability probe rejected device 0"
         except Exception as exc:
+            _swallowed("roop/regression_audit.py:157", exc, "fallback continued")
             return "probe_error", "provider capability probe failed: %s" % exc
     return "available_not_validated", "provider is exposed; real workload evidence is still required"
 
@@ -167,7 +172,8 @@ def runtime_capabilities(*, ort_module=None, torch_module=None, provider_usable=
     if ort_module is not None:
         try:
             available = [str(p) for p in ort_module.get_available_providers()]
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("roop/regression_audit.py:170", _degrade_error, "fallback continued")
             available = []
     torch_facts = _torch_facts(torch_module)
     backend_rows = []

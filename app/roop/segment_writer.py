@@ -26,6 +26,7 @@ ROOP_RESUME_KEEP=1 to keep the parts after a Stop so it can be resumed later
 Disable with ROOP_RESUME=0. Segment files start with '.' so the output-folder
 scans (e.g. the upscale pass's _outputs_since) ignore them.
 """
+from roop.degrade import swallowed as _swallowed
 
 import json
 import os
@@ -223,7 +224,8 @@ class SegmentedVideoWriter:
                 elif have != want:
                     return [], 0
             return _segments_that_exist(m, self._dir)
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("roop/segment_writer.py:226", _degrade_error, "fallback continued")
             return [], 0
 
     def _write_manifest(self):
@@ -306,7 +308,8 @@ class SegmentedVideoWriter:
             try:
                 from project_checkpoint import file_sha256
                 digest = file_sha256(_seg_path)
-            except Exception:
+            except Exception as _degrade_error:
+                _swallowed("roop/segment_writer.py:309", _degrade_error, "fallback continued")
                 pass
             self.segments.append({"file": self._cur_seg_file, "frames": self._cur_frames,
                                   "bytes": _seg_bytes, "sha256": digest})

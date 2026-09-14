@@ -13,6 +13,7 @@ engine utilization, and whole-device VRAM from ``nvidia-smi`` when available.
 """
 
 from __future__ import annotations
+from roop.degrade import swallowed as _swallowed
 
 import argparse
 import json
@@ -241,7 +242,8 @@ def compare_onnx(args: argparse.Namespace) -> Dict[str, Any]:
     feeds = _feed_for_session(session, batch)
     try:
         session.run(None, feeds)
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("benchmark_comparison.py:244", _degrade_error, "fallback continued")
         if batch != 1:
             batch = 1
             feeds = _feed_for_session(session, batch)

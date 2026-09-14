@@ -1,3 +1,4 @@
+from roop.degrade import swallowed as _swallowed
 import os
 import subprocess
 import yaml
@@ -23,7 +24,8 @@ def _enable_tensorrt_runtime():
         trt_libs = os.path.join(os.path.dirname(os.path.dirname(tensorrt.__file__)), 'tensorrt_libs')
         if os.path.isdir(trt_libs):
             dll_dirs.append(trt_libs)
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("settings.py:26", _degrade_error, "fallback continued")
         pass
     try:
         # Importing torch loads the CUDA/cuDNN runtime DLLs the TRT EP depends on.
@@ -31,13 +33,15 @@ def _enable_tensorrt_runtime():
         torch_lib = os.path.join(os.path.dirname(torch.__file__), 'lib')
         if os.path.isdir(torch_lib):
             dll_dirs.append(torch_lib)
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("settings.py:34", _degrade_error, "fallback continued")
         pass
     for d in dll_dirs:
         try:
             if hasattr(os, 'add_dll_directory'):
                 os.add_dll_directory(d)
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("settings.py:40", _degrade_error, "fallback continued")
             pass
         os.environ['PATH'] = d + os.pathsep + os.environ.get('PATH', '')
 
@@ -104,10 +108,11 @@ def detect_hardware():
             hw['hardware_profile_key'] = complete['hardware_profile_key']
         _HARDWARE_CACHE = dict(hw)
         return dict(hw)
-    except Exception:
+    except Exception as _degrade_error:
         # Partial installs and the settings portability tests may not expose
         # the full runtime probe. Fall through to the lightweight collection,
         # preserving unknown capability fields as unknown.
+        _swallowed("settings.py:107", _degrade_error, "fallback continued")
         pass
     # Settings is imported while the app is bootstrapping. Keep this identity
     # probe cheap; the full HardwareProfiler (including ffmpeg codec probes) is
@@ -123,7 +128,8 @@ def detect_hardware():
             from roop.runtime_optimizer import HardwareProfiler
             hw['architecture'] = HardwareProfiler._architecture((int(major), int(minor)))
             hw['cuda'] = str(getattr(torch.version, 'cuda', '') or '')
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("settings.py:126", _degrade_error, "fallback continued")
         pass
     try:
         import torch
@@ -136,12 +142,14 @@ def detect_hardware():
                 hw['vram_tier'] = 'desktop'
             else:
                 hw['vram_tier'] = 'large'
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("settings.py:139", _degrade_error, "fallback continued")
         pass
     try:
         import psutil
         hw['ram_gb'] = round(psutil.virtual_memory().total / (1024 ** 3))
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("settings.py:144", _degrade_error, "fallback continued")
         pass
     try:
         result = subprocess.run(
@@ -149,16 +157,19 @@ def detect_hardware():
              '--format=csv,noheader,nounits'],
             capture_output=True, text=True, timeout=1, check=False)
         hw['driver'] = (result.stdout or '').strip().splitlines()[0]
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("settings.py:152", _degrade_error, "fallback continued")
         pass
     try:
         from importlib.metadata import version
         for key, package in (('tensorrt', 'tensorrt'), ('onnxruntime', 'onnxruntime')):
             try:
                 hw[key] = version(package)
-            except Exception:
+            except Exception as _degrade_error:
+                _swallowed("settings.py:159", _degrade_error, "fallback continued")
                 pass
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("settings.py:161", _degrade_error, "fallback continued")
         pass
     # Some CUDA wheels expose only vendor-suffixed distribution metadata
     # (for example tensorrt_cu12), while the imported modules still publish
@@ -168,13 +179,15 @@ def detect_hardware():
         if not hw['tensorrt']:
             import tensorrt
             hw['tensorrt'] = str(getattr(tensorrt, '__version__', '') or '')
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("settings.py:171", _degrade_error, "fallback continued")
         pass
     try:
         if not hw['onnxruntime']:
             import onnxruntime
             hw['onnxruntime'] = str(getattr(onnxruntime, '__version__', '') or '')
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("settings.py:177", _degrade_error, "fallback continued")
         pass
     _HARDWARE_CACHE = dict(hw)
     return dict(hw)
@@ -209,7 +222,8 @@ def hardware_signature(hw=None):
         identity.setdefault('ram_total_gb', hw.get('ram_gb', 0.0))
         if identity.get('gpu_name') or identity.get('ram_total_gb'):
             return 'v2|' + hardware_profile_key(identity)
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("settings.py:212", _degrade_error, "fallback continued")
         pass
     return ''
 
@@ -307,7 +321,8 @@ class Settings:
         value = default
         try:
             value = data.get(name, default)
-        except:
+        except BaseException as _degrade_error:
+            _swallowed("settings.py:310", _degrade_error, "fallback continued")
             pass
         return value
 
@@ -351,14 +366,16 @@ class Settings:
             try:
                 if os.path.isfile(self.config_file):
                     self.save()
-            except Exception:
+            except Exception as _degrade_error:
+                _swallowed("settings.py:354", _degrade_error, "fallback continued")
                 pass        # a read-only config is not worth failing startup for
 
     def _load(self):
         try:
             with open(self.config_file, 'r') as f:
                 data = yaml.load(f, Loader=yaml.FullLoader)
-        except:
+        except BaseException as _degrade_error:
+            _swallowed("settings.py:361", _degrade_error, "fallback continued")
             data = None
 
         # ── Hardware portability ─────────────────────────────────────────────
@@ -454,7 +471,8 @@ class Settings:
                     usable_cores = cores if cores >= knee else max(2, cores - 1)
                     default_threads = int(min(usable_cores, knee))
                     threads_basis = f"v{_THREAD_RULE}|{cores}|{knee}"
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("settings.py:457", _degrade_error, "fallback continued")
             pass
 
         # _hw_get: a saved thread count is a deliberate choice ON THAT CARD.
@@ -525,7 +543,8 @@ class Settings:
                       f"the three ways a raised Max Threads can fail to take effect "
                       f"(see tests/diag_device.py).")
                 self.max_threads = logical_cores
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("settings.py:528", _degrade_error, "fallback continued")
             pass
 
         self.auto_thread_selection = self._hw_get(data, 'auto_thread_selection', True)
@@ -1059,7 +1078,8 @@ class Settings:
                     return int(min(max_cap, max(6, int(vram_gb / 1.0))))
                 else:
                     return int(min(max_cap, max(8, int(vram_gb / 0.75))))
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("settings.py:1062", _degrade_error, "fallback continued")
             pass
         return getattr(self, 'max_threads', 8)
 
@@ -1081,7 +1101,8 @@ class Settings:
         if not current_key:
             try:
                 current_key = hardware_signature(current).split('|', 1)[-1]
-            except Exception:
+            except Exception as _degrade_error:
+                _swallowed("settings.py:1084", _degrade_error, "fallback continued")
                 current_key = ''
         return bool(current_key and str(recorded) == str(current_key))
 

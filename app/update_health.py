@@ -7,6 +7,7 @@ model, writes application configuration, or writes output media.
 """
 
 from __future__ import annotations
+from roop.degrade import swallowed as _swallowed
 
 import argparse
 import contextlib
@@ -42,6 +43,7 @@ def _requirements_check(source_root: Path) -> dict[str, Any]:
         from packaging.requirements import Requirement
         from packaging.version import Version
     except Exception as exc:
+        _swallowed("update_health.py:44", exc, "fallback continued")
         return _result("dependencies", False,
                        f"dependency specifier parser is unavailable: {exc}",
                        classification="UNVERIFIED")
@@ -61,6 +63,7 @@ def _requirements_check(source_root: Path) -> dict[str, Any]:
         try:
             requirement = Requirement(line)
         except Exception as exc:
+            _swallowed("update_health.py:63", exc, "fallback continued")
             malformed.append(f"line {number}: {line} ({exc})")
             continue
         try:
@@ -72,6 +75,7 @@ def _requirements_check(source_root: Path) -> dict[str, Any]:
         try:
             matches = not requirement.specifier or Version(installed) in requirement.specifier
         except Exception as exc:
+            _swallowed("update_health.py:74", exc, "fallback continued")
             malformed.append(f"line {number}: {line} ({exc})")
             continue
         if not matches:
@@ -113,7 +117,8 @@ def _resolve_npm() -> str | None:
             cfg = os.path.join(os.path.expanduser("~"), ".pinokio", "config.json")
             with open(cfg, "r", encoding="utf-8") as handle:
                 home = json.load(handle).get("home")
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("update_health.py:116", _degrade_error, "fallback continued")
             home = None
     # <PINOKIO_HOME>/api/<launcher>/app/this_file.py
     app_dir = os.path.dirname(os.path.abspath(__file__))
@@ -176,6 +181,7 @@ def _read_config(data_root: Path) -> tuple[dict[str, Any] | None, str | None]:
         import yaml
         value = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     except Exception as exc:
+        _swallowed("update_health.py:178", exc, "fallback continued")
         return None, f"application configuration could not be read: {exc}"
     if not isinstance(value, dict):
         return None, "application configuration is not a mapping"
@@ -186,6 +192,7 @@ def _runtime_and_provider(source_root: Path, config: dict[str, Any]) -> tuple[di
     try:
         import onnxruntime as ort
     except Exception as exc:
+        _swallowed("update_health.py:188", exc, "fallback continued")
         return (_result("provider", False, f"ONNX Runtime could not be imported: {exc}"),
                 _result("gpu", False, "GPU validation could not run because ONNX Runtime is unavailable"))
     requested = os.environ.get("ROOP_EXECUTION_PROVIDER") or config.get("provider") or "cpu"
@@ -194,6 +201,7 @@ def _runtime_and_provider(source_root: Path, config: dict[str, Any]) -> tuple[di
         from roop import backend_manager
         resolved = backend_manager.resolve_provider_names([requested], device_id=0)
     except Exception as exc:
+        _swallowed("update_health.py:196", exc, "fallback continued")
         return (_result("provider", False, f"provider resolution failed: {exc}", requested=requested),
                 _result("gpu", False, "GPU validation could not run because provider resolution failed"))
     available = [str(item) for item in ort.get_available_providers()]
@@ -231,6 +239,7 @@ def _runtime_and_provider(source_root: Path, config: dict[str, Any]) -> tuple[di
                               vram_mb=int(props.total_memory // (1024 * 1024)),
                               compute_capability="%d.%d" % torch.cuda.get_device_capability(0))
         except Exception as exc:
+            _swallowed("update_health.py:233", exc, "fallback continued")
             gpu = _result("gpu", False, f"CUDA device validation failed: {exc}")
     return provider, gpu
 
@@ -277,6 +286,7 @@ def _model_check(source_root: Path, data_root: Path, config: dict[str, Any], res
         import onnxruntime as ort
         from roop.processors.FaceSwapInsightFace import SWAP_MODELS
     except Exception as exc:
+        _swallowed("update_health.py:279", exc, "fallback continued")
         failed = _result("models", False, f"model validation imports failed: {exc}")
         return [failed, _result("inference", False, "inference smoke test was not run")]
 
@@ -303,6 +313,7 @@ def _model_check(source_root: Path, data_root: Path, config: dict[str, Any], res
                 model_errors.append(f"{key}: session provider chain {actual} does not start with {resolved[0]}")
             sessions.append((key, session, int(spec.get("output_size", 128))))
         except Exception as exc:
+            _swallowed("update_health.py:305", exc, "fallback continued")
             model_errors.append(f"{key}: model session initialization failed: {exc}")
     model_result = _result("models", not model_errors,
                            "all configured local model sessions initialized" if not model_errors
@@ -323,6 +334,7 @@ def _model_check(source_root: Path, data_root: Path, config: dict[str, Any], res
                 if array.dtype.kind in "fc" and not np.isfinite(array).all():
                     raise RuntimeError("session returned non-finite values")
         except Exception as exc:
+            _swallowed("update_health.py:325", exc, "fallback continued")
             inference_errors.append(f"{key}: {exc}")
     sessions.clear()
     gc.collect()
@@ -374,12 +386,14 @@ def _launch_check(source_root: Path, config: dict[str, Any]) -> dict[str, Any]:
         try:
             for line in iter(stream.readline, ""):
                 collected.append(line)
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("update_health.py:377", _degrade_error, "fallback continued")
             pass
         finally:
             try:
                 stream.close()
-            except Exception:
+            except Exception as _degrade_error:
+                _swallowed("update_health.py:382", _degrade_error, "fallback continued")
                 pass
 
     reader = None
@@ -480,6 +494,7 @@ def main(argv: list[str] | None = None) -> int:
         with contextlib.redirect_stdout(diagnostic_output):
             report = run_health(args.source_root, args.data_root, args.skip_launch)
     except Exception as exc:
+        _swallowed("update_health.py:482", exc, "fallback continued")
         report = {"healthy": False, "checks": [_result("health-worker", False,
                                                           f"unexpected health-check failure: {exc}")]}
     if diagnostic_output.getvalue():

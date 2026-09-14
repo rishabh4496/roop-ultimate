@@ -9,6 +9,7 @@ boundaries.  A Poisson/gradient-domain pass is deliberately not used in the
 hot path: OpenCV's ``seamlessClone`` is CPU-only, allocates a full patch, and
 does not improve the synthetic boundary metric enough to justify its cost.
 """
+from roop.degrade import swallowed as _swallowed
 
 from dataclasses import dataclass
 import math
@@ -90,7 +91,8 @@ def _field(face, key, default=None):
         if isinstance(face, dict):
             return face.get(key, default)
         return getattr(face, key, default)
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/temporal_compositing.py:93", _degrade_error, "fallback continued")
         return default
 
 

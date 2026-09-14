@@ -9,6 +9,7 @@ the lifetime of the process.
 """
 
 from __future__ import annotations
+from roop.degrade import swallowed as _swallowed
 
 import os
 import hashlib
@@ -30,7 +31,8 @@ def _available() -> List[str]:
     try:
         import onnxruntime as ort
         return list(ort.get_available_providers())
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/backend_manager.py:33", _degrade_error, "fallback continued")
         return []
 
 
@@ -63,7 +65,8 @@ def provider_usable(name: str, device_id: int = 0,
             if ok:
                 count = int(torch.cuda.device_count())
                 ok = 0 <= int(device_id) < max(1, count)
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("roop/backend_manager.py:66", _degrade_error, "fallback continued")
             ok = False
     if ok and canonical.lower().startswith("dml"):
         # ORT's DML provider is self-contained; the listing is the reliable
@@ -84,7 +87,8 @@ def _small_gpu(device_id: int) -> bool:
         return bool(torch.cuda.is_available() and
                     torch.cuda.get_device_properties(device_id).total_memory /
                     (1024 ** 3) < 7.0)
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/backend_manager.py:87", _degrade_error, "fallback continued")
         return False
 
 
@@ -172,7 +176,8 @@ def diagnostic_report(device_id: int = 0, requested: str | None = None) -> dict:
         gpu = torch.cuda.get_device_name(device_id) if cuda else ""
         vram_gb = (torch.cuda.get_device_properties(device_id).total_memory / (1024 ** 3)
                    if cuda else 0.0)
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/backend_manager.py:175", _degrade_error, "fallback continued")
         cuda, gpu, vram_gb = False, "", 0.0
     configured = requested or os.environ.get("ROOP_EXECUTION_PROVIDER", "auto")
     return {
@@ -212,7 +217,8 @@ def _driver_from_smi(device_id: int = 0) -> str:
              "--id=%d" % int(device_id)],
             text=True, timeout=10, stderr=subprocess.DEVNULL)
         value = out.strip().splitlines()[0].strip() if out.strip() else ""
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/backend_manager.py:215", _degrade_error, "fallback continued")
         value = ""
     _DRIVER_SMI_CACHE[device_id] = value
     return value
@@ -229,7 +235,8 @@ def cache_namespace(precision: str, device_id: int = 0) -> str:
     try:
         import onnxruntime as ort
         ort_ver = str(getattr(ort, "__version__", "unknown"))
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/backend_manager.py:232", _degrade_error, "fallback continued")
         ort_ver = "unknown"
     cuda_ver = "unknown"
     trt_ver = "unknown"
@@ -263,16 +270,19 @@ def cache_namespace(precision: str, device_id: int = 0) -> str:
                     raw_driver = int(get_driver())
                     driver_ver = (f"{raw_driver // 1000}."
                                   f"{(raw_driver % 1000) // 10}")
-                except Exception:
+                except Exception as _degrade_error:
+                    _swallowed("roop/backend_manager.py:266", _degrade_error, "fallback continued")
                     driver_ver = "unknown"
             if driver_ver == "unknown":
                 driver_ver = _driver_from_smi(device_id) or "unknown"
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/backend_manager.py:270", _degrade_error, "fallback continued")
         pass
     try:
         import tensorrt as trt
         trt_ver = str(getattr(trt, "__version__", "unknown"))
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/backend_manager.py:275", _degrade_error, "fallback continued")
         pass
     raw = (f"{precision}_{gpu}_{sm}_cuda{cuda_ver}_drv{driver_ver}"
            f"_trt{trt_ver}_ort{ort_ver}")
@@ -374,6 +384,7 @@ def build_session_with_fallback(build, providers, tag: str = "model"):
         try:
             return build(chain), chain
         except Exception as error:  # noqa: BLE001 - the point is to degrade
+            _swallowed("roop/backend_manager.py:376", error, "fallback continued")
             if first_error is None:
                 first_error = error
             if index + 1 >= len(attempts):

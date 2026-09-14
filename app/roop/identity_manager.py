@@ -25,6 +25,7 @@ MATHEMATICAL SPECIFICATION:
 """
 
 from __future__ import annotations
+from roop.degrade import swallowed as _swallowed
 
 from collections import deque
 from dataclasses import dataclass, field
@@ -37,7 +38,8 @@ import numpy as np
 
 try:
     from scipy.optimize import linear_sum_assignment
-except Exception:
+except Exception as _degrade_error:
+    _swallowed("roop/identity_manager.py:40", _degrade_error, "fallback continued")
     linear_sum_assignment = None
 
 
@@ -332,7 +334,8 @@ def set_face_meta(face: Any, key: str, value: Any) -> None:
         pass
     try:
         setattr(face, key, value)
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/identity_manager.py:335", _degrade_error, "fallback continued")
         pass
 
 

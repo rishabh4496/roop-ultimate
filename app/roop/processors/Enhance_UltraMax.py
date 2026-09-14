@@ -187,6 +187,7 @@ Knobs, for re-measuring rather than for shipping a different default:
     ROOP_ULTRAMAX_TEXTURE         texture-restore gain, default 0 (OFF)
     ROOP_ULTRAMAX_TEXTURE_SIGMA   the band it is taken from, default 2.5 at 512
 """
+from roop.degrade import swallowed as _swallowed
 
 import os
 import threading
@@ -259,7 +260,8 @@ def _structural_pool_size(requested):
     n = max(1, int(requested or 1))
     try:
         gb = session_pool._detect_vram_gb()
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/processors/Enhance_UltraMax.py:262", _degrade_error, "fallback continued")
         gb = 0
     if 0 < gb < _POOL_SINGLE_CONTEXT_BELOW_GB:
         n = 1
@@ -607,7 +609,8 @@ class Enhance_UltraMax:
                 n = max(1, min(int(n), int(cap)))
             try:
                 gb = session_pool._detect_vram_gb()
-            except Exception:
+            except Exception as _degrade_error:
+                _swallowed("roop/processors/Enhance_UltraMax.py:610", _degrade_error, "fallback continued")
                 gb = 0
             if 0 < gb < 15.5:
                 n = 1
@@ -1349,9 +1352,10 @@ class Enhance_UltraMax:
                 self._faces += 1
             self._cuda_iob_available = True
             return restored.round().to(torch.uint8).cpu().numpy(), scale
-        except Exception:
+        except Exception as _degrade_error:
             # Old ORT builds expose CUDA OrtValues but not DLPack.  Fall back to
             # the established CPU binding path rather than failing a render.
+            _swallowed("roop/processors/Enhance_UltraMax.py:1352", _degrade_error, "fallback continued")
             self._cuda_iob_available = False
             return None
 

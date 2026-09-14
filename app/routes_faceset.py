@@ -5,6 +5,7 @@ from @app to @router. Registered via app.include_router() in api.py, safe
 because every /api route is a literal path with no path parameters, so
 declaration order cannot change which handler matches.
 """
+from roop.degrade import swallowed as _swallowed
 
 from fastapi import APIRouter, Body
 import subprocess
@@ -57,7 +58,8 @@ def _imread_unicode(path):
     try:
         data = np.fromfile(path, dtype=np.uint8)
         return cv2.imdecode(data, cv2.IMREAD_COLOR)
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("routes_faceset.py:60", _degrade_error, "fallback continued")
         return None
 
 def _imwrite_unicode(path, img) -> bool:
@@ -99,7 +101,8 @@ def _faceset_face_count(fsz_path: str) -> int:
         import zipfile
         with zipfile.ZipFile(fsz_path, "r") as zf:
             return sum(1 for n in zf.namelist() if n.lower().endswith(".png"))
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("routes_faceset.py:102", _degrade_error, "fallback continued")
         return 0
 
 def _library_entries() -> list:
@@ -107,7 +110,8 @@ def _library_entries() -> list:
     entries = []
     try:
         names = os.listdir(lib)
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("routes_faceset.py:110", _degrade_error, "fallback continued")
         names = []
     for fn in names:
         if not fn.lower().endswith(".fsz"):
@@ -115,7 +119,8 @@ def _library_entries() -> list:
         fsz_path = os.path.join(lib, fn)
         try:
             st = os.stat(fsz_path)
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("routes_faceset.py:118", _degrade_error, "fallback continued")
             continue
         entries.append({
             "filename": fn,
@@ -160,11 +165,13 @@ def _frontal_crop_from_images(images):
                 score = _frontality(kps) if kps is not None else 999.0
                 if best_score is None or score < best_score:
                     best_score, best = score, crop
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("routes_faceset.py:163", _degrade_error, "fallback continued")
             pass
     try:
         os.remove(tmp)
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("routes_faceset.py:167", _degrade_error, "fallback continued")
         pass
     return best
 

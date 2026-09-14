@@ -9,6 +9,7 @@ a folder run.
 """
 
 from __future__ import annotations
+from roop.degrade import swallowed as _swallowed
 
 from dataclasses import asdict, dataclass
 import multiprocessing as mp
@@ -50,7 +51,8 @@ def _release_gpu_resources() -> None:
             torch.cuda.empty_cache()
             if hasattr(torch.cuda, "ipc_collect"):
                 torch.cuda.ipc_collect()
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/process_manager.py:53", _degrade_error, "fallback continued")
         pass
 
 
@@ -65,8 +67,9 @@ def _worker_entry(job: VideoJob, worker: Worker, events: Any) -> None:
         event.setdefault("elapsed_seconds", time.monotonic() - started)
         try:
             events.put(event, timeout=1.0)
-        except Exception:
+        except Exception as _degrade_error:
             # UI reporting must never stall a CUDA worker.
+            _swallowed("roop/process_manager.py:68", _degrade_error, "fallback continued")
             pass
 
     try:

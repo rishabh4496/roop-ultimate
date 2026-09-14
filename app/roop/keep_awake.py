@@ -23,6 +23,7 @@ thread and is automatically cleared when that thread exits, so acquire() and
 release() must run on the same (processing) thread — which they do, since
 batch_process() runs synchronously on one thread from start to finish.
 """
+from roop.degrade import swallowed as _swallowed
 import os
 import sys
 
@@ -164,7 +165,8 @@ def release() -> None:
     try:
         import ctypes
         ctypes.windll.kernel32.SetThreadExecutionState(_ES_CONTINUOUS)
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/keep_awake.py:167", _degrade_error, "fallback continued")
         pass
     finally:
         _active = False

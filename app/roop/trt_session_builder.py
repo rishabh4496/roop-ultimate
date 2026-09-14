@@ -12,6 +12,7 @@ filesystem state; video frames never use those directories.
 """
 
 from __future__ import annotations
+from roop.degrade import swallowed as _swallowed
 
 import hashlib
 import math
@@ -362,7 +363,8 @@ class TensorRTSessionConfig:
                 total_gb = float(
                     torch.cuda.get_device_properties(int(device_id)).total_memory
                 ) / float(1024**3)
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("roop/trt_session_builder.py:365", _degrade_error, "fallback continued")
             total_gb = 0.0
         laptop = 0.0 < total_gb < 7.0
         default_opt = 2 if laptop else 8

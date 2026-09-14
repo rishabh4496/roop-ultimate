@@ -33,6 +33,7 @@ limp rather than stop.  ``ROOP_WARMUP=0`` skips the dummy pass.
 """
 
 from __future__ import annotations
+from roop.degrade import swallowed as _swallowed
 
 import glob
 import os
@@ -137,7 +138,8 @@ def _search_roots() -> List[str]:
         ort_dir = os.path.dirname(os.path.abspath(onnxruntime.__file__))
         add(ort_dir)
         add(os.path.join(ort_dir, "capi"))
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/predictor.py:140", _degrade_error, "fallback continued")
         pass
     for var in ("CUDA_PATH", "CUDNN_PATH", "TENSORRT_PATH", "TRT_PATH"):
         base = os.environ.get(var)
@@ -197,6 +199,7 @@ def environment_report() -> dict:
         ort_version = onnxruntime.__version__
         available = list(onnxruntime.get_available_providers())
     except Exception as exc:  # pragma: no cover - ORT is a hard dependency
+        _swallowed("roop/predictor.py:199", exc, "fallback continued")
         ort_version, available = "unavailable: %s" % exc, []
 
     return {
@@ -257,9 +260,10 @@ def assert_session_providers(session, requested: Optional[Iterable],
     """
     try:
         active = list(session.get_providers())
-    except Exception:
+    except Exception as _degrade_error:
         # A stub or pooled wrapper that does not speak the session protocol is
         # not something to fail a render over.
+        _swallowed("roop/predictor.py:260", _degrade_error, "fallback continued")
         return []
 
     if not wants_tensorrt(requested):
@@ -302,7 +306,8 @@ def assert_session_providers(session, requested: Optional[Iterable],
         backend_manager._record_degradation(
             tag, TENSORRT_EP, active[0] if active else "unknown",
             ProviderAssertionError("TensorRT EP did not register"))
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/predictor.py:305", _degrade_error, "fallback continued")
         pass
     return active
 

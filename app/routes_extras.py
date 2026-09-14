@@ -5,6 +5,7 @@ from @app to @router. Registered via app.include_router() in api.py, which is
 safe here because every /api route is a literal path with no path parameters,
 so declaration order cannot change which handler matches.
 """
+from roop.degrade import swallowed as _swallowed
 
 from fastapi import APIRouter
 import os
@@ -63,7 +64,8 @@ def extras_apply(file: UploadFile = File(...),
                 target_w = int(str(resolution).split("x")[0])
                 scale = target_w / img.shape[1]
                 img = cv2.resize(img, (target_w, int(img.shape[0] * scale)))
-            except Exception:
+            except Exception as _degrade_error:
+                _swallowed("routes_extras.py:66", _degrade_error, "fallback continued")
                 pass
         return img
 
@@ -157,7 +159,8 @@ def extras_enhance(file: UploadFile = File(...),
         outpath = os.path.join(out_dir, f"{operation}_{subtype}_{stem}.mp4")
         try:
             fps = util.detect_fps(path)
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("routes_extras.py:160", _degrade_error, "fallback continued")
             fps = 30
         writer = cv2.VideoWriter(outpath, cv2.VideoWriter_fourcc(*"mp4v"), fps, (ow, oh))
         writer.write(out_first)
@@ -177,5 +180,6 @@ def extras_enhance(file: UploadFile = File(...),
     finally:
         try:
             proc.Release()
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("routes_extras.py:180", _degrade_error, "fallback continued")
             pass

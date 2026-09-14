@@ -5,6 +5,7 @@ from @app to @router. Registered via app.include_router() in api.py, which is
 safe here because every /api route is a literal path with no path parameters,
 so declaration order cannot change which handler matches.
 """
+from roop.degrade import swallowed as _swallowed
 
 from fastapi import APIRouter, Body
 import os
@@ -47,13 +48,15 @@ def _analyze_output_frame(img, src_embs):
         if crop.size:
             gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
             sharp = float(cv2.Laplacian(gray, cv2.CV_64F).var())
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("routes_quality.py:50", _degrade_error, "fallback continued")
         pass
     sim = None
     if emb is not None and src_embs:
         try:
             sim = max(1.0 - util.compute_cosine_distance(emb, se) for se in src_embs)
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("routes_quality.py:56", _degrade_error, "fallback continued")
             sim = None
     return {"emb": emb, "sharp": sharp, "sim": sim}
 
@@ -108,6 +111,7 @@ def quality_analyze(payload: dict = Body(...)):
                         sims.append(r["sim"])
                     sharps.append(r["sharp"])
     except Exception as e:
+        _swallowed("routes_quality.py:110", e, "fallback continued")
         return JSONResponse(status_code=500, content={"message": f"Analysis failed: {e}"})
 
     if detected == 0:

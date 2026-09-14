@@ -31,6 +31,7 @@ No external model files are needed — activates immediately.
 """
 
 from __future__ import annotations
+from roop.degrade import swallowed as _swallowed
 
 import threading
 from typing import Optional, Tuple
@@ -163,7 +164,8 @@ def _safe_affine_warp(img: np.ndarray, matrix: np.ndarray) -> np.ndarray:
             img, matrix.astype(np.float32), (w, h), flags=cv2.INTER_LINEAR,
             borderMode=cv2.BORDER_REFLECT_101,
         )
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/face_3d_recon.py:166", _degrade_error, "fallback continued")
         return img
 
 

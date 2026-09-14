@@ -6,6 +6,7 @@ change scheduling, session ownership, or frame ordering. GPU synchronization is
 deliberately optional because explicit fences perturb throughput; a report records
 whether the GPU fields are event-based, synchronized, or unavailable.
 """
+from roop.degrade import swallowed as _swallowed
 
 from collections import defaultdict
 import json
@@ -36,7 +37,8 @@ def _cuda_module():
         import torch
         if torch.cuda.is_available():
             return torch
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/stage_profiler.py:39", _degrade_error, "fallback continued")
         pass
     return None
 
@@ -51,7 +53,8 @@ def _memory_snapshot(torch):
         return {"allocated_mb": allocated, "reserved_mb": reserved,
                 "allocated_total_mb": allocated_total,
                 "freed_total_mb": freed_total}
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/stage_profiler.py:54", _degrade_error, "fallback continued")
         return None
 
 
@@ -90,7 +93,8 @@ class StageProfiler:
                     token["sync_start"] = sync_start
                 token["event_start"] = self.torch.cuda.Event(enable_timing=True)
                 token["event_start"].record()
-            except Exception:
+            except Exception as _degrade_error:
+                _swallowed("roop/stage_profiler.py:93", _degrade_error, "fallback continued")
                 token["event_start"] = None
         return token
 
@@ -115,7 +119,8 @@ class StageProfiler:
                     gpu_event_seconds = max(0.0, token["event_start"].elapsed_time(event_end) / 1000.0)
                 if token.get("sync_start") is not None:
                     sync_window = max(0.0, wait_end - token["sync_start"])
-            except Exception:
+            except Exception as _degrade_error:
+                _swallowed("roop/stage_profiler.py:118", _degrade_error, "fallback continued")
                 gpu_event_seconds = None
         mem_end = _memory_snapshot(self.torch) if self.torch else None
         with self._lock:

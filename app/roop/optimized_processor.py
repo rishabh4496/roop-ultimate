@@ -16,6 +16,7 @@ by a CPU compositor.
 """
 
 from __future__ import annotations
+from roop.degrade import swallowed as _swallowed
 
 import json
 import os
@@ -50,7 +51,8 @@ try:
     # first can make a later Torch import fail with error 127 even though both
     # packages are individually installed and the CUDA provider is usable.
     import torch as _torch_module
-except Exception:  # pragma: no cover - CPU-only/minimal installations
+except Exception as _degrade_error:  # pragma: no cover - CPU-only/minimal installations
+    _swallowed("roop/optimized_processor.py:53", _degrade_error, "fallback continued")
     _torch_module = None
 
 prepare_tensorrt_runtime()
@@ -85,7 +87,8 @@ def _ffmpeg_binary() -> str:
         from roop.ffmpeg_path import ffmpeg_binary
 
         return str(ffmpeg_binary())
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/optimized_processor.py:88", _degrade_error, "fallback continued")
         return shutil.which("ffmpeg") or "ffmpeg"
 
 
@@ -530,6 +533,7 @@ class AsyncRawVideoWriter:
                     break
                 self.writer.write(item)
         except BaseException as exc:  # propagated to submit/close, never hidden
+            _swallowed("roop/optimized_processor.py:532", exc, "fallback continued")
             self.error = exc
             self.stop_event.set()
 
@@ -575,6 +579,7 @@ class AsyncRawVideoWriter:
         try:
             self.writer.close()
         except BaseException as exc:
+            _swallowed("roop/optimized_processor.py:577", exc, "fallback continued")
             if self.error is None:
                 self.error = exc
         if self.error is not None:
@@ -602,7 +607,8 @@ class VramGovernor:
                 total_gb = float(
                     _torch_module.cuda.get_device_properties(device_id).total_memory
                 ) / float(1024 ** 3)
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("roop/optimized_processor.py:605", _degrade_error, "fallback continued")
             pass
         hard_cap = 1536 if 0.0 < total_gb < 7.0 else 4096
         configured_cap = os.environ.get("ROOP_OPT_GPU_CAP_MB")
@@ -627,7 +633,8 @@ class VramGovernor:
             if _torch_module is not None and _torch_module.cuda.is_available():
                 free, _total = _torch_module.cuda.mem_get_info(self.device_id)
                 return float(free) / float(1024 ** 2)
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("roop/optimized_processor.py:630", _degrade_error, "fallback continued")
             pass
         return None
 
@@ -803,6 +810,7 @@ class CudaIOBinding:
             )
             self._torch = torch
         except Exception as error:
+            _swallowed("roop/optimized_processor.py:805", error, "fallback continued")
             self._torch = None
             self._disabled_reason = repr(error)
 
@@ -1056,6 +1064,7 @@ def create_onnx_session(
                 continue
             return session
         except Exception as error:
+            _swallowed("roop/optimized_processor.py:1058", error, "fallback continued")
             last_error = error
     raise RuntimeError(
         f"unable to create ONNX Runtime session for {model_path}"
@@ -1098,7 +1107,8 @@ class OnnxBatchRunner:
 
         try:
             return [str(name) for name in self.session.get_providers()]
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("roop/optimized_processor.py:1101", _degrade_error, "fallback continued")
             return []
 
     @staticmethod
@@ -1872,12 +1882,14 @@ class MemoryStreamingProcessor:
                     stats.max_queue_depth = max(stats.max_queue_depth, input_queue.qsize())
                     index += 1
             except BaseException as error:
+                _swallowed("roop/optimized_processor.py:1874", error, "fallback continued")
                 self._record_failure(error)
             finally:
                 planned_stop = end_frame is not None and index >= int(end_frame)
                 try:
                     reader.close(ignore_errors=planned_stop or self._failure is not None)
                 except BaseException as error:
+                    _swallowed("roop/optimized_processor.py:1880", error, "fallback continued")
                     self._record_failure(error)
                 self._put_or_abort(input_queue, None)
 
@@ -1945,6 +1957,7 @@ class MemoryStreamingProcessor:
                     if input_done:
                         break
             except BaseException as error:
+                _swallowed("roop/optimized_processor.py:1947", error, "fallback continued")
                 self._record_failure(error)
             finally:
                 self._stop.set()
@@ -1959,11 +1972,13 @@ class MemoryStreamingProcessor:
         try:
             reader.close()
         except BaseException as error:
+            _swallowed("roop/optimized_processor.py:1961", error, "fallback continued")
             self._record_failure(error)
         reader_thread.join(timeout=10.0)
         try:
             writer.close(discard=self._failure is not None)
         except BaseException as error:
+            _swallowed("roop/optimized_processor.py:1966", error, "fallback continued")
             self._record_failure(error)
         stats.elapsed_seconds = time.perf_counter() - started
         if self._failure is not None:

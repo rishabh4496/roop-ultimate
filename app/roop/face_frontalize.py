@@ -30,6 +30,7 @@ No extra model downloads — uses the same ``landmark_3d_68`` from buffalo_l.
 """
 
 from __future__ import annotations
+from roop.degrade import swallowed as _swallowed
 
 import math
 import cv2
@@ -120,7 +121,8 @@ def frontalize_crop(
             maxIters=2000,
             confidence=0.99,
         )
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/face_frontalize.py:123", _degrade_error, "fallback continued")
         return aligned_img, None
 
     if M is None:
@@ -175,5 +177,6 @@ def should_frontalize(
         yaw, pitch = decompose_yaw_pitch(rvec)
         yd, pd = math.degrees(yaw), math.degrees(pitch)
         return (abs(yd) > yaw_threshold_deg or abs(pd) > pitch_threshold_deg), yd, pd
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/face_frontalize.py:178", _degrade_error, "fallback continued")
         return False, 0.0, 0.0

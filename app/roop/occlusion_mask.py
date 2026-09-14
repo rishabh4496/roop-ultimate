@@ -61,6 +61,7 @@ because "a feature that reports success while not running" is the defect class
 this project keeps finding, and a silent no-op is indistinguishable from a
 working filter in the rendered output.
 """
+from roop.degrade import swallowed as _swallowed
 
 import os
 import threading
@@ -372,7 +373,8 @@ class TemporalMaskSmoother:
                 }
                 self._touch(key)
             return out
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("roop/occlusion_mask.py:375", _degrade_error, "fallback continued")
             self.errors += 1
             return mask
 

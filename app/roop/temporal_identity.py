@@ -11,6 +11,7 @@ the low-frequency colour/identity field of an already aligned crop; the current
 frame's high-frequency texture, eyes, mouth, and expression remain current.
 The feature is disabled unless ``ROOP_TEMPORAL_IDENTITY=1``.
 """
+from roop.degrade import swallowed as _swallowed
 
 import copy as _copy_module
 from dataclasses import dataclass
@@ -29,7 +30,8 @@ def _copy(value):
         return {key: _copy(item) for key, item in value.items()}
     try:
         return np.asarray(value).copy()
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/temporal_identity.py:32", _degrade_error, "fallback continued")
         return value
 
 
@@ -63,7 +65,8 @@ def _pose_dict(pose):
     if hasattr(pose, "as_dict"):
         try:
             pose = pose.as_dict()
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("roop/temporal_identity.py:66", _degrade_error, "fallback continued")
             return None
     if not isinstance(pose, dict):
         return None

@@ -12,6 +12,7 @@ process (see sidecar_keep/README.md). This processor:
 
 Matches the standard enhancer contract: Run(...) -> (uint8 BGR frame, scale).
 """
+from roop.degrade import swallowed as _swallowed
 
 import os
 import socket
@@ -93,7 +94,8 @@ class Enhance_KEEP():
                     if r.status == 200:
                         print(f"[KEEP] sidecar ready on port {self._port}")
                         return True
-            except Exception:
+            except Exception as _degrade_error:
+                _swallowed("roop/processors/Enhance_KEEP.py:96", _degrade_error, "fallback continued")
                 time.sleep(0.5)
         print("[KEEP] sidecar did not become ready in 120s — frames pass through unenhanced.")
         self._stop_sidecar()
@@ -104,10 +106,12 @@ class Enhance_KEEP():
             try:
                 self._proc.terminate()
                 self._proc.wait(timeout=5)
-            except Exception:
+            except Exception as _degrade_error:
+                _swallowed("roop/processors/Enhance_KEEP.py:107", _degrade_error, "fallback continued")
                 try:
                     self._proc.kill()
-                except Exception:
+                except Exception as _degrade_error:
+                    _swallowed("roop/processors/Enhance_KEEP.py:110", _degrade_error, "fallback continued")
                     pass
             self._proc = None
         self._ready = False

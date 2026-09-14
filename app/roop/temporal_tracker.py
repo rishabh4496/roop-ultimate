@@ -10,6 +10,7 @@ The tracker is detector-agnostic: a caller supplies the same Face objects it
 already gets from the configured detector/pool.  No model sessions, providers,
 or GPU buffers are created here.
 """
+from roop.degrade import swallowed as _swallowed
 
 from dataclasses import dataclass, field
 from functools import lru_cache
@@ -25,7 +26,8 @@ def _value(face, name, default=None):
         return face.get(name, default)
     try:
         return getattr(face, name, default)
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/temporal_tracker.py:28", _degrade_error, "fallback continued")
         return default
 
 

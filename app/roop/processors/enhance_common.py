@@ -5,6 +5,7 @@ Every enhancer here ends the same three lines — clip to [-1, 1], rescale to
 about that ending are traps, and both were found the expensive way in GPEN
 before being written down here.
 """
+from roop.degrade import swallowed as _swallowed
 
 import contextlib
 
@@ -136,7 +137,8 @@ def _cudart():
                         reverse=True)
         names += sorted(glob.glob(os.path.join(libdir, 'libcudart.so*')),
                         reverse=True)
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/processors/enhance_common.py:139", _degrade_error, "fallback continued")
         pass
     names += ['cudart64_12.dll', 'libcudart.so.12', 'libcudart.so']
     for name in names:
@@ -268,7 +270,8 @@ def looks_collapsed(result, source):
     try:
         s_std = _global_std(source)
         return s_std > 8.0 and _global_std(result) < s_std * 0.35
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/processors/enhance_common.py:271", _degrade_error, "fallback continued")
         return False
 
 

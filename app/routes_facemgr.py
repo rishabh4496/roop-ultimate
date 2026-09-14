@@ -5,6 +5,7 @@ from @app to @router. Registered via app.include_router() in api.py, safe
 because every /api route is a literal path with no path parameters, so
 declaration order cannot change which handler matches.
 """
+from roop.degrade import swallowed as _swallowed
 
 from fastapi import APIRouter, Body
 import contextlib
@@ -120,7 +121,8 @@ def facemgr_add(files: list[UploadFile] = File(...),
             video_path = path
             try:
                 state.current_video_fps = util.detect_fps(path)
-            except Exception:
+            except Exception as _degrade_error:
+                _swallowed("routes_facemgr.py:123", _degrade_error, "fallback continued")
                 state.current_video_fps = 30
     resp = _facemgr_faces_payload()
     if video_path:

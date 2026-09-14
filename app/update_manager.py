@@ -10,6 +10,7 @@ this command.
 """
 
 from __future__ import annotations
+from roop.degrade import swallowed as _swallowed
 
 import argparse
 import hashlib
@@ -207,7 +208,8 @@ def _available_providers() -> list[str] | None:
     try:
         import onnxruntime as ort
         return [str(item) for item in ort.get_available_providers()]
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("update_manager.py:210", _degrade_error, "fallback continued")
         return None
 
 
@@ -295,7 +297,8 @@ def _current_identity() -> dict[str, Any]:
     try:
         import torch
         runtime["cuda"] = str(getattr(torch.version, "cuda", "") or "") or None
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("update_manager.py:298", _degrade_error, "fallback continued")
         runtime["cuda"] = None
     ffmpeg = _run(["ffmpeg", "-version"], check=False)
     runtime["ffmpeg"] = (ffmpeg.stdout.splitlines()[0] if ffmpeg.returncode == 0
@@ -830,13 +833,15 @@ def apply() -> int:
                                  current_sha=prior_sha, candidate_sha=report.get("candidate_sha"),
                                  snapshot=str(snapshot), failure=detail)
             except Exception as rollback_exc:
+                _swallowed("update_manager.py:832", rollback_exc, "fallback continued")
                 rollback = {"ok": False, "detail": f"rollback failed: {rollback_exc}"}
                 try:
                     _record_snapshot(snapshot, rollback=rollback, status="ROLLBACK_FAILED")
                     _transaction("ROLLBACK_FAILED", current_sha=prior_sha,
                                  candidate_sha=report.get("candidate_sha"), snapshot=str(snapshot),
                                  failure=detail)
-                except Exception:
+                except Exception as _degrade_error:
+                    _swallowed("update_manager.py:839", _degrade_error, "fallback continued")
                     pass
         print(f"Update failed: {detail}. Diagnostics and transaction state were captured.")
         if rollback is not None:

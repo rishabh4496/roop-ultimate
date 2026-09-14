@@ -7,6 +7,7 @@ no detection of its own for tracked runs.
 
 A mixin, so the method bodies move verbatim and `self` is unchanged.
 """
+from roop.degrade import swallowed as _swallowed
 
 import os
 from concurrent.futures import ThreadPoolExecutor
@@ -90,7 +91,8 @@ def _readahead_depth(cap, budget_mb=256.0, lo=4, hi=16):
     try:
         per_frame = (int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
                      * int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)) * 3)
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/procmgr_tracking.py:93", _degrade_error, "fallback continued")
         per_frame = 0
     if per_frame <= 0:
         return hi
@@ -625,12 +627,14 @@ class TrackingMixin:
                             continue        # consumer is behind (or paused) — hold
                     else:
                         return
-            except Exception:
+            except Exception as _degrade_error:
+                _swallowed("roop/procmgr_tracking.py:628", _degrade_error, "fallback continued")
                 pass
             finally:
                 try:
                     frame_q.put(None, timeout=1.0)   # EOF sentinel
-                except Exception:
+                except Exception as _degrade_error:
+                    _swallowed("roop/procmgr_tracking.py:633", _degrade_error, "fallback continued")
                     pass
 
         try:
@@ -1703,7 +1707,8 @@ class TrackingMixin:
         try:
             ba = np.asarray(a.bbox, np.float64)
             bb = np.asarray(b.bbox, np.float64)
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("roop/procmgr_tracking.py:1706", _degrade_error, "fallback continued")
             return True                     # no geometry to judge on — behave as before
         wa = max(1.0, float(ba[2] - ba[0]))
         wb = max(1.0, float(bb[2] - bb[0]))
@@ -1733,7 +1738,8 @@ class TrackingMixin:
             return False
         try:
             fb = np.asarray(face.bbox, np.float64)
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("roop/procmgr_tracking.py:1736", _degrade_error, "fallback continued")
             return False
         area = max(1.0, (fb[2] - fb[0]) * (fb[3] - fb[1]))
         for otid, oface in others:
@@ -1741,7 +1747,8 @@ class TrackingMixin:
                 continue
             try:
                 ob = np.asarray(oface.bbox, np.float64)
-            except Exception:
+            except Exception as _degrade_error:
+                _swallowed("roop/procmgr_tracking.py:1744", _degrade_error, "fallback continued")
                 continue
             iw = max(0.0, min(fb[2], ob[2]) - max(fb[0], ob[0]))
             ih = max(0.0, min(fb[3], ob[3]) - max(fb[1], ob[1]))
@@ -2051,7 +2058,8 @@ class TrackingMixin:
                         if (getattr(candidate, 'format_version', 1) >= 2
                                 and getattr(candidate, 'faceset_metadata', None)):
                             pose_source_fs = candidate
-                except Exception:
+                except Exception as _degrade_error:
+                    _swallowed("roop/procmgr_tracking.py:2054", _degrade_error, "fallback continued")
                     pose_source_fs = None
             previous_source_index = getattr(
                 self, '_track_pose_source_map', {}).get(t['id'])
@@ -2092,9 +2100,10 @@ class TrackingMixin:
                                 f['landmark_2d_106'] = temporal_state.landmarks.copy()
                             elif shape == np.shape(getattr(f, 'kps', None)):
                                 f['kps'] = temporal_state.landmarks.copy()
-                    except Exception:
+                    except Exception as _degrade_error:
                         # Temporal identity is a quality layer; malformed
                         # optional detector fields must not stop the replay.
+                        _swallowed("roop/procmgr_tracking.py:2095", _degrade_error, "fallback continued")
                         temporal_state = None
                 if expression_enabled:
                     try:
@@ -2132,9 +2141,10 @@ class TrackingMixin:
                                     float(value) for value in plan['eye_strengths'])
                                 f['_expression_mouth_strength'] = float(
                                     plan['mouth_strength'])
-                    except Exception:
+                    except Exception as _degrade_error:
                         # Expression continuity is optional and must never make
                         # a detector or legacy Face object unusable.
+                        _swallowed("roop/procmgr_tracking.py:2135", _degrade_error, "fallback continued")
                         pass
                 if pose_annotation_enabled:
                     try:
@@ -2175,10 +2185,11 @@ class TrackingMixin:
                                 f['_pose_v5_source_reason'] = str(selection.reason)
                                 f['_pose_v5_needs_3d'] = bool(selection.needs_3d)
                                 previous_source_index = int(selected_index)
-                    except Exception:
+                    except Exception as _degrade_error:
                         # A pose annotation is an optimization/quality hint;
                         # never make the established temporal replay fail if a
                         # malformed optional landmark set reaches this branch.
+                        _swallowed("roop/procmgr_tracking.py:2178", _degrade_error, "fallback continued")
                         pass
                 # Stamp the owning track's id on every face this track hands
                 # out (real observation or gap-filled) so swap_faces can bind
@@ -2196,7 +2207,8 @@ class TrackingMixin:
                 # from a single frame's centroids whenever they were off.
                 try:
                     f['_track_id'] = t['id']
-                except Exception:
+                except Exception as _degrade_error:
+                    _swallowed("roop/procmgr_tracking.py:2199", _degrade_error, "fallback continued")
                     pass
                 # Inside the per-frame loop, and outside the V2 source-bank
                 # branch: temporal replay must also work with the source bank

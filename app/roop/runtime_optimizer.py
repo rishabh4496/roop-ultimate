@@ -16,6 +16,7 @@ The separation is useful for three reasons:
 """
 
 from __future__ import annotations
+from roop.degrade import swallowed as _swallowed
 
 import hashlib
 import json
@@ -213,7 +214,8 @@ class HardwareProfile:
         try:
             from roop.hardware_validation import hardware_profile_key
             result["hardware_profile_key"] = hardware_profile_key(result)
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("roop/runtime_optimizer.py:216", _degrade_error, "fallback continued")
             result["hardware_profile_key"] = None
         return result
 
@@ -609,7 +611,8 @@ def _cpu_simd_capabilities() -> Tuple[str, ...]:
         features = getattr(features, "__cpu_features__", {}) or {}
         return tuple(sorted(str(name) for name, enabled in features.items()
                             if enabled))
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/runtime_optimizer.py:612", _degrade_error, "fallback continued")
         return ()
 
 
@@ -620,7 +623,8 @@ def _cpu_frequency() -> Tuple[float, float]:
         if frequency is not None:
             return (_number(getattr(frequency, "current", 0.0)),
                     _number(getattr(frequency, "max", 0.0)))
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/runtime_optimizer.py:623", _degrade_error, "fallback continued")
         pass
     return 0.0, 0.0
 
@@ -656,7 +660,8 @@ def _cpu_affinity_info() -> Tuple[bool, Tuple[int, ...]]:
         process = psutil.Process()
         indices = tuple(int(index) for index in process.cpu_affinity())
         return True, indices
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/runtime_optimizer.py:659", _degrade_error, "fallback continued")
         return False, ()
 
 
@@ -724,7 +729,8 @@ class HardwareProfiler:
                     bf16 = bool(probe(including_emulation=False))
                 except TypeError:
                     bf16 = bool(probe())
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("roop/runtime_optimizer.py:727", _degrade_error, "fallback continued")
             pass
 
         int8 = fp8 = False
@@ -754,7 +760,8 @@ class HardwareProfiler:
                     trt_flags.add("int8")
                 if fp8:
                     trt_flags.add("fp8")
-            except Exception:
+            except Exception as _degrade_error:
+                _swallowed("roop/runtime_optimizer.py:757", _degrade_error, "fallback continued")
                 pass
 
         # Tensor Core availability is reported as a capability only when the
@@ -822,7 +829,8 @@ class HardwareProfiler:
                                    "config.json")
                 with open(cfg, "r", encoding="utf-8") as fh:
                     home = json.load(fh).get("home")
-            except Exception:
+            except Exception as _degrade_error:
+                _swallowed("roop/runtime_optimizer.py:825", _degrade_error, "fallback continued")
                 home = None
         # <PINOKIO_HOME>/api/<launcher>/app/roop/this_file.py
         app_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -881,9 +889,11 @@ class HardwareProfiler:
                     free, total = torch.cuda.mem_get_info(self.device_id)
                     vram_free = _number(free) / (1024 ** 3)
                     vram_total = _number(total) / (1024 ** 3) or vram_total
-                except Exception:
+                except Exception as _degrade_error:
+                    _swallowed("roop/runtime_optimizer.py:884", _degrade_error, "fallback continued")
                     pass
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("roop/runtime_optimizer.py:886", _degrade_error, "fallback continued")
             pass
 
         try:
@@ -893,13 +903,15 @@ class HardwareProfiler:
             trt = bool(cuda and any(
                 str(provider).lower() == "tensorrtexecutionprovider"
                 for provider in available))
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("roop/runtime_optimizer.py:896", _degrade_error, "fallback continued")
             available = set()
 
         try:
             import tensorrt as _trt
             trt_version = str(getattr(_trt, "__version__", ""))
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("roop/runtime_optimizer.py:902", _degrade_error, "fallback continued")
             pass
         # TensorRT's Builder is a heavyweight host allocation.  On the
         # sub-7GB tier the backend admission policy rejects TensorRT before any
@@ -921,7 +933,8 @@ class HardwareProfiler:
                 import torch as _torch
                 fp16, bf16, int8, fp8, tensor_cores = self._precision_capabilities(
                     _torch, self.device_id, compute_tuple, trt_builder_probe)
-            except Exception:
+            except Exception as _degrade_error:
+                _swallowed("roop/runtime_optimizer.py:924", _degrade_error, "fallback continued")
                 pass
 
         try:
@@ -931,10 +944,11 @@ class HardwareProfiler:
             memory = psutil.virtual_memory()
             ram_total = _number(memory.total) / (1024 ** 3)
             ram_available = _number(memory.available) / (1024 ** 3)
-        except Exception:
+        except Exception as _degrade_error:
             # psutil is the normal source.  The fallback is intentionally
             # conservative and is only used when that optional dependency is
             # unavailable; it is never the worker-count policy.
+            _swallowed("roop/runtime_optimizer.py:934", _degrade_error, "fallback continued")
             logical = max(1, _positive_int(os.environ.get("NUMBER_OF_PROCESSORS")) or 1)
             physical = max(1, logical // 2)
             ram_total = ram_available = 0.0
@@ -1102,7 +1116,8 @@ class WorkloadProfiler:
                 if not frame_count:
                     frame_count = _integer(cap.get(cv2.CAP_PROP_FRAME_COUNT))
                 cap.release()
-            except Exception:
+            except Exception as _degrade_error:
+                _swallowed("roop/runtime_optimizer.py:1105", _degrade_error, "fallback continued")
                 pass
 
         out_w, out_h = output_resolution or (width, height)
@@ -1187,7 +1202,8 @@ class PrecisionSelector:
                                        "not-validated")
                     if evidence not in ("safe", "candidate"):
                         return "fp32"
-                except Exception:
+                except Exception as _degrade_error:
+                    _swallowed("roop/runtime_optimizer.py:1190", _degrade_error, "fallback continued")
                     return "fp32"
             return configured
         if configured in ("bf16", "int8", "fp8"):
@@ -1204,7 +1220,8 @@ class PrecisionSelector:
                                    "not-validated")
                 if evidence != "safe" or configured != "bf16":
                     return "fp32"
-            except Exception:
+            except Exception as _degrade_error:
+                _swallowed("roop/runtime_optimizer.py:1207", _degrade_error, "fallback continued")
                 return "fp32"
             return configured
         if hardware.tensorrt_available:
@@ -1419,7 +1436,8 @@ class CUDAGraphRunner:
             import torch
             return bool(torch.cuda.is_available() and
                         hasattr(torch.cuda, "CUDAGraph"))
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("roop/runtime_optimizer.py:1422", _degrade_error, "fallback continued")
             return False
 
     def capture(self, inputs, function):
@@ -2087,6 +2105,7 @@ class RuntimeAutotuner:
             try:
                 return TuneMeasurement.from_mapping(measure(candidate, warmup_frames))
             except Exception as exc:
+                _swallowed("roop/runtime_optimizer.py:2089", exc, "fallback continued")
                 return TuneMeasurement(
                     stable=False, metrics={"error": "%s: %s" %
                                            (type(exc).__name__, exc)})
@@ -2378,8 +2397,9 @@ class RuntimeMonitor:
             while not self._sampler_stop.wait(self.sample_interval):
                 try:
                     self.sample(force=True)
-                except Exception:
+                except Exception as _degrade_error:
                     # Telemetry must never take down a render.
+                    _swallowed("roop/runtime_optimizer.py:2381", _degrade_error, "fallback continued")
                     pass
 
         thread = threading.Thread(target=_loop, name="roop-runtime-monitor",
@@ -2429,7 +2449,8 @@ class RuntimeMonitor:
             try:
                 result[str(name)] = (int(queue.qsize()) if hasattr(queue, "qsize")
                                      else int(queue))
-            except Exception:
+            except Exception as _degrade_error:
+                _swallowed("roop/runtime_optimizer.py:2432", _degrade_error, "fallback continued")
                 continue
         return result
 
@@ -2508,7 +2529,8 @@ class RuntimeMonitor:
                             cpu_temps.append(current)
             if cpu_temps:
                 result["cpu_temperature_c"] = max(cpu_temps)
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("roop/runtime_optimizer.py:2511", _degrade_error, "fallback continued")
             pass
 
         try:
@@ -2518,7 +2540,8 @@ class RuntimeMonitor:
                 free_b, total_b = torch.cuda.mem_get_info(device_id)
                 result["vram_free_gb"] = int(free_b) / 2**30
                 result["vram_total_gb"] = int(total_b) / 2**30
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("roop/runtime_optimizer.py:2521", _degrade_error, "fallback continued")
             pass
 
         # NVML is optional. It gives utilization without synchronizing CUDA or
@@ -2534,7 +2557,8 @@ class RuntimeMonitor:
             memory = pynvml.nvmlDeviceGetMemoryInfo(handle)
             result.setdefault("vram_free_gb", memory.free / 2**30)
             result.setdefault("vram_total_gb", memory.total / 2**30)
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("roop/runtime_optimizer.py:2537", _degrade_error, "fallback continued")
             pass
         if result.get("gpu_utilization_pct") is None:
             # pynvml is genuinely optional and is absent on this stack, which
@@ -2574,7 +2598,8 @@ class RuntimeMonitor:
                 if line and line[0].isdigit():
                     self._smi_last_value = float(line)
                     return self._smi_last_value
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("roop/runtime_optimizer.py:2577", _degrade_error, "fallback continued")
             pass
         self._smi_last_value = None
         return None
@@ -3197,6 +3222,7 @@ def apply_cpu_affinity(hardware: HardwareProfile, distribution: Any = "auto") ->
         import psutil
         psutil.Process(os.getpid()).cpu_affinity(list(selected))
     except Exception as exc:
+        _swallowed("roop/runtime_optimizer.py:3199", exc, "fallback continued")
         return {"applied": False, "mode": mode, "indices": selected,
                 "reason": "%s: %s" % (type(exc).__name__, exc)}
     print("[CPU] affinity distribution=%s logical=%d source=%s" %

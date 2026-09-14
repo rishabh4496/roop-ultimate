@@ -5,6 +5,7 @@ The controller deliberately observes values that the swap pipeline already has
 It does not run a detector, restorer, or optical-flow pass.  A normal frame is
 therefore a cheap pass-through; corrections are only requested for an event.
 """
+from roop.degrade import swallowed as _swallowed
 
 from collections import Counter, deque
 from dataclasses import dataclass, field
@@ -69,7 +70,8 @@ def _resize_gray(image, size=64):
             arr = cv2.cvtColor(arr, cv2.COLOR_BGR2GRAY)
         arr = cv2.resize(arr, (size, size), interpolation=cv2.INTER_AREA)
         return arr.astype(np.float32)
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/temporal_quality.py:72", _degrade_error, "fallback continued")
         return None
 
 
@@ -93,7 +95,8 @@ def _appearance_chroma(appearance):
                 arr = np.asarray(value, dtype=np.float32).reshape(-1)
                 if arr.size >= 2 and np.all(np.isfinite(arr[:2])):
                     return [float(arr[0]), float(arr[1])]
-            except Exception:
+            except Exception as _degrade_error:
+                _swallowed("roop/temporal_quality.py:96", _degrade_error, "fallback continued")
                 pass
     return None
 
@@ -121,7 +124,8 @@ def _landmark_states(face):
                    float(metrics["right_eye_openness"])) * 0.5
         jaw = _finite(metrics.get("jaw_position"), None)
         return eye, jaw
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/temporal_quality.py:124", _degrade_error, "fallback continued")
         return None, None
 
 
@@ -177,7 +181,8 @@ def make_observation(face=None, image=None, matrix=None, mask=None, output=None,
         try:
             arr = np.asarray(matrix, dtype=np.float32).reshape(2, 3)
             obs["transform"] = arr.tolist()
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("roop/temporal_quality.py:180", _degrade_error, "fallback continued")
             pass
     bbox = _face_value(face, "bbox")
     if bbox is not None:
@@ -185,7 +190,8 @@ def make_observation(face=None, image=None, matrix=None, mask=None, output=None,
             arr = np.asarray(bbox, dtype=np.float32).reshape(-1)
             if arr.size >= 4:
                 obs["bbox"] = [float(x) for x in arr[:4]]
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("roop/temporal_quality.py:188", _degrade_error, "fallback continued")
             pass
     if mask is not None:
         try:
@@ -195,7 +201,8 @@ def make_observation(face=None, image=None, matrix=None, mask=None, output=None,
                 small = np.clip(small, 0.0, 1.0)
                 obs["mask_area"] = float(np.mean(small))
                 obs["mask_shape"] = small.tolist()
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("roop/temporal_quality.py:198", _degrade_error, "fallback continued")
             pass
     if isinstance(detail_metrics, dict):
         for key in ("energy", "detail_energy", "identity_detail_energy"):
@@ -210,7 +217,8 @@ def make_observation(face=None, image=None, matrix=None, mask=None, output=None,
             if key == "chroma":
                 try:
                     obs[key] = [float(x) for x in np.asarray(values[key]).reshape(-1)[:2]]
-                except Exception:
+                except Exception as _degrade_error:
+                    _swallowed("roop/temporal_quality.py:213", _degrade_error, "fallback continued")
                     pass
             else:
                 obs[key] = _finite(values[key], obs[key])
@@ -237,7 +245,8 @@ def _mask_delta(a, b):
         if aa.shape != bb.shape:
             return None
         return float(np.mean(np.abs(aa - bb)))
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/temporal_quality.py:240", _degrade_error, "fallback continued")
         return None
 
 
@@ -250,7 +259,8 @@ def _geometry_delta(current, previous, bbox=None, previous_bbox=None):
             scale = max(1.0, abs(float(a[0, 0])) + abs(float(a[1, 1])))
             values.append(float(np.linalg.norm(a[:, :2] - b[:, :2]) / scale))
             values.append(float(np.linalg.norm(a[:, 2] - b[:, 2]) / 64.0))
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/temporal_quality.py:253", _degrade_error, "fallback continued")
         pass
     try:
         if bbox is not None and previous_bbox is not None:
@@ -259,7 +269,8 @@ def _geometry_delta(current, previous, bbox=None, previous_bbox=None):
             scale = max(1.0, float(max(a[2] - a[0], a[3] - a[1])))
             values.append(float(np.linalg.norm((a[:2] - b[:2])) / scale))
             values.append(float(np.linalg.norm((a[2:] - a[:2]) - (b[2:] - b[:2])) / scale))
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/temporal_quality.py:262", _degrade_error, "fallback continued")
         pass
     return max(values) if values else None
 
@@ -529,7 +540,8 @@ class TemporalQualityController:
                              interpolation=cv2.INTER_LINEAR)
             alpha = max(0.0, min(1.0, float(strength)))
             return np.clip(old * alpha + current * (1.0 - alpha), 0.0, 1.0)
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("roop/temporal_quality.py:532", _degrade_error, "fallback continued")
             return current_mask
 
     def stable_transform(self, track_id):

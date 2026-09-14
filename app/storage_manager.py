@@ -8,6 +8,7 @@ the current application references, and the regeneration contract recorded in
 """
 
 from __future__ import annotations
+from roop.degrade import swallowed as _swallowed
 
 import hashlib
 import json
@@ -175,9 +176,10 @@ class StorageManager:
             if active_project:
                 context["references"].add(_canonical(
                     os.path.join(self.app_root, "projects", f"{active_project}.json")))
-        except Exception:
+        except Exception as _degrade_error:
             # Inventory must remain available when the API is starting or when
             # the unit-test process intentionally has no backend imported.
+            _swallowed("storage_manager.py:178", _degrade_error, "fallback continued")
             pass
 
         try:
@@ -193,7 +195,8 @@ class StorageManager:
                     context["active_reasons"].append("a resumable queue/project job exists")
                 context["references"].update(
                     _canonical(p) for p in _path_strings(job) if p)
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("storage_manager.py:196", _degrade_error, "fallback continued")
             pass
 
         queue_file = os.path.join(self.app_root, "queue.json")

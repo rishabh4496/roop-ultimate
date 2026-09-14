@@ -18,6 +18,7 @@ tracking and alignment matrices remain compatible with the existing compositor.
 """
 
 from __future__ import annotations
+from roop.degrade import swallowed as _swallowed
 
 import os
 import shutil
@@ -57,7 +58,8 @@ from .optimized_trt_engine import TensorRTEngine
 try:
     import torch
     import torch.nn.functional as torch_functional
-except Exception:  # pragma: no cover - import-safe CPU test environments
+except Exception as _degrade_error:  # pragma: no cover - import-safe CPU test environments
+    _swallowed("roop/vectorized_pipeline.py:60", _degrade_error, "fallback continued")
     torch = None  # type: ignore[assignment]
     torch_functional = None  # type: ignore[assignment]
 
@@ -73,7 +75,8 @@ def _ffmpeg_binary() -> str:
         from roop.ffmpeg_path import ffmpeg_binary
 
         return str(ffmpeg_binary())
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/vectorized_pipeline.py:76", _degrade_error, "fallback continued")
         return shutil.which("ffmpeg") or "ffmpeg"
 
 
@@ -117,7 +120,8 @@ class PipelineConfig:
                 total_gb = float(
                     torch.cuda.get_device_properties(int(device_id)).total_memory
                 ) / float(1024**3)
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("roop/vectorized_pipeline.py:120", _degrade_error, "fallback continued")
             total_gb = 0.0
         laptop = 0.0 < total_gb < 7.0
         default_batch = 2 if laptop else 8

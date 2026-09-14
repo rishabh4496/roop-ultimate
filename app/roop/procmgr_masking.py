@@ -9,6 +9,7 @@ and `self` keeps meaning exactly what it meant. `process_mask` calls
 `self.apply_color_transfer`, which lives on ColorTransferMixin — that resolves
 through the MRO, since both are bases of the same class.
 """
+from roop.degrade import swallowed as _swallowed
 
 import os
 import threading as _threading
@@ -122,7 +123,8 @@ def _region_owner_in_crop(region, orig_frame, matrix, shape):
         return cv2.warpAffine(owner, np.asarray(matrix, dtype=np.float32),
                               (cw, ch), flags=cv2.INTER_LINEAR,
                               borderMode=cv2.BORDER_CONSTANT, borderValue=1.0)
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/procmgr_masking.py:125", _degrade_error, "fallback continued")
         return None
 
 
@@ -200,7 +202,8 @@ def _face_floor_ellipse(kps, M, shape):
                    (int(round(axis_x)), int(round(axis_y))), 0, 0, 360, 1.0, -1)
         k = max(3, (min(h, w) // 16) | 1)
         return cv2.GaussianBlur(ref, (k, k), 0)
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/procmgr_masking.py:203", _degrade_error, "fallback continued")
         return None
 
 
@@ -289,7 +292,8 @@ def _edge_blur_kernel(M, crop_shape, mask_shape, target_px=None):
         radius = int(round(target_px / frame_per_mask / 2.0 - 0.5))
         radius = max(0, min(radius, 8))
         return 2 * radius + 1
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/procmgr_masking.py:292", _degrade_error, "fallback continued")
         return 5
 
 
@@ -350,7 +354,8 @@ def _stamp_occlusion_state(target_face, occluder_mask, M):
         if filled.any():
             target_face['_landmarks_symmetric'] = repaired
             target_face['_landmarks_symmetric_filled'] = filled
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/procmgr_masking.py:353", _degrade_error, "fallback continued")
         pass
 
 
@@ -394,7 +399,8 @@ def landmark_hull(landmarks_2d, kps=None):
                 n = float(np.linalg.norm(axis))
                 if n > 1e-6:
                     u = axis / n
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("roop/procmgr_masking.py:397", _degrade_error, "fallback continued")
             pass
     v = np.array([-u[1], u[0]], dtype=np.float64)   # across-face axis
 
@@ -536,6 +542,7 @@ class MaskingMixin:
                 # track field must leave the established matte usable -- but
                 # not silently: falling back to the legacy paste on every face
                 # is indistinguishable from the feature having no effect.
+                _swallowed("roop/procmgr_masking.py:534", exc, "fallback continued")
                 warn_compositing_fallback('mask stabilisation', exc)
 
         # Cut this face's matte back where another face in the frame owns the
@@ -574,6 +581,7 @@ class MaskingMixin:
                                          target=target_img,
                                          landmarks=face_landmarks)
             except Exception as exc:
+                _swallowed("roop/procmgr_masking.py:576", exc, "fallback continued")
                 warn_compositing_fallback('alpha refinement', exc)
                 _composite_plan = None
 
@@ -662,6 +670,7 @@ class MaskingMixin:
                     roi_paste, roi_target, roi_matte[:, :, 0],
                     strength=_rim).astype(np.float32)
             except Exception as exc:
+                _swallowed("roop/procmgr_masking.py:664", exc, "fallback continued")
                 _warn_once('boundary_illumination',
                            '[Mask] boundary illumination match failed; this '
                            'face was composited without it: %s: %s'
@@ -767,7 +776,8 @@ class MaskingMixin:
                 m = cv2.resize(m, (w, h), interpolation=cv2.INTER_LINEAR)
             mask8 = (np.clip(m, 0.0, 1.0) * 255.0).astype(np.uint8)
             return cls._crop_mask_to_frame(mask8, weight, IM, frame_shape, 0.0)
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("roop/procmgr_masking.py:770", _degrade_error, "fallback continued")
             return None       # a bad mask costs the old behaviour, not a frame
 
 
@@ -862,6 +872,7 @@ class MaskingMixin:
                 # falling back silently is indistinguishable from the mode
                 # having no effect, which is this project's most expensive
                 # class of confusion.
+                _swallowed("roop/procmgr_masking.py:860", exc, "fallback continued")
                 _warn_once('mask_edge_mode=distance',
                            '[Mask] distance-transform edge failed; this face '
                            'used the Gaussian feather: %s: %s'
@@ -971,7 +982,8 @@ class MaskingMixin:
                     pts = np.hstack([corners, np.ones((4, 1), np.float32)]) @ IM.T
                     if np.isfinite(pts).all():
                         footprint = pts
-            except Exception:
+            except Exception as _degrade_error:
+                _swallowed("roop/procmgr_masking.py:974", _degrade_error, "fallback continued")
                 footprint = None
 
         if footprint is not None:
@@ -1109,6 +1121,7 @@ class MaskingMixin:
                 # the behaviours this pipeline is judged on; a fallback on
                 # every face reads exactly like "the occlusion engine does
                 # nothing", with nothing anywhere distinguishing the two.
+                _swallowed("roop/procmgr_masking.py:1105", exc, "fallback continued")
                 warn_compositing_fallback('temporal occlusion', exc)
                 _occlusion_decision = None
 
@@ -1326,7 +1339,8 @@ class MaskingMixin:
         _temporal_tid = None
         try:
             _temporal_tid = target_face.get('_track_id') if isinstance(target_face, dict) else None
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("roop/procmgr_masking.py:1329", _degrade_error, "fallback continued")
             pass
         if (_temporal_mgr is not None and _temporal_mgr.enabled
                 and reuse_mask is None and p_name != 'mask_sam2'
@@ -1336,7 +1350,8 @@ class MaskingMixin:
                     _temporal_tid, img_mask,
                     confidence=getattr(target_face, '_temporal_confidence',
                                        getattr(target_face, 'det_score', 0.0)))
-            except Exception:
+            except Exception as _degrade_error:
+                _swallowed("roop/procmgr_masking.py:1339", _degrade_error, "fallback continued")
                 pass
 
         # Enforce per-face ownership before temporal observation. A neighboring
@@ -1377,7 +1392,8 @@ class MaskingMixin:
                         other_track_ids=_others,
                         analysis_mode=('enhanced' if _occlusion_decision.reason ==
                                        'occlusion_event_reanalysis' else 'normal'))
-            except Exception:
+            except Exception as _degrade_error:
+                _swallowed("roop/procmgr_masking.py:1380", _degrade_error, "fallback continued")
                 pass
 
         return self._composite_mask(img_mask, frame, target), img_mask

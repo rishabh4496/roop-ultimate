@@ -5,6 +5,7 @@ from @app to @router. Registered via app.include_router() in api.py, which is
 safe here because every /api route is a literal path with no path parameters,
 so declaration order cannot change which handler matches.
 """
+from roop.degrade import swallowed as _swallowed
 
 from fastapi import APIRouter, Body
 import traceback
@@ -28,7 +29,8 @@ def livecam_status():
     try:
         from roop import virtualcam
         return {"active": bool(virtualcam.cam_active)}
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("routes_livecam.py:31", _degrade_error, "fallback continued")
         return {"active": False}
 
 @router.post("/api/livecam/start")
@@ -38,6 +40,7 @@ def livecam_start(payload: dict = Body(...)):
     try:
         from roop import virtualcam
     except Exception as e:
+        _swallowed("routes_livecam.py:40", e, "fallback continued")
         return JSONResponse(status_code=500,
                             content={"message": f"virtual camera support unavailable: {e}"})
     if virtualcam.cam_active:

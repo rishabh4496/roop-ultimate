@@ -8,6 +8,7 @@ live one layer down, where both the class and its mixins can import them.
 Moved verbatim from ProcessMgr.py; the tuning constants keep their env vars and
 their original comments explaining the measured values behind them.
 """
+from roop.degrade import swallowed as _swallowed
 
 import contextlib
 import functools
@@ -703,7 +704,8 @@ def audit_face_begin(frame_idx, face):
         return
     try:
         entry = ([float(v) for v in face.bbox], [])
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/procmgr_runtime.py:706", _degrade_error, "fallback continued")
         _face_ctx.cur = None
         return
     FACE_LOG.setdefault(frame_idx, []).append(entry)
@@ -1045,7 +1047,8 @@ def _audit_report():
     try:
         from roop import face_util as _fu
         _merged = _fu.merged_detections_count()
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/procmgr_runtime.py:1048", _degrade_error, "fallback continued")
         _merged = 0
     if _merged:
         print(f"     Separately, {_merged} detections were dropped as the JUNCTION between "
@@ -1265,7 +1268,8 @@ def _stream_is_terminal() -> bool:
     # attached a terminal only to stderr.
     try:
         return bool(sys.stdout.isatty())
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/procmgr_runtime.py:1268", _degrade_error, "fallback continued")
         return False
 
 
@@ -1426,7 +1430,8 @@ class ChunkedProgress(tqdm):
         self._last_rate = rate          # what the web UI's ETA must divide by
         try:
             print(self._progress_line(rate), flush=True)
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("roop/procmgr_runtime.py:1429", _degrade_error, "fallback continued")
             pass
 
     def _progress_line(self, rate=None) -> str:
@@ -1502,7 +1507,8 @@ def _bar_eta_seconds(bar):
         if not rate:
             return None
         return (total - n) / rate
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/procmgr_runtime.py:1505", _degrade_error, "fallback continued")
         return None                     # an ETA must never break a render
 
 
@@ -1550,12 +1556,14 @@ def bar_write(msg):
     try:
         tqdm.write(text)
         return
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/procmgr_runtime.py:1553", _degrade_error, "fallback continued")
         pass
     try:
         enc = getattr(sys.stdout, "encoding", None) or "ascii"
         print(text.encode(enc, "replace").decode(enc, "replace"), flush=True)
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/procmgr_runtime.py:1558", _degrade_error, "fallback continued")
         pass
 
 

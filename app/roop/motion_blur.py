@@ -17,6 +17,7 @@ Mathematical Specifications:
      - Convolve the swapped and enhanced face patch with K before alpha compositing:
        I_swapped_harmonized = cv2.filter2D(I_swapped, -1, K)
 """
+from roop.degrade import swallowed as _swallowed
 
 import os
 import threading
@@ -97,7 +98,8 @@ def calculate_optical_flow_vector(
             pyr_scale=0.5, levels=3, winsize=15,
             iterations=3, poly_n=5, poly_sigma=1.2, flags=0
         )
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/motion_blur.py:100", _degrade_error, "fallback continued")
         return 0.0, 0.0
 
     if not np.isfinite(flow).all():

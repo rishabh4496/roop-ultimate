@@ -20,6 +20,7 @@ on an RTX 4070 therefore cannot silently become an RTX 3060 decision.
 """
 
 from __future__ import annotations
+from roop.degrade import swallowed as _swallowed
 
 import hashlib
 import json
@@ -301,7 +302,8 @@ def _runtime_hardware(hardware=None):
     try:
         import roop.globals
         return getattr(roop.globals, "runtime_hardware_profile", None)
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/precision_policy.py:304", _degrade_error, "fallback continued")
         return None
 
 
@@ -379,7 +381,8 @@ def providers_for(model_key: str, providers, model_path: str | None = None,
         try:
             import roop.globals
             requested = getattr(getattr(roop.globals, "CFG", None), "trt_precision", "mixed")
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("roop/precision_policy.py:382", _degrade_error, "fallback continued")
             requested = "mixed"
     decision = resolve(model_key, requested, providers, model_path, device_id,
                        hardware=hardware)
@@ -423,8 +426,9 @@ def _finalize(model_key, model_path, providers, device_id=0):
         # this module, so a module-level import here would be circular.
         from roop.trt_shape_profile import apply_shape_profile
         return apply_shape_profile(providers, model_key, model_path)
-    except Exception:
+    except Exception as _degrade_error:
         # Shape profiling is an optimisation, never a reason to fail a build.
+        _swallowed("roop/precision_policy.py:426", _degrade_error, "fallback continued")
         return providers
 
 
@@ -442,8 +446,9 @@ def _cudnn_algo(model_key, model_path, providers, device_id=0):
         algo = cudnn_algo.probe(model_key, model_path, providers,
                                 device_id=device_id)
         return cudnn_algo.apply_algo(providers, algo)
-    except Exception:
+    except Exception as _degrade_error:
         # The policy is an optimisation guard, never a reason to fail a build.
+        _swallowed("roop/precision_policy.py:445", _degrade_error, "fallback continued")
         return list(providers or ())
 
 

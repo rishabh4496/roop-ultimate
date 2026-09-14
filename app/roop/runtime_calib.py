@@ -18,6 +18,7 @@ Design notes:
 - ms/frame is stored as an exponential moving average (recent runs weighted
   more, so a new GPU/driver shifts the estimate) plus a sample count.
 """
+from roop.degrade import swallowed as _swallowed
 import os
 import json
 import threading
@@ -93,7 +94,8 @@ def _load():
             # than no file: the estimate is stated with confidence and is wrong.
             if int(data.get("version", 0)) == _VERSION:
                 return data
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/runtime_calib.py:96", _degrade_error, "fallback continued")
         pass
     return {"version": _VERSION, "entries": {}, "global_ms_per_frame": None,
             "global_samples": 0}
@@ -105,7 +107,8 @@ def _save(data):
         with open(tmp, 'w', encoding='utf-8') as fh:
             json.dump(data, fh, indent=2)
         os.replace(tmp, _path())
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/runtime_calib.py:108", _degrade_error, "fallback continued")
         pass
 
 
@@ -120,7 +123,8 @@ def density_bucket(n):
     and a crowd scene calibrate separately without fragmenting the store."""
     try:
         n = float(n)
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/runtime_calib.py:123", _degrade_error, "fallback continued")
         return "?"
     if n <= 0:
         return "0"
@@ -150,7 +154,8 @@ def stats():
         return {"entries": len(data.get("entries", {})),
                 "global_samples": data.get("global_samples", 0),
                 "global_ms_per_frame": data.get("global_ms_per_frame")}
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/runtime_calib.py:153", _degrade_error, "fallback continued")
         return {"entries": 0, "global_samples": 0, "global_ms_per_frame": None}
 
 
@@ -215,7 +220,8 @@ def record(signature, frames, elapsed_ms):
             data["global_ms_per_frame"] = mpf if g is None else (1 - _ALPHA) * g + _ALPHA * mpf
             data["global_samples"] = data.get("global_samples", 0) + 1
             _save(data)
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/runtime_calib.py:218", _degrade_error, "fallback continued")
         pass
 
 
@@ -232,6 +238,7 @@ def predict(signature):
         g = data.get("global_ms_per_frame")
         if g is not None:
             return {"ms_per_frame": g, "samples": 0, "source": "global"}
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/runtime_calib.py:235", _degrade_error, "fallback continued")
         pass
     return None

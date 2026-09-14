@@ -1,3 +1,4 @@
+from roop.degrade import swallowed as _swallowed
 import numpy as np
 
 from roop.faceset_v2 import (FORMAT_NAME, FORMAT_VERSION, measure_lighting,
@@ -101,10 +102,12 @@ class FaceSet:
         for index, face in enumerate(self.faces):
             try:
                 face['faceset_v2_index'] = index
-            except Exception:
+            except Exception as _degrade_error:
+                _swallowed("roop/FaceSet.py:104", _degrade_error, "fallback continued")
                 try:
                     setattr(face, 'faceset_v2_index', index)
-                except Exception:
+                except Exception as _degrade_error:
+                    _swallowed("roop/FaceSet.py:107", _degrade_error, "fallback continued")
                     pass
 
     @staticmethod

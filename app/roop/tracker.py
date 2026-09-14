@@ -81,6 +81,7 @@ no existing caller changes behaviour by upgrading.
 """
 
 from __future__ import annotations
+from roop.degrade import swallowed as _swallowed
 
 from collections import deque
 from dataclasses import dataclass, field
@@ -91,7 +92,8 @@ import numpy as np
 
 try:                                        # scipy is a hard dep of the app, but
     from scipy.optimize import linear_sum_assignment
-except Exception:                           # keep the module importable for the
+except Exception as _degrade_error:                           # keep the module importable for the
+    _swallowed("roop/tracker.py:94", _degrade_error, "fallback continued")
     linear_sum_assignment = None            # pure-geometry helpers below.
 
 
@@ -573,10 +575,12 @@ class FaceTracker:
         template = track.template
         try:
             face = type(template)(template)     # insightface Face is a dict subclass
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("roop/tracker.py:576", _degrade_error, "fallback continued")
             try:
                 face = dict(template)
-            except Exception:
+            except Exception as _degrade_error:
+                _swallowed("roop/tracker.py:579", _degrade_error, "fallback continued")
                 return None
 
         last = track.bbox_history[-1] if track.bbox_history else None

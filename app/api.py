@@ -6,6 +6,7 @@ Extras handlers as plain HTTP endpoints so the React front-end can reach full pa
 
 The Gradio UI (app/ui/) is the frozen legacy/backup UI and is NOT touched here.
 """
+from roop.degrade import swallowed as _swallowed
 
 import os
 import io
@@ -292,7 +293,8 @@ def _push_log(msg, force=False, part=None):
     if part is None:
         try:
             part = segment_writer.current_part_index()
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("api.py:295", _degrade_error, "fallback continued")
             part = 0
     category, level = _runtime_state.classify_log(msg)
     _log_lines.append({"t": _time.strftime("%H:%M:%S"), "msg": msg,
@@ -422,7 +424,8 @@ def _checkpoint_segment(project_id, writer=None, frame_idx=None, manager=None):
             import routes_queue as _queue_routes
             _queue_routes.mark_project_checkpoint(
                 project_id, "PAUSED" if paused else "PROCESSING")
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("api.py:425", _degrade_error, "fallback continued")
             pass
     except Exception as exc:
         # A failed checkpoint must not kill a render; the safe writer manifest is
@@ -622,7 +625,8 @@ class ApiProgress:
                 fraction = float(value)
             base = float(_resume_context.get("base", 0.0) or 0.0)
             _progress["progress"] = max(0.0, min(1.0, base + fraction * (1.0 - base)))
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("api.py:625", _degrade_error, "fallback continued")
             pass
         if desc:
             _progress["desc"] = desc
@@ -637,7 +641,8 @@ class ApiProgress:
                     import gc
                     gc.collect()
                     torch.cuda.empty_cache()
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("api.py:640", _degrade_error, "fallback continued")
             pass
 
     def tqdm(self, iterable=None, *a, **k):
@@ -687,7 +692,8 @@ def get_settings_defaults():
     try:
         return _public_settings(
             Settings(os.path.join(os.path.dirname(__file__), '__nonexistent_defaults__.yaml')))
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("api.py:690", _degrade_error, "fallback continued")
         return {}
 
 
@@ -877,11 +883,13 @@ def _get_git_version() -> str:
         # Get tag or short commit
         version = subprocess.check_output(["git", "describe", "--tags", "--always"], stderr=subprocess.DEVNULL).decode("ascii").strip()
         return f"{branch}@{version}"
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("api.py:880", _degrade_error, "fallback continued")
         try:
             version = subprocess.check_output(["git", "rev-parse", "--short", "HEAD"], stderr=subprocess.DEVNULL).decode("ascii").strip()
             return f"main@{version}"
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("api.py:884", _degrade_error, "fallback continued")
             return "main"
 
 
@@ -891,7 +899,8 @@ def get_meta():
     try:
         from roop.core import suggest_execution_providers
         providers = suggest_execution_providers()
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("api.py:894", _degrade_error, "fallback continued")
         providers = ["cpu"]
     return {
         "git_version": _get_git_version(),
@@ -967,7 +976,8 @@ def _available_video_codecs():
                 print(f"[Encoders] not available in this ffmpeg build, hidden from "
                       f"the codec list: {', '.join(missing)}", flush=True)
             out = found
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("api.py:970", _degrade_error, "fallback continued")
         pass
     _codec_cache["list"] = out
     return out
@@ -1025,7 +1035,8 @@ def _pose_bin(kps):
         eye_y = (ley + rey) * 0.5
         mouth_y = (lmy + rmy) * 0.5
         pitch = float(np.log((abs(ny - eye_y) + 1e-6) / (abs(mouth_y - ny) + 1e-6)))
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("api.py:1028", _degrade_error, "fallback continued")
         return None
     return (_bin_index(yaw, _YAW_EDGES), _bin_index(pitch, _PITCH_EDGES))
 
@@ -1372,7 +1383,8 @@ def _refresh_target_frames(idx):
         # render came out at the wrong speed.
         try:
             state.current_video_fps = util.detect_fps(filename)
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("api.py:1375", _degrade_error, "fallback continued")
             state.current_video_fps = 30
         entry.fps = state.current_video_fps
     else:
@@ -2248,6 +2260,7 @@ def target_auto_capture(payload: dict = Body(...)):
             try:
                 target_auto_angles({"person": rank, "index": idx})
             except Exception as e:
+                _swallowed("api.py:2250", e, "fallback continued")
                 result["notes"].append(f"angle harvest failed for person {rank + 1}: {e}")
         enriched = len(roop_globals.TARGET_FACES) - before
 
@@ -2345,7 +2358,8 @@ def target_autocluster(payload: dict = Body(...)):
                     continue
                 try:
                     d = util.compute_cosine_distance(emb_i, emb_j)
-                except Exception:
+                except Exception as _degrade_error:
+                    _swallowed("api.py:2348", _degrade_error, "fallback continued")
                     continue
                 if d < threshold:
                     groups[j] = next_id
@@ -2375,7 +2389,8 @@ def _load_history() -> list:
             data = json.load(fh)
         if isinstance(data, list):
             return data
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("api.py:2378", _degrade_error, "fallback continued")
         pass
     return []
 
@@ -2447,7 +2462,8 @@ def get_profiles():
             data = json.load(f)
         if isinstance(data, list):
             return {"profiles": data}
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("api.py:2450", _degrade_error, "fallback continued")
         pass
     return {"profiles": []}
 
@@ -2463,6 +2479,7 @@ def save_profiles(payload: dict = Body(...)):
             json.dump(profiles, f, indent=2)
         os.replace(tmp, PROFILES_FILE)
     except Exception as e:
+        _swallowed("api.py:2465", e, "fallback continued")
         return JSONResponse(status_code=500, content={"message": str(e)})
     return {"status": "success", "count": len(profiles)}
 
@@ -2493,13 +2510,15 @@ def _face_normed_emb(f):
     e = None
     try:
         e = f["normed_embedding"]
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("api.py:2496", _degrade_error, "fallback continued")
         e = getattr(f, "normed_embedding", None)
     if e is None:
         raw = None
         try:
             raw = f["embedding"]
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("api.py:2502", _degrade_error, "fallback continued")
             raw = getattr(f, "embedding", None)
         if raw is not None:
             e = raw
@@ -2524,7 +2543,8 @@ def _target_person_embs():
             e = _face_normed_emb(face)
             if e is not None:
                 by_rank.setdefault(r, []).append(e)
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("api.py:2527", _degrade_error, "fallback continued")
         return {}
     return by_rank
 
@@ -2828,7 +2848,8 @@ def preview(payload: dict = Body(...)):
                     pose = solve_pose_5pt(k) if k is not None else None
                     pose_list.append([round(float(v), 1) for v in pose] if pose is not None else None)
                 person_ids = _preview_person_ids(idx, faces)
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("api.py:2831", _degrade_error, "fallback continued")
             pass
 
         if not fake or len(roop_globals.INPUT_FACESETS) < 1:
@@ -2880,7 +2901,8 @@ def preview(payload: dict = Body(...)):
             import torch
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("api.py:2883", _degrade_error, "fallback continued")
             pass
 
 
@@ -2923,7 +2945,8 @@ def preview_upscale(payload: dict = Body(...)):
     finally:
         try:
             proc.Release()
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("api.py:2926", _degrade_error, "fallback continued")
             pass
 
     h, w = out.shape[:2]
@@ -2956,6 +2979,7 @@ def trigger_swap(payload: dict = Body(...)):
         payload = dict(payload)
         payload["_project_id"] = project["id"]
     except Exception as exc:
+        _swallowed("api.py:2958", exc, "fallback continued")
         return JSONResponse(status_code=409, content={
             "message": "cannot create a recoverable project: " + str(exc),
             "recoverability_error": True})
@@ -3041,7 +3065,8 @@ def _run_swap(payload):
                 _resume_context.update({
                     "base": min(1.0, max(0, committed) / total) if total else 0.0,
                     "total": total})
-            except Exception:
+            except Exception as _degrade_error:
+                _swallowed("api.py:3044", _degrade_error, "fallback continued")
                 pass
         _progress.update({"processing": True,
                           "paused": bool(pause_state["acknowledged"]),
@@ -3058,7 +3083,8 @@ def _run_swap(payload):
             try:
                 has_checkpoint = bool((_project_checkpoint.load(project_id).get(
                     "checkpoint") or {}).get("segments"))
-            except Exception:
+            except Exception as _degrade_error:
+                _swallowed("api.py:3061", _degrade_error, "fallback continued")
                 pass
         if roop_globals.CFG.clear_output and not has_checkpoint:
             shutil.rmtree(roop_globals.output_path, ignore_errors=True)
@@ -3150,7 +3176,8 @@ def _run_swap(payload):
                     files_to_process = [list_files_process[target_idx]]
                 else:
                     files_to_process = list_files_process
-            except Exception:
+            except Exception as _degrade_error:
+                _swallowed("api.py:3153", _degrade_error, "fallback continued")
                 files_to_process = list_files_process
         else:
             files_to_process = list_files_process
@@ -3162,7 +3189,8 @@ def _run_swap(payload):
                 import gc
                 gc.collect()
                 torch.cuda.empty_cache()
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("api.py:3165", _degrade_error, "fallback continued")
             pass
 
         # Stash the settings signature so the completion hook (core.py) can
@@ -3177,7 +3205,8 @@ def _run_swap(payload):
                 # must describe the count that actually processed this render.
                 threads=roop_globals.execution_threads,
                 precision=getattr(roop_globals.CFG, 'trt_precision', 'mixed'))
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("api.py:3180", _degrade_error, "fallback continued")
             roop_globals._run_signature = None
 
         if project_id:
@@ -3256,7 +3285,8 @@ def _run_swap(payload):
                     import torch as _t
                     if _t.cuda.is_available():
                         return _t.cuda.mem_get_info(roop_globals.cuda_device_id)[0] / (1024 ** 3)
-                except Exception:
+                except Exception as _degrade_error:
+                    _swallowed("api.py:3259", _degrade_error, "fallback continued")
                     pass
                 return 0.0
             free_before = _free_gb()
@@ -3438,7 +3468,8 @@ def get_progress():
         # disk. Tagged with its own part so it lands in that tab.
         try:
             done_parts = [p for p in segment_writer.parts_snapshot() if p.get("done")]
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("api.py:3441", _degrade_error, "fallback continued")
             done_parts = []
         seen = int(_log_state.get("parts_seen", 0) or 0)
         if len(done_parts) > seen:
@@ -3466,7 +3497,8 @@ def get_progress():
                     pass
     try:
         parts = segment_writer.parts_snapshot()
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("api.py:3469", _degrade_error, "fallback continued")
         parts = []
     runtime = _runtime_state.snapshot(
         progress=_progress,
@@ -3528,7 +3560,8 @@ def get_active_job():
     processing = bool(_progress.get("processing"))
     try:
         queue_snapshot = _routes_queue._snapshot()
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("api.py:3531", _degrade_error, "fallback continued")
         queue_snapshot = {"jobs": [], "current": None, "running": False, "paused": False}
 
     current_id = queue_snapshot.get("current")
@@ -3567,7 +3600,8 @@ def get_runtime_state():
     _sync_pause_progress()
     try:
         parts = segment_writer.parts_snapshot()
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("api.py:3570", _degrade_error, "fallback continued")
         parts = []
     return _runtime_state.snapshot(
         progress=_progress,
@@ -3634,6 +3668,7 @@ def delete_output(payload: dict = Body(...)):
                 _last_output.update({"path": "", "kind": ""})
             return {"status": "success"}
         except Exception as e:
+            _swallowed("api.py:3636", e, "fallback continued")
             return JSONResponse(status_code=500, content={"message": f"failed to delete file: {e}"})
     return JSONResponse(status_code=404, content={"message": "file not found"})
 
@@ -3660,6 +3695,7 @@ def reveal_output(payload: dict = Body(default={})):
         else:
             subprocess.Popen(["xdg-open", folder])
     except Exception as e:
+        _swallowed("api.py:3662", e, "fallback continued")
         return JSONResponse(status_code=500, content={"message": str(e)})
     return {"status": "ok", "folder": folder}
 

@@ -9,6 +9,7 @@ face owns the pixel.
 """
 
 from __future__ import annotations
+from roop.degrade import swallowed as _swallowed
 
 import math
 import threading
@@ -218,7 +219,8 @@ def _landmarks_crop(target_face, matrix, output_shape, matrix_shape=None):
     for name in ("landmark_2d_68", "landmarks_2d", "landmark_2d_106"):
         try:
             value = getattr(target_face, name, None)
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("roop/identity_detail.py:221", _degrade_error, "fallback continued")
             value = None
         if value is None and isinstance(target_face, dict):
             value = target_face.get(name)
@@ -342,7 +344,8 @@ def restore_identity_detail(face_img, detail, target_face=None, matrix=None,
                     track_id, residual, confidence=decoded["confidence_scalar"],
                     motion=motion, source_index=source_index,
                     transition_alpha=transition_alpha)
-            except Exception:
+            except Exception as _degrade_error:
+                _swallowed("roop/identity_detail.py:345", _degrade_error, "fallback continued")
                 pass
         delta = residual * applied
         out = np.clip(face + delta[..., None], 0.0, 255.0).astype(np.uint8)

@@ -9,6 +9,7 @@ claiming an end-to-end video gain: this isolates the per-face ONNX transfer
 cost that RealSwap pays twice.  Use the same command on each physical GPU; it
 never substitutes one device's measurements for another.
 """
+from roop.degrade import swallowed as _swallowed
 
 import argparse
 import json
@@ -43,7 +44,8 @@ class GpuSampler:
                     stderr=subprocess.DEVNULL, timeout=2).strip().splitlines()[0]
                 util, memory = (float(part.strip()) for part in raw.split(',')[:2])
                 self.samples.append((util, memory))
-            except Exception:
+            except Exception as _degrade_error:
+                _swallowed("benchmark_speed.py:46", _degrade_error, "fallback continued")
                 pass
             self.stop_event.wait(self.period)
 

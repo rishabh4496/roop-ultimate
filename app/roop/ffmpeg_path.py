@@ -27,6 +27,7 @@ Resolution is RUNTIME ONLY.  No absolute path is ever written into a launcher
 script or a config file -- the project guide requires `PINOKIO_HOME` to be
 resolved, never assumed, and never baked in.
 """
+from roop.degrade import swallowed as _swallowed
 
 import json
 import os
@@ -60,7 +61,8 @@ def _pinokio_home():
             home = json.load(handle).get("home")
         if home and os.path.isdir(home):
             return home
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/ffmpeg_path.py:63", _degrade_error, "fallback continued")
         pass
     # <PINOKIO_HOME>/api/<launcher>/app/roop/this_file.py -> up four levels.
     here = os.path.dirname(os.path.abspath(__file__))

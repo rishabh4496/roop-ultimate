@@ -1,9 +1,11 @@
+from roop.degrade import swallowed as _swallowed
 import gc
 import os
 import cv2
 try:
     cv2.setNumThreads(1)
-except Exception:
+except Exception as _degrade_error:
+    _swallowed("roop/ProcessMgr.py:6", _degrade_error, "fallback continued")
     pass
 import time
 import numpy as np
@@ -124,11 +126,13 @@ def _configure_opencv_worker_threads(workers):
         if hasattr(cv2, 'setUseOptimized'):
             cv2.setUseOptimized(True)
         cv2.setNumThreads(value)
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/ProcessMgr.py:127", _degrade_error, "fallback continued")
         pass
     try:
         optimized = bool(cv2.useOptimized()) if hasattr(cv2, 'useOptimized') else None
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/ProcessMgr.py:131", _degrade_error, "fallback continued")
         optimized = None
     print(f'[CPU] OpenCV kernel threads={value} optimized={optimized} '
           f'across {max(1, workers)} frame workers',
@@ -460,7 +464,8 @@ def _detect_face_in_roi(frame: np.ndarray, last_bbox: np.ndarray):
         if not faces:
             return None
         face = min(faces, key=lambda f: f.bbox[0])
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/ProcessMgr.py:463", _degrade_error, "fallback continued")
         return None
 
     # Remap all 2-D coordinates from (scaled) crop space to full-frame space
@@ -714,7 +719,8 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
             process = self._psutil_proc or psutil.Process(os.getpid())
             self._psutil_proc = process
             rss_gb = process.memory_info().rss / 2**30
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("roop/ProcessMgr.py:717", _degrade_error, "fallback continued")
             rss_gb = None
         vram_free_gb = vram_total_gb = None
         try:
@@ -724,7 +730,8 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                 free_b, total_b = torch.cuda.mem_get_info(device_id)
                 vram_free_gb = int(free_b) / 2**30
                 vram_total_gb = int(total_b) / 2**30
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("roop/ProcessMgr.py:727", _degrade_error, "fallback continued")
             pass
         entry = {
             'stage': str(stage),
@@ -768,13 +775,15 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
             for queue in queues or ():
                 try:
                     total += int(queue.qsize())
-                except Exception:
+                except Exception as _degrade_error:
+                    _swallowed("roop/ProcessMgr.py:771", _degrade_error, "fallback continued")
                     pass
             return total
         def one(queue):
             try:
                 return int(queue.qsize()) if queue is not None else 0
-            except Exception:
+            except Exception as _degrade_error:
+                _swallowed("roop/ProcessMgr.py:777", _degrade_error, "fallback continued")
                 return 0
         # `frames_queue`/`processed_queue` belong to the SEQUENTIAL path. On
         # the parallel stabilization path they do not exist, so both depths
@@ -798,9 +807,10 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
         if scheduler is not None:
             try:
                 scheduler.safe_boundary(self._runtime_queue_snapshot())
-            except Exception:
+            except Exception as _degrade_error:
                 # Scheduler telemetry/admission is advisory; it must never
                 # change the established frame result or stop a render.
+                _swallowed("roop/ProcessMgr.py:801", _degrade_error, "fallback continued")
                 pass
         if monitor is None or controller is None or not monitor.enabled:
             return
@@ -1152,7 +1162,8 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                                 _torch.cuda.get_device_properties(
                                     int(getattr(roop.globals, 'cuda_device_id', 0) or 0)
                                 ).total_memory) / (1024 ** 3))
-                    except Exception:
+                    except Exception as _degrade_error:
+                        _swallowed("roop/ProcessMgr.py:1155", _degrade_error, "fallback continued")
                         pass
                 p.Initialize(extoption)
                 newprocessors.append(p)
@@ -1204,7 +1215,8 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                             return None
                         img = self.blur_area(img, blend_amount)
                         return img.astype(np.float32) / 255.0
-                    except Exception:
+                    except Exception as _degrade_error:
+                        _swallowed("roop/ProcessMgr.py:1207", _degrade_error, "fallback continued")
                         return None
 
                 def _parse_one_faceset_entry(mask_data):
@@ -1218,7 +1230,8 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                     if raw_kps:
                         try:
                             ref_kps = np.array(raw_kps, dtype=np.float32)
-                        except Exception:
+                        except Exception as _degrade_error:
+                            _swallowed("roop/ProcessMgr.py:1221", _degrade_error, "fallback continued")
                             pass
                     return {
                         'exclude_mask': exclude_mask,
@@ -1327,7 +1340,8 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                                 y, p = decompose_yaw_pitch(rvec)
                                 yaw_d = _math.degrees(y)
                                 pitch_d = _math.degrees(p)
-                            except Exception:
+                            except Exception as _degrade_error:
+                                _swallowed("roop/ProcessMgr.py:1330", _degrade_error, "fallback continued")
                                 pass
                         poses.append((yaw_d, pitch_d))
                     fs.face_poses = poses
@@ -1667,7 +1681,8 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                         try:
                             while True:
                                 self.frames_queue[threadindex].get_nowait()
-                        except Exception:
+                        except Exception as _degrade_error:
+                            _swallowed("roop/ProcessMgr.py:1670", _degrade_error, "fallback continued")
                             pass
                         self._runtime_worker_exit(threadindex)
                         self._worker_done(threadindex)
@@ -1679,7 +1694,8 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                     try:
                         while True:
                             self.frames_queue[threadindex].get_nowait()
-                    except Exception:
+                    except Exception as _degrade_error:
+                        _swallowed("roop/ProcessMgr.py:1682", _degrade_error, "fallback continued")
                         pass
                     self._runtime_worker_exit(threadindex)
                     self._worker_done(threadindex)
@@ -1720,7 +1736,8 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                         if (isinstance(item, tuple) and len(item) > 1
                                 and item[1] is not None):
                             pause_controller.pending_output(-1)
-            except Exception:
+            except Exception as _degrade_error:
+                _swallowed("roop/ProcessMgr.py:1723", _degrade_error, "fallback continued")
                 pass
 
         try:
@@ -2444,7 +2461,8 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                 if cap is not None:
                     try:
                         cap.release()
-                    except Exception:
+                    except Exception as _degrade_error:
+                        _swallowed("roop/ProcessMgr.py:2447", _degrade_error, "fallback continued")
                         pass
                     cap = None
 
@@ -2793,7 +2811,8 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                 continue
             try:
                 line = engine.summary_line()
-            except Exception:
+            except Exception as _degrade_error:
+                _swallowed("roop/ProcessMgr.py:2796", _degrade_error, "fallback continued")
                 continue
             if line:
                 print(line, flush=True)
@@ -2925,7 +2944,8 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
             if fn is not None:
                 try:
                     need = max(need, int(fn(eps)))
-                except Exception:
+                except Exception as _degrade_error:
+                    _swallowed("roop/ProcessMgr.py:2928", _degrade_error, "fallback continued")
                     need = max(need, _MAX_STAB_WARMUP)
         return need
 
@@ -2977,15 +2997,17 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
             # double) cannot report total RAM, rather than returning the cap
             # before applying the available-memory guard.
             total_mb = float(getattr(memory, 'total', 0) or 0) / (1024.0 ** 2)
-        except Exception:
+        except Exception as _degrade_error:
             # If memory telemetry is unavailable, keep the fallback cap as a
             # TOTAL live-buffer budget rather than handing every live chunk a
             # full 1536 MB.  The latter silently multiplies to ~9 GB on the
             # historical six-buffer path and can recreate the 16 GB laptop
             # allocation failure this guard is meant to prevent.
+            _swallowed("roop/ProcessMgr.py:2980", _degrade_error, "fallback continued")
             try:
                 return 1536.0 / max(1, int(self._stab_live_chunks()))
-            except Exception:
+            except Exception as _degrade_error:
+                _swallowed("roop/ProcessMgr.py:2988", _degrade_error, "fallback continued")
                 return 1536.0 / self._STAB_LIVE_CHUNKS
 
         if hard_cap is None:
@@ -3518,7 +3540,8 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                             # Pass the real frame index so the temporal-detection /
                             # SAM2 / identity-track caches stay usable in this path.
                             self.process_frame(_combined[ci], frame_idx=_base_global + ci)
-                        except Exception:
+                        except Exception as _degrade_error:
+                            _swallowed("roop/ProcessMgr.py:3521", _degrade_error, "fallback continued")
                             pass
                     for ci in range(ca, _base + b):
                         if not roop.globals.processing:
@@ -3535,7 +3558,8 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                             with _prof('frame_total'):
                                 out = self.process_frame(_combined[ci], frame_idx=gi,
                                                           output_pending=True)
-                        except Exception:
+                        except Exception as _degrade_error:
+                            _swallowed("roop/ProcessMgr.py:3538", _degrade_error, "fallback continued")
                             out = _combined[ci]
                         _results[gi] = out if out is not None else _combined[ci]
                         del out
@@ -3660,7 +3684,8 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                 try:
                     while True:
                         _write_q.get_nowait()
-                except Exception:
+                except Exception as _degrade_error:
+                    _swallowed("roop/ProcessMgr.py:3663", _degrade_error, "fallback continued")
                     pass
             if _wt.is_alive():
                 try:
@@ -3678,7 +3703,8 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
             if cap is not None:
                 try:
                     cap.release()
-                except Exception:
+                except Exception as _degrade_error:
+                    _swallowed("roop/ProcessMgr.py:3681", _degrade_error, "fallback continued")
                     pass
                 cap = None
 
@@ -3686,7 +3712,8 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
             try:
                 while not prefetch_q.empty():
                     prefetch_q.get_nowait()
-            except Exception:
+            except Exception as _degrade_error:
+                _swallowed("roop/ProcessMgr.py:3689", _degrade_error, "fallback continued")
                 pass
             rt.join(timeout=5)
             self._parallel_stab = False
@@ -3716,7 +3743,8 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
             try:
                 mem_gb = process.memory_info().rss / 1024 / 1024 / 1024
                 self._cached_mem_str = f"{COLOR_CYAN}{mem_gb:.2f}GB{COLOR_RESET}"
-            except Exception:
+            except Exception as _degrade_error:
+                _swallowed("roop/ProcessMgr.py:3719", _degrade_error, "fallback continued")
                 pass
         mem_str = getattr(self, '_cached_mem_str', f"{COLOR_CYAN}0.00GB{COLOR_RESET}")
         active_workers = getattr(self, '_active_inference_workers', None)
@@ -3845,8 +3873,9 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                 if not any(face_rotation_action(face, frame.shape[:2]) is not None
                            for face in detected):
                     return frame
-            except Exception:
+            except Exception as _degrade_error:
                 # An incomplete detector object must not suppress recovery.
+                _swallowed("roop/ProcessMgr.py:3848", _degrade_error, "fallback continued")
                 pass
 
         # rotate_* returns a read-only view; swap_faces only reads its plate and
@@ -3943,7 +3972,8 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
     def _temporal_track_id(face):
         try:
             return face.get('_track_id') if isinstance(face, dict) else None
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("roop/ProcessMgr.py:3946", _degrade_error, "fallback continued")
             return None
 
     @staticmethod
@@ -4012,7 +4042,8 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                         track_id = tuple(np.rint(face.kps.mean(axis=0) / 32.0).astype(int))
                     self._stab_history.record_landmarks(
                         track_id, face.kps, self._cur_stab_t())
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("roop/ProcessMgr.py:4015", _degrade_error, "fallback continued")
             pass
 
     def swap_faces(self, frame, temp_frame=None, stabilize=False, frame_idx=None):
@@ -4682,7 +4713,8 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                                     _dd[g] = round(min(compute_cosine_distance(
                                         self.target_face_datas[ti].embedding, face.embedding)
                                         for ti in tis), 3)
-                                except Exception:
+                                except Exception as _degrade_error:
+                                    _swallowed("roop/ProcessMgr.py:4685", _degrade_error, "fallback continued")
                                     _dd[g] = None
                             bar_write(f"[TRACKFALL] f={frame_idx} best_g={best_g} best_d={best_d:.3f} "
                                       f"claimed_src={sorted(claimed_sources_in_frame)} thr={threshold} d={_dd}")
@@ -5019,7 +5051,8 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                 area = w * h
                 step = round(np.log2(area) * 8.0) if area > 1.0 else -1e3
                 return (step, x0 + w * 0.5)
-            except Exception:
+            except Exception as _degrade_error:
+                _swallowed("roop/ProcessMgr.py:5022", _degrade_error, "fallback continued")
                 return (-1e3, 0.0)
 
         order = sorted(range(len(pending)), key=lambda k: _depth(pending[k][1]))
@@ -5081,7 +5114,8 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                 return None
             return (np.asarray(kps).copy(), np.asarray(bbox).copy(),
                     (rx0, ry0, rx1, ry1), frame[ry0:ry1, rx0:rx1].copy())
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("roop/ProcessMgr.py:5084", _degrade_error, "fallback continued")
             return None
 
     @staticmethod
@@ -5120,7 +5154,8 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
             yaw, pitch = head_angles()
             return (abs(float(yaw)) >= VERIFY_MIN_OFFAXIS
                     or abs(float(pitch)) >= VERIFY_MIN_OFFAXIS)
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("roop/ProcessMgr.py:5123", _degrade_error, "fallback continued")
             return True     # unreadable pose — check, as before
 
     @staticmethod
@@ -5145,7 +5180,8 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
             _audit_hit(AUDIT_SWAP_MOVED)
             result[ry0:ry1, rx0:rx1] = patch
             return result
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("roop/ProcessMgr.py:5148", _degrade_error, "fallback continued")
             return result
 
     @staticmethod
@@ -5156,7 +5192,8 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
             roll = (face.get('roll_deg') if isinstance(face, dict)
                     else getattr(face, 'roll_deg', None))
             return None if roll is None else float(roll)
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("roop/ProcessMgr.py:5159", _degrade_error, "fallback continued")
             return None
 
 
@@ -5412,7 +5449,8 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
             target_face['_adaptive_yaw'] = tgt_yaw_deg
             target_face['_adaptive_pitch'] = tgt_pitch_deg
             target_face['_adaptive_roll'] = float(_alignment['roll'])
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("roop/ProcessMgr.py:5415", _degrade_error, "fallback continued")
             pass
 
         # ...and the same head with the JAW taken out, for the callers that are
@@ -5466,7 +5504,8 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                 ty, tp  = decompose_yaw_pitch(rvec)
                 bank_yaw_deg   = _math.degrees(ty)
                 bank_pitch_deg = _math.degrees(tp)
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("roop/ProcessMgr.py:5469", _degrade_error, "fallback continued")
             pass   # landmarks unavailable — the source bank falls back to faces[0]
 
         # Publish this face's non-frontal score to the mask router NOW, at the
@@ -5484,7 +5523,8 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                 self._nonfrontal_router.observe(
                     getattr(target_face, 'kps', None), tgt_pitch_deg,
                     getattr(self._tls, 'frame_idx', None))
-            except Exception:
+            except Exception as _degrade_error:
+                _swallowed("roop/ProcessMgr.py:5487", _degrade_error, "fallback continued")
                 pass   # the router re-scores in process_mask regardless
 
         # ── Option 1: Multi-angle source bank ────────────────────────────────
@@ -5505,7 +5545,8 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
             try:
                 from roop.pose_source_selector import estimate_target_pose
                 target_pose_v5 = estimate_target_pose(target_face, frame_shape=plate.shape)
-            except Exception:
+            except Exception as _degrade_error:
+                _swallowed("roop/ProcessMgr.py:5508", _degrade_error, "fallback continued")
                 target_pose_v5 = None
 
         selected_src_idx = 0
@@ -5528,7 +5569,8 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                     try:
                         with _prof('lighting'):
                             target_lighting = fs.lighting_for_frame(plate, target_face['bbox'])
-                    except Exception:
+                    except Exception as _degrade_error:
+                        _swallowed("roop/ProcessMgr.py:5531", _degrade_error, "fallback continued")
                         target_lighting = None
                     if (_temporal_mgr is not None and _temporal_mgr.enabled
                             and _temporal_tid is not None):
@@ -5536,7 +5578,8 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                     if target_pose_v5 is not None:
                         try:
                             previous_idx = target_face.get('_pose_v5_source_index')
-                        except Exception:
+                        except Exception as _degrade_error:
+                            _swallowed("roop/ProcessMgr.py:5539", _degrade_error, "fallback continued")
                             previous_idx = None
                         with _prof('faceset_lookup'):
                             pose_selection_v5 = fs.select_pose_aware_reference(
@@ -5569,7 +5612,8 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                 # never let this second selector call undo temporal hysteresis.
                 try:
                     temporal_index = target_face.get('_temporal_source_index')
-                except Exception:
+                except Exception as _degrade_error:
+                    _swallowed("roop/ProcessMgr.py:5572", _degrade_error, "fallback continued")
                     temporal_index = None
                 if (temporal_index is not None
                         and 0 <= int(temporal_index) < len(fs.faces)):
@@ -5684,7 +5728,8 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                             dp = bank_pitch_deg - _math.degrees(sp)
                             if abs(dy) > 15 or abs(dp) > 15:
                                 bar_write(f"[3DRecon] pose correction: Δyaw={dy:+.1f}° Δpitch={dp:+.1f}°")
-                        except Exception:
+                        except Exception as _degrade_error:
+                            _swallowed("roop/ProcessMgr.py:5687", _degrade_error, "fallback continued")
                             pass
 
                     with _gpu_guard(pooled=analysis_pooled(), owner='analysis'):  # re-detection on posed crop: lock-free when pooled
@@ -5707,7 +5752,8 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                         try:
                             if _blob_key in posed_input:
                                 del posed_input[_blob_key]
-                        except Exception:
+                        except Exception as _degrade_error:
+                            _swallowed("roop/ProcessMgr.py:5710", _degrade_error, "fallback continued")
                             pass
                         inputface = posed_input
             except Exception as e:
@@ -5781,7 +5827,8 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                 if target_face is not None:
                     try:
                         target_face.plate_ctx = (plate, M) if _usable_ctx else None
-                    except Exception:
+                    except Exception as _degrade_error:
+                        _swallowed("roop/ProcessMgr.py:5784", _degrade_error, "fallback continued")
                         pass
                 subsample_frames = self.implode_pixel_boost(aligned_for_swap, model_output_size, subsample_total)
                 # Only skip the global GPU lock when THIS processor owns a real
@@ -5874,7 +5921,8 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                     try:
                         if hasattr(target_face, 'plate_ctx'):
                             target_face.plate_ctx = None
-                    except Exception:
+                    except Exception as _degrade_error:
+                        _swallowed("roop/ProcessMgr.py:5877", _degrade_error, "fallback continued")
                         pass
                 fake_frame = self.explode_pixel_boost(swap_result_frames, model_output_size, subsample_total, subsample_size)
                 fake_frame = fake_frame.astype(np.uint8)
@@ -6310,7 +6358,8 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                     _confidence = float(target_face.get(
                         '_temporal_confidence', self._temporal_confidence(target_face)))
                     _motion = float(target_face.get('_temporal_motion', 0.0))
-                except Exception:
+                except Exception as _degrade_error:
+                    _swallowed("roop/ProcessMgr.py:6313", _degrade_error, "fallback continued")
                     _confidence = self._temporal_confidence(target_face)
                     _motion = 0.0
                 _transition_alpha = float(target_face.get(
@@ -6358,7 +6407,8 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                         _detail_conf = float(target_face.get(
                             '_temporal_confidence', self._temporal_confidence(target_face)))
                         _detail_motion = float(target_face.get('_temporal_motion', 0.0))
-                    except Exception:
+                    except Exception as _degrade_error:
+                        _swallowed("roop/ProcessMgr.py:6361", _degrade_error, "fallback continued")
                         _detail_conf = self._temporal_confidence(target_face)
                         _detail_motion = 0.0
                     _visible = None
@@ -6564,7 +6614,8 @@ class ProcessMgr(MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin,
                 with _prof('expression_analysis'):
                     _expression_plan = _expression_engine.plan(
                         getattr(target_face, '_track_id', None))
-            except Exception:
+            except Exception as _degrade_error:
+                _swallowed("roop/ProcessMgr.py:6567", _degrade_error, "fallback continued")
                 _expression_plan = None
 
         if self.options.restore_original_mouth and not lipsync_wins:

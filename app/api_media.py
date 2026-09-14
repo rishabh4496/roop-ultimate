@@ -3,6 +3,7 @@
 Pure conversions between uploads, OpenCV arrays and data URLs. No behaviour of
 its own, which is why both api.py and the routers can import it freely.
 """
+from roop.degrade import swallowed as _swallowed
 
 import base64
 import os
@@ -72,7 +73,8 @@ def _bgr_to_preview_dataurl(bgr) -> str:
         if not ok:
             return _bgr_to_dataurl(bgr)
         return "data:image/jpeg;base64," + base64.b64encode(buf.tobytes()).decode("ascii")
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("api_media.py:75", _degrade_error, "fallback continued")
         return _bgr_to_dataurl(bgr)
 
 def _bgr_to_jpg_dataurl(bgr) -> str:
@@ -83,7 +85,8 @@ def _bgr_to_jpg_dataurl(bgr) -> str:
         if not ok:
             return ""
         return "data:image/jpeg;base64," + base64.b64encode(buf.tobytes()).decode("ascii")
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("api_media.py:86", _degrade_error, "fallback continued")
         return ""
 
 def _dataurl_to_bgr(data_url: str):
@@ -95,5 +98,6 @@ def _dataurl_to_bgr(data_url: str):
         raw = base64.b64decode(data_url.split(",", 1)[1])
         arr = np.frombuffer(raw, dtype=np.uint8)
         return cv2.imdecode(arr, cv2.IMREAD_COLOR)
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("api_media.py:98", _degrade_error, "fallback continued")
         return None

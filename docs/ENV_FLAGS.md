@@ -753,6 +753,18 @@ refusal line names the gate to loosen:
 Counters are unsynchronised increments across worker threads — a lost count is
 harmless for a breakdown meant to show relative magnitude.
 
+## Fallback diagnostics
+
+Broad exception handlers that intentionally keep a render alive now report
+their site and occurrence count through `/api/system/telemetry`. The first
+occurrence at each site is printed once, while repeated occurrences are counted
+without flooding the terminal. This distinguishes a healthy optional fallback
+from a quality layer that is disabled for an entire render.
+
+| Flag | Default | Effect |
+|------|---------|--------|
+| `ROOP_STRICT_FALLBACK` | 0 | Re-raise an exception at every instrumented fallback instead of continuing. Use this while diagnosing a suspicious render; leave it off for normal operation because some fallbacks are deliberate compatibility paths. |
+
 ## Identity tracking
 
 Cosine distances are scipy convention (0..2). A same-person **profile** frame sits

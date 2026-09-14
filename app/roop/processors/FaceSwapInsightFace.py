@@ -1,3 +1,4 @@
+from roop.degrade import swallowed as _swallowed
 import os
 import threading
 
@@ -425,7 +426,8 @@ def batch_swap_enabled() -> bool:
         import torch
         return (torch.cuda.is_available() and
                 torch.cuda.get_device_properties(0).total_memory >= 10 * 1024 ** 3)
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/processors/FaceSwapInsightFace.py:428", _degrade_error, "fallback continued")
         return False
 
 
@@ -495,7 +497,8 @@ def _freeze_convtranspose_reshape(model):
     changed anything (inswapper and the other emap swappers match nothing)."""
     try:
         inferred = onnx.shape_inference.infer_shapes(model)
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/processors/FaceSwapInsightFace.py:498", _degrade_error, "fallback continued")
         return False
     static_shapes = {}
     for vi in (list(inferred.graph.value_info) + list(inferred.graph.input)
@@ -886,7 +889,8 @@ class FaceSwapInsightFace():
             latent = converted.reshape(1, -1).astype(np.float32)
             try:
                 source_face[cache_key] = latent
-            except Exception:
+            except Exception as _degrade_error:
+                _swallowed("roop/processors/FaceSwapInsightFace.py:889", _degrade_error, "fallback continued")
                 pass
             return latent
         if mode == "cscs_dual":
@@ -912,7 +916,8 @@ class FaceSwapInsightFace():
             latent = (_emb(self.cscs_rec) + _emb(self.cscs_id)).reshape(1, -1).astype(np.float32)
             try:
                 source_face[cache_key] = latent
-            except Exception:
+            except Exception as _degrade_error:
+                _swallowed("roop/processors/FaceSwapInsightFace.py:915", _degrade_error, "fallback continued")
                 pass
             return latent
         # Default: inswapper-family normed_embedding @ emap.
@@ -939,7 +944,8 @@ class FaceSwapInsightFace():
         blob = blob.transpose(2, 0, 1)[np.newaxis].astype(np.float32)
         try:
             source_face[cache_key] = blob
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("roop/processors/FaceSwapInsightFace.py:942", _degrade_error, "fallback continued")
             pass
         return blob
 
@@ -1410,7 +1416,8 @@ class FaceSwapInsightFace():
             from roop.face_util import solve_pose_jaw_5pt
             pose = solve_pose_jaw_5pt(kps)
             return None if pose is None else float(pose[0])
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("roop/processors/FaceSwapInsightFace.py:1413", _degrade_error, "fallback continued")
             return None
 
     @classmethod

@@ -6,6 +6,7 @@ source-bank selection remains in ``FaceSet.select_reference_index``.
 """
 
 from __future__ import annotations
+from roop.degrade import swallowed as _swallowed
 
 from dataclasses import dataclass, field
 import math
@@ -19,7 +20,8 @@ def _get(obj, name, default=None):
         return obj.get(name, default)
     try:
         return getattr(obj, name, default)
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/pose_source_selector.py:22", _degrade_error, "fallback continued")
         return default
 
 
@@ -102,7 +104,8 @@ def _proportions(lm, bbox):
                 (eye_l + eye_r) * 0.5 - (lm[48] + lm[54]) * 0.5)) / height,
             "mouth_width_face_width": float(np.linalg.norm(lm[54] - lm[48])) / width,
         }
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/pose_source_selector.py:105", _degrade_error, "fallback continued")
         return {}
 
 
@@ -130,7 +133,8 @@ def expression_from_landmarks(lm, bbox=None):
             "smile_width_score": _clamp(smile / 0.42),
             "descriptor": [eye_l, eye_r, mouth, smile],
         }
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/pose_source_selector.py:133", _degrade_error, "fallback continued")
         return {}
 
 
@@ -171,7 +175,8 @@ def _pose_from_kps(kps):
             value = solve_pose_5pt(kps)
         if value is not None and len(value) >= 3:
             return tuple(float(value[i]) for i in range(3))
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/pose_source_selector.py:174", _degrade_error, "fallback continued")
         pass
     return None
 
@@ -396,10 +401,12 @@ def annotate_face_pose(face, frame_shape=None):
     estimate = estimate_target_pose(face, frame_shape=frame_shape)
     try:
         face["_pose_v5"] = estimate.as_dict()
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/pose_source_selector.py:399", _degrade_error, "fallback continued")
         try:
             setattr(face, "_pose_v5", estimate.as_dict())
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("roop/pose_source_selector.py:402", _degrade_error, "fallback continued")
             pass
     return estimate
 

@@ -1,3 +1,4 @@
+from roop.degrade import swallowed as _swallowed
 import cv2
 import numpy as np
 import onnxruntime
@@ -177,7 +178,8 @@ class Frame_Upscale():
             if torch.cuda.is_available():
                 return (torch.cuda.get_device_properties(
                     torch.cuda.current_device()).total_memory / (1024 ** 3))
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("roop/processors/Frame_Upscale.py:180", _degrade_error, "fallback continued")
             pass
         return 0.0
 

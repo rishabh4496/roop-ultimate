@@ -41,6 +41,7 @@ difference between the two. That difference is on the browser's side of the
 loopback — chiefly the backdrop-filter panels layered over this image, which
 each re-blur when it changes. See `data-render-lite` in react-ui/src/index.css.
 """
+from roop.degrade import swallowed as _swallowed
 
 import os
 import threading
@@ -141,7 +142,8 @@ def publish(frame):
         if not ok:
             return
         data = np.asarray(buf).tobytes()
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/live_preview.py:144", _degrade_error, "fallback continued")
         return          # a preview must never be able to break a render
     with _lock:
         _state['jpeg'] = data

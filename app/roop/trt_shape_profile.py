@@ -36,6 +36,7 @@ other det_size because the resulting InvalidArgument was swallowed upstream.
 """
 
 from __future__ import annotations
+from roop.degrade import swallowed as _swallowed
 
 import json
 import os
@@ -170,12 +171,14 @@ def graph_inputs(model_path: str | None) -> Tuple[InputSpec, ...]:
                           tuple(None if d is None else int(d)
                                 for d in item["dims"]))
                 for item in payload["inputs"])
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/trt_shape_profile.py:173", _degrade_error, "fallback continued")
         specs = ()
     if not specs:
         try:
             specs = _read_graph_inputs(model_path)
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("roop/trt_shape_profile.py:178", _degrade_error, "fallback continued")
             specs = ()
         if specs and path:
             try:
@@ -186,7 +189,8 @@ def graph_inputs(model_path: str | None) -> Tuple[InputSpec, ...]:
                                "inputs": [{"name": s.name, "dims": list(s.dims)}
                                           for s in specs]}, handle, indent=2)
                 os.replace(tmp, path)
-            except Exception:
+            except Exception as _degrade_error:
+                _swallowed("roop/trt_shape_profile.py:189", _degrade_error, "fallback continued")
                 pass
     with _lock:
         _spec_cache[key] = specs
@@ -277,7 +281,8 @@ def apply_shape_profile(providers: Sequence, model_key: str | None,
     """
     try:
         profile = resolve_profile(model_key, model_path)
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/trt_shape_profile.py:280", _degrade_error, "fallback continued")
         profile = None
     if profile is None:
         return list(providers or ())

@@ -13,6 +13,7 @@ Face instances, keeping the existing extraction and provider paths intact.
 """
 
 from __future__ import annotations
+from roop.degrade import swallowed as _swallowed
 
 import hashlib
 import json
@@ -97,7 +98,8 @@ def _get(obj, name, default=None):
         return obj.get(name, default)
     try:
         return getattr(obj, name, default)
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/faceset_v2.py:100", _degrade_error, "fallback continued")
         return default
 
 
@@ -169,7 +171,8 @@ def _crop_for_face(image, bbox):
         y1 = max(y0 + 1, min(h, int(math.ceil(float(bbox[3])))))
         crop = image[y0:y1, x0:x1]
         return crop.copy() if crop.size else None
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/faceset_v2.py:172", _degrade_error, "fallback continued")
         return None
 
 
@@ -209,7 +212,8 @@ def _pose(face, landmarks_2d):
             value = solve_pose_5pt(landmarks_2d)
             if value is not None:
                 return tuple(float(v) for v in value)
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("roop/faceset_v2.py:212", _degrade_error, "fallback continued")
             pass
     value = _array(_get(face, "pose"))
     if value is not None and value.size >= 3:
@@ -245,7 +249,8 @@ def _sharpness(crop):
         gray = cv2.resize(gray, (160, 160), interpolation=cv2.INTER_AREA)
         variance = float(cv2.Laplacian(gray, cv2.CV_64F).var())
         return _clamp01(variance / 350.0), variance
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/faceset_v2.py:248", _degrade_error, "fallback continued")
         return 0.0, 0.0
 
 
@@ -264,7 +269,8 @@ def _native_laplacian_variance(crop):
         gray = crop if crop.ndim == 2 else cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
         value = float(cv2.Laplacian(gray, cv2.CV_64F).var())
         return value if math.isfinite(value) else 0.0
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/faceset_v2.py:267", _degrade_error, "fallback continued")
         return 0.0
 
 
@@ -329,7 +335,8 @@ def _exposure_saturation(crop):
             "p90": float(np.percentile(gray, 90)),
             "saturation_mean": saturation_mean,
         }
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/faceset_v2.py:332", _degrade_error, "fallback continued")
         return 0.5, 0.5, {}
 
 
@@ -375,7 +382,8 @@ def _appearance(crop):
             "shadow_fraction": float((y < 0.16).mean()),
             "highlight_fraction": float((y > 0.88).mean()),
         }
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/faceset_v2.py:378", _degrade_error, "fallback continued")
         return {
             "luminance": {}, "skin_color_bgr": {}, "local_contrast": 0.0,
             "color_temperature": 1.0, "shadow_fraction": 0.0,
@@ -400,7 +408,8 @@ def _proportions(lm68, bbox):
             "eye_mouth_distance_face_height": eye_mouth / face_h,
             "mouth_width_face_width": float(np.linalg.norm(mouth_r - mouth_l)) / face_w,
         }
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/faceset_v2.py:403", _degrade_error, "fallback continued")
         return {}
 
 
@@ -426,7 +435,8 @@ def _expression(lm68, bbox):
             "smile_width_score": _clamp01(smile / 0.42),
             "descriptor": [float(eye_open), float(eye_open_r), float(mouth_open), float(smile)],
         }
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/faceset_v2.py:429", _degrade_error, "fallback continued")
         return {}
 
 
@@ -439,7 +449,8 @@ def _identity_detail_crop(image, face, fallback):
             aligned, _ = align_crop(image, kps, 128, mode="arcface")
             if aligned is not None and aligned.size:
                 return aligned
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("roop/faceset_v2.py:442", _degrade_error, "fallback continued")
             pass
     return fallback
 
@@ -490,7 +501,8 @@ def _identity_details(crop, sharp_score, image=None, face=None):
             "candidates": candidates,
             "high_frequency": representation,
         }
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/faceset_v2.py:493", _degrade_error, "fallback continued")
         return {"descriptor_shape": [16, 16], "descriptor": [], "mask": [], "candidates": []}
 
 
@@ -798,7 +810,8 @@ def _detail_uv_anchors():
             "order": ["left_eye", "right_eye", "nose", "left_mouth", "right_mouth"],
             "uv": np.round(points / 128.0, 6).tolist(),
         }
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/faceset_v2.py:801", _degrade_error, "fallback continued")
         return None
 
 
@@ -961,12 +974,14 @@ def write_faceset_v2(path, faceset, images, source_name="", min_quality=None,
         else:
             try:
                 first = type(faces[0])(faces[0])
-            except Exception:
+            except Exception as _degrade_error:
+                _swallowed("roop/faceset_v2.py:964", _degrade_error, "fallback continued")
                 first = copy.copy(faces[0])
         try:
             first["embedding"] = np.asarray(faceset.embeddings_backup).copy()
             faces = [first] + list(faces[1:])
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("roop/faceset_v2.py:969", _degrade_error, "fallback continued")
             pass
     metadata, selected = prepare_faceset_v2(
         faces, images, source_name=source_name, min_quality=min_quality,

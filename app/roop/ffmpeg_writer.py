@@ -11,6 +11,7 @@ The MIT License (MIT)
 Copyright (c) 2015 Zulko
 Copyright (c) 2023 Janvarev Vladislav
 """
+from roop.degrade import swallowed as _swallowed
 
 import os
 import subprocess as sp
@@ -72,6 +73,7 @@ def probe_encoder(codec="libx265", crf=14, timeout=30):
     except FileNotFoundError:
         return (False, f"ffmpeg binary '{FFMPEG_BINARY}' was not found on PATH.")
     except Exception as e:
+        _swallowed("roop/ffmpeg_writer.py:74", e, "fallback continued")
         return (False, f"could not launch ffmpeg: {e}")
 
     try:
@@ -80,7 +82,8 @@ def probe_encoder(codec="libx265", crf=14, timeout=30):
         proc.kill()
         try:
             proc.communicate()
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("roop/ffmpeg_writer.py:83", _degrade_error, "fallback continued")
             pass
         return (False, "the ffmpeg encoder timed out during warm-up — it launched "
                        "but never made progress. On Windows this is usually Smart "
@@ -89,7 +92,8 @@ def probe_encoder(codec="libx265", crf=14, timeout=30):
         try:
             if os.path.exists(tmp):
                 os.remove(tmp)
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("roop/ffmpeg_writer.py:92", _degrade_error, "fallback continued")
             pass
 
     if proc.returncode != 0:
@@ -368,17 +372,20 @@ class FFMPEG_VideoWriter:
         try:
             if self.proc is not None and self.proc.stderr is not None:
                 err = self.proc.stderr.read() or b""
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("roop/ffmpeg_writer.py:371", _degrade_error, "fallback continued")
             pass
         try:
             from roop.procmgr_runtime import bar_write as _say
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("roop/ffmpeg_writer.py:375", _degrade_error, "fallback continued")
             _say = print
         failed = self.codec
         self._fell_back = True
         try:
             self._spawn(sw)
         except Exception as exc:
+            _swallowed("roop/ffmpeg_writer.py:381", exc, "fallback continued")
             _say(f"[Encoder] {failed} died and the {sw} fallback could not "
                  f"launch either: {exc}")
             return False
@@ -407,7 +414,8 @@ class FFMPEG_VideoWriter:
             try:
                 if self.proc is not None and self.proc.stderr is not None:
                     ffmpeg_error = self.proc.stderr.read() or b""
-            except Exception:
+            except Exception as _degrade_error:
+                _swallowed("roop/ffmpeg_writer.py:410", _degrade_error, "fallback continued")
                 pass
             raise IOError(
                 "Roop Ultimate error: the ffmpeg encoder process exited "

@@ -34,6 +34,7 @@ Features:
 """
 
 from __future__ import annotations
+from roop.degrade import swallowed as _swallowed
 
 import concurrent.futures
 import math
@@ -425,7 +426,8 @@ class MultiScaleFaceDetector:
             from roop.retinaface import _pool_size
             pool_sz = _pool_size()
             return max(1, pool_sz)
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("roop/face_detector.py:428", _degrade_error, "fallback continued")
             return 2
 
     def detect(

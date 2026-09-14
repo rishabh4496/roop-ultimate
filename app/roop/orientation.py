@@ -33,6 +33,7 @@ through the ones that do not.
 The estimate is trusted again as soon as it agrees with the prediction, so a
 track re-acquires rather than drifting forever on a stale rate.
 """
+from roop.degrade import swallowed as _swallowed
 
 import os
 
@@ -116,7 +117,8 @@ def roll_from_face(face):
                     ax = mouth - eye
                     if float(np.hypot(ax[0], ax[1])) >= 1e-3:
                         r68 = float(np.degrees(np.arctan2(ax[0], ax[1])))
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("roop/orientation.py:119", _degrade_error, "fallback continued")
             pass
 
     if rk is not None and r68 is not None:
@@ -293,6 +295,7 @@ def resolve_track_rolls(faces_in_order):
         try:
             face["roll_deg"] = float(roll)
             face["roll_trusted"] = bool(trusted)
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("roop/orientation.py:296", _degrade_error, "fallback continued")
             pass
     return tr.coasts

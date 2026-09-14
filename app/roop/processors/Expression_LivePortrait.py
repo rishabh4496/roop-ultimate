@@ -39,6 +39,7 @@ expression delta. strength = 0 returns x_s exactly, i.e. a no-op.
 Models (~537 MB, downloaded on first use) are the FasterLivePortrait ONNX
 exports, which suit this project's onnxruntime/TensorRT stack.
 """
+from roop.degrade import swallowed as _swallowed
 
 import concurrent.futures
 import contextlib
@@ -142,7 +143,8 @@ def _maybe_report():
         faces = _faces_done
     try:
         from roop.procmgr_runtime import bar_write
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/processors/Expression_LivePortrait.py:145", _degrade_error, "fallback continued")
         return
     total = sum(t for _, t, _ in snapshot) or 1.0
     lines = [f"[Expression] per-stage cost over {faces} restored faces "
@@ -708,6 +710,7 @@ class Expression_LivePortrait:
             # plain path for the rest of the session and retry this face rather
             # than losing its expression — the fallback is what the code did
             # before chaining existed, so it cannot fail for the same reason.
+            _swallowed("roop/processors/Expression_LivePortrait.py:705", e, "fallback continued")
             if self._chain:
                 self._chain = False
                 _say(f"[Expression] device-chained feature_3d failed ({e}); "
@@ -715,6 +718,7 @@ class Expression_LivePortrait:
                 try:
                     return self._infer_once(prepared, strength, region, use_stitching)
                 except Exception as e2:
+                    _swallowed("roop/processors/Expression_LivePortrait.py:717", e2, "fallback continued")
                     e = e2
             _say(f"[Expression] LivePortrait restore failed: {e}")
             return None
@@ -768,6 +772,7 @@ class Expression_LivePortrait:
                     bgr = cv2.resize(bgr, (w, h), interpolation=cv2.INTER_CUBIC)
             return bgr
         except Exception as e:
+            _swallowed("roop/processors/Expression_LivePortrait.py:770", e, "fallback continued")
             _say(f"[Expression] LivePortrait restore failed: {e}")
             return swapped_bgr
         finally:

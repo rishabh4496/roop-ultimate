@@ -19,6 +19,7 @@ GPU model, VRAM capacity, or architecture is selected by name here.
 """
 
 from __future__ import annotations
+from roop.degrade import swallowed as _swallowed
 
 import os
 import threading
@@ -328,7 +329,8 @@ class UnifiedRuntimeScheduler:
         if self.monitor is not None:
             try:
                 self.monitor.record_stage(name, elapsed, calls=calls)
-            except Exception:
+            except Exception as _degrade_error:
+                _swallowed("roop/runtime_scheduler.py:331", _degrade_error, "fallback continued")
                 pass
 
     def observe_queue(self, name: str, depth: int) -> None:
@@ -340,7 +342,8 @@ class UnifiedRuntimeScheduler:
         try:
             import psutil
             return float(psutil.Process(os.getpid()).memory_info().rss) / 2**30
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("roop/runtime_scheduler.py:343", _degrade_error, "fallback continued")
             return None
 
     def _resource_snapshot(self) -> dict:
@@ -355,7 +358,8 @@ class UnifiedRuntimeScheduler:
             result["ram_available_gb"] = float(memory.available) / 2**30
             result["ram_total_gb"] = float(memory.total) / 2**30
             result["cpu_utilization_pct"] = float(psutil.cpu_percent(interval=None))
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("roop/runtime_scheduler.py:358", _degrade_error, "fallback continued")
             pass
         try:
             import torch
@@ -364,7 +368,8 @@ class UnifiedRuntimeScheduler:
                 free, total = torch.cuda.mem_get_info(device_id)
                 result["vram_free_gb"] = int(free) / 2**30
                 result["vram_total_gb"] = int(total) / 2**30
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("roop/runtime_scheduler.py:367", _degrade_error, "fallback continued")
             pass
         try:
             import pynvml
@@ -373,9 +378,10 @@ class UnifiedRuntimeScheduler:
                 int(getattr(self.hardware, "device_id", 0) or 0))
             result["gpu_utilization_pct"] = float(
                 pynvml.nvmlDeviceGetUtilizationRates(handle).gpu)
-        except Exception:
+        except Exception as _degrade_error:
             # NVML is optional. The scheduler still has queue, stage, CPU, and
             # VRAM signals when a vendor telemetry binding is unavailable.
+            _swallowed("roop/runtime_scheduler.py:376", _degrade_error, "fallback continued")
             pass
         if result.get("vram_total_gb"):
             result["vram_pressure_pct"] = max(
@@ -441,7 +447,8 @@ class UnifiedRuntimeScheduler:
             if self.adaptive is not None:
                 try:
                     self.adaptive.tuning = self.adaptive.tuning  # keep ownership explicit
-                except Exception:
+                except Exception as _degrade_error:
+                    _swallowed("roop/runtime_scheduler.py:444", _degrade_error, "fallback continued")
                     pass
 
     def safe_boundary(self, queue_depths: Optional[Mapping[str, int]] = None) -> dict:
@@ -465,6 +472,7 @@ class UnifiedRuntimeScheduler:
                                        _integer(changes["in_flight_frames"],
                                                 self._effective_inflight)))
             except Exception as exc:
+                _swallowed("roop/runtime_scheduler.py:467", exc, "fallback continued")
                 with self._lock:
                     self.metrics.errors.append("adaptive: %s" % exc)
         self._last_bottleneck = self.classify_bottleneck(result)
@@ -643,6 +651,7 @@ class UnifiedRuntimeScheduler:
                         self.metrics.decoded += 1
                     index += 1
             except Exception as exc:
+                _swallowed("roop/runtime_scheduler.py:645", exc, "fallback continued")
                 if lease_owned_here:
                     frame_leases.release()
                 errors.append(exc)
@@ -682,6 +691,7 @@ class UnifiedRuntimeScheduler:
                     with self._lock:
                         self.metrics.processed += 1
             except Exception as exc:
+                _swallowed("roop/runtime_scheduler.py:684", exc, "fallback continued")
                 if active_packet is not None:
                     release_packet(active_packet)
                 errors.append(exc)
@@ -718,6 +728,7 @@ class UnifiedRuntimeScheduler:
                             release_packet(packet)
                         expected += 1
             except Exception as exc:
+                _swallowed("roop/runtime_scheduler.py:720", exc, "fallback continued")
                 errors.append(exc)
                 self._stop.set()
             finally:

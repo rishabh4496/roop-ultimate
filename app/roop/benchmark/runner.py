@@ -11,6 +11,7 @@ exact models and configuration active in the environment.
 """
 
 from __future__ import annotations
+from roop.degrade import swallowed as _swallowed
 
 import gc
 import logging
@@ -80,7 +81,8 @@ def _optional_import(module_name: str) -> Any | None:
     try:
         import importlib
         return importlib.import_module(module_name)
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/benchmark/runner.py:83", _degrade_error, "fallback continued")
         return None
 
 
@@ -146,7 +148,8 @@ class GpuTelemetrySampler:
                     memory = self._nvml.nvmlDeviceGetMemoryInfo(self._nvml_handle)
                     util = float(rates.gpu)
                     mem_mb = float(memory.used) / (1024.0 * 1024.0)
-                except Exception:
+                except Exception as _degrade_error:
+                    _swallowed("roop/benchmark/runner.py:149", _degrade_error, "fallback continued")
                     pass
 
             # Fallback to torch.cuda if NVML read failed
@@ -156,9 +159,11 @@ class GpuTelemetrySampler:
                     mem_mb = (float(total_b) - float(free_b)) / (1024.0 * 1024.0)
                     try:
                         util = float(self._torch.cuda.utilization(self.device_index))
-                    except Exception:
+                    except Exception as _degrade_error:
+                        _swallowed("roop/benchmark/runner.py:159", _degrade_error, "fallback continued")
                         pass
-                except Exception:
+                except Exception as _degrade_error:
+                    _swallowed("roop/benchmark/runner.py:161", _degrade_error, "fallback continued")
                     pass
 
             if util is not None or mem_mb is not None:
@@ -179,7 +184,8 @@ class GpuTelemetrySampler:
         if self._nvml and self._nvml_handle:
             try:
                 self._nvml.nvmlShutdown()
-            except Exception:
+            except Exception as _degrade_error:
+                _swallowed("roop/benchmark/runner.py:182", _degrade_error, "fallback continued")
                 pass
 
         if not self.samples:
@@ -275,7 +281,8 @@ class BenchmarkRunResult:
                 run_id = str(raw_id)
             else:
                 run_id = str(uuid.uuid4())
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("roop/benchmark/runner.py:278", _degrade_error, "fallback continued")
             run_id = str(uuid.uuid4())
 
         return cls(
@@ -458,7 +465,8 @@ def _subprocess_worker_entry(args: dict[str, Any], queue: Any) -> None:
         def progress_forwarder(current: int, total: int, fps: float, record: FrameTelemetry | None = None) -> None:
             try:
                 queue.put(("progress", current, total, fps, record.to_dict() if record else None))
-            except Exception:
+            except Exception as _degrade_error:
+                _swallowed("roop/benchmark/runner.py:461", _degrade_error, "fallback continued")
                 pass
 
         runner = BenchmarkRunner(device_index=device_index)
@@ -476,7 +484,8 @@ def _subprocess_worker_entry(args: dict[str, Any], queue: Any) -> None:
         try:
             queue.close()
             queue.join_thread()
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("roop/benchmark/runner.py:479", _degrade_error, "fallback continued")
             pass
 
     except BaseException as exc:
@@ -495,7 +504,8 @@ def _subprocess_worker_entry(args: dict[str, Any], queue: Any) -> None:
             queue.put(("error", err_type, err_msg, tb_str, is_oom))
             queue.close()
             queue.join_thread()
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("roop/benchmark/runner.py:498", _degrade_error, "fallback continued")
             pass
         sys.exit(1)
 
@@ -756,7 +766,8 @@ class BenchmarkRunner:
         if self._psutil:
             try:
                 psutil_proc = self._psutil.Process(os.getpid())
-            except Exception:
+            except Exception as _degrade_error:
+                _swallowed("roop/benchmark/runner.py:759", _degrade_error, "fallback continued")
                 pass
 
         gc.collect()
@@ -764,7 +775,8 @@ class BenchmarkRunner:
             try:
                 self._torch.cuda.empty_cache()
                 self._torch.cuda.reset_peak_memory_stats(self.device_index)
-            except Exception:
+            except Exception as _degrade_error:
+                _swallowed("roop/benchmark/runner.py:767", _degrade_error, "fallback continued")
                 pass
 
         telemetry_records: list[FrameTelemetry] = []
@@ -812,14 +824,16 @@ class BenchmarkRunner:
                     try:
                         free_b, total_b = self._torch.cuda.mem_get_info(self.device_index)
                         vram_used_mb = (float(total_b) - float(free_b)) / (1024.0 * 1024.0)
-                    except Exception:
+                    except Exception as _degrade_error:
+                        _swallowed("roop/benchmark/runner.py:815", _degrade_error, "fallback continued")
                         pass
 
                 cpu_pct = 0.0
                 if psutil_proc:
                     try:
                         cpu_pct = float(psutil_proc.cpu_percent(interval=None))
-                    except Exception:
+                    except Exception as _degrade_error:
+                        _swallowed("roop/benchmark/runner.py:822", _degrade_error, "fallback continued")
                         pass
 
                 record = FrameTelemetry(

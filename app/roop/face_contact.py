@@ -70,6 +70,7 @@ is mostly somebody else and fall back to position, which is the evidence that
 survives contact. This is the same reasoning `_stitch_tracks` already uses when
 appearance collapses on a turned head.
 """
+from roop.degrade import swallowed as _swallowed
 
 import os
 
@@ -256,7 +257,8 @@ def suppress_merged(faces):
         return faces, 0
     try:
         boxes = [tuple(float(v) for v in f.bbox) for f in faces]
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/face_contact.py:259", _degrade_error, "fallback continued")
         return faces, 0
     drop = set(merged_indices(boxes))
     if not drop:
@@ -344,7 +346,8 @@ def _quad_box_overlap(quad, box):
                      [box[2], box[3]], [box[0], box[3]]], dtype=np.float32)
     try:
         inter, _ = cv2.intersectConvexConvex(quad, rect, True)
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/face_contact.py:347", _degrade_error, "fallback continued")
         return 0.0
     area = float(cv2.contourArea(quad))
     return float(inter) / area if area > 1e-6 else 0.0
@@ -354,7 +357,8 @@ def _quad_quad_overlap(quad_i, quad_j):
     """Fraction of `quad_i`'s area covered by oriented convex `quad_j`."""
     try:
         inter, _ = cv2.intersectConvexConvex(quad_i, quad_j, True)
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/face_contact.py:357", _degrade_error, "fallback continued")
         return 0.0
     area = float(cv2.contourArea(quad_i))
     return float(inter) / area if area > 1e-6 else 0.0
@@ -382,7 +386,8 @@ def crop_contamination(faces):
     for f in faces:
         try:
             boxes.append(tuple(float(v) for v in f.bbox))
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("roop/face_contact.py:385", _degrade_error, "fallback continued")
             boxes.append(None)
         kps = getattr(f, 'kps', None)
         if kps is not None:
@@ -417,7 +422,8 @@ def annotate(faces):
         for f, c in zip(faces, crop_contamination(faces)):
             try:
                 f['_emb_contam'] = float(c)
-            except Exception:
+            except Exception as _degrade_error:
+                _swallowed("roop/face_contact.py:420", _degrade_error, "fallback continued")
                 pass
     return faces, dropped
 
@@ -428,5 +434,6 @@ def unreliable(face):
         return False
     try:
         return float(face.get('_emb_contam', 0.0)) >= CONTAM_MAX
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/face_contact.py:431", _degrade_error, "fallback continued")
         return False

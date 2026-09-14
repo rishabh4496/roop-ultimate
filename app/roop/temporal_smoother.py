@@ -67,6 +67,7 @@ applied/declined at the end of every run, because a silent no-op and a working
 filter are indistinguishable in the output -- the single most expensive
 confusion in this project's history.
 """
+from roop.degrade import swallowed as _swallowed
 
 import math
 import os
@@ -371,7 +372,8 @@ class AdaptiveLandmarkSmoother:
                 }
                 self._touch(key)
             return out_kps, out_dense, beta
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("roop/temporal_smoother.py:374", _degrade_error, "fallback continued")
             self._counts.bump('errors')
             return kps, dense, 1.0
 
@@ -848,7 +850,8 @@ class HighFrequencyFlowStabilizer:
                 }
                 self._touch(key)
             return out
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("roop/temporal_smoother.py:851", _degrade_error, "fallback continued")
             self._counts.bump('errors')
             return crop
 

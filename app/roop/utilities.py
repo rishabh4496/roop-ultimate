@@ -1,3 +1,4 @@
+from roop.degrade import swallowed as _swallowed
 import glob
 import json
 import mimetypes
@@ -70,7 +71,8 @@ class CudaOrtIOBinding:
             return (torch.cuda.is_available() and any(
                 name in ('CUDAExecutionProvider', 'TensorrtExecutionProvider')
                 for name in providers))
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("roop/utilities.py:73", _degrade_error, "fallback continued")
             return False
 
     @staticmethod
@@ -203,7 +205,8 @@ def cuda_warp_affine(image: np.ndarray, matrix: np.ndarray,
         else:
             result = result.to(torch.float32)
         return result.cpu().numpy()
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/utilities.py:206", _degrade_error, "fallback continued")
         return None
 
 
@@ -254,7 +257,8 @@ def cuda_laplacian_pyramid_blend(target: np.ndarray, swap: np.ndarray,
                                                        mode='bilinear', align_corners=False)
             blended = blended + la[index] * (1.0 - gm[index]) + lb[index] * gm[index]
         return blended.squeeze(0).permute(1, 2, 0).clamp(0, 255).to(torch.uint8).cpu().numpy()
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/utilities.py:257", _degrade_error, "fallback continued")
         return None
 
 
@@ -380,7 +384,8 @@ def get_small_card_safe_providers(providers=None, model_path=None, stage=None):
         total_bytes = int(getattr(props, 'total_memory', 0) or 0)
         small = (torch.cuda.is_available() and
                  total_bytes > 0 and total_bytes / (1024 ** 3) < 7.0)
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/utilities.py:383", _degrade_error, "fallback continued")
         small = False
     if not small:
         return selected
@@ -516,7 +521,8 @@ def detect_dimensions(target_path: str):
             from PIL import Image
             with Image.open(target_path) as img:
                 return img.width, img.height
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("roop/utilities.py:519", _degrade_error, "fallback continued")
             return 0, 0
     cap = cv2.VideoCapture(target_path)
     if cap.isOpened():
@@ -724,7 +730,8 @@ def read_frames_metadata(frames_dir: str) -> dict:
         try:
             with open(meta_path, 'r') as fh:
                 return json.load(fh)
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("roop/utilities.py:727", _degrade_error, "fallback continued")
             pass
     return {}
 
@@ -785,7 +792,8 @@ def load_frame_mask(frames_orig_dir: str, frame_filename: str) -> dict:
         try:
             with open(mask_path, 'r') as fh:
                 return json.load(fh)
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("roop/utilities.py:788", _degrade_error, "fallback continued")
             pass
     return {}
 
@@ -806,7 +814,8 @@ def is_animated_webp(image_path: str) -> bool:
         from PIL import Image
         with Image.open(image_path) as img:
             return getattr(img, "n_frames", 1) > 1
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/utilities.py:809", _degrade_error, "fallback continued")
         return False
 
 
@@ -818,7 +827,8 @@ def is_animated_gif(image_path: str) -> bool:
         from PIL import Image
         with Image.open(image_path) as img:
             return getattr(img, "n_frames", 1) > 1
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/utilities.py:821", _degrade_error, "fallback continued")
         return False
 
 
@@ -968,7 +978,8 @@ def conditional_download(download_directory_path: str, urls: List[str], required
             try:
                 with urllib.request.urlopen(url) as response:
                     total = int(response.headers.get("Content-Length", 0))
-            except Exception:
+            except Exception as _degrade_error:
+                _swallowed("roop/utilities.py:971", _degrade_error, "fallback continued")
                 pass
             with tqdm(
                 total=total,
@@ -982,6 +993,7 @@ def conditional_download(download_directory_path: str, urls: List[str], required
                 raise IOError(f"Incomplete download: got {os.path.getsize(partial_path)} of {total} bytes")
             os.replace(partial_path, download_file_path)
         except Exception as exc:
+            _swallowed("roop/utilities.py:984", exc, "fallback continued")
             if os.path.exists(partial_path):
                 try:
                     os.remove(partial_path)
@@ -1052,7 +1064,8 @@ def get_platform() -> str:
             proc_version = open("/proc/version").read()
             if "Microsoft" in proc_version:
                 return "wsl"
-        except:
+        except BaseException as _degrade_error:
+            _swallowed("roop/utilities.py:1055", _degrade_error, "fallback continued")
             pass
     return sys.platform
 
@@ -1213,7 +1226,8 @@ def get_onnx_session_options(optimization_level=None):
         if hasattr(opts, 'execution_mode') and hasattr(onnxruntime, 'ExecutionMode'):
             try:
                 opts.execution_mode = onnxruntime.ExecutionMode.ORT_SEQUENTIAL
-            except Exception:
+            except Exception as _degrade_error:
+                _swallowed("roop/utilities.py:1216", _degrade_error, "fallback continued")
                 pass
         if hasattr(opts, 'intra_op_num_threads'):
             opts.intra_op_num_threads = _session_threads(
@@ -1229,7 +1243,8 @@ def get_onnx_session_options(optimization_level=None):
                 opts.add_session_config_entry(
                     'session.dynamic_block_base',
                     str(os.environ.get('ROOP_ORT_DYNAMIC_BLOCK', '4')))
-            except Exception:
+            except Exception as _degrade_error:
+                _swallowed("roop/utilities.py:1232", _degrade_error, "fallback continued")
                 pass
         if hasattr(opts, 'log_severity_level'):
             opts.log_severity_level = 3
@@ -1240,15 +1255,18 @@ def get_onnx_session_options(optimization_level=None):
                 else:
                     try:
                         opts.graph_optimization_level = optimization_level
-                    except Exception:
+                    except Exception as _degrade_error:
+                        _swallowed("roop/utilities.py:1243", _degrade_error, "fallback continued")
                         pass
             else:
                 try:
                     opts.graph_optimization_level = optimization_level
-                except Exception:
+                except Exception as _degrade_error:
+                    _swallowed("roop/utilities.py:1248", _degrade_error, "fallback continued")
                     pass
         return opts
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/utilities.py:1251", _degrade_error, "fallback continued")
         return None
 
 print_cuda_info()

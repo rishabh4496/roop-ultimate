@@ -37,6 +37,7 @@ fact.  Three guards, each for a mistake this repo has already made:
 """
 
 from __future__ import annotations
+from roop.degrade import swallowed as _swallowed
 
 import threading
 import time
@@ -161,7 +162,8 @@ def _live_config() -> Any:
     try:
         import roop.globals
         return roop.globals.CFG
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/benchmark/ui_dashboard.py:164", _degrade_error, "fallback continued")
         return None
 
 
@@ -200,6 +202,7 @@ class PreBenchmarkPrompt:
                 runner = BenchmarkRunner()
             models = dict(runner.inspect_active_models() or {})
         except Exception as exc:
+            _swallowed("roop/benchmark/ui_dashboard.py:202", exc, "fallback continued")
             warnings.append("Could not read the active models (%s: %s). The "
                             "benchmark would not be measuring a known "
                             "configuration." % (type(exc).__name__, exc))
@@ -471,6 +474,7 @@ class BenchmarkSession:
                 self._snapshot.status = "Cancelled"
             self._log("Cancelled by user.")
         except Exception as exc:
+            _swallowed("roop/benchmark/ui_dashboard.py:473", exc, "fallback continued")
             message = "%s: %s" % (type(exc).__name__, exc)
             with self._lock:
                 self._snapshot.running = False
@@ -938,7 +942,8 @@ def _mirror_to_globals(config_key: str, value: Any) -> Optional[Tuple[str, Any]]
     """Return the ``(globals attribute, value)`` this setting drives, if any."""
     try:
         import roop.globals as runtime
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/benchmark/ui_dashboard.py:941", _degrade_error, "fallback continued")
         return None
     if config_key == "max_threads":
         threads = _integer(value, 0)
@@ -1017,6 +1022,7 @@ def apply_recommended_settings(recommended: Optional[Mapping[str, Any]] = None,
     try:
         config.save()
     except Exception as exc:
+        _swallowed("roop/benchmark/ui_dashboard.py:1019", exc, "fallback continued")
         return {"status": "error", "applied": applied, "pending": pending,
                 "skipped": skipped, "live_globals": live,
                 "message": "Settings could not be saved: %s: %s"
@@ -1026,7 +1032,8 @@ def apply_recommended_settings(recommended: Optional[Mapping[str, Any]] = None,
     if run_id:
         try:
             marked = bool(update_setting_status(run_id, True, storage_path))
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("roop/benchmark/ui_dashboard.py:1029", _degrade_error, "fallback continued")
             marked = False
 
     message = "Applied %d setting(s)." % len(applied)
@@ -1062,13 +1069,15 @@ def decline_recommended_settings(result: Any = None, run_id: str = "",
         try:
             saved_id = save_benchmark_result(payload, storage_path)
         except Exception as exc:
+            _swallowed("roop/benchmark/ui_dashboard.py:1064", exc, "fallback continued")
             return {"status": "error", "applied": False,
                     "message": "The run could not be saved: %s: %s"
                                % (type(exc).__name__, exc)}
     elif run_id:
         try:
             update_setting_status(run_id, False, storage_path)
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("roop/benchmark/ui_dashboard.py:1071", _degrade_error, "fallback continued")
             pass
     return {"status": "declined", "applied": False, "run_id": saved_id,
             "message": DECLINE_NOTICE, "notice": DECLINE_NOTICE}
@@ -1098,7 +1107,8 @@ def stock_defaults(keys: Sequence[str] = ()) -> Dict[str, Any]:
                 os.path.join(tmp, "does-not-exist.yaml"))
             return {name: getattr(probe, name) for name in keys
                     if hasattr(probe, name)}
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/benchmark/ui_dashboard.py:1101", _degrade_error, "fallback continued")
         return {}
 
 
@@ -1139,6 +1149,7 @@ def revert_to_default_settings(config: Any = None,
     try:
         config.save()
     except Exception as exc:
+        _swallowed("roop/benchmark/ui_dashboard.py:1141", exc, "fallback continued")
         return {"status": "error", "reverted": reverted, "unchanged": unchanged,
                 "live_globals": live,
                 "message": "Defaults could not be saved: %s: %s"
@@ -1162,7 +1173,8 @@ def _bootstrap_config(log: Callable[[str], None] = print) -> Any:
     """
     try:
         import roop.globals as runtime
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/benchmark/ui_dashboard.py:1165", _degrade_error, "fallback continued")
         return None
     if getattr(runtime, "CFG", None) is not None:
         return runtime.CFG
@@ -1179,6 +1191,7 @@ def _bootstrap_config(log: Callable[[str], None] = print) -> Any:
             runtime.video_quality = runtime.CFG.video_quality
         return runtime.CFG
     except Exception as exc:
+        _swallowed("roop/benchmark/ui_dashboard.py:1181", exc, "fallback continued")
         log("  ! could not load config.yaml (%s: %s); the benchmark would be "
             "measuring module defaults rather than your configuration"
             % (type(exc).__name__, exc))
@@ -1215,6 +1228,7 @@ def run_cli_benchmark(faces: str = "1", mode: str = "quick",
     try:
         runner = BenchmarkRunner()
     except Exception as exc:
+        _swallowed("roop/benchmark/ui_dashboard.py:1217", exc, "fallback continued")
         log("Benchmark could not start: %s: %s" % (type(exc).__name__, exc))
         return 1
 
@@ -1248,6 +1262,7 @@ def run_cli_benchmark(faces: str = "1", mode: str = "quick",
         log("\nBenchmark cancelled.")
         return 130
     except Exception as exc:
+        _swallowed("roop/benchmark/ui_dashboard.py:1250", exc, "fallback continued")
         log("\nBenchmark failed: %s: %s" % (type(exc).__name__, exc))
         return 1
 
@@ -1276,7 +1291,8 @@ def list_saved_profiles(storage_path: Any = None,
     """History for the Settings > Optimization Profiles list."""
     try:
         history = load_benchmark_history(storage_path)
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/benchmark/ui_dashboard.py:1279", _degrade_error, "fallback continued")
         return []
     rows: List[Dict[str, Any]] = []
     for record in reversed(history[-max(1, int(limit)):]):

@@ -11,6 +11,7 @@ Output decoding mirrors FaceFusion's yoloface path: the model emits (1, 20, N)
 downscaled frame is pasted into top-left of; canvas coords scale back to the
 original by the resize ratio.
 """
+from roop.degrade import swallowed as _swallowed
 
 import os
 import threading
@@ -153,7 +154,8 @@ def _ensure_pool():
             from roop import session_pool
             n = session_pool.detector_pool_size(
                 model_key='detector:yolo', input_shape=(1, 3, 640, 640))
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("roop/yoloface.py:156", _degrade_error, "fallback continued")
             n = 1
         items = [YoloFaceDetector(providers) for _ in range(n)]
         q = Queue()

@@ -1,3 +1,4 @@
+from roop.degrade import swallowed as _swallowed
 #!/usr/bin/env python3
 
 import os
@@ -43,9 +44,10 @@ def _configure_torch_cuda_acceleration() -> None:
         torch.backends.cuda.matmul.allow_tf32 = True
         torch.backends.cudnn.allow_tf32 = True
         torch.backends.cudnn.benchmark = True
-    except Exception:
+    except Exception as _degrade_error:
         # Backend selection remains functional even if a CUDA runtime is only
         # partially initialised at import time.
+        _swallowed("roop/core.py:46", _degrade_error, "fallback continued")
         pass
 
 
@@ -151,7 +153,8 @@ def decode_execution_providers(execution_providers: List[str]) -> List[str]:
     try:
         import cv2 as _cv2
         _cv2.setNumThreads(1)
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/core.py:154", _degrade_error, "fallback continued")
         pass
 
     # Resolve through one capability-aware hierarchy.  This prevents a CUDA or
@@ -214,7 +217,8 @@ def decode_execution_providers(execution_providers: List[str]) -> List[str]:
                 # 8.9 (Ada) the first with FP8.
                 try:
                     _cc = torch.cuda.get_device_capability(roop.globals.cuda_device_id)
-                except Exception:
+                except Exception as _degrade_error:
+                    _swallowed("roop/core.py:217", _degrade_error, "fallback continued")
                     _cc = (0, 0)
                 fp16_capable = _cc >= (7, 0)
                 fp8_capable = _cc >= (8, 9)
@@ -265,7 +269,8 @@ def decode_execution_providers(execution_providers: List[str]) -> List[str]:
                 # ── Engine-build tuning, scaled to the GPU ──────────────────
                 try:
                     total_vram = torch.cuda.get_device_properties(roop.globals.cuda_device_id).total_memory
-                except Exception:
+                except Exception as _degrade_error:
+                    _swallowed("roop/core.py:268", _degrade_error, "fallback continued")
                     total_vram = 0
                 total_gb = total_vram / (1024 ** 3) if total_vram else 0
                 
@@ -425,7 +430,8 @@ def suggest_max_memory() -> int:
         if platform.system().lower() == 'darwin':
             return max(2, int(total_ram_gb * 0.4))
         return max(4, min(64, int(total_ram_gb * 0.7)))
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/core.py:428", _degrade_error, "fallback continued")
         if platform.system().lower() == 'darwin':
             return 4
         return 16
@@ -449,7 +455,8 @@ def suggest_execution_threads() -> int:
             import psutil
             cores = psutil.cpu_count(logical=False) or 4
             return max(1, min(4, cores // 2))
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("roop/core.py:452", _degrade_error, "fallback continued")
             return 2
 
     suggested = 8
@@ -463,7 +470,8 @@ def suggest_execution_threads() -> int:
                 suggested = int(min(max(2, cores - 1), max(2, vram_gb / 1.5)))
         elif 'CPUExecutionProvider' in provider_names:
             suggested = max(1, cores - 1)
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/core.py:466", _degrade_error, "fallback continued")
         pass
     
     return suggested
@@ -509,7 +517,8 @@ def release_resources() -> None:
                 with torch.cuda.device(roop.globals.cuda_device_id):
                     torch.cuda.empty_cache()
                     torch.cuda.ipc_collect()
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("roop/core.py:512", _degrade_error, "fallback continued")
             pass
 
 
@@ -722,7 +731,8 @@ def update_status(message: str) -> None:
         else:
             # Cyan for standard tracking logs
             color_msg = f"\033[96m[STATUS] {message}{reset}"
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/core.py:725", _degrade_error, "fallback continued")
         pass
 
     print(color_msg)
@@ -1119,7 +1129,8 @@ def _parse_per_frame_masks(json_str: str) -> dict:
                 if per_faceset:
                     result[frame_num] = per_faceset
         return result
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/core.py:1122", _degrade_error, "fallback continued")
         return {}
 
 
@@ -1304,7 +1315,8 @@ def _clear_terminal_for_new_run() -> None:
                 # 0x4 = ENABLE_VIRTUAL_TERMINAL_PROCESSING
                 kernel32.SetConsoleMode(h, mode.value | 0x0004)
         print('\x1b[3J\x1b[2J\x1b[H', end='', flush=True)
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/core.py:1307", _degrade_error, "fallback continued")
         pass
 
 
@@ -1350,7 +1362,8 @@ def _warn_single_worker_on_gpu() -> None:
               "-- which reads as 'two faces are broken' when it is the thread "
               "count. Set Max Threads to 7-10 (or turn Auto Thread Selection "
               "back on) and restart. See tests/diag_device.py.", flush=True)
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/core.py:1353", _degrade_error, "fallback continued")
         pass
 
 
@@ -1603,7 +1616,8 @@ def batch_process(output_method, files:list[ProcessEntry], use_new_method) -> No
                         sig = runtime_calib.with_density(
                             base_sig, runtime_calib.density_bucket(avg_faces))
                         runtime_calib.record(sig, frames, elapsed_time * 1000.0)
-                except Exception:
+                except Exception as _degrade_error:
+                    _swallowed("roop/core.py:1606", _degrade_error, "fallback continued")
                     pass
                 import gc
                 gc.collect()
@@ -1611,7 +1625,8 @@ def batch_process(output_method, files:list[ProcessEntry], use_new_method) -> No
                     if torch.cuda.is_available():
                         with torch.cuda.device(roop.globals.cuda_device_id):
                             torch.cuda.empty_cache()
-                except Exception:
+                except Exception as _degrade_error:
+                    _swallowed("roop/core.py:1614", _degrade_error, "fallback continued")
                     pass
         end_processing('Finished')
     finally:
@@ -1690,7 +1705,8 @@ def install_console_close_handler() -> None:
     try:
         import ctypes
         from ctypes import wintypes
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/core.py:1693", _degrade_error, "fallback continued")
         return
 
     CTRL_CLOSE_EVENT = 2
@@ -1703,7 +1719,8 @@ def install_console_close_handler() -> None:
             if roop.globals.batch_active:
                 try:
                     print('\nWindow closing — finalizing output video...')
-                except Exception:
+                except Exception as _degrade_error:
+                    _swallowed("roop/core.py:1706", _degrade_error, "fallback continued")
                     pass
                 # Bounded to stay inside the OS kill window (~5s); the frames are
                 # already encoded, so writing the trailer is fast in practice.
@@ -1715,7 +1732,8 @@ def install_console_close_handler() -> None:
         _console_handler_ref = HANDLER_ROUTINE(_handler)
         if not ctypes.windll.kernel32.SetConsoleCtrlHandler(_console_handler_ref, True):
             _console_handler_ref = None
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/core.py:1718", _degrade_error, "fallback continued")
         _console_handler_ref = None
 
 
@@ -1753,7 +1771,8 @@ def print_startup_banner() -> None:
             total_vram_gb = total_vram_bytes / (1024 ** 3)
             free_vram_gb = free_vram_bytes / (1024 ** 3)
             vram_str = f"Total VRAM: {total_vram_gb:.2f} GB | Free VRAM: {free_vram_gb:.2f} GB"
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("roop/core.py:1756", _degrade_error, "fallback continued")
             vram_str = "VRAM: Detection Failed (driver context conflict)"
         print(f"  [GPU Hardware] Active CUDA Device: ID {roop.globals.cuda_device_id} - '{gpu_name}'")
         print(f"                 {vram_str}")

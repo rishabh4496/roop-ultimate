@@ -20,6 +20,7 @@ allocate an unknown output would break the persistent-buffer contract.
 """
 
 from __future__ import annotations
+from roop.degrade import swallowed as _swallowed
 
 import os
 import threading
@@ -43,12 +44,14 @@ from .trt_session_builder import (
 
 try:
     import torch
-except Exception:  # pragma: no cover - CPU-only import smoke tests
+except Exception as _degrade_error:  # pragma: no cover - CPU-only import smoke tests
+    _swallowed("roop/optimized_trt_engine.py:46", _degrade_error, "fallback continued")
     torch = None  # type: ignore[assignment]
 
 try:
     import onnxruntime as ort
-except Exception:  # pragma: no cover - optional until an engine is built
+except Exception as _degrade_error:  # pragma: no cover - optional until an engine is built
+    _swallowed("roop/optimized_trt_engine.py:51", _degrade_error, "fallback continued")
     ort = None  # type: ignore[assignment]
 
 

@@ -18,6 +18,7 @@ module usable in a small benchmark process.
 """
 
 from __future__ import annotations
+from roop.degrade import swallowed as _swallowed
 
 import math
 import os
@@ -132,9 +133,10 @@ class PrepassConfig:
                 ) / float(1024 ** 3)
                 if total_gb < 7.0:
                     batch = 1
-        except Exception:
+        except Exception as _degrade_error:
             # CPU-only environments can still use detector batching when their
             # adapter supports it; the memory governor handles the GPU case.
+            _swallowed("roop/optimized_prepass.py:135", _degrade_error, "fallback continued")
             pass
 
         if strict_trt:
@@ -168,7 +170,8 @@ def _field(face: Any, name: str, default: Any = None) -> Any:
         return face.get(name, default)
     try:
         return getattr(face, name, default)
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/optimized_prepass.py:171", _degrade_error, "fallback continued")
         return default
 
 
@@ -317,7 +320,8 @@ def _histogram_difference(first: Optional[Float32Array], second: Optional[Float3
                 first.reshape(-1, 1), second.reshape(-1, 1), cv2.HISTCMP_BHATTACHARYYA
             )
         )
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/optimized_prepass.py:320", _degrade_error, "fallback continued")
         return 1.0
 
 

@@ -7,6 +7,7 @@ routes_faceset to import back from api.py, which is a cycle.
 
 Moved verbatim from api.py.
 """
+from roop.degrade import swallowed as _swallowed
 
 import os
 import shutil
@@ -73,7 +74,8 @@ def estimate_face_pose_from_kps(kps):
                 return pitch_label
             return f"{yaw_label} + {pitch_label}"
         return yaw_label
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("source_gallery.py:76", _degrade_error, "fallback continued")
         return "Front"
 
 def _get_source_faces_info():
@@ -307,7 +309,8 @@ def _frontality(kps):
         dx_right = abs(re_x - nose_x)
         ratio = dx_left / (dx_right + 1e-6)
         return abs(math.log(ratio + 1e-6))
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("source_gallery.py:310", _degrade_error, "fallback continued")
         return 999.0
 
 def _shrink_for_thumb(img, max_side=256):

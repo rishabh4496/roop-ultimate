@@ -1,3 +1,4 @@
+from roop.degrade import swallowed as _swallowed
 from typing import Optional
 from collections import OrderedDict
 import json
@@ -197,7 +198,8 @@ def _ffprobe_binary() -> str:
     whatever FFMPEG_BINARY resolved to (bare name or absolute path)."""
     try:
         from roop.ffmpeg_writer import FFMPEG_BINARY
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/capturer.py:200", _degrade_error, "fallback continued")
         return "ffprobe"
     d = os.path.dirname(FFMPEG_BINARY)
     return os.path.join(d, "ffprobe") if d else "ffprobe"
@@ -255,7 +257,8 @@ def _probe_video(video_path: str):
         if w > 0 and h > 0:
             info = {"w": w, "h": h, "fps": fps or 25.0, "frames": max(0, frames),
                     "codec": codec, "pix_fmt": pix_fmt}
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/capturer.py:258", _degrade_error, "fallback continued")
         info = None
     _probe_cache[video_path] = info
     return info
@@ -322,7 +325,8 @@ def _release_pipe():
     if _pipe_reader is not None:
         try:
             _pipe_reader.release()
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("roop/capturer.py:325", _degrade_error, "fallback continued")
             pass
     _pipe_reader = None
     _pipe_path = None
@@ -364,7 +368,8 @@ def _read_via_pipe(video_path: str, target: int):
             # state a freshly constructed reader is in.
             reader.set(cv2.CAP_PROP_POS_FRAMES, target)
             _pipe_reader, _pipe_path, _pipe_next = reader, video_path, target
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("roop/capturer.py:367", _degrade_error, "fallback continued")
             _release_pipe()
             return None
     ok, frame = _pipe_reader.read()
@@ -524,7 +529,8 @@ def get_video_frame_total(video_path: str) -> int:
             from PIL import Image
             with Image.open(video_path) as img:
                 return getattr(img, "n_frames", 1)
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("roop/capturer.py:527", _degrade_error, "fallback continued")
             return 1
     capture = cv2.VideoCapture(video_path)
     video_frame_total = int(capture.get(cv2.CAP_PROP_FRAME_COUNT))

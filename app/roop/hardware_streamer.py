@@ -23,6 +23,7 @@ same shared-memory blocks and synchronization primitives.
 """
 
 from __future__ import annotations
+from roop.degrade import swallowed as _swallowed
 
 import json
 import math
@@ -41,7 +42,8 @@ from numpy.typing import NDArray
 
 try:
     from roop.ffmpeg_writer import FFMPEG_BINARY
-except Exception:  # pragma: no cover - import-safe outside the app package
+except Exception as _degrade_error:  # pragma: no cover - import-safe outside the app package
+    _swallowed("roop/hardware_streamer.py:44", _degrade_error, "fallback continued")
     FFMPEG_BINARY = shutil.which("ffmpeg") or "ffmpeg"
 
 
@@ -871,6 +873,7 @@ class RingFrameProducer:
         try:
             self.run()
         except BaseException as error:
+            _swallowed("roop/hardware_streamer.py:873", error, "fallback continued")
             self.error = error
 
     def stop(self) -> None:
@@ -880,9 +883,10 @@ class RingFrameProducer:
         self.ring.abort()
         try:
             self.source.close(ignore_errors=True)
-        except Exception:
+        except Exception as _degrade_error:
             # The worker owns the definitive close/error path.  This call only
             # exists to interrupt a blocking FFmpeg/PyAV read during shutdown.
+            _swallowed("roop/hardware_streamer.py:883", _degrade_error, "fallback continued")
             pass
 
     def join(self, timeout: Optional[float] = None) -> None:

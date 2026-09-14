@@ -1,3 +1,4 @@
+from roop.degrade import swallowed as _swallowed
 import math
 import os
 import threading
@@ -53,7 +54,8 @@ def _desired_det_size():
     try:
         sz = max(320, min(1280, int(val)))
         return (sz, sz)
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/face_util.py:56", _degrade_error, "fallback continued")
         return (640, 640)
 
 
@@ -107,7 +109,8 @@ def _face_analysis_providers():
         vram_gb = (torch.cuda.get_device_properties(
             roop.globals.cuda_device_id).total_memory / (1024 ** 3)
                    if torch.cuda.is_available() else 0.0)
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/face_util.py:110", _degrade_error, "fallback continued")
         vram_gb = 0.0
     if 0 < vram_gb < 7.0:
         safe = [p for p in providers if 'tensorrt' not in str(
@@ -128,7 +131,8 @@ def _detector_offload(providers):
     try:
         from roop.face_analyser import detector_providers
         return detector_providers(providers, 'face_detection')
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/face_util.py:131", _degrade_error, "fallback continued")
         return providers
 
 
@@ -213,7 +217,8 @@ def _cleanup_fa_pool(pool):
                 if hasattr(fa.det_model, 'session'):
                     fa.det_model.session = None
                 fa.det_model = None
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("roop/face_util.py:216", _degrade_error, "fallback continued")
             pass
     import gc
     gc.collect()
@@ -222,7 +227,8 @@ def _cleanup_fa_pool(pool):
         if torch.cuda.is_available():
             with torch.cuda.device(roop.globals.cuda_device_id):
                 torch.cuda.empty_cache()
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/face_util.py:225", _degrade_error, "fallback continued")
         pass
 
 
@@ -309,17 +315,20 @@ def release_face_analyser():
     try:
         from roop.yoloface import release_detector
         release_detector()
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/face_util.py:312", _degrade_error, "fallback continued")
         pass
     try:
         from roop.retinaface import release_detector as _release_retina
         _release_retina()
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/face_util.py:317", _degrade_error, "fallback continued")
         pass
     try:
         from roop.yunet import release_detector as _release_yunet
         _release_yunet()
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/face_util.py:322", _degrade_error, "fallback continued")
         pass
 
 
@@ -345,13 +354,15 @@ def release_face_analyser_aux():
                     if m is not None and hasattr(m, 'session'):
                         try:
                             m.session = None
-                        except Exception:
+                        except Exception as _degrade_error:
+                            _swallowed("roop/face_util.py:348", _degrade_error, "fallback continued")
                             pass
             if getattr(fa, 'lm68_model', None) is not None:
                 if hasattr(fa.lm68_model, 'session'):
                     try:
                         fa.lm68_model.session = None
-                    except Exception:
+                    except Exception as _degrade_error:
+                        _swallowed("roop/face_util.py:354", _degrade_error, "fallback continued")
                         pass
                 fa.lm68_model = None
     import gc
@@ -361,7 +372,8 @@ def release_face_analyser_aux():
         if torch.cuda.is_available():
             with torch.cuda.device(getattr(roop.globals, 'cuda_device_id', 0)):
                 torch.cuda.empty_cache()
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/face_util.py:364", _degrade_error, "fallback continued")
         pass
 
 
@@ -410,7 +422,8 @@ def _refine_kps_from_68(face) -> None:
             pts[54],                    # right mouth corner
         ], dtype=np.float32)
         face.kps = refined
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/face_util.py:413", _degrade_error, "fallback continued")
         pass
 
 
@@ -422,7 +435,8 @@ def _scale_face_coords(face, inv_scale: float) -> None:
         if v is not None:
             try:
                 setattr(face, attr, np.asarray(v, dtype=np.float32) * inv_scale)
-            except Exception:
+            except Exception as _degrade_error:
+                _swallowed("roop/face_util.py:425", _degrade_error, "fallback continued")
                 pass
     lm68 = getattr(face, 'landmark_3d_68', None)
     if lm68 is not None:
@@ -430,7 +444,8 @@ def _scale_face_coords(face, inv_scale: float) -> None:
             lm68 = np.asarray(lm68, dtype=np.float32).copy()
             lm68[:, :2] *= inv_scale   # only x,y are pixel coords; z is depth
             face.landmark_3d_68 = lm68
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("roop/face_util.py:433", _degrade_error, "fallback continued")
             pass
 
 
@@ -444,7 +459,8 @@ def _offset_face_coords(face, ox: float, oy: float) -> None:
             b[0::2] += ox
             b[1::2] += oy
             face.bbox = b
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("roop/face_util.py:447", _degrade_error, "fallback continued")
             pass
     for attr in ('kps', 'landmark_2d_106'):
         v = getattr(face, attr, None)
@@ -454,7 +470,8 @@ def _offset_face_coords(face, ox: float, oy: float) -> None:
                 a[:, 0] += ox
                 a[:, 1] += oy
                 setattr(face, attr, a)
-            except Exception:
+            except Exception as _degrade_error:
+                _swallowed("roop/face_util.py:457", _degrade_error, "fallback continued")
                 pass
     lm68 = getattr(face, 'landmark_3d_68', None)
     if lm68 is not None:
@@ -463,7 +480,8 @@ def _offset_face_coords(face, ox: float, oy: float) -> None:
             lm68[:, 0] += ox   # only x,y are pixel coords; z is depth
             lm68[:, 1] += oy
             face.landmark_3d_68 = lm68
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("roop/face_util.py:466", _degrade_error, "fallback continued")
             pass
 
 
@@ -548,7 +566,8 @@ def detect_boxes_in_roi(frame, bbox, pad_ratio=1.0, min_crop=160, rotation_actio
         crop = turn[1](crop)
     try:
         faces = _detect_faces_raw(crop, aux=False) or []
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/face_util.py:551", _degrade_error, "fallback continued")
         return []
     for face in faces:
         if turn is not None:
@@ -680,7 +699,8 @@ def _rescue_upscaled(frame: Frame):
             for f in faces:
                 _scale_face_coords(f, 0.5)
             return faces
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/face_util.py:683", _degrade_error, "fallback continued")
         pass
     return None
 
@@ -711,7 +731,8 @@ def _rescue_downscaled(frame: Frame):
         
         if faces:
             return faces
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/face_util.py:714", _degrade_error, "fallback continued")
         pass
     return None
 
@@ -742,7 +763,8 @@ def _rescue_padded(frame: Frame):
                     lm[:, :2] -= pad
                     f.landmark_3d_68 = lm
             return faces
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/face_util.py:745", _degrade_error, "fallback continued")
         pass
     return None
 
@@ -771,7 +793,8 @@ def _rescue_clahe(frame: Frame):
         faces = _detect_faces_raw(eq)
         if faces:
             return faces
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/face_util.py:774", _degrade_error, "fallback continued")
         pass
     return None
 
@@ -832,7 +855,8 @@ def _rescue_rotated(frame: Frame):
                 for f in faces:
                     _unrotate_face_coords(f, w, h, angle)
                 return faces
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/face_util.py:835", _degrade_error, "fallback continued")
         pass
     return None
 
@@ -952,9 +976,11 @@ def ensure_landmark_3d_68(frame, faces):
             for f in todo:
                 try:
                     model.get(frame, f)
-                except Exception:
+                except Exception as _degrade_error:
+                    _swallowed("roop/face_util.py:955", _degrade_error, "fallback continued")
                     pass
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/face_util.py:957", _degrade_error, "fallback continued")
         pass
     return faces
 
@@ -1045,7 +1071,8 @@ def _upright_remeasure(frame, faces):
         rframe = rotate(frame)
         try:
             cands = _detect_faces_raw(rframe)
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("roop/face_util.py:1048", _degrade_error, "fallback continued")
             continue
         if not cands:
             continue
@@ -1164,7 +1191,8 @@ def get_first_face(frame: Frame) -> Any:
         faces = get_all_faces(frame)
         if faces:
             return min(faces, key=lambda x: x.bbox[0])
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/face_util.py:1167", _degrade_error, "fallback continued")
         pass
     return None
 
@@ -1175,7 +1203,8 @@ def get_first_face_detector_only(frame: Frame) -> Any:
         faces = _detect_faces_raw(frame, aux=False)
         if faces:
             return min(faces, key=lambda x: x.bbox[0])
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/face_util.py:1178", _degrade_error, "fallback continued")
         pass
     return None
 
@@ -1237,6 +1266,7 @@ def get_all_faces(frame: Frame) -> Any:
             return []
         return sorted(faces, key=lambda x: x.bbox[0])
     except Exception as exc:
+        _swallowed("roop/face_util.py:1239", exc, "fallback continued")
         _warn_detect_failure(exc)
         return []
 
@@ -1265,7 +1295,8 @@ def get_all_faces_hires(frame: Frame, det_size: int) -> Any:
         if not faces:
             return []
         return sorted(faces, key=lambda x: x.bbox[0])
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/face_util.py:1268", _degrade_error, "fallback continued")
         return []
 
 
@@ -1287,7 +1318,8 @@ def _attach_source_crops(face, img):
         face['_src_crop_arcface_112_v2'] = crop112
         face['_src_crop_ffhq_256'] = crop256
         face['_src_crop_ffhq_112'] = crop_ffhq112
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/face_util.py:1290", _degrade_error, "fallback continued")
         pass
 
 
@@ -1533,7 +1565,8 @@ def _axis_from_68(face):
         return None
     try:
         pts = np.asarray(lm, dtype=np.float64)[:, :2]
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/face_util.py:1536", _degrade_error, "fallback continued")
         return None
     if pts.shape[0] < 68 or not np.isfinite(pts).all():
         return None
@@ -1680,7 +1713,8 @@ def rotation_improves_upright(before_face, after_face):
             _, _, ya = solve_pose_5pt(kps_a)
             if abs(yb) > 110.0 and abs(ya) < 80.0:
                 return True
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("roop/face_util.py:1683", _degrade_error, "fallback continued")
             pass
     before = face_roll_tilt(before_face)
     after = face_roll_tilt(after_face)
@@ -1807,7 +1841,8 @@ def kps_pose_ratios(kps):
         yaw_ratio   = float(np.linalg.norm(pts[1] - pts[0])) / vert
         pitch_ratio = float(np.dot(pts[2] - eye_mid, axis / vert) / vert)
         return yaw_ratio, pitch_ratio
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/face_util.py:1810", _degrade_error, "fallback continued")
         return None, None
 
 
@@ -1970,7 +2005,8 @@ def solve_pose_5pt(kps):
         if out is None:
             return None
         return out[0], out[1], out[2]
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/face_util.py:1973", _degrade_error, "fallback continued")
         return None
 
 
@@ -2361,7 +2397,8 @@ def solve_pose_jaw_5pt(kps):
         if out is None:
             return None
         return out[0], out[1], out[2], best_j
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/face_util.py:2364", _degrade_error, "fallback continued")
         return None
 
 
@@ -2775,6 +2812,7 @@ def swap_moved_the_face(result, plate_kps, bbox, tol=None, rotation_action=None)
         if SWAP_SHAPE_TOL > 0:
             return keypoint_shape_change(kps, k2) > SWAP_SHAPE_TOL
         return True
-    except Exception:
+    except Exception as _degrade_error:
         # A check that throws must never cost a swap that would otherwise stand.
+        _swallowed("roop/face_util.py:2778", _degrade_error, "fallback continued")
         return False

@@ -67,6 +67,7 @@ be able to mistake an isolated GPU probe for an end-to-end pipeline result.
 """
 
 from __future__ import annotations
+from roop.degrade import swallowed as _swallowed
 
 import math
 import statistics
@@ -690,6 +691,7 @@ class SearchSpace:
         try:
             from roop import cudnn_algo
         except Exception as exc:
+            _swallowed("roop/benchmark/optimizer.py:692", exc, "fallback continued")
             return False, ("cuDNN policy module unavailable (%s); the axis is "
                            "not swept blind" % type(exc).__name__)
         lowered = ()
@@ -699,7 +701,8 @@ class SearchSpace:
                 try:
                     lowered = tuple(getter() or ())
                     break
-                except Exception:
+                except Exception as _degrade_error:
+                    _swallowed("roop/benchmark/optimizer.py:702", _degrade_error, "fallback continued")
                     continue
         if lowered:
             return False, (
@@ -839,6 +842,7 @@ def probe_temp_volume(path: Optional[str] = None, payload_mb: int = 64,
     try:
         raw = probe(path, size_mb=max(1, int(payload_mb)))
     except Exception as exc:                      # a probe must never abort a run
+        _swallowed("roop/benchmark/optimizer.py:841", exc, "fallback continued")
         return {"path": path or "", "write_mb_s": None, "read_mb_s": None,
                 "payload_mb": payload_mb, "class": "unknown",
                 "note": "probe failed: %s: %s" % (type(exc).__name__, exc)}
@@ -1654,6 +1658,7 @@ class GuidedOptimizer:
         try:
             raw = self.measure(dict(config), frames)
         except Exception as exc:                      # a failed arm is data
+            _swallowed("roop/benchmark/optimizer.py:1656", exc, "fallback continued")
             raw = {"error": "%s: %s" % (type(exc).__name__, exc), "stable": False}
         result = Measurement.from_mapping(raw, config=config, label=label,
                                           position=self._position)

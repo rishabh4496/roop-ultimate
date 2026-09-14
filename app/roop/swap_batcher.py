@@ -18,6 +18,7 @@ Robustness: timeout always flushes partial batches; stop() drains and unblocks
 every waiter; an exception in the batched run is delivered to that batch's
 waiters (they fall back to nothing/raise) instead of hanging forever.
 """
+from roop.degrade import swallowed as _swallowed
 
 import os
 import time
@@ -142,6 +143,7 @@ class SwapBatcher:
                 r.out = o
                 r.ev.set()
         except Exception as e:  # deliver the error to every waiter in this batch
+            _swallowed("roop/swap_batcher.py:144", e, "fallback continued")
             for r in batch:
                 r.err = e
                 r.ev.set()
@@ -153,6 +155,7 @@ class SwapBatcher:
                 req.out = self._run_fn([(req.src, req.tgt, req.blob)])[0]
                 self._record(1, time.perf_counter() - t0)
         except Exception as e:
+            _swallowed("roop/swap_batcher.py:155", e, "fallback continued")
             req.err = e
         req.ev.set()
 

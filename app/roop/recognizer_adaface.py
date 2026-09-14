@@ -28,6 +28,7 @@ IMPORTANT — the distance scale is NOT the same as w600k's.
 Mixing metrics is worse than either one, so callers must use identity_distance()
 for ALL comparisons in a run or none — see ready() / begin_run().
 """
+from roop.degrade import swallowed as _swallowed
 
 import os
 import threading
@@ -144,7 +145,8 @@ def face_embedding(face, frame=None):
         if kps is None:
             try:
                 kps = face['kps']
-            except Exception:
+            except Exception as _degrade_error:
+                _swallowed("roop/recognizer_adaface.py:147", _degrade_error, "fallback continued")
                 kps = None
         if kps is not None:
             from roop.face_util import align_crop
@@ -163,10 +165,12 @@ def face_embedding(face, frame=None):
     # assigning some attributes (normed_embedding) raises. See face gotchas.
     try:
         face[_EMB_KEY] = emb
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/recognizer_adaface.py:166", _degrade_error, "fallback continued")
         try:
             setattr(face, _EMB_KEY, emb)
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("roop/recognizer_adaface.py:169", _degrade_error, "fallback continued")
             pass
     return emb
 

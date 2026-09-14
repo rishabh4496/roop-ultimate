@@ -19,6 +19,7 @@ convention:
     (RetinaFace3Output below) and its own preprocessing (mean-subtract only,
     BGR, no std scaling — not the 127.5/128 SCRFD convention).
 """
+from roop.degrade import swallowed as _swallowed
 
 import os
 import threading
@@ -212,7 +213,8 @@ class RetinaFace3Output:
             try:
                 from roop.procmgr_runtime import audit_detect_best_rejected
                 audit_detect_best_rejected(scores.max())
-            except Exception:
+            except Exception as _degrade_error:
+                _swallowed("roop/retinaface.py:215", _degrade_error, "fallback continued")
                 pass
         pos_scores = scores[pos_inds]
         pos_priors = priors[pos_inds]
@@ -277,7 +279,8 @@ def _pool_size():
         from roop import session_pool
         return session_pool.detector_pool_size(
             model_key='detector:retinaface', input_shape=(1, 3, 640, 640))
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/retinaface.py:280", _degrade_error, "fallback continued")
         return 1
 
 

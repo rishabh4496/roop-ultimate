@@ -1,3 +1,4 @@
+from roop.degrade import swallowed as _swallowed
 #!/usr/bin/env python3
 
 import os
@@ -10,7 +11,8 @@ if sys.platform == 'win32':
             sys.stdout.reconfigure(encoding='utf-8')
         if hasattr(sys.stderr, 'reconfigure'):
             sys.stderr.reconfigure(encoding='utf-8')
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("run.py:13", _degrade_error, "fallback continued")
         pass
 
 os.environ["OPENCV_LOG_LEVEL"] = "ERROR"
@@ -25,7 +27,8 @@ def _apply_perf_env():
         import yaml
         with open('config.yaml', 'r') as f:
             cfg = yaml.safe_load(f) or {}
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("run.py:28", _degrade_error, "fallback continued")
         return
 
     # Build a cheap hardware-only profile before importing the model pipeline.
@@ -144,7 +147,8 @@ if _sys.platform == 'win32':
             except ConnectionResetError:
                 pass
         _T._call_connection_lost = _patched_ccl
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("run.py:147", _degrade_error, "fallback continued")
         pass
 
 from roop import core

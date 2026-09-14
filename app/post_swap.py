@@ -18,6 +18,7 @@ because `_make_frame_processor` is defined further down api.py than this code
 used to sit, so importing api.py from here would be a cycle. See the wiring
 block at the bottom of api.py.
 """
+from roop.degrade import swallowed as _swallowed
 
 import os
 import subprocess
@@ -126,7 +127,8 @@ def _select_upscale_encoder(out_w=None, out_h=None):
         if ok:
             return nvenc
         print(f"[Upscale] NVENC ({nvenc}) unavailable — using {base}: {msg[:100]}", flush=True)
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("post_swap.py:129", _degrade_error, "fallback continued")
         pass
     return base
 
@@ -203,7 +205,8 @@ def _upscale_video_inplace(proc, path):
                 import torch as _t
                 if _t.cuda.is_available():
                     return _t.cuda.mem_get_info(roop_globals.cuda_device_id)[0] / (1024 ** 3)
-            except Exception:
+            except Exception as _degrade_error:
+                _swallowed("post_swap.py:206", _degrade_error, "fallback continued")
                 pass
             return 99.0
 
@@ -251,7 +254,8 @@ def _upscale_video_inplace(proc, path):
                 if _min_free_running(active + [s], probe) < RESERVE_GB:
                     try:
                         s.Release()
-                    except Exception:
+                    except Exception as _degrade_error:
+                        _swallowed("post_swap.py:254", _degrade_error, "fallback continued")
                         pass
                     break
                 extra_sessions.append(s)
@@ -365,7 +369,8 @@ def _upscale_video_inplace(proc, path):
         for s in extra_sessions:
             try:
                 s.Release()
-            except Exception:
+            except Exception as _degrade_error:
+                _swallowed("post_swap.py:368", _degrade_error, "fallback continued")
                 pass
 
     if roop_globals.processing:
@@ -563,7 +568,8 @@ def _classical_video_inplace(path, mode, scale):
                 proc.terminate()
                 try:
                     proc.wait(timeout=5)
-                except Exception:
+                except Exception as _degrade_error:
+                    _swallowed("post_swap.py:566", _degrade_error, "fallback continued")
                     proc.kill()
                 break
             _time.sleep(0.2)
@@ -645,7 +651,8 @@ def _run_post_swap_upscale(produced_files, subtype):
     finally:
         try:
             proc.Release()
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("post_swap.py:648", _degrade_error, "fallback continued")
             pass
         roop_globals.processing = False
 
@@ -810,7 +817,8 @@ def _interp_video_minterpolate(path, factor):
                 proc.terminate()
                 try:
                     proc.wait(timeout=5)
-                except Exception:
+                except Exception as _degrade_error:
+                    _swallowed("post_swap.py:813", _degrade_error, "fallback continued")
                     proc.kill()
                 break
             _time.sleep(0.2)

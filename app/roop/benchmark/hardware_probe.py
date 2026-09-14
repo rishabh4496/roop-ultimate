@@ -7,6 +7,7 @@ dictionary instead of raising for an unavailable hardware integration.
 """
 
 from __future__ import annotations
+from roop.degrade import swallowed as _swallowed
 
 import importlib
 import logging
@@ -82,7 +83,8 @@ def _system_memory_limit_mb() -> float:
         return 0.0
     try:
         return _mb(psutil.virtual_memory().available)
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/benchmark/hardware_probe.py:85", _degrade_error, "fallback continued")
         return 0.0
 
 
@@ -207,7 +209,8 @@ def _probe_nvml(device_index: int) -> dict[str, Any] | None:
         try:
             major, minor = nvml.nvmlDeviceGetCudaComputeCapability(handle)
             capability = "%d.%d" % (int(major), int(minor))
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("roop/benchmark/hardware_probe.py:210", _degrade_error, "fallback continued")
             pass
         allocated, reserved = _torch_memory_usage(index)
         return {
@@ -232,7 +235,8 @@ def _probe_nvml(device_index: int) -> dict[str, Any] | None:
         if initialized:
             try:
                 nvml.nvmlShutdown()
-            except Exception:
+            except Exception as _degrade_error:
+                _swallowed("roop/benchmark/hardware_probe.py:235", _degrade_error, "fallback continued")
                 pass
 
 
@@ -255,9 +259,10 @@ def _probe_torch_cuda(device_index: int) -> dict[str, Any] | None:
             free, total_from_runtime = torch.cuda.mem_get_info(index)
             total = int(total_from_runtime)
             used = total - int(free)
-        except Exception:
+        except Exception as _degrade_error:
             # These figures are process-local but are still better than a
             # fabricated global VRAM reading on older torch builds.
+            _swallowed("roop/benchmark/hardware_probe.py:258", _degrade_error, "fallback continued")
             used = int(torch.cuda.memory_reserved(index))
 
         hip_version = getattr(getattr(torch, "version", None), "hip", None)
@@ -267,14 +272,16 @@ def _probe_torch_cuda(device_index: int) -> dict[str, Any] | None:
         try:
             value = torch.cuda.utilization(index)
             utilization = round(float(value), 2)
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("roop/benchmark/hardware_probe.py:270", _degrade_error, "fallback continued")
             pass
         capability: str | None = None
         if not hip_version:
             try:
                 major, minor = torch.cuda.get_device_capability(index)
                 capability = "%d.%d" % (int(major), int(minor))
-            except Exception:
+            except Exception as _degrade_error:
+                _swallowed("roop/benchmark/hardware_probe.py:277", _degrade_error, "fallback continued")
                 pass
         smi = _probe_nvidia_smi(index) if vendor == "nvidia" else {}
         return {
@@ -383,7 +390,8 @@ def _probe_openvino() -> dict[str, Any] | None:
             full_name = _as_text(
                 core.get_property(selected, "FULL_DEVICE_NAME"), selected
             )
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("roop/benchmark/hardware_probe.py:386", _degrade_error, "fallback continued")
             pass
         return {
             "available": True,
@@ -439,7 +447,8 @@ def _torch_memory_usage(device_index: int) -> tuple[float, float]:
             _mb(torch.cuda.memory_allocated(device_index)),
             _mb(torch.cuda.memory_reserved(device_index)),
         )
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/benchmark/hardware_probe.py:442", _degrade_error, "fallback continued")
         return 0.0, 0.0
 
 

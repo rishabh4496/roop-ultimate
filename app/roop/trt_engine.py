@@ -17,6 +17,7 @@ not, both learned the hard way (see ``roop/predictor.py``):
   TensorRT is not the provider that actually bound.  That list is the only
   tell.
 """
+from roop.degrade import swallowed as _swallowed
 
 import gc
 import logging
@@ -35,7 +36,8 @@ def _prepare_runtime() -> None:
     """Put the packaged TensorRT/CUDA DLLs on the loader path (idempotent)."""
     try:
         from roop.trt_session_builder import prepare_tensorrt_runtime
-    except Exception:  # pragma: no cover - builder is optional at import time
+    except Exception as _degrade_error:  # pragma: no cover - builder is optional at import time
+        _swallowed("roop/trt_engine.py:38", _degrade_error, "fallback continued")
         return
     try:
         prepare_tensorrt_runtime()
