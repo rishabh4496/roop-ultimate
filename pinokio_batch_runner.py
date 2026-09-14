@@ -20,13 +20,20 @@ import sys
 import time
 from typing import Any, Iterable
 
-from roop.process_manager import IsolatedVideoBatch, VideoJob, WorkerFailed
-
-
 PROJECT_ROOT = Path(__file__).resolve().parent
 APP_ROOT = PROJECT_ROOT / "app"
 APP_TESTS = APP_ROOT / "tests"
 VIDEO_EXTENSIONS = {".avi", ".m4v", ".mkv", ".mov", ".mp4", ".webm"}
+
+# `roop` lives in app/ and nowhere else. There used to be a second, partial
+# `roop` package at the repo root that shadowed it; importing this module from
+# the root therefore silently bound a STALE copy of face_analyser/face_reference.
+# The root package is gone, so the app directory must be on the path before any
+# `roop.*` import here.
+if str(APP_ROOT) not in sys.path:
+    sys.path.insert(0, str(APP_ROOT))
+
+from roop.process_manager import IsolatedVideoBatch, VideoJob, WorkerFailed
 
 
 def _reexec_in_app_environment() -> None:
@@ -102,8 +109,8 @@ def _frame_count(video_path: str) -> int:
 def render_video_worker(job: VideoJob, report: Any) -> dict[str, Any]:
     """Render a job inside the spawn child; imports GPU code only here."""
     # sample_bench is the repository's existing, direct batch-pipeline entry.
-    # Place app first so imports resolve the real application package instead of
-    # the small root-level launcher helper package.
+    # The spawn child starts from a bare interpreter, so app/ and app/tests must
+    # be put on its path explicitly before any application import.
     for path in (str(APP_TESTS), str(APP_ROOT)):
         if path not in sys.path:
             sys.path.insert(0, path)
