@@ -1,11 +1,37 @@
 module.exports = async (kernel) => {
   const API_PORT = await kernel.port()
-  const VITE_PORT = API_PORT + 1
-  const GRADIO_PORT = API_PORT + 2
 
   return {
     daemon: true,
     run: [
+      // Build the React UI before the backend starts.
+      //
+      // The output is plain static files that app/api.py serves itself (see the
+      // SPA mount at the bottom of that file), so there is no Node process on
+      // the runtime path at all: no `vite preview` server, no second port, no
+      // proxy hop for /api or the /ws/telemetry upgrade. That is what makes the
+      // app open on a machine other than the one it was built on.
+      //
+      // `dist/` is gitignored, so a fresh clone has no build until this step
+      // runs. Building here rather than in install.js also means a `git pull`
+      // that changes the UI is picked up on the next start without a reinstall.
+      //
+      // A build failure must NOT be silent: without dist/ the backend still
+      // serves the API but has no UI to hand the webview, so break on the
+      // errors npm/vite actually emit and show the user the real reason.
+      {
+        method: "shell.run",
+        params: {
+          path: "react-ui",
+          message: [
+            "npm run build"
+          ],
+          on: [{
+            "event": "/(npm (ERR!|error)|Build failed|error during build)/i",
+            "break": true
+          }]
+        }
+      },
       {
         method: "shell.run",
         params: {
@@ -15,11 +41,11 @@ module.exports = async (kernel) => {
             // runtime hardware/workload profiler. The launcher only supplies
             // service plumbing and does not pin one GPU's tuning onto another.
             ROOP_API_PORT: String(API_PORT),
-            ROOP_GRADIO_PORT: String(GRADIO_PORT),
-            // This client talks ONLY to the FastAPI backend. The legacy
-            // Gradio UI is incidental here, so run.py must keep serving
-            // the API if Gradio fails to launch -- without this it did
-            // not, and a Gradio port collision killed the whole backend.
+            // Gradio gets its own port well clear of the API. The legacy UI is
+            // incidental to this client, and run.py keeps serving the API if
+            // Gradio fails to launch -- without that, a Gradio port collision
+            // killed the whole backend.
+            ROOP_GRADIO_PORT: String(API_PORT + 1),
             ROOP_REACT_CLIENT: "1",
             // Full-frame temporal intake is a quality/workload invariant, not
             // a GPU performance profile.
@@ -35,94 +61,17 @@ module.exports = async (kernel) => {
           }]
         }
       },
-      // Serve the BUILT client, not the dev server.
-      //
-      // `npm run dev` was costing the app on three axes at once, and all of
-      // them land on the machine that is also rendering:
-      //
-      //  * React runs in development mode, where <StrictMode> double-invokes
-      //    every render, effect and state updater. The whole UI did twice the
-      //    work it needed to, permanently.
-      //  * Dev serves unbundled ESM — one HTTP request per module across 81
-      //    source files plus dependencies, unminified, with source maps. And
-      //    Pinokio RELOADS this webview on every tab switch, so that cost is
-      //    paid again and again during a normal session, not once at startup.
-      //  * The dev server keeps a chokidar watcher over the whole source tree
-      //    and an HMR socket open for the entire length of a render.
-      //
-      // The production build takes ~1 second and code-splits per route, so
-      // there is no startup cost worth trading any of that for.
-      //
-      // Set ROOP_UI_DEV=1 for the dev server when working ON the UI (HMR,
-      // readable stacks). It is the right tool for that and the wrong one for
-      // running renders.
-      //
-      // EACH BRANCH CAPTURES ITS OWN URL, and that is not stylistic. `input` is
-      // the return value of the IMMEDIATELY PREVIOUS step, and a `when` that
-      // evaluates false makes Pinokio "ignore the step and go to the next one
-      // immediately" — passing nothing on. So a single shared `local.set`
-      // placed after both branches reads the SKIPPED one and leaves the
-      // template unresolved, which Pinokio then treats as a literal path:
-      //
-      //   ENOENT: no such file or directory, stat '<app>\{{input.event[1]}}'
-      //
-      // Keep every capturing `shell.run` adjacent to the `local.set` that
-      // reads it. Both keys are set together in each branch so exactly one
-      // `local.set` runs per launch and nothing depends on merge order.
+      // One server now, so one URL: the backend address IS the UI address.
+      // `input` is the return value of the immediately previous step, so this
+      // stays adjacent to the shell.run that captured it.
       {
-        when: "{{!envs.ROOP_UI_DEV}}",
-        method: "shell.run",
-        params: {
-          env: {
-            ROOP_API_PORT: String(API_PORT),
-            PORT: String(VITE_PORT)
-          },
-          path: "react-ui",
-          message: [
-            "npm run build",
-            "npm run preview -- --host 127.0.0.1"
-          ],
-          on: [{
-            "event": "/(http:\\/\\/[0-9.:]+)/",
-            "done": true
-          }]
-        }
-      },
-      {
-        when: "{{!envs.ROOP_UI_DEV}}",
         method: "local.set",
         params: {
           url: "{{input.event[1]}}",
-          // Direct address of the FastAPI backend (api.py binds 127.0.0.1:ROOP_API_PORT).
-          // Surfaced so pinokio.js can offer a graceful "Stop Swap" that POSTs
-          // /api/stop — which finalizes the output video (moov atom) instead of
+          // Same origin as `url`, kept as its own key because pinokio.js passes
+          // it to stop.js/pause.js/resume.js, which POST /api/stop and friends.
+          // A graceful stop finalizes the output video (moov atom) instead of
           // the hard process-kill the Terminal square does.
-          api_url: `http://127.0.0.1:${API_PORT}`
-        }
-      },
-      {
-        when: "{{envs.ROOP_UI_DEV}}",
-        method: "shell.run",
-        params: {
-          env: {
-            ROOP_API_PORT: String(API_PORT),
-            PORT: String(VITE_PORT)
-          },
-          path: "react-ui",
-          message: [
-            "npm run dev -- --host 127.0.0.1"
-          ],
-          on: [{
-            "event": "/(http:\\/\\/[0-9.:]+)/",
-            "done": true
-          }]
-        }
-      },
-      {
-        when: "{{envs.ROOP_UI_DEV}}",
-        method: "local.set",
-        params: {
-          url: "{{input.event[1]}}",
           api_url: `http://127.0.0.1:${API_PORT}`
         }
       }

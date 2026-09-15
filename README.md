@@ -56,6 +56,25 @@ only client. React UI 2.0 was an experimental parallel client; it was removed on
 verified. The audit and the per-feature decisions are in
 `docs/development/UI_V1_V2_MIGRATION_AUDIT.md`.
 
+### One server, one port
+
+The launcher builds the React client (`npm run build`) and then starts the
+backend, which serves that build itself. There is no Vite process at runtime:
+the UI and the API share a single origin, so `/api` and the `/ws/telemetry`
+socket need no proxy.
+
+This matters for portability. Serving the UI from `vite preview` put a Node
+toolchain on the runtime path, and `vite preview` refuses to start when
+`react-ui/dist` is missing. Because `dist/` is generated and never committed,
+any build failure on another machine -- a Node older than Vite 8's
+`^20.19 || >=22.12` requirement, a missing per-platform rolldown binary, a cold
+npm cache -- took down the *server*, not just the build, and the app opened on a
+Vite error instead of the UI. Node is now needed only to produce `dist/`, and a
+failed build stops the launch with the real error rather than a broken page.
+
+For UI development, `npm run dev` in `react-ui/` still gives HMR; the dev server
+proxies `/api` and `/ws` to a backend started separately.
+
 ### Workstation features
 - **Full-bleed media canvas:** sub-pixel coordinate mapping, persistent crossfading, split comparison wipe, alpha blend, diff map, a 3.5x magnifier loupe and a paint/erase mask brush.
 - **Timeline:** filmstrip thumbnails, a measured timecode ruler, in/out trim points, chapter markers and 0.25x-4x playback.

@@ -14,13 +14,22 @@ module.exports = {
         ]
       }
     },
-    // Install Node.js dependencies for the React UI
+    // Install the React UI's Node dependencies and produce the production
+    // build that the backend serves.
+    //
+    // Node is a BUILD-time dependency only. app/api.py serves react-ui/dist
+    // itself, so nothing started here needs to keep running afterwards.
+    // Building at install time means a failing build is reported during
+    // install instead of at first launch. start_react.js builds again on every
+    // start so a `git pull` that changes the UI is picked up without a
+    // reinstall; that rebuild is ~1s once node_modules is warm.
     {
       method: "shell.run",
       params: {
         path: "react-ui",
         message: [
-          "npm install"
+          "npm install",
+          "npm run build"
         ]
       }
     },

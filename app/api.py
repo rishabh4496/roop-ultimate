@@ -3950,6 +3950,114 @@ async def _telemetry_lifespan(_app):
 app.router.lifespan_context = _telemetry_lifespan
 
 
+# ---------------------------------------------------------------------------
+# Serve the built React UI from THIS server.
+#
+# The launcher used to run `vite preview` as a second process and point the
+# webview at it, with a Vite proxy forwarding /api and /ws back here. That works
+# on the machine the UI was built on and is fragile everywhere else, because it
+# puts a Node toolchain on the RUNTIME path of a Python app:
+#
+#   * `vite preview` refuses to start at all when `react-ui/dist` is missing
+#     ("The directory "dist" does not exist. Did you build your project?").
+#     dist/ is gitignored, so on a fresh clone it exists only if `npm run build`
+#     succeeded moments earlier -- and if that build fails for ANY reason the
+#     preview server dies with it, the launcher's URL matcher never fires, and
+#     the user is left looking at a Vite error with no UI.
+#   * Vite 8 requires Node ^20.19 || >=22.12, and rolldown/oxlint ship
+#     per-platform native binaries resolved at install time. A device with an
+#     older or differently-architected Node gets a build failure, not a
+#     degraded UI.
+#   * Two servers means two ports plus a proxy hop for every request and for
+#     the telemetry WebSocket upgrade.
+#
+# None of that buys anything at runtime: the output of `vite build` is plain
+# static files. Serving them here takes Node off the runtime path entirely, so
+# the UI opens on any machine that can run the backend at all. Same-origin also
+# means /api and /ws/telemetry need no proxy -- window.location.origin (see
+# react-ui/src/api.js) already points at this server.
+#
+# NOTE ON ORDERING. The obvious implementation, `app.mount("/", StaticFiles())`,
+# is a trap: a mount at "/" matches every path, so it permanently shadows any
+# route registered after it. That is a landmine for anything that adds a route
+# later -- a test driver, a plugin, a future module imported below this line --
+# and it fails as a silent 404 on an endpoint that plainly exists in the source.
+#
+# So the SPA is attached in a way that does not depend on registration order:
+#   * /assets is a real subpath mount. Nothing else serves from there, so it
+#     cannot shadow an API route no matter when it is registered.
+#   * Everything else is served from the 404 handler, which by definition only
+#     runs once the router has already failed to match a real route. A route
+#     registered after this block still wins.
+_UI_DIST = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                        "react-ui", "dist")
+
+
+def ui_dist_ready():
+    """Whether a usable production build of the React UI is on disk."""
+    return os.path.isfile(os.path.join(_UI_DIST, "index.html"))
+
+
+@app.get("/api/ui/status")
+def ui_status():
+    """Lets the launcher and support tooling tell 'not built' from 'not running'."""
+    return {"dist": _UI_DIST, "built": ui_dist_ready()}
+
+
+if ui_dist_ready():
+    from fastapi.responses import FileResponse as _FileResponse
+    from fastapi.staticfiles import StaticFiles as _StaticFiles
+    from starlette.exceptions import HTTPException as _StarletteHTTPException
+
+    # Hashed build output. Safe to mount: it is a dedicated subpath.
+    _UI_ASSETS = os.path.join(_UI_DIST, "assets")
+    if os.path.isdir(_UI_ASSETS):
+        app.mount("/assets", _StaticFiles(directory=_UI_ASSETS), name="ui_assets")
+
+    _UI_INDEX = os.path.join(_UI_DIST, "index.html")
+
+    def _ui_file(request_path):
+        """Resolve a URL path to a file inside dist/, or None.
+
+        Rejects anything that escapes dist/ (`..`, absolute paths, symlinked
+        parents) by resolving both sides and comparing prefixes, so this cannot
+        be used to read arbitrary files off the machine.
+        """
+        candidate = os.path.normpath(os.path.join(_UI_DIST, request_path.lstrip("/")))
+        root = os.path.realpath(_UI_DIST)
+        resolved = os.path.realpath(candidate)
+        if resolved != root and not resolved.startswith(root + os.sep):
+            return None
+        return resolved if os.path.isfile(resolved) else None
+
+    @app.exception_handler(404)
+    async def _spa_fallback(request, exc):
+        """Serve the SPA for anything the API did not claim.
+
+        Runs only after the router has failed to match, so it never shadows a
+        real endpoint. Three outcomes:
+
+          * a real file in dist/ (favicon.svg, icons.svg, ...) -> that file
+          * any other in-app path -> index.html, so a deep link or a reload on
+            a client-side route boots the app and lets it route the URL itself.
+            Plain 404 there shows the user a blank page.
+          * /api or /ws -> the original 404. Handing those index.html would turn
+            a removed or mistyped endpoint into a 200 full of HTML, which
+            reaches the client as an unintelligible JSON parse error instead of
+            a clean 404.
+        """
+        path = request.url.path
+        if path.startswith("/api") or path.startswith("/ws"):
+            return JSONResponse(status_code=404, content={"detail": getattr(exc, "detail", "Not Found")})
+        # Only GET/HEAD can sensibly return a document.
+        if request.method not in ("GET", "HEAD"):
+            return JSONResponse(status_code=404, content={"detail": getattr(exc, "detail", "Not Found")})
+        found = _ui_file(path)
+        if found is not None:
+            return _FileResponse(found)
+        return _FileResponse(_UI_INDEX)
+
+
 def run_api():
     try:
         port = int(os.environ.get("ROOP_API_PORT", 8001))
