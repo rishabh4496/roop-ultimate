@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Icon } from '../../icons';
 
 /**
@@ -28,7 +28,7 @@ export default function LiveProcessingPeek({
   // reset between one poll and the fetch it triggered can land exactly there —
   // which would leave a broken-image icon in the box. Fall back to the still
   // for that seq instead, and retry naturally when the next seq arrives.
-  const [failedSeq, setFailedSeq] = React.useState('');
+  const [failedSeq, setFailedSeq] = useState('');
   const isLive = !!liveSrc && liveSrc !== failedSeq;
   const activeImage = (isLive && liveSrc) || previewSrc || rawUrl;
 
@@ -41,6 +41,7 @@ export default function LiveProcessingPeek({
             src={activeImage}
             alt={isLive ? 'Latest processed frame' : 'Preview still'}
             onError={() => { if (isLive) setFailedSeq(liveSrc); }}
+            onLoad={() => { if (failedSeq) setFailedSeq(''); }}
             className="h-full w-full object-contain transition-all duration-300 transform-gpu"
           />
         ) : (

@@ -232,7 +232,7 @@ export const Select = ({ label, info, value, onChange, options = [], modified, o
       onChange={(e) => onChange(e.target.value)}
       className="w-full px-3 py-2.5 rounded-xl glass-input text-white text-compact focus:outline-none cursor-pointer"
     >
-      {options.map((o) => {
+      {(options || []).map((o) => {
         // Accept plain strings (value === label) or {value, label} objects.
         const val = typeof o === 'object' && o !== null ? o.value : o;
         const lbl = typeof o === 'object' && o !== null ? o.label : o;

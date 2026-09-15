@@ -43,13 +43,15 @@ const ANSI_COLOR_MAP = {
 };
 
 // eslint-disable-next-line no-control-regex
-function parseAnsiTokens(text) {
+function parseAnsiTokens(rawText) {
   /* eslint-disable no-control-regex */
-  if (typeof text !== 'string') return [{ text: String(text || ''), classes: '' }];
+  if (typeof rawText !== 'string') return [{ text: String(rawText || ''), classes: '' }];
+  const text = rawText.replace(/\r/g, '');
   if (!text.includes('\u001b') && !text.includes('\x1b')) {
     return [{ text, classes: '' }];
   }
-  const regex = /(?:\u001b|\x1b)\[([0-9;]*)m/g;
+  // Matches all CSI sequences: SGR (m) and control commands (e.g. 2K, 1A)
+  const regex = /(?:\u001b|\x1b)\[([0-9;]*)([a-zA-Z])/g;
   const parts = [];
   let lastIndex = 0;
   let currentClasses = [];
@@ -57,28 +59,47 @@ function parseAnsiTokens(text) {
 
   while ((match = regex.exec(text)) !== null) {
     if (match.index > lastIndex) {
-      parts.push({ text: text.slice(lastIndex, match.index), classes: currentClasses.join(' ') });
+      const chunk = text.slice(lastIndex, match.index);
+      if (chunk) {
+        parts.push({ text: chunk, classes: currentClasses.join(' ') });
+      }
     }
-    const codes = match[1] ? match[1].split(';') : ['0'];
-    for (const code of codes) {
-      if (code === '0' || code === '') {
-        currentClasses = [];
-      } else if (code === '1') {
-        currentClasses.push('font-bold');
-      } else if (code === '2') {
-        currentClasses.push('opacity-60');
-      } else if (ANSI_COLOR_MAP[code]) {
-        currentClasses = currentClasses.filter((c) => !c.startsWith('text-'));
-        currentClasses.push(ANSI_COLOR_MAP[code]);
+    const [, codesStr, cmd] = match;
+    if (cmd === 'm') {
+      const codes = codesStr ? codesStr.split(';') : ['0'];
+      for (let i = 0; i < codes.length; i++) {
+        const code = codes[i];
+        if (code === '0' || code === '') {
+          currentClasses = [];
+        } else if (code === '1') {
+          if (!currentClasses.includes('font-bold')) currentClasses.push('font-bold');
+        } else if (code === '2') {
+          if (!currentClasses.includes('opacity-60')) currentClasses.push('opacity-60');
+        } else if (code === '3') {
+          if (!currentClasses.includes('italic')) currentClasses.push('italic');
+        } else if (code === '4') {
+          if (!currentClasses.includes('underline')) currentClasses.push('underline');
+        } else if (code === '39') {
+          currentClasses = currentClasses.filter((c) => !c.startsWith('text-'));
+        } else if (code === '38' || code === '48') {
+          // Skip extended color sequences (38;5;n or 38;2;r;g;b)
+          if (codes[i + 1] === '5') i += 2;
+          else if (codes[i + 1] === '2') i += 4;
+        } else if (ANSI_COLOR_MAP[code]) {
+          currentClasses = currentClasses.filter((c) => !c.startsWith('text-'));
+          currentClasses.push(ANSI_COLOR_MAP[code]);
+        }
       }
     }
     lastIndex = regex.lastIndex;
   }
   if (lastIndex < text.length) {
-    const remaining = text.slice(lastIndex).replace(/(?:\u001b|\x1b)\[[0-9;]*[a-zA-Z]|\r/g, '');
-    parts.push({ text: remaining, classes: currentClasses.join(' ') });
+    const chunk = text.slice(lastIndex);
+    if (chunk) {
+      parts.push({ text: chunk, classes: currentClasses.join(' ') });
+    }
   }
-  return parts.length ? parts : [{ text: text.replace(/(?:\u001b|\x1b)\[[0-9;]*[a-zA-Z]|\r/g, ''), classes: '' }];
+  return parts.length ? parts : [{ text: '', classes: '' }];
 }
 
 function FormattedLogMessage({ msg, toneClass }) {
@@ -161,10 +182,11 @@ export default function ProcessingTerminal({
     if (el) el.scrollLeft = el.scrollWidth;
   }, [parts.length]);
 
-  // A part that disappears (new run) must not leave a dead tab selected.
+  // A part that disappears (new run) or cleared errors must not leave a dead tab selected.
   useEffect(() => {
     if (typeof tab === 'number' && !parts.some((p) => p.index === tab)) setTab('all');
-  }, [parts, tab]);
+    if (tab === 'errors' && errorCount === 0) setTab('all');
+  }, [parts, tab, errorCount]);
 
   const lineTone = (msg) => {
     const m = (msg || '').toLowerCase();
@@ -214,13 +236,16 @@ export default function ProcessingTerminal({
   }, []);
 
   useEffect(() => {
-    if (autoScroll) {
-      bottomRef.current?.scrollIntoView({ block: 'end' });
+    if (autoScroll && scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
   }, [shown.length, lastShownSeq, tab, autoScroll]);
 
+  const cleanLogText = (msg) => String(msg || '').replace(/(?:\u001b|\x1b)\[[0-9;]*[a-zA-Z]|\r/g, '');
+
   const handleCopy = () => {
-    const text = shown.map((l) => `[${l.t}] ${l.msg}`).join('\n');
+    if (!shown.length) return;
+    const text = shown.map((l) => `[${l.t}] ${cleanLogText(l.msg)}`).join('\n');
     if (navigator.clipboard && navigator.clipboard.writeText) {
       navigator.clipboard.writeText(text).then(() => {
         setCopied(true);
@@ -248,14 +273,15 @@ export default function ProcessingTerminal({
   };
 
   const handleDownload = () => {
-    const text = shown.map((l) => `[${l.t}] ${l.msg}`).join('\n');
+    if (!shown.length) return;
+    const text = shown.map((l) => `[${l.t}] ${cleanLogText(l.msg)}`).join('\n');
     const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
     a.download = `roop_render_log_${typeof tab === 'number' ? `part_${tab}` : tab}_${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.log`;
     a.click();
-    URL.revokeObjectURL(url);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
 
   const chip = (active) =>
@@ -330,6 +356,13 @@ export default function ProcessingTerminal({
                 type="text"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Escape') {
+                    e.stopPropagation();
+                    setSearchQuery('');
+                    setShowSearch(false);
+                  }
+                }}
                 placeholder="Filter logs…"
                 className="bg-transparent text-white placeholder:text-white/30 text-micro focus:outline-none w-28 sm:w-36 font-mono"
               />
@@ -474,9 +507,9 @@ export default function ProcessingTerminal({
           type="button"
           onClick={() => {
             setAutoScroll(true);
-            bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+            scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
           }}
-          className="absolute bottom-10 right-4 z-20 flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[var(--accent)] hover:brightness-110 text-white text-nano font-bold shadow-2xl border border-white/20 transition-all active:scale-95 animate-bounce cursor-pointer"
+          className="absolute bottom-12 right-4 z-20 flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[var(--accent)] hover:brightness-110 text-white text-nano font-bold shadow-2xl border border-white/20 transition-all active:scale-95 animate-bounce cursor-pointer"
           aria-label="Scroll to latest output"
         >
           <span>↓ Jump to latest</span>

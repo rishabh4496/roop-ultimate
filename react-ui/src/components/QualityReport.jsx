@@ -69,12 +69,13 @@ export default function QualityReport({ outputPath, notify }) {
     );
   }
 
-  const m = data.metrics;
-  const g = m.grade;
+  const m = data?.metrics || {};
+  const g = m.grade || 'C';
   const gc = gradeColor(g);
   const radius = 26;
   const circ = radius * 2 * Math.PI;
-  const off = circ - (m.overall_score / 100) * circ;
+  const overall = Number(m.overall_score) || 0;
+  const off = circ - (overall / 100) * circ;
 
   return (
     <div className="mt-1 p-4 rounded-xl bg-black/30 border border-white/5 space-y-4">

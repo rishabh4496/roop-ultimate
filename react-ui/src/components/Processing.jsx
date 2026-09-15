@@ -311,7 +311,7 @@ export default function Processing({ progress, settings, notify, setTab,
                 <div className="text-right">
                   <div className="text-nano font-semibold uppercase tracking-[0.16em] text-white/45">Finishes</div>
                   <div className="text-title font-bold tabular-nums text-white/85">
-                    {etaMs > 0 ? new Date(Date.now() + etaMs).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—'}
+                    {etaMs > 0 ? new Date(now + etaMs).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—'}
                   </div>
                 </div>
               </div>
@@ -441,8 +441,8 @@ export default function Processing({ progress, settings, notify, setTab,
               paused={progress.paused}
               expanded={terminalExpanded}
               onToggleExpand={() => setTerminalExpanded((v) => !v)}
-              className={`w-full transition-all duration-300 ${terminalExpanded ? 'flex-1 min-h-[500px]' : 'flex-1 min-h-[220px]'}`}
-              bodyClass={terminalExpanded ? 'h-[460px]' : 'flex-1 min-h-[140px]'}
+              className={`w-full transition-all duration-300 ${terminalExpanded ? 'min-h-[560px]' : 'min-h-[320px]'}`}
+              bodyClass={terminalExpanded ? 'h-[520px] lg:h-[600px]' : 'h-[260px] lg:h-[300px]'}
             />
 
             {progress.error && <div className="text-xs text-red-400 font-semibold text-center">{progress.error}</div>}

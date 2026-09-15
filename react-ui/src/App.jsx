@@ -449,10 +449,12 @@ export default function App() {
   // selected, because that is what you just asked for), and it stays after the
   // run ends so the finished log and the output are still there to read. It
   // disappears once you navigate away from it with nothing running.
-  const [runTabOpen, setRunTabOpen] = useState(false);
+  const [runTabOpen, setRunTabOpen] = useState(
+    () => tabFromHash(window.location.hash, ALL_TABS.map((t) => t.id)) === 'processing'
+  );
   useEffect(() => {
-    if (progress.processing) setRunTabOpen(true);
-    else if (tab !== 'processing') setRunTabOpen(false);
+    if (progress.processing || tab === 'processing') setRunTabOpen(true);
+    else setRunTabOpen(false);
   }, [progress.processing, tab]);
 
   const visibleTabs = useMemo(
