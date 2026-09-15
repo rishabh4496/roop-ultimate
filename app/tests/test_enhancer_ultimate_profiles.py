@@ -26,6 +26,7 @@ import os
 import sys
 import threading
 import unittest
+from unittest import mock
 
 import cv2
 import numpy as np
@@ -171,6 +172,36 @@ class TestProfileDeclarations(unittest.TestCase):
                 src = fh.read()
             self.assertNotIn('enhance_gpen_ultimate', src, base)
             self.assertNotIn('enhance_restore_ultra', src, base)
+
+    def test_gpen_ultimate_resizes_reference_for_upscaled_tiers(self):
+        """The 1024/2048 branch must finish against the returned geometry.
+
+        The optional 1024 weight is not installed in this checkout, so this
+        exercises the branch without downloading a large model by stubbing the
+        inherited inference. It still proves the contract that matters here:
+        a scale factor above one cannot feed a 512 reference into a 1024
+        per-pixel finish.
+        """
+        from roop.processors.Enhance_GPENUltimate import Enhance_GPENUltimate
+
+        frame = face_like_crop(512)
+        enlarged = cv2.resize(frame, (1024, 1024), interpolation=cv2.INTER_CUBIC)
+        seen = {}
+
+        def fake_finish(result, reference, **_kwargs):
+            seen['shape'] = reference.shape
+            return result
+
+        with mock.patch(
+                'roop.processors.Enhance_GPENUltimate.Enhance_GPEN.Run',
+                return_value=(enlarged, 2)), mock.patch(
+                'roop.processors.Enhance_GPENUltimate.enhance_gpen_ultimate',
+                side_effect=fake_finish):
+            result, scale = Enhance_GPENUltimate().Run(None, None, frame)
+
+        self.assertEqual(result.shape, enlarged.shape)
+        self.assertEqual(scale, 2)
+        self.assertEqual(seen['shape'], enlarged.shape)
 
 
 # ── the soft-knee detail table ───────────────────────────────────────────────
