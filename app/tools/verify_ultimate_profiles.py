@@ -92,7 +92,11 @@ def main():
     # harness that passes bare strings gets no mitigation and RestoreFormer++
     # dies on this device with CUDNN_FE HEURISTIC_QUERY_FAILED.
     from roop.core import decode_execution_providers
-    roop.globals.execution_providers = decode_execution_providers(['cuda'])
+    # TensorRT is what config.yaml actually ships (`provider: tensorrt`), so it
+    # is the default here too -- verifying only CUDA would leave the path most
+    # users run untested. ROOP_VERIFY_PROVIDER=cuda selects the other one.
+    requested = os.environ.get('ROOP_VERIFY_PROVIDER', 'tensorrt')
+    roop.globals.execution_providers = decode_execution_providers([requested])
 
     dev = 'cuda' if any('CUDA' in str(p) or 'Tensorrt' in str(p)
                         for p in roop.globals.execution_providers) else 'cpu'

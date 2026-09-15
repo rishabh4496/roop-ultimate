@@ -130,7 +130,7 @@ import sample_bench as sb
 VALID_ENHANCERS = {
     'None', 'Adaptive', 'GFPGAN', 'Codeformer', 'Codeformer (fp16)', 'DMDNet',
     'GPEN 256', 'GPEN 256 Pro', 'GPEN Realistic', 'GPEN', 'GPEN 1024', 'GPEN 2048', 'UltraMax',
-    'Restoreformer++', 'KEEP (sidecar)',
+    'GPEN Ultimate', 'Restoreformer++', 'Restore Ultra', 'KEEP (sidecar)',
 }
 
 

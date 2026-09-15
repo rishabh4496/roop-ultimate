@@ -63,8 +63,10 @@ ENHANCERS = [
     "GPEN",
     "GPEN 1024",
     "GPEN 2048",
+    "GPEN Ultimate",
     "UltraMax",
     "Restoreformer++",
+    "Restore Ultra",
     # Adaptive is not a model. It is a selector that sits AFTER the mask stages
     # (see get_processing_plugins) rather than before them like every manual
     # enhancer, so it is not a like-for-like substitution for the model it

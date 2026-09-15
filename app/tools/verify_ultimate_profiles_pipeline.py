@@ -33,7 +33,11 @@ def main():
     import roop.globals
     from roop.core import decode_execution_providers
 
-    roop.globals.execution_providers = decode_execution_providers(['cuda'])
+    # TensorRT is what config.yaml actually ships (`provider: tensorrt`).
+    # ROOP_VERIFY_PROVIDER=cuda selects the other one.
+    requested = os.environ.get('ROOP_VERIFY_PROVIDER', 'tensorrt')
+    roop.globals.execution_providers = decode_execution_providers([requested])
+    print(f'provider = {requested}')
 
     from settings import Settings
     roop.globals.CFG = Settings('config.yaml')
