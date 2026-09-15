@@ -53,7 +53,7 @@ module.exports = async (kernel) => {
           },
           path: "app",
           message: [
-            "python run.py",
+            "python run.py --ui react",
           ],
           on: [{
             "event": "/(http:\\/\\/[0-9.:]+)/",

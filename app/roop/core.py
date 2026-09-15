@@ -139,7 +139,15 @@ def parse_args() -> None:
     program.add_argument('--benchmark-apply', help='Apply the recommended settings when the benchmark finishes', dest='benchmark_apply', action='store_true', default=False)
     program.add_argument('--source', '--source-path', dest='source_reference_path', default=None,
                          help='Source image or folder of same-identity reference images')
+    program.add_argument('--ui', choices=['react', 'gradio', 'legacy'], default=None,
+                         help='UI to launch: react (default for React launcher) or legacy/gradio')
+    program.add_argument('--react', action='store_true', default=False,
+                         help='Force React client mode')
     roop.globals.startup_args = program.parse_args()
+    if getattr(roop.globals.startup_args, 'react', False) or getattr(roop.globals.startup_args, 'ui', None) == 'react':
+        os.environ['ROOP_REACT_CLIENT'] = '1'
+    elif getattr(roop.globals.startup_args, 'ui', None) in ('gradio', 'legacy'):
+        os.environ.pop('ROOP_REACT_CLIENT', None)
     if hasattr(roop.globals.startup_args, 'enable_occlusion_mask') and roop.globals.startup_args.enable_occlusion_mask is not None:
         roop.globals.enable_occlusion_mask = roop.globals.startup_args.enable_occlusion_mask
     if hasattr(roop.globals.startup_args, 'detector_scale_pyramid') and roop.globals.startup_args.detector_scale_pyramid is not None:

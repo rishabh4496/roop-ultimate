@@ -151,8 +151,7 @@ TARGETS = {
     ),
     "build": (
         "Front-end build output",
-        "react-ui/dist and lint caches. The client is served by the Vite dev "
-        "server, so these are rebuilt on demand and unused at runtime.",
+        "react-ui/dist and lint caches. Rebuilt automatically on the next launch.",
         # node_modules is deliberately NOT here: it is required to launch the
         # client.  react-ui-v2/dist was listed here until React UI 2.0 was
         # removed; there is one client now.

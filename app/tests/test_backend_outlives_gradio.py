@@ -72,6 +72,16 @@ class BackendOutlivesGradioTests(unittest.TestCase):
         self.assertIn('_announce_react_backend_when_ready', main)
         react_branch = main[:main.index('else:', main.index('ROOP_REACT_CLIENT'))]
         self.assertNotIn('[Backend] listening on http://', react_branch)
+        tail = main[main.index('core.run()'):]
+        self.assertNotIn('http://', tail[:tail.index('while api_thread.is_alive()')],
+                         "run.py post-core.run() block must not emit http:// before socket readiness")
+
+    def test_run_py_accepts_ui_and_react_flags(self):
+        """CLI arguments --ui and --react must configure the active client mode."""
+        self.assertIn("'--ui'", self.run_py)
+        self.assertIn("'--react'", self.run_py)
+        main = self.run_py[self.run_py.index("args = parser.parse_args()"):self.run_py.index("def _run_cli_benchmark")]
+        self.assertIn("ROOP_REACT_CLIENT", main)
 
     def test_gradio_still_owns_the_process_for_the_legacy_launcher(self):
         """Where Gradio IS the app, its shutdown must still end the process."""
@@ -95,6 +105,24 @@ class BackendOutlivesGradioTests(unittest.TestCase):
                          "ui/main.py is expected to CATCH the launch failure")
         self.assertIn("when launching Gradio Server!", handler)
         self.assertNotIn("raise", handler.split("except Exception")[1][:200])
+
+    def test_ui_main_skips_gradio_when_react_client_active(self):
+        """When the React client is active, Gradio UI must not launch or emit a URL."""
+        main = _read(os.path.join(_APP, "ui", "main.py"))
+        self.assertIn('os.environ.get("ROOP_REACT_CLIENT") == "1"', main)
+        react_check = main[main.index('ROOP_REACT_CLIENT'):]
+        self.assertIn("return", react_check[:200],
+                      "ui/main.py must return early before building Gradio blocks")
+        self.assertLess(main.index('ROOP_REACT_CLIENT'), main.index('gr.Blocks'),
+                        "Gradio blocks must not be constructed in React mode")
+
+    def test_run_py_legacy_branch_does_not_emit_http_url(self):
+        """Legacy branch must not print http:// so start_legacy.js captures Gradio."""
+        main = self.run_py[self.run_py.index("api_thread = threading.Thread"):]
+        else_branch = main[main.index('else:', main.index('ROOP_REACT_CLIENT')):]
+        else_block = else_branch[:else_branch.index('core.run()')]
+        self.assertNotIn('http://', else_block,
+                         "run.py legacy branch must not emit http:// before Gradio launches")
 
 
 if __name__ == "__main__":

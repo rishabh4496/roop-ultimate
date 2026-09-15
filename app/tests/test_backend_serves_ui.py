@@ -124,6 +124,25 @@ class TheSpaDoesNotShadowTheApi(unittest.TestCase):
             self.assertNotIn('uvicorn.run', response.text,
                              f'{attempt} escaped react-ui/dist')
 
+    def test_missing_asset_returns_404_not_index_html(self):
+        response = self.client.get('/assets/definitely_missing_chunk_12345.js')
+        self.assertEqual(response.status_code, 404)
+        self.assertNotIn('<div id="root">', response.text)
+
+    def test_missing_file_with_static_extension_returns_404(self):
+        for name in ('missing_icon.png', 'nonexistent.svg', 'absent.ico', 'missing.css'):
+            response = self.client.get(f'/{name}')
+            self.assertEqual(response.status_code, 404, f'{name} should return 404')
+            self.assertNotIn('<div id="root">', response.text)
+
+    def test_javascript_mime_type_is_correct(self):
+        assets = os.path.join(DIST, 'assets')
+        entries = [f for f in os.listdir(assets) if f.endswith('.js')]
+        self.assertTrue(entries, 'the build produced no JS assets')
+        response = self.client.get(f'/assets/{entries[0]}')
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('application/javascript', response.headers.get('content-type', ''))
+
 
 if __name__ == '__main__':
     unittest.main()

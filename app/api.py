@@ -4004,58 +4004,86 @@ def ui_status():
     return {"dist": _UI_DIST, "built": ui_dist_ready()}
 
 
-if ui_dist_ready():
-    from fastapi.responses import FileResponse as _FileResponse
-    from fastapi.staticfiles import StaticFiles as _StaticFiles
-    from starlette.exceptions import HTTPException as _StarletteHTTPException
+import mimetypes as _mimetypes
+from fastapi.responses import FileResponse as _FileResponse, HTMLResponse as _HTMLResponse
+from fastapi.staticfiles import StaticFiles as _StaticFiles
+from starlette.exceptions import HTTPException as _StarletteHTTPException
 
-    # Hashed build output. Safe to mount: it is a dedicated subpath.
-    _UI_ASSETS = os.path.join(_UI_DIST, "assets")
-    if os.path.isdir(_UI_ASSETS):
-        app.mount("/assets", _StaticFiles(directory=_UI_ASSETS), name="ui_assets")
+# Ensure critical web asset MIME types are explicitly registered regardless of Windows registry state
+_mimetypes.add_type("application/javascript", ".js")
+_mimetypes.add_type("text/css", ".css")
+_mimetypes.add_type("image/svg+xml", ".svg")
+_mimetypes.add_type("font/woff2", ".woff2")
+_mimetypes.add_type("font/woff", ".woff")
 
-    _UI_INDEX = os.path.join(_UI_DIST, "index.html")
+_STATIC_EXTENSIONS = (
+    ".js", ".css", ".png", ".jpg", ".jpeg", ".gif", ".svg",
+    ".ico", ".woff", ".woff2", ".ttf", ".eot", ".map", ".json", ".webp"
+)
 
-    def _ui_file(request_path):
-        """Resolve a URL path to a file inside dist/, or None.
+# Hashed build output. Safe to mount: it is a dedicated subpath.
+_UI_ASSETS = os.path.join(_UI_DIST, "assets")
+if os.path.isdir(_UI_ASSETS):
+    app.mount("/assets", _StaticFiles(directory=_UI_ASSETS), name="ui_assets")
 
-        Rejects anything that escapes dist/ (`..`, absolute paths, symlinked
-        parents) by resolving both sides and comparing prefixes, so this cannot
-        be used to read arbitrary files off the machine.
-        """
-        candidate = os.path.normpath(os.path.join(_UI_DIST, request_path.lstrip("/")))
-        root = os.path.realpath(_UI_DIST)
-        resolved = os.path.realpath(candidate)
-        if resolved != root and not resolved.startswith(root + os.sep):
-            return None
-        return resolved if os.path.isfile(resolved) else None
+_UI_INDEX = os.path.join(_UI_DIST, "index.html")
 
-    @app.exception_handler(404)
-    async def _spa_fallback(request, exc):
-        """Serve the SPA for anything the API did not claim.
+def _ui_file(request_path):
+    """Resolve a URL path to a file inside dist/, or None.
 
-        Runs only after the router has failed to match, so it never shadows a
-        real endpoint. Three outcomes:
+    Rejects anything that escapes dist/ (`..`, absolute paths, symlinked
+    parents) by resolving both sides and comparing prefixes, so this cannot
+    be used to read arbitrary files off the machine.
+    """
+    candidate = os.path.normpath(os.path.join(_UI_DIST, request_path.lstrip("/")))
+    root = os.path.realpath(_UI_DIST)
+    resolved = os.path.realpath(candidate)
+    if resolved != root and not resolved.startswith(root + os.sep):
+        return None
+    return resolved if os.path.isfile(resolved) else None
 
-          * a real file in dist/ (favicon.svg, icons.svg, ...) -> that file
-          * any other in-app path -> index.html, so a deep link or a reload on
-            a client-side route boots the app and lets it route the URL itself.
-            Plain 404 there shows the user a blank page.
-          * /api or /ws -> the original 404. Handing those index.html would turn
-            a removed or mistyped endpoint into a 200 full of HTML, which
-            reaches the client as an unintelligible JSON parse error instead of
-            a clean 404.
-        """
-        path = request.url.path
-        if path.startswith("/api") or path.startswith("/ws"):
-            return JSONResponse(status_code=404, content={"detail": getattr(exc, "detail", "Not Found")})
-        # Only GET/HEAD can sensibly return a document.
-        if request.method not in ("GET", "HEAD"):
-            return JSONResponse(status_code=404, content={"detail": getattr(exc, "detail", "Not Found")})
+@app.exception_handler(404)
+async def _spa_fallback(request, exc):
+    """Serve the SPA for anything the API did not claim.
+
+    Runs only after the router has failed to match, so it never shadows a
+    real endpoint. Three outcomes:
+
+      * a real file in dist/ (favicon.svg, icons.svg, ...) -> that file
+      * any other in-app path -> index.html, so a deep link or a reload on
+        a client-side route boots the app and lets it route the URL itself.
+        Plain 404 there shows the user a blank page.
+      * /api, /ws, /assets or missing static asset files -> 404. Handing those
+        index.html would turn missing endpoints/chunks into 200 HTML, which
+        reaches the browser as SyntaxError / JSON parse errors.
+    """
+    path = request.url.path
+    if path.startswith("/api") or path.startswith("/ws"):
+        return JSONResponse(status_code=404, content={"detail": getattr(exc, "detail", "Not Found")})
+    # Only GET/HEAD can sensibly return a document.
+    if request.method not in ("GET", "HEAD"):
+        return JSONResponse(status_code=404, content={"detail": getattr(exc, "detail", "Not Found")})
+    if ui_dist_ready():
         found = _ui_file(path)
         if found is not None:
             return _FileResponse(found)
+        _, ext = os.path.splitext(path)
+        if path.startswith("/assets/") or ext.lower() in _STATIC_EXTENSIONS:
+            return JSONResponse(status_code=404, content={"detail": "Asset not found"})
         return _FileResponse(_UI_INDEX)
+    return _HTMLResponse(
+        status_code=503,
+        content=(
+            "<!DOCTYPE html><html><head><title>React UI Not Built</title>"
+            "<style>body{font-family:sans-serif;background:#111;color:#eee;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;}"
+            ".card{background:#222;padding:32px;border-radius:12px;border:1px solid #333;max-width:560px;text-align:center;}"
+            "h1{color:#e94560;margin-top:0;}code{background:#333;padding:2px 6px;border-radius:4px;color:#50a070;}</style></head>"
+            "<body><div class='card'><h1>React UI Build Missing</h1>"
+            "<p>The production React UI build was not found at <code>react-ui/dist/index.html</code>.</p>"
+            "<p>To build the UI, run: <code>cd react-ui &amp;&amp; npm run build</code> or launch via Pinokio (<code>start.js</code>).</p>"
+            "</div></body></html>"
+        )
+    )
 
 
 def run_api():

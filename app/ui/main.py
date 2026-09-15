@@ -94,7 +94,11 @@ def run():
         util.print_cuda_info()
         
     print(f'Using provider {roop.globals.execution_providers} - Device:{gputype}')
-    
+
+    if os.environ.get("ROOP_REACT_CLIENT") == "1":
+        print("[UI] React client mode active — skipping legacy Gradio web server.", flush=True)
+        return
+
     run_server = True
     uii.ui_restart_server = False
     mycss = """

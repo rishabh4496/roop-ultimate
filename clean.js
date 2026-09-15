@@ -48,7 +48,7 @@ module.exports = {
           type: "checkbox",
           key: "build",
           title: "Front-end build output",
-          description: "react-ui/dist and lint caches. The UI runs from the Vite dev server, so these are unused at runtime.",
+          description: "react-ui/dist and lint caches. Rebuilt automatically on the next launch.",
           default: true
         }, {
           type: "checkbox",

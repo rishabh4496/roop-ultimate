@@ -201,7 +201,15 @@ parser.add_argument('--benchmark-apply', dest='benchmark_apply',
                     action='store_true',
                     help='apply the recommended settings when the run finishes '
                          '(without this the run is saved but nothing changes)')
+parser.add_argument('--ui', choices=['react', 'gradio', 'legacy'], default=None,
+                    help='UI to launch: react (default for React launcher) or legacy/gradio')
+parser.add_argument('--react', action='store_true', default=False,
+                    help='force React client mode')
 args = parser.parse_args()
+if getattr(args, 'react', False) or getattr(args, 'ui', None) == 'react':
+    os.environ['ROOP_REACT_CLIENT'] = '1'
+elif getattr(args, 'ui', None) in ('gradio', 'legacy'):
+    os.environ.pop('ROOP_REACT_CLIENT', None)
 from roop import globals
 # Normalize to onnxruntime's exact provider names — naive concatenation makes
 # 'cudaExecutionProvider' (wrong case), which get_device() and the GPU guard
@@ -297,9 +305,10 @@ if __name__ == '__main__':
             daemon=True,
         ).start()
     else:
-        # Preserve the legacy launcher's existing URL capture behavior.  Its
-        # actual Gradio URL is emitted later by ui/main.py.
-        print(f"[Backend] listening on http://127.0.0.1:{api_port}", flush=True)
+        # Preserve the legacy launcher's existing URL capture behavior. Its
+        # actual Gradio URL is emitted later by ui/main.py, so do not print
+        # a web address here.
+        print(f"[Backend] API daemon running on port {api_port}", flush=True)
 
     core.run()
 
@@ -324,9 +333,7 @@ if __name__ == '__main__':
     # legacy launcher is unchanged: there Gradio IS the application, and its
     # shutdown should still end the process.
     if os.environ.get("ROOP_REACT_CLIENT") == "1" and api_thread.is_alive():
-        print("[Backend] the legacy Gradio UI has stopped. This does NOT affect "
-              "the React client.", flush=True)
-        print(f"[Backend] still serving the API on http://127.0.0.1:{api_port} "
+        print(f"[Backend] API daemon running on port {api_port} "
               f"- stop this script in Pinokio to shut it down.", flush=True)
         try:
             while api_thread.is_alive():
