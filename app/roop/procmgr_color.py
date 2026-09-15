@@ -214,17 +214,27 @@ class ColorTransferMixin:
         s_lab = cv2.cvtColor(source, cv2.COLOR_BGR2LAB)
         t_lab = cv2.cvtColor(target, cv2.COLOR_BGR2LAB)
         s_f = s_lab.astype(np.float32)
-        t_f = t_lab.astype(np.float32)
         s_flat = s_f.reshape(-1, 3)
-        t_flat = t_f.reshape(-1, 3)
-        # Subsampled covariance & mean: 16k samples converges identically to 262k
-        # while removing 60% of matrix computation time.
-        s_sub = s_flat[::4]
-        t_sub = t_flat[::4]
+        # A 512x512 crop has 262k pixels. The transform is only 3x3, so using
+        # every 16th pixel gives 16,384 spatially distributed samples, which is
+        # more than enough for stable first/second-order colour statistics. The
+        # previous stride of 4 accidentally used 65,536 samples despite the
+        # original 16k design note, making this twice-per-face stage needlessly
+        # expensive. Keep the full source float buffer for the final transform,
+        # but convert only sampled LAB pixels for the statistics.
+        s_sub = s_lab.reshape(-1, 3)[::16].astype(np.float32)
+        t_sub = t_lab.reshape(-1, 3)[::16].astype(np.float32)
         s_mean, t_mean = s_sub.mean(0), t_sub.mean(0)
         eps = np.eye(3, dtype=np.float32) * 1e-4
-        Cs = np.cov(s_sub, rowvar=False).astype(np.float32) + eps
-        Ct = np.cov(t_sub, rowvar=False).astype(np.float32) + eps
+        # np.cov spends most of its time in generic shape/mean handling. These
+        # are the same unbiased covariance matrices, expressed directly as a
+        # 3x3 centered Gram matrix, avoiding the large temporary work arrays.
+        s_centered = s_sub - s_mean
+        t_centered = t_sub - t_mean
+        denominator_s = max(1, s_centered.shape[0] - 1)
+        denominator_t = max(1, t_centered.shape[0] - 1)
+        Cs = (s_centered.T @ s_centered) / denominator_s + eps
+        Ct = (t_centered.T @ t_centered) / denominator_t + eps
 
         w_s, V_s = np.linalg.eigh(Cs)
         minv_s = (V_s * (1.0 / np.sqrt(np.clip(w_s, 1e-6, None)))) @ V_s.T
