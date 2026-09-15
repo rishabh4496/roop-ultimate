@@ -2034,9 +2034,9 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                     getattr(self, '_runtime_face_concurrency', max_b) or max_b)))
         max_b = max(2, min(max_b, threads))
         try:
-            wait_ms = float(os.environ.get('ROOP_BATCH_SWAP_WAIT_MS', '2.0'))
+            wait_ms = float(os.environ.get('ROOP_BATCH_SWAP_WAIT_MS', '4.0'))
         except ValueError:
-            wait_ms = 2.0
+            wait_ms = 4.0
         b = swap_batcher.SwapBatcher(
             swap_p.RunBatchMulti, lambda: _gpu_guard(pooled=pooled, owner='swap'),
             max_batch=max_b, max_wait_ms=wait_ms)
@@ -2270,12 +2270,16 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                             self.streamwriter.WriteToStream(fr)
                         # Real-time progress is reported directly by worker threads in _process_block
                         # as frames complete on GPU, avoiding bursty FPS and frozen terminal bars.
-                        if self._temporal_faces is not None:
-                            self._temporal_faces.pop(gi, None)
-                        if hasattr(self, '_track_assignments') and self._track_assignments is not None:
-                            self._track_assignments.pop(gi, None)
-                        if hasattr(self, '_precomputed_kps') and self._precomputed_kps is not None:
-                            self._precomputed_kps.pop(gi, None)
+                        # Evict trailing frames outside the warm-up window so block-0 warm-up of the next
+                        # chunk can still access recent temporal faces and track assignments.
+                        _evict_gi = gi - max(64, int(WU * 2))
+                        if _evict_gi >= 0:
+                            if self._temporal_faces is not None:
+                                self._temporal_faces.pop(_evict_gi, None)
+                            if hasattr(self, '_track_assignments') and self._track_assignments is not None:
+                                self._track_assignments.pop(_evict_gi, None)
+                            if hasattr(self, '_precomputed_kps') and self._precomputed_kps is not None:
+                                self._precomputed_kps.pop(_evict_gi, None)
                         # The frame/queue hook lived ONLY in the sequential
                         # encoder loop, while production runs this parallel
                         # stabilization writer. That left the monitor with
@@ -2579,6 +2583,12 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
             self._stab_chunk_queue_capacity = None
             self._runtime_read_queue = None
             self._runtime_write_queue = None
+            if self._temporal_faces is not None:
+                self._temporal_faces.clear()
+            if hasattr(self, '_track_assignments') and self._track_assignments is not None:
+                self._track_assignments.clear()
+            if hasattr(self, '_precomputed_kps') and self._precomputed_kps is not None:
+                self._precomputed_kps.clear()
             for _a in ('kps', 'enh', 't'):
                 if hasattr(self._tls, _a):
                     delattr(self._tls, _a)

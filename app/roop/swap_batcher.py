@@ -118,7 +118,12 @@ class SwapBatcher:
                     return
                 # Have ≥1 request; briefly wait for more to coalesce a batch.
                 if len(self._queue) < self._max_batch and not self._stopped and self._max_wait > 0:
-                    self._cond.wait(self._max_wait)
+                    deadline = time.monotonic() + self._max_wait
+                    while len(self._queue) < self._max_batch and not self._stopped:
+                        rem = deadline - time.monotonic()
+                        if rem <= 0:
+                            break
+                        self._cond.wait(rem)
                 batch = self._queue[:self._max_batch]
                 del self._queue[:self._max_batch]
             self._run_batch(batch)

@@ -119,10 +119,6 @@ class NVHardwareVideoReader:
             "error",
             "-hwaccel",
             "cuda",
-            # Keep this spelling in the public handler.  FFmpeg performs the
-            # required surface conversion before the raw BGR pipe boundary.
-            "-hwaccel_output_format",
-            "rawvideo",
         ]
         if self.start_frame > 0 and self.fps > 0:
             cmd.extend(["-ss", f"{max(0.0, (self.start_frame - 0.5) / self.fps):.6f}"])
@@ -614,7 +610,8 @@ class NVHardwareVideoWriter:
             )
         try:
             assert self.proc.stdin is not None
-            self.proc.stdin.write(owned.tobytes())
+            frame_view = memoryview(owned)
+            self.proc.stdin.write(frame_view if frame_view.c_contiguous else owned.tobytes())
             self.frames_written += 1
         except (BrokenPipeError, OSError, ValueError) as exc:
             if self._retry_as_software():

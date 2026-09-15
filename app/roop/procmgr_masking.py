@@ -1112,7 +1112,12 @@ class MaskingMixin:
                             _owner = _region_owner_in_crop(
                                 region, orig_frame, M, frame.shape)
                             if _owner is not None:
-                                _propagated = np.maximum(_propagated, 1.0 - _owner)
+                                _restore = 1.0 - _owner
+                                if _propagated.ndim == 3 and _restore.ndim == 2:
+                                    _restore = _restore[..., None]
+                                elif _propagated.ndim == 2 and _restore.ndim == 3:
+                                    _restore = np.squeeze(_restore)
+                                _propagated = np.maximum(_propagated, _restore)
                             return self._composite_mask(
                                 _propagated, frame, target), _propagated
             except Exception as exc:
@@ -1360,8 +1365,13 @@ class MaskingMixin:
         # mask, preventing mask leakage and cross-face blending at the source.
         _owner = _region_owner_in_crop(region, orig_frame, M, img_mask.shape)
         if _owner is not None:
-            img_mask = np.maximum(np.asarray(img_mask, dtype=np.float32),
-                                  1.0 - _owner)
+            _restore = 1.0 - _owner
+            _mask_arr = np.asarray(img_mask, dtype=np.float32)
+            if _mask_arr.ndim == 3 and _restore.ndim == 2:
+                _restore = _restore[..., None]
+            elif _mask_arr.ndim == 2 and _restore.ndim == 3:
+                _restore = np.squeeze(_restore)
+            img_mask = np.maximum(_mask_arr, _restore)
 
         # Consume exactly one analyzed mask per face/frame. Enhanced output
         # reuses this mask through the early `reuse_mask` return above, so it
@@ -1410,6 +1420,8 @@ class MaskingMixin:
         precisely so one mask can serve targets of different sizes (the swapped
         crop is 256, the enhanced one 512).
         """
+        if img_mask.ndim > 2:
+            img_mask = np.squeeze(img_mask)
         if img_mask.shape[:2] != target.shape[:2]:
             img_mask = cv2.resize(img_mask, (target.shape[1], target.shape[0]),
                                   interpolation=cv2.INTER_LINEAR)
