@@ -31,8 +31,8 @@ QUALITY_MODES = ("FAST", "BALANCED", "REALISTIC", "MAX QUALITY")
 ENHANCERS = (
     "None", "Adaptive", "GFPGAN", "Codeformer", "Codeformer (fp16)",
     "DMDNet", "GPEN 256", "GPEN 256 Pro", "GPEN Realistic", "GPEN",
-    "GPEN 256 Ultra", "GPEN 1024", "GPEN 2048", "UltraMax", "Restoreformer++",
-    "KEEP (sidecar)",
+    "GPEN 256 Ultra", "GPEN 1024", "GPEN 2048", "GPEN Ultimate", "UltraMax",
+    "Restoreformer++", "Restore Ultra", "KEEP (sidecar)",
 )
 
 BACKENDS = (

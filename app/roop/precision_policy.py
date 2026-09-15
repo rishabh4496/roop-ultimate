@@ -180,7 +180,12 @@ def canonical_model_key(model_key: str | None, model_path: str | None = None) ->
         return "codeformer_fp16"
     if "codeformer" in value:
         return "codeformer"
-    if "restoreformer" in value:
+    # "Restore Ultra" is the RestoreFormer++ WEIGHTS with a forced-alignment
+    # crop and a CPU-side anti-halo finish -- the graph, and therefore every
+    # precision property of it, is identical. Its UI label does not contain
+    # "restoreformer", so it is matched explicitly rather than falling through
+    # to "unknown" and being pinned to FP32 by the unknown-model rule.
+    if "restoreformer" in value or "restore ultra" in value or "restore_ultra" in value:
         return "restoreformer_pp"
     if "dmdnet" in value:
         return "dmdnet"

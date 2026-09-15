@@ -24,9 +24,43 @@ The face-restoration paths actually registered are:
 | GPEN 2048 | same class | `app/models/gpen_bfr_2048.onnx` | same |
 | GPEN 256 Pro | `Enhance_GPEN256Pro.py:78` / `Enhance_GPEN256Pro` | `app/models/gpen_bfr_256.onnx` | `Initialize:164`, `Release:223`, `Run:539` |
 | GPEN Realistic 256/512 | `Enhance_GPENRealistic.py:68` / `Enhance_GPENRealistic` | `gpen_bfr_256.onnx` / `GPEN-BFR-512.onnx` | `Initialize:136`, `Release:227`, `Run:269` |
+| GPEN Ultimate | `Enhance_GPENUltimate.py` / `Enhance_GPENUltimate` (subclass of `Enhance_GPEN`) | `app/models/GPEN-BFR-512.onnx` (same graph as GPEN 512) | inherits `Initialize`/`Release`; overrides `Run` for the CPU finish |
 | RestoreFormer++ | `Enhance_RestoreFormerPPlus.py:14` / `Enhance_RestoreFormerPPlus` | `app/models/restoreformer_plus_plus.onnx` | `Initialize:36`, `Run:75`, `Release:111` |
+| Restore Ultra | `Enhance_RestoreUltra.py` / `Enhance_RestoreUltra` (subclass of `Enhance_RestoreFormerPPlus`) | `app/models/restoreformer_plus_plus.onnx` (same graph as RestoreFormer++) | inherits `Initialize`/`Release`; overrides `Run` for the CPU finish |
 | UltraMax | `Enhance_UltraMax.py:222` / `Enhance_UltraMax` | `app/models/CodeFormer/codeformer.fp16.onnx` | `Initialize:323`, `Release:390`, `Run:698` |
 | KEEP (sidecar) | `Enhance_KEEP.py:52` / `Enhance_KEEP` | `app/sidecar_keep/server.py` and sidecar checkpoint | `Initialize:116`, `Run:122`, `Release:149` |
+
+### GPEN Ultimate and Restore Ultra (ported from roop-unleashed-wip, 2026-09-15)
+
+Neither profile adds a network, a TensorRT engine or any VRAM. Each opens the
+SAME weights as the plain arm it derives from, through the same pooled
+io-binding session path, with the same provider policy and the same non-finite
+guard. Exactly two things differ:
+
+1. `force_align = True` — a per-processor override of the global
+   `enhancer_align` opt-in (`ProcessMgr` enhancer-alignment block). The crop is
+   warped into `ffhq_512` space before inference and back afterwards, because
+   both finishing stages are keyed to the FFHQ template's own eye coordinates
+   and are only anatomically correct on a crop genuinely in that space.
+2. A CPU finish applied in the subclass's `Run` — never in the shared base, so
+   selecting plain `GPEN` or `Restoreformer++` is bit-identical to before:
+   bilateral detail injection through a 511-entry soft-knee table, a local
+   eye-clarity pass, and an anti-halo sharpen. Every stage is bounded against
+   its own input's 3x3 min/max envelope, which makes a halo unrepresentable
+   rather than merely small.
+
+Constants differ per profile because RestoreFormer++ already returns more
+micro-contrast than GPEN:
+
+| Profile | bilateral sigma_color | knee threshold / softness | detail strength | eye boost | sharpen amount / sigma / limit |
+|---|---:|---:|---:|---:|---:|
+| GPEN Ultimate | 22.0 | 12.0 / 3.0 | 0.36 | 0.52 | 0.30 / 1.0 / 2.5 |
+| Restore Ultra | 18.0 | 10.0 / 2.5 | 0.30 | 0.48 | 0.26 / 0.8 / 2.0 |
+
+Measured on an RTX 4070 (CUDA EP, 512 crop, second call after warm-up): GPEN
+Ultimate 125.6 ms against GPEN 98.5 ms; Restore Ultra 175.2 ms against
+RestoreFormer++ 173.9 ms. Covered by
+`app/tests/test_enhancer_ultimate_profiles.py`.
 
 The frame super-resolution paths actually exposed by `app/api.py:3251` and
 implemented by `Frame_Upscale` are:

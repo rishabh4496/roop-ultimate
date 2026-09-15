@@ -806,6 +806,11 @@ def get_processing_plugins(masking_engine, swap_model='inswapper', target_face=N
         processors.update({"gpen_realistic": {}})
     elif roop.globals.selected_enhancer == 'GPEN':
         processors.update({"gpen": {"size": 512}})
+    elif roop.globals.selected_enhancer == 'GPEN Ultimate':
+        # GPEN-512's weights with forced FFHQ alignment and an anti-halo
+        # finish (bilateral detail, eye clarity, bounded sharpen). No extra
+        # network and no extra VRAM over 'GPEN' -- see Enhance_GPENUltimate.
+        processors.update({"gpen_ultimate": {}})
     elif roop.globals.selected_enhancer == 'GPEN 1024':
         processors.update({"gpen": {"size": 1024}})
     elif roop.globals.selected_enhancer == 'GPEN 2048':
@@ -817,6 +822,11 @@ def get_processing_plugins(masking_engine, swap_model='inswapper', target_face=N
         processors.update({"ultramax": {}})
     elif roop.globals.selected_enhancer == 'Restoreformer++':
         processors.update({"restoreformer++": {}})
+    elif roop.globals.selected_enhancer == 'Restore Ultra':
+        # RestoreFormer++'s weights with forced FFHQ alignment and a gentler
+        # anti-halo finish than GPEN Ultimate's. No extra network and no extra
+        # VRAM over 'Restoreformer++' -- see Enhance_RestoreUltra.
+        processors.update({"restore_ultra": {}})
     elif roop.globals.selected_enhancer == 'KEEP (sidecar)':
         # Experimental: runs in sidecar_keep/.venv as a separate process
         # (dependency conflict with the main env); passes through unenhanced

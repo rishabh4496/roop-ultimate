@@ -543,10 +543,12 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
         'gfpgan'            : 'Enhance_GFPGAN',
         'dmdnet'            : 'Enhance_DMDNet',
         'gpen'              : 'Enhance_GPEN',
+        'gpen_ultimate'     : 'Enhance_GPENUltimate',
         'gpen_256_pro'      : 'Enhance_GPEN256Pro',
         'gpen_realistic'    : 'Enhance_GPENRealistic',
         'ultramax'          : 'Enhance_UltraMax',
         'restoreformer++'   : 'Enhance_RestoreFormerPPlus',
+        'restore_ultra'     : 'Enhance_RestoreUltra',
         'keep'              : 'Enhance_KEEP',
         'adaptive_enhancer' : 'AdaptiveEnhancer',
         'colorizer'         : 'Frame_Colorizer',
@@ -955,8 +957,9 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
             self._small_card_enhancer_policy = _policy
             if _policy.get('changed'):
                 _enhancer_keys = {
-                    'codeformer', 'gfpgan', 'dmdnet', 'gpen', 'gpen_256_pro',
-                    'gpen_realistic', 'ultramax', 'restoreformer++', 'keep',
+                    'codeformer', 'gfpgan', 'dmdnet', 'gpen', 'gpen_ultimate',
+                    'gpen_256_pro', 'gpen_realistic', 'ultramax',
+                    'restoreformer++', 'restore_ultra', 'keep',
                 }
                 options.processors = {
                     key: value for key, value in options.processors.items()
@@ -4878,8 +4881,15 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                 # passes, and whether the better-matched prior is worth that is
                 # a judgement to make on real footage rather than on paper.
                 _tmpl = getattr(p, 'model_template', None)
-                _realign = (roop.globals.enhancer_align and _tmpl
-                            and _tmpl != swap_template)
+                # `force_align` is a per-processor OVERRIDE of the global
+                # `enhancer_align` opt-in, for profiles whose finishing stages
+                # are keyed to their template's own landmark coordinates and are
+                # therefore only correct on a crop genuinely in that space --
+                # GPEN Ultimate and Restore Ultra. For every other restorer the
+                # attribute is absent and this reads exactly as it did before.
+                _force_align = getattr(p, 'force_align', False)
+                _realign = bool(_tmpl and _tmpl != swap_template
+                                and (roop.globals.enhancer_align or _force_align))
                 _A = None
                 enh_input = fake_frame
                 if _realign:

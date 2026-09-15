@@ -421,9 +421,17 @@ def _enhancer_model(name):
         'GPEN 256': ('gpen_bfr_256.onnx', 'FP32-forced under TRT'),
         'GPEN 256 Pro': ('gpen_bfr_256.onnx', 'Upgraded GPEN 256 (sharper, photoreal, high-texture)'),
         'GPEN': ('GPEN-BFR-512.onnx', 'FP32-forced under TRT'),
+        # Both Ultimate/Ultra profiles are the SAME graph as the plain arm they
+        # derive from -- forced FFHQ alignment and the anti-halo finish are CPU
+        # work -- so they must point at the same weights, or the benchmark would
+        # report "not a single-file ONNX enhancer" and skip them entirely.
+        'GPEN Ultimate': ('GPEN-BFR-512.onnx',
+                          'GPEN-512 with forced FFHQ alignment and the CPU anti-halo finish'),
         'GPEN 1024': ('gpen_bfr_1024.onnx', 'FP32-forced under TRT'),
         'GPEN 2048': ('gpen_bfr_2048.onnx', 'FP32-forced under TRT'),
         'Restoreformer++': ('restoreformer_plus_plus.onnx', ''),
+        'Restore Ultra': ('restoreformer_plus_plus.onnx',
+                          'RestoreFormer++ with forced FFHQ alignment and the CPU anti-halo finish'),
         # UltraMax is a lean CodeFormer path, not a GPEN network. Keep this
         # pointed at the model the processor actually opens so its benchmark
         # cannot report GPEN-512 timings under the UltraMax name.
@@ -560,7 +568,8 @@ def build_catalogue(faces_per_frame=1.0):
             # and DMDNet have no pool at all, so under TensorRT they hold the
             # global lock and serialise the whole pipeline behind one face.
             pooled_enh = (enh_name.startswith('Codeformer') or
-                          enh_name in ('Restoreformer++', 'UltraMax',
+                          enh_name in ('Restoreformer++', 'Restore Ultra',
+                                       'UltraMax',
                                        'GPEN Realistic', 'GPEN 256 Pro'))
             # The low-VRAM tier deliberately disables pools. A stage must not
             # be benchmarked as pooled there when the real processor will use
