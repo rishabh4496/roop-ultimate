@@ -59,6 +59,20 @@ class BackendOutlivesGradioTests(unittest.TestCase):
             r"api_thread\s*=\s*threading\.Thread\(\s*target=run_api,\s*daemon=True\s*\)",
             "the API thread must be bound to a name so it can be joined")
 
+    def test_react_url_is_published_only_after_backend_readiness(self):
+        """Pinokio must not open the webview during the CFG/API startup race."""
+        helper_start = self.run_py.index("def _announce_react_backend_when_ready")
+        helper_end = self.run_py.index("\n\nif __name__ == '__main__':", helper_start)
+        helper = self.run_py[helper_start:helper_end]
+        self.assertIn('getattr(globals, "CFG", None)', helper)
+        self.assertIn('socket.create_connection', helper)
+        self.assertIn('api_thread.is_alive()', helper)
+
+        main = self.run_py[self.run_py.index("api_thread = threading.Thread"):]
+        self.assertIn('_announce_react_backend_when_ready', main)
+        react_branch = main[:main.index('else:', main.index('ROOP_REACT_CLIENT'))]
+        self.assertNotIn('[Backend] listening on http://', react_branch)
+
     def test_gradio_still_owns_the_process_for_the_legacy_launcher(self):
         """Where Gradio IS the app, its shutdown must still end the process."""
         legacy = _read(os.path.join(_ROOT, "start_legacy.js"))

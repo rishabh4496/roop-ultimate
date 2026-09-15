@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 
 import os
+import socket
 import sys
+import time
 
 import numpy as np
 import onnxruntime as ort
@@ -227,6 +229,47 @@ def _run_cli_benchmark(faces: str, mode: str, apply_result: bool) -> int:
     return run_cli_benchmark(faces=faces, mode=mode, apply_result=apply_result)
 
 
+def _announce_react_backend_when_ready(api_thread, api_port):
+    """Publish the React URL only after both halves of startup are usable.
+
+    The API runs in a daemon thread so the launcher can start while the legacy
+    Gradio UI initializes on the main thread.  Printing the URL immediately
+    after ``api_thread.start()`` races the webview: the port may not be bound
+    yet, and ``CFG`` is still empty until ``core.run()`` begins.  The React app
+    can then mount against a live HTML shell while its first API calls return
+    empty or initializing data, which is indistinguishable from a blank UI in
+    a Pinokio webview.
+
+    Keep this wait in the backend rather than adding a second Node server or a
+    machine-specific delay.  It works on cold starts and slower laptops alike,
+    and it only changes the React launcher's readiness signal.  The legacy
+    launcher still receives its historical early URL marker below.
+    """
+    try:
+        timeout = max(30.0, float(os.environ.get("ROOP_REACT_READY_TIMEOUT", "180")))
+    except (TypeError, ValueError):
+        timeout = 180.0
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if not api_thread.is_alive():
+            print("[Backend] React startup failed: the API thread exited before readiness.",
+                  flush=True)
+            return False
+        if getattr(globals, "CFG", None) is not None:
+            try:
+                with socket.create_connection(("127.0.0.1", api_port), timeout=0.25):
+                    print(f"[Backend] listening on http://127.0.0.1:{api_port}", flush=True)
+                    return True
+            except OSError:
+                # Uvicorn may still be between startup and bind.  Retry rather
+                # than allowing Pinokio to open a URL that can fail once.
+                pass
+        time.sleep(0.1)
+    print(f"[Backend] React startup timed out after {timeout:.0f}s waiting for readiness.",
+          flush=True)
+    return False
+
+
 if __name__ == '__main__':
     if getattr(args, 'benchmark', False):
         import time
@@ -247,7 +290,16 @@ if __name__ == '__main__':
     # to the React shell.  The API owns the port, so publish the detected
     # address here instead of making the launcher guess or hard-code it.
     api_port = int(os.environ.get("ROOP_API_PORT", "8001"))
-    print(f"[Backend] listening on http://127.0.0.1:{api_port}", flush=True)
+    if os.environ.get("ROOP_REACT_CLIENT") == "1":
+        threading.Thread(
+            target=_announce_react_backend_when_ready,
+            args=(api_thread, api_port),
+            daemon=True,
+        ).start()
+    else:
+        # Preserve the legacy launcher's existing URL capture behavior.  Its
+        # actual Gradio URL is emitted later by ui/main.py.
+        print(f"[Backend] listening on http://127.0.0.1:{api_port}", flush=True)
 
     core.run()
 
