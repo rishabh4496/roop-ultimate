@@ -45,7 +45,7 @@ export default function LiveProcessingPeek({
           />
         ) : (
           <div className="flex flex-col items-center gap-2 text-neutral-500">
-            <div className="h-8 w-8 rounded-full border-2 border-white/10 border-t-indigo-500 animate-spin" />
+            <div className="h-8 w-8 rounded-full border-2 border-white/10 border-t-[var(--accent)] animate-spin" />
             <span className="text-xs">Waiting for the first processed frame…</span>
           </div>
         )}
@@ -80,7 +80,7 @@ export default function LiveProcessingPeek({
         {progressDesc && (
           <div className="absolute bottom-3 left-3 right-3 z-10">
             <div className="px-3 py-1.5 rounded-xl bg-black/80 backdrop-blur-md border border-white/10 text-xs font-mono text-neutral-200 truncate">
-              <span className="text-indigo-400 font-bold mr-2">STATE:</span>
+              <span className="text-[var(--accent)] font-bold mr-2">STATE:</span>
               <span>{progressDesc}</span>
             </div>
           </div>

@@ -4,7 +4,7 @@ import { Toasts, Confetti, MotionIcon } from './components/ui';
 import QualityProfilesModal, { BUILTIN_PROFILES } from './components/QualityProfilesModal';
 import CommandPalette from './components/CommandPalette';
 import ErrorBoundary from './components/ErrorBoundary';
-import { ConfirmHost, confirmDialog } from './components/confirm';
+import { ConfirmHost, confirmDialog, promptDialog } from './components/confirm';
 import { fmtTime } from './components/faceswap/utils';
 import useRunCompleteAlert from './components/faceswap/useRunCompleteAlert';
 import useJobRecovery from './components/faceswap/useJobRecovery';
@@ -477,7 +477,7 @@ export default function App() {
     } else if (!progress.processing && was) {
       setStartTime(null);
     }
-  }, [progress.processing, progress.started_at, startTime]);
+  }, [progress.processing, progress.started_at, startTime, setTab]);
 
   const prevProcessingCelebrationRef = useRef(false);
   useEffect(() => {
@@ -522,12 +522,19 @@ export default function App() {
     } catch { return []; }
   });
 
-  const saveSessionSnapshot = useCallback(() => {
-    const name = prompt('Enter a name for this Session Snapshot:', `Session ${new Date().toLocaleTimeString()}`);
-    if (!name) return;
+  const saveSessionSnapshot = useCallback(async () => {
+    const defaultName = `Session ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+    const name = await promptDialog({
+      title: 'Save Workspace Snapshot',
+      message: 'Enter a descriptive name for this Session Snapshot:',
+      defaultValue: defaultName,
+      placeholder: defaultName,
+      confirmLabel: 'Save Snapshot',
+    });
+    if (!name || !name.trim()) return;
     const snap = {
       id: Date.now(),
-      name,
+      name: name.trim(),
       time: new Date().toISOString(),
       tab,
       settings: { ...(settings || {}) },
@@ -538,7 +545,7 @@ export default function App() {
       localStorage.setItem('roop_session_snapshots', JSON.stringify(updated));
       return updated;
     });
-    notify(`Saved Workspace Snapshot: "${name}"`, 'success');
+    notify(`Saved Workspace Snapshot: "${name.trim()}"`, 'success');
   }, [tab, settings, activeQualityProfile, notify]);
 
   const loadSessionSnapshot = useCallback((snap) => {
@@ -547,7 +554,7 @@ export default function App() {
     if (snap.activeQualityProfile) setActiveQualityProfile(snap.activeQualityProfile);
     setShowSnapshotsModal(false);
     notify(`Loaded Workspace Snapshot: "${snap.name}"`, 'success');
-  }, [notify]);
+  }, [notify, setTab]);
 
   const deleteSessionSnapshot = useCallback((id) => {
     setSnapshots((prev) => {
@@ -664,7 +671,7 @@ export default function App() {
   const runFaceswap = useCallback((id, extra) => {
     setTab('faceswap');
     setTimeout(() => window.dispatchEvent(new CustomEvent('roop:command', { detail: { id, ...extra } })), 60);
-  }, []);
+  }, [setTab]);
 
   // Presets are mirrored into localStorage by useProfiles, so the palette can
   // list them without a fetch and without waiting on the Face Swap chunk. Read
@@ -758,7 +765,7 @@ export default function App() {
     }));
 
     return cmds;
-  }, [applyTheme, applyQualityProfile, runFaceswap, customThemes, presets, visibleTabs, liteMode]);
+  }, [applyTheme, applyQualityProfile, runFaceswap, customThemes, presets, visibleTabs, liteMode, setTab]);
 
   const registerFileListener = useCallback((cb) => {
     fileListenersRef.current.push(cb);

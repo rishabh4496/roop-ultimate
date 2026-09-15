@@ -187,9 +187,13 @@ export default function InteractivePreview({
   useEffect(() => {
     window.addEventListener('mouseup', endDrag);
     window.addEventListener('touchend', endDrag);
+    window.addEventListener('pointerup', endDrag);
+    window.addEventListener('pointercancel', endDrag);
     return () => {
       window.removeEventListener('mouseup', endDrag);
       window.removeEventListener('touchend', endDrag);
+      window.removeEventListener('pointerup', endDrag);
+      window.removeEventListener('pointercancel', endDrag);
     };
   }, [endDrag]);
 

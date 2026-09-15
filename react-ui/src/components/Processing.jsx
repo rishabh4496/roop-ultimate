@@ -1,8 +1,9 @@
-import React, { useEffect, useMemo, useRef } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { postJSON, API } from '../api';
 import { AnimatedNumber, Button } from './ui';
 import { Icon } from '../icons';
 import { motion, spring } from '../motion';
+import { confirmDialog } from './confirm';
 import QualityReport from './QualityReport';
 import ProcessingDock from './faceswap/ProcessingDock';
 import ProcessingTerminal from './faceswap/ProcessingTerminal';
@@ -38,6 +39,17 @@ export default function Processing({ progress, settings, notify, setTab,
   const pauseRequested = !!progress.pause_requested;
   const stopping = !!progress.stop_requested || controlBusy === 'stop';
 
+  const [terminalExpanded, setTerminalExpanded] = useState(false);
+
+  // Smooth 1-second interval timer when rendering so live elapsed and ETA tick smoothly
+  // even when progress poll frequency drops during active WebSocket telemetry.
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    if (!processing || progress.paused) return undefined;
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [processing, progress.paused]);
+
   const telemetry = useTelemetry();
   const {
     renderLite, mode: renderLiteMode, label: renderLiteLabel,
@@ -72,7 +84,7 @@ export default function Processing({ progress, settings, notify, setTab,
   // when this view mounted keeps its real age. The last live value is kept in a
   // ref so the completed state can still report how long the run took — the
   // clock is gone by then, and "0s" would be a lie about a four-hour render.
-  const liveElapsedMs = processing && startedAt ? Date.now() - startedAt : 0;
+  const liveElapsedMs = processing && startedAt ? Math.max(0, now - startedAt) : 0;
   const elapsedRef = useRef(0);
   useEffect(() => { if (liveElapsedMs > 0) elapsedRef.current = liveElapsedMs; }, [liveElapsedMs]);
   const elapsedMs = liveElapsedMs || elapsedRef.current;
@@ -88,12 +100,33 @@ export default function Processing({ progress, settings, notify, setTab,
         : (prog > 0.01 ? (elapsedMs * (1 - prog)) / prog : 0))
     : 0;
 
-  const stop = onStopRun || (async () => { try { await postJSON('/api/stop', {}); notify('Stopping…', 'info'); } catch (e) { notify(e.message, 'error'); } });
   const pause = onPauseRun || (async () => { try { await postJSON('/api/pause', {}); notify('Pause requested; waiting for a safe checkpoint', 'info'); } catch (e) { notify(e.message, 'error'); } });
   const resume = onResumeRun || (async () => { try { await postJSON('/api/resume', {}); notify('Resumed'); } catch (e) { notify(e.message, 'error'); } });
 
+  // Confirmation guard before cancelling a job to prevent accidental abortion
+  const stop = useCallback(async () => {
+    if (!(await confirmDialog({
+      title: 'Stop job?',
+      message: 'Stop the active job? The partial output so far is finalized and kept.',
+      confirmLabel: 'Stop',
+      danger: true,
+    }))) return;
+
+    if (onStopRun) {
+      onStopRun();
+    } else {
+      try {
+        await postJSON('/api/stop', {});
+        notify('Stopping…', 'info');
+      } catch (e) {
+        notify(e.message, 'error');
+      }
+    }
+  }, [onStopRun, notify]);
+
   const out = !processing ? progress.output : null;
   const outUrl = out?.path ? `${API}/api/file?path=${encodeURIComponent(out.path)}&t=${progress.progress}` : '';
+  const isVideoOutput = out?.kind === 'video' || /\.(mp4|mkv|mov|webm|avi)$/i.test(out?.path || '');
   const revealOutput = async () => {
     try { await postJSON('/api/reveal', { path: out?.path }); }
     catch (e) { notify(e.message, 'error'); }
@@ -115,7 +148,7 @@ export default function Processing({ progress, settings, notify, setTab,
       {/* ── Run bar ─────────────────────────────────────────────────────────
           Sticky, so the percentage and the stop control stay reachable however
           far down the terminal is scrolled. */}
-      <div className="sticky top-20 z-30 pb-3 bg-[#0c0e14]/90 backdrop-blur-md">
+      <div className="sticky top-20 z-30 pb-3 bg-neutral-950/70 backdrop-blur-md">
         {processing ? (
           <div className="relative overflow-hidden rounded-2xl glass-panel px-5 py-3.5 flex flex-col md:flex-row items-center justify-between gap-4 shadow-xl border border-white/5 w-full">
             {/* Left: circular progress ring & status */}
@@ -171,7 +204,7 @@ export default function Processing({ progress, settings, notify, setTab,
               {progress.paused ? (
                 <motion.button type="button" onClick={resume} disabled={stopping || !!controlBusy} title="Resume" aria-label="Resume the run"
                   whileHover={{ y: -3, scale: 1.06 }} whileTap={{ scale: 0.92, y: 0 }} transition={spring.snappy}
-                  className="group flex flex-col items-center gap-1.5 focus:outline-none">
+                  className="group flex flex-col items-center gap-1.5 focus:outline-none cursor-pointer">
                   <span className="h-11 w-11 rounded-xl flex items-center justify-center bg-emerald-500/15 border border-emerald-500/40 text-emerald-400 transition-colors duration-200 group-hover:bg-emerald-500/25">
                     <svg viewBox="0 0 24 24" className="w-6 h-6" fill="currentColor"><path d="M8 5.14v13.72a1 1 0 0 0 1.53.85l10.9-6.86a1 1 0 0 0 0-1.7L9.53 4.29A1 1 0 0 0 8 5.14z" /></svg>
                   </span>
@@ -180,7 +213,7 @@ export default function Processing({ progress, settings, notify, setTab,
               ) : (
                 <motion.button type="button" onClick={pause} disabled={pauseRequested || stopping || !!controlBusy} title={pauseRequested ? 'Waiting for a safe checkpoint' : 'Pause'} aria-label={pauseRequested ? 'Pause requested' : 'Pause the run'}
                   whileHover={{ y: -3, scale: 1.06 }} whileTap={{ scale: 0.92, y: 0 }} transition={spring.snappy}
-                  className="group flex flex-col items-center gap-1.5 focus:outline-none">
+                  className="group flex flex-col items-center gap-1.5 focus:outline-none cursor-pointer">
                   <span className="h-11 w-11 rounded-xl flex items-center justify-center bg-amber-500/15 border border-amber-500/40 text-amber-400 transition-colors duration-200 group-hover:bg-amber-500/25">
                     <svg viewBox="0 0 24 24" className="w-6 h-6" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1.5" /><rect x="14" y="5" width="4" height="14" rx="1.5" /></svg>
                   </span>
@@ -189,11 +222,11 @@ export default function Processing({ progress, settings, notify, setTab,
               )}
               <motion.button type="button" onClick={stop} disabled={stopping} title={stopping ? 'Stopping' : 'Stop'} aria-label={stopping ? 'Stop requested' : 'Stop the run'}
                 whileHover={{ y: -3, scale: 1.06 }} whileTap={{ scale: 0.92, y: 0 }} transition={spring.snappy}
-                className="group flex flex-col items-center gap-1.5 focus:outline-none">
+                className="group flex flex-col items-center gap-1.5 focus:outline-none cursor-pointer">
                 <span className="h-11 w-11 rounded-xl flex items-center justify-center bg-red-500/15 border border-red-500/40 text-red-400 transition-colors duration-200 group-hover:bg-red-500/25">
                   <svg viewBox="0 0 24 24" className="w-6 h-6" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2.5" /></svg>
                 </span>
-                  <span className="text-micro font-semibold uppercase tracking-[0.14em] text-white/45 group-hover:text-red-400 transition-colors">{stopping ? 'Stopping…' : 'Stop'}</span>
+                <span className="text-micro font-semibold uppercase tracking-[0.14em] text-white/45 group-hover:text-red-400 transition-colors">{stopping ? 'Stopping…' : 'Stop'}</span>
               </motion.button>
             </div>
 
@@ -240,14 +273,11 @@ export default function Processing({ progress, settings, notify, setTab,
       </div>
 
       {/* ── The stage ───────────────────────────────────────────────────────
-          Fills the viewport: this tab has nothing else on it, and the
-          diagnostics want the height. Floored so it stays usable on a short
-          window. */}
+          Responsive scrollable container so the terminal and controls are never
+          cut off on constrained viewports or laptop displays. */}
       {processing ? (
-        <div className="relative h-[calc(100vh-230px)] min-h-[620px] rounded-2xl overflow-hidden processing-stage flex flex-col items-center select-none px-4 sm:px-6 py-4">
-          {/* h-full + min-h-0 so the console below takes ALL the leftover height
-              instead of the whole block floating in a tall box. */}
-          <div className="relative h-full w-full max-w-[1900px] min-h-0 flex flex-col gap-3">
+        <div className="relative min-h-[620px] rounded-2xl overflow-y-auto overflow-x-hidden custom-scrollbar processing-stage flex flex-col items-center select-none px-4 sm:px-6 py-4">
+          <div className="relative w-full max-w-[1900px] min-h-0 flex flex-col gap-3.5">
 
             {/* ── Headline ────────────────────────────────────────────────
                 One line that answers "where is it, and when is it done". */}
@@ -288,8 +318,7 @@ export default function Processing({ progress, settings, notify, setTab,
             </div>
 
             {/* ── Pipeline rail ───────────────────────────────────────────
-                The stages ARE the progress bar: one continuous track split into
-                named segments that fill as the run moves through them. */}
+                Continuous track split into named segments with glowing step markers. */}
             {(() => {
               const d = (progress.desc || '').toLowerCase();
               const stages = [
@@ -306,24 +335,41 @@ export default function Processing({ progress, settings, notify, setTab,
               let activeIdx = stages.findIndex((s) => s.key === activeKey);
               if (activeIdx < 0) activeIdx = 1;
               return (
-                <div className="w-full">
-                  <div className="flex items-stretch gap-1">
+                <div className="w-full p-2.5 sm:p-3 rounded-2xl bg-white/[0.02] border border-white/10 backdrop-blur-sm shadow-inner">
+                  <div className="flex items-stretch gap-2">
                     {stages.map((s, i) => {
                       const state = i < activeIdx ? 'done' : i === activeIdx ? 'active' : 'pending';
                       return (
                         <div key={s.key} className="flex-1 min-w-0">
-                          <div className={`h-1.5 rounded-full overflow-hidden ${state === 'pending' ? 'bg-white/[0.06]' : 'bg-white/[0.08]'}`}>
-                            {state === 'done' && <div className="h-full w-full rounded-full bg-emerald-500/70" />}
+                          <div className={`h-2 rounded-full overflow-hidden transition-all duration-300 ${
+                            state === 'pending'
+                              ? 'bg-white/[0.06]'
+                              : state === 'done'
+                                ? 'bg-emerald-500/20'
+                                : 'bg-white/[0.08]'
+                          }`}>
+                            {state === 'done' && <div className="h-full w-full rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.5)]" />}
                             {state === 'active' && (
-                              <div className={`h-full rounded-full bg-gradient-to-r from-[var(--accent)] to-[var(--accent-hover)] transition-[width] duration-500 ease-out ${progress.paused ? '' : 'progress-bar-animated'}`}
-                                   style={{ width: `${Math.max(4, prog * 100)}%` }} />
+                              <div
+                                className={`h-full rounded-full bg-gradient-to-r from-[var(--accent)] to-[var(--accent-hover)] transition-[width] duration-500 ease-out ${progress.paused ? '' : 'progress-bar-animated'}`}
+                                style={{ width: `${Math.max(6, prog * 100)}%`, boxShadow: '0 0 10px var(--accent-glow)' }}
+                              />
                             )}
                           </div>
-                          <div className={`mt-1.5 flex items-center gap-1.5 text-micro font-semibold uppercase tracking-[0.12em] truncate ${
-                            state === 'done' ? 'text-emerald-400/70'
-                            : state === 'active' ? 'text-white'
-                            : 'text-white/45'}`}>
-                            {state === 'done' && <span aria-hidden>✓</span>}
+                          <div className={`mt-2 flex items-center gap-1.5 text-micro font-semibold uppercase tracking-[0.14em] truncate transition-colors ${
+                            state === 'done'
+                              ? 'text-emerald-400'
+                              : state === 'active'
+                                ? 'text-white drop-shadow-[0_0_8px_var(--accent-glow)]'
+                                : 'text-white/40'
+                          }`}>
+                            {state === 'done' ? (
+                              <span className="text-emerald-400 font-bold" aria-hidden="true">✓</span>
+                            ) : state === 'active' ? (
+                              <span className="h-1.5 w-1.5 rounded-full bg-[var(--accent)] shadow-[0_0_6px_var(--accent-glow)] animate-pulse" />
+                            ) : (
+                              <span className="h-1 w-1 rounded-full bg-white/20" />
+                            )}
                             <span className="truncate">{s.label}</span>
                           </div>
                         </div>
@@ -352,37 +398,39 @@ export default function Processing({ progress, settings, notify, setTab,
             />
 
             {/* Live processing frame peek & diagnostics */}
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 min-h-0">
-              <div className="lg:col-span-1">
-                <LiveProcessingPeek
-                  // The still Face Swap last had on screen, kept across the tab
-                  // switch — see faceswap/lastPreview. It is only the fallback
-                  // for the window before the first live frame is published.
-                  previewSrc={lastPreview.previewSrc}
-                  rawUrl={lastPreview.rawUrl}
-                  // Keyed on live_seq, which only changes when the pipeline
-                  // publishes a newer frame — so the browser refetches then and
-                  // not once per poll.
-                  liveSrc={progress.live_seq ? `${API}/api/live_frame?seq=${progress.live_seq}` : ''}
-                  frame={lastPreview.frame}
-                  maxFrames={lastPreview.maxFrames}
-                  progressDesc={progress.desc}
-                  paused={progress.paused}
-                />
+            {!terminalExpanded && (
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 min-h-0">
+                <div className="lg:col-span-1">
+                  <LiveProcessingPeek
+                    // The still Face Swap last had on screen, kept across the tab
+                    // switch — see faceswap/lastPreview. It is only the fallback
+                    // for the window before the first live frame is published.
+                    previewSrc={lastPreview.previewSrc}
+                    rawUrl={lastPreview.rawUrl}
+                    // Keyed on live_seq, which only changes when the pipeline
+                    // publishes a newer frame — so the browser refetches then and
+                    // not once per poll.
+                    liveSrc={progress.live_seq ? `${API}/api/live_frame?seq=${progress.live_seq}` : ''}
+                    frame={lastPreview.frame}
+                    maxFrames={lastPreview.maxFrames}
+                    progressDesc={progress.desc}
+                    paused={progress.paused}
+                  />
+                </div>
+                <div className="lg:col-span-2">
+                  <DiagnosticsPanel
+                    desc={progress.status_line || progress.desc}
+                    telemetry={telemetry}
+                    processing={processing}
+                    paused={progress.paused}
+                    config={runConfigSummary}
+                    elapsedMs={elapsedMs}
+                    etaMs={etaMs}
+                    prog={prog}
+                  />
+                </div>
               </div>
-              <div className="lg:col-span-2">
-                <DiagnosticsPanel
-                  desc={progress.desc}
-                  telemetry={telemetry}
-                  processing={processing}
-                  paused={progress.paused}
-                  config={runConfigSummary}
-                  elapsedMs={elapsedMs}
-                  etaMs={etaMs}
-                  prog={prog}
-                />
-              </div>
-            </div>
+            )}
 
             {/* Live terminal feed — mirrors what the real console prints */}
             <ProcessingTerminal
@@ -391,8 +439,10 @@ export default function Processing({ progress, settings, notify, setTab,
               statusLine={progress.status_line || progress.desc}
               runtime={progress.runtime}
               paused={progress.paused}
-              className="flex-1 min-h-0"
-              bodyClass="h-full"
+              expanded={terminalExpanded}
+              onToggleExpand={() => setTerminalExpanded((v) => !v)}
+              className={`w-full transition-all duration-300 ${terminalExpanded ? 'flex-1 min-h-[500px]' : 'flex-1 min-h-[220px]'}`}
+              bodyClass={terminalExpanded ? 'h-[460px]' : 'flex-1 min-h-[140px]'}
             />
 
             {progress.error && <div className="text-xs text-red-400 font-semibold text-center">{progress.error}</div>}
@@ -405,7 +455,7 @@ export default function Processing({ progress, settings, notify, setTab,
           {out?.path && (
             <div className="rounded-2xl glass-panel p-5 shadow-2xl border border-white/5 space-y-3">
               <div className="text-mini uppercase tracking-[0.14em] text-white/45 font-semibold">Output</div>
-              {out.kind === 'video'
+              {isVideoOutput
                 ? <video src={outUrl} controls className="w-full max-h-[52vh] rounded-xl border border-white/5" />
                 : <img src={outUrl} alt="Render output" className="w-full max-h-[52vh] object-contain rounded-xl border border-white/5" />}
               <QualityReport outputPath={out.path} notify={notify} />
@@ -420,8 +470,8 @@ export default function Processing({ progress, settings, notify, setTab,
             statusLine={progress.status_line || ''}
             runtime={progress.runtime}
             paused={false}
-            className="min-h-[320px]"
-            bodyClass="h-[320px]"
+            className="min-h-[360px]"
+            bodyClass="h-[360px]"
           />
         </div>
       )}
