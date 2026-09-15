@@ -21,6 +21,8 @@ import { Icon } from '../../icons';
 export default function ProcessingDock({
   paused = false,
   pauseRequested = false,
+  stopping = false,
+  controlBusy = '',
   onTogglePause,
   onCancelJob,
   desktopAlerts = false,
@@ -37,7 +39,7 @@ export default function ProcessingDock({
         {/* Pause / Resume Button */}
         <button
           onClick={onTogglePause}
-          disabled={pauseRequested}
+          disabled={pauseRequested || stopping || !!controlBusy}
           className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all shadow-md active:scale-95 ${
             paused
               ? 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-emerald-600/20'
@@ -52,11 +54,12 @@ export default function ProcessingDock({
         {/* Cancel Job Button */}
         <button
           onClick={onCancelJob}
+          disabled={stopping || controlBusy === 'stop'}
           className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold bg-rose-500/10 border border-rose-500/30 text-rose-300 hover:bg-rose-500/20 hover:text-rose-200 transition-all active:scale-95"
           title="Cancel current swap run"
         >
           <Icon.stop size={13} />
-          <span>Cancel Job</span>
+          <span>{stopping ? 'Stopping…' : 'Cancel Job'}</span>
         </button>
       </div>
 

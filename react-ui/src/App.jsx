@@ -187,7 +187,53 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- mount only; `tab` is read once to stamp the initial URL
   }, []);
 
-  const [progress, setProgress] = useState({ processing: false, progress: 0, desc: '', output: null });
+  const [progress, setProgress] = useState({ processing: false, progress: 0, desc: '', output: null, stop_requested: false });
+  const [controlBusy, setControlBusy] = useState('');
+  const controlBusyRef = useRef('');
+
+  const runControl = useCallback(async (action) => {
+    if (controlBusyRef.current) return null;
+    controlBusyRef.current = action;
+    setControlBusy(action);
+    const optimistic = {
+      pause: { pause_requested: true, paused: false, stop_requested: false, desc: 'Pause requested…' },
+      resume: { pause_requested: false, paused: false, stop_requested: false, desc: 'Resuming…' },
+      stop: { pause_requested: false, paused: false, stop_requested: true, desc: 'Stopping…' },
+    }[action];
+    if (optimistic) setProgress((pr) => ({ ...pr, ...optimistic }));
+    try {
+      const result = await postJSON(`/api/${action}`, {});
+      const pauseState = result?.pause || {};
+      if (action === 'pause') {
+        setProgress((pr) => ({
+          ...pr,
+          pause_requested: pauseState.requested !== undefined ? !!pauseState.requested : true,
+          paused: !!pauseState.acknowledged,
+          stop_requested: false,
+          desc: pauseState.acknowledged ? 'Paused' : 'Pause requested…',
+        }));
+      } else if (action === 'resume') {
+        setProgress((pr) => ({ ...pr, pause_requested: false, paused: false, stop_requested: false, desc: 'Resuming…' }));
+      } else if (action === 'stop' && result?.status === 'idle') {
+        controlBusyRef.current = '';
+        setControlBusy('');
+        setProgress((pr) => ({ ...pr, stop_requested: false }));
+      }
+      if (action === 'pause') notify('Pause requested; waiting for a safe checkpoint', 'info');
+      if (action === 'resume') notify('Resumed');
+      if (action === 'stop') notify('Stopping…', 'info');
+      return result;
+    } catch (e) {
+      setProgress((pr) => ({ ...pr, stop_requested: false }));
+      notify(e.message, 'error');
+      throw e;
+    } finally {
+      if (action !== 'stop') {
+        controlBusyRef.current = '';
+        setControlBusy('');
+      }
+    }
+  }, [notify]);
 
   // Mounted HERE, not only in the Face Swap and Processing tabs, because App is
   // the one component that is always mounted: 'always' mode has to hold on
@@ -321,10 +367,21 @@ export default function App() {
       current_frame: frame.current_frame,
       total_frames: frame.total_frames,
       fps: frame.fps,
+      ...(Object.prototype.hasOwnProperty.call(frame, 'pause_requested')
+        ? { pause_requested: frame.pause_requested } : {}),
+      ...(Object.prototype.hasOwnProperty.call(frame, 'stop_requested')
+        ? { stop_requested: frame.stop_requested } : {}),
     }));
   }, [reportNet]);
 
   const { connected: telemetryLive } = useTelemetrySocket(onTelemetry, true);
+
+  useEffect(() => {
+    if (!progress.processing && controlBusyRef.current === 'stop') {
+      controlBusyRef.current = '';
+      setControlBusy('');
+    }
+  }, [progress.processing]);
 
   useEffect(() => {
     // The socket carries the fast numbers; the poll still carries the log,
@@ -928,6 +985,8 @@ export default function App() {
     };
   }, [flushSettings]);
 
+  const stopping = !!progress.stop_requested || controlBusy === 'stop';
+
 
   return (
     <MotionConfig reducedMotion="user">
@@ -961,7 +1020,7 @@ export default function App() {
           </div>
           {progress.processing && (
             <div className="ml-2 flex items-center gap-2 px-2.5 py-1 rounded-lg bg-[var(--accent)]/10 border border-[var(--accent)]/20 text-micro font-bold tracking-wide uppercase">
-              <span className={`h-1.5 w-1.5 rounded-full ${progress.paused || progress.pause_requested ? 'bg-amber-400' : 'bg-[var(--accent)] animate-ping'}`} />
+              <span className={`h-1.5 w-1.5 rounded-full ${stopping ? 'bg-red-400' : progress.paused || progress.pause_requested ? 'bg-amber-400' : 'bg-[var(--accent)] animate-ping'}`} />
               {/* The chip is the one piece of the run that is on screen from
                   every tab, so it doubles as the way back to the run's own tab
                   once you have wandered off it. */}
@@ -969,9 +1028,9 @@ export default function App() {
                 type="button"
                 onClick={() => { warmTab('processing'); setTab('processing'); }}
                 title="Open the Processing tab"
-                className={`hover:underline ${progress.paused || progress.pause_requested ? 'text-amber-400/90' : 'text-[var(--accent)]'}`}
+                className={`hover:underline ${stopping ? 'text-red-400/90' : progress.paused || progress.pause_requested ? 'text-amber-400/90' : 'text-[var(--accent)]'}`}
               >
-                {progress.paused ? 'Paused' : progress.pause_requested ? 'Pause requested' : `Processing ${Math.round((progress.progress || 0) * 100)}%`}
+                {stopping ? 'Stopping' : progress.paused ? 'Paused' : progress.pause_requested ? 'Pause requested' : `Processing ${Math.round((progress.progress || 0) * 100)}%`}
               </button>
               {/* Same "time left" the Processing tab and the terminal show:
                   eta_s is the render's own progress bar, and the extrapolation
@@ -996,13 +1055,11 @@ export default function App() {
                 {progress.paused ? (
                   <button
                     type="button"
-                    onClick={async (e) => {
+                    onClick={(e) => {
                       e.stopPropagation();
-                      try {
-                        await postJSON('/api/resume', {});
-                        setProgress((pr) => ({ ...pr, paused: false, desc: 'Resuming…' }));
-                      } catch {}
+                      runControl('resume').catch(() => {});
                     }}
+                    disabled={stopping || controlBusy === 'resume'}
                     className="grid place-items-center hover:text-white text-white/60 transition-colors cursor-pointer"
                     title="Resume Job" aria-label="Resume job"
                   >
@@ -1011,13 +1068,10 @@ export default function App() {
                 ) : (
                   <button
                     type="button"
-                    disabled={progress.pause_requested}
-                    onClick={async (e) => {
+                    disabled={progress.pause_requested || stopping || controlBusy === 'pause' || controlBusy === 'resume'}
+                    onClick={(e) => {
                       e.stopPropagation();
-                      try {
-                        await postJSON('/api/pause', {});
-                        setProgress((pr) => ({ ...pr, pause_requested: true, desc: 'Pause requested…' }));
-                      } catch {}
+                      runControl('pause').catch(() => {});
                     }}
                     className="grid place-items-center hover:text-white text-white/60 transition-colors cursor-pointer"
                     title={progress.pause_requested ? 'Pause requested' : 'Pause Job'} aria-label={progress.pause_requested ? 'Pause requested' : 'Pause job'}
@@ -1030,11 +1084,10 @@ export default function App() {
                   onClick={async (e) => {
                     e.stopPropagation();
                     if (await confirmDialog({ title: 'Stop job?', message: 'Stop the active job? The partial output so far is finalized and kept.', confirmLabel: 'Stop', danger: true })) {
-                      try {
-                        await postJSON('/api/stop', {});
-                      } catch {}
+                      runControl('stop').catch(() => {});
                     }
                   }}
+                  disabled={stopping}
                   className="grid place-items-center hover:text-red-400 text-white/60 transition-colors cursor-pointer"
                   title="Stop Job" aria-label="Stop job"
                 >
@@ -1297,6 +1350,7 @@ export default function App() {
                     startTime={startTime}
                     setStartTime={setStartTime}
                     onOpenProcessing={() => { warmTab('processing'); setTab('processing'); }}
+                    onStopRun={() => runControl('stop')}
                   />
                 )}
                 {tab === 'batch' && (
@@ -1315,6 +1369,10 @@ export default function App() {
                     setTab={setTab}
                     desktopAlerts={desktopAlerts}
                     onToggleDesktopAlerts={toggleDesktopAlerts}
+                    onPauseRun={() => runControl('pause')}
+                    onResumeRun={() => runControl('resume')}
+                    onStopRun={() => runControl('stop')}
+                    controlBusy={controlBusy}
                   />
                 )}
                 {tab === 'facemgr' && <FaceManager notify={notify} registerFileListener={registerFileListener} />}

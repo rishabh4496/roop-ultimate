@@ -202,6 +202,7 @@ fm_selected_index = -1
 
 # Live progress, polled by the React UI
 _progress = {"processing": False, "paused": False, "pause_requested": False,
+             "stop_requested": False,
              "progress": 0.0, "desc": "", "error": ""}
 _resume_context = {"base": 0.0, "total": 0}
 _active_project_id = ""
@@ -3075,6 +3076,7 @@ def _run_swap(payload):
         _progress.update({"processing": True,
                           "paused": bool(pause_state["acknowledged"]),
                           "pause_requested": bool(pause_state["requested"]),
+                          "stop_requested": False,
                           "progress": _resume_context["base"], "desc": ("Paused" if pause_state["acknowledged"] else "Starting…"),
                           "error": ""})
         _run_stats.update({"start": time.time(), "frames_done": 0, "frames_total": 0})
@@ -3360,6 +3362,7 @@ def _run_swap(payload):
         _progress["processing"] = False
         _progress["paused"] = False
         _progress["pause_requested"] = False
+        _progress["stop_requested"] = False
         _resume_context.update({"base": 0.0, "total": 0})
         if project_id:
             roop_globals._checkpoint_segment_callback = None
@@ -3400,17 +3403,24 @@ def _record_last_output():
 
 @app.post("/api/stop")
 def stop_swap():
+    if not _progress["processing"]:
+        return {"status": "idle"}
     # Clear pause too so a stop while paused fully aborts (wait loop checks both).
     _procmgr_runtime.pause_controller.cancel()
     roop_globals.pause = False
+    # The worker's pause scopes and post-passes use this global as their
+    # cancellation predicate. Keep the API progress flag true until the worker
+    # reaches its finally block, so the UI can show "Stopping…" while the
+    # partial output is finalized safely.
     roop_globals.processing = False
     _stop_requested["flag"] = True
     _progress["paused"] = False
     _progress["pause_requested"] = False
-    _progress["desc"] = "Aborting…"
+    _progress["stop_requested"] = True
+    _progress["desc"] = "Stopping…"
     if _active_project_id:
         _set_processing_project_state(_active_project_id, "INTERRUPTED", "stopped by user")
-    return {"status": "stopping"}
+    return {"status": "stopping", "stop_requested": True}
 
 
 @app.post("/api/pause")

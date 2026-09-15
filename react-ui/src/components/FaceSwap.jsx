@@ -70,7 +70,7 @@ const AI_UPSCALE_MODELS = [
 
 export default function FaceSwap({
   meta, settings, setSettings, notify, registerFileListener,
-  progress, setProgress, startTime, setStartTime, onOpenProcessing
+  progress, setProgress, startTime, setStartTime, onOpenProcessing, onStopRun
 }) {
   const [sourceFaces, setSourceFaces] = useState([]);
   const [sourceFacesInfo, setSourceFacesInfo] = useState([]);
@@ -1341,14 +1341,14 @@ export default function FaceSwap({
       try { if ('Notification' in window && Notification.permission === 'default') Notification.requestPermission(); } catch { /* ignore */ }
       // Optimistically flag processing so the old "Latest output" clears
       // immediately, before the first poll tick (~1s) confirms it.
-      setProgress((pr) => ({ ...pr, processing: true, paused: false, progress: 0, desc: 'Starting…' }));
+      setProgress((pr) => ({ ...pr, processing: true, paused: false, pause_requested: false, stop_requested: false, progress: 0, desc: 'Starting…' }));
       notify('Processing started');
     } catch (e) { notify(e.message, 'error'); }
   };
 
   // Stop stays here because the floating dock offers it from this tab. Pause and
   // Resume moved to the Processing tab with the run bar that carried them.
-  const stop = async () => { await postJSON('/api/stop', {}); notify('Stopping…', 'info'); };
+  const stop = onStopRun || (async () => { await postJSON('/api/stop', {}); notify('Stopping…', 'info'); });
 
   // Hide the previous "Latest output" while a job is running so a new upload +
   // run never shows a stale result. The poll keeps reporting the old _last_output

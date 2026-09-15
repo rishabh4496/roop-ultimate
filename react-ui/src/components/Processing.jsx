@@ -30,10 +30,13 @@ import { fmtTime } from './faceswap/utils';
  * readable) and disappears once you navigate away from it.
  */
 export default function Processing({ progress, settings, notify, setTab,
-                                     desktopAlerts, onToggleDesktopAlerts }) {
+                                     desktopAlerts, onToggleDesktopAlerts,
+                                     onPauseRun, onResumeRun, onStopRun,
+                                     controlBusy = '' }) {
   const p = settings || {};
   const processing = !!progress.processing;
   const pauseRequested = !!progress.pause_requested;
+  const stopping = !!progress.stop_requested || controlBusy === 'stop';
 
   const telemetry = useTelemetry();
   const {
@@ -85,9 +88,9 @@ export default function Processing({ progress, settings, notify, setTab,
         : (prog > 0.01 ? (elapsedMs * (1 - prog)) / prog : 0))
     : 0;
 
-  const stop = async () => { try { await postJSON('/api/stop', {}); notify('Stopping…', 'info'); } catch (e) { notify(e.message, 'error'); } };
-  const pause = async () => { try { await postJSON('/api/pause', {}); notify('Pause requested; waiting for a safe checkpoint', 'info'); } catch (e) { notify(e.message, 'error'); } };
-  const resume = async () => { try { await postJSON('/api/resume', {}); notify('Resumed'); } catch (e) { notify(e.message, 'error'); } };
+  const stop = onStopRun || (async () => { try { await postJSON('/api/stop', {}); notify('Stopping…', 'info'); } catch (e) { notify(e.message, 'error'); } });
+  const pause = onPauseRun || (async () => { try { await postJSON('/api/pause', {}); notify('Pause requested; waiting for a safe checkpoint', 'info'); } catch (e) { notify(e.message, 'error'); } });
+  const resume = onResumeRun || (async () => { try { await postJSON('/api/resume', {}); notify('Resumed'); } catch (e) { notify(e.message, 'error'); } });
 
   const out = !processing ? progress.output : null;
   const outUrl = out?.path ? `${API}/api/file?path=${encodeURIComponent(out.path)}&t=${progress.progress}` : '';
@@ -117,7 +120,7 @@ export default function Processing({ progress, settings, notify, setTab,
           <div className="relative overflow-hidden rounded-2xl glass-panel px-5 py-3.5 flex flex-col md:flex-row items-center justify-between gap-4 shadow-xl border border-white/5 w-full">
             {/* Left: circular progress ring & status */}
             <div className="flex items-center gap-3.5 min-w-0">
-              <div className={`relative flex items-center justify-center h-14 w-14 select-none shrink-0 rounded-full transition-shadow duration-1000 ${!progress.paused ? 'shadow-[0_0_14px_var(--accent-glow)]' : ''}`}>
+              <div className={`relative flex items-center justify-center h-14 w-14 select-none shrink-0 rounded-full transition-shadow duration-1000 ${!progress.paused && !stopping ? 'shadow-[0_0_14px_var(--accent-glow)]' : ''}`}>
                 <svg className="transform -rotate-90 w-[52px] h-[52px]" viewBox="0 0 48 48">
                   <circle stroke="rgba(255, 255, 255, 0.08)" fill="transparent" strokeWidth={3.5} r={radius} cx={24} cy={24} />
                   <circle
@@ -138,9 +141,9 @@ export default function Processing({ progress, settings, notify, setTab,
 
               <div className="space-y-0.5 min-w-0">
                 <div className="flex items-center gap-1.5">
-                  <span className={`h-2 w-2 rounded-full ${progress.paused || pauseRequested ? 'bg-amber-400' : 'bg-[var(--accent)] animate-ping'}`} />
-                  <span className={`text-mini font-semibold uppercase tracking-[0.14em] ${progress.paused || pauseRequested ? 'text-amber-400' : 'text-[var(--accent)]'}`}>
-                    {progress.paused ? 'Paused' : pauseRequested ? 'Pause Requested' : 'Processing'}
+                  <span className={`h-2 w-2 rounded-full ${stopping ? 'bg-red-400' : progress.paused || pauseRequested ? 'bg-amber-400' : 'bg-[var(--accent)] animate-ping'}`} />
+                  <span className={`text-mini font-semibold uppercase tracking-[0.14em] ${stopping ? 'text-red-400' : progress.paused || pauseRequested ? 'text-amber-400' : 'text-[var(--accent)]'}`}>
+                    {stopping ? 'Stopping' : progress.paused ? 'Paused' : pauseRequested ? 'Pause Requested' : 'Processing'}
                   </span>
                 </div>
                 <div className="text-sm font-bold text-white truncate max-w-[340px]">
@@ -166,7 +169,7 @@ export default function Processing({ progress, settings, notify, setTab,
             {/* Right: big icon action buttons */}
             <div className="flex items-center gap-3 shrink-0">
               {progress.paused ? (
-                <motion.button type="button" onClick={resume} title="Resume" aria-label="Resume the run"
+                <motion.button type="button" onClick={resume} disabled={stopping || !!controlBusy} title="Resume" aria-label="Resume the run"
                   whileHover={{ y: -3, scale: 1.06 }} whileTap={{ scale: 0.92, y: 0 }} transition={spring.snappy}
                   className="group flex flex-col items-center gap-1.5 focus:outline-none">
                   <span className="h-11 w-11 rounded-xl flex items-center justify-center bg-emerald-500/15 border border-emerald-500/40 text-emerald-400 transition-colors duration-200 group-hover:bg-emerald-500/25">
@@ -175,7 +178,7 @@ export default function Processing({ progress, settings, notify, setTab,
                   <span className="text-micro font-semibold uppercase tracking-[0.14em] text-white/45 group-hover:text-emerald-400 transition-colors">Resume</span>
                 </motion.button>
               ) : (
-                <motion.button type="button" onClick={pause} disabled={pauseRequested} title={pauseRequested ? 'Waiting for a safe checkpoint' : 'Pause'} aria-label={pauseRequested ? 'Pause requested' : 'Pause the run'}
+                <motion.button type="button" onClick={pause} disabled={pauseRequested || stopping || !!controlBusy} title={pauseRequested ? 'Waiting for a safe checkpoint' : 'Pause'} aria-label={pauseRequested ? 'Pause requested' : 'Pause the run'}
                   whileHover={{ y: -3, scale: 1.06 }} whileTap={{ scale: 0.92, y: 0 }} transition={spring.snappy}
                   className="group flex flex-col items-center gap-1.5 focus:outline-none">
                   <span className="h-11 w-11 rounded-xl flex items-center justify-center bg-amber-500/15 border border-amber-500/40 text-amber-400 transition-colors duration-200 group-hover:bg-amber-500/25">
@@ -184,13 +187,13 @@ export default function Processing({ progress, settings, notify, setTab,
                   <span className="text-micro font-semibold uppercase tracking-[0.14em] text-white/45 group-hover:text-amber-400 transition-colors">{pauseRequested ? 'Requested' : 'Pause'}</span>
                 </motion.button>
               )}
-              <motion.button type="button" onClick={stop} title="Stop" aria-label="Stop the run"
+              <motion.button type="button" onClick={stop} disabled={stopping} title={stopping ? 'Stopping' : 'Stop'} aria-label={stopping ? 'Stop requested' : 'Stop the run'}
                 whileHover={{ y: -3, scale: 1.06 }} whileTap={{ scale: 0.92, y: 0 }} transition={spring.snappy}
                 className="group flex flex-col items-center gap-1.5 focus:outline-none">
                 <span className="h-11 w-11 rounded-xl flex items-center justify-center bg-red-500/15 border border-red-500/40 text-red-400 transition-colors duration-200 group-hover:bg-red-500/25">
                   <svg viewBox="0 0 24 24" className="w-6 h-6" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2.5" /></svg>
                 </span>
-                <span className="text-micro font-semibold uppercase tracking-[0.14em] text-white/45 group-hover:text-red-400 transition-colors">Stop</span>
+                  <span className="text-micro font-semibold uppercase tracking-[0.14em] text-white/45 group-hover:text-red-400 transition-colors">{stopping ? 'Stopping…' : 'Stop'}</span>
               </motion.button>
             </div>
 
@@ -335,6 +338,8 @@ export default function Processing({ progress, settings, notify, setTab,
             <ProcessingDock
               paused={progress.paused}
               pauseRequested={pauseRequested}
+              stopping={stopping}
+              controlBusy={controlBusy}
               onTogglePause={() => (progress.paused ? resume() : pause())}
               onCancelJob={stop}
               desktopAlerts={desktopAlerts}
