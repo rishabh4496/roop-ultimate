@@ -6,7 +6,6 @@ import { Icon } from '../icons';
 import PersonGroups from './PersonGroups';
 import QualityReport from './QualityReport';
 import FileDrop from './faceswap/FileDrop';
-import CompareGrid from './faceswap/CompareGrid';
 import ComparisonGridPanel from './faceswap/ComparisonGridPanel';
 import ParserRegions from './faceswap/ParserRegions';
 import InteractivePreview from './faceswap/InteractivePreview';

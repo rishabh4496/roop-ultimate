@@ -137,6 +137,32 @@ page.on('pageerror', (e) => errors.push(String(e)));
 await page.goto(`http://127.0.0.1:${UI_PORT}/`, { waitUntil: 'load' });
 await wait(4000);
 
+// Exercise the real lazy Settings tab as well as the default Face Swap tab.
+// The cleanup is accepted only if the controls that remain useful still render
+// and the removed benchmark surface is absent from the shipped DOM.
+const settingsTab = page.getByRole('button', { name: 'Settings', exact: true });
+check('the shipped app exposes the Settings tab', await settingsTab.count() === 1);
+await settingsTab.click();
+let settingsText = '';
+for (let i = 0; i < 50; i++) {
+  settingsText = await page.evaluate(() => document.body.innerText);
+  if (/Provider/.test(settingsText) && /Face detection threshold/.test(settingsText)
+      && /Apply Settings/.test(settingsText)) break;
+  await wait(200);
+}
+const settingsControls = {
+  provider: /Provider/.test(settingsText),
+  detectorThreshold: /Face detection threshold/.test(settingsText),
+  apply: /Apply Settings/.test(settingsText),
+};
+check('Settings keeps active runtime controls', Object.values(settingsControls).every(Boolean), JSON.stringify(settingsControls));
+check('obsolete benchmark controls are absent',
+  !/Hardware benchmark|Run benchmark|Optimization benchmark/i.test(settingsText));
+const faceSwapTab = page.getByRole('button', { name: 'Face Swap', exact: true });
+check('the shipped app returns to the Face Swap tab', await faceSwapTab.count() === 1);
+await faceSwapTab.click();
+await wait(800);
+
 check('the shipped app opens a telemetry socket by itself',
   sockets.some((s) => s.url.includes('/ws/telemetry')),
   sockets.length ? sockets.map((s) => s.url).join(', ') : 'no sockets opened');
@@ -157,14 +183,22 @@ await fetch(`http://127.0.0.1:${API_PORT}/api/__test__/advance`, {
   headers: { 'content-type': 'application/json' },
   body: JSON.stringify({ progress: 0.55, desc: '165 / 300', done: 165, total: 300 }),
 });
-await wait(2500);
-
-const advanced = tele && tele.frames.find((f) => f.current_frame === 165);
+let advanced = null;
+for (let i = 0; i < 60; i++) {
+  advanced = tele && tele.frames.find((f) => f.current_frame === 165);
+  if (advanced) break;
+  await wait(100);
+}
 check('a server-side change reaches the shipped client',
   Boolean(advanced), advanced ? `fps=${advanced.fps}` : '');
 
 // And the app must actually render it, not just receive it.
-const shown = await page.evaluate(() => document.body.innerText);
+let shown = '';
+for (let i = 0; i < 30; i++) {
+  shown = await page.evaluate(() => document.body.innerText);
+  if (/165\s*\/\s*300|55\s*%/.test(shown)) break;
+  await wait(100);
+}
 check('the UI renders the pushed progress', /165\s*\/\s*300|55\s*%|5[0-9]%/.test(shown),
   shown.match(/\d+\s*\/\s*300|\d+%/)?.[0] ?? '(no counter found in DOM)');
 
@@ -175,7 +209,11 @@ const socketCountBeforeDrop = sockets.length;
 await fetch(`http://127.0.0.1:${API_PORT}/api/__test__/drop`, { method: 'POST' });
 let reconnected = false;
 for (let i = 0; i < 80; i++) {
-  if (sockets.length > socketCountBeforeDrop) { reconnected = true; break; }
+  if (sockets.length > socketCountBeforeDrop
+      && sockets[sockets.length - 1].frames.some((f) => f.event === 'hello')) {
+    reconnected = true;
+    break;
+  }
   await wait(100);
 }
 check('the shipped hook reconnects after a server-side drop', reconnected,
@@ -191,9 +229,18 @@ await fetch(`http://127.0.0.1:${API_PORT}/api/__test__/advance`, {
   headers: { 'content-type': 'application/json' },
   body: JSON.stringify({ progress: 0.72, desc: '216 / 300', done: 216, total: 300 }),
 });
-await wait(2500);
-const recovered = sockets.some((s) => s !== tele && s.frames.some((f) => f.current_frame === 216));
-const shownRecovered = await page.evaluate(() => document.body.innerText);
+let recovered = false;
+for (let i = 0; i < 60; i++) {
+  recovered = sockets.some((s) => s !== tele && s.frames.some((f) => f.current_frame === 216));
+  if (recovered) break;
+  await wait(100);
+}
+let shownRecovered = '';
+for (let i = 0; i < 30; i++) {
+  shownRecovered = await page.evaluate(() => document.body.innerText);
+  if (/216\s*\/\s*300|72\s*%/.test(shownRecovered)) break;
+  await wait(100);
+}
 check('telemetry continues after reconnect', recovered && /216\s*\/\s*300|72\s*%|7[0-9]%/.test(shownRecovered),
   shownRecovered.match(/\d+\s*\/\s*300|\d+%/)?.[0] ?? '(no recovered counter)');
 

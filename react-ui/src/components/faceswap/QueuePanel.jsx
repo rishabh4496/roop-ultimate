@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { Button, Section } from '../ui';
 import { confirmDialog } from '../confirm';
 import {
-  ACTIVE_STATES, QUEUE_STATE_CLASS, QUEUE_STATE_LABEL, RETRYABLE_STATES,
+  ACTIVE_STATES, QUEUE_STATE_CLASS, QUEUE_STATE_LABEL,
   TERMINAL_STATES, jobState,
 } from './useQueue';
 import { Icon } from '../../icons';

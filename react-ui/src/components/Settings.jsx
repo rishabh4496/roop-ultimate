@@ -3,8 +3,6 @@ import { getJSON, postJSON } from '../api';
 import { Section, Select, Slider, Toggle, TextInput } from './ui';
 import ThemeGallery from './ThemeGallery';
 import ThemeStudio from './ThemeStudio';
-import BenchmarkPanel from './BenchmarkPanel';
-import OptimizationBenchmark from './OptimizationBenchmark';
 import { allThemes } from '../themes';
 import { fmtVal } from './settingsDiff';
 import { FOCUS_SETTING_EVENT } from './settingsCatalog';
@@ -86,29 +84,6 @@ export default function Settings({ meta, settings, setSettings, notify }) {
   // marker, chip and reset below simply does not render.
   const [defaults, setDefaults] = useState(null);
   const [onlyModified, setOnlyModified] = useState(false);
-
-  // The benchmark writes config.yaml itself (thread counts have to reach
-  // `Settings.resolve_threads`, and the pool knobs are read at startup), so this
-  // only mirrors the result into the in-memory settings the page is showing —
-  // posting it back would race the backend's own save with a stale copy.
-  //
-  // The pool values it wrote have to be mirrored too, and that half is not
-  // cosmetic. `POST /api/settings` assigns every key it receives, so a page
-  // still holding the PRE-benchmark perf_* values silently reverts them the
-  // next time anything on this page is saved — the benchmark's whole output,
-  // undone by an unrelated toggle. `pending_restart` is exactly the set of keys
-  // the backend changed underneath us.
-  // `applied_now` matters here for the same reason and is easy to miss: the
-  // codec is applied LIVE (re-read from config per run) rather than pending a
-  // restart, so it lands in the other bucket — and a page still holding the old
-  // codec would revert it on the next save exactly like the pool sizes.
-  // best_threads is in there too and is a nested object, not a settings key;
-  // it is filtered out rather than assigned over `benchmark_results`.
-  const onBenchmarkResult = useCallback((result) => {
-    const live = result?.applied?.applied_now || {};
-    const pending = result?.applied?.pending_restart || {};
-    setSettings((s) => ({ ...s, ...pending, ...live, benchmark_results: result }));
-  }, [setSettings]);
 
   useEffect(() => {
     let live = true;
@@ -495,7 +470,7 @@ export default function Settings({ meta, settings, setSettings, notify }) {
 
           <Toggle
             label="Auto thread selection"
-            info="Automatically scale thread execution dynamically based on hardware benchmark & workload mode (Standard, Enhanced, Heavy)."
+            info="Automatically scale thread execution dynamically for the selected hardware tier and workload mode (Standard, Enhanced, Heavy)."
             {...bindToggle('auto_thread_selection')}
           />
 
@@ -524,23 +499,21 @@ export default function Settings({ meta, settings, setSettings, notify }) {
           )}
           <Slider label="Max memory (GB)" info="0 = no limit" min={0} max={128} step={1} {...bind('memory_limit', 0)} />
 
-          <OptimizationBenchmark />
-          <BenchmarkPanel saved={p.benchmark_results} currentSettings={p} onResult={onBenchmarkResult} notify={notify} />
         </FilterSection>
 
         <FilterSection title="Advanced performance (restart to apply)" icon={Icon.meter} query={query} onlyModified={onlyModified} onResetKeys={resetKeys}>
           <p className="text-xs text-white/40 -mt-2">These override the launcher env and the VRAM auto-tuner. Leave on "auto" unless you know what you're tuning. Changes take effect after restarting the app.</p>
           {p.provider === 'tensorrt' && <>
             <Select label="TensorRT builder optimization" info="Build-time tactic search level. 3 is the safe performance baseline documented by ONNX Runtime; changing it creates a separate engine cache namespace and rebuilds engines on the next restart." {...bind('trt_builder_optimization_level', 3)} options={['1', '2', '3', '4', '5']} />
-            <Select label="TensorRT auxiliary streams" info="-1 lets TensorRT choose. 0 minimizes memory and is useful on the RTX 3060. Higher values may improve overlap but consume more VRAM; validate with the stress benchmark before using them." {...bind('trt_auxiliary_streams', -1)} options={['-1', '0', '1', '2', '3', '4']} />
-            <Toggle label="TensorRT CUDA graphs (experimental)" info="Opt-in only. Best for fixed-shape repeated inference; benchmark it against the current settings before enabling. Requires an app restart." {...bindToggle('trt_cuda_graph')} />
+            <Select label="TensorRT auxiliary streams" info="-1 lets TensorRT choose. 0 minimizes memory and is useful on the RTX 3060. Higher values may improve overlap but consume more VRAM; compare against a representative render before using them." {...bind('trt_auxiliary_streams', -1)} options={['-1', '0', '1', '2', '3', '4']} />
+            <Toggle label="TensorRT CUDA graphs (experimental)" info="Opt-in only. Best for fixed-shape repeated inference; compare it against the current settings on a representative render before enabling. Requires an app restart." {...bindToggle('trt_cuda_graph')} />
           </>}
           <Select label="Swapper TRT pool" info="ROOP_TRT_POOL — TensorRT contexts for the SWAPPER only; it does not affect face detection. 'auto' selects by VRAM: <7GB = 0 (disabled), 7-11.5GB = 2, 11.5-15.5GB = 2, 15.5GB+ = 4. Lower this first if you need to free VRAM for another pool. 0 on a small card is deliberate and costs little: the pooled config needs 4100MB against 2346MB, which a 6GB card cannot pay beside the desktop, and since the GPU lock was split per stage the unpooled path measures 20.84 fps against the pooled 22.22. TAKES EFFECT ON RESTART: pool sizes are baked into the TensorRT contexts when the models load, so changing this writes the setting but the current backend keeps running the old value — restart the app to apply it. Diagnostics shows what is actually running." {...bind('perf_trt_pool', 'auto')} options={meta.pool_sizes || ['auto', '1', '2', '3', '4', '5', '6', '7', '8']} />
           <Select label="Detect/Mask pool" info="ROOP_DETMASK_POOL — TensorRT contexts for face detection and masking, and the width of 'Analyzing faces'. LOWERING it slows that stage close to proportionally. DO NOT just raise it to match Max threads. Each instance carries its own model set plus a copy of the detector (retinaface_r50 is ~104MB), and on a 12GB card 8 does not fit alongside the swapper pool: measured, it ran out of VRAM and thrashed from 11.8 fps down to 0.5 and still falling, at 95% VRAM. The auto tier (12GB = 2) is chosen to leave that headroom. TAKES EFFECT ON RESTART: pool sizes are baked into the TensorRT contexts when the models load, so changing this writes the setting but the current backend keeps running the old value — restart the app to apply it. Diagnostics shows what is actually running. If you raise it, go one step at a time and watch VRAM — 5 or 6 may fit, 8 does not. Raising it only helps when the stage is DETECTION-bound. Check STAGE TIMING (ROOP_PROFILE=1): if track_decode per frame exceeds track_detect divided by this pool size, the stage is waiting on the video decoder instead and more instances buy nothing but VRAM." {...bind('perf_detmask_pool', 'auto')} options={meta.pool_sizes || ['auto', '1', '2', '3', '4', '5', '6', '7', '8']} />
           <Select label="Detector pool" info="ROOP_DETECTOR_POOL — Independent instances of the standalone DETECTOR, as distinct from the detect/mask pool above. The hybrid engines (retinaface, yoloface, yunet) bring their own detector and only borrow buffalo_l's aux models, so widening the detect/mask pool alone parallelises recognition and landmarks while the detector itself stays single-file. 'auto' follows the detect/mask pool. The two do not necessarily want the same width: on an RTX 4070 the benchmark measured the detector still scaling at 4 instances while recognition plateaued at 2. Turn this DOWN before the detect/mask pool when VRAM is tight — retinaface_r50 is ~104MB per instance (yoloface_8n ~9MB, yunet ~350KB, so those are nearly free). TAKES EFFECT ON RESTART: pool sizes are baked into the TensorRT contexts when the models load, so changing this writes the setting but the current backend keeps running the old value — restart the app to apply it. Diagnostics shows what is actually running." {...bind('perf_detector_pool', 'auto')} options={meta.pool_sizes || ['auto', '1', '2', '3', '4', '5', '6', '7', '8']} />
           <Select label="Expression pool" info="ROOP_EXPR_POOL — TensorRT contexts for the LivePortrait expression restorer, the most expensive per-face stage there is (a full re-render: 5 models, one of them a 421MB generator). Only allocated when expression restore is actually on. 'auto' is VRAM-tiered: below 11.5GB = 0 (single context), above = 2, which was measured +28% on the stage. Raise to 3 only if STAGE TIMING shows 'expression' total/wall-clock exceeding the slot count — i.e. threads queueing for a slot. Each slot is ~537MB of weights, the largest of any pool here. TAKES EFFECT ON RESTART: pool sizes are baked into the TensorRT contexts when the models load, so changing this writes the setting but the current backend keeps running the old value — restart the app to apply it. Diagnostics shows what is actually running." {...bind('perf_expr_pool', 'auto')} options={meta.pool_sizes || ['auto', '1', '2', '3', '4', '5', '6', '7', '8']} />
           <Select label="Encoder preset" info="ROOP_ENCODER_PRESET — Encoding speed preset. 'auto' selects: 'faster' for CPU encoders (libx264/libx265), and 'p5' (VBR HQ) for NVENC GPU encoders." {...bind('perf_encoder_preset', 'auto')} options={meta.encoder_presets || ['auto', 'faster', 'fast', 'medium']} />
-          <Select label="CPU OpenCV kernel threads" info="Controls resize/warp kernels inside each frame worker. Auto uses up to 2 on a large desktop such as the 4070, and 1 on the 3060 tier to avoid oversubscription. Validate with the stress benchmark." {...bind('cpu_opencv_threads', 'auto')} options={['auto', '1', '2', '3', '4']} />
+          <Select label="CPU OpenCV kernel threads" info="Controls resize/warp kernels inside each frame worker. Auto uses up to 2 on a large desktop such as the 4070, and 1 on the 3060 tier to avoid oversubscription. Validate with a representative render." {...bind('cpu_opencv_threads', 'auto')} options={['auto', '1', '2', '3', '4']} />
           <Select label="ONNX intra-op threads" info="ROOP_ORT_INTRA_THREADS — Threads ONNX Runtime uses for the math INSIDE a single operator. This multiplies against the frame-worker count rather than adding to it: 10 workers at 4 intra-op threads is 40 threads competing for the same cores, which is why the ceiling is 4. 'auto' lets the app choose per hardware tier. Matters most on a CPU-only machine, where it is the main lever there is." {...bind('cpu_ort_intra_threads', 'auto')} options={['auto', '1', '2', '3', '4']} />
           <Select label="ONNX inter-op threads" info="ROOP_ORT_INTER_THREADS — Threads ONNX Runtime uses to run INDEPENDENT nodes of a graph in parallel. Capped at 2: this pipeline already runs many sessions concurrently, so a wide per-session pool oversubscribes rather than helping. 'auto' lets the app choose." {...bind('cpu_ort_inter_threads', 'auto')} options={['auto', '1', '2']} />
           <Select label="FFmpeg encoder threads" info="ROOP_FFMPEG_THREADS — Threads handed to the software video encoder. Keeps the encoder's CPU pool separate from the frame workers so it cannot multiply the Python/ORT/OpenCV budget. Irrelevant when encoding on NVENC, which does the work on the GPU's dedicated engine. 'auto' lets the app choose." {...bind('cpu_ffmpeg_threads', 'auto')} options={['auto', '1', '2', '4', '8']} />
