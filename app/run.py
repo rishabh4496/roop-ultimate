@@ -180,7 +180,7 @@ if _sys.platform == 'win32':
 from roop import core
 import argparse
 parser = argparse.ArgumentParser()
-parser.add_argument('--execution-provider', default='cuda', help='Execution provider: cpu or cuda')
+parser.add_argument('--execution-provider', default=None, help='Execution provider override: auto, cpu, cuda, tensorrt, rocm, or dml')
 parser.add_argument('--source', '--source-path', dest='source_reference_path', default=None,
                     help='source image or folder of same-identity reference images')
 # Headless benchmark. Runs the same engine, scoring and recommendation the
@@ -211,8 +211,10 @@ _PROVIDER_NAMES = {
     'rocm': 'ROCMExecutionProvider',
     'dml': 'DmlExecutionProvider',
 }
-globals.execution_providers = [_PROVIDER_NAMES.get(
-    args.execution_provider.lower(), args.execution_provider + 'ExecutionProvider')]
+_requested_provider = str(args.execution_provider or '').strip().lower()
+if _requested_provider:
+    globals.execution_providers = [_PROVIDER_NAMES.get(
+        _requested_provider, _requested_provider + 'ExecutionProvider')]
 
 def _run_cli_benchmark(faces: str, mode: str, apply_result: bool) -> int:
     """Delegate to the one shared implementation.

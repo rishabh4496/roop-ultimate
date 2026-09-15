@@ -121,6 +121,10 @@ def parse_args() -> None:
     program = argparse.ArgumentParser(formatter_class=lambda prog: argparse.HelpFormatter(prog, max_help_position=100))
     program.add_argument('--server_share', help='Public server', dest='server_share', action='store_true', default=False)
     program.add_argument('--cuda_device_id', help='Index of the cuda gpu to use', dest='cuda_device_id', type=int, default=0)
+    # run.py exposes this override too.  Keep the second parse in sync: run.py
+    # parses the launcher arguments before calling core.run(), and core.run()
+    # parses them again before ui.main resolves the actual provider chain.
+    program.add_argument('--execution-provider', help='Execution provider override: auto, cpu, cuda, tensorrt, rocm, or dml', dest='execution_provider', default=None)
     program.add_argument('--enable-occlusion-mask', help='Enable foreground occlusion masking', dest='enable_occlusion_mask', action='store_true', default=True)
     program.add_argument('--disable-occlusion-mask', help='Disable foreground occlusion masking', dest='enable_occlusion_mask', action='store_false')
     program.add_argument('--detector-scale-pyramid', help='Multi-scale detector pyramid levels (e.g. "0.5,0.75,1.0", "auto", or "none")', dest='detector_scale_pyramid', default=None)
@@ -142,6 +146,24 @@ def parse_args() -> None:
         roop.globals.detector_scale_pyramid = roop.globals.startup_args.detector_scale_pyramid
     # Always enable all processors when using GUI
     roop.globals.frame_processors = ['face_swapper', 'face_enhancer']
+
+
+def apply_provider_override(cfg):
+    """Apply an explicit launcher provider without changing saved config.
+
+    ``run.py`` has its own argument parser because it also owns the backend
+    thread.  ``core.run`` parses the same argv again, so an override must be
+    accepted here and copied into the in-memory Settings object before
+    ``ui.main`` builds ONNX Runtime's provider chain.  Without this, the
+    documented ``run.py --execution-provider cpu`` command either failed on
+    the second parser or silently continued using config.yaml's provider.
+    """
+    requested = getattr(getattr(roop.globals, 'startup_args', None),
+                        'execution_provider', None)
+    requested = str(requested or '').strip().lower()
+    if requested:
+        cfg.provider = requested
+    return cfg
 
 
 def encode_execution_providers(execution_providers: List[str]) -> List[str]:
@@ -1814,7 +1836,7 @@ def run() -> None:
     parse_args()
     if not pre_check():
         return
-    roop.globals.CFG = Settings('config.yaml')
+    roop.globals.CFG = apply_provider_override(Settings('config.yaml'))
     roop.globals.cuda_device_id = roop.globals.startup_args.cuda_device_id
     roop.globals.execution_threads = roop.globals.CFG.max_threads
     roop.globals.video_encoder = roop.globals.CFG.output_video_codec
