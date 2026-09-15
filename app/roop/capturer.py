@@ -382,9 +382,21 @@ def _read_via_pipe(video_path: str, target: int):
 
 def get_image_frame(filename: str):
     try:
-        return cv2.imdecode(np.fromfile(filename, dtype=np.uint8), cv2.IMREAD_COLOR)
-    except:
-        print(f"Exception reading {filename}")
+        encoded = np.fromfile(filename, dtype=np.uint8)
+        if encoded.size == 0:
+            _swallowed("roop/capturer.py:385",
+                       ValueError("image file is empty"),
+                       f"could not decode {os.path.basename(filename)}")
+            return None
+        frame = cv2.imdecode(encoded, cv2.IMREAD_COLOR)
+        if frame is None:
+            _swallowed("roop/capturer.py:385",
+                       ValueError("OpenCV returned no image"),
+                       f"could not decode {os.path.basename(filename)}")
+        return frame
+    except Exception as error:
+        _swallowed("roop/capturer.py:385", error,
+                   f"could not read {os.path.basename(filename)}")
     return None
 
 

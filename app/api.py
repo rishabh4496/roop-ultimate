@@ -13,6 +13,7 @@ import io
 import collections
 import hashlib
 from collections import OrderedDict
+from collections.abc import Mapping
 import sys
 import json
 import shutil
@@ -62,6 +63,21 @@ import ui.globals as ui_globals
 
 app = FastAPI()
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+
+
+def _configuration_ready():
+    """Whether core has published the Settings object used by API workers."""
+    return getattr(roop_globals, "CFG", None) is not None
+
+
+def _configuration_initializing():
+    """Consistent response for requests arriving during model/config bootstrap."""
+    return JSONResponse(status_code=503, content={
+        "status": "initializing",
+        "ready": False,
+        "message": "The backend is still initializing. Retry shortly.",
+        "retry_after_ms": 500,
+    })
 
 
 def mapped_facesets(mapping, swap_mode=""):
@@ -2398,6 +2414,10 @@ def _load_history() -> list:
             data = json.load(fh)
         if isinstance(data, list):
             return data
+    except FileNotFoundError:
+        # No history is the normal first-run state.  Do not report a fallback
+        # until a history file exists but is unreadable or malformed.
+        return []
     except Exception as _degrade_error:
         _swallowed("api.py:2378", _degrade_error, "fallback continued")
         pass
@@ -2471,6 +2491,10 @@ def get_profiles():
             data = json.load(f)
         if isinstance(data, list):
             return {"profiles": data}
+    except FileNotFoundError:
+        # Profiles are created only after the user saves one.  A missing file
+        # therefore means an empty profile list, not a degraded load.
+        return {"profiles": []}
     except Exception as _degrade_error:
         _swallowed("api.py:2450", _degrade_error, "fallback continued")
         pass
@@ -2516,19 +2540,16 @@ _PREVIEW_TARGET_MATCH_THRESH = 0.20
 
 def _face_normed_emb(f):
     """Return a unit-length embedding for a detected face, or None."""
-    e = None
-    try:
-        e = f["normed_embedding"]
-    except Exception as _degrade_error:
-        _swallowed("api.py:2496", _degrade_error, "fallback continued")
-        e = getattr(f, "normed_embedding", None)
+    # InsightFace Face exposes fields as attributes, while a few test and
+    # import paths use mappings.  Indexing a Face first raises KeyError for a
+    # perfectly valid attribute and used to print one fallback per process.
+    e = getattr(f, "normed_embedding", None)
+    if e is None and isinstance(f, Mapping):
+        e = f.get("normed_embedding")
     if e is None:
-        raw = None
-        try:
-            raw = f["embedding"]
-        except Exception as _degrade_error:
-            _swallowed("api.py:2502", _degrade_error, "fallback continued")
-            raw = getattr(f, "embedding", None)
+        raw = getattr(f, "embedding", None)
+        if raw is None and isinstance(f, Mapping):
+            raw = f.get("embedding")
         if raw is not None:
             e = raw
     if e is None:
@@ -2758,6 +2779,8 @@ def _apply_parser_region_settings(payload):
 @app.post("/api/preview")
 def preview(payload: dict = Body(...)):
     """Render the selected target frame, optionally with a live face swap."""
+    if not _configuration_ready():
+        return _configuration_initializing()
     roop_globals.is_preview = True
     try:
         _update_mask_offsets_from_payload(payload)
@@ -2921,6 +2944,8 @@ def preview_upscale(payload: dict = Body(...)):
     the final upscale quality on one frame. Operates on the image the client
     currently shows (passed in as a data-URL); it does NOT re-run the swap
     pipeline, so it can't race the live preview's GPU sessions."""
+    if not _configuration_ready():
+        return _configuration_initializing()
     img = _dataurl_to_bgr(payload.get("image", ""))
     if img is None:
         return JSONResponse(status_code=400, content={"message": "no image to upscale"})
@@ -2965,6 +2990,8 @@ def preview_upscale(payload: dict = Body(...)):
 # ── Run the swap ─────────────────────────────────────────────────────────────
 @app.post("/api/swap")
 def trigger_swap(payload: dict = Body(...)):
+    if not _configuration_ready():
+        return _configuration_initializing()
     if _progress["processing"]:
         return JSONResponse(status_code=409, content={"message": "already processing"})
     # The benchmark holds several pools of TensorRT contexts and is timing them.

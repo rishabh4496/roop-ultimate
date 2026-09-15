@@ -318,13 +318,12 @@ class Settings:
         object.__setattr__(self, name, value)
 
     def default_get(_, data, name, default):
-        value = default
-        try:
-            value = data.get(name, default)
-        except BaseException as _degrade_error:
-            _swallowed("settings.py:310", _degrade_error, "fallback continued")
-            pass
-        return value
+        # A missing or empty YAML document is a normal state for the throwaway
+        # Settings instance used by /api/settings/defaults.  Treat non-mappings
+        # as an empty config instead of reporting a fallback for every default.
+        if not isinstance(data, dict):
+            return default
+        return data.get(name, default)
 
     def _hw_get(self, data, name, default):
         """default_get for values that are FACTS ABOUT THE GPU, not preferences.
@@ -374,7 +373,12 @@ class Settings:
         try:
             with open(self.config_file, 'r') as f:
                 data = yaml.load(f, Loader=yaml.FullLoader)
-        except BaseException as _degrade_error:
+        except FileNotFoundError:
+            # First launch and the defaults probe intentionally point at a file
+            # that does not exist.  Defaults are the successful result here, not
+            # a degraded runtime path, and no file should be created implicitly.
+            data = None
+        except Exception as _degrade_error:
             _swallowed("settings.py:361", _degrade_error, "fallback continued")
             data = None
 

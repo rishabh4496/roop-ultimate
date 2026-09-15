@@ -82,6 +82,13 @@ def runtime_estimate(payload: dict = Body(...)):
     runs (see roop.runtime_calib). Returns nulls when there's no data yet — the
     frontend falls back to its heuristic. `frames` in the payload is echoed into
     total_ms for convenience."""
+    if getattr(roop_globals, "CFG", None) is None:
+        return JSONResponse(status_code=503, content={
+            "status": "initializing",
+            "ready": False,
+            "message": "The backend is still initializing. Retry shortly.",
+            "retry_after_ms": 500,
+        })
     precision = getattr(roop_globals.CFG, 'trt_precision', 'mixed')
     threads = roop_globals.CFG.max_threads
     gpu = _gpu_name()

@@ -229,6 +229,10 @@ class SegmentedVideoWriter:
             stored_codec = str(m.get("effective_codec") or "").strip()
             self._effective_codec = stored_codec or (self.codec if segments else None)
             return segments, done
+        except FileNotFoundError:
+            # No manifest is the normal first-run state.  It is not a failed
+            # resume and should not appear as a runtime fallback in the UI.
+            return [], 0
         except Exception as _degrade_error:
             _swallowed("roop/segment_writer.py:226", _degrade_error, "fallback continued")
             return [], 0

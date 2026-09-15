@@ -127,7 +127,11 @@ class OutcomeGuardIsPreFiltered(unittest.TestCase):
 
     def test_unreadable_pose_falls_back_to_checking(self):
         body = _func('_verify_worth_it', self.src)
-        self.assertRegex(body, r'except Exception:\s*\n\s*return True')
+        # The fallback is intentionally observable. Accept the named exception
+        # binding used to report the cause, while still requiring the safety
+        # behavior that an unreadable pose must be checked.
+        self.assertRegex(body, r'except Exception(?:\s+as\s+\w+)?:')
+        self.assertIn('return True', body[body.index('except Exception'):])
 
     def test_threshold_keeps_margin_under_the_measured_failure(self):
         """The guard fires from |yaw| 43.6 deg upward on the calibration clips

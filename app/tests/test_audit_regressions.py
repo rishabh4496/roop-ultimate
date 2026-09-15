@@ -20,7 +20,10 @@ def _read(*parts):
 
 class AuditRegressionTests(unittest.TestCase):
     def test_in_memory_video_frame_count_is_end_exclusive(self):
-        tree = ast.parse(_read('roop', 'ProcessMgr.py'))
+        # Batch orchestration was extracted from ProcessMgr. Keep this guard on
+        # the owner of run_batch_inmem so a refactor does not turn a valid source
+        # check into a false failure.
+        tree = ast.parse(_read('roop', 'procmgr_batch.py'))
         assignments = [node for node in ast.walk(tree)
                        if isinstance(node, ast.Assign)
                        and any(isinstance(target, ast.Name) and target.id == 'frame_count'
