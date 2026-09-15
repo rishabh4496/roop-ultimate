@@ -8,7 +8,11 @@ import FacesetLibrary from './faceswap/FacesetLibrary';
 import { FACESWAP_DEFAULTS } from './faceswap/defaults';
 
 // Helper to convert index to target preview URL
-const targetPreviewUrl = (idx) => `${API}/api/target/preview?index=${idx}&frame=1`;
+const targetPreviewUrl = (idx, target) => (
+  target?.preview_available === false
+    ? null
+    : `${API}/api/target/preview?index=${idx}&frame=1`
+);
 
 const ENHANCER_OPTIONS = [
   'Restoreformer++',
@@ -1220,14 +1224,16 @@ export default function BatchSwap({ settings = {}, notify }) {
                   key={idx}
                   className="relative group/tgt flex items-center gap-2 p-1.5 pr-7 rounded-xl bg-white/5 border border-white/5 text-white/80 text-micro"
                 >
-                  <img
-                    src={targetPreviewUrl(idx)}
-                    alt={target.name}
-                    className="w-7 h-7 rounded-lg object-cover bg-black/50"
-                    onError={(e) => {
-                      e.target.style.display = 'none';
-                    }}
-                  />
+                  {targetPreviewUrl(idx, target) && (
+                    <img
+                      src={targetPreviewUrl(idx, target)}
+                      alt={target.name}
+                      className="w-7 h-7 rounded-lg object-cover bg-black/50"
+                      onError={(e) => {
+                        e.target.style.display = 'none';
+                      }}
+                    />
+                  )}
                   <span className="truncate max-w-[110px] font-medium" title={target.name}>
                     {idx + 1}. {target.name}
                   </span>
@@ -1523,14 +1529,16 @@ export default function BatchSwap({ settings = {}, notify }) {
                           onChange={() => {}} // handled by parent onClick
                           className="rounded border-white/20 bg-black/40 text-[var(--accent)] focus:ring-0"
                         />
-                        <img
-                          src={targetPreviewUrl(idx)}
-                          alt={target.name}
-                          className="w-10 h-10 rounded-lg object-cover bg-black/50 shrink-0"
-                          onError={(e) => {
-                            e.target.style.display = 'none';
-                          }}
-                        />
+                        {targetPreviewUrl(idx, target) && (
+                          <img
+                            src={targetPreviewUrl(idx, target)}
+                            alt={target.name}
+                            className="w-10 h-10 rounded-lg object-cover bg-black/50 shrink-0"
+                            onError={(e) => {
+                              e.target.style.display = 'none';
+                            }}
+                          />
+                        )}
                         <div className="min-w-0 flex-1">
                           <span className="text-xs font-medium text-white block truncate">{target.name}</span>
                           <span className="text-micro text-white/40 block">
@@ -1803,14 +1811,16 @@ export default function BatchSwap({ settings = {}, notify }) {
                           }
                           className="rounded border-white/20 bg-black/40 text-[var(--accent)] focus:ring-0"
                         />
-                        <img
-                          src={targetPreviewUrl(tIdx)}
-                          alt={target.name}
-                          className="w-9 h-9 rounded-lg object-cover bg-black/50 shrink-0"
-                          onError={(e) => {
-                            e.target.style.display = 'none';
-                          }}
-                        />
+                        {targetPreviewUrl(tIdx, target) && (
+                          <img
+                            src={targetPreviewUrl(tIdx, target)}
+                            alt={target.name}
+                            className="w-9 h-9 rounded-lg object-cover bg-black/50 shrink-0"
+                            onError={(e) => {
+                              e.target.style.display = 'none';
+                            }}
+                          />
+                        )}
                         <div className="min-w-0">
                           <span className="text-xs font-semibold block truncate" title={target.name}>
                             {tIdx + 1}. {target.name}
@@ -2073,14 +2083,16 @@ export default function BatchSwap({ settings = {}, notify }) {
                 >
                   {/* Left: Target Media Preview */}
                   <div className="relative shrink-0">
-                    <img
-                      src={targetPreviewUrl(job.target_index)}
-                      alt={job.target_name}
-                      className="w-14 h-14 rounded-xl object-cover bg-black/50 border border-white/10"
-                      onError={(e) => {
-                        e.target.style.display = 'none';
-                      }}
-                    />
+                    {targetPreviewUrl(job.target_index, targets[job.target_index]) && (
+                      <img
+                        src={targetPreviewUrl(job.target_index, targets[job.target_index])}
+                        alt={job.target_name}
+                        className="w-14 h-14 rounded-xl object-cover bg-black/50 border border-white/10"
+                        onError={(e) => {
+                          e.target.style.display = 'none';
+                        }}
+                      />
+                    )}
                     <span className="absolute -top-1.5 -left-1.5 bg-[var(--accent)] text-black text-nano font-bold px-1.5 py-0.5 rounded-md shadow">
                       #{idx + 1}
                     </span>

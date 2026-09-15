@@ -1408,6 +1408,10 @@ def _target_entry_dict(entry):
     total = getattr(entry, "total_frames", 0) or entry.endframe or 1
     return {
         "name": os.path.basename(entry.filename),
+        # A persisted workspace can outlive a removable target file. Expose
+        # this cheap availability bit so clients do not deliberately request
+        # a thumbnail that the preview endpoint must correctly return as 404.
+        "preview_available": os.path.isfile(entry.filename),
         "startframe": entry.startframe,
         "endframe": entry.endframe,
         "start_frame": entry.startframe,
