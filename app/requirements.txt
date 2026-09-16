@@ -4,7 +4,7 @@
 numpy==1.26.4
 torch==2.7.0
 torchvision==0.22.0
-onnxruntime-gpu==1.19.0
+onnxruntime-gpu==1.23.2
 tensorrt-cu12>=10.0.0
 fastapi>=0.110.0
 uvicorn>=0.28.0
