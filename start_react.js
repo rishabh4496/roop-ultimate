@@ -53,7 +53,13 @@ module.exports = async (kernel) => {
           path: "react-ui",
           message: [
             "npm run build"
-          ]
+          ],
+          on: [{
+            // A failed build must stop before the backend is offered as a
+            // healthy UI. Match the failure forms emitted by npm and Vite.
+            "event": "/(npm ERR!|ELIFECYCLE|error during build|failed to compile|build failed|command failed)/i",
+            "break": true
+          }]
         }
       },
       {
