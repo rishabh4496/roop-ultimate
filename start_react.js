@@ -59,11 +59,7 @@ module.exports = async (kernel) => {
           path: "react-ui",
           message: [
             "npm run build"
-          ],
-          on: [{
-            "event": "/(npm (ERR!|error)|Build failed|error during build)/i",
-            "break": true
-          }]
+          ]
         }
       },
       {
