@@ -55,7 +55,7 @@ git clone https://github.com/rishabh4496/roop-ultimate.git
 cd roop-ultimate/app
 python -m venv env && env/Scripts/activate        # Linux/macOS: source env/bin/activate
 uv pip install -r requirements.txt
-cd ../react-ui && npm install && npm run build
+cd ../react-ui && npm ci --no-audit --no-fund && npm run build
 cd ../app && python run.py
 ```
 
