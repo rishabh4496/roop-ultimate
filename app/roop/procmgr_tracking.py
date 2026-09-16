@@ -354,11 +354,19 @@ class TrackingMixin:
             # real GPU/model time, not queue-wait — lease_face_analyser() should never
             # actually block here. Tagged 'track_detect' (not 'detect') so it shows up
             # as its own STAGE TIMING line, separate from the swap phase's detect stage.
-            if skip_detection:
-                return _DetectionResult([], mode='skip')
-            with _prof('track_detect'), _gpu_guard(pooled=True):
-                with _prof('detection'):
-                    return _run_detect(fr, crop_bbox, expected_count)
+            # The pre-pass submits work ahead of the consumer. Without an admission
+            # scope here, a pause request can be acknowledged while a queued detector
+            # is still free to start, which makes the API report PAUSED while the
+            # temporal-analysis progress continues. Keep the detector itself inside
+            # the same cooperative boundary as the normal frame path.
+            with pause_scope(lambda: bool(roop.globals.processing)) as allowed:
+                if not allowed:
+                    return _DetectionResult([], mode='stop')
+                if skip_detection:
+                    return _DetectionResult([], mode='skip')
+                with _prof('track_detect'), _gpu_guard(pooled=True):
+                    with _prof('detection'):
+                        return _run_detect(fr, crop_bbox, expected_count)
 
         def _consume(f_idx, faces):
             nonlocal active, retired, next_id, reid_refused, contam_seen, contam_reid
@@ -780,6 +788,10 @@ class TrackingMixin:
                 expected_count = len(active) if HIRES_MISS and len(active) > 1 else None
 
                 if det_executor is not None:
+                    # A request can arrive after the frame was decoded/planned but
+                    # before submission. Re-check at this boundary so the queue does
+                    # not grow new detector work while the run is paused.
+                    wait_while_paused()
                     in_flight.append((idx, det_executor.submit(
                         _detect_one, frame, crop_bbox, expected_count, skip_detection)))
                     max_in_flight = pool_workers + 2
@@ -789,57 +801,74 @@ class TrackingMixin:
                         # and the reader/consumer has caught up to the dispatch cap --
                         # i.e. detection itself (track_detect above), not this wait, is
                         # the real ceiling. Timed separately so STAGE TIMING shows which.
-                        with _prof('track_wait'):
-                            result = done_fut.result()
-                        with _prof('track_consume'):
-                            _consume(done_idx, result)
-                        if temporal_tracker is not None and isinstance(frame, np.ndarray):
-                            temporal_tracker.update(
-                                result, done_idx, frame.shape,
-                                detection_mode=getattr(result, 'mode', 'full'))
+                        with pause_scope(lambda: bool(roop.globals.processing)) as allowed:
+                            if not allowed:
+                                break
+                            with _prof('track_wait'):
+                                result = done_fut.result()
+                            with _prof('track_consume'):
+                                _consume(done_idx, result)
+                            if temporal_tracker is not None and isinstance(frame, np.ndarray):
+                                temporal_tracker.update(
+                                    result, done_idx, frame.shape,
+                                    detection_mode=getattr(result, 'mode', 'full'))
                         del result, done_fut
                 else:
-                    if skip_detection:
-                        faces = _DetectionResult([], mode='skip')
-                    else:
-                        with _prof('track_detect'), _gpu_guard(pooled=analysis_pooled(), owner='analysis'):
-                            with _prof('detection'):
-                                faces = _run_detect(frame, crop_bbox, expected_count)
-                    with _prof('track_consume'):
-                        _consume(idx, faces)
-                    if temporal_tracker is not None and isinstance(frame, np.ndarray):
-                        temporal_tracker.update(
-                            faces, idx, frame.shape,
-                            detection_mode=getattr(faces, 'mode', 'full'))
+                    with pause_scope(lambda: bool(roop.globals.processing)) as allowed:
+                        if not allowed:
+                            break
+                        if skip_detection:
+                            faces = _DetectionResult([], mode='skip')
+                        else:
+                            with _prof('track_detect'), _gpu_guard(pooled=analysis_pooled(), owner='analysis'):
+                                with _prof('detection'):
+                                    faces = _run_detect(frame, crop_bbox, expected_count)
+                        with _prof('track_consume'):
+                            _consume(idx, faces)
+                        if temporal_tracker is not None and isinstance(frame, np.ndarray):
+                            temporal_tracker.update(
+                                faces, idx, frame.shape,
+                                detection_mode=getattr(faces, 'mode', 'full'))
                     del faces
 
-                del frame
-                idx += 1
-                pbar.update(1)   # terminal bar
-                # Drive the UI progress bar so the pre-pass isn't a silent black box.
-                if self.progress_gradio is not None and (idx % 10 == 0 or idx == 1):
-                    tot = frame_count or idx
-                    # The pre-pass is minutes long and has its own rate, so it
-                    # publishes its own ETA too — otherwise the UI would show a
-                    # stale swap-stage figure through the whole of it.
-                    publish_eta(pbar)
-                    self.progress_gradio((idx, tot), desc=desc,
-                                         total=tot, unit='frames')
+                # Progress is also a processing boundary. The old code could finish
+                # a detector future and publish another frame after the controller
+                # had acknowledged PAUSED. Keep the bookkeeping and UI update behind
+                # the same gate, so the observed progress cannot run ahead of the
+                # engine's pause state.
+                with pause_scope(lambda: bool(roop.globals.processing)) as allowed:
+                    if not allowed:
+                        break
+                    del frame
+                    idx += 1
+                    pbar.update(1)   # terminal bar
+                    # Drive the UI progress bar so the pre-pass isn't a silent black box.
+                    if self.progress_gradio is not None and (idx % 10 == 0 or idx == 1):
+                        tot = frame_count or idx
+                        # The pre-pass is minutes long and has its own rate, so it
+                        # publishes its own ETA too — otherwise the UI would show a
+                        # stale swap-stage figure through the whole of it.
+                        publish_eta(pbar)
+                        self.progress_gradio((idx, tot), desc=desc,
+                                             total=tot, unit='frames')
                 if frame_count and idx >= frame_count:
                     break
             # Drain any detections still in flight, in submission (frame) order.
             while in_flight:
                 done_idx, done_fut = in_flight.popleft()
-                res = done_fut.result()
-                _consume(done_idx, res)
-                # The frame array is no longer available here, but this drain
-                # only occurs after the loop's final submitted frame. The
-                # detector result still carries the actual path, and tracker
-                # state update does not need pixels for lifecycle accounting.
-                if temporal_tracker is not None:
-                    temporal_tracker.update(
-                        res, done_idx, None,
-                        detection_mode=getattr(res, 'mode', 'full'))
+                with pause_scope(lambda: bool(roop.globals.processing)) as allowed:
+                    if not allowed:
+                        break
+                    res = done_fut.result()
+                    _consume(done_idx, res)
+                    # The frame array is no longer available here, but this drain
+                    # only occurs after the loop's final submitted frame. The
+                    # detector result still carries the actual path, and tracker
+                    # state update does not need pixels for lifecycle accounting.
+                    if temporal_tracker is not None:
+                        temporal_tracker.update(
+                            res, done_idx, None,
+                            detection_mode=getattr(res, 'mode', 'full'))
                 del res, done_fut
         finally:
             pbar.close()

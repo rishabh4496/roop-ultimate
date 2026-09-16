@@ -104,7 +104,10 @@ def boot(port, log_path):
                 "ROOP_TEMPORAL_STEP": "1"})
     handle = open(log_path, "w", encoding="utf-8", errors="replace")
     process = subprocess.Popen(
-        [os.path.join(APP, "env", "Scripts", "python.exe"), "run.py"],
+        # Exercise the same explicit mode as start_react.js. Relying only on an
+        # inherited ROOP_REACT_CLIENT flag left the restart subprocess vulnerable
+        # to a stale legacy Gradio port during the real restart check.
+        [os.path.join(APP, "env", "Scripts", "python.exe"), "run.py", "--ui", "react"],
         cwd=APP, env=env, stdout=handle, stderr=subprocess.STDOUT, text=True)
     return process, handle
 

@@ -21,6 +21,7 @@ import os
 import sys
 import unittest
 import inspect
+from types import SimpleNamespace
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
@@ -43,8 +44,14 @@ class _Swapper:
 class _Stub:
     """Just enough `self` for the real _make_swap_batcher to run."""
 
-    def __init__(self, has_mask):
+    def __init__(self, has_mask, vram_gb=None):
         self.processors = [_Swapper(has_mask)]
+        # The real runtime profile recommends a small initial batch and the
+        # production code raises it only to the tier-specific default.
+        self._runtime_swap_batch_size = 2
+        if vram_gb is not None:
+            self.runtime_profile = SimpleNamespace(
+                hardware=SimpleNamespace(vram_total_gb=vram_gb))
 
 
 class BatcherYieldsToTheMask(unittest.TestCase):
@@ -55,6 +62,7 @@ class BatcherYieldsToTheMask(unittest.TestCase):
         self._strength = getattr(roop.globals, 'swap_model_mask_strength', 0.0)
         # The shipped default state: both halves enabled.
         os.environ['ROOP_BATCH_SWAP_XFRAME'] = '1'
+        os.environ.pop('ROOP_BATCH_SWAP_MAX', None)
         _pm._BATCH_SWAP = True
 
     def tearDown(self):
@@ -63,9 +71,9 @@ class BatcherYieldsToTheMask(unittest.TestCase):
         _pm._BATCH_SWAP = self._batch
         roop.globals.swap_model_mask_strength = self._strength
 
-    def _make(self, has_mask, strength, threads=4):
+    def _make(self, has_mask, strength, threads=4, vram_gb=None):
         roop.globals.swap_model_mask_strength = strength
-        return ProcessMgr._make_swap_batcher(_Stub(has_mask), threads)
+        return ProcessMgr._make_swap_batcher(_Stub(has_mask, vram_gb), threads)
 
     def test_batcher_is_built_when_the_mask_is_off(self):
         """The perf default must survive — this is the common case."""
@@ -88,6 +96,28 @@ class BatcherYieldsToTheMask(unittest.TestCase):
 
     def test_a_none_strength_reads_as_off(self):
         self.assertIsNotNone(self._make(has_mask=True, strength=None))
+
+    def test_desktop_profile_uses_the_measured_batch_eight_default(self):
+        batcher = self._make(has_mask=False, strength=0.0, threads=8, vram_gb=12.0)
+        try:
+            self.assertEqual(batcher._max_batch, 8)
+        finally:
+            batcher.stop()
+
+    def test_small_card_keeps_the_bounded_batch_default(self):
+        batcher = self._make(has_mask=False, strength=0.0, threads=8, vram_gb=6.0)
+        try:
+            self.assertEqual(batcher._max_batch, 4)
+        finally:
+            batcher.stop()
+
+    def test_explicit_batch_cap_wins_on_the_desktop_profile(self):
+        os.environ['ROOP_BATCH_SWAP_MAX'] = '3'
+        batcher = self._make(has_mask=False, strength=0.0, threads=8, vram_gb=12.0)
+        try:
+            self.assertEqual(batcher._max_batch, 3)
+        finally:
+            batcher.stop()
 
     def test_single_thread_never_batches(self):
         self.assertIsNone(self._make(has_mask=False, strength=0.0, threads=1))

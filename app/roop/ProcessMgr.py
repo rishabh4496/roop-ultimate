@@ -2026,9 +2026,20 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
             # for the same swap stage. Once the desktop batch path is enabled,
             # the single batcher owns that stage, so its B=4 default need not
             # be limited by the two independent TRT contexts in the normal
-            # pool. ROOP_BATCH_SWAP_MAX=8 remains the measured 4070 override.
+            # pool. The 4070's measured B=8 setting is safe to use by default,
+            # but do not carry it onto the sub-7GB laptop tier: that profile's
+            # single-context/global-guard policy deliberately keeps the old
+            # bounded default. An explicit ROOP_BATCH_SWAP_MAX always wins.
             if _BATCH_SWAP:
                 max_b = max(4, max_b)
+                hardware = getattr(getattr(self, 'runtime_profile', None),
+                                   'hardware', None)
+                try:
+                    desktop_vram = float(getattr(hardware, 'vram_total_gb', 0.0) or 0.0)
+                except (TypeError, ValueError):
+                    desktop_vram = 0.0
+                if desktop_vram >= 11.5:
+                    max_b = max(8, max_b)
             else:
                 max_b = min(max_b, max(2, int(
                     getattr(self, '_runtime_face_concurrency', max_b) or max_b)))
