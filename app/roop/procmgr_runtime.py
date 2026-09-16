@@ -95,16 +95,24 @@ class PauseController:
             self._paused = True
             self._condition.notify_all()
 
-    def begin(self, processing) -> bool:
+    def begin(self, processing, wait=True) -> bool:
         """Wait for a requested pause, then claim one unit of live work.
 
         Nested scopes are allowed for ``process_frame`` callers.  The owning
         worker must not wait on its own outer scope after a request arrives.
+
+        ``wait=False`` is for bounded parallel chunk workers.  Those workers
+        must return their partial result dictionary to the writer before a
+        pause can be acknowledged; blocking inside a worker join would leave
+        those output reservations stranded forever.
         """
         depth = int(getattr(self._owners, "depth", 0) or 0)
         with self._condition:
             if depth == 0:
                 while self._requested and processing():
+                    if not wait:
+                        self._acknowledge_locked()
+                        return False
                     self._acknowledge_locked()
                     self._condition.wait(timeout=0.25)
                 if not processing():
@@ -1145,9 +1153,9 @@ def _gpu_guard(pooled=False, owner=None):
 
 
 @contextlib.contextmanager
-def pause_scope(processing):
+def pause_scope(processing, wait=True):
     """Own one pause-aware unit without changing the GPU-lock API."""
-    entered = pause_controller.begin(processing)
+    entered = pause_controller.begin(processing, wait=wait)
     if not entered:
         yield False
         return
@@ -1577,5 +1585,4 @@ def wait_while_paused():
     if getattr(roop.globals, 'pause', False) and not pause_controller.snapshot()["requested"]:
         pause_controller.request()
     pause_controller.checkpoint(lambda: bool(getattr(roop.globals, 'processing', False)))
-
 

@@ -2262,8 +2262,28 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
 
         _writer_exc = [None]  # propagate write errors back to the main thread
         _writer_stop = Event()
+        _written_indices = set()
+
+        def _release_pending_results(results):
+            """Release output reservations for frames that will not be encoded.
+
+            ``process_frame(..., output_pending=True)`` reserves one output
+            before the result is handed to the parallel writer.  Normal writes
+            release that reservation at the encode boundary.  Cancellation or
+            writer failure can discard a whole result dictionary before that
+            boundary, which otherwise leaves ``PauseController`` permanently
+            seeing one pending output and makes a real pause request unable to
+            acknowledge.
+            """
+            if not isinstance(results, dict):
+                return
+            pending = sum(1 for frame in results.values() if frame is not None)
+            if pending:
+                pause_controller.pending_output(-pending)
+            results.clear()
 
         def _writer():
+            results = None
             try:
                 while True:
                     try:
@@ -2275,57 +2295,68 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                     if item is None:
                         break
                     cs, res, clen = item
+                    results = res
                     _encode_started = time.perf_counter()
                     _encoded_count = 0
                     for gi in range(cs, cs + clen):
-                        if not roop.globals.processing:
-                            break
                         fr = res.pop(gi, None)  # pop frees the frame ref immediately after write
                         if fr is None:
                             continue
-                        if self.output_to_file:
-                            # Same reason as the decode probe above: the stage
-                            # table had no `encode` row on the stabilized path.
-                            with _prof('encode'):
-                                self.videowriter.write_frame(fr)
-                        if self.output_to_cam:
-                            self.streamwriter.WriteToStream(fr)
-                        _encoded_count += 1
-                        if _runtime_scheduler is not None:
-                            _runtime_scheduler.record_progress(encoded=1)
-                        # Real-time progress is reported directly by worker threads in _process_block
-                        # as frames complete on GPU, avoiding bursty FPS and frozen terminal bars.
-                        # Evict trailing frames outside the warm-up window so block-0 warm-up of the next
-                        # chunk can still access recent temporal faces and track assignments.
-                        _evict_gi = gi - max(64, int(WU * 2))
-                        if _evict_gi >= 0:
-                            if self._temporal_faces is not None:
-                                self._temporal_faces.pop(_evict_gi, None)
-                            if hasattr(self, '_track_assignments') and self._track_assignments is not None:
-                                self._track_assignments.pop(_evict_gi, None)
-                            if hasattr(self, '_precomputed_kps') and self._precomputed_kps is not None:
-                                self._precomputed_kps.pop(_evict_gi, None)
-                        # The frame/queue hook lived ONLY in the sequential
-                        # encoder loop, while production runs this parallel
-                        # stabilization writer. That left the monitor with
-                        # frames=0 and no queue/worker telemetry, and made the
-                        # adaptive controller unreachable on the path the user
-                        # actually renders with. Same call, same safe boundary
-                        # (immediately after a frame is written).
-                        pause_controller.pending_output(-1)
-                        self._runtime_adaptive_boundary()
-                        pause_controller.checkpoint(
-                            lambda: bool(roop.globals.processing), wait_for_ack=False)
-                        if pause_controller.snapshot()["acknowledged"]:
-                            self._checkpoint_at_safe_output(gi)
-                            pause_controller.wait_until_resumed(
-                                lambda: bool(roop.globals.processing))
+                        try:
+                            if gi in _written_indices:
+                                continue
+                            if not roop.globals.processing:
+                                continue
+                            if self.output_to_file:
+                                # Same reason as the decode probe above: the stage
+                                # table had no `encode` row on the stabilized path.
+                                with _prof('encode'):
+                                    self.videowriter.write_frame(fr)
+                            if self.output_to_cam:
+                                self.streamwriter.WriteToStream(fr)
+                            _written_indices.add(gi)
+                            _encoded_count += 1
+                            if _runtime_scheduler is not None:
+                                _runtime_scheduler.record_progress(encoded=1)
+                            # Real-time progress is reported directly by worker threads in _process_block
+                            # as frames complete on GPU, avoiding bursty FPS and frozen terminal bars.
+                            # Evict trailing frames outside the warm-up window so block-0 warm-up of the next
+                            # chunk can still access recent temporal faces and track assignments.
+                            _evict_gi = gi - max(64, int(WU * 2))
+                            if _evict_gi >= 0:
+                                if self._temporal_faces is not None:
+                                    self._temporal_faces.pop(_evict_gi, None)
+                                if hasattr(self, '_track_assignments') and self._track_assignments is not None:
+                                    self._track_assignments.pop(_evict_gi, None)
+                                if hasattr(self, '_precomputed_kps') and self._precomputed_kps is not None:
+                                    self._precomputed_kps.pop(_evict_gi, None)
+                            # The frame/queue hook lived ONLY in the sequential
+                            # encoder loop, while production runs this parallel
+                            # stabilization writer. That left the monitor with
+                            # frames=0 and no queue/worker telemetry, and made the
+                            # adaptive controller unreachable on the path the user
+                            # actually renders with. Same call, same safe boundary
+                            # (immediately after a frame is written).
+                            self._runtime_adaptive_boundary()
+                            pause_controller.checkpoint(
+                                lambda: bool(roop.globals.processing), wait_for_ack=False)
+                            if pause_controller.snapshot()["acknowledged"]:
+                                self._checkpoint_at_safe_output(gi)
+                                pause_controller.wait_until_resumed(
+                                    lambda: bool(roop.globals.processing))
+                        finally:
+                            # Every popped frame owns exactly one reservation,
+                            # including frames skipped during cancellation and
+                            # frames whose encoder write raises.
+                            pause_controller.pending_output(-1)
                     if _runtime_scheduler is not None and _encoded_count:
                         _runtime_scheduler.record_stage(
                             'encode', time.perf_counter() - _encode_started,
                             calls=_encoded_count)
                     res.clear()
+                    results = None
             except Exception as exc:
+                _release_pending_results(results)
                 _writer_exc[0] = exc
                 # Say so HERE. This used to be recorded silently and re-raised in
                 # the caller's `finally` — which the caller could not reach,
@@ -2338,6 +2369,32 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
         _wt.start()
 
         _chunk_no = 0
+        current_results = None
+
+        def _process_stab_frame(frame, frame_idx, output_pending=False):
+            """Run one stabilized frame without parking a chunk worker.
+
+            The normal ``process_frame`` wrapper waits for a requested pause.
+            A parallel stabilization worker must instead return its partial
+            chunk so the writer can drain reservations and acknowledge the
+            pause.  Calling the wrapped implementation inside this bounded,
+            nonblocking scope preserves the same accounting without blocking
+            the chunk join.
+            """
+            with pause_scope(lambda: bool(roop.globals.processing), wait=False) as allowed:
+                if not allowed:
+                    return False, None
+                frame_fn = self.process_frame
+                implementation = getattr(frame_fn, '__wrapped__', None)
+                if implementation is not None:
+                    result = implementation(self, frame, frame_idx=frame_idx)
+                else:
+                    result = frame_fn(frame, frame_idx=frame_idx,
+                                      output_pending=output_pending)
+                if output_pending and result is not None:
+                    pause_controller.pending_output(1)
+                return True, result
+
         try:
             while True:
                 _t_get0 = time.perf_counter()
@@ -2363,6 +2420,7 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                 n = max(1, min(stab_width, len(chunk)))
                 results = {}
                 _block_times = {}   # per WORKER wall time → imbalance (see dispatch note below)
+                pause_interrupted = Event()
 
                 # ── Closure-capture fix ──────────────────────────────────────
                 # _process_block is re-defined each loop iteration. Without default-arg
@@ -2417,7 +2475,11 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                         try:
                             # Pass the real frame index so the temporal-detection /
                             # SAM2 / identity-track caches stay usable in this path.
-                            self.process_frame(_combined[ci], frame_idx=_base_global + ci)
+                            allowed, _ = _process_stab_frame(
+                                _combined[ci], frame_idx=_base_global + ci)
+                            if not allowed:
+                                pause_interrupted.set()
+                                return
                         except Exception as _degrade_error:
                             _swallowed("roop/ProcessMgr.py:3521", _degrade_error, "fallback continued")
                             pass
@@ -2436,8 +2498,11 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                             # including them would inflate the frame count and
                             # deflate ms/frame on exactly the path production uses.
                             with _prof('frame_total'):
-                                out = self.process_frame(_combined[ci], frame_idx=gi,
-                                                          output_pending=True)
+                                allowed, out = _process_stab_frame(
+                                    _combined[ci], frame_idx=gi, output_pending=True)
+                            if not allowed:
+                                pause_interrupted.set()
+                                return
                         except Exception as _degrade_error:
                             bar_write(
                                 f'[ProcessMgr] stabilization frame {gi} processing '
@@ -2456,7 +2521,7 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                             pause_controller.pending_output(1)
                         _results[gi] = out
                         del out
-                        if _progress_cb:
+                        if _progress_cb and gi not in _written_indices:
                             _progress_cb()
                     if _runtime_scheduler is not None and b > a:
                         _runtime_scheduler.record_progress(processed=b - a)
@@ -2527,17 +2592,50 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                 # climbed, and the render stopped with no error. Observed at 58%
                 # of a 2400-frame clip.
                 _t_put0 = time.perf_counter()
+                queued = False
                 while True:
                     try:
                         _write_q.put((chunk_start, results, len(chunk)), timeout=0.5)
+                        queued = True
                         break
                     except _QueueFull:
                         if (_writer_exc[0] is not None or not _wt.is_alive()
                                 or not roop.globals.processing):
                             break
                 _t_put = time.perf_counter() - _t_put0     # write back-pressure stall
+                if not queued:
+                    _release_pending_results(results)
+                    current_results = None
+                    break
+                # Ownership moved to _write_q. The writer or queue drain now
+                # owns all reservations in this dictionary.
+                current_results = None
                 if _writer_exc[0] is not None or not _wt.is_alive():
                     break   # leave the chunk loop; finally drains and re-raises
+
+                # A parallel worker returns as soon as a pause is requested,
+                # leaving the writer as the only owner of the current chunk's
+                # output reservations. Wait here for that writer to drain them
+                # and acknowledge the pause before trying to consume another
+                # input chunk. Without this boundary the coordinator spins on
+                # an input reader that is correctly waiting for resume.
+                pause_controller.checkpoint(
+                    lambda: bool(roop.globals.processing), wait_for_ack=True)
+                if pause_controller.snapshot()["acknowledged"]:
+                    pause_controller.wait_until_resumed(
+                        lambda: bool(roop.globals.processing))
+
+                # A nonblocking worker stops admitting new frames as soon as
+                # the request arrives. The part it already produced is now
+                # durable, but the rest of this input chunk is still pending.
+                # Put the chunk back ahead of the reader sentinel and retry it
+                # after resume. The writer de-duplicates indices already
+                # emitted from the first partial attempt.
+                if pause_interrupted.is_set() and roop.globals.processing:
+                    pause_interrupted.clear()
+                    with prefetch_q.mutex:
+                        prefetch_q.queue.appendleft(chunk)
+                    continue
 
                 if _PROFILE:
                     _bts = list(_block_times.values())
@@ -2576,12 +2674,16 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
             #  - writer died (IOError / broken pipe): the queue may still hold an
             #    item that nobody will ever consume; put(None) would block forever
             #    on a full queue without this drain.
+            _release_pending_results(current_results)
+            current_results = None
             if _writer_exc[0] is not None or not _wt.is_alive():
                 roop.globals.processing = False
             if not roop.globals.processing or not _wt.is_alive():
                 try:
                     while True:
-                        _write_q.get_nowait()
+                        item = _write_q.get_nowait()
+                        if isinstance(item, tuple) and len(item) > 1:
+                            _release_pending_results(item[1])
                 except _QueueEmpty:
                     # An empty queue is the normal end state while draining
                     # cancelled work. It is not a degraded fallback and must
