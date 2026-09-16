@@ -175,6 +175,15 @@ export default function ProcessingTerminal({
   const [showSearch, setShowSearch] = useState(false);
   const [autoScroll, setAutoScroll] = useState(true);
 
+  const isError = (line) => {
+    if (!line) return false;
+    if (line.level === 'ERROR' || line.level === 'WARNING') return true;
+    if (line.category === 'ERRORS' || line.category === 'WARNINGS') return true;
+    return /error|fail|abort|⚠/i.test(line.msg || '');
+  };
+
+  const errorCount = useMemo(() => log.filter(isError).length, [log]);
+
   // A long render has one part per ROOP_RESUME_CHUNK frames, so the strip can
   // hold dozens: keep the newest (the one being written) in view.
   useEffect(() => {
@@ -204,13 +213,6 @@ export default function ProcessingTerminal({
     return lineTone(line?.msg);
   };
 
-  const isError = (line) => {
-    if (!line) return false;
-    if (line.level === 'ERROR' || line.level === 'WARNING') return true;
-    if (line.category === 'ERRORS' || line.category === 'WARNINGS') return true;
-    return /error|fail|abort|⚠/i.test(line.msg || '');
-  };
-
   const baseShown = useMemo(() => {
     if (tab === 'errors') return log.filter(isError);
     if (typeof tab === 'number') return log.filter((l) => (l.part || 0) === tab);
@@ -223,7 +225,6 @@ export default function ProcessingTerminal({
     return baseShown.filter((l) => (l.msg || '').toLowerCase().includes(q));
   }, [baseShown, searchQuery]);
 
-  const errorCount = useMemo(() => log.filter(isError).length, [log]);
   const activePart = typeof tab === 'number' ? parts.find((p) => p.index === tab) : null;
   const lastShownSeq = shown.length ? shown[shown.length - 1].seq : null;
   const authoritativeStatus = runtime?.status?.message || statusLine;

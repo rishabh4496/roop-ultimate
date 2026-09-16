@@ -161,6 +161,8 @@ async def main():
 
                 stop_clicked = await page.click("button[aria-label='Stop the run']", settle=0.8)
                 failures += not check(stop_clicked, "Processing Stop button is clickable")
+                stop_confirmed = await page.click("div[role='dialog'] button:last-child", settle=0.8)
+                failures += not check(stop_confirmed, "Stop confirmation is accepted")
                 failures += not check(await page.wait_for("document.body.innerText.includes('Stopping')", 10), "stop state is reflected immediately in React")
                 stopped = await page.wait_for("(async()=>{const r=await fetch('/api/progress'); const p=await r.json(); return !p.processing;})()", 45)
                 after_stop = await page.evaluate("return await (await fetch('/api/progress')).json();")
