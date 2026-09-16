@@ -9,8 +9,24 @@ Time `t` here is a monotonically increasing per-frame index (dt = 1 frame), so
 `min_cutoff` / `beta` are expressed in per-frame units.
 """
 import math
+import os
 from collections import defaultdict, deque
 import numpy as np
+
+
+def _env_float(name, default):
+    """Numeric environment override that can never break startup.
+
+    A malformed value falls back to the calibrated default rather than raising
+    out of a constructor that runs on the render path.
+    """
+    raw = os.environ.get(name)
+    if raw is None or not str(raw).strip():
+        return float(default)
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return float(default)
 
 
 def _alpha(t_e, cutoff):
@@ -27,14 +43,89 @@ class StreamingStabilizationHistory:
     hard-cut detection so none of those values can bleed into a new shot.
     """
 
-    def __init__(self, capacity=32, cut_threshold=0.32):
+    # ── Why the cut rule is adaptive and not a single number ──────────────
+    # The original gate was a bare `mean|diff| >= 0.32` on a 64px luma
+    # thumbnail. 0.32 is an enormous difference for that statistic: it is
+    # roughly a third of full swing averaged over the WHOLE frame, which in
+    # practice only a cut between near-black and near-white produces. That is
+    # exactly what the unit test fed it (a black frame then a white one), so
+    # the constant passed its test and then never fired again.
+    #
+    # Measured on the clip this was found on (a 428s, 12840-frame music video
+    # that is visibly a montage, tools/cut_threshold_probe.py):
+    #
+    #     p50 0.0042   p95 0.0482   p99 0.0793   p99.9 0.1616   max 0.2002
+    #
+    # The LARGEST adjacent-frame difference in the entire clip is 0.2002, so
+    # the shipped gate fired on 0 of 12839 pairs. Both consumers of the signal
+    # were therefore dead code on this footage: the swap phase never reset its
+    # kps/enhancer/mask stabilisers at a shot change, and the tracking pre-pass
+    # never learned a shot had changed at all.
+    #
+    # No fixed number fixes this properly, because the statistic is not
+    # scale-free: a high-contrast action clip and a soft-graded interior have
+    # different baselines, and a cut is defined relative to how much the
+    # picture normally moves. So the rule is BOTH:
+    #
+    #   * an absolute floor, so grain/exposure ripple in a locked-off shot can
+    #     never be called a cut however quiet that shot is, and
+    #   * a multiple of the RECENT MEDIAN difference, which is what makes it
+    #     mean the same thing on any content.
+    #
+    # Calibrated against the same probe. floor=0.045 sits just under the clip's
+    # p95 and well above its p75; k=6 against a rolling median found 124 cuts
+    # (17.4/min, mean shot 3.4s) which matches the actual edit rate of the
+    # footage. Loosening to floor=0.030/k=4 finds 272 (38/min) and starts
+    # splitting on camera shake; tightening to 0.060/k=8 finds 67 and misses
+    # cuts between similar-looking shots. The median is taken over a short
+    # trailing window so the reference tracks the current shot rather than the
+    # whole clip.
+    #
+    # ROOP_CUT_FLOOR / ROOP_CUT_RATIO override both; ROOP_CUT_FLOOR=1.0
+    # restores the effectively-never-fires behaviour if a regression is ever
+    # traced here.
+    CUT_FLOOR = 0.045
+    CUT_RATIO = 6.0
+    CUT_WINDOW = 61
+
+    # Frames after a cut during which another cut is not reported. A shot
+    # change is one event; its settling frames are not more of them.
+    CUT_REFRACTORY = 3
+
+    # The bar before any baseline exists (the first frames of a clip). Set at
+    # the reference clip's p99.9 (0.1616): high enough that ordinary motion
+    # cannot reach it, low enough that a genuine opening cut still does.
+    CUT_COLD_START = 0.16
+
+    # Differences needed before the ratio test is trusted. Short enough that a
+    # new shot is judged on its own terms within a few frames, long enough that
+    # the median is not one or two unsettled readings.
+    CUT_MIN_BASELINE = 8
+
+    def __init__(self, capacity=32, cut_threshold=None,
+                 cut_floor=None, cut_ratio=None):
         self.capacity = max(4, int(capacity))
-        self.cut_threshold = float(cut_threshold)
+        # Kept for callers (and tests) that pin an explicit absolute gate. When
+        # given it is used as the floor AND disables the adaptive term, which is
+        # the old single-number behaviour exactly.
+        self.cut_threshold = None if cut_threshold is None else float(cut_threshold)
+        self.cut_floor = float(
+            _env_float('ROOP_CUT_FLOOR',
+                       self.CUT_FLOOR if cut_floor is None else cut_floor))
+        self.cut_ratio = float(
+            _env_float('ROOP_CUT_RATIO',
+                       self.CUT_RATIO if cut_ratio is None else cut_ratio))
         self.frames = deque(maxlen=self.capacity)
         self.landmarks = defaultdict(lambda: deque(maxlen=self.capacity))
         self.affines = defaultdict(lambda: deque(maxlen=self.capacity))
         self.mask_weights = defaultdict(lambda: deque(maxlen=self.capacity))
         self._scene_signature = None
+        # Trailing window of recent frame-to-frame differences. Only the
+        # differences are kept (a float each), never the frames.
+        self._diffs = deque(maxlen=self.CUT_WINDOW)
+        # Frames observed since the last cut, for the refractory guard. Starts
+        # large so the first frames of a clip are not treated as post-cut.
+        self._since_cut = 1 << 30
         self.scene_cuts = 0
 
     @staticmethod
@@ -54,20 +145,74 @@ class StreamingStabilizationHistory:
         if signature is None:
             return False
         previous = self._scene_signature
-        # A deterministic resize-free comparison: adjacent signatures have the
-        # same source dimensions for one stream. Resolution changes are a cut.
-        cut = previous is not None and (
-            previous.shape != signature.shape or
-            float(np.mean(np.abs(signature - previous))) >= self.cut_threshold)
+        cut = False
+        diff = None
+        if previous is not None:
+            # A deterministic resize-free comparison: adjacent signatures have
+            # the same source dimensions for one stream. Resolution changes are
+            # a cut by definition.
+            if previous.shape != signature.shape:
+                cut = True
+            else:
+                diff = float(np.mean(np.abs(signature - previous)))
+                cut = self._is_cut(diff)
         if cut:
             self.frames.clear()
             self.landmarks.clear()
             self.affines.clear()
             self.mask_weights.clear()
             self.scene_cuts += 1
+            # A new shot measures its OWN baseline. Keeping the previous
+            # shot's differences here is what made a lively shot following a
+            # quiet one report a second cut a few frames in: the median was
+            # still describing the quiet shot, so ordinary movement in the new
+            # one sat far above `ratio * baseline`. The window is therefore
+            # emptied, and `_is_cut` covers the interval where it is refilling
+            # with an absolute bar instead of a ratio (see CUT_COLD_START) —
+            # which is also what stops the cascade that simply clearing it
+            # caused on its own.
+            self._diffs.clear()
+            self._since_cut = 0
+        elif diff is not None:
+            self._since_cut += 1
+            self._diffs.append(diff)
         self._scene_signature = signature
         self.frames.append((int(t), float(signature.mean()), float(signature.std())))
         return cut
+
+    def _is_cut(self, diff):
+        """Absolute floor AND (unless pinned) a multiple of the recent median.
+
+        Below the floor is never a cut, whatever the local baseline: that is
+        what stops a perfectly still locked-off shot, whose median difference is
+        near zero, from calling its own sensor noise a scene change.
+        """
+        if diff < self.cut_floor:
+            return False
+        if self.cut_threshold is not None:
+            # Explicit absolute gate requested by the caller.
+            return diff >= self.cut_threshold
+        if self.cut_ratio <= 0:
+            return True
+        # A real cut is followed by a settling frame or two (the new shot's
+        # first inter-frame difference is often large as well: motion blur
+        # resolving, a fade completing, rolling shutter). Reporting those as
+        # further cuts would reset the stabilisers again mid-shot, which is the
+        # flicker this whole mechanism exists to prevent. One shot change is
+        # enough; suppress immediate repeats.
+        if self._since_cut < self.CUT_REFRACTORY:
+            return False
+        if len(self._diffs) < self.CUT_MIN_BASELINE:
+            # No baseline for THIS shot yet — the clip has just started, or a
+            # cut has just emptied the window. A ratio test is meaningless
+            # here, and the floor alone is a motion threshold rather than a cut
+            # threshold, so neither can be used. Fall back to a deliberately
+            # high absolute bar: high enough that ordinary movement in an
+            # unsettled new shot cannot reach it, low enough that a genuine
+            # second cut arriving before the baseline is rebuilt is still seen.
+            return diff >= self.CUT_COLD_START
+        baseline = float(np.median(np.fromiter(self._diffs, dtype=np.float64)))
+        return diff >= self.cut_ratio * max(baseline, 1e-4)
 
     def record_landmarks(self, track_id, kps, t):
         if kps is not None:

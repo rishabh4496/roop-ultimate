@@ -271,6 +271,14 @@ class TrackingMixin:
         # REID_MAX is the tighter bar for association WITHOUT spatial evidence.
         IOU_MIN, EMB_MAX, STALE = 0.2, (_TRACK_EMB_MAX or 0.7), 15
         REID_MAX = _TRACK_REID_MAX if _TRACK_REID_MAX > 0 else EMB_MAX
+        # Frame indices at which the picture cuts. Filled by the scan loop as it
+        # decodes (the cut is known BEFORE the frame's detection is consumed —
+        # see where observe_frame is called) and read by _consume, which runs in
+        # strict frame order behind the detection pool. `_shot_boundaries` is
+        # also published on self for the temporal pre-pass, which must not
+        # interpolate or coast across these.
+        shot_boundaries = set()
+        self._shot_boundaries = shot_boundaries
         print(f'[Track] {desc}: scanning frames (step={TRACK_STEP})...')
 
         def _predict_bbox(t, f_idx):
@@ -354,6 +362,32 @@ class TrackingMixin:
 
         def _consume(f_idx, faces):
             nonlocal active, retired, next_id, reid_refused, contam_seen, contam_reid
+            # ── Shot boundary ────────────────────────────────────────────────
+            # Everything below associates a detection to a track using
+            # POSITION: IoU against the track's velocity-projected box, which
+            # is the dominant term, with appearance only gating/ranking it.
+            # That model assumes the picture is continuous. Across a hard cut
+            # it is not — the next frame is a different shot, and whoever
+            # happens to stand where the previous shot's face was inherits the
+            # track, and with it that person's bound source. This is the
+            # "swapped face appears on the wrong person" failure directly.
+            #
+            # At a cut, every live track is retired. They are not deleted: the
+            # Re-ID path below searches retired tracks too, so the same person
+            # returning in the new shot is re-acquired on APPEARANCE (the
+            # tighter REID_MAX bar), which is the only evidence that still
+            # means anything across a boundary. What is refused is inheriting a
+            # track on position alone.
+            if f_idx in shot_boundaries:
+                if active:
+                    retired.extend(active)
+                    active = []
+                # Velocity across a cut is meaningless; a track re-acquired by
+                # Re-ID must not project the previous shot's motion into the
+                # new one.
+                for t in retired:
+                    t['vel'] = None
+                    t['prev_bbox'] = None
             # Retire tracks not seen for STALE frames so matching stays O(active).
             if active:
                 fresh = []
@@ -703,6 +737,25 @@ class TrackingMixin:
                 # clock read (~0.27us).
                 self._publish_live(frame)
 
+                # ── Hard-cut detection, BEFORE this frame is dispatched ──────
+                # Order matters and it did not before: this used to sit at the
+                # bottom of the loop, after _consume had already associated the
+                # frame's detections. A track could therefore claim a face
+                # across the boundary on position, and the cut was noticed only
+                # afterwards — where the sole action taken was gc.collect().
+                # Recording the boundary here means _consume sees it on the
+                # very frame it applies to, whether consumption happens inline
+                # or later out of the in-flight queue (it is keyed by frame
+                # index, not by when it runs).
+                if _scene_tracker is not None and isinstance(frame, np.ndarray):
+                    if _scene_tracker.observe_frame(frame, idx):
+                        shot_boundaries.add(idx)
+                        # Freeing the previous shot's cached frames here is the
+                        # behaviour this hook already had; it is kept, but it is
+                        # no longer the ONLY thing a cut does.
+                        import gc
+                        gc.collect()
+
                 # Skip frames to speed up detection and save memory
                 if idx > 0 and idx % TRACK_STEP != 0:
                     idx += 1
@@ -760,10 +813,6 @@ class TrackingMixin:
                             detection_mode=getattr(faces, 'mode', 'full'))
                     del faces
 
-                if _scene_tracker is not None and isinstance(frame, np.ndarray):
-                    if _scene_tracker.observe_frame(frame, idx):
-                        import gc
-                        gc.collect()
                 del frame
                 idx += 1
                 pbar.update(1)   # terminal bar
@@ -837,7 +886,7 @@ class TrackingMixin:
         # chain's identity is averaged over all its segments rather than over the
         # frames that broke it. See _stitch_tracks.
         _pre_stitch = len(tracks)
-        tracks, stitch_alias = self._stitch_tracks(tracks)
+        tracks, stitch_alias = self._stitch_tracks(tracks, cuts=shot_boundaries)
         if stitch_alias:
             per_frame = {f: [(c, stitch_alias.get(tid, tid)) for (c, tid) in lst]
                          for f, lst in per_frame.items()}
@@ -1001,7 +1050,7 @@ class TrackingMixin:
         return persons
 
     @staticmethod
-    def _stitch_tracks(tracks):
+    def _stitch_tracks(tracks, cuts=None):
         """Chain tracklets that are one person interrupted. Returns
         ``(tracks, alias)`` — the surviving tracks, and ``{old_id: new_id}`` for
         every fragment absorbed into one.
@@ -1020,9 +1069,22 @@ class TrackingMixin:
         Must run BEFORE the true-mean finalisation, so a chain's identity is
         averaged over all of its segments — which is most of the point, since a
         fragment's own mean is built entirely from the frames that broke it.
+
+        `cuts` is the set of frame indices where the picture cuts. A link whose
+        gap contains one is not a face that was briefly occluded — it is two
+        different shots — and the GEOMETRY this function links on is exactly
+        the evidence a cut destroys: "the face is near where the last one was,
+        at a similar size" describes any two people framed alike. Such a link
+        is therefore held to the appearance bar instead, which is the only
+        evidence that still carries across a boundary. Omitted (or empty) the
+        behaviour is identical to before.
         """
         if not _TRACK_STITCH or len(tracks) < 2:
             return tracks, {}
+        cuts = cuts or set()
+
+        def _cut_in(lo, hi):
+            return bool(cuts) and any(lo < c <= hi for c in cuts)
 
         def _centre(bb):
             bb = np.asarray(bb, np.float32)
@@ -1087,6 +1149,18 @@ class TrackingMixin:
                         and compute_cosine_distance(a['emb_mean'], b['emb_mean'])
                         > _TRACK_STITCH_EMB):
                     continue
+                # Across a shot change, geometry means nothing. _TRACK_STITCH_EMB
+                # is deliberately a loose veto (1.05, above the same-person
+                # profile band) because it exists to let a link through when
+                # appearance has collapsed — which is the wrong instinct here,
+                # where appearance is all there is. Require a real appearance
+                # match, on the same scale the tracker's own Re-ID uses.
+                if _cut_in(a_last, b_first):
+                    if a.get('emb_mean') is None or b.get('emb_mean') is None:
+                        continue
+                    if (compute_cosine_distance(a['emb_mean'], b['emb_mean'])
+                            > (_TRACK_REID_MAX if _TRACK_REID_MAX > 0 else 0.5)):
+                        continue
                 scored.append((norm, int(a.get('id'))))
 
             if not scored:
@@ -1652,9 +1726,21 @@ class TrackingMixin:
                         for f in v if f.get('_coasted'))
         n_refused = int(getattr(self, '_interp_refused', 0) or 0)
         n_coast_refused = int(getattr(self, '_coast_refused', 0) or 0)
+        n_refused_cut = int(getattr(self, '_interp_refused_cut', 0) or 0)
+        n_cuts = len(getattr(self, '_shot_boundaries', None) or ())
         print(f'[Temporal] {len(tracks or [])} track(s); faces on {n_frames} frames '
               f'({n_faces} total, {n_interp} gap-filled, gap limit {gap_max}'
               + (f', {n_refused} refused as unbridgeable' if n_refused else '') + ').')
+        # The shot structure the pre-pass found, and what it cost the gap-filler.
+        # Printed whenever any cut was detected: a gap-filled face is invented
+        # and then swapped unconditionally, so "how many of those did the shot
+        # structure stop" is the number that says this guard is doing anything.
+        if n_cuts:
+            print(f'[Shots] {n_cuts} hard cut(s) detected; tracks, gap-fill, '
+                  f'coasting and stitching are confined to their own shot'
+                  + (f' ({n_refused_cut} gap-filled face(s) refused for '
+                     f'crossing a cut)' if n_refused_cut else '')
+                  + '.')
         # Coupled kps+lm106 smoothing, per track. Printed unconditionally when
         # the feature is on, because "the alignment and the paste hull now move
         # together" is invisible in the output until it is wrong, and a filter
@@ -1781,7 +1867,7 @@ class TrackingMixin:
         f['_interpolated'] = True
         return f
 
-    def _coast_track_gaps(self, merged, idxs, tid, other_real):
+    def _coast_track_gaps(self, merged, idxs, tid, other_real, cuts=None):
         """Fill frames interpolation left empty with guarded Kalman predictions.
 
         Returns ``(filled, refused)``. `merged` is mutated in place.
@@ -1804,9 +1890,18 @@ class TrackingMixin:
         identity gate automatically (see `phantom-gapfill-swap`). The only thing
         standing between a prediction and a swap painted on the background is
         this guard set: MAX_COAST_FRAMES, the established-track requirement, the
-        on-screen test, and `_interp_collides` against every other track's REAL
-        detections. `ROOP_COAST_FRAMES=0` disables it entirely and restores the
-        pre-change output exactly.
+        on-screen test, `_interp_collides` against every other track's REAL
+        detections, and the SHOT BOUNDARY test below.
+        `ROOP_COAST_FRAMES=0` disables it entirely and restores the pre-change
+        output exactly.
+
+        `cuts` is the set of frame indices at which the picture cuts. A
+        constant-velocity prediction is a statement about where a face went
+        while nobody was looking, and that statement is void the moment the
+        shot changes: the new shot is not a continuation of the old one's
+        motion. Coasting past a cut is the longest-range way this pipeline can
+        invent a face in the wrong place — up to MAX_COAST_FRAMES of them —
+        so a hole is only ever coasted within the shot it belongs to.
         """
         from roop.tracker import FaceTracker
 
@@ -1824,6 +1919,14 @@ class TrackingMixin:
         if not holes:
             return 0, 0
         hole_set = set(holes)
+        cuts = cuts or set()
+
+        def _cut_between(a, b):
+            """A cut strictly inside (min, max] of the two frame indices."""
+            if not cuts:
+                return False
+            lo_, hi_ = (a, b) if a <= b else (b, a)
+            return any(lo_ < c <= hi_ for c in cuts)
 
         def _run(order):
             """One directional pass; returns {frame_index: coasted Face}."""
@@ -1858,6 +1961,19 @@ class TrackingMixin:
             a, b = forward.get(i), backward.get(i)
             if a is None and b is None:
                 continue
+            # Each direction's prediction is only admissible if no cut lies
+            # between the observation it was last measured from and this frame.
+            # The two passes are judged independently and by their own age, so
+            # a hole that one side can legitimately reach is still filled from
+            # that side after the other is refused.
+            if a is not None and _cut_between(i - int(a.get('_coast_age', 1)), i):
+                a = None
+                refused += 1
+            if b is not None and _cut_between(i, i + int(b.get('_coast_age', 1))):
+                b = None
+                refused += 1
+            if a is None and b is None:
+                continue
             if a is None:
                 best = b
             elif b is None:
@@ -1889,8 +2005,37 @@ class TrackingMixin:
         self._landmark_smooth_lines = []
         self._interp_refused = 0
         self._coast_refused = 0
+        # Gaps that were refused specifically because a shot boundary falls
+        # inside them, reported separately so the effect of the cut-aware guard
+        # is visible rather than folded into the geometric refusals.
+        self._interp_refused_cut = 0
         total_coasted = 0
         total_coasts = 0
+        # Frame indices where the picture cuts, recorded by the tracking scan.
+        # Empty when tracking ran without a scene tracker (stills, symbolic
+        # test frames), in which case every test below is a no-op and the
+        # behaviour is exactly as before.
+        cuts = getattr(self, '_shot_boundaries', None) or set()
+
+        def _spans_cut(lo, hi):
+            """True if a hard cut falls in the open interval (lo, hi].
+
+            A gap that contains a shot change must not be filled. Interpolation
+            invents a face on the straight line between two observations and
+            stamps it with the TRACK MEAN embedding, so it passes every
+            downstream identity gate by construction (see _interp_face) and is
+            swapped unconditionally. Across a cut the frames in between belong
+            to a different shot, where that person is very often not present at
+            all — so the invented face is painted onto whatever the new shot
+            contains. That is the "swapped face appears somewhere random"
+            report, and no geometric test can catch it: _bridgeable only asks
+            whether the straight line is plausible, and across a cut it usually
+            is.
+            """
+            if not cuts:
+                return False
+            return any(lo < c <= hi for c in cuts)
+
         # Every track's REAL (actually detected, non-interpolated) observation,
         # indexed by frame — used below so gap-fill never invents a face on top
         # of someone who was genuinely seen there that frame. See
@@ -1911,6 +2056,13 @@ class TrackingMixin:
                 if prev is not None and 1 < (i - prev) <= gap_max:
                     a, b = obs[prev], obs[i]
                     span = float(i - prev)
+                    # A gap containing a shot change is never bridged, however
+                    # plausible the geometry looks.
+                    if _spans_cut(prev, i):
+                        self._interp_refused += (i - prev - 1)
+                        self._interp_refused_cut += (i - prev - 1)
+                        prev = i
+                        continue
                     # Only bridge a gap the face could actually have crossed. A
                     # Re-ID reconnection carries no spatial constraint, so the two
                     # anchors can be on opposite sides of the frame — filling that
@@ -1935,7 +2087,7 @@ class TrackingMixin:
             # refused. Those are exactly the long occlusions the swap blinks off
             # through today. See roop/tracker.py for the guards.
             n_coasted, n_coast_refused = self._coast_track_gaps(
-                merged, idxs, t['id'], other_real)
+                merged, idxs, t['id'], other_real, cuts=cuts)
             total_coasted += n_coasted
             self._coast_refused += n_coast_refused
 
