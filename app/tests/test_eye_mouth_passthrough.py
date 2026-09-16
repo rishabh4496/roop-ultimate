@@ -15,6 +15,7 @@ for p in (str(REPO_ROOT), str(APP_DIR)):
         sys.path.insert(0, p)
 
 from roop.processors.frame import face_swapper
+from roop.procmgr_masking import MaskingMixin
 
 
 def create_mock_68_landmarks(
@@ -220,6 +221,46 @@ class EyeMouthPassthroughTest(unittest.TestCase):
 
         mouth_pixels = out[178:182, 125:131]
         self.assertGreater(float(mouth_pixels[..., 0].mean()), 100.0)
+
+    def test_active_pipeline_preserves_only_visible_teeth(self):
+        """Visible teeth survive the active 106-point full-frame compositor."""
+        face = {
+            'landmark_2d_106': np.zeros((106, 2), dtype=np.float32),
+        }
+        # A 20-point InsightFace mouth hull with a sufficiently open interior.
+        mouth = np.array([
+            [90, 178], [100, 170], [112, 166], [128, 165], [144, 166],
+            [156, 170], [166, 178], [156, 190], [144, 196], [128, 198],
+            [112, 196], [100, 190], [94, 184], [105, 178], [118, 173],
+            [128, 172], [138, 173], [151, 178], [138, 188],
+        ], dtype=np.float32)
+        face['landmark_2d_106'][52:71] = mouth
+        original = np.full((256, 256, 3), 100, dtype=np.uint8)
+        swapped = np.full((256, 256, 3), (40, 210, 40), dtype=np.uint8)
+        # Bright, low-chroma teeth inside the target mouth.  The surrounding
+        # target remains dark so the helper must not restore the whole identity.
+        original[174:184, 112:145] = (220, 220, 220)
+        result = MaskingMixin().preserve_visible_teeth(swapped, original, face)
+        self.assertGreater(float(result[177:181, 120:138, 0].mean()), 150.0)
+        self.assertGreater(float(result[40:80, 40:80, 1].mean()), 200.0,
+                           "Only the tooth region should change")
+
+    def test_active_pipeline_does_not_restore_a_closed_lip_highlight(self):
+        """A closed, thin mouth remains entirely owned by the swapped face."""
+        face = {
+            'landmark_2d_106': np.zeros((106, 2), dtype=np.float32),
+        }
+        mouth = np.array([
+            [100, 178], [110, 176], [128, 175], [146, 176], [156, 178],
+            [146, 181], [128, 182], [110, 181], [105, 179], [115, 178],
+            [128, 177], [141, 178], [146, 179], [128, 180], [115, 179],
+            [110, 179], [128, 179], [146, 179], [128, 180],
+        ], dtype=np.float32)
+        face['landmark_2d_106'][52:71] = mouth
+        original = np.full((256, 256, 3), 220, dtype=np.uint8)
+        swapped = np.full((256, 256, 3), (40, 210, 40), dtype=np.uint8)
+        result = MaskingMixin().preserve_visible_teeth(swapped, original, face)
+        np.testing.assert_array_equal(result, swapped)
 
 
 if __name__ == '__main__':

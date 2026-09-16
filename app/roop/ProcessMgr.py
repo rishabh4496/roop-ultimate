@@ -5630,6 +5630,20 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
             except Exception as e:
                 bar_write(f"[ProcessMgr] lip-sync failed: {e}")
 
+        # Restore only clearly visible target teeth after all mouth generators.
+        # Unlike restore_original_mouth this does not paste the target's lips or
+        # surrounding skin, so the swapped identity remains intact.  It prevents
+        # Restore Ultra / merger stages from collapsing an open smile into a
+        # toothless dark line, while explicit mouth and lip-sync controls retain
+        # ownership of the region.
+        _expression_mouth_active = bool(
+            _expression_plan is not None
+            and float(_expression_plan.get('mouth_strength', 0.0) or 0.0) > 0.0)
+        if (not self.options.restore_original_mouth and not lipsync_wins
+                and not _expression_mouth_active):
+            result = self.preserve_visible_teeth(result, plate, target_face,
+                                                  region=region)
+
         # ── Face-shape reshape (post-composite) ───────────────────────────────
         # Warp the target's jaw/chin/cheek silhouette + lower face toward the
         # source person's shape. Applies to ANY swapper: the identity swappers

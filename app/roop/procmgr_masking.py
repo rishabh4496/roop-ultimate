@@ -1480,6 +1480,112 @@ class MaskingMixin:
             mouth_mask_points = mouth_points - np.array([min_x, min_y], dtype=np.int32)
         return mouth_cutout, (min_x, min_y, max_x, max_y), mouth_mask_points
 
+    def preserve_visible_teeth(self, frame:Frame, original:Frame, face:Face,
+                               region=None, strength:float=0.90) -> Frame:
+        """Put only bright, visible teeth back over the swapped face.
+
+        The active React pipeline uses the InsightFace swap processor, while the
+        older frame processor owns the 68-point inner-mouth passthrough.  That
+        left the live path with no protection for a real smile: RestoreFormer
+        could turn a narrow row of teeth into a dark lip line.  Restoring the
+        whole mouth would also restore the target identity, so this deliberately
+        copies only low-chroma bright pixels inside the target's mouth hull.
+
+        The operation is conservative and geometry-gated.  It is a no-op when
+        dense landmarks are unavailable, when the mouth is closed/tiny, when no
+        plausible tooth pixels are present, or when an explicit mouth/lip-sync
+        stage owns the same region.
+        """
+        if (os.environ.get('ROOP_PRESERVE_TEETH', '1').strip().lower()
+                in ('0', 'off', 'false', 'no')):
+            return frame
+        if (frame is None or original is None or face is None
+                or getattr(frame, 'size', 0) == 0
+                or getattr(original, 'size', 0) == 0
+                or frame.ndim != 3 or original.ndim != 3
+                or frame.shape[:2] != original.shape[:2]):
+            return frame
+        try:
+            landmarks = getattr(face, 'landmark_2d_106', None)
+            if landmarks is None and isinstance(face, dict):
+                landmarks = face.get('landmark_2d_106')
+            if landmarks is None:
+                return frame
+            points = np.asarray(landmarks, dtype=np.float32).reshape(-1, 2)
+            if points.shape[0] < 71 or not np.isfinite(points[52:71]).all():
+                return frame
+
+            mouth_points = points[52:71]
+            min_x, min_y = np.floor(np.min(mouth_points, axis=0)).astype(int)
+            max_x, max_y = np.ceil(np.max(mouth_points, axis=0)).astype(int)
+            mouth_w = int(max_x - min_x)
+            mouth_h = int(max_y - min_y)
+            # A closed mouth has no useful interior after this conservative
+            # erosion.  The aspect gate also rejects small landmark glitches.
+            if mouth_w < 10 or mouth_h < max(5, int(round(mouth_w * 0.07))):
+                return frame
+
+            h, w = frame.shape[:2]
+            hull = cv2.convexHull(np.round(mouth_points).astype(np.int32))
+            mouth_mask = np.zeros((h, w), dtype=np.uint8)
+            cv2.fillConvexPoly(mouth_mask, hull, 255)
+
+            # Remove the lip rim.  Teeth are expected in the interior, not on
+            # the outer mouth contour where a lip highlight could be mistaken
+            # for a tooth.
+            erode_px = max(1, min(5, int(round(min(mouth_w, mouth_h) * 0.10))))
+            kernel = cv2.getStructuringElement(
+                cv2.MORPH_ELLIPSE, (erode_px * 2 + 1, erode_px * 2 + 1))
+            inner = cv2.erode(mouth_mask, kernel, iterations=1)
+            inner_pixels = inner > 0
+            if int(inner_pixels.sum()) < 6:
+                return frame
+
+            gray = cv2.cvtColor(original[:, :, :3], cv2.COLOR_BGR2GRAY)
+            hsv = cv2.cvtColor(original[:, :, :3], cv2.COLOR_BGR2HSV)
+            values = gray[inner_pixels].astype(np.float32)
+            p50 = float(np.percentile(values, 50))
+            # Relative thresholding handles dark scenes while the floor keeps
+            # pale skin highlights from turning into a false tooth region.
+            threshold = max(110.0, p50 + 26.0)
+            candidates = ((gray >= threshold) & (hsv[:, :, 1] <= 170)
+                          & inner_pixels).astype(np.uint8) * 255
+            candidates = cv2.morphologyEx(
+                candidates, cv2.MORPH_CLOSE,
+                cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3)))
+            candidate_pixels = candidates > 0
+            candidate_count = int(candidate_pixels.sum())
+            interior_count = int(inner_pixels.sum())
+            # Reject isolated noise and an all-white interior, the latter being
+            # a sign that the landmark hull is on skin rather than an open mouth.
+            if (candidate_count < 3
+                    or candidate_count > max(12, int(interior_count * 0.55))):
+                return frame
+
+            alpha = cv2.GaussianBlur(
+                candidates.astype(np.float32) / 255.0, (0, 0),
+                sigmaX=max(0.8, min(2.0, mouth_w / 35.0)))
+            alpha = np.minimum(alpha, inner.astype(np.float32) / 255.0)
+            alpha *= max(0.0, min(1.0, float(strength)))
+
+            if region is not None:
+                own = region.crop(0, 0, w, h)
+                if own is not None:
+                    own = np.asarray(own, dtype=np.float32)
+                    if own.shape[:2] != alpha.shape:
+                        own = cv2.resize(own, (w, h), interpolation=cv2.INTER_LINEAR)
+                    alpha *= np.clip(own, 0.0, 1.0)
+
+            if float(alpha.max()) <= 1e-4:
+                return frame
+            out = frame.astype(np.float32)
+            source = original.astype(np.float32)
+            a = alpha[:, :, None]
+            out = out * (1.0 - a) + source * a
+            return np.clip(out, 0.0, 255.0).astype(np.uint8)
+        except (cv2.error, TypeError, ValueError, FloatingPointError):
+            return frame
+
     def apply_eyes_area(self, frame, original, face, strength=1.0, feather=25.0,
                         size=1.0, rx=1.0, ry=1.0, yaw=0.0, pitch=0.0, region=None,
                         eye_strengths=None):
@@ -1642,7 +1748,8 @@ class MaskingMixin:
                 dilate_px = max(0, min(int(mouth_blend), box_width // 4))
                 if dilate_px > 0:
                     dilate_kernel = cv2.getStructuringElement(
-                        cv2.MORPH_ELLIPSE, (dilate_px * 2, dilate_px * 2))
+                        cv2.MORPH_ELLIPSE,
+                        (dilate_px * 2 + 1, dilate_px * 2 + 1))
                     mask = cv2.dilate(mask, dilate_kernel, iterations=1)
                     blur_k = dilate_px * 2 + 1
                 else:

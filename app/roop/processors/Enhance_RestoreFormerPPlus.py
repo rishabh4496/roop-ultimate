@@ -7,7 +7,8 @@ import roop.globals
 
 from roop.typing import Face, Frame, FaceSet
 from roop.utilities import resolve_relative_path
-from roop.processors.enhance_common import is_usable, sized, exclusive
+from roop.processors.enhance_common import (is_usable, looks_collapsed, sized,
+                                            exclusive)
 from roop.precision_policy import providers_for
 from roop import session_pool
 
@@ -106,8 +107,15 @@ class Enhance_RestoreFormerPPlus():
             return sized(fallback_bgr.astype(np.uint8), input_size)
 
         hwc = np.ascontiguousarray(result[::-1].transpose(1, 2, 0), dtype=np.float32)
-        np.maximum(hwc, -1.0, out=hwc)
-        res = cv2.convertScaleAbs(hwc, alpha=127.5, beta=127.5)
+        # RestoreFormer's contract is RGB in [-1, 1].  The previous lower-only
+        # clamp plus convertScaleAbs turned an out-of-range negative prediction
+        # into a bright positive pixel, which can create white teeth/skin blocks
+        # and makes a malformed FP16/TRT result look superficially valid.
+        np.clip(hwc, -1.0, 1.0, out=hwc)
+        res = np.rint((hwc + 1.0) * 127.5).clip(0.0, 255.0).astype(np.uint8)
+        if looks_collapsed(res, fallback_bgr):
+            print("[RestoreFormer++] collapsed output — using unenhanced frame")
+            return sized(fallback_bgr.astype(np.uint8), input_size)
         return sized(res, input_size)
 
 
