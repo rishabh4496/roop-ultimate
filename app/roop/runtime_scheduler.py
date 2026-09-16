@@ -333,6 +333,32 @@ class UnifiedRuntimeScheduler:
                 _swallowed("roop/runtime_scheduler.py:331", _degrade_error, "fallback continued")
                 pass
 
+    def record_progress(self, decoded: int = 0, processed: int = 0,
+                        encoded: int = 0) -> None:
+        """Publish frame counters for pipelines outside ``run()``.
+
+        The stabilized renderer has its own ordered chunk queues because each
+        block owns filter state.  It therefore cannot use ``run()``'s three
+        scheduler threads, but it still owns the same public runtime contract.
+        Keep these counters behind one lock so the reader, block workers, and
+        writer can report progress without exposing torn values or touching the
+        scheduler's internal metrics directly.
+        """
+        updates = {
+            "decoded": decoded,
+            "processed": processed,
+            "encoded": encoded,
+        }
+        with self._lock:
+            for name, amount in updates.items():
+                try:
+                    amount = max(0, int(amount))
+                except (TypeError, ValueError):
+                    amount = 0
+                if amount:
+                    setattr(self.metrics, name,
+                            int(getattr(self.metrics, name, 0)) + amount)
+
     def observe_queue(self, name: str, depth: int) -> None:
         with self._lock:
             self.metrics.observe_queue(name, depth)
@@ -511,8 +537,12 @@ class UnifiedRuntimeScheduler:
             return "GPU-bound"
         if cpu is not None and _number(cpu) >= 80.0:
             return "CPU-bound"
-        if self.metrics.max_queue_depths:
-            return "synchronization-bound"
+        # A partially occupied queue is normal overlap, not evidence of a
+        # synchronization bottleneck.  The old fallback labeled the production
+        # stabilized path "synchronization-bound" whenever its one-slot reader
+        # queue had a frame, even while the GPU was busy.  Only the explicit full
+        # or starved branches above can support a queue verdict; otherwise leave
+        # the result unknown until stage/utilization telemetry identifies one.
         return "unknown"
 
     def snapshot(self) -> dict:

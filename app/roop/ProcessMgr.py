@@ -2157,6 +2157,7 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
         # The scheduler depth is only a fallback for direct helper calls; a
         # profiled stabilized render sets this capacity to one at the geometry
         # decision point above.
+        _runtime_scheduler = getattr(self, '_runtime_scheduler', None)
         _scheduler_capacity = getattr(self._runtime_scheduler, 'queue_capacity', 2)
         _stab_queue_capacity = getattr(self, '_stab_chunk_queue_capacity', None)
         if _stab_queue_capacity is None:
@@ -2197,12 +2198,18 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                 if not roop.globals.processing:
                     break
                 chunk = []
+                _decode_started = time.perf_counter()
                 for fr in gen:
                     chunk.append(fr)
                     if len(chunk) >= CHUNK:
                         break
                 if not chunk:
                     break
+                if _runtime_scheduler is not None:
+                    _runtime_scheduler.record_progress(decoded=len(chunk))
+                    _runtime_scheduler.record_stage(
+                        'decode', time.perf_counter() - _decode_started,
+                        calls=len(chunk))
                 # Bounded for the same reason as the write queue: if the consumer
                 # stops (writer death, cancel), an unbounded put parks this thread
                 # holding a whole decoded chunk — ~1.1GB at 192 1080p frames.
@@ -2268,6 +2275,8 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                     if item is None:
                         break
                     cs, res, clen = item
+                    _encode_started = time.perf_counter()
+                    _encoded_count = 0
                     for gi in range(cs, cs + clen):
                         if not roop.globals.processing:
                             break
@@ -2281,6 +2290,9 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                                 self.videowriter.write_frame(fr)
                         if self.output_to_cam:
                             self.streamwriter.WriteToStream(fr)
+                        _encoded_count += 1
+                        if _runtime_scheduler is not None:
+                            _runtime_scheduler.record_progress(encoded=1)
                         # Real-time progress is reported directly by worker threads in _process_block
                         # as frames complete on GPU, avoiding bursty FPS and frozen terminal bars.
                         # Evict trailing frames outside the warm-up window so block-0 warm-up of the next
@@ -2308,6 +2320,10 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                             self._checkpoint_at_safe_output(gi)
                             pause_controller.wait_until_resumed(
                                 lambda: bool(roop.globals.processing))
+                    if _runtime_scheduler is not None and _encoded_count:
+                        _runtime_scheduler.record_stage(
+                            'encode', time.perf_counter() - _encode_started,
+                            calls=_encoded_count)
                     res.clear()
             except Exception as exc:
                 _writer_exc[0] = exc
@@ -2405,6 +2421,7 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                         except Exception as _degrade_error:
                             _swallowed("roop/ProcessMgr.py:3521", _degrade_error, "fallback continued")
                             pass
+                    _process_started = time.perf_counter()
                     for ci in range(ca, _base + b):
                         if not roop.globals.processing:
                             return
@@ -2441,6 +2458,11 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                         del out
                         if _progress_cb:
                             _progress_cb()
+                    if _runtime_scheduler is not None and b > a:
+                        _runtime_scheduler.record_progress(processed=b - a)
+                        _runtime_scheduler.record_stage(
+                            'process', time.perf_counter() - _process_started,
+                            calls=b - a)
 
                 # ── Work-stealing block dispatch ──────────────────────────────
                 # Per-frame cost varies a lot (face count/size, masking, close-up

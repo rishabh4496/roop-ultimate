@@ -135,6 +135,16 @@ class RuntimeSchedulerTests(unittest.TestCase):
         self.assertTrue(scheduler.frame_pipeline_allowed(stateful_stabilization=True))
         self.assertTrue(scheduler.frame_pipeline_allowed(stateful_stabilization=False))
 
+    def test_external_ordered_pipeline_can_publish_progress_counters(self):
+        scheduler = UnifiedRuntimeScheduler(
+            _hardware(12.0), _workload(),
+            RuntimeTuning(worker_count=4, queue_depth=3, in_flight_frames=4))
+        scheduler.record_progress(decoded=8, processed=6, encoded=4)
+        snapshot = scheduler.snapshot()
+        self.assertEqual(snapshot["decoded"], 8)
+        self.assertEqual(snapshot["processed"], 6)
+        self.assertEqual(snapshot["encoded"], 4)
+
 
 if __name__ == "__main__":
     unittest.main()

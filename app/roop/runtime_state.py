@@ -523,6 +523,15 @@ def snapshot(progress: Optional[Mapping[str, Any]] = None,
         errors.extend(str(item) for item in (sample.get("errors") or []) if item)
     if manager is not None:
         summary = getattr(manager, "_runtime_scheduler_summary", None) or {}
+        if not isinstance(summary, Mapping):
+            summary = {}
+        if not summary:
+            live_scheduler = getattr(manager, "_runtime_scheduler", None)
+            try:
+                summary = live_scheduler.snapshot() if live_scheduler is not None else {}
+            except Exception as _degrade_error:
+                _swallowed("roop/runtime_state.py:530", _degrade_error, "fallback continued")
+                summary = {}
         errors.extend(str(item) for item in (summary.get("errors") or []) if item)
 
     warning_entries = []
@@ -571,6 +580,14 @@ def snapshot(progress: Optional[Mapping[str, Any]] = None,
 
     runtime_summary = getattr(manager, "_runtime_summary", None) if manager is not None else None
     scheduler_summary = getattr(manager, "_runtime_scheduler_summary", None) if manager is not None else None
+    if not isinstance(scheduler_summary, Mapping) or not scheduler_summary:
+        live_scheduler = getattr(manager, "_runtime_scheduler", None) if manager is not None else None
+        try:
+            scheduler_summary = (live_scheduler.snapshot()
+                                 if live_scheduler is not None else None)
+        except Exception as _degrade_error:
+            _swallowed("roop/runtime_state.py:587", _degrade_error, "fallback continued")
+            scheduler_summary = None
     stage_profile = getattr(manager, "_stage_profile_report", None) if manager is not None else None
     if not isinstance(stage_profile, Mapping):
         stage_profile = {}

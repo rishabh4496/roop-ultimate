@@ -150,6 +150,38 @@ class RuntimeStateContractTest(unittest.TestCase):
         self.assertEqual(value["cpu"]["utilization_pct"], 0.0)
         self.assertEqual(value["precision"], runtime_state.NOT_APPLICABLE)
 
+    def test_live_scheduler_is_exposed_before_final_summary(self):
+        class Scheduler:
+            def snapshot(self):
+                return {"processed": 6, "encoded": 4,
+                        "stage_seconds": {"process": 1.5},
+                        "bottleneck": "GPU-bound", "errors": []}
+
+        class Manager:
+            _runtime_scheduler_summary = None
+            _runtime_scheduler = Scheduler()
+            num_threads = 4
+
+            def _runtime_queue_snapshot(self):
+                return {"input": 1, "output": 0}
+
+        with patch.object(runtime_state, "_manager", return_value=Manager()), \
+             patch.object(runtime_state, "_active_provider", return_value="cuda"), \
+             patch.object(runtime_state, "_resource_snapshot", return_value={
+                 "gpu": "NVIDIA Test GPU",
+                 "vram": {"used_gb": 2.0, "free_gb": 4.0, "total_gb": 6.0},
+                 "cpu": {"utilization_pct": 20.0, "logical_threads": 8},
+                 "memory": {"process_rss_gb": 1.0, "used_gb": 4.0,
+                            "available_gb": 12.0, "total_gb": 16.0,
+                            "utilization_pct": 25.0},
+             }):
+            value = runtime_state.snapshot(
+                progress={"processing": True, "desc": "Processing 6 / 24 (3.5 fps)"})
+
+        performance = value["sections"]["PERFORMANCE"]["values"]
+        self.assertEqual(performance["scheduler"]["processed"], 6)
+        self.assertEqual(performance["bottleneck"], "GPU-bound")
+
     def test_runtime_endpoint_is_registered(self):
         import api
         routes = [route for route in api.app.routes

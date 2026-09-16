@@ -109,6 +109,13 @@ class ClassifierReadsProcessMgrVocabulary(unittest.TestCase):
             _snapshot({"input": 1, "output": 1}))
         self.assertNotIn(verdict, ("decode-bound", "encode-bound"))
 
+    def test_partial_queue_occupancy_is_not_synchronization_evidence(self):
+        self.scheduler.metrics.decoded = 10
+        self.scheduler.metrics.observe_queue("input", 1)
+        verdict = self.scheduler.classify_bottleneck(
+            _snapshot({"input": 1, "output": 0}))
+        self.assertEqual(verdict, "unknown")
+
 
 class ProcessMgrSnapshotMatchesTheClassifier(unittest.TestCase):
     """Pin the actual key names, so the two sides cannot drift apart again."""
@@ -125,6 +132,13 @@ class ProcessMgrSnapshotMatchesTheClassifier(unittest.TestCase):
         depths = {"input": 0, "output": scheduler.queue_capacity}
         self.assertIsNotNone(_queue_depth(depths, ("encode", "output")))
         self.assertIsNotNone(_queue_depth(depths, ("decode", "input")))
+
+    def test_parallel_stabilization_publishes_scheduler_progress(self):
+        import inspect
+        from roop.ProcessMgr import ProcessMgr
+        src = inspect.getsource(ProcessMgr._run_stab_parallel)
+        self.assertIn("record_progress", src)
+        self.assertIn("record_stage", src)
 
 
 if __name__ == "__main__":
