@@ -77,6 +77,10 @@ module.exports = async (kernel) => {
             // killed the whole backend.
             ROOP_GRADIO_PORT: String(API_PORT + 1),
             ROOP_REACT_CLIENT: "1",
+            // Albumentations 1.4.15 is intentionally retained for compatibility.
+            // Disable only its online update notice so startup stays warning-free;
+            // this does not alter augmentation behavior or package versions.
+            NO_ALBUMENTATIONS_UPDATE: "1",
             // Full-frame temporal intake is a quality/workload invariant, not
             // a GPU performance profile.
             ROOP_TEMPORAL_STEP: "1"
