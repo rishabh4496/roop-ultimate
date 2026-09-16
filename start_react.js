@@ -11,9 +11,6 @@ module.exports = async (kernel) => {
         when: "{{!exists('react-ui/node_modules/vite/bin/vite.js')}}",
         method: "shell.run",
         params: {
-          env: {
-            PATH: "{{platform === 'win32' ? path.resolve(cwd, '../../bin/miniforge') + ';' + (envs.PATH || '') : path.resolve(cwd, '../../bin/miniforge') + ':' + (envs.PATH || '')}}"
-          },
           path: "react-ui",
           message: [
             "npm ci --no-audit --no-fund"
@@ -53,9 +50,6 @@ module.exports = async (kernel) => {
       {
         method: "shell.run",
         params: {
-          env: {
-            PATH: "{{platform === 'win32' ? path.resolve(cwd, '../../bin/miniforge') + ';' + (envs.PATH || '') : path.resolve(cwd, '../../bin/miniforge') + ':' + (envs.PATH || '')}}"
-          },
           path: "react-ui",
           message: [
             "npm run build"
