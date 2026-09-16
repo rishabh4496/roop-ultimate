@@ -363,7 +363,7 @@ class TrackingMixin:
                 if not allowed:
                     return _DetectionResult([], mode='stop')
                 if skip_detection:
-                    return _DetectionResult([], mode='skip')
+                    return _DetectionResult([], mode='coast')
                 with _prof('track_detect'), _gpu_guard(pooled=True):
                     with _prof('detection'):
                         return _run_detect(fr, crop_bbox, expected_count)
@@ -776,7 +776,8 @@ class TrackingMixin:
                     # decoded frames. Several existing unit tests feed symbolic
                     # frame tokens to this pre-pass and must retain their exact
                     # full-frame detector contract.
-                    detect_plan = temporal_tracker.plan(idx, frame.shape)
+                    detect_plan = temporal_tracker.plan(
+                        idx, frame.shape, force_full=(idx in shot_boundaries))
                     crop_bbox = (detect_plan.roi if detect_plan.mode == 'roi'
                                  else None)
                     skip_detection = detect_plan.mode == 'coast'
@@ -818,7 +819,7 @@ class TrackingMixin:
                         if not allowed:
                             break
                         if skip_detection:
-                            faces = _DetectionResult([], mode='skip')
+                            faces = _DetectionResult([], mode='coast')
                         else:
                             with _prof('track_detect'), _gpu_guard(pooled=analysis_pooled(), owner='analysis'):
                                 with _prof('detection'):
@@ -1757,6 +1758,14 @@ class TrackingMixin:
         n_coast_refused = int(getattr(self, '_coast_refused', 0) or 0)
         n_refused_cut = int(getattr(self, '_interp_refused_cut', 0) or 0)
         n_cuts = len(getattr(self, '_shot_boundaries', None) or ())
+        tracker_state = getattr(self, '_temporal_tracker', None)
+        schedule = dict(getattr(tracker_state, 'stats', {}) or {})
+        print(f'[Temporal] detector schedule: {schedule.get("full_detections", 0)} full, '
+              f'{schedule.get("roi_detections", 0)} ROI, '
+              f'{schedule.get("roi_fallback_full", 0)} ROI-fallback-full, '
+              f'{schedule.get("coast_frames", 0)} coast '
+              f'(ROI cadence {getattr(tracker_state, "roi_interval", 1)}).',
+              flush=True)
         print(f'[Temporal] {len(tracks or [])} track(s); faces on {n_frames} frames '
               f'({n_faces} total, {n_interp} gap-filled, gap limit {gap_max}'
               + (f', {n_refused} refused as unbridgeable' if n_refused else '') + ').')

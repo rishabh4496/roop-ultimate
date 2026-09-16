@@ -153,6 +153,31 @@ class PersistentTrackScenarios(unittest.TestCase):
 
 class DetectionPolicyTest(unittest.TestCase):
 
+    def test_pooled_cadence_coasts_between_roi_observations(self):
+        tracker = TemporalFaceTracker(full_interval=8, roi_interval=2)
+        planned = []
+        for frame in range(16):
+            mode = tracker.plan(frame, (480, 640, 3)).mode
+            planned.append(mode)
+            observed = [_face(120 + frame * 2)] if mode in ("full", "roi") else []
+            _step(tracker, frame, observed, mode)
+
+        self.assertEqual(
+            planned,
+            ["full", "coast", "roi", "coast", "roi", "coast", "roi", "coast",
+             "full", "coast", "roi", "coast", "roi", "coast", "roi", "coast"])
+        self.assertEqual(tracker.stats["full_detections"], 2)
+        self.assertEqual(tracker.stats["roi_detections"], 6)
+        self.assertEqual(tracker.stats["coast_frames"], 8)
+        self.assertEqual(len(tracker.tracks), 1)
+
+    def test_scene_cut_forces_a_real_observation(self):
+        tracker = TemporalFaceTracker(full_interval=8, roi_interval=2)
+        _step(tracker, 0, [_face(200)], "full")
+        self.assertEqual(tracker.plan(1, (480, 640, 3)).mode, "coast")
+        self.assertEqual(
+            tracker.plan(2, (480, 640, 3), force_full=True).mode, "full")
+
     def test_stable_roi_periodic_recovery_and_lost_full_fallback(self):
         tracker = TemporalFaceTracker(full_interval=4, max_misses=1)
         self.assertEqual(tracker.plan(0, (480, 640, 3)).mode, "full")

@@ -192,7 +192,7 @@ class TemporalFaceTracker:
 
     def __init__(self, full_interval=8, stable_hits=2, max_misses=3,
                  reid_age=45, stable_pad=0.55, uncertain_pad=1.35,
-                 min_roi=160):
+                 min_roi=160, roi_interval=1):
         self.full_interval = max(1, int(full_interval))
         self.stable_hits = max(1, int(stable_hits))
         self.max_misses = max(1, int(max_misses))
@@ -200,10 +200,20 @@ class TemporalFaceTracker:
         self.stable_pad = max(0.1, float(stable_pad))
         self.uncertain_pad = max(self.stable_pad, float(uncertain_pad))
         self.min_roi = max(32, int(min_roi))
+        # ROI detection uses the same detector canvas as a full-frame call. On
+        # pooled desktop hardware, doing it on every decoded frame leaves the
+        # GPU fed by a stream of tiny auxiliary model calls and still pays the
+        # Python/decode/queue overhead for every frame. A two-frame cadence lets
+        # the existing temporal interpolator cover the one-frame gaps without
+        # changing the configured full-frame recovery cadence. The laptop keeps
+        # the legacy cadence by default because its single-context path is
+        # already memory constrained.
+        self.roi_interval = max(1, int(roi_interval))
         self.tracks = []
         self._next_id = 0
         self._last_full_frame = -self.full_interval
         self._full_pending_frame = None
+        self._last_requested_frame = -self.roi_interval
         self._lost_recovery_wait = False
         self._last_plan = None
         self.events = []
@@ -212,6 +222,7 @@ class TemporalFaceTracker:
             "full_detections": 0,
             "roi_detections": 0,
             "roi_fallback_full": 0,
+            "coast_frames": 0,
             "matched": 0,
             "new_tracks": 0,
             "lost_tracks": 0,
@@ -232,6 +243,21 @@ class TemporalFaceTracker:
             except (TypeError, ValueError):
                 return default
 
+        roi_interval = os.environ.get("ROOP_TEMPORAL_ROI_INTERVAL", "auto")
+        if str(roi_interval).strip().lower() in ("", "auto"):
+            # session_pool already owns the VRAM-tier policy used by the
+            # detector. Reuse it instead of probing CUDA here, and never make
+            # the <7GB profile allocate an additional context.
+            try:
+                from roop import session_pool
+                roi_interval = 2 if session_pool.detmask_pooling_enabled() else 1
+            except Exception:
+                roi_interval = 1
+        try:
+            roi_interval = max(1, int(roi_interval))
+        except (TypeError, ValueError):
+            roi_interval = 1
+
         return cls(
             full_interval=_int("ROOP_TEMPORAL_FULL_DETECT_INTERVAL", 8),
             stable_hits=_int("ROOP_TEMPORAL_STABLE_HITS", 2),
@@ -240,6 +266,7 @@ class TemporalFaceTracker:
             stable_pad=_float("ROOP_TEMPORAL_STABLE_ROI_PAD", 0.55),
             uncertain_pad=_float("ROOP_TEMPORAL_UNCERTAIN_ROI_PAD", 1.35),
             min_roi=_int("ROOP_TEMPORAL_MIN_ROI", 160),
+            roi_interval=roi_interval,
         )
 
     @staticmethod
@@ -259,8 +286,13 @@ class TemporalFaceTracker:
             track.predicted_landmarks = predicted
         return box
 
-    def plan(self, frame_index, frame_shape):
-        """Choose full-frame recovery or a confidence-sized union ROI."""
+    def plan(self, frame_index, frame_shape, force_full=False):
+        """Choose full-frame recovery, a union ROI, or a coast frame.
+
+        ``force_full`` is used for a detected shot boundary. A boundary must
+        have a real observation on that frame, otherwise gap filling could
+        bridge the old and new shots even though the cut was already known.
+        """
         frame_index = int(frame_index)
         h, w = int(frame_shape[0]), int(frame_shape[1])
         live = [t for t in self.tracks
@@ -268,8 +300,13 @@ class TemporalFaceTracker:
         def _reserve_full(frame):
             self._last_full_frame = frame
             self._full_pending_frame = frame
+            self._last_requested_frame = frame
 
-        if not self.tracks:
+        if force_full:
+            plan = DetectionPlan("full", reason="scene_cut",
+                                 track_ids=tuple(t.track_id for t in live))
+            _reserve_full(frame_index)
+        elif not self.tracks:
             if self._last_full_frame < 0 or frame_index - self._last_full_frame >= self.full_interval:
                 plan = DetectionPlan("full", reason="initialization")
                 # Reserve the seed/recovery while detector-pool futures are in
@@ -296,6 +333,9 @@ class TemporalFaceTracker:
             _reserve_full(frame_index)
         elif not live:
             plan = DetectionPlan("coast", reason="no_live_tracks")
+        elif frame_index - self._last_requested_frame < self.roi_interval:
+            plan = DetectionPlan("coast", reason="roi_cadence",
+                                 track_ids=tuple(t.track_id for t in live))
         else:
             boxes = []
             uncertain = False
@@ -327,6 +367,7 @@ class TemporalFaceTracker:
             plan = DetectionPlan("roi", tuple(float(v) for v in roi),
                                  reason="uncertain_roi" if uncertain else "stable_roi",
                                  track_ids=tuple(ids))
+            self._last_requested_frame = frame_index
         self._last_plan = plan
         return plan
 
@@ -514,13 +555,18 @@ class TemporalFaceTracker:
             self.stats["full_detections"] += 1
             self._last_full_frame = int(frame_index)
             self._full_pending_frame = None
+            self._last_requested_frame = int(frame_index)
         elif detection_mode == "roi":
             self.stats["roi_detections"] += 1
+            self._last_requested_frame = int(frame_index)
         elif detection_mode == "roi_fallback_full":
             self.stats["roi_fallback_full"] += 1
             self.stats["full_detections"] += 1
             self._last_full_frame = int(frame_index)
             self._full_pending_frame = None
+            self._last_requested_frame = int(frame_index)
+        elif detection_mode in ("coast", "skip"):
+            self.stats["coast_frames"] += 1
 
         live = [t for t in self.tracks
                 if t.status != "lost" or int(frame_index) - t.last_frame_index <= self.reid_age]
