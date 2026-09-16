@@ -92,6 +92,9 @@ class LauncherServesTheBuild(unittest.TestCase):
         self.ui_steps = [s for s in self.run_steps
                          if s.get('method') == 'shell.run'
                          and s.get('params', {}).get('path') == 'react-ui']
+        self.build_steps = [s for s in self.ui_steps
+                            if 'npm run build' in ' '.join(
+                                s.get('params', {}).get('message', []))]
         self.backend_steps = [s for s in self.run_steps
                               if s.get('method') == 'shell.run'
                               and s.get('params', {}).get('path') == 'app']
@@ -102,16 +105,16 @@ class LauncherServesTheBuild(unittest.TestCase):
         A `preview`/`dev` step here would reintroduce the second server whose
         startup failure mode is the bug this file documents.
         """
-        self.assertEqual(len(self.ui_steps), 1,
-                         'expected exactly one react-ui step (the build)')
-        message = ' ; '.join(self.ui_steps[0]['params']['message'])
+        self.assertEqual(len(self.build_steps), 1,
+                         'expected exactly one react-ui build step')
+        message = ' ; '.join(self.build_steps[0]['params']['message'])
         self.assertIn('npm run build', message)
         self.assertNotIn('npm run preview', message)
         self.assertNotIn('npm run dev', message)
 
     def test_the_build_runs_before_the_backend(self):
         """The backend picks up dist/ at import time, so it must exist first."""
-        ui_index = self.run_steps.index(self.ui_steps[0])
+        ui_index = self.run_steps.index(self.build_steps[0])
         backend_index = self.run_steps.index(self.backend_steps[0])
         self.assertLess(ui_index, backend_index)
 
@@ -121,9 +124,9 @@ class LauncherServesTheBuild(unittest.TestCase):
         A silent build failure would therefore present as a blank or 404 page
         rather than as the build error it actually is.
         """
-        events = [o.get('event') for o in self.ui_steps[0]['params'].get('on', [])]
+        events = [o.get('event') for o in self.build_steps[0]['params'].get('on', [])]
         self.assertTrue(events, 'the build step watches for nothing')
-        breaking = [o for o in self.ui_steps[0]['params']['on'] if o.get('break')]
+        breaking = [o for o in self.build_steps[0]['params']['on'] if o.get('break')]
         self.assertTrue(breaking, 'a failing build does not stop the launch')
 
     def test_only_the_backend_publishes_a_url(self):
@@ -197,14 +200,24 @@ class InstallAndUpdateProduceABuild(unittest.TestCase):
             return handle.read()
 
     def test_install_builds_the_ui(self):
-        self.assertIn('npm run build', self._read('install.js'))
+        install = self._read('install.js')
+        self.assertIn('npm ci --no-audit --no-fund', install)
+        self.assertIn('npm run build', install)
+        self.assertIn('.pinokio-install-complete.json', install)
+        self.assertIn('path.resolve(cwd, \'../../bin/miniforge\')', install)
 
     def test_update_rebuilds_the_ui(self):
-        self.assertIn('npm run build', self._read('update.js'))
+        update = self._read('update.js')
+        self.assertIn('npm ci --no-audit --no-fund', update)
+        self.assertIn('npm run build', update)
+        self.assertIn('.pinokio-install-complete.json', update)
+        self.assertIn('path.resolve(cwd, \'../../bin/miniforge\')', update)
 
     def test_reset_removes_the_build(self):
         """Otherwise a "reset" app still boots the previous UI."""
-        self.assertIn('react-ui/dist', self._read('reset.js'))
+        reset = self._read('reset.js')
+        self.assertIn('react-ui/dist', reset)
+        self.assertIn('.pinokio-install-complete.json', reset)
 
 
 if __name__ == '__main__':

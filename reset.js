@@ -20,6 +20,12 @@ module.exports = {
       params: {
         path: "react-ui/dist"
       }
+    },
+    {
+      method: "fs.rm",
+      params: {
+        path: ".pinokio-install-complete.json"
+      }
     }
   ]
 }

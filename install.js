@@ -26,9 +26,19 @@ module.exports = {
     {
       method: "shell.run",
       params: {
+        // Pinokio's npm.cmd can run node through an absolute wrapper path,
+        // while npm run scripts look up `node` through PATH. Add the bundled
+        // Node directory explicitly so Vite can start on a clean shell and on
+        // machines whose global PATH does not contain Pinokio's Node runtime.
+        env: {
+          PATH: "{{platform === 'win32' ? path.resolve(cwd, '../../bin/miniforge') + ';' + (envs.PATH || '') : path.resolve(cwd, '../../bin/miniforge') + ':' + (envs.PATH || '')}}"
+        },
         path: "react-ui",
         message: [
-          "npm install",
+          // package-lock.json is shipped with the project. npm ci makes the
+          // frontend install deterministic on a fresh machine and installs
+          // the platform-specific optional build binary selected by npm.
+          "npm ci --no-audit --no-fund",
           "npm run build"
         ]
       }
@@ -54,6 +64,21 @@ module.exports = {
         message: [
           "uv pip install --no-deps sam2 hydra-core omegaconf iopath portalocker antlr4-python3-runtime==4.9.3"
         ]
+      }
+    },
+    // app/env alone is not proof that installation completed. Pinokio may
+    // leave it behind when a dependency download or the UI build fails. Write
+    // the marker only after every required install step above has succeeded so
+    // pinokio.js never offers Start for a partial install.
+    {
+      method: "fs.write",
+      params: {
+        path: ".pinokio-install-complete.json",
+        json: {
+          schema: 1,
+          react_build: "react-ui/dist/index.html",
+          python_environment: "app/env"
+        }
       }
     }
   ]

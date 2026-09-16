@@ -4,6 +4,22 @@ module.exports = async (kernel) => {
   return {
     daemon: true,
     run: [
+      // A user can invoke this script directly, or an earlier install can
+      // have stopped after creating app/env. Repair the frontend dependency
+      // directory before building so that path does not produce a blank UI.
+      {
+        when: "{{!exists('react-ui/node_modules/vite/bin/vite.js')}}",
+        method: "shell.run",
+        params: {
+          env: {
+            PATH: "{{platform === 'win32' ? path.resolve(cwd, '../../bin/miniforge') + ';' + (envs.PATH || '') : path.resolve(cwd, '../../bin/miniforge') + ':' + (envs.PATH || '')}}"
+          },
+          path: "react-ui",
+          message: [
+            "npm ci --no-audit --no-fund"
+          ]
+        }
+      },
       // Build the React UI before the backend starts.
       //
       // The output is plain static files that app/api.py serves itself (see the
@@ -22,6 +38,9 @@ module.exports = async (kernel) => {
       {
         method: "shell.run",
         params: {
+          env: {
+            PATH: "{{platform === 'win32' ? path.resolve(cwd, '../../bin/miniforge') + ';' + (envs.PATH || '') : path.resolve(cwd, '../../bin/miniforge') + ':' + (envs.PATH || '')}}"
+          },
           path: "react-ui",
           message: [
             "npm run build"

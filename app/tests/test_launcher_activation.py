@@ -91,6 +91,21 @@ class LauncherActivationTests(unittest.TestCase):
         self.assertIn("react-ui", _read("install.js"))
         self.assertIn("react-ui", _read("reset.js"))
 
+    def test_partial_install_cannot_be_marked_as_ready(self):
+        menu = _read("pinokio.js")
+        self.assertIn('.pinokio-install-complete.json', menu)
+        self.assertIn('react-ui/dist/index.html', menu)
+
+    def test_frontend_install_is_lockfile_driven_and_repairable(self):
+        install = _read("install.js")
+        update = _read("update.js")
+        start = _read("start_react.js")
+        self.assertIn('npm ci --no-audit --no-fund', install)
+        self.assertIn('npm ci --no-audit --no-fund', update)
+        self.assertIn('!exists(\'react-ui/node_modules/vite/bin/vite.js\')', start)
+        self.assertIn('fs.write', install)
+        self.assertIn('fs.rm', _read("reset.js"))
+
     def test_the_url_capture_pattern_is_intact(self):
         """The project's Pinokio contract: capture the URL, set it via local.set."""
         text = _read("start_react.js")

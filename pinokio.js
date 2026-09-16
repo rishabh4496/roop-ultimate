@@ -5,7 +5,13 @@ module.exports = {
   description: "Face swapping for images and video, with a React UI. Independent project; AGPL-3.0. Private — access is by invitation.",
   icon: "icon.png",
   menu: async (kernel, info) => {
-    let installed = info.exists("app/env")
+    // app/env is created before the later Python, model-support, and React
+    // build steps finish. Treating it as the install sentinel exposed Start
+    // after a partial install, which opened an empty/missing React client on a
+    // fresh machine. The marker is written only by the final install/update
+    // step, and the dist check catches manual deletion of the generated UI.
+    let installed = info.exists(".pinokio-install-complete.json")
+      && info.exists("react-ui/dist/index.html")
     // start.js is a thin re-export of start_react.js, so EITHER path can be
     // the one actually running. Resolve which, and use that same path for both
     // info.local() and the Terminal href — a Terminal button pointing at the
