@@ -470,14 +470,16 @@ def _detect_face_in_roi(frame: np.ndarray, last_bbox: np.ndarray):
         scale = 1.0
 
     try:
-        from roop.face_util import lease_face_analyser
-        with lease_face_analyser() as fa:
-            faces = fa.get(crop)
+        # Hybrid detector mode deliberately removes buffalo_l's det_model after
+        # startup because the selected alternate detector owns detection.  Calling
+        # fa.get() here therefore reaches None.detect(); use the public entry point
+        # so SCRFD and all hybrid engines follow the same configured path.
+        faces = get_all_faces(crop) or []
         if not faces:
             return None
         face = min(faces, key=lambda f: f.bbox[0])
     except Exception as _degrade_error:
-        _swallowed("roop/ProcessMgr.py:463", _degrade_error, "fallback continued")
+        _swallowed("roop/ProcessMgr.py:478", _degrade_error, "fallback continued")
         return None
 
     # Remap all 2-D coordinates from (scaled) crop space to full-frame space

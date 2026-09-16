@@ -7,7 +7,10 @@ video render or in UI guidance.
 
 import ast
 import os
+import threading
 import unittest
+
+import numpy as np
 
 
 APP = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -119,6 +122,68 @@ class AuditRegressionTests(unittest.TestCase):
             self.assertEqual(len(face_util.FACE_ANALYSER_POOL), 0)
         except ImportError:
             pass
+
+    def test_roi_retry_uses_the_configured_detector_entrypoint(self):
+        source = _read('roop', 'ProcessMgr.py')
+        start = source.index('def _detect_face_in_roi')
+        end = source.index('\n\ndef ', start)
+        body = source[start:end]
+        self.assertIn('faces = get_all_faces(crop) or []', body)
+        self.assertNotIn('fa.get(crop)', body)
+
+    def test_hybrid_detector_rejects_or_clips_invalid_roi_geometry(self):
+        try:
+            from roop import face_util
+        except ImportError:
+            self.skipTest('runtime dependencies are not installed')
+
+        class _AuxModel:
+            def get(self, frame, face):
+                face.embedding = np.ones(4, dtype=np.float32)
+
+        class _Analyser:
+            models = {'recognition': _AuxModel()}
+
+        frame = np.zeros((720, 1280, 3), dtype=np.uint8)
+        bboxes = np.array([
+            [-20.0, -30.0, 1305.0, 760.0, 0.95],
+            [500.0, 500.0, 499.0, 510.0, 0.90],
+            [0.0, 0.0, np.nan, 10.0, 0.85],
+        ], dtype=np.float32)
+        kpss = np.array([
+            [[-10.0, -10.0], [1300.0, 20.0], [640.0, 360.0],
+             [100.0, 730.0], [1200.0, 730.0]],
+            [[500.0, 500.0], [500.0, 500.0], [500.0, 500.0],
+             [500.0, 500.0], [500.0, 500.0]],
+            [[0.0, 0.0], [1.0, 1.0], [2.0, 2.0], [3.0, 3.0], [4.0, 4.0]],
+        ], dtype=np.float32)
+
+        faces = face_util._hybrid_detector_faces(
+            frame, _Analyser(), bboxes, kpss, aux=True)
+
+        self.assertEqual(len(faces), 1)
+        self.assertTrue(np.isfinite(faces[0].bbox).all())
+        self.assertTrue((faces[0].bbox >= 0).all())
+        self.assertLessEqual(float(faces[0].bbox[2]), frame.shape[1])
+        self.assertLessEqual(float(faces[0].bbox[3]), frame.shape[0])
+        self.assertTrue((faces[0].kps[:, 0] < frame.shape[1]).all())
+        self.assertTrue((faces[0].kps[:, 1] < frame.shape[0]).all())
+
+    def test_clahe_state_is_not_shared_between_detection_workers(self):
+        try:
+            from roop import face_util
+        except ImportError:
+            self.skipTest('runtime dependencies are not installed')
+
+        owner = face_util._clahe_for_current_worker()
+        other = []
+        worker = threading.Thread(
+            target=lambda: other.append(face_util._clahe_for_current_worker()))
+        worker.start()
+        worker.join()
+
+        self.assertEqual(len(other), 1)
+        self.assertIsNot(owner, other[0])
 
 
 if __name__ == '__main__':

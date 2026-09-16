@@ -590,9 +590,42 @@ def _hybrid_detector_faces(frame, fa, bboxes, kpss, aux=True):
     from insightface.app.common import Face
     if bboxes.shape[0] == 0:
         return []
+    frame_h, frame_w = frame.shape[:2]
     ret = []
     for i in range(bboxes.shape[0]):
-        face = Face(bbox=bboxes[i, 0:4], kps=kpss[i], det_score=bboxes[i, 4])
+        # Alternate detectors can return a box/keypoint just beyond the source
+        # canvas, especially for a clipped close-up. Passing that geometry to
+        # buffalo_l's affine/crop helpers can make OpenCV construct an invalid
+        # Mat ROI. Clamp to the actual frame before any auxiliary model sees it;
+        # a partially visible face is still useful, while an empty/degenerate
+        # detection is not.
+        try:
+            raw_box = np.asarray(bboxes[i], dtype=np.float32).reshape(-1)
+            if raw_box.size < 5 or not np.isfinite(raw_box[:5]).all():
+                continue
+            x1, y1, x2, y2 = [float(v) for v in raw_box[:4]]
+            x1 = min(max(x1, 0.0), max(0.0, float(frame_w - 1)))
+            y1 = min(max(y1, 0.0), max(0.0, float(frame_h - 1)))
+            x2 = min(max(x2, 0.0), float(frame_w))
+            y2 = min(max(y2, 0.0), float(frame_h))
+            if x2 <= x1 or y2 <= y1:
+                continue
+
+            kps = None
+            if kpss is not None:
+                kps = np.asarray(kpss[i], dtype=np.float32).reshape(-1, 2)
+                if not np.isfinite(kps).all():
+                    continue
+                kps = kps.copy()
+                kps[:, 0] = np.clip(kps[:, 0], 0.0, max(0.0, float(frame_w - 1)))
+                kps[:, 1] = np.clip(kps[:, 1], 0.0, max(0.0, float(frame_h - 1)))
+            if aux and (kps is None or kps.shape != (5, 2)):
+                continue
+        except (TypeError, ValueError, IndexError, FloatingPointError):
+            continue
+
+        face = Face(bbox=np.array([x1, y1, x2, y2], dtype=np.float32),
+                    kps=kps, det_score=float(raw_box[4]))
         if aux:
             for taskname, model in fa.models.items():
                 if taskname == 'detection':
@@ -769,9 +802,19 @@ def _rescue_padded(frame: Frame):
     return None
 
 
-# Reused across calls: cv2.createCLAHE is cheap to build but this rescue is
-# common enough on dark/backlit footage that a fresh one per call is wasted work.
-_CLAHE = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
+# CLAHE keeps scratch state while applying a frame. The rescue runs from the
+# parallel detection workers, so one shared OpenCV object can race and corrupt
+# the internal ROI it is processing. Keep one tiny instance per worker instead
+# of serialising the rescue or constructing one for every frame.
+_CLAHE_LOCAL = threading.local()
+
+
+def _clahe_for_current_worker():
+    clahe = getattr(_CLAHE_LOCAL, 'instance', None)
+    if clahe is None:
+        clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
+        _CLAHE_LOCAL.instance = clahe
+    return clahe
 
 
 def _rescue_clahe(frame: Frame):
@@ -789,12 +832,13 @@ def _rescue_clahe(frame: Frame):
     try:
         lab = cv2.cvtColor(frame, cv2.COLOR_BGR2LAB)
         l, a, b = cv2.split(lab)
-        eq = cv2.cvtColor(cv2.merge((_CLAHE.apply(l), a, b)), cv2.COLOR_LAB2BGR)
+        eq = cv2.cvtColor(cv2.merge((_clahe_for_current_worker().apply(l), a, b)),
+                          cv2.COLOR_LAB2BGR)
         faces = _detect_faces_raw(eq)
         if faces:
             return faces
     except Exception as _degrade_error:
-        _swallowed("roop/face_util.py:774", _degrade_error, "fallback continued")
+        _swallowed("roop/face_util.py:790", _degrade_error, "fallback continued")
         pass
     return None
 
