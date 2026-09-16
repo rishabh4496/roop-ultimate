@@ -1,10 +1,12 @@
 """Regression coverage for startup and diagnostic fallbacks seen in live logs."""
 
+import json
 import os
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import numpy as np
@@ -101,6 +103,31 @@ class StartupFallbackHardeningTest(unittest.TestCase):
                 self.assertEqual(response.body and b"initializing" in response.body, True)
         finally:
             roop_globals.CFG = previous
+
+    def test_swap_refuses_a_missing_target_before_creating_a_checkpoint(self):
+        import api
+        import roop.globals as roop_globals
+
+        previous_targets = list(api.list_files_process)
+        previous_sources = list(roop_globals.INPUT_FACESETS)
+        api.list_files_process.clear()
+        roop_globals.INPUT_FACESETS[:] = [object()]
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                missing = os.path.join(tmp, "deleted-upload.mp4")
+                api.list_files_process.append(SimpleNamespace(filename=missing))
+                with patch.object(api, "_configuration_ready", return_value=True), \
+                        patch.object(api, "_create_processing_project") as checkpoint:
+                    response = api.trigger_swap({"target_index": 0})
+
+                self.assertEqual(response.status_code, 409)
+                body = json.loads(response.body.decode("utf-8"))
+                self.assertTrue(body.get("target_unavailable"))
+                self.assertEqual(body["targets"][0]["path"], missing)
+                checkpoint.assert_not_called()
+        finally:
+            api.list_files_process[:] = previous_targets
+            roop_globals.INPUT_FACESETS[:] = previous_sources
 
     def test_invalid_image_reports_the_actual_decode_cause(self):
         from roop.capturer import get_image_frame

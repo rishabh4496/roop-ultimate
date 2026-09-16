@@ -402,6 +402,40 @@ def _create_processing_project(payload, job_id=None):
     )
 
 
+def _unavailable_target_entries(payload=None):
+    """Return target entries that the requested run cannot open.
+
+    Target metadata can outlive an uploaded file: a completed run keeps the
+    selected target in the in-memory UI state while temporary upload cleanup
+    removes the media.  Letting that stale entry reach ``file_identity`` turns
+    a simple re-add operation into a misleading recoverability failure.  The
+    worker also accepts either one explicit target or the complete target list,
+    so validate the same effective set here.
+    """
+    payload = payload or {}
+    raw_index = payload.get("target_index")
+    indices = range(len(list_files_process))
+    if raw_index is not None:
+        try:
+            index = int(raw_index)
+        except (TypeError, ValueError):
+            index = -1
+        if 0 <= index < len(list_files_process):
+            indices = (index,)
+
+    missing = []
+    for index in indices:
+        entry = list_files_process[index]
+        path = str(getattr(entry, "filename", "") or "")
+        if not os.path.isfile(path):
+            missing.append({
+                "index": int(index),
+                "name": os.path.basename(path),
+                "path": path,
+            })
+    return missing
+
+
 def _checkpoint_segment(project_id, writer=None, frame_idx=None, manager=None):
     if not project_id:
         return
@@ -3006,6 +3040,14 @@ def trigger_swap(payload: dict = Body(...)):
         return JSONResponse(status_code=400, content={"message": "no target media"})
     if len(roop_globals.INPUT_FACESETS) < 1:
         return JSONResponse(status_code=400, content={"message": "no source faces"})
+
+    unavailable = _unavailable_target_entries(payload)
+    if unavailable:
+        return JSONResponse(status_code=409, content={
+            "message": "target media is no longer available; re-add the file before swapping",
+            "target_unavailable": True,
+            "targets": unavailable,
+        })
 
     # Persist the complete input/settings identity before starting the worker.
     # A process exit immediately after this response still leaves a project the
