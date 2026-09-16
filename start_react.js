@@ -87,7 +87,8 @@ module.exports = async (kernel) => {
             ROOP_REACT_CLIENT: "1",
             // Full-frame temporal intake is a quality/workload invariant, not
             // a GPU performance profile.
-            ROOP_TEMPORAL_STEP: "1"
+            ROOP_TEMPORAL_STEP: "1",
+            PYTHONUNBUFFERED: "1"
           },
           path: "app",
           message: [
