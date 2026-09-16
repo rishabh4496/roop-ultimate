@@ -26,6 +26,13 @@ from runtime_lifecycle import Api, payload_for  # noqa: E402
 API_PORT = int(os.environ.get("ROOP_CONTROL_API_PORT", "42003"))
 TABS = ("Home", "Face Swap", "Batch Matrix", "Processing", "Face Manager", "Editor", "Outputs", "History", "Settings")
 
+# Pinokio commonly runs Python with the Windows cp1252 console encoding. Real
+# uploads can contain emoji and other Unicode characters, so diagnostics must
+# never crash before the browser acceptance path gets a verdict.
+for _stream in (sys.stdout, sys.stderr):
+    with contextlib.suppress(Exception):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+
 
 def stop(proc):
     if proc is None:
