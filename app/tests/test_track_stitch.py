@@ -382,7 +382,7 @@ class TheMechanicsHold(unittest.TestCase):
         src = open(os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                 '..', 'roop', 'procmgr_tracking.py'),
                    encoding='utf-8').read()
-        stitch = src.index('tracks, stitch_alias = self._stitch_tracks(tracks)')
+        stitch = src.index('tracks, stitch_alias = self._stitch_tracks(tracks, cuts=shot_boundaries)')
         truemean = src.index("t['emb_mean'] = (np.asarray(t['emb_sum']")
         assign = src.index('self._assign_track_sources(tracks, per_frame)')
         self.assertLess(stitch, truemean)
@@ -462,7 +462,7 @@ class TheMechanicsHold(unittest.TestCase):
         call count of 2368 reads as a broken pipeline and was three clips of
         timing beside one clip of audit."""
         pm = open(os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                               '..', 'roop', 'ProcessMgr.py'), encoding='utf-8').read()
+                               '..', 'roop', 'procmgr_batch.py'), encoding='utf-8').read()
         self.assertIn('_prof_reset()', pm)
         self.assertLess(abs(pm.index('_prof_reset()') - pm.index('_audit_reset()')), 600)
         from roop.procmgr_runtime import _prof_reset, _prof_times, _prof_counts

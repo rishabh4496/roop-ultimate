@@ -24,6 +24,7 @@ from roop.procmgr_runtime import (          # noqa: E402
 )
 
 _PROCMGR = os.path.join(os.path.dirname(__file__), '..', 'roop', 'ProcessMgr.py')
+_BATCH = os.path.join(os.path.dirname(__file__), '..', 'roop', 'procmgr_batch.py')
 
 
 def _swap_faces_body():
@@ -222,7 +223,7 @@ class TestAuditBuckets(unittest.TestCase):
         therefore reported its own counts plus all previous clips' — the exact
         confusion the audit exists to remove, and invisible on a single-clip run.
         """
-        with open(_PROCMGR, encoding='utf-8') as fh:
+        with open(_BATCH, encoding='utf-8') as fh:
             tree = ast.parse(fh.read())
         where = {'_audit_reset': set(), '_audit_report': set()}
         for node in ast.walk(tree):

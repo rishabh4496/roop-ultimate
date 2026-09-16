@@ -166,6 +166,9 @@ class TemporalIdentityTest(unittest.TestCase):
         with open(os.path.join(root, "roop", "ProcessMgr.py"),
                   encoding="utf-8") as fh:
             process_mgr = fh.read()
+        with open(os.path.join(root, "roop", "procmgr_batch.py"),
+                  encoding="utf-8") as fh:
+            batch = fh.read()
         with open(os.path.join(root, "roop", "procmgr_tracking.py"),
                   encoding="utf-8") as fh:
             tracking = fh.read()
@@ -175,7 +178,7 @@ class TemporalIdentityTest(unittest.TestCase):
         self.assertIn("update_geometry", tracking)
         self.assertIn("propose_source", tracking)
         self.assertIn("propose_identity", tracking)
-        self.assertIn("ordered output history", process_mgr)
+        self.assertIn("ordered output history", batch)
         with open(os.path.join(root, "roop", "temporal_identity.py"),
                   encoding="utf-8") as fh:
             temporal_identity = fh.read()
