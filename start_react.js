@@ -18,6 +18,21 @@ module.exports = async (kernel) => {
           message: [
             "npm ci --no-audit --no-fund"
           ]
+      }
+    },
+      // Repair an older machine in place. A previous installer could leave
+      // NumPy 2.x behind even though the current requirements pin 1.26.4;
+      // run.py deliberately refuses that ABI because InsightFace's native
+      // bindings cannot import it. This no-op is fast when already correct,
+      // and avoids forcing users to reset a large model environment.
+      {
+        method: "shell.run",
+        params: {
+          venv: "env",
+          path: "app",
+          message: [
+            "uv pip install numpy==1.26.4"
+          ]
         }
       },
       // Build the React UI before the backend starts.
@@ -77,6 +92,12 @@ module.exports = async (kernel) => {
           on: [{
             "event": "/(http:\\/\\/[0-9.:]+)/",
             "done": true
+          }, {
+            // Do not continue to local.set after a backend preflight failure.
+            // Otherwise Pinokio displays the literal {{input.event[1]}} as if
+            // it were a URL and offers controls for a server that is dead.
+            "event": "/(\\[FATAL\\]|ModuleNotFoundError:|ImportError:|Traceback \\(most recent call last\\))/i",
+            "break": true
           }]
         }
       },

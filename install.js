@@ -53,6 +53,20 @@ module.exports = {
         }
       }
     },
+    // torch.js is intentionally allowed to own the PyTorch install, but
+    // InsightFace's native bindings cannot run with NumPy 2.x. Re-assert the
+    // compatible version after torch.js so an existing or newly provisioned
+    // environment cannot finish with an unusable NumPy ABI.
+    {
+      method: "shell.run",
+      params: {
+        venv: "env",
+        path: "app",
+        message: [
+          "uv pip install numpy==1.26.4"
+        ]
+      }
+    },
     // Segment Anything 2 (tracked mask engine). Installed AFTER torch.js so it
     // reuses the torch installed there: --no-deps + only its pure-Python deps so
     // the torch/numpy/cv2 already in the env are never touched.

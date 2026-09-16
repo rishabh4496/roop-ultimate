@@ -41,7 +41,12 @@ module.exports = {
     } else if (installed) {
       if (running.start_react) {
         let local = info.local(start_react_script)
-        if (local && local.url) {
+        // A failed shell can leave the literal template in local state when
+        // its URL capture never fired. Never expose that as a clickable tab or
+        // as evidence that stop/pause endpoints are alive.
+        let has_valid_url = local && typeof local.url === "string"
+          && /^https?:\/\/(?:localhost|127\.0\.0\.1|[0-9.:]+)(?:\/|$)/.test(local.url)
+        if (has_valid_url) {
           return [{
             default: true,
             icon: "fa-solid fa-rocket",

@@ -15,6 +15,15 @@ module.exports = {
       message: "uv pip install -r requirements.txt"
     }
   }, {
+    // Repair older environments that were installed before the InsightFace
+    // NumPy constraint was pinned, without requiring a destructive reset.
+    method: "shell.run",
+    params: {
+      venv: "env",
+      path: "app",
+      message: "uv pip install numpy==1.26.4"
+    }
+  }, {
     // Rebuild the UI, not just its dependencies. The backend serves
     // react-ui/dist (see the SPA mount in app/api.py), so a pull that changes
     // the UI is not actually live until the build runs -- `npm ci` alone

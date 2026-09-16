@@ -35,12 +35,18 @@ This repository contains both the launcher and the full application.
 Pinokio detects the GPU and installs the matching PyTorch and ONNX Runtime
 build. `install.js` is self-contained: it installs `app/requirements.txt`, the
 React UI's lockfile dependencies with `npm ci`, builds the production UI,
-installs PyTorch via `torch.js`, and installs SAM 2. It does not clone or
+installs PyTorch via `torch.js`, reasserts the InsightFace-compatible NumPy
+version, and installs SAM 2. It does not clone or
 download from any other project's repository. The installer writes its
 completion marker only after every step succeeds, so an interrupted install
 cannot expose a blank React screen as if the app were ready. If an older
 installation already has `app/env` but Pinokio still shows a blank page,
 choose **Install** once more to complete the frontend build.
+
+Starting or updating an older environment also repairs NumPy in place when a
+previous install left NumPy 2.x behind. This avoids a destructive reset. If the
+launcher reports a fatal dependency error before opening the UI, rerun **Update**
+or **Install** so the environment repair can finish.
 
 ### Manually
 

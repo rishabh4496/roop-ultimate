@@ -106,6 +106,19 @@ class LauncherActivationTests(unittest.TestCase):
         self.assertIn('fs.write', install)
         self.assertIn('fs.rm', _read("reset.js"))
 
+    def test_insightface_numpy_compatibility_is_repaired_on_all_paths(self):
+        self.assertIn('numpy==1.26.4', _read('app/requirements.txt'))
+        self.assertIn('numpy==1.26.4', _read('install.js'))
+        self.assertIn('numpy==1.26.4', _read('update.js'))
+        self.assertIn('numpy==1.26.4', _read('start_react.js'))
+
+    def test_backend_preflight_failure_cannot_publish_a_fake_url(self):
+        start = _read('start_react.js')
+        self.assertIn('"break": true', start)
+        menu = _read('pinokio.js')
+        self.assertIn('has_valid_url', menu)
+        self.assertIn('typeof local.url === "string"', menu)
+
     def test_the_url_capture_pattern_is_intact(self):
         """The project's Pinokio contract: capture the URL, set it via local.set."""
         text = _read("start_react.js")

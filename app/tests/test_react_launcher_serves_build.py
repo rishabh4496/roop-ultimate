@@ -97,7 +97,11 @@ class LauncherServesTheBuild(unittest.TestCase):
                                 s.get('params', {}).get('message', []))]
         self.backend_steps = [s for s in self.run_steps
                               if s.get('method') == 'shell.run'
-                              and s.get('params', {}).get('path') == 'app']
+                              and s.get('params', {}).get('path') == 'app'
+                              and 'python run.py' in ' '.join(
+                                  s.get('params', {}).get('message', [])
+                                  if isinstance(s.get('params', {}).get('message', []), list)
+                                  else [s.get('params', {}).get('message', '')])]
 
     def test_the_ui_is_built_not_served_by_node(self):
         """One UI step, and it builds. Nothing long-running from Node.
@@ -134,6 +138,12 @@ class LauncherServesTheBuild(unittest.TestCase):
         self.assertEqual(len(self.backend_steps), 1)
         events = [o.get('event') for o in self.backend_steps[0]['params']['on']]
         self.assertIn('/(http:\\/\\/[0-9.:]+)/', events)
+
+    def test_backend_preflight_failure_breaks_before_url_local_set(self):
+        events = self.backend_steps[0]['params']['on']
+        breaking = [o for o in events if o.get('break')]
+        self.assertTrue(breaking)
+        self.assertTrue(any('FATAL' in o.get('event', '') for o in breaking))
 
     def test_the_backend_gets_the_api_port_and_a_clear_gradio_port(self):
         env = self.backend_steps[0]['params']['env']
@@ -218,6 +228,10 @@ class InstallAndUpdateProduceABuild(unittest.TestCase):
         reset = self._read('reset.js')
         self.assertIn('react-ui/dist', reset)
         self.assertIn('.pinokio-install-complete.json', reset)
+
+    def test_start_repairs_old_numpy_installations(self):
+        start = self._read('start_react.js')
+        self.assertIn('uv pip install numpy==1.26.4', start)
 
 
 if __name__ == '__main__':
