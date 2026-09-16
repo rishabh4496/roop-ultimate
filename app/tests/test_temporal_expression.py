@@ -12,12 +12,25 @@ if APP not in sys.path:
     sys.path.insert(0, APP)
 
 from roop.temporal_expression import (  # noqa: E402
-    LEFT_BROW, RIGHT_BROW, TemporalExpressionEngine, measure_expression,
+    LEFT_BROW, LEFT_EYE, MOUTH_HORIZONTAL, MOUTH_VERTICAL, RIGHT_BROW,
+    RIGHT_EYE, TemporalExpressionEngine, measure_expression,
 )
 
 
 def expression_landmarks(left=0.30, right=0.30, mouth=0.04,
                          brow_shift=0.0, jaw_shift=0.0):
+    """A synthetic 106-point face with known eye and mouth apertures.
+
+    Built from the module's OWN index constants rather than from hard-coded
+    numbers. The literals this replaced (33/35/36/37/39/42 for an eye, 52/61
+    for the mouth) were the same wrong indices the implementation used, so the
+    test agreed with the code by construction and could not have caught either
+    being wrong -- and both were: the eye groups put non-corners in the EAR's
+    width slots (inflating it ~3.7x) and the mouth pair measured corner-to-
+    corner width instead of lip separation (correlation with real mouth
+    opening: +0.000). Keyed to the constants, this fixture now checks the
+    formula, which is the part that has to be right whatever the indices are.
+    """
     points = np.zeros((106, 2), dtype=np.float32)
     points[:, 0] = np.linspace(80.0, 240.0, 106)
     points[:, 1] = 150.0
@@ -30,12 +43,14 @@ def expression_landmarks(left=0.30, right=0.30, mouth=0.04,
                   (cx + w * .2, 120.0 + h / 2.0), (cx - w * .2, 120.0 + h / 2.0))
         points[list(indices)] = np.asarray(values, dtype=np.float32)
 
-    eye((33, 35, 36, 37, 39, 42), 130.0, left)
-    eye((87, 89, 90, 91, 93, 96), 190.0, right)
-    points[53] = (130.0, 170.0)
-    points[59] = (190.0, 170.0)
-    points[52] = (160.0, 170.0 - mouth * 30.0)
-    points[61] = (160.0, 170.0 + mouth * 30.0)
+    eye(LEFT_EYE, 130.0, left)
+    eye(RIGHT_EYE, 190.0, right)
+    # Mouth corners 60px apart, so `mouth` is the aperture as a fraction of
+    # mouth width -- the ratio measure_expression is defined to return.
+    points[MOUTH_HORIZONTAL[0]] = (130.0, 170.0)
+    points[MOUTH_HORIZONTAL[1]] = (190.0, 170.0)
+    points[MOUTH_VERTICAL[0]] = (160.0, 170.0 - mouth * 30.0)
+    points[MOUTH_VERTICAL[1]] = (160.0, 170.0 + mouth * 30.0)
     points[list(LEFT_BROW), 1] = 94.0 - brow_shift
     points[list(RIGHT_BROW), 1] = 94.0 - brow_shift
     points[:33, 1] += jaw_shift

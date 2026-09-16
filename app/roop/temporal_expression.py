@@ -16,11 +16,64 @@ from threading import RLock
 import numpy as np
 
 
-# These are the same InsightFace 106-point indices used by expression_bench.py.
-LEFT_EYE = (33, 35, 36, 37, 39, 42)
-RIGHT_EYE = (87, 89, 90, 91, 93, 96)
-MOUTH_VERTICAL = (52, 61)
-MOUTH_HORIZONTAL = (53, 59)
+# ── Eye indices, measured rather than cited ──────────────────────────────────
+# `_ear` computes (|p1-p5| + |p2-p4|) / (2 * |p0-p3|), which is the standard
+# eye-aspect-ratio ONLY when p0 and p3 are the eye corners (the widest pair)
+# and the other four are the two lid pairs between them.
+#
+# The previous groups — (33, 35, 36, 37, 39, 42) and (87, 89, 90, 91, 93, 96) —
+# put non-corner points in the p0/p3 slots. Measured over 300 faces of the
+# reference clip (tools/probe_eye_indices.py), normalised to the face box:
+#
+#     p0-p3 separation as used : 0.044   (left)   0.045  (right)
+#     the true corner width    : 0.165   (35,39)  0.173  (89,93)
+#
+# Dividing by a width ~3.7x too small inflated the ratio by the same factor:
+# EAR read 1.84-3.12 (left) and 2.79-3.49 (right) where a real EAR is
+# ~0.2-0.45 open and ~0.1 closed. Every consumer compares against a running
+# reference scaled by `open_ratio` (0.70) and a `closed_ratio` (0.48), so on
+# those numbers the blink states could not track the eyelids.
+#
+# The right-eye ordering below was derived by searching every corner/lid
+# assignment of the 87..96 contour for the one whose EAR best correlates with
+# an independent lid-separation reference (tools/derive_eye_ear_order.py); the
+# left is its mirror within the 33..42 contour. Verified on the same 300 faces
+# (tools/verify_eye_ear_symmetry.py):
+#
+#     LEFT  (35,41,42,39,37,33)  EAR 0.137-0.472 median 0.253  r=+0.993
+#     RIGHT (89,95,96,93,91,87)  EAR 0.124-0.504 median 0.262  r=+0.992
+LEFT_EYE = (35, 41, 42, 39, 37, 33)
+RIGHT_EYE = (89, 95, 96, 93, 91, 87)
+
+# ── Mouth indices, measured rather than cited ────────────────────────────────
+# These were (52, 61) for "vertical" and (53, 59) for "horizontal", and both
+# were wrong — in a way that silently disabled every decision built on them.
+#
+# Measured by running the real 2d106det model over 150 faces of the reference
+# clip and locating the mouth by GEOMETRY, normalised to the face box
+# (tools/probe_mouth_indices.py):
+#
+#     52  x=0.348 y=0.765     the LEFT mouth corner
+#     61  x=0.658 y=0.733     the RIGHT mouth corner
+#     67  x=0.516 y=0.690     upper lip centre
+#     53  x=0.504 y=0.800     lower lip centre
+#
+# So MOUTH_VERTICAL was corner-to-corner — the mouth's WIDTH — and
+# MOUTH_HORIZONTAL was (53, 59), a 0.067-wide fragment of the lower lip
+# against a true mouth width of 0.317, i.e. 4.8x too short.
+#
+# `mouth_openness` is computed as VERTICAL / HORIZONTAL, so it was measuring
+# width divided by a short lower-lip segment: a number near 4.8 that barely
+# moves when the mouth opens. Correlation with actual mouth opening over those
+# 150 faces: +0.000. The open/closed thresholds it feeds (0.48 and 0.70) can
+# never be crossed by such a value, so the mouth half of expression restore
+# was dead — which is what "mouth opening is not good" looks like from here.
+#
+# The replacement pair is the one that scores best against a geometry-derived
+# openness reference over the same faces (r = +1.000 for (53, 67), with (53,
+# 71) at +0.991 behind it), and the horizontal pair is the true corners.
+MOUTH_VERTICAL = (67, 53)       # upper lip centre -> lower lip centre
+MOUTH_HORIZONTAL = (52, 61)     # left corner -> right corner
 
 # The existing DMDNet map is the repository's trusted 106 -> 68 convention.
 # 68 brow points are 17..26, hence these two 5-point brow groups.
