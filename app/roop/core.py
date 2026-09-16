@@ -749,9 +749,12 @@ def update_status(message: str) -> None:
         reset = "\033[0m"
         bold = "\033[1m"
         lower_msg = message.lower()
-        if any(kw in lower_msg for kw in ["failed", "error", "stopped", "cannot", "warning"]):
-            # Red color for warnings/errors/stops
+        if any(kw in lower_msg for kw in ["failed", "error", "cannot", "warning", "unavailable"]):
+            # Red is reserved for failures. A deliberate stop is a normal
+            # control outcome, not evidence that the render crashed.
             color_msg = f"\033[91m{bold}[ERROR] {message}{reset}"
+        elif "stopped" in lower_msg or "aborting" in lower_msg:
+            color_msg = f"\033[93m{bold}[STOPPED] {message}{reset}"
         elif any(kw in lower_msg for kw in ["finished", "success", "completed", "took"]):
             # Green color for successes/completions
             color_msg = f"\033[92m{bold}[SUCCESS] {message}{reset}"

@@ -3302,7 +3302,10 @@ def _run_swap(payload):
         # telemetry must never be applied to a truncated render.
         if _stop_requested["flag"]:
             _progress["desc"] = "Stopped"
-            _push_log("⚠ Stopped — partial output was not recorded as completed", force=True)
+            # A user cancellation is not a render error. Keep it visually
+            # distinct from the warning/error glyphs so React does not put a
+            # deliberate stop in its Errors filter or red terminal styling.
+            _push_log("⏹ Stopped — partial output was not recorded as completed", force=True)
             return
 
         # ── AI upscale second pass (opt-in) ─────────────────────────────────

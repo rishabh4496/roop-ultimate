@@ -2547,6 +2547,11 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                 try:
                     while True:
                         _write_q.get_nowait()
+                except _QueueEmpty:
+                    # An empty queue is the normal end state while draining
+                    # cancelled work. It is not a degraded fallback and must
+                    # not appear in the user's terminal as an error.
+                    pass
                 except Exception as _degrade_error:
                     _swallowed("roop/ProcessMgr.py:3663", _degrade_error, "fallback continued")
                     pass
@@ -2575,6 +2580,11 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
             try:
                 while not prefetch_q.empty():
                     prefetch_q.get_nowait()
+            except _QueueEmpty:
+                # `empty()` is only a hint and another cleanup path can win the
+                # race between the check and get_nowait(). That race is expected
+                # during shutdown, not a processing failure.
+                pass
             except Exception as _degrade_error:
                 _swallowed("roop/ProcessMgr.py:3689", _degrade_error, "fallback continued")
                 pass
