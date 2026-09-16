@@ -190,7 +190,7 @@ class StabChunkBudget(unittest.TestCase):
         from roop.ProcessMgr import ProcessMgr
         self.PM = ProcessMgr
 
-    def _budget(self, avail_gb, share=None, total_gb=None):
+    def _budget(self, avail_gb, share=None, total_gb=None, queue_capacity=None):
         """Call the real method with a stub self and a faked psutil reading."""
         import roop.ProcessMgr as pmmod
 
@@ -202,6 +202,10 @@ class StabChunkBudget(unittest.TestCase):
             _STAB_LIVE_CHUNKS = self.PM._STAB_LIVE_CHUNKS
             _stab_live_chunks = self.PM._stab_live_chunks
             _runtime_scheduler = None
+
+        if queue_capacity is not None:
+            _NS._runtime_scheduler = type(
+                'Scheduler', (), {'queue_capacity': queue_capacity})()
 
         class _FakeVM:
             available = int(avail_gb * 1024 ** 3)
@@ -251,16 +255,16 @@ class StabChunkBudget(unittest.TestCase):
         self.assertLessEqual(self._budget(8, share=9.0) * 6 / 1024.0, 8 * 0.90 + 1e-6)
 
     def test_desktop_share_enables_two_rounds_without_spending_laptop_ram(self):
-        """The 32 GB desktop has enough headroom for queue slack; 16 GB does not."""
-        desktop = self._budget(8.3, total_gb=32)
-        laptop = self._budget(8.3, total_gb=16)
-        self.assertAlmostEqual(desktop, 8.3 * 1024.0 * 0.58 / 6.0, places=3)
-        self.assertAlmostEqual(laptop, 8.3 * 1024.0 * 0.40 / 6.0, places=3)
-        self.assertGreaterEqual(8.3 - desktop * 6.0 / 1024.0, 3.0)
-        # 720p, 12-frame blocks: 24 blocks are two complete 12-worker rounds.
-        block_mb = 1280 * 720 * 3 * 12 / (1024.0 ** 2)
-        self.assertGreaterEqual(int(desktop // block_mb), 24)
-        self.assertLess(int(laptop // block_mb), 24)
+        """The 32 GB desktop gets two 720p rounds; 16 GB keeps the guard."""
+        desktop = self._budget(8.3, total_gb=32, queue_capacity=1)
+        laptop = self._budget(8.3, total_gb=16, queue_capacity=1)
+        self.assertAlmostEqual(desktop, 8.3 * 1024.0 * 0.75 / 5.0, places=3)
+        self.assertAlmostEqual(laptop, 8.3 * 1024.0 * 0.40 / 5.0, places=3)
+        self.assertGreaterEqual(8.3 - desktop * 5.0 / 1024.0, 2.0)
+        # 720p, 24-frame blocks: 20 blocks are two complete 10-worker rounds.
+        block_mb = 1280 * 720 * 3 * 24 / (1024.0 ** 2)
+        self.assertGreaterEqual(int(desktop // block_mb), 20)
+        self.assertLess(int(laptop // block_mb), 20)
 
     def test_an_explicit_env_value_runs_exactly_as_set(self):
         """Same rule the pool knobs settled on: a control that silently runs a

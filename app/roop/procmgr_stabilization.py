@@ -143,26 +143,33 @@ class StabilizationSchedulingMixin:
             else:
                 hard_cap = 1536.0
 
-        # The desktop profile needs two complete 12-worker rounds before the
-        # block queue can redistribute an expensive face-heavy block.  The
-        # former 40% default left the 32 GB / 4070 machine at 17 blocks on a
-        # 720p, 12-frame-block render: enough for one round, but not the 24
-        # blocks needed for work stealing.  Its six live buffers then used only
-        # 3.3 GB with 8.3 GB free, leaving capacity that could not do useful
-        # work.  58% raises that to 4.8 GB and still leaves about 3.5 GB free.
+        # The desktop profile needs two complete worker rounds before the block
+        # queue can redistribute an expensive face-heavy block.  The old 58%
+        # share was enough for the historical 12-frame geometry, but the live
+        # 720p render uses 24-frame blocks and started with only one round:
+        # `10 blocks x 24f` and 22.89 FPS were observed in the active terminal.
+        # With the real queue depth of one, five live chunk copies are held.
+        # 75% gives that desktop path enough room for 20 blocks at 720p while
+        # retaining roughly 2.0 GB of free host RAM in the observed case.
         #
         # This is deliberately keyed to system RAM, not VRAM: the TensorRT pool
         # policy already owns VRAM and stays at 2/2/2 on the 12 GB card.  Keep
-        # the 16 GB laptop at 40%, where six live chunks must stay under its
-        # tighter host-memory budget.  An explicit environment setting remains
-        # authoritative on either machine.
-        default_share = 0.58 if total_mb >= 28000.0 else 0.40
+        # the 16 GB laptop at 40%, where its live chunks must stay under the
+        # tighter host-memory budget.  If a caller has a deeper queue than the
+        # production stabilized path, retain the conservative 58% desktop
+        # share because the extra copies consume the headroom this optimization
+        # relies on. An explicit environment setting remains authoritative on
+        # either machine.
+        live = self._stab_live_chunks()
+        if total_mb >= 28000.0:
+            default_share = 0.75 if live <= 5 else 0.58
+        else:
+            default_share = 0.40
         try:
             share = float(os.environ.get('ROOP_STAB_RAM_SHARE', '') or default_share)
         except ValueError:
             share = default_share
         share = min(0.90, max(0.05, share))
-        live = self._stab_live_chunks()
         # The floor is useful only while the requested RAM share can afford it.
         # Applying an unconditional 96 MB floor makes queue depth part of the
         # memory limit in name only: under pressure, 7 live chunks reserve
