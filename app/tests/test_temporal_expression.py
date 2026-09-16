@@ -58,6 +58,18 @@ def expression_landmarks(left=0.30, right=0.30, mouth=0.04,
 
 
 class TemporalExpressionTests(unittest.TestCase):
+    def test_landmark_map_uses_eye_corners_and_lip_centres(self):
+        """Keep the model-specific 106-point map from silently regressing.
+
+        The synthetic fixture intentionally follows the exported constants so
+        it tests the measurement formula. This separate contract test pins the
+        actual InsightFace 2d106 layout that was verified against real faces.
+        """
+        self.assertEqual(LEFT_EYE, (35, 41, 42, 39, 37, 33))
+        self.assertEqual(RIGHT_EYE, (89, 95, 96, 93, 91, 87))
+        self.assertEqual(MOUTH_VERTICAL, (67, 53))
+        self.assertEqual(MOUTH_HORIZONTAL, (52, 61))
+
     def test_measurement_reports_requested_target_channels(self):
         measured = measure_expression(
             expression_landmarks(left=.28, right=.14, mouth=.40),

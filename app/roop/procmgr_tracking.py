@@ -1903,6 +1903,7 @@ class TrackingMixin:
         invent a face in the wrong place — up to MAX_COAST_FRAMES of them —
         so a hole is only ever coasted within the shot it belongs to.
         """
+        from bisect import bisect_right
         from roop.tracker import FaceTracker
 
         try:
@@ -1927,6 +1928,21 @@ class TrackingMixin:
                 return False
             lo_, hi_ = (a, b) if a <= b else (b, a)
             return any(lo_ < c <= hi_ for c in cuts)
+
+        def _gap_spans_cut(frame_idx):
+            """Return whether this hole's REAL observation interval has a cut.
+
+            The coaster's private `_coast_age` is directional and can be smaller
+            than the distance to the nearest real observation after a tracker
+            update. Using it as the only boundary test therefore lets a
+            prediction leak through a cut when the hole is approached from the
+            far side. The sorted real anchors define the actual gap
+            unambiguously.
+            """
+            pos = bisect_right(idxs, frame_idx) - 1
+            left = idxs[pos] if pos >= 0 else lo
+            right = idxs[pos + 1] if pos + 1 < len(idxs) else hi
+            return _cut_between(left, right)
 
         def _run(order):
             """One directional pass; returns {frame_index: coasted Face}."""
@@ -1961,17 +1977,13 @@ class TrackingMixin:
             a, b = forward.get(i), backward.get(i)
             if a is None and b is None:
                 continue
-            # Each direction's prediction is only admissible if no cut lies
-            # between the observation it was last measured from and this frame.
-            # The two passes are judged independently and by their own age, so
-            # a hole that one side can legitimately reach is still filled from
-            # that side after the other is refused.
-            if a is not None and _cut_between(i - int(a.get('_coast_age', 1)), i):
-                a = None
+            # A whole gap is refused when its REAL anchors straddle a cut. Do
+            # this once for both directional predictions. Judging each result
+            # only by its private coast age is unsafe because that age can hide
+            # the farther anchor after a tracker update.
+            if _gap_spans_cut(i):
                 refused += 1
-            if b is not None and _cut_between(i, i + int(b.get('_coast_age', 1))):
-                b = None
-                refused += 1
+                continue
             if a is None and b is None:
                 continue
             if a is None:
