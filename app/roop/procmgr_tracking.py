@@ -1753,7 +1753,7 @@ class TrackingMixin:
         if n_coasted or n_coast_refused:
             print(f'[Coast] {n_coasted} face(s) carried on Kalman prediction past '
                   f'the {gap_max}-frame gap limit'
-                  + (f'; {n_coast_refused} refused as colliding' if n_coast_refused else '')
+                  + (f'; {n_coast_refused} refused by safety guards' if n_coast_refused else '')
                   + f' (limit {_COAST_FRAMES} frames, ROOP_COAST_FRAMES=0 to disable).')
 
         # ── Coverage guard ───────────────────────────────────────────────────
