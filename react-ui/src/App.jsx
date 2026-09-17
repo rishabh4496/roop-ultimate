@@ -188,6 +188,41 @@ export default function App() {
   }, []);
 
   const [progress, setProgress] = useState({ processing: false, progress: 0, desc: '', output: null, stop_requested: false });
+
+  // ── Folding a /api/progress response into state ──────────────────────────
+  //
+  // NOT `setProgress(pr)`. The poll response and the telemetry frame are
+  // different shapes, and neither is a superset of the other:
+  //
+  //   * the poll carries `log`, `parts`, `runtime`, `output` — and no
+  //     `current_frame`, `total_frames` or `fps` (see `get_progress`, which
+  //     never adds them; only `_telemetry_snapshot` derives those).
+  //   * the telemetry frame carries exactly those three, plus the fast-moving
+  //     scalars, and none of the heavy blocks.
+  //
+  // Replacing state wholesale with the poll response therefore DELETED the
+  // pushed counters every time a poll landed. With the socket up the poll still
+  // runs at SLOW_POLL_MS, so the frame counter and the fps readout blanked once
+  // every five seconds and were repopulated 250 ms later by the next frame —
+  // a visible flicker on every figure derived from them, and a gap in the
+  // throughput series each time.
+  //
+  // Merging keeps whichever source last had something to say about a field.
+  // The poll remains authoritative for everything it actually sends.
+  const mergeProgress = useCallback((pr) => {
+    setProgress((prev) => {
+      const next = { ...prev, ...pr };
+      // A run that has ENDED must not keep the last live counters around, or
+      // the finished view reports the frame it stopped on as if it were still
+      // moving.
+      if (!pr.processing) {
+        next.current_frame = undefined;
+        next.total_frames = undefined;
+        next.fps = undefined;
+      }
+      return next;
+    });
+  }, []);
   const [controlBusy, setControlBusy] = useState('');
   const controlBusyRef = useRef('');
 
@@ -271,7 +306,7 @@ export default function App() {
       try {
         const pr = await getJSON('/api/progress', { timeout: 8000 });
         reportNet(true);
-        setProgress(pr);
+        mergeProgress(pr);
         if (!pr.processing) {
           clearInterval(pollRef.current);
           pollRef.current = null;
@@ -282,7 +317,7 @@ export default function App() {
         reportNet(false);
       }
     }, intervalMs);
-  }, [reportNet]);
+  }, [reportNet, mergeProgress]);
 
   // ── Catch up the moment this view is looked at again ─────────────────────
   // Switching to the Terminal (or another Pinokio tab) either reloads this
@@ -302,7 +337,7 @@ export default function App() {
       try {
         const pr = await getJSON('/api/progress', { timeout: 8000 });
         reportNet(true);
-        setProgress(pr);
+        mergeProgress(pr);
         if (pr.processing && !pollRef.current) startPolling();
       } catch {
         reportNet(false);
@@ -316,7 +351,7 @@ export default function App() {
       window.removeEventListener('focus', catchUp);
       window.removeEventListener('pageshow', catchUp);
     };
-  }, [startPolling, reportNet]);
+  }, [startPolling, reportNet, mergeProgress]);
 
   // Heartbeat while offline — reconnects and refreshes core state on recovery.
   useEffect(() => {
@@ -327,12 +362,12 @@ export default function App() {
     beatRef.current = setInterval(async () => {
       try {
         const pr = await getJSON('/api/progress', { timeout: 5000 });
-        setProgress(pr);
+        mergeProgress(pr);
         reportNet(true);
       } catch { /* still down */ }
     }, 3000);
     return () => { if (beatRef.current) { clearInterval(beatRef.current); beatRef.current = null; } };
-  }, [offline, reportNet]);
+  }, [offline, reportNet, mergeProgress]);
 
   // ── Live telemetry ───────────────────────────────────────────────────────
   // The backend pushes run state over a WebSocket. Measured, the poll ships
@@ -896,7 +931,7 @@ export default function App() {
       bootAttemptRef.current = 0;
       try {
         const pr = await getJSON('/api/progress', { timeout: 8000 });
-        setProgress(pr);
+        mergeProgress(pr);
         if (pr.processing) startPolling();
       } catch { /* progress is non-critical for boot */ }
     } catch (e) {
@@ -919,7 +954,7 @@ export default function App() {
     } finally {
       setRetrying(false);
     }
-  }, [reportNet, startPolling]);
+  }, [reportNet, startPolling, mergeProgress]);
 
   useEffect(() => {
     loadCore();
