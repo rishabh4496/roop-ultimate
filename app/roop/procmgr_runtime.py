@@ -1203,31 +1203,31 @@ def pause_aware(function):
     return wrapped
 
 
-# ANSI escape codes for terminal coloring
+# ANSI escape codes for rich terminal coloring
 COLOR_RESET = "\033[0m"
-
-
-COLOR_ACCENT = "\033[38;5;205m"  # Pink/Red matching UI #E94560
-
-
-COLOR_CYAN = "\033[36m"          # Cyan for counts
-
-
-COLOR_GREEN = "\033[32m"         # Green for times
-
-
-COLOR_GRAY = "\033[90m"          # Gray for separators
-
-
-COLOR_YELLOW = "\033[33m"        # Yellow for stats
-
+COLOR_BOLD = "\033[1m"
+COLOR_DIM = "\033[2m"
+COLOR_ACCENT = "\033[1;38;5;205m"      # Bold Pink/Red matching UI #E94560
+COLOR_PERCENT = "\033[1;38;5;220m"     # Bold Gold/Yellow for percentage
+COLOR_CYAN = "\033[38;5;39m"           # Bright Electric Cyan
+COLOR_GREEN = "\033[38;5;78m"          # Emerald Green for elapsed
+COLOR_LIME = "\033[1;38;5;84m"         # Bright Lime for ETA
+COLOR_GRAY = "\033[90m"                # Gray for borders/delimiters
+COLOR_SEP = "\033[38;5;240m"           # Muted divider
+COLOR_YELLOW = "\033[1;38;5;214m"      # Warm Amber for rate/FPS
+COLOR_WHITE = "\033[1;37m"             # Crisp Bold White for processed counts
+COLOR_MUTED = "\033[38;5;248m"         # Muted Silver for totals/labels
+COLOR_PURPLE = "\033[38;5;141m"        # Soft Violet for VRAM/GPU
 
 PROGRESS_BAR_FORMAT = (
     f"{COLOR_ACCENT}{{desc}}{COLOR_RESET}: "
-    f"{COLOR_GRAY}|{{bar}}|{COLOR_RESET} "
-    f"{COLOR_CYAN}{{n_fmt}}/{{total_fmt}}{COLOR_RESET} "
-    f"[{COLOR_GREEN}{{elapsed}}{COLOR_RESET}<{COLOR_GREEN}{{remaining}}{COLOR_RESET}, "
-    f"{COLOR_YELLOW}{{rate_fmt}}{COLOR_RESET}{{postfix}}]"
+    f"{COLOR_PERCENT}{{percentage:5.1f}}%{COLOR_RESET} "
+    f"{COLOR_GRAY}[{COLOR_CYAN}{{bar}}{COLOR_GRAY}]{COLOR_RESET} "
+    f"{COLOR_WHITE}{{n_fmt}}{COLOR_GRAY}/{COLOR_MUTED}{{total_fmt}}{COLOR_RESET} "
+    f"{COLOR_SEP}|{COLOR_RESET} {COLOR_MUTED}Elapsed:{COLOR_RESET} {COLOR_GREEN}{{elapsed}}{COLOR_RESET} "
+    f"{COLOR_SEP}|{COLOR_RESET} {COLOR_MUTED}ETA:{COLOR_RESET} {COLOR_LIME}{{remaining}}{COLOR_RESET} "
+    f"{COLOR_SEP}|{COLOR_RESET} {COLOR_YELLOW}{{rate_fmt}}{COLOR_RESET}"
+    f"{{postfix}}"
 )
 
 
@@ -1450,22 +1450,29 @@ class ChunkedProgress(tqdm):
         elapsed = d.get("elapsed") or 0
         unit = self.unit or "it"
 
+        head = self.desc or 'Progress'
+        bits = []
         if total:
-            head = self.desc or 'Progress'
-            count = f"{n:,}/{total:,} {unit}  {n / total * 100:5.1f}%"
+            pct = (n / total * 100) if total > 0 else 0.0
+            bits.append(f"{COLOR_PERCENT}{pct:5.1f}%{COLOR_RESET}")
+            bits.append(f"{COLOR_WHITE}{n:,}{COLOR_GRAY}/{COLOR_MUTED}{total:,} {unit}{COLOR_RESET}")
         else:
-            head = f"{self.desc or 'Progress'}"
-            count = f"{n:,} {unit}"
+            bits.append(f"{COLOR_WHITE}{n:,} {unit}{COLOR_RESET}")
 
-        bits = [f"{COLOR_CYAN}{count}{COLOR_RESET}"]
         if rate:
             bits.append(f"{COLOR_YELLOW}{rate:.1f} {unit}/s{COLOR_RESET}")
-        bits.append(f"{COLOR_GREEN}{self.format_interval(int(elapsed))}{COLOR_RESET} elapsed")
+        bits.append(f"{COLOR_MUTED}Elapsed:{COLOR_RESET} {COLOR_GREEN}{self.format_interval(int(elapsed))}{COLOR_RESET}")
         if rate and total and total > n:
-            bits.append(f"{COLOR_GREEN}{self.format_interval(int((total - n) / rate))}{COLOR_RESET} left")
+            rem_s = int((total - n) / rate)
+            bits.append(f"{COLOR_MUTED}ETA:{COLOR_RESET} {COLOR_LIME}{self.format_interval(rem_s)}{COLOR_RESET}")
+            try:
+                finish_t = time.localtime(time.time() + rem_s)
+                bits.append(f"{COLOR_MUTED}Finish:~{COLOR_CYAN}{time.strftime('%I:%M %p', finish_t)}{COLOR_RESET}")
+            except Exception:
+                pass
         if self.postfix:
             bits.append(str(self.postfix))
-        return f"{COLOR_ACCENT}{head}{COLOR_RESET}  ·  " + "  ·  ".join(bits)
+        return f"{COLOR_ACCENT}{head}{COLOR_RESET}  {COLOR_SEP}|{COLOR_RESET}  " + f"  {COLOR_SEP}·{COLOR_RESET}  ".join(bits)
 
 
 # ── The terminal's ETA, shared with the web UI ───────────────────────────────

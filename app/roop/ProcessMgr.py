@@ -53,7 +53,7 @@ from roop.face_overlap import build_regions as build_face_regions, FaceRegion
 from roop import face_contact
 from roop import recognizer_adaface as _ada
 from roop import live_preview as _live_preview
-from roop.procmgr_runtime import _PROFILE, _TRACK_VETO_DIST, _TRACK_VETO_MARGIN, _TRACK_VETO_SINGLE, _TRACK_EMB_MAX, _DEBUG_MATCH, COLOR_RESET, COLOR_CYAN, COLOR_YELLOW, _prof, _prof_report, _prof_reset, _gpu_guard, PROGRESS_BAR_FORMAT, wait_while_paused, pause_controller, pause_scope, pause_aware, ChunkedProgress, bar_write, publish_eta as _publish_eta, _audit_hit, audit_over_threshold as _audit_over_threshold, audit_frame_seen, audit_detect_frame_begin, audit_detect_miss, audit_face_begin, _audit_swapped_gapfill, _audit_reset, _audit_report, VETO_SOURCE_REUSED, VETO_SINGLE_ABS, VETO_OTHER_FITS, VETO_FAR_FROM_OWN, AUDIT_SWAP_MOVED, VERIFY_MIN_OFFAXIS, VERIFY_SWAP, set_runtime_monitor, set_detailed_profiler
+from roop.procmgr_runtime import _PROFILE, _TRACK_VETO_DIST, _TRACK_VETO_MARGIN, _TRACK_VETO_SINGLE, _TRACK_EMB_MAX, _DEBUG_MATCH, COLOR_RESET, COLOR_CYAN, COLOR_YELLOW, COLOR_PURPLE, _prof, _prof_report, _prof_reset, _gpu_guard, PROGRESS_BAR_FORMAT, wait_while_paused, pause_controller, pause_scope, pause_aware, ChunkedProgress, bar_write, publish_eta as _publish_eta, _audit_hit, audit_over_threshold as _audit_over_threshold, audit_frame_seen, audit_detect_frame_begin, audit_detect_miss, audit_face_begin, _audit_swapped_gapfill, _audit_reset, _audit_report, VETO_SOURCE_REUSED, VETO_SINGLE_ABS, VETO_OTHER_FITS, VETO_FAR_FROM_OWN, AUDIT_SWAP_MOVED, VERIFY_MIN_OFFAXIS, VERIFY_SWAP, set_runtime_monitor, set_detailed_profiler
 from roop.stage_profiler import StageProfiler
 from roop.runtime_optimizer import RuntimeOptimizer, RuntimeMonitor, SafeAdaptiveController
 from roop.runtime_scheduler import UnifiedRuntimeScheduler
@@ -2760,16 +2760,28 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
             except Exception as _degrade_error:
                 _swallowed("roop/ProcessMgr.py:3719", _degrade_error, "fallback continued")
                 pass
+            try:
+                import torch
+                if torch.cuda.is_available():
+                    free_b, total_b = torch.cuda.mem_get_info()
+                    used_gb = (total_b - free_b) / (1024**3)
+                    self._cached_vram_str = f"{COLOR_PURPLE}{used_gb:.1f}GB{COLOR_RESET}"
+            except Exception:
+                pass
         mem_str = getattr(self, '_cached_mem_str', f"{COLOR_CYAN}0.00GB{COLOR_RESET}")
         active_workers = getattr(self, '_active_inference_workers', None)
         thread_str = f"{COLOR_YELLOW}{active_workers or self.num_threads}{COLOR_RESET}"
         # refresh=False: this fires once per FRAME, and a refreshing set_postfix
         # re-renders the whole bar each time on top of the render update() is
         # about to do anyway. The values are picked up by the next draw.
-        progress.set_postfix({
+        postfix_dict = {
             'memory_usage': mem_str,
             'execution_threads': thread_str
-        }, refresh=False)
+        }
+        vram_str = getattr(self, '_cached_vram_str', None)
+        if vram_str:
+            postfix_dict['vram'] = vram_str
+        progress.set_postfix(postfix_dict, refresh=False)
         progress.update(1)
         if self.progress_gradio is not None:
             n = progress.n
