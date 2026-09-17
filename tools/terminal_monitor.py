@@ -1,7 +1,7 @@
 """Terminal Progress Monitor for Roop Ultimate.
 
 Displays rich real-time visual progress for active render jobs in the terminal:
-- Vivid ANSI 256-color gradient progress bar
+- Vivid ANSI 256-color gradient progress bar with dynamic palettes
 - Accurate completion percentage
 - Stabilized time left (ETA) and estimated local finish clock time
 - Frame counts (completed / total / remaining)
@@ -9,9 +9,18 @@ Displays rich real-time visual progress for active render jobs in the terminal:
 - System resources (RAM, disk free space)
 - Target file and active chunk segment info
 
+Palettes available:
+  - cyberpunk : Deep Purple -> Magenta -> Electric Cyan -> Neon Mint
+  - ocean     : Cobalt Blue -> Aqua Cyan -> Sea Green -> Radiant Emerald
+  - flame     : Slate Blue -> Amber Yellow -> Warm Orange -> Laser Green
+  - sunset    : Rose Crimson -> Warm Amber -> Solar Gold -> Spring Mint
+
 Usage:
-  python tools/terminal_monitor.py         # Print current snapshot
-  python tools/terminal_monitor.py --live  # Continuously stream live progress
+  python tools/terminal_monitor.py                      # Current snapshot (default: cyberpunk)
+  python tools/terminal_monitor.py --palette ocean       # Use Ocean palette
+  python tools/terminal_monitor.py --style stage         # Stage-color bar instead of gradient
+  python tools/terminal_monitor.py --live               # Continuously stream live progress
+  python tools/terminal_monitor.py --demo               # Display live showcase of all 4 palettes
 """
 
 import sys
@@ -23,15 +32,13 @@ import argparse
 import subprocess
 from datetime import datetime, timedelta
 
-# ANSI 256-Color Palette
+# ANSI 256-Color Base Tokens
 RST = "\033[0m"
 BOLD = "\033[1m"
 DIM = "\033[2m"
 CLR_TITLE = "\033[1;38;5;206m"   # Neon Pink / Coral
 CLR_BORDER = "\033[38;5;240m"  # Slate Gray
 CLR_LABEL = "\033[38;5;248m"   # Silver Muted
-CLR_PCT = "\033[1;38;5;220m"    # Bold Amber Gold
-CLR_BAR_FILL = "\033[38;5;39m"  # Electric Cyan
 CLR_BAR_EMPTY = "\033[38;5;238m" # Dark Ash Gray
 CLR_VAL = "\033[1;37m"          # Bright White
 CLR_TIME = "\033[38;5;78m"      # Mint Green (Elapsed)
@@ -41,8 +48,71 @@ CLR_SPEED = "\033[1;38;5;214m"  # Warm Gold (FPS)
 CLR_GPU = "\033[38;5;141m"      # Violet
 CLR_WARN = "\033[1;38;5;203m"    # Soft Red
 
+PALETTES = {
+    "cyberpunk": {
+        "name": "Cyberpunk Neon (Synthwave)",
+        "stops": [
+            (0.0, "\033[38;5;129m"),   # Deep Purple
+            (25.0, "\033[38;5;198m"),  # Hot Magenta
+            (50.0, "\033[38;5;39m"),   # Electric Cyan
+            (75.0, "\033[38;5;84m"),   # Neon Mint
+        ]
+    },
+    "ocean": {
+        "name": "Ocean to Aurora (Cool Tech)",
+        "stops": [
+            (0.0, "\033[38;5;27m"),    # Cobalt Blue
+            (25.0, "\033[38;5;38m"),   # Aqua Cyan
+            (50.0, "\033[38;5;42m"),   # Sea Green
+            (75.0, "\033[38;5;48m"),   # Radiant Emerald
+        ]
+    },
+    "flame": {
+        "name": "Thermal Flame (Energy)",
+        "stops": [
+            (0.0, "\033[38;5;67m"),    # Slate Blue
+            (25.0, "\033[38;5;220m"),  # Amber Yellow
+            (50.0, "\033[38;5;208m"),  # Warm Orange
+            (75.0, "\033[38;5;46m"),   # Laser Green
+        ]
+    },
+    "sunset": {
+        "name": "Sunset Gold (Luxury)",
+        "stops": [
+            (0.0, "\033[38;5;161m"),   # Rose Crimson
+            (25.0, "\033[38;5;214m"),  # Warm Amber
+            (50.0, "\033[38;5;221m"),  # Solar Gold
+            (75.0, "\033[38;5;119m"),  # Spring Mint
+        ]
+    }
+}
+
+def get_color_for_pct(pct, palette_name="cyberpunk"):
+    pal = PALETTES.get(palette_name, PALETTES["cyberpunk"])
+    curr = pal["stops"][0][1]
+    for thresh, clr in pal["stops"]:
+        if pct >= thresh:
+            curr = clr
+        else:
+            break
+    return curr
+
+def build_bar(pct, width=30, palette_name="cyberpunk", style="gradient"):
+    filled = int(round(width * (max(0.0, min(100.0, pct)) / 100.0)))
+    if style == "gradient":
+        chars = []
+        for i in range(filled):
+            pos_pct = (i / width) * 100.0
+            c = get_color_for_pct(pos_pct, palette_name)
+            chars.append(f"{c}█")
+        fill_str = "".join(chars)
+    else:
+        c = get_color_for_pct(pct, palette_name)
+        fill_str = f"{c}{'█' * filled}"
+    empty_str = f"{CLR_BAR_EMPTY}{'░' * (width - filled)}"
+    return f"{fill_str}{empty_str}{RST}"
+
 def format_duration(seconds):
-    """Format seconds into HH:MM:SS or MM:SS."""
     if seconds is None or seconds < 0:
         return "--:--"
     total_sec = int(seconds)
@@ -54,7 +124,6 @@ def format_duration(seconds):
     return f"{minutes:02d}m {secs:02d}s"
 
 def get_latest_log_data(workspace_root):
-    """Parse the most recent progress line from logs/api/start_react.js/latest."""
     log_path = os.path.join(workspace_root, "logs", "api", "start_react.js", "latest")
     if not os.path.isfile(log_path):
         return None
@@ -65,7 +134,6 @@ def get_latest_log_data(workspace_root):
     except Exception:
         return None
 
-    # Look for tqdm progress pattern: e.g. 96600/147630 [1:17:13<37:53, 22.44frames/s, ...]
     matches = list(re.finditer(
         r"(\d+)/(\d+)\s*\[([0-9:]+)<([0-9:?]+),\s*([0-9.]+)\s*(?:frames|it)/s(?:,\s*memory_usage=([0-9.]+[A-Za-z]+))?(?:,\s*execution_threads=(\d+))?",
         raw
@@ -92,7 +160,6 @@ def get_latest_log_data(workspace_root):
     }
 
 def get_job_info(workspace_root):
-    """Retrieve target filename and segments status from output resume JSON."""
     output_dir = os.path.join(workspace_root, "app", "output")
     if not os.path.isdir(output_dir):
         return {}
@@ -118,7 +185,6 @@ def get_job_info(workspace_root):
         return {}
 
 def get_hardware_telemetry(workspace_root):
-    """Query GPU usage and disk free space."""
     res = {"gpu_name": "NVIDIA GPU", "gpu_temp": None, "gpu_util": None, "vram_used": None, "vram_total": None, "disk_free_gb": None}
     try:
         out = subprocess.check_output(
@@ -144,8 +210,7 @@ def get_hardware_telemetry(workspace_root):
 
     return res
 
-def render_dashboard(workspace_root, width=80):
-    """Construct the rich visual terminal dashboard."""
+def render_dashboard(workspace_root, width=80, palette_name="cyberpunk", style="gradient"):
     log_data = get_latest_log_data(workspace_root)
     job_info = get_job_info(workspace_root)
     hw_info = get_hardware_telemetry(workspace_root)
@@ -158,26 +223,22 @@ def render_dashboard(workspace_root, width=80):
     pct = (n / total * 100.0) if total > 0 else 0.0
     fps = log_data["fps"]
     
-    # Calculate stabilized ETA and local finish time
     rem_frames = max(0, total - n)
     rem_secs = (rem_frames / fps) if fps > 0 else 0
     eta_formatted = format_duration(rem_secs)
     finish_dt = datetime.now() + timedelta(seconds=rem_secs)
     finish_str = finish_dt.strftime("%I:%M %p")
 
-    # Bar rendering
+    # Bar rendering with dynamic palette and style
     bar_width = 30
-    filled_len = int(round(bar_width * (pct / 100.0)))
-    filled_len = min(bar_width, max(0, filled_len))
-    bar_str = f"{CLR_BAR_FILL}{'█' * filled_len}{CLR_BAR_EMPTY}{'░' * (bar_width - filled_len)}{RST}"
+    bar_str = build_bar(pct, width=bar_width, palette_name=palette_name, style=style)
+    pct_color = get_color_for_pct(pct, palette_name)
 
-    # Build Header
     lines = []
     lines.append(f"{CLR_BORDER}╔{'═' * (width - 2)}╗{RST}")
     lines.append(f"{CLR_BORDER}║{RST} {BOLD}{CLR_TITLE}⚡ ROOP ULTIMATE — REAL-TIME RENDER TERMINAL{RST}{' ' * (width - 48)}{CLR_BORDER}║{RST}")
     lines.append(f"{CLR_BORDER}╠{'═' * (width - 2)}╣{RST}")
 
-    # Job info section
     src = job_info.get("source_name", "Target Video")
     if len(src) > 52:
         src = src[:49] + "..."
@@ -191,20 +252,17 @@ def render_dashboard(workspace_root, width=80):
     lines.append(f"{CLR_BORDER}║{RST} {CLR_LABEL}Status:{RST} {CLR_VAL}{job_sub:<54}{RST} {CLR_BORDER}║{RST}")
     lines.append(f"{CLR_BORDER}╠{'═' * (width - 2)}╣{RST}")
 
-    # Progress Bar Line
-    bar_line = f"[{bar_str}] {CLR_PCT}{pct:5.1f}%{RST}"
-    # Raw visible length without ANSI
+    bar_line = f"[{bar_str}] {pct_color}{pct:5.1f}%{RST}"
+    filled_len = int(round(bar_width * (pct / 100.0)))
     raw_bar_line = f"[{'█' * filled_len}{'░' * (bar_width - filled_len)}] {pct:5.1f}%"
     pad = width - 4 - len(raw_bar_line) - 10
     lines.append(f"{CLR_BORDER}║{RST} {CLR_LABEL}Progress:{RST} {bar_line}{' ' * max(0, pad)}{CLR_BORDER}║{RST}")
 
-    # Frame details
     frame_info = f"{CLR_VAL}{n:,}{RST} / {CLR_LABEL}{total:,}{RST} frames ({CLR_VAL}{rem_frames:,}{RST} remaining)"
     raw_frame_info = f"{n:,} / {total:,} frames ({rem_frames:,} remaining)"
     pad_frames = width - 4 - len(raw_frame_info) - 8
     lines.append(f"{CLR_BORDER}║{RST} {CLR_LABEL}Frames:{RST}   {frame_info}{' ' * max(0, pad_frames)}{CLR_BORDER}║{RST}")
 
-    # Speed, Elapsed, ETA, Finish Time
     metrics = (
         f"{CLR_LABEL}Speed:{RST} {CLR_SPEED}{fps:.1f} fps{RST}  "
         f"{CLR_BORDER}│{RST}  {CLR_LABEL}Elapsed:{RST} {CLR_TIME}{log_data['elapsed_str']}{RST}  "
@@ -214,14 +272,13 @@ def render_dashboard(workspace_root, width=80):
     pad_metrics = width - 4 - len(raw_metrics) - 2
     lines.append(f"{CLR_BORDER}║{RST}  {metrics}{' ' * max(0, pad_metrics)}{CLR_BORDER}║{RST}")
 
-    finish_line = f"Est. Completion: {CLR_FINISH}{finish_str}{RST} (local time)"
-    raw_finish = f"Est. Completion: {finish_str} (local time)"
+    finish_line = f"Est. Completion: {CLR_FINISH}{finish_str}{RST} (local time)  {CLR_BORDER}│{RST}  Palette: {pct_color}{palette_name.title()}{RST}"
+    raw_finish = f"Est. Completion: {finish_str} (local time)  │  Palette: {palette_name.title()}"
     pad_finish = width - 4 - len(raw_finish) - 2
     lines.append(f"{CLR_BORDER}║{RST}  {finish_line}{' ' * max(0, pad_finish)}{CLR_BORDER}║{RST}")
 
     lines.append(f"{CLR_BORDER}╠{'═' * (width - 2)}╣{RST}")
 
-    # Hardware Telemetry Section
     gpu_label = hw_info["gpu_name"]
     if len(gpu_label) > 28:
         gpu_label = gpu_label[:25] + "..."
@@ -242,6 +299,18 @@ def render_dashboard(workspace_root, width=80):
     lines.append(f"{CLR_BORDER}╚{'═' * (width - 2)}╝{RST}")
     return "\n".join(lines)
 
+def show_palette_demo():
+    print(f"\n{BOLD}{CLR_TITLE}=== ROOP ULTIMATE: DYNAMIC COLOR PALETTE SHOWCASE ==={RST}\n")
+    test_pcts = [15.0, 45.0, 72.0, 96.0]
+    for key, pinfo in PALETTES.items():
+        print(f"{BOLD}{CLR_VAL}{pinfo['name']} (--palette {key}){RST}")
+        for pct in test_pcts:
+            clr = get_color_for_pct(pct, key)
+            bar_grad = build_bar(pct, width=28, palette_name=key, style="gradient")
+            bar_stage = build_bar(pct, width=28, palette_name=key, style="stage")
+            print(f"  {clr}{pct:5.1f}%{RST}  Gradient: [{bar_grad}]   Stage: [{bar_stage}]")
+        print()
+
 def main():
     if hasattr(sys.stdout, "reconfigure"):
         try:
@@ -249,22 +318,28 @@ def main():
         except Exception:
             pass
     parser = argparse.ArgumentParser(description="Roop Ultimate Live Terminal Monitor")
+    parser.add_argument("--palette", choices=["cyberpunk", "ocean", "flame", "sunset"], default="cyberpunk", help="Color palette to display")
+    parser.add_argument("--style", choices=["gradient", "stage"], default="gradient", help="Progress bar fill style")
     parser.add_argument("--live", "-w", action="store_true", help="Continuously monitor and update terminal display")
+    parser.add_argument("--demo", action="store_true", help="Showcase all 4 dynamic color palettes")
     parser.add_argument("--interval", type=float, default=1.0, help="Refresh interval in seconds (default: 1.0)")
     args = parser.parse_args()
+
+    if args.demo:
+        show_palette_demo()
+        return
 
     workspace_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
     if not args.live:
-        print(render_dashboard(workspace_root))
+        print(render_dashboard(workspace_root, palette_name=args.palette, style=args.style))
         return
 
-    # Clear screen and hide cursor on live mode
     try:
         sys.stdout.write("\033[?25l\033[2J")
         sys.stdout.flush()
         while True:
-            dash = render_dashboard(workspace_root)
+            dash = render_dashboard(workspace_root, palette_name=args.palette, style=args.style)
             sys.stdout.write("\033[H" + dash + "\n")
             sys.stdout.flush()
             time.sleep(args.interval)

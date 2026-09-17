@@ -1219,6 +1219,48 @@ COLOR_WHITE = "\033[1;37m"             # Crisp Bold White for processed counts
 COLOR_MUTED = "\033[38;5;248m"         # Muted Silver for totals/labels
 COLOR_PURPLE = "\033[38;5;141m"        # Soft Violet for VRAM/GPU
 
+PALETTES = {
+    "cyberpunk": [
+        (0.0, "\033[38;5;129m"),   # Deep Purple
+        (25.0, "\033[38;5;198m"),  # Hot Magenta
+        (50.0, "\033[38;5;39m"),   # Electric Cyan
+        (75.0, "\033[38;5;84m"),   # Neon Mint
+    ],
+    "ocean": [
+        (0.0, "\033[38;5;27m"),    # Cobalt Blue
+        (25.0, "\033[38;5;38m"),   # Aqua Cyan
+        (50.0, "\033[38;5;42m"),   # Sea Green
+        (75.0, "\033[38;5;48m"),   # Radiant Emerald
+    ],
+    "flame": [
+        (0.0, "\033[38;5;67m"),    # Slate Blue
+        (25.0, "\033[38;5;220m"),  # Amber Yellow
+        (50.0, "\033[38;5;208m"),  # Warm Orange
+        (75.0, "\033[38;5;46m"),   # Laser Green
+    ],
+    "sunset": [
+        (0.0, "\033[38;5;161m"),   # Rose Crimson
+        (25.0, "\033[38;5;214m"),  # Warm Amber
+        (50.0, "\033[38;5;221m"),  # Solar Gold
+        (75.0, "\033[38;5;119m"),  # Spring Mint
+    ]
+}
+
+
+def get_progress_color(percentage: float, palette_name: str = None) -> str:
+    """Return ANSI color code for the current percentage based on active palette."""
+    if palette_name is None:
+        palette_name = os.environ.get("ROOP_PROGRESS_PALETTE", "cyberpunk").strip().lower()
+    palette = PALETTES.get(palette_name) or PALETTES["cyberpunk"]
+    current_color = palette[0][1]
+    for threshold, color in palette:
+        if percentage >= threshold:
+            current_color = color
+        else:
+            break
+    return current_color
+
+
 PROGRESS_BAR_FORMAT = (
     f"{COLOR_ACCENT}{{desc}}{COLOR_RESET}: "
     f"{COLOR_PERCENT}{{percentage:5.1f}}%{COLOR_RESET} "
@@ -1417,6 +1459,19 @@ class ChunkedProgress(tqdm):
                 else:
                     self._refresh_rate()
                     self._last_t = now
+                    if self.total and self.total > 0:
+                        pct = (self.n / self.total) * 100.0
+                        c = get_progress_color(pct)
+                        self.bar_format = (
+                            f"{COLOR_ACCENT}{{desc}}{COLOR_RESET}: "
+                            f"{c}{{percentage:5.1f}}%{COLOR_RESET} "
+                            f"{COLOR_GRAY}[{c}{{bar}}{COLOR_GRAY}]{COLOR_RESET} "
+                            f"{COLOR_WHITE}{{n_fmt}}{COLOR_GRAY}/{COLOR_MUTED}{{total_fmt}}{COLOR_RESET} "
+                            f"{COLOR_SEP}|{COLOR_RESET} {COLOR_MUTED}Elapsed:{COLOR_RESET} {COLOR_GREEN}{{elapsed}}{COLOR_RESET} "
+                            f"{COLOR_SEP}|{COLOR_RESET} {COLOR_MUTED}ETA:{COLOR_RESET} {COLOR_LIME}{{remaining}}{COLOR_RESET} "
+                            f"{COLOR_SEP}|{COLOR_RESET} {COLOR_YELLOW}{{rate_fmt}}{COLOR_RESET}"
+                            f"{{postfix}}"
+                        )
                     self.refresh()
             return ret
 
@@ -1454,7 +1509,8 @@ class ChunkedProgress(tqdm):
         bits = []
         if total:
             pct = (n / total * 100) if total > 0 else 0.0
-            bits.append(f"{COLOR_PERCENT}{pct:5.1f}%{COLOR_RESET}")
+            pct_color = get_progress_color(pct)
+            bits.append(f"{pct_color}{pct:5.1f}%{COLOR_RESET}")
             bits.append(f"{COLOR_WHITE}{n:,}{COLOR_GRAY}/{COLOR_MUTED}{total:,} {unit}{COLOR_RESET}")
         else:
             bits.append(f"{COLOR_WHITE}{n:,} {unit}{COLOR_RESET}")
