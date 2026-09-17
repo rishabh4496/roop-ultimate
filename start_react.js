@@ -11,11 +11,16 @@ module.exports = async (kernel) => {
         when: "{{!exists('react-ui/node_modules/vite/bin/vite.js')}}",
         method: "shell.run",
         params: {
+          env: {
+            PATH: [
+              "{{path.resolve(cwd, '../../bin/miniforge')}}"
+            ]
+          },
           path: "react-ui",
           message: [
             "npm ci --no-audit --no-fund"
           ]
-      }
+        }
     },
       // Repair an older machine in place. A previous installer could leave
       // NumPy 2.x behind even though the current requirements pin 1.26.4;
@@ -50,6 +55,11 @@ module.exports = async (kernel) => {
       {
         method: "shell.run",
         params: {
+          env: {
+            PATH: [
+              "{{path.resolve(cwd, '../../bin/miniforge')}}"
+            ]
+          },
           path: "react-ui",
           message: [
             "npm run build"
