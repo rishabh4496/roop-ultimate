@@ -31,7 +31,10 @@ module.exports = {
         // Node directory explicitly so Vite can start on a clean shell and on
         // machines whose global PATH does not contain Pinokio's Node runtime.
         env: {
-          PATH: "{{platform === 'win32' ? path.resolve(cwd, '../../bin/miniforge') + ';' + path.resolve(cwd, '../../bin/miniconda') + ';' + (envs.PATH || '') : path.resolve(cwd, '../../bin/miniforge') + ':' + path.resolve(cwd, '../../bin/miniconda') + ':' + (envs.PATH || '')}}"
+          PATH: [
+            "{{path.resolve(cwd, '../../bin/miniforge')}}",
+            "{{path.resolve(cwd, '../../bin/miniconda')}}"
+          ]
         },
         path: "react-ui",
         message: [

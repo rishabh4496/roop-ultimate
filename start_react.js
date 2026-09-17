@@ -12,7 +12,10 @@ module.exports = async (kernel) => {
         method: "shell.run",
         params: {
           env: {
-            PATH: "{{platform === 'win32' ? path.resolve(cwd, '../../bin/miniforge') + ';' + path.resolve(cwd, '../../bin/miniconda') + ';' + (envs.PATH || '') : path.resolve(cwd, '../../bin/miniforge') + ':' + path.resolve(cwd, '../../bin/miniconda') + ':' + (envs.PATH || '')}}"
+            PATH: [
+              "{{path.resolve(cwd, '../../bin/miniforge')}}",
+              "{{path.resolve(cwd, '../../bin/miniconda')}}"
+            ]
           },
           path: "react-ui",
           message: [
@@ -54,7 +57,10 @@ module.exports = async (kernel) => {
         method: "shell.run",
         params: {
           env: {
-            PATH: "{{platform === 'win32' ? path.resolve(cwd, '../../bin/miniforge') + ';' + path.resolve(cwd, '../../bin/miniconda') + ';' + (envs.PATH || '') : path.resolve(cwd, '../../bin/miniforge') + ':' + path.resolve(cwd, '../../bin/miniconda') + ':' + (envs.PATH || '')}}"
+            PATH: [
+              "{{path.resolve(cwd, '../../bin/miniforge')}}",
+              "{{path.resolve(cwd, '../../bin/miniconda')}}"
+            ]
           },
           path: "react-ui",
           message: [
