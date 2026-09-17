@@ -1034,10 +1034,12 @@ class MaskingMixin:
             return None
         return x0, y0, x1, y1, crop_x0, crop_y0, crop_x1, crop_y1
 
-    def process_mask(self, processor, frame:Frame, target:Frame, orig_frame:Frame=None, target_face:Face=None, M=None, tgt_pitch_deg:float=0.0, reuse_mask=None, rotation_action=None, region=None):
+    def process_mask(self, processor, frame:Frame, target:Frame, orig_frame:Frame=None, target_face:Face=None, M=None, tgt_pitch_deg:float=0.0, reuse_mask=None, rotation_action=None, region=None, defer_composite=False):
         """Mask `target` back toward `frame`. Returns (result, img_mask).
 
         `reuse_mask` skips straight to compositing with an already-computed mask.
+        `defer_composite` returns the unmodified target and computed mask so the
+        caller can apply a temporal mask filter before doing the final composite.
         The caller runs this TWICE per face when an enhancer is on — once for the
         swapped crop, once for the enhanced one — and every input the mask is
         derived from (`frame`, `target_face`, `M`, `orig_frame`, `tgt_pitch_deg`)
@@ -1048,6 +1050,8 @@ class MaskingMixin:
         mask model itself is only ~2.4ms of it.
         """
         if reuse_mask is not None:
+            if defer_composite:
+                return target, reuse_mask
             return self._composite_mask(reuse_mask, frame, target), reuse_mask
         # SAM2 is temporally tracked: instead of running per-crop inference it warps
         # its precomputed full-frame mask into this crop via the affine M stashed in
@@ -1407,6 +1411,8 @@ class MaskingMixin:
                 _swallowed("roop/procmgr_masking.py:1380", _degrade_error, "fallback continued")
                 pass
 
+        if defer_composite:
+            return target, img_mask
         return self._composite_mask(img_mask, frame, target), img_mask
 
     def _composite_mask(self, img_mask, frame: Frame, target: Frame):

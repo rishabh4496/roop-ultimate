@@ -4982,20 +4982,33 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                 _pre_mask_fake = fake_frame
                 _pre_mask_enhanced = enhanced_frame
                 with _prof('mask'), _gpu_guard(pooled=getattr(p, 'pool', None) is not None, owner='mask'):  # mask: lock-free when pooled
-                    fake_frame, _img_mask = self.process_mask(p, aligned_img, fake_frame, orig_frame=plate, target_face=target_face, M=M, tgt_pitch_deg=tgt_pitch_deg, rotation_action=rotation_action, region=region)
+                    # Defer both target composites until the mask stabilizer has
+                    # finished. Otherwise the raw composites are immediately
+                    # discarded and rebuilt below with the filtered mask. This
+                    # preserves the exact emitted pixels while removing two
+                    # full-crop blend passes on the stabilized path.
+                    fake_frame, _img_mask = self.process_mask(
+                        p, aligned_img, fake_frame, orig_frame=plate,
+                        target_face=target_face, M=M, tgt_pitch_deg=tgt_pitch_deg,
+                        rotation_action=rotation_action, region=region,
+                        defer_composite=True)
                     if enhanced_frame is not None:
                         # Same mask, different target — every input it is derived
                         # from is identical here, so recomputing it (engine call,
                         # landmark hull, mouth mask, blurs) would be pure waste.
-                        enhanced_frame, _ = self.process_mask(p, aligned_img, enhanced_frame, orig_frame=plate, target_face=target_face, M=M, tgt_pitch_deg=tgt_pitch_deg, reuse_mask=_img_mask, region=region)
+                        enhanced_frame, _ = self.process_mask(p, aligned_img, enhanced_frame, orig_frame=plate, target_face=target_face, M=M, tgt_pitch_deg=tgt_pitch_deg, reuse_mask=_img_mask, region=region, defer_composite=True)
                 _ms = self._cur_mask_stab()
                 if (self._stab_active and _ms is not None and _img_mask is not None
                         and rotation_action is None):
                     with _prof('stabilize'):
                         _img_mask = _ms.apply(
                             _img_mask, target_face.kps, self._cur_stab_t())
-                    fake_frame = self._composite_mask(_img_mask, aligned_img,
-                                                      _pre_mask_fake)
+                # The mask calls above deliberately returned the raw targets.
+                # Composite exactly once per target, after optional temporal
+                # filtering, so no quality path observes the pre-filter mask.
+                if _img_mask is not None:
+                    fake_frame = self._composite_mask(
+                        _img_mask, aligned_img, _pre_mask_fake)
                     if _pre_mask_enhanced is not None:
                         enhanced_frame = self._composite_mask(
                             _img_mask, aligned_img, _pre_mask_enhanced)
