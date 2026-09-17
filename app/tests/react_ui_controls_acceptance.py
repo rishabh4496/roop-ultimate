@@ -152,6 +152,46 @@ async def main():
             failures += not check(bool(before.get("processing")), "live render available for controls", json.dumps({k: before.get(k) for k in ('processing','paused','pause_requested','progress','desc')}))
 
             if before.get("processing"):
+                # This is the acceptance contract for the Processing surface,
+                # not a source assertion. Read the DOM a user actually receives
+                # from the browser and compare the visible model names with the
+                # runtime snapshot delivered by the public API. `innerText`
+                # applies the panel's uppercase CSS, hence the case-folding.
+                processing_ui = await page.evaluate("""
+                    const p = await (await fetch('/api/progress')).json();
+                    const text = document.body.innerText || '';
+                    const bar = document.querySelector('[role="progressbar"]');
+                    const widths = Array.from(document.querySelectorAll('[style*="width"]'))
+                      .map((el) => parseFloat(el.style.width)).filter(Number.isFinite);
+                    const offsets = Array.from(document.querySelectorAll('[style*="stroke-dashoffset"]'))
+                      .map((el) => parseFloat(el.style.strokeDashoffset)).filter(Number.isFinite);
+                    const model = p.runtime?.sections?.MODEL?.values?.swap_model || p.runtime?.model || '';
+                    const provider = p.runtime?.sections?.PROVIDER?.values?.effective || p.runtime?.provider || '';
+                    return {
+                      progressbar: !!bar,
+                      ariaNow: bar ? Number(bar.getAttribute('aria-valuenow')) : null,
+                      ariaText: bar?.getAttribute('aria-valuetext') || '',
+                      modelsPanel: text.toLowerCase().includes('models in use'),
+                      model, modelVisible: !model || text.toLowerCase().includes(String(model).toLowerCase()),
+                      provider, providerVisible: !provider || text.toLowerCase().includes(String(provider).toLowerCase()),
+                      widths, offsets,
+                      noSentinels: !/\\b(?:undefined|NaN)\\b/.test(text),
+                    };
+                """)
+                failures += not check(processing_ui.get("progressbar"), "Processing exposes an accessible progress bar")
+                aria_now = processing_ui.get("ariaNow")
+                failures += not check(isinstance(aria_now, (int, float)) and 0 <= aria_now <= 100,
+                                      "progress bar value stays within 0..100", json.dumps(processing_ui))
+                failures += not check(bool(processing_ui.get("ariaText")), "progress bar exposes readable progress text")
+                failures += not check(processing_ui.get("modelsPanel"), "Processing shows Models in use")
+                failures += not check(processing_ui.get("modelVisible"), "visible swapper matches runtime snapshot", json.dumps(processing_ui))
+                failures += not check(processing_ui.get("providerVisible"), "visible provider matches runtime snapshot", json.dumps(processing_ui))
+                failures += not check(all(0 <= n <= 100 for n in processing_ui.get("widths", [])),
+                                      "visible progress widths stay bounded", json.dumps(processing_ui.get("widths")))
+                failures += not check(all(n >= 0 for n in processing_ui.get("offsets", [])),
+                                      "progress ring offset stays non-negative", json.dumps(processing_ui.get("offsets")))
+                failures += not check(processing_ui.get("noSentinels"), "Processing has no undefined or NaN text")
+
                 pause = await page.click("button[aria-label='Pause the run']", settle=0.8)
                 failures += not check(pause, "Processing Pause button is clickable")
                 pause_state = await page.wait_for("(async()=>{const r=await fetch('/api/progress'); const p=await r.json(); return p.pause_requested || p.paused;})()", 30)
