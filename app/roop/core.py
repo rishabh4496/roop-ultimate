@@ -1845,14 +1845,14 @@ def print_startup_banner() -> None:
 
 def run() -> None:
     parse_args()
-    if not pre_check():
-        return
     roop.globals.CFG = apply_provider_override(Settings('config.yaml'))
     roop.globals.cuda_device_id = roop.globals.startup_args.cuda_device_id
     roop.globals.execution_threads = roop.globals.CFG.max_threads
     roop.globals.video_encoder = roop.globals.CFG.output_video_codec
     roop.globals.video_quality = roop.globals.CFG.video_quality
     roop.globals.max_memory = roop.globals.CFG.memory_limit if roop.globals.CFG.memory_limit > 0 else None
+    if not pre_check():
+        return
     if getattr(roop.globals.startup_args, 'benchmark', False):
         # Placed AFTER CFG and the runtime globals are established, so the
         # benchmark measures the user's real configuration -- and BEFORE the

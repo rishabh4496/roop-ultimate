@@ -93,7 +93,8 @@ module.exports = async (kernel) => {
             NO_ALBUMENTATIONS_UPDATE: "1",
             // Full-frame temporal intake is a quality/workload invariant, not
             // a GPU performance profile.
-            ROOP_TEMPORAL_STEP: "1"
+            ROOP_TEMPORAL_STEP: "1",
+            PYTHONUNBUFFERED: "1"
           },
           path: "app",
           message: [
