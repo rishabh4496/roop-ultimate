@@ -55,6 +55,11 @@ def _apply_perf_env():
         import yaml
         with open('config.yaml', 'r') as f:
             cfg = yaml.safe_load(f) or {}
+    except FileNotFoundError:
+        # Fresh installs have no saved preferences yet, just like Settings._load.
+        # Keep the existing environment/defaults without emitting an "Errno"
+        # diagnostic that Pinokio treats as a failed startup. Do not create a file.
+        return
     except Exception as _degrade_error:
         _swallowed("run.py:28", _degrade_error, "fallback continued")
         return

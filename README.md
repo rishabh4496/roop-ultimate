@@ -48,6 +48,15 @@ previous install left NumPy 2.x behind. This avoids a destructive reset. If the
 launcher reports a fatal dependency error before opening the UI, rerun **Update**
 or **Install** so the environment repair can finish.
 
+On a fresh install, `app/config.yaml` is optional: startup uses defaults until
+you save settings. Older revisions incorrectly logged its absence as
+`[Fallback] run.py:28 ... [Errno 2]`, which Pinokio could interpret as a startup
+failure and terminate the shell. The startup fix treats only the missing file
+as normal; unreadable or malformed settings are still reported. Pull the latest
+code on the affected, stopped installation and click **Start**. Do not copy
+another GPU's config, reset the app, or change a running installation's packages
+to fix this particular message.
+
 ### Manually
 
 ```bash
