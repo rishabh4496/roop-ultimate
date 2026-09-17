@@ -28,6 +28,7 @@ scans (e.g. the upscale pass's _outputs_since) ignore them.
 """
 from roop.degrade import swallowed as _swallowed
 
+import gc
 import json
 import os
 import subprocess
@@ -381,6 +382,7 @@ class SegmentedVideoWriter:
                   f"{last['first']}-{last['last']} · {last['bytes'] / 1048576:.0f} MB")
             self._write_manifest()
             self._notify_checkpoint()
+            gc.collect()
         else:
             try:
                 os.remove(os.path.join(self._dir, self._cur_seg_file))

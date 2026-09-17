@@ -272,11 +272,35 @@ def _ensure_face_analyser():
             and _ANALYSER_LM68_LAZY == cur_lm68_lazy):
         return FACE_ANALYSER
     with THREAD_LOCK_ANALYSER:
+        # If pool already satisfies the structural configuration and only det_thresh changed,
+        # mutate the threshold in-place across all pooled instances without tearing down sessions.
+        structural_match = (
+            bool(FACE_ANALYSER_POOL)
+            and len(FACE_ANALYSER_POOL) == target_pool_size
+            and roop.globals.g_current_face_analysis == roop.globals.g_desired_face_analysis
+            and _ANALYSER_DET_SIZE == _desired_det_size()
+            and _ANALYSER_ENGINE == cur_engine
+            and _ANALYSER_LM68_LAZY == cur_lm68_lazy
+        )
+        if structural_match:
+            if _ANALYSER_DET_THRESH != cur_det_thresh:
+                _ANALYSER_DET_THRESH = cur_det_thresh
+                targets = list(FACE_ANALYSER_POOL)
+                if FACE_ANALYSER is not None and FACE_ANALYSER not in targets:
+                    targets.append(FACE_ANALYSER)
+                for fa in targets:
+                    if hasattr(fa, 'det_thresh'):
+                        fa.det_thresh = cur_det_thresh
+                    if getattr(fa, 'det_model', None) is not None and hasattr(fa.det_model, 'det_thresh'):
+                        fa.det_model.det_thresh = cur_det_thresh
+            if FACE_ANALYSER is None and FACE_ANALYSER_POOL:
+                FACE_ANALYSER = FACE_ANALYSER_POOL[0]
+            return FACE_ANALYSER
+
         if (not FACE_ANALYSER_POOL
                 or len(FACE_ANALYSER_POOL) != target_pool_size
                 or roop.globals.g_current_face_analysis != roop.globals.g_desired_face_analysis
                 or _ANALYSER_DET_SIZE != _desired_det_size()
-                or _ANALYSER_DET_THRESH != cur_det_thresh
                 or _ANALYSER_ENGINE != cur_engine
                 or _ANALYSER_LM68_LAZY != cur_lm68_lazy):
             if FACE_ANALYSER_POOL:
@@ -1211,14 +1235,17 @@ def _detect_faces(frame):
     (padded), rotated face, and dark/backlit lighting (CLAHE) rescues."""
     faces = _detect_faces_raw(frame)
     if not faces:
+        engine = getattr(roop.globals, 'detector_engine', 'scrfd')
+        has_multiscale = (engine in ('retinaface', 'retinaface_r50')
+                          or bool(getattr(roop.globals, 'detector_scale_pyramid', None)))
         # 1. Small-face rescue
         if getattr(roop.globals, 'rescue_small_faces', False):
             faces = _rescue_upscaled(frame)
-        # 2. Close-up rescue
-        if not faces:
+        # 2. Close-up rescue (skip if multiscale detector already ran downscaled passes)
+        if not faces and not has_multiscale:
             faces = _rescue_downscaled(frame)
-        # 3. Boundary padding rescue
-        if not faces:
+        # 3. Boundary padding rescue (skip if multiscale detector already applied border context padding)
+        if not faces and not has_multiscale:
             faces = _rescue_padded(frame)
         # 4. Rotated face rescue
         if not faces:

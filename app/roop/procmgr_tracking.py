@@ -1861,7 +1861,7 @@ class TrackingMixin:
         if not others:
             return False
         try:
-            fb = np.asarray(face.bbox, np.float64)
+            fb = np.asarray(face.get('bbox') if isinstance(face, dict) else getattr(face, 'bbox', face), np.float64)
         except Exception as _degrade_error:
             _swallowed("roop/procmgr_tracking.py:1736", _degrade_error, "fallback continued")
             return False
@@ -1870,7 +1870,7 @@ class TrackingMixin:
             if otid == tid:
                 continue
             try:
-                ob = np.asarray(oface.bbox, np.float64)
+                ob = np.asarray(oface.get('bbox') if isinstance(oface, dict) else getattr(oface, 'bbox', oface), np.float64)
             except Exception as _degrade_error:
                 _swallowed("roop/procmgr_tracking.py:1744", _degrade_error, "fallback continued")
                 continue
@@ -2093,9 +2093,13 @@ class TrackingMixin:
         other_real = {}
         for t in tracks:
             for f_idx, face in (t.get('obs') or {}).items():
-                other_real.setdefault(f_idx, []).append((t['id'], face))
+                bbox = getattr(face, 'bbox', None)
+                if bbox is None and isinstance(face, dict):
+                    bbox = face.get('bbox')
+                if bbox is not None:
+                    other_real.setdefault(f_idx, []).append((t['id'], bbox))
         for t in tracks:
-            obs = t.get('obs') or {}
+            obs = t.pop('obs', None) or {}
             if not obs:
                 continue
             emb_mean = np.asarray(t['emb_mean'], dtype=np.float32)

@@ -401,13 +401,22 @@ class BatchProcessingMixin:
         self._replay_analysis_released = False
         try:
             _runtime_optimizer = RuntimeOptimizer(settings=getattr(roop.globals, 'CFG', None))
+            _target_datas = getattr(self, 'target_face_datas', []) or []
+            _target_groups = getattr(self, 'target_face_groups', None) or getattr(roop.globals, 'TARGET_FACE_GROUP', None)
+            if _target_groups and (not _target_datas or len(_target_groups) == len(_target_datas)):
+                try:
+                    _unique_identities = len(set(_target_groups))
+                except Exception:
+                    _unique_identities = len(_target_groups)
+            else:
+                _unique_identities = len(_target_datas)
             self.runtime_profile = _runtime_optimizer.profile_video(
                 source_video,
                 frame_count=frame_count,
                 resolution=(width, height),
                 output_resolution=(width, height),
-                faces_per_frame=max(1, len(getattr(self, 'target_face_datas', []) or [])),
-                face_count=len(getattr(self, 'target_face_datas', []) or []),
+                faces_per_frame=max(1, _unique_identities),
+                face_count=_unique_identities,
                 save=True)
             # Publish the one profiled device to model-session policy. Every
             # provider decision in this workload now uses the same detected

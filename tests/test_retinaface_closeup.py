@@ -54,7 +54,9 @@ def _create_synthetic_face_image(size: int = 1024, zoom_factor: float = 0.85) ->
     or generates a detailed facial pattern with skin tones, eyes, nose, and mouth.
     """
     # Prefer real fixture image if available
-    sample_path = REPO_ROOT / 'facesets' / 'akansha.png'
+    sample_path = APP_DIR / 'facesets' / 'akansha.png'
+    if not sample_path.exists():
+        sample_path = REPO_ROOT / 'facesets' / 'akansha.png'
     if sample_path.exists():
         img = cv2.imread(str(sample_path))
         if img is not None:
@@ -222,8 +224,8 @@ class TestRetinaFaceCloseupDetection(unittest.TestCase):
         # 1. Face height > 500px -> True
         self.assertTrue(should_trigger_pyramid((1080, 1920), estimated_face_height=520))
 
-        # 2. 0 faces on high-res frame -> True
-        self.assertTrue(should_trigger_pyramid((1080, 1920), initial_dets=np.empty((0, 5))))
+        # 2. 0 faces on negative frame is pruned -> False
+        self.assertFalse(should_trigger_pyramid((1080, 1920), initial_dets=np.empty((0, 5))))
 
         # 3. 0 faces on small low-res thumbnail -> False
         self.assertFalse(should_trigger_pyramid((240, 320), initial_dets=np.empty((0, 5))))

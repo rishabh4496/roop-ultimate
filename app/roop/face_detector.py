@@ -366,8 +366,7 @@ def should_trigger_pyramid(
     Conditions (matching specification):
     1. CLI/UI explicitly set scales other than 'auto' or 'none'.
     2. Estimated face height exceeds 500px (macro shot / extreme close-up).
-    3. Detection returns 0 faces on a high-resolution frame (H >= 500 or W >= 500).
-    4. Detected face fills > 75% of frame height or face height > 500px.
+    3. Detected face fills > 75% of frame height or face height > 500px.
     """
     parsed = parse_scale_pyramid(configured_scales)
     if parsed is not None:
@@ -383,9 +382,8 @@ def should_trigger_pyramid(
     # 2. Check initial detection results if an initial pass was performed
     if initial_dets is not None:
         if len(initial_dets) == 0:
-            # 0 faces on a high-res frame
-            if max(h, w) >= HIGH_RES_MIN_DIMENSION:
-                return True
+            # Prune multi-scale execution on negative frames: an initial pass yielding
+            # 0 faces should not unconditionally trigger the full pyramid.
             return False
 
         # 3. Check if any detected face is close-up (> 500px or filling > 75% of frame)

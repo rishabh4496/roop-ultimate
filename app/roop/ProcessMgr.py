@@ -867,17 +867,15 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
         recognition, and landmark results that the swap pass consumes. Releasing
         auxiliary analysis sessions (recognition, landmark, genderage) reclaims
         substantial VRAM and host RAM before main processing begins. Release is
-        allowed only when the replay covers the whole clip and 3D or
-        frontalization work is not active. Verification and autorotation keep
+        allowed only when the replay covers the whole clip. 3D reconstruction
+        and frontalization consume cached landmarks and do not require live
+        auxiliary neural sessions during replay. Verification and autorotation keep
         the detector-only portion of the analyser, while recognition and
         landmark sessions are released.
         """
         if not getattr(self, '_temporal_mode', False) or self._temporal_faces is None:
             return False
         if int(getattr(self, '_temporal_covered', 0) or 0) < int(frame_count or 0):
-            return False
-        if (getattr(self.options, 'use_3d_recon', False)
-                or getattr(self.options, 'use_frontalization', False)):
             return False
         try:
             # The main pass consumes the replayed Face objects. Keep the

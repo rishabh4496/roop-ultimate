@@ -1279,7 +1279,7 @@ class Enhance_UltraMax:
             # symptom was the collapse guard rejecting the face.
             x = (source.permute(2, 0, 1).flip(0).unsqueeze(0)
                  .div(127.5).sub(1.0).to(dtype).contiguous())
-            fidelity = torch.tensor([getattr(roop.globals, 'codeformer_fidelity', 0.5)],
+            fidelity = torch.tensor(float(getattr(roop.globals, 'codeformer_fidelity', 0.5)),
                                     device=source.device, dtype=torch.float64)
             in0, in1 = self.model_inputs[0].name, self.model_inputs[1].name
             out_name = self.model_outputs[0].name
