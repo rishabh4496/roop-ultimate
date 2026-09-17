@@ -10,6 +10,7 @@ module.exports = {
         "message": [
            "uv pip install torch==2.7.0 torchvision==0.22.0 {{args && args.xformers ? 'xformers' : ''}} --index-url https://download.pytorch.org/whl/cu128 --force-reinstall --no-deps",
            "uv pip install filelock fsspec jinja2 networkx typing-extensions sympy",
+           "uv pip uninstall onnxruntime",
            "uv pip install onnxruntime-gpu==1.23.2",
            "uv pip install --extra-index-url https://pypi.nvidia.com/ tensorrt-cu12==10.9.0.34 tensorrt-cu12-libs==10.9.0.34 tensorrt-cu12-bindings==10.9.0.34"
         ]
@@ -81,6 +82,7 @@ module.exports = {
         "message": [
           "uv pip install torch==2.7.0 torchvision==0.22.0 {{args && args.xformers ? 'xformers' : ''}} --index-url https://download.pytorch.org/whl/cu128 --force-reinstall --no-deps",
           "uv pip install filelock fsspec jinja2 networkx typing-extensions sympy",
+          "uv pip uninstall onnxruntime",
           "uv pip install onnxruntime-gpu==1.23.2",
           "uv pip install --extra-index-url https://pypi.nvidia.com/ tensorrt-cu12==10.9.0.34 tensorrt-cu12-libs==10.9.0.34 tensorrt-cu12-bindings==10.9.0.34"
         ]
