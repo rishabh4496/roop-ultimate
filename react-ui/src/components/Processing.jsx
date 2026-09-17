@@ -8,6 +8,7 @@ import QualityReport from './QualityReport';
 import ProcessingDock from './faceswap/ProcessingDock';
 import ProcessingTerminal from './faceswap/ProcessingTerminal';
 import DiagnosticsPanel from './faceswap/DiagnosticsPanel';
+import RunModelsPanel from './faceswap/RunModelsPanel';
 import LiveProcessingPeek from './faceswap/LiveProcessingPeek';
 import useTelemetry from './faceswap/useTelemetry';
 import useRenderLite from './faceswap/useRenderLite';
@@ -43,12 +44,19 @@ export default function Processing({ progress, settings, notify, setTab,
 
   // Smooth 1-second interval timer when rendering so live elapsed and ETA tick smoothly
   // even when progress poll frequency drops during active WebSocket telemetry.
+  //
+  // It keeps running WHILE PAUSED, which it did not: `started_at` is the
+  // backend's wall clock and does not stop for a pause, so freezing this timer
+  // froze the Elapsed readout at whatever it said when Pause was pressed while
+  // the real number kept climbing. Resuming then made it jump by the length of
+  // the pause. A paused run still ages; only the ETA is meaningless, and that
+  // is handled separately below.
   const [now, setNow] = useState(Date.now());
   useEffect(() => {
-    if (!processing || progress.paused) return undefined;
+    if (!processing) return undefined;
     const timer = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(timer);
-  }, [processing, progress.paused]);
+  }, [processing]);
 
   const telemetry = useTelemetry();
   const {
@@ -59,26 +67,63 @@ export default function Processing({ progress, settings, notify, setTab,
   // run finishing while this tab is closed still announces itself. This tab
   // only hosts the TOGGLE for it, which is why both arrive as props.
 
-  // The knobs that actually decide a run's speed and look, shown alongside the
-  // live diagnostics so a screenshot of a slow or wrong-looking run says what
-  // produced it. Mirrors the summary Face Swap used to build for this panel.
+  // The knobs that decide a run's speed and look, shown alongside the live
+  // diagnostics so a screenshot of a slow or wrong-looking run says what
+  // produced it.
+  //
+  // The MODEL names are deliberately not here any more. They moved to
+  // RunModelsPanel, which reads them from the pipeline's own runtime snapshot
+  // rather than from `settings` — and while both were on screen they could
+  // disagree, because this list re-renders the moment a control is touched in
+  // another tab while the run keeps whatever it started with. Two panels
+  // captioned "swapper" showing two different swappers is worse than one panel.
+  // What is left is the behaviour flags, which have no runtime equivalent.
   const runConfigSummary = useMemo(() => ([
-    ['swapper', p.swap_model || '—'],
-    ['detector', p.detector_engine || '—'],
-    ['enhancer', p.selected_enhancer && p.selected_enhancer !== 'None' ? p.selected_enhancer : 'off'],
-    ['mask', p.mask_engine || '—'],
-    ['pixel boost', p.subsample_upscale || '—'],
-    ['upscale', p.upscale_after_swap ? (p.upscale_model_after || 'on') : 'off'],
+    ['face mode', p.face_detection_mode || '—'],
+    ['det size', p.default_det_size ? 'auto' : (p.face_detector_size || '—')],
+    ['swap steps', String(p.num_swap_steps ?? 1)],
     ['tracking', p.track_identities ? 'on' : 'off'],
     ['temporal', p.temporal_detection ? 'on' : 'off'],
     ['stabilize', p.stabilize_face || p.stabilize_enhancer || p.stabilize_mask ? 'on' : 'off'],
-  ]), [p.swap_model, p.detector_engine, p.selected_enhancer, p.mask_engine,
-       p.subsample_upscale, p.upscale_after_swap, p.upscale_model_after,
-       p.track_identities, p.temporal_detection, p.stabilize_face, p.stabilize_enhancer,
-       p.stabilize_mask]);
+    ['threads', String(p.max_threads ?? '—')],
+    ['codec', p.output_video_codec || '—'],
+  ]), [p.face_detection_mode, p.default_det_size, p.face_detector_size,
+       p.num_swap_steps, p.track_identities, p.temporal_detection,
+       p.stabilize_face, p.stabilize_enhancer, p.stabilize_mask,
+       p.max_threads, p.output_video_codec]);
 
-  const prog = progress.progress || 0;
+  // ── The fraction every bar on this tab is drawn from ─────────────────────
+  //
+  // Clamped, because it is drawn straight into a `width:` and a stroke offset.
+  // `_progress["progress"]` is written from several places in the backend — the
+  // swap loop, the post-swap upscale pass and the interpolation pass each reset
+  // it to 0.0 and count up again — and `post_swap.py` caps its own writes at
+  // 0.999 while `api.py` sets a flat 1.0 at the end. Unclamped, a value even
+  // slightly outside [0,1] (a resume base plus a fraction that rounds over,
+  // most easily) produced a negative `strokeDashoffset`, which Chromium renders
+  // as a FULL ring: a run at 4% drew a complete circle.
+  const rawProg = Number(progress.progress);
+  const prog = Number.isFinite(rawProg) ? Math.min(1, Math.max(0, rawProg)) : 0;
   const startedAt = progress.started_at ? progress.started_at * 1000 : null;
+
+  // Frame counters, from the telemetry frame where there is one (it is pushed at
+  // 4 Hz and carries them as numbers) and from the status line otherwise. The
+  // headline percentage is a fraction of the WHOLE job including the encode
+  // tail; "51,203 / 88,483" is the thing people actually read progress from, and
+  // it was on the diagnostics strip only.
+  const frames = useMemo(() => {
+    const done = Number(progress.current_frame);
+    const total = Number(progress.total_frames);
+    if (Number.isFinite(done) && Number.isFinite(total) && total > 0) {
+      return { done, total };
+    }
+    const m = /(\d[\d,]*)\s*\/\s*(\d[\d,]*)/.exec(progress.desc || '');
+    if (!m) return null;
+    const d = parseInt(m[1].replace(/,/g, ''), 10);
+    const t = parseInt(m[2].replace(/,/g, ''), 10);
+    if (!Number.isFinite(d) || !Number.isFinite(t) || t <= 0) return null;
+    return { done: d, total: t };
+  }, [progress.current_frame, progress.total_frames, progress.desc]);
 
   // Elapsed comes from the backend's own clock, so a run that was already going
   // when this view mounted keeps its real age. The last live value is kept in a
@@ -94,11 +139,24 @@ export default function Processing({ progress, settings, notify, setTab,
   // start-up and the encode tail, where nothing is counting. (Deriving it from
   // elapsed × (1 − prog) / prog throughout reads minutes of model loading and
   // pre-pass as if they were swap time, and overshoots by 2×.)
-  const etaMs = processing
+  //
+  // A PAUSED run has no ETA. The backend's eta_s is frames-remaining over a rate
+  // that is now zero, so it keeps returning the last rate's answer and the
+  // countdown carried on ticking down over a stopped render — and "Finishes
+  // 04:12" stayed on screen as a wall-clock time that was already wrong the
+  // moment it was drawn. Better to say nothing than to say something false.
+  const etaMs = processing && !progress.paused && !pauseRequested && !stopping
     ? (typeof progress.eta_s === 'number' && progress.eta_s > 0
         ? progress.eta_s * 1000
         : (prog > 0.01 ? (elapsedMs * (1 - prog)) / prog : 0))
     : 0;
+
+  // Why the ETA is not being shown, so the placeholder is never just a shrug.
+  const etaNote = !processing ? null
+    : stopping ? 'stopping'
+    : (progress.paused || pauseRequested) ? 'paused'
+    : etaMs > 0 ? null
+    : 'estimating…';
 
   const pause = onPauseRun || (async () => { try { await postJSON('/api/pause', {}); notify('Pause requested; waiting for a safe checkpoint', 'info'); } catch (e) { notify(e.message, 'error'); } });
   const resume = onResumeRun || (async () => { try { await postJSON('/api/resume', {}); notify('Resumed'); } catch (e) { notify(e.message, 'error'); } });
@@ -147,8 +205,16 @@ export default function Processing({ progress, settings, notify, setTab,
 
       {/* ── Run bar ─────────────────────────────────────────────────────────
           Sticky, so the percentage and the stop control stay reachable however
-          far down the terminal is scrolled. */}
-      <div className="sticky top-20 z-30 pb-3 bg-neutral-950/70 backdrop-blur-md">
+          far down the terminal is scrolled.
+
+          The backdrop follows --bg-gradient's own surface rather than a
+          hardcoded `bg-neutral-950/70`. That literal is a near-black wash, which
+          is invisible on the dark themes it was written for and a dark smear
+          across the top of the panel on every LIGHT one — and the content
+          scrolling underneath it still showed through, because 70% of black over
+          a white page is grey, not "the page". */}
+      <div className="sticky top-20 z-30 pb-3 backdrop-blur-md"
+           style={{ background: 'linear-gradient(to bottom, var(--card-bg) 0%, var(--card-bg) 72%, transparent 100%)' }}>
         {processing ? (
           <div className="relative overflow-hidden rounded-2xl glass-panel px-5 py-3.5 flex flex-col md:flex-row items-center justify-between gap-4 shadow-xl border border-white/5 w-full">
             {/* Left: circular progress ring & status */}
@@ -195,7 +261,11 @@ export default function Processing({ progress, settings, notify, setTab,
               <div className="h-6 w-px bg-white/10" />
               <div className="flex flex-col">
                 <span className="text-micro uppercase tracking-wider text-white/45 font-bold">ETA</span>
-                <span className="text-emerald-400 font-bold tabular-nums whitespace-nowrap">{etaMs > 0 ? fmtTime(etaMs) : '--:--'}</span>
+                {/* `--:--` read as a clock that had stopped. It is not a time at
+                    all — it is the absence of one — so it says which. */}
+                <span className={`font-bold tabular-nums whitespace-nowrap ${etaMs > 0 ? 'text-emerald-400' : 'text-white/35'}`}>
+                  {etaMs > 0 ? fmtTime(etaMs) : (etaNote || '—')}
+                </span>
               </div>
             </div>
 
@@ -230,8 +300,24 @@ export default function Processing({ progress, settings, notify, setTab,
               </motion.button>
             </div>
 
-            {/* Smooth animated progress line along the bottom edge */}
-            <div className="absolute inset-x-0 bottom-0 h-1 bg-white/[0.04]">
+            {/* Smooth animated progress line along the bottom edge.
+
+                This is the tab's primary progress indicator and was invisible to
+                assistive tech: a pair of bare divs with a width. `role` + the
+                aria-value* trio is what makes a screen reader able to report the
+                run at all, and it is the ONE bar here that measures the whole
+                job, so it is the one that carries it. */}
+            <div
+              className="absolute inset-x-0 bottom-0 h-1 bg-white/[0.04]"
+              role="progressbar"
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={Math.round(prog * 100)}
+              aria-valuetext={`${Math.round(prog * 100)} percent${
+                frames ? `, frame ${frames.done} of ${frames.total}` : ''}${
+                etaMs > 0 ? `, ${fmtTime(etaMs)} remaining` : ''}`}
+              aria-label="Render progress"
+            >
               <div
                 className={`h-full bg-gradient-to-r from-[var(--accent)] to-[var(--accent-hover)] transition-[width] duration-500 ease-out ${progress.paused ? '' : 'progress-bar-animated'}`}
                 style={{ width: `${Math.max(2, prog * 100)}%`, boxShadow: '0 0 10px var(--accent-glow)' }}
@@ -292,6 +378,17 @@ export default function Processing({ progress, settings, notify, setTab,
                 <div className="mt-1 flex items-baseline gap-2.5">
                   <AnimatedNumber value={prog * 100} decimals={1} suffix="%"
                                   className="font-mono text-display leading-none font-bold tabular-nums text-white" />
+                  {/* The frame counter, beside the percentage rather than only
+                      down in the diagnostics strip. The percentage covers the
+                      whole job including the encode tail, so it moves at a
+                      different rate from the frames and people read progress
+                      from the frames. */}
+                  {frames && (
+                    <span className="font-mono text-title font-bold tabular-nums text-white/45 whitespace-nowrap">
+                      {frames.done.toLocaleString()}
+                      <span className="text-white/25"> / {frames.total.toLocaleString()}</span>
+                    </span>
+                  )}
                   <span className="text-sm font-medium text-white/55 truncate max-w-[46ch]">
                     {progress.desc || 'Swapping faces…'}
                   </span>
@@ -305,7 +402,9 @@ export default function Processing({ progress, settings, notify, setTab,
                 <div className="w-px bg-white/10" />
                 <div className="text-right">
                   <div className="text-nano font-semibold uppercase tracking-[0.16em] text-white/45">Time left</div>
-                  <div className="text-title font-bold tabular-nums text-emerald-400">{etaMs > 0 ? fmtTime(etaMs) : '--:--'}</div>
+                  <div className={`text-title font-bold tabular-nums ${etaMs > 0 ? 'text-emerald-400' : 'text-white/35'}`}>
+                    {etaMs > 0 ? fmtTime(etaMs) : (etaNote || '—')}
+                  </div>
                 </div>
                 <div className="w-px bg-white/10" />
                 <div className="text-right">
@@ -318,7 +417,19 @@ export default function Processing({ progress, settings, notify, setTab,
             </div>
 
             {/* ── Pipeline rail ───────────────────────────────────────────
-                Continuous track split into named segments with glowing step markers. */}
+                Continuous track split into named segments with glowing step markers.
+
+                THE BAR INSIDE THE ACTIVE SEGMENT IS STAGE-LOCAL, not the whole
+                run's percentage. It used to be `prog * 100`, which is a fraction
+                of the ENTIRE job: at 60% overall the Swap segment showed 60%
+                full, and then the moment the run moved on to Combine — a stage
+                that is seconds long — that segment ALSO started at ~99% and
+                crawled, because it was still being handed the job-wide number.
+                Each segment claimed to be a progress bar for its own stage and
+                was in fact four copies of the same one. The frame counter is the
+                honest source for the stage that has one; a stage without one
+                (encode, mux) gets an indeterminate sweep, which says "working,
+                length unknown" instead of inventing a number. */}
             {(() => {
               const d = (progress.desc || '').toLowerCase();
               const stages = [
@@ -334,6 +445,12 @@ export default function Processing({ progress, settings, notify, setTab,
               else if (/analy|track|extract|detect|start/.test(d)) activeKey = 'analyze';
               let activeIdx = stages.findIndex((s) => s.key === activeKey);
               if (activeIdx < 0) activeIdx = 1;
+              // The counter in the status line restarts per stage ("Upscaling
+              // frame 1 / N"), so it IS the stage-local fraction wherever one is
+              // printed at all.
+              const stageFrac = frames && frames.total > 0
+                ? Math.min(1, Math.max(0, frames.done / frames.total))
+                : null;
               return (
                 <div className="w-full p-2.5 sm:p-3 rounded-2xl bg-white/[0.02] border border-white/10 backdrop-blur-sm shadow-inner">
                   <div className="flex items-stretch gap-2">
@@ -349,12 +466,20 @@ export default function Processing({ progress, settings, notify, setTab,
                                 : 'bg-white/[0.08]'
                           }`}>
                             {state === 'done' && <div className="h-full w-full rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.5)]" />}
-                            {state === 'active' && (
+                            {state === 'active' && (stageFrac != null ? (
                               <div
                                 className={`h-full rounded-full bg-gradient-to-r from-[var(--accent)] to-[var(--accent-hover)] transition-[width] duration-500 ease-out ${progress.paused ? '' : 'progress-bar-animated'}`}
-                                style={{ width: `${Math.max(6, prog * 100)}%`, boxShadow: '0 0 10px var(--accent-glow)' }}
+                                style={{ width: `${Math.max(6, stageFrac * 100)}%`, boxShadow: '0 0 10px var(--accent-glow)' }}
                               />
-                            )}
+                            ) : (
+                              /* No counter for this stage: sweep rather than lie. */
+                              <div className="relative h-full w-full overflow-hidden">
+                                <div
+                                  className={`absolute inset-y-0 w-1/3 rounded-full bg-gradient-to-r from-transparent via-[var(--accent)] to-transparent ${progress.paused ? '' : 'preview-indeterminate'}`}
+                                  style={{ boxShadow: '0 0 10px var(--accent-glow)' }}
+                                />
+                              </div>
+                            ))}
                           </div>
                           <div className={`mt-2 flex items-center gap-1.5 text-micro font-semibold uppercase tracking-[0.14em] truncate transition-colors ${
                             state === 'done'
@@ -400,7 +525,7 @@ export default function Processing({ progress, settings, notify, setTab,
             {/* Live processing frame peek & diagnostics */}
             {!terminalExpanded && (
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 min-h-0">
-                <div className="lg:col-span-1">
+                <div className="lg:col-span-1 flex flex-col gap-3.5 min-w-0">
                   <LiveProcessingPeek
                     // The still Face Swap last had on screen, kept across the tab
                     // switch — see faceswap/lastPreview. It is only the fallback
@@ -416,8 +541,17 @@ export default function Processing({ progress, settings, notify, setTab,
                     progressDesc={progress.desc}
                     paused={progress.paused}
                   />
+                  {/* WHAT is doing the work, under the frame it is producing.
+                      Sourced from the pipeline's own runtime snapshot, so it
+                      shows the models the run actually holds rather than
+                      whatever Settings has drifted to since it started. */}
+                  <RunModelsPanel
+                    runtime={progress.runtime}
+                    settings={settings}
+                    telemetry={telemetry}
+                  />
                 </div>
-                <div className="lg:col-span-2">
+                <div className="lg:col-span-2 min-w-0">
                   <DiagnosticsPanel
                     desc={progress.status_line || progress.desc}
                     telemetry={telemetry}
@@ -427,6 +561,12 @@ export default function Processing({ progress, settings, notify, setTab,
                     elapsedMs={elapsedMs}
                     etaMs={etaMs}
                     prog={prog}
+                    // The counters straight off the 4 Hz telemetry frame. The
+                    // panel used to re-parse them out of the status STRING,
+                    // which only changes as fast as the string is rewritten.
+                    framesDone={frames?.done}
+                    framesTotal={frames?.total}
+                    fps={progress.fps}
                   />
                 </div>
               </div>
@@ -453,12 +593,24 @@ export default function Processing({ progress, settings, notify, setTab,
           {/* The output itself, so a finished run does not have to be chased
               into another tab to be looked at. */}
           {out?.path && (
-            <div className="rounded-2xl glass-panel p-5 shadow-2xl border border-white/5 space-y-3">
-              <div className="text-mini uppercase tracking-[0.14em] text-white/45 font-semibold">Output</div>
-              {isVideoOutput
-                ? <video src={outUrl} controls className="w-full max-h-[52vh] rounded-xl border border-white/5" />
-                : <img src={outUrl} alt="Render output" className="w-full max-h-[52vh] object-contain rounded-xl border border-white/5" />}
-              <QualityReport outputPath={out.path} notify={notify} />
+            <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_280px]">
+              <div className="rounded-2xl glass-panel p-5 shadow-2xl border border-white/5 space-y-3 min-w-0">
+                <div className="text-mini uppercase tracking-[0.14em] text-white/45 font-semibold">Output</div>
+                {isVideoOutput
+                  ? <video src={outUrl} controls className="w-full max-h-[52vh] rounded-xl border border-white/5" />
+                  : <img src={outUrl} alt="Render output" className="w-full max-h-[52vh] object-contain rounded-xl border border-white/5" />}
+                <QualityReport outputPath={out.path} notify={notify} />
+              </div>
+              {/* What produced this file. The backend keeps the last run's
+                  runtime block until the next run starts, so "which swapper was
+                  this?" is answerable while looking at the result rather than
+                  only while it is being made. */}
+              <RunModelsPanel
+                runtime={progress.runtime}
+                settings={settings}
+                telemetry={telemetry}
+                className="self-start"
+              />
             </div>
           )}
 

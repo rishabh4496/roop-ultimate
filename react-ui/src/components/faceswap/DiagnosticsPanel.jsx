@@ -121,7 +121,8 @@ const fmtDur = (ms) => {
 };
 
 export default function DiagnosticsPanel({ desc = '', telemetry, processing, paused, config = [],
-                                           elapsedMs = 0, etaMs = 0, prog = 0 }) {
+                                           elapsedMs = 0, etaMs = 0, prog = 0,
+                                           framesDone = null, framesTotal = null, fps = null }) {
   // ── Throughput history ────────────────────────────────────────────────────
   // Derived from the FRAME COUNT over wall time, NOT from the "(Z FPS)" in the
   // status line. That number is tqdm's smoothed rate, and tqdm measures the
@@ -135,6 +136,21 @@ export default function DiagnosticsPanel({ desc = '', telemetry, processing, pau
   const lastDescRef = useRef('');
   const lastSampleRef = useRef(null);   // { t, done } of the previous sample
 
+  // The frame counter, preferring the numbers the telemetry socket pushes at
+  // 4 Hz over re-parsing them back out of the status STRING. Parsing the string
+  // is not wrong, it is just slow and lossy: the line is rewritten far less
+  // often than the counters change, and the moment the run enters a stage that
+  // prints no counter (encode, mux) the regex stops matching and every figure
+  // below fell to '—' even though the telemetry frame still carried them.
+  // Memoised on the VALUES, not rebuilt per render: `frames` below is a
+  // useMemo over it, and a fresh object identity every render would make that
+  // memo, and everything keyed off it, recompute on every single tick.
+  const counted = useMemo(() => (
+    Number.isFinite(Number(framesDone)) && Number(framesTotal) > 0
+      ? { done: Number(framesDone), total: Number(framesTotal) }
+      : null
+  ), [framesDone, framesTotal]);
+
   useEffect(() => {
     if (!processing) {
       setFpsHist([]); setHwHist({ gpu: [], vram: [], cpu: [] });
@@ -142,15 +158,23 @@ export default function DiagnosticsPanel({ desc = '', telemetry, processing, pau
     }
   }, [processing]);
 
+  // Sample key: the counter when we have one, the status string otherwise. Both
+  // paths then share one Δframes/Δtime computation.
+  const sampleDone = counted ? counted.done : null;
   useEffect(() => {
-    if (!processing || paused || !desc || desc === lastDescRef.current) return;
-    lastDescRef.current = desc;
-    const m = desc.match(/(\d[\d,]*)\s*\/\s*(\d[\d,]*)/);
-    if (!m) return;
-    const done = parseInt(m[1].replace(/,/g, ''), 10);
+    if (!processing || paused) return;
+    let done = sampleDone;
+    if (done == null) {
+      if (!desc || desc === lastDescRef.current) return;
+      lastDescRef.current = desc;
+      const m = desc.match(/(\d[\d,]*)\s*\/\s*(\d[\d,]*)/);
+      if (!m) return;
+      done = parseInt(m[1].replace(/,/g, ''), 10);
+    }
     if (!isFinite(done)) return;
     const now = Date.now();
     const prev = lastSampleRef.current;
+    if (prev && done === prev.done) return;   // nothing advanced; not a sample
     lastSampleRef.current = { t: now, done };
     if (!prev) return;
     // A stage change restarts the count ("Upscaling frame 1 / N") — the series
@@ -159,7 +183,7 @@ export default function DiagnosticsPanel({ desc = '', telemetry, processing, pau
     const dt = (now - prev.t) / 1000;
     if (dt < 0.25) return;              // too short to divide by meaningfully
     setFpsHist((h) => [...h, (done - prev.done) / dt].slice(-160));
-  }, [desc, processing, paused]);
+  }, [desc, processing, paused, sampleDone]);
 
   useEffect(() => {
     if (!processing || !telemetry) return;
@@ -169,6 +193,12 @@ export default function DiagnosticsPanel({ desc = '', telemetry, processing, pau
       cpu: [...h.cpu, telemetry.cpu_percent ?? 0].slice(-160),
     }));
   }, [telemetry, processing]);
+
+  // The backend's own run-average, used only where the local series has nothing
+  // to say yet. `collecting throughput samples…` sitting on screen for the first
+  // half-minute of every run, while the terminal one panel over was already
+  // printing a rate, made the panel look broken rather than warming up.
+  const backendFps = Number.isFinite(Number(fps)) && Number(fps) > 0 ? Number(fps) : null;
 
   const fpsStats = useMemo(() => {
     if (fpsHist.length === 0) return null;
@@ -209,15 +239,19 @@ export default function DiagnosticsPanel({ desc = '', telemetry, processing, pau
   const vramPct = telemetry?.vram_total ? (telemetry.vram_used / telemetry.vram_total) * 100 : 0;
   const hasGpuUtil = telemetry?.gpu_util !== undefined && telemetry?.gpu_util !== null;
 
-  // ── Frame counts, straight out of the status line ─────────────────────────
+  // ── Frame counts ──────────────────────────────────────────────────────────
+  // The pushed counters first; the status line only when there are none.
   const frames = useMemo(() => {
+    if (counted) {
+      return { ...counted, left: Math.max(0, counted.total - counted.done) };
+    }
     const m = desc.match(/(\d[\d,]*)\s*\/\s*(\d[\d,]*)/);
     if (!m) return null;
     const done = parseInt(m[1].replace(/,/g, ''), 10);
     const total = parseInt(m[2].replace(/,/g, ''), 10);
     if (!isFinite(done) || !isFinite(total) || total <= 0) return null;
     return { done, total, left: Math.max(0, total - done) };
-  }, [desc]);
+  }, [desc, counted]);
 
   // ── Stall watchdog ────────────────────────────────────────────────────────
   // A run that has quietly wedged looks identical to a slow one: the bar sits
@@ -225,12 +259,19 @@ export default function DiagnosticsPanel({ desc = '', telemetry, processing, pau
   // unchanged tells them apart — and a long silence during the swap phase is
   // the signature of the encoder-warm-up / display-power stalls this app has
   // hit before, so it is worth surfacing rather than leaving to be noticed.
+  //
+  // It watches THE FRAME COUNTER, not the status string. Watching the string
+  // meant the encode/mux tail — which prints one line and then works silently
+  // for minutes on a long video — reliably tripped the 90-second threshold and
+  // put a red "Stalled?" on a render that was doing exactly what it should.
+  // Progress moving at all resets it, whichever field carries the movement.
   const [stallMs, setStallMs] = useState(0);
-  const descAtRef = useRef(Date.now());
-  useEffect(() => { descAtRef.current = Date.now(); setStallMs(0); }, [desc]);
+  const progressAtRef = useRef(Date.now());
+  const activityKey = `${frames ? frames.done : ''}|${Math.round(prog * 1e4)}|${desc}`;
+  useEffect(() => { progressAtRef.current = Date.now(); setStallMs(0); }, [activityKey]);
   useEffect(() => {
-    if (!processing || paused) return;
-    const id = setInterval(() => setStallMs(Date.now() - descAtRef.current), 1000);
+    if (!processing || paused) { setStallMs(0); return undefined; }
+    const id = setInterval(() => setStallMs(Date.now() - progressAtRef.current), 1000);
     return () => clearInterval(id);
   }, [processing, paused]);
 
@@ -254,7 +295,10 @@ export default function DiagnosticsPanel({ desc = '', telemetry, processing, pau
         <Stat label="Elapsed" value={fmtDur(elapsedMs)} />
         <Stat label="Left" value={fmtDur(etaMs)} tone="text-emerald-400" />
         <Stat label="Finishes" value={finishAt} sub="wall clock" />
-        <Stat label="Avg" value={fpsStats ? `${fpsStats.avg.toFixed(1)}` : '—'} sub="fps over run" />
+        <Stat label="Avg"
+              value={fpsStats ? fpsStats.avg.toFixed(1)
+                              : backendFps != null ? backendFps.toFixed(1) : '—'}
+              sub="fps over run" />
         <Stat label="RAM" value={telemetry?.ram_used != null ? `${telemetry.ram_used} GB` : '—'}
               sub={telemetry?.ram_total ? `of ${telemetry.ram_total} GB` : null} />
         <Stat label="Disk free" value={telemetry?.disk_free != null ? `${telemetry.disk_free} GB` : '—'}
@@ -295,8 +339,13 @@ export default function DiagnosticsPanel({ desc = '', telemetry, processing, pau
             </div>
           </>
         ) : (
-          <div className="mt-2 h-[52px] flex items-center text-micro font-mono text-white/45">
-            collecting throughput samples…
+          <div className="mt-2 h-[52px] flex items-center gap-2 text-micro font-mono text-white/45">
+            {backendFps != null && (
+              <span className="text-compact font-bold text-[var(--accent)]">
+                {backendFps.toFixed(1)} fps
+              </span>
+            )}
+            <span>collecting throughput samples…</span>
           </div>
         )}
       </div>
