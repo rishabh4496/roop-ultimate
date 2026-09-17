@@ -682,24 +682,54 @@ class TerminalThroughputMeter:
         elapsed = max(0.001, now - self.start_t)
         total = self.total or 0
         fps = self.fps_display if self.fps_display > 0 else (self.n / elapsed)
+        try:
+            from roop.procmgr_runtime import (
+                get_progress_color, COLOR_RESET, COLOR_ACCENT, COLOR_WHITE,
+                COLOR_MUTED, COLOR_GREEN, COLOR_LIME, COLOR_YELLOW, COLOR_SEP, COLOR_GRAY
+            )
+            use_color = True
+        except Exception:
+            use_color = False
+
         if total > 0:
             pct = min(100.0, (self.n / total) * 100.0)
-            count_str = f"{self.n:,}/{total:,} {self.unit} ({pct:5.1f}%)"
+            if use_color:
+                c = get_progress_color(pct)
+                b_width = 15
+                filled = int(round(b_width * (pct / 100.0)))
+                bar_str = f" {COLOR_GRAY}[{c}{'█' * filled}\033[38;5;238m{'░' * (b_width - filled)}{COLOR_GRAY}]{COLOR_RESET} {c}{pct:5.1f}%{COLOR_RESET}"
+                count_str = f"{COLOR_WHITE}{self.n:,}{COLOR_GRAY}/{COLOR_MUTED}{total:,} {self.unit}{COLOR_RESET}{bar_str}"
+            else:
+                count_str = f"{self.n:,}/{total:,} {self.unit} ({pct:5.1f}%)"
             eta_str = ""
             if fps > 0:
                 eta_s = int(max(0, total - self.n) / fps)
                 m, s = divmod(eta_s, 60)
                 h, m = divmod(m, 60)
-                eta_str = f" · ETA {h:02d}:{m:02d}:{s:02d}" if h else f" · ETA {m:02d}:{s:02d}"
+                if use_color:
+                    time_txt = f"{h:02d}:{m:02d}:{s:02d}" if h else f"{m:02d}:{s:02d}"
+                    eta_str = f" {COLOR_SEP}·{COLOR_RESET} {COLOR_MUTED}ETA{COLOR_RESET} {COLOR_LIME}{time_txt}{COLOR_RESET}"
+                else:
+                    eta_str = f" · ETA {h:02d}:{m:02d}:{s:02d}" if h else f" · ETA {m:02d}:{s:02d}"
         else:
-            count_str = f"{self.n:,} {self.unit}"
+            if use_color:
+                count_str = f"{COLOR_WHITE}{self.n:,} {self.unit}{COLOR_RESET}"
+            else:
+                count_str = f"{self.n:,} {self.unit}"
             eta_str = ""
 
         m_e, s_e = divmod(int(elapsed), 60)
         h_e, m_e = divmod(m_e, 60)
         el_str = f"{h_e:02d}:{m_e:02d}:{s_e:02d}" if h_e else f"{m_e:02d}:{s_e:02d}"
         import sys
-        sys.stderr.write(f"\r[Throughput] {self.desc}: {count_str} · {fps:.1f} {self.unit}/s · elapsed {el_str}{eta_str}")
+        if use_color:
+            sys.stderr.write(
+                f"\r{COLOR_ACCENT}[Throughput] {self.desc}{COLOR_RESET}: {count_str} {COLOR_SEP}·{COLOR_RESET} "
+                f"{COLOR_YELLOW}{fps:.1f} {self.unit}/s{COLOR_RESET} {COLOR_SEP}·{COLOR_RESET} "
+                f"{COLOR_MUTED}elapsed{COLOR_RESET} {COLOR_GREEN}{el_str}{COLOR_RESET}{eta_str}"
+            )
+        else:
+            sys.stderr.write(f"\r[Throughput] {self.desc}: {count_str} · {fps:.1f} {self.unit}/s · elapsed {el_str}{eta_str}")
         sys.stderr.flush()
 
     def __call__(self, progress_tuple=None, desc=None, total=None, unit=None, **kwargs):
