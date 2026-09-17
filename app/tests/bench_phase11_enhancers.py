@@ -62,8 +62,10 @@ PATHS = [
     ("GPEN 2048",         "Enhance_GPEN",               "Enhance_GPEN",               {"size": 2048}),
     ("GPEN 256 Pro",      "Enhance_GPEN256Pro",         "Enhance_GPEN256Pro",         {}),
     ("GPEN Realistic",    "Enhance_GPENRealistic",      "Enhance_GPENRealistic",      {}),
+    ("GPEN Ultimate",     "Enhance_GPENUltimate",       "Enhance_GPENUltimate",       {}),
     ("UltraMax",          "Enhance_UltraMax",           "Enhance_UltraMax",           {}),
     ("Restoreformer++",   "Enhance_RestoreFormerPPlus", "Enhance_RestoreFormerPPlus", {}),
+    ("Restore Ultra",     "Enhance_RestoreUltra",       "Enhance_RestoreUltra",       {}),
     ("DMDNet",            "Enhance_DMDNet",             "Enhance_DMDNet",             {}),
 ]
 
