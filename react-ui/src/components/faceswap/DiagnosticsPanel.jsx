@@ -175,13 +175,20 @@ export default function DiagnosticsPanel({ desc = '', telemetry, processing, pau
     const now = Date.now();
     const prev = lastSampleRef.current;
     if (prev && done === prev.done) return;   // nothing advanced; not a sample
-    lastSampleRef.current = { t: now, done };
-    if (!prev) return;
+    if (!prev) {
+      lastSampleRef.current = { t: now, done };
+      return;
+    }
     // A stage change restarts the count ("Upscaling frame 1 / N") — the series
     // would otherwise take a huge negative step and then a fake spike.
-    if (done < prev.done) { setFpsHist([]); return; }
+    if (done < prev.done) {
+      setFpsHist([]);
+      lastSampleRef.current = { t: now, done };
+      return;
+    }
     const dt = (now - prev.t) / 1000;
     if (dt < 0.25) return;              // too short to divide by meaningfully
+    lastSampleRef.current = { t: now, done };
     setFpsHist((h) => [...h, (done - prev.done) / dt].slice(-160));
   }, [desc, processing, paused, sampleDone]);
 
@@ -265,15 +272,16 @@ export default function DiagnosticsPanel({ desc = '', telemetry, processing, pau
   // for minutes on a long video — reliably tripped the 90-second threshold and
   // put a red "Stalled?" on a render that was doing exactly what it should.
   // Progress moving at all resets it, whichever field carries the movement.
+  const isPostProcessing = /combin|finaliz|encod|audio|mux|minterpolat/i.test(desc);
   const [stallMs, setStallMs] = useState(0);
   const progressAtRef = useRef(Date.now());
   const activityKey = `${frames ? frames.done : ''}|${Math.round(prog * 1e4)}|${desc}`;
   useEffect(() => { progressAtRef.current = Date.now(); setStallMs(0); }, [activityKey]);
   useEffect(() => {
-    if (!processing || paused) { setStallMs(0); return undefined; }
+    if (!processing || paused || isPostProcessing) { setStallMs(0); return undefined; }
     const id = setInterval(() => setStallMs(Date.now() - progressAtRef.current), 1000);
     return () => clearInterval(id);
-  }, [processing, paused]);
+  }, [processing, paused, isPostProcessing]);
 
   // Wall-clock time the run is projected to finish at — far easier to act on
   // than "32m 30s left" when the answer is "come back after lunch".
@@ -305,9 +313,9 @@ export default function DiagnosticsPanel({ desc = '', telemetry, processing, pau
               tone={telemetry?.disk_free != null && telemetry.disk_free < 20 ? 'text-red-400' : 'text-white/80'}
               sub="output drive" />
         <Stat label="Status"
-              value={paused ? 'Paused' : stallMs > 90000 ? 'Stalled?' : 'Running'}
-              tone={paused ? 'text-amber-400' : stallMs > 90000 ? 'text-red-400' : 'text-emerald-400'}
-              sub={stallMs > 15000 ? `no output ${fmtDur(stallMs)}` : null} />
+              value={paused ? 'Paused' : (!isPostProcessing && stallMs > 90000) ? 'Stalled?' : 'Running'}
+              tone={paused ? 'text-amber-400' : (!isPostProcessing && stallMs > 90000) ? 'text-red-400' : 'text-emerald-400'}
+              sub={!isPostProcessing && stallMs > 15000 ? `no output ${fmtDur(stallMs)}` : null} />
       </div>
 
       {/* ── Throughput ───────────────────────────────────────────────────── */}
@@ -389,7 +397,7 @@ export default function DiagnosticsPanel({ desc = '', telemetry, processing, pau
             identical results. `vram_gb` comes with it because the 'auto' tier is
             a function of it and it is otherwise unknowable from the UI. */}
         {telemetry?.pools && (
-          <div className="col-span-2 rounded-lg border border-white/[0.07] bg-black/30 px-2.5 py-1.5 flex items-center justify-between gap-3">
+          <div className="col-span-2 lg:col-span-1 rounded-lg border border-white/[0.07] bg-black/30 px-2.5 py-1.5 flex items-center justify-between gap-3">
             <span className="text-nano font-semibold uppercase tracking-wider text-white/45">
               Pools running
             </span>

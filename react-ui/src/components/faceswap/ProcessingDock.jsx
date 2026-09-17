@@ -39,23 +39,23 @@ export default function ProcessingDock({
         {/* Pause / Resume Button */}
         <button
           onClick={onTogglePause}
-          disabled={pauseRequested || stopping || !!controlBusy}
-          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all shadow-md active:scale-95 ${
+          disabled={stopping || !!controlBusy || (!paused && pauseRequested)}
+          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all shadow-md active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed ${
             paused
               ? 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-emerald-600/20'
               : 'bg-amber-600 hover:bg-amber-500 text-white shadow-amber-600/20'
           }`}
-          title={pauseRequested ? 'Waiting for a safe checkpoint' : paused ? 'Resume execution' : 'Pause execution'}
+          title={paused ? 'Resume execution' : pauseRequested ? 'Waiting for a safe checkpoint' : 'Pause execution'}
         >
           {paused ? <Icon.play size={13} /> : <Icon.pause size={13} />}
-          <span>{pauseRequested ? 'Pause Requested' : paused ? 'Resume Render' : 'Pause Render'}</span>
+          <span>{paused ? 'Resume Render' : pauseRequested ? 'Pause Requested' : 'Pause Render'}</span>
         </button>
 
         {/* Cancel Job Button */}
         <button
           onClick={onCancelJob}
           disabled={stopping || controlBusy === 'stop'}
-          className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold bg-rose-500/10 border border-rose-500/30 text-rose-300 hover:bg-rose-500/20 hover:text-rose-200 transition-all active:scale-95"
+          className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold bg-rose-500/10 border border-rose-500/30 text-rose-300 hover:bg-rose-500/20 hover:text-rose-200 transition-all active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed"
           title="Cancel current swap run"
         >
           <Icon.stop size={13} />

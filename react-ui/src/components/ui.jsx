@@ -549,19 +549,20 @@ export const FaceGallery = ({ title, faces, selected, onSelect, onRemove, empty,
 // Smoothly tweens a displayed number toward `value` (eased). Great for %/fps/ETA.
 export const AnimatedNumber = ({ value, duration = 500, decimals = 0, suffix = '', className = '' }) => {
   const [disp, setDisp] = useState(value || 0);
-  const fromRef = useRef(value || 0);
+  const dispRef = useRef(value || 0);
   const rafRef = useRef();
   useEffect(() => {
-    const from = fromRef.current;
+    const from = dispRef.current;
     const to = value || 0;
     if (from === to) return;
     const start = performance.now();
     const tick = (t) => {
       const p = Math.min(1, (t - start) / duration);
       const eased = 1 - Math.pow(1 - p, 3);
-      setDisp(from + (to - from) * eased);
+      const cur = p >= 1 ? to : from + (to - from) * eased;
+      dispRef.current = cur;
+      setDisp(cur);
       if (p < 1) rafRef.current = requestAnimationFrame(tick);
-      else fromRef.current = to;
     };
     cancelAnimationFrame(rafRef.current);
     rafRef.current = requestAnimationFrame(tick);

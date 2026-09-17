@@ -41,7 +41,6 @@ export default function LiveProcessingPeek({
             src={activeImage}
             alt={isLive ? 'Latest processed frame' : 'Preview still'}
             onError={() => { if (isLive) setFailedSeq(liveSrc); }}
-            onLoad={() => { if (failedSeq) setFailedSeq(''); }}
             className="h-full w-full object-contain transition-all duration-300 transform-gpu"
           />
         ) : (

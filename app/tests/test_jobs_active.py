@@ -75,6 +75,24 @@ class JobsActiveRoute(unittest.TestCase):
         for heavy in ('log', 'parts', 'runtime', 'live_frame'):
             self.assertNotIn(heavy, snap)
 
+    def test_progress_exposes_duration_s(self):
+        prev_processing = self.api._progress['processing']
+        prev_stats = dict(self.api._run_stats)
+        try:
+            self.api._progress['processing'] = False
+            self.api._run_stats['duration_s'] = 42.5
+            p = self.api.get_progress()
+            self.assertEqual(p['duration_s'], 42.5)
+
+            self.api._progress['processing'] = True
+            self.api._run_stats['start'] = 1700000000.0
+            p = self.api.get_progress()
+            self.assertGreater(p['duration_s'], 0)
+        finally:
+            self.api._progress['processing'] = prev_processing
+            self.api._run_stats.clear()
+            self.api._run_stats.update(prev_stats)
+
 
 if __name__ == '__main__':
     unittest.main()

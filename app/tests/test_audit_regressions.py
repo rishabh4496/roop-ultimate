@@ -185,6 +185,16 @@ class AuditRegressionTests(unittest.TestCase):
         self.assertEqual(len(other), 1)
         self.assertIsNot(owner, other[0])
 
+    def test_last_output_cleared_on_job_start(self):
+        source = _read('api.py')
+        self.assertIn('_last_output.update({"path": "", "kind": ""})', source)
+
+    def test_duration_s_exposed_in_progress_and_run_stats(self):
+        source = _read('api.py')
+        self.assertIn('"duration_s": dur_s', source)
+        self.assertIn('"duration_s": 0.0', source)
+        self.assertIn('_run_stats["duration_s"] = round(max(0.0, time.time() - _run_stats["start"]), 1)', source)
+
 
 if __name__ == '__main__':
     unittest.main()

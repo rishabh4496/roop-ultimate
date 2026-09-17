@@ -232,7 +232,7 @@ _last_output = {"path": "", "kind": ""}
 # without touching the pipeline. `start == 0` means no run has begun this session.
 import re as _re
 _FRAME_RE = _re.compile(r"(\d[\d,]*)\s*/\s*(\d[\d,]*)")
-_run_stats = {"start": 0.0, "frames_done": 0, "frames_total": 0}
+_run_stats = {"start": 0.0, "frames_done": 0, "frames_total": 0, "duration_s": 0.0}
 
 # Rolling terminal-style log tail surfaced to the preview box while a job runs.
 # Capture is centralized in get_progress() (see below) so it mirrors _progress["desc"]
@@ -2480,6 +2480,7 @@ def _record_run_history(payload: dict, produced_files: list):
         now = time.time()
         started = _run_stats.get("start") or 0.0
         duration_s = round(now - started, 1) if started and now > started else 0.0
+        _run_stats["duration_s"] = duration_s
         frames = _run_stats.get("frames_total") or _run_stats.get("frames_done") or 0
         fps = round(frames / duration_s, 1) if duration_s > 0 and frames else 0.0
         entry = {
@@ -3113,6 +3114,7 @@ def _run_swap(payload):
         # And the previous run's "time left", so this one's opening seconds fall back
         # to the UI's own estimate rather than inheriting a finished run's figure.
         _procmgr_runtime.reset_eta()
+        _last_output.update({"path": "", "kind": ""})
         _push_log("▶ Starting job…", force=True)
         _resume_context.update({"base": 0.0, "total": 0})
         if project_id:
@@ -3152,7 +3154,7 @@ def _run_swap(payload):
                           "stop_requested": False,
                           "progress": _resume_context["base"], "desc": ("Paused" if pause_state["acknowledged"] else "Starting…"),
                           "error": ""})
-        _run_stats.update({"start": time.time(), "frames_done": 0, "frames_total": 0})
+        _run_stats.update({"start": time.time(), "frames_done": 0, "frames_total": 0, "duration_s": 0.0})
         _update_mask_offsets_from_payload(payload)
         prepare_environment()
         # A project with committed segments owns its partial output. Clearing
@@ -3440,6 +3442,8 @@ def _run_swap(payload):
         _progress["pause_requested"] = False
         _progress["stop_requested"] = False
         _resume_context.update({"base": 0.0, "total": 0})
+        if _run_stats.get("start"):
+            _run_stats["duration_s"] = round(max(0.0, time.time() - _run_stats["start"]), 1)
         if project_id:
             roop_globals._checkpoint_segment_callback = None
         _active_project_id = ""
@@ -3602,6 +3606,12 @@ def get_progress():
     # uses it as /api/live_frame's cache key, so the image refetches exactly
     # when there is something new and never per poll. live_frame stays empty —
     # inlining a base64 still into every poll is what made this expensive.
+    start_time = float(_run_stats.get("start") or 0.0)
+    if bool(_progress.get("processing")) and start_time > 0:
+        dur_s = max(0.0, time.time() - start_time)
+        _run_stats["duration_s"] = dur_s
+    else:
+        dur_s = float(_run_stats.get("duration_s") or 0.0)
     return {**_progress, "output": _last_output, "live_frame": "",
             "live_seq": runtime["frame_progress"]["live_seq"],
             # Seconds remaining as the TERMINAL's progress bar is showing them.
@@ -3613,7 +3623,8 @@ def get_progress():
             # reload (Pinokio reloads it on every tab switch). The UI used to
             # restart its own clock from zero there, which made a 40-minute run
             # read as "0s" and the ETA jump.
-            "started_at": float(_run_stats.get("start") or 0.0),
+            "started_at": start_time,
+            "duration_s": dur_s,
             "log_schema_version": 1,
             "log": list(_log_lines), "parts": parts,
             # The counter the console pins and rewrites in place instead of

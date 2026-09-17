@@ -1084,6 +1084,7 @@ export default function App() {
                   which is exactly what this chip used to say while the tab beside
                   it said something else. */}
               {(() => {
+                if (progress.paused || progress.pause_requested || stopping) return null;
                 const eta = typeof progress.eta_s === 'number' && progress.eta_s > 0
                   ? progress.eta_s * 1000
                   : (startTime && (progress.progress || 0) > 0.01

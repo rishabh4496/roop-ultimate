@@ -132,7 +132,8 @@ export default function Processing({ progress, settings, notify, setTab,
   const liveElapsedMs = processing && startedAt ? Math.max(0, now - startedAt) : 0;
   const elapsedRef = useRef(0);
   useEffect(() => { if (liveElapsedMs > 0) elapsedRef.current = liveElapsedMs; }, [liveElapsedMs]);
-  const elapsedMs = liveElapsedMs || elapsedRef.current;
+  const backendDurationMs = progress.duration_s ? progress.duration_s * 1000 : 0;
+  const elapsedMs = liveElapsedMs || backendDurationMs || elapsedRef.current;
 
   // "Time left" is the terminal's own eta_s wherever one is counting frames, so
   // the two agree by construction; the extrapolation is only the fallback for
@@ -183,7 +184,7 @@ export default function Processing({ progress, settings, notify, setTab,
   }, [onStopRun, notify]);
 
   const out = !processing ? progress.output : null;
-  const outUrl = out?.path ? `${API}/api/file?path=${encodeURIComponent(out.path)}&t=${progress.progress}` : '';
+  const outUrl = out?.path ? `${API}/api/file?path=${encodeURIComponent(out.path)}&t=${progress.started_at || Date.now()}` : '';
   const isVideoOutput = out?.kind === 'video' || /\.(mp4|mkv|mov|webm|avi)$/i.test(out?.path || '');
   const revealOutput = async () => {
     try { await postJSON('/api/reveal', { path: out?.path }); }
@@ -347,11 +348,11 @@ export default function Processing({ progress, settings, notify, setTab,
               </div>
             </div>
             <div className="flex items-center gap-2 shrink-0">
-              {out?.path && (
-                <a href={outUrl} download
+              {out?.path && !failed && (
+                <a href={outUrl} download={out.path.split(/[\\/]/).pop()}
                   className="inline-block px-3 py-1.5 rounded-xl text-sm bg-[var(--accent)] hover:bg-[var(--accent-hover)] text-white font-bold transition-colors">⬇ Download</a>
               )}
-              {out?.path && <Button size="sm" variant="secondary" onClick={revealOutput}>Open folder</Button>}
+              {out?.path && !failed && <Button size="sm" variant="secondary" onClick={revealOutput}>Open folder</Button>}
               <Button size="sm" variant="secondary" onClick={() => setTab('faceswap')}>Back to Face Swap</Button>
             </div>
           </div>
@@ -432,14 +433,17 @@ export default function Processing({ progress, settings, notify, setTab,
                 length unknown" instead of inventing a number. */}
             {(() => {
               const d = (progress.desc || '').toLowerCase();
+              const hasInterp = !!p.interp_after_swap && p.interp_after_swap !== 'off';
               const stages = [
                 { key: 'analyze', label: 'Analyze' },
                 { key: 'swap', label: 'Swap' },
                 ...(p.upscale_after_swap ? [{ key: 'upscale', label: 'Upscale' }] : []),
+                ...(hasInterp ? [{ key: 'interp', label: 'Interpolate' }] : []),
                 { key: 'combine', label: 'Combine' },
               ];
               let activeKey = 'swap';
               if (/combin|finaliz|encod|audio|mux/.test(d)) activeKey = 'combine';
+              else if (/interpolat|rife|minterpolat/.test(d)) activeKey = 'interp';
               else if (/upscal/.test(d)) activeKey = 'upscale';
               else if (/processing frame|swapp/.test(d)) activeKey = 'swap';
               else if (/analy|track|extract|detect|start/.test(d)) activeKey = 'analyze';
@@ -448,9 +452,9 @@ export default function Processing({ progress, settings, notify, setTab,
               // The counter in the status line restarts per stage ("Upscaling
               // frame 1 / N"), so it IS the stage-local fraction wherever one is
               // printed at all.
-              const stageFrac = frames && frames.total > 0
+              const stageFrac = activeKey === 'combine' ? null : (frames && frames.total > 0
                 ? Math.min(1, Math.max(0, frames.done / frames.total))
-                : null;
+                : null);
               return (
                 <div className="w-full p-2.5 sm:p-3 rounded-2xl bg-white/[0.02] border border-white/10 backdrop-blur-sm shadow-inner">
                   <div className="flex items-stretch gap-2">
@@ -592,7 +596,7 @@ export default function Processing({ progress, settings, notify, setTab,
         <div className="space-y-6">
           {/* The output itself, so a finished run does not have to be chased
               into another tab to be looked at. */}
-          {out?.path && (
+          {out?.path && !failed && (
             <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_280px]">
               <div className="rounded-2xl glass-panel p-5 shadow-2xl border border-white/5 space-y-3 min-w-0">
                 <div className="text-mini uppercase tracking-[0.14em] text-white/45 font-semibold">Output</div>

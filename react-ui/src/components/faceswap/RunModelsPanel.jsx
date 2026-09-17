@@ -180,7 +180,7 @@ export default function RunModelsPanel({ runtime = null, settings = null, teleme
         </div>
       )}
 
-      {(view.turbo || view.nvdec || view.nvenc) && (
+      {(view.turbo || view.nvdec || view.nvenc || view.pixelBoost) && (
         <div className="mt-1.5 flex flex-wrap items-center gap-1">
           {view.turbo && (
             <span className="rounded border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5

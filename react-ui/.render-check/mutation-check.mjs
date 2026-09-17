@@ -82,12 +82,13 @@ for (const m of MUTATIONS) {
   copyFileSync(m.file, backup);
   try {
     const original = readFileSync(m.file, 'utf8');
-    if (!original.includes(m.from)) {
+    const target = original.includes('\r\n') ? m.from.replace(/\r?\n/g, '\r\n') : m.from.replace(/\r\n/g, '\n');
+    if (!original.includes(target)) {
       console.log(`  SKIP  ${m.name}\n          anchor not found; the harness cannot speak to this`);
       undetected += 1;
       continue;
     }
-    writeFileSync(m.file, original.replace(m.from, m.to));
+    writeFileSync(m.file, original.replace(target, m.to));
     const code = run();
     if (code !== 0) {
       console.log(`  CAUGHT   ${m.name}`);
