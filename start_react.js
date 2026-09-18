@@ -15,7 +15,7 @@ module.exports = async (kernel) => {
             PATH: [
               "{{path.resolve(cwd, '../../bin/miniforge')}}",
               "{{path.resolve(cwd, '../../bin/miniconda')}}",
-              "{{envs.PATH}}"
+              "{{(envs.PATH || envs.Path || '')}}"
             ]
           },
           path: "react-ui",
@@ -32,20 +32,6 @@ module.exports = async (kernel) => {
         params: {
           src: "app/default_config.yaml",
           dest: "app/config.yaml"
-        }
-      },
-      // Ensure TensorRT packages are installed on NVIDIA devices if missing from env
-      {
-        when: "{{(gpu === 'nvidia' || (Array.isArray(gpus) && gpus.includes('nvidia')) || which('nvidia-smi')) && !exists('app/env/Lib/site-packages/tensorrt')}}",
-        method: "shell.run",
-        params: {
-          venv: "env",
-          path: "app",
-          message: [
-            "uv pip uninstall onnxruntime",
-            "uv pip install onnxruntime-gpu==1.23.2",
-            "uv pip install --extra-index-url https://pypi.nvidia.com/ tensorrt-cu12==10.9.0.34 tensorrt-cu12-libs==10.9.0.34 tensorrt-cu12-bindings==10.9.0.34"
-          ]
         }
       },
       // Repair an older machine in place. A previous installer could leave
@@ -85,7 +71,7 @@ module.exports = async (kernel) => {
             PATH: [
               "{{path.resolve(cwd, '../../bin/miniforge')}}",
               "{{path.resolve(cwd, '../../bin/miniconda')}}",
-              "{{envs.PATH}}"
+              "{{(envs.PATH || envs.Path || '')}}"
             ]
           },
           path: "react-ui",

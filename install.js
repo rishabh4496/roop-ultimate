@@ -34,7 +34,7 @@ module.exports = {
           PATH: [
             "{{path.resolve(cwd, '../../bin/miniforge')}}",
             "{{path.resolve(cwd, '../../bin/miniconda')}}",
-            "{{envs.PATH}}"
+            "{{(envs.PATH || envs.Path || '')}}"
           ]
         },
         path: "react-ui",
