@@ -59,8 +59,9 @@ def _enable_tensorrt_runtime():
                 for root, dirs, _ in os.walk(p):
                     if os.path.basename(root).lower() == 'bin' and root not in dll_dirs:
                         dll_dirs.append(root)
-    except Exception:
-        pass
+    except Exception as _degrade_error:
+        _swallowed("settings.py:_enable_tensorrt_runtime[nvidia]", _degrade_error,
+                   "pip-installed NVIDIA runtime directories were not added")
     for d in dll_dirs:
         try:
             if hasattr(os, 'add_dll_directory'):
@@ -93,6 +94,41 @@ _enable_tensorrt_runtime()
 #         retain one core of headroom on smaller CPUs.
 _THREAD_RULE = 3
 _HARDWARE_CACHE = None
+_DEFAULT_PROVIDER_CACHE = None
+
+
+def _default_provider():
+    """The provider a machine with no saved config should start on.
+
+    Historically this was the literal 'cuda', which meant a TensorRT-capable
+    install started on CUDA and the UI hid the precision selector (it only
+    renders when provider == 'tensorrt'). Ask the backend what is actually
+    usable and prefer the fastest validated chain, falling back the same way
+    the resolver does.
+    """
+    global _DEFAULT_PROVIDER_CACHE
+    if _DEFAULT_PROVIDER_CACHE is not None:
+        return _DEFAULT_PROVIDER_CACHE
+    provider = 'cuda'
+    try:
+        import onnxruntime as ort
+        lister = getattr(ort, 'get_available_providers', None)
+        available = [str(p) for p in lister()] if callable(lister) else []
+        if 'TensorrtExecutionProvider' in available:
+            provider = 'tensorrt'
+        elif 'CUDAExecutionProvider' in available:
+            provider = 'cuda'
+        elif 'ROCMExecutionProvider' in available:
+            provider = 'rocm'
+        elif 'DmlExecutionProvider' in available:
+            provider = 'directml'
+        elif available:
+            provider = 'cpu'
+    except Exception as _degrade_error:
+        _swallowed("settings.py:_default_provider", _degrade_error,
+                   "defaulting the provider to CUDA")
+    _DEFAULT_PROVIDER_CACHE = provider
+    return provider
 
 
 def detect_hardware():
@@ -407,15 +443,26 @@ class Settings:
             with open(self.config_file, 'r') as f:
                 data = yaml.load(f, Loader=yaml.FullLoader)
         except FileNotFoundError:
-            # First launch: check if default_config.yaml exists to seed initial settings
+            # No saved settings yet. A fresh install may ship a reference
+            # default_config.yaml; seed from it so the first launch gets the
+            # shipped provider/precision profile instead of bare code defaults.
+            #
+            # ONLY for a real 'config.yaml'. `default_get`'s own defaults probe
+            # and several tests construct Settings() against a deliberately
+            # absent path to read the CODE defaults, and seeding those would
+            # silently redefine what "default" means for every such caller.
             data = None
-            default_path = os.path.join(os.path.dirname(os.path.abspath(self.config_file)), 'default_config.yaml')
-            if os.path.isfile(default_path):
-                try:
-                    with open(default_path, 'r') as f:
-                        data = yaml.load(f, Loader=yaml.FullLoader)
-                except Exception as _degrade_error:
-                    _swallowed("settings.py:default_config", _degrade_error, "fallback continued")
+            if os.path.basename(self.config_file) == 'config.yaml':
+                default_path = os.path.join(
+                    os.path.dirname(os.path.abspath(self.config_file)),
+                    'default_config.yaml')
+                if os.path.isfile(default_path):
+                    try:
+                        with open(default_path, 'r') as f:
+                            data = yaml.load(f, Loader=yaml.FullLoader)
+                    except Exception as _degrade_error:
+                        _swallowed("settings.py:default_config", _degrade_error,
+                                   "fallback continued")
         except Exception as _degrade_error:
             _swallowed("settings.py:361", _degrade_error, "fallback continued")
             data = None
@@ -473,21 +520,7 @@ class Settings:
         default_threads = 3
         threads_basis = f"v{_THREAD_RULE}|unknown"
         try:
-            if data and isinstance(data, dict) and 'provider' in data:
-                self.provider = data['provider']
-            else:
-                self.provider = 'tensorrt'
-                try:
-                    from roop.core import suggest_execution_providers
-                    suggested = suggest_execution_providers()
-                    if 'tensorrt' in suggested:
-                        self.provider = 'tensorrt'
-                    elif 'cuda' in suggested:
-                        self.provider = 'cuda'
-                    elif suggested:
-                        self.provider = suggested[0]
-                except Exception:
-                    pass
+            self.provider = self.default_get(data, 'provider', _default_provider())
             if self.provider in ['cuda', 'tensorrt']:
                 import torch
                 if torch.cuda.is_available():
@@ -609,10 +642,7 @@ class Settings:
         self.benchmark_results = self._hw_get(data, 'benchmark_results', {})
         
         self.memory_limit = self.default_get(data, 'memory_limit', 0)
-        if data and isinstance(data, dict) and 'provider' in data:
-            self.provider = data['provider']
-        else:
-            self.provider = getattr(self, 'provider', 'tensorrt')
+        self.provider = self.default_get(data, 'provider', _default_provider())
         # TensorRT precision mode: 'fp32' | 'fp16' | 'mixed' (only used when provider == 'tensorrt')
         self.trt_precision = self.default_get(data, 'trt_precision', 'mixed')
         # TensorRT tuning. Level 3 is the documented performance baseline;

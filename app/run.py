@@ -7,16 +7,99 @@ import time
 
 import numpy as np
 
-# Ensure TensorRT runtime DLL directories are registered on Windows before ORT loads
-try:
-    from settings import _enable_tensorrt_runtime
-    _enable_tensorrt_runtime()
-except Exception:
-    pass
+
+# Populated by _register_gpu_runtime_dirs() before roop.degrade is importable,
+# then replayed through it immediately after onnxruntime loads.
+_GPU_RUNTIME_PROBE_ERRORS = []
+
+
+def _swallowed(site, error, detail):
+    """Report a swallowed exception.
+
+    Before `import onnxruntime` runs, the real reporter is not importable:
+    `roop.degrade` imports the roop package, which imports onnxruntime, and
+    doing that here is precisely the ordering bug this module was fixed for.
+    So this buffers, and the module rebinds `_swallowed` to the real
+    `roop.degrade.swallowed` right after ORT loads, replaying the buffer. Every
+    swallow is reported either way; only the timing differs.
+    """
+    _GPU_RUNTIME_PROBE_ERRORS.append((site, error, detail))
+
+
+def _register_gpu_runtime_dirs():
+    """Add TensorRT/CUDA DLL directories to the loader search path.
+
+    Deliberately self-contained: it must not import `settings` or any `roop`
+    module. Those pull in the whole model stack, which itself imports
+    onnxruntime; importing them here made `onnxruntime` a partially
+    initialised module by the time the preflight check ran, and the check
+    then failed with "module 'onnxruntime' has no attribute
+    'get_available_providers'" on a perfectly healthy install.
+    """
+    dll_dirs = []
+
+    def _add(directory):
+        if directory and os.path.isdir(directory) and directory not in dll_dirs:
+            dll_dirs.append(directory)
+
+    for module_name, resolver in (
+        ("tensorrt", lambda m: os.path.join(
+            os.path.dirname(os.path.dirname(m.__file__)), "tensorrt_libs")),
+        ("tensorrt_libs", lambda m: os.path.dirname(m.__file__)),
+        # torch ships the CUDA/cuDNN runtime the TensorRT EP links against.
+        ("torch", lambda m: os.path.join(os.path.dirname(m.__file__), "lib")),
+    ):
+        try:
+            module = __import__(module_name)
+            if getattr(module, "__file__", None):
+                _add(resolver(module))
+        except Exception as error:
+            _swallowed(
+                f"run.py:_register_gpu_runtime_dirs[{module_name}]", error,
+                "that runtime's DLL directory was not added")
+            continue
+
+    # pip-installed NVIDIA runtimes (nvidia-cuda-runtime-cu12 and friends)
+    # keep their DLLs in nvidia/<component>/bin.
+    try:
+        import nvidia
+        roots = ([os.path.dirname(nvidia.__file__)]
+                 if getattr(nvidia, "__file__", None)
+                 else list(getattr(nvidia, "__path__", [])))
+        for root in roots:
+            for current, _dirs, _files in os.walk(root):
+                if os.path.basename(current).lower() == "bin":
+                    _add(current)
+    except Exception as error:
+        _swallowed(
+            "run.py:_register_gpu_runtime_dirs[nvidia]", error,
+            "pip-installed NVIDIA runtime directories were not added")
+
+    for directory in dll_dirs:
+        try:
+            if hasattr(os, "add_dll_directory"):
+                os.add_dll_directory(directory)
+        except Exception as error:
+            _swallowed(
+                "run.py:_register_gpu_runtime_dirs[add_dll_directory]", error,
+                f"{directory} left to PATH resolution only")
+        os.environ["PATH"] = directory + os.pathsep + os.environ.get("PATH", "")
+
+
+_register_gpu_runtime_dirs()
 
 import onnxruntime as ort
 
-from roop.degrade import swallowed as _swallowed
+from roop.degrade import swallowed as _degrade_swallowed
+
+# The reporting channel is importable from here on, so make `_swallowed` the
+# real one and replay whatever the pre-ORT DLL probe buffered. A missing
+# TensorRT/CUDA runtime directory is exactly the "feature is silently off"
+# case roop.degrade exists to surface.
+_swallowed = _degrade_swallowed
+for _site, _error, _detail in _GPU_RUNTIME_PROBE_ERRORS:
+    _swallowed(_site, _error, _detail)
+_GPU_RUNTIME_PROBE_ERRORS.clear()
 
 
 def run_preflight_checks():
@@ -27,7 +110,24 @@ def run_preflight_checks():
             "InsightFace C-bindings require numpy<2.0.0."
         )
 
-    providers = ort.get_available_providers()
+    # A partially initialised or shadowed onnxruntime has no provider API at
+    # all. Report that as the install problem it is instead of crashing with
+    # an AttributeError that reads like the app is broken.
+    lister = getattr(ort, "get_available_providers", None)
+    if not callable(lister):
+        print(
+            "[WARNING] onnxruntime is installed but exposes no provider API "
+            f"(loaded from {getattr(ort, '__file__', 'unknown')}). Skipping the "
+            "provider preflight; run Fix TensorRT if acceleration is missing."
+        )
+        return
+
+    try:
+        providers = lister()
+    except Exception as exc:
+        print(f"[WARNING] could not query ONNX Runtime providers: {exc}")
+        return
+
     if "TensorrtExecutionProvider" not in providers:
         print(
             "[WARNING] TensorrtExecutionProvider not found in ONNX Runtime. "
