@@ -44,6 +44,11 @@ def available_providers() -> List[str]:
     Never raises. A caller that already handles "no GPU provider" therefore
     handles a broken runtime too, instead of dying on an AttributeError.
     """
+    try:
+        from roop.gpu_preflight import get_preflight_result
+        return list(get_preflight_result().get("available_providers", []))
+    except Exception:
+        pass
     lister = provider_api()
     if lister is None:
         return []

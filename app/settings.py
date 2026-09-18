@@ -111,12 +111,12 @@ def _default_provider():
         return _DEFAULT_PROVIDER_CACHE
     provider = 'cuda'
     try:
-        import onnxruntime as ort
-        lister = getattr(ort, 'get_available_providers', None)
-        available = [str(p) for p in lister()] if callable(lister) else []
-        if 'TensorrtExecutionProvider' in available:
+        from roop.gpu_preflight import get_preflight_result
+        preflight = get_preflight_result()
+        available = preflight.get("available_providers", [])
+        if preflight.get("tensorrt_session_usable", False):
             provider = 'tensorrt'
-        elif 'CUDAExecutionProvider' in available:
+        elif preflight.get("cuda_available", False) and 'CUDAExecutionProvider' in available:
             provider = 'cuda'
         elif 'ROCMExecutionProvider' in available:
             provider = 'rocm'

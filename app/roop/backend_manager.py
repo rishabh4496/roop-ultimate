@@ -29,6 +29,11 @@ def _name(value) -> str:
 
 def _available() -> List[str]:
     try:
+        from roop.gpu_preflight import get_preflight_result
+        return list(get_preflight_result().get("available_providers", []))
+    except Exception:
+        pass
+    try:
         from roop.ort_support import available_providers as _ort_providers
         return _ort_providers()
     except Exception as _degrade_error:
@@ -68,6 +73,12 @@ def provider_usable(name: str, device_id: int = 0,
         except Exception as _degrade_error:
             _swallowed("roop/backend_manager.py:66", _degrade_error, "fallback continued")
             ok = False
+        if ok and canonical.lower().startswith("tensorrt"):
+            try:
+                from roop.gpu_preflight import get_preflight_result
+                ok = bool(get_preflight_result().get("tensorrt_session_usable", False))
+            except Exception:
+                pass
     if ok and canonical.lower().startswith("dml"):
         # ORT's DML provider is self-contained; the listing is the reliable
         # check and importing torch must not make DirectML appear unavailable.
@@ -189,6 +200,11 @@ def diagnostic_report(device_id: int = 0, requested: str | None = None) -> dict:
 def clear_probe_cache() -> None:
     with _lock:
         _probe_cache.clear()
+    try:
+        from roop.gpu_preflight import clear_preflight_cache
+        clear_preflight_cache()
+    except Exception:
+        pass
 
 
 _DRIVER_SMI_CACHE: Dict[int, str] = {}
