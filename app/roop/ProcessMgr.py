@@ -2766,7 +2766,8 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                     free_b, total_b = torch.cuda.mem_get_info()
                     used_gb = (total_b - free_b) / (1024**3)
                     self._cached_vram_str = f"{COLOR_PURPLE}{used_gb:.1f}GB{COLOR_RESET}"
-            except Exception:
+            except Exception as _degrade_error:
+                _swallowed("roop/ProcessMgr.py:2769", _degrade_error, "VRAM postfix disabled")
                 pass
         mem_str = getattr(self, '_cached_mem_str', f"{COLOR_CYAN}0.00GB{COLOR_RESET}")
         active_workers = getattr(self, '_active_inference_workers', None)

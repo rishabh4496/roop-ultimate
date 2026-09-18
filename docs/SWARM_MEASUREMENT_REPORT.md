@@ -150,21 +150,28 @@ suite by roughly 800 tests**. It should not be quoted again.
 
 ### Post-fix validation on the finalized working tree
 
-The targeted compatibility fixes were validated with **83 passed, 2 warnings,
-and 8 subtests**. A subsequent full-suite run collected 2,822 tests and
-reported **2,818 passed, 3 failed, 1 skipped, 938 subtests passed**. The three
-failures were one standing exception-visibility policy counter and two
-GPU/order-sensitive benchmark tests. Both benchmark failures passed when rerun
-in isolation immediately afterward:
+The initial targeted compatibility fixes were validated with **83 passed, 2
+warnings, and 8 subtests**. The follow-up hardening then instrumented all 28
+silent broad fallback handlers through the existing aggregated
+`degrade.swallowed` reporter without changing fallback control flow. The full
+exception-visibility module now passes **3/3**, and the broader focused suite
+passes **81 tests, 2 warnings, and 2 subtests**.
 
-- `tests/test_benchmark_runner.py::test_dry_run_60_frames` - **1 passed in
-  55.82 s**.
-- `tests/test_benchmark_video_harness.py::test_real_video_execution` - **1
-  passed in 37.24 s**.
+A subsequent full-suite run collected 2,822 tests and reported **2,817 passed,
+4 failed, 1 skipped, 938 subtests passed**. The four failures are
+order-sensitive benchmark/E2E tests. They pass when run in focused or isolated
+mode:
 
-The remaining full-suite failure is `test_exception_visibility`, which still
-reports the known broad-handler debt. This is recorded as a policy cleanup item,
-not disguised as a performance regression.
+- `tests/test_benchmark_runner.py::test_dry_run_60_frames` - passes in the
+  focused suite.
+- `tests/test_benchmark_video_harness.py::test_real_video_execution` - passes
+  in the focused suite.
+- Both `tests/test_full_benchmark_e2e.py` failures - **2 passed in 12.12 s**
+  when rerun together in isolation.
+
+The remaining full-suite failures are therefore test-order or shared-runtime
+state artifacts, not the former exception-visibility debt. They remain visible
+in the aggregate result rather than being masked.
 
 The 10 failures listed below describe the **pre-fix clean-HEAD run** on
 `4eac84b`. The tree had zero tracked modifications then, so no swarm worker

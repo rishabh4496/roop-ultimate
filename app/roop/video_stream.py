@@ -17,6 +17,7 @@ import numpy as np
 
 from roop.ffmpeg_path import NVENC_PRESET_DEFAULT, NVENC_PRESETS, ffmpeg_binary
 from roop.util_ffmpeg import clamp_quality
+from roop.degrade import swallowed as _swallowed
 
 logger = logging.getLogger("roop.video")
 
@@ -181,7 +182,8 @@ class NVHardwareVideoReader:
             return
         try:
             fallback.release()
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("roop/video_stream.py:184", _degrade_error, "fallback capture release")
             pass
 
     def _activate_fallback(self):
@@ -193,7 +195,8 @@ class NVHardwareVideoReader:
             # The fallback was opened only to obtain metadata, so align it with
             # any seek requested before the direct reader failed to start.
             fallback.set(1, self.start_frame)
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("roop/video_stream.py:196", _degrade_error, "fallback seek skipped")
             pass
         logger.warning(
             "Direct NVDEC pipe produced no frame for %s; continuing with "
@@ -213,7 +216,8 @@ class NVHardwareVideoReader:
         except subprocess.TimeoutExpired:
             try:
                 proc.kill()
-            except Exception:
+            except Exception as _degrade_error:
+                _swallowed("roop/video_stream.py:216", _degrade_error, "decoder kill skipped")
                 pass
             _, stderr = proc.communicate()
         except Exception as exc:
@@ -221,7 +225,8 @@ class NVHardwareVideoReader:
             try:
                 proc.kill()
                 proc.wait(timeout=5)
-            except Exception:
+            except Exception as _degrade_error:
+                _swallowed("roop/video_stream.py:224", _degrade_error, "decoder wait skipped")
                 pass
         if proc.returncode not in (None, 0) and not self._reported_error:
             detail = (stderr or b"").decode("utf-8", "replace").strip()
@@ -362,31 +367,36 @@ class NVHardwareVideoReader:
                 self._fallback_capture = None
                 try:
                     fallback.release()
-                except Exception:
+                except Exception as _degrade_error:
+                    _swallowed("roop/video_stream.py:365", _degrade_error, "fallback release skipped")
                     pass
             return
         for stream in (proc.stdout, proc.stderr):
             try:
                 if stream is not None and not stream.closed:
                     stream.close()
-            except Exception:
+            except Exception as _degrade_error:
+                _swallowed("roop/video_stream.py:372", _degrade_error, "decoder stream close skipped")
                 pass
         if self._fallback_capture is not None:
             fallback = self._fallback_capture
             self._fallback_capture = None
             try:
                 fallback.release()
-            except Exception:
+            except Exception as _degrade_error:
+                _swallowed("roop/video_stream.py:379", _degrade_error, "fallback release skipped")
                 pass
         try:
             if proc.poll() is None:
                 proc.terminate()
                 proc.wait(timeout=5)
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("roop/video_stream.py:385", _degrade_error, "decoder terminate skipped")
             try:
                 proc.kill()
                 proc.wait(timeout=5)
-            except Exception:
+            except Exception as _degrade_error:
+                _swallowed("roop/video_stream.py:389", _degrade_error, "decoder kill skipped")
                 pass
 
     close = release
@@ -563,7 +573,8 @@ class NVHardwareVideoWriter:
             return ""
         try:
             return (self.proc.stderr.read() or b"").decode("utf-8", "replace").strip()
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("roop/video_stream.py:566", _degrade_error, "encoder stderr unavailable")
             return ""
 
     def _retry_as_software(self) -> bool:
@@ -576,7 +587,8 @@ class NVHardwareVideoWriter:
         if old is not None:
             try:
                 old.wait(timeout=5)
-            except Exception:
+            except Exception as _degrade_error:
+                _swallowed("roop/video_stream.py:579", _degrade_error, "failed encoder wait skipped")
                 pass
         self._fell_back = True
         try:
@@ -656,27 +668,32 @@ class NVHardwareVideoWriter:
             try:
                 if proc.stdin is not None and not proc.stdin.closed:
                     proc.stdin.close()
-            except Exception:
+            except Exception as _degrade_error:
+                _swallowed("roop/video_stream.py:659", _degrade_error, "encoder stdin close skipped")
                 pass
             try:
                 proc.wait(timeout=5)
-            except Exception:
+            except Exception as _degrade_error:
+                _swallowed("roop/video_stream.py:663", _degrade_error, "encoder wait skipped")
                 try:
                     proc.kill()
                     proc.wait(timeout=5)
-                except Exception:
+                except Exception as _degrade_error:
+                    _swallowed("roop/video_stream.py:667", _degrade_error, "encoder kill skipped")
                     pass
             try:
                 if proc.stderr is not None and not proc.stderr.closed:
                     stderr = proc.stderr.read() or b""
-            except Exception:
+            except Exception as _degrade_error:
+                _swallowed("roop/video_stream.py:672", _degrade_error, "encoder stderr read skipped")
                 pass
         finally:
             for stream in (getattr(proc, "stdin", None), getattr(proc, "stderr", None)):
                 try:
                     if stream is not None and not stream.closed:
                         stream.close()
-                except Exception:
+                except Exception as _degrade_error:
+                    _swallowed("roop/video_stream.py:679", _degrade_error, "encoder stream close skipped")
                     pass
         if communication_error is not None:
             self._remove_failed_output()
@@ -708,7 +725,8 @@ class NVHardwareVideoWriter:
                 if proc.poll() is None:
                     proc.kill()
                 proc.communicate(timeout=10)
-            except Exception:
+            except Exception as _degrade_error:
+                _swallowed("roop/video_stream.py:711", _degrade_error, "encoder abort cleanup skipped")
                 pass
         try:
             if os.path.exists(self.output_path):
@@ -761,7 +779,8 @@ def open_video_capture(
         if fallback_capture is not None:
             try:
                 fallback_capture.release()
-            except Exception:
+            except Exception as _degrade_error:
+                _swallowed("roop/video_stream.py:764", _degrade_error, "fallback capture release")
                 pass
         logger.info("%s: using direct NVDEC pipe", tag)
         return reader

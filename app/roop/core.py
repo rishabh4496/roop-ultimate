@@ -688,7 +688,8 @@ class TerminalThroughputMeter:
                 COLOR_MUTED, COLOR_GREEN, COLOR_LIME, COLOR_YELLOW, COLOR_SEP, COLOR_GRAY
             )
             use_color = True
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("roop/core.py:691", _degrade_error, "colorized progress disabled")
             use_color = False
 
         if total > 0:

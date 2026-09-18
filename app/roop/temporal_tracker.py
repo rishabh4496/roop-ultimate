@@ -251,7 +251,8 @@ class TemporalFaceTracker:
             try:
                 from roop import session_pool
                 roi_interval = 2 if session_pool.detmask_pooling_enabled() else 1
-            except Exception:
+            except Exception as _degrade_error:
+                _swallowed("roop/temporal_tracker.py:254", _degrade_error, "single-interval fallback")
                 roi_interval = 1
         try:
             roi_interval = max(1, int(roi_interval))

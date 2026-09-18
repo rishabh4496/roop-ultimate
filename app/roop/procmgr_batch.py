@@ -23,6 +23,7 @@ class BatchProcessingMixin:
         import sys
         import cv2
         import roop
+        from roop.degrade import swallowed as _swallowed
         from concurrent.futures import ThreadPoolExecutor, as_completed
         from queue import Queue
         from threading import Thread
@@ -406,7 +407,8 @@ class BatchProcessingMixin:
             if _target_groups and (not _target_datas or len(_target_groups) == len(_target_datas)):
                 try:
                     _unique_identities = len(set(_target_groups))
-                except Exception:
+                except Exception as _degrade_error:
+                    _swallowed("roop/procmgr_batch.py:409", _degrade_error, "identity-group fallback")
                     _unique_identities = len(_target_groups)
             else:
                 _unique_identities = len(_target_datas)

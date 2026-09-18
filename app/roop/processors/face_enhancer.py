@@ -14,10 +14,12 @@ from typing import Any, Optional, Sequence, Tuple
 
 import cv2
 import numpy as np
+from roop.degrade import swallowed as _swallowed
 
 try:
     import torch
-except Exception:  # pragma: no cover - CPU-only import environments
+except Exception as _degrade_error:  # pragma: no cover - CPU-only import environments
+    _swallowed("roop/processors/face_enhancer.py:20", _degrade_error, "CPU-only enhancer import")
     torch = None
 
 from roop.trt_engine import TensorRTInferenceSession
