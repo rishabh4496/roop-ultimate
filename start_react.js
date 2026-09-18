@@ -34,23 +34,27 @@ module.exports = async (kernel) => {
           dest: "app/config.yaml"
         }
       },
-      // Self-heal an environment that has no ONNX Runtime at all.
+      // Guarantee the GPU inference stack before the backend starts.
       //
-      // If torch.js was skipped during install, the venv has no onnxruntime,
-      // and `import onnxruntime` resolves to an implicit NAMESPACE package --
-      // a module object with __file__ None and no get_available_providers.
-      // That is the "onnxruntime is installed but exposes no provider API
-      // (loaded from None)" startup failure. torch.js owns the correct
-      // per-platform versions, so re-run it rather than duplicating them.
+      // torch.js picks its dependency set from Pinokio's `gpu` variable. When
+      // that reports something other than 'nvidia' on an NVIDIA machine, the
+      // CPU branch installs plain `onnxruntime` and TensorRT never appears;
+      // and a `when` expression that raises skips its step silently, which can
+      // leave the venv with no onnxruntime at all (the "loaded from None"
+      // failure). Neither case is visible until startup.
+      //
+      // This step asks the MACHINE (nvidia-smi, torch's CUDA build) instead of
+      // the launcher, and installs only what is genuinely missing. It is a
+      // no-op on a correct environment, so it runs unconditionally rather than
+      // behind another condition that could itself be wrong.
       {
-        when: "{{!exists('app/env/Lib/site-packages/onnxruntime/__init__.py') && !exists('app/env/lib/python3.10/site-packages/onnxruntime/__init__.py')}}",
-        method: "script.start",
+        method: "shell.run",
         params: {
-          uri: "torch.js",
-          params: {
-            venv: "env",
-            path: "app"
-          }
+          venv: "env",
+          path: "app",
+          message: [
+            "python ensure_gpu_runtime.py"
+          ]
         }
       },
       // Repair an older machine in place. A previous installer could leave

@@ -84,6 +84,20 @@ module.exports = {
         ]
       }
     },
+    // torch.js is condition-driven, so a machine whose GPU it did not
+    // recognise can finish "successfully" with a CPU-only or incomplete
+    // environment. Verify against the hardware and repair before the install
+    // is marked complete. No-op when torch.js already did the right thing.
+    {
+      method: "shell.run",
+      params: {
+        venv: "env",
+        path: "app",
+        message: [
+          "python ensure_gpu_runtime.py"
+        ]
+      }
+    },
     // Seed default configuration from main device so every new user starts with
     // TensorRT provider, mixed precision mode, and optimized look/performance settings.
     {
