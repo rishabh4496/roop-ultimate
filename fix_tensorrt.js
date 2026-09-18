@@ -3,24 +3,17 @@ module.exports = {
     {
       method: "log",
       params: {
-        text: "Repairing the GPU inference stack (onnxruntime-gpu + TensorRT 10.9)...\nDetects this machine's GPU and installs only what is missing, including the -libs/-bindings subpackages that contain the runtime DLLs (nvinfer_10.dll etc.).\nVersion 10.9 matches onnxruntime-gpu 1.23 (its TensorRT EP is built against TensorRT 10.9).\nThis may take a few minutes — the libs package is ~1.6 GB."
+        text: "Installing TensorRT 10.9 into the existing env...\nThis installs the meta package AND the -libs/-bindings subpackages that actually contain the runtime DLLs (nvinfer_10.dll etc.) onnxruntime needs for the TensorRT execution provider.\nVersion 10.9 matches onnxruntime-gpu 1.23 (its TensorRT EP is built against TensorRT 10.9).\nThis may take a few minutes — the libs package is ~1.6 GB."
       }
     },
-    // Repair the WHOLE inference stack, not just TensorRT.
-    //
-    // The case that sends people to this button is often an environment with
-    // no usable onnxruntime at all (torch.js skipped, or the CPU build
-    // installed on an NVIDIA machine). Installing TensorRT on top of that
-    // changes nothing, because the TensorRT EP lives in onnxruntime-gpu.
-    // ensure_gpu_runtime.py checks the hardware and installs whatever is
-    // genuinely missing, including onnxruntime-gpu.
     {
       method: "shell.run",
       params: {
         venv: "env",
         path: "app",
         message: [
-          "python ensure_gpu_runtime.py"
+          "uv pip install onnxruntime-gpu==1.23.2",
+          "uv pip install --extra-index-url https://pypi.nvidia.com/ tensorrt-cu12==10.9.0.34 tensorrt-cu12-libs==10.9.0.34 tensorrt-cu12-bindings==10.9.0.34"
         ]
       }
     },

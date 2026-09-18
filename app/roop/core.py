@@ -196,11 +196,6 @@ def decode_execution_providers(execution_providers: List[str]) -> List[str]:
     resolved_names = resolve_provider_names(execution_providers,
                                             getattr(roop.globals, 'cuda_device_id', 0))
     requested_name = str(execution_providers[0] if execution_providers else '').lower()
-    if ('tensorrt' in requested_name and
-            not any('tensorrt' in str(p).lower() for p in resolved_names)):
-        print('[Backend] sub-7GB GPU: TensorRT disabled by the laptop RSS '
-              'safety policy; using CUDA/CPU providers. Set '
-              'ROOP_ALLOW_TRT_SMALL_GPU=1 to override.')
     from roop.ort_support import available_providers as _ort_providers
     available = _ort_providers()
     list_providers = [provider for provider in available
@@ -471,9 +466,17 @@ def suggest_max_memory() -> int:
 
 
 def suggest_execution_providers() -> List[str]:
-    return [p.replace('ExecutionProvider', '').lower()
-            for p in resolve_provider_names(['auto'],
-                                            getattr(roop.globals, 'cuda_device_id', 0))]
+    from roop.ort_support import available_providers
+    providers = available_providers()
+    encoded = [p.replace('ExecutionProvider', '').lower() for p in providers]
+    ordered = []
+    for pref in ('tensorrt', 'cuda', 'rocm', 'dml', 'cpu'):
+        if pref in encoded and pref not in ordered:
+            ordered.append(pref)
+    for remaining in encoded:
+        if remaining not in ordered:
+            ordered.append(remaining)
+    return ordered or ['cpu']
 
 
 def suggest_execution_threads() -> int:

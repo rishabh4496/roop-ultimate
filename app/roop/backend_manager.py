@@ -113,10 +113,7 @@ def resolve_provider_names(requested: Iterable[str] | None,
     # Accept both encoded names and the short names used by settings.yaml.
     short = _name(requested[0]).lower().replace("executionprovider", "")
     candidates = _HIERARCHY.get(short, tuple(_name(p) for p in requested))
-    if short == "auto" and _small_gpu(device_id):
-        # When sub-7GB safety policy is active and backend is 'auto', prefer CUDA
-        candidates = tuple(p for p in candidates
-                           if "tensorrt" not in p.lower())
+    # All candidates in hierarchy are evaluated for usability without blanket exclusion
     resolved: List[str] = []
     for candidate in candidates:
         if provider_usable(candidate, device_id, available) and candidate not in resolved:
