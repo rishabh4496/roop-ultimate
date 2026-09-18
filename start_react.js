@@ -14,7 +14,8 @@ module.exports = async (kernel) => {
           env: {
             PATH: [
               "{{path.resolve(cwd, '../../bin/miniforge')}}",
-              "{{path.resolve(cwd, '../../bin/miniconda')}}"
+              "{{path.resolve(cwd, '../../bin/miniconda')}}",
+              "{{envs.PATH}}"
             ]
           },
           path: "react-ui",
@@ -22,7 +23,31 @@ module.exports = async (kernel) => {
             "npm ci --no-audit --no-fund"
           ]
         }
-    },
+      },
+      // Ensure default config exists from main device so TensorRT provider and
+      // mixed precision are active on clean starts.
+      {
+        when: "{{!exists('app/config.yaml') && exists('app/default_config.yaml')}}",
+        method: "fs.copy",
+        params: {
+          src: "app/default_config.yaml",
+          dest: "app/config.yaml"
+        }
+      },
+      // Ensure TensorRT packages are installed on NVIDIA devices if missing from env
+      {
+        when: "{{(gpu === 'nvidia' || (Array.isArray(gpus) && gpus.includes('nvidia')) || which('nvidia-smi')) && !exists('app/env/Lib/site-packages/tensorrt')}}",
+        method: "shell.run",
+        params: {
+          venv: "env",
+          path: "app",
+          message: [
+            "uv pip uninstall onnxruntime",
+            "uv pip install onnxruntime-gpu==1.23.2",
+            "uv pip install --extra-index-url https://pypi.nvidia.com/ tensorrt-cu12==10.9.0.34 tensorrt-cu12-libs==10.9.0.34 tensorrt-cu12-bindings==10.9.0.34"
+          ]
+        }
+      },
       // Repair an older machine in place. A previous installer could leave
       // NumPy 2.x behind even though the current requirements pin 1.26.4;
       // run.py deliberately refuses that ABI because InsightFace's native
@@ -59,7 +84,8 @@ module.exports = async (kernel) => {
           env: {
             PATH: [
               "{{path.resolve(cwd, '../../bin/miniforge')}}",
-              "{{path.resolve(cwd, '../../bin/miniconda')}}"
+              "{{path.resolve(cwd, '../../bin/miniconda')}}",
+              "{{envs.PATH}}"
             ]
           },
           path: "react-ui",
@@ -105,6 +131,9 @@ module.exports = async (kernel) => {
           on: [{
             "event": "/(http:\\/\\/[0-9.:]+)/",
             "done": true
+          }, {
+            "event": "/\\[FATAL\\]/",
+            "break": true
           }]
         }
       },

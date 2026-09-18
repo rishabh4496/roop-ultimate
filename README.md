@@ -57,13 +57,13 @@ code on the affected, stopped installation and click **Start**. Do not copy
 another GPU's config, reset the app, or change a running installation's packages
 to fix this particular message.
 
-Similarly, TensorRT packages (`tensorrt-cu12`) are optional acceleration libraries
-that can be absent or pending on fresh machines or non-TensorRT configurations.
-Startup now treats missing TensorRT module imports as normal without emitting
-diagnostic `ModuleNotFoundError` fallback messages that Pinokio's shell runner or
-launcher script could misinterpret as fatal errors. If TensorRT is not present,
-the application seamlessly falls back to CUDA execution. Users desiring TensorRT
-acceleration on compatible cards can click **Fix TensorRT** in Pinokio at any time.
+Similarly, TensorRT packages (`tensorrt-cu12`, `tensorrt-cu12-libs`, `tensorrt-cu12-bindings`,
+and `onnxruntime-gpu`) are automatically provisioned by Pinokio for all NVIDIA hardware profiles.
+The installer seeds initial configuration directly from the main reference workstation (`default_config.yaml`),
+ensuring `provider: tensorrt` and `trt_precision: mixed` are active from the first launch,
+while device-adaptive auto-tuning transparently adjusts thread counts and execution pools for the target GPU tier.
+If TensorRT is ever missing from an existing custom virtual environment, startup auto-heals it, and
+users can also click **Fix TensorRT** in Pinokio at any time.
 
 ### Manually
 

@@ -2,7 +2,7 @@ module.exports = {
   run: [
     // windows nvidia
     {
-      "when": "{{platform === 'win32' && gpu === 'nvidia'}}",
+      "when": "{{platform === 'win32' && (gpu === 'nvidia' || (Array.isArray(gpus) && gpus.includes('nvidia')) || which('nvidia-smi'))}}",
       "method": "shell.run",
       "params": {
         "venv": "{{args && args.venv ? args.venv : null}}",
@@ -19,7 +19,7 @@ module.exports = {
     },
     // windows amd
     {
-      "when": "{{platform === 'win32' && gpu === 'amd'}}",
+      "when": "{{platform === 'win32' && !(gpu === 'nvidia' || (Array.isArray(gpus) && gpus.includes('nvidia')) || which('nvidia-smi')) && (gpu === 'amd' || (Array.isArray(gpus) && gpus.includes('amd')))}}",
       "method": "shell.run",
       "params": {
         "venv": "{{args && args.venv ? args.venv : null}}",
@@ -32,7 +32,7 @@ module.exports = {
     },
     // windows cpu
     {
-      "when": "{{platform === 'win32' && (gpu !== 'nvidia' && gpu !== 'amd')}}",
+      "when": "{{platform === 'win32' && !(gpu === 'nvidia' || (Array.isArray(gpus) && gpus.includes('nvidia')) || which('nvidia-smi')) && !(gpu === 'amd' || (Array.isArray(gpus) && gpus.includes('amd')))}}",
       "method": "shell.run",
       "params": {
         "venv": "{{args && args.venv ? args.venv : null}}",
@@ -74,7 +74,7 @@ module.exports = {
     },
     // linux nvidia
     {
-      "when": "{{platform === 'linux' && gpu === 'nvidia'}}",
+      "when": "{{platform === 'linux' && (gpu === 'nvidia' || (Array.isArray(gpus) && gpus.includes('nvidia')) || which('nvidia-smi'))}}",
       "method": "shell.run",
       "params": {
         "venv": "{{args && args.venv ? args.venv : null}}",
@@ -91,7 +91,7 @@ module.exports = {
     },
     // linux rocm (amd)
     {
-      "when": "{{platform === 'linux' && gpu === 'amd'}}",
+      "when": "{{platform === 'linux' && !(gpu === 'nvidia' || (Array.isArray(gpus) && gpus.includes('nvidia')) || which('nvidia-smi')) && (gpu === 'amd' || (Array.isArray(gpus) && gpus.includes('amd')))}}",
       "method": "shell.run",
       "params": {
         "venv": "{{args && args.venv ? args.venv : null}}",
@@ -101,11 +101,12 @@ module.exports = {
           "uv pip install filelock fsspec jinja2 networkx typing-extensions sympy",
           "uv pip install https://repo.radeon.com/rocm/manylinux/rocm-rel-6.3/onnxruntime_rocm-1.19.0-cp310-cp310-linux_x86_64.whl"
         ]
-      }
+      },
+      "next": null
     },
     // linux cpu
     {
-      "when": "{{platform === 'linux' && (gpu !== 'amd' && gpu !== 'nvidia')}}",
+      "when": "{{platform === 'linux' && !(gpu === 'nvidia' || (Array.isArray(gpus) && gpus.includes('nvidia')) || which('nvidia-smi')) && !(gpu === 'amd' || (Array.isArray(gpus) && gpus.includes('amd')))}}",
       "method": "shell.run",
       "params": {
         "venv": "{{args && args.venv ? args.venv : null}}",

@@ -79,7 +79,7 @@ def provider_usable(name: str, device_id: int = 0,
 
 def _small_gpu(device_id: int) -> bool:
     """Return whether this device is below the laptop's 7GB safety tier."""
-    if os.environ.get('ROOP_ALLOW_TRT_SMALL_GPU', '').strip().lower() in (
+    if os.environ.get('ROOP_ALLOW_TRT_SMALL_GPU', '1').strip().lower() in (
             '1', 'true', 'yes', 'on'):
         return False
     try:
@@ -113,10 +113,8 @@ def resolve_provider_names(requested: Iterable[str] | None,
     # Accept both encoded names and the short names used by settings.yaml.
     short = _name(requested[0]).lower().replace("executionprovider", "")
     candidates = _HIERARCHY.get(short, tuple(_name(p) for p in requested))
-    if short in ("auto", "tensorrt") and _small_gpu(device_id):
-        # TensorRT's multi-session host footprint exceeds the 2.5GB laptop
-        # RSS ceiling even with pools disabled. CUDA remains GPU-accelerated
-        # and is the safe default for the complete small-card pipeline.
+    if short == "auto" and _small_gpu(device_id):
+        # When sub-7GB safety policy is active and backend is 'auto', prefer CUDA
         candidates = tuple(p for p in candidates
                            if "tensorrt" not in p.lower())
     resolved: List[str] = []
@@ -142,7 +140,7 @@ def provider_admission(requested: str | None = None, device_id: int = 0) -> dict
     """
     configured = str(requested or os.environ.get("ROOP_EXECUTION_PROVIDER", "auto"))
     small = _small_gpu(device_id)
-    allow_small_trt = os.environ.get("ROOP_ALLOW_TRT_SMALL_GPU", "").strip().lower() in (
+    allow_small_trt = os.environ.get("ROOP_ALLOW_TRT_SMALL_GPU", "1").strip().lower() in (
         "1", "true", "yes", "on")
     short = _name(configured).lower().replace("executionprovider", "")
     if small and short in ("auto", "tensorrt") and not allow_small_trt:

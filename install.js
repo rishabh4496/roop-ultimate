@@ -33,7 +33,8 @@ module.exports = {
         env: {
           PATH: [
             "{{path.resolve(cwd, '../../bin/miniforge')}}",
-            "{{path.resolve(cwd, '../../bin/miniconda')}}"
+            "{{path.resolve(cwd, '../../bin/miniconda')}}",
+            "{{envs.PATH}}"
           ]
         },
         path: "react-ui",
@@ -81,6 +82,16 @@ module.exports = {
         message: [
           "uv pip install --no-deps sam2 hydra-core omegaconf iopath portalocker antlr4-python3-runtime==4.9.3"
         ]
+      }
+    },
+    // Seed default configuration from main device so every new user starts with
+    // TensorRT provider, mixed precision mode, and optimized look/performance settings.
+    {
+      when: "{{!exists('app/config.yaml') && exists('app/default_config.yaml')}}",
+      method: "fs.copy",
+      params: {
+        src: "app/default_config.yaml",
+        dest: "app/config.yaml"
       }
     },
     // app/env alone is not proof that installation completed. Pinokio may

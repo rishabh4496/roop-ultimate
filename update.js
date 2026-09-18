@@ -15,6 +15,15 @@ module.exports = {
       message: "uv pip install -r requirements.txt"
     }
   }, {
+    method: "script.start",
+    params: {
+      uri: "torch.js",
+      params: {
+        venv: "env",
+        path: "app",
+      }
+    }
+  }, {
     // Repair older environments that were installed before the InsightFace
     // NumPy constraint was pinned, without requiring a destructive reset.
     method: "shell.run",
@@ -33,7 +42,8 @@ module.exports = {
       env: {
         PATH: [
           "{{path.resolve(cwd, '../../bin/miniforge')}}",
-          "{{path.resolve(cwd, '../../bin/miniconda')}}"
+          "{{path.resolve(cwd, '../../bin/miniconda')}}",
+          "{{envs.PATH}}"
         ]
       },
       path: "react-ui",
@@ -41,6 +51,13 @@ module.exports = {
         "npm ci --no-audit --no-fund",
         "npm run build"
       ]
+    }
+  }, {
+    when: "{{!exists('app/config.yaml') && exists('app/default_config.yaml')}}",
+    method: "fs.copy",
+    params: {
+      src: "app/default_config.yaml",
+      dest: "app/config.yaml"
     }
   }, {
     method: "fs.write",

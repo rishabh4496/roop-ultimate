@@ -46,6 +46,21 @@ def _enable_tensorrt_runtime():
     except Exception as _degrade_error:
         _swallowed("settings.py:34", _degrade_error, "fallback continued")
         pass
+    try:
+        import nvidia
+        nvidia_file = getattr(nvidia, '__file__', None)
+        if nvidia_file:
+            nvidia_base = os.path.dirname(nvidia_file)
+            for root, dirs, _ in os.walk(nvidia_base):
+                if os.path.basename(root).lower() == 'bin' and root not in dll_dirs:
+                    dll_dirs.append(root)
+        elif hasattr(nvidia, '__path__'):
+            for p in nvidia.__path__:
+                for root, dirs, _ in os.walk(p):
+                    if os.path.basename(root).lower() == 'bin' and root not in dll_dirs:
+                        dll_dirs.append(root)
+    except Exception:
+        pass
     for d in dll_dirs:
         try:
             if hasattr(os, 'add_dll_directory'):
@@ -392,10 +407,15 @@ class Settings:
             with open(self.config_file, 'r') as f:
                 data = yaml.load(f, Loader=yaml.FullLoader)
         except FileNotFoundError:
-            # First launch and the defaults probe intentionally point at a file
-            # that does not exist.  Defaults are the successful result here, not
-            # a degraded runtime path, and no file should be created implicitly.
+            # First launch: check if default_config.yaml exists to seed initial settings
             data = None
+            default_path = os.path.join(os.path.dirname(os.path.abspath(self.config_file)), 'default_config.yaml')
+            if os.path.isfile(default_path):
+                try:
+                    with open(default_path, 'r') as f:
+                        data = yaml.load(f, Loader=yaml.FullLoader)
+                except Exception as _degrade_error:
+                    _swallowed("settings.py:default_config", _degrade_error, "fallback continued")
         except Exception as _degrade_error:
             _swallowed("settings.py:361", _degrade_error, "fallback continued")
             data = None
@@ -453,7 +473,21 @@ class Settings:
         default_threads = 3
         threads_basis = f"v{_THREAD_RULE}|unknown"
         try:
-            self.provider = self.default_get(data, 'provider', 'cuda')
+            if data and isinstance(data, dict) and 'provider' in data:
+                self.provider = data['provider']
+            else:
+                self.provider = 'tensorrt'
+                try:
+                    from roop.core import suggest_execution_providers
+                    suggested = suggest_execution_providers()
+                    if 'tensorrt' in suggested:
+                        self.provider = 'tensorrt'
+                    elif 'cuda' in suggested:
+                        self.provider = 'cuda'
+                    elif suggested:
+                        self.provider = suggested[0]
+                except Exception:
+                    pass
             if self.provider in ['cuda', 'tensorrt']:
                 import torch
                 if torch.cuda.is_available():
@@ -575,7 +609,10 @@ class Settings:
         self.benchmark_results = self._hw_get(data, 'benchmark_results', {})
         
         self.memory_limit = self.default_get(data, 'memory_limit', 0)
-        self.provider = self.default_get(data, 'provider', 'cuda')
+        if data and isinstance(data, dict) and 'provider' in data:
+            self.provider = data['provider']
+        else:
+            self.provider = getattr(self, 'provider', 'tensorrt')
         # TensorRT precision mode: 'fp32' | 'fp16' | 'mixed' (only used when provider == 'tensorrt')
         self.trt_precision = self.default_get(data, 'trt_precision', 'mixed')
         # TensorRT tuning. Level 3 is the documented performance baseline;

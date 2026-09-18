@@ -6,6 +6,14 @@ import sys
 import time
 
 import numpy as np
+
+# Ensure TensorRT runtime DLL directories are registered on Windows before ORT loads
+try:
+    from settings import _enable_tensorrt_runtime
+    _enable_tensorrt_runtime()
+except Exception:
+    pass
+
 import onnxruntime as ort
 
 from roop.degrade import swallowed as _swallowed
@@ -55,10 +63,12 @@ def _apply_perf_env():
         with open('config.yaml', 'r') as f:
             content = f.read()
     except FileNotFoundError:
-        # Fresh installs have no saved preferences yet, just like Settings._load.
-        # Keep the existing environment/defaults without emitting an "Errno"
-        # diagnostic that Pinokio treats as a failed startup. Do not create a file.
-        return
+        # Check if default_config.yaml is available to seed the initial environment
+        try:
+            with open('default_config.yaml', 'r') as f:
+                content = f.read()
+        except FileNotFoundError:
+            return
     except Exception as _degrade_error:
         _swallowed("run.py:28", _degrade_error, "fallback continued")
         return

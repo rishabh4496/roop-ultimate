@@ -1025,7 +1025,9 @@ def get_device() -> str:
     available_providers = ort.get_available_providers()
 
     if len(roop.globals.execution_providers) < 1:
-        if 'CUDAExecutionProvider' in available_providers:
+        if 'TensorrtExecutionProvider' in available_providers:
+            roop.globals.execution_providers = ['TensorrtExecutionProvider', 'CUDAExecutionProvider']
+        elif 'CUDAExecutionProvider' in available_providers:
             roop.globals.execution_providers = ['CUDAExecutionProvider']
         else:
             roop.globals.execution_providers = ["CPUExecutionProvider"]
