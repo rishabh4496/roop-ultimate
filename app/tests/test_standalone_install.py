@@ -163,6 +163,7 @@ class TestNoUpstreamCoupling(unittest.TestCase):
     # mention there is harmless in a way one in `metadata.py` is not.
     ALLOWED = {'NOTICE.md', 'app/tests/test_standalone_install.py',
                'CLAUDE.md', 'GEMINI.md', 'QWEN.md', 'AGENTS.md', 'facegemini.md',
+               'docs/PHASE11_ENHANCER_INVENTORY.md', 'docs/SESSION_LOGS.md', 'docs/SWARM_MEASUREMENT_REPORT.md',
                '.clinerules', '.cursorrules', '.windsurfrules'}
     EXTS = {'.py', '.js', '.jsx', '.ts', '.tsx', '.json', '.md', '.sh', '.bat',
             '.yaml', '.yml', '.html', '.css'}

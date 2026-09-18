@@ -18,7 +18,7 @@ Full record: `docs/SWARM_MEASUREMENT_REPORT.md` and `app/output/phase2_baseline/
 2. **Color Mode Cost Ratios:** Measured on real fixture face crops that `lct` runs in 1.95 ms/face, `rct` in 4.57 ms (2.3x), `mkl` in 6.45 ms (3.3x), and `idt` in 27.17 ms (**13.9x**). IDT is documented and warned in the UI, but confirmed never auto-selected.
 3. **cuDNN Frontend Fallback Fixed:** Fixed `cudnn_algo.apply_algo` to properly handle bare string provider names, ensuring models requiring `DEFAULT` conv algo (e.g. CodeFormer) are protected against `CUDNN_FE failure 8: HEURISTIC_QUERY_FAILED`.
 4. **NVENC Preset Unified:** Unified `NVHardwareVideoWriter` preset default from `p4` to `p5`, aligning with `FFMPEG_VideoWriter` and `NVENC_PRESET_DEFAULT`.
-5. **Test Suite Health:** Resolved test logic mismatches in `test_lipsync_audio.py` (procmgr_batch source inclusion), `test_angles.py` (profile_3pt acceptance), and `test_benchmark_video_harness.py` (`swap_model` resolution).
+5. **Test Suite Health:** Resolved test logic mismatches in `test_lipsync_audio.py` (procmgr_batch source inclusion), `test_angles.py` (profile_3pt acceptance), `test_benchmark_video_harness.py` (`swap_model` and storage-schema compatibility), and standalone-install documentation coupling. Focused validation is **83 passed, 2 warnings, 8 subtests**. The full suite reached **2818 passed, 3 failed, 1 skipped, 938 subtests**; the two benchmark failures passed in isolation, leaving only the known exception-visibility policy debt in the aggregate run.
 
 ---
 

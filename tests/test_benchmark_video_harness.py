@@ -200,8 +200,9 @@ def test_real_video_execution(temp_dir: Path) -> None:
     assert len(reloaded) == 1, f"Expected 1 saved run, found {len(reloaded)}"
     saved = reloaded[0]
     assert saved["run_id"] == result.run_id
-    assert saved["metrics"]["avg_fps"] == result.metrics["avg_fps"]
-    assert saved["metrics"]["p1_low_fps"] == result.metrics["p1_low_fps"]
+    metrics_obj = saved.get("metrics") or saved.get("best_metrics")
+    assert metrics_obj["avg_fps"] == result.metrics["avg_fps"]
+    assert metrics_obj["p1_low_fps"] == result.metrics["p1_low_fps"]
     assert saved["workload"]["target_faces"] == 1
     print("   -> Real Video Execution & Telemetry: PASS")
     print(f"      Throughput   : {result.metrics['avg_fps']:.2f} FPS")
