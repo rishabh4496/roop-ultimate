@@ -103,9 +103,28 @@ def onnxruntime_status() -> tuple[bool, list[str]]:
         return False, []
 
 
+def _find_uv() -> str | None:
+    uv = shutil.which("uv")
+    if uv:
+        return uv
+    here = os.path.dirname(os.path.abspath(__file__))
+    for base in (
+        os.path.join(here, "..", "..", "..", "bin"),
+        os.path.join(here, "..", "..", "bin"),
+    ):
+        for flavor in ("miniforge", "miniconda"):
+            candidate = os.path.abspath(os.path.join(base, flavor, "Library", "bin", "uv.exe"))
+            if os.path.isfile(candidate):
+                return candidate
+            candidate_nix = os.path.abspath(os.path.join(base, flavor, "bin", "uv"))
+            if os.path.isfile(candidate_nix):
+                return candidate_nix
+    return None
+
+
 def _pip(args: list[str]) -> bool:
     """Install through uv when available, else pip. Never raises."""
-    uv = shutil.which("uv")
+    uv = _find_uv()
     commands = []
     if uv:
         commands.append([uv, "pip", "install", "--python", sys.executable, *args])
