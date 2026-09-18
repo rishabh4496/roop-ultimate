@@ -24,6 +24,16 @@ module.exports = {
       }
     },
     {
+      method: "shell.run",
+      params: {
+        venv: "env",
+        path: "app",
+        message: [
+          "python verify_ort.py"
+        ]
+      }
+    },
+    {
       method: "log",
       params: {
         text: "Done! TensorRT is now installed and cache cleared.\nRestart the app (Stop → Start) and you should see:\n  Using provider [('TensorrtExecutionProvider', ...)] - Device:cuda"
