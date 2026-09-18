@@ -281,6 +281,8 @@ def cache_namespace(precision: str, device_id: int = 0) -> str:
     try:
         import tensorrt as trt
         trt_ver = str(getattr(trt, "__version__", "unknown"))
+    except (ImportError, ModuleNotFoundError):
+        trt_ver = "unknown"
     except Exception as _degrade_error:
         _swallowed("roop/backend_manager.py:275", _degrade_error, "fallback continued")
         pass

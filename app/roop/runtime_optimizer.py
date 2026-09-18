@@ -760,6 +760,8 @@ class HardwareProfiler:
                     trt_flags.add("int8")
                 if fp8:
                     trt_flags.add("fp8")
+            except (ImportError, ModuleNotFoundError):
+                pass
             except Exception as _degrade_error:
                 _swallowed("roop/runtime_optimizer.py:757", _degrade_error, "fallback continued")
                 pass
@@ -910,6 +912,8 @@ class HardwareProfiler:
         try:
             import tensorrt as _trt
             trt_version = str(getattr(_trt, "__version__", ""))
+        except (ImportError, ModuleNotFoundError):
+            trt_version = ""
         except Exception as _degrade_error:
             _swallowed("roop/runtime_optimizer.py:902", _degrade_error, "fallback continued")
             pass
