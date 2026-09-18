@@ -118,7 +118,8 @@ def main():
     if not args.model.is_file():
         raise SystemExit(f'model not found: {args.model}')
 
-    available = ort.get_available_providers()
+    from roop.ort_support import available_providers
+    available = available_providers()
     providers = [name for name in ('TensorrtExecutionProvider', 'CUDAExecutionProvider',
                                    'CPUExecutionProvider') if name in available]
     session = ort.InferenceSession(str(args.model), providers=providers)

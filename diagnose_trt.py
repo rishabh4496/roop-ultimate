@@ -18,7 +18,8 @@ try:
     import onnxruntime as ort
     print("onnxruntime    :", ort.__version__)
     print("device         :", ort.get_device())
-    print("providers(adv) :", ort.get_available_providers())
+    lister = getattr(ort, "get_available_providers", None)
+    print("providers(adv) :", lister() if callable(lister) else "MISSING (no provider API)")
 except Exception as e:
     print("onnxruntime import FAILED:", e)
     sys.exit(1)

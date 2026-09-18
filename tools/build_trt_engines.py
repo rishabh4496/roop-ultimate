@@ -255,7 +255,8 @@ def load_onnxruntime() -> Any:
             "onnxruntime-gpu with TensorRT support is required. Run this command "
             "with the application's app/env interpreter."
         ) from error
-    providers = list(ort.get_available_providers())
+    lister = getattr(ort, "get_available_providers", None)
+    providers = list(lister()) if callable(lister) else []
     if "TensorrtExecutionProvider" not in providers:
         if _reexec_with_app_environment():
             # os.execv replaces this process and therefore never returns.
