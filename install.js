@@ -94,6 +94,22 @@ module.exports = {
         dest: "app/config.yaml"
       }
     },
+    // Deterministically verify the ONNX Runtime installation contract and provider API.
+    // Fails loudly if onnxruntime is shadowed, corrupted, or exposes no provider API.
+    {
+      method: "shell.run",
+      params: {
+        venv: "env",
+        path: "app",
+        message: [
+          "python verify_ort.py"
+        ],
+        on: [{
+          "event": "/\\[FATAL\\]/",
+          "break": true
+        }]
+      }
+    },
     // app/env alone is not proof that installation completed. Pinokio may
     // leave it behind when a dependency download or the UI build fails. Write
     // the marker only after every required install step above has succeeded so

@@ -60,6 +60,19 @@ module.exports = {
       dest: "app/config.yaml"
     }
   }, {
+    method: "shell.run",
+    params: {
+      venv: "env",
+      path: "app",
+      message: [
+        "python verify_ort.py"
+      ],
+      on: [{
+        "event": "/\\[FATAL\\]/",
+        "break": true
+      }]
+    }
+  }, {
     method: "fs.write",
     params: {
       path: ".pinokio-install-complete.json",

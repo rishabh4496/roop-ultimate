@@ -26,6 +26,7 @@ module.exports = {
         "path": "{{args && args.path ? args.path : '.'}}",
         "message": [
           "uv pip install torch torch-directml torchvision torchaudio numpy==1.26.4 --force-reinstall",
+          "uv pip uninstall onnxruntime-gpu",
           "uv pip install onnxruntime-directml"
         ]
       }
@@ -40,6 +41,7 @@ module.exports = {
         "message": [
           "uv pip install torch==2.7.0 torchvision==0.22.0 --index-url https://download.pytorch.org/whl/cpu --force-reinstall --no-deps",
           "uv pip install filelock fsspec jinja2 networkx typing-extensions sympy",
+          "uv pip uninstall onnxruntime-gpu",
           "uv pip install onnxruntime==1.17.1"
         ]
       }
@@ -99,6 +101,7 @@ module.exports = {
         "message": [
           "uv pip install torch==2.7.0 torchvision==0.22.0 --index-url https://download.pytorch.org/whl/rocm6.3 --force-reinstall --no-deps",
           "uv pip install filelock fsspec jinja2 networkx typing-extensions sympy",
+          "uv pip uninstall onnxruntime-gpu",
           "uv pip install https://repo.radeon.com/rocm/manylinux/rocm-rel-6.3/onnxruntime_rocm-1.19.0-cp310-cp310-linux_x86_64.whl"
         ]
       },
@@ -114,6 +117,7 @@ module.exports = {
         "message": [
           "uv pip install torch==2.7.0 torchvision==0.22.0 --index-url https://download.pytorch.org/whl/cpu --force-reinstall --no-deps",
           "uv pip install filelock fsspec jinja2 networkx typing-extensions sympy",
+          "uv pip uninstall onnxruntime-gpu",
           "uv pip install onnxruntime==1.17.1"
         ]
       }

@@ -11,6 +11,7 @@ timm>=0.9.16
 # Existing UI and processing dependencies.
 gradio==5.50.0
 onnx==1.16.0
+onnxruntime-gpu==1.23.2
 albucore==0.0.16
 psutil==5.9.6
 nvidia-ml-py>=12.535.133
