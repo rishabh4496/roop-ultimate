@@ -104,6 +104,8 @@ MAX_LOST_FRAMES = 30
 MAX_COAST_FRAMES = 15
 MIN_HITS_TO_COAST = 3
 LOW_CONFIDENCE = 0.5
+FAST_MOTION_SPEED = 5.0
+FAST_MOTION_COAST_MULTIPLIER = 2
 
 # Occlusion states stamped on a face as `occlusion_state`.
 STATE_VISIBLE = 'visible'
@@ -497,7 +499,17 @@ class FaceTracker:
                 track = self.tracks[track_id]
                 if track.missed <= 0 or track.template is None:
                     continue                    # matched this frame, or never seen
-                if track.coasted_run >= self.max_coast:
+                velocity = track.velocity
+                velocity_magnitude = float(np.linalg.norm(velocity[:2]))
+                dynamic_max_coast = self.max_coast
+                if velocity_magnitude > FAST_MOTION_SPEED:
+                    # Motion blur and detector latency are longest immediately
+                    # after a fast turn. Preserve the established track, but
+                    # never let it outlive the track itself.
+                    dynamic_max_coast = min(
+                        self.max_coast * FAST_MOTION_COAST_MULTIPLIER,
+                        max(self.max_coast, self.max_age - 1))
+                if track.coasted_run >= dynamic_max_coast:
                     self.stats['coast_expired'] += 1
                     continue
                 if track.hits < self.min_hits_to_coast:

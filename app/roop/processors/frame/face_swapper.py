@@ -110,8 +110,17 @@ try:
     )
 except ImportError:
     try:
-        import globals as roop_globals
-        roop = type('RoopModule', (), {'globals': roop_globals})
+        import roop.globals as roop_globals
+    except ImportError:
+        try:
+            import globals as roop_globals
+        except ImportError:
+            roop_globals = None
+    try:
+        if roop_globals is not None:
+            roop = type('RoopModule', (), {'globals': roop_globals})
+        else:
+            raise ImportError
     except ImportError:
         class _Globals:
             enable_occlusion_mask = True
@@ -352,6 +361,7 @@ class TemporalMaskSmoother:
 
     FLOW_SIZE = 128
     RESET_RESIDUAL = 0.50
+    MOTION_FLOW_SCALE = 8.0
     FLOW_TIERS = ('nvof', 'cuda_farneback', 'dis')
 
     def __init__(self, alpha: float = DEFAULT_EMA_ALPHA,
@@ -624,15 +634,54 @@ class TemporalMaskSmoother:
                 # never estimated separately, so NVOF adds no second pass.
                 warped_seam = self._warp(state['seam'], flow, cur_mask.shape)
 
-                # Reset on large flow residual (scene cut or sudden teleportation)
+                # During fast motion, the flow estimate is least trustworthy.
+                # Increase the current-frame weight instead of allowing a stale
+                # warped mask to smear across a turning face.
+                flow_magnitude = float(np.mean(np.linalg.norm(flow, axis=2)))
+                motion_factor = float(np.clip(
+                    flow_magnitude / self.MOTION_FLOW_SCALE, 0.0, 1.0))
+                adaptive_alpha = float(np.clip(
+                    eff_alpha + (1.0 - eff_alpha) * motion_factor, 0.0, 1.0))
+
+                # Soften the reset boundary. A moderate residual is usually a
+                # fast turn or a newly visible foreground object, not a scene
+                # cut, so a hard one-frame reset would itself flicker.
                 residual = float(np.mean(np.abs(warped - cur_mask)))
                 if residual <= self.RESET_RESIDUAL:
-                    out_mask = np.clip(eff_alpha * cur_mask + (1.0 - eff_alpha) * warped, 0.0, 1.0)
-                    out_seam = np.clip(eff_alpha * self._seam_boundary(cur_mask) +
-                                       (1.0 - eff_alpha) * warped_seam, 0.0, 1.0)
+                    out_mask = np.clip(adaptive_alpha * cur_mask +
+                                       (1.0 - adaptive_alpha) * warped, 0.0, 1.0)
+                    out_seam = np.clip(adaptive_alpha * self._seam_boundary(cur_mask) +
+                                       (1.0 - adaptive_alpha) * warped_seam, 0.0, 1.0)
+                elif residual <= self.RESET_RESIDUAL * 1.5:
+                    smooth_weight = float(np.clip(
+                        (residual - self.RESET_RESIDUAL) /
+                        (self.RESET_RESIDUAL * 0.5), 0.0, 1.0))
+                    smoothed = np.clip(adaptive_alpha * cur_mask +
+                                       (1.0 - adaptive_alpha) * warped, 0.0, 1.0)
+                    smooth_seam = np.clip(
+                        adaptive_alpha * self._seam_boundary(cur_mask) +
+                        (1.0 - adaptive_alpha) * warped_seam, 0.0, 1.0)
+                    out_mask = ((1.0 - smooth_weight) * smoothed +
+                                smooth_weight * cur_mask)
+                    out_seam = ((1.0 - smooth_weight) * smooth_seam +
+                                smooth_weight * self._seam_boundary(cur_mask))
                 else:
-                    out_mask = cur_mask
-                    out_seam = self._seam_boundary(cur_mask)
+                    # Continue the same soft transition beyond the reset
+                    # threshold. Capping the reset blend avoids a one-frame
+                    # raw-mask pop when fast motion or a new occluder causes a
+                    # large residual.
+                    reset_weight = float(np.clip(
+                        (residual - self.RESET_RESIDUAL) /
+                        max(1e-6, 1.0 - self.RESET_RESIDUAL), 0.0, 0.90))
+                    smoothed = np.clip(adaptive_alpha * cur_mask +
+                                       (1.0 - adaptive_alpha) * warped, 0.0, 1.0)
+                    smooth_seam = np.clip(
+                        adaptive_alpha * self._seam_boundary(cur_mask) +
+                        (1.0 - adaptive_alpha) * warped_seam, 0.0, 1.0)
+                    out_mask = ((1.0 - reset_weight) * smoothed +
+                                reset_weight * cur_mask)
+                    out_seam = ((1.0 - reset_weight) * smooth_seam +
+                                reset_weight * self._seam_boundary(cur_mask))
             else:
                 out_mask = cur_mask
                 out_seam = self._seam_boundary(cur_mask)
@@ -1277,17 +1326,63 @@ def get_gaze_retargeter() -> Optional[onnxruntime.InferenceSession]:
 
 
 def _heuristic_occlusion_mask(crop_frame: np.ndarray, face_mask: Optional[np.ndarray] = None) -> np.ndarray:
-    """Fallback heuristic detection for foreign occlusions (hands, black bars, objects)."""
+    """Fallback detection for dark and fine foreground objects.
+
+    The model path is still fixed at 256x256 for its GPU budget. This fallback
+    keeps the source resolution on CPU so thin pens, rims, and similar objects
+    are not erased by a second downsample.
+    """
     h, w = crop_frame.shape[:2]
-    crop_256 = cv2.resize(crop_frame, (OCCLUSION_INPUT_SIZE, OCCLUSION_INPUT_SIZE), interpolation=cv2.INTER_AREA)
-    gray = cv2.cvtColor(crop_256, cv2.COLOR_BGR2GRAY) if crop_256.ndim == 3 else crop_256
+    source = np.asarray(crop_frame)
+    if source.ndim == 2:
+        source_bgr = cv2.cvtColor(np.clip(source, 0, 255).astype(np.uint8), cv2.COLOR_GRAY2BGR)
+    else:
+        source_bgr = np.clip(source, 0, 255).astype(np.uint8)
+    gray = cv2.cvtColor(source_bgr, cv2.COLOR_BGR2GRAY)
 
     dark = (gray < 35).astype(np.float32)
-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
-    dark = cv2.morphologyEx(dark, cv2.MORPH_CLOSE, kernel)
-    if (h, w) != (OCCLUSION_INPUT_SIZE, OCCLUSION_INPUT_SIZE):
-        dark = cv2.resize(dark, (w, h), interpolation=cv2.INTER_LINEAR)
-    return np.clip(dark, 0.0, 1.0).astype(np.float32)
+
+    # A foreign pen/rim/wire may have ordinary luminance and therefore cannot
+    # be found by a darkness or skin-color rule. Use only scale-aware geometry:
+    # strong, narrow edges are dilated into a conservative object band. This
+    # deliberately avoids guessing a person's skin distribution.
+    edges = cv2.Canny(gray, 50, 120).astype(np.float32) / 255.0
+    gray_grad_x = cv2.Sobel(gray.astype(np.float32), cv2.CV_32F, 1, 0, ksize=3)
+    gray_grad_y = cv2.Sobel(gray.astype(np.float32), cv2.CV_32F, 0, 1, ksize=3)
+    gray_grad = cv2.magnitude(gray_grad_x, gray_grad_y)
+    nonzero_grad = gray_grad[gray_grad > 0.0]
+    adaptive_threshold = (float(np.percentile(nonzero_grad, 70)) * 0.35
+                          if nonzero_grad.size else 8.0)
+    adaptive_threshold = max(8.0, adaptive_threshold)
+    gray_edges = np.clip(
+        (gray_grad - adaptive_threshold) / adaptive_threshold, 0.0, 1.0)
+    edges = np.maximum(edges, gray_edges)
+    # Keep chroma only as a local boundary signal, never as a skin model. This
+    # catches a saturated object whose grayscale luminance matches the face.
+    lab = cv2.cvtColor(source_bgr, cv2.COLOR_BGR2LAB).astype(np.float32)
+    chroma_edges = np.zeros((h, w), dtype=np.float32)
+    for channel in (lab[..., 1], lab[..., 2]):
+        gx = cv2.Sobel(channel, cv2.CV_32F, 1, 0, ksize=3)
+        gy = cv2.Sobel(channel, cv2.CV_32F, 0, 1, ksize=3)
+        chroma_edges = np.maximum(chroma_edges, cv2.magnitude(gx, gy))
+    chroma_edges = np.clip((chroma_edges - 12.0) / 48.0, 0.0, 1.0)
+    edges = np.maximum(edges, chroma_edges)
+    edge_band = cv2.dilate(edges, np.ones((7, 7), dtype=np.uint8), iterations=1)
+    edge_band = cv2.GaussianBlur(edge_band, (5, 5), 0)
+    edge_signal = np.clip((edge_band - 0.10) * 2.0, 0.0, 1.0).astype(np.float32)
+
+    if face_mask is not None:
+        mask_for_stats = np.asarray(face_mask, dtype=np.float32)
+        if mask_for_stats.shape != (h, w):
+            mask_for_stats = cv2.resize(mask_for_stats, (w, h), interpolation=cv2.INTER_LINEAR)
+    else:
+        mask_for_stats = np.ones((h, w), dtype=np.float32)
+
+    combined = np.maximum(dark, edge_signal * 0.75)
+    combined *= np.clip(mask_for_stats, 0.0, 1.0)
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (7, 7))
+    combined = cv2.morphologyEx(combined, cv2.MORPH_CLOSE, kernel)
+    return np.clip(combined, 0.0, 1.0).astype(np.float32)
 
 
 def compute_occlusion_mask(
@@ -1339,14 +1434,22 @@ def compute_occlusion_mask(
             elif raw_out.ndim == 3 and raw_out.shape[0] == 1:
                 raw_out = raw_out[0]
 
-            vis_face = np.clip(raw_out / 0.70, 0.0, 1.0)
+            raw_out = np.clip(np.asarray(raw_out, dtype=np.float32), 0.0, 1.0)
+            # Preserve ambiguous partial occlusions instead of clipping every
+            # value above 0.70 to fully visible.
+            vis_face = 1.0 / (1.0 + np.exp(-8.0 * (raw_out - 0.50)))
             occ_256 = np.clip(1.0 - vis_face, 0.0, 1.0)
 
             if (h, w) != (OCCLUSION_INPUT_SIZE, OCCLUSION_INPUT_SIZE):
                 occlusion_mask = cv2.resize(occ_256, (w, h), interpolation=cv2.INTER_LINEAR)
             else:
                 occlusion_mask = occ_256
-            return np.clip(occlusion_mask, 0.0, 1.0).astype(np.float32)
+            model_mask = np.clip(occlusion_mask, 0.0, 1.0).astype(np.float32)
+            heuristic_mask = _heuristic_occlusion_mask(crop_frame, face_mask)
+            # The model is strongest on its training distribution. Let the
+            # inexpensive visual fallback rescue unusual colored/fine objects,
+            # while never reducing the model's occlusion estimate.
+            return np.maximum(model_mask, heuristic_mask * 0.75).astype(np.float32)
         except Exception as _degrade_error:
             _swallowed("roop/processors/frame/face_swapper.py:1344", _degrade_error, "fallback continued")
             pass

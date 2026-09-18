@@ -474,9 +474,20 @@ def dual_threshold_match(
             best_sim = float(np.dot(q, ref_u))
 
     if sliding_window is not None and len(sliding_window) > 0:
-        win_max = sliding_window.max_similarity(q, normalized=True)
-        win_mean = sliding_window.mean_similarity(q, normalized=True)
-        best_sim = max(best_sim, win_max, win_mean)
+        # A single contaminated crop must not be able to win the match just
+        # because it is the maximum of an otherwise clean window. Use a
+        # trimmed temporal consensus when enough history is available.
+        window_embeddings = sliding_window.embeddings()
+        if len(window_embeddings) >= 5:
+            similarities = sorted(float(np.dot(q, entry))
+                                  for entry in window_embeddings)
+            trim = max(1, len(similarities) // 8)
+            consensus = similarities[trim:-trim]
+            if consensus:
+                best_sim = max(best_sim, float(np.mean(consensus)))
+        else:
+            win_mean = sliding_window.mean_similarity(q, normalized=True)
+            best_sim = max(best_sim, win_mean)
 
     iou = 0.0
     if current_bbox is not None and previous_bbox is not None:
@@ -580,6 +591,23 @@ class MultiIdentityReferenceRouter:
             if not self.identities or not detected_faces:
                 return [None] * len(detected_faces)
 
+            # The recognition crop can contain a neighbouring face even when
+            # the detector boxes are still distinct. Annotate once here so the
+            # real-time router uses the same contamination verdict as tracking.
+            try:
+                from roop.face_contact import CONTAM_MAX, crop_contamination
+                if float(CONTAM_MAX) > 0.0:
+                    missing = [face for face in detected_faces
+                               if _field(face, '_emb_contam', None) is None]
+                    if missing:
+                        for face, contamination in zip(
+                                detected_faces, crop_contamination(detected_faces)):
+                            if _field(face, '_emb_contam', None) is None:
+                                _set_field(face, '_emb_contam', float(contamination))
+            except Exception as _degrade_error:
+                _swallowed("roop/face_reference.py:586", _degrade_error,
+                           "fallback continued")
+
             m = len(detected_faces)
             id_names = sorted(self.identities)
             n = len(id_names)
@@ -590,6 +618,7 @@ class MultiIdentityReferenceRouter:
 
             face_bboxes = []
             face_embs = []
+            face_contaminated = []
 
             # Each frame embedding is validated/normalized exactly once.  The
             # reference bank is persistent on CUDA, so its full MxN cosine
@@ -602,6 +631,11 @@ class MultiIdentityReferenceRouter:
                     if bbox is not None and len(bbox) >= 4 else None
                 )
                 face_embs.append(emb)
+                try:
+                    face_contaminated.append(
+                        float(_field(face, '_emb_contam', 0.0) or 0.0) >= 0.35)
+                except (TypeError, ValueError):
+                    face_contaminated.append(False)
 
             gpu_similarities = PERSISTENT_REFERENCE_EMBEDDINGS.similarities(
                 face_embs, id_names)
@@ -609,6 +643,24 @@ class MultiIdentityReferenceRouter:
             for i, face in enumerate(detected_faces):
                 for j, name in enumerate(id_names):
                     state = self.identities[name]
+                    if face_contaminated[i]:
+                        # Once the recognition crop is mostly another person,
+                        # appearance is actively misleading. Keep the track on
+                        # spatial continuity (or its locked detector track).
+                        iou = (_bbox_iou(face_bboxes[i], state.previous_bbox)
+                               if face_bboxes[i] is not None and
+                               state.previous_bbox is not None else 0.0)
+                        tid = _field(face, '_track_id')
+                        same_track = (tid is not None and
+                                      state.locked_track_id is not None and
+                                      int(tid) == int(state.locked_track_id))
+                        sim_matrix[i, j] = 0.0
+                        iou_matrix[i, j] = iou
+                        contaminated_iou_threshold = max(
+                            0.25, self.iou_threshold * 0.75)
+                        eligible[i, j] = bool(
+                            same_track or iou >= contaminated_iou_threshold)
+                        continue
                     reference_similarity = (
                         float(gpu_similarities[i, j])
                         if gpu_similarities is not None and face_embs[i] is not None
@@ -640,15 +692,23 @@ class MultiIdentityReferenceRouter:
                             is_crossing = True
                             break
 
-            # Cost matrix: C = 1.0 - (alpha * sim + (1 - alpha) * iou)
-            # When crossing, alpha = 1.0 so spatial coordinates never flip identity assignments
-            alpha = 1.0 if is_crossing else 0.75
+            # During a crossing, recognition crops are the least trustworthy,
+            # so retain spatial continuity instead of switching to embedding-
+            # only matching. Coast predictions keep a little more appearance
+            # weight because their track embedding is a clean temporal mean.
+            alpha_by_face = [0.75] * m
+            if is_crossing:
+                alpha_by_face = [
+                    0.75 if bool(_field(face, '_coasted', False)) else 0.40
+                    for face in detected_faces
+                ]
             cost_matrix = np.full((m, n), 1e5, dtype=np.float32)
             for i in range(m):
                 for j in range(n):
                     if eligible[i, j]:
-                        score = (alpha * sim_matrix[i, j] + (1.0 - alpha) * iou_matrix[i, j]
-                                 if not is_crossing else sim_matrix[i, j])
+                        alpha = alpha_by_face[i]
+                        score = (alpha * sim_matrix[i, j] +
+                                 (1.0 - alpha) * iou_matrix[i, j])
                         cost_matrix[i, j] = 1.0 - score
 
             # Optimal bipartite matching
@@ -682,8 +742,16 @@ class MultiIdentityReferenceRouter:
                     state.last_seen_frame = int(frame_index)
                     if face_bboxes[r] is not None:
                         state.previous_bbox = face_bboxes[r].copy()
-                    if face_embs[r] is not None:
-                        state.sliding_window.add(face_embs[r], weight=1.0)
+                    if face_embs[r] is not None and not is_crossing:
+                        try:
+                            contamination = float(
+                                _field(detected_faces[r], '_emb_contam', 0.0) or 0.0)
+                        except (TypeError, ValueError):
+                            contamination = 1.0
+                        if contamination < 0.05:
+                            state.sliding_window.add(face_embs[r], weight=1.0)
+                        elif contamination < 0.20:
+                            state.sliding_window.add(face_embs[r], weight=0.3)
                     _set_field(detected_faces[r], "_assigned_identity", name)
                     tid = _field(detected_faces[r], "_track_id")
                     if tid is not None:

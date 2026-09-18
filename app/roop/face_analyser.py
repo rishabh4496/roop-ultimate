@@ -328,10 +328,21 @@ class AffineEMAFilter:
             if tid in self.tracks:
                 prev_m, prev_f = self.tracks[tid]
                 dt = abs(f_idx - prev_f) if frame_index is not None else 1
-                # Translation displacement check: ignore filter if scene cut / large teleport occurred
+                # Fade the temporal contribution out over a displacement band.
+                # Toggling between EMA and raw matrices exactly at one hard
+                # threshold produces the visible jitter during fast rotation.
                 disp = float(np.linalg.norm(matrix[:, 2] - prev_m[:, 2]))
-                if dt <= self.max_gap and disp <= self.max_displacement:
-                    filtered = (self.alpha * matrix + (1.0 - self.alpha) * prev_m).astype(np.float32)
+                if dt <= self.max_gap:
+                    if disp <= self.max_displacement:
+                        alpha_eff = self.alpha
+                    elif disp <= self.max_displacement * 2.0:
+                        t = ((disp - self.max_displacement) /
+                             self.max_displacement)
+                        alpha_eff = self.alpha + (1.0 - self.alpha) * t
+                    else:
+                        alpha_eff = 1.0
+                    filtered = (alpha_eff * matrix +
+                                (1.0 - alpha_eff) * prev_m).astype(np.float32)
                     self.tracks[tid] = (filtered, f_idx)
                     return filtered
             self.tracks[tid] = (matrix.copy().astype(np.float32), f_idx)
