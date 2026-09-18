@@ -1022,7 +1022,8 @@ def resolve_relative_path(path: str) -> str:
 
 def get_device() -> str:
     import onnxruntime as ort
-    available_providers = ort.get_available_providers()
+    from roop.ort_support import available_providers as _ort_providers
+    available_providers = _ort_providers()
 
     if len(roop.globals.execution_providers) < 1:
         if 'TensorrtExecutionProvider' in available_providers:

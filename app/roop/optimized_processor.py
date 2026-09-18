@@ -985,7 +985,8 @@ def create_onnx_session(
     if ort is None:
         raise ImportError("onnxruntime is required for OnnxBatchRunner")
     if providers is None:
-        available = set(ort.get_available_providers())
+        from roop.ort_support import available_providers as _ort_providers
+        available = set(_ort_providers())
         requested: List[Any] = [
             name
             for name in (

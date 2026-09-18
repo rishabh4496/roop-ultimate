@@ -39,8 +39,8 @@ def run():
 
     set_display_ui(show_msg)
     if roop.globals.CFG.provider in ("cuda", "tensorrt") and util.has_cuda_device() == False:
-        import onnxruntime as _ort
-        _available = _ort.get_available_providers()
+        from roop.ort_support import available_providers as _ort_providers
+        _available = _ort_providers()
         _asked = roop.globals.CFG.provider
         if 'DmlExecutionProvider' in _available:
             roop.globals.CFG.provider = "dml"

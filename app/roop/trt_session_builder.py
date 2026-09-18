@@ -514,7 +514,8 @@ def build_tensorrt_session(
     path = Path(model_path)
     if not path.is_file():
         raise FileNotFoundError(path)
-    available = {str(name) for name in ort.get_available_providers()}
+    from roop.ort_support import available_providers as _ort_providers
+    available = {str(name) for name in _ort_providers()}
     if "TensorrtExecutionProvider" not in available:
         raise TensorRTSessionError(
             f"TensorRTExecutionProvider is unavailable; ORT providers are {sorted(available)!r}"

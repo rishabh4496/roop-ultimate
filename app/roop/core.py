@@ -54,7 +54,9 @@ def _configure_torch_cuda_acceleration() -> None:
 _configure_torch_cuda_acceleration()
 
 import onnxruntime as ort
-available_providers = ort.get_available_providers()
+from roop.ort_support import available_providers as _ort_providers
+# Module level: a broken onnxruntime must not raise during import.
+available_providers = _ort_providers()
 print("Available ONNX providers at startup:", available_providers)  # Debug
 
 import pathlib
@@ -199,7 +201,8 @@ def decode_execution_providers(execution_providers: List[str]) -> List[str]:
         print('[Backend] sub-7GB GPU: TensorRT disabled by the laptop RSS '
               'safety policy; using CUDA/CPU providers. Set '
               'ROOP_ALLOW_TRT_SMALL_GPU=1 to override.')
-    available = onnxruntime.get_available_providers()
+    from roop.ort_support import available_providers as _ort_providers
+    available = _ort_providers()
     list_providers = [provider for provider in available
                       if provider in resolved_names]
     

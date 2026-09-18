@@ -204,7 +204,8 @@ def _runtime_and_provider(source_root: Path, config: dict[str, Any]) -> tuple[di
         _swallowed("update_health.py:196", exc, "fallback continued")
         return (_result("provider", False, f"provider resolution failed: {exc}", requested=requested),
                 _result("gpu", False, "GPU validation could not run because provider resolution failed"))
-    available = [str(item) for item in ort.get_available_providers()]
+    from roop.ort_support import available_providers as _ort_providers
+    available = [str(item) for item in _ort_providers()]
     if not resolved:
         return (_result("provider", False,
                         "no usable ONNX Runtime execution provider was resolved",
