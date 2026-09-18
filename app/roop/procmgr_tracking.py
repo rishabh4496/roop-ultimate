@@ -18,6 +18,26 @@ from collections import deque as _deque
 import cv2
 import numpy as np
 
+
+def is_synthetic_face(face):
+    """Return whether ``face`` has guessed rather than detected geometry.
+
+    Interpolated and coasted observations carry a track embedding by design, so
+    downstream identity gates cannot tell that their landmarks were invented.
+    They are safe for continuity bookkeeping, but not safe as alignment input
+    for a neural face paste when an object or fast motion hid the face.
+    """
+    try:
+        if isinstance(face, dict):
+            return bool(face.get('_interpolated') or face.get('_coasted'))
+        getter = getattr(face, 'get', None)
+        if getter is not None:
+            return bool(getter('_interpolated', False) or getter('_coasted', False))
+        return bool(getattr(face, '_interpolated', False) or
+                    getattr(face, '_coasted', False))
+    except (AttributeError, TypeError, ValueError):
+        return False
+
 from roop.procmgr_runtime import (_DEBUG_MATCH, _TRACK_EMB_MAX, _TRACK_ASSIGN_MAX,
                                   _TRACK_ASSIGN_MARGIN, _TRACK_ASSIGN_FLOOR,
                                   _TRACK_ASSIGN_MIN_OBS, _TRACK_REID_MAX,

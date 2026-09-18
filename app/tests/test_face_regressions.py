@@ -15,9 +15,15 @@ if APP not in sys.path:
 from roop.face_reference import EmbeddingSlidingWindow, MultiIdentityReferenceRouter, dual_threshold_match
 from roop.processors.frame import face_swapper
 from roop.tracker import FaceTracker
+from roop.procmgr_tracking import is_synthetic_face
 
 
 class TemporalContinuityRegression(unittest.TestCase):
+    def test_synthetic_temporal_faces_are_not_swap_candidates(self):
+        self.assertTrue(is_synthetic_face({'_interpolated': True}))
+        self.assertTrue(is_synthetic_face({'_coasted': True}))
+        self.assertFalse(is_synthetic_face({'_track_id': 7}))
+
     def test_large_mask_residual_is_not_a_raw_one_frame_pop(self):
         smoother = face_swapper.TemporalMaskSmoother(alpha=0.8)
         smoother._dense_flow = lambda current, previous: np.zeros(

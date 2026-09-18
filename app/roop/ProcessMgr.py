@@ -46,7 +46,7 @@ from roop.temporal_quality import (TemporalQualityController, make_observation,
                                    merge_decisions)
 from roop.adaptive_enhancer import evaluate_face_frame
 from roop.procmgr_tiling import PixelBoostMixin
-from roop.procmgr_tracking import TrackingMixin
+from roop.procmgr_tracking import TrackingMixin, is_synthetic_face
 from roop.procmgr_batch import BatchProcessingMixin
 from roop.procmgr_stabilization import StabilizationSchedulingMixin
 from roop.face_overlap import build_regions as build_face_regions, FaceRegion
@@ -4282,6 +4282,15 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
         competing with another face for pixels; None when it has the frame to
         itself.
         """
+        # A temporal gap-fill/coast carries a track embedding but its landmarks
+        # are guessed.  Letting the swap model align on that geometry creates the
+        # exact reported failure: one-frame wrong identities and severe warps
+        # when an object crosses the face.  Keep the untouched/accumulated frame
+        # for this observation instead of painting a synthetic face.
+        if is_synthetic_face(target_face):
+            _audit_hit('refused: synthetic face geometry')
+            return frame
+
         from roop.face_util import align_crop
 
         destination_is_private = plate is not None and plate is not frame
