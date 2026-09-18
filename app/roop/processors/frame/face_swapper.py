@@ -1330,7 +1330,10 @@ def _heuristic_occlusion_mask(crop_frame: np.ndarray, face_mask: Optional[np.nda
 
     The model path is still fixed at 256x256 for its GPU budget. This fallback
     keeps the source resolution on CPU so thin pens, rims, and similar objects
-    are not erased by a second downsample.
+    are not erased by a second downsample. Geometry/chroma cues are enabled
+    only when ``face_mask`` is a tight ROI (roughly 2% to 75% of the crop).
+    Without that ROI, only unambiguous dark pixels are returned, avoiding broad
+    face-detail erasure when a caller supplies no mask or a full-frame mask.
     """
     h, w = crop_frame.shape[:2]
     source = np.asarray(crop_frame)
@@ -1342,34 +1345,37 @@ def _heuristic_occlusion_mask(crop_frame: np.ndarray, face_mask: Optional[np.nda
 
     dark = (gray < 35).astype(np.float32)
 
-    # A foreign pen/rim/wire may have ordinary luminance and therefore cannot
-    # be found by a darkness or skin-color rule. Use only scale-aware geometry:
-    # strong, narrow edges are dilated into a conservative object band. This
-    # deliberately avoids guessing a person's skin distribution.
-    edges = cv2.Canny(gray, 50, 120).astype(np.float32) / 255.0
+    # A foreign pen/rim/wire may have ordinary luminance. Use only local
+    # geometry, never a skin-color classifier: high-percentile gradients in
+    # luminance and both LAB chroma channels, then a directional close and a
+    # small dilation to fill the interior of a thin object.
     gray_grad_x = cv2.Sobel(gray.astype(np.float32), cv2.CV_32F, 1, 0, ksize=3)
     gray_grad_y = cv2.Sobel(gray.astype(np.float32), cv2.CV_32F, 0, 1, ksize=3)
     gray_grad = cv2.magnitude(gray_grad_x, gray_grad_y)
-    nonzero_grad = gray_grad[gray_grad > 0.0]
-    adaptive_threshold = (float(np.percentile(nonzero_grad, 70)) * 0.35
-                          if nonzero_grad.size else 8.0)
-    adaptive_threshold = max(8.0, adaptive_threshold)
-    gray_edges = np.clip(
-        (gray_grad - adaptive_threshold) / adaptive_threshold, 0.0, 1.0)
-    edges = np.maximum(edges, gray_edges)
-    # Keep chroma only as a local boundary signal, never as a skin model. This
-    # catches a saturated object whose grayscale luminance matches the face.
     lab = cv2.cvtColor(source_bgr, cv2.COLOR_BGR2LAB).astype(np.float32)
-    chroma_edges = np.zeros((h, w), dtype=np.float32)
+    channel_edges = [gray_grad]
     for channel in (lab[..., 1], lab[..., 2]):
         gx = cv2.Sobel(channel, cv2.CV_32F, 1, 0, ksize=3)
         gy = cv2.Sobel(channel, cv2.CV_32F, 0, 1, ksize=3)
-        chroma_edges = np.maximum(chroma_edges, cv2.magnitude(gx, gy))
-    chroma_edges = np.clip((chroma_edges - 12.0) / 48.0, 0.0, 1.0)
-    edges = np.maximum(edges, chroma_edges)
-    edge_band = cv2.dilate(edges, np.ones((7, 7), dtype=np.uint8), iterations=1)
-    edge_band = cv2.GaussianBlur(edge_band, (5, 5), 0)
-    edge_signal = np.clip((edge_band - 0.10) * 2.0, 0.0, 1.0).astype(np.float32)
+        channel_edges.append(cv2.magnitude(gx, gy))
+
+    edge_signal = np.zeros((h, w), dtype=np.float32)
+    for magnitude in channel_edges:
+        nonzero = magnitude[magnitude > 0.0]
+        threshold = (float(np.percentile(nonzero, 99.0))
+                     if nonzero.size else 0.0)
+        threshold = max(8.0, threshold)
+        edge_signal = np.maximum(edge_signal,
+                                 (magnitude >= threshold).astype(np.float32))
+    edge_signal = cv2.morphologyEx(
+        edge_signal, cv2.MORPH_CLOSE,
+        cv2.getStructuringElement(cv2.MORPH_RECT, (21, 3)))
+    edge_signal = cv2.morphologyEx(
+        edge_signal, cv2.MORPH_CLOSE,
+        cv2.getStructuringElement(cv2.MORPH_RECT, (3, 21)))
+    edge_signal = cv2.dilate(
+        edge_signal, cv2.getStructuringElement(cv2.MORPH_RECT, (9, 9)),
+        iterations=1).astype(np.float32)
 
     if face_mask is not None:
         mask_for_stats = np.asarray(face_mask, dtype=np.float32)
@@ -1378,7 +1384,12 @@ def _heuristic_occlusion_mask(crop_frame: np.ndarray, face_mask: Optional[np.nda
     else:
         mask_for_stats = np.ones((h, w), dtype=np.float32)
 
-    combined = np.maximum(dark, edge_signal * 0.75)
+    mask_coverage = float(np.mean(mask_for_stats > 0.5))
+    has_tight_face_roi = face_mask is not None and 0.02 <= mask_coverage <= 0.75
+    if not has_tight_face_roi:
+        return np.clip(dark, 0.0, 1.0).astype(np.float32)
+
+    combined = np.maximum(dark, edge_signal)
     combined *= np.clip(mask_for_stats, 0.0, 1.0)
     kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (7, 7))
     combined = cv2.morphologyEx(combined, cv2.MORPH_CLOSE, kernel)
@@ -1464,7 +1475,16 @@ def apply_occlusion_blend(
 ) -> np.ndarray:
     """Generate effective blend mask: Mask_blend = Mask_face * (1.0 - Mask_occlusion)."""
     if enable_occlusion is None:
-        enable_occlusion = getattr(roop.globals, 'enable_occlusion_mask', True)
+        # The module-level fallback keeps this processor importable when an
+        # optional dependency is absent, but the UI toggle still lives in the
+        # real roop.globals module. Read that live module when available.
+        try:
+            import roop.globals as runtime_globals
+            enable_occlusion = getattr(runtime_globals, 'enable_occlusion_mask', True)
+        except Exception as _degrade_error:
+            _swallowed("roop/processors/frame/face_swapper.py:1468",
+                       _degrade_error, "fallback continued")
+            enable_occlusion = getattr(roop.globals, 'enable_occlusion_mask', True)
 
     f_mask = np.asarray(face_mask, dtype=np.float32)
     if not enable_occlusion or occlusion_mask is None:

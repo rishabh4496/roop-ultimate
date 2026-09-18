@@ -67,6 +67,24 @@ class ForeignObjectRegression(unittest.TestCase):
         self.assertGreater(float(object_region.mean()), 0.10)
         self.assertLess(float(forehead.mean()), 0.10)
 
+    def test_missing_or_broad_face_mask_does_not_erase_face_detail(self):
+        crop = np.full((256, 256, 3), 140, dtype=np.uint8)
+        cv2.ellipse(crop, (128, 128), (90, 105), 0, 0, 360,
+                    (130, 150, 175), -1)
+        cv2.ellipse(crop, (98, 118), (12, 5), 0, 0, 360,
+                    (25, 25, 25), -1)
+        cv2.ellipse(crop, (158, 118), (12, 5), 0, 0, 360,
+                    (25, 25, 25), -1)
+        cv2.ellipse(crop, (128, 165), (28, 8), 0, 0, 360,
+                    (25, 25, 25), 2)
+
+        no_mask = face_swapper._heuristic_occlusion_mask(crop)
+        broad_mask = face_swapper._heuristic_occlusion_mask(
+            crop, face_mask=np.ones((256, 256), dtype=np.float32))
+
+        self.assertLess(float(np.mean(no_mask > 0.2)), 0.05)
+        self.assertLess(float(np.mean(broad_mask > 0.2)), 0.05)
+
 
 class IdentityContinuityRegression(unittest.TestCase):
     @staticmethod
