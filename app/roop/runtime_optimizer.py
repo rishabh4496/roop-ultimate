@@ -899,9 +899,13 @@ class HardwareProfiler:
             pass
 
         try:
-            import onnxruntime as ort
-            ort_version = str(getattr(ort, "__version__", ""))
-            available = set(ort.get_available_providers())
+            from roop.ort_support import available_providers as _ort_providers
+            available = set(_ort_providers())
+            try:
+                import onnxruntime as ort
+                ort_version = str(getattr(ort, "__version__", ""))
+            except Exception:
+                ort_version = ""
             trt = bool(cuda and any(
                 str(provider).lower() == "tensorrtexecutionprovider"
                 for provider in available))

@@ -31,8 +31,13 @@ PRODUCTION = (
     os.path.join("roop", "utilities.py"),
     os.path.join("roop", "optimized_processor.py"),
     os.path.join("roop", "trt_session_builder.py"),
+    os.path.join("roop", "runtime_optimizer.py"),
+    os.path.join("roop", "backend_manager.py"),
+    os.path.join("roop", "predictor.py"),
+    os.path.join("roop", "bench.py"),
     os.path.join("ui", "main.py"),
     "update_health.py",
+    "update_manager.py",
 )
 
 

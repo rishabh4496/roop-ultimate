@@ -195,9 +195,13 @@ def environment_report() -> dict:
             missing.append("%s (%s)" % (label, ", ".join(patterns)))
 
     try:
-        import onnxruntime
-        ort_version = onnxruntime.__version__
-        available = list(onnxruntime.get_available_providers())
+        from roop.ort_support import available_providers as _ort_providers
+        available = _ort_providers()
+        try:
+            import onnxruntime
+            ort_version = getattr(onnxruntime, "__version__", "")
+        except Exception:
+            ort_version = ""
     except Exception as exc:  # pragma: no cover - ORT is a hard dependency
         _swallowed("roop/predictor.py:199", exc, "fallback continued")
         ort_version, available = "unavailable: %s" % exc, []

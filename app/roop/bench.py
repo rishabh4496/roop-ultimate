@@ -284,7 +284,8 @@ def probe_device():
             _swallowed("roop/bench.py:278", _degrade_error, "fallback continued")
             info['hardware_profile_key'] = None
     try:
-        info['ort_providers'] = list(onnxruntime.get_available_providers())
+        from roop.ort_support import available_providers as _ort_providers
+        info['ort_providers'] = _ort_providers()
     except Exception as _degrade_error:
         _swallowed("roop/bench.py:282", _degrade_error, "fallback continued")
         pass

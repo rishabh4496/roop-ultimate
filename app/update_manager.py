@@ -206,8 +206,8 @@ def _provider_from_config() -> str | None:
 
 def _available_providers() -> list[str] | None:
     try:
-        import onnxruntime as ort
-        return [str(item) for item in ort.get_available_providers()]
+        from roop.ort_support import available_providers as _ort_providers
+        return _ort_providers()
     except Exception as _degrade_error:
         _swallowed("update_manager.py:210", _degrade_error, "fallback continued")
         return None

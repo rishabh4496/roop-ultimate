@@ -29,8 +29,8 @@ def _name(value) -> str:
 
 def _available() -> List[str]:
     try:
-        import onnxruntime as ort
-        return list(ort.get_available_providers())
+        from roop.ort_support import available_providers as _ort_providers
+        return _ort_providers()
     except Exception as _degrade_error:
         _swallowed("roop/backend_manager.py:33", _degrade_error, "fallback continued")
         return []
