@@ -171,6 +171,8 @@ def apply_algo(providers, algo):
             opts = dict(entry[1] or {})
             opts['cudnn_conv_algo_search'] = algo
             out.append((entry[0], opts))
+        elif str(entry) == 'CUDAExecutionProvider':
+            out.append(('CUDAExecutionProvider', {'cudnn_conv_algo_search': algo}))
         else:
             out.append(entry)
     return out

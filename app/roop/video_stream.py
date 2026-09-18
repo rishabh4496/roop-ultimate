@@ -415,7 +415,7 @@ class NVHardwareVideoWriter:
         fps: float,
         audio_source: Optional[str] = None,
         codec: str = "hevc_nvenc",
-        preset: Optional[str] = "p4",
+        preset: Optional[str] = "p5",
         bitrate: Optional[str] = None,
         cq: int = 19,
         crf: Optional[int] = None,

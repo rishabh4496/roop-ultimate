@@ -137,28 +137,28 @@ def test_active_models_preservation() -> None:
     """Verify that running the benchmark does NOT alter user's active models."""
     print("3. Testing Active Models Preservation Invariant...")
     # Set simulated user active models
-    orig_swapper = getattr(roop.globals, "face_swap_mode", "DFL XSeg")
+    orig_swapper = getattr(roop.globals, "swap_model", "inswapper")
     orig_enhancer = getattr(roop.globals, "selected_enhancer", None)
     orig_mask = getattr(roop.globals, "mask_engine", None)
 
-    roop.globals.face_swap_mode = "DFL XSeg"
+    roop.globals.swap_model = "realswap"
     roop.globals.selected_enhancer = "Codeformer"
     roop.globals.mask_engine = "RealityUX"
 
     runner = BenchmarkRunner()
     active = runner.inspect_active_models()
 
-    assert active["swapper"] == "DFL XSeg"
+    assert active["swapper"] == "realswap"
     assert active["enhancer"] == "Codeformer"
     assert active["mask_engine"] == "RealityUX"
 
     # Verify roop.globals are unchanged
-    assert roop.globals.face_swap_mode == "DFL XSeg"
+    assert roop.globals.swap_model == "realswap"
     assert roop.globals.selected_enhancer == "Codeformer"
     assert roop.globals.mask_engine == "RealityUX"
 
     # Restore original state
-    roop.globals.face_swap_mode = orig_swapper
+    roop.globals.swap_model = orig_swapper
     roop.globals.selected_enhancer = orig_enhancer
     roop.globals.mask_engine = orig_mask
     print("   -> Active Models Invariant: PASS (user models preserved without modification)")
