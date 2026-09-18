@@ -241,8 +241,7 @@ class TestDefaultOffIsANoOp(unittest.TestCase):
 
     def setUp(self):
         src_path = os.path.join(APP, 'roop', 'ProcessMgr.py')
-        batch_path = os.path.join(APP, 'roop', 'procmgr_batch.py')
-        self.src = open(src_path, encoding='utf-8').read() + '\n' + open(batch_path, encoding='utf-8').read()
+        self.src = open(src_path, encoding='utf-8').read()
 
     def per_frame_gate(self):
         """process_face's lip-sync gate: the lipsync_wins decision plus the

@@ -1049,7 +1049,7 @@ export default function App() {
       </div>
 
       {/* Floating Header Capsule */}
-      <header className="sticky top-4 z-40 mx-auto max-w-none w-[98%] rounded-2xl glass-panel px-5 py-3 flex flex-col md:flex-row items-center justify-between gap-4 border-white/10">
+      <header className="sticky top-2 z-40 mx-auto max-w-[1920px] w-full px-3.5 sm:px-5 py-2.5 rounded-2xl glass-panel flex flex-col md:flex-row items-center justify-between gap-3 border-white/10">
         <div className="flex items-center gap-3">
           <MotionIcon icon={Icon.brand} size="md" variant="accent" animate="pulse" />
           <div>
@@ -1230,7 +1230,7 @@ export default function App() {
 
       {/* Hardware Telemetry HUD Banner */}
       {showHud && (
-        <div className="w-[98%] mx-auto mt-3 p-4 bg-black/80 backdrop-blur-xl border border-white/10 rounded-2xl grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs text-white shadow-xl animate-slide-up z-30 relative">
+        <div className="w-full max-w-[1920px] mx-auto mt-2 p-3 sm:p-3.5 bg-black/80 backdrop-blur-xl border border-white/10 rounded-2xl grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs text-white shadow-xl animate-slide-up z-30 relative">
           <div className="flex flex-col">
             <span className="text-nano font-semibold uppercase tracking-wider text-white/40">Execution Engine</span>
             <span className="font-mono text-emerald-400 font-bold">{hudValue(progress.runtime?.sections?.PROVIDER?.values?.effective)}</span>
@@ -1334,7 +1334,7 @@ export default function App() {
       )}
 
       {/* Main Container Layout */}
-      <main className="flex-1 w-[98%] max-w-none mx-auto px-6 py-8 mt-4 z-10 relative">
+      <main className="flex-1 w-full max-w-[1920px] mx-auto px-3 sm:px-4 md:px-6 py-3 md:py-4 mt-1.5 z-10 relative">
         {error && (
           <div role="alert" className="rounded-2xl bg-red-500/10 border border-red-500/20 p-5 text-sm text-red-300 animate-slide-up flex flex-wrap items-center justify-between gap-3">
             {/* items-start: on a wrapped multi-line error the icon belongs on

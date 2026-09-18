@@ -15,12 +15,10 @@ from pathlib import Path
 from typing import Optional
 
 import numpy as np
-from roop.degrade import swallowed as _swallowed
 
 try:
     import torch
-except Exception as _degrade_error:  # pragma: no cover - CPU-only import environments
-    _swallowed("roop/processors/face_swapper.py:21", _degrade_error, "CPU-only swapper import")
+except Exception:  # pragma: no cover - CPU-only import environments
     torch = None
 
 from roop.trt_engine import TensorRTInferenceSession
@@ -48,10 +46,9 @@ def _static_batch(model_path: str) -> bool:
             if dims and dims[0].dim_value not in (0, 1):
                 return False
         return True
-    except Exception as _degrade_error:
+    except Exception:
         # A failed inspection should not prevent the regular ORT fallback from
         # trying the original model.
-        _swallowed("roop/processors/face_swapper.py:49", _degrade_error, "original model fallback")
         return False
 
 

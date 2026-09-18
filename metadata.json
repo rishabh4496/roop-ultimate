@@ -1,0 +1,10 @@
+{
+  "name": "Roop Ultimate",
+  "description": "High-performance face swapping and restoration workstation with real-time preview, multi-angle source bank, and quality enhancers",
+  "requestFramePermissions": [
+    "camera"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

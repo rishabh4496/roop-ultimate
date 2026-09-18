@@ -901,7 +901,7 @@ export default function BatchSwap({ settings = {}, notify }) {
   }, [targetGroups, targetFaces, targetNames]);
 
   return (
-    <div className="space-y-6 pb-12 relative">
+    <div className="space-y-4 pb-8 relative">
       {/* ── Pre-flight Batch Health Inspector Modal ── */}
       {showHealthModal && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
@@ -986,7 +986,7 @@ export default function BatchSwap({ settings = {}, notify }) {
       )}
 
       {/* ── Top Header Banner ── */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 glass-panel p-6 rounded-2xl">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 glass-panel p-4 rounded-2xl">
         <div>
           <h2 className="text-xl font-bold text-white flex items-center gap-2">
             <Icon.batch className="text-[var(--accent)]" size={24} />

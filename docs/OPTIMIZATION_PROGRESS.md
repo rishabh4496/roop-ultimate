@@ -1,27 +1,5 @@
 # Optimization Progress
 
-## SWARM OPTIMIZATION & VERIFICATION CAMPAIGN — RTX 4070 (2026-09-18)
-
-Full record: `docs/SWARM_MEASUREMENT_REPORT.md` and `app/output/phase2_baseline/swarm_prebaseline.json`.
-
-### 1. Controlled Pre-Optimization Baseline (RTX 4070)
-- **Workload:** `double/d4.mp4` frames 0..600 (1280x720, 30 fps), sources harjot,gargee
-- **Stack:** `hyperswap` / `GPEN 256 Pro` / `RealityUX` / `hevc_nvenc` / 10 threads
-- **Throughput:** **7.82 FPS** (600 frames in 76.74 s core processing time)
-- **Quality:** 849 faces seen, 846 swapped, **0 wrong-faceset** applications across 573 attributed swaps
-- **I/O Rates:** Decode: **352.94 FPS** (0.2% runtime); NVENC Encode: **555.56 FPS** (0.2% runtime)
-- **Memory/Power:** Peak VRAM 9,958 MB (mean 4,552 MB); Peak RSS 11.65 GB (mean 7.45 GB); Peak GPU Util 100% (mean 37.1%); Peak Power 138.0 W
-- **RTX 3060 Laptop:** PENDING (physical hardware not present in this session)
-
-### 2. Major Discoveries & Disproved Hypotheses
-1. **Lighting Stage Share:** Proved empirically that `lighting` accounts for only **2.8% of total runtime** (19.6 s out of 704 s worker time, 11.58 ms/call), completely refuting the prior handoff estimate of ~19%. The previously reported 32-37 ms was worker contention over CPU threads rather than algorithmic complexity. At 256px crop under live `lct` config, single-threaded lighting is only 4.51 ms/face.
-2. **Color Mode Cost Ratios:** Measured on real fixture face crops that `lct` runs in 1.95 ms/face, `rct` in 4.57 ms (2.3x), `mkl` in 6.45 ms (3.3x), and `idt` in 27.17 ms (**13.9x**). IDT is documented and warned in the UI, but confirmed never auto-selected.
-3. **cuDNN Frontend Fallback Fixed:** Fixed `cudnn_algo.apply_algo` to properly handle bare string provider names, ensuring models requiring `DEFAULT` conv algo (e.g. CodeFormer) are protected against `CUDNN_FE failure 8: HEURISTIC_QUERY_FAILED`.
-4. **NVENC Preset Unified:** Unified `NVHardwareVideoWriter` preset default from `p4` to `p5`, aligning with `FFMPEG_VideoWriter` and `NVENC_PRESET_DEFAULT`.
-5. **Test Suite Health:** Resolved test logic mismatches in `test_lipsync_audio.py` (procmgr_batch source inclusion), `test_angles.py` (profile_3pt acceptance), `test_benchmark_video_harness.py` (`swap_model` and storage-schema compatibility), standalone-install documentation coupling, and exception visibility across 28 broad fallback handlers. Focused validation is **81 passed, 2 warnings, 2 subtests**, with the exception-visibility module at **3/3**. The full suite reached **2817 passed, 4 failed, 1 skipped, 938 subtests**; all four failures pass in focused or isolated runs and are retained as order-sensitive aggregate failures.
-
----
-
 ## FINAL VALIDATION CAMPAIGN — RTX 4070 (2026-09-01, later session)
 
 Full record: `docs/FINAL_VALIDATION_MATRIX.md`, section

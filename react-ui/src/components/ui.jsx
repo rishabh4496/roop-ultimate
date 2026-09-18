@@ -99,7 +99,7 @@ export const MotionIcon = ({
 
   return (
     <motion.span
-      whileHover={{ scale: 1.1, rotate: [0, -4, 4, 0] }}
+      whileHover={{ scale: 1.08, rotate: 3 }}
       whileTap={{ scale: 0.92 }}
       transition={spring.snappy}
       className={`inline-grid place-items-center border backdrop-blur-md transition-all shrink-0 ${sz.container} ${varStyle} ${className}`}
@@ -122,9 +122,9 @@ export const Section = ({ title, icon, iconVariant = 'accent', action, children,
   );
   const label = 'text-mini font-semibold uppercase tracking-[0.14em] text-white/45';
   return (
-    <Card className={`p-5 ${className}`} tilt={tilt} glare={glare} hover={hover} elevation={elevation}>
+    <Card className={`p-3.5 sm:p-4.5 ${className}`} tilt={tilt} glare={glare} hover={hover} elevation={elevation}>
       {title && (
-        <div className={`flex items-center justify-between gap-3 ${showBody ? 'mb-4' : 'mb-0'}`}>
+        <div className={`flex items-center justify-between gap-3 ${showBody ? 'mb-3' : 'mb-0'}`}>
           {collapsible ? (
             <button type="button" onClick={() => setOpen((o) => !o)} aria-expanded={open}
                     className="flex items-center gap-2 min-w-0 group/sec">
@@ -149,12 +149,12 @@ export const Section = ({ title, icon, iconVariant = 'accent', action, children,
               transition={{ ...spring.smooth, opacity: { duration: 0.2 } }}
               style={{ overflow: 'hidden' }}
             >
-              <div className="space-y-4">{children}</div>
+              <div className="space-y-3">{children}</div>
             </motion.div>
           )}
         </AnimatePresence>
       ) : (
-        showBody && <div className="space-y-4">{children}</div>
+        showBody && <div className="space-y-3">{children}</div>
       )}
     </Card>
   );

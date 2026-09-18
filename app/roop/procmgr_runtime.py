@@ -1524,8 +1524,7 @@ class ChunkedProgress(tqdm):
             try:
                 finish_t = time.localtime(time.time() + rem_s)
                 bits.append(f"{COLOR_MUTED}Finish:~{COLOR_CYAN}{time.strftime('%I:%M %p', finish_t)}{COLOR_RESET}")
-            except Exception as _degrade_error:
-                _swallowed("roop/procmgr_runtime.py:1527", _degrade_error, "finish time hidden")
+            except Exception:
                 pass
         if self.postfix:
             bits.append(str(self.postfix))
@@ -1649,3 +1648,4 @@ def wait_while_paused():
     if getattr(roop.globals, 'pause', False) and not pause_controller.snapshot()["requested"]:
         pause_controller.request()
     pause_controller.checkpoint(lambda: bool(getattr(roop.globals, 'processing', False)))
+

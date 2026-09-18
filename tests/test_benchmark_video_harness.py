@@ -137,28 +137,28 @@ def test_active_models_preservation() -> None:
     """Verify that running the benchmark does NOT alter user's active models."""
     print("3. Testing Active Models Preservation Invariant...")
     # Set simulated user active models
-    orig_swapper = getattr(roop.globals, "swap_model", "inswapper")
+    orig_swapper = getattr(roop.globals, "face_swap_mode", "DFL XSeg")
     orig_enhancer = getattr(roop.globals, "selected_enhancer", None)
     orig_mask = getattr(roop.globals, "mask_engine", None)
 
-    roop.globals.swap_model = "realswap"
+    roop.globals.face_swap_mode = "DFL XSeg"
     roop.globals.selected_enhancer = "Codeformer"
     roop.globals.mask_engine = "RealityUX"
 
     runner = BenchmarkRunner()
     active = runner.inspect_active_models()
 
-    assert active["swapper"] == "realswap"
+    assert active["swapper"] == "DFL XSeg"
     assert active["enhancer"] == "Codeformer"
     assert active["mask_engine"] == "RealityUX"
 
     # Verify roop.globals are unchanged
-    assert roop.globals.swap_model == "realswap"
+    assert roop.globals.face_swap_mode == "DFL XSeg"
     assert roop.globals.selected_enhancer == "Codeformer"
     assert roop.globals.mask_engine == "RealityUX"
 
     # Restore original state
-    roop.globals.swap_model = orig_swapper
+    roop.globals.face_swap_mode = orig_swapper
     roop.globals.selected_enhancer = orig_enhancer
     roop.globals.mask_engine = orig_mask
     print("   -> Active Models Invariant: PASS (user models preserved without modification)")
@@ -200,9 +200,8 @@ def test_real_video_execution(temp_dir: Path) -> None:
     assert len(reloaded) == 1, f"Expected 1 saved run, found {len(reloaded)}"
     saved = reloaded[0]
     assert saved["run_id"] == result.run_id
-    metrics_obj = saved.get("metrics") or saved.get("best_metrics")
-    assert metrics_obj["avg_fps"] == result.metrics["avg_fps"]
-    assert metrics_obj["p1_low_fps"] == result.metrics["p1_low_fps"]
+    assert saved["metrics"]["avg_fps"] == result.metrics["avg_fps"]
+    assert saved["metrics"]["p1_low_fps"] == result.metrics["p1_low_fps"]
     assert saved["workload"]["target_faces"] == 1
     print("   -> Real Video Execution & Telemetry: PASS")
     print(f"      Throughput   : {result.metrics['avg_fps']:.2f} FPS")

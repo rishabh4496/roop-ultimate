@@ -99,13 +99,13 @@ export default function Extras({ notify, registerFileListener }) {
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <Section>
         <h2 className="text-lg font-bold">Media editor</h2>
         <p className="text-sm text-white/50">Resize, rotate, crop and re-time images or videos.</p>
       </Section>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 3xl:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-2 3xl:grid-cols-3 gap-4">
         <Section title="Input & transform" icon={Icon.editor}>
           <label className="block cursor-pointer focus-within:outline focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-[var(--accent)]">
             <div className="px-4 py-5 rounded-lg border-2 border-dashed border-white/15 hover:border-[var(--accent)]/50 text-center text-sm text-white/60 mb-4">

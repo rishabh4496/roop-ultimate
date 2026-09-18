@@ -130,7 +130,7 @@ export default function FaceManager({ notify, registerFileListener }) {
   }, [scores, threshold]);
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <Section>
         <h2 className="text-lg font-bold">Create blending facesets</h2>
         <p className="text-sm text-white/50">
@@ -170,7 +170,7 @@ export default function FaceManager({ notify, registerFileListener }) {
         </div>
       </Section>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 3xl:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-2 3xl:grid-cols-3 gap-4">
         <Section title="Add faces">
           <label className="block cursor-pointer focus-within:outline focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-[var(--accent)]">
             <div className="px-4 py-5 rounded-lg border-2 border-dashed border-white/15 hover:border-[var(--accent)]/50 text-center text-sm text-white/60">Add images / videos</div>

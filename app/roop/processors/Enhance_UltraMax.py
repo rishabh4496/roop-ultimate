@@ -1550,7 +1550,6 @@ class Enhance_UltraMax:
                 restored = res_t.clamp(0, 255).round().to(torch.uint8).cpu().numpy()
                 did_gpu_post = True
             except Exception as _gpu_err:
-                _swallowed("roop/processors/Enhance_UltraMax.py:1552", _gpu_err, "CPU post-processing fallback")
                 did_gpu_post = False
 
         if not did_gpu_post:

@@ -116,13 +116,13 @@ export default function Home({ progress, setTab, setSettings, notify }) {
     : null;
 
   return (
-    <Stagger className="space-y-6">
+    <Stagger className="space-y-4">
       {/* ── Hero ──────────────────────────────────────────────────────────
           Either an invitation to start, or — when something is already
           running — the state of that, so this page is never stale while the
           most interesting thing in the app is happening. */}
       <Reveal>
-        <Card elevation="hero" className="p-6 md:p-7 flex flex-col md:flex-row md:items-center gap-5 justify-between">
+        <Card elevation="hero" className="p-4 sm:p-5 md:p-6 flex flex-col md:flex-row md:items-center gap-4 justify-between">
           <div className="min-w-0">
             <h2 className="text-title font-bold text-white/95 tracking-tight">
               {progress?.processing
@@ -206,7 +206,7 @@ export default function Home({ progress, setTab, setSettings, notify }) {
         )}
       </Reveal>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         {/* ── Recent runs ─────────────────────────────────────────────── */}
         <Reveal>
           <Section

@@ -41,9 +41,10 @@ function PoseCompass({ covered, color }) {
 // Group target-face indices by their person rank, preserving rank order.
 function groupByPerson(groups) {
   const map = new Map();
-  groups.forEach((rank, i) => {
-    if (!map.has(rank)) map.set(rank, []);
-    map.get(rank).push(i);
+  (Array.isArray(groups) ? groups : []).forEach((rank, i) => {
+    const scalar = Array.isArray(rank) ? (typeof rank[0] === 'number' ? rank[0] : 0) : (typeof rank === 'number' ? rank : parseInt(rank, 10) || 0);
+    if (!map.has(scalar)) map.set(scalar, []);
+    map.get(scalar).push(i);
   });
   return Array.from(map.entries()).sort((a, b) => a[0] - b[0]); // [rank, [indices]]
 }
@@ -65,13 +66,18 @@ export default function PersonGroups({
   const [scanning, setScanning] = useState(false);    // whole-clip auto-capture
   const containerRef = useRef(null);
 
-  const people = groupByPerson(targetGroups.slice(0, targetFaces.length));
-  const selRank = targetGroups[selTargetFace];
+  const normTargetGroups = (Array.isArray(targetGroups) ? targetGroups : []).map(g => Array.isArray(g) ? (g[0] ?? 0) : (typeof g === 'number' ? g : parseInt(g, 10) || 0));
+  const people = groupByPerson(normTargetGroups.slice(0, targetFaces.length));
+  const rawSelRank = normTargetGroups[selTargetFace];
+  const selRank = typeof rawSelRank === 'number' ? rawSelRank : 0;
 
   // Push the four parallel arrays back to the parent from an API payload.
   const applyPayload = (res) => {
     if (res.target_faces) setTargetFaces(res.target_faces);
-    if (res.target_groups) setTargetGroups(res.target_groups);
+    if (res.target_groups) {
+      const flat = res.target_groups.map((g) => Array.isArray(g) ? (g[0] ?? 0) : (typeof g === 'number' ? g : parseInt(g, 10) || 0));
+      setTargetGroups(flat);
+    }
     if (res.target_names !== undefined && setTargetNames) setTargetNames(res.target_names || []);
     if (res.target_faces_info !== undefined && setTargetFacesInfo) setTargetFacesInfo(res.target_faces_info || []);
     if (clearPreviewCache) clearPreviewCache();
@@ -324,8 +330,10 @@ export default function PersonGroups({
         const color = PERSON_COLORS[rank % PERSON_COLORS.length];
         const open = isExpanded(rank);
         const isSel = rank === selRank;
-        const currentMap = faceMapping[rank] !== undefined ? faceMapping[rank] : rank;
-        const mapValid = currentMap >= 0 && currentMap < sourceFaces.length;
+        const rawMap = faceMapping && faceMapping[rank] !== undefined ? faceMapping[rank] : rank;
+        const currentMap = Array.isArray(rawMap) ? (rawMap[0] ?? -1) : (typeof rawMap === 'number' && Number.isFinite(rawMap) ? rawMap : parseInt(rawMap, 10));
+        const safeMap = Number.isFinite(currentMap) ? currentMap : -1;
+        const mapValid = safeMap >= 0 && safeMap < sourceFaces.length;
 
         // Pose coverage for this person.
         const poses = indices.map((i) => (targetFacesInfo && targetFacesInfo[i]?.pose) || 'Front');
@@ -381,7 +389,7 @@ export default function PersonGroups({
               {sourceFaces.length > 0 && (
                 <select
                   onClick={(e) => e.stopPropagation()}
-                  value={currentMap}
+                  value={safeMap}
                   onChange={(e) => setMapping(rank, parseInt(e.target.value, 10))}
                   title="Which source face this person becomes"
                   className={`px-2 py-1 rounded-lg glass-input text-white text-mini font-bold focus:outline-none cursor-pointer max-w-[120px] shrink-0 ${mapValid ? '' : 'text-white/50'}`}
@@ -402,6 +410,7 @@ export default function PersonGroups({
                   {indices.map((i) => {
                     const pose = (targetFacesInfo && targetFacesInfo[i]?.pose) || 'Front';
                     const sel = i === selTargetFace;
+                    const safeAngleRank = Number.isFinite(rank) ? rank : 0;
                     return (
                       <div key={i} className="relative group/angle">
                         <button type="button" onClick={() => setSelTargetFace(i)}
@@ -427,7 +436,7 @@ export default function PersonGroups({
                         {/* reassign to another person */}
                         {people.length > 1 && (
                           <select
-                            value={rank}
+                            value={safeAngleRank}
                             onChange={(e) => reassign(i, parseInt(e.target.value, 10))}
                             title="Move this angle to another person"
                             className="mt-1 w-14 px-1 py-0.5 rounded-md glass-input text-white/70 text-nano focus:outline-none cursor-pointer">

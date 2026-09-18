@@ -59,7 +59,7 @@ export default function ThemeGallery({ value, onChange, customThemes = [], onEdi
   const current = value || 'Default';
   const customs = (Array.isArray(customThemes) ? customThemes : []).map(normalizeRecipe);
   return (
-    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
+    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 max-h-[480px] overflow-y-auto custom-scrollbar p-1 -m-1">
       {/* The user's own themes lead — they are the ones being iterated on. */}
       {customs.map((t) => (
         <ThemeCard key={`custom-${t.name}`} theme={t} active={t.name === current} onChange={onChange} onEdit={onEdit} />

@@ -1989,7 +1989,7 @@ export default function FaceSwap({
       : 'text-white/45 border-white/10 bg-white/5');
 
   return (
-    <div className="flex flex-col lg:flex-row gap-6 items-start w-full">
+    <div className="flex flex-col lg:flex-row gap-4 items-start w-full">
 
       {/* COLUMN 1: Settings & Controls — sticky sidebar on large viewports so it
           follows the scroll (and never leaves the lower-left area empty) while
@@ -2001,7 +2001,7 @@ export default function FaceSwap({
           progress panel. Watching a render and setting up the next job are now
           two different tabs, so this one keeps its layout at all times and the
           run has the Processing tab to itself. */}
-      <div className={`w-full lg:w-[380px] 3xl:w-[440px] 4xl:w-[520px] shrink-0 pr-0 lg:pr-2 space-y-5 select-none ${!showLeftPanel ? 'hidden' : ''}`}>
+      <div className={`w-full lg:w-[350px] 3xl:w-[400px] 4xl:w-[460px] shrink-0 space-y-3.5 select-none ${!showLeftPanel ? 'hidden' : ''}`}>
         <Section title="Presets">
           <div className="flex flex-wrap gap-2">
             {Object.keys(PRESETS).map((name) => (
@@ -2187,7 +2187,7 @@ export default function FaceSwap({
           )}
           <Select label="Frame interpolation (after swap)" info="Raises the output frame rate with motion-interpolated in-between frames as the final pass (after any upscale). RIFE = AI motion interpolation (recommended, fast); minterpolate = classical ffmpeg motion estimation (no model, much slower). Duration is unchanged — frame count and fps are multiplied together, audio untouched." value={p.interp_after_swap || 'off'} onChange={(v) => set('interp_after_swap', v)}
             options={[{ value: 'off', label: 'Off' }, { value: 'rife_2x', label: 'RIFE ×2 fps' }, { value: 'rife_4x', label: 'RIFE ×4 fps' }, { value: 'minterpolate_2x', label: 'ffmpeg minterpolate ×2' }]} />
-          <Select label="Color/lighting match" info="Matches the swapped face's skin tone & lighting to the original scene. RCT = per-channel (fast, default). LCT = corrects hue casts. MKL = fullest match. IDT = matches the full non-Gaussian colour distribution, which the other three cannot: under mixed lighting (warm key, cool fill) skin is bimodal and no single linear map lands it. IDT is the quality ceiling here and also much the dearest: an interleaved CPU probe on production 256² crops measured about 27 ms per face, versus about 4.6 ms for RCT and 2.0 ms for LCT. Absolute time varies with CPU load, but the cost gap is real. Reach for it on hard lighting or stills, not by default. None = off." value={p.color_transfer_mode || 'rct'} onChange={(v) => set('color_transfer_mode', v)} options={meta.color_transfer_modes || ['none', 'rct', 'lct', 'mkl', 'idt']} />
+          <Select label="Color/lighting match" info="Matches the swapped face's skin tone & lighting to the original scene. RCT = per-channel (fast, default). LCT = corrects hue casts. MKL = fullest match. IDT = matches the full non-Gaussian colour distribution, which the other three cannot: under mixed lighting (warm key, cool fill) skin is bimodal and no single linear map lands it. IDT is the quality ceiling here and also much the dearest: measured ~65 ms per 512² face against ~11 ms for RCT and ~17 ms for LCT/MKL, because it makes several passes over every pixel instead of one matrix multiply. Reach for it on hard lighting or stills, not by default. None = off." value={p.color_transfer_mode || 'rct'} onChange={(v) => set('color_transfer_mode', v)} options={meta.color_transfer_modes || ['none', 'rct', 'lct', 'mkl', 'idt']} />
           <Toggle label="Target-conditioned lighting" info="SOURCE supplies identity while TARGET controls exposure, white balance, scene color cast, spatial shadows, highlights and local contrast. It uses a low-frequency target field, never a wholesale texture paste. DARK/VERY DARK scenes reduce restoration and sharpening; VERY DARK avoids aggressive exposure correction. Temporal EMA prevents warm/neutral/blue flicker. Off preserves the legacy color-transfer path." checked={!!p.target_conditioned_appearance} onChange={(v) => set('target_conditioned_appearance', v)} />
           {p.target_conditioned_appearance && <>
             <Slider label="Appearance conditioning strength" min={0} max={1} step={0.05} value={num(p.target_conditioned_appearance_strength, 0.75)} onChange={(v) => set('target_conditioned_appearance_strength', v)} />
@@ -2410,12 +2410,12 @@ export default function FaceSwap({
       {/* COLUMN 2 & 3 WRAPPER: Preview canvas leads (hero) with the media
           asset managers as a right rail (2xl:flex-row-reverse), so the live
           preview is the visual center instead of buried on the far right. */}
-      <div className="flex-1 w-full min-w-0 space-y-6 flex flex-col 2xl:flex-row-reverse gap-6">
+      <div className="flex-1 w-full min-w-0 space-y-3.5 flex flex-col xl:flex-row-reverse gap-3.5">
 
         {/* COLUMN 2: Media Asset Manager — right rail. Stays put during a run,
             as with column 1: the sources and targets a running job baked in are
             already its own, so editing these is setting up the NEXT job. */}
-        <div className={`w-full 2xl:w-[360px] 3xl:w-[440px] 4xl:w-[500px] shrink-0 space-y-6 select-none ${!showRightPanel ? 'hidden' : ''}`}>
+        <div className={`w-full xl:w-[330px] 3xl:w-[380px] 4xl:w-[440px] shrink-0 space-y-3.5 select-none ${!showRightPanel ? 'hidden' : ''}`}>
           <Section title="Target media" icon={Icon.faceswap}>
             <PersonGroups
               targetFaces={targetFaces}
@@ -2658,12 +2658,12 @@ export default function FaceSwap({
                   </div>
                   
                   <div className="space-y-1.5 pt-1">
-                    {sourceFacesInfo[selSource].count > 1 ? (
+                    {(sourceFacesInfo[selSource].count || 1) > 1 && Array.isArray(sourceFacesInfo[selSource].poses) && sourceFacesInfo[selSource].poses.length > 0 ? (
                       <>
                         <div className="text-micro font-bold text-white/45 mb-1">Pose Coverage Breakdown:</div>
                         <div className="flex flex-wrap gap-1.5">
                           {Object.entries(
-                            sourceFacesInfo[selSource].poses.reduce((acc, p) => {
+                            (sourceFacesInfo[selSource].poses || []).reduce((acc, p) => {
                               acc[p] = (acc[p] || 0) + 1;
                               return acc;
                             }, {})
@@ -2677,7 +2677,7 @@ export default function FaceSwap({
                     ) : (
                       <div className="flex items-center justify-between text-white/60">
                         <span>Detected Pose:</span>
-                        <span className="font-bold text-white">{sourceFacesInfo[selSource].poses[0] || 'Front'}</span>
+                        <span className="font-bold text-white">{sourceFacesInfo[selSource].poses?.[0] || 'Front'}</span>
                       </div>
                     )}
                   </div>
@@ -2696,8 +2696,8 @@ export default function FaceSwap({
                 rendering. A run has its own tab now, so this one no longer
                 turns into a progress panel — it just says a job is in flight,
                 and offers the way over to it. */}
-            <div className="w-full space-y-4">
-              <div className="rounded-2xl glass-panel p-6 flex flex-col md:flex-row items-center justify-between gap-6 shadow-2xl border border-white/5 w-full">
+            <div className="w-full space-y-3">
+              <div className="rounded-2xl glass-panel p-3.5 sm:p-4 flex flex-col md:flex-row items-center justify-between gap-3 sm:gap-4 shadow-xl border border-white/5 w-full">
                 <div className="flex items-center gap-3 w-full md:w-auto">
                   <Button variant="primary" size="lg" onClick={start} disabled={targets.length === 0 || sourceFaces.length === 0 || progress.processing} className="w-full md:w-auto justify-center">▶ Start Swapping</Button>
                   {maxFrames > 1 && (

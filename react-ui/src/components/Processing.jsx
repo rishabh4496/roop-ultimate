@@ -202,7 +202,7 @@ export default function Processing({ progress, settings, notify, setTab,
   const completed = !processing && !progress.error && prog >= 0.99;
 
   return (
-    <div className="w-full space-y-6">
+    <div className="w-full space-y-4">
 
       {/* ── Run bar ─────────────────────────────────────────────────────────
           Sticky, so the percentage and the stop control stay reachable however

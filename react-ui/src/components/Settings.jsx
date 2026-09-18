@@ -10,6 +10,7 @@ import { confirmDialog } from './confirm';
 import { Icon } from '../icons';
 import StorageManager from './StorageManager';
 import EnvironmentHealth from './EnvironmentHealth';
+import BenchmarkPanel from './BenchmarkPanel';
 
 // A Section that participates in the settings search and the "only changed"
 // filter. With either active it keeps just the controls that match (or the
@@ -53,7 +54,7 @@ function FilterSection({ title, icon, query, onlyModified, onResetKeys, children
     </button>
   ) : null;
 
-  return <Section title={title} icon={icon} action={action} {...rest}>{kids}</Section>;
+  return <Section title={title} icon={icon} action={action} className="break-inside-avoid mb-4" {...rest}>{kids}</Section>;
 }
 
 export default function Settings({ meta, settings, setSettings, notify }) {
@@ -265,7 +266,7 @@ export default function Settings({ meta, settings, setSettings, notify }) {
           </>
         )}
       </div>
-      <div className="grid grid-cols-1 lg:grid-cols-3 4xl:grid-cols-4 gap-6">
+      <div className="columns-1 md:columns-2 xl:columns-3 4xl:columns-4 gap-4 [column-fill:_balance]">
         <FilterSection title="Server" icon={Icon.settings} query={query} onlyModified={onlyModified} onResetKeys={resetKeys}>
           <Toggle label="Public server (share)" {...bindToggle('server_share')} />
           <Toggle label="Clear output folder before each run" {...bindToggle('clear_output')} />
@@ -563,6 +564,21 @@ export default function Settings({ meta, settings, setSettings, notify }) {
           <Toggle label="Show video in browser (re-encodes)" {...bindToggle('output_show_video')} />
         </FilterSection>
       </div>
+
+      {/* Hardware Benchmark & Optimization Suite */}
+      <BenchmarkPanel
+        notify={notify}
+        onSettingsApplied={async () => {
+          try {
+            const fresh = await getJSON('/api/settings');
+            if (fresh && typeof fresh === 'object') {
+              setSettings((s) => ({ ...s, ...fresh }));
+            }
+          } catch {
+            // ignore
+          }
+        }}
+      />
 
       {/* Standing environment evidence and the update compatibility verdict.
           Both were previously unreachable while idle: the runtime report only

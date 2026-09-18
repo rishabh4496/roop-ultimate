@@ -25,7 +25,11 @@ const port = process.env.PORT ? Number(process.env.PORT) : undefined
 // healthy. `/ws` needs its OWN entry: proxy rules match by path prefix so
 // '/api' does not cover it, and `ws: true` is required for Vite to forward the
 // HTTP Upgrade handshake at all.
-const proxy = {
+// The proxy below is only needed when running Vite as a standalone dev server
+// alongside a separate Python backend on ROOP_API_PORT. When running inside
+// server.ts, Express handles /api directly.
+const useProxy = Boolean(process.env.ROOP_STANDALONE_DEV || process.env.ROOP_API_PORT)
+const proxy = useProxy ? {
   '/api': {
     target: `http://127.0.0.1:${apiPort}`,
     changeOrigin: true,
@@ -35,7 +39,7 @@ const proxy = {
     ws: true,
     changeOrigin: true,
   },
-}
+} : undefined
 
 // https://vite.dev/config/
 export default defineConfig({

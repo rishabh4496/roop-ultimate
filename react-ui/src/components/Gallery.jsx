@@ -244,7 +244,7 @@ export default function Gallery({ notify, setSettings, setTab }) {
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       {/* Upper header action bar */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
@@ -396,7 +396,7 @@ export default function Gallery({ notify, setSettings, setTab }) {
       {/* Grid or List view */}
       {!loading && filteredFiles.length > 0 && (
         viewMode === 'grid' ? (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
             {filteredFiles.map((file) => {
               const absolutePath = `${outputPath}/${file.name}`;
               const srcUrl = fileUrl(absolutePath);
