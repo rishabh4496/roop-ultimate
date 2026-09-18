@@ -16,6 +16,7 @@ from roop.face_reference import EmbeddingSlidingWindow, MultiIdentityReferenceRo
 from roop.processors.frame import face_swapper
 from roop.tracker import FaceTracker
 from roop.procmgr_tracking import is_synthetic_face
+from roop.ProcessMgr import _restore_partial_occlusion
 
 
 class TemporalContinuityRegression(unittest.TestCase):
@@ -58,6 +59,52 @@ class TemporalContinuityRegression(unittest.TestCase):
 
 
 class ForeignObjectRegression(unittest.TestCase):
+    def test_partial_occlusion_restores_target_face_hull(self):
+        angles = np.linspace(0.0, 2.0 * np.pi, 106, endpoint=False)
+        landmarks = np.column_stack((
+            64.0 + 42.0 * np.cos(angles),
+            64.0 + 52.0 * np.sin(angles),
+        )).astype(np.float32)
+        face = {
+            "occlusion_state": "partial",
+            "landmark_2d_106": landmarks,
+            "kps": np.asarray(
+                ((48, 50), (80, 50), (64, 64), (52, 82), (76, 82)),
+                dtype=np.float32,
+            ),
+            "bbox": np.asarray((20, 12, 108, 116), dtype=np.float32),
+        }
+        generated = np.zeros((128, 128, 3), dtype=np.uint8)
+        plate = np.full_like(generated, 255)
+
+        restored = _restore_partial_occlusion(generated, plate, face)
+
+        self.assertGreater(int(restored[64, 64, 0]), 200)
+        self.assertEqual(int(restored[4, 4, 0]), 0)
+
+    def test_partial_occlusion_keeps_foreground_object_from_plate(self):
+        angles = np.linspace(0.0, 2.0 * np.pi, 106, endpoint=False)
+        landmarks = np.column_stack((
+            64.0 + 42.0 * np.cos(angles),
+            64.0 + 52.0 * np.sin(angles),
+        )).astype(np.float32)
+        face = {
+            "occlusion_state": "partial",
+            "landmark_2d_106": landmarks,
+            "kps": np.asarray(
+                ((48, 50), (80, 50), (64, 64), (52, 82), (76, 82)),
+                dtype=np.float32,
+            ),
+            "bbox": np.asarray((20, 12, 108, 116), dtype=np.float32),
+        }
+        generated = np.zeros((128, 128, 3), dtype=np.uint8)
+        plate = np.full_like(generated, 255)
+        plate[60:68, 20:108] = (7, 11, 13)
+
+        restored = _restore_partial_occlusion(generated, plate, face)
+
+        self.assertEqual(tuple(int(v) for v in restored[64, 64]), (7, 11, 13))
+
     def test_thin_non_skin_colored_object_gets_geometry_occlusion_signal(self):
         crop = np.full((256, 256, 3), 140, dtype=np.uint8)
         face_mask = np.zeros((256, 256), dtype=np.float32)
