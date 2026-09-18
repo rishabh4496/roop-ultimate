@@ -105,12 +105,6 @@ module.exports = async (kernel) => {
           on: [{
             "event": "/(http:\\/\\/[0-9.:]+)/",
             "done": true
-          }, {
-            // Do not continue to local.set after a backend preflight failure.
-            // Otherwise Pinokio displays the literal {{input.event[1]}} as if
-            // it were a URL and offers controls for a server that is dead.
-            "event": "/(\\[FATAL\\]|ModuleNotFoundError:|ImportError:|Traceback \\(most recent call last\\))/i",
-            "break": true
           }]
         }
       },

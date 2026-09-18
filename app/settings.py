@@ -24,6 +24,14 @@ def _enable_tensorrt_runtime():
         trt_libs = os.path.join(os.path.dirname(os.path.dirname(tensorrt.__file__)), 'tensorrt_libs')
         if os.path.isdir(trt_libs):
             dll_dirs.append(trt_libs)
+    except (ImportError, OSError, RuntimeError):
+        try:
+            import tensorrt_libs
+            trt_libs = os.path.dirname(tensorrt_libs.__file__)
+            if os.path.isdir(trt_libs):
+                dll_dirs.append(trt_libs)
+        except (ImportError, OSError, RuntimeError):
+            pass
     except Exception as _degrade_error:
         _swallowed("settings.py:26", _degrade_error, "fallback continued")
         pass
@@ -33,6 +41,8 @@ def _enable_tensorrt_runtime():
         torch_lib = os.path.join(os.path.dirname(torch.__file__), 'lib')
         if os.path.isdir(torch_lib):
             dll_dirs.append(torch_lib)
+    except (ImportError, OSError, RuntimeError):
+        pass
     except Exception as _degrade_error:
         _swallowed("settings.py:34", _degrade_error, "fallback continued")
         pass
@@ -161,10 +171,12 @@ def detect_hardware():
         _swallowed("settings.py:152", _degrade_error, "fallback continued")
         pass
     try:
-        from importlib.metadata import version
+        from importlib.metadata import version, PackageNotFoundError
         for key, package in (('tensorrt', 'tensorrt'), ('onnxruntime', 'onnxruntime')):
             try:
                 hw[key] = version(package)
+            except PackageNotFoundError:
+                hw[key] = ''
             except Exception as _degrade_error:
                 _swallowed("settings.py:159", _degrade_error, "fallback continued")
                 pass
@@ -176,16 +188,22 @@ def detect_hardware():
     # their canonical runtime versions.  Keep the settings signature aligned
     # with HardwareProfiler instead of silently dropping these identity fields.
     try:
-        if not hw['tensorrt']:
-            import tensorrt
-            hw['tensorrt'] = str(getattr(tensorrt, '__version__', '') or '')
+        if not hw.get('tensorrt'):
+            try:
+                import tensorrt
+                hw['tensorrt'] = str(getattr(tensorrt, '__version__', '') or '')
+            except (ImportError, OSError, RuntimeError):
+                pass
     except Exception as _degrade_error:
         _swallowed("settings.py:171", _degrade_error, "fallback continued")
         pass
     try:
-        if not hw['onnxruntime']:
-            import onnxruntime
-            hw['onnxruntime'] = str(getattr(onnxruntime, '__version__', '') or '')
+        if not hw.get('onnxruntime'):
+            try:
+                import onnxruntime
+                hw['onnxruntime'] = str(getattr(onnxruntime, '__version__', '') or '')
+            except (ImportError, OSError, RuntimeError):
+                pass
     except Exception as _degrade_error:
         _swallowed("settings.py:177", _degrade_error, "fallback continued")
         pass
