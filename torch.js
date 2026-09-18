@@ -2,7 +2,7 @@ module.exports = {
   run: [
     // windows nvidia
     {
-      "when": "{{platform === 'win32' && (gpu === 'nvidia' || (Array.isArray(gpus) && gpus.includes('nvidia')) || which('nvidia-smi'))}}",
+      "when": "{{platform === 'win32' && gpu === 'nvidia'}}",
       "method": "shell.run",
       "params": {
         "venv": "{{args && args.venv ? args.venv : null}}",
@@ -19,7 +19,7 @@ module.exports = {
     },
     // windows amd
     {
-      "when": "{{platform === 'win32' && !(gpu === 'nvidia' || (Array.isArray(gpus) && gpus.includes('nvidia')) || which('nvidia-smi')) && (gpu === 'amd' || (Array.isArray(gpus) && gpus.includes('amd')))}}",
+      "when": "{{platform === 'win32' && gpu === 'amd'}}",
       "method": "shell.run",
       "params": {
         "venv": "{{args && args.venv ? args.venv : null}}",
@@ -32,7 +32,7 @@ module.exports = {
     },
     // windows cpu
     {
-      "when": "{{platform === 'win32' && !(gpu === 'nvidia' || (Array.isArray(gpus) && gpus.includes('nvidia')) || which('nvidia-smi')) && !(gpu === 'amd' || (Array.isArray(gpus) && gpus.includes('amd')))}}",
+      "when": "{{platform === 'win32' && (gpu !== 'nvidia' && gpu !== 'amd')}}",
       "method": "shell.run",
       "params": {
         "venv": "{{args && args.venv ? args.venv : null}}",
@@ -74,7 +74,7 @@ module.exports = {
     },
     // linux nvidia
     {
-      "when": "{{platform === 'linux' && (gpu === 'nvidia' || (Array.isArray(gpus) && gpus.includes('nvidia')) || which('nvidia-smi'))}}",
+      "when": "{{platform === 'linux' && gpu === 'nvidia'}}",
       "method": "shell.run",
       "params": {
         "venv": "{{args && args.venv ? args.venv : null}}",
@@ -91,7 +91,7 @@ module.exports = {
     },
     // linux rocm (amd)
     {
-      "when": "{{platform === 'linux' && !(gpu === 'nvidia' || (Array.isArray(gpus) && gpus.includes('nvidia')) || which('nvidia-smi')) && (gpu === 'amd' || (Array.isArray(gpus) && gpus.includes('amd')))}}",
+      "when": "{{platform === 'linux' && gpu === 'amd'}}",
       "method": "shell.run",
       "params": {
         "venv": "{{args && args.venv ? args.venv : null}}",
@@ -106,7 +106,7 @@ module.exports = {
     },
     // linux cpu
     {
-      "when": "{{platform === 'linux' && !(gpu === 'nvidia' || (Array.isArray(gpus) && gpus.includes('nvidia')) || which('nvidia-smi')) && !(gpu === 'amd' || (Array.isArray(gpus) && gpus.includes('amd')))}}",
+      "when": "{{platform === 'linux' && (gpu !== 'amd' && gpu !== 'nvidia')}}",
       "method": "shell.run",
       "params": {
         "venv": "{{args && args.venv ? args.venv : null}}",

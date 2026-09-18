@@ -34,6 +34,25 @@ module.exports = async (kernel) => {
           dest: "app/config.yaml"
         }
       },
+      // Self-heal an environment that has no ONNX Runtime at all.
+      //
+      // If torch.js was skipped during install, the venv has no onnxruntime,
+      // and `import onnxruntime` resolves to an implicit NAMESPACE package --
+      // a module object with __file__ None and no get_available_providers.
+      // That is the "onnxruntime is installed but exposes no provider API
+      // (loaded from None)" startup failure. torch.js owns the correct
+      // per-platform versions, so re-run it rather than duplicating them.
+      {
+        when: "{{!exists('app/env/Lib/site-packages/onnxruntime/__init__.py') && !exists('app/env/lib/python3.10/site-packages/onnxruntime/__init__.py')}}",
+        method: "script.start",
+        params: {
+          uri: "torch.js",
+          params: {
+            venv: "env",
+            path: "app"
+          }
+        }
+      },
       // Repair an older machine in place. A previous installer could leave
       // NumPy 2.x behind even though the current requirements pin 1.26.4;
       // run.py deliberately refuses that ABI because InsightFace's native
