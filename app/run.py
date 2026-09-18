@@ -84,31 +84,8 @@ def run_preflight_checks():
             "[WARNING] TensorrtExecutionProvider not found in ONNX Runtime. "
             "Falling back to CUDA.", flush=True
         )
-        return
-
-    if "TensorrtExecutionProvider" not in providers:
-        print(
-            "[WARNING] TensorrtExecutionProvider not found in ONNX Runtime. "
-            "Falling back to CUDA.", flush=True
-        )
-        return
-
-    trt_usable = True
-    try:
-        from roop.gpu_preflight import get_preflight_result
-        preflight = get_preflight_result()
-        if preflight.get("onnxruntime_importable") and not preflight.get("tensorrt_session_usable", False):
-            trt_usable = False
-    except Exception:
-        pass
-
-    if trt_usable:
-        print("[OK] TensorrtExecutionProvider registered.", flush=True)
     else:
-        print(
-            "[WARNING] TensorrtExecutionProvider not found in ONNX Runtime. "
-            "Falling back to CUDA.", flush=True
-        )
+        print("[OK] TensorrtExecutionProvider registered.", flush=True)
 
 
 if __name__ == "__main__":

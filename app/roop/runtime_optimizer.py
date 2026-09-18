@@ -899,16 +899,15 @@ class HardwareProfiler:
             pass
 
         try:
-            from roop.ort_support import available_providers as _ort_providers
-            available = set(_ort_providers())
+            from roop.backend_manager import canonical_provider_decision
+            _cstate = canonical_provider_decision("auto", device_id=self.device_id)
+            available = set(_cstate.available)
+            trt = bool(_cstate.active == "TensorrtExecutionProvider")
             try:
                 import onnxruntime as ort
                 ort_version = str(getattr(ort, "__version__", ""))
             except Exception:
                 ort_version = ""
-            trt = bool(cuda and any(
-                str(provider).lower() == "tensorrtexecutionprovider"
-                for provider in available))
         except Exception as _degrade_error:
             _swallowed("roop/runtime_optimizer.py:896", _degrade_error, "fallback continued")
             available = set()

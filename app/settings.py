@@ -111,19 +111,9 @@ def _default_provider():
         return _DEFAULT_PROVIDER_CACHE
     provider = 'cuda'
     try:
-        from roop.gpu_preflight import get_preflight_result
-        preflight = get_preflight_result()
-        available = preflight.get("available_providers", [])
-        if preflight.get("tensorrt_session_usable", False):
-            provider = 'tensorrt'
-        elif preflight.get("cuda_available", False) and 'CUDAExecutionProvider' in available:
-            provider = 'cuda'
-        elif 'ROCMExecutionProvider' in available:
-            provider = 'rocm'
-        elif 'DmlExecutionProvider' in available:
-            provider = 'directml'
-        elif available:
-            provider = 'cpu'
+        from roop.backend_manager import canonical_provider_decision
+        decision = canonical_provider_decision('auto')
+        provider = decision.active.replace('ExecutionProvider', '').lower()
     except Exception as _degrade_error:
         _swallowed("settings.py:_default_provider", _degrade_error,
                    "defaulting the provider to CUDA")
@@ -521,6 +511,18 @@ class Settings:
         threads_basis = f"v{_THREAD_RULE}|unknown"
         try:
             self.provider = self.default_get(data, 'provider', _default_provider())
+            try:
+                from roop.backend_manager import canonical_provider_decision
+                _decision = canonical_provider_decision(self.provider)
+                self.provider_requested = self.provider
+                self.provider_active = _decision.active.replace('ExecutionProvider', '').lower()
+                self.degradation_reason = _decision.degradation_reason
+                self.degradation_stage = _decision.degradation_stage
+            except Exception:
+                self.provider_requested = self.provider
+                self.provider_active = self.provider
+                self.degradation_reason = None
+                self.degradation_stage = None
             if self.provider in ['cuda', 'tensorrt']:
                 import torch
                 if torch.cuda.is_available():

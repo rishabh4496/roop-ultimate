@@ -16,7 +16,8 @@ import hashlib
 import json
 import re
 import threading
-from typing import Iterable, List, Dict, Mapping, Tuple
+from dataclasses import dataclass
+from typing import Iterable, List, Dict, Mapping, Tuple, Optional, Any
 
 
 _lock = threading.Lock()
@@ -102,6 +103,159 @@ def _small_gpu(device_id: int) -> bool:
         _swallowed("roop/backend_manager.py:87", _degrade_error, "fallback continued")
         return False
 
+
+@dataclass(frozen=True)
+class CanonicalProviderState:
+    requested: str
+    admitted: str
+    available: Tuple[str, ...]
+    active: str
+    active_chain: Tuple[str, ...]
+    degraded: bool
+    degradation_reason: Optional[str]
+    degradation_stage: Optional[str]
+
+    def as_dict(self) -> Dict[str, Any]:
+        return {
+            "requested": self.requested,
+            "admitted": self.admitted,
+            "available": list(self.available),
+            "active": self.active,
+            "active_chain": list(self.active_chain),
+            "degraded": self.degraded,
+            "degradation_reason": self.degradation_reason,
+            "degradation_stage": self.degradation_stage,
+        }
+
+
+_CANONICAL_STATE_CACHE: Dict[Tuple[str, int], CanonicalProviderState] = {}
+_PROVIDER_DEGRADATIONS: List[Dict[str, Any]] = []
+
+
+def provider_degradations() -> List[Dict[str, Any]]:
+    """Return structured log of all provider degradations."""
+    with _lock:
+        return list(_PROVIDER_DEGRADATIONS)
+
+
+def record_provider_degradation(requested: str, active: str, reason: str, stage: str) -> None:
+    """Record a structured provider downgrade record."""
+    entry = {
+        "requested": requested,
+        "active": active,
+        "reason": reason,
+        "stage": stage,
+    }
+    with _lock:
+        _PROVIDER_DEGRADATIONS.append(entry)
+    print(f"[Provider] Downgrade: requested '{requested}' -> active '{active}' ({stage}): {reason}", flush=True)
+
+
+def canonical_provider_decision(requested: Optional[str] = None, device_id: int = 0) -> CanonicalProviderState:
+    """The single authoritative provider decision following the 4-step resolution pipeline:
+
+    1. Explicit user selection (requested)
+    2. Capability / admission validation (admitted)
+    3. Actual usable provider chain (available & usable)
+    4. Runtime session verification (active)
+    """
+    raw_req = str(requested or os.environ.get("ROOP_EXECUTION_PROVIDER", "auto")).strip().lower()
+    req = _name(raw_req).replace("executionprovider", "").lower() or "auto"
+
+    cache_key = (req, int(device_id))
+    with _lock:
+        if cache_key in _CANONICAL_STATE_CACHE:
+            return _CANONICAL_STATE_CACHE[cache_key]
+
+    from roop.gpu_preflight import get_preflight_result
+    preflight = get_preflight_result()
+    available_providers = tuple(preflight.get("available_providers", []))
+
+    # Step 2: Capability / Admission Validation
+    admitted = req
+    degradation_reason = None
+    degradation_stage = None
+
+    small = _small_gpu(device_id)
+    allow_small_trt = os.environ.get("ROOP_ALLOW_TRT_SMALL_GPU", "1").strip().lower() in ("1", "true", "yes", "on")
+
+    if req in ("auto", "tensorrt"):
+        if small and not allow_small_trt:
+            admitted = "cuda"
+            degradation_reason = "sub-7GB safety policy rejects TensorRT; use CUDA/CPU fallback"
+            degradation_stage = "admission_rejected"
+        else:
+            admitted = "tensorrt"
+    elif req == "cuda":
+        if not preflight.get("cuda_available", False):
+            admitted = "cpu"
+            degradation_reason = "No CUDA device available for requested CUDA provider"
+            degradation_stage = "admission_rejected"
+        else:
+            admitted = "cuda"
+    elif req in ("rocm", "dml", "directml", "cpu"):
+        admitted = req
+    else:
+        admitted = req
+
+    # Step 3: Actual Usable Provider Chain
+    candidates = _HIERARCHY.get(admitted, (f"{admitted.capitalize()}ExecutionProvider", "CPUExecutionProvider"))
+    usable_chain: List[str] = []
+
+    for candidate in candidates:
+        cand_lower = candidate.lower()
+        if cand_lower.startswith("tensorrt"):
+            if preflight.get("tensorrt_session_usable", False):
+                usable_chain.append(candidate)
+            elif not degradation_reason and req in ("auto", "tensorrt"):
+                degradation_reason = preflight.get("failure_reason") or "TensorRT runtime is not usable"
+                degradation_stage = preflight.get("failure_stage") or "runtime_unavailable"
+        elif cand_lower.startswith("cuda"):
+            if preflight.get("cuda_available", False) and "CUDAExecutionProvider" in available_providers:
+                usable_chain.append(candidate)
+            elif not degradation_reason and req in ("auto", "tensorrt", "cuda"):
+                degradation_reason = preflight.get("failure_reason") or "CUDA is not available"
+                degradation_stage = preflight.get("failure_stage") or "cuda_unavailable"
+        elif cand_lower.startswith("rocm"):
+            if "ROCMExecutionProvider" in available_providers:
+                usable_chain.append(candidate)
+        elif cand_lower.startswith("dml"):
+            if "DmlExecutionProvider" in available_providers:
+                usable_chain.append(candidate)
+        elif cand_lower.startswith("cpu"):
+            if "CPUExecutionProvider" in available_providers:
+                usable_chain.append(candidate)
+
+    if not usable_chain:
+        usable_chain = ["CPUExecutionProvider"] if "CPUExecutionProvider" in available_providers else []
+
+    # Step 4: Runtime Session Verification
+    active = usable_chain[0] if usable_chain else "none"
+    active_short = active.replace("ExecutionProvider", "").lower()
+
+    degraded = False
+    if req != "auto" and active_short != req:
+        degraded = True
+        if not degradation_reason:
+            degradation_reason = f"Provider '{req}' was requested but session bound to '{active_short}'"
+            degradation_stage = "session_fallback"
+        record_provider_degradation(req, active_short, degradation_reason, degradation_stage or "unknown")
+
+    state = CanonicalProviderState(
+        requested=req,
+        admitted=admitted,
+        available=available_providers,
+        active=active,
+        active_chain=tuple(usable_chain),
+        degraded=degraded,
+        degradation_reason=degradation_reason,
+        degradation_stage=degradation_stage,
+    )
+
+    with _lock:
+        _CANONICAL_STATE_CACHE[cache_key] = state
+
+    return state
 
 _HIERARCHY = {
     "auto": ("TensorrtExecutionProvider", "CUDAExecutionProvider",
@@ -200,9 +354,16 @@ def diagnostic_report(device_id: int = 0, requested: str | None = None) -> dict:
 def clear_probe_cache() -> None:
     with _lock:
         _probe_cache.clear()
+        _CANONICAL_STATE_CACHE.clear()
+        _PROVIDER_DEGRADATIONS.clear()
     try:
         from roop.gpu_preflight import clear_preflight_cache
         clear_preflight_cache()
+    except Exception:
+        pass
+    try:
+        import settings
+        settings._DEFAULT_PROVIDER_CACHE = None
     except Exception:
         pass
 
