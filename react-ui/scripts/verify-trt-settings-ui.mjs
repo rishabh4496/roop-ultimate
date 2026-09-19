@@ -86,10 +86,39 @@ if (!options.includes('tensorrt') || !options.includes('cuda') || !options.inclu
 const statusText = await page.locator('text=Active:').first().innerText();
 console.log(`PASS  Runtime status displayed: "${statusText}"`);
 
+// The old UI incorrectly presented capable sub-7GB RTX cards as policy-blocked.
+// Pin the public settings surface to the new admission contract instead of only
+// checking that a provider dropdown happens to render.
+const allowedPolicy = page.getByText('TRT Policy: Allowed on all RTX VRAM tiers', { exact: true });
+const allowedPolicyCount = await allowedPolicy.count();
+console.log(`PASS  TensorRT admission policy displayed: count=${allowedPolicyCount}`);
+if (allowedPolicyCount !== 1) {
+  console.error('FAIL: TensorRT UI still has stale or missing VRAM admission messaging');
+  await browser.close();
+  server.kill();
+  process.exit(1);
+}
+const staleBlockedPolicy = page.getByText(/TensorRT Blocked by Sub-7GB/i);
+const staleBlockedCount = await staleBlockedPolicy.count();
+if (staleBlockedCount !== 0) {
+  console.error('FAIL: stale sub-7GB TensorRT block is visible in the UI');
+  await browser.close();
+  server.kill();
+  process.exit(1);
+}
+
 // Check Precision mode (TensorRT) is rendered in the DOM
 const precisionSelect = page.locator('[data-setting="trt_precision"] select');
 const precCount = await precisionSelect.count();
 console.log(`PASS  Precision mode rendered: count=${precCount}`);
+const precisionOptions = await precisionSelect.locator('option').allInnerTexts();
+console.log(`PASS  TensorRT precisions available: ${JSON.stringify(precisionOptions)}`);
+if (!['fp32', 'fp16', 'mixed'].every((value) => precisionOptions.includes(value))) {
+  console.error('FAIL: TensorRT precision options are incomplete');
+  await browser.close();
+  server.kill();
+  process.exit(1);
+}
 
 // Check Advanced Performance section has TensorRT controls
 const builderSelect = page.locator('[data-setting="trt_builder_optimization_level"] select');
