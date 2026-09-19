@@ -32,7 +32,10 @@ from roop.startup_state_machine import (
 
 class TestStartupStateMachine(unittest.TestCase):
     def setUp(self):
+        from roop import backend_manager
+        backend_manager.clear_probe_cache()
         self.sm = StartupStateMachine(halt_on_fatal=False)
+        self.addCleanup(backend_manager.clear_probe_cache)
 
     def test_ten_phases_and_sequence_defined(self):
         """All 10 explicit phases must be defined in strict sequence."""

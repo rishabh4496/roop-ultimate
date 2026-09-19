@@ -265,7 +265,12 @@ parser.add_argument('--ui', choices=['react', 'gradio', 'legacy'], default=None,
                     help='UI to launch: react (default for React launcher) or legacy/gradio')
 parser.add_argument('--react', action='store_true', default=False,
                     help='force React client mode')
+parser.add_argument('--diagnose-runtime', action='store_true', default=False,
+                    help='run standalone diagnostic probe and print runtime environment report without launching servers or models')
 args = parser.parse_args()
+if getattr(args, 'diagnose_runtime', False):
+    from roop.runtime_diagnostics import run_diagnose_runtime
+    sys.exit(run_diagnose_runtime())
 if getattr(args, 'react', False) or getattr(args, 'ui', None) == 'react':
     os.environ['ROOP_REACT_CLIENT'] = '1'
 elif getattr(args, 'ui', None) in ('gradio', 'legacy'):
