@@ -194,7 +194,13 @@ def record_provider_degradation(requested: str, active: str, reason: str, stage:
     }
     with _lock:
         _PROVIDER_DEGRADATIONS.append(entry)
-    print(f"[Provider] Downgrade: requested '{requested}' -> active '{active}' ({stage}): {reason}", flush=True)
+    # A closed Pinokio/test terminal must not turn a recoverable provider
+    # downgrade into a startup failure.  This is especially common on Windows
+    # when a test runner replaces stdout or a detached daemon loses its pipe.
+    try:
+        print(f"[Provider] Downgrade: requested '{requested}' -> active '{active}' ({stage}): {reason}", flush=True)
+    except (OSError, ValueError):
+        pass
 
 
 def canonical_provider_decision(requested: Optional[str] = None, device_id: int = 0) -> CanonicalProviderState:
