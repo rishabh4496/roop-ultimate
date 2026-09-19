@@ -20,12 +20,12 @@ present as "it works, just slowly":
    already half written.
 
 Scope of the assertion, deliberately narrow: it fires only when TensorRT was
-*requested for that session* and did not register.  It therefore cannot fire on
-the sub-7GB tier (``backend_manager.resolve_provider_names`` strips TensorRT
-before any session is built) nor on the models ``precision_policy`` routes to
-CUDA/FP32 on purpose (inswapper's FP16 smudge, the ESRGAN upscaler's black
-frames).  In both of those cases TensorRT is absent from the *requested* list,
-which is the input to this check.
+*requested for that session* and did not register.  It can therefore validate
+TensorRT on every CUDA-capable RTX tier, including the low-VRAM safety profile.
+It does not fire on models that ``precision_policy`` intentionally routes to
+CUDA/FP32 (inswapper's FP16 smudge, the ESRGAN upscaler's black frames).  In
+those cases TensorRT is absent from the *requested* list, which is the input
+to this check.
 
 ``ROOP_STRICT_PROVIDER=0`` downgrades the raise to a loud warning plus a
 recorded degradation, for the case where somebody needs a broken environment to

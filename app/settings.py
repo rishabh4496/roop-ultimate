@@ -536,7 +536,7 @@ class Settings:
                     # is false: the models are held in per-model SessionPools
                     # whose size is set by session_pool, not by the number of
                     # workers, so a worker adds only its own frame buffers.
-                    # Measured 2026-08-25 under the <7GB policy (pools 0/0),
+                    # Measured 2026-08-25 under the <7GB safety profile (pools 0/0),
                     # own VRAM across a whole render:
                     #
                     #     threads    4      6      8     10     12

@@ -333,10 +333,9 @@ def provider_admission(requested: str | None = None, device_id: int = 0) -> dict
     """Explain the runtime admission decision for the requested backend.
 
     This is deliberately separate from provider resolution so diagnostics can
-    distinguish "TensorRT is not installed" from "TensorRT was intentionally
-    rejected for this hardware tier".  The latter is the expected Phase 4
-    behavior on a sub-7GB device unless the user explicitly opts into the
-    experimental override.
+    distinguish "TensorRT is not installed" from a runtime/provider failure.
+    VRAM tiering only selects conservative resource defaults.  It does not
+    reject TensorRT on a sub-7GB RTX device.
     """
     configured = requested or os.environ.get("ROOP_EXECUTION_PROVIDER", "auto")
     decision = canonical_provider_decision(configured, device_id)

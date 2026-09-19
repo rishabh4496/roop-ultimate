@@ -1382,8 +1382,8 @@ class CUDAGraphManager:
                                      independent_work=2,
                                      shared_mutable_buffers=False)
         if small and requested:
-            reason = ("not admitted on the sub-7GB tier; TensorRT/CUDA graph "
-                      "capture requires a separately bounded candidate")
+            reason = ("CUDA graph capture remains disabled on the sub-7GB "
+                      "safety tier; TensorRT provider admission is unaffected")
         elif safe:
             reason = ("enabled by user; caller still needs a candidate-specific "
                       "stable-shape/address contract")
