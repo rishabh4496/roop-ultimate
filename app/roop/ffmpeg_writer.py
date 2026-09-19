@@ -234,7 +234,8 @@ class FFMPEG_VideoWriter:
         if audiofile is not None:
             cmd.extend([
                 '-i', audiofile,
-                '-acodec', 'copy'
+                '-c:a', 'aac',
+                '-b:a', '192k'
             ])
 
         cmd.extend(['-vcodec', codec])
@@ -330,8 +331,9 @@ class FFMPEG_VideoWriter:
 
         cmd.extend([
             '-pix_fmt', 'yuv420p',
-
         ])
+        if self.filename.lower().endswith(('.mp4', '.mov', '.m4v')):
+            cmd.extend(['-movflags', '+faststart'])
         cmd.extend([
             self.filename
         ])

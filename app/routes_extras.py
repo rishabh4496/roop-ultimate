@@ -84,13 +84,18 @@ def extras_apply(file: UploadFile = File(...),
     first = _process_frame(first_frame)
     oh, ow = first.shape[:2]
     outpath = os.path.join(out_dir, "edited_" + os.path.splitext(os.path.basename(path))[0] + ".mp4")
-    writer = cv2.VideoWriter(outpath, cv2.VideoWriter_fourcc(*"mp4v"), fps, (ow, oh))
+    raw_tmp = os.path.join(out_dir, f".raw_edited_{os.path.splitext(os.path.basename(path))[0]}_{ow}x{oh}.mp4")
+    writer = cv2.VideoWriter(raw_tmp, cv2.VideoWriter_fourcc(*"mp4v"), fps, (ow, oh))
     for i in range(1, total + 1):
         fr = get_video_frame(path, i)
         if fr is None:
             continue
         writer.write(_process_frame(fr))
     writer.release()
+    from roop.util_ffmpeg import finalize_web_video
+    if not finalize_web_video(raw_tmp, outpath, audio_source=path, delete_raw=True):
+        if os.path.isfile(raw_tmp):
+            os.replace(raw_tmp, outpath)
     return {"path": outpath, "kind": "video"}
 
 def _make_frame_processor(operation: str, subtype: str):
@@ -162,7 +167,8 @@ def extras_enhance(file: UploadFile = File(...),
         except Exception as _degrade_error:
             _swallowed("routes_extras.py:160", _degrade_error, "fallback continued")
             fps = 30
-        writer = cv2.VideoWriter(outpath, cv2.VideoWriter_fourcc(*"mp4v"), fps, (ow, oh))
+        raw_tmp = os.path.join(out_dir, f".raw_{operation}_{subtype}_{stem}.mp4")
+        writer = cv2.VideoWriter(raw_tmp, cv2.VideoWriter_fourcc(*"mp4v"), fps, (ow, oh))
         writer.write(out_first)
         for i in range(2, total + 1):
             fr = get_video_frame(path, i)
@@ -173,6 +179,10 @@ def extras_enhance(file: UploadFile = File(...),
                 res = cv2.resize(res, (ow, oh))
             writer.write(res)
         writer.release()
+        from roop.util_ffmpeg import finalize_web_video
+        if not finalize_web_video(raw_tmp, outpath, audio_source=path, delete_raw=True):
+            if os.path.isfile(raw_tmp):
+                os.replace(raw_tmp, outpath)
         return {"path": outpath, "kind": "video"}
     except Exception as e:
         traceback.print_exc()

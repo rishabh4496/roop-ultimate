@@ -456,7 +456,10 @@ class SegmentedVideoWriter:
                     fh.write("file '" + p.replace("'", "'\\''") + "'\n")
             cmd = [FFMPEG_BINARY, "-hide_banner", "-loglevel", "error", "-y",
                    "-f", "concat", "-safe", "0", "-i", list_path,
-                   "-c", "copy", self.target_video]
+                   "-c", "copy"]
+            if self.target_video.lower().endswith((".mp4", ".mov", ".m4v")):
+                cmd.extend(["-movflags", "+faststart"])
+            cmd.append(self.target_video)
             kwargs = {}
             if os.name == "nt":
                 kwargs["creationflags"] = 0x08000000  # CREATE_NO_WINDOW

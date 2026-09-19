@@ -355,6 +355,8 @@ class FFmpegRawWriter:
         ]
         if self.audio_source:
             command.extend(["-i", self.audio_source, "-map", "0:v:0", "-map", "1:a:0?"])
+        else:
+            command.extend(["-an"])
         command.extend(["-c:v", codec])
         if codec.endswith("_nvenc"):
             command.extend(
@@ -403,7 +405,9 @@ class FFmpegRawWriter:
             command.extend(["-vf", ",".join(filters)])
         command.extend(["-pix_fmt", "yuv420p"])
         if self.audio_source:
-            command.extend(["-c:a", "copy"])
+            command.extend(["-c:a", "aac", "-b:a", "192k"])
+        if self.path.lower().endswith((".mp4", ".mov", ".m4v")):
+            command.extend(["-movflags", "+faststart"])
         command.append(self.path)
         return command
 

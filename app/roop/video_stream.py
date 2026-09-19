@@ -500,14 +500,16 @@ class NVHardwareVideoWriter:
                 "-i",
                 os.path.abspath(self.audio_source),
                 "-c:a",
-                "copy",
+                "aac",
+                "-b:a",
+                "192k",
                 "-map",
                 "0:v:0",
                 "-map",
                 "1:a:0?",
             ])
         else:
-            cmd.extend(["-map", "0:v:0"])
+            cmd.extend(["-map", "0:v:0", "-an"])
 
         cmd.extend(["-c:v", codec])
         quality = clamp_quality(codec, self.cq)
@@ -544,7 +546,10 @@ class NVHardwareVideoWriter:
                 "-color_trc", "bt709",
                 "-color_range", "tv",
             ])
-        cmd.extend(["-pix_fmt", "yuv420p", self.output_path])
+        cmd.extend(["-pix_fmt", "yuv420p"])
+        if self.output_path.lower().endswith((".mp4", ".mov", ".m4v")):
+            cmd.extend(["-movflags", "+faststart"])
+        cmd.append(self.output_path)
         return cmd
 
     def _spawn(self, codec: str) -> None:

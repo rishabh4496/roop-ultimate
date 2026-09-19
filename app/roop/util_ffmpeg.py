@@ -55,6 +55,72 @@ _QUALITY_MAX_WIDE = 63
 _WIDE_RANGE_CODECS = ('libvpx', 'vp9', 'aom', 'av1', 'svtav1')
 
 
+
+
+def finalize_web_video(raw_video_path: str, final_video_path: str, audio_source: str = None, crf: int = 18, delete_raw: bool = False) -> bool:
+    """Post-process or re-encode video into a browser-compliant web-compatible MP4.
+    
+    Explicitly includes:
+      - -c:v libx264
+      - -pix_fmt yuv420p
+      - -movflags +faststart
+      - -c:a aac -b:a 192k (or cleanly stripped with -an if muted / no audio)
+    """
+    temp_dest = (final_video_path + ".web.tmp.mp4") if os.path.abspath(raw_video_path) == os.path.abspath(final_video_path) else final_video_path
+    has_audio = False
+    if audio_source and os.path.isfile(audio_source):
+        has_audio = bool(util.audio_sample_rate(audio_source))
+
+    cmd = [
+        ffmpeg_binary(), '-hide_banner', '-y', '-loglevel', 'error',
+        '-i', raw_video_path,
+    ]
+    if has_audio:
+        cmd.extend([
+            '-i', audio_source,
+            '-map', '0:v:0',
+            '-map', '1:a:0?',
+            '-c:a', 'aac',
+            '-b:a', '192k',
+            '-shortest',
+        ])
+    else:
+        cmd.extend([
+            '-map', '0:v:0',
+            '-an',
+        ])
+    quality = crf if crf is not None else 18
+    cmd.extend([
+        '-c:v', 'libx264',
+        *_rate_control('libx264', quality),
+        '-pix_fmt', 'yuv420p',
+        '-movflags', '+faststart',
+        temp_dest,
+    ])
+    kwargs = {
+        'stdout': subprocess.PIPE,
+        'stderr': subprocess.PIPE,
+    }
+    if os.name == 'nt':
+        kwargs['creationflags'] = 0x08000000
+    res = subprocess.run(cmd, **kwargs)
+    if res.returncode == 0 and os.path.isfile(temp_dest):
+        if temp_dest != final_video_path:
+            os.replace(temp_dest, final_video_path)
+        if delete_raw and raw_video_path != final_video_path and os.path.isfile(raw_video_path):
+            try:
+                os.remove(raw_video_path)
+            except OSError:
+                pass
+        return True
+    if os.path.isfile(temp_dest) and temp_dest != final_video_path:
+        try:
+            os.remove(temp_dest)
+        except OSError:
+            pass
+    return False
+
+
 def quality_max(codec: str) -> int:
     """Largest quality value *codec* accepts (0 = best quality for all of them)."""
     c = (codec or '').lower()
@@ -90,11 +156,31 @@ def cut_video(original_video: str, cut_video: str, start_frame: int, end_frame: 
     fps = util.detect_fps(original_video)
     start_time = start_frame / fps
     num_frames = end_frame - start_frame
+    has_audio = bool(util.audio_sample_rate(original_video))
 
     if reencode:
-        run_ffmpeg(['-ss',  format(start_time, ".2f"), '-i', original_video, '-c:v', roop.globals.video_encoder, '-c:a', 'aac', '-frames:v', str(num_frames), cut_video])
+        audio_flags = ['-c:a', 'aac', '-b:a', '192k'] if has_audio else ['-an']
+        run_ffmpeg([
+            '-ss', format(start_time, ".2f"),
+            '-i', original_video,
+            '-c:v', 'libx264',
+            *_rate_control('libx264', roop.globals.video_quality),
+            '-pix_fmt', 'yuv420p',
+            '-movflags', '+faststart',
+            *audio_flags,
+            '-frames:v', str(num_frames),
+            cut_video
+        ])
     else:
-        run_ffmpeg(['-ss',  format(start_time, ".2f"), '-i', original_video,  '-frames:v', str(num_frames), '-c:v' ,'copy','-c:a' ,'copy', cut_video])
+        cmd = ['-ss', format(start_time, ".2f"), '-i', original_video, '-frames:v', str(num_frames), '-c:v', 'copy']
+        if has_audio:
+            cmd.extend(['-c:a', 'copy'])
+        else:
+            cmd.append('-an')
+        if cut_video.lower().endswith(('.mp4', '.mov', '.m4v')):
+            cmd.extend(['-movflags', '+faststart'])
+        cmd.append(cut_video)
+        run_ffmpeg(cmd)
 
 def join_videos(videos: List[str], dest_filename: str, simple: bool):
     if simple:
@@ -189,7 +275,20 @@ def create_video(target_path: str, dest_filename: str, fps: float = 24.0, temp_d
     # cause ffmpeg to fail silently and produce an empty (corrupt) output file.
     fps = util.constant_frame_rate(fps)
     vf = util.cfr_video_filter(fps) + ',scale=trunc(iw/2)*2:trunc(ih/2)*2,colorspace=bt709:iall=bt601-6-625:fast=1'
-    run_ffmpeg(['-framerate', str(fps), '-i', os.path.join(temp_directory_path, f'%06d.{roop.globals.CFG.output_image_format}'), '-c:v', roop.globals.video_encoder] + _rate_control(roop.globals.video_encoder, roop.globals.video_quality) + ['-pix_fmt', 'yuv420p', '-vf', vf, '-r', str(fps), '-vsync', 'cfr', '-fps_mode', 'cfr', '-y', dest_filename])
+    run_ffmpeg([
+        '-framerate', str(fps),
+        '-i', os.path.join(temp_directory_path, f'%06d.{roop.globals.CFG.output_image_format}'),
+        '-c:v', 'libx264',
+        *_rate_control('libx264', roop.globals.video_quality),
+        '-pix_fmt', 'yuv420p',
+        '-movflags', '+faststart',
+        '-vf', vf,
+        '-r', str(fps),
+        '-vsync', 'cfr',
+        '-fps_mode', 'cfr',
+        '-an',
+        '-y', dest_filename
+    ])
     return dest_filename
 
 
@@ -244,8 +343,17 @@ def apply_media_transforms_gif(input_path: str, output_path: str,
 
 def create_video_from_gif(gif_path: str, output_path):
     fps = util.detect_fps(gif_path)
-    filter = """scale='trunc(in_w/2)*2':'trunc(in_h/2)*2',format=yuv420p,fps=10"""
-    run_ffmpeg(['-i', gif_path, '-vf', f'"{filter}"', '-movflags', '+faststart', '-shortest', output_path])
+    vf = f"scale=trunc(iw/2)*2:trunc(ih/2)*2,format=yuv420p,fps={fps}"
+    run_ffmpeg([
+        '-i', gif_path,
+        '-vf', vf,
+        '-c:v', 'libx264',
+        '-pix_fmt', 'yuv420p',
+        '-movflags', '+faststart',
+        '-an',
+        '-shortest',
+        output_path
+    ])
 
 
 
@@ -254,10 +362,18 @@ def resize_video(input_path: str, output_path: str, width: int, height: int) -> 
         f'scale={width}:{height}:force_original_aspect_ratio=decrease,'
         f'pad={width}:{height}:(ow-iw)/2:(oh-ih)/2'
     )
-    return run_ffmpeg(['-i', input_path, '-vf', scale_filter,
-                       '-c:v', roop.globals.video_encoder,
-                       *_rate_control(roop.globals.video_encoder, roop.globals.video_quality),
-                       '-c:a', 'copy', output_path])
+    has_audio = bool(util.audio_sample_rate(input_path))
+    audio_flags = ['-c:a', 'aac', '-b:a', '192k'] if has_audio else ['-an']
+    return run_ffmpeg([
+        '-i', input_path,
+        '-vf', scale_filter,
+        '-c:v', 'libx264',
+        *_rate_control('libx264', roop.globals.video_quality),
+        '-pix_fmt', 'yuv420p',
+        '-movflags', '+faststart',
+        *audio_flags,
+        output_path
+    ])
 
 
 def rotate_media(input_path: str, output_path: str, transform: str) -> bool:
@@ -269,14 +385,33 @@ def rotate_media(input_path: str, output_path: str, transform: str) -> bool:
         "Flip Vertical":         "vflip",
     }
     vf = transform_map.get(transform, "transpose=1")
-    return run_ffmpeg(['-i', input_path, '-vf', vf, '-c:a', 'copy', output_path])
+    has_audio = bool(util.audio_sample_rate(input_path))
+    audio_flags = ['-c:a', 'aac', '-b:a', '192k'] if has_audio else ['-an']
+    return run_ffmpeg([
+        '-i', input_path,
+        '-vf', vf,
+        '-c:v', 'libx264',
+        *_rate_control('libx264', roop.globals.video_quality),
+        '-pix_fmt', 'yuv420p',
+        '-movflags', '+faststart',
+        *audio_flags,
+        output_path
+    ])
 
 
 def change_fps(input_path: str, output_path: str, fps: float) -> bool:
-    return run_ffmpeg(['-i', input_path, '-vf', f'fps={fps}',
-                       '-c:v', roop.globals.video_encoder,
-                       *_rate_control(roop.globals.video_encoder, roop.globals.video_quality),
-                       '-c:a', 'copy', output_path])
+    has_audio = bool(util.audio_sample_rate(input_path))
+    audio_flags = ['-c:a', 'aac', '-b:a', '192k'] if has_audio else ['-an']
+    return run_ffmpeg([
+        '-i', input_path,
+        '-vf', f'fps={fps}',
+        '-c:v', 'libx264',
+        *_rate_control('libx264', roop.globals.video_quality),
+        '-pix_fmt', 'yuv420p',
+        '-movflags', '+faststart',
+        *audio_flags,
+        output_path
+    ])
 
 
 def crop_media(input_path: str, output_path: str,
@@ -287,7 +422,18 @@ def crop_media(input_path: str, output_path: str,
         f"crop=in_w*(1-{l:.4f}-{r:.4f}):in_h*(1-{t:.4f}-{b:.4f})"
         f":in_w*{l:.4f}:in_h*{t:.4f}"
     )
-    return run_ffmpeg(['-i', input_path, '-vf', crop_filter, '-c:a', 'copy', output_path])
+    has_audio = bool(util.audio_sample_rate(input_path))
+    audio_flags = ['-c:a', 'aac', '-b:a', '192k'] if has_audio else ['-an']
+    return run_ffmpeg([
+        '-i', input_path,
+        '-vf', crop_filter,
+        '-c:v', 'libx264',
+        *_rate_control('libx264', roop.globals.video_quality),
+        '-pix_fmt', 'yuv420p',
+        '-movflags', '+faststart',
+        *audio_flags,
+        output_path
+    ])
 
 
 def apply_media_transforms(input_path: str, output_path: str,
@@ -295,12 +441,19 @@ def apply_media_transforms(input_path: str, output_path: str,
     """Apply a list of -vf filters in a single ffmpeg pass."""
     if not vf_filters:
         return False
-    codec   = roop.globals.video_encoder   or 'libx264'
     quality = roop.globals.video_quality   if roop.globals.video_quality is not None else 14
     vf = ','.join(vf_filters)
     args = ['-i', input_path, '-vf', vf]
     if is_video:
-        args += ['-c:v', codec, *_rate_control(codec, quality), '-c:a', 'copy']
+        has_audio = bool(util.audio_sample_rate(input_path))
+        audio_flags = ['-c:a', 'aac', '-b:a', '192k'] if has_audio else ['-an']
+        args += [
+            '-c:v', 'libx264',
+            *_rate_control('libx264', quality),
+            '-pix_fmt', 'yuv420p',
+            '-movflags', '+faststart',
+            *audio_flags
+        ]
     args.append(output_path)
     return run_ffmpeg(args)
 
@@ -410,9 +563,10 @@ def apply_media_transforms_webp(input_path: str, output_path: str,
         '-r', str(fps),
         '-an', '-i', '-',
         '-vf', vf,
-        '-c:v', codec,
-        *_rate_control(codec, quality),
+        '-c:v', 'libx264',
+        *_rate_control('libx264', quality),
         '-pix_fmt', 'yuv420p',
+        '-movflags', '+faststart',
         output_path,
     ]
     print(f"apply_media_transforms_webp: piping {len(frames)} frames @ {fps} fps")
@@ -449,7 +603,6 @@ def create_video_from_frames_dir(frames_dir: str, output_path: str, fps: float,
     Frames must follow the %06d.<image_format> naming convention that
     extract_frames() produces (e.g. 000001.png, 000002.png …).
     """
-    codec   = roop.globals.video_encoder   or 'libx264'
     quality = roop.globals.video_quality   if roop.globals.video_quality is not None else 14
     # scale=trunc(iw/2)*2:trunc(ih/2)*2 rounds odd dimensions down to even, required by yuv420p.
     fps = util.constant_frame_rate(fps)
@@ -457,11 +610,13 @@ def create_video_from_frames_dir(frames_dir: str, output_path: str, fps: float,
     return run_ffmpeg([
         '-framerate', str(fps),
         '-i',    os.path.join(frames_dir, f'%06d.{image_format}'),
-        '-c:v',  codec,
-    ] + _rate_control(codec, quality) + [
+        '-c:v',  'libx264',
+    ] + _rate_control('libx264', quality) + [
         '-pix_fmt', 'yuv420p',
+        '-movflags', '+faststart',
         '-vf',   vf,
         '-r', str(fps), '-vsync', 'cfr', '-fps_mode', 'cfr',
+        '-an',
         '-y',    output_path,
     ])
 
@@ -547,5 +702,7 @@ def restore_audio(intermediate_video: str, original_video: str, trim_frame_start
     )
     if duration is not None:
         commands += ['-t', format(duration, '.6f')]
+    if final_video.lower().endswith(('.mp4', '.mov', '.m4v')):
+        commands += ['-movflags', '+faststart']
     commands += [final_video]
     return run_ffmpeg(commands)

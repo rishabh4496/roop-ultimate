@@ -901,7 +901,10 @@ def queue_join(payload: dict = Body(...)):
                 # The concat demuxer takes a quoted path with ' escaped.
                 fh.write("file '%s'\n" % f.replace("'", r"'\''"))
         cmd = [FFMPEG_BINARY, "-hide_banner", "-y", "-f", "concat", "-safe", "0",
-               "-i", listing, "-c", "copy", dest]
+               "-i", listing, "-c", "copy"]
+        if dest.lower().endswith((".mp4", ".mov", ".m4v")):
+            cmd.extend(["-movflags", "+faststart"])
+        cmd.append(dest)
         kwargs = {"creationflags": 0x08000000} if os.name == "nt" else {}
         proc = subprocess.run(cmd, stdout=subprocess.DEVNULL, **kwargs)
         if proc.returncode != 0 or not os.path.exists(dest):
