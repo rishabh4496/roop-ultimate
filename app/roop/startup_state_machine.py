@@ -627,19 +627,16 @@ def execute_gpu_preflight(device_id: int = 0) -> PhaseResult:
             gpu_name = torch.cuda.get_device_name(int(device_id))
             from roop.backend_manager import is_sub_7gb_gpu
             sub_7gb = is_sub_7gb_gpu(int(device_id))
-            if sub_7gb:
-                return PhaseResult(
-                    phase=StartupPhase.GPU_PREFLIGHT,
-                    status=PhaseStatus.DEGRADED,
-                    component="gpu",
-                    reason=f"Sub-7GB GPU tier detected ({gpu_name}: {vram_gb:.1f}GB); 0/0 pools enforced",
-                    details={"gpu_name": gpu_name, "vram_gb": vram_gb, "sub_7gb": True},
-                )
             return PhaseResult(
                 phase=StartupPhase.GPU_PREFLIGHT,
                 status=PhaseStatus.SUCCESS,
                 component="gpu",
-                details={"gpu_name": gpu_name, "vram_gb": vram_gb, "sub_7gb": False},
+                details={
+                    "gpu_name": gpu_name,
+                    "vram_gb": vram_gb,
+                    "sub_7gb": sub_7gb,
+                    "safety_profile": "single-context" if sub_7gb else "standard",
+                },
             )
         elif has_nvidia_hardware():
             return PhaseResult(

@@ -72,19 +72,18 @@ export default function Settings({ meta, settings, setSettings, notify }) {
   const isTrtActive = activeProvider === 'tensorrt';
   const isTrtAdmitted = admittedProvider === 'tensorrt';
   const isTrtAvailable = Boolean(m.tensorrt_available || availableProviders.includes('tensorrt'));
-  const isTrtAllowed = m.tensorrt_allowed !== undefined ? Boolean(m.tensorrt_allowed) : isTrtAdmitted;
-  const isSub7Gb = Boolean(m.is_sub_7gb_gpu || m.provider_status?.is_sub_7gb_gpu);
+  // VRAM tier controls safe contexts, pools, and streams. It is not a
+  // TensorRT admission rule. A capable 6GB RTX card must not be presented as
+  // policy-blocked when the provider is installed and usable.
+  const isTrtAllowed = true;
   const isTrtDegraded = isTrtRequested && !isTrtActive;
-  const isTrtBlocked = isTrtRequested && !isTrtAllowed;
   const isCudaActive = activeProvider === 'cuda';
 
   const trtFailureReason =
     p.degradation_reason ||
     m.degradation_reason ||
     m.provider_status?.degradation_reason ||
-    (isTrtBlocked
-      ? 'Sub-7GB safety policy blocks TensorRT by default to prevent memory exhaustion'
-      : isTrtDegraded
+    (isTrtDegraded
       ? `TensorRT failed to initialize; session fell back to ${activeProvider.toUpperCase()}`
       : '');
 
@@ -483,25 +482,19 @@ export default function Settings({ meta, settings, setSettings, notify }) {
                 className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-nano font-semibold border ${
                   isTrtActive
                     ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-300'
-                    : isTrtBlocked
-                    ? 'bg-amber-500/15 border-amber-500/30 text-amber-300'
                     : isTrtDegraded
                     ? 'bg-amber-500/15 border-amber-500/30 text-amber-300'
                     : 'bg-white/5 border-white/10 text-white/40'
                 }`}
                 title={
-                  isTrtBlocked
-                    ? 'TensorRT blocked by sub-7GB safety policy (admitted: CUDA)'
-                    : isTrtDegraded
+                  isTrtDegraded
                     ? `TensorRT degraded to ${activeProvider.toUpperCase()}: ${trtFailureReason}`
                     : ''
                 }
               >
-                {isTrtBlocked ? '🛡️' : isTrtDegraded ? '⚠️' : '⚡'} TensorRT {
+                {isTrtDegraded ? '⚠️' : '⚡'} TensorRT {
                   isTrtActive
                     ? (p.trt_precision || 'mixed')
-                    : isTrtBlocked
-                    ? `(Blocked <7GB → ${activeProvider.toUpperCase()})`
                     : isTrtDegraded
                     ? `(Inactive → ${activeProvider.toUpperCase()})`
                     : (p.trt_precision || 'mixed')
@@ -538,36 +531,21 @@ export default function Settings({ meta, settings, setSettings, notify }) {
                 TRT Available: {isTrtAvailable ? 'Yes' : 'No'}
               </span>
               <span className={`px-2 py-0.5 rounded-md text-nano font-bold uppercase tracking-wider ${isTrtAllowed ? 'bg-emerald-500/10 text-emerald-300/80 border border-emerald-500/20' : 'bg-amber-500/10 text-amber-300/80 border border-amber-500/20'}`}>
-                TRT Policy: {isTrtAllowed ? 'Allowed' : 'Blocked (<7GB)'}
+                TRT Policy: Allowed on all RTX VRAM tiers
               </span>
               {requestedProvider !== activeProvider && (
                 <span className="text-amber-300/80 text-nano">
                   • Configured: {requestedProvider.toUpperCase()} (Restart required to apply)
                 </span>
               )}
-              {admittedProvider !== requestedProvider && (
+              {admittedProvider !== requestedProvider && !isTrtDegraded && (
                 <span className="text-rose-300/80 text-nano">
-                  • Admitted: {admittedProvider.toUpperCase()} (Safety policy adjusted selection)
+                  • Admitted: {admittedProvider.toUpperCase()}
                 </span>
               )}
             </div>
 
-            {isTrtBlocked && (
-              <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 text-xs text-amber-200/90 flex flex-col gap-1">
-                <div className="flex items-center gap-1.5 font-bold text-amber-300">
-                  <span>🛡️</span>
-                  <span>TensorRT Blocked by Sub-7GB Safety Policy (Admitted: CUDA)</span>
-                </div>
-                <p className="text-white/70">
-                  This device has under 7GB VRAM (e.g. RTX 3060 6GB Laptop GPU). TensorRT admission is blocked by default to prevent memory exhaustion and engine thrashing.
-                </p>
-                <p className="text-white/40 text-nano">
-                  To test experimental TensorRT on 6GB, set ROOP_ALLOW_TRT_SMALL_GPU=1 in your launcher environment.
-                </p>
-              </div>
-            )}
-
-            {isTrtDegraded && !isTrtBlocked && (
+            {isTrtDegraded && (
               <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 text-xs text-amber-200/90 flex flex-col gap-1">
                 <div className="flex items-center gap-1.5 font-bold text-amber-300">
                   <span>⚠️</span>

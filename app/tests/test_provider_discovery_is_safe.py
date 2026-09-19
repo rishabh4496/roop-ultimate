@@ -132,16 +132,10 @@ class ProviderDiscoveryIsAlwaysSafe(unittest.TestCase):
 
 
 class TheSmallGpuTensorRTGateIsConsistent(unittest.TestCase):
-    """One env var, one default, or a 6GB card gets contradictory answers.
+    """The removed opt-in environment variable must not control admission."""
 
-    backend_manager admits TensorRT on a sub-7GB card, so a profiler that
-    still defaults the same flag to OFF reports "backend admission remains
-    CUDA/CPU" and skips the capability probe that feeds precision selection.
-    """
-
-    def test_every_reader_uses_the_same_default(self):
+    def test_no_runtime_reader_uses_the_legacy_opt_in(self):
         pattern = "ROOP_ALLOW_TRT_SMALL_GPU"
-        defaults = {}
         for relative in (os.path.join("roop", "backend_manager.py"),
                          os.path.join("roop", "runtime_optimizer.py"),
                          os.path.join("roop", "face_util.py")):
@@ -150,26 +144,8 @@ class TheSmallGpuTensorRTGateIsConsistent(unittest.TestCase):
                 continue
             with open(path, encoding="utf-8") as handle:
                 tree = ast.parse(handle.read())
-            for node in ast.walk(tree):
-                if (isinstance(node, ast.Call)
-                        and isinstance(node.func, ast.Attribute)
-                        and node.func.attr == "get"
-                        and node.args
-                        and isinstance(node.args[0], ast.Constant)
-                        and node.args[0].value == pattern):
-                    fallback = (node.args[1].value
-                                if len(node.args) > 1
-                                and isinstance(node.args[1], ast.Constant)
-                                else "<none>")
-                    defaults.setdefault(relative, set()).add(fallback)
-
-        self.assertTrue(defaults, f"no reader of {pattern} was found")
-        distinct = {value for values in defaults.values() for value in values}
-        self.assertEqual(
-            len(distinct), 1,
-            f"{pattern} is read with conflicting defaults {defaults}; a sub-7GB "
-            "card then gets TensorRT admitted by one module and refused by "
-            "another")
+            with open(path, encoding="utf-8") as handle:
+                self.assertNotIn(pattern, handle.read())
 
 
 if __name__ == "__main__":

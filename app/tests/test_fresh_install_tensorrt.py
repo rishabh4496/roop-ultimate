@@ -71,11 +71,9 @@ class TestFreshInstallTensorRT(unittest.TestCase):
                 self.assertEqual(cfg.trt_precision, "mixed")
 
     def test_sub_7gb_gpu_admits_tensorrt(self):
-        """A secondary device or laptop card (< 7GB) must admit TensorRT."""
-        with patch.dict(os.environ, {"ROOP_ALLOW_TRT_SMALL_GPU": "1"}):
-            self.assertFalse(_small_gpu(0))
-            adm = provider_admission("tensorrt", device_id=0)
-            self.assertTrue(adm["admitted"])
+        """A secondary device or laptop card (< 7GB) admits TensorRT without opt-in."""
+        adm = provider_admission("tensorrt", device_id=0)
+        self.assertTrue(adm["admitted"])
 
     def test_resolve_provider_names_includes_tensorrt(self):
         """resolve_provider_names must retain TensorrtExecutionProvider for tensorrt and auto."""

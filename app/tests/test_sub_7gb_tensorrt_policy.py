@@ -45,7 +45,7 @@ class TestSub7GbTensorRTPolicy(unittest.TestCase):
                  patch("roop.session_pool._detect_vram_gb", return_value=6.0):
 
                 self.assertTrue(backend_manager.is_sub_7gb_gpu(0))
-                self.assertFalse(backend_manager.allow_small_gpu_trt())
+                self.assertTrue(backend_manager.allow_small_gpu_trt())
                 self.assertTrue(backend_manager.is_trt_allowed_for_device(0))
                 self.assertTrue(backend_manager._small_gpu(0))
 
@@ -61,14 +61,14 @@ class TestSub7GbTensorRTPolicy(unittest.TestCase):
                 self.assertEqual(adm["admitted_provider"], "tensorrt")
                 self.assertTrue(adm["tensorrt_allowed"])
                 self.assertTrue(adm["is_sub_7gb_gpu"])
-                self.assertFalse(adm["override"])
+                self.assertTrue(adm["override"])
 
                 # Resource pools must be 0/0 on 6GB card
                 swp_pool, det_pool = session_pool._auto_pool_defaults()
                 self.assertEqual((swp_pool, det_pool), (0, 0))
 
-    def test_6gb_gpu_with_explicit_opt_in_admits_tensorrt_without_4070_pools(self):
-        """With ROOP_ALLOW_TRT_SMALL_GPU=1, 6GB card admits TensorRT but keeps 0/0 pool constraints."""
+    def test_6gb_gpu_legacy_override_is_not_required_for_tensorrt(self):
+        """Legacy opt-in variables do not control 6GB TensorRT admission."""
         mock_preflight = {
             "available_providers": ["TensorrtExecutionProvider", "CUDAExecutionProvider", "CPUExecutionProvider"],
             "cuda_available": True,
@@ -84,7 +84,7 @@ class TestSub7GbTensorRTPolicy(unittest.TestCase):
                 self.assertTrue(backend_manager.is_sub_7gb_gpu(0))
                 self.assertTrue(backend_manager.allow_small_gpu_trt())
                 self.assertTrue(backend_manager.is_trt_allowed_for_device(0))
-                self.assertFalse(backend_manager._small_gpu(0))
+                self.assertTrue(backend_manager._small_gpu(0))
 
                 decision = backend_manager.canonical_provider_decision("tensorrt", device_id=0)
                 self.assertEqual(decision.requested, "tensorrt")
@@ -98,7 +98,7 @@ class TestSub7GbTensorRTPolicy(unittest.TestCase):
                 self.assertTrue(adm["tensorrt_allowed"])
                 self.assertTrue(adm["override"])
 
-                # 6GB card MUST NOT inherit RTX 4070 pools (2/2) even when opted in
+                # 6GB card MUST NOT inherit RTX 4070 pools (2/2).
                 swp_pool, det_pool = session_pool._auto_pool_defaults()
                 self.assertEqual((swp_pool, det_pool), (0, 0))
 

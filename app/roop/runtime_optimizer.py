@@ -920,20 +920,11 @@ class HardwareProfiler:
         except Exception as _degrade_error:
             _swallowed("roop/runtime_optimizer.py:902", _degrade_error, "fallback continued")
             pass
-        # TensorRT's Builder is a heavyweight host allocation.  Provider
-        # admission is intentionally independent of VRAM tier now, while this
-        # optional feature probe remains deferred on sub-7GB cards so startup
-        # does not consume the RSS budget before the bounded runtime profile is
-        # applied. The installed/provider capability is still recorded above.
+        # TensorRT's Builder is a heavyweight host allocation, but capability
+        # probing must not be hidden behind a VRAM admission policy.  The
+        # low-VRAM runtime profile still limits contexts and pools after this
+        # capability is recorded.
         trt_builder_probe = trt
-        if cuda and vram_total and vram_total < 7.0:
-            allow_small_trt = os.environ.get(
-                "ROOP_ALLOW_TRT_SMALL_GPU", "0").strip().lower() in (
-                    "1", "true", "yes", "on")
-            trt_builder_probe = bool(allow_small_trt)
-            if not trt_builder_probe:
-                print("[Hardware] sub-7GB GPU: TensorRT Builder capability probe "
-                      "deferred; backend admission remains CUDA/CPU", flush=True)
         if cuda:
             try:
                 import torch as _torch
@@ -1189,12 +1180,6 @@ class PrecisionSelector:
     def select(self, settings: Any, hardware: HardwareProfile,
                model_key: str = "") -> str:
         configured = str(_value(settings, "trt_precision", "mixed") or "mixed").lower()
-        # The sub-7GB profile intentionally does not admit TensorRT. Reporting
-        # the effective precision as FP32 keeps diagnostics/profile identity
-        # honest; the configured UI value remains available for an explicit,
-        # separately audited override.
-        if 0 < hardware.vram_total_gb < 7.0 and configured != "fp32":
-            return "fp32"
         if configured == "fp32":
             return configured
         if configured in ("fp16", "mixed"):
@@ -1961,7 +1946,7 @@ class RuntimeAutotuner:
             _value(settings, "trt_precision", "auto") or "auto").lower()
         initial["precision"] = (
             configured_precision if not _is_auto(settings, "trt_precision") else
-            ("fp32" if hardware.vram_total_gb < 7.0 else "mixed"))
+            ("mixed" if hardware.tensorrt_available else "fp32"))
         initial["stage"] = "baseline"
         result = [initial]
 
@@ -1980,12 +1965,8 @@ class RuntimeAutotuner:
         small = hardware.vram_total_gb > 0 and hardware.vram_total_gb < 7.0
         if not self._explicit(settings, "backend_precision"):
             if hardware.tensorrt_available:
-                # Small cards are TensorRT-capable, but keep their validated
-                # FP32/one-context policy rather than proposing the desktop
-                # FP16 tuning candidate.
                 add("backend_precision", backend="tensorrt",
-                    precision=("fp16" if hardware.fp16_supported and not small
-                               else "fp32"))
+                    precision=("fp16" if hardware.fp16_supported else "fp32"))
             if hardware.cuda_available:
                 add("backend_precision", backend="cuda", precision="fp32")
         if not small and not self._explicit(settings, "trt_concurrency"):

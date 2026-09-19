@@ -81,15 +81,12 @@ def _hybrid_engine_active() -> bool:
 
 
 def _face_analysis_providers():
-    """Use CUDA for buffalo_l on sub-7GB cards to bound host RSS.
+    """Use the configured provider chain for every RTX hardware tier.
 
-    FaceAnalysis creates several independent ORT sessions (detector, landmark
-    and recognition models). Loading all of them through TensorRT on the 6GB
-    laptop consumes several gigabytes of host working set before the first
-    frame, even with TensorRT pools disabled. The swapper and selected frame
-    processors keep their configured provider; only this multi-session bundle
-    takes the CUDA path on small cards. An explicit opt-in preserves the old
-    all-TensorRT behaviour for diagnostics.
+    Low-VRAM cards remain bounded by the single-context/session-pool policy.
+    TensorRT is not silently removed from the FaceAnalysis bundle based only on
+    total VRAM, because that made the UI claim TensorRT was unavailable even
+    when the provider was installed and usable.
     """
     providers = list(roop.globals.execution_providers or [])
     # CFG IS NOT POPULATED UNTIL THE FIRST RUN PREPARES THE ENVIRONMENT, but the
@@ -105,27 +102,6 @@ def _face_analysis_providers():
     # which is the same answer a default Settings gives.
     if roop.globals.CFG is not None and roop.globals.CFG.force_cpu:
         return ["CPUExecutionProvider"]
-    if os.environ.get('ROOP_ALLOW_TRT_SMALL_GPU', '0').strip().lower() in (
-            '1', 'true', 'yes', 'on'):
-        return providers
-    names = [p[0] if isinstance(p, (tuple, list)) else str(p)
-             for p in providers]
-    if not any('tensorrt' in name.lower() for name in names):
-        return providers
-    try:
-        import torch
-        vram_gb = (torch.cuda.get_device_properties(
-            roop.globals.cuda_device_id).total_memory / (1024 ** 3)
-                   if torch.cuda.is_available() else 0.0)
-    except Exception as _degrade_error:
-        _swallowed("roop/face_util.py:110", _degrade_error, "fallback continued")
-        vram_gb = 0.0
-    if 0 < vram_gb < 7.0:
-        safe = [p for p in providers if 'tensorrt' not in str(
-            p[0] if isinstance(p, (tuple, list)) else p).lower()]
-        print('[FaceAnalysis] sub-7GB GPU: using CUDA/CPU for buffalo_l '
-              'sessions to keep host RSS bounded; swapper provider unchanged.')
-        return _detector_offload(safe or ["CPUExecutionProvider"])
     return _detector_offload(providers)
 
 

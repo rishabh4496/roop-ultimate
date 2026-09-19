@@ -115,16 +115,14 @@ def is_sub_7gb_gpu(device_id: int = 0) -> bool:
 
 
 def allow_small_gpu_trt() -> bool:
-    """Return whether the legacy small-GPU TensorRT override is set.
+    """Return whether small RTX cards are eligible for TensorRT.
 
-    TensorRT admission is no longer blocked by VRAM size.  The flag is retained
-    only for compatibility with older diagnostics and deployments that still
-    expose it.  Low-VRAM resource limits are enforced independently by the
-    runtime optimizer and session pools.
+    All CUDA-capable RTX devices are TensorRT candidates now.  This helper is
+    retained as a compatibility field for older clients, but it no longer reads
+    an opt-in environment variable.  Low-VRAM limits remain enforced by the
+    runtime optimizer and session pools rather than by provider admission.
     """
-    return os.environ.get("ROOP_ALLOW_TRT_SMALL_GPU", "0").strip().lower() in (
-        "1", "true", "yes", "on"
-    )
+    return True
 
 
 def is_trt_allowed_for_device(device_id: int = 0) -> bool:
@@ -139,14 +137,7 @@ def is_trt_allowed_for_device(device_id: int = 0) -> bool:
 
 
 def _small_gpu(device_id: int = 0) -> bool:
-    """Return whether this device is treated as a small GPU (below 7GB safety tier without opt-in).
-
-    Maintained for backwards compatibility. When ROOP_ALLOW_TRT_SMALL_GPU=1 is set,
-    this returns False to permit TensorRT admission.
-    """
-    if os.environ.get('ROOP_ALLOW_TRT_SMALL_GPU', '0').strip().lower() in (
-            '1', 'true', 'yes', 'on'):
-        return False
+    """Return whether this device uses the conservative low-VRAM safety tier."""
     return is_sub_7gb_gpu(device_id)
 
 
@@ -363,12 +354,10 @@ def provider_admission(requested: str | None = None, device_id: int = 0) -> dict
         "reason": decision.degradation_reason or (
             "hardware tier permits requested backend; availability is checked separately"
         ),
-        "override": bool(
-            normalized in ("auto", "tensorrt")
-            and decision.admitted == "tensorrt"
-            and small
-            and allow_small_gpu_trt()
-        ),
+        # Kept for clients that rendered the old opt-in badge.  It now means
+        # that the small-card safety profile is active, not that admission was
+        # obtained through a hidden environment override.
+        "override": bool(normalized in ("auto", "tensorrt") and small),
     }
 
 
