@@ -1889,7 +1889,14 @@ def print_startup_banner() -> None:
 
 
 def run() -> None:
+    from roop.startup_state_machine import (
+        StartupPhase,
+        get_startup_state_machine,
+        execute_config_load,
+    )
+    sm = get_startup_state_machine()
     parse_args()
+    sm.execute_phase(StartupPhase.CONFIG_LOAD, execute_config_load, 'config.yaml')
     roop.globals.CFG = apply_provider_override(Settings('config.yaml'))
     roop.globals.cuda_device_id = roop.globals.startup_args.cuda_device_id
     roop.globals.execution_threads = roop.globals.CFG.max_threads

@@ -92,21 +92,14 @@ def run():
 
     # Configure execution providers. If TensorRT is selected, also register CUDA as a fallback
     # to prevent silent fallback to CPU if TensorRT initialization fails at run time.
-    providers = [roop.globals.CFG.provider]
-    if roop.globals.CFG.provider == "tensorrt":
-        providers.append("cuda")
-    roop.globals.execution_providers = decode_execution_providers(providers)
-    if roop.globals.execution_providers:
-        _first = roop.globals.execution_providers[0]
-        _first_name = _first[0] if isinstance(_first, (tuple, list)) else _first
-        _active_short = str(_first_name).replace("ExecutionProvider", "").lower()
-        roop.globals.CFG.provider_active = _active_short
-        roop.globals.CFG.provider_requested = getattr(
-            roop.globals.CFG, "provider_requested", roop.globals.CFG.provider)
-        if roop.globals.CFG.provider == "tensorrt" and _active_short != "tensorrt":
-            if not getattr(roop.globals.CFG, "degradation_reason", None):
-                roop.globals.CFG.degradation_reason = f"TensorRT requested but session bound to {_active_short}"
-                roop.globals.CFG.degradation_stage = "session_fallback" 
+    from roop.startup_state_machine import (
+        StartupPhase,
+        get_startup_state_machine,
+        execute_model_runtime_init,
+        execute_ui_ready,
+    )
+    sm = get_startup_state_machine()
+    sm.execute_phase(StartupPhase.MODEL_RUNTIME_INIT, execute_model_runtime_init, roop.globals.CFG)
     gputype = util.get_device()
     if gputype == 'cuda':
         util.print_cuda_info()
@@ -116,6 +109,7 @@ def run():
     if os.environ.get("ROOP_REACT_CLIENT") == "1":
         print("[UI] React client mode active — skipping legacy Gradio web server.", flush=True)
         return
+    sm.execute_phase(StartupPhase.UI_READY, execute_ui_ready, 0, False)
 
     run_server = True
     uii.ui_restart_server = False

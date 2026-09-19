@@ -56,65 +56,24 @@ from roop.degrade import swallowed as _swallowed
 
 
 def run_preflight_checks():
-    np_major = int(np.__version__.split(".")[0])
-    if np_major >= 2:
-        sys.exit(
-            f"[FATAL] NumPy version {np.__version__} detected. "
-            "InsightFace C-bindings require numpy<2.0.0."
-        )
-
-    try:
-        from roop.gpu_preflight import get_preflight_result
-        result = get_preflight_result()
-    except Exception as exc:
-        sys.exit(
-            "[FATAL] authoritative ONNX Runtime preflight could not run: "
-            f"{type(exc).__name__}: {exc}"
-        )
-
-    if not result.get("onnxruntime_importable"):
-        sys.exit(
-            "[FATAL] ONNX Runtime is not usable. "
-            f"stage={result.get('failure_stage') or 'unknown'}; "
-            f"reason={result.get('failure_reason') or 'import failed'}. "
-            "Repair the Pinokio environment before starting the app."
-        )
-
-    providers = list(result.get("available_providers") or [])
-    if not providers:
-        sys.exit(
-            "[FATAL] ONNX Runtime exposes no execution providers. "
-            f"stage={result.get('failure_stage') or 'unknown'}; "
-            f"reason={result.get('failure_reason') or 'provider registry is empty'}."
-        )
-
-    active = result.get("active_provider") or "none"
-    stage = result.get("failure_stage")
-    reason = result.get("failure_reason")
-    if active == "TensorrtExecutionProvider" and result.get("tensorrt_session_usable"):
-        print("[OK] TensorRT minimal session verified as active.", flush=True)
-    elif "CUDAExecutionProvider" in providers and active == "CUDAExecutionProvider":
-        print(
-            "[WARNING] TensorRT is not active; CUDA is the validated fallback. "
-            f"stage={stage or 'none'}; reason={reason or 'TensorRT was not selected'}",
-            flush=True,
-        )
-    elif active == "CPUExecutionProvider":
-        print(
-            "[WARNING] GPU providers are not active; CPU fallback is validated. "
-            f"stage={stage or 'none'}; reason={reason or 'GPU provider unavailable'}",
-            flush=True,
-        )
-    else:
-        print(
-            "[WARNING] no recognized accelerated provider is active. "
-            f"stage={stage or 'none'}; reason={reason or 'provider chain unavailable'}",
-            flush=True,
-        )
-    print(
-        "[Runtime] provider preflight: "
-        f"requested=auto active={active} available={providers}", flush=True
+    from roop.gpu_preflight import get_preflight_result
+    from roop.startup_state_machine import (
+        StartupPhase,
+        get_startup_state_machine,
+        execute_boot,
+        execute_dependency_preflight,
+        execute_dll_runtime_preflight,
+        execute_ort_preflight,
+        execute_gpu_preflight,
+        execute_provider_admission,
     )
+    sm = get_startup_state_machine()
+    sm.execute_phase(StartupPhase.BOOT, execute_boot)
+    sm.execute_phase(StartupPhase.DEPENDENCY_PREFLIGHT, execute_dependency_preflight)
+    sm.execute_phase(StartupPhase.DLL_RUNTIME_PREFLIGHT, execute_dll_runtime_preflight)
+    sm.execute_phase(StartupPhase.ORT_PREFLIGHT, execute_ort_preflight)
+    sm.execute_phase(StartupPhase.GPU_PREFLIGHT, execute_gpu_preflight)
+    sm.execute_phase(StartupPhase.PROVIDER_ADMISSION, execute_provider_admission)
 
 
 if __name__ == "__main__":
@@ -339,44 +298,20 @@ def _run_cli_benchmark(faces: str, mode: str, apply_result: bool) -> int:
 
 
 def _announce_react_backend_when_ready(api_thread, api_port):
-    """Publish the React URL only after both halves of startup are usable.
-
-    The API runs in a daemon thread so the launcher can start while the legacy
-    Gradio UI initializes on the main thread.  Printing the URL immediately
-    after ``api_thread.start()`` races the webview: the port may not be bound
-    yet, and ``CFG`` is still empty until ``core.run()`` begins.  The React app
-    can then mount against a live HTML shell while its first API calls return
-    empty or initializing data, which is indistinguishable from a blank UI in
-    a Pinokio webview.
-
-    Keep this wait in the backend rather than adding a second Node server or a
-    machine-specific delay.  It works on cold starts and slower laptops alike,
-    and it only changes the React launcher's readiness signal.  The legacy
-    launcher still receives its historical early URL marker below.
-    """
-    try:
-        timeout = max(30.0, float(os.environ.get("ROOP_REACT_READY_TIMEOUT", "180")))
-    except (TypeError, ValueError):
-        timeout = 180.0
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if not api_thread.is_alive():
-            print("[Backend] React startup failed: the API thread exited before readiness.",
-                  flush=True)
-            return False
-        if getattr(globals, "CFG", None) is not None:
-            try:
-                with socket.create_connection(("127.0.0.1", api_port), timeout=0.25):
-                    print(f"[Backend] listening on http://127.0.0.1:{api_port}", flush=True)
-                    return True
-            except OSError:
-                # Uvicorn may still be between startup and bind.  Retry rather
-                # than allowing Pinokio to open a URL that can fail once.
-                pass
-        time.sleep(0.1)
-    print(f"[Backend] React startup timed out after {timeout:.0f}s waiting for readiness.",
-          flush=True)
-    return False
+    """Publish the React URL only after both halves of startup are usable."""
+    from roop.startup_state_machine import (
+        StartupPhase,
+        PhaseStatus,
+        get_startup_state_machine,
+        execute_api_ready,
+        execute_ui_ready,
+    )
+    sm = get_startup_state_machine()
+    api_res = sm.execute_phase(StartupPhase.API_READY, execute_api_ready, api_thread, api_port)
+    if api_res.status == PhaseStatus.FATAL:
+        return False
+    ui_res = sm.execute_phase(StartupPhase.UI_READY, execute_ui_ready, api_port, True)
+    return ui_res.status != PhaseStatus.FATAL
 
 
 if __name__ == '__main__':
