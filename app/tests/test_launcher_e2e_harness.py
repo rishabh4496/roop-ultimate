@@ -44,6 +44,7 @@ if str(APP) not in sys.path:
     sys.path.insert(0, str(APP))
 
 import install_state
+import fixtures
 
 
 def find_node() -> Optional[str]:
@@ -53,8 +54,7 @@ def find_node() -> Optional[str]:
     roots = [
         os.environ.get("PINOKIO_HOME"),
         os.path.abspath(os.path.join(str(ROOT), os.pardir, os.pardir)),
-        r"G:\pinokio",
-        r"C:\pinokio",
+        fixtures.pinokio_home(),
     ]
     for r in filter(None, roots):
         for rel in (
