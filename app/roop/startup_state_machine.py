@@ -26,6 +26,41 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 
+class StartupError(RuntimeError):
+    """Structured error for fatal startup dependency, runtime, or configuration failures."""
+
+    def __init__(
+        self,
+        phase: StartupPhase | str,
+        component: str,
+        reason: str,
+        detected_version: str | None = None,
+        expected_version: str | None = None,
+        next_action: str | None = None,
+        details: Dict[str, Any] | None = None,
+    ):
+        super().__init__(reason)
+        self.phase = phase if isinstance(phase, StartupPhase) else StartupPhase(str(phase))
+        self.component = component
+        self.reason = reason
+        self.detected_version = detected_version
+        self.expected_version = expected_version
+        self.next_action = next_action
+        self.details = details or {}
+
+    def as_phase_result(self) -> PhaseResult:
+        return PhaseResult(
+            phase=self.phase,
+            status=PhaseStatus.FATAL,
+            component=self.component,
+            reason=self.reason,
+            detected_version=self.detected_version,
+            expected_version=self.expected_version,
+            next_action=self.next_action,
+            details=self.details,
+        )
+
+
 class StartupPhase(str, enum.Enum):
     BOOT = "BOOT"
     DEPENDENCY_PREFLIGHT = "DEPENDENCY_PREFLIGHT"
@@ -282,6 +317,8 @@ class StartupStateMachine:
         try:
             res = fn(*args, **kwargs)
             return self.record(res)
+        except StartupError as exc:
+            return self.record(exc.as_phase_result())
         except SystemExit:
             raise
         except Exception as exc:
@@ -436,9 +473,9 @@ def execute_dll_runtime_preflight() -> PhaseResult:
             if hardware.vendor == "nvidia" and compatibility.get("status") == "failed":
                 return PhaseResult(
                     phase=StartupPhase.DLL_RUNTIME_PREFLIGHT,
-                    status=PhaseStatus.DEGRADED,
+                    status=PhaseStatus.FATAL,
                     component="tensorrt_dlls",
-                    reason="; ".join(compatibility.get("failure_reasons") or ["Windows native runtime compatibility failed"]),
+                    reason="; ".join(compatibility.get("failure_reasons") or ["Required Windows native runtime components are missing"]),
                     detected_version="none",
                     expected_version="TensorRT 10.x runtime libraries",
                     next_action="Install TensorRT runtime libraries via Pinokio or pip install tensorrt",
@@ -725,12 +762,22 @@ def execute_config_load(config_path: str = "config.yaml") -> PhaseResult:
     from settings import Settings
     try:
         cfg = Settings(config_path)
+        if getattr(cfg, "provider_active", "") in ("unknown", "none"):
+            return PhaseResult(
+                phase=StartupPhase.CONFIG_LOAD,
+                status=PhaseStatus.FATAL,
+                component="settings",
+                reason=f"Configuration provider state is unknown: {getattr(cfg, 'degradation_reason', 'decision failure')}",
+                next_action="Verify ONNX Runtime installation and provider configuration",
+            )
         return PhaseResult(
             phase=StartupPhase.CONFIG_LOAD,
             status=PhaseStatus.SUCCESS,
             component="settings",
             details={"provider": cfg.provider, "max_threads": cfg.max_threads},
         )
+    except StartupError as exc:
+        return exc.as_phase_result()
     except Exception as exc:
         return PhaseResult(
             phase=StartupPhase.CONFIG_LOAD,
@@ -826,7 +873,71 @@ def execute_api_ready(api_thread, api_port: int, timeout: float = 180.0) -> Phas
 
 
 def execute_ui_ready(api_port: int, is_react: bool = True) -> PhaseResult:
-    """Phase 10: UI_READY - Verify UI build and emit Pinokio capture URL."""
+    """Phase 10: UI_READY - Verify UI build, environment readiness, and emit Pinokio capture URL."""
+    sm = get_startup_state_machine()
+
+    if sm.is_failed:
+        return PhaseResult(
+            phase=StartupPhase.UI_READY,
+            status=PhaseStatus.FATAL,
+            component="startup",
+            reason="Cannot declare UI ready: an earlier startup phase encountered a fatal failure",
+            next_action="Resolve earlier startup phase failures before launching UI",
+        )
+
+    # Gate 1: Verify ORT is valid
+    ort_res = sm.get_result(StartupPhase.ORT_PREFLIGHT)
+    if not ort_res or ort_res.status == PhaseStatus.FATAL:
+        return PhaseResult(
+            phase=StartupPhase.UI_READY,
+            status=PhaseStatus.FATAL,
+            component="onnxruntime",
+            reason="Cannot declare UI ready: ONNX Runtime preflight failed or is invalid",
+            next_action="Repair ONNX Runtime environment",
+        )
+
+    # Gate 2: Verify provider state is known
+    prov_res = sm.get_result(StartupPhase.PROVIDER_ADMISSION)
+    if not prov_res or prov_res.status == PhaseStatus.FATAL:
+        return PhaseResult(
+            phase=StartupPhase.UI_READY,
+            status=PhaseStatus.FATAL,
+            component="provider",
+            reason="Cannot declare UI ready: Provider admission failed",
+            next_action="Verify provider selection and hardware compatibility",
+        )
+    active_provider = prov_res.details.get("active", "")
+    if not active_provider or active_provider in ("unknown", "none"):
+        return PhaseResult(
+            phase=StartupPhase.UI_READY,
+            status=PhaseStatus.FATAL,
+            component="provider",
+            reason=f"Cannot declare UI ready: Active provider is {active_provider or 'unknown'}",
+            next_action="Select a valid execution provider",
+        )
+
+    # Gate 3: Verify configuration is valid
+    cfg_res = sm.get_result(StartupPhase.CONFIG_LOAD)
+    if not cfg_res or cfg_res.status == PhaseStatus.FATAL:
+        return PhaseResult(
+            phase=StartupPhase.UI_READY,
+            status=PhaseStatus.FATAL,
+            component="settings",
+            reason="Cannot declare UI ready: Configuration is invalid or failed to load",
+            next_action="Repair config.yaml syntax",
+        )
+
+    # Gate 4: Verify required native runtime is not missing
+    dll_res = sm.get_result(StartupPhase.DLL_RUNTIME_PREFLIGHT)
+    if dll_res and dll_res.status == PhaseStatus.FATAL:
+        return PhaseResult(
+            phase=StartupPhase.UI_READY,
+            status=PhaseStatus.FATAL,
+            component="runtime_dlls",
+            reason="Cannot declare UI ready: Required native runtime is missing",
+            next_action="Install required native runtime libraries",
+        )
+
     if is_react:
         from pathlib import Path
         repo_root = Path(__file__).resolve().parent.parent.parent

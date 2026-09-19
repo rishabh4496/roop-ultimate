@@ -14,6 +14,7 @@ from roop.startup_state_machine import (
     StartupPhase,
     PhaseStatus,
     PhaseResult,
+    StartupError,
     StartupStateMachine,
     PHASE_SEQUENCE,
     format_fatal_diagnostic,
@@ -201,6 +202,78 @@ class TestStartupStateMachine(unittest.TestCase):
         with patch("sys.stdout", stdout_buf):
             # Because API failed, UI_READY is never called, so stdout has no URL
             self.assertNotIn("[Backend] listening on http", stdout_buf.getvalue())
+
+    def test_startup_error_generates_fatal_phase_result(self):
+        err = StartupError(
+            phase=StartupPhase.ORT_PREFLIGHT,
+            component="onnxruntime",
+            reason="Broken ORT runtime",
+            detected_version="none",
+            expected_version="1.23.2",
+            next_action="Reinstall ORT",
+        )
+        res = err.as_phase_result()
+        self.assertEqual(res.status, PhaseStatus.FATAL)
+        self.assertEqual(res.phase, StartupPhase.ORT_PREFLIGHT)
+        self.assertEqual(res.component, "onnxruntime")
+        self.assertEqual(res.reason, "Broken ORT runtime")
+
+    def test_ui_ready_never_reports_ready_when_ort_invalid(self):
+        self.sm.record_fatal(StartupPhase.ORT_PREFLIGHT, "onnxruntime", "ORT invalid")
+        with patch("roop.startup_state_machine.get_startup_state_machine", return_value=self.sm):
+            res = execute_ui_ready(8001, is_react=True)
+            self.assertEqual(res.status, PhaseStatus.FATAL)
+            self.assertIn("earlier startup phase encountered a fatal failure", res.reason)
+
+    def test_ui_ready_never_reports_ready_when_provider_state_unknown(self):
+        self.sm.record_success(StartupPhase.BOOT, "boot")
+        self.sm.record_success(StartupPhase.DEPENDENCY_PREFLIGHT, "deps")
+        self.sm.record_success(StartupPhase.DLL_RUNTIME_PREFLIGHT, "dlls")
+        self.sm.record_success(StartupPhase.ORT_PREFLIGHT, "ort")
+        self.sm.record_success(StartupPhase.GPU_PREFLIGHT, "gpu")
+        # Provider admission with unknown active provider
+        self.sm.record(
+            PhaseResult(
+                phase=StartupPhase.PROVIDER_ADMISSION,
+                status=PhaseStatus.DEGRADED,
+                component="provider",
+                reason="Unknown provider",
+                details={"active": "none"},
+            )
+        )
+        with patch("roop.startup_state_machine.get_startup_state_machine", return_value=self.sm):
+            res = execute_ui_ready(8001, is_react=True)
+            self.assertEqual(res.status, PhaseStatus.FATAL)
+            self.assertIn("Active provider is none", res.reason)
+
+    def test_ui_ready_never_reports_ready_when_config_invalid(self):
+        self.sm.record_success(StartupPhase.BOOT, "boot")
+        self.sm.record_success(StartupPhase.DEPENDENCY_PREFLIGHT, "deps")
+        self.sm.record_success(StartupPhase.DLL_RUNTIME_PREFLIGHT, "dlls")
+        self.sm.record_success(StartupPhase.ORT_PREFLIGHT, "ort")
+        self.sm.record_success(StartupPhase.GPU_PREFLIGHT, "gpu")
+        self.sm.record(
+            PhaseResult(
+                phase=StartupPhase.PROVIDER_ADMISSION,
+                status=PhaseStatus.SUCCESS,
+                component="provider",
+                details={"active": "cuda"},
+            )
+        )
+        self.sm.record_fatal(StartupPhase.CONFIG_LOAD, "settings", "Invalid yaml in config.yaml")
+        with patch("roop.startup_state_machine.get_startup_state_machine", return_value=self.sm):
+            res = execute_ui_ready(8001, is_react=True)
+            self.assertEqual(res.status, PhaseStatus.FATAL)
+            self.assertIn("earlier startup phase encountered a fatal failure", res.reason)
+
+    def test_ui_ready_never_reports_ready_when_native_runtime_missing(self):
+        self.sm.record_success(StartupPhase.BOOT, "boot")
+        self.sm.record_success(StartupPhase.DEPENDENCY_PREFLIGHT, "deps")
+        self.sm.record_fatal(StartupPhase.DLL_RUNTIME_PREFLIGHT, "runtime_dlls", "Missing native CUDA runtime")
+        with patch("roop.startup_state_machine.get_startup_state_machine", return_value=self.sm):
+            res = execute_ui_ready(8001, is_react=True)
+            self.assertEqual(res.status, PhaseStatus.FATAL)
+            self.assertIn("earlier startup phase encountered a fatal failure", res.reason)
 
 
 if __name__ == "__main__":
