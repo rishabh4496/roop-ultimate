@@ -528,10 +528,14 @@ def _classical_video_inplace(path, mode, scale):
     # Resolve input dims so the output can be capped to the encoder's limit —
     # NVENC rejects frames past 4096 (h264) / 8192 (hevc/av1), which is exactly
     # how ×4 of an already-large source used to fail (silently) mid-run.
-    cap = cv2.VideoCapture(path)
-    in_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 0)
-    in_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0)
-    cap.release()
+    cap = None
+    try:
+        cap = cv2.VideoCapture(path)
+        in_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 0)
+        in_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0)
+    finally:
+        if cap is not None:
+            cap.release()
     if in_w <= 0 or in_h <= 0:
         _progress["error"] = f"{label} upscale: couldn't read video dimensions of {os.path.basename(path)}"
         return
@@ -798,11 +802,15 @@ def _interp_video_minterpolate(path, factor):
     stem = os.path.splitext(os.path.basename(path))[0]
     tmp = os.path.join(d, f".interp_{stem}{ext}")
 
-    cap = cv2.VideoCapture(path)
-    w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 0)
-    h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0)
-    fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
-    cap.release()
+    cap = None
+    try:
+        cap = cv2.VideoCapture(path)
+        w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 0)
+        h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0)
+        fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
+    finally:
+        if cap is not None:
+            cap.release()
     enc = _select_upscale_encoder(w, h)
     q = roop_globals.video_quality
     vf = f"minterpolate=fps={fps * factor:.6f}:mi_mode=mci:mc_mode=aobmc:vsbmc=1"

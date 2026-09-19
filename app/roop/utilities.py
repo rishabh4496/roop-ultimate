@@ -443,6 +443,33 @@ if platform.system().lower() == "darwin":
 
 
 # https://github.com/facefusion/facefusion/blob/master/facefusion
+def detect_fps_fractional(target_path: str) -> str:
+    """Extract exact fractional r_frame_rate string (e.g. '24000/1001', '30/1') using ffprobe.
+
+    Falls back to stringified detect_fps() if ffprobe is unavailable or fails.
+    """
+    if target_path and target_path.lower().endswith('.webp'):
+        return str(detect_fps(target_path))
+    try:
+        from roop.ffmpeg_path import ffprobe_binary
+        cmd = [
+            ffprobe_binary(), "-v", "0", "-of", "csv=p=0",
+            "-select_streams", "v:0",
+            "-show_entries", "stream=r_frame_rate",
+            target_path
+        ]
+        res = subprocess.run(cmd, capture_output=True, text=True, check=False)
+        out = (res.stdout or "").strip()
+        if out and "/" in out:
+            num, den = out.split("/", 1)
+            num_i, den_i = int(num), int(den)
+            if den_i > 0 and num_i > 0:
+                return out
+    except Exception as _degrade_error:
+        _swallowed("utilities.py:detect_fps_fractional", _degrade_error, "fallback continued")
+    return str(detect_fps(target_path))
+
+
 def detect_fps(target_path: str) -> float:
     # Animated WebP: OpenCV returns 0 FPS — derive from PIL frame durations instead
     if target_path and target_path.lower().endswith('.webp'):
@@ -458,8 +485,6 @@ def detect_fps(target_path: str) -> float:
                         durations.append(d)
                     print(f"[detect_fps] WebP '{os.path.basename(target_path)}': "
                           f"{n} frames, raw durations (ms) = {durations}")
-                    # Treat None or 0 as 100 ms (browsers use ~100 ms as the
-                    # effective minimum for animated WebP, similar to GIF).
                     cleaned = [(d if d and d > 0 else 100) for d in durations]
                     avg_ms = sum(cleaned) / len(cleaned)
                     fps = round(1000.0 / avg_ms, 2)
@@ -467,12 +492,43 @@ def detect_fps(target_path: str) -> float:
                     return fps
         except Exception as exc:
             print(f"[detect_fps] WebP duration read failed: {exc}")
-        return 10.0  # safe fallback: 100 ms per frame
+        return 10.0
+
+    # Primary: Dynamic fractional FPS extraction using ffprobe
+    try:
+        from roop.ffmpeg_path import ffprobe_binary
+        cmd = [
+            ffprobe_binary(), "-v", "0", "-of", "csv=p=0",
+            "-select_streams", "v:0",
+            "-show_entries", "stream=r_frame_rate",
+            target_path
+        ]
+        res = subprocess.run(cmd, capture_output=True, text=True, check=False)
+        out = (res.stdout or "").strip()
+        if out and "/" in out:
+            num, den = out.split("/", 1)
+            num_i, den_i = int(num), int(den)
+            if den_i > 0 and num_i > 0:
+                val = num_i / den_i
+                if np.isfinite(val) and 0.0 < val <= 240.0:
+                    return constant_frame_rate(val)
+    except Exception as _degrade_error:
+        _swallowed("utilities.py:detect_fps", _degrade_error, "fallback continued")
+
+    # Fallback: OpenCV VideoCapture with robust try/finally release
     fps = 24.0
-    cap = cv2.VideoCapture(target_path)
-    if cap.isOpened():
-        fps = cap.get(cv2.CAP_PROP_FPS)
-    cap.release()
+    cap = None
+    try:
+        cap = cv2.VideoCapture(target_path)
+        if cap.isOpened():
+            val = cap.get(cv2.CAP_PROP_FPS)
+            if val and val > 0:
+                fps = val
+    except Exception:
+        pass
+    finally:
+        if cap is not None:
+            cap.release()
     return constant_frame_rate(fps)
 
 

@@ -544,9 +544,13 @@ def get_video_frame_total(video_path: str) -> int:
         except Exception as _degrade_error:
             _swallowed("roop/capturer.py:527", _degrade_error, "fallback continued")
             return 1
-    capture = cv2.VideoCapture(video_path)
-    video_frame_total = int(capture.get(cv2.CAP_PROP_FRAME_COUNT))
-    capture.release()
+    capture = None
+    try:
+        capture = cv2.VideoCapture(video_path)
+        video_frame_total = int(capture.get(cv2.CAP_PROP_FRAME_COUNT))
+    finally:
+        if capture is not None:
+            capture.release()
     if video_frame_total > 0:
         return video_frame_total
     # cv2 could not index the file (seen on long H.265). Everything downstream —

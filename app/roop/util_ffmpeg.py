@@ -285,20 +285,28 @@ def extract_frames(target_path : str, trim_frame_start, trim_frame_end, fps : fl
 def create_video(target_path: str, dest_filename: str, fps: float = 24.0, temp_directory_path: str = None) -> None:
     if temp_directory_path is None:
         temp_directory_path = util.get_temp_directory_path(target_path)
-    # scale=trunc(iw/2)*2:trunc(ih/2)*2 rounds odd dimensions down to even, which is
-    # required by yuv420p / libx264. Without this, frames with odd width or height
-    # cause ffmpeg to fail silently and produce an empty (corrupt) output file.
-    fps = util.constant_frame_rate(fps)
-    vf = util.cfr_video_filter(fps) + ',scale=trunc(iw/2)*2:trunc(ih/2)*2,pad=ceil(iw/2)*2:ceil(ih/2)*2,colorspace=bt709:iall=bt601-6-625:fast=1'
+
+    # Fractional FPS extraction: pass exact fractional r_frame_rate directly into -framerate
+    framerate_str = str(fps)
+    try:
+        if target_path and os.path.isfile(target_path):
+            fractional = util.detect_fps_fractional(target_path)
+            if fractional:
+                framerate_str = fractional
+    except Exception:
+        pass
+
+    fps_num = util.constant_frame_rate(fps)
+    vf = util.cfr_video_filter(fps_num) + ',scale=trunc(iw/2)*2:trunc(ih/2)*2,pad=ceil(iw/2)*2:ceil(ih/2)*2,colorspace=bt709:iall=bt601-6-625:fast=1'
     run_ffmpeg([
-        '-framerate', str(fps),
+        '-framerate', framerate_str,
         '-i', os.path.join(temp_directory_path, f'%06d.{roop.globals.CFG.output_image_format}'),
         '-c:v', 'libx264',
         *_rate_control('libx264', roop.globals.video_quality),
         '-pix_fmt', 'yuv420p',
         '-movflags', '+faststart',
         '-vf', f'{vf},pad=ceil(iw/2)*2:ceil(ih/2)*2',
-        '-r', str(fps),
+        '-r', framerate_str,
         '-vsync', 'cfr',
         '-fps_mode', 'cfr',
         '-an',

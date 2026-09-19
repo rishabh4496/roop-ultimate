@@ -86,12 +86,14 @@ def extras_apply(file: UploadFile = File(...),
     outpath = os.path.join(out_dir, "edited_" + os.path.splitext(os.path.basename(path))[0] + ".mp4")
     raw_tmp = os.path.join(out_dir, f".raw_edited_{os.path.splitext(os.path.basename(path))[0]}_{ow}x{oh}.mp4")
     writer = cv2.VideoWriter(raw_tmp, cv2.VideoWriter_fourcc(*"mp4v"), fps, (ow, oh))
-    for i in range(1, total + 1):
-        fr = get_video_frame(path, i)
-        if fr is None:
-            continue
-        writer.write(_process_frame(fr))
-    writer.release()
+    try:
+        for i in range(1, total + 1):
+            fr = get_video_frame(path, i)
+            if fr is None:
+                continue
+            writer.write(_process_frame(fr))
+    finally:
+        writer.release()
     from roop.util_ffmpeg import finalize_web_video
     if not finalize_web_video(raw_tmp, outpath, audio_source=path, delete_raw=True):
         if os.path.isfile(raw_tmp):
@@ -169,16 +171,18 @@ def extras_enhance(file: UploadFile = File(...),
             fps = 30
         raw_tmp = os.path.join(out_dir, f".raw_{operation}_{subtype}_{stem}.mp4")
         writer = cv2.VideoWriter(raw_tmp, cv2.VideoWriter_fourcc(*"mp4v"), fps, (ow, oh))
-        writer.write(out_first)
-        for i in range(2, total + 1):
-            fr = get_video_frame(path, i)
-            if fr is None:
-                continue
-            res = proc.Run(fr)
-            if res.shape[:2] != (oh, ow):
-                res = cv2.resize(res, (ow, oh))
-            writer.write(res)
-        writer.release()
+        try:
+            writer.write(out_first)
+            for i in range(2, total + 1):
+                fr = get_video_frame(path, i)
+                if fr is None:
+                    continue
+                res = proc.Run(fr)
+                if res.shape[:2] != (oh, ow):
+                    res = cv2.resize(res, (ow, oh))
+                writer.write(res)
+        finally:
+            writer.release()
         from roop.util_ffmpeg import finalize_web_video
         if not finalize_web_video(raw_tmp, outpath, audio_source=path, delete_raw=True):
             if os.path.isfile(raw_tmp):
