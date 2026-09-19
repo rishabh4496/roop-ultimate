@@ -7,7 +7,16 @@ From the launcher folder:
     app\env\Scripts\python.exe diagnose_trt.py     (Windows)
     app/env/bin/python diagnose_trt.py             (Linux)
 """
-import os, sys, glob
+import glob
+import os
+import sys
+import tempfile
+
+APP_ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "app")
+if APP_ROOT not in sys.path:
+    sys.path.insert(0, APP_ROOT)
+
+from roop.trt_probe import TINY_ONNX_PROBE_BYTES, write_tiny_probe
 
 print("=" * 70)
 print("PYTHON :", sys.executable)
@@ -59,16 +68,12 @@ print("(watch for 'LoadLibrary failed with error 126', a version mismatch, or")
 print(" 'Failed to create TensorrtExecutionProvider')")
 print("=" * 70)
 try:
-    import numpy as np
-    from onnx import helper, TensorProto
     import onnx
-    X = helper.make_tensor_value_info("X", TensorProto.FLOAT, [1, 4])
-    Y = helper.make_tensor_value_info("Y", TensorProto.FLOAT, [1, 4])
-    node = helper.make_node("Relu", ["X"], ["Y"])
-    graph = helper.make_graph([node], "g", [X], [Y])
-    model = helper.make_model(graph, opset_imports=[helper.make_opsetid("", 13)])
-    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_trt_probe.onnx")
-    onnx.save(model, path)
+    model = onnx.load_from_string(TINY_ONNX_PROBE_BYTES)
+    onnx.checker.check_model(model, full_check=False)
+    with tempfile.NamedTemporaryFile(prefix="roop_trt_probe_", suffix=".onnx", delete=False) as handle:
+        temp_name = handle.name
+    path = write_tiny_probe(temp_name)
 
     so = ort.SessionOptions()
     so.log_severity_level = 1  # WARNING+ - shows the real EP load error without verbose noise
@@ -80,3 +85,9 @@ try:
         print(">>> FAILURE: TensorRT EP was dropped — see the verbose error above.")
 except Exception as e:
     print("probe failed:", repr(e))
+finally:
+    if "path" in locals():
+        try:
+            os.unlink(path)
+        except OSError:
+            pass

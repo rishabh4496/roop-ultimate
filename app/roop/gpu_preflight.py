@@ -19,14 +19,10 @@ import os
 import sys
 from typing import Any, Dict, List, Optional, Tuple
 
-# Tiny in-memory 1-node Relu ONNX model (91 bytes).
-# Generated via onnx.helper: Float tensor X [1, 4] -> Relu -> Y [1, 4], opset 13.
-# Zero external package dependencies needed to deserialize or construct in ORT.
-_TINY_ONNX_PROBE_BYTES = (
-    b"\x08\n:?\n\x0c\n\x01X\x12\x01Y\"\x04Relu\x12\x05probeZ\x13\n\x01X\x12\x0e\n\x0c\x08"
-    b"\x01\x12\x08\n\x02\x08\x01\n\x02\x08\x04b\x13\n\x01Y\x12\x0e\n\x0c\x08\x01\x12\x08\n"
-    b"\x02\x08\x01\n\x02\x08\x04B\x04\n\x00\x10\r"
-)
+from .trt_probe import TINY_ONNX_PROBE_BYTES
+
+# Backward-compatible private alias used by the existing provider tests.
+_TINY_ONNX_PROBE_BYTES = TINY_ONNX_PROBE_BYTES
 
 _REGISTERED_DLL_DIRS: List[str] = []
 _DLL_HANDLES: List[object] = []
