@@ -15,14 +15,12 @@ import subprocess
 import sys
 from typing import Any
 
-
-ORT_DISTRIBUTIONS = {
-    "onnxruntime",
-    "onnxruntime-gpu",
-    "onnxruntime-directml",
-    "onnxruntime-rocm",
-    "onnxruntime-silicon",
-}
+from ort_package_detector import (
+    ORTInspectionError,
+    ORT_DISTRIBUTIONS,
+    inspect_onnxruntime,
+    scan_shadow_paths,
+)
 
 
 def _normalise(name: str) -> str:
@@ -48,29 +46,26 @@ def _distributions() -> dict[str, str]:
 
 
 def detect_shadowing(app_dir: str) -> None:
-    """Detect local files/directories and conflicting ORT distributions."""
-    cwd = os.getcwd()
-    check_paths = [cwd]
-    if app_dir not in check_paths:
-        check_paths.append(app_dir)
-
-    for path in check_paths:
-        py_shadow = os.path.join(path, "onnxruntime.py")
-        if os.path.isfile(py_shadow):
-            _fatal(f"Local file shadows onnxruntime package: {py_shadow}")
-
-        dir_shadow = os.path.join(path, "onnxruntime")
-        if os.path.isdir(dir_shadow) and "site-packages" not in os.path.normpath(dir_shadow).lower():
-            _fatal(f"Local directory shadows onnxruntime package: {dir_shadow}")
-
+    """Run the explicit pre-import namespace/shadow scan."""
+    namespace_paths, shadow_paths, package_roots = scan_shadow_paths([app_dir])
+    if namespace_paths:
+        _fatal("onnxruntime package directory is missing __init__.py: " + ", ".join(namespace_paths))
+    if shadow_paths:
+        _fatal("shadowed ONNX Runtime artifacts found on import paths: " + ", ".join(shadow_paths))
     installed = _distributions()
     ort_packages = sorted(name for name in ORT_DISTRIBUTIONS if name in installed)
-    if len(ort_packages) > 1:
+    if len(ort_packages) != 1:
         _fatal(
-            "Conflicting ONNX Runtime distributions are installed: "
-            + ", ".join(ort_packages)
-            + ". Exactly one ORT distribution is allowed."
+            "Expected exactly one ONNX Runtime distribution, found "
+            + (", ".join(ort_packages) if ort_packages else "none")
         )
+    expected_root = os.path.dirname(
+        str(importlib.metadata.distribution(ort_packages[0]).locate_file("onnxruntime/__init__.py"))
+    )
+    foreign_roots = [root for root in package_roots if os.path.normcase(os.path.realpath(root))
+                     != os.path.normcase(os.path.realpath(expected_root))]
+    if foreign_roots:
+        _fatal("duplicate or shadowed onnxruntime package roots found: " + ", ".join(foreign_roots))
 
 
 def verify_numpy() -> None:
@@ -88,22 +83,24 @@ def verify_onnxruntime() -> list[str]:
     """Import ORT and require a real provider API and non-empty result."""
     try:
         import onnxruntime as ort
+        report = inspect_onnxruntime(module=ort)
+    except ORTInspectionError as exc:
+        _fatal(str(exc))
     except Exception as exc:
-        _fatal(f"Failed to import onnxruntime: {exc}")
+        _fatal(f"Failed to import or inspect onnxruntime: {exc}")
 
-    ort_file = getattr(ort, "__file__", None)
-    if not ort_file:
-        _fatal(
-            "onnxruntime resolved to an unpopulated namespace package "
-            "(__file__ is None). Stale or corrupted package artifacts detected."
-        )
-    version = getattr(ort, "__version__", "unknown")
-    if not isinstance(version, str) or not version.strip() or version == "unknown":
-        _fatal(f"imported onnxruntime ({ort_file}) does not expose a usable __version__")
+    print(f"Python executable        : {sys.executable}", flush=True)
+    print(f"sys.prefix              : {sys.prefix}", flush=True)
+    print(f"sys.path                : {sys.path}", flush=True)
+    print(f"onnxruntime.__file__    : {report.module_path}", flush=True)
+    print(f"onnxruntime spec.origin : {report.spec_origin}", flush=True)
+    print(f"onnxruntime distribution: {report.distribution_location}", flush=True)
+    print(f"onnxruntime version     : {report.module_version}", flush=True)
+
     provider_api = getattr(ort, "get_available_providers", None)
     if not callable(provider_api):
         _fatal(
-            f"imported onnxruntime ({ort_file}) does not expose callable "
+            f"imported onnxruntime ({report.module_path}) does not expose callable "
             "get_available_providers"
         )
     try:
@@ -113,8 +110,6 @@ def verify_onnxruntime() -> list[str]:
     if not providers:
         _fatal("onnxruntime reports an empty list of execution providers")
 
-    print(f"[Verify Runtime] ort.__file__: {ort_file}", flush=True)
-    print(f"[Verify Runtime] ort.version : {version}", flush=True)
     print(f"[Verify Runtime] ort.api     : callable", flush=True)
     print(f"[Verify Runtime] providers   : {providers}", flush=True)
     return providers

@@ -7,6 +7,8 @@ import sys
 import tempfile
 import types
 import unittest
+import importlib.metadata
+from importlib.machinery import ModuleSpec
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
@@ -14,14 +16,25 @@ import verify_ort
 
 
 class TestVerifyOrt(unittest.TestCase):
-    def test_healthy_environment_verifies_successfully(self):
-        """A healthy environment with callable get_available_providers passes without error."""
+    @staticmethod
+    def _healthy_ort():
         mock_ort = types.ModuleType("onnxruntime")
-        mock_ort.__file__ = "/env/lib/site-packages/onnxruntime/__init__.py"
-        mock_ort.__version__ = "1.23.2"
+        distribution = importlib.metadata.distribution("onnxruntime-gpu")
+        module_path = str(distribution.locate_file("onnxruntime/__init__.py"))
+        mock_ort.__file__ = module_path
+        mock_ort.__version__ = distribution.version
+        mock_ort.__spec__ = ModuleSpec(
+            "onnxruntime", loader=None, origin=module_path, is_package=True
+        )
+        mock_ort.__path__ = [os.path.dirname(module_path)]
         mock_ort.get_available_providers = lambda: [
             "TensorrtExecutionProvider", "CUDAExecutionProvider", "CPUExecutionProvider"
         ]
+        return mock_ort
+
+    def test_healthy_environment_verifies_successfully(self):
+        """A healthy environment with callable get_available_providers passes without error."""
+        mock_ort = self._healthy_ort()
 
         with patch.dict(sys.modules, {"onnxruntime": mock_ort}):
             # Should not raise SystemExit
@@ -29,8 +42,8 @@ class TestVerifyOrt(unittest.TestCase):
 
     def test_missing_get_available_providers_fails_loudly(self):
         """An onnxruntime module without get_available_providers must fail loudly with exit code 1."""
-        broken_ort = types.ModuleType("onnxruntime")
-        broken_ort.__file__ = "/env/lib/site-packages/onnxruntime/__init__.py"
+        broken_ort = self._healthy_ort()
+        del broken_ort.get_available_providers
         # No get_available_providers attribute
 
         with patch.dict(sys.modules, {"onnxruntime": broken_ort}):
@@ -40,8 +53,7 @@ class TestVerifyOrt(unittest.TestCase):
 
     def test_uncallable_get_available_providers_fails_loudly(self):
         """A non-callable get_available_providers attribute must fail loudly with exit code 1."""
-        broken_ort = types.ModuleType("onnxruntime")
-        broken_ort.__file__ = "/env/lib/site-packages/onnxruntime/__init__.py"
+        broken_ort = self._healthy_ort()
         broken_ort.get_available_providers = "not_a_function"
 
         with patch.dict(sys.modules, {"onnxruntime": broken_ort}):
@@ -51,12 +63,42 @@ class TestVerifyOrt(unittest.TestCase):
 
     def test_namespace_package_no_file_fails_loudly(self):
         """An unpopulated namespace package (__file__ is None) must fail loudly with exit code 1."""
-        namespace_ort = types.ModuleType("onnxruntime")
+        namespace_ort = self._healthy_ort()
         namespace_ort.__file__ = None
+        namespace_ort.__spec__ = ModuleSpec("onnxruntime", loader=None, origin=None, is_package=True)
 
         with patch.dict(sys.modules, {"onnxruntime": namespace_ort}):
             with self.assertRaises(SystemExit) as cm:
                 verify_ort.verify_onnxruntime()
+            self.assertEqual(cm.exception.code, 1)
+
+    def test_sys_path_package_shadowing_detected(self):
+        """A second normal onnxruntime package root is also a shadow artifact."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            os.makedirs(os.path.join(tmpdir, "onnxruntime"), exist_ok=True)
+            Path(os.path.join(tmpdir, "onnxruntime", "__init__.py")).write_text(
+                "__version__ = 'shadow'", encoding="utf-8"
+            )
+            with self.assertRaises(SystemExit) as cm:
+                verify_ort.detect_shadowing(tmpdir)
+            self.assertEqual(cm.exception.code, 1)
+
+    def test_namespace_directory_without_init_detected(self):
+        """A package directory without __init__.py must be rejected explicitly."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            os.makedirs(os.path.join(tmpdir, "onnxruntime"), exist_ok=True)
+            with self.assertRaises(SystemExit) as cm:
+                verify_ort.detect_shadowing(tmpdir)
+            self.assertEqual(cm.exception.code, 1)
+
+    def test_stale_bytecode_shadowing_detected(self):
+        """A stale onnxruntime bytecode artifact must not be accepted."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            pycache = os.path.join(tmpdir, "__pycache__")
+            os.makedirs(pycache, exist_ok=True)
+            Path(os.path.join(pycache, "onnxruntime.cpython-310.pyc")).write_bytes(b"stale")
+            with self.assertRaises(SystemExit) as cm:
+                verify_ort.detect_shadowing(tmpdir)
             self.assertEqual(cm.exception.code, 1)
 
     def test_local_file_shadowing_detected(self):
