@@ -64,6 +64,12 @@ import ui.globals as ui_globals
 app = FastAPI()
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
+# Preview updates several process-wide globals while it performs detection and
+# swapping. React can issue overlapping requests when a user scrubs frames or
+# changes controls quickly, so keep those requests from interleaving and
+# restoring one another's state out of order.
+_preview_request_lock = threading.Lock()
+
 
 def _configuration_ready():
     """Whether core has published the Settings object used by API workers."""
@@ -2969,6 +2975,7 @@ def preview(payload: dict = Body(...)):
     """Render the selected target frame, optionally with a live face swap."""
     if not _configuration_ready():
         return _configuration_initializing()
+    _preview_request_lock.acquire()
     roop_globals.is_preview = True
     try:
         _update_mask_offsets_from_payload(payload)
@@ -3131,6 +3138,7 @@ def preview(payload: dict = Body(...)):
         except Exception as _degrade_error:
             _swallowed("api.py:2883", _degrade_error, "fallback continued")
             pass
+        _preview_request_lock.release()
 
 
 @app.post("/api/preview_upscale")

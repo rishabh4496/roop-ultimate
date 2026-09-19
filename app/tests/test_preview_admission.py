@@ -98,6 +98,15 @@ class PreviewAdmissionTests(unittest.TestCase):
             text = handle.read()
         self.assertIn("and not getattr(roop.globals, 'is_preview', False)", text)
 
+    def test_api_serializes_overlapping_preview_requests(self):
+        """Fast control changes must not interleave process-wide preview globals."""
+        api = os.path.join(_APP, "api.py")
+        with open(api, encoding="utf-8") as handle:
+            text = handle.read()
+        self.assertIn("_preview_request_lock = threading.Lock()", text)
+        self.assertIn("_preview_request_lock.acquire()", text)
+        self.assertIn("_preview_request_lock.release()", text)
+
 
 if __name__ == "__main__":
     unittest.main()
