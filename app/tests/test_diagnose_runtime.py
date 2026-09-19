@@ -74,7 +74,7 @@ class TestDiagnoseRuntime(unittest.TestCase):
             self.assertEqual(data["result"]["status"], "PASS")
 
     def test_degraded_environment_yields_degraded_and_exit_1(self):
-        """When TensorRT falls back or is rejected by sub-7GB policy, result is DEGRADED with exit code 1."""
+        """When TensorRT is unavailable and falls back, result is DEGRADED with exit code 1."""
         mock_preflight = {
             "available_providers": ["CUDAExecutionProvider", "CPUExecutionProvider"],
             "cuda_available": True,

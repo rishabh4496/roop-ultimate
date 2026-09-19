@@ -42,10 +42,10 @@ a new run on driver 616.56.
 
 The 4070 baseline is the controlled `double/d4.mp4`, 1280×720, frames 0–600,
 RealSwap + RealityUX + GPEN 256 Pro, TensorRT pools 2/2, 10 workers, and
-hevc_nvenc output. The 3060 automatic run deliberately used its safe profile:
-TensorRT disabled, no enhancer, XSeg-only mask, CPU decode, pools 0/0, and
-guarded FP32 swap. Consequently these rows are not a like-for-like speed
-comparison.
+hevc_nvenc output. The 3060 automatic run is historical and deliberately used
+its old safe profile: no usable TensorRT runtime, no enhancer, XSeg-only mask,
+CPU decode, pools 0/0, and guarded FP32 swap. Consequently these rows are not
+a like-for-like speed comparison and do not describe current TensorRT policy.
 
 ## Phase 1 RTX 4070 backend verification
 

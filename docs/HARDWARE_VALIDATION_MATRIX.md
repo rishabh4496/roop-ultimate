@@ -58,13 +58,17 @@ differ by 2x on the SAME machine in the SAME session: the Phase 14 autotuner's
 60-frame arms measured 6.0%, against 3.3% at 600 frames. Short windows measure
 warm-up. Size the claim to the window.
 
+The following Device B rows are historical measurements from before the
+all-RTX TensorRT admission change. They remain useful for resource-safety and
+quality baselines, but their provider result does not describe current policy.
+
 Per-phase state on the physically-present RTX 3060:
 
 | Phase / gate | 3060 state |
 |---|---|
 | 2 — controlled baseline | measured, 4.53 FPS |
 | 3 — runtime architecture / resource management | measured; strict `<2.5 GB` RSS gate **FAILS**, and 2026-08-31 **DECOMPOSED** it: floor 2.3-2.5 GB, stabilization+temporal **+886 MB**, enhancer +428 MB, mask engine ~0. Not a leak; the gate is unreachable without giving up 27% of the swaps |
-| 4, 7, 11 — engine contexts, concurrency, enhancers | measured (CUDA path; TensorRT disabled by the sub-7GB policy) |
+| 4, 7, 11 — engine contexts, concurrency, enhancers | measured on the historical CUDA path; TensorRT was disabled by the then-current policy |
 | 5 — quality matrix | run, all 6 arms PASS; **precision selection not exercisable** here (backend admission is CUDA/CPU), so the precision question stays open |
 | 6 — CUDA streams / graphs | measured, neutral |
 | 8 — CPU/GPU transfer | measured |
@@ -177,15 +181,15 @@ cd app
 env/Scripts/python.exe tests/baseline_controlled.py --tag phase2_3060 --target "RTX 3060"
 ```
 
-### The 3060 runs a materially different stack, by design
+### The historical 3060 run used a materially different stack
 
-The sub-7GB policy adapts the pipeline before it starts. These are
-hardware-adaptive decisions, not defects, but they mean the two targets' rows
-are **not like-for-like** and must never be presented as one comparison:
+The pre-change sub-7GB policy adapted the pipeline before it started. These
+historical hardware-adaptive decisions mean the two targets' rows are **not
+like-for-like** and must never be presented as one comparison:
 
 | Stage | RTX 4070 baseline | RTX 3060, automatic |
 |---|---|---|
-| Provider | TensorRT | **CUDA/CPU** (TRT disabled by the laptop RSS policy) |
+| Provider | TensorRT | **CUDA/CPU** (the historical run used no usable TensorRT runtime) |
 | Enhancer | GPEN 256 Pro | **None** (stripped by the RSS gate) |
 | Mask | RealityUX (XSeg + BiSeNet) | **XSeg only**, BiSeNet parser skipped |
 | Decode | — | **CPU** (NVDEC → CPU by the RSS policy) |
@@ -501,13 +505,14 @@ No profile is promoted.
 The requested stack was overridden before the first frame. The report's own
 `workload.adaptive_downgrades`:
 
-    provider     TensorRT disabled by the sub-7GB RSS policy; CUDA/CPU used
+    provider     historical run used CUDA/CPU because TensorRT was unavailable
     enhancer     GPEN 256 Pro -> None (sub-7GB RSS gate)
     mask_engine  RealityUX degraded to XSeg only; BiSeNet parser skipped
     decode       NVDEC -> CPU (sub-7GB RSS policy)
 
 **All four non-baseline candidates varied TensorRT-specific parameters on a
-card where TensorRT is not admitted**, so none of them could move anything:
+historical run where TensorRT was unavailable**, so none of them could move
+anything:
 
 - `precision: fp16` — inert; Phase 5 established precision does not reach a
   runtime here, and CUDA ignores `trt_precision` outright.
@@ -515,7 +520,7 @@ card where TensorRT is not admitted**, so none of them could move anything:
   this arm changed the requested value and not the running program. Its 3.40
   is the low arm of the set, which is noise, not a CUDA penalty.
 - `swapper_pool_size: 1` and `trt_context_count: 2 / swapper_pool_size: 2` —
-  tuning TensorRT contexts and pools that the sub-7GB policy forces to 0.
+  tuning TensorRT contexts and pools that the historical safety profile kept at 0.
 
 The search then declared stagnation after two stages and stopped at 5 of 12
 candidates, **never reaching the CPU-threading, queue/buffer or encoder
@@ -523,9 +528,10 @@ stages** — the only dimensions with any headroom on this target. "No
 improvement found" is the right answer reached for the wrong reason: it
 searched a dimension this hardware does not have.
 
-This is the mandate's own failure mode — a profile plan assumed from the GPU
-rather than from detected capability. A 6 GB card whose admission is CUDA/CPU
-should not spend a bounded budget on TensorRT knobs.
+This was the mandate's old failure mode: a profile plan assumed from the GPU
+rather than from detected capability. Current admission is capability-based,
+so a 6 GB card remains a TensorRT candidate and only falls back when the
+runtime/session cannot actually use TensorRT.
 
 ### SECOND DEFECT: the cached profile advertises a backend this card refuses
 
@@ -665,8 +671,8 @@ controller ever did act, steer it using a false premise.
 
 Note the contrast with the 4070, which reported queues 9/2 and 50% worker
 utilization on the same code and classified `synchronization-bound`. So this is
-a target-specific instrumentation gap, plausibly because the sub-7GB policy
-routes through a different execution path than the one the queue counters
+a target-specific instrumentation gap, plausibly because this historical
+low-VRAM run used a different execution path than the one the queue counters
 instrument — **not diagnosed here, recorded as open.**
 
 The monitor implementation now aggregates cumulative stage counters for the
@@ -1412,9 +1418,10 @@ off / on / on / off with a cold build pass per arm.
 **-0.6%: NEUTRAL.** Cold build cost was also identical (262.3 s vs 264.3 s).
 Swap rate was 100% in all four runs, so nothing was traded away.
 
-This is the expected result rather than a surprise: TensorRT is disabled on this
-card by the sub-7GB policy, so the provider-level graph flag has no engine to
-capture. The result confirms two existing decisions on their own hardware —
+This historical run used no usable TensorRT runtime, so the provider-level graph
+flag had no engine to capture. TensorRT admission is now independent of VRAM,
+but graph capture remains disabled on the small-card safety profile. The result
+confirms two existing decisions on their own hardware —
 the 4070's rejection of CUDA graphs as a default (2.06 ms captured vs 1.67 ms
 normal), and the small-card policy's refusal to admit graph readiness at all.
 

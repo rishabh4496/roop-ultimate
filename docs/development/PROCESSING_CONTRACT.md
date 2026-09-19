@@ -138,8 +138,9 @@ the producer cadence or hardware policy.
   detmask pools, while `runtime_optimizer.AutoTuner.tune` derives bounded
   worker/queue/chunk values from detected capacity. This is tier-based logic,
   not a model-name check.
-- The sub-7GB policy is explicit: `session_pool._auto_pool_defaults`
-  disables automatic TRT/context pools, `ProcessMgr.initialize`
+- The sub-7GB safety profile is explicit: `session_pool._auto_pool_defaults`
+  keeps automatic TRT/context pools at 0/0, while provider admission remains
+  available to capable TensorRT runtimes. `ProcessMgr.initialize`
   (`ProcessMgr.py:834-863`) removes the measured RSS-risk enhancer by default,
   and `run_batch_inmem` (`:1860-1876`) selects CPU decode unless explicitly
   overridden. `ProcessMgr.py:1977-1984` and `:2589-2590` retain one-worker /

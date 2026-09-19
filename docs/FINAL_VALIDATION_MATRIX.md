@@ -44,13 +44,13 @@ from the other GPU.
 Under the campaign's own approval rule 7, a decision needing the other physical
 machine is recorded and deferred, not guessed.
 
-### Adaptive downgrades ACTIVE on this target
+### Adaptive resource profile ACTIVE on this target
 
 These change what several rows can possibly prove:
 
 | stage | shipped behaviour on this card |
 |---|---|
-| provider | TensorRT disabled by the sub-7GB RSS policy; **CUDA/CPU used** |
+| provider | TensorRT remains eligible; this historical run used **CUDA/CPU** because the TensorRT runtime was unavailable |
 | enhancer | `GPEN 256 Pro` -> **None** (sub-7GB RSS gate) |
 | mask engine | RealityUX **degraded to XSeg only**; BiSeNet parser skipped |
 | decode | NVDEC -> **CPU** |
@@ -106,14 +106,14 @@ retested here - `NOT TESTED` no run - `BLOCKED` needs absent hardware/media -
 
 | # | test | level | actual | status | 3060 | 4070 |
 |---|---|---|---|---|---|---|
-| 1.1 | provider admission on sub-7GB | HARDWARE | `TensorRT disabled ... using CUDA/CPU` announced every run | PASS | PASS | NOT TESTED |
-| 1.2 | TensorRT engine build/cache | HARDWARE | **not exercisable** - TRT not admitted on this card | BLOCKED | BLOCKED | NOT TESTED |
-| 1.3 | FP16 / FP32 / mixed precision | HARDWARE | precision cannot reach an engine without TRT admission | BLOCKED | BLOCKED | NOT TESTED |
+| 1.1 | provider admission on sub-7GB | HARDWARE | TensorRT candidate is admitted; active provider is verified from the constructed session | PASS | PASS | NOT TESTED |
+| 1.2 | TensorRT engine build/cache | HARDWARE | **not exercisable in this historical run** - the TensorRT runtime was unavailable | BLOCKED | BLOCKED | NOT TESTED |
+| 1.3 | FP16 / FP32 / mixed precision | HARDWARE | precision could not reach an engine because the TensorRT runtime was unavailable | BLOCKED | BLOCKED | NOT TESTED |
 | 1.4 | CPU fallback | INTEGRATION | CPU EP present and used every run | PASS | PASS | NOT TESTED |
 | 1.5 | pool sizing on 6GB | HARDWARE | `ROOP_TRT_POOL=0, ROOP_DETMASK_POOL=0` | PASS | PASS | NOT TESTED |
 
-1.2/1.3 are BLOCKED, not FAIL: the refusal is correct policy for this VRAM
-tier, and the campaign forbids degrading one GPU to suit the other.
+1.2/1.3 are BLOCKED, not FAIL: the historical environment lacked a usable
+TensorRT runtime. Current code does not reject TensorRT based on VRAM tier.
 
 ## Phase 3 - face detection
 

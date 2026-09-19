@@ -36,7 +36,7 @@ Then automatically verifies all 20 required points:
 
 Repeats across both:
 - 12GB NVIDIA profile (RTX 4070 Desktop: TRT admitted, 2/2 pools)
-- 6GB NVIDIA profile (RTX 3060 Laptop: CUDA fallback by sub-7GB policy, 0/0 pools)
+- 6GB NVIDIA profile (RTX 3060 Laptop: TensorRT candidate with safe 0/0 pools)
 """
 from __future__ import annotations
 
@@ -281,7 +281,9 @@ class GoldenCleanInstallVerification(unittest.TestCase):
             self.assertIn(res_ort.status, (PhaseStatus.SUCCESS, PhaseStatus.DEGRADED))
             res_gpu = sm.execute_phase(StartupPhase.GPU_PREFLIGHT, execute_gpu_preflight)
             self.assertIn(res_gpu.status, (PhaseStatus.SUCCESS, PhaseStatus.DEGRADED))
-            admitted_chain = decode_execution_providers(["cuda" if is_sub_7gb else "tensorrt"])
+            # VRAM tiering selects safe pool/concurrency defaults, but it does
+            # not remove TensorRT from the provider admission chain.
+            admitted_chain = decode_execution_providers(["tensorrt"])
             opts = ort.SessionOptions()
             opts.log_severity_level = 3
             real_sess = ort.InferenceSession(
@@ -303,14 +305,9 @@ class GoldenCleanInstallVerification(unittest.TestCase):
             self.assertEqual(cfg.trt_precision, "mixed", "TensorRT precision mode represented")
 
             res_adm = sm.execute_phase(StartupPhase.PROVIDER_ADMISSION, execute_provider_admission, cfg.provider)
-            if is_sub_7gb:
-                self.assertEqual(res_adm.details["admitted"], "cuda")
-                self.assertEqual(res_adm.details["active"], "cuda")
-                self.assertEqual(res_adm.status, PhaseStatus.DEGRADED)
-            else:
-                self.assertEqual(res_adm.details["admitted"], "tensorrt")
-                self.assertEqual(res_adm.details["active"], "tensorrt")
-                self.assertEqual(res_adm.status, PhaseStatus.SUCCESS)
+            self.assertEqual(res_adm.details["admitted"], "tensorrt")
+            self.assertEqual(res_adm.details["active"], "tensorrt")
+            self.assertEqual(res_adm.status, PhaseStatus.SUCCESS)
 
             res_cfg = sm.execute_phase(StartupPhase.CONFIG_LOAD, execute_config_load, str(cfg_path))
             self.assertEqual(res_cfg.status, PhaseStatus.SUCCESS)
@@ -347,10 +344,7 @@ class GoldenCleanInstallVerification(unittest.TestCase):
             # 18. actual session providers are recorded
             bound_providers = [str(p) for p in real_sess.get_providers()]
             self.assertTrue(len(bound_providers) > 0)
-            if is_sub_7gb:
-                self.assertEqual(bound_providers[0], "CUDAExecutionProvider")
-            else:
-                self.assertEqual(bound_providers[0], "TensorrtExecutionProvider")
+            self.assertEqual(bound_providers[0], "TensorrtExecutionProvider")
 
             # 19. restart works without reinstall
             sm_restart = get_startup_state_machine()
@@ -401,7 +395,7 @@ class GoldenCleanInstallVerification(unittest.TestCase):
     # Secondary Device Profile: 6GB NVIDIA RTX 3060 Laptop
     # ──────────────────────────────────────────────────────────────────────────
     def test_golden_clean_install_6gb_profile(self):
-        """Golden clean install verification on 6GB Laptop profile (CUDA fallback by policy, 0/0 pools)."""
+        """Golden clean install verification on 6GB Laptop profile (TensorRT admitted, 0/0 pools)."""
         self._assert_clean_environment()
         self._run_exact_install_sequence(vram_gb=6.0)
         self._verify_all_20_points(vram_gb=6.0)
