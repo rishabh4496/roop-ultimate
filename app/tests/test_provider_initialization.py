@@ -16,6 +16,7 @@ from pathlib import Path
 from unittest.mock import patch, MagicMock
 
 import onnxruntime as ort
+from fastapi.testclient import TestClient
 import settings
 from settings import Settings
 import roop.globals as roop_globals
@@ -29,7 +30,7 @@ from roop.startup_state_machine import (
     execute_ort_preflight,
     execute_provider_admission,
 )
-from api import get_meta, _public_settings
+from api import app, get_meta, _public_settings
 
 
 class TestProviderInitializationMatrix(unittest.TestCase):
@@ -491,6 +492,46 @@ class TestProviderInitializationMatrix(unittest.TestCase):
                 self.assertTrue(meta["tensorrt_active"])
                 self.assertIn("tensorrt", meta["providers"])
                 self.assertIn("fp16", meta["trt_precisions"])
+
+    def test_public_http_meta_and_settings_keep_6gb_tensorrt_admitted(self):
+        """The public API must not reintroduce a sub-7GB block after backend admission."""
+        mock_preflight = {
+            "available_providers": ["TensorrtExecutionProvider", "CUDAExecutionProvider", "CPUExecutionProvider"],
+            "cuda_available": True,
+            "tensorrt_available": True,
+            "tensorrt_session_usable": True,
+            "active_provider": "TensorrtExecutionProvider",
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = Settings(str(Path(tmpdir) / "config.yaml"))
+            cfg.provider = "tensorrt"
+            cfg.trt_precision = "mixed"
+            roop_globals.CFG = cfg
+            roop_globals.execution_providers = [
+                ("TensorrtExecutionProvider", {}),
+                ("CUDAExecutionProvider", {}),
+                "CPUExecutionProvider",
+            ]
+
+            with patch("roop.gpu_preflight.get_preflight_result", return_value=mock_preflight), \
+                 patch("roop.backend_manager.is_sub_7gb_gpu", return_value=True), \
+                 patch("roop.session_pool._detect_vram_gb", return_value=6.0):
+                with TestClient(app) as client:
+                    meta_response = client.get("/api/meta")
+                    settings_response = client.get("/api/settings")
+
+                self.assertEqual(meta_response.status_code, 200)
+                self.assertEqual(settings_response.status_code, 200)
+                meta = meta_response.json()
+                public_settings = settings_response.json()
+                self.assertTrue(meta["tensorrt_allowed"])
+                self.assertTrue(meta["is_sub_7gb_gpu"])
+                self.assertEqual(meta["requested_provider"], "tensorrt")
+                self.assertEqual(meta["admitted_provider"], "tensorrt")
+                self.assertEqual(meta["active_provider"], "tensorrt")
+                self.assertEqual(meta["trt_precisions"], ["fp32", "fp16", "mixed"])
+                self.assertEqual(public_settings["provider"], "tensorrt")
+                self.assertEqual(public_settings["trt_precision"], "mixed")
 
 
 if __name__ == "__main__":
