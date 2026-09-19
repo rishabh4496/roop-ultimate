@@ -41,7 +41,26 @@ SCOPES = [
     {"platform": "darwin", "arch": "x64", "gpu": ""},
 ]
 
-NODE = shutil.which("node")
+def _find_node():
+    found = shutil.which("node")
+    if found:
+        return found
+    roots = [
+        os.environ.get("PINOKIO_HOME"),
+        os.path.abspath(os.path.join(ROOT, os.pardir, os.pardir)),
+    ]
+    for root in filter(None, roots):
+        for rel in (
+            ("bin", "miniforge", "node.exe"), ("bin", "miniforge", "node"),
+            ("bin", "miniconda", "node.exe"), ("bin", "miniconda", "node"),
+            ("bin", "nodejs", "node.exe"), ("bin", "nodejs", "node"),
+        ):
+            candidate = os.path.join(root, *rel)
+            if os.path.isfile(candidate):
+                return candidate
+    return None
+
+NODE = _find_node()
 
 EVAL_JS = r"""
 const vm = require('node:vm');
