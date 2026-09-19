@@ -103,7 +103,8 @@ class LauncherActivationTests(unittest.TestCase):
         self.assertIn('npm ci --no-audit --no-fund', install)
         self.assertIn('npm ci --no-audit --no-fund', update)
         self.assertIn('!exists(\'react-ui/node_modules/vite/bin/vite.js\')', start)
-        self.assertIn('fs.write', install)
+        self.assertIn('install_state.py begin', install)
+        self.assertIn('install_state.py commit --manifest', install)
         self.assertIn('fs.rm', _read("reset.js"))
 
     def test_insightface_numpy_compatibility_is_repaired_on_all_paths(self):

@@ -4,6 +4,18 @@ module.exports = async (kernel) => {
   return {
     daemon: true,
     run: [
+      {
+        method: "shell.run",
+        params: {
+          path: "app",
+          message: ["python install_state.py recover"]
+        }
+      },
+      {
+        when: "{{exists('.pinokio-install-incomplete.json') || !exists('.pinokio-install-ready.json')}}",
+        method: "script.start",
+        params: { uri: "install.js" }
+      },
       // Never infer readiness from app/env. Verify the final package contract
       // and the actual machine before building or starting the UI. This also
       // reports an explicitly incomplete or missing install marker clearly.

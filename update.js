@@ -1,13 +1,15 @@
 module.exports = {
   run: [{
-    when: "{{exists('.pinokio-install-complete.json')}}",
-    method: "fs.rm",
-    params: { path: ".pinokio-install-complete.json" }
-  }, {
-    method: "fs.write",
+    method: "shell.run",
     params: {
-      path: ".pinokio-install-incomplete.json",
-      json: { schema: 1, state: "in_progress", next_action: "rerun update" }
+      path: "app",
+      message: ["python install_state.py begin --stage update"]
+    }
+  }, {
+    method: "shell.run",
+    params: {
+      path: "app",
+      message: ["python install_state.py stage --stage git_update"]
     }
   }, {
     method: "shell.run",
@@ -20,9 +22,21 @@ module.exports = {
   }, {
     method: "shell.run",
     params: {
+      path: "app",
+      message: ["python install_state.py stage --stage python_requirements"]
+    }
+  }, {
+    method: "shell.run",
+    params: {
       venv: "env",
       path: "app",
       message: "uv pip install -r requirements.txt"
+    }
+  }, {
+    method: "shell.run",
+    params: {
+      path: "app",
+      message: ["python install_state.py stage --stage pytorch_gpu_runtime"]
     }
   }, {
     method: "script.start",
@@ -32,6 +46,12 @@ module.exports = {
         venv: "env",
         path: "app",
       }
+    }
+  }, {
+    method: "shell.run",
+    params: {
+      path: "app",
+      message: ["python install_state.py stage --stage support_dependencies"]
     }
   }, {
     // Repair older environments that were installed before the InsightFace
@@ -44,9 +64,13 @@ module.exports = {
     }
   }, {
     // Rebuild the UI, not just its dependencies. The backend serves
-    // react-ui/dist (see the SPA mount in app/api.py), so a pull that changes
-    // the UI is not actually live until the build runs -- `npm ci` alone
-    // would leave the previous build in place and the update invisible.
+    // react-ui/dist, so a pull that changes the UI is not live until this runs.
+    method: "shell.run",
+    params: {
+      path: "app",
+      message: ["python install_state.py stage --stage react_build"]
+    }
+  }, {
     method: "shell.run",
     params: {
       env: {
@@ -72,26 +96,23 @@ module.exports = {
   }, {
     method: "shell.run",
     params: {
+      path: "app",
+      message: ["python install_state.py stage --stage runtime_verification"]
+    }
+  }, {
+    method: "shell.run",
+    params: {
       venv: "env",
       path: "app",
       message: [
-        "python verify_ort.py"
+        "python verify_ort.py --manifest-out .runtime-verification.json"
       ]
     }
   }, {
-    when: "{{exists('.pinokio-install-incomplete.json')}}",
-    method: "fs.rm",
-    params: { path: ".pinokio-install-incomplete.json" }
-  }, {
-    method: "fs.write",
+    method: "shell.run",
     params: {
-      path: ".pinokio-install-complete.json",
-      json: {
-        schema: 2,
-        react_build: "react-ui/dist/index.html",
-        python_environment: "app/env",
-        runtime_verification: "app/verify_ort.py"
-      }
+      path: "app",
+      message: ["python install_state.py commit --manifest .runtime-verification.json"]
     }
   }]
 }

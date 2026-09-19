@@ -3,18 +3,18 @@ module.exports = {
     bundle: "ai",
   },
   run: [
-    // Mark the environment incomplete before any dependency or UI step runs.
-    // A failed install must not leave a stale healthy marker behind.
     {
-      when: "{{exists('.pinokio-install-complete.json')}}",
-      method: "fs.rm",
-      params: { path: ".pinokio-install-complete.json" }
+      method: "shell.run",
+      params: {
+        path: "app",
+        message: ["python install_state.py begin --stage bootstrap"]
+      }
     },
     {
-      method: "fs.write",
+      method: "shell.run",
       params: {
-        path: ".pinokio-install-incomplete.json",
-        json: { schema: 1, state: "in_progress", next_action: "rerun install" }
+        path: "app",
+        message: ["python install_state.py stage --stage python_requirements"]
       }
     },
     // Install Python dependencies for the backend (app/ is already in the repo)
@@ -26,6 +26,13 @@ module.exports = {
         message: [
           "uv pip install -r requirements.txt"
         ]
+      }
+    },
+    {
+      method: "shell.run",
+      params: {
+        path: "app",
+        message: ["python install_state.py stage --stage react_build"]
       }
     },
     // Install the React UI's Node dependencies and produce the production
@@ -62,6 +69,13 @@ module.exports = {
       }
     },
     {
+      method: "shell.run",
+      params: {
+        path: "app",
+        message: ["python install_state.py stage --stage pytorch_gpu_runtime"]
+      }
+    },
+    {
       method: "script.start",
       params: {
         uri: "torch.js",
@@ -69,6 +83,13 @@ module.exports = {
           venv: "env",
           path: "app",
         }
+      }
+    },
+    {
+      method: "shell.run",
+      params: {
+        path: "app",
+        message: ["python install_state.py stage --stage support_dependencies"]
       }
     },
     // torch.js is intentionally allowed to own the PyTorch install, but
@@ -108,37 +129,28 @@ module.exports = {
         dest: "app/config.yaml"
       }
     },
-    // Deterministically verify the ONNX Runtime installation contract and provider API.
-    // Fails loudly if onnxruntime is shadowed, corrupted, or exposes no provider API.
+    {
+      method: "shell.run",
+      params: {
+        path: "app",
+        message: ["python install_state.py stage --stage runtime_verification"]
+      }
+    },
     {
       method: "shell.run",
       params: {
         venv: "env",
         path: "app",
         message: [
-          "python verify_ort.py"
+          "python verify_ort.py --manifest-out .runtime-verification.json"
         ]
       }
     },
-    // app/env alone is not proof that installation completed. Pinokio may
-    // leave it behind when a dependency download or the UI build fails. Write
-    // the marker only after every required install step above has succeeded so
-    // pinokio.js never offers Start for a partial install.
     {
-      when: "{{exists('.pinokio-install-incomplete.json')}}",
-      method: "fs.rm",
-      params: { path: ".pinokio-install-incomplete.json" }
-    },
-    {
-      method: "fs.write",
+      method: "shell.run",
       params: {
-        path: ".pinokio-install-complete.json",
-        json: {
-          schema: 2,
-          react_build: "react-ui/dist/index.html",
-          python_environment: "app/env",
-          runtime_verification: "app/verify_ort.py"
-        }
+        path: "app",
+        message: ["python install_state.py commit --manifest .runtime-verification.json"]
       }
     }
   ]

@@ -213,14 +213,16 @@ class InstallAndUpdateProduceABuild(unittest.TestCase):
         install = self._read('install.js')
         self.assertIn('npm ci --no-audit --no-fund', install)
         self.assertIn('npm run build', install)
-        self.assertIn('.pinokio-install-complete.json', install)
+        self.assertIn('install_state.py commit --manifest', install)
+        self.assertIn('.runtime-verification.json', install)
         self.assertIn('path.resolve(cwd, \'../../bin/miniforge\')', install)
 
     def test_update_rebuilds_the_ui(self):
         update = self._read('update.js')
         self.assertIn('npm ci --no-audit --no-fund', update)
         self.assertIn('npm run build', update)
-        self.assertIn('.pinokio-install-complete.json', update)
+        self.assertIn('install_state.py commit --manifest', update)
+        self.assertIn('.runtime-verification.json', update)
         self.assertIn('path.resolve(cwd, \'../../bin/miniforge\')', update)
 
     def test_reset_removes_the_build(self):

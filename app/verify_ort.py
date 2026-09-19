@@ -13,6 +13,8 @@ import os
 import shutil
 import subprocess
 import sys
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from ort_package_detector import (
@@ -21,6 +23,16 @@ from ort_package_detector import (
     inspect_onnxruntime,
     scan_shadow_paths,
 )
+from install_state import (
+    INSTALLER_VERSION,
+    InstallationStateError,
+    atomic_write_json,
+    check_ready,
+    repository_commit,
+)
+
+
+_LAST_ORT_REPORT = None
 
 
 def _normalise(name: str) -> str:
@@ -81,9 +93,11 @@ def verify_numpy() -> None:
 
 def verify_onnxruntime() -> list[str]:
     """Import ORT and require a real provider API and non-empty result."""
+    global _LAST_ORT_REPORT
     try:
         import onnxruntime as ort
         report = inspect_onnxruntime(module=ort)
+        _LAST_ORT_REPORT = report
     except ORTInspectionError as exc:
         _fatal(str(exc))
     except Exception as exc:
@@ -124,7 +138,7 @@ def _hardware() -> Any:
     raise AssertionError("unreachable")
 
 
-def verify_distribution_contract(hardware: Any) -> None:
+def verify_distribution_contract(hardware: Any) -> dict[str, str]:
     installed = _distributions()
     actual = sorted(name for name in ORT_DISTRIBUTIONS if name in installed)
     if len(actual) != 1:
@@ -144,6 +158,7 @@ def verify_distribution_contract(hardware: Any) -> None:
     if actual[0] != expected:
         _fatal(f"ONNX Runtime distribution is {actual[0]}, expected {expected} for {hardware.vendor}/{hardware.system}")
     print(f"[Verify Runtime] ort.dist    : {actual[0]}=={installed[actual[0]]}", flush=True)
+    return {"name": actual[0], "version": installed[actual[0]]}
 
 
 def _nvidia_driver(hardware: Any) -> str:
@@ -162,7 +177,7 @@ def _nvidia_driver(hardware: Any) -> str:
     return line
 
 
-def verify_torch_and_gpu(hardware: Any) -> None:
+def verify_torch_and_gpu(hardware: Any) -> dict[str, str]:
     try:
         import torch
     except Exception as exc:
@@ -176,12 +191,19 @@ def verify_torch_and_gpu(hardware: Any) -> None:
     elif hardware.vendor == "amd" and os.name == "nt":
         if "torch-directml" not in _distributions():
             _fatal("AMD hardware requires the torch-directml distribution")
+    gpu_name = (hardware.gpu_names[0] if getattr(hardware, "gpu_names", ()) else "none")
+    return {
+        "pytorch_version": str(torch.__version__),
+        "cuda_version": str(torch.version.cuda or "none"),
+        "gpu_name": gpu_name,
+        "gpu_vendor": str(hardware.vendor),
+    }
 
 
-def verify_tensorrt_package(hardware: Any) -> None:
+def verify_tensorrt_package(hardware: Any) -> dict[str, str]:
     if hardware.vendor != "nvidia":
         print("[Verify Runtime] tensorrt   : not required for non-NVIDIA runtime", flush=True)
-        return
+        return {"version": "not_required"}
     installed = _distributions()
     missing = [name for name in ("tensorrt-cu12", "tensorrt-cu12-libs", "tensorrt-cu12-bindings")
                if _normalise(name) not in installed]
@@ -193,20 +215,23 @@ def verify_tensorrt_package(hardware: Any) -> None:
         _fatal(f"TensorRT package is installed but cannot be imported: {exc}")
     version = getattr(tensorrt, "__version__", "unknown")
     print(f"[Verify Runtime] tensorrt  : {version}", flush=True)
+    return {"version": str(version)}
 
 
 def verify_complete_marker() -> None:
-    marker = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                          ".pinokio-install-complete.json")
-    incomplete = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                              ".pinokio-install-incomplete.json")
-    if os.path.exists(incomplete):
-        _fatal("installation is explicitly marked incomplete; run Pinokio Install or Update")
-    if not os.path.isfile(marker):
-        _fatal("installation-complete marker is missing; app/env is not proof of a valid install")
+    try:
+        check_ready()
+    except InstallationStateError as exc:
+        _fatal(str(exc))
 
 
-def verify_environment(*, require_complete: bool = False) -> None:
+def _write_manifest(path: str, manifest: dict[str, Any]) -> None:
+    destination = os.path.abspath(path)
+    atomic_write_json(Path(destination), manifest)
+    print(f"[Verify Runtime] manifest  : {destination}", flush=True)
+
+
+def verify_environment(*, require_complete: bool = False, manifest: bool = False) -> dict[str, Any]:
     if require_complete:
         verify_complete_marker()
     app_dir = os.path.dirname(os.path.abspath(__file__))
@@ -214,19 +239,76 @@ def verify_environment(*, require_complete: bool = False) -> None:
     verify_numpy()
     hardware = _hardware()
     print(f"[Verify Runtime] hardware   : {hardware.vendor}/{hardware.system}", flush=True)
-    verify_distribution_contract(hardware)
+    ort_distribution = verify_distribution_contract(hardware)
     providers = verify_onnxruntime()
-    verify_torch_and_gpu(hardware)
-    verify_tensorrt_package(hardware)
+    torch_info = verify_torch_and_gpu(hardware)
+    tensorrt_info = verify_tensorrt_package(hardware)
     print(f"[Verify Runtime] verified    : providers={providers}", flush=True)
     print("[OK] Python runtime installation contract verified.", flush=True)
+    if not manifest:
+        return {}
+
+    from roop.gpu_preflight import get_preflight_result
+    preflight = get_preflight_result(force_probe=True)
+    vram_mb = [int(value) for value in getattr(hardware, "vram_mb", ()) if int(value) > 0]
+    max_vram_mb = max(vram_mb, default=0)
+    trt_required = hardware.vendor == "nvidia" and max_vram_mb >= 7 * 1024
+    if trt_required and not preflight.get("tensorrt_session_usable", False):
+        _fatal(
+            "TensorRT minimal session verification failed on a GPU where TensorRT is required: "
+            + str(preflight.get("failure_reason") or preflight.get("failure_stage") or "unknown")
+        )
+    active_provider = str(preflight.get("active_provider") or "none")
+    if active_provider == "none":
+        _fatal("runtime preflight did not construct an active ORT provider session")
+    trt_result = (
+        "passed" if preflight.get("tensorrt_session_usable") else
+        "not_required_by_sub_7gb_policy" if hardware.vendor == "nvidia" and max_vram_mb < 7 * 1024 else
+        "not_required" if hardware.vendor != "nvidia" else
+        f"failed:{preflight.get('failure_stage') or 'unknown'}"
+    )
+    manifest_data: dict[str, Any] = {
+        "schema": 3,
+        "state": "verified",
+        "verification_passed": True,
+        "installer_version": INSTALLER_VERSION,
+        "python_version": sys.version,
+        "python_executable": sys.executable,
+        "platform": str(hardware.system),
+        "architecture": str(hardware.architecture),
+        "gpu_vendor": torch_info["gpu_vendor"],
+        "gpu_name": torch_info["gpu_name"],
+        "gpu_vram_mb": vram_mb,
+        "cuda_version": torch_info["cuda_version"],
+        "pytorch_version": torch_info["pytorch_version"],
+        "onnxruntime_version": str(_LAST_ORT_REPORT.module_version if _LAST_ORT_REPORT else "unknown"),
+        "onnxruntime_path": str(_LAST_ORT_REPORT.module_path if _LAST_ORT_REPORT else "unknown"),
+        "onnxruntime_distribution": ort_distribution,
+        "tensorrt_version": tensorrt_info["version"],
+        "ort_provider_list": providers,
+        "tensorrt_session_test_result": trt_result,
+        "tensorrt_session_usable": bool(preflight.get("tensorrt_session_usable", False)),
+        "active_provider": active_provider,
+        "installation_timestamp": datetime.now(timezone.utc).isoformat(),
+        "repository_commit": repository_commit(),
+        "dependency_verification_status": "passed",
+        "runtime_verification_status": "passed",
+        "runtime_preflight": preflight,
+    }
+    return manifest_data
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--require-complete", action="store_true")
+    parser.add_argument("--manifest-out", default=None)
     args = parser.parse_args(argv)
-    verify_environment(require_complete=args.require_complete)
+    result = verify_environment(
+        require_complete=args.require_complete,
+        manifest=args.manifest_out is not None,
+    )
+    if args.manifest_out:
+        _write_manifest(args.manifest_out, result)
     return 0
 
 

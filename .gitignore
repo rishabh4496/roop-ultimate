@@ -47,6 +47,9 @@ app/runtime_calibration.json
 app/run_history.json
 app/profiles.json
 .pinokio-install-complete.json
+.pinokio-install-ready.json
+.pinokio-install-incomplete.json
+app/.runtime-verification.json
 # Machine-local benchmark history and recommendation state.
 /.roop/
 # Persisted batch queue (per-machine; jobs reference locally loaded targets)

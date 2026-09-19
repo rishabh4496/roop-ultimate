@@ -11,6 +11,7 @@ module.exports = {
     // fresh machine. The marker is written only by the final install/update
     // step, and the dist check catches manual deletion of the generated UI.
     let installed = info.exists(".pinokio-install-complete.json")
+      && info.exists(".pinokio-install-ready.json")
       && !info.exists(".pinokio-install-incomplete.json")
       && info.exists("react-ui/dist/index.html")
     // start.js is a thin re-export of start_react.js, so EITHER path can be
