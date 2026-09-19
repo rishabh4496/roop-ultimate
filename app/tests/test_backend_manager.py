@@ -15,17 +15,29 @@ class BackendManagerTests(unittest.TestCase):
         self.assertTrue(provider_available('CPUExecutionProvider', ['CPUExecutionProvider']))
         self.assertFalse(provider_available('tensorrt', ['CPUExecutionProvider']))
 
-    @patch('roop.backend_manager._available', return_value=['TensorrtExecutionProvider',
-                                                              'CUDAExecutionProvider',
-                                                              'CPUExecutionProvider'])
-    @patch('roop.backend_manager.provider_usable', side_effect=lambda name, device_id=0, available=None:
-           name != 'TensorrtExecutionProvider')
-    def test_tensorrt_falls_back_to_cuda_then_cpu(self, _usable, _available):
+    @patch('roop.gpu_preflight.get_preflight_result', return_value={
+        'available_providers': ['TensorrtExecutionProvider',
+                                'CUDAExecutionProvider',
+                                'CPUExecutionProvider'],
+        'cuda_available': True,
+        'tensorrt_session_usable': False,
+        'active_provider': 'CUDAExecutionProvider',
+        'failure_stage': 'tensorrt_session_construction_failure',
+        'failure_reason': 'minimal TensorRT session failed',
+    })
+    def test_tensorrt_falls_back_to_cuda_then_cpu(self, _preflight):
         self.assertEqual(resolve_provider_names(['tensorrt']),
                          ['CUDAExecutionProvider', 'CPUExecutionProvider'])
 
-    @patch('roop.backend_manager._available', return_value=['CPUExecutionProvider'])
-    def test_missing_gpu_provider_is_cpu(self, _available):
+    @patch('roop.gpu_preflight.get_preflight_result', return_value={
+        'available_providers': ['CPUExecutionProvider'],
+        'cuda_available': False,
+        'tensorrt_session_usable': False,
+        'active_provider': 'CPUExecutionProvider',
+        'failure_stage': 'cuda_unavailable',
+        'failure_reason': 'no CUDA device',
+    })
+    def test_missing_gpu_provider_is_cpu(self, _preflight):
         self.assertEqual(resolve_provider_names(['cuda']), ['CPUExecutionProvider'])
 
     def test_cache_namespace_contains_precision_and_runtime_identity(self):

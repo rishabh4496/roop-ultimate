@@ -82,6 +82,8 @@ class ProviderDiscoveryIsAlwaysSafe(unittest.TestCase):
 
         broken = types.ModuleType("onnxruntime")      # namespace-package shape
         broken.__file__ = None
+        from roop.gpu_preflight import clear_preflight_cache
+        clear_preflight_cache()
         saved = sys.modules.get("onnxruntime")
         sys.modules["onnxruntime"] = broken
         try:
@@ -92,7 +94,6 @@ class ProviderDiscoveryIsAlwaysSafe(unittest.TestCase):
                 sys.modules["onnxruntime"] = saved
             else:
                 sys.modules.pop("onnxruntime", None)
-            from roop.gpu_preflight import clear_preflight_cache
             clear_preflight_cache()
 
     def test_no_production_call_is_unguarded(self):
