@@ -60,6 +60,26 @@ function FilterSection({ title, icon, query, onlyModified, onResetKeys, children
 export default function Settings({ meta, settings, setSettings, notify }) {
   const m = meta || {};
   const p = settings || {};
+
+  const requestedProvider = (p.provider || m.requested_provider || 'cuda').toLowerCase();
+  const activeProvider = (p.provider_active || m.active_provider || requestedProvider).toLowerCase();
+  const admittedProvider = (p.provider_admitted || m.admitted_provider || requestedProvider).toLowerCase();
+  const availableProviders = (m.available_providers || m.providers || []).map((x) =>
+    (typeof x === 'object' && x !== null ? x.value : x).toLowerCase()
+  );
+
+  const isTrtRequested = requestedProvider === 'tensorrt';
+  const isTrtActive = activeProvider === 'tensorrt';
+  const isTrtAdmitted = admittedProvider === 'tensorrt';
+  const isTrtDegraded = isTrtRequested && !isTrtActive;
+  const isCudaActive = activeProvider === 'cuda';
+
+  const trtFailureReason =
+    p.degradation_reason ||
+    m.degradation_reason ||
+    m.provider_status?.degradation_reason ||
+    (isTrtDegraded ? `TensorRT failed to initialize; session fell back to ${activeProvider.toUpperCase()}` : '');
+
   const set = (k, v) => setSettings((s) => ({ ...s, [k]: v }));
   // Theme edits change several keys at once (picking a theme also clears the
   // system pairing), and they must land in ONE state update — two sequential
@@ -72,6 +92,11 @@ export default function Settings({ meta, settings, setSettings, notify }) {
     postJSON('/api/settings', patch).catch(() => {});
   }, [setSettings]);
   const [query, setQuery] = useState('');
+
+  const showTrtSettings =
+    isTrtRequested ||
+    isTrtActive ||
+    !!(query && (query.toLowerCase().includes('tensor') || query.toLowerCase().includes('precis')));
   const [studio, setStudio] = useState({ open: false, initial: null });
 
   // ── Drift from defaults ──────────────────────────────────────────────────
@@ -336,7 +361,7 @@ export default function Settings({ meta, settings, setSettings, notify }) {
                   <div className="flex items-center gap-2">
                     <span className="text-xs font-bold text-white">GPU Full Potential Suite</span>
                     <span className="rounded-full px-2 py-0.5 text-nano font-bold uppercase tracking-wider bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
-                      {p.provider === 'tensorrt' && p.perf_nvdec !== 'off' && p.perf_batch_swap !== 'off' ? '🚀 Max Turbo Active' : '⚡ Hardware Acceleration'}
+                      {isTrtActive && p.perf_nvdec !== 'off' && p.perf_batch_swap !== 'off' ? '🚀 Max Turbo Active' : isTrtDegraded ? `⚠️ TensorRT Inactive (Active: ${activeProvider.toUpperCase()})` : isCudaActive ? '⚡ CUDA Active' : '⚡ Hardware Acceleration'}
                     </span>
                   </div>
                   <span className="text-nano text-white/50">Maximize TensorRT, NVDEC decoding, NVENC encoding & cross-frame batching</span>
@@ -446,8 +471,20 @@ export default function Settings({ meta, settings, setSettings, notify }) {
 
             {/* Hardware Pipeline Feature Badges */}
             <div className="flex flex-wrap gap-1.5 pt-1">
-              <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-nano font-semibold border ${p.provider === 'tensorrt' ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-300' : 'bg-white/5 border-white/10 text-white/40'}`}>
-                ⚡ TensorRT {p.trt_precision || 'mixed'}
+              <span
+                className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-nano font-semibold border ${
+                  isTrtActive
+                    ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-300'
+                    : isTrtDegraded
+                    ? 'bg-amber-500/15 border-amber-500/30 text-amber-300'
+                    : 'bg-white/5 border-white/10 text-white/40'
+                }`}
+                title={isTrtDegraded ? `TensorRT degraded to ${activeProvider.toUpperCase()}: ${trtFailureReason}` : ''}
+              >
+                {isTrtDegraded ? '⚠️' : '⚡'} TensorRT {isTrtActive ? (p.trt_precision || 'mixed') : isTrtDegraded ? `(Inactive → ${activeProvider.toUpperCase()})` : (p.trt_precision || 'mixed')}
+              </span>
+              <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-nano font-semibold border ${isCudaActive && !isTrtActive ? 'bg-cyan-500/15 border-cyan-500/30 text-cyan-300' : 'bg-white/5 border-white/10 text-white/40'}`}>
+                ⚡ CUDA Active
               </span>
               <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-nano font-semibold border ${p.perf_nvdec !== 'off' ? 'bg-cyan-500/15 border-cyan-500/30 text-cyan-300' : 'bg-white/5 border-white/10 text-white/40'}`}>
                 🎬 NVDEC GPU Decode
@@ -465,8 +502,54 @@ export default function Settings({ meta, settings, setSettings, notify }) {
           </div>
 
           <Select label="Provider" info="Inference sessions are built at startup — provider and precision changes take effect after restarting the app." {...bind('provider')} options={m.providers || []} />
-          {p.provider === 'tensorrt' && (
-            <Select label="Precision mode (TensorRT)" info="mixed = recommended; fp16 = fastest; fp32 = most accurate. Applies after app restart." {...bind('trt_precision', 'mixed')} options={m.trt_precisions ?? ['fp32', 'fp16', 'mixed']} />
+
+          {/* Provider Capability & Admission Status */}
+          <div className="flex flex-col gap-2 -mt-2 mb-1">
+            <div className="flex flex-wrap items-center gap-2 text-xs text-white/70">
+              <span className="font-medium text-white/50">Runtime status:</span>
+              <span className={`px-2 py-0.5 rounded-md text-nano font-bold uppercase tracking-wider ${isTrtActive ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40' : isCudaActive ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40' : 'bg-white/10 text-white/80 border border-white/20'}`}>
+                Active: {activeProvider}
+              </span>
+              {requestedProvider !== activeProvider && (
+                <span className="text-amber-300/80 text-nano">
+                  • Configured: {requestedProvider.toUpperCase()} (Restart required to apply)
+                </span>
+              )}
+              {admittedProvider !== requestedProvider && (
+                <span className="text-rose-300/80 text-nano">
+                  • Admitted: {admittedProvider.toUpperCase()} (Safety policy adjusted selection)
+                </span>
+              )}
+            </div>
+
+            {isTrtDegraded && (
+              <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 text-xs text-amber-200/90 flex flex-col gap-1">
+                <div className="flex items-center gap-1.5 font-bold text-amber-300">
+                  <span>⚠️</span>
+                  <span>TensorRT Unavailable (Active Session: {activeProvider.toUpperCase()})</span>
+                </div>
+                <p className="text-white/70">
+                  {trtFailureReason || 'TensorRT runtime is unavailable or failed initialization on this session.'}
+                </p>
+                <p className="text-white/40 text-nano">
+                  TensorRT controls remain configured below and will take effect when TensorRT runtime is active.
+                </p>
+              </div>
+            )}
+          </div>
+
+          {showTrtSettings && (
+            <Select
+              label="Precision mode (TensorRT)"
+              info={
+                isTrtActive
+                  ? "mixed = recommended; fp16 = fastest; fp32 = most accurate. Applies after app restart."
+                  : `TensorRT is currently inactive (${trtFailureReason || activeProvider}). Configured precision is preserved and will take effect when TensorRT runtime is available.`
+              }
+              {...bind('trt_precision', 'mixed')}
+              options={m.trt_precisions ?? ['fp32', 'fp16', 'mixed']}
+              disabled={!isTrtActive}
+            />
           )}
           <Toggle label="Force CPU for face analyser" {...bindToggle('force_cpu')} />
 
@@ -505,10 +588,33 @@ export default function Settings({ meta, settings, setSettings, notify }) {
 
         <FilterSection title="Advanced performance (restart to apply)" icon={Icon.meter} query={query} onlyModified={onlyModified} onResetKeys={resetKeys}>
           <p className="text-xs text-white/40 -mt-2">These override the launcher env and the VRAM auto-tuner. Leave on "auto" unless you know what you're tuning. Changes take effect after restarting the app.</p>
-          {p.provider === 'tensorrt' && <>
-            <Select label="TensorRT builder optimization" info="Build-time tactic search level. 3 is the safe performance baseline documented by ONNX Runtime; changing it creates a separate engine cache namespace and rebuilds engines on the next restart." {...bind('trt_builder_optimization_level', 3)} options={['1', '2', '3', '4', '5']} />
-            <Select label="TensorRT auxiliary streams" info="-1 lets TensorRT choose. 0 minimizes memory and is useful on the RTX 3060. Higher values may improve overlap but consume more VRAM; compare against a representative render before using them." {...bind('trt_auxiliary_streams', -1)} options={['-1', '0', '1', '2', '3', '4']} />
-            <Toggle label="TensorRT CUDA graphs (experimental)" info="Opt-in only. Best for fixed-shape repeated inference; compare it against the current settings on a representative render before enabling. Requires an app restart." {...bindToggle('trt_cuda_graph')} />
+          {showTrtSettings && <>
+            {isTrtDegraded && (
+              <div className="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/20 text-xs text-amber-200/90 -mt-1 mb-2">
+                <span className="font-semibold text-amber-300">Note: </span>
+                TensorRT builder optimization, auxiliary streams, and CUDA graph controls are configured for TensorRT, but active runtime is currently {activeProvider.toUpperCase()}.
+              </div>
+            )}
+            <Select
+              label="TensorRT builder optimization"
+              info="Build-time tactic search level. 3 is the safe performance baseline documented by ONNX Runtime; changing it creates a separate engine cache namespace and rebuilds engines on the next restart."
+              {...bind('trt_builder_optimization_level', 3)}
+              options={['1', '2', '3', '4', '5']}
+              disabled={!isTrtActive}
+            />
+            <Select
+              label="TensorRT auxiliary streams"
+              info="-1 lets TensorRT choose. 0 minimizes memory and is useful on the RTX 3060. Higher values may improve overlap but consume more VRAM; compare against a representative render before using them."
+              {...bind('trt_auxiliary_streams', -1)}
+              options={['-1', '0', '1', '2', '3', '4']}
+              disabled={!isTrtActive}
+            />
+            <Toggle
+              label="TensorRT CUDA graphs (experimental)"
+              info="Opt-in only. Best for fixed-shape repeated inference; compare it against the current settings on a representative render before enabling. Requires an app restart."
+              {...bindToggle('trt_cuda_graph')}
+              disabled={!isTrtActive}
+            />
           </>}
           <Select label="Swapper TRT pool" info="ROOP_TRT_POOL — TensorRT contexts for the SWAPPER only; it does not affect face detection. 'auto' selects by VRAM: <7GB = 0 (disabled), 7-11.5GB = 2, 11.5-15.5GB = 2, 15.5GB+ = 4. Lower this first if you need to free VRAM for another pool. 0 on a small card is deliberate and costs little: the pooled config needs 4100MB against 2346MB, which a 6GB card cannot pay beside the desktop, and since the GPU lock was split per stage the unpooled path measures 20.84 fps against the pooled 22.22. TAKES EFFECT ON RESTART: pool sizes are baked into the TensorRT contexts when the models load, so changing this writes the setting but the current backend keeps running the old value — restart the app to apply it. Diagnostics shows what is actually running." {...bind('perf_trt_pool', 'auto')} options={m.pool_sizes || ['auto', '1', '2', '3', '4', '5', '6', '7', '8']} />
           <Select label="Detect/Mask pool" info="ROOP_DETMASK_POOL — TensorRT contexts for face detection and masking, and the width of 'Analyzing faces'. LOWERING it slows that stage close to proportionally. DO NOT just raise it to match Max threads. Each instance carries its own model set plus a copy of the detector (retinaface_r50 is ~104MB), and on a 12GB card 8 does not fit alongside the swapper pool: measured, it ran out of VRAM and thrashed from 11.8 fps down to 0.5 and still falling, at 95% VRAM. The auto tier (12GB = 2) is chosen to leave that headroom. TAKES EFFECT ON RESTART: pool sizes are baked into the TensorRT contexts when the models load, so changing this writes the setting but the current backend keeps running the old value — restart the app to apply it. Diagnostics shows what is actually running. If you raise it, go one step at a time and watch VRAM — 5 or 6 may fit, 8 does not. Raising it only helps when the stage is DETECTION-bound. Check STAGE TIMING (ROOP_PROFILE=1): if track_decode per frame exceeds track_detect divided by this pool size, the stage is waiting on the video decoder instead and more instances buy nothing but VRAM." {...bind('perf_detmask_pool', 'auto')} options={m.pool_sizes || ['auto', '1', '2', '3', '4', '5', '6', '7', '8']} />

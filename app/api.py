@@ -763,6 +763,16 @@ def save_settings(settings: dict = Body(...)):
             if k.startswith('_') or not hasattr(roop_globals.CFG, k):
                 continue
             setattr(roop_globals.CFG, k, v)
+        if "provider" in settings:
+            try:
+                from roop.backend_manager import canonical_provider_decision
+                _dec = canonical_provider_decision(roop_globals.CFG.provider)
+                roop_globals.CFG.provider_requested = roop_globals.CFG.provider
+                roop_globals.CFG.provider_admitted = _dec.admitted
+                roop_globals.CFG.degradation_reason = _dec.degradation_reason
+                roop_globals.CFG.degradation_stage = _dec.degradation_stage
+            except Exception:
+                pass
         roop_globals.CFG.save()
     return {"status": "success"}
 
@@ -946,18 +956,89 @@ def _get_git_version() -> str:
             return "main"
 
 
+def _get_provider_meta():
+    from roop.core import suggest_execution_providers
+    try:
+        providers = suggest_execution_providers()
+    except Exception:
+        providers = ["cpu"]
+
+    cfg = getattr(roop_globals, "CFG", None)
+    req = getattr(cfg, "provider_requested", getattr(cfg, "provider", "auto")) if cfg else "auto"
+
+    active = "cpu"
+    admitted = req
+    reason = getattr(cfg, "degradation_reason", None) if cfg else None
+    stage = getattr(cfg, "degradation_stage", None) if cfg else None
+    trt_avail = False
+    trt_session_ok = False
+
+    try:
+        from roop.backend_manager import canonical_provider_decision
+        from roop.gpu_preflight import get_preflight_result
+        preflight = get_preflight_result()
+        trt_avail = bool(preflight.get("tensorrt_available", False)) or "tensorrt" in providers
+        trt_session_ok = bool(preflight.get("tensorrt_session_usable", False))
+        dec = canonical_provider_decision(req if req != "auto" else None)
+        admitted = getattr(cfg, "provider_admitted", dec.admitted)
+        if not reason:
+            reason = dec.degradation_reason or preflight.get("failure_reason")
+        if not stage:
+            stage = dec.degradation_stage or preflight.get("failure_stage")
+
+        live_provs = getattr(roop_globals, "execution_providers", None)
+        if live_provs:
+            first = live_provs[0]
+            first_name = first[0] if isinstance(first, (tuple, list)) else first
+            active = str(first_name).replace("ExecutionProvider", "").lower()
+        elif cfg and hasattr(cfg, "provider_active"):
+            active = str(cfg.provider_active).lower()
+        else:
+            active = dec.active.replace("ExecutionProvider", "").lower()
+    except Exception as _e:
+        _swallowed("api.py:_get_provider_meta", _e, "fallback continued")
+
+    return {
+        "providers": providers,
+        "available_providers": providers,
+        "requested_provider": req,
+        "active_provider": active,
+        "admitted_provider": admitted,
+        "degradation_reason": reason,
+        "degradation_stage": stage,
+        "tensorrt_available": trt_avail,
+        "tensorrt_session_usable": trt_session_ok,
+        "tensorrt_active": active == "tensorrt",
+        "provider_status": {
+            "requested": req,
+            "admitted": admitted,
+            "active": active,
+            "available": providers,
+            "degraded": bool(reason) or (req == "tensorrt" and active != "tensorrt"),
+            "degradation_reason": reason,
+            "degradation_stage": stage,
+            "tensorrt_session_usable": trt_session_ok,
+        },
+    }
+
+
 @app.get("/api/meta")
 def get_meta():
     """Choice lists + current galleries for the React UI to render."""
-    try:
-        from roop.core import suggest_execution_providers
-        providers = suggest_execution_providers()
-    except Exception as _degrade_error:
-        _swallowed("api.py:894", _degrade_error, "fallback continued")
-        providers = ["cpu"]
+    prov_meta = _get_provider_meta()
     return {
         "git_version": _get_git_version(),
-        "providers": providers,
+        "providers": prov_meta["providers"],
+        "available_providers": prov_meta["available_providers"],
+        "requested_provider": prov_meta["requested_provider"],
+        "active_provider": prov_meta["active_provider"],
+        "admitted_provider": prov_meta["admitted_provider"],
+        "degradation_reason": prov_meta["degradation_reason"],
+        "degradation_stage": prov_meta["degradation_stage"],
+        "tensorrt_available": prov_meta["tensorrt_available"],
+        "tensorrt_session_usable": prov_meta["tensorrt_session_usable"],
+        "tensorrt_active": prov_meta["tensorrt_active"],
+        "provider_status": prov_meta["provider_status"],
         "trt_precisions": ["fp32", "fp16", "mixed"],
         "enhancers": ["None", "Adaptive", "Codeformer", "Codeformer (fp16)", "DMDNet",
                        "GFPGAN", "GPEN 256", "GPEN 256 Pro", "GPEN Realistic", "GPEN", "GPEN 1024",

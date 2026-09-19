@@ -465,9 +465,27 @@ def suggest_max_memory() -> int:
 
 def suggest_execution_providers() -> List[str]:
     from roop.backend_manager import canonical_provider_decision
-    decision = canonical_provider_decision('auto')
-    return [p.replace('ExecutionProvider', '').lower()
-            for p in decision.active_chain] or ['cpu']
+    try:
+        from roop.gpu_preflight import get_preflight_result
+        preflight = get_preflight_result()
+        raw_avail = [str(p).replace('ExecutionProvider', '').lower()
+                     for p in preflight.get('available_providers', [])]
+    except Exception:
+        raw_avail = []
+
+    try:
+        decision = canonical_provider_decision('auto')
+        chain = [p.replace('ExecutionProvider', '').lower()
+                 for p in decision.active_chain]
+    except Exception:
+        chain = []
+
+    result = []
+    for p in ('tensorrt', 'cuda', 'rocm', 'dml', 'cpu'):
+        if p in raw_avail or p in chain:
+            if p not in result:
+                result.append(p)
+    return result or ['cpu']
 
 
 def suggest_execution_threads() -> int:

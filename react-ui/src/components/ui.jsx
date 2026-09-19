@@ -225,12 +225,13 @@ export const Field = ({ label, info, children, modified, onReset, settingKey }) 
   </label>
 );
 
-export const Select = ({ label, info, value, onChange, options = [], modified, onReset, settingKey }) => (
+export const Select = ({ label, info, value, onChange, options = [], modified, onReset, settingKey, disabled }) => (
   <Field label={label} info={info} modified={modified} onReset={onReset} settingKey={settingKey}>
     <select
       value={value ?? ''}
-      onChange={(e) => onChange(e.target.value)}
-      className="w-full px-3 py-2.5 rounded-xl glass-input text-white text-compact focus:outline-none cursor-pointer"
+      disabled={disabled}
+      onChange={(e) => !disabled && onChange(e.target.value)}
+      className={`w-full px-3 py-2.5 rounded-xl glass-input text-white text-compact focus:outline-none ${disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
     >
       {(options || []).map((o) => {
         // Accept plain strings (value === label) or {value, label} objects.
@@ -333,13 +334,14 @@ export const Slider = ({ label, info, value, onChange, min = 0, max = 1, step = 
 // the Face Swap panel) impossible to reach or operate from the keyboard at all.
 // sr-only keeps it invisible but focusable, and `peer` carries its focus state
 // out to the switch so the ring lands on the thing the eye is looking at.
-export const Toggle = ({ label, info, checked, onChange, modified, onReset, settingKey }) => (
-  <label data-setting={settingKey} className="flex items-start justify-between gap-3 w-full text-left cursor-pointer group/toggle select-none">
+export const Toggle = ({ label, info, checked, onChange, modified, onReset, settingKey, disabled }) => (
+  <label data-setting={settingKey} className={`flex items-start justify-between gap-3 w-full text-left select-none ${disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer group/toggle'}`}>
     <input
       type="checkbox"
       className="sr-only peer"
       checked={!!checked}
-      onChange={(e) => onChange(e.target.checked)}
+      disabled={disabled}
+      onChange={(e) => !disabled && onChange(e.target.checked)}
     />
     <span className="flex items-start gap-1.5 min-w-0 flex-1">
       <span className="text-compact font-semibold tracking-wide leading-snug text-white/80 group-hover/toggle:text-white transition-colors">{label}</span>
@@ -348,7 +350,7 @@ export const Toggle = ({ label, info, checked, onChange, modified, onReset, sett
     </span>
     <motion.span
       aria-hidden
-      whileTap={{ scale: 0.9 }}
+      whileTap={disabled ? undefined : { scale: 0.9 }}
       transition={spring.snappy}
       className={`relative block shrink-0 mt-0.5 w-10 h-[22px] rounded-full transition-colors duration-200 border peer-focus-visible:outline peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-[var(--accent)] ${checked ? 'bg-[var(--accent)] border-[var(--accent)]' : 'bg-white/[0.06] border-white/10 group-hover/toggle:border-white/20'}`}
     >

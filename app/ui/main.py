@@ -42,12 +42,15 @@ def run():
         from roop.ort_support import available_providers as _ort_providers
         _available = _ort_providers()
         _asked = roop.globals.CFG.provider
+        _fallback = "cpu"
         if 'DmlExecutionProvider' in _available:
-            roop.globals.CFG.provider = "dml"
+            _fallback = "dml"
         elif 'ROCMExecutionProvider' in _available:
-            roop.globals.CFG.provider = "rocm"
-        else:
-            roop.globals.CFG.provider = "cpu"
+            _fallback = "rocm"
+        roop.globals.CFG.provider_requested = _asked
+        roop.globals.CFG.provider_active = _fallback
+        roop.globals.CFG.degradation_reason = f"No usable CUDA device detected by PyTorch; fell back to {_fallback}"
+        roop.globals.CFG.degradation_stage = "cuda_unavailable"
         # SAY SO. This is a 10x downgrade and it used to happen in silence.
         # Worse, it silently takes the thread count with it: batch_process
         # forces execution_threads to 1 for dml/rocm (suggest_execution_threads),
@@ -58,8 +61,8 @@ def run():
         print(f"  [PROVIDER FALLBACK] '{_asked}' was requested but torch reports "
               f"NO USABLE CUDA DEVICE.")
         print(f"                      Falling back to "
-              f"'{roop.globals.CFG.provider}'. Expect roughly 1-2 fps.")
-        if roop.globals.CFG.provider in ("dml", "rocm"):
+              f"'{_fallback}'. Expect roughly 1-2 fps.")
+        if _fallback in ("dml", "rocm"):
             print("                      This provider is also FORCED TO ONE "
                   "WORKER THREAD, whatever Max Threads says.")
         print("                      Almost always a broken torch/CUDA install, "
@@ -71,7 +74,8 @@ def run():
     # onnxruntime lists TensorrtExecutionProvider as "available" even when the
     # TensorRT runtime libraries (nvinfer.dll etc.) are missing from the system.
     # Attempting to use it then produces error 126 and falls back silently to CPU,
-    # losing all GPU acceleration.  Detect this early and fall back to CUDA instead.
+    # losing all GPU acceleration.  Detect this early and record fallback reason
+    # without mutating the user's requested provider setting.
     if roop.globals.CFG.provider == "tensorrt":
         _trt_ok = False
         try:
@@ -81,7 +85,10 @@ def run():
             pass
         if not _trt_ok:
             print("TensorRT runtime libraries not found – falling back to CUDA provider.")
-            roop.globals.CFG.provider = "cuda"
+            roop.globals.CFG.provider_requested = "tensorrt"
+            roop.globals.CFG.provider_active = "cuda"
+            roop.globals.CFG.degradation_reason = "TensorRT runtime libraries (tensorrt package) not found"
+            roop.globals.CFG.degradation_stage = "dll_load_failure"
 
     # Configure execution providers. If TensorRT is selected, also register CUDA as a fallback
     # to prevent silent fallback to CPU if TensorRT initialization fails at run time.
@@ -89,6 +96,17 @@ def run():
     if roop.globals.CFG.provider == "tensorrt":
         providers.append("cuda")
     roop.globals.execution_providers = decode_execution_providers(providers)
+    if roop.globals.execution_providers:
+        _first = roop.globals.execution_providers[0]
+        _first_name = _first[0] if isinstance(_first, (tuple, list)) else _first
+        _active_short = str(_first_name).replace("ExecutionProvider", "").lower()
+        roop.globals.CFG.provider_active = _active_short
+        roop.globals.CFG.provider_requested = getattr(
+            roop.globals.CFG, "provider_requested", roop.globals.CFG.provider)
+        if roop.globals.CFG.provider == "tensorrt" and _active_short != "tensorrt":
+            if not getattr(roop.globals.CFG, "degradation_reason", None):
+                roop.globals.CFG.degradation_reason = f"TensorRT requested but session bound to {_active_short}"
+                roop.globals.CFG.degradation_stage = "session_fallback" 
     gputype = util.get_device()
     if gputype == 'cuda':
         util.print_cuda_info()

@@ -515,11 +515,13 @@ class Settings:
                 from roop.backend_manager import canonical_provider_decision
                 _decision = canonical_provider_decision(self.provider)
                 self.provider_requested = self.provider
+                self.provider_admitted = _decision.admitted
                 self.provider_active = _decision.active.replace('ExecutionProvider', '').lower()
                 self.degradation_reason = _decision.degradation_reason
                 self.degradation_stage = _decision.degradation_stage
             except Exception:
                 self.provider_requested = self.provider
+                self.provider_admitted = self.provider
                 self.provider_active = self.provider
                 self.degradation_reason = None
                 self.degradation_stage = None
@@ -644,7 +646,6 @@ class Settings:
         self.benchmark_results = self._hw_get(data, 'benchmark_results', {})
         
         self.memory_limit = self.default_get(data, 'memory_limit', 0)
-        self.provider = self.default_get(data, 'provider', _default_provider())
         # TensorRT precision mode: 'fp32' | 'fp16' | 'mixed' (only used when provider == 'tensorrt')
         self.trt_precision = self.default_get(data, 'trt_precision', 'mixed')
         # TensorRT tuning. Level 3 is the documented performance baseline;
