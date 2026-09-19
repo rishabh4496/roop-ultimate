@@ -85,8 +85,21 @@ async function decodeOnMainThread(url, signal) {
  * Rejects with an AbortError when `signal` fires — callers treat that as
  * "superseded", not as a failure worth surfacing.
  */
-export function decodeFrame(url, { signal } = {}) {
+export function normalizeFrameUrl(url) {
+  if (typeof url !== 'string' || !url) return url;
+  const trimmed = url.trim();
+  if (trimmed.startsWith('data:') || trimmed.startsWith('blob:') || trimmed.startsWith('http:') || trimmed.startsWith('https:') || trimmed.startsWith('/')) {
+    return trimmed;
+  }
+  if (trimmed.length > 50 && /^[A-Za-z0-9+/=]+$/.test(trimmed.slice(0, 100))) {
+    return `data:image/jpeg;base64,${trimmed}`;
+  }
+  return trimmed;
+}
+
+export function decodeFrame(rawUrl, { signal } = {}) {
   if (signal?.aborted) return Promise.reject(new DOMException('aborted', 'AbortError'));
+  const url = normalizeFrameUrl(rawUrl);
 
   const w = getWorker();
   if (!w) return decodeOnMainThread(url, signal);

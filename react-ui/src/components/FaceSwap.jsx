@@ -1,3 +1,4 @@
+import OutputVideoPlayer from './OutputVideoPlayer';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { getJSON, postJSON, postFile, postFiles, API } from '../api';
@@ -3129,7 +3130,7 @@ export default function FaceSwap({
                 <div className="space-y-2">
                   <div className="text-xs text-[var(--text-muted)]">Latest output</div>
                   {out.kind === 'video'
-                    ? <video src={outUrl} controls className="w-full rounded-xl border border-white/5" />
+                    ? <OutputVideoPlayer src={outUrl} renderKey={out?.path || out?.url} className="w-full rounded-xl border border-white/5" />
                     : <img src={outUrl} alt="output" className="w-full rounded-xl border border-white/5" />}
                   <div className="flex flex-wrap gap-2">
                     <a href={outUrl} download

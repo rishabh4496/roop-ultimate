@@ -87,7 +87,21 @@ export function ownedCount(owner) {
  * Returns the input unchanged when it is not a data URL (already a blob/http
  * url, or empty), so call sites do not have to branch.
  */
-export function dataUrlToOwnedBlobUrl(dataUrl, owner) {
+export function normalizeDataUrl(dataUrl) {
+  if (typeof dataUrl !== 'string' || !dataUrl) return dataUrl;
+  const trimmed = dataUrl.trim();
+  if (trimmed.startsWith('data:') || trimmed.startsWith('blob:') || trimmed.startsWith('http:') || trimmed.startsWith('https:') || trimmed.startsWith('/')) {
+    return trimmed;
+  }
+  // If receiving raw base64 image data without the data: scheme, attach data:image/jpeg;base64,
+  if (trimmed.length > 50 && /^[A-Za-z0-9+/=]+$/.test(trimmed.slice(0, 100))) {
+    return `data:image/jpeg;base64,${trimmed}`;
+  }
+  return trimmed;
+}
+
+export function dataUrlToOwnedBlobUrl(rawInput, owner) {
+  const dataUrl = normalizeDataUrl(rawInput);
   if (typeof dataUrl !== 'string' || !dataUrl.startsWith('data:')) return dataUrl;
   const comma = dataUrl.indexOf(',');
   if (comma < 0) return dataUrl;

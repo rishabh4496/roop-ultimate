@@ -1,3 +1,4 @@
+import OutputVideoPlayer from './OutputVideoPlayer';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { postJSON, API } from '../api';
 import { AnimatedNumber, Button } from './ui';
@@ -601,7 +602,7 @@ export default function Processing({ progress, settings, notify, setTab,
               <div className="rounded-2xl glass-panel p-5 shadow-2xl border border-white/5 space-y-3 min-w-0">
                 <div className="text-mini uppercase tracking-[0.14em] text-white/45 font-semibold">Output</div>
                 {isVideoOutput
-                  ? <video src={outUrl} controls className="w-full max-h-[52vh] rounded-xl border border-white/5" />
+                  ? <OutputVideoPlayer src={outUrl} renderKey={out?.path || out?.url} className="w-full max-h-[52vh] rounded-xl border border-white/5" />
                   : <img src={outUrl} alt="Render output" className="w-full max-h-[52vh] object-contain rounded-xl border border-white/5" />}
                 <QualityReport outputPath={out.path} notify={notify} />
               </div>

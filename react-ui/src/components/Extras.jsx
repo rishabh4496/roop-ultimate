@@ -1,3 +1,4 @@
+import OutputVideoPlayer from './OutputVideoPlayer';
 import React, { useState, useEffect } from 'react';
 import { postFile, fileUrl, getJSON } from '../api';
 import { Section, Select, Slider, Button } from './ui';
@@ -180,7 +181,7 @@ export default function Extras({ notify, registerFileListener }) {
       {enhResult?.path && (
         <Section title="AI post-processing output">
           {enhResult.kind === 'video'
-            ? <video src={fileUrl(enhResult.path)} controls className="w-full rounded-lg border border-white/10" />
+            ? <OutputVideoPlayer src={fileUrl(enhResult.path)} renderKey={enhResult.path} className="w-full rounded-lg border border-white/10" />
             : <img src={fileUrl(enhResult.path)} alt="output" className="max-w-full rounded-lg border border-white/10" />}
           <a href={fileUrl(enhResult.path)} download className="inline-block mt-2 text-sm text-[var(--accent)] underline">⬇ Download</a>
         </Section>
@@ -189,7 +190,7 @@ export default function Extras({ notify, registerFileListener }) {
       {result?.path && (
         <Section title="Output">
           {result.kind === 'video'
-            ? <video src={fileUrl(result.path)} controls className="w-full rounded-lg border border-white/10" />
+            ? <OutputVideoPlayer src={fileUrl(result.path)} renderKey={result.path} className="w-full rounded-lg border border-white/10" />
             : <img src={fileUrl(result.path)} alt="output" className="max-w-full rounded-lg border border-white/10" />}
           <a href={fileUrl(result.path)} download className="inline-block mt-2 text-sm text-[var(--accent)] underline">⬇ Download</a>
         </Section>
