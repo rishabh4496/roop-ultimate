@@ -79,7 +79,7 @@ def finalize_web_video(raw_video_path: str, final_video_path: str, audio_source:
         cmd.extend([
             '-i', audio_source,
             '-map', '0:v:0',
-            '-map', '1:a:0?',
+            '-map', '1:a?',
             '-c:a', 'aac',
             '-b:a', '192k',
             '-shortest',
@@ -93,6 +93,7 @@ def finalize_web_video(raw_video_path: str, final_video_path: str, audio_source:
     cmd.extend([
         '-c:v', 'libx264',
         *_rate_control('libx264', quality),
+        '-vf', 'pad=ceil(iw/2)*2:ceil(ih/2)*2',
         '-pix_fmt', 'yuv420p',
         '-movflags', '+faststart',
         temp_dest,
@@ -104,6 +105,15 @@ def finalize_web_video(raw_video_path: str, final_video_path: str, audio_source:
     if os.name == 'nt':
         kwargs['creationflags'] = 0x08000000
     res = subprocess.run(cmd, **kwargs)
+    if res.returncode != 0:
+        err = (res.stderr or b"").decode("utf-8", "replace").strip()
+        print(f"[FFmpeg Error] finalize_web_video failed (exit {res.returncode}):\nCommand: {' '.join(cmd)}\n{err}", flush=True)
+        if os.path.isfile(temp_dest) and temp_dest != final_video_path:
+            try:
+                os.remove(temp_dest)
+            except OSError:
+                pass
+        return False
     if res.returncode == 0 and os.path.isfile(temp_dest):
         if temp_dest != final_video_path:
             os.replace(temp_dest, final_video_path)
