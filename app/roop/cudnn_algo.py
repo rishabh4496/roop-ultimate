@@ -171,6 +171,12 @@ def apply_algo(providers, algo):
             opts = dict(entry[1] or {})
             opts['cudnn_conv_algo_search'] = algo
             out.append((entry[0], opts))
+        elif str(entry) == 'CUDAExecutionProvider':
+            # backend_manager commonly publishes the provider chain as names
+            # rather than (name, options) pairs. Keep the chain/order intact,
+            # but promote CUDA to the option-bearing form so a cached DEFAULT
+            # verdict is actually applied to RestoreFormer/CodeFormer.
+            out.append((entry, {'cudnn_conv_algo_search': algo}))
         else:
             out.append(entry)
     return out

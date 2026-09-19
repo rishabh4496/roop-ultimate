@@ -85,6 +85,11 @@ SWAP_MODELS = {
         "file": "inswapper_128.onnx",
         "url": "https://huggingface.co/countfloyd/deepfake/resolve/main/inswapper_128.onnx",
         "output_size": 128,
+        # The public export is fixed at B=1. `_relax_batch_dim` can rewrite the
+        # graph declaration, but the shipped TensorRT/ORT graph still rejects
+        # B>1 with "Requested shape:{4,3,128,128}". Use the proven sequential
+        # path so preview and render never lose a face to a doomed batch call.
+        "batch_capable": False,
         "mean": [0.0, 0.0, 0.0],
         "standard_deviation": [1.0, 1.0, 1.0],
         "denormalize": False,
@@ -743,7 +748,7 @@ class FaceSwapInsightFace():
             self._swap_providers = swap_providers
             self._model_arg = model_arg
             self._trt_disabled = False
-            self._batch_unsupported = False
+            self._batch_unsupported = not spec.get("batch_capable", True)
 
             def _build(_i=0):
                 return onnxruntime.InferenceSession(
@@ -835,7 +840,7 @@ class FaceSwapInsightFace():
                 # dimensions is insufficient.  RunBatchMulti keeps the two
                 # nets' results indexed together before applying the existing
                 # per-face affine and eyelid-band composite.
-                self._batch_unsupported = False
+                self._batch_unsupported = not spec.get("batch_capable", True)
 
     @staticmethod
     def _graph_emits_mask(session, output_size):
@@ -2026,7 +2031,9 @@ class FaceSwapInsightFace():
         # getattr, not attribute access: `Run` guards the same way, because a
         # subclass that drives these methods over a stub session (the batch
         # fallback tests) never runs __init__.
-        if self._batch_unsupported:
+        if (self._batch_unsupported or
+                not SWAP_MODELS.get(self.loaded_model_key, {}).get(
+                    "batch_capable", True)):
             return self._sequential_fallback(
                 [(source_face, target_face, t) for t in temp_frames])
         return self.RunBatchMulti([
@@ -2041,7 +2048,9 @@ class FaceSwapInsightFace():
         # getattr, not attribute access: `Run` guards the same way, because a
         # subclass that drives these methods over a stub session (the batch
         # fallback tests) never runs __init__.
-        if self._batch_unsupported:
+        if (self._batch_unsupported or
+                not SWAP_MODELS.get(self.loaded_model_key, {}).get(
+                    "batch_capable", True)):
             return self._sequential_fallback(requests)
         latents = [self._compute_source_input(src) for src, _tgt, _blob in requests]
         if any(l is None for l in latents):

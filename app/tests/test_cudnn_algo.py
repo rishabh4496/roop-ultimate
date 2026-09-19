@@ -95,6 +95,13 @@ class ApplyAlgo(unittest.TestCase):
         provs = ['TensorrtExecutionProvider', 'CPUExecutionProvider']
         self.assertEqual(cudnn_algo.apply_algo(provs, 'DEFAULT'), provs)
 
+    def test_adds_options_to_string_form_cuda_provider(self):
+        provs = ['CUDAExecutionProvider', 'CPUExecutionProvider']
+        out = cudnn_algo.apply_algo(provs, 'DEFAULT')
+        self.assertEqual(out[0][0], 'CUDAExecutionProvider')
+        self.assertEqual(out[0][1]['cudnn_conv_algo_search'], 'DEFAULT')
+        self.assertEqual(out[1], 'CPUExecutionProvider')
+
 
 class ProbeScope(unittest.TestCase):
 

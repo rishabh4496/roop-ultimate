@@ -211,6 +211,22 @@ class FallbackKeepsTheMaskContract(unittest.TestCase):
         self.assertEqual(sw.batch_attempts, 1, 'a known-broken model must not retry')
         self.assertEqual(len(outs), 2)
 
+    def test_fixed_batch_inswapper_uses_sequential_path_without_retrying(self):
+        """The shipped inswapper export is fixed at B=1, not merely flaky.
+
+        Preview used to submit four 128px crops anyway, producing the terminal
+        OrtValue shape error before the fallback could run. The model contract
+        now routes that export directly through the same per-face path that
+        preserves swaps and masks.
+        """
+        sw = _Swapper(batch_works=False, emits_mask=True)
+        sw.loaded_model_key = 'inswapper'
+        outs = sw.RunBatch(object(), object(), _crops(4))
+        self.assertEqual(len(outs), 4)
+        self.assertEqual(sw.batch_attempts, 0)
+        self.assertEqual(sw.single_calls, 4)
+        self.assertIsNotNone(sw.take_masks())
+
 
 class BatchFailureMustNotDisableTrtForSingleFrames(unittest.TestCase):
     """A model whose export only breaks at batch>1 (e.g. hyperswap's internal
