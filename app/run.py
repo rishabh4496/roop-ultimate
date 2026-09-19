@@ -336,16 +336,12 @@ if __name__ == '__main__':
     api_thread = threading.Thread(target=run_api, daemon=True)
     api_thread.start()
     # Pinokio's launcher waits for a concrete loopback URL before advancing
-    # to the React shell.  The API owns the port, so publish the detected
-    # address here instead of making the launcher guess or hard-code it.
+    # to the React shell.  API_READY is deliberately announced after
+    # core.run() returns from CONFIG_LOAD and MODEL_RUNTIME_INIT.  Publishing
+    # it from a concurrent thread here races the transactional state machine
+    # and attempts API_READY while those required phases are still pending.
     api_port = int(os.environ.get("ROOP_API_PORT", "8001"))
-    if os.environ.get("ROOP_REACT_CLIENT") == "1":
-        threading.Thread(
-            target=_announce_react_backend_when_ready,
-            args=(api_thread, api_port),
-            daemon=True,
-        ).start()
-    else:
+    if os.environ.get("ROOP_REACT_CLIENT") != "1":
         # Preserve the legacy launcher's existing URL capture behavior. Its
         # actual Gradio URL is emitted later by ui/main.py, so do not print
         # a web address here.
@@ -374,6 +370,8 @@ if __name__ == '__main__':
     # legacy launcher is unchanged: there Gradio IS the application, and its
     # shutdown should still end the process.
     if os.environ.get("ROOP_REACT_CLIENT") == "1" and api_thread.is_alive():
+        if not _announce_react_backend_when_ready(api_thread, api_port):
+            sys.exit(1)
         print(f"[Backend] API daemon running on port {api_port} "
               f"- stop this script in Pinokio to shut it down.", flush=True)
         try:
