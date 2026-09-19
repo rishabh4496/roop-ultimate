@@ -2309,6 +2309,7 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
         self._runtime_write_queue = _write_q
 
         _writer_exc = [None]  # propagate write errors back to the main thread
+        _worker_exc = [None]  # propagate processing-worker errors back to the main thread
         _writer_stop = Event()
         _written_indices = set()
 
@@ -2610,12 +2611,25 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                     if gc.isenabled():
                         gc.disable()
                     _w0 = time.perf_counter()
-                    while roop.globals.processing:
-                        try:
-                            a, b = _q.get_nowait()
-                        except _QueueEmpty:
-                            break
-                        _pb(a, b)
+                    try:
+                        while roop.globals.processing:
+                            try:
+                                a, b = _q.get_nowait()
+                            except _QueueEmpty:
+                                break
+                            _pb(a, b)
+                    except Exception as exc:
+                        # A processing worker used to die silently here. The
+                        # coordinator then joined a partial worker set, marked
+                        # the run stopped, and the API reported no traceback or
+                        # actionable error. Preserve the first failure, wake
+                        # the reader/writer, and let the caller's normal
+                        # exception path mark the project FAILED.
+                        if _worker_exc[0] is None:
+                            _worker_exc[0] = exc
+                            bar_write(f'[Stabilize] processing worker failed: '
+                                      f'{type(exc).__name__}: {exc}')
+                        roop.globals.processing = False
                     _bt[_wi] = time.perf_counter() - _w0
 
                 workers = [Thread(target=_runner, args=(i,), name=f'stab_proc{i}') for i in range(min(n, n_blocks))]
@@ -2625,6 +2639,11 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                 for w in workers:
                     w.join()
                 _t_proc = time.perf_counter() - _t_proc0   # compute time (slowest worker gates this)
+
+                if _worker_exc[0] is not None:
+                    raise RuntimeError(
+                        f'stabilization worker failed: {type(_worker_exc[0]).__name__}: '
+                        f'{_worker_exc[0]}') from _worker_exc[0]
 
                 # Queue the chunk for the background write thread.
                 # Blocks only when FFMPEG is slower than frame processing

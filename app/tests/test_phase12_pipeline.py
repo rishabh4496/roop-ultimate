@@ -40,6 +40,13 @@ class Phase12SchedulingContract(unittest.TestCase):
         self.assertRegex(body, r"for gi in range\(cs, cs \+ clen\)")
         self.assertIn("res.pop(gi, None)", body)
 
+    def test_stabilization_worker_failures_are_rethrown(self):
+        body = PM.split("def _run_stab_parallel", 1)[1].split("def update_progress", 1)[0]
+        self.assertIn("_worker_exc = [None]", body)
+        self.assertIn("processing worker failed", body)
+        self.assertIn("raise RuntimeError(", body)
+        self.assertIn("from _worker_exc[0]", body)
+
     def test_mask_compositor_skips_identity_resize(self):
         body = MASK.split("def _composite_mask", 1)[1].split("def ", 1)[0]
         self.assertIn("if img_mask.shape[:2] != target.shape[:2]", body)
