@@ -52,7 +52,6 @@ def _register_gpu_runtime_dirs():
 
 _register_gpu_runtime_dirs()
 
-import onnxruntime as ort
 from roop.degrade import swallowed as _swallowed
 
 
@@ -64,28 +63,58 @@ def run_preflight_checks():
             "InsightFace C-bindings require numpy<2.0.0."
         )
 
-    lister = getattr(ort, "get_available_providers", None)
-    if not callable(lister):
-        print(
-            "[WARNING] onnxruntime is installed but exposes no provider API. "
-            "Skipping the provider preflight; run Fix TensorRT if acceleration is missing.",
-            flush=True
-        )
-        return
-
     try:
-        providers = lister()
+        from roop.gpu_preflight import get_preflight_result
+        result = get_preflight_result()
     except Exception as exc:
-        print(f"[WARNING] could not query ONNX Runtime providers: {exc}", flush=True)
-        return
+        sys.exit(
+            "[FATAL] authoritative ONNX Runtime preflight could not run: "
+            f"{type(exc).__name__}: {exc}"
+        )
 
-    if "TensorrtExecutionProvider" not in providers:
+    if not result.get("onnxruntime_importable"):
+        sys.exit(
+            "[FATAL] ONNX Runtime is not usable. "
+            f"stage={result.get('failure_stage') or 'unknown'}; "
+            f"reason={result.get('failure_reason') or 'import failed'}. "
+            "Repair the Pinokio environment before starting the app."
+        )
+
+    providers = list(result.get("available_providers") or [])
+    if not providers:
+        sys.exit(
+            "[FATAL] ONNX Runtime exposes no execution providers. "
+            f"stage={result.get('failure_stage') or 'unknown'}; "
+            f"reason={result.get('failure_reason') or 'provider registry is empty'}."
+        )
+
+    active = result.get("active_provider") or "none"
+    stage = result.get("failure_stage")
+    reason = result.get("failure_reason")
+    if active == "TensorrtExecutionProvider" and result.get("tensorrt_session_usable"):
+        print("[OK] TensorRT minimal session verified as active.", flush=True)
+    elif "CUDAExecutionProvider" in providers and active == "CUDAExecutionProvider":
         print(
-            "[WARNING] TensorrtExecutionProvider not found in ONNX Runtime. "
-            "Falling back to CUDA.", flush=True
+            "[WARNING] TensorRT is not active; CUDA is the validated fallback. "
+            f"stage={stage or 'none'}; reason={reason or 'TensorRT was not selected'}",
+            flush=True,
+        )
+    elif active == "CPUExecutionProvider":
+        print(
+            "[WARNING] GPU providers are not active; CPU fallback is validated. "
+            f"stage={stage or 'none'}; reason={reason or 'GPU provider unavailable'}",
+            flush=True,
         )
     else:
-        print("[OK] TensorrtExecutionProvider registered.", flush=True)
+        print(
+            "[WARNING] no recognized accelerated provider is active. "
+            f"stage={stage or 'none'}; reason={reason or 'provider chain unavailable'}",
+            flush=True,
+        )
+    print(
+        "[Runtime] provider preflight: "
+        f"requested=auto active={active} available={providers}", flush=True
+    )
 
 
 if __name__ == "__main__":

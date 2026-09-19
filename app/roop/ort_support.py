@@ -48,16 +48,15 @@ def available_providers() -> List[str]:
         from roop.gpu_preflight import get_preflight_result
         return list(get_preflight_result().get("available_providers", []))
     except Exception:
-        pass
-    lister = provider_api()
-    if lister is None:
-        return []
-    try:
-        return [str(provider) for provider in lister()]
-    except Exception:
         return []
 
 
 def onnxruntime_is_usable() -> bool:
     """Whether onnxruntime is importable AND exposes its provider API."""
-    return provider_api() is not None
+    try:
+        from roop.gpu_preflight import get_preflight_result
+        result = get_preflight_result()
+        return bool(result.get("onnxruntime_importable")
+                    and result.get("available_providers"))
+    except Exception:
+        return False

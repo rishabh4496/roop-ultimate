@@ -29,14 +29,15 @@ def _name(value) -> str:
 
 
 def _available() -> List[str]:
+    """Return the provider list from the one authoritative preflight.
+
+    There is intentionally no second ONNX Runtime probe here.  A preflight
+    failure is represented by an empty provider list and remains visible in
+    ``get_preflight_result()`` for diagnostics.
+    """
     try:
         from roop.gpu_preflight import get_preflight_result
         return list(get_preflight_result().get("available_providers", []))
-    except Exception:
-        pass
-    try:
-        from roop.ort_support import available_providers as _ort_providers
-        return _ort_providers()
     except Exception as _degrade_error:
         _swallowed("roop/backend_manager.py:33", _degrade_error, "fallback continued")
         return []
@@ -80,6 +81,13 @@ def provider_usable(name: str, device_id: int = 0,
                 ok = bool(get_preflight_result().get("tensorrt_session_usable", False))
             except Exception:
                 pass
+        elif ok and canonical.lower().startswith("cuda"):
+            try:
+                from roop.gpu_preflight import get_preflight_result
+                active = get_preflight_result().get("active_provider")
+                ok = active in ("TensorrtExecutionProvider", "CUDAExecutionProvider")
+            except Exception:
+                ok = False
     if ok and canonical.lower().startswith("dml"):
         # ORT's DML provider is self-contained; the listing is the reliable
         # check and importing torch must not make DirectML appear unavailable.
@@ -159,8 +167,9 @@ def canonical_provider_decision(requested: Optional[str] = None, device_id: int 
     3. Actual usable provider chain (available & usable)
     4. Runtime session verification (active)
     """
-    raw_req = str(requested or os.environ.get("ROOP_EXECUTION_PROVIDER", "auto")).strip().lower()
-    req = _name(raw_req).replace("executionprovider", "").lower() or "auto"
+    raw_req = requested or os.environ.get("ROOP_EXECUTION_PROVIDER", "auto")
+    req = _name(raw_req).strip().lower().replace("executionprovider", "") or "auto"
+    req = {"directml": "dml"}.get(req, req)
 
     cache_key = (req, int(device_id))
     with _lock:
@@ -170,6 +179,7 @@ def canonical_provider_decision(requested: Optional[str] = None, device_id: int 
     from roop.gpu_preflight import get_preflight_result
     preflight = get_preflight_result()
     available_providers = tuple(preflight.get("available_providers", []))
+    preflight_active = preflight.get("active_provider")
 
     # Step 2: Capability / Admission Validation
     admitted = req
@@ -211,7 +221,13 @@ def canonical_provider_decision(requested: Optional[str] = None, device_id: int 
                 degradation_reason = preflight.get("failure_reason") or "TensorRT runtime is not usable"
                 degradation_stage = preflight.get("failure_stage") or "runtime_unavailable"
         elif cand_lower.startswith("cuda"):
-            if preflight.get("cuda_available", False) and "CUDAExecutionProvider" in available_providers:
+            if (
+                preflight.get("cuda_available", False)
+                and "CUDAExecutionProvider" in available_providers
+                and preflight_active in (
+                    "TensorrtExecutionProvider", "CUDAExecutionProvider"
+                )
+            ):
                 usable_chain.append(candidate)
             elif not degradation_reason and req in ("auto", "tensorrt", "cuda"):
                 degradation_reason = preflight.get("failure_reason") or "CUDA is not available"
@@ -233,8 +249,12 @@ def canonical_provider_decision(requested: Optional[str] = None, device_id: int 
     active = usable_chain[0] if usable_chain else "none"
     active_short = active.replace("ExecutionProvider", "").lower()
 
-    degraded = False
-    if req != "auto" and active_short != req:
+    # Auto is still a request for the fastest admitted chain.  If that chain
+    # steps down, record it too.  Only an explicit CPU request is inherently
+    # non-degrading when it binds to CPU.
+    preferred_short = _name(candidates[0]).replace("ExecutionProvider", "").lower()
+    degraded = bool(degradation_reason) or active_short != preferred_short
+    if degraded:
         degraded = True
         if not degradation_reason:
             degradation_reason = f"Provider '{req}' was requested but session bound to '{active_short}'"
@@ -272,23 +292,11 @@ _HIERARCHY = {
 
 def resolve_provider_names(requested: Iterable[str] | None,
                            device_id: int = 0) -> List[str]:
-    """Resolve a requested backend to a validated, ordered provider chain."""
+    """Resolve a requested backend through the canonical decision only."""
     requested = list(requested or ("cpu",))
-    available = _available()
-    # Accept both encoded names and the short names used by settings.yaml.
-    short = _name(requested[0]).lower().replace("executionprovider", "")
-    candidates = _HIERARCHY.get(short, tuple(_name(p) for p in requested))
-    # All candidates in hierarchy are evaluated for usability without blanket exclusion
-    resolved: List[str] = []
-    for candidate in candidates:
-        if provider_usable(candidate, device_id, available) and candidate not in resolved:
-            resolved.append(candidate)
-    if not resolved:
-        # CPU is the only safe universal last resort.  Keep this explicit so a
-        # broken GPU runtime is visible in diagnostics rather than silently
-        # producing an empty providers list and a later opaque crash.
-        resolved = ["CPUExecutionProvider"] if provider_available("CPUExecutionProvider", available) else []
-    return resolved
+    decision = canonical_provider_decision(
+        requested[0] if requested else "cpu", device_id=device_id)
+    return list(decision.active_chain)
 
 
 def provider_admission(requested: str | None = None, device_id: int = 0) -> dict:
@@ -300,36 +308,32 @@ def provider_admission(requested: str | None = None, device_id: int = 0) -> dict
     behavior on a sub-7GB device unless the user explicitly opts into the
     experimental override.
     """
-    configured = str(requested or os.environ.get("ROOP_EXECUTION_PROVIDER", "auto"))
-    small = _small_gpu(device_id)
-    allow_small_trt = os.environ.get("ROOP_ALLOW_TRT_SMALL_GPU", "1").strip().lower() in (
-        "1", "true", "yes", "on")
-    short = _name(configured).lower().replace("executionprovider", "")
-    if small and short in ("auto", "tensorrt") and not allow_small_trt:
-        return {
-            "requested": configured,
-            "admitted": False,
-            "reason": "sub-7GB safety policy rejects TensorRT; use CUDA/CPU fallback",
-            "override": False,
-        }
-    if small and short in ("auto", "tensorrt") and allow_small_trt:
-        return {
-            "requested": configured,
-            "admitted": True,
-            "reason": "explicit ROOP_ALLOW_TRT_SMALL_GPU override",
-            "override": True,
-        }
+    configured = requested or os.environ.get("ROOP_EXECUTION_PROVIDER", "auto")
+    decision = canonical_provider_decision(configured, device_id)
+    normalized = _name(configured).lower().replace("executionprovider", "")
+    normalized = {"directml": "dml"}.get(normalized, normalized)
+    admitted = decision.degradation_stage != "admission_rejected"
     return {
         "requested": configured,
-        "admitted": True,
-        "reason": "hardware tier permits requested backend; availability is checked separately",
-        "override": False,
+        "admitted": admitted,
+        "admitted_provider": decision.admitted,
+        "reason": decision.degradation_reason or (
+            "hardware tier permits requested backend; availability is checked separately"
+        ),
+        "override": bool(
+            normalized in ("auto", "tensorrt")
+            and decision.admitted == "tensorrt"
+            and os.environ.get("ROOP_ALLOW_TRT_SMALL_GPU", "1").strip().lower()
+            in ("1", "true", "yes", "on")
+            and _small_gpu(device_id)
+        ),
     }
 
 
 def diagnostic_report(device_id: int = 0, requested: str | None = None) -> dict:
     """Return JSON-safe diagnostics for logs and the diagnostics panel."""
-    available = _available()
+    decision = canonical_provider_decision(requested, device_id)
+    available = list(decision.available)
     try:
         import torch
         cuda = bool(torch.cuda.is_available())
@@ -346,8 +350,18 @@ def diagnostic_report(device_id: int = 0, requested: str | None = None) -> dict:
         "cuda_visible": cuda,
         "gpu": gpu,
         "vram_gb": round(vram_gb, 2),
-        "admission": provider_admission(configured, device_id),
-        "resolved": resolve_provider_names([configured], device_id),
+        "admission": {
+            "requested": decision.requested,
+            "admitted": decision.admitted,
+            "reason": decision.degradation_reason,
+            "stage": decision.degradation_stage,
+        },
+        "resolved": list(decision.active_chain),
+        "provider_requested": decision.requested,
+        "provider_admitted": decision.admitted,
+        "provider_active": decision.active,
+        "degradation_reason": decision.degradation_reason,
+        "degradation_stage": decision.degradation_stage,
     }
 
 
@@ -520,11 +534,19 @@ def session_degradations() -> List[dict]:
         return list(_DEGRADATIONS)
 
 
-def _record_degradation(tag: str, frm: str, to: str, error: BaseException) -> None:
+def _record_degradation(tag: str, frm: str, to: str, error: BaseException,
+                        requested_provider: str | None = None,
+                        active_provider: str | None = None) -> None:
     entry = {"model": str(tag), "from": frm, "to": to,
              "error": f"{type(error).__name__}: {error}"[:400]}
     with _lock:
         _DEGRADATIONS.append(entry)
+    record_provider_degradation(
+        requested_provider or frm,
+        active_provider or to,
+        entry["error"],
+        "session_construction",
+    )
     print(f"[Backend] {tag}: {frm} session build FAILED, falling back to {to}. "
           f"{entry['error']}")
 
@@ -563,7 +585,15 @@ def build_session_with_fallback(build, providers, tag: str = "model"):
                 first_error = error
             if index + 1 >= len(attempts):
                 break
-            _record_degradation(tag, label, attempts[index + 1][0], error)
+            next_label, next_chain = attempts[index + 1]
+            _record_degradation(
+                tag,
+                label,
+                next_label,
+                error,
+                requested_provider=_name(chain[0]),
+                active_provider=_name(next_chain[0]),
+            )
     if first_error is not None:
         raise first_error
     raise RuntimeError(f"{tag}: no usable execution provider chain")

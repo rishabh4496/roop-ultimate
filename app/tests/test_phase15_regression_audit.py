@@ -2,6 +2,7 @@
 
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from roop.regression_audit import (
     BACKENDS,
@@ -53,7 +54,20 @@ def test_matrix_contains_all_requested_backend_families_and_precisions():
 
 
 def test_unavailable_provider_is_not_reported_as_pass():
-    report = runtime_capabilities(ort_module=FakeOrt(), torch_module=FakeTorch(), provider_usable=lambda *_args: True)
+    preflight = {
+        "onnxruntime_importable": True,
+        "onnxruntime_version": "test-ort",
+        "onnxruntime_path": "test",
+        "available_providers": ["CPUExecutionProvider", "CUDAExecutionProvider"],
+        "cuda_available": True,
+        "tensorrt_available": False,
+        "tensorrt_session_usable": False,
+        "active_provider": "CUDAExecutionProvider",
+        "failure_stage": "provider_not_compiled",
+        "failure_reason": "TensorRT unavailable",
+    }
+    with patch("roop.gpu_preflight.get_preflight_result", return_value=preflight):
+        report = runtime_capabilities(ort_module=FakeOrt(), torch_module=FakeTorch(), provider_usable=lambda *_args: True)
     rows = {row["id"]: row for row in report["backends"]}
     assert rows["cuda_fp32"]["status"] == "available_not_validated"
     assert rows["tensorrt_fp32"]["status"] == "unavailable"
@@ -95,7 +109,20 @@ def test_cache_audit_flags_driverless_and_legacy_namespaces_without_deleting(tmp
 
 
 def test_report_keeps_cache_and_execution_gaps_explicit(tmp_path: Path):
-    report = build_report(cache_roots=[tmp_path], active_namespaces=["fp32_active"], ort_module=FakeOrt(), torch_module=FakeTorch(), provider_usable=lambda *_args: True)
+    preflight = {
+        "onnxruntime_importable": True,
+        "onnxruntime_version": "test-ort",
+        "onnxruntime_path": "test",
+        "available_providers": ["CPUExecutionProvider", "CUDAExecutionProvider"],
+        "cuda_available": True,
+        "tensorrt_available": False,
+        "tensorrt_session_usable": False,
+        "active_provider": "CUDAExecutionProvider",
+        "failure_stage": "provider_not_compiled",
+        "failure_reason": "TensorRT unavailable",
+    }
+    with patch("roop.gpu_preflight.get_preflight_result", return_value=preflight):
+        report = build_report(cache_roots=[tmp_path], active_namespaces=["fp32_active"], ort_module=FakeOrt(), torch_module=FakeTorch(), provider_usable=lambda *_args: True)
     assert report["rules"]["availability_is_not_validation"] is True
     assert report["coverage_summary"]["complete"] is False
     assert report["enhancers"]["status"] == "not_run"

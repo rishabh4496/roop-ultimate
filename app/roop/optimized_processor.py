@@ -985,17 +985,10 @@ def create_onnx_session(
     if ort is None:
         raise ImportError("onnxruntime is required for OnnxBatchRunner")
     if providers is None:
-        from roop.ort_support import available_providers as _ort_providers
-        available = set(_ort_providers())
-        requested: List[Any] = [
-            name
-            for name in (
-                "TensorrtExecutionProvider",
-                "CUDAExecutionProvider",
-                "CPUExecutionProvider",
-            )
-            if name in available
-        ]
+        from roop.backend_manager import canonical_provider_decision
+        requested: List[Any] = list(
+            canonical_provider_decision("auto").active_chain
+        )
     else:
         requested = list(providers)
     if not requested:

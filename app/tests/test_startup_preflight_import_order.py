@@ -54,18 +54,33 @@ class PreflightImportOrdering(unittest.TestCase):
     def setUp(self):
         self.tree = ast.parse(_module_source())
 
-    def test_no_app_module_is_imported_before_onnxruntime(self):
-        """settings/roop pull in onnxruntime themselves; importing them first
-        is what left `ort` half-initialised."""
-        offenders = [
-            name for name in _imports_before_onnxruntime(self.tree)
-            if name == "settings" or name == "roop" or name.startswith("roop.")
-        ]
+    def test_no_app_module_is_imported_before_runtime_registration(self):
+        """DLL registration must happen before the first app-module import."""
+        source = _module_source()
+        registration_line = next(
+            node.lineno for node in self.tree.body
+            if isinstance(node, ast.Expr)
+            and isinstance(node.value, ast.Call)
+            and isinstance(node.value.func, ast.Name)
+            and node.value.func.id == "_register_gpu_runtime_dirs"
+        )
+        offenders = []
+        for node in self.tree.body:
+            if node.lineno >= registration_line:
+                continue
+            if isinstance(node, ast.Import):
+                names = [alias.name for alias in node.names]
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                names = [node.module]
+            else:
+                continue
+            offenders.extend(
+                name for name in names
+                if name == "settings" or name == "roop" or name.startswith("roop.")
+            )
         self.assertEqual(
             offenders, [],
-            "run.py imports %s before onnxruntime; that is the exact ordering "
-            "that produced 'module onnxruntime has no attribute "
-            "get_available_providers' at startup" % offenders)
+            "run.py imports %s before DLL registration" % offenders)
 
     def test_dll_registration_helper_exists_and_is_self_contained(self):
         """The helper must resolve DLL directories without the app packages."""
@@ -96,25 +111,23 @@ class PreflightImportOrdering(unittest.TestCase):
             f"_register_gpu_runtime_dirs imports {forbidden}; it must stay "
             "independent of the model stack")
 
-    def test_the_helper_runs_before_onnxruntime_is_imported(self):
-        """Registering the directories after the import would be a no-op."""
+    def test_authoritative_preflight_owns_onnxruntime_import(self):
+        """The central preflight must own the guarded ORT import."""
         source = _module_source()
-        call_at = source.find("\n_register_gpu_runtime_dirs()")
-        import_at = source.find("\nimport onnxruntime")
-        self.assertNotEqual(call_at, -1, "the helper is never called")
-        self.assertNotEqual(import_at, -1, "onnxruntime is never imported")
-        self.assertLess(call_at, import_at,
-                        "DLL directories must be registered before ORT loads")
+        self.assertNotIn("import onnxruntime as ort", source)
+        self.assertIn(
+            "from roop.gpu_preflight import get_preflight_result", source)
 
 
 class PreflightDegradesInsteadOfCrashing(unittest.TestCase):
     """`run_preflight_checks` is the first thing the launcher executes."""
 
-    def _preflight(self, ort_module):
+    def _preflight(self, result):
+        import sys
+
         namespace = {
-            "sys": __import__("sys"),
+            "sys": sys,
             "np": types.SimpleNamespace(__version__="1.26.4"),
-            "ort": ort_module,
         }
         function = next(n for n in ast.parse(_module_source()).body
                         if isinstance(n, ast.FunctionDef)
@@ -122,43 +135,69 @@ class PreflightDegradesInsteadOfCrashing(unittest.TestCase):
         exec(compile(ast.Module(body=[function], type_ignores=[]),
                      str(RUN_PY), "exec"), namespace)
 
-        buffer = io.StringIO()
-        with contextlib.redirect_stdout(buffer), contextlib.redirect_stderr(buffer):
-            namespace["run_preflight_checks"]()
+        fake_preflight = types.ModuleType("roop.gpu_preflight")
+        fake_preflight.get_preflight_result = lambda: result
+        saved = sys.modules.get("roop.gpu_preflight")
+        sys.modules["roop.gpu_preflight"] = fake_preflight
+        try:
+            buffer = io.StringIO()
+            with contextlib.redirect_stdout(buffer), contextlib.redirect_stderr(buffer):
+                namespace["run_preflight_checks"]()
+        finally:
+            if saved is not None:
+                sys.modules["roop.gpu_preflight"] = saved
+            else:
+                sys.modules.pop("roop.gpu_preflight", None)
         return buffer.getvalue()
 
     def test_a_module_without_the_provider_api_is_a_warning_not_a_crash(self):
         """This is the exact shape that terminated the Pinokio shell."""
-        broken = types.ModuleType("onnxruntime")     # no get_available_providers
-        broken.__file__ = "/somewhere/onnxruntime/__init__.py"
-        output = self._preflight(broken)
-        self.assertIn("WARNING", output)
-        self.assertNotIn("Traceback", output)
+        broken = {
+            "onnxruntime_importable": True,
+            "available_providers": [],
+            "active_provider": "none",
+            "failure_stage": "provider_not_compiled",
+            "failure_reason": "get_available_providers is missing",
+        }
+        with self.assertRaisesRegex(SystemExit, "provider_not_compiled"):
+            self._preflight(broken)
 
     def test_a_failing_provider_query_is_a_warning_not_a_crash(self):
-        def explode():
-            raise RuntimeError("provider registry unavailable")
-
-        module = types.ModuleType("onnxruntime")
-        module.get_available_providers = explode
-        output = self._preflight(module)
-        self.assertIn("WARNING", output)
-        self.assertIn("provider registry unavailable", output)
+        result = {
+            "onnxruntime_importable": True,
+            "available_providers": [],
+            "active_provider": "none",
+            "failure_stage": "provider_not_compiled",
+            "failure_reason": "provider registry unavailable",
+        }
+        with self.assertRaisesRegex(SystemExit, "provider registry unavailable"):
+            self._preflight(result)
 
     def test_a_healthy_tensorrt_runtime_is_reported_ok(self):
-        module = types.ModuleType("onnxruntime")
-        module.get_available_providers = lambda: [
-            "TensorrtExecutionProvider", "CUDAExecutionProvider",
-            "CPUExecutionProvider"]
-        self.assertIn("[OK] TensorrtExecutionProvider registered.",
-                      self._preflight(module))
+        result = {
+            "onnxruntime_importable": True,
+            "available_providers": [
+                "TensorrtExecutionProvider", "CUDAExecutionProvider",
+                "CPUExecutionProvider"],
+            "active_provider": "TensorrtExecutionProvider",
+            "tensorrt_session_usable": True,
+            "failure_stage": None,
+            "failure_reason": None,
+        }
+        self.assertIn("[OK] TensorRT minimal session verified as active.",
+                      self._preflight(result))
 
     def test_a_cuda_only_runtime_still_starts_with_a_warning(self):
-        module = types.ModuleType("onnxruntime")
-        module.get_available_providers = lambda: [
-            "CUDAExecutionProvider", "CPUExecutionProvider"]
-        output = self._preflight(module)
-        self.assertIn("TensorrtExecutionProvider not found", output)
+        result = {
+            "onnxruntime_importable": True,
+            "available_providers": ["CUDAExecutionProvider", "CPUExecutionProvider"],
+            "active_provider": "CUDAExecutionProvider",
+            "tensorrt_session_usable": False,
+            "failure_stage": "tensorrt_session_construction_failure",
+            "failure_reason": "TensorRT failed to initialize",
+        }
+        output = self._preflight(result)
+        self.assertIn("CUDA is the validated fallback", output)
         self.assertNotIn("Traceback", output)
 
 

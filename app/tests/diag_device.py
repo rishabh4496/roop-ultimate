@@ -70,11 +70,16 @@ def main():
     head("2. onnxruntime")
     avail = []
     try:
-        import onnxruntime as ort
-        print("  onnxruntime      %s" % ort.__version__)
-        avail = ort.get_available_providers()
+        from roop.gpu_preflight import get_preflight_result
+        preflight = get_preflight_result()
+        print("  onnxruntime      %s" % preflight.get("onnxruntime_version", "unknown"))
+        print("  onnxruntime path %s" % preflight.get("onnxruntime_path", "unknown"))
+        avail = list(preflight.get("available_providers", []))
         print("  available        %s" % avail)
-        print("  (what ORT was BUILT with, NOT what it can actually run)")
+        print("  active           %s" % preflight.get("active_provider", "none"))
+        print("  failure          %s: %s" % (
+            preflight.get("failure_stage", "none"),
+            preflight.get("failure_reason", "none")))
     except Exception as e:
         print("  onnxruntime import FAILED: %s" % e)
 
@@ -89,26 +94,18 @@ def main():
     from settings import Settings
     cfg = Settings("config.yaml")
     asked = cfg.provider
-    resolved = asked
+    from roop.backend_manager import canonical_provider_decision
+    decision = canonical_provider_decision(asked)
+    resolved = decision.active.replace("ExecutionProvider", "").lower()
     print("  config.yaml asks for            '%s'" % asked)
-    if asked in ("cuda", "tensorrt") and not cuda_ok:
-        if 'DmlExecutionProvider' in avail:
-            resolved = "dml"
-        elif 'ROCMExecutionProvider' in avail:
-            resolved = "rocm"
-        else:
-            resolved = "cpu"
-        print("  no CUDA device -> rewritten to  '%s'" % resolved)
-    if resolved == "tensorrt":
-        try:
-            import tensorrt  # noqa: F811
-        except Exception:
-            resolved = "cuda"
-            print("  tensorrt not importable -> 'cuda'")
-    print("  EFFECTIVE PROVIDER              '%s'" % resolved)
-    if resolved != asked:
+    print("  admitted provider               '%s'" % decision.admitted)
+    print("  active provider                 '%s'" % resolved)
+    if decision.degraded:
+        print("  degradation                     %s (%s)" % (
+            decision.degradation_reason, decision.degradation_stage))
         VERDICTS.append("The provider you configured ('%s') is NOT what will "
-                        "run ('%s')." % (asked, resolved))
+                        "run ('%s'): %s" % (
+                            asked, resolved, decision.degradation_reason))
 
     # 4. threads: what you set vs what runs
     head("4. threads")

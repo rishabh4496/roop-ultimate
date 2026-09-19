@@ -193,13 +193,11 @@ def decode_execution_providers(execution_providers: List[str]) -> List[str]:
     # TensorRT provider that is merely listed by ORT from becoming the sole
     # backend and failing later inside a model session.  CPU remains an ordered
     # fallback for every GPU hierarchy.
-    resolved_names = resolve_provider_names(execution_providers,
-                                            getattr(roop.globals, 'cuda_device_id', 0))
-    requested_name = str(execution_providers[0] if execution_providers else '').lower()
-    from roop.ort_support import available_providers as _ort_providers
-    available = _ort_providers()
-    list_providers = [provider for provider in available
-                      if provider in resolved_names]
+    from roop.backend_manager import canonical_provider_decision
+    decision = canonical_provider_decision(
+        execution_providers[0] if execution_providers else 'cpu',
+        getattr(roop.globals, 'cuda_device_id', 0))
+    list_providers = list(decision.active_chain)
     
     try:
         for i in range(len(list_providers)):
@@ -466,17 +464,10 @@ def suggest_max_memory() -> int:
 
 
 def suggest_execution_providers() -> List[str]:
-    from roop.ort_support import available_providers
-    providers = available_providers()
-    encoded = [p.replace('ExecutionProvider', '').lower() for p in providers]
-    ordered = []
-    for pref in ('tensorrt', 'cuda', 'rocm', 'dml', 'cpu'):
-        if pref in encoded and pref not in ordered:
-            ordered.append(pref)
-    for remaining in encoded:
-        if remaining not in ordered:
-            ordered.append(remaining)
-    return ordered or ['cpu']
+    from roop.backend_manager import canonical_provider_decision
+    decision = canonical_provider_decision('auto')
+    return [p.replace('ExecutionProvider', '').lower()
+            for p in decision.active_chain] or ['cpu']
 
 
 def suggest_execution_threads() -> int:

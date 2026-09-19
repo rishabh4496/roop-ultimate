@@ -169,12 +169,12 @@ def runtime_capabilities(*, ort_module=None, torch_module=None, provider_usable=
     ort_module = _import_ort() if ort_module is None else ort_module
     torch_module = _import_torch() if torch_module is None else torch_module
     available = []
-    if ort_module is not None:
-        try:
-            available = [str(p) for p in ort_module.get_available_providers()]
-        except Exception as _degrade_error:
-            _swallowed("roop/regression_audit.py:170", _degrade_error, "fallback continued")
-            available = []
+    try:
+        from roop.gpu_preflight import get_preflight_result
+        available = list(get_preflight_result().get("available_providers", []))
+    except Exception as _degrade_error:
+        _swallowed("roop/regression_audit.py:170", _degrade_error, "fallback continued")
+        available = []
     torch_facts = _torch_facts(torch_module)
     backend_rows = []
     for row in BACKENDS:

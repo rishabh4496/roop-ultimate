@@ -92,6 +92,8 @@ class ProviderDiscoveryIsAlwaysSafe(unittest.TestCase):
                 sys.modules["onnxruntime"] = saved
             else:
                 sys.modules.pop("onnxruntime", None)
+            from roop.gpu_preflight import clear_preflight_cache
+            clear_preflight_cache()
 
     def test_no_production_call_is_unguarded(self):
         offenders = []
