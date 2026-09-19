@@ -37,8 +37,9 @@ def list_output():
             full = os.path.join(out, f)
             if os.path.isfile(full) and not f.startswith("."):
                 kind = "video" if util.is_video(full) else ("image" if util.is_image(full) else "file")
-                items.append({"name": f, "kind": kind, "mtime": os.path.getmtime(full),
-                              "size": os.path.getsize(full)})
+                items.append({"name": f, "kind": kind, "url": f"/outputs/{f}",
+                              "path": f"/outputs/{f}", "absolute_path": full,
+                              "mtime": os.path.getmtime(full), "size": os.path.getsize(full)})
     return {"output_path": out, "files": items[:50]}
 
 
@@ -125,58 +126,11 @@ def _open_shared(path: str):
     return os.fdopen(fd, "rb")
 
 
-@router.get("/api/file")
-def get_file(path: str, request: Request):
-    """Serve an output/temp file by absolute path (guarded to known dirs).
+def _stream_file_response(ap: str, request: Request):
+    """Serve a file with full HTTP 206 Byte-Range support and Windows share-delete handle."""
+    if not os.path.isfile(ap):
+        return JSONResponse(status_code=404, content={"message": "file not found"})
 
-    Streams the file (with HTTP Range support, so video seeking is instant) using
-    a share-delete handle (_open_shared). This matches FileResponse's smooth
-    seeking but, unlike FileResponse, never locks the output against move/delete —
-    so the finished video can be moved out of the output folder while it's still
-    showing in the player.
-    """
-    # Each root is a DIRECTORY OF MEDIA this endpoint is meant to hand out. It
-    # is deliberately not "the app folder" and emphatically not its parent:
-    # /api/file takes an arbitrary path from the query string, so every entry
-    # here is readable over HTTP by anything that can reach the port — which
-    # includes the network whenever the "public server (share)" setting is on.
-    # Rooting it at the working directory's parent would publish the whole
-    # project (config.yaml, .git, logs, models) and, depending on where the
-    # process was launched from, neighbouring apps as well.
-    #
-    # `.pinokio-temp` is what needs reaching outside `app/`; it sits at the
-    # project root. That one directory is named directly, resolved from this
-    # file rather than from the working directory so it lands in the same place
-    # no matter where the process was started.
-    _app_dir = os.path.dirname(os.path.abspath(__file__))
-    _project_dir = os.path.dirname(_app_dir)
-    roots = [
-        API_TEMP,
-        os.path.join(os.getcwd(), "temp"),
-        os.path.join(os.getcwd(), ".pinokio-temp"),
-        os.path.join(_app_dir, ".pinokio-temp"),
-        os.path.join(_project_dir, ".pinokio-temp"),
-        _faceset_library_dir(),
-    ]
-    out_dir = getattr(roop_globals, "output_path", "") or ""
-    if out_dir:
-        roots.append(out_dir)
-    allowed = [os.path.normcase(os.path.abspath(r)) for r in roots]
-    ap = os.path.abspath(path)
-    ap_n = os.path.normcase(ap)
-
-    def _within(child, parent):
-        # commonpath (unlike startswith) can't be fooled by sibling dirs that
-        # share a prefix, e.g. "output_evil" vs "output".
-        try:
-            return os.path.commonpath([child, parent]) == parent
-        except ValueError:
-            return False
-
-    if not any(_within(ap_n, a) for a in allowed) or not os.path.isfile(ap):
-        return JSONResponse(status_code=403, content={"message": "forbidden"})
-
-    import mimetypes
     file_size = os.path.getsize(ap)
     media_type = mimetypes.guess_type(ap)[0] or "application/octet-stream"
     range_header = request.headers.get("range") or request.headers.get("Range")
@@ -194,6 +148,13 @@ def get_file(path: str, request: Request):
                 yield data
         finally:
             f.close()
+
+    cors_headers = {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET, HEAD, OPTIONS",
+        "Access-Control-Allow-Headers": "Range, Content-Range, Accept-Ranges, Content-Type",
+        "Access-Control-Expose-Headers": "Content-Range, Accept-Ranges, Content-Length, Content-Type",
+    }
 
     if range_header and range_header.strip().lower().startswith("bytes="):
         spec = range_header.split("=", 1)[1].split(",", 1)[0].strip()
@@ -213,10 +174,89 @@ def get_file(path: str, request: Request):
             "Accept-Ranges": "bytes",
             "Content-Range": f"bytes {start}-{end}/{file_size}",
             "Content-Length": str(length),
+            **cors_headers,
         }
+        if request.method == "HEAD":
+            return Response(status_code=206, media_type=media_type, headers=headers)
         return StreamingResponse(_iter(start, length), status_code=206,
                                  media_type=media_type, headers=headers)
 
-    headers = {"Accept-Ranges": "bytes", "Content-Length": str(file_size)}
+    headers = {
+        "Accept-Ranges": "bytes",
+        "Content-Length": str(file_size),
+        **cors_headers,
+    }
+    if request.method == "HEAD":
+        return Response(status_code=200, media_type=media_type, headers=headers)
     return StreamingResponse(_iter(0, file_size), media_type=media_type, headers=headers)
+
+
+@router.api_route("/outputs/{filename:path}", methods=["GET", "HEAD"])
+@router.api_route("/api/media/{filename:path}", methods=["GET", "HEAD"])
+@router.api_route("/static/outputs/{filename:path}", methods=["GET", "HEAD"])
+def get_output_file(filename: str, request: Request):
+    """Dedicated static media endpoint serving output files with HTTP 206 Range support."""
+    out_dir = getattr(roop_globals, "output_path", None)
+    if not out_dir or not os.path.isdir(out_dir):
+        return JSONResponse(status_code=404, content={"message": "output directory not configured"})
+
+    full_path = os.path.abspath(os.path.join(out_dir, filename))
+    norm_out = os.path.normcase(os.path.abspath(out_dir))
+    norm_full = os.path.normcase(full_path)
+    try:
+        if os.path.commonpath([norm_full, norm_out]) != norm_out or not os.path.isfile(full_path):
+            return JSONResponse(status_code=404, content={"message": "file not found"})
+    except ValueError:
+        return JSONResponse(status_code=403, content={"message": "forbidden"})
+
+    return _stream_file_response(full_path, request)
+
+
+@router.api_route("/api/file", methods=["GET", "HEAD"])
+def get_file(path: str, request: Request):
+    """Serve an output/temp file by path with HTTP 206 Range support."""
+    out_dir = getattr(roop_globals, "output_path", "") or ""
+    clean_path = path or ""
+
+    # Map web-accessible URLs or relative output filenames to output_path
+    for prefix in ("/outputs/", "outputs/", "/api/media/", "api/media/"):
+        if clean_path.startswith(prefix):
+            clean_path = clean_path[len(prefix):]
+            break
+
+    if out_dir and os.path.isdir(out_dir):
+        cand = os.path.abspath(os.path.join(out_dir, clean_path))
+        norm_out = os.path.normcase(os.path.abspath(out_dir))
+        try:
+            if os.path.commonpath([os.path.normcase(cand), norm_out]) == norm_out and os.path.isfile(cand):
+                return _stream_file_response(cand, request)
+        except ValueError:
+            pass
+
+    _app_dir = os.path.dirname(os.path.abspath(__file__))
+    _project_dir = os.path.dirname(_app_dir)
+    roots = [
+        API_TEMP,
+        os.path.join(os.getcwd(), "temp"),
+        os.path.join(os.getcwd(), ".pinokio-temp"),
+        os.path.join(_app_dir, ".pinokio-temp"),
+        os.path.join(_project_dir, ".pinokio-temp"),
+        _faceset_library_dir(),
+    ]
+    if out_dir:
+        roots.append(out_dir)
+    allowed = [os.path.normcase(os.path.abspath(r)) for r in roots]
+    ap = os.path.abspath(clean_path)
+    ap_n = os.path.normcase(ap)
+
+    def _within(child, parent):
+        try:
+            return os.path.commonpath([child, parent]) == parent
+        except ValueError:
+            return False
+
+    if not any(_within(ap_n, a) for a in allowed) or not os.path.isfile(ap):
+        return JSONResponse(status_code=403, content={"message": "forbidden"})
+
+    return _stream_file_response(ap, request)
 

@@ -184,7 +184,7 @@ export default function Processing({ progress, settings, notify, setTab,
   }, [onStopRun, notify]);
 
   const out = !processing ? progress.output : null;
-  const outUrl = out?.path ? `${API}/api/file?path=${encodeURIComponent(out.path)}&t=${progress.started_at || Date.now()}` : '';
+  const outUrl = out ? (out.url ? `${API}${out.url}?t=${progress.started_at || Date.now()}` : (out.path?.startsWith('/') ? `${API}${out.path}?t=${progress.started_at || Date.now()}` : `${API}/api/file?path=${encodeURIComponent(out.path)}&t=${progress.started_at || Date.now()}`)) : '';
   const isVideoOutput = out?.kind === 'video' || /\.(mp4|mkv|mov|webm|avi)$/i.test(out?.path || '');
   const revealOutput = async () => {
     try { await postJSON('/api/reveal', { path: out?.path }); }

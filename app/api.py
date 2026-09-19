@@ -62,7 +62,14 @@ import project_checkpoint as _project_checkpoint
 import ui.globals as ui_globals
 
 app = FastAPI()
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*", "Range", "range", "Accept-Ranges", "Content-Range", "Content-Length"],
+    expose_headers=["Content-Range", "Accept-Ranges", "Content-Length", "Content-Type"],
+)
 
 # Preview updates several process-wide globals while it performs detection and
 # swapping. React can issue overlapping requests when a user scrubs frames or
@@ -3655,7 +3662,15 @@ def _record_last_output():
         return
     latest = max(files, key=os.path.getmtime)
     kind = "video" if util.is_video(latest) else ("image" if util.is_image(latest) else "file")
-    _last_output.update({"path": latest, "kind": kind})
+    rel_name = os.path.basename(latest)
+    web_url = f"/outputs/{rel_name}"
+    _last_output.update({
+        "path": web_url,
+        "url": web_url,
+        "name": rel_name,
+        "absolute_path": latest,
+        "kind": kind
+    })
 
 
 @app.post("/api/stop")

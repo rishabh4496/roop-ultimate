@@ -920,7 +920,7 @@ def queue_join(payload: dict = Body(...)):
             pass
 
     _say(f"[Queue] joined {len(files)} segment(s) -> {os.path.basename(dest)}")
-    return {"path": dest, "name": os.path.basename(dest), "segments": len(files)}
+    url = f"/outputs/{os.path.basename(dest)}"; return {"path": url, "url": url, "name": os.path.basename(dest), "absolute_path": dest, "segments": len(files)}
 
 
 @router.post("/api/queue/stop")

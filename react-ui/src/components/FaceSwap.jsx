@@ -1377,7 +1377,7 @@ export default function FaceSwap({
   // until the new job finishes, so we gate on `processing` rather than clearing
   // progress.output (which the next poll tick would just restore).
   const out = progress.processing ? null : progress.output;
-  const outUrl = out?.path ? `${API}/api/file?path=${encodeURIComponent(out.path)}&t=${progress.progress}` : '';
+  const outUrl = out ? (out.url ? `${API}${out.url}?t=${progress.progress || 0}` : (out.path?.startsWith('/') ? `${API}${out.path}?t=${progress.progress || 0}` : `${API}/api/file?path=${encodeURIComponent(out.path)}&t=${progress.progress}`)) : '';
   const prog = progress.progress || 0;
 
   const elapsedMs = progress.processing && startTime ? Date.now() - startTime : 0;

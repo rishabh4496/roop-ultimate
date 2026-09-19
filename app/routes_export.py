@@ -63,4 +63,4 @@ def apply_export(payload: dict = Body(...)):
     if not ok or not os.path.exists(dest):
         return JSONResponse(status_code=500, content={
             "message": "export failed — see the terminal log"})
-    return {"path": dest, "name": os.path.basename(dest)}
+    url = f"/outputs/{os.path.basename(dest)}"; return {"path": url, "url": url, "name": os.path.basename(dest), "absolute_path": dest}

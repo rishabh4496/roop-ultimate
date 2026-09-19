@@ -75,7 +75,7 @@ def extras_apply(file: UploadFile = File(...),
         out = _process_frame(img)
         outpath = os.path.join(out_dir, "edited_" + os.path.splitext(os.path.basename(path))[0] + ".png")
         cv2.imwrite(outpath, out)
-        return {"path": outpath, "kind": "image"}
+        url = f"/outputs/{os.path.basename(outpath)}"; return {"path": url, "url": url, "name": os.path.basename(outpath), "absolute_path": outpath, "kind": "image"}
 
     total = get_video_frame_total(path) or 1
     first_frame = get_video_frame(path, 1)
@@ -96,7 +96,7 @@ def extras_apply(file: UploadFile = File(...),
     if not finalize_web_video(raw_tmp, outpath, audio_source=path, delete_raw=True):
         if os.path.isfile(raw_tmp):
             os.replace(raw_tmp, outpath)
-    return {"path": outpath, "kind": "video"}
+    url = f"/outputs/{os.path.basename(outpath)}"; return {"path": url, "url": url, "name": os.path.basename(outpath), "absolute_path": outpath, "kind": "video"}
 
 def _make_frame_processor(operation: str, subtype: str):
     """Instantiate + initialize the requested frame processor. Returns a class
@@ -153,7 +153,7 @@ def extras_enhance(file: UploadFile = File(...),
             out = proc.Run(img)
             outpath = os.path.join(out_dir, f"{operation}_{subtype}_{stem}.png")
             cv2.imwrite(outpath, out)
-            return {"path": outpath, "kind": "image"}
+            url = f"/outputs/{os.path.basename(outpath)}"; return {"path": url, "url": url, "name": os.path.basename(outpath), "absolute_path": outpath, "kind": "image"}
 
         total = get_video_frame_total(path) or 1
         first = get_video_frame(path, 1)
@@ -183,7 +183,7 @@ def extras_enhance(file: UploadFile = File(...),
         if not finalize_web_video(raw_tmp, outpath, audio_source=path, delete_raw=True):
             if os.path.isfile(raw_tmp):
                 os.replace(raw_tmp, outpath)
-        return {"path": outpath, "kind": "video"}
+        url = f"/outputs/{os.path.basename(outpath)}"; return {"path": url, "url": url, "name": os.path.basename(outpath), "absolute_path": outpath, "kind": "video"}
     except Exception as e:
         traceback.print_exc()
         return JSONResponse(status_code=500, content={"message": f"processing failed: {e}"})

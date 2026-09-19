@@ -133,4 +133,9 @@ export const postFile = (path, file, fields, opts) => {
   return xhrUpload(path, fd, opts);
 };
 
-export const fileUrl = (p) => `${API}/api/file?path=${encodeURIComponent(p)}`;
+export const fileUrl = (p) => {
+  if (!p) return '';
+  if (p.startsWith('http://') || p.startsWith('https://')) return p;
+  if (p.startsWith('/')) return `${API}${p}`;
+  return `${API}/api/file?path=${encodeURIComponent(p)}`;
+};
