@@ -929,7 +929,7 @@ class HardwareProfiler:
         trt_builder_probe = trt
         if cuda and vram_total and vram_total < 7.0:
             allow_small_trt = os.environ.get(
-                "ROOP_ALLOW_TRT_SMALL_GPU", "1").strip().lower() in (
+                "ROOP_ALLOW_TRT_SMALL_GPU", "0").strip().lower() in (
                     "1", "true", "yes", "on")
             trt_builder_probe = bool(allow_small_trt)
             if not trt_builder_probe:

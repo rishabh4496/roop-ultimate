@@ -97,19 +97,51 @@ def provider_usable(name: str, device_id: int = 0,
     return ok
 
 
-def _small_gpu(device_id: int) -> bool:
-    """Return whether this device is below the laptop's 7GB safety tier."""
-    if os.environ.get('ROOP_ALLOW_TRT_SMALL_GPU', '1').strip().lower() in (
-            '1', 'true', 'yes', 'on'):
-        return False
+def is_sub_7gb_gpu(device_id: int = 0) -> bool:
+    """Return whether the physical CUDA device has strictly less than 7.0 GB VRAM.
+
+    This is an intrinsic hardware check derived from physical VRAM, never from the GPU
+    model name alone. Returns False for CPU-only systems or devices with >= 7.0 GB VRAM.
+    """
     try:
         import torch
-        return bool(torch.cuda.is_available() and
-                    torch.cuda.get_device_properties(device_id).total_memory /
-                    (1024 ** 3) < 7.0)
+        if not torch.cuda.is_available() or torch.cuda.device_count() <= int(device_id):
+            return False
+        total_gb = torch.cuda.get_device_properties(int(device_id)).total_memory / (1024 ** 3)
+        return 0.0 < total_gb < 7.0
     except Exception as _degrade_error:
-        _swallowed("roop/backend_manager.py:87", _degrade_error, "fallback continued")
+        _swallowed("roop/backend_manager.py:is_sub_7gb_gpu", _degrade_error, "fallback continued")
         return False
+
+
+def allow_small_gpu_trt() -> bool:
+    """Return whether explicit opt-in for experimental TensorRT on sub-7GB GPUs is enabled.
+
+    Defaults to '0' (disabled). Sub-7GB cards (such as the RTX 3060 6GB Laptop GPU) are
+    enforced on CUDA by default to prevent memory exhaustion and engine thrashing.
+    """
+    return os.environ.get("ROOP_ALLOW_TRT_SMALL_GPU", "0").strip().lower() in (
+        "1", "true", "yes", "on"
+    )
+
+
+def is_trt_allowed_for_device(device_id: int = 0) -> bool:
+    """Return whether TensorRT admission is permitted on the device under the sub-7GB policy."""
+    if is_sub_7gb_gpu(device_id) and not allow_small_gpu_trt():
+        return False
+    return True
+
+
+def _small_gpu(device_id: int = 0) -> bool:
+    """Return whether this device is treated as a small GPU (below 7GB safety tier without opt-in).
+
+    Maintained for backwards compatibility. When ROOP_ALLOW_TRT_SMALL_GPU=1 is set,
+    this returns False to permit TensorRT admission.
+    """
+    if os.environ.get('ROOP_ALLOW_TRT_SMALL_GPU', '0').strip().lower() in (
+            '1', 'true', 'yes', 'on'):
+        return False
+    return is_sub_7gb_gpu(device_id)
 
 
 @dataclass(frozen=True)
@@ -186,13 +218,13 @@ def canonical_provider_decision(requested: Optional[str] = None, device_id: int 
     degradation_reason = None
     degradation_stage = None
 
-    small = _small_gpu(device_id)
-    allow_small_trt = os.environ.get("ROOP_ALLOW_TRT_SMALL_GPU", "1").strip().lower() in ("1", "true", "yes", "on")
+    small = is_sub_7gb_gpu(device_id)
+    allow_small_trt = allow_small_gpu_trt()
 
     if req in ("auto", "tensorrt"):
         if small and not allow_small_trt:
             admitted = "cuda"
-            degradation_reason = "sub-7GB safety policy rejects TensorRT; use CUDA/CPU fallback"
+            degradation_reason = "sub-7GB safety policy rejects TensorRT by default; use CUDA/CPU fallback or set ROOP_ALLOW_TRT_SMALL_GPU=1 to opt in"
             degradation_stage = "admission_rejected"
         else:
             admitted = "tensorrt"
@@ -313,19 +345,22 @@ def provider_admission(requested: str | None = None, device_id: int = 0) -> dict
     normalized = _name(configured).lower().replace("executionprovider", "")
     normalized = {"directml": "dml"}.get(normalized, normalized)
     admitted = decision.degradation_stage != "admission_rejected"
+    small = is_sub_7gb_gpu(device_id)
+    allowed = is_trt_allowed_for_device(device_id)
     return {
         "requested": configured,
         "admitted": admitted,
         "admitted_provider": decision.admitted,
+        "is_sub_7gb_gpu": small,
+        "tensorrt_allowed": allowed,
         "reason": decision.degradation_reason or (
             "hardware tier permits requested backend; availability is checked separately"
         ),
         "override": bool(
             normalized in ("auto", "tensorrt")
             and decision.admitted == "tensorrt"
-            and os.environ.get("ROOP_ALLOW_TRT_SMALL_GPU", "1").strip().lower()
-            in ("1", "true", "yes", "on")
-            and _small_gpu(device_id)
+            and small
+            and allow_small_gpu_trt()
         ),
     }
 

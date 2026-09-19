@@ -105,11 +105,12 @@ class TestTrtSettingsVisibility(unittest.TestCase):
             cfg_path = Path(tmpdir) / "config.yaml"
             cfg_path.write_text("provider: tensorrt\n", encoding="utf-8")
 
-            with patch("roop.gpu_preflight.get_preflight_result", return_value=mock_preflight), \
-                 patch("roop.backend_manager._small_gpu", return_value=True), \
-                 patch.dict(os.environ, {"ROOP_ALLOW_TRT_SMALL_GPU": "0"}):
+            with patch.dict(os.environ, {}, clear=False):
+                os.environ.pop("ROOP_ALLOW_TRT_SMALL_GPU", None)
+                with patch("roop.gpu_preflight.get_preflight_result", return_value=mock_preflight), \
+                     patch("roop.backend_manager.is_sub_7gb_gpu", return_value=True):
 
-                cfg = Settings(str(cfg_path))
+                    cfg = Settings(str(cfg_path))
                 self.assertEqual(cfg.provider, "tensorrt")
                 self.assertEqual(cfg.provider_requested, "tensorrt")
                 self.assertEqual(cfg.provider_admitted, "cuda")

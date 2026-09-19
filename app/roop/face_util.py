@@ -97,7 +97,7 @@ def _face_analysis_providers():
     # which is the same answer a default Settings gives.
     if roop.globals.CFG is not None and roop.globals.CFG.force_cpu:
         return ["CPUExecutionProvider"]
-    if os.environ.get('ROOP_ALLOW_TRT_SMALL_GPU', '1').strip().lower() in (
+    if os.environ.get('ROOP_ALLOW_TRT_SMALL_GPU', '0').strip().lower() in (
             '1', 'true', 'yes', 'on'):
         return providers
     names = [p[0] if isinstance(p, (tuple, list)) else str(p)

@@ -972,14 +972,26 @@ def _get_provider_meta():
     stage = getattr(cfg, "degradation_stage", None) if cfg else None
     trt_avail = False
     trt_session_ok = False
+    sub_7gb = False
+    allow_small = False
+    trt_allowed = True
 
     try:
-        from roop.backend_manager import canonical_provider_decision
+        from roop.backend_manager import (
+            canonical_provider_decision,
+            is_sub_7gb_gpu,
+            allow_small_gpu_trt,
+            is_trt_allowed_for_device,
+        )
         from roop.gpu_preflight import get_preflight_result
+        dev_id = getattr(roop_globals, "cuda_device_id", 0)
+        sub_7gb = is_sub_7gb_gpu(dev_id)
+        allow_small = allow_small_gpu_trt()
+        trt_allowed = is_trt_allowed_for_device(dev_id)
         preflight = get_preflight_result()
         trt_avail = bool(preflight.get("tensorrt_available", False)) or "tensorrt" in providers
         trt_session_ok = bool(preflight.get("tensorrt_session_usable", False))
-        dec = canonical_provider_decision(req if req != "auto" else None)
+        dec = canonical_provider_decision(req if req != "auto" else None, device_id=dev_id)
         admitted = getattr(cfg, "provider_admitted", dec.admitted)
         if not reason:
             reason = dec.degradation_reason or preflight.get("failure_reason")
@@ -1007,6 +1019,9 @@ def _get_provider_meta():
         "degradation_reason": reason,
         "degradation_stage": stage,
         "tensorrt_available": trt_avail,
+        "tensorrt_allowed": trt_allowed,
+        "is_sub_7gb_gpu": sub_7gb,
+        "allow_small_gpu_trt": allow_small,
         "tensorrt_session_usable": trt_session_ok,
         "tensorrt_active": active == "tensorrt",
         "provider_status": {
@@ -1014,6 +1029,10 @@ def _get_provider_meta():
             "admitted": admitted,
             "active": active,
             "available": providers,
+            "tensorrt_available": trt_avail,
+            "tensorrt_allowed": trt_allowed,
+            "is_sub_7gb_gpu": sub_7gb,
+            "allow_small_gpu_trt": allow_small,
             "degraded": bool(reason) or (req == "tensorrt" and active != "tensorrt"),
             "degradation_reason": reason,
             "degradation_stage": stage,
@@ -1036,6 +1055,9 @@ def get_meta():
         "degradation_reason": prov_meta["degradation_reason"],
         "degradation_stage": prov_meta["degradation_stage"],
         "tensorrt_available": prov_meta["tensorrt_available"],
+        "tensorrt_allowed": prov_meta["tensorrt_allowed"],
+        "is_sub_7gb_gpu": prov_meta["is_sub_7gb_gpu"],
+        "allow_small_gpu_trt": prov_meta["allow_small_gpu_trt"],
         "tensorrt_session_usable": prov_meta["tensorrt_session_usable"],
         "tensorrt_active": prov_meta["tensorrt_active"],
         "provider_status": prov_meta["provider_status"],
