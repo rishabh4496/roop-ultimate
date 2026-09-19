@@ -242,9 +242,33 @@ export default function FaceSwap({
     const uniqPersons = Array.from(new Set(targetGroups))
       .filter(x => typeof x === 'number')
       .sort((a, b) => a - b);
+    const rawSelectedPerson = targetGroups[selTargetFace];
+    const selectedPerson = typeof rawSelectedPerson === 'number'
+      ? rawSelectedPerson
+      : (Array.isArray(rawSelectedPerson) ? rawSelectedPerson[0] : Number(rawSelectedPerson));
     return uniqPersons.map(pId => {
       const mappedSrc = faceMapping[pId];
-      return mappedSrc !== undefined ? mappedSrc : pId;
+      // An explicit dropdown choice, including Skip (-1), always wins.
+      if (mappedSrc !== undefined) {
+        const explicit = Number(mappedSrc);
+        return explicit === -1 || (explicit >= 0 && explicit < sourceFaces.length)
+          ? explicit
+          : -1;
+      }
+
+      // "Selected face" must mean the highlighted target person, not every
+      // person captured into the target bank. The old fallback used pId as a
+      // source index, so selecting one target could swap a different person
+      // and could also generate [0, 1] for two target people with one source.
+      if (p.face_detection_mode === 'Selected face') {
+        if (sourceFaces.length < 1 || pId !== selectedPerson) return -1;
+        return Math.min(selSource, sourceFaces.length - 1);
+      }
+
+      // Keep the legacy person-rank default for multi-source modes, but never
+      // send an out-of-range source index. Invalid implicit entries become an
+      // intentional skip instead of a silent empty FaceSet in the backend.
+      return pId >= 0 && pId < sourceFaces.length ? pId : -1;
     });
   };
 
@@ -2449,6 +2473,8 @@ export default function FaceSwap({
               selTargetFace={selTargetFace}
               setSelTargetFace={setSelTargetFace}
               sourceFaces={sourceFaces}
+              faceSelection={p.face_detection_mode}
+              selectedSource={selSource}
               faceMapping={faceMapping}
               setFaceMapping={setFaceMapping}
               frame={frame}

@@ -52,7 +52,7 @@ function groupByPerson(groups) {
 export default function PersonGroups({
   targetFaces, targetGroups, targetNames, targetFacesInfo,
   selTargetFace, setSelTargetFace,
-  sourceFaces, faceMapping, setFaceMapping,
+  sourceFaces, faceSelection, selectedSource, faceMapping, setFaceMapping,
   frame, selTarget,
   setTargetFaces, setTargetGroups, setTargetNames, setTargetFacesInfo,
   notify, clearPreviewCache,
@@ -330,7 +330,11 @@ export default function PersonGroups({
         const color = PERSON_COLORS[rank % PERSON_COLORS.length];
         const open = isExpanded(rank);
         const isSel = rank === selRank;
-        const rawMap = faceMapping && faceMapping[rank] !== undefined ? faceMapping[rank] : rank;
+        const rawMap = faceMapping && faceMapping[rank] !== undefined
+          ? faceMapping[rank]
+          : faceSelection === 'Selected face'
+            ? (rank === selRank ? selectedSource : -1)
+            : rank;
         const currentMap = Array.isArray(rawMap) ? (rawMap[0] ?? -1) : (typeof rawMap === 'number' && Number.isFinite(rawMap) ? rawMap : parseInt(rawMap, 10));
         const safeMap = Number.isFinite(currentMap) ? currentMap : -1;
         const mapValid = safeMap >= 0 && safeMap < sourceFaces.length;
