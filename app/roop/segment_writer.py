@@ -465,8 +465,9 @@ class SegmentedVideoWriter:
                 kwargs["creationflags"] = 0x08000000  # CREATE_NO_WINDOW
             proc = subprocess.run(cmd, capture_output=True, **kwargs)
             if proc.returncode != 0:
-                err = (proc.stderr or b"").decode("utf-8", "replace")[:400]
-                bar_write(f"[Resume] segment concat failed (ffmpeg exit {proc.returncode}): {err}")
+                err = (proc.stderr or b"").decode("utf-8", "replace").strip()
+                bar_write(f"[Resume] segment concat failed (ffmpeg exit {proc.returncode}): {err[:400]}")
+                print(f"[Resume Error] segment concat failed (ffmpeg exit {proc.returncode}):\n{err}", flush=True)
                 return False
             return True
         except Exception as e:

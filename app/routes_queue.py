@@ -906,10 +906,12 @@ def queue_join(payload: dict = Body(...)):
             cmd.extend(["-movflags", "+faststart"])
         cmd.append(dest)
         kwargs = {"creationflags": 0x08000000} if os.name == "nt" else {}
-        proc = subprocess.run(cmd, stdout=subprocess.DEVNULL, **kwargs)
+        proc = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, **kwargs)
         if proc.returncode != 0 or not os.path.exists(dest):
+            err = (proc.stderr or b"").decode("utf-8", "replace").strip()
+            print(f"[Queue Error] ffmpeg concat failed (exit {proc.returncode}):\n{err}", flush=True)
             return JSONResponse(status_code=500, content={
-                "message": f"ffmpeg concat failed (exit {proc.returncode}) — see the terminal log"})
+                "message": f"ffmpeg concat failed (exit {proc.returncode}): {err[:200]}"})
     except Exception as e:
         _swallowed("routes_queue.py:863", e, "fallback continued")
         return JSONResponse(status_code=500, content={"message": str(e)})

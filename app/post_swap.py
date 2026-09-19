@@ -542,11 +542,13 @@ def _classical_video_inplace(path, mode, scale):
                 f"{_upscale_max_dim(enc)}px {enc} limit — raise ROOP_UPSCALE_MAX_DIM "
                 f"and/or use a CPU encoder for true ×{scale}]")
     vf = _classical_vf(mode, tw, th)
-    has_audio = bool(util.audio_sample_rate(path))
-    audio_flags = ['-c:a', 'aac', '-b:a', '192k'] if has_audio else ['-an']
-    cmd = ([FFMPEG_BINARY, '-hide_banner', '-y', '-i', path, '-vf', vf,
+    pad_vf = f"{vf},pad=ceil(iw/2)*2:ceil(ih/2)*2"
+    cmd = ([FFMPEG_BINARY, '-hide_banner', '-y', '-i', path,
+            '-map', '0:v:0', '-map', '0:a?',
+            '-vf', pad_vf,
             '-c:v', 'libx264' if enc == 'libx264' else enc] + _rate_control(enc, q) +
-           ['-pix_fmt', 'yuv420p', '-movflags', '+faststart'] + audio_flags + [tmp])
+           ['-pix_fmt', 'yuv420p', '-movflags', '+faststart',
+            '-c:a', 'aac', '-b:a', '192k', tmp])
     print(f"\n[Stage 3/4] {label} ×{scale} upscale (ffmpeg, enc={enc}) — "
           f"{os.path.basename(path)} → {tw}×{th}{note}", flush=True)
     _progress["desc"] = f"{label} ×{scale} upscaling…"
@@ -804,11 +806,13 @@ def _interp_video_minterpolate(path, factor):
     enc = _select_upscale_encoder(w, h)
     q = roop_globals.video_quality
     vf = f"minterpolate=fps={fps * factor:.6f}:mi_mode=mci:mc_mode=aobmc:vsbmc=1"
-    has_audio = bool(util.audio_sample_rate(path))
-    audio_flags = ['-c:a', 'aac', '-b:a', '192k'] if has_audio else ['-an']
-    cmd = ([FFMPEG_BINARY, "-hide_banner", "-y", "-i", path, "-vf", vf,
+    pad_vf = f"{vf},pad=ceil(iw/2)*2:ceil(ih/2)*2"
+    cmd = ([FFMPEG_BINARY, "-hide_banner", "-y", "-i", path,
+            "-map", "0:v:0", "-map", "0:a?",
+            "-vf", pad_vf,
             "-c:v", 'libx264' if enc == 'libx264' else enc] + _rate_control(enc, q) +
-           ['-pix_fmt', 'yuv420p', '-movflags', '+faststart'] + audio_flags + [tmp])
+           ['-pix_fmt', 'yuv420p', '-movflags', '+faststart',
+            "-c:a", "aac", "-b:a", "192k", tmp])
     print(f"\n[Stage] minterpolate x{factor} (ffmpeg, enc={enc}) — {os.path.basename(path)}", flush=True)
     _progress["desc"] = f"Interpolating x{factor} (ffmpeg)…"
     popen_kwargs = {}
