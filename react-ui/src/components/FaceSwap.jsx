@@ -1096,12 +1096,17 @@ export default function FaceSwap({
 
   useEffect(() => {
     if (progress.processing || !previewDeferredRef.current) return;
+    // Keep the flag alive if the user is mid-scrub or playing — we cannot
+    // refresh right now, and clearing the flag here would discard the
+    // "needs refresh after run" intent permanently. Re-fire when scrubbing
+    // ends (the [selTarget, frame, …] effect handles that).
+    if (isScrubbing || isPlaying) return;
     previewDeferredRef.current = false;
-    if (targets.length === 0 || isScrubbing || isPlaying) return;
+    if (targets.length === 0) return;
     const t = setTimeout(() => refreshPreview(), 350);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [progress.processing]);
+  }, [progress.processing, isScrubbing, isPlaying]);
 
   // ── source / target file handling ──
   // A cancelled upload is an outcome, not a failure: the user asked for it, so
@@ -1125,7 +1130,12 @@ export default function FaceSwap({
       setSourceFaces(res.source_faces);
       if (res.source_faces_info) setSourceFacesInfo(res.source_faces_info);
       const added = res.source_faces.length - before;
-      if (added > 0) notify(`Loaded ${added} face(s) — ${res.faceset_count} faceset(s) total`);
+      if (res.unsupported?.length) {
+        notify(
+          `Unsupported file type(s) — only images (.png/.jpg/.jpeg/.webp) and .fsz facesets are accepted as source: ${res.unsupported.join(', ')}`,
+          'error'
+        );
+      } else if (added > 0) notify(`Loaded ${added} face(s) — ${res.faceset_count} faceset(s) total`);
       else notify('No face detected in the uploaded file(s)', 'error');
     } catch (err) { reportUploadError(err); }
     finally { setUploadingSrc(false); setSrcProgress(null); srcAbortRef.current = null; }

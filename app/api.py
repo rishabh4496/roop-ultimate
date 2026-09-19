@@ -1300,6 +1300,7 @@ def get_state():
 # frozen. Sync `def` costs a threadpool hop and gives the loop back.
 @app.post("/api/source/add")
 def source_add(files: list[UploadFile] = File(...)):
+    skipped_names = []
     for f in files:
         path = _save_upload(f)
         try:
@@ -1315,9 +1316,17 @@ def source_add(files: list[UploadFile] = File(...)):
                     face.mask_offsets = _mask_offsets_from_cfg()
                     fs.faces.append(face)
                     _sources_append(fs, util.convert_to_gradio(fd[1]))
+            else:
+                # Videos, GIFs and other non-image/non-fsz files cannot be
+                # used as source references. Report them so the frontend can
+                # surface a useful error rather than "no face detected".
+                skipped_names.append(os.path.basename(path))
         except Exception:
             traceback.print_exc()
-    return _source_faces_payload()
+    payload = _source_faces_payload()
+    if skipped_names:
+        payload["unsupported"] = skipped_names
+    return payload
 
 
 @app.post("/api/source/add-folder")
@@ -2976,8 +2985,8 @@ def preview(payload: dict = Body(...)):
     if not _configuration_ready():
         return _configuration_initializing()
     _preview_request_lock.acquire()
-    roop_globals.is_preview = True
     try:
+        roop_globals.is_preview = True
         _update_mask_offsets_from_payload(payload)
         idx = int(payload.get("index", state.selected_target_index))
         frame = int(payload.get("frame", 1))
