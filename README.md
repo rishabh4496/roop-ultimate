@@ -65,6 +65,31 @@ while device-adaptive auto-tuning transparently adjusts thread counts and execut
 If TensorRT is ever missing from an existing custom virtual environment, startup auto-heals it, and
 users can also click **Fix TensorRT** in Pinokio at any time.
 
+### Windows NVIDIA runtime compatibility
+
+The installer and startup preflight verify native compatibility instead of
+treating an ORT provider list as proof that the provider works. The verifier
+checks the active Python and wheel architecture, ORT CUDA/TensorRT provider
+DLLs, TensorRT native libraries and Python bindings, CUDA/cuDNN DLLs, PE
+architecture, native loadability, active-environment ownership, duplicate
+versions, and foreign PATH candidates. It reports the exact selected DLL path
+for every critical component. DLL directories are registered process-locally
+with `os.add_dll_directory`; the application does not rewrite the global
+Windows PATH.
+
+Run the standalone diagnostic first when troubleshooting an NVIDIA install:
+
+```bash
+python run.py --diagnose-runtime
+```
+
+`PASS` means the selected native components are x64, loadable, and owned by
+the active environment. `DEGRADED` means the active selection is valid but
+duplicate or foreign PATH candidates were detected. `FAIL` means a required
+component is missing, outside the active environment, architecture-mismatched,
+or cannot be loaded. The installer does not publish its completion marker when
+the compatibility verifier fails.
+
 ### Manually
 
 ```bash

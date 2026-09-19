@@ -8,8 +8,11 @@ import time
 import numpy as np
 
 
+_GPU_DLL_HANDLES = []
+
+
 def _register_gpu_runtime_dirs():
-    """Register TensorRT and CUDA DLL directories so ONNX Runtime can load them."""
+    """Register process-local TensorRT/CUDA DLL directories without PATH edits."""
     dll_dirs = []
 
     def _add(directory):
@@ -44,10 +47,9 @@ def _register_gpu_runtime_dirs():
     for directory in dll_dirs:
         try:
             if hasattr(os, "add_dll_directory"):
-                os.add_dll_directory(directory)
+                _GPU_DLL_HANDLES.append(os.add_dll_directory(directory))
         except Exception:
             pass
-        os.environ["PATH"] = directory + os.pathsep + os.environ.get("PATH", "")
 
 
 _register_gpu_runtime_dirs()

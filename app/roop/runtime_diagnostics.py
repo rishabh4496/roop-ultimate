@@ -199,6 +199,43 @@ def collect_runtime_diagnostics() -> Tuple[Dict[str, Any], int]:
         "minimal_session_result": trt_session_result,
     }
 
+    # Native compatibility is a separate, path-aware check.  It is deliberately
+    # advisory for CPU/AMD systems and fail-closed for applicable Windows NVIDIA
+    # installations, where a provider list alone is not proof of a usable EP.
+    try:
+        from provision_runtime import detect_hardware
+        from windows_runtime_compat import verify_windows_nvidia_runtime
+        compat_hardware = detect_hardware()
+        compat_vram = [int(value) for value in getattr(compat_hardware, "vram_mb", ()) if int(value) > 0]
+        binary_compatibility = verify_windows_nvidia_runtime(
+            hardware=compat_hardware,
+            require_tensorrt=compat_hardware.vendor == "nvidia" and max(compat_vram, default=0) >= 7 * 1024,
+        )
+        if binary_compatibility.get("status") == "failed":
+            fatal_reasons.extend(binary_compatibility.get("failure_reasons", []))
+        elif binary_compatibility.get("status") == "degraded":
+            degraded_reasons.extend(binary_compatibility.get("warnings", []))
+    except Exception as exc:
+        applicable_nvidia = False
+        try:
+            from provision_runtime import detect_hardware
+            detected_hardware = detect_hardware()
+            applicable_nvidia = detected_hardware.system == "Windows" and detected_hardware.vendor == "nvidia"
+        except Exception:
+            pass
+        binary_compatibility = {
+            "applicable": applicable_nvidia,
+            "status": "unavailable",
+            "failure_reasons": [str(exc)],
+            "warnings": [],
+            "selected_dll_paths": {},
+        }
+        if applicable_nvidia:
+            fatal_reasons.append(f"Binary compatibility probe unavailable: {exc}")
+        else:
+            degraded_reasons.append(f"Binary compatibility probe unavailable: {exc}")
+    data["binary_compatibility"] = binary_compatibility
+
     # 5. Provider Decision
     requested = "auto"
     admitted = "auto"
@@ -270,6 +307,7 @@ def format_diagnostics_report(data: Dict[str, Any]) -> str:
     ort = data["onnxruntime"]
     cuda = data["cuda"]
     trt = data["tensorrt"]
+    binary = data["binary_compatibility"]
     dec = data["provider_decision"]
     cfg = data["config"]
     res = data["result"]
@@ -301,6 +339,21 @@ def format_diagnostics_report(data: Dict[str, Any]) -> str:
         f"TensorRT DLL directories: {dll_str}",
         f"TensorRT provider library: {trt['provider_library']}",
         f"minimal TensorRT ORT session result: {trt['minimal_session_result']}",
+        "",
+        "=== Binary Compatibility ===",
+        f"status: {binary.get('status', 'unknown')}",
+        f"Python architecture: {binary.get('python_architecture', 'unknown')}",
+        f"PyTorch wheel architecture: {binary.get('torch_wheel_architecture', 'unknown')}",
+        f"ONNX Runtime wheel architecture: {binary.get('onnxruntime_wheel_architecture', 'unknown')}",
+        f"TensorRT bindings architecture: {binary.get('tensorrt_python_bindings_architecture', 'unknown')}",
+        f"TensorRT native DLL architecture: {binary.get('tensorrt_native_dll_architecture', 'unknown')}",
+        f"PATH contamination: {binary.get('path_contamination', []) or 'none'}",
+        f"duplicate DLL versions: {binary.get('duplicate_dll_versions', {}) or 'none'}",
+        "selected critical DLL paths:",
+        *[
+            f"  {name}: {path}"
+            for name, path in sorted((binary.get("selected_dll_paths") or {}).items())
+        ],
         "",
         "=== Provider Decision ===",
         f"requested: {dec['requested']}",

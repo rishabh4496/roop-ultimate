@@ -243,6 +243,23 @@ def verify_environment(*, require_complete: bool = False, manifest: bool = False
     providers = verify_onnxruntime()
     torch_info = verify_torch_and_gpu(hardware)
     tensorrt_info = verify_tensorrt_package(hardware)
+    from windows_runtime_compat import verify_windows_nvidia_runtime
+    vram_mb = [int(value) for value in getattr(hardware, "vram_mb", ()) if int(value) > 0]
+    max_vram_mb = max(vram_mb, default=0)
+    binary_compatibility = verify_windows_nvidia_runtime(
+        hardware=hardware,
+        require_tensorrt=hardware.vendor == "nvidia" and max_vram_mb >= 7 * 1024,
+    )
+    print(
+        f"[Verify Runtime] binary    : {binary_compatibility['status']} "
+        f"selected={binary_compatibility.get('selected_dll_paths', {})}",
+        flush=True,
+    )
+    if binary_compatibility["status"] == "failed":
+        _fatal(
+            "Windows NVIDIA binary/runtime compatibility failed: "
+            + "; ".join(binary_compatibility["failure_reasons"])
+        )
     print(f"[Verify Runtime] verified    : providers={providers}", flush=True)
     print("[OK] Python runtime installation contract verified.", flush=True)
     if not manifest:
@@ -250,7 +267,6 @@ def verify_environment(*, require_complete: bool = False, manifest: bool = False
 
     from roop.gpu_preflight import get_preflight_result
     preflight = get_preflight_result(force_probe=True)
-    vram_mb = [int(value) for value in getattr(hardware, "vram_mb", ()) if int(value) > 0]
     max_vram_mb = max(vram_mb, default=0)
     trt_required = hardware.vendor == "nvidia" and max_vram_mb >= 7 * 1024
     if trt_required and not preflight.get("tensorrt_session_usable", False):
@@ -293,6 +309,8 @@ def verify_environment(*, require_complete: bool = False, manifest: bool = False
         "repository_commit": repository_commit(),
         "dependency_verification_status": "passed",
         "runtime_verification_status": "passed",
+        "binary_runtime_compatibility_status": binary_compatibility["status"],
+        "binary_runtime_compatibility": binary_compatibility,
         "runtime_preflight": preflight,
     }
     return manifest_data

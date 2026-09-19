@@ -148,6 +148,7 @@ def _manifest_valid(value: dict[str, Any] | None) -> bool:
         "onnxruntime_version", "tensorrt_version", "ort_provider_list",
         "tensorrt_session_test_result", "installation_timestamp", "repository_commit",
         "dependency_verification_status", "runtime_verification_status",
+        "binary_runtime_compatibility_status", "binary_runtime_compatibility",
     )
     return all(key in value for key in required) and value.get("verification_passed") is True
 

@@ -420,24 +420,51 @@ def execute_dll_runtime_preflight() -> PhaseResult:
     """Phase 3: DLL_RUNTIME_PREFLIGHT - Register and verify Windows native runtime libraries."""
     if sys.platform == "win32":
         try:
+            from provision_runtime import detect_hardware
+            from windows_runtime_compat import verify_windows_nvidia_runtime
             import roop.gpu_preflight as gp
             reg_fn = getattr(gp, "register_gpu_runtime_dirs", None)
             dirs = reg_fn() if reg_fn else []
             check_fn = getattr(gp, "_check_tensorrt_dlls", None)
             trt_ok = check_fn(dirs) if check_fn else True
-            if has_nvidia_hardware() and not trt_ok:
+            hardware = detect_hardware()
+            vram_mb = [int(value) for value in getattr(hardware, "vram_mb", ()) if int(value) > 0]
+            compatibility = verify_windows_nvidia_runtime(
+                hardware=hardware,
+                require_tensorrt=hardware.vendor == "nvidia" and max(vram_mb, default=0) >= 7 * 1024,
+            )
+            if hardware.vendor == "nvidia" and compatibility.get("status") == "failed":
                 return PhaseResult(
                     phase=StartupPhase.DLL_RUNTIME_PREFLIGHT,
                     status=PhaseStatus.DEGRADED,
                     component="tensorrt_dlls",
-                    reason="TensorRT runtime DLLs (nvinfer.dll) were not found in registered directories or PATH; CUDA fallback will be used if needed",
+                    reason="; ".join(compatibility.get("failure_reasons") or ["Windows native runtime compatibility failed"]),
                     detected_version="none",
                     expected_version="TensorRT 10.x runtime libraries",
                     next_action="Install TensorRT runtime libraries via Pinokio or pip install tensorrt",
-                    details={"registered_dirs": dirs},
+                    details={"registered_dirs": dirs, "binary_compatibility": compatibility},
                 )
-        except Exception:
-            pass
+            if hardware.vendor == "nvidia" and (not trt_ok or compatibility.get("status") == "degraded"):
+                return PhaseResult(
+                    phase=StartupPhase.DLL_RUNTIME_PREFLIGHT,
+                    status=PhaseStatus.DEGRADED,
+                    component="tensorrt_dlls",
+                    reason="TensorRT native runtime is usable only with process-local path selection; CUDA fallback remains available",
+                    detected_version=str(compatibility.get("tensorrt_version", "unknown")),
+                    expected_version="TensorRT 10.x runtime libraries",
+                    next_action="Review the binary compatibility report before selecting TensorRT",
+                    details={"registered_dirs": dirs, "binary_compatibility": compatibility},
+                )
+        except Exception as exc:
+            if has_nvidia_hardware():
+                return PhaseResult(
+                    phase=StartupPhase.DLL_RUNTIME_PREFLIGHT,
+                    status=PhaseStatus.FATAL,
+                    component="windows_native_runtime",
+                    reason=f"Windows NVIDIA binary compatibility probe failed: {type(exc).__name__}: {exc}",
+                    expected_version="x64 CUDA/TensorRT runtime owned by the active Pinokio environment",
+                    next_action="Run python run.py --diagnose-runtime and repair the Pinokio environment",
+                )
 
     return PhaseResult(
         phase=StartupPhase.DLL_RUNTIME_PREFLIGHT,

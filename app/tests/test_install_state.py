@@ -53,6 +53,8 @@ class TestInstallState(unittest.TestCase):
             "repository_commit": "commit-test",
             "dependency_verification_status": "passed",
             "runtime_verification_status": "passed",
+            "binary_runtime_compatibility_status": "not_applicable",
+            "binary_runtime_compatibility": {"status": "not_applicable"},
         }
 
     def test_begin_replaces_ready_state_and_records_stage(self):

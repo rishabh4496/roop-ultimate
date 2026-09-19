@@ -29,6 +29,7 @@ _TINY_ONNX_PROBE_BYTES = (
 )
 
 _REGISTERED_DLL_DIRS: List[str] = []
+_DLL_HANDLES: List[object] = []
 _PREFLIGHT_CACHE: Optional[Dict[str, Any]] = None
 
 
@@ -75,14 +76,16 @@ def register_gpu_runtime_dirs() -> List[str]:
     except Exception:
         pass
 
-    # 3. Register via os.add_dll_directory and prepend to PATH on Windows
+    # 3. Register process-local DLL directories.  Keep the handles alive for
+    # the lifetime of the process.  Do not mutate the global PATH: that makes
+    # stale system CUDA/TensorRT installations win DLL resolution for unrelated
+    # child processes and hides which runtime was actually selected.
     for directory in dll_dirs:
         try:
             if hasattr(os, "add_dll_directory"):
-                os.add_dll_directory(directory)
+                _DLL_HANDLES.append(os.add_dll_directory(directory))
         except Exception:
             pass
-        os.environ["PATH"] = directory + os.pathsep + os.environ.get("PATH", "")
 
     _REGISTERED_DLL_DIRS = list(dll_dirs)
     return list(_REGISTERED_DLL_DIRS)
