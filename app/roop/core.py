@@ -77,6 +77,7 @@ from roop.ProcessOptions import ProcessOptions
 from roop.capturer import get_video_frame_total, release_video
 from roop.backend_manager import (resolve_provider_names, diagnostic_report,
                                   cache_namespace, trt_tuning_namespace)
+from roop.render_guard import check_render_gpu_headroom
 
 
 clip_text = None
@@ -1312,6 +1313,25 @@ def batch_process_regular(output_method, files:list[ProcessEntry], masking_engin
     roop.globals.is_preview = False
     release_resources()
     limit_resources()
+    # Do this before ProcessMgr.initialize() creates ONNX/TensorRT sessions.
+    # When another process owns almost all VRAM, engine construction can look
+    # like a deadlock for minutes and may leave a partial temp video behind.
+    # This is a resource guard only: total VRAM still does not qualify or
+    # disqualify TensorRT, including on sub-7GB RTX cards.
+    render_provider = getattr(roop.globals.CFG, 'provider_active', None) or getattr(
+        roop.globals.CFG, 'provider', 'auto')
+    render_headroom = check_render_gpu_headroom(
+        render_provider,
+        int(getattr(roop.globals, 'cuda_device_id', 0) or 0),
+    )
+    if render_headroom:
+        print(
+            "[RenderGuard] admission: "
+            f"{render_headroom['free_vram_gb']:.2f}GB free / "
+            f"{render_headroom['total_vram_gb']:.2f}GB total, "
+            f"floor={render_headroom['required_free_vram_gb']:.2f}GB",
+            flush=True,
+        )
     if progress is None:
         progress = create_throughput_progress(desc="Processing", unit="frames")
     if process_mgr is None:
