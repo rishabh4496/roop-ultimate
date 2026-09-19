@@ -91,8 +91,8 @@ class TestTrtSettingsVisibility(unittest.TestCase):
                 saved_text = cfg_path.read_text(encoding="utf-8")
                 self.assertIn("provider: tensorrt", saved_text)
 
-    def test_sub_7gb_safety_admission_state_reflected(self):
-        """When sub-7GB GPU safety policy rejects TensorRT, admission state must be 'cuda' while requested is 'tensorrt'."""
+    def test_sub_7gb_tensorrt_capability_state_reflected(self):
+        """A sub-7GB RTX keeps TensorRT admission while retaining safety tuning."""
         mock_preflight = {
             "available_providers": ["TensorrtExecutionProvider", "CUDAExecutionProvider", "CPUExecutionProvider"],
             "cuda_available": True,
@@ -113,10 +113,10 @@ class TestTrtSettingsVisibility(unittest.TestCase):
                     cfg = Settings(str(cfg_path))
                 self.assertEqual(cfg.provider, "tensorrt")
                 self.assertEqual(cfg.provider_requested, "tensorrt")
-                self.assertEqual(cfg.provider_admitted, "cuda")
-                self.assertEqual(cfg.provider_active, "cuda")
-                self.assertEqual(cfg.degradation_stage, "admission_rejected")
-                self.assertIn("sub-7GB safety policy", cfg.degradation_reason)
+                self.assertEqual(cfg.provider_admitted, "tensorrt")
+                self.assertEqual(cfg.provider_active, "tensorrt")
+                self.assertIsNone(cfg.degradation_stage)
+                self.assertIsNone(cfg.degradation_reason)
 
     def test_tensorrt_active_state_exposes_trt_active_flag(self):
         """When TensorRT is genuinely active, meta and CFG reflect tensorrt active."""

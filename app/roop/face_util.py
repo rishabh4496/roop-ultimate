@@ -41,6 +41,14 @@ _ANALYSER_LM68_LAZY = None        # lm68_lazy the pool was built with (rebuild o
 THREAD_LOCK_ANALYSER = threading.Lock()
 THREAD_LOCK_SWAPPER = threading.Lock()
 FACE_SWAPPER = None
+# Pool rebuilds can happen while a preview detector is still using an instance.
+# Keep leases tied to the queue they acquired from and make teardown wait for
+# those leases before destroying the old sessions. Without this, the global
+# queue was replaced with None and the returning worker raised
+# ``AttributeError: 'NoneType' object has no attribute 'put'``; get_all_faces
+# swallowed that exception as "no faces", making preview return the raw frame.
+_ANALYSER_LEASE_COND = threading.Condition()
+_ANALYSER_LEASES = 0
 
 
 def _desired_det_size():
@@ -308,6 +316,9 @@ def _ensure_face_analyser():
                 FACE_ANALYSER_POOL = []
                 FACE_ANALYSER = None
                 _ANALYSER_Q = None
+                with _ANALYSER_LEASE_COND:
+                    while _ANALYSER_LEASES:
+                        _ANALYSER_LEASE_COND.wait()
                 _cleanup_fa_pool(old_pool)
             roop.globals.g_current_face_analysis = roop.globals.g_desired_face_analysis
             _ANALYSER_DET_SIZE = _desired_det_size()
@@ -335,6 +346,9 @@ def release_face_analyser():
         FACE_ANALYSER = None
         FACE_ANALYSER_POOL = []
         _ANALYSER_Q = None
+        with _ANALYSER_LEASE_COND:
+            while _ANALYSER_LEASES:
+                _ANALYSER_LEASE_COND.wait()
     _cleanup_fa_pool(old_pool)
     try:
         from roop.yoloface import release_detector
@@ -411,13 +425,25 @@ def lease_face_analyser():
     thread gets its OWN instance (safe concurrency); the queue blocks once all N are
     out, capping concurrency at the pool size. Without a pool it yields the single
     shared instance (caller serialises via the global lock)."""
+    global _ANALYSER_LEASES
     _ensure_face_analyser()
-    if analysis_pooled():
-        fa = _ANALYSER_Q.get()
+    with _ANALYSER_LEASE_COND:
+        # Capture the queue locally. The global queue may be replaced by a
+        # settings-driven rebuild after this function starts, but teardown now
+        # waits for this lease and the finally block returns to the queue that
+        # actually issued the instance.
+        queue = _ANALYSER_Q if analysis_pooled() else None
+        if queue is not None:
+            _ANALYSER_LEASES += 1
+    if queue is not None:
+        fa = queue.get()
         try:
             yield fa
         finally:
-            _ANALYSER_Q.put(fa)
+            queue.put(fa)
+            with _ANALYSER_LEASE_COND:
+                _ANALYSER_LEASES -= 1
+                _ANALYSER_LEASE_COND.notify_all()
     else:
         yield FACE_ANALYSER
 

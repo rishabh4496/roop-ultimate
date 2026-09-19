@@ -305,9 +305,41 @@ def _normalize_job(payload: dict) -> dict:
     }
 
 
+def _validate_job_payload(payload) -> str | None:
+    if not isinstance(payload, dict):
+        return "job must be an object"
+    if payload.get("payload") is not None and not isinstance(payload.get("payload"), dict):
+        return "job payload must be an object"
+    try:
+        source_index = int(payload.get("source_index") or 0)
+    except (TypeError, ValueError):
+        return "source_index must be a non-negative integer"
+    if source_index < 0:
+        return "source_index must be a non-negative integer"
+    starts = payload.get("frame_start")
+    ends = payload.get("frame_end")
+    try:
+        if starts is not None:
+            starts = int(starts)
+        if ends is not None:
+            ends = int(ends)
+    except (TypeError, ValueError):
+        return "frame_start and frame_end must be integers"
+    if starts is not None and starts < 0:
+        return "frame_start must be non-negative"
+    if ends is not None and ends < 0:
+        return "frame_end must be non-negative"
+    if starts is not None and ends is not None and ends < starts:
+        return "frame_end must not be before frame_start"
+    return None
+
+
 @router.post("/api/queue/add")
 def queue_add(payload: dict = Body(...)):
     """Append a job. `payload.payload` is the /api/swap body to replay."""
+    error = _validate_job_payload(payload)
+    if error:
+        return JSONResponse(status_code=400, content={"message": error})
     job = _normalize_job(payload)
     with _lock:
         _queue["jobs"].append(job)
@@ -318,7 +350,12 @@ def queue_add(payload: dict = Body(...)):
 @router.post("/api/queue/add_batch")
 def queue_add_batch(payload: dict = Body(...)):
     """Append multiple jobs in one atomic transaction."""
-    raw_jobs = payload.get("jobs") or []
+    raw_jobs = payload.get("jobs") if isinstance(payload, dict) else None
+    if not isinstance(raw_jobs, list):
+        return JSONResponse(status_code=400, content={"message": "jobs must be a list"})
+    errors = [error for error in (_validate_job_payload(item) for item in raw_jobs) if error]
+    if errors:
+        return JSONResponse(status_code=400, content={"message": errors[0]})
     new_jobs = [_normalize_job(j) for j in raw_jobs]
     with _lock:
         _queue["jobs"].extend(new_jobs)

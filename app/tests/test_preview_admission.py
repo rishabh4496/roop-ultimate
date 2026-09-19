@@ -91,6 +91,13 @@ class PreviewAdmissionTests(unittest.TestCase):
             text = handle.read()
         self.assertIn("_preview_process_mgr.is_preview = True", text)
 
+    def test_live_swap_skips_batch_fast_bypass_during_preview(self):
+        """Preview must not run a second detector pass and return raw pixels."""
+        core = os.path.join(_APP, "roop", "core.py")
+        with open(core, encoding="utf-8") as handle:
+            text = handle.read()
+        self.assertIn("and not getattr(roop.globals, 'is_preview', False)", text)
+
 
 if __name__ == "__main__":
     unittest.main()

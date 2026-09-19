@@ -667,10 +667,22 @@ export default function FaceSwap({
   // the override in the request for free.
   const buildPreviewPayload = (params, { index, frame: fr, fake, ...overrides } = {}) => {
     const activeParams = withSliderBypass(params);
+    // "Selected face" is the safe render default, but it requires a captured
+    // target identity. A fresh target media item has detected faces before the
+    // user has clicked "Use face"; sending selected mode in that state makes
+    // ProcessMgr correctly find zero eligible target persons and returns the
+    // untouched frame, which looks like a broken preview. Previewing all
+    // detected faces with the selected source is a useful, reversible fallback
+    // for that pre-capture state. The render payload remains strict and still
+    // requires explicit target capture for selected-face video swaps.
+    const previewDetection = activeParams.face_detection_mode === 'Selected face'
+      && targetFaces.length === 0
+      ? 'All faces'
+      : activeParams.face_detection_mode;
     return {
       index, frame: fr, fake_preview: fake,
       enhancer: activeParams.selected_enhancer, adaptive_enhancer_profile: activeParams.adaptive_enhancer_profile || 'BALANCED', codeformer_fidelity: num(activeParams.codeformer_fidelity, 0.5),
-      detection: activeParams.face_detection_mode,
+      detection: previewDetection,
       face_distance: num(activeParams.max_face_distance, 0.75), blend_ratio: num(activeParams.blend_ratio, 0.8),
       mask_engine: activeParams.mask_engine, mask_engine_2: activeParams.mask_engine_2,
       clip_text: activeParams.mask_clip_text,
@@ -898,6 +910,7 @@ export default function FaceSwap({
     const killer = setTimeout(() => ctrl.abort(), 15 * 60 * 1000);
     try {
       const res = await postJSON('/api/preview', buildPreviewPayload(p, { index: idx, frame: fr, fake }), { signal: ctrl.signal });
+      if (res?.error) throw new Error(res.message || res.error || 'preview swap failed');
       if (res.faces) setPreviewFaces(res.faces);
       setPreviewPersonIds(res.person_ids || []);
       setPreviewKps(res.kps || []);

@@ -115,10 +115,12 @@ def is_sub_7gb_gpu(device_id: int = 0) -> bool:
 
 
 def allow_small_gpu_trt() -> bool:
-    """Return whether explicit opt-in for experimental TensorRT on sub-7GB GPUs is enabled.
+    """Return whether the legacy small-GPU TensorRT override is set.
 
-    Defaults to '0' (disabled). Sub-7GB cards (such as the RTX 3060 6GB Laptop GPU) are
-    enforced on CUDA by default to prevent memory exhaustion and engine thrashing.
+    TensorRT admission is no longer blocked by VRAM size.  The flag is retained
+    only for compatibility with older diagnostics and deployments that still
+    expose it.  Low-VRAM resource limits are enforced independently by the
+    runtime optimizer and session pools.
     """
     return os.environ.get("ROOP_ALLOW_TRT_SMALL_GPU", "0").strip().lower() in (
         "1", "true", "yes", "on"
@@ -126,9 +128,13 @@ def allow_small_gpu_trt() -> bool:
 
 
 def is_trt_allowed_for_device(device_id: int = 0) -> bool:
-    """Return whether TensorRT admission is permitted on the device under the sub-7GB policy."""
-    if is_sub_7gb_gpu(device_id) and not allow_small_gpu_trt():
-        return False
+    """Return whether this device may attempt TensorRT after runtime preflight.
+
+    VRAM size is a tuning input, not a qualification rule.  A tiny RTX card may
+    still use TensorRT with one context, no pools, bounded workspace, and the
+    global GPU guard.  The actual provider/session preflight remains the
+    authoritative check for whether TensorRT can run on the installed driver.
+    """
     return True
 
 
@@ -218,16 +224,11 @@ def canonical_provider_decision(requested: Optional[str] = None, device_id: int 
     degradation_reason = None
     degradation_stage = None
 
-    small = is_sub_7gb_gpu(device_id)
-    allow_small_trt = allow_small_gpu_trt()
-
     if req in ("auto", "tensorrt"):
-        if small and not allow_small_trt:
-            admitted = "cuda"
-            degradation_reason = "sub-7GB safety policy rejects TensorRT by default; use CUDA/CPU fallback or set ROOP_ALLOW_TRT_SMALL_GPU=1 to opt in"
-            degradation_stage = "admission_rejected"
-        else:
-            admitted = "tensorrt"
+        # Hardware tiering controls workspace, precision, pools, and
+        # concurrency. It must not reject a qualified TensorRT provider merely
+        # because the card has less than 7 GB of VRAM.
+        admitted = "tensorrt"
     elif req == "cuda":
         if not preflight.get("cuda_available", False):
             admitted = "cpu"

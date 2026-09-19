@@ -138,7 +138,7 @@ class TestProviderInitializationMatrix(unittest.TestCase):
 
     # ── 4. RTX 3060 6GB Policy ─────────────────────────────────────────────
     def test_arm04_rtx_3060_6gb_policy(self):
-        """Arm 4: RTX 3060 6GB enforces sub-7GB policy (CUDA fallback, 0/0 pools)."""
+        """Arm 4: RTX 3060 6GB uses TensorRT with 0/0 pools and bounded tuning."""
         mock_preflight = {
             "available_providers": ["TensorrtExecutionProvider", "CUDAExecutionProvider", "CPUExecutionProvider"],
             "cuda_available": True,
@@ -154,9 +154,9 @@ class TestProviderInitializationMatrix(unittest.TestCase):
 
                 decision = backend_manager.canonical_provider_decision("tensorrt", device_id=0)
                 self.assertEqual(decision.requested, "tensorrt")
-                self.assertEqual(decision.admitted, "cuda")
-                self.assertEqual(decision.active, "CUDAExecutionProvider")
-                self.assertEqual(decision.degradation_stage, "admission_rejected")
+                self.assertEqual(decision.admitted, "tensorrt")
+                self.assertEqual(decision.active, "TensorrtExecutionProvider")
+                self.assertIsNone(decision.degradation_stage)
 
                 # Pools must be 0/0
                 self.assertEqual(session_pool._auto_pool_defaults(), (0, 0))
@@ -166,8 +166,8 @@ class TestProviderInitializationMatrix(unittest.TestCase):
                 self.assertEqual(bound[0], "CUDAExecutionProvider")
 
                 meta = get_meta()
-                self.assertFalse(meta["tensorrt_allowed"])
-                self.assertEqual(meta["admitted_provider"], "cuda")
+                self.assertTrue(meta["tensorrt_allowed"])
+                self.assertEqual(meta["admitted_provider"], "tensorrt")
 
     # ── 5. RTX 4070 12GB Policy ────────────────────────────────────────────
     def test_arm05_rtx_4070_12gb_policy(self):
@@ -448,10 +448,10 @@ class TestProviderInitializationMatrix(unittest.TestCase):
         with patch.dict(os.environ, {}, clear=False):
             os.environ.pop("ROOP_ALLOW_TRT_SMALL_GPU", None)
             with patch("roop.gpu_preflight.get_preflight_result", return_value=mock_3060), \
-                 patch("roop.backend_manager.is_sub_7gb_gpu", return_value=True):
+                patch("roop.backend_manager.is_sub_7gb_gpu", return_value=True):
                 dec_3060 = backend_manager.canonical_provider_decision("auto", device_id=0)
-                self.assertEqual(dec_3060.admitted, "cuda")
-                self.assertEqual(dec_3060.active, "CUDAExecutionProvider")
+                self.assertEqual(dec_3060.admitted, "tensorrt")
+                self.assertEqual(dec_3060.active, "TensorrtExecutionProvider")
 
     # ── React Settings State Matching Backend Capability ───────────────────
     def test_react_settings_payload_matches_backend_capability(self):

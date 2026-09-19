@@ -149,6 +149,13 @@ RUN_ONLY_OUTPUT = {
 
 
 class TestFrontendReachesBackend(unittest.TestCase):
+    def test_selected_face_preview_has_a_pre_capture_fallback(self):
+        """A fresh target has detections but no captured identity yet."""
+        src = FACESWAP_JSX.read_text(encoding='utf-8')
+        self.assertIn("const previewDetection = activeParams.face_detection_mode === 'Selected face'", src)
+        self.assertIn("&& targetFaces.length === 0", src)
+        self.assertIn("? 'All faces'", src)
+
     def test_every_sent_setting_is_consumed(self):
         """A key in the request that the backend never reads is a control that
         silently does nothing — the exact bug this suite exists for."""

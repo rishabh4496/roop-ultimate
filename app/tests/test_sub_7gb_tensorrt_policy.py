@@ -29,8 +29,8 @@ class TestSub7GbTensorRTPolicy(unittest.TestCase):
         roop_globals.CFG = self._saved_cfg
         roop_globals.execution_providers = self._saved_provs
 
-    def test_6gb_gpu_default_rejects_tensorrt_with_cuda_fallback(self):
-        """On a 6GB card (e.g. RTX 3060 Laptop), TensorRT is rejected by default and falls back to CUDA."""
+    def test_6gb_gpu_default_admits_tensorrt_with_safe_pools(self):
+        """A 6GB RTX card may use qualified TensorRT without desktop pools."""
         mock_preflight = {
             "available_providers": ["TensorrtExecutionProvider", "CUDAExecutionProvider", "CPUExecutionProvider"],
             "cuda_available": True,
@@ -46,20 +46,20 @@ class TestSub7GbTensorRTPolicy(unittest.TestCase):
 
                 self.assertTrue(backend_manager.is_sub_7gb_gpu(0))
                 self.assertFalse(backend_manager.allow_small_gpu_trt())
-                self.assertFalse(backend_manager.is_trt_allowed_for_device(0))
+                self.assertTrue(backend_manager.is_trt_allowed_for_device(0))
                 self.assertTrue(backend_manager._small_gpu(0))
 
                 decision = backend_manager.canonical_provider_decision("tensorrt", device_id=0)
                 self.assertEqual(decision.requested, "tensorrt")
-                self.assertEqual(decision.admitted, "cuda")
-                self.assertEqual(decision.active, "CUDAExecutionProvider")
-                self.assertEqual(decision.degradation_stage, "admission_rejected")
-                self.assertIn("sub-7GB safety policy", decision.degradation_reason)
+                self.assertEqual(decision.admitted, "tensorrt")
+                self.assertEqual(decision.active, "TensorrtExecutionProvider")
+                self.assertIsNone(decision.degradation_stage)
+                self.assertIsNone(decision.degradation_reason)
 
                 adm = backend_manager.provider_admission("tensorrt", device_id=0)
-                self.assertFalse(adm["admitted"])
-                self.assertEqual(adm["admitted_provider"], "cuda")
-                self.assertFalse(adm["tensorrt_allowed"])
+                self.assertTrue(adm["admitted"])
+                self.assertEqual(adm["admitted_provider"], "tensorrt")
+                self.assertTrue(adm["tensorrt_allowed"])
                 self.assertTrue(adm["is_sub_7gb_gpu"])
                 self.assertFalse(adm["override"])
 
@@ -192,8 +192,8 @@ class TestSub7GbTensorRTPolicy(unittest.TestCase):
             swp_pool, det_pool = session_pool._auto_pool_defaults()
             self.assertEqual((swp_pool, det_pool), (0, 0))
 
-    def test_cuda_fallback_not_regressed_when_trt_rejected(self):
-        """When TensorRT is rejected by policy, CUDAExecutionProvider binds cleanly if CUDA is available."""
+    def test_qualified_tensorrt_remains_active_on_small_gpu(self):
+        """A usable TensorRT session is not downgraded solely for being sub-7GB."""
         mock_preflight = {
             "available_providers": ["TensorrtExecutionProvider", "CUDAExecutionProvider", "CPUExecutionProvider"],
             "cuda_available": True,
@@ -207,9 +207,9 @@ class TestSub7GbTensorRTPolicy(unittest.TestCase):
                  patch("roop.backend_manager.is_sub_7gb_gpu", return_value=True):
 
                 decision = backend_manager.canonical_provider_decision("tensorrt", device_id=0)
-                self.assertEqual(decision.admitted, "cuda")
-                self.assertEqual(decision.active, "CUDAExecutionProvider")
-                self.assertEqual(decision.active_chain, ("CUDAExecutionProvider", "CPUExecutionProvider"))
+                self.assertEqual(decision.admitted, "tensorrt")
+                self.assertEqual(decision.active, "TensorrtExecutionProvider")
+                self.assertEqual(decision.active_chain, ("TensorrtExecutionProvider", "CUDAExecutionProvider", "CPUExecutionProvider"))
 
 
 if __name__ == "__main__":

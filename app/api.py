@@ -750,8 +750,50 @@ def get_settings_defaults():
         return {}
 
 
+_SETTINGS_INT_RANGES = {
+    "max_threads": (1, 128),
+    "num_swap_steps": (1, 5),
+    "trt_contexts": (1, 4),
+    "stabilization_workers": (1, 12),
+}
+_SETTINGS_FLOAT_RANGES = {
+    "face_detector_threshold": (0.0, 1.0),
+    "face_detector_nms": (0.0, 1.0),
+    "max_face_distance": (0.0, 2.0),
+    "blend_ratio": (0.0, 1.0),
+    "codeformer_fidelity": (0.0, 1.0),
+}
+
+
+def _validate_settings_payload(values: dict):
+    """Reject malformed numeric/provider settings before CFG is mutated."""
+    if not isinstance(values, dict):
+        return "settings must be an object"
+    provider = values.get("provider")
+    if provider is not None and str(provider).lower() not in {
+        "auto", "cpu", "cuda", "tensorrt", "rocm", "dml", "directml",
+    }:
+        return "provider is not supported"
+    for key, (lo, hi) in _SETTINGS_INT_RANGES.items():
+        if key not in values:
+            continue
+        value = values[key]
+        if isinstance(value, bool) or not isinstance(value, int) or not lo <= value <= hi:
+            return f"{key} must be an integer between {lo} and {hi}"
+    for key, (lo, hi) in _SETTINGS_FLOAT_RANGES.items():
+        if key not in values:
+            continue
+        value = values[key]
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not lo <= float(value) <= hi:
+            return f"{key} must be a number between {lo} and {hi}"
+    return None
+
+
 @app.post("/api/settings")
 def save_settings(settings: dict = Body(...)):
+    validation_error = _validate_settings_payload(settings)
+    if validation_error:
+        return JSONResponse(status_code=400, content={"message": validation_error})
     _update_mask_offsets_from_payload(settings)
     if roop_globals.CFG:
         for k, v in settings.items():
@@ -1620,10 +1662,18 @@ def target_set_frame(payload: dict = Body(...)):
     """Set start/end frame of the selected target (Set as Start / End)."""
     idx = state.selected_target_index
     which = payload.get("which", "start")
-    frame = int(payload.get("frame", 1))
+    try:
+        frame = int(payload.get("frame", 1))
+    except (TypeError, ValueError):
+        return JSONResponse(status_code=400, content={"message": "frame must be an integer"})
+    if idx < 0 or idx >= len(list_files_process):
+        return _target_list_payload()
+    entry = list_files_process[idx]
+    total = getattr(entry, "total_frames", 0) or entry.endframe or 0
+    frame = max(0, frame)
+    if which == "end":
+        frame = max(1, frame)
     if idx < len(list_files_process):
-        entry = list_files_process[idx]
-        total = getattr(entry, "total_frames", 0) or entry.endframe or 0
         if which == "start":
             entry.startframe = min(frame, entry.endframe or frame)
         else:
@@ -1955,7 +2005,7 @@ def target_use_face(payload: dict = Body(...)):
     """
     idx = int(payload.get("index", state.selected_target_index))
     frame = int(payload.get("frame", 1))
-    if idx >= len(list_files_process):
+    if idx < 0 or idx >= len(list_files_process):
         return {"target_faces": [], "target_groups": []}
     face_index = payload.get("face_index", None)
     if face_index is not None:
@@ -1982,7 +2032,7 @@ def target_add_angle(payload: dict = Body(...)):
     person = int(payload.get("person", 0))     # 0-based person rank
     idx = int(payload.get("index", state.selected_target_index))
     frame = int(payload.get("frame", 1))
-    if idx >= len(list_files_process):
+    if idx < 0 or idx >= len(list_files_process):
         return _target_faces_payload({"count": 0})
     ranks = _target_groups_ranked()
     raw_group = next((roop_globals.TARGET_FACE_GROUP[i] for i, r in enumerate(ranks) if r == person), None)
@@ -2062,7 +2112,7 @@ def target_auto_angles(payload: dict = Body(...)):
 
     person = int(payload.get("person", 0))
     idx = int(payload.get("index", state.selected_target_index))
-    if idx >= len(list_files_process):
+    if idx < 0 or idx >= len(list_files_process):
         return _target_faces_payload({"count": 0, "message": "no target"})
     target_path = list_files_process[idx].filename
     if util.is_image(target_path) and not target_path.lower().endswith("gif"):
@@ -3064,7 +3114,14 @@ def preview(payload: dict = Body(...)):
             return {"image": _bgr_to_preview_dataurl(swapped), "faces": faces_list, "person_ids": person_ids, "kps": kps_list, "pose": pose_list}
         except Exception:
             traceback.print_exc()
-            return {"image": _bgr_to_preview_dataurl(current_frame), "faces": faces_list, "person_ids": person_ids, "kps": kps_list, "pose": pose_list, "error": "swap failed"}
+            return JSONResponse(status_code=500, content={
+                "message": "preview swap failed",
+                "error": "swap failed",
+                "faces": faces_list,
+                "person_ids": person_ids,
+                "kps": kps_list,
+                "pose": pose_list,
+            })
     finally:
         roop_globals.is_preview = False
         try:

@@ -920,12 +920,11 @@ class HardwareProfiler:
         except Exception as _degrade_error:
             _swallowed("roop/runtime_optimizer.py:902", _degrade_error, "fallback continued")
             pass
-        # TensorRT's Builder is a heavyweight host allocation.  On the
-        # sub-7GB tier the backend admission policy rejects TensorRT before any
-        # production engine is built, so constructing a Builder here would
-        # consume the very RSS budget this profiler is meant to protect.  The
-        # installed/provider capability and version are still recorded above;
-        # only the optional Builder feature probe is deferred on that tier.
+        # TensorRT's Builder is a heavyweight host allocation.  Provider
+        # admission is intentionally independent of VRAM tier now, while this
+        # optional feature probe remains deferred on sub-7GB cards so startup
+        # does not consume the RSS budget before the bounded runtime profile is
+        # applied. The installed/provider capability is still recorded above.
         trt_builder_probe = trt
         if cuda and vram_total and vram_total < 7.0:
             allow_small_trt = os.environ.get(
@@ -1665,7 +1664,7 @@ class AutoTuner:
         configured_provider = _short(_value(settings, "provider", "auto")).lower()
         if configured_provider in ("cpu", "cpu only", "none"):
             backend = "cpu"
-        elif (hardware.tensorrt_available and not small and
+        elif (hardware.tensorrt_available and
               configured_provider in ("auto", "", "cuda", "tensorrt")):
             backend = "tensorrt"
         elif hardware.cuda_available and configured_provider not in ("cpu", "cpu only"):
@@ -1980,9 +1979,13 @@ class RuntimeAutotuner:
 
         small = hardware.vram_total_gb > 0 and hardware.vram_total_gb < 7.0
         if not self._explicit(settings, "backend_precision"):
-            if (hardware.tensorrt_available and not small and
-                    hardware.fp16_supported):
-                add("backend_precision", backend="tensorrt", precision="fp16")
+            if hardware.tensorrt_available:
+                # Small cards are TensorRT-capable, but keep their validated
+                # FP32/one-context policy rather than proposing the desktop
+                # FP16 tuning candidate.
+                add("backend_precision", backend="tensorrt",
+                    precision=("fp16" if hardware.fp16_supported and not small
+                               else "fp32"))
             if hardware.cuda_available:
                 add("backend_precision", backend="cuda", precision="fp32")
         if not small and not self._explicit(settings, "trt_concurrency"):
