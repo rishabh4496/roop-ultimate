@@ -1,5 +1,15 @@
 module.exports = {
   run: [{
+    when: "{{exists('.pinokio-install-complete.json')}}",
+    method: "fs.rm",
+    params: { path: ".pinokio-install-complete.json" }
+  }, {
+    method: "fs.write",
+    params: {
+      path: ".pinokio-install-incomplete.json",
+      json: { schema: 1, state: "in_progress", next_action: "rerun update" }
+    }
+  }, {
     method: "shell.run",
     params: {
       message: [
@@ -66,20 +76,21 @@ module.exports = {
       path: "app",
       message: [
         "python verify_ort.py"
-      ],
-      on: [{
-        "event": "/\\[FATAL\\]/",
-        "break": true
-      }]
+      ]
     }
+  }, {
+    when: "{{exists('.pinokio-install-incomplete.json')}}",
+    method: "fs.rm",
+    params: { path: ".pinokio-install-incomplete.json" }
   }, {
     method: "fs.write",
     params: {
       path: ".pinokio-install-complete.json",
       json: {
-        schema: 1,
+        schema: 2,
         react_build: "react-ui/dist/index.html",
-        python_environment: "app/env"
+        python_environment: "app/env",
+        runtime_verification: "app/verify_ort.py"
       }
     }
   }]

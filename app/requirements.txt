@@ -11,7 +11,10 @@ timm>=0.9.16
 # Existing UI and processing dependencies.
 gradio==5.50.0
 onnx==1.16.0
-onnxruntime-gpu==1.23.2
+# ONNX Runtime is provisioned by provision_runtime.py after the machine is
+# classified. Keeping it out of this common file prevents CPU/DirectML installs
+# from inheriting the NVIDIA GPU wheel and gives every platform one final ORT
+# package contract.
 albucore==0.0.16
 psutil==5.9.6
 nvidia-ml-py>=12.535.133

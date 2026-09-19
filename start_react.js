@@ -4,6 +4,19 @@ module.exports = async (kernel) => {
   return {
     daemon: true,
     run: [
+      // Never infer readiness from app/env. Verify the final package contract
+      // and the actual machine before building or starting the UI. This also
+      // reports an explicitly incomplete or missing install marker clearly.
+      {
+        method: "shell.run",
+        params: {
+          venv: "env",
+          path: "app",
+          message: [
+            "python verify_ort.py --require-complete"
+          ]
+        }
+      },
       // A user can invoke this script directly, or an earlier install can
       // have stopped after creating app/env. Repair the frontend dependency
       // directory before building so that path does not produce a blank UI.

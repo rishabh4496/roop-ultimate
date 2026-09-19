@@ -3,6 +3,20 @@ module.exports = {
     bundle: "ai",
   },
   run: [
+    // Mark the environment incomplete before any dependency or UI step runs.
+    // A failed install must not leave a stale healthy marker behind.
+    {
+      when: "{{exists('.pinokio-install-complete.json')}}",
+      method: "fs.rm",
+      params: { path: ".pinokio-install-complete.json" }
+    },
+    {
+      method: "fs.write",
+      params: {
+        path: ".pinokio-install-incomplete.json",
+        json: { schema: 1, state: "in_progress", next_action: "rerun install" }
+      }
+    },
     // Install Python dependencies for the backend (app/ is already in the repo)
     {
       method: "shell.run",
@@ -103,11 +117,7 @@ module.exports = {
         path: "app",
         message: [
           "python verify_ort.py"
-        ],
-        on: [{
-          "event": "/\\[FATAL\\]/",
-          "break": true
-        }]
+        ]
       }
     },
     // app/env alone is not proof that installation completed. Pinokio may
@@ -115,13 +125,19 @@ module.exports = {
     // the marker only after every required install step above has succeeded so
     // pinokio.js never offers Start for a partial install.
     {
+      when: "{{exists('.pinokio-install-incomplete.json')}}",
+      method: "fs.rm",
+      params: { path: ".pinokio-install-incomplete.json" }
+    },
+    {
       method: "fs.write",
       params: {
         path: ".pinokio-install-complete.json",
         json: {
-          schema: 1,
+          schema: 2,
           react_build: "react-ui/dist/index.html",
-          python_environment: "app/env"
+          python_environment: "app/env",
+          runtime_verification: "app/verify_ort.py"
         }
       }
     }

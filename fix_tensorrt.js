@@ -1,6 +1,13 @@
 module.exports = {
   run: [
     {
+      method: "fs.write",
+      params: {
+        path: ".pinokio-install-incomplete.json",
+        json: { schema: 1, state: "in_progress", next_action: "rerun TensorRT repair" }
+      }
+    },
+    {
       method: "log",
       params: {
         text: "Installing TensorRT 10.9 into the existing env...\nThis installs the meta package AND the -libs/-bindings subpackages that actually contain the runtime DLLs (nvinfer_10.dll etc.) onnxruntime needs for the TensorRT execution provider.\nVersion 10.9 matches onnxruntime-gpu 1.23 (its TensorRT EP is built against TensorRT 10.9).\nThis may take a few minutes — the libs package is ~1.6 GB."
@@ -12,8 +19,7 @@ module.exports = {
         venv: "env",
         path: "app",
         message: [
-          "uv pip install onnxruntime-gpu==1.23.2",
-          "uv pip install --extra-index-url https://pypi.nvidia.com/ tensorrt-cu12==10.9.0.34 tensorrt-cu12-libs==10.9.0.34 tensorrt-cu12-bindings==10.9.0.34"
+          "python provision_runtime.py --tensorrt-only"
         ]
       }
     },
@@ -31,6 +37,24 @@ module.exports = {
         message: [
           "python verify_ort.py"
         ]
+      }
+    },
+    {
+      method: "fs.rm",
+      params: {
+        path: ".pinokio-install-incomplete.json"
+      }
+    },
+    {
+      method: "fs.write",
+      params: {
+        path: ".pinokio-install-complete.json",
+        json: {
+          schema: 2,
+          react_build: "react-ui/dist/index.html",
+          python_environment: "app/env",
+          runtime_verification: "app/verify_ort.py"
+        }
       }
     },
     {
