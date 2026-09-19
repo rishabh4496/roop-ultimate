@@ -461,11 +461,13 @@ def execute_ort_preflight() -> PhaseResult:
         )
 
     if not result.get("onnxruntime_importable"):
+        stage = result.get("failure_stage") or "package_missing"
+        reason = result.get("failure_reason") or "ONNX Runtime import failed"
         return PhaseResult(
             phase=StartupPhase.ORT_PREFLIGHT,
             status=PhaseStatus.FATAL,
             component="onnxruntime",
-            reason=result.get("failure_reason") or "ONNX Runtime import failed",
+            reason=f"{stage}: {reason}",
             detected_version=result.get("onnxruntime_version") or "none",
             expected_version="onnxruntime-gpu>=1.18.0",
             next_action="Repair the Pinokio environment before starting the app",

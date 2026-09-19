@@ -989,7 +989,7 @@ def _get_provider_meta():
         allow_small = allow_small_gpu_trt()
         trt_allowed = is_trt_allowed_for_device(dev_id)
         preflight = get_preflight_result()
-        trt_avail = bool(preflight.get("tensorrt_available", False)) or "tensorrt" in providers
+        trt_avail = bool(preflight.get("tensorrt_available", False))
         trt_session_ok = bool(preflight.get("tensorrt_session_usable", False))
         dec = canonical_provider_decision(req if req != "auto" else None, device_id=dev_id)
         admitted = getattr(cfg, "provider_admitted", dec.admitted)
