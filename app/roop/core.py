@@ -1172,12 +1172,8 @@ def live_swap(frame, options, input_facesets=None):
     # old early fast-path ran a second FaceAnalysis pass and could return the
     # untouched frame before ProcessMgr had a chance to apply its selected-face
     # fallback, tracking, or low-VRAM guard. It also doubled exposure to the
-    # analyser-pool rebuild race. Batch rendering keeps the cheap bypass.
-    if (not getattr(options, 'show_face_masking', False)
-            and not getattr(roop.globals, 'is_preview', False)):
-        if fast_path_bypass(frame, target_faces=roop.globals.TARGET_FACES,
-                            threshold=getattr(options, 'face_distance_threshold', None)):
-            return frame
+    # analyser-pool rebuild race. Batch rendering keeps the cheap bypass;
+    # the preview path does not — it always goes through ProcessMgr.
 
     facesets = roop.globals.INPUT_FACESETS if input_facesets is None else input_facesets
 

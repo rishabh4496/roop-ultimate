@@ -92,11 +92,28 @@ class PreviewAdmissionTests(unittest.TestCase):
         self.assertIn("_preview_process_mgr.is_preview = True", text)
 
     def test_live_swap_skips_batch_fast_bypass_during_preview(self):
-        """Preview must not run a second detector pass and return raw pixels."""
+        """Preview must not run a second detector pass and return raw pixels.
+
+        The dead-code guard (`and not is_preview`) was removed in favour of a
+        comment that explicitly documents the intent and the absence of the
+        fast-path call.  This test now checks that the bypass is absent rather
+        than that a vacuous condition exists.
+        """
         core = os.path.join(_APP, "roop", "core.py")
         with open(core, encoding="utf-8") as handle:
             text = handle.read()
-        self.assertIn("and not getattr(roop.globals, 'is_preview', False)", text)
+        # fast_path_bypass must not be called from within live_swap.
+        # Locate the function body between its def and the next top-level def.
+        live_swap_start = text.find("def live_swap(")
+        self.assertGreater(live_swap_start, 0, "live_swap not found in core.py")
+        next_def = text.find("\ndef ", live_swap_start + 1)
+        body = text[live_swap_start:next_def] if next_def > 0 else text[live_swap_start:]
+        self.assertNotIn(
+            "fast_path_bypass",
+            body,
+            "live_swap must not call fast_path_bypass — preview must go through "
+            "ProcessMgr so selected-face fallback and tracking work correctly",
+        )
 
     def test_api_serializes_overlapping_preview_requests(self):
         """Fast control changes must not interleave process-wide preview globals."""
