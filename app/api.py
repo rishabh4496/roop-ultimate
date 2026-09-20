@@ -2297,7 +2297,52 @@ def target_context(payload: dict = Body(...)):
     return _target_faces_payload()
 
 
+_TARGET_FACE_INDEX_ORDER = "get_all_faces:left_to_right:bbox_x1"
+
+
+class _TargetFaceCaptureError(ValueError):
+    def __init__(self, code, message, *, status_code=422, detected_face_count=None):
+        super().__init__(message)
+        self.code = code
+        self.message = message
+        self.status_code = status_code
+        self.detected_face_count = detected_face_count
+
+
+def _face_bbox_sort_key(face):
+    bbox = face.get("bbox") if isinstance(face, dict) else getattr(face, "bbox", None)
+    try:
+        values = [float(v) for v in bbox[:4]]
+        return tuple(values)
+    except (TypeError, ValueError, IndexError):
+        return (float("inf"), float("inf"), float("inf"), float("inf"))
+
+
+def _faces_in_target_selection_order(frame):
+    """Return the final detection order shared by preview and capture."""
+    from roop.face_util import get_all_faces
+    # get_all_faces applies confidence/NMS/rescue filtering.  Sorting only this
+    # final list keeps the UI index stable and prevents crop filtering from
+    # shifting a later selected face.
+    return sorted(list(get_all_faces(frame) or []), key=_face_bbox_sort_key)
+
+
+def _target_face_capture_error(exc, *, media_id=None, frame=None, face_index=None):
+    content = {
+        "error": exc.code,
+        "message": exc.message,
+        "target_media_id": media_id,
+        "frame": frame,
+        "face_index": face_index,
+        "face_index_order": _TARGET_FACE_INDEX_ORDER,
+    }
+    if exc.detected_face_count is not None:
+        content["detected_face_count"] = exc.detected_face_count
+    return JSONResponse(status_code=exc.status_code, content=content)
+
+
 def _faces_from_frame(idx, frame):
+    """Capture-all helper used only by the explicit ``capture_all`` action."""
     target_path = list_files_process[idx].filename
     roop_globals.target_path = target_path
     if util.is_image(target_path) and not target_path.lower().endswith("gif"):
@@ -2316,7 +2361,7 @@ def _face_data_at_index(idx, frame, fi):
     (``face_temp.size < 1``), which shifts every later index and makes a click
     capture the wrong person. Here we index into get_all_faces directly and
     never drop the selected face (fall back to the whole frame as the crop)."""
-    from roop.face_util import get_all_faces, _attach_source_crops, clamp_cut_values
+    from roop.face_util import _attach_source_crops, clamp_cut_values
     target_path = list_files_process[idx].filename
     roop_globals.target_path = target_path
     if util.is_image(target_path) and not target_path.lower().endswith("gif"):
@@ -2324,10 +2369,19 @@ def _face_data_at_index(idx, frame, fi):
     else:
         img = get_video_frame(target_path, frame)
     if img is None:
-        return []
-    faces = get_all_faces(img)
-    if not (0 <= fi < len(faces)):
-        return []
+        raise _TargetFaceCaptureError(
+            "frame_unavailable", "could not read the requested target frame",
+            status_code=404)
+    faces = _faces_in_target_selection_order(img)
+    if not faces:
+        raise _TargetFaceCaptureError(
+            "no_faces_detected", "no face was detected in the requested frame",
+            status_code=422, detected_face_count=0)
+    if not isinstance(fi, int) or isinstance(fi, bool) or not (0 <= fi < len(faces)):
+        raise _TargetFaceCaptureError(
+            "invalid_face_index",
+            f"face_index {fi!r} is outside the {len(faces)} detected face(s)",
+            status_code=422, detected_face_count=len(faces))
     face = faces[fi]
     (sx, sy, ex, ey) = face["bbox"].astype("int")
     sx, ex, sy, ey = clamp_cut_values(sx, ex, sy, ey, img)
@@ -2340,35 +2394,119 @@ def _face_data_at_index(idx, frame, fi):
 
 @app.post("/api/target/use_face")
 def target_use_face(payload: dict = Body(...)):
-    """Add target faces from the current frame, each as a NEW person (group).
+    """Capture one explicitly selected face, or all faces via explicit opt-in.
 
-    If `face_index` is supplied, only that single detected face is added — the
-    index is into the left-to-right detection order, which matches the numbered
-    boxes drawn on the live-preview overlay, so clicking a box adds exactly that
-    person to the target faces.
+    Omitting ``face_index`` is an error.  The previous omission path called
+    ``_faces_from_frame`` and silently captured every detection, so a normal
+    single-face capture could create several target people.  ``capture_all`` is
+    retained as a separate, deliberate action for callers that need it.
     """
-    idx, _media_id, error = _activate_target_from_payload(
-        payload, index=payload.get("index", state.selected_target_index))
-    if error:
-        return error
-    frame = int(payload.get("frame", 1))
-    face_index = payload.get("face_index", None)
-    if face_index is not None:
-        # Single box clicked: select by get_all_faces order (matches the overlay
-        # boxes exactly), NOT the extract_face_images list which can skip faces
-        # and shift indices → capturing the wrong person.
-        faces_data = _face_data_at_index(idx, frame, int(face_index))
-    else:
-        faces_data = _faces_from_frame(idx, frame)
-    next_id = (max(roop_globals.TARGET_FACE_GROUP) + 1) if roop_globals.TARGET_FACE_GROUP else 0
-    for fd in faces_data:
-        roop_globals.TARGET_FACES.append(fd[0])
-        roop_globals.TARGET_FACE_GROUP.append(next_id)
-        ui_globals.ui_target_thumbs.append(util.convert_to_gradio(fd[1]))
-        next_id += 1
-    state.selected_target_face_index = max(0, len(roop_globals.TARGET_FACES) - 1)
-    _save_active_target_context_locked()
-    return _target_faces_payload({"count": len(faces_data)})
+    media_id = payload.get("target_media_id") or payload.get("media_id")
+    if not media_id:
+        return JSONResponse(status_code=400, content={
+            "error": "target_media_id_required",
+            "message": "target_media_id is required when capturing a target face",
+            "target_media_id": None,
+        })
+    if "frame" not in payload:
+        return JSONResponse(status_code=400, content={
+            "error": "frame_required",
+            "message": "frame is required when capturing a target face",
+            "target_media_id": media_id,
+        })
+    try:
+        frame = int(payload.get("frame"))
+    except (TypeError, ValueError):
+        return JSONResponse(status_code=400, content={
+            "error": "invalid_frame",
+            "message": "frame must be an integer",
+            "target_media_id": media_id,
+            "frame": payload.get("frame"),
+        })
+    if frame < 1:
+        return JSONResponse(status_code=400, content={
+            "error": "invalid_frame",
+            "message": "frame must be at least 1",
+            "target_media_id": media_id,
+            "frame": frame,
+        })
+
+    capture_all = payload.get("capture_all") is True
+    raw_face_index = payload.get("face_index")
+    if capture_all and raw_face_index is not None:
+        return JSONResponse(status_code=400, content={
+            "error": "capture_mode_conflict",
+            "message": "face_index and capture_all cannot be used together",
+            "target_media_id": media_id,
+            "frame": frame,
+            "face_index": raw_face_index,
+        })
+    if not capture_all and raw_face_index is None:
+        return JSONResponse(status_code=400, content={
+            "error": "face_index_required",
+            "message": "select one detected face before capturing, or use the explicit capture-all action",
+            "target_media_id": media_id,
+            "frame": frame,
+            "face_index": None,
+            "face_index_order": _TARGET_FACE_INDEX_ORDER,
+        })
+
+    face_index = None
+    if not capture_all:
+        try:
+            if isinstance(raw_face_index, bool):
+                raise ValueError
+            if isinstance(raw_face_index, str):
+                if not raw_face_index.strip() or not raw_face_index.strip().lstrip("-").isdigit():
+                    raise ValueError
+                face_index = int(raw_face_index.strip())
+            elif isinstance(raw_face_index, int):
+                face_index = raw_face_index
+            else:
+                raise ValueError
+        except (TypeError, ValueError):
+            return JSONResponse(status_code=422, content={
+                "error": "invalid_face_index",
+                "message": "face_index must be a zero-based integer",
+                "target_media_id": media_id,
+                "frame": frame,
+                "face_index": raw_face_index,
+                "face_index_order": _TARGET_FACE_INDEX_ORDER,
+            })
+
+    with _target_context_lock:
+        idx, _media_id, error = _activate_target_from_payload(payload, refresh=False)
+        if error:
+            return error
+        try:
+            if capture_all:
+                faces_data = _faces_from_frame(idx, frame)
+                if not faces_data:
+                    raise _TargetFaceCaptureError(
+                        "no_faces_detected", "no face was detected in the requested frame",
+                        status_code=422, detected_face_count=0)
+            else:
+                # Single-face capture always uses the final detector list in the
+                # exact order also used to produce the preview overlay.
+                faces_data = _face_data_at_index(idx, frame, face_index)
+        except _TargetFaceCaptureError as exc:
+            return _target_face_capture_error(
+                exc, media_id=_media_id, frame=frame, face_index=face_index)
+
+        next_id = (max(roop_globals.TARGET_FACE_GROUP) + 1) if roop_globals.TARGET_FACE_GROUP else 0
+        for fd in faces_data:
+            roop_globals.TARGET_FACES.append(fd[0])
+            roop_globals.TARGET_FACE_GROUP.append(next_id)
+            ui_globals.ui_target_thumbs.append(util.convert_to_gradio(fd[1]))
+            next_id += 1
+        state.selected_target_face_index = max(0, len(roop_globals.TARGET_FACES) - 1)
+        _save_active_target_context_locked()
+        return _target_faces_payload({
+            "count": len(faces_data),
+            "face_index": face_index,
+            "capture_all": capture_all,
+            "face_index_order": _TARGET_FACE_INDEX_ORDER,
+        })
 
 
 @app.post("/api/target/add_angle")
@@ -3458,8 +3596,8 @@ def preview(payload: dict = Body(...)):
         kps_list = []
         pose_list = []
         try:
-            from roop.face_util import get_all_faces, solve_pose_5pt
-            faces = get_all_faces(current_frame)
+            from roop.face_util import solve_pose_5pt
+            faces = _faces_in_target_selection_order(current_frame)
             if faces:
                 for f in faces:
                     bbox = f["bbox"].astype(int).tolist()
@@ -3486,6 +3624,7 @@ def preview(payload: dict = Body(...)):
                 "person_ids": person_ids,
                 "kps": kps_list,
                 "pose": pose_list,
+                "face_index_order": _TARGET_FACE_INDEX_ORDER,
                 "request_id": processing_request["request_id"],
                 "target_index": idx,
                 "target_media_id": media_id,
@@ -3498,7 +3637,7 @@ def preview(payload: dict = Body(...)):
             }
 
         if not fake or len(roop_globals.INPUT_FACESETS) < 1:
-            return {"image": _bgr_to_preview_dataurl(current_frame), "faces": faces_list, "person_ids": person_ids, "kps": kps_list, "pose": pose_list, "request_id": processing_request["request_id"], "target_index": idx, "target_media_id": media_id}
+            return {"image": _bgr_to_preview_dataurl(current_frame), "faces": faces_list, "person_ids": person_ids, "kps": kps_list, "pose": pose_list, "face_index_order": _TARGET_FACE_INDEX_ORDER, "request_id": processing_request["request_id"], "target_index": idx, "target_media_id": media_id}
 
         try:
             from roop.core import live_swap, get_processing_plugins
@@ -3536,8 +3675,8 @@ def preview(payload: dict = Body(...)):
 
             swapped = live_swap(current_frame, options, input_facesets=mapped)
             if swapped is None:
-                return {"image": _bgr_to_preview_dataurl(current_frame), "faces": faces_list, "person_ids": person_ids, "kps": kps_list, "pose": pose_list, "request_id": processing_request["request_id"], "target_index": idx, "target_media_id": media_id}
-            return {"image": _bgr_to_preview_dataurl(swapped), "faces": faces_list, "person_ids": person_ids, "kps": kps_list, "pose": pose_list, "request_id": processing_request["request_id"], "target_index": idx, "target_media_id": media_id}
+                return {"image": _bgr_to_preview_dataurl(current_frame), "faces": faces_list, "person_ids": person_ids, "kps": kps_list, "pose": pose_list, "face_index_order": _TARGET_FACE_INDEX_ORDER, "request_id": processing_request["request_id"], "target_index": idx, "target_media_id": media_id}
+            return {"image": _bgr_to_preview_dataurl(swapped), "faces": faces_list, "person_ids": person_ids, "kps": kps_list, "pose": pose_list, "face_index_order": _TARGET_FACE_INDEX_ORDER, "request_id": processing_request["request_id"], "target_index": idx, "target_media_id": media_id}
         except Exception:
             traceback.print_exc()
             return JSONResponse(status_code=500, content={
@@ -3547,6 +3686,7 @@ def preview(payload: dict = Body(...)):
                 "person_ids": person_ids,
                 "kps": kps_list,
                 "pose": pose_list,
+                "face_index_order": _TARGET_FACE_INDEX_ORDER,
                 "request_id": processing_request["request_id"],
                 "target_index": idx,
                 "target_media_id": media_id,

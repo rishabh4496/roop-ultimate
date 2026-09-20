@@ -322,7 +322,14 @@ def run_provider_probe(provider, target_path, settings, capture_frame, frame_to_
     # This arm is performed by a separately started server when requested. The
     # harness only records the same selected preview under that active provider.
     request("POST", "/api/target/clear_faces")
-    request("POST", "/api/target/use_face", json={"index": 0, "frame": capture_frame, "face_index": 0})
+    active_state = target_state()
+    target_media_id = active_state.get("target_media_id") if isinstance(active_state, dict) else None
+    if not target_media_id:
+        raise RuntimeError("active target state did not provide target_media_id")
+    request("POST", "/api/target/use_face", json={
+        "index": 0, "frame": capture_frame,
+        "target_media_id": target_media_id, "face_index": 0,
+    })
     code, body, img = preview(frame_to_test, settings, True, {"selection_mode": "selected", "person_id": 0})
     delta, _ = log_delta(log_path, 0)
     return {"provider_requested": provider, "preview_http": code, "preview": body,
@@ -396,6 +403,12 @@ def main():
         report["errors"].append("Faceset or target was not accepted by API")
         write_json(OUT / "acceptance_report.json", report)
         return 5
+    target_media_id = target_after_add.get("target_media_id")
+    if not target_media_id:
+        report["status"] = "NOT_PERFORMED_TARGET_ID_MISSING"
+        report["errors"].append("Target was accepted without a target_media_id")
+        write_json(OUT / "acceptance_report.json", report)
+        return 6
 
     total = int(report["preflight"]["opencv"]["frame_count"])
     # Raw scan gives evidence for start/middle/end and scene variation.
@@ -426,7 +439,10 @@ def main():
     capture = raw_b
     boxes = capture.get("faces") or []
     face_index = max(range(len(boxes)), key=lambda i: (boxes[i][2]-boxes[i][0])*(boxes[i][3]-boxes[i][1])) if boxes else 0
-    ccode, cbody = request("POST", "/api/target/use_face", json={"index": 0, "frame": b_frame, "face_index": face_index})
+    ccode, cbody = request("POST", "/api/target/use_face", json={
+        "index": 0, "frame": b_frame, "target_media_id": target_media_id,
+        "face_index": face_index,
+    })
     cstate = target_state()
     groups = cstate.get("target_groups", [])
     report["stages"]["C_target_capture"] = {"capture_frame": b_frame, "face_index": face_index,

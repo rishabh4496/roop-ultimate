@@ -103,6 +103,10 @@ export default function FaceSwap({
   const [previewFor, setPreviewFor] = useState('');
   const [previewFaces, setPreviewFaces] = useState([]);
   const [previewPersonIds, setPreviewPersonIds] = useState([]);
+  // A detection index is only valid for the exact target media/frame that
+  // produced the overlay. It is intentionally not part of the target-person
+  // context and is cleared whenever either input changes.
+  const [selectedDetectedFace, setSelectedDetectedFace] = useState(null);
   const [previewKps, setPreviewKps] = useState([]);
   // (yaw, pitch, roll) per face, solved server-side by the SAME solve_pose_5pt
   // the non-frontal mask router gates on — see the
@@ -253,6 +257,31 @@ export default function FaceSwap({
   const targetIdAt = (index = selTarget) => targets[index]?.media_id
     || targets[index]?.id || null;
   const activeTargetMediaId = targetIdAt(selTarget);
+  const selectedDetectedFaceIndex = selectedDetectedFace
+    && selectedDetectedFace.mediaId === activeTargetMediaId
+    && selectedDetectedFace.frame === frame
+    ? selectedDetectedFace.index : null;
+
+  useEffect(() => {
+    setSelectedDetectedFace(null);
+  }, [activeTargetMediaId, frame]);
+
+  useEffect(() => {
+    if (selectedDetectedFaceIndex !== null
+        && selectedDetectedFaceIndex >= previewFaces.length) {
+      setSelectedDetectedFace(null);
+    }
+  }, [previewFaces, selectedDetectedFaceIndex]);
+
+  const selectDetectedFace = (faceIndex) => {
+    if (!activeTargetMediaId || !Number.isInteger(faceIndex)
+        || faceIndex < 0 || faceIndex >= previewFaces.length) return;
+    setSelectedDetectedFace({
+      mediaId: activeTargetMediaId,
+      frame,
+      index: faceIndex,
+    });
+  };
 
   const rememberTargetContext = (mediaId = activeTargetMediaId, patch = {}) => {
     if (!mediaId) return;
@@ -1544,20 +1573,42 @@ export default function FaceSwap({
 
   const selectSource = async (i) => { setSelSource(i); await postJSON('/api/source/select', { index: i }); };
 
-  const useFaceFromFrame = async () => {
+  const captureTargetFaceFromFrame = async ({ faceIndex = null, captureAll = false } = {}) => {
     try {
       const res = await postJSON('/api/target/use_face', {
-        index: selTarget, frame, target_media_id: activeTargetMediaId,
+        index: selTarget,
+        frame,
+        target_media_id: activeTargetMediaId,
+        ...(captureAll ? { capture_all: true } : { face_index: faceIndex }),
       });
       setTargetFaces(res.target_faces);
       setTargetGroups(res.target_groups || []);
       setTargetNames(res.target_names || []);
       setTargetFacesInfo(res.target_faces_info || []);
       setSelTargetFace(Math.max(0, (res.target_faces || []).length - 1));
+      setSelectedDetectedFace(null);
       applyTargetContext(res, res.target_media_id || activeTargetMediaId);
       set('face_detection_mode', 'Selected face');
-      notify(`Added ${res.count} target person(s)`);
+      notify(captureAll
+        ? `Added ${res.count} target person(s)`
+        : `Added Face ${faceIndex + 1} as a target person`);
     } catch (e) { notify(e.message, 'error'); }
+  };
+
+  const useFaceFromFrame = async () => {
+    if (selectedDetectedFaceIndex === null) {
+      notify('Select one detected face in the preview first', 'error');
+      return;
+    }
+    await captureTargetFaceFromFrame({ faceIndex: selectedDetectedFaceIndex });
+  };
+
+  const captureAllPeopleFromFrame = async () => {
+    if (!previewFaces.length) {
+      notify('No detected faces to capture', 'error');
+      return;
+    }
+    await captureTargetFaceFromFrame({ captureAll: true });
   };
 
   // Spot-check the AI upscale on just the current preview frame — sends the
@@ -1585,25 +1636,6 @@ export default function FaceSwap({
     } finally {
       setUpscaling(false);
     }
-  };
-
-  // Click a numbered face box in the live preview to capture just that person
-  // as a NEW target face (face_index = its left-to-right box order).
-  const addPersonFromBox = async (faceIndex) => {
-    try {
-      const res = await postJSON('/api/target/use_face', {
-        index: selTarget, frame, face_index: faceIndex, target_media_id: activeTargetMediaId,
-      });
-      if (!res.count) { notify('No face found for that box', 'error'); return; }
-      setTargetFaces(res.target_faces);
-      setTargetGroups(res.target_groups || []);
-      setTargetNames(res.target_names || []);
-      setTargetFacesInfo(res.target_faces_info || []);
-      setSelTargetFace(Math.max(0, (res.target_faces || []).length - 1));
-      applyTargetContext(res, res.target_media_id || activeTargetMediaId);
-      set('face_detection_mode', 'Selected face');
-      notify(`Added Person ${(previewPersonIds[faceIndex] ?? faceIndex) + 1} to target faces`);
-    } catch (e) { notify(e.message, 'error'); }
   };
 
   const setFrameMarkerVal = async (which, val) => {
@@ -3161,7 +3193,8 @@ export default function FaceSwap({
                     kps={previewKps}
                     pose={previewPose}
                     personIds={previewPersonIds}
-                    onSelectPerson={addPersonFromBox}
+                    selectedFaceIndex={selectedDetectedFaceIndex}
+                    onSelectFace={selectDetectedFace}
                     splitView={splitView}
                     compare={compare}
                     onToggleCompare={() => setCompare((v) => { const n = !v; if (n) { setComparingEnhancers(false); setComparingMasks(false); setComparingSwappers(false); setComparingUpscalers(false); } return n; })}
@@ -3282,7 +3315,17 @@ export default function FaceSwap({
                 the run is over (see the deferred-preview effect above). */}
             <div className={`flex items-center flex-wrap gap-3 ${maxFrames > 1 ? 'pt-3 border-t border-white/5' : ''}`}>
               <Button size="sm" variant="secondary" title="Re-run the swap for this frame, ignoring the cached result" onClick={() => refreshPreview({ force: true })}>Refresh</Button>
-              <Button size="sm" variant="primary" onClick={useFaceFromFrame}>Use face from frame</Button>
+              <Button size="sm" variant="primary" disabled={selectedDetectedFaceIndex === null}
+                title={selectedDetectedFaceIndex === null
+                  ? 'Select a numbered detected face first'
+                  : `Capture detected face ${selectedDetectedFaceIndex + 1}`} onClick={useFaceFromFrame}>
+                {selectedDetectedFaceIndex === null
+                  ? 'Select a face to capture'
+                  : `Use selected face ${selectedDetectedFaceIndex + 1}`}
+              </Button>
+              <Button size="sm" variant="secondary" disabled={!previewFaces.length}
+                title="Explicitly capture every detected face as a separate target person"
+                onClick={captureAllPeopleFromFrame}>Capture all people</Button>
               {previewSrc && !comparingEnhancers && !comparingMasks && !comparingSwappers && !comparingUpscalers && (
                 <Button size="sm" variant="secondary" disabled={upscaling} onClick={upscaleThisFrame}
                   title="AI-upscale just this frame to preview final quality">

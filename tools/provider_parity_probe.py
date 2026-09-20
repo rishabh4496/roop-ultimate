@@ -60,7 +60,12 @@ def main():
     with SOURCE.open("rb") as fh:
         sc,sb=req("POST","/api/source/add",files={"files":(SOURCE.name,fh,"application/octet-stream")})
     ac,ab=req("POST","/api/target/add_path",json={"paths":[str(TARGET)]})
-    cc,cb=req("POST","/api/target/use_face",json={"index":0,"frame":61,"face_index":0})
+    target_media_id = ab.get("target_media_id") if isinstance(ab, dict) else None
+    if not target_media_id:
+        raise RuntimeError("target add response did not provide target_media_id")
+    cc,cb=req("POST","/api/target/use_face",json={"index":0,"frame":61,
+                                                       "target_media_id":target_media_id,
+                                                       "face_index":0})
     settings=req("GET","/api/settings")[1]
     rc,raw=req("POST","/api/preview",json=payload(settings,1,False))
     fc,fake=req("POST","/api/preview",json=payload(settings,1,True))

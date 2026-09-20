@@ -210,7 +210,7 @@ graph TD
 1. **Coordinate Normalization:** Translate native media coordinates `[sx, sy, ex, ey]` to percentage-based CSS layout positions:
    $$\text{left} = \frac{sx}{\text{imgDim.w}} \times 100\%, \quad \text{top} = \frac{sy}{\text{imgDim.h}} \times 100\%$$
    $$\text{width} = \frac{ex - sx}{\text{imgDim.w}} \times 100\%, \quad \text{height} = \frac{ey - sy}{\text{imgDim.h}} \times 100\%$$
-2. **Interactive Bounding Boxes:** Render glowing bounding boxes for all detected faces, labeled with `Person {id + 1}` chips. Clicking any bounding box must trigger target face capture (`/api/target/use_face`).
+2. **Interactive Bounding Boxes:** Render glowing bounding boxes for all detected faces, labeled with deterministic `Face {index + 1}` chips. Clicking a box selects that exact detected index; the separate **Use selected face** action sends `target_media_id`, `frame`, and `face_index` to `/api/target/use_face`. Capturing every detected face is available only through the explicit **Capture all people** action.
 3. **5-Point ArcFace Landmarks Overlay:** Render SVG landmark coordinates for:
    - Left Eye & Right Eye (`#38bdf8`) + Eye Axis line.
    - Nose Tip (`#fbbf24`).
