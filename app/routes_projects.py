@@ -68,16 +68,32 @@ def _load_into_runtime(record):
     globals_.source_path = None
     for source in (record.get("inputs") or {}).get("sources") or []:
         path = source["path"]
+        saved_id = str(source.get("source_id") or "")
         if path.lower().endswith(".fsz"):
-            _ingest_faceset(path)
+            faceset = _ingest_faceset(path)
+            if saved_id and faceset is not None:
+                faceset._source_id = saved_id
             continue
         faces = extract_face_images(path, (False, 0))
         if not faces:
             raise ValueError(f"no source face could be restored from {path}")
         globals_.source_path = path
-        for fd in faces:
+        # Image uploads are one faceset per detected face; a record written
+        # before source_id existed is restored under the same "#face-N" ids
+        # the upload path allocates, so an old mapping still resolves.
+        saved_face = None
+        if "#face-" in saved_id:
+            try:
+                saved_face = int(saved_id.rsplit("#face-", 1)[1])
+            except ValueError:
+                saved_face = None
+        for face_index, fd in enumerate(faces):
+            if saved_face is not None and face_index != saved_face:
+                continue
             faceset = FaceSet()
             faceset._source_path = os.path.abspath(path)
+            faceset._source_id = (saved_id if saved_face is not None
+                                  else f"{os.path.abspath(path)}#face-{face_index}")
             face = fd[0]
             faceset.faces.append(face)
             _sources_append(faceset, api.util.convert_to_gradio(fd[1]))

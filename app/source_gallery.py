@@ -299,6 +299,16 @@ def _ingest_faceset(path):
                 frame = get_image_frame(filename)
                 for fd in extract_face_images(filename, (False, 0)):
                     append_face(fd, frame)
+    if len(face_set.faces) < 1:
+        # A faceset that contributes no face must not vanish silently: the
+        # caller reported "loaded", the gallery did not grow, and every mapping
+        # naming this source became a silent skip.  Raise with the reason so
+        # /api/source/add, the library loader and project restore can report a
+        # structured error instead.
+        members = [name for name in os.listdir(unzipfolder) if name.lower().endswith(".png")]
+        if faceset_metadata is None and not members:
+            raise ValueError("FaceSet archive contains no PNG reference members")
+        raise ValueError("FaceSet contains no detectable faces")
     if len(face_set.faces) > 0:
         # Keep the originating archive with the in-memory FaceSet so a durable
         # processing project can reload the exact source rather than only a
@@ -314,6 +324,7 @@ def _ingest_faceset(path):
         # later face's picture onto the wrong faceset.
         _sources_append(face_set,
                         util.convert_to_gradio(best_crop) if best_crop is not None else None)
+    return face_set
 
 def _frontality(kps):
     """0 = perfectly frontal, larger = more turned to a profile. Uses the same

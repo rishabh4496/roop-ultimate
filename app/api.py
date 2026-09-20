@@ -670,7 +670,12 @@ def _project_sources():
         if not path:
             raise ValueError(
                 f"source faceset {index + 1} has no reloadable file; save it to the faceset library first")
-        sources.append(_project_checkpoint.file_identity(path))
+        identity = _project_checkpoint.file_identity(path)
+        # The person->source mapping is keyed by this id.  Restoring a
+        # multi-face image without it re-created ids as the bare path, so the
+        # saved mapping matched nothing and every person silently skipped.
+        identity["source_id"] = str(getattr(faceset, "_source_id", "") or "")
+        sources.append(identity)
     return sources
 
 
@@ -1833,11 +1838,19 @@ def _selected_source_identity():
 @app.post("/api/source/add")
 def source_add(files: list[UploadFile] = File(...)):
     skipped_names = []
+    # Structured per-file failures.  A corrupt or empty .fsz used to be
+    # swallowed into a traceback and a 200 that looked like "no face detected".
+    errors = []
     for f in files:
         path = _save_upload(f)
         try:
             if path.lower().endswith("fsz"):
-                _ingest_faceset(path)
+                try:
+                    _ingest_faceset(path)
+                except ValueError as exc:
+                    errors.append({"file": os.path.basename(path),
+                                   "error": "invalid_faceset", "message": str(exc)})
+                    continue
             elif util.has_image_extension(path):
                 roop_globals.source_path = path
                 faces_data = extract_face_images(path, (False, 0))
@@ -1854,11 +1867,15 @@ def source_add(files: list[UploadFile] = File(...)):
                 # used as source references. Report them so the frontend can
                 # surface a useful error rather than "no face detected".
                 skipped_names.append(os.path.basename(path))
-        except Exception:
+        except Exception as exc:
             traceback.print_exc()
+            errors.append({"file": os.path.basename(path),
+                           "error": "load_failed", "message": str(exc)})
     payload = _source_faces_payload()
     if skipped_names:
         payload["unsupported"] = skipped_names
+    if errors:
+        payload["errors"] = errors
     return payload
 
 
@@ -4311,10 +4328,20 @@ def preview(payload: dict = Body(...)):
                 selection_state=selection_state,
                 processing_request=processing_request)
 
+            # The swap audit for THIS preview call: which detected faces were
+            # routed, swapped, or refused and why.  A routed face that a quality
+            # gate then discards used to come back as an unswapped picture with
+            # no diagnostic at all (Stage 15 acceptance finding).
+            audit_before = dict(_procmgr_runtime._audit)
             swapped = live_swap(current_frame, options, input_facesets=mapped)
+            audit_after = _procmgr_runtime._audit
+            swap_audit = {key: int(audit_after[key] - audit_before.get(key, 0))
+                          for key in list(audit_after.keys())
+                          if audit_after[key] - audit_before.get(key, 0)}
+            print(f"[Preview] request={processing_request['request_id']} swap_audit={swap_audit}", flush=True)
             if swapped is None:
-                return {"image": _bgr_to_preview_dataurl(current_frame), "faces": faces_list, "person_ids": person_ids, "kps": kps_list, "pose": pose_list, "face_index_order": _TARGET_FACE_INDEX_ORDER, **echo, "target_index": idx, "target_media_id": media_id}
-            return {"image": _bgr_to_preview_dataurl(swapped), "faces": faces_list, "person_ids": person_ids, "kps": kps_list, "pose": pose_list, "face_index_order": _TARGET_FACE_INDEX_ORDER, **echo, "target_index": idx, "target_media_id": media_id}
+                return {"image": _bgr_to_preview_dataurl(current_frame), "faces": faces_list, "person_ids": person_ids, "kps": kps_list, "pose": pose_list, "face_index_order": _TARGET_FACE_INDEX_ORDER, **echo, "swap_audit": swap_audit, "target_index": idx, "target_media_id": media_id}
+            return {"image": _bgr_to_preview_dataurl(swapped), "faces": faces_list, "person_ids": person_ids, "kps": kps_list, "pose": pose_list, "face_index_order": _TARGET_FACE_INDEX_ORDER, **echo, "swap_audit": swap_audit, "target_index": idx, "target_media_id": media_id}
         except Exception:
             traceback.print_exc()
             return JSONResponse(status_code=500, content={

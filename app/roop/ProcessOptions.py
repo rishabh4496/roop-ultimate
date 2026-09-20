@@ -27,7 +27,13 @@ class ProcessOptions:
             selection_state = self.processing_request.get("selection_state")
         # Canonical target-person selection. This is deliberately separate from
         # selected_index, which is a source-gallery index in the legacy modes.
-        self.selection_state = normalize_target_selection(selection_state)
+        # The request's stable person ids are the universe this selection is
+        # judged against; without them a "tp_..." id parsed as a missing rank
+        # and the whole run swapped nothing (Stage 15 acceptance finding).
+        stable_ids = (self.processing_request.get("target_person_ids")
+                      if self.processing_request else None)
+        self.selection_state = normalize_target_selection(
+            selection_state, target_person_ids=stable_ids or None)
         self.masking_text = masking_text
         self.imagemask = imagemask
         self.num_swap_steps = num_steps

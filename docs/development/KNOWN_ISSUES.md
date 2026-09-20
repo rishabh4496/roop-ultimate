@@ -560,3 +560,22 @@ in this session; no result below is extrapolated to it.
     backend's own TCP endpoints for 90 s across 177 samples during a live render
     and found **zero non-loopback peers** - which bounds the claim without
     simulating a disconnection.
+
+## 2026-09-21 Stage 15 acceptance: occlusion gate discards fully visible faces
+
+`roop.tracker.occlusion_state_for` marks a face `partial` when >= 8% of its
+106 landmarks fall outside the occluder mask, and `ProcessMgr.process_face`
+then discards the whole swap (`refused: partial occlusion`). On
+`D:\Monica Bellucci .mp4` frame 1 the occluder reads Monica's fully visible
+face at 0.208 (0.17-0.21 across the first 60 frames) and the man on the right
+at 0.17; the man on the left reads 0.094 on CPU and < 0.08 on CUDA/TensorRT,
+so the SAME face paints on the GPU and is refused on CPU. Identity routing is
+unaffected (the correct person is routed on every provider); the loss is in
+painting. Measured, not tuned: deciding the gate (landmark subset, fraction,
+or restoring only the occluded region) is its own change with its own
+distribution measurement. `ROOP_OCCLUSION_MASK=0` is the A/B override.
+
+Also observed, not changed: the live `config.yaml` has `max_face_distance: 1.2`.
+At that threshold a frame where the selected person is absent routes the
+nearest stranger (render frames 49-52: one face, d=0.99, swapped). That is the
+user's setting; the acceptance harness reports it, Stage 15 did not lower it.

@@ -41,6 +41,18 @@ def normalize_target_selection(selection=None, person_count=None,
         mode = SELECTION_NONE
 
     stable_ids = [str(value) for value in (target_person_ids or [])]
+    if not stable_ids and target_person_ids is None:
+        # No universe supplied.  A selection that already addresses people by
+        # stable id must be judged on that contract, not parsed as integer
+        # ranks: every re-normalization below the API boundary (ProcessOptions,
+        # ProcessMgr) used to turn "tp_..." into a missing rank, report
+        # selection_required, and swap nothing -- in preview AND render.
+        carried = [raw.get("person_id")] + list(
+            raw.get("person_ids") if isinstance(raw.get("person_ids"), list) else [])
+        stable_ids = [str(value) for value in carried
+                      if value not in (None, "") and not isinstance(value, bool)
+                      and _optional_int(value) is None]
+        stable_ids = list(dict.fromkeys(stable_ids))
     use_stable_ids = bool(stable_ids)
     raw_person_id = raw.get("person_id")
     if use_stable_ids:
@@ -172,6 +184,35 @@ def selection_group_ids(target_groups, selection, target_person_ids=None):
         wanted = {rank for rank, stable_id in enumerate(stable_ids)
                   if stable_id in wanted}
     return {group for group, rank in rank_by_group.items() if rank in wanted}
+
+
+def resolve_processing_selection(options, target_face_count):
+    """ProcessMgr's selection setup, as one pure function.
+
+    Returns ``(target_face_groups, target_selection, selected_group_ids)``
+    from the options' canonical request (or the legacy globals fallback the
+    caller supplies through ``options``).  Lifted out of
+    ``ProcessMgr.initialize`` so the Stage 15 regression -- a stable-id
+    selection that normalized to ``selection_required`` and selected nobody --
+    is tested against the code that actually runs, not a copy of it.
+    """
+    request = getattr(options, "processing_request", None)
+    request = request if isinstance(request, dict) else None
+    request_groups = request.get("target_groups") if request else None
+    stable_ids = request.get("target_person_ids") if request else None
+    if isinstance(request_groups, list) and len(request_groups) == target_face_count:
+        groups = list(request_groups)
+    else:
+        groups = list(getattr(options, "legacy_target_face_groups", None) or [])
+    if len(groups) != target_face_count:
+        groups = list(range(target_face_count))
+    selection = normalize_target_selection(
+        getattr(options, "selection_state", None),
+        person_count=len(set(groups)),
+        target_person_ids=stable_ids or None,
+    )
+    selected = selection_group_ids(groups, selection, stable_ids or None)
+    return groups, selection, selected
 
 
 def selection_face_indices(target_groups, selection, target_person_ids=None):

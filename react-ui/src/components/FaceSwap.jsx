@@ -1598,12 +1598,18 @@ export default function FaceSwap({
       setSourceFaces(res.source_faces);
       if (res.source_faces_info) setSourceFacesInfo(res.source_faces_info);
       const added = res.source_faces.length - before;
+      if (res.errors?.length) {
+        // Structured per-file faceset failures (corrupt archive, checksum
+        // mismatch, no detectable face). The reason, not "no face detected".
+        res.errors.forEach((e) => notify(`${e.file}: ${e.message}`, 'error'));
+      }
       if (res.unsupported?.length) {
         notify(
           `Unsupported file type(s) — only images (.png/.jpg/.jpeg/.webp) and .fsz facesets are accepted as source: ${res.unsupported.join(', ')}`,
           'error'
         );
       } else if (added > 0) notify(`Loaded ${added} face(s) — ${res.faceset_count} faceset(s) total`);
+      else if (res.errors?.length) { /* already reported above */ }
       else notify('No face detected in the uploaded file(s)', 'error');
     } catch (err) { reportUploadError(err); }
     finally { setUploadingSrc(false); setSrcProgress(null); srcAbortRef.current = null; }

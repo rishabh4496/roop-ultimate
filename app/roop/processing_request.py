@@ -303,6 +303,27 @@ def normalize_processing_request(payload=None, *, target_groups=None,
         current_source_names,
     )
 
+    source_index = resolve_selected_source_index(
+        source_index_mapping, selected_source_gallery_index)
+    # Single-person "Selected face": the source is the one MAPPED to the
+    # selected person.  `source_index` used to be re-resolved from the
+    # gallery-highlighted source, so highlighting source A while person P was
+    # mapped to source B swapped P with A when another person happened to map
+    # there, or refused P outright (-1) when nobody did.  ProcessMgr's
+    # single-person path reads `selected_index` as the mapped-list slot, so
+    # that slot must be the selected person's own rank.
+    if (swap_mode == "selected" and source_index_mapping is not None
+            and selection.get("valid") and selection.get("person_id") is not None):
+        person = selection["person_id"]
+        if stable_person_ids and str(person) in stable_person_ids:
+            rank = stable_person_ids.index(str(person))
+        else:
+            rank = _optional_int(person, -1)
+        if 0 <= rank < len(source_index_mapping):
+            source_index = rank if source_index_mapping[rank] >= 0 else -1
+        else:
+            source_index = -1
+
     resolved_mapping_ids = [
         (current_source_ids[index]
          if isinstance(current_source_ids, list) and 0 <= index < len(current_source_ids)
@@ -334,8 +355,7 @@ def normalize_processing_request(payload=None, *, target_groups=None,
         "source_face_count": max(0, int(source_count or 0)),
         "selected_source_gallery_index": _optional_int(
             selected_source_gallery_index, -1),
-        "source_index": resolve_selected_source_index(
-            source_index_mapping, selected_source_gallery_index),
+        "source_index": source_index,
     }
 
 

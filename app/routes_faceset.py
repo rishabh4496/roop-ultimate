@@ -263,6 +263,11 @@ def faceset_library_load(payload: dict = Body(...)):
         return JSONResponse(status_code=404, content={"message": "faceset not found"})
     try:
         _ingest_faceset(path)
+    except ValueError as exc:
+        # Corrupt archive, checksum mismatch, or no detectable face: the
+        # reason is the message; nothing was added to the gallery.
+        return JSONResponse(status_code=422, content={
+            "error": "invalid_faceset", "message": str(exc), "filename": fn})
     except Exception:
         traceback.print_exc()
         return JSONResponse(status_code=500, content={"message": "failed to load faceset"})

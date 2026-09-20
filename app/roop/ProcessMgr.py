@@ -55,7 +55,8 @@ from roop.procmgr_stabilization import StabilizationSchedulingMixin
 from roop.face_overlap import build_regions as build_face_regions, FaceRegion
 from roop import face_contact
 from roop import recognizer_adaface as _ada
-from roop.target_selection import normalize_target_selection, selection_group_ids
+from roop.target_selection import (normalize_target_selection, resolve_processing_selection,
+                                   selection_group_ids)
 from roop import live_preview as _live_preview
 from roop.procmgr_runtime import _PROFILE, _TRACK_VETO_DIST, _TRACK_VETO_MARGIN, _TRACK_VETO_SINGLE, _TRACK_EMB_MAX, _DEBUG_MATCH, COLOR_RESET, COLOR_CYAN, COLOR_YELLOW, COLOR_PURPLE, _prof, _prof_report, _prof_reset, _gpu_guard, PROGRESS_BAR_FORMAT, wait_while_paused, pause_controller, pause_scope, pause_aware, ChunkedProgress, bar_write, publish_eta as _publish_eta, _audit_hit, audit_over_threshold as _audit_over_threshold, audit_frame_seen, audit_detect_frame_begin, audit_detect_miss, audit_face_begin, _audit_swapped_gapfill, _audit_reset, _audit_report, VETO_SOURCE_REUSED, VETO_SINGLE_ABS, VETO_OTHER_FITS, VETO_FAR_FROM_OWN, AUDIT_SWAP_MOVED, VERIFY_MIN_OFFAXIS, VERIFY_SWAP, set_runtime_monitor, set_detailed_profiler
 from roop.stage_profiler import StageProfiler
@@ -983,31 +984,16 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
             if isinstance(getattr(options, 'processing_request', None), dict)
             else None
         )
-        request_groups = (
-            self.processing_request.get('target_groups')
-            if self.processing_request is not None else None
-        )
-        if isinstance(request_groups, list) and len(request_groups) == len(target_faces):
-            # The API-normalized request is authoritative for both preview and
-            # render. It contains ranked person ids, not source/reference/frame
-            # indices. Keep the globals fallback for direct legacy callers.
-            self.target_face_groups = list(request_groups)
-        else:
-            self.target_face_groups = list(roop.globals.TARGET_FACE_GROUP)
-        if len(self.target_face_groups) != len(target_faces):
-            self.target_face_groups = list(range(len(target_faces)))
-        self.target_selection = normalize_target_selection(
-            getattr(options, 'selection_state', None),
-            person_count=len(set(self.target_face_groups)),
-            target_person_ids=(
-                self.processing_request.get('target_person_ids')
-                if self.processing_request else None),
-        )
-        self.selected_target_groups = selection_group_ids(
-            self.target_face_groups, self.target_selection,
-            (self.processing_request.get('target_person_ids')
-             if self.processing_request else None),
-        )
+        # The API-normalized request is authoritative for both preview and
+        # render. It contains ranked person ids, not source/reference/frame
+        # indices. Keep the globals fallback for direct legacy callers. The
+        # resolution itself lives in roop.target_selection so it is tested
+        # against the code that runs here (Stage 15: a stable-id selection
+        # once normalized to "selection_required" and selected nobody).
+        options.legacy_target_face_groups = list(roop.globals.TARGET_FACE_GROUP)
+        (self.target_face_groups, self.target_selection,
+         self.selected_target_groups) = resolve_processing_selection(
+            options, len(target_faces))
         self.num_frames_no_face = 0
         self.last_swapped_frame = None
         # No `last_found_bboxes` here: the ROI-rescue cache is per worker and
@@ -5933,6 +5919,20 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
             restored = _restore_partial_occlusion(result, plate, target_face, region=region)
             if restored is not result:
                 _audit_hit('refused: partial occlusion')
+                if _DEBUG_MATCH:
+                    # The Stage 15 acceptance found a routed, eligible face that
+                    # never painted, with nothing in the log saying why. Name
+                    # the gate and the number it read.
+                    try:
+                        _frac = (target_face.get('_occluded_landmark_frac')
+                                 if isinstance(target_face, dict)
+                                 else getattr(target_face, '_occluded_landmark_frac', None))
+                        bar_write(f"[Occlusion] swap discarded (partial occlusion): "
+                                  f"bbox={[round(float(v)) for v in target_face.bbox]} "
+                                  f"hidden_landmark_frac={None if _frac is None else round(float(_frac), 3)} "
+                                  f"gate=0.08")
+                    except Exception as _degrade_error:
+                        _swallowed("roop/ProcessMgr.py:occlusion-diag", _degrade_error, "fallback continued")
                 result = restored
 
         if _vs is not None and self._verify_worth_it(rotation_action, _head_angles):
