@@ -9,6 +9,7 @@
     "lint": "oxlint",
     "test:render": "node .render-check/run.mjs",
     "test:mapping": "node .render-check/face-mapping-check.mjs",
+    "test:stage14": "node .render-check/stage14-async-check.mjs",
     "test:render:mutations": "node .render-check/mutation-check.mjs",
     "preview": "vite preview"
   },

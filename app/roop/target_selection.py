@@ -115,9 +115,25 @@ def normalize_target_selection(selection=None, person_count=None,
     }
 
 
-def selection_diagnostic_for_mode(mode, selection, target_count):
-    """Return the admission diagnostic for a selected-mode request."""
-    selection = normalize_target_selection(selection)
+def selection_diagnostic_for_mode(mode, selection, target_count,
+                                  target_person_ids=None):
+    """Return the admission diagnostic for a selected-mode request.
+
+    ``target_person_ids`` must be the active context's stable ids whenever the
+    selection addresses people by stable id.  Re-normalizing a stable-id
+    selection without them parsed ``"tp_..."`` as a missing integer rank and
+    reported ``selection_required`` for every valid Stage 13 selection, so no
+    "Selected face" preview or render could ever be admitted.
+    """
+    stable_ids = [str(value) for value in (target_person_ids or [])]
+    if not stable_ids and isinstance(selection, Mapping):
+        # No context supplied: accept the ids the selection itself carries so
+        # a stable-id selection is judged on its own contract, not as ranks.
+        carried = [selection.get("person_id")] + list(selection.get("person_ids") or [])
+        stable_ids = [str(value) for value in carried
+                      if value not in (None, "") and _optional_int(value) is None]
+    selection = normalize_target_selection(
+        selection, target_person_ids=stable_ids or None)
     if mode not in (SELECTION_SELECTED, "selected_multi"):
         return None
     if int(target_count or 0) < 1:

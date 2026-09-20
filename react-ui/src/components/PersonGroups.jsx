@@ -48,14 +48,35 @@ function groupByPerson(groups, personIds) {
 
 export default function PersonGroups({
   targetFaces, targetGroups, targetNames, targetFacesInfo,
-  targetPersonIds, selectedTargetPersonId,
+  targetPersonIds, targetReferenceFaceIds, selectedTargetPersonId,
   setSelectedTargetPersonId, setTargetPersonIds, setTargetReferenceFaceIds,
   selTargetFace, setSelTargetFace,
   sourceFaces, sourceFacesInfo, faceSelection, selectedSource, faceMapping, setFaceMapping,
   frame, selTarget, targetMediaId,
   setTargetFaces, setTargetGroups, setTargetNames, setTargetFacesInfo,
   notify, clearPreviewCache,
+  // Stage 14: the versioned write path for target-scoped identity state.
+  // When present, every selection/mapping change is persisted through it so
+  // the backend (and therefore a reload) knows the selected person, not just
+  // the array position of an angle.
+  commitTargetContext,
 }) {
+  // Select a person by stable id, optionally on one of its angles. The click
+  // used to change React state only, so a reload restored whatever angle index
+  // the backend last saw — usually the previous person.
+  const choosePerson = (personId, faceIndex) => {
+    setSelTargetFace(faceIndex);
+    if (setSelectedTargetPersonId) setSelectedTargetPersonId(personId);
+    if (commitTargetContext) {
+      const referenceId = Array.isArray(targetReferenceFaceIds)
+        ? targetReferenceFaceIds[faceIndex] : undefined;
+      commitTargetContext({
+        selected_target_person_id: personId,
+        ...(referenceId ? { selected_reference_face_id: referenceId } : {}),
+        selected_target_face_index: faceIndex,
+      });
+    }
+  };
   const [expanded, setExpanded] = useState({});      // target_person_id -> bool override
   const [editingRank, setEditingRank] = useState(null);
   const [editValue, setEditValue] = useState('');
@@ -279,11 +300,17 @@ export default function PersonGroups({
     setFaceMapping(next);
     // Mapping is UI-owned, but it is still target-specific state. Persist it
     // immediately so a reload cannot reconstruct B from A's last mapping.
-    postJSON('/api/target/context', {
-      target_media_id: targetMediaId,
-      face_mapping: next,
-      target_person_source_mapping: next,
-    }).catch((e) => notify(e.message, 'error'));
+    // Through the versioned path when the parent provides it, so a preview
+    // built BEFORE this change cannot land afterwards and overwrite it.
+    if (commitTargetContext) {
+      commitTargetContext({ face_mapping: next, target_person_source_mapping: next });
+    } else {
+      postJSON('/api/target/context', {
+        target_media_id: targetMediaId,
+        face_mapping: next,
+        target_person_source_mapping: next,
+      }).catch((e) => notify(e.message, 'error'));
+    }
     if (clearPreviewCache) clearPreviewCache();
   };
 
@@ -298,7 +325,7 @@ export default function PersonGroups({
     const cur = ranks.indexOf(selRank);
     const nextRank = ranks[Math.min(ranks.length - 1, Math.max(0, cur + (e.key === 'ArrowDown' ? 1 : -1)))];
     const firstFace = people.find(([id]) => id === nextRank)?.[1]?.[0];
-    if (firstFace >= 0) setSelTargetFace(firstFace);
+    if (firstFace >= 0) choosePerson(nextRank, firstFace);
   };
 
   const otherRanks = people.map(([r]) => r);
@@ -403,7 +430,7 @@ export default function PersonGroups({
             style={isSel ? { boxShadow: `inset 3px 0 0 ${color}` } : { boxShadow: `inset 3px 0 0 ${color}55` }}
           >
             {/* Header */}
-            <div className="flex items-center gap-2 px-3 py-2.5 cursor-pointer" onClick={() => { setSelTargetFace(indices[0]); if (setSelectedTargetPersonId) setSelectedTargetPersonId(rank); }}>
+            <div className="flex items-center gap-2 px-3 py-2.5 cursor-pointer" onClick={() => choosePerson(rank, indices[0])}>
               <button type="button" onClick={(e) => { e.stopPropagation(); toggleExpand(rank); }}
                 aria-label={`${open ? 'Collapse' : 'Expand'} ${labelFor(rank)}`}
                 aria-expanded={open}
@@ -459,7 +486,7 @@ export default function PersonGroups({
                     const sel = i === selTargetFace;
                     return (
                       <div key={i} className="relative group/angle">
-                        <button type="button" onClick={() => { setSelTargetFace(i); if (setSelectedTargetPersonId) setSelectedTargetPersonId(rank); }}
+                        <button type="button" onClick={() => choosePerson(rank, i)}
                           className={`block rounded-lg overflow-hidden border-2 transition-all ${sel ? 'scale-105' : 'opacity-80 hover:opacity-100'}`}
                           style={{ borderColor: sel ? color : 'transparent' }}>
                           <img src={targetFaces[i]} alt={pose} className="w-14 h-14 object-cover" />

@@ -65,6 +65,14 @@ from roop.processing_request import (
     resolve_selected_source_index,
     selection_log_line,
 )
+from roop.processing_selection import (
+    apply_processing_selection,
+    build_processing_selection,
+    is_stale_version,
+    selection_diagnostics,
+    selection_invalidation_reasons,
+    selection_signature,
+)
 from roop.target_selection import (normalize_target_selection,
                                    selection_diagnostic_for_mode)
 from target_media_state import TargetMediaContextStore
@@ -101,6 +109,49 @@ _preview_request_lock = threading.Lock()
 # replace the faces that ProcessMgr is using halfway through a job.
 _target_context_lock = threading.RLock()
 _target_contexts = TargetMediaContextStore()
+# Stage 14: the newest selection_version the client has written for each
+# target media id.  A late-arriving request that carries an OLDER version (a
+# preview built before the user changed the mapping/person) must not write its
+# selection over the newer one.  Unversioned (legacy) writes are accepted.
+_selection_versions = {}
+
+
+def _selection_write_is_stale(payload, media_id):
+    """True when `payload` carries a selection_version older than the newest
+    version already applied to `media_id`.  Records the version otherwise."""
+    if not media_id:
+        return False
+    selection = build_processing_selection(payload)
+    incoming = selection.get("selection_version")
+    if incoming is None:
+        return False
+    current = _selection_versions.get(str(media_id))
+    if is_stale_version(incoming, current):
+        print(f"[Selection] stale-write-skipped media={media_id} "
+              f"incoming={incoming} current={current} "
+              f"request={selection.get('request_id')}", flush=True)
+        return True
+    _selection_versions[str(media_id)] = int(incoming)
+    return False
+
+
+def _target_context_signature():
+    """Short hash of the identity-bearing state a preview result depends on
+    beyond the request itself: the active target's people/angles/mapping and
+    the loaded source identities.  Part of every preview_signature so a result
+    computed against a different target context is distinguishable."""
+    try:
+        body = {
+            "media": getattr(state, "active_target_media_id", None),
+            "people": list(getattr(roop_globals, "TARGET_FACE_PERSON_IDS", []) or []),
+            "refs": list(getattr(roop_globals, "TARGET_REFERENCE_FACE_IDS", []) or []),
+            "mapping": dict(getattr(state, "active_target_person_source_mapping", {}) or {}),
+            "sources": [str(info.get("id") or "") for info in _get_source_faces_info()],
+        }
+    except Exception as _degrade_error:
+        _swallowed("api.py:_target_context_signature", _degrade_error, "fallback continued")
+        return None
+    return selection_signature({}, context=body)
 
 
 def _configuration_ready():
@@ -965,7 +1016,8 @@ def _target_selection_for_payload(payload):
 
 def _selection_diagnostic_for_mode(mode, selection):
     return selection_diagnostic_for_mode(
-        mode, selection, len(roop_globals.TARGET_FACES))
+        mode, selection, len(roop_globals.TARGET_FACES),
+        target_person_ids=[r["target_person_id"] for r in _target_person_records()])
 
 
 def _selection_message(code):
@@ -976,9 +1028,41 @@ def _canonical_processing_request(payload, target_media_index=None,
                                   target_media_id=None, request_id=None):
     """Resolve all selection/index semantics once for either route."""
     payload = dict(payload or {})
+    # Stage 14: the canonical processing_selection carried by the request is
+    # authoritative.  Project it onto the flat fields FIRST so every legacy
+    # reader below (detection, selection_state, mapping, selected source,
+    # media id) sees the selection that was actually sent.
+    selection = build_processing_selection(
+        payload, target_media_id=target_media_id or payload.get("target_media_id"),
+        request_id=request_id)
+    payload = apply_processing_selection(payload, selection)
     # Keep the API boundary's target-person normalization as the single place
     # that applies the current ranked target bank to the serializable state.
     payload["selection_state"] = _target_selection_for_payload(payload)
+    selection = dict(selection, selection_state=dict(payload["selection_state"]))
+    # A legacy client may have addressed the person by display rank; the
+    # converted selection_state now carries the stable id, so the canonical
+    # person fields must follow it rather than keep the rank.
+    resolved_state = payload["selection_state"]
+    if resolved_state.get("selection_mode") == "selected":
+        selection["target_person_id"] = resolved_state.get("person_id")
+        selection["target_person_ids"] = (
+            [resolved_state["person_id"]] if resolved_state.get("person_id") else [])
+    elif resolved_state.get("selection_mode") == "multi_person":
+        selection["target_person_id"] = None
+        selection["target_person_ids"] = list(resolved_state.get("person_ids") or [])
+    if selection.get("source_identity_id") is None:
+        selected_gallery = payload.get("source_index")
+        if selected_gallery is None:
+            selected_gallery = state.selected_input_face_index
+        infos = _get_source_faces_info()
+        try:
+            selected_gallery = int(selected_gallery)
+        except (TypeError, ValueError):
+            selected_gallery = -1
+        if 0 <= selected_gallery < len(infos):
+            selection["source_identity_id"] = str(infos[selected_gallery].get("id") or "") or None
+            payload["selected_source_id"] = selection["source_identity_id"]
     selected_source = payload.get("source_index")
     if selected_source is None:
         selected_source = state.selected_input_face_index
@@ -996,11 +1080,65 @@ def _canonical_processing_request(payload, target_media_index=None,
         current_source_ids=source_ids,
         target_person_ids=[r["target_person_id"] for r in _target_person_records()],
         request_id=request_id,
+        processing_selection=selection,
     )
 
 
-def _log_normalized_selection(request, phase):
-    print(selection_log_line(request, phase), flush=True)
+def _log_normalized_selection(request, phase, preview_signature=None):
+    print(selection_log_line(request, phase, preview_signature), flush=True)
+
+
+def _selection_invalidation_for_active_context(selection):
+    """Reasons a stored (queued) selection can no longer run as written.
+
+    Reads the ACTIVE target context and the current source gallery; the queue
+    runner calls it after activating the job's own target media, so the person
+    and reference ids compared are the ones that media owns.
+    """
+    with _target_context_lock:
+        _normalize_target_identity_locked()
+        # Legacy clients (BatchSwap) still address people by display rank.
+        # Resolve ranks against the active records first; a rank that no
+        # longer exists stays unresolved and is reported as removed.
+        records = _target_person_records()
+        stable = {r["target_person_id"] for r in records}
+
+        def resolve(value):
+            if value is None or str(value) in stable:
+                return value
+            resolved = person_id_for_rank(records, value)
+            return resolved if resolved is not None else value
+
+        selection = dict(selection or {})
+        selection["target_person_id"] = resolve(selection.get("target_person_id"))
+        selection["target_person_ids"] = [
+            resolve(value) for value in (selection.get("target_person_ids") or [])]
+        selection["target_person_source_mapping"] = {
+            str(resolve(person)): source
+            for person, source in (selection.get("target_person_source_mapping") or {}).items()}
+        return selection_invalidation_reasons(
+            selection,
+            target_media_ids=[_ensure_target_media_id(entry) for entry in list_files_process],
+            target_person_ids=list(getattr(roop_globals, "TARGET_FACE_PERSON_IDS", []) or []),
+            reference_face_ids=list(getattr(roop_globals, "TARGET_REFERENCE_FACE_IDS", []) or []),
+            source_identity_ids=[str(info.get("id") or "") for info in _get_source_faces_info()],
+        )
+
+
+def _selection_response_fields(request, *, frame=None, fake=None):
+    """Diagnostic echo attached to every preview/render response so the client
+    can decide whether the response is the one it is still waiting for."""
+    selection = request.get("processing_selection") or {}
+    signature = selection_signature(
+        selection, frame=frame, fake=fake, context=_target_context_signature())
+    return {
+        "request_id": request.get("request_id"),
+        "processing_selection": dict(selection),
+        "selection_version": selection.get("selection_version"),
+        "preview_signature": signature,
+        "frame": frame,
+        "diagnostics": selection_diagnostics(selection, preview_signature=signature),
+    }
 
 
 def index_of_no_face_action(text):
@@ -1663,8 +1801,23 @@ def get_state():
         **_target_context_payload(),
         "targets": targets,
         "selected_target_index": state.selected_target_index,
+        "selected_source_index": state.selected_input_face_index,
+        "selected_source_id": _selected_source_identity(),
         "faceset_count": len(roop_globals.INPUT_FACESETS),
     }
+
+
+def _selected_source_identity():
+    """Stable id of the selected source faceset, or None."""
+    infos = _get_source_faces_info()
+    index = getattr(state, "selected_input_face_index", 0)
+    try:
+        index = int(index)
+    except (TypeError, ValueError):
+        return None
+    if 0 <= index < len(infos):
+        return str(infos[index].get("id") or "") or None
+    return None
 
 
 # ── Source faces ─────────────────────────────────────────────────────────────
@@ -2075,6 +2228,7 @@ def target_remove(payload: dict = Body(...)):
         _save_active_target_context_locked()
         list_files_process.pop(idx)
         _target_contexts.remove(media_id)
+        _selection_versions.pop(str(media_id), None)
         # Do not let the next surviving-target activation save the just-removed
         # active globals back under A's deleted id.  That would resurrect A's
         # context and is especially easy to hit when removing the last/selected
@@ -2111,6 +2265,7 @@ def target_clear():
         _save_active_target_context_locked()
         list_files_process.clear()
         _target_contexts.clear()
+        _selection_versions.clear()
         state.selected_target_index = 0
         state.active_target_media_id = None
         state.selected_target_face_index = 0
@@ -2480,11 +2635,74 @@ def _target_faces_payload(extra=None):
     return out
 
 
+def _save_target_selection_from_payload(payload):
+    """Persist the selected target person / reference angle for the active
+    target.  Ids are validated against the active context; an unknown id is
+    rejected so a deleted person can never be written back as selected."""
+    if not isinstance(payload, dict):
+        return None
+    wants_person = "selected_target_person_id" in payload
+    wants_reference = "selected_reference_face_id" in payload
+    wants_face = "selected_target_face_index" in payload
+    if not (wants_person or wants_reference or wants_face):
+        return None
+    with _target_context_lock:
+        media_id = getattr(state, "active_target_media_id", None)
+        if _selection_write_is_stale(payload, media_id):
+            return None
+        people, references, _mapping = _normalize_target_identity_locked()
+        person = payload.get("selected_target_person_id") if wants_person else None
+        reference = payload.get("selected_reference_face_id") if wants_reference else None
+        person = str(person).strip() if person not in (None, "") else None
+        reference = str(reference).strip() if reference not in (None, "") else None
+        if person is not None and person not in people:
+            return JSONResponse(status_code=422, content={
+                "error": "invalid_person_id",
+                "message": _SELECTION_MESSAGES["invalid_person_id"],
+                "target_media_id": media_id,
+                "selected_target_person_id": person,
+            })
+        if reference is not None and reference not in references:
+            return JSONResponse(status_code=422, content={
+                "error": "invalid_reference_face_id",
+                "message": _SELECTION_MESSAGES["invalid_reference_face_id"],
+                "target_media_id": media_id,
+                "selected_reference_face_id": reference,
+            })
+        if wants_face:
+            try:
+                face_index = max(0, int(payload.get("selected_target_face_index") or 0))
+            except (TypeError, ValueError):
+                face_index = 0
+            state.selected_target_face_index = min(
+                face_index, max(0, len(roop_globals.TARGET_FACES) - 1))
+        if reference is not None:
+            state.selected_reference_face_id = reference
+            try:
+                state.selected_target_face_index = references.index(reference)
+            except ValueError:
+                pass
+        if person is not None:
+            state.selected_target_person_id = person
+            if reference is None:
+                # Keep the reference angle on the selected person.
+                current = getattr(state, "selected_reference_face_id", None)
+                owned = [references[i] for i, value in enumerate(people) if value == person]
+                if current not in owned and owned:
+                    state.selected_reference_face_id = owned[0]
+                    state.selected_target_face_index = references.index(owned[0])
+        _normalize_target_identity_locked()
+        _save_active_target_context_locked()
+    return None
+
+
 def _save_target_mapping_from_payload(payload):
     """Persist a target's source mapping without making it global state."""
     if not isinstance(payload, dict) or (
             "face_mapping" not in payload
             and "target_person_source_mapping" not in payload):
+        return None
+    if _selection_write_is_stale(payload, getattr(state, "active_target_media_id", None)):
         return None
     mapping = payload.get("target_person_source_mapping")
     if mapping is None:
@@ -2569,6 +2787,9 @@ def target_context(payload: dict = Body(...)):
     mapping_error = _save_target_mapping_from_payload(payload)
     if mapping_error:
         return mapping_error
+    selection_error = _save_target_selection_from_payload(payload)
+    if selection_error:
+        return selection_error
     return _target_faces_payload()
 
 
@@ -3929,10 +4150,14 @@ def preview(payload: dict = Body(...)):
         fake = bool(payload.get("fake_preview", False))
         processing_request = _canonical_processing_request(
             payload, target_media_index=idx, target_media_id=media_id)
-        _log_normalized_selection(processing_request, "preview")
+        # Echoed on EVERY response below (including the diagnostic and error
+        # ones) so the client can tell a response for the selection it still
+        # wants from one for a selection it has since left.
+        echo = _selection_response_fields(processing_request, frame=frame, fake=fake)
+        _log_normalized_selection(processing_request, "preview", echo["preview_signature"])
 
         if idx >= len(list_files_process):
-            return JSONResponse(status_code=404, content={"message": "no target"})
+            return JSONResponse(status_code=404, content={"message": "no target", **echo})
 
         filename = list_files_process[idx].filename
         if util.is_video(filename) or filename.lower().endswith("gif") or util.is_animated_webp(filename):
@@ -3940,7 +4165,7 @@ def preview(payload: dict = Body(...)):
         else:
             current_frame = get_image_frame(filename)
         if current_frame is None:
-            return JSONResponse(status_code=404, content={"message": "no frame"})
+            return JSONResponse(status_code=404, content={"message": "no frame", **echo})
 
         # Apply detection resolution before any detection so the face-box overlay and
         # the swap both use the chosen det_size (640 accurate / 320 fast).
@@ -4038,7 +4263,7 @@ def preview(payload: dict = Body(...)):
                 "kps": kps_list,
                 "pose": pose_list,
                 "face_index_order": _TARGET_FACE_INDEX_ORDER,
-                "request_id": processing_request["request_id"],
+                **echo,
                 "target_index": idx,
                 "target_media_id": media_id,
                 "selection_state": selection_state,
@@ -4050,7 +4275,7 @@ def preview(payload: dict = Body(...)):
             }
 
         if not fake or len(roop_globals.INPUT_FACESETS) < 1:
-            return {"image": _bgr_to_preview_dataurl(current_frame), "faces": faces_list, "person_ids": person_ids, "kps": kps_list, "pose": pose_list, "face_index_order": _TARGET_FACE_INDEX_ORDER, "request_id": processing_request["request_id"], "target_index": idx, "target_media_id": media_id}
+            return {"image": _bgr_to_preview_dataurl(current_frame), "faces": faces_list, "person_ids": person_ids, "kps": kps_list, "pose": pose_list, "face_index_order": _TARGET_FACE_INDEX_ORDER, **echo, "target_index": idx, "target_media_id": media_id}
 
         try:
             from roop.core import live_swap, get_processing_plugins
@@ -4088,8 +4313,8 @@ def preview(payload: dict = Body(...)):
 
             swapped = live_swap(current_frame, options, input_facesets=mapped)
             if swapped is None:
-                return {"image": _bgr_to_preview_dataurl(current_frame), "faces": faces_list, "person_ids": person_ids, "kps": kps_list, "pose": pose_list, "face_index_order": _TARGET_FACE_INDEX_ORDER, "request_id": processing_request["request_id"], "target_index": idx, "target_media_id": media_id}
-            return {"image": _bgr_to_preview_dataurl(swapped), "faces": faces_list, "person_ids": person_ids, "kps": kps_list, "pose": pose_list, "face_index_order": _TARGET_FACE_INDEX_ORDER, "request_id": processing_request["request_id"], "target_index": idx, "target_media_id": media_id}
+                return {"image": _bgr_to_preview_dataurl(current_frame), "faces": faces_list, "person_ids": person_ids, "kps": kps_list, "pose": pose_list, "face_index_order": _TARGET_FACE_INDEX_ORDER, **echo, "target_index": idx, "target_media_id": media_id}
+            return {"image": _bgr_to_preview_dataurl(swapped), "faces": faces_list, "person_ids": person_ids, "kps": kps_list, "pose": pose_list, "face_index_order": _TARGET_FACE_INDEX_ORDER, **echo, "target_index": idx, "target_media_id": media_id}
         except Exception:
             traceback.print_exc()
             return JSONResponse(status_code=500, content={
@@ -4100,7 +4325,7 @@ def preview(payload: dict = Body(...)):
                 "kps": kps_list,
                 "pose": pose_list,
                 "face_index_order": _TARGET_FACE_INDEX_ORDER,
-                "request_id": processing_request["request_id"],
+                **echo,
                 "target_index": idx,
                 "target_media_id": media_id,
             })
@@ -4234,7 +4459,12 @@ def trigger_swap(payload: dict = Body(...)):
     # Claim the processing flag synchronously — the worker thread also sets it,
     # but only after it starts, so two rapid POSTs could otherwise both pass
     # the guard above and run concurrently.
-    return _start_existing_project(project["id"], payload)
+    response = _start_existing_project(project["id"], payload)
+    if isinstance(response, dict):
+        # The selection this render will use is frozen HERE, in
+        # payload["normalized_request"]; the worker never re-reads UI state.
+        response.update(_selection_response_fields(processing_request))
+    return response
 
 
 def _run_swap(payload):
@@ -4354,6 +4584,7 @@ def _run_swap(payload):
                     else state.selected_target_index),
                 target_media_id=payload.get("target_media_id"))
         _log_normalized_selection(processing_request, "render")
+        payload["processing_selection"] = processing_request.get("processing_selection")
         prepare_environment()
         # A project with committed segments owns its partial output. Clearing
         # the output directory here would destroy the only safe resume prefix.
@@ -5119,6 +5350,7 @@ _routes_queue._project_source_list = list_files_process
 _routes_queue._activate_target = _activate_target_media
 _routes_queue._ensure_target_media_id = _ensure_target_media_id
 _routes_queue._benchmark_running = lambda: bool(_benchmark_state["running"])
+_routes_queue._selection_invalidation = _selection_invalidation_for_active_context
 _routes_queue.load()
 
 # Helpers that left with their route groups but are still called by code that

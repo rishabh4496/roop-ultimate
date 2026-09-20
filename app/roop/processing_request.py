@@ -7,6 +7,11 @@ the preview and batch paths then consume the same snapshot.
 
 from uuid import uuid4
 
+from roop.processing_selection import (
+    apply_processing_selection,
+    build_processing_selection,
+    selection_diagnostics,
+)
 from roop.target_selection import normalize_target_selection
 
 
@@ -220,9 +225,20 @@ def normalize_processing_request(payload=None, *, target_groups=None,
                                  target_media_id=None,
                                  current_source_names=None,
                                  current_source_ids=None,
-                                 target_person_ids=None):
+                                 target_person_ids=None,
+                                 processing_selection=None):
     """Build the one request representation consumed by preview and render."""
     payload = payload if isinstance(payload, dict) else {}
+    # Stage 14: the canonical selection is authoritative over the flat fields.
+    # Building it here (when the API boundary has not already) means a direct
+    # caller and the API produce the same request from the same payload.
+    if not isinstance(processing_selection, dict):
+        processing_selection = build_processing_selection(
+            payload, target_media_id=target_media_id, request_id=request_id)
+    payload = apply_processing_selection(payload, processing_selection)
+    request_id = processing_selection["request_id"]
+    if target_media_id is None:
+        target_media_id = processing_selection.get("target_media_id")
     groups = list(target_groups or [])
     # The UI may send the parallel per-angle id array while the API normally
     # supplies the already-projected per-person list. Canonical requests use
@@ -296,6 +312,8 @@ def normalize_processing_request(payload=None, *, target_groups=None,
 
     return {
         "request_id": str(request_id or payload.get("request_id") or uuid4().hex[:12]),
+        "processing_selection": dict(processing_selection),
+        "selection_version": processing_selection.get("selection_version"),
         "swap_mode": swap_mode,
         "selection_state": selection,
         "target_groups": groups,
@@ -321,13 +339,20 @@ def normalize_processing_request(payload=None, *, target_groups=None,
     }
 
 
-def selection_log_line(request, phase):
-    """Return a compact, stable diagnostic line for either route."""
+def selection_log_line(request, phase, preview_signature=None):
+    """Return a compact, stable diagnostic line for either route.
+
+    Carries the Stage 14 diagnostic fields (request id, target media id,
+    target person id, source identity id, selection version, preview
+    signature) and never an embedding or face payload.
+    """
     selection = request.get("selection_state") or {}
     if selection.get("selection_mode") == "multi_person":
         person = selection.get("person_ids", [])
     else:
         person = selection.get("person_id")
+    diag = selection_diagnostics(request.get("processing_selection"),
+                                 preview_signature=preview_signature)
     line = (
         f"[Selection] phase={phase} request={request.get('request_id')} "
         f"mode={request.get('swap_mode')} person={person} "
@@ -336,7 +361,11 @@ def selection_log_line(request, phase):
         f"mapping={request.get('face_mapping')} "
         f"source_index={request.get('source_index')} "
         f"target_media={request.get('target_media_index')} "
-        f"target_media_id={request.get('target_media_id')}"
+        f"target_media_id={request.get('target_media_id')} "
+        f"target_person_id={diag['target_person_id']} "
+        f"source_identity_id={diag['source_identity_id']} "
+        f"selection_version={diag['selection_version']} "
+        f"preview_signature={diag['preview_signature']}"
     )
     errors = request.get("source_mapping_errors") or []
     return f"{line} mapping_errors={errors}" if errors else line

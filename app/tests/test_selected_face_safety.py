@@ -102,7 +102,10 @@ class SelectedFaceSafetyTests(unittest.TestCase):
                     patch.object(self.api, "_create_processing_project", return_value=project) as create, \
                     patch.object(self.api, "_start_existing_project", return_value={"status": "started"}) as start:
                 response = self.api.trigger_swap({"detection": "All faces"})
-            self.assertEqual(response, {"status": "started"})
+            self.assertEqual(response["status"], "started")
+            # Stage 14: the start response also echoes the frozen selection.
+            self.assertIn("request_id", response)
+            self.assertIn("processing_selection", response)
             create.assert_called_once()
             start.assert_called_once_with(project["id"], ANY)
         finally:

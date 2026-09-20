@@ -29,6 +29,16 @@ The runner supplies only what it alone knows: `target_index`, resolved from
 `target_name` at dispatch time. Resolving by NAME is deliberate — a stored index
 goes stale as soon as a target is removed after queueing, and the job then
 silently swaps the wrong file.
+
+STAGE 14 — THE SELECTION IS FROZEN AT QUEUE TIME
+------------------------------------------------
+`processing_selection` is the canonical target selection (target media id,
+target person id(s), source identity id, person->source mapping, detection
+mode, selection version) serialized when the job is CREATED.  At dispatch the
+runner hands exactly that object to the worker and validates every identity in
+it against what is currently loaded.  A person or source that has since been
+removed FAILS the job with a reason — it is never silently re-resolved to a
+different person, a skip, or whatever the UI happens to show at that moment.
 """
 from roop.degrade import swallowed as _swallowed
 
@@ -44,6 +54,10 @@ import uuid
 import roop.globals as roop_globals
 import api_state as state
 from roop.procmgr_runtime import pause_controller
+from roop.processing_selection import (
+    build_processing_selection,
+    selection_diagnostics,
+)
 
 
 router = APIRouter()
@@ -71,6 +85,10 @@ _ensure_target_media_id = None  # api.py's id allocator for legacy entries
 # benchmark measuring a card that is busy rendering. Injected as a predicate
 # rather than imported to keep the one-way api.py -> routes_queue dependency.
 _benchmark_running = lambda: False           # noqa: E731
+# api.py's dispatch-time validator: (processing_selection) -> [reason, ...].
+# Called AFTER the job's target is activated, so the person/reference ids it
+# compares against belong to that media.  None (tests) skips validation.
+_selection_invalidation = None
 
 QUEUE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "queue.json")
 
@@ -282,15 +300,45 @@ def queue_list():
     return _snapshot()
 
 
+def _job_selection(payload: dict) -> dict:
+    """Freeze the canonical selection for a job at creation/edit time.
+
+    The client sends it at the top level of the job and again inside the swap
+    payload; the top-level one wins, then the payload's, then the flat legacy
+    fields (older clients).  `target_media_id` on the job is the media the job
+    was created for and always overrides a stale one inside the payload.
+    """
+    body = dict(payload.get("payload") or {})
+    top = payload.get("processing_selection")
+    if isinstance(top, dict):
+        body["processing_selection"] = top
+    if payload.get("selection_version") is not None and "selection_version" not in body:
+        body["selection_version"] = payload.get("selection_version")
+    if payload.get("source_id") and not body.get("selected_source_id"):
+        body["selected_source_id"] = payload.get("source_id")
+    selection = build_processing_selection(
+        body,
+        target_media_id=str(payload.get("target_media_id") or "") or None,
+        request_id=payload.get("request_id") or body.get("request_id"))
+    return selection
+
+
 def _normalize_job(payload: dict) -> dict:
+    selection = _job_selection(payload)
     return {
         "schema_version": SCHEMA_VERSION,
         "id": uuid.uuid4().hex[:12],
         "target_name": str(payload.get("target_name") or ""),
-        "target_media_id": str(payload.get("target_media_id") or ""),
+        "target_media_id": str(payload.get("target_media_id") or selection.get("target_media_id") or ""),
         "source_index": int(payload.get("source_index") or 0),
         "source_name": str(payload.get("source_name") or ""),
+        "source_id": str(payload.get("source_id") or selection.get("source_identity_id") or ""),
         "payload": payload.get("payload") or {},
+        # Immutable from here on. queue_update replaces it wholesale when the
+        # client explicitly edits the job; nothing else touches it.
+        "processing_selection": selection,
+        "selection_version": selection.get("selection_version"),
+        "request_id": selection.get("request_id"),
         "frame_start": payload.get("frame_start"),
         "frame_end": payload.get("frame_end"),
         "label": str(payload.get("label") or ""),
@@ -420,9 +468,17 @@ def queue_update(payload: dict = Body(...)):
         if _state(job) in ("PREPARING", "PROCESSING", "PAUSE_REQUESTED", "PAUSED"):
             return JSONResponse(status_code=409, content={"message": "job is running"})
         for key in ("payload", "target_name", "target_media_id", "source_index", "source_name",
-                    "label", "frame_start", "frame_end"):
+                    "source_id", "label", "frame_start", "frame_end"):
             if key in payload:
                 job[key] = payload[key]
+        # An explicit edit re-freezes the selection from what the client sent;
+        # the old snapshot is never merged with the new one.
+        if "payload" in payload or "processing_selection" in payload:
+            merged = {**job, **payload}
+            selection = _job_selection(merged)
+            job["processing_selection"] = selection
+            job["selection_version"] = selection.get("selection_version")
+            job["request_id"] = selection.get("request_id")
         # An edited job is worth running again even if it already ran.
         if payload.get("requeue") or _state(job) in ("COMPLETED", "FAILED", "CANCELLED", "INTERRUPTED"):
             _set_state(job, "QUEUED")
@@ -538,6 +594,28 @@ def _run_one(job):
             _swallowed("routes_queue.py:533", exc, "target context activation failed")
             return "FAILED", f"target context is no longer available: {exc}"
 
+    # Stage 14: validate the FROZEN selection against what is loaded now.  An
+    # identity that disappeared after queueing fails the job explicitly; the
+    # worker is never handed a selection it would have to reinterpret.
+    selection = job.get("processing_selection")
+    if not isinstance(selection, dict):
+        selection = _job_selection(job)
+        job["processing_selection"] = selection
+    if _selection_invalidation is not None:
+        try:
+            reasons = list(_selection_invalidation(selection) or [])
+        except Exception as exc:
+            _swallowed("routes_queue.py:selection_invalidation", exc, "treated as invalid")
+            reasons = [f"selection could not be validated: {exc}"]
+        if reasons:
+            diag = selection_diagnostics(selection)
+            _say(f"[Queue] job {job['id']} selection invalidated: {'; '.join(reasons)} "
+                 f"request_id={diag['request_id']} target_media_id={diag['target_media_id']} "
+                 f"target_person_id={diag['target_person_id']} "
+                 f"source_identity_id={diag['source_identity_id']} "
+                 f"selection_version={diag['selection_version']}")
+            return "FAILED", "selection invalidated: " + "; ".join(reasons)
+
     # Dynamically re-resolve source_index by source_name if faceset list shifted.
     # The queue stores the source name alongside the numeric index because the
     # gallery is mutable; source_gallery exposes the current names from the
@@ -548,7 +626,7 @@ def _run_one(job):
         src_idx = int(raw_source_index) if raw_source_index is not None else 0
     except (TypeError, ValueError):
         src_idx = -1
-    target_src_id = str(job.get("source_id") or "").strip()
+    target_src_id = str(selection.get("source_identity_id") or job.get("source_id") or "").strip()
     target_src_name = str(job.get("source_name") or "").strip()
     source_infos = getattr(state, "source_faces_info", None)
     if not source_infos:
@@ -580,6 +658,13 @@ def _run_one(job):
     if not actual_media_id and _ensure_target_media_id is not None:
         actual_media_id = _ensure_target_media_id(list_files_process[idx])
     payload["target_media_id"] = media_id or actual_media_id
+    # The worker consumes the job's frozen selection, not whatever selection
+    # the UI has moved on to.  Any flat field the payload still carries is
+    # overridden by the canonical object in _canonical_processing_request.
+    payload["processing_selection"] = dict(selection)
+    payload["request_id"] = selection.get("request_id")
+    if selection.get("selection_version") is not None:
+        payload["selection_version"] = selection.get("selection_version")
 
     project_id = str(job.get("project_id") or "")
     if project_id and _validate_project is not None:

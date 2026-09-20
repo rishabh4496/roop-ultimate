@@ -64,6 +64,11 @@ class QueueTestBase(unittest.TestCase):
         # Same reasoning: a test that pretends the benchmark is running must not
         # leave every later test dispatching into a fake benchmark.
         q._benchmark_running = lambda: False
+        # api.py injects its dispatch-time selection validator when it is
+        # imported by another test module in this process. These tests drive
+        # the runner with fake entries and no target context, so validate
+        # nothing here; test_stage14_async_state exercises the real validator.
+        q._selection_invalidation = None
 
     def tearDown(self):
         q._queue["running"] = False

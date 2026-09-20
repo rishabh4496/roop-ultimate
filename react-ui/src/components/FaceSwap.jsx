@@ -15,6 +15,13 @@ import {
   remapSourceMappingAfterRemoval,
   remapSourceMappingAfterMove,
 } from './faceswap/faceMapping';
+import {
+  buildProcessingSelection as buildCanonicalSelection,
+  classifyPreviewResponse,
+  nextSelectionVersion,
+  reconcileRestoredSelection,
+  selectionIdentity,
+} from './faceswap/processingSelection';
 import ComparisonGridPanel from './faceswap/ComparisonGridPanel';
 import ParserRegions from './faceswap/ParserRegions';
 import InteractivePreview from './faceswap/InteractivePreview';
@@ -323,14 +330,29 @@ export default function FaceSwap({
     const referenceIds = res?.target_reference_face_ids
       ?? saved.targetReferenceFaceIds ?? [];
     const persistedMapping = res?.face_mapping ?? saved.faceMapping ?? {};
-    const restoredMapping = Array.isArray(persistedMapping)
-      ? mappingObjectFromArray(persistedMapping) : persistedMapping;
-    const selectedPerson = res?.selected_target_person_id
-      ?? saved.selectedTargetPersonId
-      ?? (personIds[Number(res?.selected_target_face_index ?? saved.selTargetFace ?? 0)] || null);
-    const selectedReference = res?.selected_reference_face_id
-      ?? saved.selectedReferenceFaceId
-      ?? (referenceIds[Number(res?.selected_target_face_index ?? saved.selTargetFace ?? 0)] || null);
+    // Stage 14: whatever was remembered client-side is reconciled against the
+    // ids the backend just returned. A person, angle or mapping entry that no
+    // longer exists there is dropped — a reload can never resurrect it. The
+    // backend's own selected ids win when they are valid; the client memory
+    // is only a fallback for ids the backend still knows.
+    const reconciled = reconcileRestoredSelection({
+      savedPersonId: saved.selectedTargetPersonId,
+      savedReferenceId: saved.selectedReferenceFaceId,
+      savedMapping: Array.isArray(persistedMapping)
+        ? mappingObjectFromArray(persistedMapping) : persistedMapping,
+      personIds, referenceIds,
+      sourceIdentityIds: res?.source_faces_info
+        ? res.source_faces_info.map((info, index) => info?.id || `memory-slot-${index}`)
+        : null,
+      serverPersonId: res?.selected_target_person_id,
+      serverReferenceId: res?.selected_reference_face_id,
+    });
+    const restoredMapping = reconciled.faceMapping;
+    const fallbackFace = Number(res?.selected_target_face_index ?? saved.selTargetFace ?? 0);
+    const selectedPerson = reconciled.selectedTargetPersonId
+      ?? (personIds[fallbackFace] || null);
+    const selectedReference = reconciled.selectedReferenceFaceId
+      ?? (referenceIds[fallbackFace] || null);
     const selectedFace = Number.isInteger(res?.selected_target_face_index)
       ? res.selected_target_face_index
       : (Number.isInteger(saved.selTargetFace) ? saved.selTargetFace : 0);
@@ -429,6 +451,60 @@ export default function FaceSwap({
     || (sourceFaces[index] ? `Face ${index + 1}` : null);
   const sourceIdAt = (index) => sourceFacesInfo[index]?.id
     || (sourceFaces[index] ? `memory-slot-${index}` : null);
+
+  // ── Stage 14: the canonical processing selection ─────────────────────────
+  // `selectionVersion` is bumped IN RENDER (useMemo, not an effect) whenever
+  // any identity-bearing input changes, so a payload built in the same render
+  // as the change already carries the new version. `commitTargetContext` bumps
+  // it synchronously too, so a write fired from a click handler is ordered
+  // before the preview that follows the re-render.
+  const selectionVersionRef = useRef(0);
+  const bumpSelectionVersion = () => {
+    selectionVersionRef.current = nextSelectionVersion(selectionVersionRef.current);
+    return selectionVersionRef.current;
+  };
+  // `settings` (the prop), not `p`: `p` is declared further down the body and
+  // a dependency array is evaluated as the body runs — naming it here would be
+  // a temporal-dead-zone throw on first render that neither the build nor
+  // oxlint reports.
+  const selectionVersion = useMemo(bumpSelectionVersion,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [activeTargetMediaId, selectedTargetPersonId, selectedReferenceFaceId, selSource,
+      faceMapping, settings?.face_detection_mode, targetPersonIds, targetReferenceFaceIds,
+      targetGroups, sourceFacesInfo]);
+
+  // One object, built from one snapshot of the UI, sent by preview, swap and
+  // queue alike. Nothing downstream may re-derive any of these fields.
+  const buildProcessingSelection = (params = p, { requestId = null } = {}) => buildCanonicalSelection({
+    targetMediaId: activeTargetMediaId,
+    targetGroups, targetPersonIds, faceMapping,
+    sourceCount: sourceFaces.length,
+    sourceIdentityIds: sourceFacesInfo.map((info, index) => info?.id || `memory-slot-${index}`),
+    faceSelection: params.face_detection_mode,
+    selectedTargetPersonId, selectedReferenceFaceId,
+    selectedSource: selSource,
+    selectionState: getTargetSelectionState(params),
+    selectionVersion,
+    requestId,
+  });
+
+  // The single write path for target-scoped identity state (selected person /
+  // reference angle / mapping). Carries a fresh selection_version so the
+  // backend can drop any OLDER write that lands after it — e.g. a preview built
+  // before the click that finishes after this.
+  const commitTargetContext = async (patch = {}, mediaId = activeTargetMediaId) => {
+    if (!mediaId) return null;
+    try {
+      return await postJSON('/api/target/context', {
+        target_media_id: mediaId,
+        selection_version: bumpSelectionVersion(),
+        ...patch,
+      });
+    } catch (e) {
+      notify(e.message, 'error');
+      return null;
+    }
+  };
 
   const getSourceMappingNames = (params = p) => getFaceMappingArray(params)
     .map((sourceIndex) => sourceIndex >= 0 ? sourceNameAt(sourceIndex) : null);
@@ -553,8 +629,9 @@ export default function FaceSwap({
     return previewCacheRef.current[key];
   };
 
-  const setCachedPreview = (idx, fr, data) => {
-    const key = getCacheKey(idx, fr);
+  // Write under an explicit key — the key captured when a request was SENT —
+  // so a response is always filed under the selection it was rendered for.
+  const setCachedPreviewByKey = (key, data) => {
     const cache = previewCacheRef.current;
     const keys = Object.keys(cache);
     if (keys.length > 200) {
@@ -646,11 +723,15 @@ export default function FaceSwap({
               current && String(current).toLowerCase() === String(name).toLowerCase());
             return match >= 0 ? match : -1;
           });
-          setFaceMapping(mappingObjectFromArray(
+          const nextMapping = mappingObjectFromArray(
             (recipeIds.length === r.face_mapping.length
               || recipeNames.length === r.face_mapping.length)
               ? imported : r.face_mapping,
-          ));
+          );
+          setFaceMapping(nextMapping);
+          // Persist through the versioned write path, like a dropdown change,
+          // so a reload restores the imported mapping rather than the old one.
+          commitTargetContext({ face_mapping: nextMapping, target_person_source_mapping: nextMapping });
         }
         const savedSelection = r.selection_state;
         const savedReference = Number(savedSelection?.target_reference_index);
@@ -717,22 +798,32 @@ export default function FaceSwap({
       selected_source_id: sourceIdAt(selSource),
       target_media_id: activeTargetMediaId,
       selection_state: getTargetSelectionState(sp),
+      processing_selection: buildProcessingSelection(sp),
+      selection_version: selectionVersion,
       imagemask: maskJson,
     };
   };
 
   // Describe the current setup as a queue job. `extra` carries a segment
   // (frame_start/frame_end) when one range of several is being queued.
-  const currentJob = (extra = {}) => ({
-    target_name: targets[selTarget]?.name || '',
-    target_media_id: activeTargetMediaId,
-    source_index: selSource,
-    source_name: sourceFacesInfo[selSource]?.name
-      || (sourceFaces[selSource] ? `Face ${selSource + 1}` : 'Selected face'),
-    source_id: sourceIdAt(selSource),
-    payload: buildSwapPayload(),
-    ...extra,
-  });
+  const currentJob = (extra = {}) => {
+    const payload = buildSwapPayload();
+    return {
+      target_name: targets[selTarget]?.name || '',
+      target_media_id: activeTargetMediaId,
+      source_index: selSource,
+      source_name: sourceFacesInfo[selSource]?.name
+        || (sourceFaces[selSource] ? `Face ${selSource + 1}` : 'Selected face'),
+      source_id: sourceIdAt(selSource),
+      payload,
+      // Frozen at queue-creation time; the server stores it on the job and the
+      // worker consumes exactly this (see app/routes_queue.py).
+      processing_selection: payload.processing_selection,
+      selection_version: payload.selection_version,
+      request_id: payload.processing_selection?.request_id,
+      ...extra,
+    };
+  };
 
   const addToQueue = async () => {
     if (targets.length === 0) { notify('Load target media first', 'error'); return; }
@@ -765,17 +856,9 @@ export default function FaceSwap({
       return;
     }
     if (segments.segments.length === 0) return;
-    const payload = buildSwapPayload();
     const name = targets[selTarget]?.name || '';
-    await queue.addMany(segments.segments.map((s, i) => ({
-      target_name: name,
-      target_media_id: activeTargetMediaId,
-      source_index: selSource,
-      source_name: sourceFacesInfo[selSource]?.name
-        || (sourceFaces[selSource] ? `Face ${selSource + 1}` : 'Selected face'),
-      source_id: sourceIdAt(selSource),
+    await queue.addMany(segments.segments.map((s, i) => currentJob({
       label: `${name} — segment ${i + 1}`,
-      payload,
       frame_start: s.start,
       frame_end: s.end,
     })));
@@ -851,6 +934,12 @@ export default function FaceSwap({
 
   const previewBusyRef = useRef(false);   // a /api/preview call is in flight
   const previewPendingRef = useRef(null); // latest queued request while busy (coalesced)
+  // The NEWEST render's refreshPreview. The coalesced request is dispatched
+  // through this, never through the closure that happened to be in flight:
+  // that closure still holds the person/source/settings of the render it was
+  // created in, so it would rebuild the OLD request and the change the user
+  // just made would never be rendered.
+  const refreshPreviewRef = useRef(null);
 
   // p = the swap parameters, seeded from CFG (settings) and patched locally.
   const p = settings || {};
@@ -984,6 +1073,8 @@ export default function FaceSwap({
       selected_source_name: sourceNameAt(selSource),
       target_media_id: requestedMediaId || targetIdAt(index) || activeTargetMediaId,
       selection_state: getTargetSelectionState(activeParams),
+      processing_selection: buildProcessingSelection(activeParams),
+      selection_version: selectionVersion,
       mask_top: activeParams.mask_top,
       mask_bottom: activeParams.mask_bottom,
       mask_left: activeParams.mask_left,
@@ -1012,12 +1103,29 @@ export default function FaceSwap({
   // short version token: it is a base64 PNG that can run to tens of kilobytes,
   // and the signature is re-stringified on every render. The token still bumps
   // on every mask edit, so the invalidate-when-it-changes guarantee holds.
+  // The canonical selection is reduced to its identity fields: the request id
+  // and version are per-request bookkeeping and would make every signature
+  // unique, which would turn the cache into a no-op.
   const previewSignature = (params, fake) =>
     JSON.stringify(buildPreviewPayload(params, {
       index: 0, frame: 0, fake, imagemask: `mask:${maskVersion}`,
+      processing_selection: selectionIdentity(buildProcessingSelection(params, { requestId: 'sig' })),
+      selection_version: null,
     }));
 
   const previewKey = previewSignature(p, fakePreview);
+
+  // What the stage wants to show RIGHT NOW, readable from inside an async
+  // response handler that closed over an older render. Updated every render.
+  const wantedPreviewRef = useRef({ key: '', mediaId: null, frame: 1 });
+  wantedPreviewRef.current = {
+    key: `${activeTargetMediaId || `legacy-index-${selTarget}`}_${frame}_${previewKey}_${cacheSuffix}`,
+    mediaId: activeTargetMediaId,
+    frame,
+  };
+  // Monotonic id of the newest preview request issued; a response for an
+  // older one is logged as superseded.
+  const previewSeqRef = useRef(0);
 
   // One-click speed/quality profiles. Each bundles the core levers (detection
   // resolution, pixel-boost upscale, enhancer, swap steps); other settings (mask
@@ -1067,6 +1175,18 @@ export default function FaceSwap({
     checkDesync(st);
     setSourceFaces(st.source_faces || []);
     if (st.source_faces_info) setSourceFacesInfo(st.source_faces_info);
+    // The selected SOURCE is restored by its stable id; the numeric index is
+    // only a fallback for a backend that predates selected_source_id.
+    if (Array.isArray(st.source_faces_info)) {
+      const byId = st.selected_source_id
+        ? st.source_faces_info.findIndex((info) => String(info?.id) === String(st.selected_source_id))
+        : -1;
+      const byIndex = Number.isInteger(st.selected_source_index)
+        && st.selected_source_index >= 0
+        && st.selected_source_index < st.source_faces_info.length
+        ? st.selected_source_index : 0;
+      setSelSource(byId >= 0 ? byId : byIndex);
+    }
     const tg = st.targets || [];
     setTargets(tg);
     if (tg.length > 0) {
@@ -1183,11 +1303,13 @@ export default function FaceSwap({
     // ProcessMgr on the GPU. Two overlapping /api/preview calls corrupt/hang
     // TensorRT/CUDA. So never run two at once — queue the latest request and
     // run it once the current one finishes.
-    if (previewBusyRef.current) { 
-      previewPendingRef.current = {
-        ...opts, index: idx, frame: fr, fake, target_media_id: requestedMediaId,
-      };
-      return; 
+    if (previewBusyRef.current) {
+      // Only the caller's own opts are kept. Anything they did not say
+      // (target, frame, person, source, settings) is resolved by the newest
+      // closure when this is re-dispatched, so the coalesced request always
+      // asks for what the UI wants THEN, not what it wanted now.
+      previewPendingRef.current = { ...opts };
+      return;
     }
     
     previewBusyRef.current = true;
@@ -1197,17 +1319,58 @@ export default function FaceSwap({
     // never wedge the single-flight guard permanently.
     const ctrl = new AbortController();
     const killer = setTimeout(() => ctrl.abort(), 15 * 60 * 1000);
+    // Everything the response will be judged against is captured NOW, from
+    // this render's values — never re-read after the await, when the UI may
+    // be on another person, source, target or frame.
+    previewSeqRef.current += 1;
+    const request = {
+      seq: previewSeqRef.current,
+      requestId: null,
+      key: getCacheKey(idx, fr),
+      mediaId: requestedMediaId,
+      frame: fr,
+      selection: null,
+    };
     try {
+      // The selection is built first so its request id is known before the
+      // body leaves; the body itself still comes from buildPreviewPayload (the
+      // only /api/preview request site, see test_settings_wiring).
+      const selection = buildProcessingSelection(p);
+      request.requestId = selection.request_id;
+      request.selection = selection;
       const res = await postJSON('/api/preview', buildPreviewPayload(p, {
         index: idx, frame: fr, fake, target_media_id: requestedMediaId,
+        processing_selection: selection,
       }), { signal: ctrl.signal });
       if (res?.error) throw new Error(res.message || res.error || 'preview swap failed');
-      // A target can be removed/replaced at the same array position while the
-      // request is in flight. Never let that response populate the current
-      // target's preview or cache.
-      if (requestedMediaId && res?.target_media_id
-          && res.target_media_id !== requestedMediaId) return;
-      if (requestedMediaId && targetIdAt(selTarget) !== requestedMediaId) return;
+      const verdict = classifyPreviewResponse({
+        request, response: res, wanted: wantedPreviewRef.current,
+      });
+      if (!verdict.accept) {
+        // Never displayed; never written under the live selection's key.
+        // A superseded-but-valid answer is filed under ITS OWN key so a step
+        // back to that frame/selection is instant.
+        if (verdict.cache && res.image) {
+          const own = dataUrlToOwnedBlobUrl(res.image, previewOwner);
+          setCachedPreviewByKey(request.key, {
+            faces: res.faces || [], personIds: res.person_ids || [], kps: res.kps || [],
+            pose: res.pose || [], image: own,
+            diagnostic: res.selection_diagnostic || (res.target_required ? 'target_required' : null),
+            signature: res.preview_signature || null, requestId: res.request_id || null,
+          });
+        }
+        if (import.meta.env?.DEV) {
+          console.debug('[preview] stale response discarded', {
+            reason: verdict.reason, seq: request.seq, newest: previewSeqRef.current,
+            request_id: request.requestId, target_media_id: request.mediaId,
+            target_person_id: request.selection?.target_person_id,
+            source_identity_id: request.selection?.source_identity_id,
+            selection_version: request.selection?.selection_version,
+            preview_signature: res.preview_signature,
+          });
+        }
+        return;
+      }
       if (res.faces) setPreviewFaces(res.faces);
       setPreviewPersonIds(res.person_ids || []);
       setPreviewKps(res.kps || []);
@@ -1228,7 +1391,11 @@ export default function FaceSwap({
       setPreviewSrc(blobSrc);
       setPreviewFor(blobSrc ? `${requestedMediaId || `legacy-index-${idx}`}_${fr}` : '');
       if (blobSrc) {
-        setCachedPreview(idx, fr, { faces: res.faces || [], personIds: res.person_ids || [], kps: res.kps || [], pose: res.pose || [], image: blobSrc, diagnostic });
+        setCachedPreviewByKey(request.key, {
+          faces: res.faces || [], personIds: res.person_ids || [], kps: res.kps || [],
+          pose: res.pose || [], image: blobSrc, diagnostic,
+          signature: res.preview_signature || null, requestId: res.request_id || null,
+        });
       }
     } catch (e) {
       notify(e.name === 'AbortError' ? 'Preview timed out (model build took too long)' : e.message, 'error');
@@ -1240,10 +1407,11 @@ export default function FaceSwap({
       if (previewPendingRef.current) {
         const next = previewPendingRef.current;
         previewPendingRef.current = null;
-        refreshPreview(next);
+        (refreshPreviewRef.current || refreshPreview)(next);
       }
     }
   };
+  refreshPreviewRef.current = refreshPreview;
 
   // ── Comparison-grid preview loaders ─────────────────────────────────────
   // Enhancers, mask engines and swapper models each render one preview per
@@ -1472,7 +1640,11 @@ export default function FaceSwap({
       const mf = newTargetsList[selectedIndex]?.frames || 1;
       setMaxFrames(mf); setFrame(1);
       applyTargetContext({ ...res, selected_target_index: selectedIndex }, mediaId);
-      refreshPreview({ index: selectedIndex, frame: 1, target_media_id: mediaId });
+      // No eager refreshPreview here: this closure still holds the PREVIOUS
+      // target's people/mapping, so a request built now would pair the new
+      // media with the old selection (and be discarded as stale on return).
+      // The [selTarget, frame] effect issues the request from the re-rendered
+      // context instead.
       notify(`Added ${newTargetsList.length - beforeCount} target(s)`);
 
       // Automatically add videos to batch queue if more than 1 video is uploaded
@@ -1567,7 +1739,8 @@ export default function FaceSwap({
     const mf = res.targets[selectedIndex]?.frames || 1;
     setMaxFrames(mf);
     applyTargetContext({ ...res, selected_target_index: selectedIndex }, selectedId);
-    refreshPreview({ index: selectedIndex, frame: 1, target_media_id: selectedId });
+    // See applyTargetAdd: the refresh comes from the [selTarget, frame] effect,
+    // once this render's stale closure has been replaced by B's context.
   };
 
   // The backend reports it if the faceset list and the gallery thumbnails have
@@ -2817,6 +2990,7 @@ export default function FaceSwap({
               targetReferenceFaceIds={targetReferenceFaceIds}
               selectedTargetPersonId={selectedTargetPersonId}
               setSelectedTargetPersonId={setSelectedTargetPersonId}
+              commitTargetContext={commitTargetContext}
               setTargetPersonIds={setTargetPersonIds}
               setTargetReferenceFaceIds={setTargetReferenceFaceIds}
               selTargetFace={selTargetFace}

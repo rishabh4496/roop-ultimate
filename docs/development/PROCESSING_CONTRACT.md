@@ -1,5 +1,66 @@
 # Processing Contract
 
+## Selection Stage 14 amendment (2026-09-21): one canonical processing selection
+
+Preview, direct render (`/api/swap`) and queued jobs now carry ONE immutable
+`processing_selection` object (client: `react-ui/src/components/faceswap/
+processingSelection.js`; server: `app/roop/processing_selection.py`):
+
+| field | meaning |
+|---|---|
+| `request_id` | per request; echoed on every preview/render response |
+| `selection_version` | monotonic integer bumped on every identity change (client `nextSelectionVersion`) |
+| `target_media_id` | stable media id, never an array index |
+| `target_person_id` / `target_person_ids` | stable `tp_` ids (legacy ranks are resolved at the API boundary) |
+| `target_reference_face_id` | selected reference angle (`tr_`) |
+| `source_identity_id` | selected source faceset id |
+| `detection_mode` | `Selected face` / `Selected people` / ... |
+| `target_person_source_mapping` | `{target_person_id: source_identity_id}` |
+| `selection_state` | the Stage 13 serializable contract, kept inside |
+
+Rules that are now enforced, each with a test:
+
+* **Authority.** `_canonical_processing_request` projects the canonical object
+  onto the flat fields FIRST; a stale `detection` / `selection_state` /
+  mapping beside it cannot win (`test_stage14_async_state.CanonicalSelection`).
+* **Preview responses are self-identifying.** Every `/api/preview` reply
+  (plain, diagnostic, error) carries `request_id`, `processing_selection`,
+  `selection_version`, `frame`, `preview_signature` and a compact
+  `diagnostics` block. The client judges a reply with
+  `classifyPreviewResponse` against the selection it wants NOW: a reply for a
+  superseded person/source/media/frame is never displayed and never written
+  under the live cache key (filed under its own key only). The coalesced
+  pending request is dispatched through the newest render's closure.
+* **Stale writes are dropped.** `/api/target/context`, preview and swap
+  persist target-scoped selection (mapping, selected person/reference) only
+  when their `selection_version` is not older than the newest one already
+  applied for that media (`api._selection_versions`).
+* **Queue freezes at creation.** `routes_queue._normalize_job` stores the
+  selection on the job; `_run_one` validates every identity in it against the
+  loaded state after activating the job's target and FAILS the job with a
+  reason (`selection invalidated: ...`) if a person, reference, media or source
+  is gone. The worker receives the frozen object; a mapping changed after
+  queueing never reaches the job.
+* **Direct render freezes at POST.** `payload["normalized_request"]` is built
+  synchronously in `/api/swap`; `_run_swap` uses it and never re-reads UI
+  state.
+* **Session restore is by id.** `/api/state` returns
+  `selected_target_person_id`, `selected_reference_face_id`,
+  `target_person_source_mapping`, `selected_source_id`; the client reconciles
+  its remembered context against those lists (`reconcileRestoredSelection`) so
+  a deleted person/angle/source can never be resurrected. Person clicks in
+  PersonGroups now persist through the versioned commit path.
+* **Inherited defect fixed.** `selection_diagnostic_for_mode` re-normalized a
+  stable-id selection without the id universe and reported
+  `selection_required` for every valid Selected-face request; it now receives
+  the active ids.
+
+Logs: `[Selection] phase=... request=... target_media_id=... target_person_id=...
+source_identity_id=... selection_version=... preview_signature=...` (no
+embeddings). Tests: `app/tests/test_stage14_async_state.py` (29) and
+`react-ui/.render-check/stage14-async-check.mjs` (`npm run test:stage14`, 28,
+delayed-response races with real timers).
+
 ## Stage 18 amendment (2026-09-02, physical RTX 3060)
 
 Two processing defects were found and fixed; both were invisible to the return
