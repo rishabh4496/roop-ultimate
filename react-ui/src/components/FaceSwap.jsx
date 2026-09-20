@@ -670,18 +670,10 @@ export default function FaceSwap({
   // the override in the request for free.
   const buildPreviewPayload = (params, { index, frame: fr, fake, ...overrides } = {}) => {
     const activeParams = withSliderBypass(params);
-    // "Selected face" is the safe render default, but it requires a captured
-    // target identity. A fresh target media item has detected faces before the
-    // user has clicked "Use face"; sending selected mode in that state makes
-    // ProcessMgr correctly find zero eligible target persons and returns the
-    // untouched frame, which looks like a broken preview. Previewing all
-    // detected faces with the selected source is a useful, reversible fallback
-    // for that pre-capture state. The render payload remains strict and still
-    // requires explicit target capture for selected-face video swaps.
-    const previewDetection = activeParams.face_detection_mode === 'Selected face'
-      && targetFaces.length === 0
-      ? 'All faces'
-      : activeParams.face_detection_mode;
+    // Respect the user's selected face detection mode. Do not coerce "Selected face"
+    // to "All faces" when targetFaces is empty, as that causes unwanted automatic
+    // swapping of random faces before the user chooses a target face.
+    const previewDetection = activeParams.face_detection_mode;
     return {
       index, frame: fr, fake_preview: fake,
       enhancer: activeParams.selected_enhancer, adaptive_enhancer_profile: activeParams.adaptive_enhancer_profile || 'BALANCED', codeformer_fidelity: num(activeParams.codeformer_fidelity, 0.5),
