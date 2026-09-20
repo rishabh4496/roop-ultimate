@@ -405,6 +405,18 @@ def verify_and_warmup(session, requested: Optional[Iterable], tag: str,
     return active
 
 
+def forget(tag: str) -> None:
+    """Forget ONE tag, for a session that is being released and rebuilt.
+
+    ``warmup_session`` is once-per-tag, so a swapper released on a model
+    switch and later reloaded under the same tag would otherwise skip its
+    dummy pass and pay the TensorRT engine load on frame 0 of the render.
+    """
+    with _lock:
+        _warmed.discard(tag)
+        _asserted.discard(tag)
+
+
 def reset() -> None:
     """Forget which tags were warmed/asserted (tests, and model reloads)."""
     with _lock:

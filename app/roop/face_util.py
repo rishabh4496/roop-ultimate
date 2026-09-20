@@ -311,7 +311,18 @@ def _ensure_face_analyser():
                 q.put(fa)
             _ANALYSER_Q = q
             if n > 1:
-                print(f"[FaceAnalysis] pool of {n} TRT instances — detection runs {n}-way concurrent (lock-free).")
+                # Name the provider the pool actually built on, not "TRT"
+                # unconditionally: on a CPU or CUDA run the label was wrong, and
+                # a wrong provider label is exactly what this audit is meant to
+                # stop appearing in logs.
+                try:
+                    _prov = FACE_ANALYSER_POOL[0].models['detection'].session.get_providers()[0]
+                    _prov = _prov.replace('ExecutionProvider', '')
+                except Exception as _degrade_error:
+                    _swallowed("roop/face_util.py:analyser_pool_label", _degrade_error,
+                               "provider label fell back to GPU")
+                    _prov = 'GPU'
+                print(f"[FaceAnalysis] pool of {n} {_prov} instances — detection runs {n}-way concurrent (lock-free).")
     return FACE_ANALYSER
 
 

@@ -41,6 +41,7 @@ class BatchProcessingMixin:
             open_video_capture,
         )
         from roop import face_util
+        from roop import runtime_banner as _runtime_banner
         import roop.util_ffmpeg as util_ffmpeg
         from roop.degrade import swallowed as _swallowed
         # Stabilization scheduling (temporal smoothing needs frames in order; the
@@ -787,6 +788,10 @@ class BatchProcessingMixin:
             # coordination and may use a single inference worker.
             if not use_unified_scheduler:
                 self._swap_batcher = self._make_swap_batcher(threads)
+            # The batch path is only settled here, so this is the first point
+            # the banner can name it; it also re-checks the selection snapshot
+            # taken at initialize (selection_invariant=...).
+            print(_runtime_banner.runtime_selection_line(self, 'video'), flush=True)
             if use_unified_scheduler:
                 _inference_workers = 1
                 self._active_inference_workers = _inference_workers

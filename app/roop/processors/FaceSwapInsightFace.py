@@ -2120,6 +2120,14 @@ class FaceSwapInsightFace():
             self._io_bindings.clear()
         del self.model_swap_insightface
         self.model_swap_insightface = None
+        # The warm-up ledger is per tag; a later reload under this tag must
+        # pay its dummy pass again rather than the first frame of a render.
+        try:
+            from roop import predictor
+            predictor.forget(f"swapper:{self.loaded_model_key}")
+        except Exception as _degrade_error:
+            _swallowed("roop/processors/FaceSwapInsightFace.py:Release", _degrade_error,
+                       "fallback continued")
         self.emap = None
         self.converter = None
         self.loaded_model_key = None

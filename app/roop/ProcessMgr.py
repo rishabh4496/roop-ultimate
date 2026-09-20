@@ -22,6 +22,7 @@ from roop import face_util
 from roop.processors.FaceSwapInsightFace import (verify_tol_for as _swap_verify_tol_for,
                                                   batch_swap_enabled as _batch_swap_enabled)
 from roop import orientation
+from roop import runtime_banner as _runtime_banner
 from roop.face_util import estimate_norm, solve_pose_5pt, solve_pose_jaw_5pt
 from roop.face_util import offaxis_deg, swap_template_points
 from roop.face_analyser import FaceTracker, canonicalize_face_alignment
@@ -1268,6 +1269,14 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                 print(f"Not using {module}")
         self.processors = newprocessors
         self._log_memory_stage('phase4:processors-ready')
+
+        # Freeze the selection layer's outputs and print them beside the live
+        # runtime state. The runtime layer (provider, precision, batch path)
+        # may still change after this point -- a TensorRT rebuild, a model
+        # declining batching -- and every later banner re-checks that the
+        # selection did NOT move with it. See roop/runtime_banner.py.
+        self._selection_snapshot = _runtime_banner.snapshot_selection(self)
+        print(_runtime_banner.runtime_selection_line(self, 'init'), flush=True)
 
         # The flow-warped HF carry damps a generative restorer's per-frame
         # texture hallucination, so it is meaningless without one. Decided here

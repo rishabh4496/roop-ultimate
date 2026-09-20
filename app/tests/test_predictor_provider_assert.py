@@ -155,6 +155,19 @@ class WarmupTest(unittest.TestCase):
         predictor.warmup_session(session, "once")
         self.assertEqual(len(session.ran), 1)
 
+    def test_forget_lets_a_rebuilt_session_under_the_same_tag_warm_again(self):
+        # A swapper released on a model switch and reloaded later carries the
+        # same tag; without forget() its new session would skip the dummy pass
+        # and pay the engine load on frame 0 of the render.
+        first = StubSession([CUDA], inputs=[StubMeta("in", [1, 3, 112, 112])])
+        rebuilt = StubSession([CUDA], inputs=[StubMeta("in", [1, 3, 112, 112])])
+        predictor.warmup_session(first, "swapper:x")
+        predictor.warmup_session(rebuilt, "swapper:x")
+        self.assertEqual(len(rebuilt.ran), 0)
+        predictor.forget("swapper:x")
+        predictor.warmup_session(rebuilt, "swapper:x")
+        self.assertEqual(len(rebuilt.ran), 1)
+
     def test_a_failing_warmup_reports_and_does_not_raise(self):
         """The dummy pass surfaces a first-inference failure; it must not BE one.
 
