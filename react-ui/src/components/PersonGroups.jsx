@@ -3,6 +3,7 @@ import { postJSON } from '../api';
 import { PERSON_COLORS } from './constants';
 import { confirmDialog } from './confirm';
 import { Icon } from '../icons';
+import { mapPerson } from './faceswap/faceMapping';
 
 // Coarse pose buckets we consider "primary coverage" for a person. Anything the
 // backend labels (e.g. "Left Profile + Up Tilt") is matched against these by
@@ -330,13 +331,16 @@ export default function PersonGroups({
         const color = PERSON_COLORS[rank % PERSON_COLORS.length];
         const open = isExpanded(rank);
         const isSel = rank === selRank;
-        const rawMap = faceMapping && faceMapping[rank] !== undefined
-          ? faceMapping[rank]
-          : faceSelection === 'Selected face'
-            ? (rank === selRank ? selectedSource : -1)
-            : rank;
-        const currentMap = Array.isArray(rawMap) ? (rawMap[0] ?? -1) : (typeof rawMap === 'number' && Number.isFinite(rawMap) ? rawMap : parseInt(rawMap, 10));
-        const safeMap = Number.isFinite(currentMap) ? currentMap : -1;
+        // Same helper the swap payload is built from, so the row can never show
+        // a source the backend will not actually use.
+        const safeMap = mapPerson({
+          person: rank,
+          faceMapping,
+          sourceCount: sourceFaces.length,
+          faceSelection,
+          selectedPerson: selRank,
+          selectedSource,
+        });
         const mapValid = safeMap >= 0 && safeMap < sourceFaces.length;
 
         // Pose coverage for this person.
