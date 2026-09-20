@@ -52,6 +52,7 @@ from roop.procmgr_stabilization import StabilizationSchedulingMixin
 from roop.face_overlap import build_regions as build_face_regions, FaceRegion
 from roop import face_contact
 from roop import recognizer_adaface as _ada
+from roop.target_selection import normalize_target_selection, selection_group_ids
 from roop import live_preview as _live_preview
 from roop.procmgr_runtime import _PROFILE, _TRACK_VETO_DIST, _TRACK_VETO_MARGIN, _TRACK_VETO_SINGLE, _TRACK_EMB_MAX, _DEBUG_MATCH, COLOR_RESET, COLOR_CYAN, COLOR_YELLOW, COLOR_PURPLE, _prof, _prof_report, _prof_reset, _gpu_guard, PROGRESS_BAR_FORMAT, wait_while_paused, pause_controller, pause_scope, pause_aware, ChunkedProgress, bar_write, publish_eta as _publish_eta, _audit_hit, audit_over_threshold as _audit_over_threshold, audit_frame_seen, audit_detect_frame_begin, audit_detect_miss, audit_face_begin, _audit_swapped_gapfill, _audit_reset, _audit_report, VETO_SOURCE_REUSED, VETO_SINGLE_ABS, VETO_OTHER_FITS, VETO_FAR_FROM_OWN, AUDIT_SWAP_MOVED, VERIFY_MIN_OFFAXIS, VERIFY_SWAP, set_runtime_monitor, set_detailed_profiler
 from roop.stage_profiler import StageProfiler
@@ -616,6 +617,9 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
         self.input_face_datas = []
         self.target_face_datas = []
         self.target_face_groups = []   # parallel to target_face_datas: person id per face
+        self.processing_request = None
+        self.target_selection = normalize_target_selection()
+        self.selected_target_groups = set()
         self.imagemask = None
         self.processors = []
         self.options = None
@@ -967,9 +971,31 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
         # Multi-angle target groups: person id per target face (default = each its
         # own person). Multiple angles of one person share an id; matching uses
         # the min distance across a person's angles → robust to pose (anti-flicker).
-        self.target_face_groups = list(roop.globals.TARGET_FACE_GROUP)
+        self.processing_request = (
+            getattr(options, 'processing_request', None)
+            if isinstance(getattr(options, 'processing_request', None), dict)
+            else None
+        )
+        request_groups = (
+            self.processing_request.get('target_groups')
+            if self.processing_request is not None else None
+        )
+        if isinstance(request_groups, list) and len(request_groups) == len(target_faces):
+            # The API-normalized request is authoritative for both preview and
+            # render. It contains ranked person ids, not source/reference/frame
+            # indices. Keep the globals fallback for direct legacy callers.
+            self.target_face_groups = list(request_groups)
+        else:
+            self.target_face_groups = list(roop.globals.TARGET_FACE_GROUP)
         if len(self.target_face_groups) != len(target_faces):
             self.target_face_groups = list(range(len(target_faces)))
+        self.target_selection = normalize_target_selection(
+            getattr(options, 'selection_state', None),
+            person_count=len(set(self.target_face_groups)),
+        )
+        self.selected_target_groups = selection_group_ids(
+            self.target_face_groups, self.target_selection,
+        )
         self.num_frames_no_face = 0
         self.last_swapped_frame = None
         # No `last_found_bboxes` here: the ROI-rescue cache is per worker and
@@ -3343,7 +3369,7 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                                    len(faces) - i)
                         break
 
-            elif self.options.swap_mode == "selected" and getattr(self, '_track_mode', False) and frame_idx is not None:
+            elif self.options.swap_mode in ("selected", "selected_multi") and getattr(self, '_track_mode', False) and frame_idx is not None:
                 # Identity-lock: use the source assigned to this person's TRACK in
                 # the pre-pass (matched by combination of spatial distance and embedding cosine similarity),
                 # so the source can't flip frame-to-frame as it can with per-frame embedding matching.
@@ -3412,7 +3438,6 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                 groups = self.target_face_groups
                 uniq = sorted(set(groups)) if groups else []
                 rank = {g: r for r, g in enumerate(uniq)}
-                single_person = len(uniq) <= 1
                 threshold = self.options.face_distance_threshold
                 # When AdaFace drives identity, distances are on ITS scale —
                 # comparing them against max_face_distance would be meaningless.
@@ -3425,6 +3450,15 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                 persons = {}
                 for i, g in enumerate(groups[:len(self.target_face_datas)]):
                     persons.setdefault(g, []).append(i)
+                persons = {
+                    g: tis for g, tis in persons.items()
+                    if g in self.selected_target_groups
+                }
+                single_person = len(persons) <= 1
+                allowed_source_indices = {
+                    self.options.selected_index if single_person else rank[g]
+                    for g in persons
+                }
                 # source index -> the captured angles of the person that source
                 # belongs to, so a track's source can be checked against the face
                 # actually in front of us.
@@ -3511,6 +3545,8 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                     # attempts this supersedes, not adds to.
                     tid = face.get('_track_id') if isinstance(face, dict) else None
                     exact = track_source_map.get(tid) if tid is not None else None
+                    if exact not in allowed_source_indices:
+                        exact = None
                     if exact is not None and tid in claimed_track_ids:
                         exact = None        # defensive: shouldn't happen (one face per track per frame)
 
@@ -3523,6 +3559,8 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                             if j in claimed:
                                 continue
                             cent, src_index = entry[0], entry[1]
+                            if src_index not in allowed_source_indices:
+                                continue
                             d_spatial = float(np.hypot(cent[0] - c[0], cent[1] - c[1]))
                             if len(entry) > 2 and entry[2] is not None:
                                 d_cosine = float(compute_cosine_distance(entry[2], face.embedding))
@@ -3890,7 +3928,7 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                             # candidate.
                             _audit_hit('fallback missed (no candidate person left)')
 
-            elif self.options.swap_mode == "selected":
+            elif self.options.swap_mode in ("selected", "selected_multi"):
                 # Multi-angle matching: assign each captured target PERSON their
                 # single closest detected face (min distance across that person's
                 # stored angles), within the distance threshold. A turned head
@@ -3905,7 +3943,6 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                 groups = self.target_face_groups
                 uniq = sorted(set(groups)) if groups else []
                 rank = {g: r for r, g in enumerate(uniq)}
-                single_person = len(uniq) <= 1
                 threshold = self.options.face_distance_threshold
                 # When AdaFace drives identity, distances are on ITS scale —
                 # comparing them against max_face_distance would be meaningless.
@@ -3915,6 +3952,11 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                 persons = {}
                 for i, g in enumerate(groups[:len(self.target_face_datas)]):
                     persons.setdefault(g, []).append(i)
+                persons = {
+                    g: tis for g, tis in persons.items()
+                    if g in self.selected_target_groups
+                }
+                single_person = len(persons) <= 1
 
                 # (distance, person_g, face_idx) for every pair within threshold,
                 # using each person's closest angle to that face.

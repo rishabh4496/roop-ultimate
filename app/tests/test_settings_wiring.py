@@ -84,7 +84,8 @@ def _function_body(src, marker, from_index=0):
 # if a knob is ever removed). Both literal forms are accepted so a helper that
 # reads one key directly is not silently missed.
 SETTINGS_HELPERS = ("_apply_merger_settings", "_apply_eye_restore_settings",
-                    "_apply_parser_region_settings", "_apply_enhancer_settings")
+                    "_apply_parser_region_settings", "_apply_enhancer_settings",
+                    "_target_selection_for_payload")
 
 
 def _helper_keys(name):
@@ -146,15 +147,19 @@ RUN_ONLY_OUTPUT = {
     "wait_after_extraction", "interp_after_swap",
     "upscale_after_swap", "upscale_model_after", "target_index",
 }
+# Internal checkpoint transport, not a user setting sent by FaceSwap.jsx.
+# The render worker consumes the already-normalized request persisted by
+# /api/swap; preview constructs the same request directly at its boundary.
+INTERNAL_TRANSPORT_KEYS = {"normalized_request"}
 
 
 class TestFrontendReachesBackend(unittest.TestCase):
     def test_selected_face_preview_has_a_pre_capture_fallback(self):
-        """A fresh target has detections but no captured identity yet."""
+        """Selected face stays selected until a target identity is captured."""
         src = FACESWAP_JSX.read_text(encoding='utf-8')
-        self.assertIn("const previewDetection = activeParams.face_detection_mode === 'Selected face'", src)
-        self.assertIn("&& targetFaces.length === 0", src)
-        self.assertIn("? 'All faces'", src)
+        self.assertIn("const previewDetection = activeParams.face_detection_mode;", src)
+        self.assertNotIn("? 'All faces'", src)
+        self.assertIn("target_required", src)
 
     def test_every_sent_setting_is_consumed(self):
         """A key in the request that the backend never reads is a control that
@@ -238,7 +243,8 @@ class TestPreviewAndRunAgree(unittest.TestCase):
 
     def test_run_extras_are_temporal_or_output_only(self):
         extra = run_consumed_keys() - preview_consumed_keys()
-        unexplained = extra - RUN_ONLY_TEMPORAL - RUN_ONLY_OUTPUT - VIA_MASK_OFFSET_HELPER
+        unexplained = (extra - RUN_ONLY_TEMPORAL - RUN_ONLY_OUTPUT
+                       - VIA_MASK_OFFSET_HELPER - INTERNAL_TRANSPORT_KEYS)
         self.assertEqual(unexplained, set(),
                          f"the run path reads {sorted(unexplained)} that preview() "
                          f"does not. If it affects a single frame, wire it into "

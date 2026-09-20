@@ -7,7 +7,7 @@ import { Icon } from '../icons';
 import PersonGroups from './PersonGroups';
 import QualityReport from './QualityReport';
 import FileDrop from './faceswap/FileDrop';
-import { buildFaceMappingArray } from './faceswap/faceMapping';
+import { buildFaceMappingArray, buildTargetSelectionState } from './faceswap/faceMapping';
 import ComparisonGridPanel from './faceswap/ComparisonGridPanel';
 import ParserRegions from './faceswap/ParserRegions';
 import InteractivePreview from './faceswap/InteractivePreview';
@@ -102,6 +102,7 @@ export default function FaceSwap({
   // the non-frontal mask router gates on — see the
   // preview endpoint for why it is not re-derived here.
   const [previewPose, setPreviewPose] = useState([]);
+  const [previewDiagnostic, setPreviewDiagnostic] = useState(null);
   // Manual mask painted in the preview box (PNG data URL) + the face keypoints
   // it was painted against. maskVersion is a cheap token for the preview cache
   // key so the multi-KB data URL never has to be stringified per render.
@@ -241,13 +242,24 @@ export default function FaceSwap({
 
   // Single source of truth, shared with the PersonGroups dropdown so the row
   // the user reads and the payload the backend receives cannot disagree.
-  const getFaceMappingArray = () => buildFaceMappingArray({
+  const getFaceMappingArray = (params = p) => buildFaceMappingArray({
     targetGroups,
     faceMapping,
     sourceCount: sourceFaces.length,
-    faceSelection: p.face_detection_mode,
+    faceSelection: params.face_detection_mode,
     selTargetFace,
     selectedSource: selSource,
+  });
+
+  const getTargetSelectionState = (params = p) => buildTargetSelectionState({
+    faceSelection: params.face_detection_mode,
+    targetGroups,
+    faceMapping,
+    sourceCount: sourceFaces.length,
+    selTargetFace,
+    selectedSource: selSource,
+    targetReferenceIndex: selTargetFace,
+    targetMediaIndex: selTarget,
   });
 
   // Profile Management — named setting presets (see faceswap/useProfiles).
@@ -474,7 +486,8 @@ export default function FaceSwap({
       autorotate: sp.autorotate_faces,
       face_distance: num(sp.max_face_distance, 0.75), blend_ratio: num(sp.blend_ratio, 0.8),
       num_swap_steps: num(sp.num_swap_steps, 1),
-      face_mapping: getFaceMappingArray(),
+      face_mapping: getFaceMappingArray(sp),
+      selection_state: getTargetSelectionState(sp),
       imagemask: maskJson,
     };
   };
@@ -723,7 +736,8 @@ export default function FaceSwap({
       swap_model_mask_strength: activeParams.swap_model_mask_strength,
       rescue_small_faces: activeParams.rescue_small_faces,
       detector_engine: activeParams.detector_engine,
-      face_mapping: getFaceMappingArray(),
+      face_mapping: getFaceMappingArray(activeParams),
+      selection_state: getTargetSelectionState(activeParams),
       mask_top: activeParams.mask_top,
       mask_bottom: activeParams.mask_bottom,
       mask_left: activeParams.mask_left,
@@ -852,7 +866,12 @@ export default function FaceSwap({
   }, []);
 
   const refreshPreview = async (opts = {}) => {
-    if (targets.length === 0) { setPreviewSrc(''); setPreviewFor(''); return; }
+    if (targets.length === 0) {
+      setPreviewSrc('');
+      setPreviewFor('');
+      setPreviewDiagnostic(null);
+      return;
+    }
 
     const idx = opts.index ?? selTarget;
     const fr = opts.frame ?? frame;
@@ -875,6 +894,7 @@ export default function FaceSwap({
         setPreviewPersonIds(cached.personIds || []);
         setPreviewKps(cached.kps || []);
         setPreviewPose(cached.pose || []);
+        setPreviewDiagnostic(cached.diagnostic || null);
         // No revoke of the outgoing url here: it is a cache entry, and the
         // cache is what owns it. Freeing it would blank a frame the user can
         // still step back onto.
@@ -910,6 +930,9 @@ export default function FaceSwap({
       setPreviewPersonIds(res.person_ids || []);
       setPreviewKps(res.kps || []);
       setPreviewPose(res.pose || []);
+      const diagnostic = res.selection_diagnostic
+        || (res.target_required ? 'target_required' : null);
+      setPreviewDiagnostic(diagnostic);
       // The backend hands back a base64 data URL. It is converted here, ONCE,
       // at the only point it enters the client — so nothing downstream (React
       // state, the cache, the pop-out, localStorage) ever holds the megabytes.
@@ -923,7 +946,7 @@ export default function FaceSwap({
       setPreviewSrc(blobSrc);
       setPreviewFor(blobSrc ? `${idx}_${fr}` : '');
       if (blobSrc) {
-        setCachedPreview(idx, fr, { faces: res.faces || [], personIds: res.person_ids || [], kps: res.kps || [], pose: res.pose || [], image: blobSrc });
+        setCachedPreview(idx, fr, { faces: res.faces || [], personIds: res.person_ids || [], kps: res.kps || [], pose: res.pose || [], image: blobSrc, diagnostic });
       }
     } catch (e) {
       notify(e.name === 'AbortError' ? 'Preview timed out (model build took too long)' : e.message, 'error');
@@ -1291,6 +1314,7 @@ export default function FaceSwap({
       setTargetGroups(res.target_groups || []);
       setTargetNames(res.target_names || []);
       setTargetFacesInfo(res.target_faces_info || []);
+      setSelTargetFace(Math.max(0, (res.target_faces || []).length - 1));
       set('face_detection_mode', 'Selected face');
       notify(`Added ${res.count} target person(s)`);
     } catch (e) { notify(e.message, 'error'); }
@@ -1333,6 +1357,7 @@ export default function FaceSwap({
       setTargetGroups(res.target_groups || []);
       setTargetNames(res.target_names || []);
       setTargetFacesInfo(res.target_faces_info || []);
+      setSelTargetFace(Math.max(0, (res.target_faces || []).length - 1));
       set('face_detection_mode', 'Selected face');
       notify(`Added Person ${(previewPersonIds[faceIndex] ?? faceIndex) + 1} to target faces`);
     } catch (e) { notify(e.message, 'error'); }
@@ -2999,6 +3024,16 @@ export default function FaceSwap({
                 </Button>
               )}
             </div>
+
+            {previewDiagnostic && (
+              <div role="status" className="mt-2 rounded-lg border border-amber-400/25 bg-amber-400/[0.06] px-3 py-2 text-xs text-amber-200/90">
+                {previewDiagnostic === 'target_required'
+                  ? 'Capture a target face before using Selected face mode. The preview is showing the original frame.'
+                  : previewDiagnostic === 'invalid_person_id'
+                    ? 'The selected target person is no longer available. Select another target person. The preview is showing the original frame.'
+                    : 'Select a target person before using this mode. The preview is showing the original frame.'}
+              </div>
+            )}
 
             <div className="flex items-center flex-wrap gap-3">
               <Toggle label="Live Swap" checked={fakePreview} onChange={setFakePreview} />

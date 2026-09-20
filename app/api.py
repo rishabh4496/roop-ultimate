@@ -58,6 +58,15 @@ from roop import segment_writer
 from roop import live_preview
 from roop import procmgr_runtime as _procmgr_runtime
 from roop import runtime_state as _runtime_state
+from roop.processing_request import (
+    normalize_processing_request,
+    normalize_source_index_mapping,
+    normalize_swap_mode,
+    resolve_selected_source_index,
+    selection_log_line,
+)
+from roop.target_selection import (normalize_target_selection,
+                                   selection_diagnostic_for_mode)
 import project_checkpoint as _project_checkpoint
 import ui.globals as ui_globals
 
@@ -107,8 +116,9 @@ def mapped_facesets(mapping, swap_mode=""):
     number of captured people: with three sources loaded and one person
     captured it silently swapped one face instead of three. That mode therefore
     opts out and keeps the gallery order. The modes that DO use the mapping are
-    "Selected face" (indexes by person rank) and the single-source modes (whose
-    gallery index is translated by mapped_selected_index below).
+    "Selected face" / "Selected people" (indexes by person rank) and the
+    single-source modes (whose gallery index is translated by
+    mapped_selected_index below).
 
     This returns a NEW list and never touches roop_globals.INPUT_FACESETS. An
     earlier version swapped the global out for the duration of the swap and
@@ -120,15 +130,13 @@ def mapped_facesets(mapping, swap_mode=""):
     had it, so that person swapped with an empty faceset — i.e. stayed
     un-swapped — until the face was removed and re-added outside the window.
     """
-    if not isinstance(mapping, list) or len(mapping) == 0 or swap_mode == "all_input":
+    source_indices = normalize_source_index_mapping(
+        mapping, len(roop_globals.INPUT_FACESETS), swap_mode)
+    if source_indices is None:
         return None
     facesets = list(roop_globals.INPUT_FACESETS)
     mapped = []
-    for x in mapping:
-        try:
-            src_idx = int(x)
-        except (ValueError, TypeError):
-            src_idx = -1
+    for src_idx in source_indices:
         if 0 <= src_idx < len(facesets):
             mapped.append(facesets[src_idx])
         else:
@@ -153,13 +161,9 @@ def mapped_selected_index(mapping, mapped, selected):
     # Per-entry coercion, matching mapped_facesets: one unparseable entry must
     # not throw away the translation for every other face (a bare
     # `[int(x) for x in mapping]` would, and silently pin every mode to source 0).
-    for rank, x in enumerate(mapping):
-        try:
-            if int(x) == int(selected):
-                return rank
-        except (ValueError, TypeError):
-            continue
-    return 0
+    source_indices = normalize_source_index_mapping(
+        mapping, len(roop_globals.INPUT_FACESETS), "")
+    return resolve_selected_source_index(source_indices, selected)
 
 API_TEMP = os.path.join(os.getcwd(), "temp", "api_uploads")
 os.makedirs(API_TEMP, exist_ok=True)
@@ -625,9 +629,59 @@ def _update_mask_offsets_from_payload(payload: dict):
 
 
 def translate_swap_mode(text):
-    return {"Selected face": "selected", "First found": "first",
-            "All input faces": "all_input", "All female": "all_female",
-            "All male": "all_male"}.get(text, "all")
+    return normalize_swap_mode(text)
+
+
+_TARGET_REQUIRED_MESSAGE = "Capture a target face before using Selected face mode"
+_SELECTION_MESSAGES = {
+    "selection_required": "Select a target person before using this mode",
+    "invalid_person_id": "The selected target person is no longer available; select another person",
+}
+
+
+def _selected_face_target_required(detection):
+    return (translate_swap_mode(detection) == "selected"
+            and len(roop_globals.TARGET_FACES) < 1)
+
+
+def _target_selection_for_payload(payload):
+    return normalize_target_selection(
+        (payload or {}).get("selection_state"),
+        person_count=len(set(_target_groups_ranked())),
+    )
+
+
+def _selection_diagnostic_for_mode(mode, selection):
+    return selection_diagnostic_for_mode(
+        mode, selection, len(roop_globals.TARGET_FACES))
+
+
+def _selection_message(code):
+    return _SELECTION_MESSAGES.get(code, _TARGET_REQUIRED_MESSAGE)
+
+
+def _canonical_processing_request(payload, target_media_index=None,
+                                  request_id=None):
+    """Resolve all selection/index semantics once for either route."""
+    payload = dict(payload or {})
+    # Keep the API boundary's target-person normalization as the single place
+    # that applies the current ranked target bank to the serializable state.
+    payload["selection_state"] = _target_selection_for_payload(payload)
+    selected_source = payload.get("source_index")
+    if selected_source is None:
+        selected_source = state.selected_input_face_index
+    return normalize_processing_request(
+        payload,
+        target_groups=_target_groups_ranked(),
+        source_count=len(roop_globals.INPUT_FACESETS),
+        selected_source_gallery_index=selected_source,
+        target_media_index=target_media_index,
+        request_id=request_id,
+    )
+
+
+def _log_normalized_selection(request, phase):
+    print(selection_log_line(request, phase), flush=True)
 
 
 def index_of_no_face_action(text):
@@ -1129,7 +1183,8 @@ def get_meta():
                          "blendswap", "uniface", "instyleswapper_a",
                          "instyleswapper_b", "instyleswapper_c", "cscs"],
         "face_detection_modes": ["First found", "All input faces", "All female",
-                                  "All male", "All faces", "Selected face"],
+                                  "All male", "All faces", "Selected face",
+                                  "Selected people"],
         "mask_engines": ["None", "Clip2Seg", "DFL XSeg", "Face Parser (BiSeNet)",
                           "RealityUX", "Face Occluder", "Face Occluder v3 (XSeg-3)",
                           "Segment Anything (MobileSAM)", "Segment Anything (FastSAM)",
@@ -2998,6 +3053,9 @@ def preview(payload: dict = Body(...)):
         idx = int(payload.get("index", state.selected_target_index))
         frame = int(payload.get("frame", 1))
         fake = bool(payload.get("fake_preview", False))
+        processing_request = _canonical_processing_request(
+            payload, target_media_index=idx)
+        _log_normalized_selection(processing_request, "preview")
 
         if idx >= len(list_files_process):
             return JSONResponse(status_code=404, content={"message": "no target"})
@@ -3038,7 +3096,8 @@ def preview(payload: dict = Body(...)):
         _apply_temporal_quality_settings(payload)
         _apply_lipsync_settings(payload)
 
-        roop_globals.face_swap_mode = translate_swap_mode(payload.get("detection", "All faces"))
+        roop_globals.face_swap_mode = processing_request["swap_mode"]
+        selection_state = processing_request["selection_state"]
         roop_globals.selected_enhancer = payload.get("enhancer", "None")
         _apply_adaptive_enhancer_settings(payload)
         roop_globals.codeformer_fidelity = float(payload.get(
@@ -3095,8 +3154,26 @@ def preview(payload: dict = Body(...)):
             _swallowed("api.py:2831", _degrade_error, "fallback continued")
             pass
 
+        selection_diagnostic = _selection_diagnostic_for_mode(
+            roop_globals.face_swap_mode, selection_state)
+        if selection_diagnostic:
+            return {
+                "image": _bgr_to_preview_dataurl(current_frame),
+                "faces": faces_list,
+                "person_ids": person_ids,
+                "kps": kps_list,
+                "pose": pose_list,
+                "request_id": processing_request["request_id"],
+                "selection_state": selection_state,
+                "selection_diagnostic": selection_diagnostic,
+                "target_required": selection_diagnostic == "target_required",
+                "message": (_TARGET_REQUIRED_MESSAGE
+                             if selection_diagnostic == "target_required"
+                             else _selection_message(selection_diagnostic)),
+            }
+
         if not fake or len(roop_globals.INPUT_FACESETS) < 1:
-            return {"image": _bgr_to_preview_dataurl(current_frame), "faces": faces_list, "person_ids": person_ids, "kps": kps_list, "pose": pose_list}
+            return {"image": _bgr_to_preview_dataurl(current_frame), "faces": faces_list, "person_ids": person_ids, "kps": kps_list, "pose": pose_list, "request_id": processing_request["request_id"]}
 
         try:
             from roop.core import live_swap, get_processing_plugins
@@ -3106,12 +3183,11 @@ def preview(payload: dict = Body(...)):
             mask_engine = map_mask_engines(payload.get("mask_engine", "None"),
                                            payload.get("mask_engine_2", "None"),
                                            payload.get("clip_text", ""))
-            face_index = state.selected_input_face_index
-            if len(roop_globals.INPUT_FACESETS) <= face_index:
-                face_index = 0
-            face_mapping = payload.get("face_mapping")
-            mapped = mapped_facesets(face_mapping, roop_globals.face_swap_mode)
-            face_index = mapped_selected_index(face_mapping, mapped, face_index)
+            mapped = mapped_facesets(
+                processing_request["source_index_mapping"],
+                processing_request["swap_mode"],
+            )
+            face_index = processing_request["source_index"]
 
             options = ProcessOptions(
                 get_processing_plugins(mask_engine, swap_model=swap_model),
@@ -3129,12 +3205,14 @@ def preview(payload: dict = Body(...)):
                 frontalization_threshold=float(payload.get("frontalization_threshold", 30.0)),
                 swap_model=swap_model,
                 stabilize_method=payload.get("stabilize_method", "one_euro"),
-                stabilize_face=bool(payload.get("stabilize_face", False)))
+                stabilize_face=bool(payload.get("stabilize_face", False)),
+                selection_state=selection_state,
+                processing_request=processing_request)
 
             swapped = live_swap(current_frame, options, input_facesets=mapped)
             if swapped is None:
-                return {"image": _bgr_to_preview_dataurl(current_frame), "faces": faces_list, "person_ids": person_ids, "kps": kps_list, "pose": pose_list}
-            return {"image": _bgr_to_preview_dataurl(swapped), "faces": faces_list, "person_ids": person_ids, "kps": kps_list, "pose": pose_list}
+                return {"image": _bgr_to_preview_dataurl(current_frame), "faces": faces_list, "person_ids": person_ids, "kps": kps_list, "pose": pose_list, "request_id": processing_request["request_id"]}
+            return {"image": _bgr_to_preview_dataurl(swapped), "faces": faces_list, "person_ids": person_ids, "kps": kps_list, "pose": pose_list, "request_id": processing_request["request_id"]}
         except Exception:
             traceback.print_exc()
             return JSONResponse(status_code=500, content={
@@ -3144,6 +3222,7 @@ def preview(payload: dict = Body(...)):
                 "person_ids": person_ids,
                 "kps": kps_list,
                 "pose": pose_list,
+                "request_id": processing_request["request_id"],
             })
     finally:
         roop_globals.is_preview = False
@@ -3225,6 +3304,25 @@ def trigger_swap(payload: dict = Body(...)):
         return JSONResponse(status_code=400, content={"message": "no target media"})
     if len(roop_globals.INPUT_FACESETS) < 1:
         return JSONResponse(status_code=400, content={"message": "no source faces"})
+    payload = dict(payload)
+    target_media_index = payload.get("target_index")
+    if target_media_index is None:
+        target_media_index = state.selected_target_index
+    processing_request = _canonical_processing_request(
+        payload, target_media_index=target_media_index)
+    swap_mode = processing_request["swap_mode"]
+    selection_state = processing_request["selection_state"]
+    selection_diagnostic = _selection_diagnostic_for_mode(swap_mode, selection_state)
+    if selection_diagnostic:
+        return JSONResponse(status_code=409, content={
+            "message": (_TARGET_REQUIRED_MESSAGE
+                         if selection_diagnostic == "target_required"
+                         else _selection_message(selection_diagnostic)),
+            "selection_diagnostic": selection_diagnostic,
+            "target_required": selection_diagnostic == "target_required",
+        })
+    payload["selection_state"] = selection_state
+    payload["normalized_request"] = processing_request
 
     unavailable = _unavailable_target_entries(payload)
     if unavailable:
@@ -3239,7 +3337,6 @@ def trigger_swap(payload: dict = Body(...)):
     # next application instance can validate instead of guessing from a frame.
     try:
         project = _create_processing_project(payload)
-        payload = dict(payload)
         payload["_project_id"] = project["id"]
     except Exception as exc:
         _swallowed("api.py:2958", exc, "fallback continued")
@@ -3340,6 +3437,14 @@ def _run_swap(payload):
                           "error": ""})
         _run_stats.update({"start": time.time(), "frames_done": 0, "frames_total": 0, "duration_s": 0.0})
         _update_mask_offsets_from_payload(payload)
+        processing_request = payload.get("normalized_request")
+        if not isinstance(processing_request, dict):
+            processing_request = _canonical_processing_request(
+                payload, target_media_index=(
+                    payload.get("target_index")
+                    if payload.get("target_index") is not None
+                    else state.selected_target_index))
+        _log_normalized_selection(processing_request, "render")
         prepare_environment()
         # A project with committed segments owns its partial output. Clearing
         # the output directory here would destroy the only safe resume prefix.
@@ -3356,7 +3461,7 @@ def _run_swap(payload):
             os.makedirs(roop_globals.output_path, exist_ok=True)
 
         enhancer = payload.get("enhancer", roop_globals.CFG.selected_enhancer)
-        detection = payload.get("detection", roop_globals.CFG.face_detection_mode)
+        selection_state = processing_request["selection_state"]
         output_method = payload.get("output_method", roop_globals.CFG.output_method)
         processing_method = payload.get("video_method", roop_globals.CFG.video_swapping_method)
         upsample = payload.get("upscale", roop_globals.CFG.subsample_upscale)
@@ -3374,7 +3479,7 @@ def _run_swap(payload):
         roop_globals.keep_frames = bool(payload.get("keep_frames", roop_globals.CFG.keep_frames))
         roop_globals.wait_after_extraction = bool(payload.get("wait_after_extraction", roop_globals.CFG.wait_after_extraction))
         roop_globals.skip_audio = bool(payload.get("skip_audio", roop_globals.CFG.skip_audio))
-        roop_globals.face_swap_mode = translate_swap_mode(detection)
+        roop_globals.face_swap_mode = processing_request["swap_mode"]
         roop_globals.default_det_size = bool(payload.get("default_det_size", roop_globals.CFG.default_det_size))
         roop_globals.face_detector_size = str(payload.get("face_detector_size", roop_globals.CFG.face_detector_size))
         roop_globals.face_detector_threshold = float(payload.get("face_detector_threshold", roop_globals.CFG.face_detector_threshold))
@@ -3428,8 +3533,16 @@ def _run_swap(payload):
 
         mask_engine = map_mask_engines(selected_mask_engine, selected_mask_engine_2, clip_text)
 
-        if roop_globals.face_swap_mode == "selected" and len(roop_globals.TARGET_FACES) < 1:
-            _progress.update({"processing": False, "error": "No target face selected"})
+        selection_diagnostic = _selection_diagnostic_for_mode(
+            processing_request["swap_mode"], selection_state)
+        if selection_diagnostic:
+            _progress.update({
+                "processing": False,
+                "error": (_TARGET_REQUIRED_MESSAGE
+                           if selection_diagnostic == "target_required"
+                           else _selection_message(selection_diagnostic)),
+                "selection_diagnostic": selection_diagnostic,
+            })
             return
 
         roop_globals.processing = True
@@ -3492,8 +3605,10 @@ def _run_swap(payload):
         print(f"\n===== SWAP PIPELINE: {_stages} =====", flush=True)
         print("[Stage 1/2] ANALYZE + SWAP (per-frame detection & swapping)…", flush=True)
 
-        run_mapping = payload.get("face_mapping")
-        run_facesets = mapped_facesets(run_mapping, roop_globals.face_swap_mode)
+        run_facesets = mapped_facesets(
+            processing_request["source_index_mapping"],
+            processing_request["swap_mode"],
+        )
         roop_globals.is_preview = False
         batch_process_regular(
             output_method, files_to_process, mask_engine, clip_text,
@@ -3504,7 +3619,7 @@ def _run_swap(payload):
             bool(payload.get("restore_original_mouth", roop_globals.CFG.restore_original_mouth)),
             int(payload.get("num_swap_steps", roop_globals.CFG.num_swap_steps)),
             ApiProgress(),
-            mapped_selected_index(run_mapping, run_facesets, state.selected_input_face_index),
+            processing_request["source_index"],
             use_3d_recon=bool(payload.get("use_3d_recon", roop_globals.CFG.use_3d_recon)),
             mask_per_frame_json="",
             use_source_bank=bool(payload.get("use_source_bank", roop_globals.CFG.use_source_bank)),
@@ -3522,7 +3637,9 @@ def _run_swap(payload):
             stabilize_landmarks=bool(payload.get("stabilize_landmarks", roop_globals.CFG.stabilize_landmarks)),
             stabilize_hf_texture=bool(payload.get("stabilize_hf_texture", roop_globals.CFG.stabilize_hf_texture)),
             stabilize_hf_texture_weight=float(payload.get("stabilize_hf_texture_weight", roop_globals.CFG.stabilize_hf_texture_weight)),
-            input_facesets=run_facesets)
+            input_facesets=run_facesets,
+            selection_state=selection_state,
+            processing_request=processing_request)
 
         # batch_process_regular returns normally after a deliberate stop so it
         # can finalize any partial output safely.  Do not treat that return as

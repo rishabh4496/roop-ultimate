@@ -24,8 +24,9 @@ export function selectedPersonOf(targetGroups, selTargetFace) {
 }
 
 export function uniquePersons(targetGroups) {
-  return Array.from(new Set(Array.isArray(targetGroups) ? targetGroups : []))
-    .filter((x) => typeof x === 'number')
+  return Array.from(new Set((Array.isArray(targetGroups) ? targetGroups : [])
+    .map((x) => Array.isArray(x) ? Number(x[0]) : Number(x))
+    .filter((x) => Number.isFinite(x))))
     .sort((a, b) => a - b);
 }
 
@@ -81,4 +82,111 @@ export function buildFaceMappingArray({
     selectedPerson,
     selectedSource,
   }));
+}
+
+const optionalInt = (value) => {
+  if (value === null || value === undefined || typeof value === 'boolean') return null;
+  if (typeof value === 'string' && value.trim() === '') return null;
+  const n = Number(value);
+  return Number.isInteger(n) ? n : null;
+};
+
+// UI-side normalization of the same serializable contract consumed by
+// app/roop/target_selection.py. person_id/person_ids are TARGET PERSON RANKS;
+// they are never source-gallery, reference-angle, media, detection, or track
+// indices. The extra fields remain explicit so a future video selector can add
+// a stable track id without overloading person_id.
+export function normalizeTargetSelectionState(selection = {}, targetGroups = []) {
+  const raw = selection && typeof selection === 'object' ? selection : {};
+  const mode = raw.selection_mode === 'selected' || raw.selection_mode === 'multi_person'
+    ? raw.selection_mode : 'none';
+  const persons = uniquePersons(targetGroups);
+  let personId = optionalInt(raw.person_id);
+  let personIds = Array.isArray(raw.person_ids)
+    ? raw.person_ids.map(optionalInt).filter((v, i, all) => v !== null && all.indexOf(v) === i)
+    : [];
+  let diagnostic = null;
+
+  if (mode === 'selected') {
+    if (personId === null) diagnostic = 'selection_required';
+    else personIds = [personId];
+  } else if (mode === 'multi_person') {
+    if (!personIds.length) diagnostic = 'selection_required';
+  } else {
+    personId = null;
+    personIds = [];
+  }
+
+  if (!diagnostic && mode !== 'none' && personIds.some((id) => id < 0)) {
+    diagnostic = 'invalid_person_id';
+  }
+  if (!diagnostic && mode !== 'none' && persons.length
+      && personIds.some((id) => id >= persons.length)) {
+    diagnostic = 'invalid_person_id';
+  }
+  if (diagnostic) {
+    personId = null;
+    personIds = [];
+  }
+
+  return {
+    selection_mode: mode,
+    person_id: personId,
+    person_ids: personIds,
+    target_reference_index: optionalInt(raw.target_reference_index),
+    target_detection_index: optionalInt(raw.target_detection_index),
+    track_id: optionalInt(raw.track_id),
+    target_media_index: optionalInt(raw.target_media_index),
+    valid: !diagnostic,
+    diagnostic,
+  };
+}
+
+// Convert the UI's highlighted reference angle and mapping controls into the
+// canonical target-person contract. A person's other captured angles remain
+// represented by the same person_id and are pooled by ProcessMgr.
+export function buildTargetSelectionState({
+  faceSelection,
+  targetGroups,
+  faceMapping,
+  sourceCount,
+  selTargetFace,
+  selectedSource,
+  targetReferenceIndex = selTargetFace,
+  targetMediaIndex = null,
+}) {
+  const persons = uniquePersons(targetGroups);
+  const highlightedRaw = selectedPersonOf(targetGroups, selTargetFace);
+  const highlightedPerson = persons.indexOf(highlightedRaw);
+  let selection;
+
+  if (faceSelection === 'Selected face') {
+    selection = {
+      selection_mode: 'selected',
+      person_id: highlightedPerson >= 0 ? highlightedPerson : null,
+      person_ids: highlightedPerson >= 0 ? [highlightedPerson] : [],
+    };
+  } else if (faceSelection === 'Selected people') {
+    const mappings = buildFaceMappingArray({
+      targetGroups, faceMapping, sourceCount, faceSelection,
+      selTargetFace, selectedSource,
+    });
+    selection = {
+      selection_mode: 'multi_person',
+      person_id: null,
+      person_ids: mappings
+        .map((source, rank) => (source >= 0 ? rank : null))
+        .filter((rank) => rank !== null),
+    };
+  } else {
+    selection = { selection_mode: 'none', person_id: null, person_ids: [] };
+  }
+
+  return normalizeTargetSelectionState({
+    ...selection,
+    target_reference_index: targetReferenceIndex,
+    target_detection_index: null,
+    track_id: null,
+    target_media_index: targetMediaIndex,
+  }, targetGroups);
 }

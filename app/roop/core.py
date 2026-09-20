@@ -1232,7 +1232,9 @@ def _reprocess_custom_mask_frames(temp_frame_paths: list, orig_frame_paths: list
                                    use_source_bank: bool = False,
                                    use_frontalization: bool = False,
                                    frontalization_threshold: float = 25.0,
-                                   swap_model: str = 'inswapper') -> None:
+                                   swap_model: str = 'inswapper',
+                                   selection_state=None,
+                                   processing_request=None) -> None:
     """Re-process frames that have a custom per-frame mask.
 
     Strategy:
@@ -1288,6 +1290,8 @@ def _reprocess_custom_mask_frames(temp_frame_paths: list, orig_frame_paths: list
             use_frontalization=use_frontalization,
             frontalization_threshold=frontalization_threshold,
             swap_model=swap_model,
+            selection_state=selection_state,
+            processing_request=processing_request,
         )
         result = live_swap(orig_bgr, options)
         if result is not None:
@@ -1303,7 +1307,8 @@ def batch_process_regular(output_method, files:list[ProcessEntry], masking_engin
                           stabilize_mask=False, stabilize_mask_strength=0.5,
                           stabilize_landmarks=True, stabilize_hf_texture=False,
                           stabilize_hf_texture_weight=0.15,
-                          input_facesets=None, **kwargs) -> None:
+                          input_facesets=None, selection_state=None,
+                          processing_request=None, **kwargs) -> None:
     global clip_text, process_mgr
 
     roop.globals.is_preview = False
@@ -1338,6 +1343,14 @@ def batch_process_regular(output_method, files:list[ProcessEntry], masking_engin
     # `input_facesets` lets the caller hand in a person-ordered remap of the
     # sources without mutating the global (see api.mapped_facesets).
     facesets = roop.globals.INPUT_FACESETS if input_facesets is None else input_facesets
+    # A canonical request owns the source index. Keep the old selected_index
+    # argument for direct callers, but do not reinterpret it when the API has
+    # already resolved the preview/render request.
+    if isinstance(processing_request, dict):
+        try:
+            selected_index = int(processing_request.get("source_index", selected_index))
+        except (TypeError, ValueError):
+            pass
     if len(facesets) <= selected_index:
         selected_index = 0
     options = ProcessOptions(get_processing_plugins(masking_engine, swap_model=swap_model),
@@ -1359,7 +1372,9 @@ def batch_process_regular(output_method, files:list[ProcessEntry], masking_engin
                               stabilize_mask_strength=stabilize_mask_strength,
                               stabilize_landmarks=stabilize_landmarks,
                               stabilize_hf_texture=stabilize_hf_texture,
-                              stabilize_hf_texture_weight=stabilize_hf_texture_weight)
+                              stabilize_hf_texture_weight=stabilize_hf_texture_weight,
+                              selection_state=selection_state,
+                              processing_request=processing_request)
     process_mgr.initialize(facesets, roop.globals.TARGET_FACES, options)
 
     # Stash per-frame mask map and batch options on globals so batch_process can access them
@@ -1373,6 +1388,8 @@ def batch_process_regular(output_method, files:list[ProcessEntry], masking_engin
     roop.globals._batch_use_frontalization= use_frontalization
     roop.globals._batch_front_threshold   = frontalization_threshold
     roop.globals._batch_swap_model        = swap_model
+    roop.globals._batch_selection_state   = selection_state
+    roop.globals._batch_processing_request = processing_request
     roop.globals._batch_stabilize_landmarks = stabilize_landmarks
     roop.globals._batch_stabilize_hf_texture = stabilize_hf_texture
     roop.globals._batch_stabilize_hf_texture_weight = stabilize_hf_texture_weight
@@ -1625,6 +1642,8 @@ def batch_process(output_method, files:list[ProcessEntry], use_new_method) -> No
                             use_frontalization=getattr(roop.globals, '_batch_use_frontalization', False),
                             frontalization_threshold=getattr(roop.globals, '_batch_front_threshold', 25.0),
                             swap_model=getattr(roop.globals, '_batch_swap_model', 'inswapper'),
+                            selection_state=getattr(roop.globals, '_batch_selection_state', None),
+                            processing_request=getattr(roop.globals, '_batch_processing_request', None),
                         )
 
                     if roop.globals.wait_after_extraction and temp_frame_paths:

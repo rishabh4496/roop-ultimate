@@ -4,7 +4,13 @@
 // still fails here. Run with: node .render-check/face-mapping-check.mjs
 import assert from 'node:assert/strict';
 import process from 'node:process';
-import { buildFaceMappingArray, mapPerson, selectedPersonOf, SKIP }
+import {
+  buildFaceMappingArray,
+  buildTargetSelectionState,
+  mapPerson,
+  selectedPersonOf,
+  SKIP,
+}
   from '../src/components/faceswap/faceMapping.js';
 
 let pass = 0;
@@ -182,6 +188,49 @@ check('row value equals payload entry for every person, in both modes', () => {
       });
     }
   }
+});
+
+group('Explicit target-person selection contract');
+const selection = (o = {}) => buildTargetSelectionState({
+  targetGroups: [0, 1], faceMapping: {}, sourceCount: 2,
+  faceSelection: SEL, selTargetFace: 0, selectedSource: 0,
+  targetMediaIndex: 3, ...o,
+});
+check('one selected person is serialized as a person rank', () => {
+  assert.deepEqual(selection({ selTargetFace: 1 }), {
+    selection_mode: 'selected', person_id: 1, person_ids: [1],
+    target_reference_index: 1, target_detection_index: null, track_id: null,
+    target_media_index: 3, valid: true, diagnostic: null,
+  });
+});
+check('changing the selected reference changes only person_id', () => {
+  assert.equal(selection({ selTargetFace: 0 }).person_id, 0);
+  assert.equal(selection({ selTargetFace: 1 }).person_id, 1);
+});
+check('multiple angles share one person id', () => {
+  const out = buildTargetSelectionState({
+    targetGroups: [0, 0, 1], faceMapping: {}, sourceCount: 1,
+    faceSelection: SEL, selTargetFace: 1, selectedSource: 0,
+  });
+  assert.deepEqual(out.person_ids, [0]);
+  assert.equal(out.person_id, 0);
+});
+check('multi-person mode is explicit and follows the mapping', () => {
+  const out = buildTargetSelectionState({
+    targetGroups: [0, 1], faceMapping: { 0: 0, 1: 1 }, sourceCount: 2,
+    faceSelection: 'Selected people', selTargetFace: 0, selectedSource: 0,
+  });
+  assert.equal(out.selection_mode, 'multi_person');
+  assert.deepEqual(out.person_ids, [0, 1]);
+});
+check('no target reference is invalid instead of selecting another person', () => {
+  const out = buildTargetSelectionState({
+    targetGroups: [], faceMapping: {}, sourceCount: 1,
+    faceSelection: SEL, selTargetFace: 0, selectedSource: 0,
+  });
+  assert.equal(out.valid, false);
+  assert.equal(out.diagnostic, 'selection_required');
+  assert.deepEqual(out.person_ids, []);
 });
 
 console.log(`\n${fails.length ? `FAILED: ${fails.join(', ')}` : `ALL GREEN: ${pass}/${pass} checks passed`}`);

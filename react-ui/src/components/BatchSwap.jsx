@@ -6,6 +6,7 @@ import useQueue from './faceswap/useQueue';
 import QueuePanel from './faceswap/QueuePanel';
 import FacesetLibrary from './faceswap/FacesetLibrary';
 import { FACESWAP_DEFAULTS } from './faceswap/defaults';
+import { normalizeTargetSelectionState } from './faceswap/faceMapping';
 
 // Helper to convert index to target preview URL
 const targetPreviewUrl = (idx, target) => (
@@ -281,6 +282,15 @@ export default function BatchSwap({ settings = {}, notify }) {
       });
 
       const primarySourceIdx = mappings[0]?.sourceIdx || 0;
+      const personIds = Array.from(new Set(mappings
+        .map((m) => Math.max(0, parseInt(m.personRank, 10) || 0))))
+        .sort((a, b) => a - b);
+      const selectionState = swapMode === 'Selected people'
+        ? { selection_mode: 'multi_person', person_id: null, person_ids: personIds }
+        : swapMode === 'Selected face'
+          ? { selection_mode: 'selected', person_id: personIds[0] ?? null, person_ids: personIds.slice(0, 1) }
+          : { selection_mode: 'none', person_id: null, person_ids: [] };
+      const normalizedSelectionState = normalizeTargetSelectionState(selectionState);
 
       return {
         payload: {
@@ -301,6 +311,7 @@ export default function BatchSwap({ settings = {}, notify }) {
           num_swap_steps: parseInt(base.num_swap_steps || 1, 10),
           auto_fallback: autoFallbackEnabled,
           face_mapping: faceMapping,
+          selection_state: normalizedSelectionState,
         },
         primarySourceIdx,
         mappings,
@@ -1424,6 +1435,7 @@ export default function BatchSwap({ settings = {}, notify }) {
                   className="w-full bg-black/50 border border-white/10 rounded-xl px-3 py-2 text-xs text-white"
                 >
                   <option value="Selected face">Selected face (By Person Rank)</option>
+                  <option value="Selected people">Selected people (Mapped persons)</option>
                   <option value="All input faces">All input faces (Gallery Order)</option>
                   <option value="All faces">All faces (Swap every detected face)</option>
                   <option value="First found">First found (First detected face)</option>
