@@ -345,7 +345,13 @@ def _stamp_occlusion_state(target_face, occluder_mask, M):
                        if isinstance(target_face, dict) else False)
         state = _tracker.occlusion_state_for(visible, coasted=coasted)
         target_face['occlusion_state'] = state
-        target_face['_occluded_landmark_frac'] = float(1.0 - visible.mean())
+        # The same population the gate reads (interior landmarks on 2d106).
+        target_face['_occluded_landmark_frac'] = _tracker.occlusion_hidden_fraction(visible)
+        # Which landmarks the occluder hid -- diagnostic only, read by the
+        # [Occlusion] log line so a refusal can be attributed to a region
+        # (jaw contour under hair/collar vs. an object across the face).
+        target_face['_occluded_landmark_indices'] = [
+            int(i) for i in np.flatnonzero(~np.asarray(visible, dtype=bool))]
         if state != _tracker.STATE_PARTIAL:
             return
         kps = getattr(target_face, 'kps', None)

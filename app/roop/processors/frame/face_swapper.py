@@ -75,6 +75,7 @@ try:
         STATE_VISIBLE,
         _face_field as _field,
         landmark_visibility,
+        occlusion_hidden_fraction,
         occlusion_state_for,
         symmetry_inpaint_landmarks,
     )
@@ -171,6 +172,7 @@ except ImportError:
             STATE_VISIBLE,
             _face_field as _field,
             landmark_visibility,
+            occlusion_hidden_fraction,
             occlusion_state_for,
             symmetry_inpaint_landmarks,
         )
@@ -184,6 +186,7 @@ except ImportError:
                 STATE_VISIBLE,
                 _face_field as _field,
                 landmark_visibility,
+                occlusion_hidden_fraction,
                 occlusion_state_for,
                 symmetry_inpaint_landmarks,
             )
@@ -2143,7 +2146,7 @@ def _repair_occluded_landmarks(pts_crop: np.ndarray,
     if target_face is not None:
         try:
             target_face['occlusion_state'] = state
-            target_face['_occluded_landmark_frac'] = float(1.0 - visible.mean())
+            target_face['_occluded_landmark_frac'] = occlusion_hidden_fraction(visible)
         except (TypeError, AttributeError):
             pass
     if state != STATE_PARTIAL:

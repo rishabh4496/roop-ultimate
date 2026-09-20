@@ -5927,10 +5927,13 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                         _frac = (target_face.get('_occluded_landmark_frac')
                                  if isinstance(target_face, dict)
                                  else getattr(target_face, '_occluded_landmark_frac', None))
+                        _idx = (target_face.get('_occluded_landmark_indices')
+                                if isinstance(target_face, dict)
+                                else getattr(target_face, '_occluded_landmark_indices', None))
                         bar_write(f"[Occlusion] swap discarded (partial occlusion): "
                                   f"bbox={[round(float(v)) for v in target_face.bbox]} "
                                   f"hidden_landmark_frac={None if _frac is None else round(float(_frac), 3)} "
-                                  f"gate=0.08")
+                                  f"gate=0.08 hidden_indices={_idx}")
                     except Exception as _degrade_error:
                         _swallowed("roop/ProcessMgr.py:occlusion-diag", _degrade_error, "fallback continued")
                 result = restored

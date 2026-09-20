@@ -407,6 +407,13 @@ await check('person selection and mapping edits go through the versioned commit 
   assert.ok(faceSwap.includes('selection_version: bumpSelectionVersion()'));
   assert.ok(faceSwap.includes('commitTargetContext={commitTargetContext}'));
 });
+await check('a preview face-box click captures that face (or selects its person), never a bare highlight', () => {
+  assert.ok(faceSwap.includes('onSelectFace={onFaceBoxClick}'), 'the stage must be wired to onFaceBoxClick');
+  const body = faceSwap.slice(faceSwap.indexOf('const onFaceBoxClick = async'), faceSwap.indexOf('const capturedBoxesRef'));
+  assert.ok(body.includes('await captureTargetFaceFromFrame({ faceIndex })'));
+  assert.ok(body.includes('capturedBoxesRef.current[boxKey]'), 'a repeated click must select, not capture twice');
+  assert.ok(body.includes('captureBusyRef.current'), 'clicks during an in-flight capture are ignored');
+});
 await check('session restore goes through reconcileRestoredSelection and restores the source by id', () => {
   assert.ok(faceSwap.includes('reconcileRestoredSelection({'));
   assert.ok(faceSwap.includes('st.selected_source_id'));

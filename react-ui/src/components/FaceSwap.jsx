@@ -14,6 +14,7 @@ import {
   mappingObjectFromArray,
   remapSourceMappingAfterRemoval,
   remapSourceMappingAfterMove,
+  targetPersonRecords,
 } from './faceswap/faceMapping';
 import {
   buildProcessingSelection as buildCanonicalSelection,
@@ -1834,7 +1835,8 @@ export default function FaceSwap({
       notify(captureAll
         ? `Added ${res.count} target person(s)`
         : `Added Face ${faceIndex + 1} as a target person`);
-    } catch (e) { notify(e.message, 'error'); }
+      return res.selected_target_person_id || null;
+    } catch (e) { notify(e.message, 'error'); return null; }
   };
 
   const useFaceFromFrame = async () => {
@@ -1844,6 +1846,61 @@ export default function FaceSwap({
     }
     await captureTargetFaceFromFrame({ faceIndex: selectedDetectedFaceIndex });
   };
+
+  // A click on ONE numbered box in the preview IS the explicit choice of a
+  // target face, so it captures that face right away. It used to only mark
+  // the box and wait for the "Use selected face" button below the stage --
+  // which sat out of view, so nothing ever reached the target panel and
+  // nothing swapped (the backend log showed no /api/target/use_face at all).
+  //
+  // A box the overlay already labels with a CAPTURED person (its person id is
+  // below the captured count) selects that person instead of capturing it a
+  // second time: every use_face creates a new person, and two people for one
+  // face is exactly the duplicate this avoids.
+  const onFaceBoxClick = async (faceIndex) => {
+    if (!Number.isInteger(faceIndex) || faceIndex < 0 || faceIndex >= previewFaces.length) return;
+    selectDetectedFace(faceIndex);
+    const records = targetPersonRecords({
+      targetGroups, targetPersonIds, targetReferenceFaceIds, targetNames,
+    });
+    // Two ways a box can already be somebody: the overlay labelled it with a
+    // captured person (after the preview refreshed), or THIS box on THIS frame
+    // was captured a moment ago and the refresh has not landed yet (a second
+    // click, or a double-click). Both select; neither captures again.
+    const boxKey = `${activeTargetMediaId}_${frame}_${faceIndex}`;
+    const known = capturedBoxesRef.current[boxKey];
+    let rank = Number(previewPersonIds[faceIndex]);
+    if (known && records.some((r) => r.targetPersonId === known)) {
+      rank = records.findIndex((r) => r.targetPersonId === known);
+    }
+    if (Number.isInteger(rank) && rank >= 0 && rank < records.length) {
+      const record = records[rank];
+      const firstFace = record.faceIndices[0] ?? 0;
+      setSelectedTargetPersonId(record.targetPersonId);
+      setSelectedReferenceFaceId(targetReferenceFaceIds[firstFace] || null);
+      setSelTargetFace(firstFace);
+      set('face_detection_mode', 'Selected face');
+      commitTargetContext({
+        selected_target_person_id: record.targetPersonId,
+        ...(targetReferenceFaceIds[firstFace]
+          ? { selected_reference_face_id: targetReferenceFaceIds[firstFace] } : {}),
+        selected_target_face_index: firstFace,
+      });
+      notify(`Selected ${record.name || `Person ${rank + 1}`} as the target person`);
+      return;
+    }
+    if (captureBusyRef.current) return;   // a capture for a box is already in flight
+    captureBusyRef.current = true;
+    try {
+      const created = await captureTargetFaceFromFrame({ faceIndex });
+      if (created) capturedBoxesRef.current[boxKey] = created;
+    } finally {
+      captureBusyRef.current = false;
+    }
+  };
+  // box (media_frame_index) -> the target_person_id its capture produced.
+  const capturedBoxesRef = useRef({});
+  const captureBusyRef = useRef(false);
 
   const captureAllPeopleFromFrame = async () => {
     if (!previewFaces.length) {
@@ -3446,7 +3503,7 @@ export default function FaceSwap({
                     pose={previewPose}
                     personIds={previewPersonIds}
                     selectedFaceIndex={selectedDetectedFaceIndex}
-                    onSelectFace={selectDetectedFace}
+                    onSelectFace={onFaceBoxClick}
                     splitView={splitView}
                     compare={compare}
                     onToggleCompare={() => setCompare((v) => { const n = !v; if (n) { setComparingEnhancers(false); setComparingMasks(false); setComparingSwappers(false); setComparingUpscalers(false); } return n; })}

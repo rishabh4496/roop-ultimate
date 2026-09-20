@@ -941,6 +941,40 @@ def symmetry_inpaint_landmarks(points: np.ndarray, visible: Optional[np.ndarray]
     return out.astype(np.float32), filled
 
 
+# InsightFace's 2d106 layout: indices 0-32 are the jaw/face contour, 33-105
+# the brows, eyes, nose and mouth -- the landmarks INSIDE the pasted face.
+CONTOUR_106 = 33
+
+
+def occlusion_gate_population(visible: np.ndarray) -> np.ndarray:
+    """The landmarks the occlusion gate is judged on.
+
+    On the 106-point layout the jaw contour is excluded.  It runs under hair,
+    a collar or a shoulder on ordinary footage and is not inside the region a
+    swap pastes, so counting it measured the wardrobe, not the face: on
+    `D:\Monica Bellucci .mp4` frame 1 the gate read a fully visible face at
+    hidden fraction 0.208 (22 landmarks) and every one of the 22 was a contour
+    point (0-13, 18-24, 32); the swap of the selected person was then thrown
+    away on 26 of 67 routed frames.  A real occluder across the face still hides
+    interior landmarks and still trips the same 8% gate.  Other landmark counts
+    (5-point kps, 68) are judged whole, as before.
+    """
+    seen = np.asarray(visible, dtype=bool).reshape(-1)
+    if seen.size == 106:
+        return seen[CONTOUR_106:]
+    return seen
+
+
+def occlusion_hidden_fraction(visible: Optional[np.ndarray]) -> float:
+    """Share of the GATED landmark population behind the occluder."""
+    if visible is None:
+        return 0.0
+    seen = occlusion_gate_population(visible)
+    if seen.size == 0:
+        return 0.0
+    return float(1.0 - seen.mean())
+
+
 def occlusion_state_for(visible: Optional[np.ndarray],
                         coasted: bool = False,
                         partial_frac: float = 0.08) -> str:
@@ -950,13 +984,14 @@ def occlusion_state_for(visible: Optional[np.ndarray],
     before a face is called partially occluded.  It is not zero because a
     single landmark grazing a mask edge is segmentation noise, and flagging on
     it would put most frames of most clips into the partial state -- a flag
-    that is always on carries no information.
+    that is always on carries no information.  The share is taken over
+    `occlusion_gate_population` (interior landmarks on the 106-point layout).
     """
     if coasted:
         return STATE_COASTED
     if visible is None:
         return STATE_VISIBLE
-    seen = np.asarray(visible, dtype=bool).reshape(-1)
+    seen = occlusion_gate_population(visible)
     if seen.size == 0:
         return STATE_VISIBLE
     hidden = 1.0 - float(seen.mean())
@@ -969,4 +1004,5 @@ __all__ = [
     'FaceTrack', 'FaceTracker',
     'symmetry_axis', 'derive_mirror_map', 'landmark_visibility',
     'symmetry_inpaint_landmarks', 'occlusion_state_for',
+    'occlusion_gate_population', 'occlusion_hidden_fraction', 'CONTOUR_106',
 ]

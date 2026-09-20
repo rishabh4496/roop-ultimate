@@ -501,9 +501,9 @@ export default function InteractivePreview({
           }`}
           style={{ left: `${left}%`, top: `${top}%`, width: `${width}%`, height: `${height}%` }}
           data-face-index={i}
-          aria-label={selectable ? `Select detected face ${i + 1}` : undefined}
+          aria-label={selectable ? `Use detected face ${i + 1} as the target person` : undefined}
           aria-pressed={selectable ? selected : undefined}
-          title={selectable ? `Select Face ${i + 1} (Person ${personLabel})` : undefined}
+          title={selectable ? `Click to use Face ${i + 1} (Person ${personLabel}) as the target` : undefined}
           onPointerDown={selectable ? (e) => e.stopPropagation() : undefined}
           onClick={selectable ? (e) => { e.stopPropagation(); onSelectFace(i); } : undefined}
         >
@@ -512,7 +512,7 @@ export default function InteractivePreview({
           </span>
           {selectable && (
             <span className="absolute left-1/2 -translate-x-1/2 -bottom-6 opacity-0 group-hover/face:opacity-100 transition-opacity bg-black/80 backdrop-blur text-[var(--accent)] text-nano font-bold px-1.5 py-0.5 rounded whitespace-nowrap pointer-events-none">
-              {selected ? 'Selected' : 'Select face'}
+              {selected ? 'Selected' : '＋ Use as target'}
             </span>
           )}
         </div>

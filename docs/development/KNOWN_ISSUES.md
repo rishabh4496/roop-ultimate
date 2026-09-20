@@ -563,6 +563,15 @@ in this session; no result below is extrapolated to it.
 
 ## 2026-09-21 Stage 15 acceptance: occlusion gate discards fully visible faces
 
+**RESOLVED the same day (commit after d916395).** The `[Occlusion]` diagnostic
+showed the 22 "hidden" landmarks were all 2d106 jaw-contour points (0-13,
+18-24, 32) under the fur collar and hair. The gate now reads the interior
+landmarks (33-105) on the 106-point layout (`roop.tracker.
+occlusion_gate_population`); the 8% threshold is unchanged and an occluder
+across the face still trips it (`tests/test_occlusion_gate_population.py`).
+Re-run of the real-file acceptance: 29 PASS / 0 FAIL, Monica paints (0.384
+changed inside her box, 0.0 on the two men). The original record follows.
+
 `roop.tracker.occlusion_state_for` marks a face `partial` when >= 8% of its
 106 landmarks fall outside the occluder mask, and `ProcessMgr.process_face`
 then discards the whole swap (`refused: partial occlusion`). On
