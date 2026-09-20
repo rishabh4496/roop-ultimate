@@ -23,6 +23,7 @@ from roop.processors.FaceSwapInsightFace import (verify_tol_for as _swap_verify_
                                                   batch_swap_enabled as _batch_swap_enabled)
 from roop import orientation
 from roop import runtime_banner as _runtime_banner
+from roop import selected_routing
 from roop.face_util import estimate_norm, solve_pose_5pt, solve_pose_jaw_5pt
 from roop.face_util import offaxis_deg, swap_template_points
 from roop.face_analyser import FaceTracker, canonicalize_face_alignment
@@ -243,6 +244,10 @@ _DEBUG_POSE_LOG = False
 # is printed once per video at the end of run_batch_inmem.
 # Opt-in batched swap: run the pixel-boost tiles through one inference call.
 _BATCH_SWAP = _batch_swap_enabled()
+
+# Opt-in per-frame Selected-Face routing log (assertion 8): identity distance
+# for every detected candidate. Off by default -- it is one line per frame.
+_LOG_SELECTED_ROUTE = os.environ.get('ROOP_LOG_SELECTED_ROUTE', '0').strip().lower() in ('1', 'true', 'yes', 'on')
 
 # On by default: when the full-frame detect pass in the multi-face branch
 # below finds SOME faces but fewer than last frame had (one person went
@@ -3963,140 +3968,86 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                             _audit_hit('fallback missed (no candidate person left)')
 
             elif self.options.swap_mode in ("selected", "selected_multi"):
-                # Multi-angle matching: assign each captured target PERSON their
-                # single closest detected face (min distance across that person's
-                # stored angles), within the distance threshold. A turned head
-                # still matches via a side/back angle, so the swap doesn't drop
-                # out frame-to-frame (no flicker).
-                #
-                # Crucially this is a 1:1 assignment: a selected person maps to
-                # AT MOST ONE face per frame, and a face is swapped by AT MOST
-                # ONE person. This stops a look-alike or hard-pose bystander from
-                # also being swapped just for landing under the distance cutoff
-                # (which a per-face "swap everything under threshold" loop did).
-                groups = self.target_face_groups
-                uniq = sorted(set(groups)) if groups else []
-                rank = {g: r for r, g in enumerate(uniq)}
+                # Multi-angle 1:1 assignment: each SELECTED person is given the
+                # single detected face closest to any of its captured angles,
+                # within the identity threshold; a face is swapped by at most one
+                # person, a person swaps at most one face. The decision itself is
+                # roop.selected_routing.compute_selected_assignment -- lifted out
+                # so the "Selected Face" routing can be regression-tested with
+                # synthetic embeddings (tests/test_selected_face_regression.py).
+                # This branch owns only the audit counters and the pending list;
+                # the numbers it reports are unchanged.
                 threshold = self.options.face_distance_threshold
-                # When AdaFace drives identity, distances are on ITS scale —
-                # comparing them against max_face_distance would be meaningless.
                 id_threshold = _ada.active_threshold(threshold)
+                _assign = selected_routing.compute_selected_assignment(
+                    faces, self.target_face_datas, self.target_face_groups,
+                    self.selected_target_groups, self.options.selected_index,
+                    len(self.input_face_datas), id_threshold,
+                    identity_match=lambda refs, f: _ada.best_identity_match(refs, f, frame),
+                    unreliable=face_contact.unreliable,
+                )
 
-                # person group id -> list of its target-face (angle) indices
-                persons = {}
-                for i, g in enumerate(groups[:len(self.target_face_datas)]):
-                    persons.setdefault(g, []).append(i)
-                persons = {
-                    g: tis for g, tis in persons.items()
-                    if g in self.selected_target_groups
-                }
-                single_person = len(persons) <= 1
-
-                # (distance, person_g, face_idx) for every pair within threshold,
-                # using each person's closest angle to that face.
-                candidates = []
-                _contaminated = set()
-                for fidx, face in enumerate(faces):
-                    # A face sharing its recognition crop with the one beside it
-                    # is not offered to anybody. There is no track to fall back
-                    # on in this mode, and the measured behaviour of matching
-                    # anyway is that the two people of a couple each match the
-                    # OTHER's captured photo on the frames they touch — a
-                    # confident, threshold-passing swap with the wrong faceset.
-                    # See roop/face_contact.py.
-                    if face_contact.unreliable(face):
-                        _contaminated.add(fidx)
-                        if _DEBUG_MATCH:
-                            for g, tis in persons.items():
+                if _DEBUG_MATCH:
+                    rank = ({g: r for r, g in enumerate(sorted(set(self.target_face_groups)))}
+                            if self.target_face_groups else {})
+                    for cd in _assign.distances:
+                        if cd.contaminated:
+                            # The decision path skips identity on a contaminated
+                            # face; recompute the per-person lines only here, so
+                            # the every-frame cost this mode avoids stays avoided.
+                            for g, tis in _assign.persons.items():
                                 best_angle, d = _ada.best_identity_match(
                                     [self.target_face_datas[ti] for ti in tis],
-                                    face, frame)
-                                actual_angle = (tis[best_angle]
-                                                if best_angle is not None else None)
+                                    faces[cd.face_index], frame)
+                                actual_angle = tis[best_angle] if best_angle is not None else None
                                 bar_write(_ada.identity_diagnostic(
-                                    rank[g], fidx, actual_angle, d,
-                                    id_threshold, False))
-                        continue
-                    for g, tis in persons.items():
-                        best_angle, d = _ada.best_identity_match(
-                            [self.target_face_datas[ti] for ti in tis], face, frame)
-                        actual_angle = (tis[best_angle]
-                                        if best_angle is not None else None)
-                        eligible = d is not None and d <= id_threshold
-                        if _DEBUG_MATCH:
+                                    rank[g], cd.face_index, actual_angle, d, id_threshold, False))
+                        else:
                             bar_write(_ada.identity_diagnostic(
-                                rank[g], fidx, actual_angle, d,
-                                id_threshold, eligible))
-                        if eligible:
-                            candidates.append((d, g, fidx))
-                candidates.sort(key=lambda c: c[0])   # greedily assign closest pairs first
-
-                # ── Diagnostic (preview / ROOP_DEBUG_MATCH) ──────────────────
-                # Multi-person "person 2 never swaps" bugs are almost always one
-                # of: (a) the backend only has ONE captured person group so
-                # single_person collapses two faces onto one source, (b) a person
-                # sits just over the distance threshold this frame, or (c) fewer
-                # source facesets than persons. Surface all three at a glance.
-                if _DEBUG_MATCH:
+                                rank[cd.group], cd.face_index, cd.best_reference_angle,
+                                cd.distance, id_threshold, cd.eligible))
                     try:
                         dists = {fidx: {g: round(d, 3) if d is not None else None
-                                        for g, tis in persons.items()
+                                        for g, tis in _assign.persons.items()
                                         for _angle, d in [_ada.best_identity_match(
                                             [self.target_face_datas[ti] for ti in tis],
                                             faces[fidx], frame)]}
                                  for fidx in range(len(faces))}
-                        bar_write(f"[MATCH] persons={len(persons)} single_person={single_person} "
+                        bar_write(f"[MATCH] persons={len(_assign.persons)} single_person={_assign.single_person} "
                                   f"faces={len(faces)} sources={len(self.input_face_datas)} "
                                   f"thr={threshold} dist(face->person)={dists}")
                     except Exception as _e:
                         bar_write(f"[MATCH] diag failed: {_e}")
 
-                claimed_faces, claimed_persons = set(), set()
+                if _LOG_SELECTED_ROUTE:
+                    bar_write(selected_routing.format_distance_log(_assign, frame_idx))
+
                 _audit_hit('faces seen', len(faces))
-                # Same sub-count of `faces seen` the identity-lock path keeps,
-                # and for the same reason — this is the DEFAULT mode, so a
-                # gap-fill line that only exists over there describes the path
-                # most runs do not take.
+                # Same gap-fill sub-count the identity-lock path keeps, so the
+                # DEFAULT mode does not grow a permanent 0 line.
                 _gapfilled = sum(1 for f in faces
                                  if isinstance(f, dict) and f.get('_interpolated'))
-                if _gapfilled:      # or the report grows a permanent 0 line
+                if _gapfilled:
                     _audit_hit('  of those, gap-filled', _gapfilled)
-                for d, g, fidx in candidates:
-                    if fidx in claimed_faces or g in claimed_persons:
-                        continue
-                    claimed_faces.add(fidx)
-                    claimed_persons.add(g)
-                    src_index = self.options.selected_index if single_person else rank[g]
-                    if 0 <= src_index < len(self.input_face_datas):
-                        pending.append((src_index, faces[fidx]))
-                        num_faces_found += 1
-                        _audit_hit('swapped (identity match)')
-                        _audit_swapped_gapfill(faces[fidx])
-                    else:
-                        _audit_hit('refused: no source faceset for that person')
-                        if _DEBUG_MATCH:
-                            bar_write(f"[MATCH] person g={g} matched face {fidx} but src_index="
-                                      f"{src_index} >= sources({len(self.input_face_datas)}) — NOT swapped")
 
-                # Why every OTHER detected face was left alone. This is the path
-                # the app runs by default — track mode is opt-in — and until now
-                # it was the one path that could not say anything about a face it
-                # declined to swap. "The swap flickers when something crosses the
-                # face" has two candidate causes that look identical on screen and
-                # need completely different fixes: the detector losing the face
-                # (it never reaches here at all), or the identity distance
-                # crossing the threshold because the occluder changed what the
-                # recognition model sees. One run now distinguishes them.
-                _paired = {f for _, _, f in candidates}
+                for src_index, fidx in _assign.pending:
+                    pending.append((src_index, faces[fidx]))
+                    num_faces_found += 1
+                    _audit_hit('swapped (identity match)')
+                    _audit_swapped_gapfill(faces[fidx])
+
+                # Every face that was NOT swapped, accounted for by the same
+                # reason strings the decision assigned (over threshold / crop
+                # shared with the neighbour / a closer face claimed the person /
+                # the person has no source faceset -- never redirected).
                 for fidx in range(len(faces)):
-                    if fidx in claimed_faces:
+                    reason = _assign.reasons.get(fidx)
+                    if reason is None or reason == selected_routing.SWAPPED:
                         continue
-                    if fidx in _contaminated:
-                        _audit_hit('refused: crop shared with the face beside it')
-                    elif fidx not in _paired:
-                        _audit_hit('refused: over the identity threshold')
-                    else:
-                        _audit_hit('refused: that person matched a closer face')
+                    _audit_hit(reason)
+                    if _DEBUG_MATCH and reason == selected_routing.REFUSED_NO_SOURCE:
+                        bar_write(f"[MATCH] a selected person matched face {fidx} "
+                                  f"but has no source faceset — NOT swapped")
 
             elif self.options.swap_mode == "all_female" or self.options.swap_mode == "all_male":
                 gender = 'F' if self.options.swap_mode == "all_female" else 'M'

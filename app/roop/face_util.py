@@ -315,9 +315,14 @@ def _ensure_face_analyser():
                 # unconditionally: on a CPU or CUDA run the label was wrong, and
                 # a wrong provider label is exactly what this audit is meant to
                 # stop appearing in logs.
+                # Any of buffalo_l's sessions was built on the same chain; the
+                # 'detection' one is dropped for hybrid engines, so read the
+                # first model that is present rather than assuming a key.
                 try:
-                    _prov = FACE_ANALYSER_POOL[0].models['detection'].session.get_providers()[0]
-                    _prov = _prov.replace('ExecutionProvider', '')
+                    _models = getattr(FACE_ANALYSER_POOL[0], 'models', {}) or {}
+                    _sess = next(m.session for m in _models.values()
+                                 if getattr(m, 'session', None) is not None)
+                    _prov = _sess.get_providers()[0].replace('ExecutionProvider', '')
                 except Exception as _degrade_error:
                     _swallowed("roop/face_util.py:analyser_pool_label", _degrade_error,
                                "provider label fell back to GPU")
