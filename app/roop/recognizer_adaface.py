@@ -18,15 +18,22 @@ Why AdaFace:
   fewer false positives than ArcFace. A wider same/different gap is what makes a
   strict threshold survivable.
 
-IMPORTANT — the distance scale is NOT the same as w600k's.
+IMPORTANT — both recognisers use cosine distance, but the calibrated distance
+scale is NOT interchangeable between w600k and AdaFace.
   Do not reuse max_face_distance here. AdaFace has its own threshold
   (ROOP_ADAFACE_DIST) and it must be calibrated on real footage before use, which
   is what tools/calibrate_identity.py is for. Because of that this module is OFF
   by default: enabling it with an unmeasured threshold would just trade one
   badly-tuned gate for another.
 
+Distance units in this module are cosine distance: 0.0 means identical and
+larger values are less similar. A run has exactly one active identity metric;
+an unavailable AdaFace embedding is a non-match in an AdaFace run, never a
+silent w600k comparison.
+
 Mixing metrics is worse than either one, so callers must use identity_distance()
-for ALL comparisons in a run or none — see ready() / begin_run().
+for ALL captured-target identity comparisons in a run or none — temporal
+association may use w600k as a separate continuity signal.
 """
 from roop.degrade import swallowed as _swallowed
 
@@ -158,7 +165,8 @@ def face_embedding(face, frame=None):
     try:
         emb = embed_crop(crop)
     except Exception as e:
-        print(f'[AdaFace] embedding failed ({e}); falling back to w600k')
+        print(f'[AdaFace] embedding failed ({e}); this face is unavailable '
+              'for an AdaFace identity decision')
         return None
 
     # insightface's Face is a dict subclass; setting a new KEY is fine, whereas
@@ -211,18 +219,26 @@ def ready() -> bool:
     return _run_active
 
 
+def metric_name() -> str:
+    """Return the recogniser that owns identity decisions for this run."""
+    return 'adaface' if _run_active else 'w600k'
+
+
 def identity_distance(target_face, probe_face, frame=None):
     """Cosine distance between two faces for IDENTITY decisions only.
 
-    Uses AdaFace when the run activated it and both sides embed; otherwise the
-    w600k embedding, so callers need no branching. Returns None when neither
-    metric is computable.
+    Uses AdaFace for both sides when the run activated it. If either side cannot
+    produce an AdaFace embedding, returns ``None`` rather than comparing one
+    side with AdaFace and the other with w600k. When AdaFace is inactive, both
+    sides use the w600k embedding. Returns None when the active metric is not
+    computable.
     """
     if _run_active:
         a = face_embedding(target_face)
         b = face_embedding(probe_face, frame)
-        if a is not None and b is not None:
-            return float(compute_cosine_distance(a, b))
+        if a is None or b is None:
+            return None
+        return float(compute_cosine_distance(a, b))
 
     a = getattr(target_face, 'embedding', None)
     b = getattr(probe_face, 'embedding', None)
@@ -231,11 +247,45 @@ def identity_distance(target_face, probe_face, frame=None):
     return float(compute_cosine_distance(a, b))
 
 
+def best_identity_match(reference_faces, probe_face, frame=None):
+    """Return ``(reference_index, distance)`` for the closest reference angle.
+
+    The caller supplies only the captured angles belonging to one target
+    person. This preserves multi-angle pooling while making the active metric
+    and the ``min`` direction explicit in one place.
+    """
+    best_index, best_distance = None, None
+    for index, reference in enumerate(reference_faces or []):
+        distance = identity_distance(reference, probe_face, frame)
+        if distance is None:
+            continue
+        if best_distance is None or distance < best_distance:
+            best_index, best_distance = index, float(distance)
+    return best_index, best_distance
+
+
+def identity_diagnostic(target_person, detected_face, best_reference_angle,
+                        distance, threshold, eligible):
+    """Format the stable per-comparison identity diagnostic line."""
+    distance_text = 'none' if distance is None else f'{float(distance):.3f}'
+    reference_text = ('none' if best_reference_angle is None
+                      else str(int(best_reference_angle)))
+    return (
+        f'target_person={int(target_person)} '
+        f'detected_face={int(detected_face)} '
+        f'best_reference_angle={reference_text} '
+        f'identity_distance={distance_text} '
+        f'threshold={float(threshold):.3f} '
+        f'eligible={str(bool(eligible)).lower()}'
+    )
+
+
 def active_threshold(w600k_threshold):
     """The gate to compare identity_distance() against.
 
     AdaFace distances are on their own scale, so reusing max_face_distance would
     be meaningless — return the calibrated AdaFace threshold when it is driving.
+    Both branches use the same lower-is-better rule: ``distance <= threshold``.
     """
     return DIST_THRESHOLD if _run_active else w600k_threshold
 

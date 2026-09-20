@@ -46,7 +46,8 @@ from roop.temporal_quality import (TemporalQualityController, make_observation,
                                    merge_decisions)
 from roop.adaptive_enhancer import evaluate_face_frame
 from roop.procmgr_tiling import PixelBoostMixin
-from roop.procmgr_tracking import TrackingMixin, is_synthetic_face
+from roop.procmgr_tracking import (TrackingMixin, is_synthetic_face,
+                                   track_source_index)
 from roop.procmgr_batch import BatchProcessingMixin
 from roop.procmgr_stabilization import StabilizationSchedulingMixin
 from roop.face_overlap import build_regions as build_face_regions, FaceRegion
@@ -3471,11 +3472,10 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                     """Cosine distance from *face* to the closest captured angle of
                     the person that source index *src* belongs to (None if unknown)."""
                     tis = rank_to_tis.get(src)
-                    if not tis or getattr(face, 'embedding', None) is None:
+                    if not tis:
                         return None
                     ds = [_ada.identity_distance(self.target_face_datas[ti], face, frame)
-                          for ti in tis
-                          if getattr(self.target_face_datas[ti], 'embedding', None) is not None]
+                          for ti in tis]
                     ds = [d for d in ds if d is not None]
                     return min(ds) if ds else None
 
@@ -3509,7 +3509,7 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                         bool(f.get('_interpolated')) if isinstance(f, dict) else False,
                         _dist_to_any_person(f)))
 
-                for face in faces:
+                for detected_index, face in enumerate(faces):
                     audit_face_begin(frame_idx, face)
                     _audit_hit('faces seen')
                     # Same isinstance guard the claim-ordering sort above uses —
@@ -3526,6 +3526,17 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                     dirty = face_contact.unreliable(face)
                     if dirty:
                         _audit_hit('  of those, crop shared with the face beside it')
+
+                    if _DEBUG_MATCH:
+                        for g, tis in persons.items():
+                            best_angle, d = _ada.best_identity_match(
+                                [self.target_face_datas[ti] for ti in tis], face, frame)
+                            actual_angle = (tis[best_angle]
+                                            if best_angle is not None else None)
+                            eligible = (not dirty and d is not None and d <= id_threshold)
+                            bar_write(_ada.identity_diagnostic(
+                                rank[g], detected_index, actual_angle, d,
+                                id_threshold, eligible))
 
                     # ── Exact track match ────────────────────────────────────
                     # A face handed out by temporal detection (see
@@ -3544,7 +3555,8 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                     # rejected / RECODE_STATUS.md for the four detection-side
                     # attempts this supersedes, not adds to.
                     tid = face.get('_track_id') if isinstance(face, dict) else None
-                    exact = track_source_map.get(tid) if tid is not None else None
+                    exact = (track_source_index(track_source_map.get(tid))
+                             if tid is not None else None)
                     if exact not in allowed_source_indices:
                         exact = None
                     if exact is not None and tid in claimed_track_ids:
@@ -3823,10 +3835,6 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                             if r_src in claimed_sources_in_frame:
                                 n_src_claimed += 1
                                 continue
-                            embs = [getattr(self.target_face_datas[ti], 'embedding', None) for ti in tis]
-                            embs = [e for e in embs if e is not None]
-                            if not embs or getattr(face, 'embedding', None) is None:
-                                continue
                             _ds = [_ada.identity_distance(self.target_face_datas[ti], face, frame)
                                    for ti in tis]
                             _ds = [x for x in _ds if x is not None]
@@ -3843,9 +3851,11 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                             _dd = {}
                             for g, tis in persons.items():
                                 try:
-                                    _dd[g] = round(min(compute_cosine_distance(
-                                        self.target_face_datas[ti].embedding, face.embedding)
-                                        for ti in tis), 3)
+                                    _angle, _distance = _ada.best_identity_match(
+                                        [self.target_face_datas[ti] for ti in tis],
+                                        face, frame)
+                                    _dd[g] = (round(_distance, 3)
+                                              if _distance is not None else None)
                                 except Exception as _degrade_error:
                                     _swallowed("roop/ProcessMgr.py:4685", _degrade_error, "fallback continued")
                                     _dd[g] = None
@@ -3972,15 +3982,28 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                     # See roop/face_contact.py.
                     if face_contact.unreliable(face):
                         _contaminated.add(fidx)
+                        if _DEBUG_MATCH:
+                            for g, tis in persons.items():
+                                best_angle, d = _ada.best_identity_match(
+                                    [self.target_face_datas[ti] for ti in tis],
+                                    face, frame)
+                                actual_angle = (tis[best_angle]
+                                                if best_angle is not None else None)
+                                bar_write(_ada.identity_diagnostic(
+                                    rank[g], fidx, actual_angle, d,
+                                    id_threshold, False))
                         continue
                     for g, tis in persons.items():
-                        _ds = [_ada.identity_distance(self.target_face_datas[ti], face, frame)
-                               for ti in tis]
-                        _ds = [x for x in _ds if x is not None]
-                        if not _ds:
-                            continue
-                        d = min(_ds)
-                        if d <= id_threshold:
+                        best_angle, d = _ada.best_identity_match(
+                            [self.target_face_datas[ti] for ti in tis], face, frame)
+                        actual_angle = (tis[best_angle]
+                                        if best_angle is not None else None)
+                        eligible = d is not None and d <= id_threshold
+                        if _DEBUG_MATCH:
+                            bar_write(_ada.identity_diagnostic(
+                                rank[g], fidx, actual_angle, d,
+                                id_threshold, eligible))
+                        if eligible:
                             candidates.append((d, g, fidx))
                 candidates.sort(key=lambda c: c[0])   # greedily assign closest pairs first
 
@@ -3992,9 +4015,11 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                 # source facesets than persons. Surface all three at a glance.
                 if _DEBUG_MATCH:
                     try:
-                        dists = {fidx: {g: round(min(compute_cosine_distance(
-                                    self.target_face_datas[ti].embedding, faces[fidx].embedding)
-                                    for ti in tis), 3) for g, tis in persons.items()}
+                        dists = {fidx: {g: round(d, 3) if d is not None else None
+                                        for g, tis in persons.items()
+                                        for _angle, d in [_ada.best_identity_match(
+                                            [self.target_face_datas[ti] for ti in tis],
+                                            faces[fidx], frame)]}
                                  for fidx in range(len(faces))}
                         bar_write(f"[MATCH] persons={len(persons)} single_person={single_person} "
                                   f"faces={len(faces)} sources={len(self.input_face_datas)} "

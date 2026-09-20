@@ -38,7 +38,7 @@ import numpy as np
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from insightface.app.common import Face                  # noqa: E402
-from roop.procmgr_tracking import TrackingMixin          # noqa: E402
+from roop.procmgr_tracking import (TrackingMixin, track_source_index)  # noqa: E402
 
 
 class _Options:
@@ -157,6 +157,62 @@ class TemporalFaceReplayTest(unittest.TestCase):
         self.assertEqual(seen, {7, 9})
         self.assertTrue(all(f.get('_track_id') is not None
                             for faces in out.values() for f in faces))
+
+
+class VideoSelectedPersonAdversarialTest(unittest.TestCase):
+    """A crossing must not turn the selected track's source into a default."""
+
+    @staticmethod
+    def _moving_track(track_id, xs, embedding):
+        frames = list(range(len(xs)))
+        obs = {i: _face(x, 300.0, embedding) for i, x in enumerate(xs)}
+        return {
+            'id': track_id,
+            'obs': obs,
+            'emb_mean': embedding,
+            'emb_n': len(frames),
+        }
+
+    def test_selected_track_remains_the_only_eligible_face_through_crossing(self):
+        """The target and an unrelated person cross while their track IDs persist.
+
+        The source map intentionally uses its production representation,
+        ``(source_index, track_embedding)``. This catches both halves of the
+        contract: temporal replay must preserve each track ID and the swap
+        path must read only the source-index component of that binding.
+        """
+        target_embedding = _emb(11)
+        bystander_embedding = _emb(22)
+        mgr = _Mgr()
+        tracks = [
+            self._moving_track(41, [250.0, 450.0, 650.0], target_embedding),
+            self._moving_track(99, [750.0, 550.0, 350.0], bystander_embedding),
+        ]
+        out = mgr._build_temporal_faces(tracks, gap_max=10)
+        source_map = {
+            41: (0, target_embedding),
+            99: (None, bystander_embedding),
+        }
+
+        self.assertEqual(sorted(out), [0, 1, 2])
+        for frame_index in (0, 1, 2):
+            sources = [
+                track_source_index(source_map.get(face.get('_track_id')))
+                for face in out[frame_index]
+            ]
+            self.assertEqual(sources.count(0), 1,
+                             'the selected target track must remain eligible')
+            self.assertEqual(sources.count(None), 1,
+                             'the crossing bystander must remain untouched')
+
+        # Keep this regression tied to the exact ProcessMgr handoff, not only to
+        # the helper in isolation. `_track_source_map` values are tuples and the
+        # exact branch must use their source component.
+        process_mgr = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), '..', 'roop', 'ProcessMgr.py')
+        with open(process_mgr, encoding='utf-8') as handle:
+            source = handle.read()
+        self.assertIn('track_source_index(track_source_map.get(tid))', source)
 
 
 if __name__ == '__main__':

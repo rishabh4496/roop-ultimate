@@ -720,7 +720,12 @@ def has_face(frame: Frame) -> bool:
 
 
 def compute_cosine_similarity(emb1: np.ndarray, emb2: np.ndarray) -> float:
-    """Cosine similarity in [0, 1] range (1.0 = identical)."""
+    """Raw cosine similarity in [-1, 1] (1.0 = identical).
+
+    Callers that need a distance must use ``1.0 - similarity``. That distance
+    is lower-is-better and has units in [0, 2] for normalized-direction
+    comparisons.
+    """
     if emb1 is None or emb2 is None:
         return 0.0
     v1 = np.asarray(emb1, dtype=np.float32).flatten()
@@ -731,7 +736,7 @@ def compute_cosine_similarity(emb1: np.ndarray, emb2: np.ndarray) -> float:
         return 0.0
     dot = float(np.dot(v1, v2))
     sim = dot / (n1 * n2)
-    # Clamp to [-1.0, 1.0] then map to [0, 1] or return direct cosine similarity
+    # Return the direct cosine similarity; do not silently invert or remap it.
     return max(-1.0, min(1.0, sim))
 
 
@@ -745,14 +750,14 @@ def check_face_matches_target(
     low_threshold: Optional[float] = None,
     iou_threshold: Optional[float] = None
 ) -> Tuple[bool, float]:
-    """Check if face matches any target face above similarity threshold (or below distance threshold).
-    
-    Supports dual-threshold hysteresis:
-      - High acceptance threshold: S_match >= high_threshold (default 0.62).
-      - Low tracking threshold: S_track >= low_threshold (default 0.50) when paired with
-        spatial IoU >= iou_threshold (default 0.50) with previous_bbox.
+    """Compare w600k embeddings with explicit threshold units.
 
-    Returns (matches: bool, best_score: float).
+    Without hysteresis arguments, ``threshold`` is *cosine distance* and the
+    match rule is ``distance <= threshold`` (lower is better); the returned
+    score is the best raw cosine similarity. When hysteresis is requested,
+    ``high_threshold`` and ``low_threshold`` are instead *cosine similarity*
+    thresholds and use ``similarity >= threshold``. Keeping those units
+    separate avoids accidentally treating a similarity threshold as a distance.
     """
     if not target_faces:
         return True, 1.0
@@ -762,7 +767,7 @@ def check_face_matches_target(
     if emb is None:
         return False, 0.0
 
-    # Default distance threshold from globals/options (lower distance = higher similarity)
+    # Default threshold is cosine distance (lower distance = higher similarity).
     dist_thresh = float(threshold if threshold is not None
                         else getattr(roop.globals, "face_distance_threshold", 0.65) or 0.65)
 
@@ -777,7 +782,7 @@ def check_face_matches_target(
             continue
         
         sim = compute_cosine_similarity(emb, t_emb)
-        dist = 1.0 - sim  # Cosine distance
+        dist = 1.0 - sim  # Cosine distance, lower is better
         if dist < min_dist:
             min_dist = dist
             best_sim = sim
@@ -788,7 +793,7 @@ def check_face_matches_target(
         best_sim = max(best_sim, win_max, win_mean)
         min_dist = min(min_dist, 1.0 - best_sim)
 
-    # Dual-threshold hysteresis evaluation
+    # Dual-threshold hysteresis uses similarity units, unlike dist_thresh.
     if previous_bbox is not None or high_threshold is not None or low_threshold is not None:
         h_thresh = 0.62 if high_threshold is None else float(high_threshold)
         l_thresh = 0.50 if low_threshold is None else float(low_threshold)

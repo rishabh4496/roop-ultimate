@@ -93,6 +93,64 @@ class TestActiveScaling(unittest.TestCase):
         self.assertEqual(ada.scale(0.85, 0), 0.85)
 
 
+class TestIdentitySemantics(unittest.TestCase):
+    """Deterministic identity decisions independent of ONNX/model availability."""
+
+    def setUp(self):
+        self._saved = ada._run_active
+        ada._run_active = False
+
+    def tearDown(self):
+        ada._run_active = self._saved
+
+    @staticmethod
+    def _face(w600k, adaface=None):
+        face = _FakeFace(np.asarray(w600k, dtype=np.float32))
+        if adaface is not None:
+            face[ada._EMB_KEY] = np.asarray(adaface, dtype=np.float32)
+        return face
+
+    def test_selected_person_uses_all_of_only_that_persons_angles(self):
+        ada._run_active = True
+        # Person 0 has two captured angles. The probe is closest to angle 1,
+        # while person 1 has a deliberately different reference bank.
+        person_zero = [
+            self._face([1, 0, 0], [1, 0, 0]),
+            self._face([0, 1, 0], [0, 1, 0]),
+        ]
+        person_one = [self._face([0, 0, 1], [0, 0, 1])]
+        probe = self._face([0, 1, 0], [0, 1, 0])
+
+        angle, distance = ada.best_identity_match(person_zero, probe)
+        self.assertEqual(angle, 1)
+        self.assertAlmostEqual(distance, 0.0, places=6)
+        other_angle, other_distance = ada.best_identity_match(person_one, probe)
+        self.assertEqual(other_angle, 0)
+        self.assertAlmostEqual(other_distance, 1.0, places=6)
+
+    def test_threshold_is_cosine_distance_lower_is_better(self):
+        ada._run_active = True
+        target = self._face([1, 0, 0], [1, 0, 0])
+        identical = self._face([0, 1, 0], [1, 0, 0])
+        orthogonal = self._face([0, 1, 0], [0, 1, 0])
+        self.assertLessEqual(ada.identity_distance(target, identical), 0.1)
+        self.assertFalse(ada.identity_distance(target, orthogonal) <= 0.1)
+
+    def test_active_run_never_falls_back_to_w600k_when_adaface_side_is_missing(self):
+        ada._run_active = True
+        target = self._face([1, 0, 0], [1, 0, 0])
+        probe_without_adaface = self._face([1, 0, 0])
+        self.assertIsNone(ada.identity_distance(target, probe_without_adaface))
+
+    def test_diagnostic_has_stable_distance_threshold_units(self):
+        line = ada.identity_diagnostic(0, 0, 2, 0.12549, 0.5, True)
+        self.assertEqual(
+            line,
+            'target_person=0 detected_face=0 best_reference_angle=2 '
+            'identity_distance=0.125 threshold=0.500 eligible=true',
+        )
+
+
 class TestContract(unittest.TestCase):
     def test_alignment_matches_the_cached_crop_key(self):
         """face_embedding reuses _attach_source_crops' cached crop, so the two

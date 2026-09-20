@@ -28,6 +28,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from roop.procmgr_tracking import TrackingMixin, no_source_reason  # noqa: E402
 from roop.procmgr_runtime import _TRACK_ASSIGN_MAX           # noqa: E402
+from roop import recognizer_adaface as ada                    # noqa: E402
 
 
 def _emb(*vals):
@@ -207,6 +208,44 @@ class MultiPersonTest(unittest.TestCase):
         tracks = [_track(1, _at_distance(profile, 0.05), 0, 400)]
         track_src, _assign_max, _refused, _inh = mgr._assign_track_sources(tracks)
         self.assertEqual(track_src[1], 0)
+
+
+class ActiveIdentityMetricTest(unittest.TestCase):
+    """Track-to-target binding must use one run-wide metric on both sides."""
+
+    def setUp(self):
+        self._saved = ada._run_active
+        ada._run_active = True
+
+    def tearDown(self):
+        ada._run_active = self._saved
+
+    def test_active_metric_ignores_misleading_w600k_track_vector(self):
+        target = _Captured(np.array([0.0, 1.0, 0.0], np.float32))
+        setattr(target, ada._EMB_KEY, TARGET.copy())
+        mgr = _Mgr([target.embedding], [0])
+        # Replace the manager's captured object with the cached AdaFace target;
+        # its w600k embedding is deliberately orthogonal to the AdaFace vector.
+        mgr.target_face_datas = [target]
+        track = _track(1, TARGET, 0, 20)
+        track['ada_mean'] = TARGET.copy()
+        track['ada_n'] = 1
+        track['ada_sum'] = TARGET.astype(np.float64)
+
+        track_src, assign_max, refused, _inherited = mgr._assign_track_sources([track])
+        self.assertEqual(track_src[1], 0)
+        self.assertAlmostEqual(assign_max, ada.DIST_THRESHOLD, places=6)
+        self.assertEqual(refused, 0)
+
+    def test_active_metric_missing_track_vector_is_not_w600k_fallback(self):
+        target = _Captured(TARGET.copy())
+        setattr(target, ada._EMB_KEY, TARGET.copy())
+        mgr = _Mgr([target], [0])
+        track = _track(1, TARGET, 0, 20)
+        # No ada_mean means the active metric cannot compare this track. Its
+        # matching w600k vector must not silently rescue it.
+        track_src, _assign_max, _refused, _inherited = mgr._assign_track_sources([track])
+        self.assertIsNone(track_src[1])
 
 
 class GateOrderTest(unittest.TestCase):

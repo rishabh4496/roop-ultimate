@@ -38,6 +38,21 @@ def is_synthetic_face(face):
     except (AttributeError, TypeError, ValueError):
         return False
 
+
+def track_source_index(binding):
+    """Return the source index carried by a track-source binding.
+
+    ``_track_source_map`` deliberately keeps the source index alongside the
+    track's mean embedding: ``(source_index, embedding)``. The embedding is
+    useful to diagnostics and legacy spatial fallback, but it is not another
+    source identifier. Keeping this unpacking in one helper prevents the exact
+    track-ID path from comparing the tuple itself with the allowed integer
+    source indices.
+    """
+    if isinstance(binding, (tuple, list)):
+        return binding[0] if binding else None
+    return binding
+
 from roop.procmgr_runtime import (_DEBUG_MATCH, _TRACK_EMB_MAX, _TRACK_ASSIGN_MAX,
                                   _TRACK_ASSIGN_MARGIN, _TRACK_ASSIGN_FLOOR,
                                   _TRACK_ASSIGN_MIN_OBS, _TRACK_REID_MAX,
@@ -55,6 +70,7 @@ import roop.globals
 from roop import session_pool
 from roop.face_util import get_all_faces, analysis_pooled
 from roop import face_contact
+from roop import recognizer_adaface as _ada
 from roop.utilities import compute_cosine_distance
 from roop.procmgr_runtime import _prof, _gpu_guard, pause_scope, wait_while_paused, PROGRESS_BAR_FORMAT, _TRACK_OVERLAP_FRAC, ChunkedProgress, bar_write, publish_eta, audit_detect_frame_begin, audit_detect_miss_here
 from roop.temporal_tracker import TemporalFaceTracker
@@ -335,13 +351,23 @@ class TrackingMixin:
                         if pool_workers > 1 else None)
 
         def _run_detect(fr, crop_bbox, expected_count=None):
+            def _cache_identity_embeddings(faces):
+                # Target-assignment identity uses one metric for the whole run.
+                # Temporal association below intentionally remains the existing
+                # w600k continuity signal; this cache is only for the captured
+                # target <-> runtime identity boundary.
+                if _ada.ready():
+                    for detected in faces or ():
+                        _ada.face_embedding(detected, fr)
+                return faces
+
             # Fresh slate per frame: the score recorded is the best ANY attempt on
             # this frame rejected, not a leftover from the previous one.
             audit_detect_frame_begin()
             if crop_bbox is not None:
                 faces = get_all_faces_in_roi(fr, crop_bbox)
                 if faces:
-                    return _DetectionResult(faces, mode='roi')
+                    return _DetectionResult(_cache_identity_embeddings(faces), mode='roi')
             faces = get_all_faces(fr) or []
             if HIRES_MISS and expected_count and len(faces) < expected_count:
                 hi_faces = get_all_faces_hires(fr, HIRES_DET_SIZE)
@@ -359,6 +385,7 @@ class TrackingMixin:
                     if any(self._bbox_iou(hf.bbox, f.bbox) >= 0.3 for f in faces):
                         continue
                     faces.append(hf)
+            _cache_identity_embeddings(faces)
             if not faces:
                 # Every attempt on this frame came back empty. How close the best
                 # rejected anchor came is the only thing that says whether
@@ -426,6 +453,7 @@ class TrackingMixin:
             for face in faces:
                 bbox = np.asarray(face.bbox, dtype=np.float32)
                 emb = np.asarray(face.embedding, dtype=np.float32)
+                ada_emb = (_ada.face_embedding(face) if _ada.ready() else None)
                 # Two faces in contact put most of each other INSIDE each
                 # other's recognition crop, so both embeddings drift toward the
                 # same picture. Believing one here is how a person's track
@@ -555,6 +583,11 @@ class TrackingMixin:
                         'emb_sum': emb.astype(np.float64).copy(),
                         'emb_n': 1,
                         'emb_mean': emb.copy(),
+                        'ada_sum': (None if dirty or ada_emb is None
+                                    else np.asarray(ada_emb, dtype=np.float64).copy()),
+                        'ada_n': (0 if dirty or ada_emb is None else 1),
+                        'ada_mean': (None if dirty or ada_emb is None
+                                     else np.asarray(ada_emb, dtype=np.float32).copy()),
                         # Explicit temporal state fields. The companion
                         # TemporalFaceTracker owns scheduling/lifecycle state;
                         # these copies keep the established whole-clip track
@@ -629,6 +662,18 @@ class TrackingMixin:
                                 best['emb_mean'] = ((1.0 - alpha) * best['emb_mean'] + alpha * emb).astype(np.float32)
                                 best['emb_sum'] += emb
                                 best['emb_n'] += 1
+                        if ada_emb is not None:
+                            if best.get('emb_dirty') or not best.get('ada_n'):
+                                best['ada_sum'] = np.asarray(ada_emb, dtype=np.float64).copy()
+                                best['ada_n'] = 1
+                                best['ada_mean'] = np.asarray(ada_emb, dtype=np.float32).copy()
+                            else:
+                                best['ada_sum'] = (np.asarray(best['ada_sum'], np.float64)
+                                                   + np.asarray(ada_emb, np.float64))
+                                best['ada_n'] = int(best.get('ada_n') or 0) + 1
+                                best['ada_mean'] = (
+                                    np.asarray(best['ada_sum'], np.float64)
+                                    / float(best['ada_n'])).astype(np.float32)
                     best['identity_embedding'] = np.asarray(
                         best.get('emb_mean', emb), dtype=np.float32).copy()
 
@@ -958,6 +1003,17 @@ class TrackingMixin:
                 if n > 1 and t.get('emb_sum') is not None:
                     t['emb_mean'] = (np.asarray(t['emb_sum'], np.float64) / float(n)).astype(np.float32)
 
+        # Captured-target identity assignment must use the same recogniser on
+        # both sides. Temporal continuity still uses the established w600k
+        # signal above, but these means are the AdaFace-side track identities
+        # when AdaFace is active for this run.
+        if _ada.ready():
+            for t in tracks:
+                n = int(t.get('ada_n') or 0)
+                if n > 0 and t.get('ada_sum') is not None:
+                    t['ada_mean'] = (np.asarray(t['ada_sum'], np.float64)
+                                     / float(n)).astype(np.float32)
+
         # Assign each track to a source (person rank), once, by mean embedding.
         track_map = {t['id']: t for t in tracks}
         track_src, assign_max, refused_margin, inherited = (
@@ -1043,19 +1099,28 @@ class TrackingMixin:
             return f'  [shares {n} frames with track {otid}, {sep:.2f} widths apart = {what}]'
 
         rows = []
+        summary_identity_active = _ada.ready()
         for t in sorted(tracks, key=lambda x: int(x.get('first_seen', 0))):
             dd = {}
             for g, tis in persons.items():
-                embs = [getattr(self.target_face_datas[ti], 'embedding', None) for ti in tis]
+                embs = [(_ada.face_embedding(self.target_face_datas[ti])
+                         if summary_identity_active
+                         else getattr(self.target_face_datas[ti], 'embedding', None))
+                        for ti in tis]
                 embs = [e for e in embs if e is not None]
-                if embs and t.get('emb_mean') is not None:
-                    dd[g] = min(compute_cosine_distance(e, t['emb_mean']) for e in embs)
+                t_identity = (t.get('ada_mean') if summary_identity_active
+                              else t.get('emb_mean'))
+                if embs and t_identity is not None:
+                    dd[g] = min(compute_cosine_distance(e, t_identity) for e in embs)
             near = min(dd.values()) if dd else float('nan')
             n_frames = len(t.get('obs', {})) or max(
                 1, int(t.get('last_seen', 0)) - int(t.get('first_seen', 0)) + 1)
             src = track_src.get(t['id'])
             rows.append((n_frames, t, near, dd, src))
         if rows:
+            summary_margin = _ada.scale(
+                _TRACK_ASSIGN_MARGIN,
+                getattr(self.options, 'face_distance_threshold', 0.75))
             print(f"[Track] per-track assignment (gate {assign_max:.2f}; below it is the "
                   f"same person, 1.0+ is somebody else):", flush=True)
             for n_frames, t, near, dd, src in sorted(rows, key=lambda r: -r[0]):
@@ -1082,7 +1147,7 @@ class TrackingMixin:
               + (f' (stitched down from {_pre_stitch})' if stitch_alias else '')
               + f', {matched} matched to a source (gate {assign_max:.2f})'
               + (f', {refused_margin} refused as too far from their person\'s '
-                 f'closest track (margin {_TRACK_ASSIGN_MARGIN})' if refused_margin else '')
+                 f'closest track (margin {summary_margin})' if refused_margin else '')
               + (f'; {reid_refused} detections refused by the appearance-only '
                  f'fallback (Re-ID gate {REID_MAX})' if reid_refused else '')
               + (f'; {contam_seen} detections had a contaminated recognition crop '
@@ -1247,6 +1312,17 @@ class TrackingMixin:
             if src.get('emb_sum') is not None and dst.get('emb_sum') is not None:
                 dst['emb_sum'] = np.asarray(dst['emb_sum'], np.float64) + np.asarray(src['emb_sum'], np.float64)
                 dst['emb_n'] = int(dst.get('emb_n') or 0) + int(src.get('emb_n') or 0)
+            src_ada_n = int(src.get('ada_n') or 0)
+            if src_ada_n and src.get('ada_sum') is not None:
+                if int(dst.get('ada_n') or 0) and dst.get('ada_sum') is not None:
+                    dst['ada_sum'] = (np.asarray(dst['ada_sum'], np.float64)
+                                      + np.asarray(src['ada_sum'], np.float64))
+                    dst['ada_n'] = int(dst.get('ada_n') or 0) + src_ada_n
+                else:
+                    dst['ada_sum'] = np.asarray(src['ada_sum'], np.float64).copy()
+                    dst['ada_n'] = src_ada_n
+                dst['ada_mean'] = (np.asarray(dst['ada_sum'], np.float64)
+                                   / float(dst['ada_n'])).astype(np.float32)
             if src.get('obs'):
                 dst.setdefault('obs', {}).update(src['obs'])
             dst['first_seen'] = min(int(dst.get('first_seen', 0)), int(src.get('first_seen', 0)))
@@ -1294,6 +1370,40 @@ class TrackingMixin:
         rank = {g: r for r, g in enumerate(uniq)}
         single_person = len(uniq) <= 1
         threshold = self.options.face_distance_threshold
+        identity_threshold = _ada.active_threshold(threshold)
+        identity_active = _ada.ready()
+
+        def _track_identity_embedding(track):
+            """Vector used for captured-target identity, never mixed metrics."""
+            return (track.get('ada_mean') if identity_active
+                    else track.get('emb_mean'))
+
+        def _face_identity_embedding(face):
+            """Runtime vector used for captured-target identity."""
+            return (_ada.face_embedding(face) if identity_active
+                    else getattr(face, 'embedding', None))
+
+        def _target_identity_embedding(face):
+            """Captured-angle vector used for captured-target identity."""
+            return (_ada.face_embedding(face) if identity_active
+                    else getattr(face, 'embedding', None))
+
+        # Assignment constants are calibrated in w600k cosine-distance units.
+        # AdaFace is still cosine distance (0 identical, larger less similar),
+        # but its calibrated scale is separate, so every identity gate is
+        # rescaled together for an AdaFace run. Defaults are unchanged.
+        gate_max = (_ada.scale(_TRACK_ASSIGN_MAX, threshold)
+                    if identity_active else _TRACK_ASSIGN_MAX)
+        gate_margin = (_ada.scale(_TRACK_ASSIGN_MARGIN, threshold)
+                       if identity_active else _TRACK_ASSIGN_MARGIN)
+        gate_floor = (_ada.scale(_TRACK_ASSIGN_FLOOR, threshold)
+                      if identity_active else _TRACK_ASSIGN_FLOOR)
+        inherit_max = (_ada.scale(_TRACK_INHERIT_MAX, threshold)
+                       if identity_active else _TRACK_INHERIT_MAX)
+        inherit_gain = (_ada.scale(_TRACK_INHERIT_GAIN, threshold)
+                        if identity_active else _TRACK_INHERIT_GAIN)
+        inherit_margin = (_ada.scale(_TRACK_INHERIT_MARGIN, threshold)
+                          if identity_active else _TRACK_INHERIT_MARGIN)
 
         persons = self._person_angle_indices()
 
@@ -1302,9 +1412,9 @@ class TrackingMixin:
         # loose per-frame threshold exists to carry a single bad frame, not to
         # hand a stretch of frames to a track that merely resembles the target.
         if single_person:
-            assign_max = threshold
+            assign_max = identity_threshold
         else:
-            assign_max = min(threshold, _TRACK_ASSIGN_MAX) if _TRACK_ASSIGN_MAX > 0 else threshold
+            assign_max = min(identity_threshold, gate_max) if gate_max > 0 else identity_threshold
 
         candidates = []
         track_map = {t['id']: t for t in tracks}
@@ -1313,11 +1423,11 @@ class TrackingMixin:
         # to ask whether a track explains them better than the photo does.
         photo_d = {}
         for t in tracks:
-            t_emb = t.get('emb_mean')
+            t_emb = _track_identity_embedding(t)
             if t_emb is None:
                 continue
             for g, tis in persons.items():
-                embs = [getattr(self.target_face_datas[ti], 'embedding', None) for ti in tis]
+                embs = [_target_identity_embedding(self.target_face_datas[ti]) for ti in tis]
                 embs = [e for e in embs if e is not None]
                 if not embs:
                     continue
@@ -1332,7 +1442,7 @@ class TrackingMixin:
                     hits = 0
                     hit_frames = []
                     for f_idx, face in (t.get('obs') or {}).items():
-                        oe = getattr(face, 'embedding', None)
+                        oe = _face_identity_embedding(face)
                         if oe is None:
                             continue
                         # A contaminated observation's embedding is measuring
@@ -1395,9 +1505,9 @@ class TrackingMixin:
             # comparison of two floats and refuses outright. Never tighter than
             # _TRACK_ASSIGN_FLOOR: a very good anchor must not turn the margin
             # into a stricter gate than anything else applies to this person.
-            if (_TRACK_ASSIGN_MARGIN > 0 and g in person_anchor
-                    and d > max(person_anchor[g] + _TRACK_ASSIGN_MARGIN,
-                                _TRACK_ASSIGN_FLOOR)):
+            if (gate_margin > 0 and g in person_anchor
+                    and d > max(person_anchor[g] + gate_margin,
+                                gate_floor)):
                 refused_margin += 1
                 continue
             t = track_map[tid]
@@ -1480,15 +1590,16 @@ class TrackingMixin:
             best = (float('inf'), None)
             for oid in person_tracks.get(g, ()):
                 ot = track_map.get(oid)
-                if ot is None or ot.get('emb_mean') is None:
+                ot_emb = _track_identity_embedding(ot) if ot is not None else None
+                if ot_emb is None:
                     continue
-                d = compute_cosine_distance(ot['emb_mean'], t_emb)
+                d = compute_cosine_distance(ot_emb, t_emb)
                 if d < best[0]:
                     best = (d, oid)
             return best
 
         inherited = {}
-        if _TRACK_INHERIT_MAX > 0:
+        if inherit_max > 0:
             # Repeated to a fixed point. Identity is transitive along the clip:
             # the wide-shot track vouches for the close-up one, which is then
             # itself the only thing near the tracks of the shot AFTER it. On the
@@ -1500,17 +1611,20 @@ class TrackingMixin:
                 progress = False
                 for t in tracks:
                     tid = t['id']
-                    if track_src.get(tid) is not None or t.get('emb_mean') is None:
+                    t_identity = _track_identity_embedding(t)
+                    if track_src.get(tid) is not None or t_identity is None:
                         continue
                     t_frames = self._track_frames(t, frames_of)
                     best = None
                     for g in persons:
                         owner = person_owner.get(g)
-                        d, near = _nearest_track(t['emb_mean'], g)
-                        if near is None or d > _TRACK_INHERIT_MAX:
+                        d, near = _nearest_track(t_identity, g)
+                        if near is None or d > inherit_max:
                             continue
                         own_t = track_map.get(owner)
-                        if own_t is None or own_t.get('emb_mean') is None:
+                        own_identity = (_track_identity_embedding(own_t)
+                                        if own_t is not None else None)
+                        if own_identity is None:
                             continue
                         # ONE of two justifications, because there are two shapes
                         # of leftover and no single test covers both.
@@ -1540,15 +1654,15 @@ class TrackingMixin:
                         ref = photo_d.get((tid, g))
                         contained = (int(own_t.get('first_seen', 0)) <= int(t.get('first_seen', 0))
                                      and int(t.get('last_seen', 0)) <= int(own_t.get('last_seen', 0)))
-                        d_own_owner = compute_cosine_distance(own_t['emb_mean'], t['emb_mean'])
+                        d_own_owner = compute_cosine_distance(own_identity, t_identity)
                         fragment_ok = (contained and ref is not None
-                                       and d_own_owner <= ref - _TRACK_INHERIT_GAIN)
+                                       and d_own_owner <= ref - inherit_gain)
                         margin_ok = False
-                        if _TRACK_INHERIT_MARGIN > 0 and len(persons) > 1:
-                            others = [_nearest_track(t['emb_mean'], g2)[0]
+                        if inherit_margin > 0 and len(persons) > 1:
+                            others = [_nearest_track(t_identity, g2)[0]
                                       for g2 in persons if g2 != g]
                             others = [x for x in others if x < float('inf')]
-                            margin_ok = bool(others) and min(others) - d >= _TRACK_INHERIT_MARGIN
+                            margin_ok = bool(others) and min(others) - d >= inherit_margin
                         if not (fragment_ok or margin_ok):
                             continue
                         if t_frames is not None:
