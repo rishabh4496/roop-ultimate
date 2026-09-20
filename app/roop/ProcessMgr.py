@@ -999,9 +999,14 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
         self.target_selection = normalize_target_selection(
             getattr(options, 'selection_state', None),
             person_count=len(set(self.target_face_groups)),
+            target_person_ids=(
+                self.processing_request.get('target_person_ids')
+                if self.processing_request else None),
         )
         self.selected_target_groups = selection_group_ids(
             self.target_face_groups, self.target_selection,
+            (self.processing_request.get('target_person_ids')
+             if self.processing_request else None),
         )
         self.num_frames_no_face = 0
         self.last_swapped_frame = None

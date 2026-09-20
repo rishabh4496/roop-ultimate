@@ -219,17 +219,39 @@ def normalize_processing_request(payload=None, *, target_groups=None,
                                  target_media_index=None, request_id=None,
                                  target_media_id=None,
                                  current_source_names=None,
-                                 current_source_ids=None):
+                                 current_source_ids=None,
+                                 target_person_ids=None):
     """Build the one request representation consumed by preview and render."""
     payload = payload if isinstance(payload, dict) else {}
     groups = list(target_groups or [])
+    # The UI may send the parallel per-angle id array while the API normally
+    # supplies the already-projected per-person list. Canonical requests use
+    # first-appearance person order in either case; no angle index becomes an
+    # identity by accident.
+    stable_person_ids = []
+    for value in (target_person_ids or []):
+        value = str(value)
+        if value not in stable_person_ids:
+            stable_person_ids.append(value)
     swap_mode = normalize_swap_mode(payload.get("detection", "All faces"))
     selection = normalize_target_selection(
         payload.get("selection_state"),
         person_count=len(set(groups)),
+        target_person_ids=stable_person_ids,
     )
-    face_mapping = payload.get("face_mapping")
-    source_mapping_ids = payload.get("source_mapping_ids")
+    stable_mapping = payload.get("target_person_source_mapping")
+    if (not isinstance(stable_mapping, dict)
+            and isinstance(payload.get("face_mapping"), dict)
+            and stable_person_ids):
+        stable_mapping = payload.get("face_mapping")
+    if isinstance(stable_mapping, dict) and stable_person_ids:
+        face_mapping = [stable_mapping.get(person_id, -1)
+                        for person_id in stable_person_ids]
+        source_mapping_ids = [stable_mapping.get(person_id)
+                              for person_id in stable_person_ids]
+    else:
+        face_mapping = payload.get("face_mapping")
+        source_mapping_ids = payload.get("source_mapping_ids")
     source_mapping_names = payload.get("source_mapping_names")
     source_index_mapping = resolve_source_mapping_ids(
         face_mapping, source_mapping_ids, current_source_ids,
@@ -279,6 +301,9 @@ def normalize_processing_request(payload=None, *, target_groups=None,
         "target_groups": groups,
         "target_face_count": len(groups),
         "target_person_count": len(set(groups)),
+        "target_person_ids": stable_person_ids,
+        "target_person_source_mapping": (
+            dict(stable_mapping) if isinstance(stable_mapping, dict) else {}),
         "target_media_index": target_media,
         "target_media_id": (str(target_media_id)
                             if target_media_id is not None else

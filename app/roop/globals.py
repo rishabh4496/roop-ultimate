@@ -227,6 +227,10 @@ TARGET_FACES = []
 # Multiple angles of the same person share a group id; each group maps (by rank)
 # to one source faceset. Enables multi-angle target tracking (anti-flicker).
 TARGET_FACE_GROUP: List[int] = []
+# Stage 13 stable identity projections.  These are parallel to TARGET_FACES;
+# TARGET_FACE_GROUP remains only for legacy ProcessMgr compatibility.
+TARGET_FACE_PERSON_IDS: List[str] = []
+TARGET_REFERENCE_FACE_IDS: List[str] = []
 # Optional human-friendly names keyed by RAW group id (e.g. {0: "Bride"}).
 # Ranks shift when groups merge/split, but the raw group id is stable, so we key
 # names by raw id and resolve to per-rank names in the API payload.

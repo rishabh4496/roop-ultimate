@@ -115,6 +115,10 @@ def _load_into_runtime(record):
         face = _restore_face(item.get("data"))
         globals_.TARGET_FACES.append(face)
         globals_.TARGET_FACE_GROUP.append(int(item.get("group", len(globals_.TARGET_FACE_GROUP))))
+        globals_.TARGET_FACE_PERSON_IDS.append(
+            item.get("target_person_id") or "")
+        globals_.TARGET_REFERENCE_FACE_IDS.append(
+            item.get("target_reference_face_id") or "")
         bbox = np.asarray(getattr(face, "bbox", face.get("bbox")), dtype=np.int32)
         thumbnail = item.get("thumbnail") or ""
         if thumbnail:
@@ -131,7 +135,20 @@ def _load_into_runtime(record):
         ui_globals.ui_target_thumbs.append(frame)
     names = target_context.get("target_face_names") or {}
     if names:
-        globals_.TARGET_FACE_NAMES.update({int(k): str(v) for k, v in names.items()})
+        # Pre-Stage 13 checkpoints keyed names by raw integer group. Stable
+        # checkpoints use target_person_names instead; ignore an unexpected
+        # non-numeric legacy key rather than turning restore into a 500.
+        for key, value in names.items():
+            try:
+                globals_.TARGET_FACE_NAMES[int(key)] = str(value)
+            except (TypeError, ValueError):
+                continue
+    api.state.active_target_person_source_mapping = dict(
+        target_context.get("target_person_source_mapping") or {})
+    api.state.active_target_person_names = dict(
+        target_context.get("target_person_names") or {})
+    api.state.selected_target_person_id = target_context.get("selected_target_person_id")
+    api.state.selected_reference_face_id = target_context.get("selected_reference_face_id")
     try:
         api.state.selected_target_face_index = max(
             0, int(target_context.get("selected_target_face_index", 0) or 0))

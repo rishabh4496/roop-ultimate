@@ -29,6 +29,14 @@ class TargetMediaContext:
     target_thumbs: list = field(default_factory=list)
     selected_target_face_index: int = 0
     source_mapping: dict | list = field(default_factory=dict)
+    # Stable Stage 13 identity layer.  The old fields above remain as a
+    # compatibility projection for ProcessMgr and older checkpoints.
+    target_person_ids: list = field(default_factory=list)
+    target_reference_face_ids: list = field(default_factory=list)
+    selected_target_person_id: str | None = None
+    selected_reference_face_id: str | None = None
+    target_person_source_mapping: dict = field(default_factory=dict)
+    target_person_names: dict = field(default_factory=dict)
 
     def clone(self) -> "TargetMediaContext":
         return TargetMediaContext(
@@ -39,6 +47,12 @@ class TargetMediaContext:
             selected_target_face_index=int(self.selected_target_face_index or 0),
             source_mapping=(dict(self.source_mapping) if isinstance(self.source_mapping, dict)
                             else list(self.source_mapping or [])),
+            target_person_ids=list(self.target_person_ids),
+            target_reference_face_ids=list(self.target_reference_face_ids),
+            selected_target_person_id=self.selected_target_person_id,
+            selected_reference_face_id=self.selected_reference_face_id,
+            target_person_source_mapping=dict(self.target_person_source_mapping),
+            target_person_names=dict(self.target_person_names),
         )
 
 
@@ -57,7 +71,10 @@ class TargetMediaContextStore:
 
     def save(self, media_id: str, *, target_faces=None, target_face_group=None,
              target_face_names=None, target_thumbs=None,
-             selected_target_face_index=0, source_mapping=None) -> TargetMediaContext:
+             selected_target_face_index=0, source_mapping=None,
+             target_person_ids=None, target_reference_face_ids=None,
+             selected_target_person_id=None, selected_reference_face_id=None,
+             target_person_source_mapping=None, target_person_names=None) -> TargetMediaContext:
         context = TargetMediaContext(
             target_faces=list(target_faces or []),
             target_face_group=list(target_face_group or []),
@@ -66,6 +83,17 @@ class TargetMediaContextStore:
             selected_target_face_index=max(0, int(selected_target_face_index or 0)),
             source_mapping=(dict(source_mapping) if isinstance(source_mapping, dict)
                             else list(source_mapping or [])),
+            target_person_ids=list(target_person_ids or []),
+            target_reference_face_ids=list(target_reference_face_ids or []),
+            selected_target_person_id=(str(selected_target_person_id)
+                                       if selected_target_person_id else None),
+            selected_reference_face_id=(str(selected_reference_face_id)
+                                        if selected_reference_face_id else None),
+            target_person_source_mapping=(
+                dict(target_person_source_mapping)
+                if isinstance(target_person_source_mapping, dict) else {}),
+            target_person_names=(dict(target_person_names)
+                                if isinstance(target_person_names, dict) else {}),
         )
         self._contexts[str(media_id)] = context
         return context.clone()

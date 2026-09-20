@@ -68,6 +68,15 @@ from roop.processing_request import (
 from roop.target_selection import (normalize_target_selection,
                                    selection_diagnostic_for_mode)
 from target_media_state import TargetMediaContextStore
+from target_person_state import (
+    normalize_parallel_ids,
+    person_records,
+    person_id_for_rank,
+    rank_for_person_id,
+    person_id_for_face_index,
+    new_target_person_id,
+    new_target_reference_face_id,
+)
 import project_checkpoint as _project_checkpoint
 import ui.globals as ui_globals
 
@@ -285,6 +294,7 @@ def _save_active_target_context_locked():
         media_id = getattr(state, "active_target_media_id", None)
         if not media_id:
             return
+        person_ids, reference_ids, stable_mapping = _normalize_target_identity_locked()
         _target_contexts.save(
             media_id,
             target_faces=roop_globals.TARGET_FACES,
@@ -293,18 +303,30 @@ def _save_active_target_context_locked():
             target_thumbs=ui_globals.ui_target_thumbs,
             selected_target_face_index=getattr(state, "selected_target_face_index", 0),
             source_mapping=getattr(state, "active_target_source_mapping", {}) or {},
+            target_person_ids=person_ids,
+            target_reference_face_ids=reference_ids,
+            selected_target_person_id=getattr(state, "selected_target_person_id", None),
+            selected_reference_face_id=getattr(state, "selected_reference_face_id", None),
+            target_person_source_mapping=stable_mapping,
+            target_person_names=getattr(state, "active_target_person_names", {}) or {},
         )
 
 
 def _clear_active_target_globals_locked():
     roop_globals.TARGET_FACES.clear()
     roop_globals.TARGET_FACE_GROUP.clear()
+    getattr(roop_globals, "TARGET_FACE_PERSON_IDS", []).clear()
+    getattr(roop_globals, "TARGET_REFERENCE_FACE_IDS", []).clear()
     if getattr(roop_globals, "TARGET_FACE_NAMES", None) is None:
         roop_globals.TARGET_FACE_NAMES = {}
     else:
         roop_globals.TARGET_FACE_NAMES.clear()
     ui_globals.ui_target_thumbs.clear()
     state.active_target_source_mapping = {}
+    state.active_target_person_source_mapping = {}
+    state.active_target_person_names = {}
+    state.selected_target_person_id = None
+    state.selected_reference_face_id = None
 
 
 def _load_target_context_locked(media_id: str):
@@ -312,6 +334,14 @@ def _load_target_context_locked(media_id: str):
     _clear_active_target_globals_locked()
     roop_globals.TARGET_FACES.extend(context.target_faces)
     roop_globals.TARGET_FACE_GROUP.extend(context.target_face_group)
+    person_ids, reference_ids = normalize_parallel_ids(
+        context.target_person_ids,
+        context.target_reference_face_ids,
+        len(context.target_faces),
+        context.target_face_group,
+    )
+    roop_globals.TARGET_FACE_PERSON_IDS.extend(person_ids)
+    roop_globals.TARGET_REFERENCE_FACE_IDS.extend(reference_ids)
     roop_globals.TARGET_FACE_NAMES.update(context.target_face_names)
     ui_globals.ui_target_thumbs.extend(context.target_thumbs)
     state.active_target_media_id = str(media_id)
@@ -322,6 +352,86 @@ def _load_target_context_locked(media_id: str):
     state.active_target_source_mapping = (
         dict(context.source_mapping) if isinstance(context.source_mapping, dict)
         else list(context.source_mapping or []))
+    state.active_target_person_source_mapping = dict(
+        context.target_person_source_mapping or {})
+    state.active_target_person_names = dict(context.target_person_names or {})
+    state.selected_target_person_id = context.selected_target_person_id
+    state.selected_reference_face_id = context.selected_reference_face_id
+    _normalize_target_identity_locked()
+
+
+def _normalize_target_identity_locked():
+    """Synchronize stable target-person identity with active legacy arrays.
+
+    This is the only compatibility bridge.  It is intentionally loss-averse:
+    an old rank/index mapping is converted when the current source identity is
+    known; otherwise it is left only in the legacy mirror and the canonical
+    stable mapping omits that ambiguous entry instead of selecting source 0.
+    """
+    people, references = normalize_parallel_ids(
+        getattr(roop_globals, "TARGET_FACE_PERSON_IDS", []),
+        getattr(roop_globals, "TARGET_REFERENCE_FACE_IDS", []),
+        len(roop_globals.TARGET_FACES),
+        getattr(roop_globals, "TARGET_FACE_GROUP", []),
+    )
+    roop_globals.TARGET_FACE_PERSON_IDS[:] = people
+    roop_globals.TARGET_REFERENCE_FACE_IDS[:] = references
+    records = person_records(
+        people, references,
+        getattr(roop_globals, "TARGET_FACE_NAMES", {}) or {},
+        getattr(state, "active_target_person_source_mapping", {}) or {},
+    )
+    person_ids = [record["target_person_id"] for record in records]
+
+    stable = {}
+    existing = getattr(state, "active_target_person_source_mapping", {})
+    if isinstance(existing, dict):
+        for person_id, source_id in existing.items():
+            if person_id in person_ids and source_id not in (None, ""):
+                stable[person_id] = source_id
+
+    # Migrate old rank-keyed dicts/lists once.  Numeric source entries are only
+    # promoted to a source identity when the source gallery exposes that id.
+    legacy = getattr(state, "active_target_source_mapping", {})
+    source_infos = _get_source_faces_info()
+    source_ids = [str(info.get("id") or "") for info in source_infos]
+
+    def source_identity(value):
+        if value in (None, "", -1, "-1"):
+            return None
+        if isinstance(value, str) and not value.strip().lstrip("-").isdigit():
+            return value
+        try:
+            index = int(value)
+        except (TypeError, ValueError):
+            return None
+        return source_ids[index] if 0 <= index < len(source_ids) else None
+
+    pairs = legacy.items() if isinstance(legacy, dict) else enumerate(legacy or [])
+    for raw_rank, raw_source in pairs:
+        try:
+            rank = int(raw_rank)
+        except (TypeError, ValueError):
+            continue
+        target_person_id = person_id_for_rank(records, rank)
+        source_id = source_identity(raw_source)
+        if target_person_id and source_id is not None and target_person_id not in stable:
+            stable[target_person_id] = source_id
+
+    state.active_target_person_source_mapping = stable
+    selected_face = getattr(state, "selected_target_face_index", 0)
+    selected_person = getattr(state, "selected_target_person_id", None)
+    if selected_person not in person_ids:
+        selected_person = person_id_for_face_index(people, selected_face)
+    state.selected_target_person_id = selected_person
+    selected_ref = getattr(state, "selected_reference_face_id", None)
+    if selected_ref not in references:
+        try:
+            selected_ref = references[int(selected_face)]
+        except (TypeError, ValueError, IndexError):
+            selected_ref = references[0] if references else None
+    state.selected_reference_face_id = selected_ref
+    return people, references, stable
 
 
 def _activate_target_media(*, index=None, media_id=None, refresh=True):
@@ -361,14 +471,26 @@ def _ensure_active_target_context():
 
 
 def _target_context_payload():
+    _normalize_target_identity_locked()
+    records = _target_person_records()
+    stable_mapping = getattr(state, "active_target_person_source_mapping", {}) or {}
     return {
         "target_media_id": getattr(state, "active_target_media_id", None),
         "selected_target_face_index": getattr(state, "selected_target_face_index", 0),
-        "face_mapping": getattr(state, "active_target_source_mapping", {}) or {},
+        # Stable contract.  `legacy_face_mapping` is a derived compatibility
+        # view for older UI builds; it is never used as durable identity.
+        "face_mapping": dict(stable_mapping),
+        "target_person_source_mapping": dict(stable_mapping),
+        "legacy_face_mapping": _target_legacy_mapping_array(),
         "target_faces": [_rgb_to_dataurl(t) for t in ui_globals.ui_target_thumbs],
         "target_groups": _target_groups_ranked(),
         "target_faces_info": _target_faces_info(),
         "target_names": _target_names_ranked(),
+        "target_person_ids": list(getattr(roop_globals, "TARGET_FACE_PERSON_IDS", [])),
+        "target_reference_face_ids": list(getattr(roop_globals, "TARGET_REFERENCE_FACE_IDS", [])),
+        "target_persons": records,
+        "selected_target_person_id": getattr(state, "selected_target_person_id", None),
+        "selected_reference_face_id": getattr(state, "selected_reference_face_id", None),
     }
 
 # Live progress, polled by the React UI
@@ -508,13 +630,20 @@ def _project_target_faces():
     result = []
     thumbnails = list(getattr(ui_globals, "ui_target_thumbs", []) or [])
     groups = list(getattr(roop_globals, "TARGET_FACE_GROUP", []) or [])
+    person_ids, reference_ids, _mapping = _normalize_target_identity_locked()
     for index, face in enumerate(roop_globals.TARGET_FACES):
         data = {}
         for key in fields:
             value = face.get(key) if isinstance(face, dict) else getattr(face, key, None)
             if value is not None:
                 data[key] = value
-        item = {"data": data, "group": groups[index] if index < len(groups) else index}
+        item = {
+            "data": data,
+            "group": groups[index] if index < len(groups) else index,
+            "target_person_id": person_ids[index] if index < len(person_ids) else None,
+            "target_reference_face_id": (
+                reference_ids[index] if index < len(reference_ids) else None),
+        }
         if index < len(thumbnails):
             item["thumbnail"] = _rgb_to_dataurl(thumbnails[index])
         result.append(item)
@@ -559,6 +688,12 @@ def _create_processing_project(payload, job_id=None):
             "target_face_names": dict(getattr(roop_globals, "TARGET_FACE_NAMES", {}) or {}),
             "selected_target_face_index": getattr(state, "selected_target_face_index", 0),
             "face_mapping": getattr(state, "active_target_source_mapping", {}) or payload.get("face_mapping", {}),
+            "target_person_ids": list(getattr(roop_globals, "TARGET_FACE_PERSON_IDS", [])),
+            "target_reference_face_ids": list(getattr(roop_globals, "TARGET_REFERENCE_FACE_IDS", [])),
+            "selected_target_person_id": getattr(state, "selected_target_person_id", None),
+            "selected_reference_face_id": getattr(state, "selected_reference_face_id", None),
+            "target_person_source_mapping": dict(getattr(state, "active_target_person_source_mapping", {}) or {}),
+            "target_person_names": dict(getattr(state, "active_target_person_names", {}) or {}),
         },
         app_version=_get_git_version(),
     )
@@ -781,6 +916,7 @@ _TARGET_REQUIRED_MESSAGE = "Capture a target face before using Selected face mod
 _SELECTION_MESSAGES = {
     "selection_required": "Select a target person before using this mode",
     "invalid_person_id": "The selected target person is no longer available; select another person",
+    "invalid_reference_face_id": "The selected target reference face is no longer available; select another angle",
 }
 
 
@@ -790,10 +926,41 @@ def _selected_face_target_required(detection):
 
 
 def _target_selection_for_payload(payload):
-    return normalize_target_selection(
-        (payload or {}).get("selection_state"),
+    raw = dict((payload or {}).get("selection_state") or {})
+    records = _target_person_records()
+    stable_ids = [r["target_person_id"] for r in records]
+
+    def convert(value):
+        if value is None:
+            return None
+        text = str(value)
+        if text in stable_ids:
+            return text
+        try:
+            return person_id_for_rank(records, int(value))
+        except (TypeError, ValueError):
+            return text
+
+    if "person_id" in raw:
+        raw["person_id"] = convert(raw.get("person_id"))
+    if isinstance(raw.get("person_ids"), list):
+        raw["person_ids"] = [convert(value) for value in raw["person_ids"]]
+    selection = normalize_target_selection(
+        raw,
         person_count=len(set(_target_groups_ranked())),
+        target_person_ids=stable_ids,
     )
+    reference_id = selection.get("target_reference_face_id")
+    if reference_id is not None:
+        reference_ids = set(getattr(roop_globals, "TARGET_REFERENCE_FACE_IDS", []) or [])
+        if reference_id not in reference_ids:
+            selection.update({
+                "person_id": None,
+                "person_ids": [],
+                "valid": False,
+                "diagnostic": "invalid_reference_face_id",
+            })
+    return selection
 
 
 def _selection_diagnostic_for_mode(mode, selection):
@@ -827,6 +994,7 @@ def _canonical_processing_request(payload, target_media_index=None,
         target_media_id=target_media_id or payload.get("target_media_id"),
         current_source_names=source_names,
         current_source_ids=source_ids,
+        target_person_ids=[r["target_person_id"] for r in _target_person_records()],
         request_id=request_id,
     )
 
@@ -2201,17 +2369,22 @@ def target_preview_seq(index: int = 0, start: int = 1, count: int = 16,
 
 
 def _target_groups_ranked():
-    """Map raw group ids in TARGET_FACE_GROUP to contiguous 0-based person ranks
-    (sorted by group id) so person N → source faceset N regardless of removals.
-    Also keeps the group list length in sync with TARGET_FACES."""
+    """Return a disposable display-rank projection from stable person ids.
+
+    The old implementation sorted raw group integers.  That made a regroup or
+    face reorder silently change which person a mapping referred to.  Raw
+    groups remain available to legacy callers, but this projection is based on
+    first appearance of the stable target-person ids instead.
+    """
+    _normalize_target_identity_locked()
     faces = roop_globals.TARGET_FACES
-    grp = roop_globals.TARGET_FACE_GROUP
-    if len(grp) != len(faces):
-        grp = list(range(len(faces)))   # default: each face its own person
-        roop_globals.TARGET_FACE_GROUP = grp
-    uniq = sorted(set(grp))
-    rank = {g: r for r, g in enumerate(uniq)}
-    return [rank[g] for g in grp]
+    people = list(getattr(roop_globals, "TARGET_FACE_PERSON_IDS", []) or [])
+    order = []
+    for person in people[:len(faces)]:
+        if person not in order:
+            order.append(person)
+    rank = {person: index for index, person in enumerate(order)}
+    return [rank[person] for person in people[:len(faces)]]
 
 
 def _target_faces_info():
@@ -2230,13 +2403,77 @@ def _target_faces_info():
 def _target_names_ranked():
     """Person display names indexed by contiguous rank (parallel to the ranks
     returned by _target_groups_ranked). Empty string when unnamed."""
-    grp = roop_globals.TARGET_FACE_GROUP
-    uniq = sorted(set(grp))
-    names = getattr(roop_globals, 'TARGET_FACE_NAMES', {}) or {}
-    return [names.get(g, "") for g in uniq]
+    _normalize_target_identity_locked()
+    records = _target_person_records()
+    return [record.get("name", "") for record in records]
+
+
+def _target_person_records():
+    """Stable target-person records with disposable display ranks."""
+    people, references, mapping = _normalize_target_identity_locked()
+    records = person_records(
+        people, references,
+        getattr(state, "active_target_person_names", {}) or {},
+        mapping,
+    )
+    # Migrate names saved by pre-Stage13 contexts, where keys were raw groups.
+    legacy_names = getattr(roop_globals, "TARGET_FACE_NAMES", {}) or {}
+    groups = list(getattr(roop_globals, "TARGET_FACE_GROUP", []) or [])
+    for record in records:
+        if record.get("name"):
+            continue
+        indices = record.get("face_indices") or []
+        if indices:
+            name = legacy_names.get(groups[indices[0]])
+            if name:
+                record["name"] = str(name)
+    return records
+
+
+def _target_person_id_for_payload(payload, *, legacy_person=None):
+    """Resolve a stable person id at an API boundary.
+
+    New callers send ``target_person_id``.  ``person`` is accepted only as a
+    legacy display-rank alias and is immediately converted against the active
+    records; it is never persisted as identity.
+    """
+    records = _target_person_records()
+    candidate = (payload or {}).get("target_person_id") if isinstance(payload, dict) else None
+    if candidate is not None:
+        candidate = str(candidate).strip()
+        if any(r["target_person_id"] == candidate for r in records):
+            return candidate
+        return None
+    raw = legacy_person if legacy_person is not None else (payload or {}).get("person")
+    return person_id_for_rank(records, raw)
+
+
+def _target_face_indices_for_person(person_id):
+    people, _references, _mapping = _normalize_target_identity_locked()
+    return [i for i, value in enumerate(people) if value == person_id]
+
+
+def _target_legacy_mapping_array():
+    """Return a runtime-only rank-ordered source index list.
+
+    The durable mapping is the stable dictionary.  ProcessMgr still receives
+    this derived list until its old face-set ordering API is retired.
+    """
+    records = _target_person_records()
+    stable = getattr(state, "active_target_person_source_mapping", {}) or {}
+    source_ids = [str(info.get("id") or "") for info in _get_source_faces_info()]
+    result = []
+    for record in records:
+        source_id = stable.get(record["target_person_id"])
+        try:
+            result.append(source_ids.index(str(source_id)))
+        except ValueError:
+            result.append(-1)
+    return result
 
 
 def _target_faces_payload(extra=None):
+    _normalize_target_identity_locked()
     out = _target_context_payload()
     if extra:
         out.update(extra)
@@ -2245,15 +2482,51 @@ def _target_faces_payload(extra=None):
 
 def _save_target_mapping_from_payload(payload):
     """Persist a target's source mapping without making it global state."""
-    if not isinstance(payload, dict) or "face_mapping" not in payload:
-        return
-    mapping = payload.get("face_mapping")
+    if not isinstance(payload, dict) or (
+            "face_mapping" not in payload
+            and "target_person_source_mapping" not in payload):
+        return None
+    mapping = payload.get("target_person_source_mapping")
+    if mapping is None:
+        mapping = payload.get("face_mapping")
     if not isinstance(mapping, (dict, list, tuple)):
-        return
+        return None
     with _target_context_lock:
-        state.active_target_source_mapping = (
-            dict(mapping) if isinstance(mapping, dict) else list(mapping))
+        if isinstance(mapping, dict):
+            stable_ids = {r["target_person_id"] for r in _target_person_records()}
+            source_ids = {str(info.get("id") or "") for info in _get_source_faces_info()}
+            invalid_people = [str(key) for key in mapping
+                              if str(key) not in stable_ids]
+            invalid_sources = [str(value) for key, value in mapping.items()
+                               if str(key) in stable_ids
+                               and value not in (None, "", -1, "-1")
+                               and str(value) not in source_ids]
+            # Numeric keys are legacy rank keys and remain accepted only as a
+            # compatibility mirror.  Stable-shaped mappings are strict.
+            stable_shaped = bool(mapping) and not all(
+                str(key).lstrip("-").isdigit() for key in mapping)
+            if stable_shaped and (invalid_people or invalid_sources):
+                return JSONResponse(status_code=422, content={
+                    "error": "invalid_target_source_mapping",
+                    "message": "target_person_id and source_identity_id must belong to the active context",
+                    "invalid_target_person_ids": invalid_people,
+                    "invalid_source_identity_ids": invalid_sources,
+                    "target_media_id": getattr(state, "active_target_media_id", None),
+                })
+            stable = {
+                str(key): value for key, value in mapping.items()
+                if str(key) in stable_ids and value not in (None, "", -1, "-1")
+            }
+            if stable:
+                state.active_target_person_source_mapping = stable
+            # Keep the submitted object as the compatibility mirror so old
+            # clients and Stage 11 callers can round-trip it unchanged.
+            state.active_target_source_mapping = dict(mapping)
+        else:
+            state.active_target_source_mapping = list(mapping)
+        _normalize_target_identity_locked()
         _save_active_target_context_locked()
+    return None
 
 
 def _activate_target_from_payload(payload, *, refresh=True, index=None):
@@ -2293,7 +2566,9 @@ def target_context(payload: dict = Body(...)):
     _target_idx, _media_id, error = _activate_target_from_payload(payload, refresh=False)
     if error:
         return error
-    _save_target_mapping_from_payload(payload)
+    mapping_error = _save_target_mapping_from_payload(payload)
+    if mapping_error:
+        return mapping_error
     return _target_faces_payload()
 
 
@@ -2494,12 +2769,19 @@ def target_use_face(payload: dict = Body(...)):
                 exc, media_id=_media_id, frame=frame, face_index=face_index)
 
         next_id = (max(roop_globals.TARGET_FACE_GROUP) + 1) if roop_globals.TARGET_FACE_GROUP else 0
+        _normalize_target_identity_locked()
         for fd in faces_data:
+            person_id = new_target_person_id()
             roop_globals.TARGET_FACES.append(fd[0])
             roop_globals.TARGET_FACE_GROUP.append(next_id)
+            roop_globals.TARGET_FACE_PERSON_IDS.append(person_id)
+            roop_globals.TARGET_REFERENCE_FACE_IDS.append(new_target_reference_face_id())
             ui_globals.ui_target_thumbs.append(util.convert_to_gradio(fd[1]))
             next_id += 1
         state.selected_target_face_index = max(0, len(roop_globals.TARGET_FACES) - 1)
+        state.selected_target_person_id = person_id if faces_data else None
+        state.selected_reference_face_id = (
+            roop_globals.TARGET_REFERENCE_FACE_IDS[-1] if faces_data else None)
         _save_active_target_context_locked()
         return _target_faces_payload({
             "count": len(faces_data),
@@ -2514,7 +2796,6 @@ def target_add_angle(payload: dict = Body(...)):
     """Add another angle (lateral/profile/upside-down) of an EXISTING target
     person, picking the face in the current frame closest to that person so
     matching survives pose changes (anti-flicker, multi-angle tracking)."""
-    person = int(payload.get("person", 0))     # 0-based person rank
     idx, _media_id, error = _activate_target_from_payload(
         payload, index=payload.get("index", state.selected_target_index))
     if error:
@@ -2522,8 +2803,16 @@ def target_add_angle(payload: dict = Body(...)):
     frame = int(payload.get("frame", 1))
     if idx < 0 or idx >= len(list_files_process):
         return _target_faces_payload({"count": 0})
-    ranks = _target_groups_ranked()
-    raw_group = next((roop_globals.TARGET_FACE_GROUP[i] for i, r in enumerate(ranks) if r == person), None)
+    person_id = _target_person_id_for_payload(payload)
+    if person_id is None:
+        return JSONResponse(status_code=422, content={
+            "error": "invalid_target_person_id",
+            "message": "target_person_id is not present in the active target context",
+            "target_media_id": _media_id,
+        })
+    person_indices = _target_face_indices_for_person(person_id)
+    raw_group = (roop_globals.TARGET_FACE_GROUP[person_indices[0]]
+                 if person_indices else None)
     if raw_group is None:
         return _target_faces_payload({"count": 0, "message": "no such person"})
     faces_data = _faces_from_frame(idx, frame)
@@ -2560,10 +2849,16 @@ def target_add_angle(payload: dict = Body(...)):
             other_d = min(float(util.compute_cosine_distance(oe, best_fd[0].embedding)) for oe in other_embeddings)
             if other_d < best_d:
                 return _target_faces_payload({"count": 0, "message": "face belongs to another target person"})
+        _normalize_target_identity_locked()
         roop_globals.TARGET_FACES.append(best_fd[0])
         roop_globals.TARGET_FACE_GROUP.append(raw_group)
+        roop_globals.TARGET_FACE_PERSON_IDS.append(person_id)
+        reference_id = new_target_reference_face_id()
+        roop_globals.TARGET_REFERENCE_FACE_IDS.append(reference_id)
         ui_globals.ui_target_thumbs.append(util.convert_to_gradio(best_fd[1]))
         state.selected_target_face_index = len(roop_globals.TARGET_FACES) - 1
+        state.selected_target_person_id = person_id
+        state.selected_reference_face_id = reference_id
         _save_active_target_context_locked()
     return _target_faces_payload({"count": 1, "distance": round(float(best_d), 3)})
 
@@ -2600,7 +2895,6 @@ def target_auto_angles(payload: dict = Body(...)):
     if _progress["processing"]:
         return JSONResponse(status_code=409, content={"message": "busy processing"})
 
-    person = int(payload.get("person", 0))
     idx, _media_id, error = _activate_target_from_payload(
         payload, index=payload.get("index", state.selected_target_index))
     if error:
@@ -2611,8 +2905,16 @@ def target_auto_angles(payload: dict = Body(...)):
     if util.is_image(target_path) and not target_path.lower().endswith("gif"):
         return _target_faces_payload({"count": 0, "message": "auto-angles needs a video target"})
 
-    ranks = _target_groups_ranked()
-    raw_group = next((roop_globals.TARGET_FACE_GROUP[i] for i, r in enumerate(ranks) if r == person), None)
+    person_id = _target_person_id_for_payload(payload)
+    if person_id is None:
+        return JSONResponse(status_code=422, content={
+            "error": "invalid_target_person_id",
+            "message": "target_person_id is not present in the active target context",
+            "target_media_id": _media_id,
+        })
+    person_indices = _target_face_indices_for_person(person_id)
+    raw_group = (roop_globals.TARGET_FACE_GROUP[person_indices[0]]
+                 if person_indices else None)
     if raw_group is None:
         return _target_faces_payload({"count": 0, "message": "no such person"})
 
@@ -2798,6 +3100,8 @@ def target_auto_angles(payload: dict = Body(...)):
         _attach_source_crops(best_f, img)
         roop_globals.TARGET_FACES.append(best_f)
         roop_globals.TARGET_FACE_GROUP.append(raw_group)
+        roop_globals.TARGET_FACE_PERSON_IDS.append(person_id)
+        roop_globals.TARGET_REFERENCE_FACE_IDS.append(new_target_reference_face_id())
         ui_globals.ui_target_thumbs.append(util.convert_to_gradio(crop))
         bank.append(best_e)
         bin_counts[pose_bin] = bin_counts.get(pose_bin, 0) + 1
@@ -2905,12 +3209,17 @@ def target_auto_capture(payload: dict = Body(...)):
     if bool(payload.get("replace", True)):
         roop_globals.TARGET_FACES.clear()
         roop_globals.TARGET_FACE_GROUP.clear()
+        roop_globals.TARGET_FACE_PERSON_IDS.clear()
+        roop_globals.TARGET_REFERENCE_FACE_IDS.clear()
         if getattr(roop_globals, 'TARGET_FACE_NAMES', None):
             roop_globals.TARGET_FACE_NAMES.clear()
+        state.active_target_person_source_mapping = {}
+        state.active_target_person_names = {}
         ui_globals.ui_target_thumbs.clear()
         state.selected_target_face_index = 0
 
     next_id = (max(roop_globals.TARGET_FACE_GROUP) + 1) if roop_globals.TARGET_FACE_GROUP else 0
+    group_to_person = {}
     from roop.face_util import _attach_source_crops, clamp_cut_values
     for face, grp, info in zip(result["targets"], result["groups"], result["per_person"]):
         # The scan keeps faces, not frames (487 frames of 1280x632 would be a
@@ -2933,8 +3242,11 @@ def target_auto_capture(payload: dict = Body(...)):
         if crop.size < 1:
             crop = img
         _attach_source_crops(face, img)
+        person_id = group_to_person.setdefault(grp, new_target_person_id())
         roop_globals.TARGET_FACES.append(face)
         roop_globals.TARGET_FACE_GROUP.append(next_id + grp)
+        roop_globals.TARGET_FACE_PERSON_IDS.append(person_id)
+        roop_globals.TARGET_REFERENCE_FACE_IDS.append(new_target_reference_face_id())
         ui_globals.ui_target_thumbs.append(util.convert_to_gradio(crop))
 
     # ── Grow each person into a multi-angle bank ─────────────────────────────
@@ -2964,9 +3276,9 @@ def target_auto_capture(payload: dict = Body(...)):
     enriched = 0
     if bool(payload.get("enrich", True)):
         before = len(roop_globals.TARGET_FACES)
-        for rank in range(len(set(result["groups"]))):
+        for person_id in group_to_person.values():
             try:
-                target_auto_angles({"person": rank, "index": idx})
+                target_auto_angles({"target_person_id": person_id, "index": idx})
             except Exception as e:
                 _swallowed("api.py:2250", e, "fallback continued")
                 result["notes"].append(f"angle harvest failed for person {rank + 1}: {e}")
@@ -2993,11 +3305,25 @@ def target_remove_face(payload: dict = Body(...)):
     _target_idx, _media_id, error = _activate_target_from_payload(payload, refresh=False)
     if error:
         return error
-    idx = int(payload.get("face_index", payload.get("index", -1)))
+    try:
+        idx = int(payload.get("face_index", payload.get("index", -1)))
+    except (TypeError, ValueError):
+        return JSONResponse(status_code=422, content={
+            "error": "invalid_target_reference_face",
+            "message": "face_index must identify a captured target reference face",
+            "target_media_id": _media_id,
+        })
+    _normalize_target_identity_locked()
+    removed_person_id = person_id_for_face_index(
+        roop_globals.TARGET_FACE_PERSON_IDS, idx)
     if 0 <= idx < len(roop_globals.TARGET_FACES):
         roop_globals.TARGET_FACES.pop(idx)
     if 0 <= idx < len(roop_globals.TARGET_FACE_GROUP):
         roop_globals.TARGET_FACE_GROUP.pop(idx)
+    if 0 <= idx < len(roop_globals.TARGET_FACE_PERSON_IDS):
+        roop_globals.TARGET_FACE_PERSON_IDS.pop(idx)
+    if 0 <= idx < len(roop_globals.TARGET_REFERENCE_FACE_IDS):
+        roop_globals.TARGET_REFERENCE_FACE_IDS.pop(idx)
     if 0 <= idx < len(ui_globals.ui_target_thumbs):
         ui_globals.ui_target_thumbs.pop(idx)
     if roop_globals.TARGET_FACES:
@@ -3005,6 +3331,18 @@ def target_remove_face(payload: dict = Body(...)):
             state.selected_target_face_index, len(roop_globals.TARGET_FACES) - 1)
     else:
         state.selected_target_face_index = 0
+    remaining_people = set(roop_globals.TARGET_FACE_PERSON_IDS)
+    if removed_person_id and removed_person_id not in remaining_people:
+        state.active_target_person_source_mapping.pop(removed_person_id, None)
+        state.active_target_person_names.pop(removed_person_id, None)
+    if roop_globals.TARGET_FACE_PERSON_IDS:
+        selected = min(state.selected_target_face_index,
+                       len(roop_globals.TARGET_FACE_PERSON_IDS) - 1)
+        state.selected_target_person_id = roop_globals.TARGET_FACE_PERSON_IDS[selected]
+        state.selected_reference_face_id = roop_globals.TARGET_REFERENCE_FACE_IDS[selected]
+    else:
+        state.selected_target_person_id = None
+        state.selected_reference_face_id = None
     _save_active_target_context_locked()
     return _target_faces_payload()
 
@@ -3031,15 +3369,71 @@ def target_group(payload: dict = Body(...)):
     _target_idx, _media_id, error = _activate_target_from_payload(payload, refresh=False)
     if error:
         return error
+    _normalize_target_identity_locked()
+    stable_people = payload.get("target_person_ids")
     groups = payload.get("groups")
-    if isinstance(groups, list):
-        parsed = []
-        for x in groups[:len(roop_globals.TARGET_FACES)]:
+    if isinstance(stable_people, list):
+        if len(stable_people) != len(roop_globals.TARGET_FACES):
+            return JSONResponse(status_code=422, content={
+                "error": "target_person_id_count_mismatch",
+                "message": "one target_person_id is required for every captured angle",
+                "target_media_id": _media_id,
+            })
+        known = {r["target_person_id"] for r in _target_person_records()}
+        requested = [str(value) for value in stable_people]
+        if any(value not in known for value in requested):
+            return JSONResponse(status_code=422, content={
+                "error": "invalid_target_person_id",
+                "message": "target_person_id is not present in the active target context",
+                "target_media_id": _media_id,
+            })
+        roop_globals.TARGET_FACE_PERSON_IDS[:] = requested
+        # Legacy group ids are only a runtime compatibility projection.  Keep
+        # each person's existing raw group and allocate a fresh one if a
+        # legacy group is missing, never by rank or array position.
+        raw_by_person = {}
+        for person, group in zip(roop_globals.TARGET_FACE_PERSON_IDS,
+                                 roop_globals.TARGET_FACE_GROUP):
+            raw_by_person.setdefault(person, group)
+        next_group = max(roop_globals.TARGET_FACE_GROUP or [-1]) + 1
+        roop_globals.TARGET_FACE_GROUP[:] = [
+            raw_by_person.setdefault(person, next_group + len(raw_by_person))
+            for person in requested
+        ]
+        _save_active_target_context_locked()
+    elif isinstance(groups, list):
+        # Legacy rank/group input is converted against the current records in
+        # one step.  A malformed rank is an error; it must not become person 0.
+        records = _target_person_records()
+        converted = []
+        raw_groups = []
+        for value in groups[:len(roop_globals.TARGET_FACES)]:
             try:
-                parsed.append(int(x))
+                rank = int(value)
             except (ValueError, TypeError):
-                parsed.append(0)
-        roop_globals.TARGET_FACE_GROUP = parsed
+                return JSONResponse(status_code=422, content={
+                    "error": "invalid_target_person_id",
+                    "message": "groups must contain valid target-person display ranks",
+                    "target_media_id": _media_id,
+                })
+            person = person_id_for_rank(records, rank)
+            if person is None:
+                return JSONResponse(status_code=422, content={
+                    "error": "invalid_target_person_id",
+                    "message": "target person rank is no longer available",
+                    "target_media_id": _media_id,
+                })
+            converted.append(person)
+            old_index = records[rank]["face_indices"][0]
+            raw_groups.append(roop_globals.TARGET_FACE_GROUP[old_index])
+        if len(converted) != len(roop_globals.TARGET_FACES):
+            return JSONResponse(status_code=422, content={
+                "error": "target_person_id_count_mismatch",
+                "message": "one person assignment is required for every captured angle",
+                "target_media_id": _media_id,
+            })
+        roop_globals.TARGET_FACE_PERSON_IDS[:] = converted
+        roop_globals.TARGET_FACE_GROUP[:] = raw_groups
         _save_active_target_context_locked()
     return _target_faces_payload()
 
@@ -3051,12 +3445,19 @@ def target_name(payload: dict = Body(...)):
     _target_idx, _media_id, error = _activate_target_from_payload(payload, refresh=False)
     if error:
         return error
-    person = int(payload.get("person", 0))
     name = str(payload.get("name", "")).strip()[:40]
-    ranks = _target_groups_ranked()
-    raw_group = next((roop_globals.TARGET_FACE_GROUP[i]
-                      for i, r in enumerate(ranks) if r == person), None)
+    person_id = _target_person_id_for_payload(payload)
+    if person_id is None:
+        return JSONResponse(status_code=422, content={
+            "error": "invalid_target_person_id",
+            "message": "target_person_id is not present in the active target context",
+            "target_media_id": _media_id,
+        })
+    person_indices = _target_face_indices_for_person(person_id)
+    raw_group = (roop_globals.TARGET_FACE_GROUP[person_indices[0]]
+                 if person_indices else None)
     if raw_group is not None:
+        state.active_target_person_names[person_id] = name
         if not hasattr(roop_globals, 'TARGET_FACE_NAMES') or roop_globals.TARGET_FACE_NAMES is None:
             roop_globals.TARGET_FACE_NAMES = {}
         if name:
@@ -3099,12 +3500,24 @@ def target_autocluster(payload: dict = Body(...)):
                 if d < threshold:
                     groups[j] = next_id
         next_id += 1
-    roop_globals.TARGET_FACE_GROUP = groups
+    # Reclustering changes structure.  Give each resulting cluster fresh stable
+    # identities and explicitly invalidate all old mappings/names.  This is
+    # conservative by design: no old source can silently transfer to a new
+    # cluster merely because it moved into the same display rank.
+    old_people = list(getattr(roop_globals, "TARGET_FACE_PERSON_IDS", []))
+    roop_globals.TARGET_FACE_GROUP[:] = groups
+    roop_globals.TARGET_FACE_PERSON_IDS[:] = [
+        new_target_person_id() for _ in faces]
+    roop_globals.TARGET_REFERENCE_FACE_IDS[:] = [
+        new_target_reference_face_id() for _ in faces]
+    state.active_target_person_source_mapping = {}
+    state.active_target_person_names = {}
     # Names keyed by old raw ids are meaningless after a full re-cluster.
     if getattr(roop_globals, 'TARGET_FACE_NAMES', None):
         roop_globals.TARGET_FACE_NAMES.clear()
     _save_active_target_context_locked()
-    return _target_faces_payload({"people": next_id})
+    return _target_faces_payload({"people": next_id,
+                                  "mappings_invalidated": bool(old_people)})
 
 
 # ── Run history (settings snapshot per produced output) ──────────────────────

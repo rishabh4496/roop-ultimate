@@ -7,6 +7,8 @@ import process from 'node:process';
 import {
   buildFaceMappingArray,
   buildTargetSelectionState,
+  stableTargetSourceMapping,
+  targetPersonRecords,
   mapPerson,
   mappingObjectFromArray,
   normalizeSourceMapping,
@@ -255,6 +257,43 @@ check('no target reference is invalid instead of selecting another person', () =
   assert.equal(out.valid, false);
   assert.equal(out.diagnostic, 'selection_required');
   assert.deepEqual(out.person_ids, []);
+});
+
+group('Stable target-person identity');
+check('mapping follows opaque person ids after display reorder', () => {
+  const common = {
+    targetGroups: [1, 0],
+    targetPersonIds: ['tp-b', 'tp-a'],
+    faceMapping: { 'tp-a': 'source-a', 'tp-b': 'source-b' },
+    sourceIdentityIds: ['source-a', 'source-b'], sourceCount: 2,
+    faceSelection: 'Selected people', selectedSource: 0,
+  };
+  assert.deepEqual(stableTargetSourceMapping(common), {
+    'tp-a': 'source-a', 'tp-b': 'source-b',
+  });
+  assert.deepEqual(buildFaceMappingArray(common), [1, 0]);
+});
+check('deleting one stable person does not retarget the survivor', () => {
+  const records = targetPersonRecords({
+    targetGroups: [1], targetPersonIds: ['tp-b'],
+  });
+  assert.equal(records[0].targetPersonId, 'tp-b');
+  assert.deepEqual(buildFaceMappingArray({
+    targetGroups: [1], targetPersonIds: ['tp-b'],
+    faceMapping: { 'tp-b': 'source-b' },
+    sourceIdentityIds: ['source-a', 'source-b'], sourceCount: 2,
+    faceSelection: 'All faces',
+  }), [1]);
+});
+check('stable selected-person selection is serialized by id, not rank', () => {
+  const out = buildTargetSelectionState({
+    targetGroups: [1, 0], targetPersonIds: ['tp-b', 'tp-a'],
+    faceMapping: {}, sourceCount: 1, sourceIdentityIds: ['source-a'],
+    faceSelection: SEL, selTargetFace: 0,
+    selectedTargetPersonId: 'tp-b', selectedSource: 0,
+  });
+  assert.equal(out.person_id, 'tp-b');
+  assert.deepEqual(out.person_ids, ['tp-b']);
 });
 
 console.log(`\n${fails.length ? `FAILED: ${fails.join(', ')}` : `ALL GREEN: ${pass}/${pass} checks passed`}`);

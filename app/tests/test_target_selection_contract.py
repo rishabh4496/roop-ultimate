@@ -86,6 +86,43 @@ class TargetSelectionContractTests(unittest.TestCase):
         self.assertIn("g in self.selected_target_groups", source)
         self.assertIn('("selected", "selected_multi")', source)
 
+    def test_stable_person_ids_select_all_angles_for_the_selected_person(self):
+        target_groups = [0, 0, 1]
+        person_ids = ["tp-a", "tp-b"]
+        selection = normalize_target_selection(
+            {"selection_mode": "selected", "person_id": "tp-b"},
+            person_count=2, target_person_ids=person_ids)
+        self.assertEqual(selection_group_ids(target_groups, selection, person_ids), {1})
+        self.assertEqual(selection_face_indices(target_groups, selection, person_ids), [2])
+
+    def test_parallel_angle_ids_do_not_turn_second_angle_into_a_new_person(self):
+        target_groups = [0, 0, 1]
+        parallel_ids = ["tp-a", "tp-a", "tp-b"]
+        selection = normalize_target_selection(
+            {"selection_mode": "selected", "person_id": "tp-a"},
+            person_count=2, target_person_ids=["tp-a", "tp-b"])
+        self.assertEqual(selection_group_ids(target_groups, selection, parallel_ids), {0})
+        self.assertEqual(selection_face_indices(target_groups, selection, parallel_ids), [0, 1])
+
+
+    def test_stable_person_ids_select_all_angles_for_the_selected_person(self):
+        target_groups = [0, 0, 1]
+        person_ids = ["tp-a", "tp-b"]
+        selection = normalize_target_selection(
+            {"selection_mode": "selected", "person_id": "tp-b"},
+            person_count=2, target_person_ids=person_ids)
+        self.assertEqual(selection_group_ids(target_groups, selection, person_ids), {1})
+        self.assertEqual(selection_face_indices(target_groups, selection, person_ids), [2])
+
+    def test_parallel_angle_ids_do_not_turn_second_angle_into_a_new_person(self):
+        target_groups = [0, 0, 1]
+        parallel_ids = ["tp-a", "tp-a", "tp-b"]
+        selection = normalize_target_selection(
+            {"selection_mode": "selected", "person_id": "tp-a"},
+            person_count=2, target_person_ids=["tp-a", "tp-b"])
+        self.assertEqual(selection_group_ids(target_groups, selection, parallel_ids), {0})
+        self.assertEqual(selection_face_indices(target_groups, selection, parallel_ids), [0, 1])
+
 
 if __name__ == "__main__":
     unittest.main()

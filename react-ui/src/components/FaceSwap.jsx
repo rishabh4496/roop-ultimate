@@ -10,6 +10,7 @@ import FileDrop from './faceswap/FileDrop';
 import {
   buildFaceMappingArray,
   buildTargetSelectionState,
+  stableTargetSourceMapping,
   mappingObjectFromArray,
   remapSourceMappingAfterRemoval,
   remapSourceMappingAfterMove,
@@ -85,9 +86,16 @@ export default function FaceSwap({
   const [targetGroups, setTargetGroups] = useState([]);
   const [targetNames, setTargetNames] = useState([]);
   const [targetFacesInfo, setTargetFacesInfo] = useState([]);
+  const [targetPersonIds, setTargetPersonIds] = useState([]);
+  const [targetReferenceFaceIds, setTargetReferenceFaceIds] = useState([]);
+  const [selectedTargetPersonId, setSelectedTargetPersonId] = useState(null);
+  const [selectedReferenceFaceId, setSelectedReferenceFaceId] = useState(null);
   const [targets, setTargets] = useState([]);
   const [selSource, setSelSource] = useState(0);
   const [selTarget, setSelTarget] = useState(0);
+  // Legacy state name retained for component compatibility. This is the
+  // selected reference-angle index only; target person identity is carried by
+  // selectedTargetPersonId and target-media identity by activeTargetMediaId.
   const [selTargetFace, setSelTargetFace] = useState(0);
   const [frame, setFrame] = useState(1);
   const [maxFrames, setMaxFrames] = useState(1);
@@ -291,6 +299,10 @@ export default function FaceSwap({
       targetGroups,
       targetNames,
       targetFacesInfo,
+      targetPersonIds,
+      targetReferenceFaceIds,
+      selectedTargetPersonId,
+      selectedReferenceFaceId,
       faceMapping,
       selTargetFace,
       frame,
@@ -307,9 +319,18 @@ export default function FaceSwap({
     const groups = res?.target_groups ?? saved.targetGroups ?? [];
     const names = res?.target_names ?? saved.targetNames ?? [];
     const facesInfo = res?.target_faces_info ?? saved.targetFacesInfo ?? [];
+    const personIds = res?.target_person_ids ?? saved.targetPersonIds ?? [];
+    const referenceIds = res?.target_reference_face_ids
+      ?? saved.targetReferenceFaceIds ?? [];
     const persistedMapping = res?.face_mapping ?? saved.faceMapping ?? {};
     const restoredMapping = Array.isArray(persistedMapping)
       ? mappingObjectFromArray(persistedMapping) : persistedMapping;
+    const selectedPerson = res?.selected_target_person_id
+      ?? saved.selectedTargetPersonId
+      ?? (personIds[Number(res?.selected_target_face_index ?? saved.selTargetFace ?? 0)] || null);
+    const selectedReference = res?.selected_reference_face_id
+      ?? saved.selectedReferenceFaceId
+      ?? (referenceIds[Number(res?.selected_target_face_index ?? saved.selTargetFace ?? 0)] || null);
     const selectedFace = Number.isInteger(res?.selected_target_face_index)
       ? res.selected_target_face_index
       : (Number.isInteger(saved.selTargetFace) ? saved.selTargetFace : 0);
@@ -318,6 +339,10 @@ export default function FaceSwap({
     setTargetGroups(groups);
     setTargetNames(names);
     setTargetFacesInfo(facesInfo);
+    setTargetPersonIds(personIds);
+    setTargetReferenceFaceIds(referenceIds);
+    setSelectedTargetPersonId(selectedPerson);
+    setSelectedReferenceFaceId(selectedReference);
     setFaceMapping(restoredMapping || {});
     setSelTargetFace(boundedFace);
     const resultTarget = res?.targets?.[res?.selected_target_index ?? selTarget]
@@ -334,6 +359,10 @@ export default function FaceSwap({
       targetGroups: groups,
       targetNames: names,
       targetFacesInfo: facesInfo,
+      targetPersonIds: personIds,
+      targetReferenceFaceIds: referenceIds,
+      selectedTargetPersonId: selectedPerson,
+      selectedReferenceFaceId: selectedReference,
       selTargetFace: boundedFace,
       frame: restoredFrame,
       faceMapping: restoredMapping || {},
@@ -352,7 +381,9 @@ export default function FaceSwap({
     rememberTargetContext();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTargetMediaId, targetFaces, targetGroups, targetNames,
-    targetFacesInfo, faceMapping, selTargetFace, frame, previewSrc, previewFor]);
+    targetFacesInfo, targetPersonIds, targetReferenceFaceIds,
+    selectedTargetPersonId, selectedReferenceFaceId, faceMapping,
+    selTargetFace, frame, previewSrc, previewFor]);
 
   // Single source of truth, shared with the PersonGroups dropdown so the row
   // the user reads and the payload the backend receives cannot disagree.
@@ -362,6 +393,21 @@ export default function FaceSwap({
     sourceCount: sourceFaces.length,
     faceSelection: params.face_detection_mode,
     selTargetFace,
+    selectedSource: selSource,
+    targetPersonIds,
+    selectedTargetPersonId,
+    selectedReferenceFaceId,
+    sourceIdentityIds: sourceFacesInfo.map((info, index) => info?.id || `memory-slot-${index}`),
+  });
+
+  const getStableTargetSourceMapping = (params = p) => stableTargetSourceMapping({
+    targetGroups,
+    targetPersonIds,
+    faceMapping,
+    sourceCount: sourceFaces.length,
+    sourceIdentityIds: sourceFacesInfo.map((info, index) => info?.id || `memory-slot-${index}`),
+    faceSelection: params.face_detection_mode,
+    selectedTargetPersonId,
     selectedSource: selSource,
   });
 
@@ -374,6 +420,9 @@ export default function FaceSwap({
     selectedSource: selSource,
     targetReferenceIndex: selTargetFace,
     targetMediaIndex: selTarget,
+    targetPersonIds,
+    selectedTargetPersonId,
+    sourceIdentityIds: sourceFacesInfo.map((info, index) => info?.id || `memory-slot-${index}`),
   });
 
   const sourceNameAt = (index) => sourceFacesInfo[index]?.name
@@ -543,6 +592,8 @@ export default function FaceSwap({
         exported_at: new Date().toISOString(),
         settings: { ...p },
         face_mapping: getFaceMappingArray(),
+        target_person_source_mapping: getStableTargetSourceMapping(),
+        target_person_ids: targetPersonIds,
         source_mapping_names: getSourceMappingNames(),
         source_mapping_ids: getSourceMappingIds(),
         selected_source_name: sourceNameAt(selSource),
@@ -658,6 +709,8 @@ export default function FaceSwap({
       face_distance: num(sp.max_face_distance, 0.75), blend_ratio: num(sp.blend_ratio, 0.8),
       num_swap_steps: num(sp.num_swap_steps, 1),
       face_mapping: getFaceMappingArray(sp),
+      target_person_source_mapping: getStableTargetSourceMapping(sp),
+      target_person_ids: targetPersonIds,
       source_mapping_names: getSourceMappingNames(sp),
       source_mapping_ids: getSourceMappingIds(sp),
       selected_source_name: sourceNameAt(selSource),
@@ -925,6 +978,8 @@ export default function FaceSwap({
       rescue_small_faces: activeParams.rescue_small_faces,
       detector_engine: activeParams.detector_engine,
       face_mapping: getFaceMappingArray(activeParams),
+      target_person_source_mapping: getStableTargetSourceMapping(activeParams),
+      target_person_ids: targetPersonIds,
       source_mapping_names: getSourceMappingNames(activeParams),
       selected_source_name: sourceNameAt(selSource),
       target_media_id: requestedMediaId || targetIdAt(index) || activeTargetMediaId,
@@ -1047,6 +1102,10 @@ export default function FaceSwap({
       setTargetGroups([]);
       setTargetNames([]);
       setTargetFacesInfo([]);
+      setTargetPersonIds([]);
+      setTargetReferenceFaceIds([]);
+      setSelectedTargetPersonId(null);
+      setSelectedReferenceFaceId(null);
       setFaceMapping({});
       setSelTargetFace(0);
       setPreviewSrc('');
@@ -1585,6 +1644,10 @@ export default function FaceSwap({
       setTargetGroups(res.target_groups || []);
       setTargetNames(res.target_names || []);
       setTargetFacesInfo(res.target_faces_info || []);
+      setTargetPersonIds(res.target_person_ids || []);
+      setTargetReferenceFaceIds(res.target_reference_face_ids || []);
+      setSelectedTargetPersonId(res.selected_target_person_id || null);
+      setSelectedReferenceFaceId(res.selected_reference_face_id || null);
       setSelTargetFace(Math.max(0, (res.target_faces || []).length - 1));
       setSelectedDetectedFace(null);
       applyTargetContext(res, res.target_media_id || activeTargetMediaId);
@@ -2750,9 +2813,16 @@ export default function FaceSwap({
               targetGroups={targetGroups}
               targetNames={targetNames}
               targetFacesInfo={targetFacesInfo}
+              targetPersonIds={targetPersonIds}
+              targetReferenceFaceIds={targetReferenceFaceIds}
+              selectedTargetPersonId={selectedTargetPersonId}
+              setSelectedTargetPersonId={setSelectedTargetPersonId}
+              setTargetPersonIds={setTargetPersonIds}
+              setTargetReferenceFaceIds={setTargetReferenceFaceIds}
               selTargetFace={selTargetFace}
               setSelTargetFace={setSelTargetFace}
               sourceFaces={sourceFaces}
+              sourceFacesInfo={sourceFacesInfo}
               faceSelection={p.face_detection_mode}
               selectedSource={selSource}
               faceMapping={faceMapping}
@@ -2932,7 +3002,9 @@ export default function FaceSwap({
                   });
                   setTargets(r.targets || []);
                   setTargetFaces([]); setTargetGroups([]); setTargetNames([]);
-                  setTargetFacesInfo([]); setFaceMapping({}); setSelTargetFace(0);
+                  setTargetFacesInfo([]); setTargetPersonIds([]);
+                  setTargetReferenceFaceIds([]); setSelectedTargetPersonId(null);
+                  setSelectedReferenceFaceId(null); setFaceMapping({}); setSelTargetFace(0);
                   setPreviewSrc(''); setPreviewFor('');
                 }}>Clear targets</Button>
               </div>

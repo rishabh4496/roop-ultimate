@@ -85,6 +85,77 @@ export function uniquePersons(targetGroups) {
     .sort((a, b) => a - b);
 }
 
+// Stable target-person projection.  Display rank is derived from first
+// appearance and is never persisted as identity.  `faceIndices` and
+// `referenceFaceIds` are angle/reference namespaces, not person ids.
+export function targetPersonRecords({
+  targetGroups = [], targetPersonIds = [], targetReferenceFaceIds = [], targetNames = [],
+} = {}) {
+  const groups = Array.isArray(targetGroups) ? targetGroups : [];
+  const ids = Array.isArray(targetPersonIds) ? targetPersonIds : [];
+  const refs = Array.isArray(targetReferenceFaceIds) ? targetReferenceFaceIds : [];
+  const order = [];
+  groups.forEach((group, index) => {
+    const personId = ids[index] || `legacy-target-person-${String(group)}`;
+    if (!order.includes(personId)) order.push(personId);
+  });
+  return order.map((targetPersonId, displayRank) => {
+    const faceIndices = groups.map((group, index) => {
+      const id = ids[index] || `legacy-target-person-${String(group)}`;
+      return id === targetPersonId ? index : null;
+    }).filter((index) => index !== null);
+    return {
+      targetPersonId,
+      target_person_id: targetPersonId,
+      displayRank,
+      display_rank: displayRank,
+      faceIndices,
+      face_indices: faceIndices,
+      referenceFaceIds: faceIndices.map((index) => refs[index]).filter(Boolean),
+      reference_face_ids: faceIndices.map((index) => refs[index]).filter(Boolean),
+      name: Array.isArray(targetNames) ? (targetNames[displayRank] || '') : '',
+    };
+  });
+}
+
+export function selectedTargetPersonId({
+  targetPersonIds, selectedReferenceIndex,
+} = {}) {
+  const index = Number(selectedReferenceIndex);
+  const ids = Array.isArray(targetPersonIds) ? targetPersonIds : [];
+  return Number.isInteger(index) && index >= 0 && index < ids.length
+    ? ids[index] || null
+    : null;
+}
+
+export function stableTargetSourceMapping({
+  targetGroups, targetPersonIds, faceMapping, sourceCount, sourceIdentityIds = [],
+  faceSelection, selectedTargetPersonId: selectedId, selectedSource,
+} = {}) {
+  const records = targetPersonRecords({ targetGroups, targetPersonIds });
+  const sourceIds = Array.isArray(sourceIdentityIds) ? sourceIdentityIds : [];
+  const result = {};
+  records.forEach((record) => {
+    const key = record.targetPersonId;
+    const hasStable = hasOwn(faceMapping, key);
+    const legacyRank = record.displayRank;
+    const raw = hasStable ? faceMapping[key]
+      : (hasOwn(faceMapping, legacyRank) ? faceMapping[legacyRank] : undefined);
+    if (raw !== undefined) {
+      const byIdentity = sourceIds.findIndex((id) => String(id) === String(raw));
+      const sourceIndex = byIdentity >= 0
+        ? byIdentity : normalizeSourceIndex(raw, sourceCount);
+      if (sourceIndex >= 0 && sourceIds[sourceIndex]) result[key] = sourceIds[sourceIndex];
+      return;
+    }
+    if (faceSelection === 'Selected face' && selectedId === key) {
+      const sourceIndex = normalizeSourceIndex(selectedSource, sourceCount);
+      if (sourceIndex >= 0 && sourceIds[sourceIndex]) result[key] = sourceIds[sourceIndex];
+    }
+  });
+  return result;
+}
+
 // The source index for ONE person. Single source of truth for both the payload
 // and the dropdown.
 export function mapPerson({
@@ -128,7 +199,23 @@ export function buildFaceMappingArray({
   faceSelection,
   selTargetFace,
   selectedSource,
+  targetPersonIds,
+  selectedTargetPersonId,
+  sourceIdentityIds,
 }) {
+  if (Array.isArray(targetPersonIds) && targetPersonIds.length) {
+    const stable = stableTargetSourceMapping({
+      targetGroups, targetPersonIds, faceMapping, sourceCount, sourceIdentityIds,
+      faceSelection, selectedTargetPersonId, selectedSource,
+    });
+    return targetPersonRecords({ targetGroups, targetPersonIds })
+      .map((record) => {
+        const sourceId = stable[record.targetPersonId];
+        const index = Array.isArray(sourceIdentityIds)
+          ? sourceIdentityIds.findIndex((id) => String(id) === String(sourceId)) : SKIP;
+        return index >= 0 ? index : SKIP;
+      });
+  }
   const selectedPerson = selectedPersonOf(targetGroups, selTargetFace);
   return uniquePersons(targetGroups).map((person) => mapPerson({
     person,
@@ -148,10 +235,11 @@ const optionalInt = (value) => {
 };
 
 // UI-side normalization of the same serializable contract consumed by
-// app/roop/target_selection.py. person_id/person_ids are TARGET PERSON RANKS;
-// they are never source-gallery, reference-angle, media, detection, or track
-// indices. The extra fields remain explicit so a future video selector can add
-// a stable track id without overloading person_id.
+// app/roop/target_selection.py. person_id/person_ids are stable target-person
+// ids when the active context provides them, and legacy display ranks only for
+// old contexts. They are never source-gallery, reference-angle, media,
+// detection, or track indices. The extra fields remain explicit so a future
+// video selector can add a stable track id without overloading person_id.
 export function normalizeTargetSelectionState(selection = {}, targetGroups = []) {
   const raw = selection && typeof selection === 'object' ? selection : {};
   const mode = raw.selection_mode === 'selected' || raw.selection_mode === 'multi_person'
@@ -185,7 +273,7 @@ export function normalizeTargetSelectionState(selection = {}, targetGroups = [])
     personIds = [];
   }
 
-  return {
+  const result = {
     selection_mode: mode,
     person_id: personId,
     person_ids: personIds,
@@ -196,6 +284,9 @@ export function normalizeTargetSelectionState(selection = {}, targetGroups = [])
     valid: !diagnostic,
     diagnostic,
   };
+  const referenceId = raw.target_reference_face_id || raw.selected_reference_face_id;
+  if (referenceId) result.target_reference_face_id = referenceId;
+  return result;
 }
 
 // Convert the UI's highlighted reference angle and mapping controls into the
@@ -210,7 +301,44 @@ export function buildTargetSelectionState({
   selectedSource,
   targetReferenceIndex = selTargetFace,
   targetMediaIndex = null,
+  targetPersonIds = [],
+  selectedTargetPersonId = null,
+  selectedReferenceFaceId = null,
+  sourceIdentityIds = [],
 }) {
+  if (Array.isArray(targetPersonIds) && targetPersonIds.length) {
+    const records = targetPersonRecords({ targetGroups, targetPersonIds });
+    const selectedId = selectedTargetPersonId
+      || selectedTargetPersonIdOf({ targetGroups, targetPersonIds, selTargetFace });
+    let selection;
+    if (faceSelection === 'Selected face') {
+      selection = {
+        selection_mode: 'selected', person_id: selectedId,
+        person_ids: selectedId ? [selectedId] : [],
+      };
+    } else if (faceSelection === 'Selected people') {
+      const stable = stableTargetSourceMapping({
+        targetGroups, targetPersonIds, faceMapping, sourceCount,
+        sourceIdentityIds: sourceIdentityIds || [], faceSelection,
+        selectedTargetPersonId: selectedId, selectedSource,
+      });
+      selection = {
+        selection_mode: 'multi_person', person_id: null,
+        person_ids: records.map((record) => record.targetPersonId)
+          .filter((id) => hasOwn(stable, id)),
+      };
+    } else {
+      selection = { selection_mode: 'none', person_id: null, person_ids: [] };
+    }
+    return {
+      ...selection,
+      ...(selectedReferenceFaceId
+        ? { target_reference_face_id: selectedReferenceFaceId } : {}),
+      target_reference_index: targetReferenceIndex,
+      target_detection_index: null, track_id: null,
+      target_media_index: targetMediaIndex, valid: true, diagnostic: null,
+    };
+  }
   const persons = uniquePersons(targetGroups);
   const highlightedRaw = selectedPersonOf(targetGroups, selTargetFace);
   const highlightedPerson = persons.indexOf(highlightedRaw);
@@ -245,4 +373,12 @@ export function buildTargetSelectionState({
     track_id: null,
     target_media_index: targetMediaIndex,
   }, targetGroups);
+}
+
+function selectedTargetPersonIdOf({ targetGroups, targetPersonIds, selTargetFace }) {
+  const index = Number(selTargetFace);
+  return Array.isArray(targetPersonIds) && Number.isInteger(index)
+    ? targetPersonIds[index] || null : selectedTargetPersonId({
+      targetGroups, targetPersonIds, selectedReferenceIndex: selTargetFace,
+    });
 }

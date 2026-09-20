@@ -3,7 +3,7 @@ import { postJSON } from '../api';
 import { PERSON_COLORS } from './constants';
 import { confirmDialog } from './confirm';
 import { Icon } from '../icons';
-import { mapPerson } from './faceswap/faceMapping';
+import { targetPersonRecords, normalizeSourceIndex, SKIP } from './faceswap/faceMapping';
 
 // Coarse pose buckets we consider "primary coverage" for a person. Anything the
 // backend labels (e.g. "Left Profile + Up Tilt") is matched against these by
@@ -39,26 +39,24 @@ function PoseCompass({ covered, color }) {
   );
 }
 
-// Group target-face indices by their person rank, preserving rank order.
-function groupByPerson(groups) {
-  const map = new Map();
-  (Array.isArray(groups) ? groups : []).forEach((rank, i) => {
-    const scalar = Array.isArray(rank) ? (typeof rank[0] === 'number' ? rank[0] : 0) : (typeof rank === 'number' ? rank : parseInt(rank, 10) || 0);
-    if (!map.has(scalar)) map.set(scalar, []);
-    map.get(scalar).push(i);
-  });
-  return Array.from(map.entries()).sort((a, b) => a[0] - b[0]); // [rank, [indices]]
+// Stable person ids are the row keys.  displayRank is derived solely for the
+// label/color; deleting/reordering an angle cannot rename another row.
+function groupByPerson(groups, personIds) {
+  return targetPersonRecords({ targetGroups: groups, targetPersonIds: personIds })
+    .map((record) => [record.targetPersonId, record.faceIndices, record.displayRank]);
 }
 
 export default function PersonGroups({
   targetFaces, targetGroups, targetNames, targetFacesInfo,
+  targetPersonIds, selectedTargetPersonId,
+  setSelectedTargetPersonId, setTargetPersonIds, setTargetReferenceFaceIds,
   selTargetFace, setSelTargetFace,
-  sourceFaces, faceSelection, selectedSource, faceMapping, setFaceMapping,
+  sourceFaces, sourceFacesInfo, faceSelection, selectedSource, faceMapping, setFaceMapping,
   frame, selTarget, targetMediaId,
   setTargetFaces, setTargetGroups, setTargetNames, setTargetFacesInfo,
   notify, clearPreviewCache,
 }) {
-  const [expanded, setExpanded] = useState({});      // rank -> bool override
+  const [expanded, setExpanded] = useState({});      // target_person_id -> bool override
   const [editingRank, setEditingRank] = useState(null);
   const [editValue, setEditValue] = useState('');
   const [dropTarget, setDropTarget] = useState(null); // rank being hovered in a drag
@@ -67,10 +65,11 @@ export default function PersonGroups({
   const [scanning, setScanning] = useState(false);    // whole-clip auto-capture
   const containerRef = useRef(null);
 
-  const normTargetGroups = (Array.isArray(targetGroups) ? targetGroups : []).map(g => Array.isArray(g) ? (g[0] ?? 0) : (typeof g === 'number' ? g : parseInt(g, 10) || 0));
-  const people = groupByPerson(normTargetGroups.slice(0, targetFaces.length));
-  const rawSelRank = normTargetGroups[selTargetFace];
-  const selRank = typeof rawSelRank === 'number' ? rawSelRank : 0;
+  const normTargetGroups = (Array.isArray(targetGroups) ? targetGroups : []).map(g => Array.isArray(g) ? (g[0] ?? 0) : g);
+  const people = groupByPerson(normTargetGroups.slice(0, targetFaces.length), targetPersonIds);
+  const selRank = selectedTargetPersonId
+    || targetPersonIds?.[selTargetFace]
+    || people[0]?.[0];
 
   // Push the four parallel arrays back to the parent from an API payload.
   const applyPayload = (res) => {
@@ -81,14 +80,26 @@ export default function PersonGroups({
     }
     if (res.target_names !== undefined && setTargetNames) setTargetNames(res.target_names || []);
     if (res.target_faces_info !== undefined && setTargetFacesInfo) setTargetFacesInfo(res.target_faces_info || []);
+    if (res.target_person_source_mapping !== undefined && setFaceMapping) {
+      setFaceMapping(res.target_person_source_mapping || {});
+    } else if (res.face_mapping && !Array.isArray(res.face_mapping) && setFaceMapping) {
+      setFaceMapping(res.face_mapping || {});
+    }
+    if (res.target_person_ids && setTargetPersonIds) setTargetPersonIds(res.target_person_ids);
+    if (res.target_reference_face_ids && setTargetReferenceFaceIds) setTargetReferenceFaceIds(res.target_reference_face_ids);
+    if (res.selected_target_person_id && setSelectedTargetPersonId) setSelectedTargetPersonId(res.selected_target_person_id);
     if (clearPreviewCache) clearPreviewCache();
   };
 
   const isExpanded = (rank) => (rank in expanded ? expanded[rank] : rank === selRank);
   const toggleExpand = (rank) => setExpanded((e) => ({ ...e, [rank]: !isExpanded(rank) }));
 
-  const nameFor = (rank) => (targetNames && targetNames[rank]) || '';
-  const labelFor = (rank) => nameFor(rank) || `Person ${rank + 1}`;
+  const displayRankOf = (personId) => people.find(([id]) => id === personId)?.[2] ?? 0;
+  const nameFor = (personId) => {
+    const rank = displayRankOf(personId);
+    return (targetNames && targetNames[rank]) || '';
+  };
+  const labelFor = (personId) => nameFor(personId) || `Person ${displayRankOf(personId) + 1}`;
 
   const call = async (path, body, okMsg) => {
     setBusy(true);
@@ -115,28 +126,29 @@ export default function PersonGroups({
     }
   };
 
-  const addAngle = (rank) => call('/api/target/add_angle', {
-    person: rank, index: selTarget, frame, target_media_id: targetMediaId,
+  const addAngle = (targetPersonId) => call('/api/target/add_angle', {
+    target_person_id: targetPersonId, index: selTarget, frame, target_media_id: targetMediaId,
   },
-    `Captured a new angle for ${labelFor(rank)}`);
+    `Captured a new angle for ${labelFor(targetPersonId)}`);
 
   // Scan the whole video and auto-capture this person at many poses, filling
   // their angle bank so identity survives turns without manual capturing.
   // The backend does a coarse pass plus a targeted refine pass over the moments
   // where the pose changed, so the toast reports what it actually looked at —
   // "0 new angles" after 40 frames means something very different from after 400.
-  const autoAngles = async (rank) => {
-    setHarvesting(rank);
+  const autoAngles = async (targetPersonId) => {
+    const rank = targetPersonId; // legacy local name; value is a stable id
+    setHarvesting(targetPersonId);
     try {
       const res = await postJSON('/api/target/auto_angles', {
-        person: rank, index: selTarget, target_media_id: targetMediaId,
+        target_person_id: targetPersonId, index: selTarget, target_media_id: targetMediaId,
       });
       applyPayload(res);
       const detail = res.scanned
         ? ` — scanned ${res.scanned} frames in ${res.seconds}s, ${res.bins} pose bin${res.bins === 1 ? '' : 's'} covered`
         : '';
       if (res.count) {
-        notify(`Auto-captured ${res.count} new angle${res.count === 1 ? '' : 's'} for ${labelFor(rank)}${detail}`);
+        notify(`Auto-captured ${res.count} new angle${res.count === 1 ? '' : 's'} for ${labelFor(targetPersonId)}${detail}`);
         // A wrong angle looks like any other thumbnail, and its cost lands much
         // later as the wrong person being swapped — every match takes the
         // minimum over a person's angles, so one bad entry speaks for all of
@@ -238,30 +250,39 @@ export default function PersonGroups({
   };
 
   // Move a single angle to another person (or a brand-new one via `newPerson`).
-  const reassign = (faceIdx, targetRank) => {
-    const g = [...targetGroups];
-    g[faceIdx] = targetRank;
-    setTargetGroups(g);
+  const reassign = (faceIdx, targetPersonId) => {
+    const ids = [...(targetPersonIds || [])];
+    ids[faceIdx] = targetPersonId;
+    if (setTargetPersonIds) setTargetPersonIds(ids);
     postJSON('/api/target/group', {
-      groups: g, target_media_id: targetMediaId,
+      target_person_ids: ids, target_media_id: targetMediaId,
     }).then(applyPayload).catch((e) => notify(e.message, 'error'));
   };
 
-  const commitName = (rank) => {
+  const commitName = (targetPersonId) => {
     setEditingRank(null);
     const name = editValue.trim();
-    if (name === nameFor(rank)) return;
-    call('/api/target/name', { person: rank, name, target_media_id: targetMediaId });
+    if (name === nameFor(targetPersonId)) return;
+    call('/api/target/name', {
+      target_person_id: targetPersonId, name, target_media_id: targetMediaId,
+    });
   };
 
-  const setMapping = (rank, val) => {
-    const next = { ...(faceMapping || {}), [rank]: val };
+  const sourceIdentityAt = (index) => sourceFacesInfo?.[index]?.id
+    || (sourceFaces[index] ? `memory-slot-${index}` : null);
+
+  const setMapping = (targetPersonId, val) => {
+    const sourceId = Number(val) >= 0 ? sourceIdentityAt(Number(val)) : null;
+    const next = { ...(faceMapping || {}) };
+    if (sourceId) next[targetPersonId] = sourceId;
+    else delete next[targetPersonId];
     setFaceMapping(next);
     // Mapping is UI-owned, but it is still target-specific state. Persist it
     // immediately so a reload cannot reconstruct B from A's last mapping.
     postJSON('/api/target/context', {
       target_media_id: targetMediaId,
       face_mapping: next,
+      target_person_source_mapping: next,
     }).catch((e) => notify(e.message, 'error'));
     if (clearPreviewCache) clearPreviewCache();
   };
@@ -276,12 +297,11 @@ export default function PersonGroups({
     const ranks = people.map(([r]) => r);
     const cur = ranks.indexOf(selRank);
     const nextRank = ranks[Math.min(ranks.length - 1, Math.max(0, cur + (e.key === 'ArrowDown' ? 1 : -1)))];
-    const firstFace = targetGroups.indexOf(nextRank);
+    const firstFace = people.find(([id]) => id === nextRank)?.[1]?.[0];
     if (firstFace >= 0) setSelTargetFace(firstFace);
   };
 
   const otherRanks = people.map(([r]) => r);
-  const nextNewRank = (Math.max(-1, ...otherRanks) + 1);
 
   if (targetFaces.length === 0) {
     return (
@@ -344,20 +364,22 @@ export default function PersonGroups({
         </div>
       )}
 
-      {people.map(([rank, indices]) => {
-        const color = PERSON_COLORS[rank % PERSON_COLORS.length];
+      {people.map(([rank, indices, displayRank]) => {
+        const color = PERSON_COLORS[displayRank % PERSON_COLORS.length];
         const open = isExpanded(rank);
         const isSel = rank === selRank;
         // Same helper the swap payload is built from, so the row can never show
         // a source the backend will not actually use.
-        const safeMap = mapPerson({
-          person: rank,
-          faceMapping,
-          sourceCount: sourceFaces.length,
-          faceSelection,
-          selectedPerson: selRank,
-          selectedSource,
-        });
+        const rawStable = faceMapping?.[rank];
+        const mappedByIdentity = rawStable == null ? SKIP
+          : sourceFacesInfo?.findIndex((info, index) =>
+            String(info?.id || `memory-slot-${index}`) === String(rawStable));
+        const mappedById = mappedByIdentity >= 0 ? mappedByIdentity
+          : normalizeSourceIndex(rawStable, sourceFaces.length);
+        const safeMap = mappedById >= 0 ? mappedById
+          : (faceSelection === 'Selected face' && rank === selRank
+            ? normalizeSourceIndex(selectedSource, sourceFaces.length)
+            : SKIP);
         const mapValid = safeMap >= 0 && safeMap < sourceFaces.length;
 
         // Pose coverage for this person.
@@ -381,7 +403,7 @@ export default function PersonGroups({
             style={isSel ? { boxShadow: `inset 3px 0 0 ${color}` } : { boxShadow: `inset 3px 0 0 ${color}55` }}
           >
             {/* Header */}
-            <div className="flex items-center gap-2 px-3 py-2.5 cursor-pointer" onClick={() => { setSelTargetFace(indices[0]); }}>
+            <div className="flex items-center gap-2 px-3 py-2.5 cursor-pointer" onClick={() => { setSelTargetFace(indices[0]); if (setSelectedTargetPersonId) setSelectedTargetPersonId(rank); }}>
               <button type="button" onClick={(e) => { e.stopPropagation(); toggleExpand(rank); }}
                 aria-label={`${open ? 'Collapse' : 'Expand'} ${labelFor(rank)}`}
                 aria-expanded={open}
@@ -395,7 +417,7 @@ export default function PersonGroups({
                     onChange={(e) => setEditValue(e.target.value)}
                     onBlur={() => commitName(rank)}
                     onKeyDown={(e) => { if (e.key === 'Enter') commitName(rank); if (e.key === 'Escape') setEditingRank(null); }}
-                    placeholder={`Person ${rank + 1}`}
+                    placeholder={`Person ${displayRank + 1}`}
                     className="w-full px-2 py-1 rounded-md glass-input text-white text-xs font-bold focus:outline-none"
                   />
                 ) : (
@@ -435,10 +457,9 @@ export default function PersonGroups({
                   {indices.map((i) => {
                     const pose = (targetFacesInfo && targetFacesInfo[i]?.pose) || 'Front';
                     const sel = i === selTargetFace;
-                    const safeAngleRank = Number.isFinite(rank) ? rank : 0;
                     return (
                       <div key={i} className="relative group/angle">
-                        <button type="button" onClick={() => setSelTargetFace(i)}
+                        <button type="button" onClick={() => { setSelTargetFace(i); if (setSelectedTargetPersonId) setSelectedTargetPersonId(rank); }}
                           className={`block rounded-lg overflow-hidden border-2 transition-all ${sel ? 'scale-105' : 'opacity-80 hover:opacity-100'}`}
                           style={{ borderColor: sel ? color : 'transparent' }}>
                           <img src={targetFaces[i]} alt={pose} className="w-14 h-14 object-cover" />
@@ -461,14 +482,13 @@ export default function PersonGroups({
                         {/* reassign to another person */}
                         {people.length > 1 && (
                           <select
-                            value={safeAngleRank}
-                            onChange={(e) => reassign(i, parseInt(e.target.value, 10))}
+                            value={rank}
+                            onChange={(e) => reassign(i, e.target.value)}
                             title="Move this angle to another person"
                             className="mt-1 w-14 px-1 py-0.5 rounded-md glass-input text-white/70 text-nano focus:outline-none cursor-pointer">
                             {otherRanks.map((r) => (
                               <option key={r} value={r} className="bg-[#121420]">→ {labelFor(r)}</option>
                             ))}
-                            <option value={nextNewRank} className="bg-[#121420]">→ New</option>
                           </select>
                         )}
                       </div>
