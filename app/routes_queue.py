@@ -61,6 +61,8 @@ _create_project = None      # api.py's durable project creator
 _validate_project = None    # api.py's environment/checkpoint validator
 _set_project_state = None   # api.py's project lifecycle projection
 _project_source_list = None # api.py's canonical target list; protects test/fake bindings
+_activate_target = None      # api.py's stable target-context loader
+_ensure_target_media_id = None  # api.py's id allocator for legacy entries
 # True while the hardware benchmark holds the GPU. /api/swap refuses to start a
 # render then and the benchmark refuses to start during one, but the queue is a
 # THIRD way into `_run_swap` that neither guard covers: it calls it directly, so
@@ -285,6 +287,7 @@ def _normalize_job(payload: dict) -> dict:
         "schema_version": SCHEMA_VERSION,
         "id": uuid.uuid4().hex[:12],
         "target_name": str(payload.get("target_name") or ""),
+        "target_media_id": str(payload.get("target_media_id") or ""),
         "source_index": int(payload.get("source_index") or 0),
         "source_name": str(payload.get("source_name") or ""),
         "payload": payload.get("payload") or {},
@@ -416,7 +419,7 @@ def queue_update(payload: dict = Body(...)):
             return JSONResponse(status_code=404, content={"message": "no such job"})
         if _state(job) in ("PREPARING", "PROCESSING", "PAUSE_REQUESTED", "PAUSED"):
             return JSONResponse(status_code=409, content={"message": "job is running"})
-        for key in ("payload", "target_name", "source_index", "source_name",
+        for key in ("payload", "target_name", "target_media_id", "source_index", "source_name",
                     "label", "frame_start", "frame_end"):
             if key in payload:
                 job[key] = payload[key]
@@ -501,13 +504,39 @@ def _run_one(job):
     job["processing_started"] = False
     if job.get("cancel_requested") or job["id"] in _cancel_requested:
         return "CANCELLED", "cancelled before processing"
-    names = [os.path.basename(getattr(e, "filename", "") or "") for e in list_files_process]
-    try:
-        idx = names.index(os.path.basename(job["target_name"]))
-    except ValueError:
-        return "FAILED", f'target "{job["target_name"]}" is no longer loaded'
+    media_id = str(job.get("target_media_id") or "").strip()
+    idx = None
+    if media_id:
+        for candidate_index, entry in enumerate(list_files_process):
+            entry_id = getattr(entry, "media_id", "") or ""
+            if not entry_id and _ensure_target_media_id is not None:
+                entry_id = _ensure_target_media_id(entry)
+            if str(entry_id) == media_id:
+                idx = candidate_index
+                break
+        if idx is None:
+            return "FAILED", f'target media "{media_id}" is no longer loaded'
+    else:
+        # Compatibility for jobs written before Stage 11. New jobs always use
+        # target_media_id, so duplicate filenames cannot select the wrong file.
+        names = [os.path.basename(getattr(e, "filename", "") or "") for e in list_files_process]
+        legacy_name = os.path.basename(job["target_name"])
+        matches = [candidate_index for candidate_index, name in enumerate(names)
+                   if name == legacy_name]
+        if not matches:
+            return "FAILED", f'target "{job["target_name"]}" is no longer loaded'
+        if len(matches) > 1:
+            return "FAILED", f'legacy target "{job["target_name"]}" is ambiguous; requeue it'
+        idx = matches[0]
 
     state.selected_target_index = idx
+    if (_activate_target is not None and
+            (_project_source_list is None or list_files_process is _project_source_list)):
+        try:
+            _activate_target(index=idx, media_id=media_id or None, refresh=False)
+        except Exception as exc:
+            _swallowed("routes_queue.py:533", exc, "target context activation failed")
+            return "FAILED", f"target context is no longer available: {exc}"
 
     # Dynamically re-resolve source_index by source_name if faceset list shifted.
     # The queue stores the source name alongside the numeric index because the
@@ -547,6 +576,10 @@ def _run_one(job):
 
     payload = dict(job.get("payload") or {})
     payload["target_index"] = idx
+    actual_media_id = getattr(list_files_process[idx], "media_id", "") or ""
+    if not actual_media_id and _ensure_target_media_id is not None:
+        actual_media_id = _ensure_target_media_id(list_files_process[idx])
+    payload["target_media_id"] = media_id or actual_media_id
 
     project_id = str(job.get("project_id") or "")
     if project_id and _validate_project is not None:

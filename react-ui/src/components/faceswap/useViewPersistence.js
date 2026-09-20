@@ -31,7 +31,7 @@ const WRITE_DEBOUNCE_MS = 400;
  *          the rehydrate callback reads it once and re-rendering on it would
  *          be pointless churn.
  */
-export default function useViewPersistence({ selTarget, frame, previewSrc }) {
+export default function useViewPersistence({ selTarget, targetMediaId, frame, previewSrc }) {
   const restoredViewRef = useRef(null);
 
   // Read BOTH halves at mount, before anything can overwrite them. The image
@@ -78,11 +78,14 @@ export default function useViewPersistence({ selTarget, frame, previewSrc }) {
         } else {
           localStorage.removeItem(VIEW_IMG_KEY);
         }
-        localStorage.setItem(VIEW_KEY, JSON.stringify({ target: selTarget, frame, t: Date.now() }));
+        localStorage.setItem(VIEW_KEY, JSON.stringify({
+          target: selTarget, target_media_id: targetMediaId || null,
+          frame, t: Date.now(),
+        }));
       } catch { /* storage blocked — the view just won't be restored */ }
     }, WRITE_DEBOUNCE_MS);
     return () => { cancelled = true; clearTimeout(t); };
-  }, [selTarget, frame, previewSrc]);
+  }, [selTarget, targetMediaId, frame, previewSrc]);
 
   return restoredViewRef;
 }

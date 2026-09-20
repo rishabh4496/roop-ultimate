@@ -85,12 +85,19 @@ def _load_into_runtime(record):
     target = (record.get("inputs") or {}).get("target") or {}
     target_path = target.get("path")
     api.list_files_process.clear()
-    globals_.TARGET_FACES.clear()
-    globals_.TARGET_FACE_GROUP.clear()
-    if getattr(globals_, "TARGET_FACE_NAMES", None):
-        globals_.TARGET_FACE_NAMES.clear()
-    ui_globals.ui_target_thumbs.clear()
-    entry = ProcessEntry(target_path, 0, 0, 0)
+    target_context = (record.get("inputs") or {}).get("target_context") or {}
+    media_id = target_context.get("target_media_id") or target.get("target_media_id")
+    # A project load replaces the active target, even when it happens to reuse
+    # the same persisted media id.  Clear the compatibility globals and discard
+    # that id's in-memory context before restoring checkpoint data, otherwise
+    # the restore loop would append its faces to stale faces from the old run.
+    with api._target_context_lock:
+        api._clear_active_target_globals_locked()
+        api.state.active_target_media_id = None
+        api.state.selected_target_face_index = 0
+        if media_id:
+            api._target_contexts.remove(media_id)
+    entry = ProcessEntry(target_path, 0, 0, 0, media_id=media_id)
     api.list_files_process.append(entry)
     api._refresh_target_frames(0)
     entry.startframe = int((record.get("inputs") or {}).get("frame_start", 0) or 0)
@@ -98,6 +105,7 @@ def _load_into_runtime(record):
     if saved_end:
         entry.endframe = min(saved_end, int(getattr(entry, "total_frames", saved_end) or saved_end))
     api.state.selected_target_index = 0
+    api._activate_target_media(index=0, media_id=entry.media_id, refresh=False)
     globals_.target_path = target_path
     output_directory = (record.get("output") or {}).get("directory")
     if output_directory:
@@ -121,6 +129,19 @@ def _load_into_runtime(record):
         # the restored detector object above, so do not run a detector here.
         frame = np.zeros((max(1, int(bbox[3] + 2)), max(1, int(bbox[2] + 2)), 3), dtype=np.uint8)
         ui_globals.ui_target_thumbs.append(frame)
+    names = target_context.get("target_face_names") or {}
+    if names:
+        globals_.TARGET_FACE_NAMES.update({int(k): str(v) for k, v in names.items()})
+    try:
+        api.state.selected_target_face_index = max(
+            0, int(target_context.get("selected_target_face_index", 0) or 0))
+    except (TypeError, ValueError):
+        api.state.selected_target_face_index = 0
+    saved_mapping = target_context.get("face_mapping", {})
+    api.state.active_target_source_mapping = (
+        dict(saved_mapping) if isinstance(saved_mapping, dict)
+        else list(saved_mapping or []) if isinstance(saved_mapping, list) else {})
+    api._save_active_target_context_locked()
     return api.get_state()
 
 

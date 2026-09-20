@@ -227,6 +227,7 @@ def new_project(*, job_id: str | None, name: str, payload: Mapping[str, Any],
                 sources: list[dict], target: dict, frame_start: int,
                 frame_end: int, output: dict, cfg: Any,
                 target_faces: list[dict] | None = None,
+                target_context: dict | None = None,
                 app_version: str = "") -> dict:
     now = time.time()
     project_id = uuid.uuid4().hex[:16]
@@ -249,6 +250,7 @@ def new_project(*, job_id: str | None, name: str, payload: Mapping[str, Any],
             "frame_start": int(frame_start),
             "frame_end": int(frame_end),
             "target_faces": target_faces or [],
+            "target_context": dict(target_context or {}),
         },
         "settings": {
             "payload": payload_copy,

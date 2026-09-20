@@ -54,7 +54,7 @@ export default function PersonGroups({
   targetFaces, targetGroups, targetNames, targetFacesInfo,
   selTargetFace, setSelTargetFace,
   sourceFaces, faceSelection, selectedSource, faceMapping, setFaceMapping,
-  frame, selTarget,
+  frame, selTarget, targetMediaId,
   setTargetFaces, setTargetGroups, setTargetNames, setTargetFacesInfo,
   notify, clearPreviewCache,
 }) {
@@ -109,13 +109,15 @@ export default function PersonGroups({
   };
 
   const removeAngle = async (i) => {
-    const res = await call('/api/target/remove_face', { index: i });
+    const res = await call('/api/target/remove_face', { index: i, target_media_id: targetMediaId });
     if (res && selTargetFace >= (res.target_faces?.length || 0)) {
       setSelTargetFace(Math.max(0, (res.target_faces?.length || 1) - 1));
     }
   };
 
-  const addAngle = (rank) => call('/api/target/add_angle', { person: rank, index: selTarget, frame },
+  const addAngle = (rank) => call('/api/target/add_angle', {
+    person: rank, index: selTarget, frame, target_media_id: targetMediaId,
+  },
     `Captured a new angle for ${labelFor(rank)}`);
 
   // Scan the whole video and auto-capture this person at many poses, filling
@@ -126,7 +128,9 @@ export default function PersonGroups({
   const autoAngles = async (rank) => {
     setHarvesting(rank);
     try {
-      const res = await postJSON('/api/target/auto_angles', { person: rank, index: selTarget });
+      const res = await postJSON('/api/target/auto_angles', {
+        person: rank, index: selTarget, target_media_id: targetMediaId,
+      });
       applyPayload(res);
       const detail = res.scanned
         ? ` — scanned ${res.scanned} frames in ${res.seconds}s, ${res.bins} pose bin${res.bins === 1 ? '' : 's'} covered`
@@ -163,7 +167,7 @@ export default function PersonGroups({
   };
 
   const autoCluster = async () => {
-    const res = await call('/api/target/autocluster', {});
+    const res = await call('/api/target/autocluster', { target_media_id: targetMediaId });
     if (res) { setExpanded({}); notify(`Grouped into ${res.people} ${res.people === 1 ? 'person' : 'people'}`); }
   };
 
@@ -180,7 +184,9 @@ export default function PersonGroups({
     }))) return;
     setScanning(true);
     try {
-      const res = await postJSON('/api/target/auto_capture', { index: selTarget, replace: true });
+      const res = await postJSON('/api/target/auto_capture', {
+        index: selTarget, replace: true, target_media_id: targetMediaId,
+      });
       applyPayload(res);
       if (!res.count) {
         notify(res.message || 'Auto-capture found nobody in this clip', 'warning');
@@ -221,7 +227,9 @@ export default function PersonGroups({
   const clearAllFaces = async () => {
     if (!targetFaces.length) return;
     if (!(await confirmDialog({ title: 'Clear all faces?', message: 'Remove all captured target faces? This clears every person in this layout.', confirmLabel: 'Clear all', danger: true }))) return;
-    const res = await call('/api/target/clear_faces', {}, 'Cleared all target faces');
+    const res = await call('/api/target/clear_faces', {
+      target_media_id: targetMediaId,
+    }, 'Cleared all target faces');
     if (res) {
       setExpanded({});
       setSelTargetFace(0);
@@ -234,18 +242,27 @@ export default function PersonGroups({
     const g = [...targetGroups];
     g[faceIdx] = targetRank;
     setTargetGroups(g);
-    postJSON('/api/target/group', { groups: g }).then(applyPayload).catch((e) => notify(e.message, 'error'));
+    postJSON('/api/target/group', {
+      groups: g, target_media_id: targetMediaId,
+    }).then(applyPayload).catch((e) => notify(e.message, 'error'));
   };
 
   const commitName = (rank) => {
     setEditingRank(null);
     const name = editValue.trim();
     if (name === nameFor(rank)) return;
-    call('/api/target/name', { person: rank, name });
+    call('/api/target/name', { person: rank, name, target_media_id: targetMediaId });
   };
 
   const setMapping = (rank, val) => {
-    setFaceMapping((prev) => ({ ...prev, [rank]: val }));
+    const next = { ...(faceMapping || {}), [rank]: val };
+    setFaceMapping(next);
+    // Mapping is UI-owned, but it is still target-specific state. Persist it
+    // immediately so a reload cannot reconstruct B from A's last mapping.
+    postJSON('/api/target/context', {
+      target_media_id: targetMediaId,
+      face_mapping: next,
+    }).catch((e) => notify(e.message, 'error'));
     if (clearPreviewCache) clearPreviewCache();
   };
 

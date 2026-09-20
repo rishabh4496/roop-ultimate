@@ -150,7 +150,7 @@ RUN_ONLY_OUTPUT = {
 # Internal checkpoint transport, not a user setting sent by FaceSwap.jsx.
 # The render worker consumes the already-normalized request persisted by
 # /api/swap; preview constructs the same request directly at its boundary.
-INTERNAL_TRANSPORT_KEYS = {"normalized_request"}
+INTERNAL_TRANSPORT_KEYS = {"normalized_request", "target_media_id"}
 
 
 class TestFrontendReachesBackend(unittest.TestCase):

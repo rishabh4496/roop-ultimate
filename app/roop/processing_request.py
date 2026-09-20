@@ -217,6 +217,7 @@ def resolve_selected_source_index(source_index_mapping, selected_source_gallery_
 def normalize_processing_request(payload=None, *, target_groups=None,
                                  source_count=0, selected_source_gallery_index=0,
                                  target_media_index=None, request_id=None,
+                                 target_media_id=None,
                                  current_source_names=None,
                                  current_source_ids=None):
     """Build the one request representation consumed by preview and render."""
@@ -279,6 +280,10 @@ def normalize_processing_request(payload=None, *, target_groups=None,
         "target_face_count": len(groups),
         "target_person_count": len(set(groups)),
         "target_media_index": target_media,
+        "target_media_id": (str(target_media_id)
+                            if target_media_id is not None else
+                            (str(payload.get("target_media_id"))
+                             if payload.get("target_media_id") else None)),
         "face_mapping": normalized_mapping,
         "source_index_mapping": source_index_mapping,
         "source_mapping_ids": resolved_mapping_ids,
@@ -305,7 +310,8 @@ def selection_log_line(request, phase):
         f"source_facesets={request.get('source_face_count')} "
         f"mapping={request.get('face_mapping')} "
         f"source_index={request.get('source_index')} "
-        f"target_media={request.get('target_media_index')}"
+        f"target_media={request.get('target_media_index')} "
+        f"target_media_id={request.get('target_media_id')}"
     )
     errors = request.get("source_mapping_errors") or []
     return f"{line} mapping_errors={errors}" if errors else line

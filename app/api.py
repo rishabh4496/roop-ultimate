@@ -67,6 +67,7 @@ from roop.processing_request import (
 )
 from roop.target_selection import (normalize_target_selection,
                                    selection_diagnostic_for_mode)
+from target_media_state import TargetMediaContextStore
 import project_checkpoint as _project_checkpoint
 import ui.globals as ui_globals
 
@@ -85,6 +86,12 @@ app.add_middleware(
 # changes controls quickly, so keep those requests from interleaving and
 # restoring one another's state out of order.
 _preview_request_lock = threading.Lock()
+# Target-face globals are retained for the legacy processing core, but they
+# are only the active target context.  This lock makes the save/load transition
+# atomic and is held for a final render so selecting another target cannot
+# replace the faces that ProcessMgr is using halfway through a job.
+_target_context_lock = threading.RLock()
+_target_contexts = TargetMediaContextStore()
 
 
 def _configuration_ready():
@@ -238,6 +245,131 @@ _ANGLE_REVIEW      = float(os.environ.get('ROOP_ANGLE_REVIEW', '0.70'))
 list_files_process: list = []          # list[ProcessEntry] – the target media queue
 
 fm_selected_index = -1
+
+
+def _ensure_target_media_id(entry) -> str:
+    """Attach an opaque id to legacy/current ProcessEntry-like objects."""
+    return _target_contexts.ensure_media_id(entry)
+
+
+def _target_media_id_at(index: int) -> str | None:
+    if 0 <= int(index) < len(list_files_process):
+        return _ensure_target_media_id(list_files_process[int(index)])
+    return None
+
+
+def _target_index_for_ref(payload=None, *, index=None, media_id=None):
+    """Resolve a target by stable id first, with an index compatibility fallback."""
+    payload = payload if isinstance(payload, dict) else {}
+    requested_id = media_id or payload.get("target_media_id") or payload.get("media_id")
+    if requested_id:
+        requested_id = str(requested_id)
+        for target_index, entry in enumerate(list_files_process):
+            if _ensure_target_media_id(entry) == requested_id:
+                return target_index, requested_id
+        return None, requested_id
+    raw_index = index if index is not None else payload.get("index")
+    if raw_index is None:
+        raw_index = state.selected_target_index
+    try:
+        target_index = int(raw_index)
+    except (TypeError, ValueError):
+        return None, None
+    if target_index < 0 or target_index >= len(list_files_process):
+        return None, None
+    return target_index, _ensure_target_media_id(list_files_process[target_index])
+
+
+def _save_active_target_context_locked():
+    with _target_context_lock:
+        media_id = getattr(state, "active_target_media_id", None)
+        if not media_id:
+            return
+        _target_contexts.save(
+            media_id,
+            target_faces=roop_globals.TARGET_FACES,
+            target_face_group=roop_globals.TARGET_FACE_GROUP,
+            target_face_names=getattr(roop_globals, "TARGET_FACE_NAMES", {}) or {},
+            target_thumbs=ui_globals.ui_target_thumbs,
+            selected_target_face_index=getattr(state, "selected_target_face_index", 0),
+            source_mapping=getattr(state, "active_target_source_mapping", {}) or {},
+        )
+
+
+def _clear_active_target_globals_locked():
+    roop_globals.TARGET_FACES.clear()
+    roop_globals.TARGET_FACE_GROUP.clear()
+    if getattr(roop_globals, "TARGET_FACE_NAMES", None) is None:
+        roop_globals.TARGET_FACE_NAMES = {}
+    else:
+        roop_globals.TARGET_FACE_NAMES.clear()
+    ui_globals.ui_target_thumbs.clear()
+    state.active_target_source_mapping = {}
+
+
+def _load_target_context_locked(media_id: str):
+    context = _target_contexts.load(media_id)
+    _clear_active_target_globals_locked()
+    roop_globals.TARGET_FACES.extend(context.target_faces)
+    roop_globals.TARGET_FACE_GROUP.extend(context.target_face_group)
+    roop_globals.TARGET_FACE_NAMES.update(context.target_face_names)
+    ui_globals.ui_target_thumbs.extend(context.target_thumbs)
+    state.active_target_media_id = str(media_id)
+    state.selected_target_face_index = min(
+        max(0, int(context.selected_target_face_index or 0)),
+        max(0, len(roop_globals.TARGET_FACES) - 1),
+    )
+    state.active_target_source_mapping = (
+        dict(context.source_mapping) if isinstance(context.source_mapping, dict)
+        else list(context.source_mapping or []))
+
+
+def _activate_target_media(*, index=None, media_id=None, refresh=True):
+    """Make exactly one target context active and return ``(index, id)``.
+
+    A missing id/index or a failed media refresh leaves the old active context
+    untouched.  That property is important for failed target loads: a failed
+    B selection must never leave A's identity arrays paired with B's media.
+    """
+    with _target_context_lock:
+        target_index, resolved_id = _target_index_for_ref(
+            index=index, media_id=media_id)
+        if target_index is None or resolved_id is None:
+            raise ValueError("target media is no longer loaded")
+        if refresh:
+            _refresh_target_frames(target_index)
+        current_id = getattr(state, "active_target_media_id", None)
+        if current_id != resolved_id:
+            _save_active_target_context_locked()
+            _load_target_context_locked(resolved_id)
+        else:
+            state.active_target_media_id = resolved_id
+        state.selected_target_index = target_index
+        return target_index, resolved_id
+
+
+def _ensure_active_target_context():
+    """Synchronize globals with the selected queue entry for legacy callers."""
+    if not list_files_process:
+        with _target_context_lock:
+            _save_active_target_context_locked()
+            _clear_active_target_globals_locked()
+            state.active_target_media_id = None
+            state.selected_target_face_index = 0
+        return None, None
+    return _activate_target_media(index=state.selected_target_index, refresh=False)
+
+
+def _target_context_payload():
+    return {
+        "target_media_id": getattr(state, "active_target_media_id", None),
+        "selected_target_face_index": getattr(state, "selected_target_face_index", 0),
+        "face_mapping": getattr(state, "active_target_source_mapping", {}) or {},
+        "target_faces": [_rgb_to_dataurl(t) for t in ui_globals.ui_target_thumbs],
+        "target_groups": _target_groups_ranked(),
+        "target_faces_info": _target_faces_info(),
+        "target_names": _target_names_ranked(),
+    }
 
 # Live progress, polled by the React UI
 _progress = {"processing": False, "paused": False, "pause_requested": False,
@@ -399,6 +531,7 @@ def _create_processing_project(payload, job_id=None):
         raise ValueError("target is no longer loaded")
     entry = list_files_process[target_index]
     target = _project_checkpoint.file_identity(entry.filename)
+    target["target_media_id"] = _ensure_target_media_id(entry)
     cfg = roop_globals.CFG
     start = int(getattr(entry, "startframe", 0) or 0)
     end = int(getattr(entry, "endframe", 0) or getattr(entry, "total_frames", 0) or 0)
@@ -421,6 +554,12 @@ def _create_processing_project(payload, job_id=None):
         output=output,
         cfg=cfg,
         target_faces=_project_target_faces(),
+        target_context={
+            "target_media_id": target["target_media_id"],
+            "target_face_names": dict(getattr(roop_globals, "TARGET_FACE_NAMES", {}) or {}),
+            "selected_target_face_index": getattr(state, "selected_target_face_index", 0),
+            "face_mapping": getattr(state, "active_target_source_mapping", {}) or payload.get("face_mapping", {}),
+        },
         app_version=_get_git_version(),
     )
 
@@ -667,7 +806,7 @@ def _selection_message(code):
 
 
 def _canonical_processing_request(payload, target_media_index=None,
-                                  request_id=None):
+                                  target_media_id=None, request_id=None):
     """Resolve all selection/index semantics once for either route."""
     payload = dict(payload or {})
     # Keep the API boundary's target-person normalization as the single place
@@ -685,6 +824,7 @@ def _canonical_processing_request(payload, target_media_index=None,
         source_count=len(roop_globals.INPUT_FACESETS),
         selected_source_gallery_index=selected_source,
         target_media_index=target_media_index,
+        target_media_id=target_media_id or payload.get("target_media_id"),
         current_source_names=source_names,
         current_source_ids=source_ids,
         request_id=request_id,
@@ -1345,16 +1485,14 @@ def _pose_bin(kps):
 @app.get("/api/state")
 def get_state():
     """Rehydrate the UI: current source/target galleries and target queue."""
+    _ensure_active_target_context()
     targets = [_target_entry_dict(entry) for entry in list_files_process]
     desync = _sources_desync()
     return {
         **({"desync": desync} if desync else {}),
         "source_faces": [_rgb_to_dataurl(t) for t in ui_globals.ui_input_thumbs],
         "source_faces_info": _get_source_faces_info(),
-        "target_faces": [_rgb_to_dataurl(t) for t in ui_globals.ui_target_thumbs],
-        "target_groups": _target_groups_ranked(),
-        "target_faces_info": _target_faces_info(),
-        "target_names": _target_names_ranked(),
+        **_target_context_payload(),
         "targets": targets,
         "selected_target_index": state.selected_target_index,
         "faceset_count": len(roop_globals.INPUT_FACESETS),
@@ -1612,6 +1750,8 @@ def target_add_path(payload: dict = Body(...)):
     if isinstance(raw, str):
         raw = [raw]
 
+    with _target_context_lock:
+        _save_active_target_context_locked()
     first_new = len(list_files_process)
     added, rejected = [], []
     for p in raw:
@@ -1622,7 +1762,9 @@ def target_add_path(payload: dict = Body(...)):
         if not _is_usable_target(path):
             rejected.append({"path": p, "why": "not a supported image or video"})
             continue
-        list_files_process.append(ProcessEntry(path, 0, 0, 0))
+        entry = ProcessEntry(path, 0, 0, 0)
+        _ensure_target_media_id(entry)
+        list_files_process.append(entry)
         added.append(path)
 
     # Nothing landed — leave the selection alone. Unlike the upload route, this
@@ -1639,6 +1781,7 @@ def target_add_path(payload: dict = Body(...)):
     for i in range(first_new, len(list_files_process)):
         _refresh_target_frames(i)
     state.selected_target_index = first_new
+    _activate_target_media(index=first_new, refresh=False)
     out = _target_list_payload()
     out["added"] = added
     out["rejected"] = rejected
@@ -1647,15 +1790,21 @@ def target_add_path(payload: dict = Body(...)):
 
 @app.post("/api/target/add")
 def target_add(files: list[UploadFile] = File(...)):
+    with _target_context_lock:
+        _save_active_target_context_locked()
     first_new = len(list_files_process)
     for f in files:
         path = _save_upload(f)
-        list_files_process.append(ProcessEntry(path, 0, 0, 0))
+        entry = ProcessEntry(path, 0, 0, 0)
+        _ensure_target_media_id(entry)
+        list_files_process.append(entry)
     # Refresh every new entry (not just index 0) so videos report their real
     # frame count/fps immediately — the UI's auto-queue and labels rely on it.
     for i in range(first_new, len(list_files_process)):
         _refresh_target_frames(i)
     state.selected_target_index = first_new if first_new < len(list_files_process) else 0
+    if list_files_process:
+        _activate_target_media(index=state.selected_target_index, refresh=False)
     return _target_list_payload()
 
 
@@ -1689,8 +1838,13 @@ def _refresh_target_frames(idx):
 
 
 def _target_entry_dict(entry):
+    media_id = _ensure_target_media_id(entry)
     total = getattr(entry, "total_frames", 0) or entry.endframe or 1
     return {
+        # `media_id` is the identity used by target contexts, queues, and the
+        # React key.  The numeric index remains a transport/UI position only.
+        "id": media_id,
+        "media_id": media_id,
         "name": os.path.basename(entry.filename),
         # A persisted workspace can outlive a removable target file. Expose
         # this cheap availability bit so clients do not deliberately request
@@ -1708,48 +1862,100 @@ def _target_entry_dict(entry):
 def _target_list_payload():
     targets = [_target_entry_dict(entry) for entry in list_files_process]
     return {"targets": targets, "selected_target_index": state.selected_target_index,
+            "target_media_id": getattr(state, "active_target_media_id", None),
             "fps": state.current_video_fps}
 
 
 @app.post("/api/target/select")
 def target_select(payload: dict = Body(...)):
-    idx = int(payload.get("index", 0))
-    # Clamp: a negative index would silently wrap to the last entry via
-    # Python list indexing in downstream helpers.
-    state.selected_target_index = max(0, min(idx, max(0, len(list_files_process) - 1)))
-    _refresh_target_frames(state.selected_target_index)
-    return _target_list_payload()
+    with _target_context_lock:
+        idx, media_id = _target_index_for_ref(payload)
+        if idx is None or media_id is None:
+            return JSONResponse(status_code=404, content={
+                "message": "target media is no longer loaded",
+                "target_media_id": payload.get("target_media_id"),
+            })
+        try:
+            # Refresh before switching the globals.  A missing/corrupt B thus
+            # leaves A's active identity context intact.
+            _refresh_target_frames(idx)
+        except Exception as exc:
+            _swallowed("api.py:1882", exc, "target load failed")
+            return JSONResponse(status_code=409, content={
+                "message": f"could not load target media: {exc}",
+                "target_media_id": media_id,
+                "target_load_failed": True,
+            })
+        selected_face = payload.get("selected_target_face_index")
+        if selected_face is not None:
+            try:
+                state.selected_target_face_index = max(0, int(selected_face))
+            except (TypeError, ValueError):
+                state.selected_target_face_index = 0
+        _activate_target_media(index=idx, media_id=media_id, refresh=False)
+        _save_active_target_context_locked()
+        return {**_target_list_payload(), **_target_context_payload()}
 
 
 @app.post("/api/target/remove")
 def target_remove(payload: dict = Body(...)):
     """Remove a single target media item from the queue."""
-    idx = int(payload.get("index", -1))
-    if 0 <= idx < len(list_files_process):
+    with _target_context_lock:
+        idx, media_id = _target_index_for_ref(payload)
+        if idx is None or media_id is None:
+            return JSONResponse(status_code=404, content={"message": "target media is no longer loaded"})
+        _save_active_target_context_locked()
         list_files_process.pop(idx)
-    if state.selected_target_index >= len(list_files_process):
-        state.selected_target_index = max(0, len(list_files_process) - 1)
-    if list_files_process:
-        _refresh_target_frames(state.selected_target_index)
-    return _target_list_payload()
+        _target_contexts.remove(media_id)
+        # Do not let the next surviving-target activation save the just-removed
+        # active globals back under A's deleted id.  That would resurrect A's
+        # context and is especially easy to hit when removing the last/selected
+        # item before uploading a replacement into the same array position.
+        if media_id == getattr(state, "active_target_media_id", None):
+            state.active_target_media_id = None
+        if not list_files_process:
+            state.selected_target_index = 0
+            state.active_target_media_id = None
+            state.selected_target_face_index = 0
+            _clear_active_target_globals_locked()
+            return {**_target_list_payload(), **_target_context_payload()}
+
+        old_selected = state.selected_target_index
+        if idx < old_selected:
+            new_selected = old_selected - 1
+        elif idx == old_selected:
+            new_selected = min(old_selected, len(list_files_process) - 1)
+        else:
+            new_selected = old_selected
+        new_selected = max(0, min(new_selected, len(list_files_process) - 1))
+        state.selected_target_index = new_selected
+        _refresh_target_frames(new_selected)
+        # Always activate by the surviving entry's id.  This is deliberately
+        # done even when the removed target was not selected, so a stale active
+        # id can never survive a queue mutation.
+        _activate_target_media(index=new_selected, refresh=False)
+        return {**_target_list_payload(), **_target_context_payload()}
 
 
 @app.post("/api/target/clear")
 def target_clear():
-    list_files_process.clear()
-    roop_globals.TARGET_FACES.clear()
-    roop_globals.TARGET_FACE_GROUP.clear()
-    if getattr(roop_globals, 'TARGET_FACE_NAMES', None):
-        roop_globals.TARGET_FACE_NAMES.clear()
-    ui_globals.ui_target_thumbs.clear()
-    state.selected_target_index = 0
-    return _target_list_payload()
+    with _target_context_lock:
+        _save_active_target_context_locked()
+        list_files_process.clear()
+        _target_contexts.clear()
+        state.selected_target_index = 0
+        state.active_target_media_id = None
+        state.selected_target_face_index = 0
+        _clear_active_target_globals_locked()
+        return {**_target_list_payload(), **_target_context_payload()}
 
 
 @app.post("/api/target/set_frame")
 def target_set_frame(payload: dict = Body(...)):
     """Set start/end frame of the selected target (Set as Start / End)."""
-    idx = state.selected_target_index
+    idx, _media_id, error = _activate_target_from_payload(payload, refresh=False)
+    if error:
+        return error
     which = payload.get("which", "start")
     try:
         frame = int(payload.get("frame", 1))
@@ -2031,15 +2237,64 @@ def _target_names_ranked():
 
 
 def _target_faces_payload(extra=None):
-    out = {
-        "target_faces": [_rgb_to_dataurl(t) for t in ui_globals.ui_target_thumbs],
-        "target_groups": _target_groups_ranked(),
-        "target_faces_info": _target_faces_info(),
-        "target_names": _target_names_ranked(),
-    }
+    out = _target_context_payload()
     if extra:
         out.update(extra)
     return out
+
+
+def _save_target_mapping_from_payload(payload):
+    """Persist a target's source mapping without making it global state."""
+    if not isinstance(payload, dict) or "face_mapping" not in payload:
+        return
+    mapping = payload.get("face_mapping")
+    if not isinstance(mapping, (dict, list, tuple)):
+        return
+    with _target_context_lock:
+        state.active_target_source_mapping = (
+            dict(mapping) if isinstance(mapping, dict) else list(mapping))
+        _save_active_target_context_locked()
+
+
+def _activate_target_from_payload(payload, *, refresh=True, index=None):
+    """Resolve and activate the target named by an identity API request."""
+    has_explicit_media_id = isinstance(payload, dict) and bool(
+        payload.get("target_media_id") or payload.get("media_id"))
+    if has_explicit_media_id:
+        idx, media_id = _target_index_for_ref(payload)
+    elif index is not None:
+        idx, media_id = _target_index_for_ref({}, index=index)
+    else:
+        # Face/person mutations historically used `index` for the face/angle
+        # itself.  Without a stable media id, keep those requests scoped to the
+        # currently selected target rather than misreading face index 0 as the
+        # first target media.
+        idx, media_id = _target_index_for_ref({}, index=state.selected_target_index)
+    if idx is None or media_id is None:
+        return None, None, JSONResponse(status_code=404, content={
+            "message": "target media is no longer loaded",
+            "target_media_id": payload.get("target_media_id") if isinstance(payload, dict) else None,
+        })
+    try:
+        _activate_target_media(index=idx, media_id=media_id, refresh=refresh)
+    except Exception as exc:
+        _swallowed("api.py:2279", exc, "target load failed")
+        return None, None, JSONResponse(status_code=409, content={
+            "message": f"could not load target media: {exc}",
+            "target_media_id": media_id,
+            "target_load_failed": True,
+        })
+    return idx, media_id, None
+
+
+@app.post("/api/target/context")
+def target_context(payload: dict = Body(...)):
+    """Save UI-only target state that is not part of the legacy face arrays."""
+    _target_idx, _media_id, error = _activate_target_from_payload(payload, refresh=False)
+    if error:
+        return error
+    _save_target_mapping_from_payload(payload)
+    return _target_faces_payload()
 
 
 def _faces_from_frame(idx, frame):
@@ -2092,10 +2347,11 @@ def target_use_face(payload: dict = Body(...)):
     boxes drawn on the live-preview overlay, so clicking a box adds exactly that
     person to the target faces.
     """
-    idx = int(payload.get("index", state.selected_target_index))
+    idx, _media_id, error = _activate_target_from_payload(
+        payload, index=payload.get("index", state.selected_target_index))
+    if error:
+        return error
     frame = int(payload.get("frame", 1))
-    if idx < 0 or idx >= len(list_files_process):
-        return {"target_faces": [], "target_groups": []}
     face_index = payload.get("face_index", None)
     if face_index is not None:
         # Single box clicked: select by get_all_faces order (matches the overlay
@@ -2110,6 +2366,8 @@ def target_use_face(payload: dict = Body(...)):
         roop_globals.TARGET_FACE_GROUP.append(next_id)
         ui_globals.ui_target_thumbs.append(util.convert_to_gradio(fd[1]))
         next_id += 1
+    state.selected_target_face_index = max(0, len(roop_globals.TARGET_FACES) - 1)
+    _save_active_target_context_locked()
     return _target_faces_payload({"count": len(faces_data)})
 
 
@@ -2119,7 +2377,10 @@ def target_add_angle(payload: dict = Body(...)):
     person, picking the face in the current frame closest to that person so
     matching survives pose changes (anti-flicker, multi-angle tracking)."""
     person = int(payload.get("person", 0))     # 0-based person rank
-    idx = int(payload.get("index", state.selected_target_index))
+    idx, _media_id, error = _activate_target_from_payload(
+        payload, index=payload.get("index", state.selected_target_index))
+    if error:
+        return error
     frame = int(payload.get("frame", 1))
     if idx < 0 or idx >= len(list_files_process):
         return _target_faces_payload({"count": 0})
@@ -2164,6 +2425,8 @@ def target_add_angle(payload: dict = Body(...)):
         roop_globals.TARGET_FACES.append(best_fd[0])
         roop_globals.TARGET_FACE_GROUP.append(raw_group)
         ui_globals.ui_target_thumbs.append(util.convert_to_gradio(best_fd[1]))
+        state.selected_target_face_index = len(roop_globals.TARGET_FACES) - 1
+        _save_active_target_context_locked()
     return _target_faces_payload({"count": 1, "distance": round(float(best_d), 3)})
 
 
@@ -2200,7 +2463,10 @@ def target_auto_angles(payload: dict = Body(...)):
         return JSONResponse(status_code=409, content={"message": "busy processing"})
 
     person = int(payload.get("person", 0))
-    idx = int(payload.get("index", state.selected_target_index))
+    idx, _media_id, error = _activate_target_from_payload(
+        payload, index=payload.get("index", state.selected_target_index))
+    if error:
+        return error
     if idx < 0 or idx >= len(list_files_process):
         return _target_faces_payload({"count": 0, "message": "no target"})
     target_path = list_files_process[idx].filename
@@ -2447,6 +2713,7 @@ def target_auto_angles(payload: dict = Body(...)):
         print('[AutoAngles] turned away: '
               + ', '.join(f'{n} {why}' for why, n in rejected.most_common()))
 
+    _save_active_target_context_locked()
     return _target_faces_payload({
         "count": added,
         "scanned": scanned,
@@ -2476,9 +2743,10 @@ def target_auto_capture(payload: dict = Body(...)):
     angles; pass `replace: true` to clear the existing people first, which is
     what the UI button does since re-running it otherwise duplicates everyone.
     """
-    idx = int(payload.get("index", state.selected_target_index))
-    if idx >= len(list_files_process):
-        return _target_faces_payload({"count": 0, "message": "no target selected"})
+    idx, _media_id, error = _activate_target_from_payload(
+        payload, index=payload.get("index", state.selected_target_index))
+    if error:
+        return error
     target_path = list_files_process[idx].filename
     if not util.is_video(target_path):
         return _target_faces_payload({"count": 0, "message": "auto-capture needs a video target"})
@@ -2502,6 +2770,7 @@ def target_auto_capture(payload: dict = Body(...)):
         if getattr(roop_globals, 'TARGET_FACE_NAMES', None):
             roop_globals.TARGET_FACE_NAMES.clear()
         ui_globals.ui_target_thumbs.clear()
+        state.selected_target_face_index = 0
 
     next_id = (max(roop_globals.TARGET_FACE_GROUP) + 1) if roop_globals.TARGET_FACE_GROUP else 0
     from roop.face_util import _attach_source_crops, clamp_cut_values
@@ -2565,6 +2834,9 @@ def target_auto_capture(payload: dict = Body(...)):
                 result["notes"].append(f"angle harvest failed for person {rank + 1}: {e}")
         enriched = len(roop_globals.TARGET_FACES) - before
 
+    if roop_globals.TARGET_FACES:
+        state.selected_target_face_index = len(roop_globals.TARGET_FACES) - 1
+    _save_active_target_context_locked()
     return _target_faces_payload({
         "count": len(result["targets"]),
         "angles_added": enriched,
@@ -2580,31 +2852,47 @@ def target_auto_capture(payload: dict = Body(...)):
 
 @app.post("/api/target/remove_face")
 def target_remove_face(payload: dict = Body(...)):
-    idx = int(payload.get("index", -1))
+    _target_idx, _media_id, error = _activate_target_from_payload(payload, refresh=False)
+    if error:
+        return error
+    idx = int(payload.get("face_index", payload.get("index", -1)))
     if 0 <= idx < len(roop_globals.TARGET_FACES):
         roop_globals.TARGET_FACES.pop(idx)
     if 0 <= idx < len(roop_globals.TARGET_FACE_GROUP):
         roop_globals.TARGET_FACE_GROUP.pop(idx)
     if 0 <= idx < len(ui_globals.ui_target_thumbs):
         ui_globals.ui_target_thumbs.pop(idx)
+    if roop_globals.TARGET_FACES:
+        state.selected_target_face_index = min(
+            state.selected_target_face_index, len(roop_globals.TARGET_FACES) - 1)
+    else:
+        state.selected_target_face_index = 0
+    _save_active_target_context_locked()
     return _target_faces_payload()
 
 
 @app.post("/api/target/clear_faces")
-def target_clear_faces():
+def target_clear_faces(payload: dict = Body(default={} )):
     """Remove every captured target person/angle, but keep the target media
     queue intact (unlike /api/target/clear which also drops the videos/images).
     Backs the 'Reset' button in the Target Faces panel."""
-    roop_globals.TARGET_FACES.clear()
-    roop_globals.TARGET_FACE_GROUP.clear()
-    if getattr(roop_globals, 'TARGET_FACE_NAMES', None):
-        roop_globals.TARGET_FACE_NAMES.clear()
-    ui_globals.ui_target_thumbs.clear()
+    # The clear button is scoped to the currently active target media.  Do not
+    # clear the process-global arrays before activating that context: doing so
+    # would erase A when a stale UI request arrives while B is selected.
+    _target_idx, _media_id, error = _activate_target_from_payload(payload, refresh=False)
+    if error:
+        return error
+    _clear_active_target_globals_locked()
+    state.selected_target_face_index = 0
+    _save_active_target_context_locked()
     return _target_faces_payload({"count": 0})
 
 
 @app.post("/api/target/group")
 def target_group(payload: dict = Body(...)):
+    _target_idx, _media_id, error = _activate_target_from_payload(payload, refresh=False)
+    if error:
+        return error
     groups = payload.get("groups")
     if isinstance(groups, list):
         parsed = []
@@ -2614,6 +2902,7 @@ def target_group(payload: dict = Body(...)):
             except (ValueError, TypeError):
                 parsed.append(0)
         roop_globals.TARGET_FACE_GROUP = parsed
+        _save_active_target_context_locked()
     return _target_faces_payload()
 
 
@@ -2621,6 +2910,9 @@ def target_group(payload: dict = Body(...)):
 def target_name(payload: dict = Body(...)):
     """Give a person (by 0-based rank) a display name, e.g. 'Bride'. Stored by
     the person's stable raw group id so it survives rank shifts."""
+    _target_idx, _media_id, error = _activate_target_from_payload(payload, refresh=False)
+    if error:
+        return error
     person = int(payload.get("person", 0))
     name = str(payload.get("name", "")).strip()[:40]
     ranks = _target_groups_ranked()
@@ -2633,6 +2925,7 @@ def target_name(payload: dict = Body(...)):
             roop_globals.TARGET_FACE_NAMES[raw_group] = name
         else:
             roop_globals.TARGET_FACE_NAMES.pop(raw_group, None)
+        _save_active_target_context_locked()
     return _target_faces_payload()
 
 
@@ -2641,6 +2934,9 @@ def target_autocluster(payload: dict = Body(...)):
     """Auto-assign every captured target face to a person by clustering their
     recognition embeddings — same identity within `threshold` cosine distance
     lands in one group. Replaces the current manual grouping."""
+    _target_idx, _media_id, error = _activate_target_from_payload(payload, refresh=False)
+    if error:
+        return error
     threshold = float(payload.get("threshold", 0.55))
     faces = roop_globals.TARGET_FACES
     groups = [-1] * len(faces)
@@ -2669,6 +2965,7 @@ def target_autocluster(payload: dict = Body(...)):
     # Names keyed by old raw ids are meaningless after a full re-cluster.
     if getattr(roop_globals, 'TARGET_FACE_NAMES', None):
         roop_globals.TARGET_FACE_NAMES.clear()
+    _save_active_target_context_locked()
     return _target_faces_payload({"people": next_id})
 
 
@@ -3059,14 +3356,28 @@ def preview(payload: dict = Body(...)):
     if not _configuration_ready():
         return _configuration_initializing()
     _preview_request_lock.acquire()
+    target_context_lock_held = False
     try:
+        # The preview must read one complete target context.  A target switch
+        # cannot replace the process-global compatibility arrays halfway through
+        # detection/swap and pair B's media with A's identities.
+        _target_context_lock.acquire()
+        target_context_lock_held = True
+        payload = dict(payload or {})
         roop_globals.is_preview = True
         _update_mask_offsets_from_payload(payload)
-        idx = int(payload.get("index", state.selected_target_index))
+        idx, media_id, target_error = _activate_target_from_payload(
+            payload, index=payload.get("index", state.selected_target_index), refresh=False)
+        if target_error:
+            return target_error
+        payload["index"] = idx
+        payload["target_index"] = idx
+        payload["target_media_id"] = media_id
+        _save_target_mapping_from_payload(payload)
         frame = int(payload.get("frame", 1))
         fake = bool(payload.get("fake_preview", False))
         processing_request = _canonical_processing_request(
-            payload, target_media_index=idx)
+            payload, target_media_index=idx, target_media_id=media_id)
         _log_normalized_selection(processing_request, "preview")
 
         if idx >= len(list_files_process):
@@ -3176,6 +3487,8 @@ def preview(payload: dict = Body(...)):
                 "kps": kps_list,
                 "pose": pose_list,
                 "request_id": processing_request["request_id"],
+                "target_index": idx,
+                "target_media_id": media_id,
                 "selection_state": selection_state,
                 "selection_diagnostic": selection_diagnostic,
                 "target_required": True if selection_diagnostic == "target_required" else False,
@@ -3185,7 +3498,7 @@ def preview(payload: dict = Body(...)):
             }
 
         if not fake or len(roop_globals.INPUT_FACESETS) < 1:
-            return {"image": _bgr_to_preview_dataurl(current_frame), "faces": faces_list, "person_ids": person_ids, "kps": kps_list, "pose": pose_list, "request_id": processing_request["request_id"]}
+            return {"image": _bgr_to_preview_dataurl(current_frame), "faces": faces_list, "person_ids": person_ids, "kps": kps_list, "pose": pose_list, "request_id": processing_request["request_id"], "target_index": idx, "target_media_id": media_id}
 
         try:
             from roop.core import live_swap, get_processing_plugins
@@ -3223,8 +3536,8 @@ def preview(payload: dict = Body(...)):
 
             swapped = live_swap(current_frame, options, input_facesets=mapped)
             if swapped is None:
-                return {"image": _bgr_to_preview_dataurl(current_frame), "faces": faces_list, "person_ids": person_ids, "kps": kps_list, "pose": pose_list, "request_id": processing_request["request_id"]}
-            return {"image": _bgr_to_preview_dataurl(swapped), "faces": faces_list, "person_ids": person_ids, "kps": kps_list, "pose": pose_list, "request_id": processing_request["request_id"]}
+                return {"image": _bgr_to_preview_dataurl(current_frame), "faces": faces_list, "person_ids": person_ids, "kps": kps_list, "pose": pose_list, "request_id": processing_request["request_id"], "target_index": idx, "target_media_id": media_id}
+            return {"image": _bgr_to_preview_dataurl(swapped), "faces": faces_list, "person_ids": person_ids, "kps": kps_list, "pose": pose_list, "request_id": processing_request["request_id"], "target_index": idx, "target_media_id": media_id}
         except Exception:
             traceback.print_exc()
             return JSONResponse(status_code=500, content={
@@ -3235,6 +3548,8 @@ def preview(payload: dict = Body(...)):
                 "kps": kps_list,
                 "pose": pose_list,
                 "request_id": processing_request["request_id"],
+                "target_index": idx,
+                "target_media_id": media_id,
             })
     finally:
         roop_globals.is_preview = False
@@ -3245,6 +3560,8 @@ def preview(payload: dict = Body(...)):
         except Exception as _degrade_error:
             _swallowed("api.py:2883", _degrade_error, "fallback continued")
             pass
+        if target_context_lock_held:
+            _target_context_lock.release()
         _preview_request_lock.release()
 
 
@@ -3317,11 +3634,16 @@ def trigger_swap(payload: dict = Body(...)):
     if len(roop_globals.INPUT_FACESETS) < 1:
         return JSONResponse(status_code=400, content={"message": "no source faces"})
     payload = dict(payload)
-    target_media_index = payload.get("target_index")
-    if target_media_index is None:
-        target_media_index = state.selected_target_index
+    target_media_index, target_media_id, target_error = _activate_target_from_payload(
+        payload, index=payload.get("target_index", state.selected_target_index), refresh=False)
+    if target_error:
+        return target_error
+    payload["target_index"] = target_media_index
+    payload["target_media_id"] = target_media_id
+    _save_target_mapping_from_payload(payload)
     processing_request = _canonical_processing_request(
-        payload, target_media_index=target_media_index)
+        payload, target_media_index=target_media_index,
+        target_media_id=target_media_id)
     swap_mode = processing_request["swap_mode"]
     selection_state = processing_request["selection_state"]
     selection_diagnostic = _selection_diagnostic_for_mode(swap_mode, selection_state)
@@ -3381,11 +3703,32 @@ def _run_swap(payload):
     # can always read them, however early the failure lands.
     project_id = ""
     pause_state = {"requested": False, "acknowledged": False}
+    target_context_lock_held = False
     try:
+        # The render owns an immutable target context for its whole lifetime.
+        # UI target switches wait until this finally block releases the lock;
+        # they cannot replace TARGET_FACES while ProcessMgr is reading them.
+        _target_context_lock.acquire()
+        target_context_lock_held = True
         _procmgr_runtime.pause_controller.start()
         pause_state = _procmgr_runtime.pause_controller.snapshot()
         roop_globals.pause = bool(pause_state["requested"])
         _stop_requested["flag"] = False
+
+        # Resolve the queued media only after the run's preamble is inside the
+        # protected try/finally.  A missing target is still rejected before any
+        # processing work, but the failure path cannot wedge the processing flag.
+        requested_target_index = payload.get("target_index")
+        requested_target_id = payload.get("target_media_id")
+        target_index, target_media_id = _target_index_for_ref(
+            payload, index=requested_target_index)
+        if target_index is None or target_media_id is None:
+            raise ValueError("target media is no longer loaded")
+        _activate_target_media(index=target_index, media_id=target_media_id,
+                               refresh=False)
+        payload = dict(payload)
+        payload["target_index"] = target_index
+        payload["target_media_id"] = target_media_id
         project_id = str(payload.get(_PROJECT_ID_KEY) or "")
         global _active_project_id
         _active_project_id = project_id
@@ -3455,7 +3798,8 @@ def _run_swap(payload):
                 payload, target_media_index=(
                     payload.get("target_index")
                     if payload.get("target_index") is not None
-                    else state.selected_target_index))
+                    else state.selected_target_index),
+                target_media_id=payload.get("target_media_id"))
         _log_normalized_selection(processing_request, "render")
         prepare_environment()
         # A project with committed segments owns its partial output. Clearing
@@ -3760,6 +4104,8 @@ def _run_swap(payload):
         if project_id:
             roop_globals._checkpoint_segment_callback = None
         _active_project_id = ""
+        if target_context_lock_held:
+            _target_context_lock.release()
 
 
 def _sync_pause_progress():
@@ -4217,6 +4563,8 @@ _routes_queue._create_project = _create_processing_project
 _routes_queue._validate_project = _validate_processing_project
 _routes_queue._set_project_state = _set_processing_project_state
 _routes_queue._project_source_list = list_files_process
+_routes_queue._activate_target = _activate_target_media
+_routes_queue._ensure_target_media_id = _ensure_target_media_id
 _routes_queue._benchmark_running = lambda: bool(_benchmark_state["running"])
 _routes_queue.load()
 

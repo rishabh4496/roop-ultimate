@@ -246,6 +246,85 @@ export default function FaceSwap({
   // Target-to-Source visual mapping state
   const [faceMapping, setFaceMapping] = useState({});
 
+  // Target media is an ordered view, not an identity. Keep the complete UI
+  // context keyed by the backend-issued media id so A -> B -> A restores A's
+  // people, angles, names, mapping, selected reference, frame, and preview.
+  const targetContextsRef = useRef({});
+  const targetIdAt = (index = selTarget) => targets[index]?.media_id
+    || targets[index]?.id || null;
+  const activeTargetMediaId = targetIdAt(selTarget);
+
+  const rememberTargetContext = (mediaId = activeTargetMediaId, patch = {}) => {
+    if (!mediaId) return;
+    targetContextsRef.current[mediaId] = {
+      ...(targetContextsRef.current[mediaId] || {}),
+      targetFaces,
+      targetGroups,
+      targetNames,
+      targetFacesInfo,
+      faceMapping,
+      selTargetFace,
+      frame,
+      previewSrc,
+      previewFor,
+      ...patch,
+    };
+  };
+
+  const applyTargetContext = (res, mediaId = res?.target_media_id) => {
+    if (!mediaId) return;
+    const saved = targetContextsRef.current[mediaId] || {};
+    const faces = res?.target_faces ?? saved.targetFaces ?? [];
+    const groups = res?.target_groups ?? saved.targetGroups ?? [];
+    const names = res?.target_names ?? saved.targetNames ?? [];
+    const facesInfo = res?.target_faces_info ?? saved.targetFacesInfo ?? [];
+    const persistedMapping = res?.face_mapping ?? saved.faceMapping ?? {};
+    const restoredMapping = Array.isArray(persistedMapping)
+      ? mappingObjectFromArray(persistedMapping) : persistedMapping;
+    const selectedFace = Number.isInteger(res?.selected_target_face_index)
+      ? res.selected_target_face_index
+      : (Number.isInteger(saved.selTargetFace) ? saved.selTargetFace : 0);
+    const boundedFace = Math.max(0, Math.min(selectedFace, Math.max(0, faces.length - 1)));
+    setTargetFaces(faces);
+    setTargetGroups(groups);
+    setTargetNames(names);
+    setTargetFacesInfo(facesInfo);
+    setFaceMapping(restoredMapping || {});
+    setSelTargetFace(boundedFace);
+    const resultTarget = res?.targets?.[res?.selected_target_index ?? selTarget]
+      || targets[res?.selected_target_index ?? selTarget];
+    const max = resultTarget?.frames || maxFrames || 1;
+    const restoredFrame = Number.isInteger(saved.frame) && saved.frame >= 1
+      ? Math.min(saved.frame, max) : 1;
+    setFrame(restoredFrame);
+    setPreviewSrc(saved.previewSrc || '');
+    setPreviewFor(saved.previewFor || '');
+    targetContextsRef.current[mediaId] = {
+      ...saved,
+      targetFaces: faces,
+      targetGroups: groups,
+      targetNames: names,
+      targetFacesInfo: facesInfo,
+      selTargetFace: boundedFace,
+      frame: restoredFrame,
+      faceMapping: restoredMapping || {},
+      previewSrc: saved.previewSrc || '',
+      previewFor: saved.previewFor || '',
+    };
+  };
+
+  // Keep the ref current for changes made inside PersonGroups (mapping/name/
+  // angle operations) before a target switch can serialize the context.
+  // `rememberTargetContext` intentionally closes over the current context;
+  // memoizing it would make the per-target snapshot lag one render behind.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (!activeTargetMediaId) return;
+    rememberTargetContext();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTargetMediaId, targetFaces, targetGroups, targetNames,
+    targetFacesInfo, faceMapping, selTargetFace, frame, previewSrc, previewFor]);
+
   // Single source of truth, shared with the PersonGroups dropdown so the row
   // the user reads and the payload the backend receives cannot disagree.
   const getFaceMappingArray = (params = p) => buildFaceMappingArray({
@@ -374,10 +453,10 @@ export default function FaceSwap({
   // difference between the two models. Comparing a new render against a stale
   // one is the one thing a comparison grid must not do.
   const cacheSuffix =
-    `${meta?.git_version || 'dev'}_${sourceSig}_${targetSig}_${selSource}_${selTargetFace}`;
+    `${meta?.git_version || 'dev'}_${activeTargetMediaId || 'no-target'}_${sourceSig}_${targetSig}_${selSource}_${selTargetFace}`;
 
   const getCacheKey = (idx = selTarget, fr = frame) => {
-    return `${idx}_${fr}_${previewKey}_${cacheSuffix}`;
+    return `${targetIdAt(idx) || `legacy-index-${idx}`}_${fr}_${previewKey}_${cacheSuffix}`;
   };
 
   // Is this url still referenced by a cache entry? Asked before freeing the
@@ -534,9 +613,9 @@ export default function FaceSwap({
   // replays it (app/routes_queue.py). One builder rather than two means a new
   // setting cannot reach a hand-started run and miss a queued one — which is
   // exactly what the queue's private copy of this list used to do.
-  // `target_index` is deliberately absent: the queue resolves it from the target
-  // NAME at dispatch time, because a stored index goes stale as soon as a target
-  // is removed and the job then renders a different file than the one it names.
+  // `target_index` is deliberately absent: the queue resolves the target from
+  // the immutable target_media_id at dispatch time, because a stored index goes
+  // stale as soon as a target is removed.
   const buildSwapPayload = (params = p) => {
     const sp = withSliderBypass(params);
     return {
@@ -554,6 +633,7 @@ export default function FaceSwap({
       source_mapping_ids: getSourceMappingIds(sp),
       selected_source_name: sourceNameAt(selSource),
       selected_source_id: sourceIdAt(selSource),
+      target_media_id: activeTargetMediaId,
       selection_state: getTargetSelectionState(sp),
       imagemask: maskJson,
     };
@@ -563,6 +643,7 @@ export default function FaceSwap({
   // (frame_start/frame_end) when one range of several is being queued.
   const currentJob = (extra = {}) => ({
     target_name: targets[selTarget]?.name || '',
+    target_media_id: activeTargetMediaId,
     source_index: selSource,
     source_name: sourceFacesInfo[selSource]?.name
       || (sourceFaces[selSource] ? `Face ${selSource + 1}` : 'Selected face'),
@@ -583,7 +664,9 @@ export default function FaceSwap({
   const loadJobSettings = (job) => {
     if (!job?.payload) return;
     setSettings((s) => ({ ...(s || {}), ...job.payload }));
-    const idx = targets.findIndex((t) => t.name === job.target_name);
+    const idx = job.target_media_id
+      ? targets.findIndex((t) => (t.media_id || t.id) === job.target_media_id)
+      : targets.findIndex((t) => t.name === job.target_name);
     if (idx >= 0) selectTarget(idx);
   };
 
@@ -604,6 +687,7 @@ export default function FaceSwap({
     const name = targets[selTarget]?.name || '';
     await queue.addMany(segments.segments.map((s, i) => ({
       target_name: name,
+      target_media_id: activeTargetMediaId,
       source_index: selSource,
       source_name: sourceFacesInfo[selSource]?.name
         || (sourceFaces[selSource] ? `Face ${selSource + 1}` : 'Selected face'),
@@ -620,12 +704,14 @@ export default function FaceSwap({
   // concatenate them in clip order, not in the order they happened to render.
   const joinableJobs = React.useMemo(() => {
     const name = targets[selTarget]?.name;
-    if (!name) return [];
+    const mediaId = activeTargetMediaId;
+    if (!name && !mediaId) return [];
     return queue.jobs
-      .filter((j) => j.target_name === name && jobState(j) === 'COMPLETED'
+      .filter((j) => (mediaId ? j.target_media_id === mediaId : j.target_name === name)
+                     && jobState(j) === 'COMPLETED'
                      && j.frame_start != null && (j.outputs || []).length > 0)
       .sort((a, b) => a.frame_start - b.frame_start);
-  }, [queue.jobs, targets, selTarget]);
+  }, [queue.jobs, targets, selTarget, activeTargetMediaId]);
 
   const joinSegments = async () => {
     try {
@@ -752,7 +838,9 @@ export default function FaceSwap({
   // `params` is the settings object to read from: `p` normally, or a grid's
   // `localParams` (p with that grid's one override applied), which reproduces
   // the override in the request for free.
-  const buildPreviewPayload = (params, { index, frame: fr, fake, ...overrides } = {}) => {
+  const buildPreviewPayload = (params, {
+    index, frame: fr, fake, target_media_id: requestedMediaId, ...overrides
+  } = {}) => {
     const activeParams = withSliderBypass(params);
     // Respect the user's selected face detection mode. Do not coerce "Selected face"
     // to "All faces" when targetFaces is empty, as that causes unwanted automatic
@@ -810,6 +898,7 @@ export default function FaceSwap({
       face_mapping: getFaceMappingArray(activeParams),
       source_mapping_names: getSourceMappingNames(activeParams),
       selected_source_name: sourceNameAt(selSource),
+      target_media_id: requestedMediaId || targetIdAt(index) || activeTargetMediaId,
       selection_state: getTargetSelectionState(activeParams),
       mask_top: activeParams.mask_top,
       mask_bottom: activeParams.mask_bottom,
@@ -872,7 +961,9 @@ export default function FaceSwap({
   // across the webview reload a Pinokio tab switch causes. Captured at mount
   // and read once by the rehydrate effect below — see
   // faceswap/useViewPersistence.
-  const restoredViewRef = useViewPersistence({ selTarget, frame, previewSrc });
+  const restoredViewRef = useViewPersistence({
+    selTarget, targetMediaId: activeTargetMediaId, frame, previewSrc,
+  });
 
   // Pull the backend's own view of the workspace — sources, targets, harvested
   // faces — into this component. Two callers, and the difference between them
@@ -892,10 +983,6 @@ export default function FaceSwap({
     checkDesync(st);
     setSourceFaces(st.source_faces || []);
     if (st.source_faces_info) setSourceFacesInfo(st.source_faces_info);
-    setTargetFaces(st.target_faces || []);
-    setTargetGroups(st.target_groups || []);
-    setTargetNames(st.target_names || []);
-    setTargetFacesInfo(st.target_faces_info || []);
     const tg = st.targets || [];
     setTargets(tg);
     if (tg.length > 0) {
@@ -907,11 +994,34 @@ export default function FaceSwap({
       const sel = st.selected_target_index || 0;
       const mf = tg[sel]?.frames || 1;
       const v = restoreView ? restoredViewRef.current : null;
-      const sameView = v && v.target === sel && v.frame >= 1 && v.frame <= mf;
+      const mediaId = st.target_media_id || tg[sel]?.media_id || tg[sel]?.id;
+      const sameView = v &&
+        ((v.target_media_id && v.target_media_id === mediaId)
+         || (!v.target_media_id && v.target === sel))
+        && v.frame >= 1 && v.frame <= mf;
       setSelTarget(sel);
       setMaxFrames(mf);
-      setFrame(sameView ? v.frame : 1);
-      if (sameView && v.image) { setPreviewSrc(v.image); setPreviewFor(`${sel}_${v.frame}`); }
+      if (mediaId) {
+        targetContextsRef.current[mediaId] = {
+          ...(targetContextsRef.current[mediaId] || {}),
+          frame: sameView ? v.frame : 1,
+          previewSrc: sameView ? (v.image || '') : '',
+          previewFor: sameView ? `${mediaId}_${v.frame}` : '',
+        };
+        applyTargetContext({
+          ...st,
+          selected_target_index: sel,
+        }, mediaId);
+      }
+    } else {
+      setTargetFaces([]);
+      setTargetGroups([]);
+      setTargetNames([]);
+      setTargetFacesInfo([]);
+      setFaceMapping({});
+      setSelTargetFace(0);
+      setPreviewSrc('');
+      setPreviewFor('');
     }
     return st;
   /* eslint-disable-next-line react-hooks/exhaustive-deps -- setters are stable; checkDesync and restoredViewRef are refs/stable by construction */
@@ -949,6 +1059,7 @@ export default function FaceSwap({
     const idx = opts.index ?? selTarget;
     const fr = opts.frame ?? frame;
     const fake = opts.fake ?? fakePreview;
+    const requestedMediaId = opts.target_media_id || targetIdAt(idx);
 
     // Check client-side preview cache first.
     //
@@ -973,7 +1084,7 @@ export default function FaceSwap({
         // still step back onto.
         previewSrcRef.current = cached.image;
         setPreviewSrc(cached.image);
-        setPreviewFor(`${idx}_${fr}`);
+        setPreviewFor(`${requestedMediaId || `legacy-index-${idx}`}_${fr}`);
         return;
       }
     } else {
@@ -985,7 +1096,9 @@ export default function FaceSwap({
     // TensorRT/CUDA. So never run two at once — queue the latest request and
     // run it once the current one finishes.
     if (previewBusyRef.current) { 
-      previewPendingRef.current = { ...opts, index: idx, frame: fr, fake: fake }; 
+      previewPendingRef.current = {
+        ...opts, index: idx, frame: fr, fake, target_media_id: requestedMediaId,
+      };
       return; 
     }
     
@@ -997,8 +1110,16 @@ export default function FaceSwap({
     const ctrl = new AbortController();
     const killer = setTimeout(() => ctrl.abort(), 15 * 60 * 1000);
     try {
-      const res = await postJSON('/api/preview', buildPreviewPayload(p, { index: idx, frame: fr, fake }), { signal: ctrl.signal });
+      const res = await postJSON('/api/preview', buildPreviewPayload(p, {
+        index: idx, frame: fr, fake, target_media_id: requestedMediaId,
+      }), { signal: ctrl.signal });
       if (res?.error) throw new Error(res.message || res.error || 'preview swap failed');
+      // A target can be removed/replaced at the same array position while the
+      // request is in flight. Never let that response populate the current
+      // target's preview or cache.
+      if (requestedMediaId && res?.target_media_id
+          && res.target_media_id !== requestedMediaId) return;
+      if (requestedMediaId && targetIdAt(selTarget) !== requestedMediaId) return;
       if (res.faces) setPreviewFaces(res.faces);
       setPreviewPersonIds(res.person_ids || []);
       setPreviewKps(res.kps || []);
@@ -1017,7 +1138,7 @@ export default function FaceSwap({
       if (prevSrc && prevSrc !== blobSrc && !cacheHoldsUrl(prevSrc)) revokeUrl(prevSrc);
       previewSrcRef.current = blobSrc;
       setPreviewSrc(blobSrc);
-      setPreviewFor(blobSrc ? `${idx}_${fr}` : '');
+      setPreviewFor(blobSrc ? `${requestedMediaId || `legacy-index-${idx}`}_${fr}` : '');
       if (blobSrc) {
         setCachedPreview(idx, fr, { faces: res.faces || [], personIds: res.person_ids || [], kps: res.kps || [], pose: res.pose || [], image: blobSrc, diagnostic });
       }
@@ -1256,10 +1377,14 @@ export default function FaceSwap({
   const applyTargetAdd = async (res, beforeCount) => {
       const newTargetsList = res.targets || [];
       setTargets(newTargetsList);
-      setSelTarget(res.selected_target_index || 0);
-      const mf = newTargetsList[res.selected_target_index || 0]?.frames || 1;
+      const selectedIndex = res.selected_target_index || 0;
+      const mediaId = res.target_media_id || targetIdAt(selectedIndex)
+        || newTargetsList[selectedIndex]?.media_id || newTargetsList[selectedIndex]?.id;
+      setSelTarget(selectedIndex);
+      const mf = newTargetsList[selectedIndex]?.frames || 1;
       setMaxFrames(mf); setFrame(1);
-      refreshPreview({ index: res.selected_target_index || 0, frame: 1 });
+      applyTargetContext({ ...res, selected_target_index: selectedIndex }, mediaId);
+      refreshPreview({ index: selectedIndex, frame: 1, target_media_id: mediaId });
       notify(`Added ${newTargetsList.length - beforeCount} target(s)`);
 
       // Automatically add videos to batch queue if more than 1 video is uploaded
@@ -1269,6 +1394,7 @@ export default function FaceSwap({
         const payload = buildSwapPayload();
         await queue.addMany(newVideos.map((t) => ({
           target_name: t.name || '',
+          target_media_id: t.media_id || t.id || null,
           source_index: selSource,
           source_name: sourceFacesInfo[selSource]?.name
             || (sourceFaces[selSource] ? `Face ${selSource + 1}` : 'Selected face'),
@@ -1321,21 +1447,39 @@ export default function FaceSwap({
   };
 
   const removeTarget = async (i) => {
-    const res = await postJSON('/api/target/remove', { index: i });
+    rememberTargetContext();
+    const mediaId = targetIdAt(i);
+    const res = await postJSON('/api/target/remove', { index: i, target_media_id: mediaId });
     setTargets(res.targets);
     const newSel = res.selected_target_index || 0;
     setSelTarget(newSel);
-    if (res.targets.length === 0) { setPreviewSrc(''); setPreviewFor(''); setMaxFrames(1); }
-    else { setMaxFrames(res.targets[newSel]?.frames || 1); setFrame(1); }
+    const nextId = res.target_media_id || res.targets[newSel]?.media_id || res.targets[newSel]?.id;
+    if (res.targets.length === 0) {
+      setPreviewSrc(''); setPreviewFor(''); setMaxFrames(1);
+      applyTargetContext(res, null);
+    } else {
+      setMaxFrames(res.targets[newSel]?.frames || 1);
+      applyTargetContext({ ...res, selected_target_index: newSel }, nextId);
+    }
   };
 
   const selectTarget = async (i) => {
-    setSelTarget(i);
-    const res = await postJSON('/api/target/select', { index: i });
+    const mediaId = targetIdAt(i);
+    if (!mediaId) return;
+    rememberTargetContext();
+    const res = await postJSON('/api/target/select', {
+      index: i,
+      target_media_id: mediaId,
+      selected_target_face_index: selTargetFace,
+    });
     setTargets(res.targets);
-    const mf = res.targets[i]?.frames || 1;
-    setMaxFrames(mf); setFrame(1);
-    refreshPreview({ index: i, frame: 1 });
+    const selectedIndex = res.selected_target_index ?? i;
+    const selectedId = res.target_media_id || mediaId;
+    setSelTarget(selectedIndex);
+    const mf = res.targets[selectedIndex]?.frames || 1;
+    setMaxFrames(mf);
+    applyTargetContext({ ...res, selected_target_index: selectedIndex }, selectedId);
+    refreshPreview({ index: selectedIndex, frame: 1, target_media_id: selectedId });
   };
 
   // The backend reports it if the faceset list and the gallery thumbnails have
@@ -1402,12 +1546,15 @@ export default function FaceSwap({
 
   const useFaceFromFrame = async () => {
     try {
-      const res = await postJSON('/api/target/use_face', { index: selTarget, frame });
+      const res = await postJSON('/api/target/use_face', {
+        index: selTarget, frame, target_media_id: activeTargetMediaId,
+      });
       setTargetFaces(res.target_faces);
       setTargetGroups(res.target_groups || []);
       setTargetNames(res.target_names || []);
       setTargetFacesInfo(res.target_faces_info || []);
       setSelTargetFace(Math.max(0, (res.target_faces || []).length - 1));
+      applyTargetContext(res, res.target_media_id || activeTargetMediaId);
       set('face_detection_mode', 'Selected face');
       notify(`Added ${res.count} target person(s)`);
     } catch (e) { notify(e.message, 'error'); }
@@ -1444,13 +1591,16 @@ export default function FaceSwap({
   // as a NEW target face (face_index = its left-to-right box order).
   const addPersonFromBox = async (faceIndex) => {
     try {
-      const res = await postJSON('/api/target/use_face', { index: selTarget, frame, face_index: faceIndex });
+      const res = await postJSON('/api/target/use_face', {
+        index: selTarget, frame, face_index: faceIndex, target_media_id: activeTargetMediaId,
+      });
       if (!res.count) { notify('No face found for that box', 'error'); return; }
       setTargetFaces(res.target_faces);
       setTargetGroups(res.target_groups || []);
       setTargetNames(res.target_names || []);
       setTargetFacesInfo(res.target_faces_info || []);
       setSelTargetFace(Math.max(0, (res.target_faces || []).length - 1));
+      applyTargetContext(res, res.target_media_id || activeTargetMediaId);
       set('face_detection_mode', 'Selected face');
       notify(`Added Person ${(previewPersonIds[faceIndex] ?? faceIndex) + 1} to target faces`);
     } catch (e) { notify(e.message, 'error'); }
@@ -1459,7 +1609,9 @@ export default function FaceSwap({
   const setFrameMarkerVal = async (which, val) => {
     if (!val || isNaN(val)) return;
     try {
-      const res = await postJSON('/api/target/set_frame', { which, frame: val });
+      const res = await postJSON('/api/target/set_frame', {
+        which, frame: val, target_media_id: activeTargetMediaId,
+      });
       if (res.targets) setTargets(res.targets);
       notify(`Set ${which} frame = ${val}`);
     } catch (e) { notify(e.message, 'error'); }
@@ -1554,7 +1706,7 @@ export default function FaceSwap({
     // Mid-drag there is no render for most frames and none is coming; the
     // freshest decoded raw frame is what keeps a scrub feeling continuous.
     if (scrubbingNow) return getCachedPreview(selTarget, frame)?.image || rawUrl;
-    if (previewSrc && previewFor === `${selTarget}_${frame}`) return previewSrc;
+    if (previewSrc && previewFor === `${activeTargetMediaId || `legacy-index-${selTarget}`}_${frame}`) return previewSrc;
     const cached = getCachedPreview(selTarget, frame)?.image;
     if (cached) return cached;
     if (rawIsCurrent) return loadedRawUrl;   // right frame, not swapped yet
@@ -1862,8 +2014,12 @@ export default function FaceSwap({
 
     try {
       // Set temporary start/end frames in backend
-      await postJSON('/api/target/set_frame', { which: 'start', frame: previewStart });
-      await postJSON('/api/target/set_frame', { which: 'end', frame: previewEnd });
+      await postJSON('/api/target/set_frame', {
+        which: 'start', frame: previewStart, target_media_id: activeTargetMediaId,
+      });
+      await postJSON('/api/target/set_frame', {
+        which: 'end', frame: previewEnd, target_media_id: activeTargetMediaId,
+      });
 
       // Start the swap with current settings. Through the SAME builder the real
       // run and the queue use — this was a hand-copied second version of that
@@ -1894,8 +2050,12 @@ export default function FaceSwap({
     if (isGeneratingPreviewClip && !progress.processing && origStartEnd) {
       const restore = async () => {
         try {
-          await postJSON('/api/target/set_frame', { which: 'start', frame: origStartEnd.start });
-          await postJSON('/api/target/set_frame', { which: 'end', frame: origStartEnd.end });
+          await postJSON('/api/target/set_frame', {
+            which: 'start', frame: origStartEnd.start, target_media_id: activeTargetMediaId,
+          });
+          await postJSON('/api/target/set_frame', {
+            which: 'end', frame: origStartEnd.end, target_media_id: activeTargetMediaId,
+          });
           
           // Sync targets list
           const res = await getJSON('/api/state');
@@ -2567,6 +2727,7 @@ export default function FaceSwap({
               setFaceMapping={setFaceMapping}
               frame={frame}
               selTarget={selTarget}
+              targetMediaId={activeTargetMediaId}
               setTargetFaces={setTargetFaces}
               setTargetGroups={setTargetGroups}
               setTargetNames={setTargetNames}
@@ -2676,7 +2837,10 @@ export default function FaceSwap({
                 {targets.map((t, i) => {
                   // Show the most advanced state any queued job for this file
                   // reached — with segments, one target can carry several jobs.
-                  const jobs = queue.jobs.filter(j => j.target_name === t.name);
+                  const mediaId = t.media_id || t.id;
+                  const jobs = queue.jobs.filter(j => mediaId
+                    ? j.target_media_id === mediaId
+                    : j.target_name === t.name);
                   const job = jobs.find(j => ACTIVE_STATES.includes(jobState(j)))
                     || jobs.find(j => RETRYABLE_STATES.includes(jobState(j)))
                     || jobs.find(j => jobState(j) === 'RECOVERABLE')
@@ -2688,13 +2852,13 @@ export default function FaceSwap({
                   const duration = isVideo && t.fps ? (t.frames / t.fps).toFixed(1) : null;
                   const TypeIcon = isVideo ? Icon.film : Icon.still;
                   return (
-                    <div key={i}
+                    <div key={mediaId || i}
                       className={`group flex items-center gap-3 px-3.5 py-3 rounded-xl text-sm border transition-all duration-200 cursor-pointer ${selTarget === i ? 'bg-[var(--accent)]/10 border-[var(--accent)]/40' : 'bg-white/[0.02] border-white/[0.06] hover:border-white/15 hover:bg-white/[0.04]'}`}
                       onClick={() => selectTarget(i)}>
                       {/* v=name busts the browser cache: the URL is index-based, so
                           after a removal the same index can point at another file. */}
                       <img
-                        src={`${API}/api/target/preview?index=${i}&frame=1&width=96&v=${encodeURIComponent(t.name)}`}
+                        src={`${API}/api/target/preview?index=${i}&frame=1&width=96&v=${encodeURIComponent(mediaId || t.name)}`}
                         alt=""
                         loading="lazy"
                         className="w-12 h-9 shrink-0 rounded-lg object-cover bg-black/40 border border-white/10"
@@ -2729,7 +2893,16 @@ export default function FaceSwap({
             )}
             {targets.length > 0 && (
               <div className="pt-2 border-t border-white/5 flex justify-end">
-                <Button size="sm" variant="stop" onClick={async () => { const r = await postJSON('/api/target/clear', {}); setTargets(r.targets); setTargetFaces([]); setTargetGroups([]); setTargetNames([]); setTargetFacesInfo([]); setFaceMapping({}); setPreviewSrc(''); setPreviewFor(''); }}>Clear targets</Button>
+                <Button size="sm" variant="stop" onClick={async () => {
+                  rememberTargetContext();
+                  const r = await postJSON('/api/target/clear', {
+                    target_media_id: activeTargetMediaId,
+                  });
+                  setTargets(r.targets || []);
+                  setTargetFaces([]); setTargetGroups([]); setTargetNames([]);
+                  setTargetFacesInfo([]); setFaceMapping({}); setSelTargetFace(0);
+                  setPreviewSrc(''); setPreviewFor('');
+                }}>Clear targets</Button>
               </div>
             )}
           </Section>
@@ -3080,7 +3253,7 @@ export default function FaceSwap({
                   playbackRate={playbackRate}
                   setPlaybackRate={setPlaybackRate}
                   thumbUrl={(f) => `${API}/api/target/preview?index=${selTarget}&frame=${f}&width=384`}
-                  targetKey={targets[selTarget]?.name || String(selTarget)}
+                  targetKey={activeTargetMediaId || targets[selTarget]?.name || String(selTarget)}
                   segments={segments.segments}
                   onSegmentClick={jumpToSegment}
                 />

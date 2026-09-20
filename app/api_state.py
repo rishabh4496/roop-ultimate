@@ -13,4 +13,7 @@ and reintroduce the very problem this module exists to prevent.
 
 selected_input_face_index = 0          # which source faceset is "selected"
 selected_target_index = 0              # which target file is shown in preview
+active_target_media_id = None          # stable id for the selected target file
+selected_target_face_index = 0         # compatibility mirror of active context
+active_target_source_mapping = {}      # per-target source mapping compatibility mirror
 current_video_fps = 30
