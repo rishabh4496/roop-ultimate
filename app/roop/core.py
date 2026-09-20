@@ -1351,8 +1351,13 @@ def batch_process_regular(output_method, files:list[ProcessEntry], masking_engin
             selected_index = int(processing_request.get("source_index", selected_index))
         except (TypeError, ValueError):
             pass
-    if len(facesets) <= selected_index:
-        selected_index = 0
+    if not (0 <= selected_index < len(facesets)):
+        # A canonical request may deliberately carry -1 when its source
+        # mapping is invalid or the selected source was removed.  Keep that
+        # explicit skip all the way to ProcessMgr; falling back to source 0 can
+        # swap a different identity.  Direct legacy callers retain the old
+        # default only when no canonical request was supplied.
+        selected_index = -1 if isinstance(processing_request, dict) else 0
     options = ProcessOptions(get_processing_plugins(masking_engine, swap_model=swap_model),
                               roop.globals.distance_threshold, roop.globals.blend_ratio,
                               roop.globals.face_swap_mode, selected_index, new_clip_text, imagemask, num_swap_steps,

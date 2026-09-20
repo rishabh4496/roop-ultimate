@@ -3230,6 +3230,9 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                 _tfaces = self._temporal_faces.get(frame_idx) or []
 
         if self.options.swap_mode == "first":
+            if not (0 <= self.options.selected_index < len(self.input_face_datas)):
+                _audit_hit('refused: no valid selected source')
+                return num_faces_found, frame
             if _tfaces is not None:
                 face = min(_tfaces, key=lambda f: f.bbox[0]) if _tfaces else None
             else:
@@ -3349,11 +3352,14 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                 # registered from landmarks nobody detected. That question does
                 # not care which mode selected the face.
                 _audit_hit('faces seen', len(faces))
-                for face in faces:
-                    num_faces_found += 1
-                    pending.append((self.options.selected_index, face))
-                    _audit_hit('swapped (every face)')
-                    _audit_swapped_gapfill(face)
+                if 0 <= self.options.selected_index < len(self.input_face_datas):
+                    for face in faces:
+                        num_faces_found += 1
+                        pending.append((self.options.selected_index, face))
+                        _audit_hit('swapped (every face)')
+                        _audit_swapped_gapfill(face)
+                else:
+                    _audit_hit('refused: no valid selected source', len(faces))
 
             elif self.options.swap_mode == "all_input":
                 _audit_hit('faces seen', len(faces))
@@ -3459,6 +3465,8 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                 allowed_source_indices = {
                     self.options.selected_index if single_person else rank[g]
                     for g in persons
+                    if 0 <= (self.options.selected_index if single_person else rank[g])
+                    < len(self.input_face_datas)
                 }
                 # source index -> the captured angles of the person that source
                 # belongs to, so a track's source can be checked against the face
@@ -3471,6 +3479,8 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                 def _dist_to_source(face, src):
                     """Cosine distance from *face* to the closest captured angle of
                     the person that source index *src* belongs to (None if unknown)."""
+                    if src not in allowed_source_indices:
+                        return None
                     tis = rank_to_tis.get(src)
                     if not tis:
                         return None
@@ -3482,7 +3492,10 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                 def _dist_to_any_person(face):
                     """Closest captured angle of ANY selected person (inf if none)."""
                     ds = []
-                    for tis in persons.values():
+                    for g, tis in persons.items():
+                        source = self.options.selected_index if single_person else rank[g]
+                        if source not in allowed_source_indices:
+                            continue
                         for ti in tis:
                             d = _ada.identity_distance(self.target_face_datas[ti], face, frame)
                             if d is not None:
@@ -3832,6 +3845,8 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                         best_any = None             # nearest candidate REGARDLESS of the gate
                         for g, tis in candidate_persons.items():
                             r_src = self.options.selected_index if single_person else rank.get(g, 0)
+                            if r_src not in allowed_source_indices:
+                                continue
                             if r_src in claimed_sources_in_frame:
                                 n_src_claimed += 1
                                 continue
@@ -3864,7 +3879,7 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
 
                         if best_g is not None:
                             src_index = self.options.selected_index if single_person else rank[best_g]
-                            if src_index < len(self.input_face_datas):
+                            if 0 <= src_index < len(self.input_face_datas):
                                 claimed_sources_in_frame.add(src_index)
                                 pending.append((src_index, face))
                                 num_faces_found += 1
@@ -4043,7 +4058,7 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                     claimed_faces.add(fidx)
                     claimed_persons.add(g)
                     src_index = self.options.selected_index if single_person else rank[g]
-                    if src_index < len(self.input_face_datas):
+                    if 0 <= src_index < len(self.input_face_datas):
                         pending.append((src_index, faces[fidx]))
                         num_faces_found += 1
                         _audit_hit('swapped (identity match)')
@@ -4078,7 +4093,7 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                 gender = 'F' if self.options.swap_mode == "all_female" else 'M'
                 _audit_hit('faces seen', len(faces))
                 for face in faces:
-                    if face.sex == gender:
+                    if face.sex == gender and 0 <= self.options.selected_index < len(self.input_face_datas):
                         num_faces_found += 1
                         pending.append((self.options.selected_index, face))
                         _audit_hit('swapped (gender match)')

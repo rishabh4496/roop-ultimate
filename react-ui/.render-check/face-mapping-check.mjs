@@ -8,6 +8,10 @@ import {
   buildFaceMappingArray,
   buildTargetSelectionState,
   mapPerson,
+  mappingObjectFromArray,
+  normalizeSourceMapping,
+  remapSourceMappingAfterMove,
+  remapSourceMappingAfterRemoval,
   selectedPersonOf,
   SKIP,
 }
@@ -68,9 +72,9 @@ check('no source faces loaded -> everyone skipped, nothing out of range', () => 
     [SKIP, SKIP],
   );
 });
-check('selected source past the gallery is clamped, never out of range', () => {
+check('selected source past the gallery is an explicit skip, never a redirect', () => {
   const out = build({ targetGroups: [0], selTargetFace: 0, selectedSource: 7, sourceCount: 2, faceSelection: SEL });
-  assert.deepEqual(out, [1]);
+  assert.deepEqual(out, [SKIP]);
 });
 check('negative selected source is a skip, not a Python tail index', () => {
   assert.deepEqual(
@@ -123,6 +127,26 @@ check('explicit garbage degrades to Skip, not NaN', () => {
   const out = build({ targetGroups: [0], faceMapping: { 0: 'abc' }, selTargetFace: 0, selectedSource: 0, sourceCount: 2, faceSelection: SEL });
   assert.deepEqual(out, [SKIP]);
   assert.ok(Number.isFinite(out[0]));
+});
+check('explicit null from a recipe degrades to Skip, not the default source', () => {
+  assert.deepEqual(
+    build({ targetGroups: [0], faceMapping: mappingObjectFromArray([null]), selTargetFace: 0, selectedSource: 0, sourceCount: 1, faceSelection: SEL }),
+    [SKIP],
+  );
+});
+
+group('Source gallery mutation preserves identity bindings');
+check('removing source 0 skips its person and compacts later sources', () => {
+  assert.deepEqual(remapSourceMappingAfterRemoval([0, 1, 2], 0), [SKIP, 0, 1]);
+});
+check('removing source 1 never redirects source 0 to source 1', () => {
+  assert.deepEqual(remapSourceMappingAfterRemoval([0, 1], 1), [0, SKIP]);
+});
+check('reordering source 0 after source 2 follows source identities', () => {
+  assert.deepEqual(remapSourceMappingAfterMove([0, 1, 2], 0, 2), [2, 0, 1]);
+});
+check('invalid source mappings normalize to explicit skips', () => {
+  assert.deepEqual(normalizeSourceMapping([null, '', 'bad', 8, -1, 1], 2), [SKIP, SKIP, SKIP, SKIP, SKIP, 1]);
 });
 
 group('Other detection modes keep the legacy person-rank default');

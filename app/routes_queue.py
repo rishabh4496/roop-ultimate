@@ -509,11 +509,34 @@ def _run_one(job):
 
     state.selected_target_index = idx
 
-    # Dynamically re-resolve source_index by source_name if faceset list shifted
-    src_idx = int(job.get("source_index") or 0)
+    # Dynamically re-resolve source_index by source_name if faceset list shifted.
+    # The queue stores the source name alongside the numeric index because the
+    # gallery is mutable; source_gallery exposes the current names from the
+    # faceset's originating path.  Numeric source indices remain only a legacy
+    # fallback for jobs created before that metadata existed.
+    raw_source_index = job.get("source_index")
+    try:
+        src_idx = int(raw_source_index) if raw_source_index is not None else 0
+    except (TypeError, ValueError):
+        src_idx = -1
+    target_src_id = str(job.get("source_id") or "").strip()
     target_src_name = str(job.get("source_name") or "").strip()
-    if target_src_name and getattr(state, "source_faces_info", None):
-        for i, info in enumerate(state.source_faces_info):
+    source_infos = getattr(state, "source_faces_info", None)
+    if not source_infos:
+        try:
+            from source_gallery import _get_source_faces_info
+            source_infos = _get_source_faces_info()
+        except Exception as _degrade_error:
+            _swallowed("routes_queue.py:526", _degrade_error, "fallback continued")
+            source_infos = []
+    if target_src_id and source_infos:
+        for i, info in enumerate(source_infos):
+            info_id = str(info.get("id") or "").strip()
+            if info_id and info_id.casefold() == target_src_id.casefold():
+                src_idx = i
+                break
+    elif target_src_name and source_infos:
+        for i, info in enumerate(source_infos):
             info_name = str(info.get("name") or "").strip()
             if info_name and info_name.lower() == target_src_name.lower():
                 src_idx = i
@@ -547,11 +570,6 @@ def _run_one(job):
             return "FAILED", f"could not create processing checkpoint: {exc}"
     if project_id:
         payload["_project_id"] = project_id
-
-    # Sanitize face_mapping payload so null/None entries don't crash ProcessMgr
-    fm = payload.get("face_mapping")
-    if isinstance(fm, list):
-        payload["face_mapping"] = [0 if (x is None or x == "") else int(x) for x in fm]
 
     _set_state(job, "PROCESSING")
     job["processing_started"] = True

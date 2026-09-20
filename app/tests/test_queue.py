@@ -179,6 +179,21 @@ class Runner(QueueTestBase):
         self.assertEqual(len(self.ran), 1)
         self.assertEqual(self.ran[0]["target_index"], 0)
 
+    def test_queue_preserves_source_mapping_values_for_canonical_normalization(self):
+        """Queue serialization must not turn an invalid mapping into source 0."""
+        self.entries.append(_Entry("/media/a.mp4"))
+        self._add(
+            "a.mp4",
+            payload={
+                "face_mapping": [None, "bad", -1, 1],
+                "selection_state": {"selection_mode": "selected", "person_id": 1},
+            },
+        )
+        self._drain()
+        self.assertEqual(
+            self.ran[0]["face_mapping"], [None, "bad", -1, 1],
+        )
+
     def test_a_target_that_is_gone_fails_that_job_only(self):
         self.entries.append(_Entry("/media/b.mp4"))
         self._add("gone.mp4")

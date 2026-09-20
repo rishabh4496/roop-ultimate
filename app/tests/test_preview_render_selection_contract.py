@@ -26,12 +26,15 @@ class PreviewRenderSelectionContractTests(unittest.TestCase):
                 "target_reference_index": 2,
             },
             "face_mapping": [-1, 0],
+            "source_mapping_names": [None, "source-a"],
+            "selected_source_name": "source-a",
             "target_index": 0,
         }
         common = {
             "target_groups": [0, 1, 1],
             "source_count": 1,
             "selected_source_gallery_index": 0,
+            "current_source_names": ["source-a"],
             "target_media_index": 0,
             "request_id": "parity-test",
         }

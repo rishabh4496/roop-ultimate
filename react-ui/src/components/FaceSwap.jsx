@@ -7,7 +7,13 @@ import { Icon } from '../icons';
 import PersonGroups from './PersonGroups';
 import QualityReport from './QualityReport';
 import FileDrop from './faceswap/FileDrop';
-import { buildFaceMappingArray, buildTargetSelectionState } from './faceswap/faceMapping';
+import {
+  buildFaceMappingArray,
+  buildTargetSelectionState,
+  mappingObjectFromArray,
+  remapSourceMappingAfterRemoval,
+  remapSourceMappingAfterMove,
+} from './faceswap/faceMapping';
 import ComparisonGridPanel from './faceswap/ComparisonGridPanel';
 import ParserRegions from './faceswap/ParserRegions';
 import InteractivePreview from './faceswap/InteractivePreview';
@@ -262,6 +268,16 @@ export default function FaceSwap({
     targetMediaIndex: selTarget,
   });
 
+  const sourceNameAt = (index) => sourceFacesInfo[index]?.name
+    || (sourceFaces[index] ? `Face ${index + 1}` : null);
+  const sourceIdAt = (index) => sourceFacesInfo[index]?.id
+    || (sourceFaces[index] ? `memory-slot-${index}` : null);
+
+  const getSourceMappingNames = (params = p) => getFaceMappingArray(params)
+    .map((sourceIndex) => sourceIndex >= 0 ? sourceNameAt(sourceIndex) : null);
+  const getSourceMappingIds = (params = p) => getFaceMappingArray(params)
+    .map((sourceIndex) => sourceIndex >= 0 ? sourceIdAt(sourceIndex) : null);
+
   // Profile Management — named setting presets (see faceswap/useProfiles).
   const {
     profiles, newProfileName, setNewProfileName,
@@ -419,6 +435,11 @@ export default function FaceSwap({
         exported_at: new Date().toISOString(),
         settings: { ...p },
         face_mapping: getFaceMappingArray(),
+        source_mapping_names: getSourceMappingNames(),
+        source_mapping_ids: getSourceMappingIds(),
+        selected_source_name: sourceNameAt(selSource),
+        selected_source_id: sourceIdAt(selSource),
+        selection_state: getTargetSelectionState(),
       };
       const blob = new Blob([JSON.stringify(recipe, null, 2)], { type: 'application/json' });
       const url = URL.createObjectURL(blob);
@@ -443,9 +464,51 @@ export default function FaceSwap({
         if (r.type !== 'roop-recipe' || !r.settings) throw new Error('Not a valid roop recipe file.');
         setSettings((s) => ({ ...s, ...r.settings }));
         if (Array.isArray(r.face_mapping)) {
-          const fm = {};
-          r.face_mapping.forEach((v, i) => { fm[i] = v; });
-          setFaceMapping(fm);
+          // Preserve explicit skips and malformed entries as skips.  Importing
+          // a null/invalid value must not make mapPerson fall back to source 0.
+          const recipeNames = Array.isArray(r.source_mapping_names)
+            ? r.source_mapping_names : [];
+          const recipeIds = Array.isArray(r.source_mapping_ids)
+            ? r.source_mapping_ids : [];
+          const currentNames = sourceFacesInfo.map((info, index) =>
+            info?.name || (sourceFaces[index] ? `Face ${index + 1}` : null));
+          const currentIds = sourceFacesInfo.map((info, index) =>
+            info?.id || (sourceFaces[index] ? `memory-slot-${index}` : null));
+          const imported = r.face_mapping.map((value, index) => {
+            const sourceId = recipeIds[index];
+            if (recipeIds.length === r.face_mapping.length
+                && sourceId != null && String(sourceId).trim() !== '') {
+              return currentIds.findIndex((current) =>
+                current && String(current).toLowerCase() === String(sourceId).toLowerCase());
+            }
+            const name = recipeNames[index];
+            if (name == null || String(name).trim() === '') return -1;
+            const match = currentNames.findIndex((current) =>
+              current && String(current).toLowerCase() === String(name).toLowerCase());
+            return match >= 0 ? match : -1;
+          });
+          setFaceMapping(mappingObjectFromArray(
+            (recipeIds.length === r.face_mapping.length
+              || recipeNames.length === r.face_mapping.length)
+              ? imported : r.face_mapping,
+          ));
+        }
+        const savedSelection = r.selection_state;
+        const savedReference = Number(savedSelection?.target_reference_index);
+        if (Number.isInteger(savedReference) && savedReference >= 0
+            && savedReference < targetFaces.length) {
+          setSelTargetFace(savedReference);
+        }
+        if (r.selected_source_id || r.selected_source_name) {
+          const matchById = r.selected_source_id
+            ? sourceFacesInfo.findIndex((info, index) =>
+              String(info?.id || `memory-slot-${index}`).toLowerCase()
+                === String(r.selected_source_id).toLowerCase())
+            : -1;
+          const match = matchById >= 0 ? matchById : sourceFacesInfo.findIndex((info, index) =>
+            String(info?.name || `Face ${index + 1}`).toLowerCase()
+              === String(r.selected_source_name || '').toLowerCase());
+          if (match >= 0) setSelSource(match);
         }
         clearPreviewCache();
         notify('Recipe applied — settings and mapping restored');
@@ -487,6 +550,10 @@ export default function FaceSwap({
       face_distance: num(sp.max_face_distance, 0.75), blend_ratio: num(sp.blend_ratio, 0.8),
       num_swap_steps: num(sp.num_swap_steps, 1),
       face_mapping: getFaceMappingArray(sp),
+      source_mapping_names: getSourceMappingNames(sp),
+      source_mapping_ids: getSourceMappingIds(sp),
+      selected_source_name: sourceNameAt(selSource),
+      selected_source_id: sourceIdAt(selSource),
       selection_state: getTargetSelectionState(sp),
       imagemask: maskJson,
     };
@@ -497,7 +564,9 @@ export default function FaceSwap({
   const currentJob = (extra = {}) => ({
     target_name: targets[selTarget]?.name || '',
     source_index: selSource,
-    source_name: sourceFaces[selSource] ? `Face ${selSource + 1}` : 'Selected face',
+    source_name: sourceFacesInfo[selSource]?.name
+      || (sourceFaces[selSource] ? `Face ${selSource + 1}` : 'Selected face'),
+    source_id: sourceIdAt(selSource),
     payload: buildSwapPayload(),
     ...extra,
   });
@@ -536,7 +605,9 @@ export default function FaceSwap({
     await queue.addMany(segments.segments.map((s, i) => ({
       target_name: name,
       source_index: selSource,
-      source_name: sourceFaces[selSource] ? `Face ${selSource + 1}` : 'Selected face',
+      source_name: sourceFacesInfo[selSource]?.name
+        || (sourceFaces[selSource] ? `Face ${selSource + 1}` : 'Selected face'),
+      source_id: sourceIdAt(selSource),
       label: `${name} — segment ${i + 1}`,
       payload,
       frame_start: s.start,
@@ -737,6 +808,8 @@ export default function FaceSwap({
       rescue_small_faces: activeParams.rescue_small_faces,
       detector_engine: activeParams.detector_engine,
       face_mapping: getFaceMappingArray(activeParams),
+      source_mapping_names: getSourceMappingNames(activeParams),
+      selected_source_name: sourceNameAt(selSource),
       selection_state: getTargetSelectionState(activeParams),
       mask_top: activeParams.mask_top,
       mask_bottom: activeParams.mask_bottom,
@@ -1197,7 +1270,9 @@ export default function FaceSwap({
         await queue.addMany(newVideos.map((t) => ({
           target_name: t.name || '',
           source_index: selSource,
-          source_name: sourceFaces[selSource] ? `Face ${selSource + 1}` : 'Selected face',
+          source_name: sourceFacesInfo[selSource]?.name
+            || (sourceFaces[selSource] ? `Face ${selSource + 1}` : 'Selected face'),
+          source_id: sourceIdAt(selSource),
           payload,
         })));
         notify(`Automatically queued ${newVideos.length} uploaded videos`, 'success');
@@ -1277,10 +1352,12 @@ export default function FaceSwap({
       const res = checkDesync(await postJSON(path, body));
       if (res.source_faces) setSourceFaces(res.source_faces);
       if (res.source_faces_info) setSourceFacesInfo(res.source_faces_info);
+      return res;
     } catch (e) {
       // Surface failures (e.g. a 404 when the backend hasn't been restarted to
       // pick up a new endpoint) instead of silently doing nothing.
       notify(`${path.split('/').pop()} failed: ${e.message}. If this is a new feature, restart the app server.`, 'error');
+      return null;
     }
   };
 
@@ -1289,20 +1366,36 @@ export default function FaceSwap({
   // at whatever slid into the removed slot (wrong face) or off the end of the
   // list (the backend then swaps in an empty faceset).
   const removeSource = async (i) => {
-    await sourceAction('/api/source/remove', { index: i });
-    setFaceMapping((prev) => {
-      const next = {};
-      for (const [pid, src] of Object.entries(prev || {})) {
-        if (typeof src !== 'number' || src === i) continue;  // dropped → falls back to default
-        next[pid] = src > i ? src - 1 : src;
-      }
-      return next;
-    });
+    if (i < 0 || i >= sourceFaces.length) return;
+    const res = await sourceAction('/api/source/remove', { index: i });
+    if (!res) return;
+    // Rebase the EFFECTIVE mapping, not only explicit dropdown overrides. This
+    // keeps default person→source bindings stable too: the removed source is a
+    // deliberate skip, and later indices compact around it.
+    setFaceMapping(mappingObjectFromArray(
+      remapSourceMappingAfterRemoval(getFaceMappingArray(), i),
+    ));
     const nextSel = selSource === i ? 0 : selSource > i ? selSource - 1 : selSource;
     if (nextSel !== selSource) {
       setSelSource(nextSel);
       try { await postJSON('/api/source/select', { index: nextSel }); } catch { /* selection is best-effort */ }
     }
+  };
+
+  const moveSource = async (direction) => {
+    const from = selSource;
+    const to = direction === 'left' ? from - 1 : from + 1;
+    if (from < 0 || from >= sourceFaces.length || to < 0 || to >= sourceFaces.length) return;
+    const res = await sourceAction('/api/source/move', { index: from, direction });
+    if (!res) return;
+    // Rebase the effective person->source mapping in the same transaction as
+    // the gallery move.  Otherwise the raw numeric source slots would make a
+    // target person inherit whichever faceset slid into the old slot.
+    setFaceMapping(mappingObjectFromArray(
+      remapSourceMappingAfterMove(getFaceMappingArray(), from, to),
+    ));
+    setSelSource(to);
+    try { await postJSON('/api/source/select', { index: to }); } catch { /* best effort */ }
   };
 
   const selectSource = async (i) => { setSelSource(i); await postJSON('/api/source/select', { index: i }); };
@@ -2686,8 +2779,8 @@ export default function FaceSwap({
                 <Button size="sm" variant="secondary" onClick={togglePinCurrentSource} title="Pin selected identity to Quick Bar">
                   ⭐ Pin Identity
                 </Button>
-                <Button size="sm" variant="secondary" onClick={() => sourceAction('/api/source/move', { index: selSource, direction: 'left' })}>⬅ Move</Button>
-                <Button size="sm" variant="secondary" onClick={() => sourceAction('/api/source/move', { index: selSource, direction: 'right' })}>Move ➡</Button>
+                <Button size="sm" variant="secondary" onClick={() => moveSource('left')}>⬅ Move</Button>
+                <Button size="sm" variant="secondary" onClick={() => moveSource('right')}>Move ➡</Button>
                 <Button size="sm" variant="secondary" onClick={() => sourceAction('/api/source/remove', { index: selSource })}>Remove</Button>
                 <Button size="sm" variant="secondary" title="Set each tile to the most frontal face in its set" onClick={() => sourceAction('/api/source/refresh_thumbs', {})}>Frontal thumb</Button>
                 <Button size="sm" variant="stop" onClick={() => sourceAction('/api/source/clear', {})}>Clear all</Button>

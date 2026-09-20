@@ -6,7 +6,11 @@ import useQueue from './faceswap/useQueue';
 import QueuePanel from './faceswap/QueuePanel';
 import FacesetLibrary from './faceswap/FacesetLibrary';
 import { FACESWAP_DEFAULTS } from './faceswap/defaults';
-import { normalizeTargetSelectionState } from './faceswap/faceMapping';
+import {
+  normalizeSourceMapping,
+  normalizeTargetSelectionState,
+  SKIP,
+} from './faceswap/faceMapping';
 
 // Helper to convert index to target preview URL
 const targetPreviewUrl = (idx, target) => (
@@ -267,30 +271,46 @@ export default function BatchSwap({ settings = {}, notify }) {
     (mappings = [], swapMode = 'Selected face', overrides = {}) => {
       const base = { ...FACESWAP_DEFAULTS, ...settings };
       
-      // Build dense face_mapping array (fill gaps with 0 to prevent nulls)
-      let maxRank = 0;
+      // Build a dense target-person mapping. Missing ranks are explicit skips;
+      // filling them with source 0 silently redirects a person to another
+      // identity when a mapping is sparse or imported from a recipe.
+      let maxRank = -1;
       mappings.forEach((m) => {
-        const r = Math.max(0, parseInt(m.personRank, 10) || 0);
+        const parsed = Number(m.personRank);
+        const r = Number.isInteger(parsed) && parsed >= 0 ? parsed : -1;
         if (r > maxRank) maxRank = r;
       });
 
-      const faceMapping = new Array(maxRank + 1).fill(0);
+      const faceMapping = new Array(maxRank + 1).fill(SKIP);
       mappings.forEach((m) => {
-        const rank = Math.max(0, parseInt(m.personRank, 10) || 0);
-        const srcIdx = Math.max(0, parseInt(m.sourceIdx, 10) || 0);
-        faceMapping[rank] = srcIdx;
+        const rank = Number(m.personRank);
+        if (!Number.isInteger(rank) || rank < 0) return;
+        const srcIdx = Number(m.sourceIdx);
+        faceMapping[rank] = Number.isInteger(srcIdx) ? srcIdx : SKIP;
+      });
+      const normalizedFaceMapping = normalizeSourceMapping(faceMapping, sourceFaces.length) || [];
+      const sourceMappingNames = normalizedFaceMapping.map((sourceIndex) => {
+        if (sourceIndex < 0) return null;
+        return sourceFacesInfo[sourceIndex]?.name || `Face ${sourceIndex + 1}`;
+      });
+      const sourceMappingIds = normalizedFaceMapping.map((sourceIndex) => {
+        if (sourceIndex < 0) return null;
+        return sourceFacesInfo[sourceIndex]?.id || `memory-slot-${sourceIndex}`;
       });
 
-      const primarySourceIdx = mappings[0]?.sourceIdx || 0;
+      const primarySource = Number(mappings[0]?.sourceIdx);
+      const primarySourceIdx = Number.isInteger(primarySource) && primarySource >= 0
+        && primarySource < sourceFaces.length ? primarySource : SKIP;
       const personIds = Array.from(new Set(mappings
-        .map((m) => Math.max(0, parseInt(m.personRank, 10) || 0))))
+        .map((m) => Number(m.personRank))
+        .filter((rank) => Number.isInteger(rank) && rank >= 0)))
         .sort((a, b) => a - b);
       const selectionState = swapMode === 'Selected people'
         ? { selection_mode: 'multi_person', person_id: null, person_ids: personIds }
         : swapMode === 'Selected face'
           ? { selection_mode: 'selected', person_id: personIds[0] ?? null, person_ids: personIds.slice(0, 1) }
           : { selection_mode: 'none', person_id: null, person_ids: [] };
-      const normalizedSelectionState = normalizeTargetSelectionState(selectionState);
+      const normalizedSelectionState = normalizeTargetSelectionState(selectionState, targetGroups);
 
       return {
         payload: {
@@ -310,14 +330,22 @@ export default function BatchSwap({ settings = {}, notify }) {
           blend_ratio: parseFloat(base.blend_ratio || 0.8),
           num_swap_steps: parseInt(base.num_swap_steps || 1, 10),
           auto_fallback: autoFallbackEnabled,
-          face_mapping: faceMapping,
+          face_mapping: normalizedFaceMapping,
+          source_mapping_names: sourceMappingNames,
+          source_mapping_ids: sourceMappingIds,
+          selected_source_name: primarySourceIdx >= 0
+            ? (sourceFacesInfo[primarySourceIdx]?.name || `Face ${primarySourceIdx + 1}`)
+            : null,
+          selected_source_id: primarySourceIdx >= 0
+            ? (sourceFacesInfo[primarySourceIdx]?.id || `memory-slot-${primarySourceIdx}`)
+            : null,
           selection_state: normalizedSelectionState,
         },
         primarySourceIdx,
         mappings,
       };
     },
-    [settings, autoFallbackEnabled],
+    [settings, autoFallbackEnabled, sourceFaces.length, sourceFacesInfo, targetGroups],
   );
 
   // ── Portable Preset Export & Import ─────────────────────────────────────
@@ -868,6 +896,7 @@ export default function BatchSwap({ settings = {}, notify }) {
         target_name: j.target_name,
         source_index: j.source_index,
         source_name: j.source_name,
+        source_id: j.source_id || j.payload?.selected_source_id || null,
         payload: j.payload,
         frame_start: j.frame_start,
         frame_end: j.frame_end,

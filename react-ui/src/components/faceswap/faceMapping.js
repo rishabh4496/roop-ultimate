@@ -12,6 +12,61 @@
 
 export const SKIP = -1;
 
+const hasOwn = (object, key) => Object.prototype.hasOwnProperty.call(object || {}, key);
+
+// Source-gallery indices are a separate namespace from target-person ranks.
+// Normalize malformed values to the explicit skip sentinel; never coerce them
+// to source 0, because source 0 is a real user's identity.
+export function normalizeSourceIndex(value, sourceCount) {
+  if (value === null || value === undefined || value === ''
+      || typeof value === 'boolean') return SKIP;
+  const n = Number(value);
+  return Number.isInteger(n) && n >= 0 && n < Number(sourceCount || 0) ? n : SKIP;
+}
+
+export function normalizeSourceMapping(mapping, sourceCount) {
+  if (!Array.isArray(mapping)) return null;
+  return mapping.map((value) => normalizeSourceIndex(value, sourceCount));
+}
+
+export function mappingObjectFromArray(mapping) {
+  const result = {};
+  (Array.isArray(mapping) ? mapping : []).forEach((value, index) => {
+    result[index] = value;
+  });
+  return result;
+}
+
+export function remapSourceMappingAfterRemoval(mapping, removedIndex) {
+  const removed = Number(removedIndex);
+  if (!Array.isArray(mapping) || !Number.isInteger(removed) || removed < 0) {
+    return Array.isArray(mapping) ? [...mapping] : [];
+  }
+  return mapping.map((value) => {
+    const source = Number(value);
+    if (!Number.isInteger(source) || source < 0) return SKIP;
+    if (source === removed) return SKIP;
+    return source > removed ? source - 1 : source;
+  });
+}
+
+export function remapSourceMappingAfterMove(mapping, fromIndex, toIndex) {
+  const from = Number(fromIndex);
+  const to = Number(toIndex);
+  if (!Array.isArray(mapping) || !Number.isInteger(from) || !Number.isInteger(to)
+      || from < 0 || to < 0 || from === to) {
+    return Array.isArray(mapping) ? [...mapping] : [];
+  }
+  return mapping.map((value) => {
+    const source = Number(value);
+    if (!Number.isInteger(source) || source < 0) return SKIP;
+    if (source === from) return to;
+    if (from < to && source > from && source <= to) return source - 1;
+    if (to < from && source >= to && source < from) return source + 1;
+    return source;
+  });
+}
+
 // The highlighted target person, from the highlighted target FACE.
 // targetGroups[i] is the person rank of target face i, and is occasionally an
 // array (a face banked under a person) or a numeric string out of storage.
@@ -41,11 +96,12 @@ export function mapPerson({
   selectedSource,
 }) {
   const explicitRaw = faceMapping ? faceMapping[person] : undefined;
-  if (explicitRaw !== undefined && explicitRaw !== null && explicitRaw !== '') {
+  if (hasOwn(faceMapping, person)) {
     // An explicit dropdown choice, including Skip, always wins.
-    const explicit = Array.isArray(explicitRaw) ? Number(explicitRaw[0]) : Number(explicitRaw);
-    if (!Number.isFinite(explicit)) return SKIP;
-    return explicit >= 0 && explicit < sourceCount ? explicit : SKIP;
+    return normalizeSourceIndex(
+      Array.isArray(explicitRaw) ? explicitRaw[0] : explicitRaw,
+      sourceCount,
+    );
   }
 
   // "Selected face" means the ONE highlighted target person. The old fallback
@@ -55,8 +111,8 @@ export function mapPerson({
   if (faceSelection === 'Selected face') {
     if (sourceCount < 1 || person !== selectedPerson) return SKIP;
     const src = Number(selectedSource);
-    if (!Number.isFinite(src) || src < 0) return SKIP;
-    return Math.min(src, sourceCount - 1);
+    if (!Number.isInteger(src) || src < 0 || src >= sourceCount) return SKIP;
+    return src;
   }
 
   // Legacy person-rank default for the multi-source modes, clamped to the

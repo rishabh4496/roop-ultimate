@@ -80,7 +80,7 @@ class SelectedFaceSafetyTests(unittest.TestCase):
         guard = "selection_diagnostic = _selection_diagnostic_for_mode("
         self.assertIn(guard, trigger)
         self.assertLess(trigger.index(guard), trigger.index("_create_processing_project"))
-        self.assertIn("roop_globals.face_swap_mode = translate_swap_mode(detection)", self.api_source)
+        self.assertIn('roop_globals.face_swap_mode = processing_request["swap_mode"]', self.api_source)
 
     def test_case_2_all_faces_endpoint_still_starts_the_existing_path(self):
         previous = (
@@ -117,7 +117,7 @@ class SelectedFaceSafetyTests(unittest.TestCase):
         self.assertFalse(self.api._selected_face_target_required("Selected face"))
         run = self.api_source[self.api_source.index("def _run_swap("):]
         self.assertIn("_selection_diagnostic_for_mode(", run)
-        self.assertIn("roop_globals.face_swap_mode = translate_swap_mode(detection)", run)
+        self.assertIn('roop_globals.face_swap_mode = processing_request["swap_mode"]', run)
 
     def test_case_4_frontend_never_converts_selected_to_all_faces(self):
         self.assertIn("const previewDetection = activeParams.face_detection_mode;", self.face_swap_source)

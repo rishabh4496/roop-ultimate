@@ -153,8 +153,9 @@ def mapped_selected_index(mapping, mapped, selected):
     source for every face ("All faces", "First found", gender) index it with
     `selected_index`, so an untranslated gallery index either picks the wrong
     source or (with fewer persons than source faces) runs off the end, in which
-    case the face is skipped and nothing is swapped at all. Falls back to the
-    first person's source when the selected face is mapped to nobody.
+    case the face is skipped and nothing is swapped at all. When the selected
+    gallery source is mapped to nobody, the result is ``-1`` and the caller
+    keeps the frame untouched rather than guessing source 0.
     """
     if mapped is None:
         return selected
@@ -162,7 +163,12 @@ def mapped_selected_index(mapping, mapped, selected):
     # not throw away the translation for every other face (a bare
     # `[int(x) for x in mapping]` would, and silently pin every mode to source 0).
     source_indices = normalize_source_index_mapping(
-        mapping, len(roop_globals.INPUT_FACESETS), "")
+        mapping,
+        len(roop_globals.INPUT_FACESETS) or (
+            max([int(value) for value in (mapping or [])
+                 if isinstance(value, (int, float)) and int(value) >= 0] + [-1])
+            + 1),
+        "")
     return resolve_selected_source_index(source_indices, selected)
 
 API_TEMP = os.path.join(os.getcwd(), "temp", "api_uploads")
@@ -670,12 +676,17 @@ def _canonical_processing_request(payload, target_media_index=None,
     selected_source = payload.get("source_index")
     if selected_source is None:
         selected_source = state.selected_input_face_index
+    source_infos = _get_source_faces_info()
+    source_names = [info.get("name", "") for info in source_infos]
+    source_ids = [info.get("id", "") for info in source_infos]
     return normalize_processing_request(
         payload,
         target_groups=_target_groups_ranked(),
         source_count=len(roop_globals.INPUT_FACESETS),
         selected_source_gallery_index=selected_source,
         target_media_index=target_media_index,
+        current_source_names=source_names,
+        current_source_ids=source_ids,
         request_id=request_id,
     )
 
@@ -1371,9 +1382,10 @@ def source_add(files: list[UploadFile] = File(...)):
             elif util.has_image_extension(path):
                 roop_globals.source_path = path
                 faces_data = extract_face_images(path, (False, 0))
-                for fd in faces_data:
+                for face_index, fd in enumerate(faces_data):
                     fs = FaceSet()
                     fs._source_path = os.path.abspath(path)
+                    fs._source_id = f"{os.path.abspath(path)}#face-{face_index}"
                     face = fd[0]
                     face.mask_offsets = _mask_offsets_from_cfg()
                     fs.faces.append(face)
@@ -3166,7 +3178,7 @@ def preview(payload: dict = Body(...)):
                 "request_id": processing_request["request_id"],
                 "selection_state": selection_state,
                 "selection_diagnostic": selection_diagnostic,
-                "target_required": selection_diagnostic == "target_required",
+                "target_required": True if selection_diagnostic == "target_required" else False,
                 "message": (_TARGET_REQUIRED_MESSAGE
                              if selection_diagnostic == "target_required"
                              else _selection_message(selection_diagnostic)),
@@ -3319,7 +3331,7 @@ def trigger_swap(payload: dict = Body(...)):
                          if selection_diagnostic == "target_required"
                          else _selection_message(selection_diagnostic)),
             "selection_diagnostic": selection_diagnostic,
-            "target_required": selection_diagnostic == "target_required",
+            "target_required": True if selection_diagnostic == "target_required" else False,
         })
     payload["selection_state"] = selection_state
     payload["normalized_request"] = processing_request

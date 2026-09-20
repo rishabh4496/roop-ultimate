@@ -11,6 +11,7 @@ from roop.degrade import swallowed as _swallowed
 
 import os
 import shutil
+from uuid import uuid4
 
 import cv2
 import numpy as np
@@ -80,17 +81,32 @@ def estimate_face_pose_from_kps(kps):
 
 def _get_source_faces_info():
     source_faces_info = []
-    for fs in roop_globals.INPUT_FACESETS:
+    for source_index, fs in enumerate(roop_globals.INPUT_FACESETS):
+        faces = getattr(fs, "faces", []) or []
+        source_id = str(getattr(fs, "_source_id", "") or "").strip()
+        if not source_id:
+            source_path = str(getattr(fs, "_source_path", "") or "").strip()
+            source_id = os.path.abspath(source_path) if source_path else f"memory:{uuid4().hex}"
+            try:
+                fs._source_id = source_id
+            except Exception:
+                pass
         faces_poses = []
-        for face in fs.faces:
+        for face in faces:
             kps = getattr(face, 'kps', None)
             if kps is None and isinstance(face, dict) and 'kps' in face:
                 kps = face['kps']
             poses_str = estimate_face_pose_from_kps(kps) if kps is not None else "Front"
             faces_poses.append(poses_str)
         source_faces_info.append({
-            "count": len(fs.faces),
-            "poses": faces_poses
+            "count": len(faces),
+            "poses": faces_poses,
+            "id": source_id,
+            # The basename is stable across gallery reordering and is used by
+            # queued jobs to re-resolve their selected source.  It is metadata,
+            # not a replacement for the numeric source index in a mapping.
+            "name": os.path.basename(str(getattr(fs, "_source_path", "") or ""))
+                    or f"Face {source_index + 1}",
         })
     return source_faces_info
 
@@ -198,6 +214,7 @@ def add_reference_folder(paths, min_cosine=0.65):
     face_set.identity_embedding = cluster.embedding
     face_set.normalized_embedding = cluster.embedding.copy()
     face_set._source_path = os.path.abspath(accepted[0][2])
+    face_set._source_id = os.path.abspath(accepted[0][2])
     thumb_index = min(range(len(accepted)), key=lambda i: sum(
         value * value for value in cluster.poses[i]))
     _sources_append(face_set, util.convert_to_gradio(accepted[thumb_index][3]))
@@ -287,6 +304,7 @@ def _ingest_faceset(path):
         # processing project can reload the exact source rather than only a
         # thumbnail or an embedding snapshot.
         face_set._source_path = os.path.abspath(path)
+        face_set._source_id = os.path.abspath(path)
         if faceset_metadata is not None:
             face_set.attach_v2_metadata(faceset_metadata)
         elif len(face_set.faces) > 1:
