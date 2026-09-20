@@ -1312,21 +1312,6 @@ class MaskingMixin:
             img_mask = (cv2.GaussianBlur(binary_mask, (k, k), 0) if k > 1
                         else binary_mask)
 
-            # ── occlusion_state, read off the occluder's own verdict ──────────
-            # This is the ONLY engine in the chain trained to find a foreign
-            # object in front of a face, and its mask is already computed, in
-            # this crop's coordinates, on this frame. Sampling ~106 points out of
-            # it costs a warpAffine on a (106, 2) array -- there is no second
-            # inference and no extra model.
-            #
-            # It is confined to the occluder family on purpose. A face-shape
-            # masker (XSeg, FaceParser, RealityUX) is HIGH on everything that is
-            # not face INCLUDING the background, so every landmark on the jaw or
-            # hairline would read as occluded and the state would be "partial"
-            # on essentially every frame -- a flag that is always on carries no
-            # information.
-            _stamp_occlusion_state(target_face, img_mask, M)
-
         if p_name in dense_maskers and kps is not None and M is not None:
             img_mask = _recover_undersized_mask(img_mask, kps, M)
 
@@ -1346,6 +1331,26 @@ class MaskingMixin:
                 and rotation_action is None):
             with _prof('stabilize'):
                 img_mask = _ms.apply(img_mask, kps, self._cur_stab_t())
+
+        # ── occlusion_state, read the mask AFTER temporal stabilization ───────
+        # This is the ONLY engine in the chain trained to find a foreign object
+        # in front of a face.  Sampling ~106 points costs a warpAffine on a
+        # (106, 2) array and does not run another model.
+        #
+        # The state is an admission gate in ProcessMgr._to_canonical: a partial
+        # state restores the target hull and makes the generated identity
+        # disappear for that frame.  Reading the raw mask before MaskStabilizer
+        # meant one noisy 256px boundary crossing could alternate the whole face
+        # on and off even though the mask used for compositing was already being
+        # temporally smoothed.  Stamp from the same stabilized mask that is used
+        # by the compositor so the gate has the same temporal behaviour as the
+        # visible result.
+        #
+        # Keep this confined to the occluder family. XSeg, FaceParser and
+        # RealityUX are face-shape masks whose high values include background and
+        # hairline pixels, so they must never drive this state.
+        if p_name in ('mask_occluder', 'mask_xseg3'):
+            _stamp_occlusion_state(target_face, img_mask, M)
 
         # Phase 6 keeps a second, per-track mask history when the new identity
         # layer is enabled. Skip SAM2, which already carries its own temporal

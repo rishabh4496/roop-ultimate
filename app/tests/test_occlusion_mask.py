@@ -3,7 +3,9 @@
 import os
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
 
 import cv2
 import numpy as np
@@ -16,6 +18,7 @@ for p in (str(REPO_ROOT), str(APP_DIR)):
 
 import roop.globals
 from roop.processors.frame import face_swapper
+from roop.procmgr_masking import MaskingMixin
 
 
 class OcclusionMaskTest(unittest.TestCase):
@@ -48,6 +51,88 @@ class OcclusionMaskTest(unittest.TestCase):
     def tearDown(self):
         roop.globals.enable_occlusion_mask = True
         face_swapper.clear_temporal_state()
+
+    def test_partial_admission_does_not_flip_back_on_raw_mask_noise(self):
+        """The visible swap must follow the stabilized mask, not raw noise.
+
+        Before the fix, ``process_mask`` stamped ``occlusion_state`` before the
+        mask stabilizer.  A first frame with an occluder followed by a clear raw
+        frame therefore changed the state to ``visible`` even when the
+        compositor still held the occlusion mask.  ProcessMgr then alternated
+        between restoring and showing the generated face.
+        """
+        class Face(dict):
+            def __getattr__(self, name):
+                try:
+                    return self[name]
+                except KeyError:
+                    raise AttributeError(name)
+
+        class HoldingMask:
+            def __init__(self):
+                self.previous = None
+
+            def apply(self, mask, kps, _t):
+                current = np.asarray(mask, dtype=np.float32)
+                if self.previous is None:
+                    self.previous = current.copy()
+                else:
+                    self.previous = np.maximum(self.previous, current)
+                return self.previous.copy()
+
+        points = np.column_stack((
+            np.linspace(8.0, 24.0, 106),
+            np.linspace(8.0, 24.0, 106),
+        )).astype(np.float32)
+        face = Face(
+            kps=np.asarray(((8, 8), (24, 8), (16, 16), (10, 24), (22, 24)),
+                           dtype=np.float32),
+            landmark_2d_106=points,
+            bbox=np.asarray((4, 4, 28, 28), dtype=np.float32),
+            pose=np.zeros(3, dtype=np.float32),
+        )
+        frame = np.zeros((32, 32, 3), dtype=np.uint8)
+        identity = np.asarray(((1, 0, 0), (0, 1, 0)), dtype=np.float32)
+
+        class Processor:
+            processorname = 'mask_occluder'
+
+            def __init__(self):
+                self.calls = 0
+
+            def Run(self, _frame, _keywords):
+                self.calls += 1
+                # First frame: every interior landmark is behind the object.
+                # Second frame: the raw detector says the object disappeared.
+                return np.ones((32, 32), dtype=np.float32) if self.calls == 1 \
+                    else np.zeros((32, 32), dtype=np.float32)
+
+        class Harness(MaskingMixin):
+            def __init__(self):
+                self.options = SimpleNamespace(
+                    masking_text='', show_face_masking=False)
+                self._stab_active = True
+                self._tls = SimpleNamespace(frame_idx=0, cur_M=None)
+                self.mask_stabilizer = HoldingMask()
+
+            def _temporal_engine(self, _name):
+                return None
+
+            def _cur_mask_stab(self):
+                return self.mask_stabilizer
+
+            def _cur_stab_t(self):
+                return self._tls.frame_idx
+
+        harness = Harness()
+        processor = Processor()
+        with patch('roop.procmgr_masking._recover_undersized_mask',
+                   side_effect=lambda mask, *_args: mask):
+            for frame_index in (0, 1):
+                harness._tls.frame_idx = frame_index
+                harness.process_mask(processor, frame, frame.copy(),
+                                     target_face=face, M=identity)
+                self.assertEqual(face.get('occlusion_state'), 'partial')
 
     def test_occlusion_parsing_detects_foreground_black_bar(self):
         """Confirm the occlusion parsing pipeline identifies the artificial black bar as occlusion."""

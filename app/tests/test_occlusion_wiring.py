@@ -155,11 +155,14 @@ class OcclusionStateIsStampedTest(unittest.TestCase):
         partial state -- a flag that is always on carries no information.
         """
         source = (APP / 'roop' / 'procmgr_masking.py').read_text(encoding='utf-8')
-        stamp_at = source.index('_stamp_occlusion_state(target_face, img_mask, M)')
         guard_at = source.index("if p_name in ('mask_occluder', 'mask_xseg3'):")
         dense_at = source.index("if p_name in dense_maskers and kps is not None")
-        self.assertLess(guard_at, stamp_at)
-        self.assertLess(stamp_at, dense_at)
+        stabilize_at = source.index('img_mask = _ms.apply(img_mask, kps, self._cur_stab_t())')
+        stamp_at = source.index('_stamp_occlusion_state(target_face, img_mask, M)')
+        self.assertLess(guard_at, dense_at)
+        self.assertLess(dense_at, stabilize_at)
+        self.assertLess(stabilize_at, stamp_at,
+                        'occlusion admission must read the temporally stabilized mask')
 
 
 class SwapperSurfaceTest(unittest.TestCase):
