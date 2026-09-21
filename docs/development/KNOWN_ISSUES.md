@@ -339,10 +339,14 @@ newer writer-options identity are conservatively not trusted for continuation.
     the KEEP sidecar checkpoint has no checksum validation. The proposed model
     manifest and digest gate are not implemented.
 
-23. **Stage 9B has no current update candidate manifest.** The updater requires
-    a candidate `update_manifest.json` at the exact fetched commit; the
-    current branch has no newer candidate, and a future candidate without that
-    manifest is intentionally `UNVERIFIED`.
+23. **Stage 9B update manifest -- RESOLVED 2026-09-22.** Schema 1 required
+    `source_commit` to equal the candidate's own commit SHA, which no committed
+    file can satisfy; no commit ever shipped a valid manifest. Schema 2 binds
+    identity to the sensitive-file hashes, `tools/gen_update_manifest.py`
+    generates the file (pre-commit hook + CI `--check`), and
+    `test_update_manifest_head.py` fails when HEAD would not admit itself.
+    Still open: `update.js` bypasses the gate (plain `git pull`) since
+    `66d9e6d`; see `UPDATE_CONTRACT.md` "Apply behavior".
 24. **Stage 9B applies only source fast-forwards.** Dependency, model,
     application-requirement, and critical-runtime changes require review and
     are not installed by `update.js`; staged environments, coordinated

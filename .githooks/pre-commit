@@ -1,0 +1,20 @@
+#!/bin/sh
+# Regenerate update_manifest.json from the index and stage it, so a commit that
+# changes a sensitive dependency/runtime file can never ship a stale manifest.
+# One-time setup per clone:  git config core.hooksPath .githooks
+# CI (tools/gen_update_manifest.py --check) rejects the commit otherwise.
+set -e
+root="$(git rev-parse --show-toplevel)"
+py=""
+for candidate in "$root/app/env/Scripts/python.exe" "$root/app/env/bin/python" python3 python; do
+  if command -v "$candidate" >/dev/null 2>&1 || [ -x "$candidate" ]; then
+    py="$candidate"
+    break
+  fi
+done
+if [ -z "$py" ]; then
+  echo "pre-commit: no python found to run tools/gen_update_manifest.py" >&2
+  exit 1
+fi
+"$py" "$root/tools/gen_update_manifest.py"
+git add "$root/update_manifest.json"

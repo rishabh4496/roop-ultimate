@@ -17,7 +17,9 @@ roop-ultimate/
 ├── react-ui/             the React client (Vite)
 ├── install.js start.js update.js reset.js    Pinokio launcher scripts
 ├── scripts/              clean.js + cleanup.py (disk cleanup), fix_tensorrt.js, verify_roop_keep.py
-├── tools/                diagnose_trt.py, repair_venv_paths.py, phase14-after-render.ps1, acceptance harnesses
+├── tools/                gen_settings.py, gen_update_manifest.py, diagnose_trt.py, repair_venv_paths.py, acceptance harnesses
+├── update_manifest.json  GENERATED update-compatibility manifest (tools/gen_update_manifest.py)
+├── .githooks/pre-commit  regenerates update_manifest.json; enable with `git config core.hooksPath .githooks`
 ├── docs/                 BENCHMARKS.md, TROUBLESHOOTING.md, CHANGELOG.md, session logs, contracts
 ├── pinokio.js pinokio.json                   launcher UI and metadata
 ├── package.json package-lock.json           dev-only mock server + typecheck (npm)
@@ -68,7 +70,26 @@ that need a CUDA device carry the `gpu` marker and are deselected by
 
 CI (`.github/workflows/ci.yml`) runs on every push and pull request: react-ui
 lint and build, the root typecheck, and the light-profile tests on Ubuntu and
-Windows.
+Windows, plus the two generated-file checks (`gen_settings.py --check`,
+`gen_update_manifest.py --check`).
+
+## Generated files: update_manifest.json
+
+`update_manifest.json` is what `app/update_manager.py` evaluates before it
+fast-forwards a user's install; a missing or stale one leaves every existing
+user on the previous commit. It is generated, never edited by hand:
+
+```
+git config core.hooksPath .githooks     # once per clone
+```
+
+The hook re-renders it from the index on every commit and stages it. Without
+the hook, run `python tools/gen_update_manifest.py` after staging any of
+`app/requirements.txt`, `app/provision_runtime.py`, `app/update_manager.py`,
+`app/update_health.py`, `torch.js`, `scripts/fix_tensorrt.js`, `update.js` or
+the react-ui package files, and commit the result. CI and
+`test_update_manifest_head.py` fail while HEAD's manifest is stale.
+See `UPDATE_CONTRACT.md` for what the manifest binds to and why.
 
 ## Before changing settings or benchmarking
 

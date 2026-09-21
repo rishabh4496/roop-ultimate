@@ -9,16 +9,51 @@ is installable.
 The candidate is the exact commit returned by `git ls-remote` for the current
 branch and then fetched into an `origin/<branch>` remote-tracking ref. The
 candidate must contain a valid `update_manifest.json` at that exact commit.
-The manifest `source_commit` must equal the fetched 40-character commit SHA.
 The updater does not treat a branch name, tag name, filename, or “latest” label
 as sufficient identity.
+
+The manifest binds to the candidate through `tracked_file_hashes`: every
+listed SHA-256 must equal the blob of that path in the fetched candidate tree.
+Schema 1 additionally required a `source_commit` equal to the candidate's own
+commit SHA. A committed file cannot contain the hash of the commit that
+contains it, so that requirement was unsatisfiable: between its introduction
+and 2026-09-22 (0 of the last 20 commits on `main`, and none earlier) no
+commit ever carried a valid manifest, and every candidate would have been
+`UNVERIFIED`. Schema 2 drops the field; the checker rejects schema 1.
+
+## Generation (never hand-written)
+
+`tools/gen_update_manifest.py` renders the manifest from the committed
+dependency contract: the torch/onnxruntime/tensorrt/CUDA pins in
+`app/provision_runtime.py`, the ONNX Runtime wheels it installs (providers),
+the constants `app/update_manager.py` enforces (hardware profiles, GPU
+architectures, checkpoint contract), the support matrix declared in the
+generator (platforms, Python range), and the hashes of every
+`SENSITIVE_FILES` entry read from the git index.
+
+- `.githooks/pre-commit` regenerates and stages it on every commit
+  (`git config core.hooksPath .githooks`, once per clone).
+- CI (`python tools/gen_update_manifest.py --check`) fails any push or pull
+  request whose `HEAD` manifest is missing or differs from what HEAD's
+  contract renders.
+- `app/tests/test_update_manifest_head.py` runs `evaluate_manifest()` --
+  the updater's own validation -- against `HEAD:update_manifest.json` and
+  HEAD's tree, read through git the way a fetched candidate is, and fails
+  unless HEAD is `SAFE` for an installation on the declared contract.
+
+Because the manifest is a pure function of the sensitive files, a commit that
+changes none of them keeps a valid manifest through merges, rebases and
+squashes; a commit that does change them is rejected by CI until regenerated.
+The three change lists and both `policy` fields are rendered empty /
+`unchanged`: review of a dependency or runtime change is driven by the
+checker's per-installation `tracked_file_hashes` comparison, and a runtime
+pin change surfaces as an `INCOMPATIBLE` `compatibility.runtime` constraint.
 
 ## Required manifest evidence
 
 The current checker requires these fields:
 
-- `schema_version`: `1`.
-- `source_commit`: the candidate commit SHA.
+- `schema_version`: `2`.
 - `activation`: `fast_forward_only`.
 - `compatibility.platforms`: a list containing the current Python platform.
 - `compatibility.python`: explicit `min`, and optional simple `max` version
@@ -41,8 +76,9 @@ The current checker requires these fields:
 - `critical_runtime_changes`, `dependency_changes`, and `model_changes`: lists.
   Non-empty lists require review and are never installed by this updater.
 - `tracked_file_hashes`: SHA-256 values for the sensitive dependency/runtime
-  and both React package manifests/lockfiles listed in
-  `app/update_manager.py`. Each value must match the fetched candidate tree.
+  files (including `app/provision_runtime.py`, where the pins live) and both
+  React package manifests/lockfiles listed in `app/update_manager.py`. Each
+  value must match the fetched candidate tree.
 
 The manifest is repository-provided evidence. It is not independent proof of
 physical acceptance on either GPU. The updater therefore reports the local
@@ -67,6 +103,13 @@ does not mean that CUDA, ONNX Runtime, TensorRT, Python, FFmpeg, NVIDIA
 drivers, models, or other critical components are safe to upgrade.
 
 ## Apply behavior
+
+> **Current wiring (2026-09-22):** `update.js` has run a plain
+> `git checkout main && git pull origin main` plus dependency reinstall since
+> commit `66d9e6d` (2026-09-05), which removed the `update_manager.py apply`
+> call because no candidate ever carried a manifest. The gate below is
+> implemented and tested but is not on the Pinokio Update button's path until
+> `update.js` calls `python update_manager.py apply` again.
 
 `update.js` invokes `app/update_manager.py apply` in the existing Pinokio
 `app/env` environment. The command performs the compatibility check first and

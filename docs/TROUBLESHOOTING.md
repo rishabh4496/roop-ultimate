@@ -105,7 +105,8 @@ in-app Storage Manager (Settings) is the finer-grained, reference-aware alternat
 ## Updates
 
 Pinokio's **Update** action runs a compatibility check before changing source.
-A candidate must provide an exact-commit `update_manifest.json` declaring
+A candidate must provide a generated `update_manifest.json` (its tracked-file
+hashes verified against the fetched commit) declaring
 compatible Python, CUDA/Torch, ONNX Runtime/TensorRT, execution provider,
 checkpoint contract, model/application policy, and both supported GPU profiles
 (RTX 4070 12 GB and RTX 3060 Laptop 6 GB). Missing evidence is reported as

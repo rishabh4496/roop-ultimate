@@ -1,12 +1,20 @@
 """Compatibility-gated updater for the Pinokio project.
 
 The updater deliberately has a narrow apply surface.  A candidate must carry
-an immutable, repository-provided ``update_manifest.json`` whose commit,
-runtime constraints, hardware profiles, provider policy, checkpoint contract,
-and sensitive-file hashes all agree with the current installation.  Only a
+an immutable, repository-provided ``update_manifest.json`` whose runtime
+constraints, hardware profiles, provider policy, checkpoint contract, and
+sensitive-file hashes all agree with the current installation.  Only a
 source-only fast-forward is currently admissible.  Dependency, model, and
 critical-runtime changes are reported for review and are never installed by
 this command.
+
+The manifest is generated, never hand-written: ``tools/gen_update_manifest.py``
+renders it from the committed dependency contract and CI rejects a commit whose
+manifest is missing or stale.  Its identity is the set of ``SENSITIVE_FILES``
+hashes, each verified against the fetched candidate tree.  Schema 1 carried a
+``source_commit`` field that had to equal the candidate's own commit SHA; a
+committed file cannot contain the hash of the commit that contains it, so no
+commit in this repository ever shipped a valid schema-1 manifest.
 """
 
 from __future__ import annotations
@@ -30,6 +38,9 @@ from typing import Any, Iterable
 
 CLASSIFICATIONS = ("SAFE", "REQUIRES REVIEW", "UNVERIFIED", "INCOMPATIBLE")
 MANIFEST_PATH = "update_manifest.json"
+# Schema 2: identity is the tracked-file hash set (verified against the
+# candidate tree), not a self-referential commit SHA.
+MANIFEST_SCHEMA_VERSION = 2
 CHECKPOINT_SCHEMA = 1
 PROCESSING_CONTRACT = "segmented-video-v1"
 MANDATORY_HARDWARE_PROFILES = {
@@ -41,6 +52,9 @@ MANDATORY_HARDWARE_PROFILES = {
 MANDATORY_GPU_ARCHITECTURES = {"8.9", "8.6"}
 SENSITIVE_FILES = (
     "app/requirements.txt",
+    # The torch / onnxruntime / tensorrt pins the manifest's runtime
+    # constraints are rendered from.
+    "app/provision_runtime.py",
     "app/update_manager.py",
     "app/update_health.py",
     "torch.js",
@@ -363,10 +377,8 @@ def evaluate_manifest(manifest: dict[str, Any] | None, candidate_sha: str,
             f"candidate does not contain a valid {MANIFEST_PATH}"
         ]}
 
-    if manifest.get("schema_version") != 1:
+    if manifest.get("schema_version") != MANIFEST_SCHEMA_VERSION:
         unknown.append("update manifest schema is missing or unsupported")
-    if manifest.get("source_commit") != candidate_sha:
-        unknown.append("manifest source_commit does not equal the fetched candidate commit")
     if manifest.get("activation") != "fast_forward_only":
         unknown.append("activation policy is not the verified fast-forward-only mode")
 

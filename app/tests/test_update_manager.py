@@ -16,9 +16,13 @@ from pathlib import Path
 # ERROR instead of running its tests -- a whole module silently uncollected on
 # one of the two commands the project documents.  Bootstrapping here makes the
 # module self-sufficient under either.
+# app.update_manager itself imports roop.* from app/, so app/ must be on the
+# path too; otherwise this module only collects when an earlier test module
+# happened to add it (it was order-dependent under pytest).
 _ROOT = Path(__file__).resolve().parents[2]
-if str(_ROOT) not in sys.path:
-    sys.path.insert(0, str(_ROOT))
+for _path in (_ROOT, _ROOT / "app"):
+    if str(_path) not in sys.path:
+        sys.path.insert(0, str(_path))
 
 from app import update_manager
 
@@ -44,10 +48,9 @@ def _state():
     }
 
 
-def _manifest(state, sha="a" * 40):
+def _manifest(state):
     return {
-        "schema_version": 1,
-        "source_commit": sha,
+        "schema_version": update_manager.MANIFEST_SCHEMA_VERSION,
         "activation": "fast_forward_only",
         "compatibility": {
             "platforms": ["win32"],
@@ -163,11 +166,26 @@ class UpdateManagerTests(unittest.TestCase):
         self.assertEqual(result["classification"], "REQUIRES REVIEW")
         self.assertTrue(any("PAUSED" in item for item in result["reasons"]))
 
-    def test_manifest_commit_mismatch_is_unverified(self):
+    def test_schema_1_manifest_is_unverified(self):
+        # Schema 1 bound identity to a source_commit no committed file can
+        # satisfy; the checker does not accept it.
         state = _state()
-        result = update_manager.evaluate_manifest(_manifest(state, "b" * 40), "a" * 40,
+        manifest = _manifest(state)
+        manifest["schema_version"] = 1
+        manifest["source_commit"] = "a" * 40
+        result = update_manager.evaluate_manifest(manifest, "a" * 40,
                                                    state, state["tracked_file_hashes"])
         self.assertEqual(result["classification"], "UNVERIFIED")
+
+    def test_manifest_hash_not_in_candidate_tree_is_unverified(self):
+        # The identity binding: every declared hash must be the fetched tree's.
+        state = _state()
+        manifest = _manifest(state)
+        manifest["tracked_file_hashes"]["app/requirements.txt"] = "not-the-tree"
+        result = update_manager.evaluate_manifest(manifest, "a" * 40,
+                                                   state, state["tracked_file_hashes"])
+        self.assertEqual(result["classification"], "UNVERIFIED")
+        self.assertTrue(any("requirements.txt" in item for item in result["reasons"]))
 
     def test_invalid_manifest_is_unverified(self):
         result = update_manager.evaluate_manifest(None, "a" * 40, _state())
