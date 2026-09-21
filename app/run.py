@@ -365,6 +365,11 @@ if __name__ == '__main__':
             sys.exit(1)
         print(f"[Backend] API daemon running on port {api_port} "
               f"- stop this script in Pinokio to shut it down.", flush=True)
+        # Repeat the share banner here, after the model-loading output, so the
+        # token is the last thing on the Pinokio terminal, not buried above it.
+        import api_access as _api_access
+        if _api_access.get_policy().share:
+            print(_api_access.get_policy().banner(api_port), flush=True)
         try:
             while api_thread.is_alive():
                 api_thread.join(timeout=1.0)

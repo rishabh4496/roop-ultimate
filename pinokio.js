@@ -2,7 +2,7 @@ const path = require('path')
 module.exports = {
   version: "3.7",
   title: "Roop Ultimate",
-  description: "Face swapping for images and video, with a React UI. Independent project; AGPL-3.0. Private — access is by invitation.",
+  description: "Face swapping for images and video, with a React UI. Independent project; AGPL-3.0.",
   icon: "icon.png",
   menu: async (kernel, info) => {
     // app/env is created before the later Python, model-support, and React

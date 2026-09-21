@@ -127,6 +127,18 @@ failed build stops the launch with the real error rather than a broken page.
 For UI development, `npm run dev` in `react-ui/` still gives HMR; the dev server
 proxies `/api` and `/ws` to a backend started separately.
 
+### Network access
+
+The backend listens on `127.0.0.1` only. Even there, `/api` and `/ws` refuse
+requests whose browser `Origin` is not this server or a local page (403), so a
+web page from another site cannot drive it. **Public server (share)** in
+Settings -> Server (or `--server_share`) makes it listen on every interface at
+the next launch. That launch prints a banner with a random per-launch token;
+every request from another machine must carry it (`Authorization: Bearer`,
+`?token=`, or open the printed `/?token=...` URL once and the UI keeps it in a
+cookie). Share mode is never enabled silently: it is announced at startup and
+when the setting is saved. See `app/api_access.py`.
+
 ### Mock API (development only)
 
 `react-ui/mock-server/server.ts` is **not the real backend**. It is an Express

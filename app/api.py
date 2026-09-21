@@ -87,16 +87,25 @@ from target_person_state import (
 )
 import project_checkpoint as _project_checkpoint
 import ui.globals as ui_globals
+import api_access as _api_access
 
 app = FastAPI()
+# CORS is only ever needed by a LOCAL page on another port (the Vite dev
+# server); the production UI is same-origin. `*` with credentials echoed any
+# site's Origin back, which let a remote web page read responses from this
+# API. The regex admits loopback names and Pinokio's *.localhost proxy only.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1|\[::1\]|[A-Za-z0-9.-]+\.localhost)(:\d+)?$",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*", "Range", "range", "Accept-Ranges", "Content-Range", "Content-Length"],
     expose_headers=["Content-Range", "Accept-Ranges", "Content-Length", "Content-Type"],
 )
+# Outermost: a foreign Origin is refused (403) before any handler runs, and in
+# share mode a non-loopback caller without the launch token gets 401. Covers
+# every /api and /ws route, the telemetry WebSocket included. See api_access.
+app.add_middleware(_api_access.AccessControlMiddleware)
 
 # Preview updates several process-wide globals while it performs detection and
 # swapping. React can issue overlapping requests when a user scrubs frames or
@@ -1333,6 +1342,10 @@ def save_settings(settings: dict = Body(...)):
             # would undo that, and the ordering is dict order, i.e. luck.
             if k.startswith('_') or not hasattr(roop_globals.CFG, k):
                 continue
+            if k == 'server_share' and bool(v) and not bool(getattr(roop_globals.CFG, k, False)):
+                print("[Backend] server_share ENABLED in settings: on the next launch the API"
+                      " binds to all interfaces and requires the per-launch token printed"
+                      " at startup. It is not active until then.", flush=True)
             setattr(roop_globals.CFG, k, v)
         if "provider" in settings:
             try:
@@ -5579,6 +5592,29 @@ def _ui_file(request_path):
         return None
     return resolved if os.path.isfile(resolved) else None
 
+def _serve_index(request):
+    """index.html, gated by the share-mode token for non-loopback visitors.
+
+    Opening the printed URL (`/?token=...`) sets an HttpOnly, SameSite=Strict
+    cookie so every later same-origin request -- fetch, <img>, <video>, the
+    telemetry socket -- carries the token without the UI knowing about it.
+    Without a valid token the visitor gets a small form, not the app.
+    """
+    policy = _api_access.get_policy()
+    client = request.client.host if request.client else None
+    if not policy.share or _api_access.env_client_is_loopback(client):
+        return _FileResponse(_UI_INDEX)
+    query_token = _api_access.token_from_request_query(request.url.query)
+    if query_token is not None and policy.token_ok(query_string=request.url.query):
+        response = _FileResponse(_UI_INDEX)
+        response.set_cookie(_api_access.TOKEN_COOKIE, policy.token, httponly=True,
+                            samesite="strict", path="/")
+        return response
+    if policy.token_ok(cookie_header=request.headers.get("cookie")):
+        return _FileResponse(_UI_INDEX)
+    return _HTMLResponse(status_code=401, content=_api_access.TOKEN_PAGE)
+
+
 @app.exception_handler(404)
 async def _spa_fallback(request, exc):
     """Serve the SPA for anything the API did not claim.
@@ -5607,7 +5643,7 @@ async def _spa_fallback(request, exc):
         _, ext = os.path.splitext(path)
         if path.startswith("/assets/") or ext.lower() in _STATIC_EXTENSIONS:
             return JSONResponse(status_code=404, content={"detail": "Asset not found"})
-        return _FileResponse(_UI_INDEX)
+        return _serve_index(request)
     return _HTMLResponse(
         status_code=503,
         content=(
@@ -5635,4 +5671,9 @@ def run_api():
         port = int(os.environ.get("ROOP_API_PORT", 8001))
     except ValueError:
         port = 8001
-    uvicorn.run(app, host="127.0.0.1", port=port, log_level="error")
+    # Loopback unless share mode was asked for explicitly; then every
+    # interface, announced, with the per-launch token. See api_access.
+    policy = _api_access.get_policy()
+    if policy.share:
+        print(policy.banner(port), flush=True)
+    uvicorn.run(app, host=policy.host, port=port, log_level="error")
