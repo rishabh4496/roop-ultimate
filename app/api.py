@@ -5598,11 +5598,11 @@ def _serve_index(request):
     Opening the printed URL (`/?token=...`) sets an HttpOnly, SameSite=Strict
     cookie so every later same-origin request -- fetch, <img>, <video>, the
     telemetry socket -- carries the token without the UI knowing about it.
-    Without a valid token the visitor gets a small form, not the app.
+    Without a valid token the visitor gets a small form, not the app. This
+    applies to loopback too: the Pinokio sidebar link carries the token.
     """
     policy = _api_access.get_policy()
-    client = request.client.host if request.client else None
-    if not policy.share or _api_access.env_client_is_loopback(client):
+    if not policy.share:
         return _FileResponse(_UI_INDEX)
     query_token = _api_access.token_from_request_query(request.url.query)
     if query_token is not None and policy.token_ok(query_string=request.url.query):

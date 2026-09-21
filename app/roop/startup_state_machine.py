@@ -949,7 +949,10 @@ def execute_ui_ready(api_port: int, is_react: bool = True) -> PhaseResult:
                 next_action="Run: cd react-ui && npm run build",
             )
 
-        ready_url = f"http://127.0.0.1:{api_port}"
+        # In share mode this carries the per-launch token: the launcher
+        # captures it for the sidebar link and for stop/pause/resume.
+        import api_access
+        ready_url = api_access.get_policy().ready_url(api_port)
         print(f"[Backend] listening on {ready_url}", flush=True)
         return PhaseResult(
             phase=StartupPhase.UI_READY,

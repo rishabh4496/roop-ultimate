@@ -12,16 +12,15 @@ silently: it must be asked for (config.yaml or --server_share), it is announced
 with a banner, and it comes with a random per-launch bearer token that every
 non-loopback /api and /ws request must present -- as `Authorization: Bearer`,
 as a `token` query parameter, or as the cookie the UI is given when it is
-opened through the printed URL. Loopback peers are exempt so the launcher's
-own Stop/Pause/Resume scripts keep working; a local browser page is still
-held to the Origin rule.
+opened through the printed URL. No caller is exempt, loopback included: the
+launcher's own Stop/Pause/Resume scripts get the token from start_react.js,
+which captures it from the ready line (`ready_url`).
 
 Everything here is decided from config.yaml and argv, not from
 roop.globals.CFG: the API thread starts before core.run() loads CFG.
 """
 from __future__ import annotations
 
-import ipaddress
 import secrets
 import sys
 from http.cookies import CookieError, SimpleCookie
@@ -61,15 +60,6 @@ def share_requested(config_path: str = "config.yaml", argv: Optional[list] = Non
     return bool(isinstance(data, dict) and data.get("server_share") is True)
 
 
-def _is_loopback(host: Optional[str]) -> bool:
-    if not host:
-        return False
-    try:
-        return ipaddress.ip_address(host.strip("[]")).is_loopback
-    except ValueError:
-        return host.lower() == "localhost"
-
-
 class AccessPolicy:
     """The bind host, the token (share mode only) and the two checks."""
 
@@ -107,10 +97,8 @@ class AccessPolicy:
 
     # -- Token --------------------------------------------------------------
     def token_ok(self, authorization: Optional[str] = None, cookie_header: Optional[str] = None,
-                 query_string: Optional[str] = None, client_host: Optional[str] = None) -> bool:
+                 query_string: Optional[str] = None) -> bool:
         if not self.share:
-            return True
-        if _is_loopback(client_host):
             return True
         candidates = []
         if authorization and authorization.lower().startswith("bearer "):
@@ -131,6 +119,17 @@ class AccessPolicy:
     def share_url(self, port: int) -> str:
         return f"http://<this-machine's-address>:{port}/?{TOKEN_QUERY}={self.token}"
 
+    def ready_url(self, port: int) -> str:
+        """The loopback URL the launcher captures from the ready line.
+
+        In share mode it carries the token, so the Pinokio sidebar link opens
+        a UI that works and start_react.js can capture the token for its
+        Stop/Pause/Resume scripts. Regex-stable: host:port, then optionally
+        `/?token=<url-safe token>`, nothing else on the line.
+        """
+        base = f"http://{LOOPBACK_HOST}:{port}"
+        return f"{base}/?{TOKEN_QUERY}={self.token}" if self.share else base
+
     def banner(self, port: int) -> str:
         if not self.share:
             return ""
@@ -138,12 +137,12 @@ class AccessPolicy:
             "",
             "=" * 72,
             "  SHARE MODE IS ON: the backend is listening on EVERY network interface.",
-            "  Anyone who can reach this machine can reach the API. Every request from",
-            "  another machine must carry this launch's token (new one every start):",
+            "  Anyone who can reach this machine can reach the API. EVERY /api and /ws",
+            "  request must carry this launch's token (new one every start):",
             "",
             f"      {self.token}",
             "",
-            "  Open the UI with the token in the URL and it is remembered for the session:",
+            "  The Pinokio sidebar shows the token and its Open link carries it. Or open:",
             f"      {self.share_url(port)}",
             "",
             "  Scripts: Authorization: Bearer <token>   or   ?token=<token>",
@@ -198,10 +197,8 @@ class AccessControlMiddleware:
         # A CORS preflight carries no credentials by design; it changes nothing.
         if scope["type"] == "http" and scope.get("method") == "OPTIONS":
             return await self.app(scope, receive, send)
-        client = scope.get("client")
         if not policy.token_ok(headers.get("authorization"), headers.get("cookie"),
-                               (scope.get("query_string") or b"").decode("latin-1"),
-                               client[0] if client else None):
+                               (scope.get("query_string") or b"").decode("latin-1")):
             return await self._refuse(scope, send, 401, "Bearer token required (share mode)")
         return await self.app(scope, receive, send)
 
@@ -235,7 +232,3 @@ launcher console at startup (a new one every launch).</p>
 <p><small>Scripts: <code>Authorization: Bearer &lt;token&gt;</code> or <code>?%s=&lt;token&gt;</code>.</small></p>
 </div></body></html>""" % (TOKEN_QUERY, TOKEN_QUERY)
 
-
-def env_client_is_loopback(client_host: Optional[str]) -> bool:
-    """Whether the connecting peer is this machine (token exempt)."""
-    return _is_loopback(client_host)

@@ -49,26 +49,34 @@ module.exports = {
         let has_valid_url = local && typeof local.url === "string"
           && /^https?:\/\/(?:localhost|127\.0\.0\.1|[0-9.:]+)(?:\/|$)/.test(local.url)
         if (has_valid_url) {
+          // Share mode: the backend is on every interface and every /api call
+          // needs this launch's token. Show it here (the console has it too)
+          // and open the UI through the URL that hands the browser the cookie.
+          let share_token = (local && typeof local.share_token === "string") ? local.share_token : ""
+          let open_url = share_token ? `${local.url}/?token=${share_token}` : local.url
+          let open_text = share_token
+            ? `<div><strong>Open React UI 1.0</strong><div>SHARE MODE ON — token for other machines: <code>${share_token}</code></div></div>`
+            : "Open React UI 1.0"
           return [{
             default: true,
             icon: "fa-solid fa-rocket",
-            text: "Open React UI 1.0",
-            href: local.url,
+            text: open_text,
+            href: open_url,
           }, {
             icon: "fa-solid fa-circle-stop",
             text: "<div><strong>Stop Swap</strong><div>Abort the current job and finalize a playable video</div></div>",
             href: "stop.js",
-            params: { api_url: local.api_url },
+            params: { api_url: local.api_url, share_token: share_token },
           }, {
             icon: "fa-solid fa-pause",
             text: "<div><strong>Pause</strong><div>Hold the running job</div></div>",
             href: "pause.js",
-            params: { api_url: local.api_url },
+            params: { api_url: local.api_url, share_token: share_token },
           }, {
             icon: "fa-solid fa-play",
             text: "<div><strong>Resume</strong><div>Continue a paused job</div></div>",
             href: "resume.js",
-            params: { api_url: local.api_url },
+            params: { api_url: local.api_url, share_token: share_token },
           }, {
             icon: 'fa-solid fa-terminal',
             text: "Terminal — React UI 1.0",

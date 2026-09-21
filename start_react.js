@@ -140,7 +140,10 @@ module.exports = async (kernel) => {
             "python run.py --ui react",
           ],
           on: [{
-            "event": "/(http:\\/\\/[0-9.:]+)/",
+            // Group 1: the loopback URL. Group 2: the per-launch token the
+            // backend appends as `/?token=...` ONLY in share mode (see
+            // app/api_access.py ready_url). One line, one capture.
+            "event": "/(http:\\/\\/[0-9.:]+)(?:\\/\\?token=([A-Za-z0-9_-]+))?/",
             "done": true
           }, {
             "event": "/\\[FATAL\\]/",
@@ -159,7 +162,11 @@ module.exports = async (kernel) => {
           // it to stop.js/pause.js/resume.js, which POST /api/stop and friends.
           // A graceful stop finalizes the output video (moov atom) instead of
           // the hard process-kill the Terminal square does.
-          api_url: `http://127.0.0.1:${API_PORT}`
+          api_url: `http://127.0.0.1:${API_PORT}`,
+          // Share mode only; empty otherwise. pinokio.js shows it in the sidebar
+          // and hands it to stop.js/pause.js/resume.js as a bearer token, since
+          // in share mode every /api call needs it, loopback included.
+          share_token: "{{input.event[2] || ''}}"
         }
       }
     ]

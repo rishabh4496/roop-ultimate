@@ -9,7 +9,10 @@ module.exports = {
       method: "net",
       params: {
         url: "{{args.api_url}}/api/pause",
-        method: "post"
+        method: "post",
+        // Share mode requires the per-launch token on every /api call;
+        // outside share mode the backend ignores the header.
+        headers: { Authorization: "Bearer {{args.share_token}}" }
       }
     },
     {

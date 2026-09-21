@@ -133,11 +133,12 @@ The backend listens on `127.0.0.1` only. Even there, `/api` and `/ws` refuse
 requests whose browser `Origin` is not this server or a local page (403), so a
 web page from another site cannot drive it. **Public server (share)** in
 Settings -> Server (or `--server_share`) makes it listen on every interface at
-the next launch. That launch prints a banner with a random per-launch token;
-every request from another machine must carry it (`Authorization: Bearer`,
-`?token=`, or open the printed `/?token=...` URL once and the UI keeps it in a
-cookie). Share mode is never enabled silently: it is announced at startup and
-when the setting is saved. See `app/api_access.py`.
+the next launch. That launch prints a banner with a random per-launch token and
+the Pinokio sidebar shows it; every `/api` and `/ws` request, loopback included,
+must carry it (`Authorization: Bearer`, `?token=`, or open the sidebar's
+`/?token=...` link once and the UI keeps it in a cookie). Share mode is never
+enabled silently: it is announced at startup and when the setting is saved. See
+`app/api_access.py`.
 
 ### Mock API (development only)
 

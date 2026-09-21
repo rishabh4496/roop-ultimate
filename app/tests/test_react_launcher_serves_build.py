@@ -136,8 +136,12 @@ class LauncherServesTheBuild(unittest.TestCase):
     def test_only_the_backend_publishes_a_url(self):
         """One server means one URL, and it is the backend's."""
         self.assertEqual(len(self.backend_steps), 1)
-        events = [o.get('event') for o in self.backend_steps[0]['params']['on']]
-        self.assertIn('/(http:\\/\\/[0-9.:]+)/', events)
+        # Group 1 is the loopback URL; a later optional group carries the
+        # share-mode token (test_api_access.LauncherCarriesTheToken).
+        url_events = [o for o in self.backend_steps[0]['params']['on']
+                      if o.get('event', '').startswith('/(http:\\/\\/[0-9.:]+)')]
+        self.assertEqual(len(url_events), 1)
+        self.assertTrue(url_events[0].get('done'))
 
     def test_backend_preflight_failure_breaks_before_url_local_set(self):
         events = self.backend_steps[0]['params']['on']

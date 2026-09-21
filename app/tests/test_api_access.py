@@ -129,16 +129,31 @@ class TokenRequiredInShareMode(unittest.TestCase):
                                                "Access-Control-Request-Method": "GET"})
         self.assertEqual(r.status_code, 200)
 
-    def test_loopback_peer_is_exempt(self):
-        # The launcher's own stop/pause/resume scripts call from 127.0.0.1 and
-        # carry no token; a local browser page is still held to the Origin rule.
-        policy = api_access.get_policy()
-        self.assertTrue(policy.token_ok(client_host="127.0.0.1"))
-        self.assertTrue(policy.token_ok(client_host="::1"))
-        self.assertFalse(policy.token_ok(client_host="192.168.1.20"))
+    def test_loopback_peer_needs_the_token_too(self):
+        # No exemption for 127.0.0.1: the launcher's stop/pause/resume scripts
+        # carry the token they captured from the ready line (see the launcher
+        # tests below), and a local browser page is held to the Origin rule.
         local = TestClient(api.app, client=("127.0.0.1", 50000))
-        self.assertEqual(local.get(PING).status_code, 200)
-        self.assertEqual(local.get(PING, headers={"Origin": "https://evil.example"}).status_code, 403)
+        self.assertEqual(local.get(PING).status_code, 401)
+        self.assertEqual(local.get(PING, headers={"Authorization": f"Bearer {TOKEN}"}).status_code, 200)
+        self.assertEqual(local.get(PING, headers={"Authorization": f"Bearer {TOKEN}",
+                                                  "Origin": "https://evil.example"}).status_code, 403)
+        if api.ui_dist_ready():
+            self.assertEqual(local.get("/").status_code, 401)
+
+    def test_ready_line_carries_the_token_only_in_share_mode(self):
+        # What the launcher's regex captures: host:port, then in share mode
+        # `/?token=<url-safe>` and nothing else.
+        self.assertEqual(api_access.AccessPolicy(share=False).ready_url(8001), "http://127.0.0.1:8001")
+        on = api_access.AccessPolicy(share=True, token=TOKEN)
+        self.assertEqual(on.ready_url(8001), f"http://127.0.0.1:8001/?token={TOKEN}")
+        import re
+        self.assertRegex(on.token, r"^[A-Za-z0-9_-]+$")   # matches the launcher's group 2
+        # execute_ui_ready is gated on earlier startup phases, so pin the
+        # source: ready_url() must be its only URL source.
+        from roop import startup_state_machine as ssm
+        self.assertIn("api_access.get_policy().ready_url(api_port)",
+                      open(ssm.__file__, encoding="utf-8").read())
 
     @unittest.skipUnless(api.ui_dist_ready(), "react-ui/dist not built")
     def test_index_hands_out_the_cookie_only_for_the_token(self):
@@ -217,6 +232,46 @@ class ForeignOriginRejected(unittest.TestCase):
         # Only /api and /ws are guarded; a page load carries no Origin anyway.
         r = self.client.get("/", headers={"Origin": "https://evil.example"})
         self.assertIn(r.status_code, (200, 503))
+
+
+class LauncherCarriesTheToken(unittest.TestCase):
+    """start_react.js captures the token from the ready line; pinokio.js shows
+    it in the sidebar and passes it to stop/pause/resume, which send it as a
+    bearer header. Read the real launcher files so a drift fails here."""
+
+    ROOT = os.path.dirname(APP)
+
+    def _launcher(self, name):
+        with open(os.path.join(self.ROOT, name), encoding="utf-8") as fh:
+            return fh.read()
+
+    def _event_regex(self):
+        import re
+        src = self._launcher("start_react.js")
+        m = re.search(r'"event": "/(\(http:.*?)/",', src)
+        self.assertIsNotNone(m, "start_react.js lost its URL capture")
+        # the file holds a JS string literal, so `\\/` in the source is `\/`
+        # in the regex the shell actually evaluates.
+        return re.compile(m.group(1).replace("\\\\", "\\"))
+
+    def test_capture_regex_reads_url_and_optional_token(self):
+        rx = self._event_regex()
+        off = api_access.AccessPolicy(share=False)
+        on = api_access.AccessPolicy(share=True, token=TOKEN)
+        m = rx.search(f"[Backend] listening on {off.ready_url(8001)}")
+        self.assertEqual((m.group(1), m.group(2)), ("http://127.0.0.1:8001", None))
+        m = rx.search(f"[Backend] listening on {on.ready_url(8001)}")
+        self.assertEqual((m.group(1), m.group(2)), ("http://127.0.0.1:8001", TOKEN))
+
+    def test_local_set_and_scripts_thread_the_token(self):
+        start = self._launcher("start_react.js")
+        self.assertIn('url: "{{input.event[1]}}"', start)
+        self.assertIn("share_token: \"{{input.event[2] || ''}}\"", start)
+        menu = self._launcher("pinokio.js")
+        self.assertIn("share_token: share_token", menu)
+        self.assertIn("/?token=${share_token}", menu)
+        for name in ("stop.js", "pause.js", "resume.js"):
+            self.assertIn('headers: { Authorization: "Bearer {{args.share_token}}" }', self._launcher(name))
 
 
 if __name__ == "__main__":
