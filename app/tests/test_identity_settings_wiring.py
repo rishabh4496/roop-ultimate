@@ -48,12 +48,14 @@ class TestIdentitySettingsReachTheirFlags(unittest.TestCase):
         self.assertRegex(src, r"default_get\(data, 'recognizer', 'default'\)")
 
     def test_run_py_maps_each_setting_to_its_flag(self):
-        src = _read('run.py')
+        # The mapping lives in settings.ENV_SETTINGS; run.py applies it.
+        import settings
+        mapping = {key: (var, kind) for key, var, kind in settings.ENV_SETTINGS}
         for key, var in self.TRISTATE.items():
-            self.assertIn(f"'{var}', '{key}'", src,
-                          f"run.py must map {key} -> {var}")
-        self.assertIn('ROOP_ADAFACE', src)
-        self.assertIn('ROOP_PRIORITY', src)
+            self.assertEqual(mapping.get(key), (var, 'tristate'), f"{key} -> {var} must be a tri-state")
+        self.assertEqual(mapping['recognizer'][0], 'ROOP_ADAFACE')
+        self.assertEqual(mapping['process_priority'][0], 'ROOP_PRIORITY')
+        self.assertIn('apply_env(cfg, os.environ)', _read('run.py'))
 
     def test_each_flag_is_actually_read_by_a_roop_module(self):
         """The names must match something that reads them, or the setting is a
@@ -84,10 +86,9 @@ class TestIdentitySettingsReachTheirFlags(unittest.TestCase):
             f"offered priorities {sorted(names - accepted)} are not in "
             f"keep_awake._PRIORITY_CLASSES {sorted(accepted)}")
 
-        # run.py must not forward a name outside that table either.
-        forwarded = re.search(r"_pri in \(([^)]+)\)", _read('run.py'))
-        self.assertIsNotNone(forwarded)
-        self.assertTrue(set(re.findall(r"'([a-z_]+)'", forwarded.group(1))) <= accepted)
+        # The mapping must not forward a name outside that table either.
+        import settings
+        self.assertTrue(set(settings._PRIORITY_NAMES) <= accepted)
 
     def test_recognizer_options_match_what_run_py_understands(self):
         offered = re.search(r'"recognizers":\s*\[([^\]]+)\]', _read('api.py'))

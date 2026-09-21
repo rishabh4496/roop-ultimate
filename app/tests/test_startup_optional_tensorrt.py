@@ -16,6 +16,12 @@ from unittest.mock import patch
 from roop import degrade
 
 
+# Needs the ML stack at runtime (onnxruntime/cv2/torch behaviour, not just imports);
+# skipped in the light profile / CI, run on the GPU machines. See conftest.py.
+import pytest
+pytestmark = pytest.mark.gpu
+
+
 class TestStartupOptionalTensorRT(unittest.TestCase):
     def setUp(self):
         degrade.reset()

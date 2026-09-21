@@ -24,6 +24,12 @@ from roop.tracker import (MAX_COAST_FRAMES, MAX_LOST_FRAMES, STATE_COASTED,
                           FaceTracker)
 
 
+# Needs the ML stack at runtime (onnxruntime/cv2/torch behaviour, not just imports);
+# skipped in the light profile / CI, run on the GPU machines. See conftest.py.
+import pytest
+pytestmark = pytest.mark.gpu
+
+
 def _face(cx, cy=100.0, width=40.0, height=52.0, embedding=(1.0, 0.0, 0.0, 0.0),
           score=0.9):
     return {

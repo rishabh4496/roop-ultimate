@@ -24,7 +24,6 @@ from __future__ import annotations
 import importlib.abc
 import os
 import sys
-import threading
 
 import pytest
 
@@ -54,21 +53,53 @@ def pytest_configure(config):
         sys.meta_path.insert(0, _HeavyImportSkips())
 
 
+class HeavyImportBlocked(ImportError, pytest.skip.Exception):
+    """Both an ImportError and a pytest skip.
+
+    Code that guards an optional import (`try: import torch except ImportError`)
+    catches this exactly as it would on a machine without the package, so the
+    light profile exercises the same degraded paths CI's runners have. An
+    UNGUARDED import lets it propagate, and pytest reads it as a skip -- of the
+    whole module when raised at import time, of one test otherwise.
+    """
+
+    def __init__(self, reason):
+        ImportError.__init__(self, reason)
+        pytest.skip.Exception.__init__(self, reason, allow_module_level=True)
+
+
 class _HeavyImportSkips(importlib.abc.MetaPathFinder):
     """In the light profile, importing a heavy package skips instead of failing."""
 
     def find_spec(self, name, path=None, target=None):
         if name.split(".", 1)[0] not in HEAVY_PACKAGES or name in sys.modules:
             return None
-        reason = f"needs the ML stack ({name}); not available in the light profile"
-        # A skip is only meaningful on the thread pytest is running the test
-        # on. A worker thread that probes for torch/psutil inside try/except
-        # gets an ordinary ImportError, which is what a machine without the
-        # package would give it -- Skipped is a BaseException and would kill
-        # the thread instead.
-        if threading.current_thread() is not threading.main_thread():
-            raise ImportError(reason)
-        raise pytest.skip.Exception(reason, allow_module_level=True)
+        raise HeavyImportBlocked(f"needs the ML stack ({name}); not available in the light profile")
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_make_collect_report(collector):
+    """A test module whose own top-level import hits the blocker is SKIPPED.
+
+    pytest checks ImportError before Skipped when importing a test module, so
+    without this the blocked import would be reported as a collection error.
+    Only reports whose failure is the blocker are touched; every other
+    collection error stays an error.
+    """
+    outcome = yield
+    if not LIGHT:
+        return
+    report = outcome.get_result()
+    if report.outcome != "failed":
+        return
+    text = str(report.longrepr)
+    if "HeavyImportBlocked" not in text:
+        return
+    reason = next((line.split("HeavyImportBlocked:", 1)[1].strip()
+                   for line in text.splitlines() if "HeavyImportBlocked:" in line),
+                  "needs the ML stack; not available in the light profile")
+    report.outcome = "skipped"
+    report.longrepr = (str(getattr(collector, "path", collector.name)), 0, f"Skipped: {reason}")
 
 
 def pytest_collection_modifyitems(config, items):

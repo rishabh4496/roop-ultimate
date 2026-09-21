@@ -15,6 +15,12 @@ from roop.runtime_diagnostics import (
 )
 
 
+# Needs the ML stack at runtime (onnxruntime/cv2/torch behaviour, not just imports);
+# skipped in the light profile / CI, run on the GPU machines. See conftest.py.
+import pytest
+pytestmark = pytest.mark.gpu
+
+
 class TestDiagnoseRuntime(unittest.TestCase):
     def test_report_contains_all_required_section_headers(self):
         """The output report must contain all 7 required section headings."""

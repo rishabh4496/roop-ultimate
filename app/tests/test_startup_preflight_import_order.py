@@ -30,6 +30,12 @@ from pathlib import Path
 RUN_PY = Path(__file__).resolve().parents[1] / "run.py"
 
 
+# Needs the ML stack at runtime (onnxruntime/cv2/torch behaviour, not just imports);
+# skipped in the light profile / CI, run on the GPU machines. See conftest.py.
+import pytest
+pytestmark = pytest.mark.gpu
+
+
 def _module_source() -> str:
     return RUN_PY.read_text(encoding="utf-8")
 

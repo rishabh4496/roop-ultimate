@@ -27,6 +27,12 @@ from roop.backend_manager import (
 from settings import Settings
 
 
+# Needs the ML stack at runtime (onnxruntime/cv2/torch behaviour, not just imports);
+# skipped in the light profile / CI, run on the GPU machines. See conftest.py.
+import pytest
+pytestmark = pytest.mark.gpu
+
+
 class TestFreshInstallTensorRT(unittest.TestCase):
     def setUp(self):
         degrade.reset()

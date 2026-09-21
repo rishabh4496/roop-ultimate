@@ -71,5 +71,7 @@ jobs:
           cache: pip
           cache-dependency-path: app/requirements-ci.txt
       - run: python -m pip install -r app/requirements-ci.txt
+      - name: generated settings files are current (settings.schema.json, settingsCatalog.js)
+        run: python tools/gen_settings.py --check
       - name: pytest (both trees, GPU tests skipped)
         run: python -m pytest -m "not gpu" -q -p no:cacheprovider -rfE

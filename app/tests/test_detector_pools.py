@@ -137,9 +137,12 @@ class TheDetectorPoolSettingReachesTheEnvVar(unittest.TestCase):
                              'resets to auto on the next launch')
 
     def test_run_py_exports_it_from_the_config(self):
+        # The mapping is settings.ENV_SETTINGS (run.py applies it via apply_env).
+        import settings
+        self.assertIn(('perf_detector_pool', 'ROOP_DETECTOR_POOL', 'value'), settings.ENV_SETTINGS,
+                      'the setting never reaches the environment')
         src = Path(APP, 'run.py').read_text(encoding='utf-8')
-        self.assertIn("_set('ROOP_DETECTOR_POOL', cfg.get('perf_detector_pool'))",
-                      src, 'the setting never reaches the environment')
+        self.assertIn('apply_env(cfg, os.environ)', src)
         # Before any roop import, like its neighbours: the pools are sized at
         # first use, but ProcessMgr reads other perf vars at IMPORT time and the
         # call has to stay on the correct side of that line.
@@ -151,10 +154,12 @@ class TheDetectorPoolSettingReachesTheEnvVar(unittest.TestCase):
         # would then take the int() path, fail, and fall back — same answer by
         # accident today, but it also stops the launcher's own env from being
         # overridable, which is what 'auto' is for.
-        src = Path(APP, 'run.py').read_text(encoding='utf-8')
-        m = re.search(r'def _set\(var, val\):.*?\n\n', src, re.S)
-        self.assertIsNotNone(m)
-        self.assertIn("!= 'auto'", m.group(0))
+        import settings
+        env = {}
+        settings.apply_env({'perf_detector_pool': 'auto'}, env)
+        self.assertNotIn('ROOP_DETECTOR_POOL', env)
+        settings.apply_env({'perf_detector_pool': 2}, env)
+        self.assertEqual(env['ROOP_DETECTOR_POOL'], '2')
 
     def test_the_ui_control_binds_the_same_key(self):
         jsx = Path(APP, '..', 'react-ui', 'src', 'components',

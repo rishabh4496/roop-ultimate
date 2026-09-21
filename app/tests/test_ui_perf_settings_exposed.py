@@ -117,7 +117,9 @@ class PerformanceSettingsAreReachable(unittest.TestCase):
         have to encode every ROOP_* name and would decay into a list nobody
         updates.
         """
-        exported = _read(RUN_PY)
+        # The export table is settings.ENV_SETTINGS (run.py applies it).
+        import settings
+        exported = {key for key, _, _ in settings.ENV_SETTINGS}
         for key in ('perf_ort_arena_strategy', 'perf_cudnn_conv_algo',
                     'perf_gpu_mem_limit'):
             with self.subTest(setting=key):
@@ -132,14 +134,15 @@ class PerformanceSettingsAreReachable(unittest.TestCase):
         ROOP_CUDA_MEM_LIMIT. A setting exported under a name nothing reads
         saves, displays, and does nothing.
         """
+        import settings
         core = _read(os.path.join(APP, 'roop', 'core.py'))
-        run = _read(RUN_PY)
+        exported = {var for _, var, _ in settings.ENV_SETTINGS}
         for name in ('ROOP_CUDA_ARENA_STRATEGY', 'ROOP_CUDA_MEM_LIMIT',
                      'ROOP_CUDNN_CONV_ALGO'):
             with self.subTest(env=name):
                 self.assertIn(name, core, "%s is exported but core.py never "
                                           "reads it" % name)
-                self.assertIn(name, run, "%s is read but never exported" % name)
+                self.assertIn(name, exported, "%s is read but never exported" % name)
 
 
 if __name__ == '__main__':

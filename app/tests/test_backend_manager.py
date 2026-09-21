@@ -6,6 +6,12 @@ from roop.backend_manager import (clear_probe_cache, provider_available,
                                   trt_tuning_namespace)
 
 
+# Needs the ML stack at runtime (onnxruntime/cv2/torch behaviour, not just imports);
+# skipped in the light profile / CI, run on the GPU machines. See conftest.py.
+import pytest
+pytestmark = pytest.mark.gpu
+
+
 class BackendManagerTests(unittest.TestCase):
     def tearDown(self):
         clear_probe_cache()

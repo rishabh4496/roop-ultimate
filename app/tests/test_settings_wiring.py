@@ -322,23 +322,20 @@ class TestPerfKnobWiring(unittest.TestCase):
             self.assertIn(key, saved, f"{key} is loaded but never written by save()")
 
     def test_every_ui_perf_knob_reaches_an_env_var(self):
-        """run.py is what turns a config value into the env var the consumer
-        reads; a knob missing here saves cleanly and does nothing."""
-        run_src = (REPO / "app" / "run.py").read_text(encoding="utf-8")
+        """settings.ENV_SETTINGS is what turns a config value into the env var
+        the consumer reads (run.py applies it); a knob missing there saves
+        cleanly and does nothing."""
+        import settings
+        mapped = {key for key, _, _ in settings.ENV_SETTINGS}
         for key in sorted(self._jsx_perf_keys()):
-            # Two shapes: _set(VAR, cfg.get(key)) for free-form values, and the
-            # (var, key) tuple loop for the auto/on/off tri-states.
-            self.assertTrue(
-                re.search(rf"_set\('([A-Z_]+)',\s*cfg\.get\('{key}'\)\)", run_src)
-                or re.search(rf"'{key}'\)", run_src),
-                f"{key} is in the UI but run.py never maps it to an env var")
+            self.assertIn(key, mapped, f"{key} is in the UI but ENV_SETTINGS never maps it to an env var")
 
     def test_the_expression_pool_knob_is_wired_end_to_end(self):
         """The most recently added one, and the one whose absence prompted this
         test: it must land on the exact env var session_pool reads."""
         self.assertIn("perf_expr_pool", self._jsx_perf_keys())
-        self.assertIn("_set('ROOP_EXPR_POOL', cfg.get('perf_expr_pool'))",
-                      (REPO / "app" / "run.py").read_text(encoding="utf-8"))
+        import settings
+        self.assertIn(("perf_expr_pool", "ROOP_EXPR_POOL", "value"), settings.ENV_SETTINGS)
         self.assertIn("ROOP_EXPR_POOL",
                       (REPO / "app" / "roop" / "session_pool.py").read_text(encoding="utf-8"))
 

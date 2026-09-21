@@ -51,68 +51,12 @@ def _apply_perf_env():
     except Exception:
         return
 
-    def _set(var, val):
-        if var in os.environ:
-            return
-        if val is None:
-            return
-        s = str(val).strip()
-        if s and s.lower() != 'auto':
-            os.environ[var] = s
-
-    _set('ROOP_TRT_POOL', cfg.get('perf_trt_pool'))
-    _set('ROOP_TRT_BUILDER_OPT_LEVEL', cfg.get('trt_builder_optimization_level'))
-    _set('ROOP_TRT_AUX_STREAMS', cfg.get('trt_auxiliary_streams'))
-    if cfg.get('trt_cuda_graph') is not None and 'ROOP_TRT_CUDA_GRAPH' not in os.environ:
-        graph = cfg.get('trt_cuda_graph')
-        graph_on = graph is True or str(graph).strip().lower() in ('1', 'true', 'yes', 'on')
-        os.environ['ROOP_TRT_CUDA_GRAPH'] = '1' if graph_on else '0'
-    _set('ROOP_CV_THREADS', cfg.get('cpu_opencv_threads'))
-    _set('ROOP_ORT_INTRA_THREADS', cfg.get('cpu_ort_intra_threads'))
-    _set('ROOP_ORT_INTER_THREADS', cfg.get('cpu_ort_inter_threads'))
-    _set('ROOP_FFMPEG_THREADS', cfg.get('cpu_ffmpeg_threads'))
-    _set('ROOP_DETMASK_POOL', cfg.get('perf_detmask_pool'))
-    _set('ROOP_DETECTOR_POOL', cfg.get('perf_detector_pool'))
-    _set('ROOP_EXPR_POOL', cfg.get('perf_expr_pool'))
-    _set('ROOP_ENCODER_PRESET', cfg.get('perf_encoder_preset'))
-    # The ONNX provider options the benchmark tunes. core.py reads these exact
-    # names when it builds the CUDA provider, so a bench that omitted them
-    # would compare enhancers under a different allocator and conv planner
-    # than production uses.
-    _set('ROOP_CUDA_ARENA_STRATEGY', cfg.get('perf_ort_arena_strategy'))
-    _set('ROOP_CUDNN_CONV_ALGO', cfg.get('perf_cudnn_conv_algo'))
-    _set('ROOP_STAB_CHUNK_MB', cfg.get('perf_stab_chunk_mb'))
-    _set('ROOP_STAB_STREAMING', cfg.get('perf_stab_streaming'))
-    _mem_limit = cfg.get('perf_gpu_mem_limit')
-    if _mem_limit is not None and str(_mem_limit).strip().lower() not in ('', 'auto'):
-        try:
-            os.environ['ROOP_CUDA_MEM_LIMIT'] = str(
-                int(float(str(_mem_limit).strip()) * 1024 * 1024))
-        except (TypeError, ValueError):
-            pass
-    # Same tri-state list run.py carries. `tests/test_bench_perf_env.py` asserts
-    # the two agree, because a key that is here but not there (or the reverse) is
-    # a bench measuring a different machine than the app — which is exactly how
-    # two_face_video.py spent months reporting artificially slow fps.
-    for var, key in (('ROOP_PROFILE', 'perf_profile'),
-                     ('ROOP_BATCH_SWAP', 'perf_batch_swap'),
-                     ('ROOP_NVDEC', 'perf_nvdec'),
-                     ('ROOP_FACE_DEMARCATE', 'face_demarcate'),
-                     ('ROOP_TRACK_STITCH', 'track_stitch'),
-                     ('ROOP_VERIFY_SWAP', 'verify_swap'),
-                     ('ROOP_UPRIGHT_REMEASURE', 'upright_remeasure')):
-        if var in os.environ:
-            continue
-        v = str(cfg.get(key, 'auto')).strip().lower()
-        if v == 'on' or (v == 'auto' and var == 'ROOP_BATCH_SWAP'):
-            os.environ[var] = '1'
-            if var == 'ROOP_BATCH_SWAP' and 'ROOP_BATCH_SWAP_XFRAME' not in os.environ:
-                os.environ['ROOP_BATCH_SWAP_XFRAME'] = '1'
-        elif v == 'off':
-            os.environ[var] = '0'
-            if var == 'ROOP_BATCH_SWAP' and 'ROOP_BATCH_SWAP_XFRAME' not in os.environ:
-                os.environ['ROOP_BATCH_SWAP_XFRAME'] = '0'
-
+    # The one mapping the app uses (settings.ENV_SETTINGS via settings.apply_env),
+    # so this bench cannot measure a different machine than run.py launches.
+    # Before 2026-09-22 this was a hand-kept copy guarded by
+    # test_bench_perf_env.py; it had drifted (no recognizer/priority export).
+    from settings import apply_env
+    apply_env(cfg, os.environ)
 
 _apply_perf_env()
 

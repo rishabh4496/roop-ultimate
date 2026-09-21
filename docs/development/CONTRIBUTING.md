@@ -62,7 +62,7 @@ ROOP_TEST_LIGHT=1 python -m pytest -m "not gpu"
 
 With the profile on, `conftest.py` turns an import of a heavy package into a
 *skip*, at module level or inside a test, so the summary's skipped count says
-how much of the suite was not exercised (~360 of ~1,220 on 2026-09-22). Tests
+how much of the suite was not exercised (285 skipped + 51 `gpu`-deselected of ~1,480 on 2026-09-22). Tests
 that need a CUDA device carry the `gpu` marker and are deselected by
 `-m "not gpu"`. `app/requirements-ci.txt` is the light profile's package list.
 
@@ -79,9 +79,14 @@ once per enhancer and grades the results against the original footage) and
 
 Two things worth knowing before changing settings or benchmarking:
 
-- A new setting must be registered in **three** places — `app/settings.py`, the
-  React panel, and `react-ui/src/.../settingsCatalog.js` — and, if it drives a
-  `ROOP_*` flag, mapped in `run.py`.
+- **`app/settings.py` is the single source for a setting**: name and default in
+  `Settings._load()`/`save()`, the panel label/section in `UI_SETTINGS`, the `ROOP_*`
+  mapping in `ENV_SETTINGS`. Then `python tools/gen_settings.py` regenerates
+  `app/settings.schema.json` and `react-ui/src/components/settingsCatalog.js`; commit
+  both. `test_settings_schema.py` and CI's `gen_settings.py --check` fail while they are
+  stale, and `test_bench_perf_env.py` rejects any hand-written `ROOP_*` export outside
+  `settings.apply_env`. The panel's control itself is still hand-written JSX
+  (`bind('x')` in `Settings.jsx`); `test_ui_settings_catalog.py` keeps it in step.
 - A benchmark that does not state a setting inherits `roop.globals`' default,
   which is not what production runs. `tests/compare_enhancers_video.py` syncs
   from `config.yaml` and prints what it changed; prefer it over ad-hoc harnesses.

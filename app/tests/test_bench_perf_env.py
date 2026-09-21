@@ -5,9 +5,16 @@ measuring a different machine. That is not hypothetical here:
 `tests/two_face_video.py` shipped without `_apply_perf_env` at all, so every fps
 number it printed before 2026-08-16 was taken at 4 threads with no pooling.
 
-This is a SOURCE-level guard, deliberately. Importing `run.py` to compare the
-real dicts is not an option — it parses `sys.argv` at module scope, so it dies
-under any test runner's arguments.
+Until 2026-09-22 run.py and the bench each carried a hand-written copy of the
+mapping and this test compared the two by parsing their source. Now there is
+one mapping -- settings.ENV_SETTINGS, applied by settings.apply_env -- and this
+test checks that both call it and that neither has grown a private copy back.
+(The old parser had also let the copies drift: the bench never exported the
+recognizer or priority flags.) test_settings_schema.py proves apply_env itself
+against the pre-registry implementation.
+
+Source-level, deliberately: importing `run.py` is not an option -- it parses
+`sys.argv` at module scope, so it dies under any test runner's arguments.
 """
 
 import os
@@ -17,49 +24,42 @@ import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 APP = os.path.dirname(HERE)
+if APP not in sys.path:
+    sys.path.insert(0, APP)
+
+import settings  # noqa: E402
 
 
-def _tristate_pairs(path):
-    """The (ENV_VAR, config_key) pairs inside the tri-state `for var, key in (...)`
-    loop of an `_apply_perf_env`."""
+def _src(path):
     with open(path, encoding='utf-8') as f:
-        src = f.read()
-    m = re.search(r"for var, key in \((.*?)\):", src, re.S)
-    assert m, f"no tri-state loop found in {path}"
-    return set(re.findall(r"\('([A-Z0-9_]+)',\s*'([a-z0-9_]+)'\)", m.group(1)))
-
-
-def _set_calls(path):
-    """The `_set('ROOP_X', cfg.get('key'))` pairs."""
-    with open(path, encoding='utf-8') as f:
-        src = f.read()
-    return set(re.findall(r"_set\('([A-Z0-9_]+)',\s*cfg\.get\('([a-z0-9_]+)'\)\)", src))
+        return f.read()
 
 
 class TestBenchPerfEnvMatchesApp(unittest.TestCase):
     RUN = os.path.join(APP, 'run.py')
     BENCH = os.path.join(APP, 'tests', 'compare_enhancers_video.py')
 
-    def test_tristate_flags_match(self):
-        app, bench = _tristate_pairs(self.RUN), _tristate_pairs(self.BENCH)
-        self.assertTrue(app, "parsed nothing out of run.py — the guard is dead")
-        self.assertEqual(app, bench,
-                         f"run.py only: {sorted(app - bench)}; "
-                         f"bench only: {sorted(bench - app)}")
+    def test_both_call_the_shared_mapping(self):
+        for path in (self.RUN, self.BENCH):
+            src = _src(path)
+            self.assertRegex(src, r"from settings import apply_env", os.path.basename(path))
+            self.assertRegex(src, r"apply_env\(cfg, os\.environ\)", os.path.basename(path))
 
-    def test_direct_set_flags_match(self):
-        app, bench = _set_calls(self.RUN), _set_calls(self.BENCH)
-        self.assertTrue(app, "parsed nothing out of run.py — the guard is dead")
-        self.assertEqual(app, bench,
-                         f"run.py only: {sorted(app - bench)}; "
-                         f"bench only: {sorted(bench - app)}")
+    def test_no_private_copy_came_back(self):
+        for path in (self.RUN, self.BENCH):
+            src = _src(path)
+            self.assertNotRegex(src, r"_set\('ROOP_", os.path.basename(path))
+            self.assertNotRegex(src, r"for var, key in \(\('ROOP_", os.path.basename(path))
+            self.assertNotIn("os.environ['ROOP_CUDA_MEM_LIMIT']", src, os.path.basename(path))
 
-    def test_guard_fails_when_a_key_is_dropped(self):
-        """The guard has to actually fail — verified, not assumed."""
-        pairs = _tristate_pairs(self.BENCH)
-        self.assertGreater(len(pairs), 1)
-        trimmed = set(list(pairs)[1:])
-        self.assertNotEqual(_tristate_pairs(self.RUN), trimmed)
+    def test_the_mapping_still_covers_the_flags_the_benches_depend_on(self):
+        # The names the 2026-08 fps investigations turned on; losing one from
+        # ENV_SETTINGS would silently slow every bench again.
+        env_vars = {var for _, var, _ in settings.ENV_SETTINGS}
+        for var in ('ROOP_TRT_POOL', 'ROOP_DETMASK_POOL', 'ROOP_DETECTOR_POOL', 'ROOP_BATCH_SWAP',
+                    'ROOP_PROFILE', 'ROOP_NVDEC', 'ROOP_CUDA_ARENA_STRATEGY', 'ROOP_CUDNN_CONV_ALGO',
+                    'ROOP_CUDA_MEM_LIMIT', 'ROOP_STAB_CHUNK_MB', 'ROOP_STAB_STREAMING'):
+            self.assertIn(var, env_vars)
 
 
 if __name__ == '__main__':

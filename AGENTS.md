@@ -153,10 +153,21 @@ feature ran.
 - The Gradio UI under `app/ui/` is **frozen**. All new UI work is the React app in
   `react-ui/`. `api.py` is a non-reloading uvicorn thread — the backend needs a restart
   for changes to take.
-- A new setting must be registered in **three** places (`settings.py`, the panel, and
-  `settingsCatalog.js`) and, if it drives a `ROOP_*` flag, mapped in
-  `run.py::_apply_perf_env`. **Grep that something actually READS it** — a control bound
-  to a value nothing consumes looks completely wired.
+- **`app/settings.py` is the single source for a setting.** Adding one (since 2026-09-22):
+  1. `Settings._load()`: `self.x = self.default_get(data, 'x', default)` and the entry in
+     `save()` — the name and default live here and nowhere else.
+  2. `UI_SETTINGS` (same file): `('x', 'Label', 'Section')` if the React panel exposes it.
+     Then bind it in `Settings.jsx` with `bind('x')` / `bindToggle('x')` — the panel's
+     controls are still hand-written JSX; `test_ui_settings_catalog.py` keeps the two in step.
+  3. `ENV_SETTINGS` (same file): `('x', 'ROOP_X', kind)` if a `ROOP_*` flag reads it;
+     `settings.apply_env` applies it in `run.py` and the comparison benches. Do NOT add a
+     `_set('ROOP_...` line anywhere — `test_bench_perf_env.py` rejects a private copy.
+  4. Run `python tools/gen_settings.py` and commit `app/settings.schema.json` and
+     `react-ui/src/components/settingsCatalog.js` with the change. Both are GENERATED;
+     `test_settings_schema.py` (and CI's `--check` step) fail while they are stale.
+  5. **Grep that something actually READS the flag** — a control bound to a value nothing
+     consumes looks completely wired (`test_identity_settings_wiring.py` checks the
+     identity ones; the rule is general).
 - Never edit source with PowerShell `Get-Content | Set-Content` (UTF-8 corruption). Use
   Edit, or Python.
 - Stop the app before touching the venv — a running app locks ONNX/CUDA DLLs.

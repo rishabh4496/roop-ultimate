@@ -142,84 +142,12 @@ def _apply_perf_env():
         # never prevent the established provider/fallback path from launching.
         print(f"[RuntimeOptimizer] startup profile unavailable: {exc}", flush=True)
 
-    def _set(var, val):
-        # A caller (including a controlled benchmark) owns an explicit
-        # process environment value.  Config is only the fallback; otherwise
-        # an A/B arm can be silently replaced before modules import it.
-        if var in os.environ:
-            return
-        if val is None:
-            return
-        s = str(val).strip()
-        if s and s.lower() != 'auto':
-            os.environ[var] = s
+    # The setting -> ROOP_* mapping is settings.ENV_SETTINGS, applied by
+    # settings.apply_env: one implementation shared with the comparison benches,
+    # and the same 'an explicit environment value wins' contract as before.
+    from settings import apply_env as _apply_env
+    _apply_env(cfg, os.environ)
 
-    _set('ROOP_TRT_POOL', cfg.get('perf_trt_pool'))
-    _set('ROOP_TRT_BUILDER_OPT_LEVEL', cfg.get('trt_builder_optimization_level'))
-    _set('ROOP_TRT_AUX_STREAMS', cfg.get('trt_auxiliary_streams'))
-    if cfg.get('trt_cuda_graph') is not None and 'ROOP_TRT_CUDA_GRAPH' not in os.environ:
-        graph = cfg.get('trt_cuda_graph')
-        graph_on = graph is True or str(graph).strip().lower() in ('1', 'true', 'yes', 'on')
-        os.environ['ROOP_TRT_CUDA_GRAPH'] = '1' if graph_on else '0'
-    _set('ROOP_CV_THREADS', cfg.get('cpu_opencv_threads'))
-    _set('ROOP_ORT_INTRA_THREADS', cfg.get('cpu_ort_intra_threads'))
-    _set('ROOP_ORT_INTER_THREADS', cfg.get('cpu_ort_inter_threads'))
-    _set('ROOP_FFMPEG_THREADS', cfg.get('cpu_ffmpeg_threads'))
-    _set('ROOP_DETMASK_POOL', cfg.get('perf_detmask_pool'))
-    _set('ROOP_DETECTOR_POOL', cfg.get('perf_detector_pool'))
-    _set('ROOP_EXPR_POOL', cfg.get('perf_expr_pool'))
-    _set('ROOP_ENCODER_PRESET', cfg.get('perf_encoder_preset'))
-    _set('ROOP_STAB_CHUNK_MB', cfg.get('perf_stab_chunk_mb'))
-    _set('ROOP_STAB_STREAMING', cfg.get('perf_stab_streaming'))
-    # These three names are core.py's, not invented here: it reads
-    # ROOP_CUDA_ARENA_STRATEGY and ROOP_CUDA_MEM_LIMIT directly when building
-    # the CUDA provider options, and ROOP_CUDNN_CONV_ALGO overrides the
-    # otherwise-hardcoded conv planner. Exporting under any other name would
-    # produce a setting that saves, displays, and does nothing.
-    _set('ROOP_CUDA_ARENA_STRATEGY', cfg.get('perf_ort_arena_strategy'))
-    _set('ROOP_CUDNN_CONV_ALGO', cfg.get('perf_cudnn_conv_algo'))
-    _mem_limit = cfg.get('perf_gpu_mem_limit')
-    if _mem_limit is not None and str(_mem_limit).strip().lower() not in ('', 'auto'):
-        # core.py wants BYTES; the benchmark and the UI both speak MiB.
-        try:
-            os.environ['ROOP_CUDA_MEM_LIMIT'] = str(
-                int(float(str(_mem_limit).strip()) * 1024 * 1024))
-        except (TypeError, ValueError):
-            pass
-    for var, key in (('ROOP_PROFILE', 'perf_profile'), ('ROOP_BATCH_SWAP', 'perf_batch_swap'),
-                     ('ROOP_NVDEC', 'perf_nvdec'),
-                     # Identity/tracking features that used to be reachable only
-                     # by editing a launcher's environment. Same 'auto' contract:
-                     # leave the env alone and let each module keep its own
-                     # default, so exposing them changed no shipped behaviour.
-                     ('ROOP_FACE_DEMARCATE', 'face_demarcate'),
-                     ('ROOP_TRACK_STITCH', 'track_stitch'),
-                     ('ROOP_VERIFY_SWAP', 'verify_swap'),
-                     ('ROOP_UPRIGHT_REMEASURE', 'upright_remeasure')):
-        if var in os.environ:
-            continue
-        v = str(cfg.get(key, 'auto')).strip().lower()
-        if v == 'on' or (v == 'auto' and var == 'ROOP_BATCH_SWAP'):
-            os.environ[var] = '1'
-            if var == 'ROOP_BATCH_SWAP' and 'ROOP_BATCH_SWAP_XFRAME' not in os.environ:
-                os.environ['ROOP_BATCH_SWAP_XFRAME'] = '1'
-        elif v == 'off':
-            os.environ[var] = '0'
-            if var == 'ROOP_BATCH_SWAP' and 'ROOP_BATCH_SWAP_XFRAME' not in os.environ:
-                os.environ['ROOP_BATCH_SWAP_XFRAME'] = '0'
-
-    # Not tri-state: a model choice and a priority class.
-    _rec = str(cfg.get('recognizer', 'default')).strip().lower()
-    if _rec == 'adaface' and 'ROOP_ADAFACE' not in os.environ:
-        os.environ['ROOP_ADAFACE'] = '1'
-    elif _rec == 'default' and 'ROOP_ADAFACE' not in os.environ:
-        os.environ['ROOP_ADAFACE'] = '0'
-    # Only the names keep_awake._PRIORITY_CLASSES accepts; it falls back to
-    # 'high' for anything else, so passing a value it does not know through
-    # would present as a working setting that does nothing.
-    _pri = str(cfg.get('process_priority', 'auto')).strip().lower()
-    if _pri in ('high', 'above_normal', 'normal') and 'ROOP_PRIORITY' not in os.environ:
-        os.environ['ROOP_PRIORITY'] = _pri
 
 _apply_perf_env()
 

@@ -3,6 +3,205 @@ import os
 import subprocess
 import yaml
 
+
+# ── The settings registry: ONE place for what the UI exposes and what reaches
+# ── the environment ─────────────────────────────────────────────────────────
+#
+# A setting's NAME and DEFAULT are still defined where they always were, in
+# Settings._load() below (`self.x = self.default_get(data, 'x', default)`).
+# The two other facts about a setting live here instead of in two other files:
+#
+#   UI_SETTINGS   which settings the React Settings panel exposes, with the
+#                 label and section the command palette shows. Rendered into
+#                 react-ui/src/components/settingsCatalog.js by
+#                 tools/gen_settings.py; the panel (Settings.jsx) still binds
+#                 each key by hand and test_ui_settings_catalog.py keeps the
+#                 two in step.
+#   ENV_SETTINGS  which settings become a ROOP_* environment variable at
+#                 startup, and how. apply_env() below is the one implementation;
+#                 run.py and the comparison benches call it.
+#
+# tools/gen_settings.py also renders app/settings.schema.json (every setting,
+# its default, its UI entry and its env mapping). test_settings_schema.py fails
+# when either generated file is stale: after editing this registry, run
+#     python tools/gen_settings.py
+# and commit the two generated files with the change.
+#
+# Order matters in both tables: UI_SETTINGS is the palette's order, and
+# ENV_SETTINGS is applied top to bottom.
+
+UI_SETTINGS = (
+    # Server
+    ('server_share', 'Public server (share)', 'Server'),
+    ('clear_output', 'Clear output folder before each run', 'Server'),
+    ('server_name', 'Server name', 'Server'),
+    ('server_port', 'Server port', 'Server'),
+    ('output_template', 'Filename output template', 'Server'),
+    ('faceset_library_path', 'Faceset library folder', 'Server'),
+    # Performance
+    ('provider', 'Provider', 'Performance'),
+    ('trt_precision', 'Precision mode (TensorRT)', 'Performance'),
+    ('force_cpu', 'Force CPU for face analyser', 'Performance'),
+    ('auto_thread_selection', 'Auto thread selection', 'Performance'),
+    ('face_detector_threshold', 'Face detection threshold', 'Performance'),
+    ('face_detector_nms', 'Overlap NMS threshold', 'Performance'),
+    ('detector_scale_pyramid', 'Detector scale pyramid', 'Performance'),
+    ('max_threads', 'Max threads', 'Performance'),
+    ('memory_limit', 'Max memory (GB)', 'Performance'),
+    # Advanced performance
+    ('perf_trt_pool', 'Swapper TRT pool', 'Advanced performance'),
+    ('trt_builder_optimization_level', 'TensorRT builder optimization', 'Advanced performance'),
+    ('trt_auxiliary_streams', 'TensorRT auxiliary streams', 'Advanced performance'),
+    ('trt_cuda_graph', 'TensorRT CUDA graphs (experimental)', 'Advanced performance'),
+    ('cpu_opencv_threads', 'CPU OpenCV kernel threads', 'Advanced performance'),
+    ('perf_detmask_pool', 'Detect/Mask pool', 'Advanced performance'),
+    ('perf_detector_pool', 'Detector pool', 'Advanced performance'),
+    ('perf_expr_pool', 'Expression pool', 'Advanced performance'),
+    ('perf_encoder_preset', 'Encoder preset', 'Advanced performance'),
+    ('perf_nvdec', 'GPU video decode (NVDEC)', 'Advanced performance'),
+    ('perf_batch_swap', 'Batched swap', 'Advanced performance'),
+    ('perf_profile', 'Stage profiling (terminal)', 'Advanced performance'),
+    ('cpu_ort_intra_threads', 'ONNX intra-op threads', 'Advanced performance'),
+    ('cpu_ort_inter_threads', 'ONNX inter-op threads', 'Advanced performance'),
+    ('cpu_ffmpeg_threads', 'FFmpeg encoder threads', 'Advanced performance'),
+    ('perf_ort_arena_strategy', 'ONNX memory arena', 'Advanced performance'),
+    ('perf_cudnn_conv_algo', 'cuDNN conv algorithm search', 'Advanced performance'),
+    ('perf_gpu_mem_limit', 'Provider memory limit (MiB)', 'Advanced performance'),
+    # Identity & tracking
+    ('recognizer', 'Recognition model', 'Identity & tracking'),
+    ('face_demarcate', 'Interacting-face demarcation', 'Identity & tracking'),
+    ('track_stitch', 'Track stitching', 'Identity & tracking'),
+    ('verify_swap', 'Swap outcome guard', 'Identity & tracking'),
+    ('upright_remeasure', 'Upright re-measure (rolled faces)', 'Identity & tracking'),
+    ('process_priority', 'Process priority', 'Identity & tracking'),
+    # Output
+    ('output_image_format', 'Image format', 'Output'),
+    ('output_video_format', 'Video format', 'Output'),
+    ('output_video_codec', 'Video codec', 'Output'),
+    ('video_quality', 'Video quality', 'Output'),
+    ('use_os_temp_folder', 'Use OS temp folder', 'Output'),
+    ('output_show_video', 'Show video in browser (re-encodes)', 'Output'),
+)
+
+# kinds:
+#   value          str(value) unless blank or 'auto'; the env var wins if set
+#   bool           '1' / '0' from a truthy/falsy value; env wins
+#   mib_to_bytes   value in MiB -> bytes, unless blank or 'auto'; env wins
+#   tristate       'on' -> '1', 'off' -> '0', anything else untouched; env wins
+#   tristate_on    like tristate but 'auto' -> '1', and mirrors to a *_XFRAME twin
+#   recognizer     'adaface' -> '1', 'default' -> '0'; env wins
+#   priority       one of keep_awake's classes verbatim; anything else untouched
+ENV_SETTINGS = (
+    ('perf_trt_pool', 'ROOP_TRT_POOL', 'value'),
+    ('trt_builder_optimization_level', 'ROOP_TRT_BUILDER_OPT_LEVEL', 'value'),
+    ('trt_auxiliary_streams', 'ROOP_TRT_AUX_STREAMS', 'value'),
+    ('trt_cuda_graph', 'ROOP_TRT_CUDA_GRAPH', 'bool'),
+    ('cpu_opencv_threads', 'ROOP_CV_THREADS', 'value'),
+    ('cpu_ort_intra_threads', 'ROOP_ORT_INTRA_THREADS', 'value'),
+    ('cpu_ort_inter_threads', 'ROOP_ORT_INTER_THREADS', 'value'),
+    ('cpu_ffmpeg_threads', 'ROOP_FFMPEG_THREADS', 'value'),
+    ('perf_detmask_pool', 'ROOP_DETMASK_POOL', 'value'),
+    ('perf_detector_pool', 'ROOP_DETECTOR_POOL', 'value'),
+    ('perf_expr_pool', 'ROOP_EXPR_POOL', 'value'),
+    ('perf_encoder_preset', 'ROOP_ENCODER_PRESET', 'value'),
+    ('perf_stab_chunk_mb', 'ROOP_STAB_CHUNK_MB', 'value'),
+    ('perf_stab_streaming', 'ROOP_STAB_STREAMING', 'value'),
+    # These three names are core.py's, not invented here: it reads
+    # ROOP_CUDA_ARENA_STRATEGY and ROOP_CUDA_MEM_LIMIT directly when building
+    # the CUDA provider options, and ROOP_CUDNN_CONV_ALGO overrides the
+    # otherwise-hardcoded conv planner. Exporting under any other name would
+    # produce a setting that saves, displays, and does nothing.
+    ('perf_ort_arena_strategy', 'ROOP_CUDA_ARENA_STRATEGY', 'value'),
+    ('perf_cudnn_conv_algo', 'ROOP_CUDNN_CONV_ALGO', 'value'),
+    ('perf_gpu_mem_limit', 'ROOP_CUDA_MEM_LIMIT', 'mib_to_bytes'),   # core.py wants BYTES
+    ('perf_profile', 'ROOP_PROFILE', 'tristate'),
+    ('perf_batch_swap', 'ROOP_BATCH_SWAP', 'tristate_on'),
+    ('perf_nvdec', 'ROOP_NVDEC', 'tristate'),
+    # Identity/tracking features that used to be reachable only by editing a
+    # launcher's environment. Same 'auto' contract: leave the env alone and let
+    # each module keep its own default, so exposing them changed no behaviour.
+    ('face_demarcate', 'ROOP_FACE_DEMARCATE', 'tristate'),
+    ('track_stitch', 'ROOP_TRACK_STITCH', 'tristate'),
+    ('verify_swap', 'ROOP_VERIFY_SWAP', 'tristate'),
+    ('upright_remeasure', 'ROOP_UPRIGHT_REMEASURE', 'tristate'),
+    # Not tri-state: a model choice and a priority class.
+    ('recognizer', 'ROOP_ADAFACE', 'recognizer'),
+    ('process_priority', 'ROOP_PRIORITY', 'priority'),
+)
+
+# Only the names keep_awake._PRIORITY_CLASSES accepts; it falls back to 'high'
+# for anything else, so passing a value it does not know through would present
+# as a working setting that does nothing.
+_PRIORITY_NAMES = ('high', 'above_normal', 'normal')
+
+
+def apply_env(cfg, environ):
+    """Export the ENV_SETTINGS of a config mapping into `environ`.
+
+    The contract every kind shares: a value already in the environment wins. A
+    caller (including a controlled benchmark) owns an explicit process
+    environment value; config is only the fallback, otherwise an A/B arm can be
+    silently replaced before modules import it. Returns the names it set.
+    """
+    if not isinstance(cfg, dict):
+        cfg = {}
+    applied = []
+
+    def _put(var, value):
+        environ[var] = value
+        applied.append(var)
+
+    for key, var, kind in ENV_SETTINGS:
+        # mib_to_bytes is the one kind that has never deferred to the environment
+        # (run.py before 2026-09-22 set ROOP_CUDA_MEM_LIMIT unconditionally); kept
+        # as it was so this refactor changes nothing. Candidate for a later fix.
+        if var in environ and kind != 'mib_to_bytes':
+            continue
+        raw = cfg.get(key)
+        if kind == 'value':
+            if raw is None:
+                continue
+            s = str(raw).strip()
+            if s and s.lower() != 'auto':
+                _put(var, s)
+        elif kind == 'bool':
+            if raw is None:
+                continue
+            on = raw is True or str(raw).strip().lower() in ('1', 'true', 'yes', 'on')
+            _put(var, '1' if on else '0')
+        elif kind == 'mib_to_bytes':
+            if raw is None or str(raw).strip().lower() in ('', 'auto'):
+                continue
+            try:
+                _put(var, str(int(float(str(raw).strip()) * 1024 * 1024)))
+            except (TypeError, ValueError):
+                pass
+        elif kind in ('tristate', 'tristate_on'):
+            v = str(cfg.get(key, 'auto')).strip().lower()
+            twin = var + '_XFRAME' if kind == 'tristate_on' else None
+            if v == 'on' or (v == 'auto' and kind == 'tristate_on'):
+                _put(var, '1')
+                if twin and twin not in environ:
+                    _put(twin, '1')
+            elif v == 'off':
+                _put(var, '0')
+                if twin and twin not in environ:
+                    _put(twin, '0')
+        elif kind == 'recognizer':
+            v = str(cfg.get(key, 'default')).strip().lower()
+            if v == 'adaface':
+                _put(var, '1')
+            elif v == 'default':
+                _put(var, '0')
+        elif kind == 'priority':
+            v = str(cfg.get(key, 'auto')).strip().lower()
+            if v in _PRIORITY_NAMES:
+                _put(var, v)
+        else:
+            raise ValueError(f"ENV_SETTINGS: unknown kind {kind!r} for {key}")
+    return applied
+
+
 # --- Make the TensorRT execution provider actually loadable on Windows ---
 # onnxruntime advertises 'TensorrtExecutionProvider' as available even when its
 # native runtime DLLs cannot be loaded. Loading onnxruntime_providers_tensorrt.dll

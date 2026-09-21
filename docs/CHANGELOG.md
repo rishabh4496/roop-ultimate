@@ -7,6 +7,15 @@ folder). Entries before 2026-09-21 were moved here from the README on 2026-09-22
 
 ## 2026-09-22
 
+- **Settings have one source.** `app/settings.py` now carries `UI_SETTINGS` (panel
+  label/section) and `ENV_SETTINGS` (the `ROOP_*` mapping, applied by
+  `settings.apply_env`); `tools/gen_settings.py` renders `app/settings.schema.json` and
+  `react-ui/src/components/settingsCatalog.js` from it, and a test plus a CI step fail
+  while they are stale. No setting's name or default changed; `apply_env` is proven
+  equal to the old `run.py` block on every value shape. Found on the way:
+  `perf_stab_chunk_mb` / `perf_stab_streaming` are read from `config.yaml` but have no
+  `Settings` attribute or UI (schema marks them `config_only`), and the comparison bench
+  had never exported the recognizer/priority flags (it now uses the shared mapping).
 - **Repository restructure.** `AGENTS.md` is the single agent rule file; the other rule
   files point to it. README reorganised into what-it-is / install / run / config /
   troubleshooting / licence; benchmark phases, the update contract detail and incident
