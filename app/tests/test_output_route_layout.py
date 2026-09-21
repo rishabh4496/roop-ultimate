@@ -22,19 +22,37 @@ def _paths(path):
                     and decorator.func.value.id == "router"
                     and decorator.args
                     and isinstance(decorator.args[0], ast.Constant)):
-                result.add((decorator.func.attr.upper(), decorator.args[0].value))
+                verb = decorator.func.attr.upper()
+                if verb == "API_ROUTE":
+                    # @router.api_route(path, methods=[...]) -- one entry per
+                    # method, so a GET+HEAD media route reads as its verbs.
+                    methods = []
+                    for kw in decorator.keywords:
+                        if kw.arg == "methods" and isinstance(kw.value, (ast.List, ast.Tuple)):
+                            methods = [m.value for m in kw.value.elts if isinstance(m, ast.Constant)]
+                    for m in methods:
+                        result.add((str(m).upper(), decorator.args[0].value))
+                    continue
+                result.add((verb, decorator.args[0].value))
     return result
 
 
 class OutputRouteBoundaryTest(unittest.TestCase):
     def test_output_handlers_are_owned_by_the_output_router(self):
         paths = _paths(OUTPUT)
-        self.assertEqual({
+        media = {"/api/file", "/outputs/{filename:path}",
+                 "/api/media/{filename:path}", "/static/outputs/{filename:path}"}
+        expected = {
             ("GET", "/api/output"),
             ("POST", "/api/output/delete"),
             ("POST", "/api/reveal"),
-            ("GET", "/api/file"),
-        }, paths)
+        }
+        # Every media path answers HEAD as well as GET (a <video> probes with
+        # HEAD before it ranges the body).
+        for path in media:
+            expected.add(("GET", path))
+            expected.add(("HEAD", path))
+        self.assertEqual(expected, paths)
 
     def test_api_registers_one_router_and_keeps_import_compatibility_only(self):
         source = API.read_text(encoding="utf-8")

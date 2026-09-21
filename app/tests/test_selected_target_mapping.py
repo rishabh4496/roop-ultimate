@@ -23,15 +23,20 @@ REACT_UI = ROOT / "react-ui"
 CHECKER = REACT_UI / ".render-check" / "face-mapping-check.mjs"
 
 sys.path.insert(0, str(ROOT / "app"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import fixtures  # noqa: E402
 
 
 def _node() -> str | None:
     found = shutil.which("node")
     if found:
         return found
+    # Pinokio's bundled Node, resolved from PINOKIO_HOME rather than a drive
+    # letter: this suite runs on two machines whose homes are G:\ and C:\.
+    home = Path(fixtures.pinokio_home())
     for cand in (
-        Path("G:/pinokio/bin/miniconda/node.exe"),
-        Path("G:/pinokio/bin/miniforge/node.exe"),
+        home / "bin" / "miniconda" / "node.exe",
+        home / "bin" / "miniforge" / "node.exe",
     ):
         if cand.exists():
             return str(cand)

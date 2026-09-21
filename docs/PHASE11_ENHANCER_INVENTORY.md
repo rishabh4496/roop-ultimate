@@ -30,7 +30,7 @@ The face-restoration paths actually registered are:
 | UltraMax | `Enhance_UltraMax.py:222` / `Enhance_UltraMax` | `app/models/CodeFormer/codeformer.fp16.onnx` | `Initialize:323`, `Release:390`, `Run:698` |
 | KEEP (sidecar) | `Enhance_KEEP.py:52` / `Enhance_KEEP` | `app/sidecar_keep/server.py` and sidecar checkpoint | `Initialize:116`, `Run:122`, `Release:149` |
 
-### GPEN Ultimate and Restore Ultra (ported from roop-unleashed-wip, 2026-09-15)
+### GPEN Ultimate and Restore Ultra (ported from the earlier WIP branch, 2026-09-15)
 
 Neither profile adds a network, a TensorRT engine or any VRAM. Each opens the
 SAME weights as the plain arm it derives from, through the same pooled

@@ -242,6 +242,13 @@ class TestDefaultOffIsANoOp(unittest.TestCase):
     def setUp(self):
         src_path = os.path.join(APP, 'roop', 'ProcessMgr.py')
         self.src = open(src_path, encoding='utf-8').read()
+        # run_batch_inmem (the audio-cache setup) was lifted into the batch
+        # mixin; the per-face gate stays in ProcessMgr. Both are inspected.
+        batch_path = os.path.join(APP, 'roop', 'procmgr_batch.py')
+        self.batch_src = open(batch_path, encoding='utf-8').read()
+
+    def cache_block(self):
+        return self.batch_src.split("self._lipsync_fps = fps", 1)[1][:1200]
 
     def per_frame_gate(self):
         """process_face's lip-sync gate: the lipsync_wins decision plus the
@@ -284,8 +291,7 @@ class TestDefaultOffIsANoOp(unittest.TestCase):
         self.assertIn("_lipsync_audio", decision)
 
     def test_audio_cache_setup_is_itself_gated(self):
-        block = self.src.split("self._lipsync_fps = fps", 1)[1][:1200]
-        self.assertIn("getattr(roop.globals, 'lipsync_enabled', False)", block)
+        self.assertIn("getattr(roop.globals, 'lipsync_enabled', False)", self.cache_block())
 
     def test_both_gates_read_the_same_global_not_processoptions(self):
         """Regression guard: the audio-cache setup (run_batch_inmem) originally
@@ -293,7 +299,7 @@ class TestDefaultOffIsANoOp(unittest.TestCase):
         defines — getattr's False default meant the cache was NEVER built, so
         turning the toggle on did nothing, silently, forever. Both gates must
         read the same roop.globals attribute or they can drift apart again."""
-        cache_block = self.src.split("self._lipsync_fps = fps", 1)[1][:1200]
+        cache_block = self.cache_block()
         face_block = self.per_frame_gate()
         self.assertNotIn("self.options.lipsync_enabled", cache_block)
         for block in (cache_block, face_block):

@@ -213,6 +213,13 @@ class VideoSelectedPersonAdversarialTest(unittest.TestCase):
         with open(process_mgr, encoding='utf-8') as handle:
             source = handle.read()
         self.assertIn('track_source_index(track_source_map.get(tid))', source)
+        # ...and, having unpacked it, the claim must use the INT as-is. The
+        # commit that introduced the helper left `cand = exact[0]` behind, so
+        # every tracked face raised TypeError, the worker wrote the original
+        # frame, and a "Lock face identities" render swapped nothing while the
+        # audit reported 638 faces seen and no refusal at all (2026-09-21).
+        self.assertNotIn('cand = exact[0]', source)
+        self.assertIn('cand = exact if exact is not None else entries[best_j][1]', source)
 
 
 if __name__ == '__main__':

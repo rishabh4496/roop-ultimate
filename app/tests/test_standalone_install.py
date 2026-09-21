@@ -17,6 +17,7 @@ directory that exists but is a link somewhere else.
 """
 
 import os
+import re
 import sys
 import unittest
 
@@ -102,7 +103,15 @@ class TestStandaloneInstall(unittest.TestCase):
         with open(bat, encoding='utf-8', errors='ignore') as f:
             for line in f:
                 if 'VIRTUAL_ENV=' in line:
-                    recorded = line.split('VIRTUAL_ENV=', 1)[1].strip().strip('"\'')
+                    # Newer uv writes the path through a `for` expansion:
+                    #   @for %%i in ("<path>") do @set "VIRTUAL_ENV=%%~fi"
+                    # so the literal after VIRTUAL_ENV= is `%%~fi`; the path
+                    # is the quoted operand of `in (...)`.
+                    m = re.search(r'in \("([^"]+)"\)', line)
+                    if m:
+                        recorded = m.group(1)
+                    else:
+                        recorded = line.split('VIRTUAL_ENV=', 1)[1].strip().strip('"\'')
                     break
         self.assertIsNotNone(recorded, 'activate script names no VIRTUAL_ENV')
         self.assertEqual(
@@ -162,6 +171,7 @@ class TestNoUpstreamCoupling(unittest.TestCase):
     # worse. They are development notes rather than product surface, so a stale
     # mention there is harmless in a way one in `metadata.py` is not.
     ALLOWED = {'NOTICE.md', 'app/tests/test_standalone_install.py',
+               'docs/SESSION_LOGS.md',  # verbatim history of removing the coupling
                'CLAUDE.md', 'GEMINI.md', 'QWEN.md', 'AGENTS.md', 'facegemini.md',
                '.clinerules', '.cursorrules', '.windsurfrules'}
     EXTS = {'.py', '.js', '.jsx', '.ts', '.tsx', '.json', '.md', '.sh', '.bat',

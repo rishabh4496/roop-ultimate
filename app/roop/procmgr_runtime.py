@@ -737,6 +737,21 @@ AUDIT_SWAPPED_GAPFILL = '  of those SWAPPED, gap-filled'
 # silently missing from the output.
 AUDIT_SWAP_MOVED = 'discarded: the swap put the face somewhere it was not'
 
+# A frame whose processing RAISED. The worker writes the original frame and
+# carries on (a bad frame must not lose a long render), and the per-frame line
+# it prints scrolls off within seconds. Counted here, frame-denominated, so a
+# render where every frame failed reads as one in the summary: 2026-09-21 an
+# `exact[0]` on an int raised for every tracked face, every frame was written
+# untouched, and the audit showed 638 faces seen with no refusal bucket at all.
+AUDIT_FRAME_FAILED = 'frames whose processing RAISED (original written)'
+
+
+def audit_frame_failed(exc):
+    _audit[AUDIT_FRAME_FAILED] += 1
+    key = f'  first failure: {type(exc).__name__}: {str(exc)[:90]}'
+    if not any(k.startswith('  first failure:') for k in _audit):
+        _audit[key] += 0   # present, count irrelevant -- carries the message
+
 
 # Master switch for the outcome guard. ROOP_VERIFY_SWAP=0 turns it off, which
 # was previously only reachable by pushing VERIFY_MIN_OFFAXIS past any angle a
@@ -1011,9 +1026,21 @@ def _audit_report():
     # the table stops being scannable — which is the only thing it is for.
     kw = max(34, max(len(k) for k in _audit))
     for k in sorted(_audit, key=lambda x: -_audit[x]):
-        if k == 'frames with no face detected at all':
+        if k in ('frames with no face detected at all', AUDIT_FRAME_FAILED):
             continue    # frame-denominated — reported below, with frames as the base
+        if k.startswith('  first failure:'):
+            continue    # a message riding on AUDIT_FRAME_FAILED, printed with it
         print(f"  {k:{kw}s} {_audit[k]:8d} {100.0 * _audit[k] / seen:6.1f}%", flush=True)
+    failed = _audit.get(AUDIT_FRAME_FAILED, 0)
+    if failed:
+        _fr = _audit_frames[0]
+        _of = f" of {_fr} ({100.0 * failed / _fr:.1f}% of frames)" if _fr else ""
+        print(f"  !! {failed} frame(s){_of} RAISED during processing and were written "
+              "UNTOUCHED. Whatever the buckets above say, those frames are the "
+              "original video. This is a code defect, not a gate.", flush=True)
+        for k in _audit:
+            if k.startswith('  first failure:'):
+                print(f"   {k.strip()}", flush=True)
     missed = seen - swapped
     if missed > 0:
         print(f"  -> {missed} of {seen} detected faces ({100.0 * missed / seen:.1f}%) were NOT swapped.",

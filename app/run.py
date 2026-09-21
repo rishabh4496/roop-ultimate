@@ -223,23 +223,12 @@ def _apply_perf_env():
 
 _apply_perf_env()
 
-# Windows asyncio fix: Python 3.10 on Windows raises ConnectionResetError
-# (WinError 10054) in asyncio ProactorEventLoop when a subprocess pipe closes.
-# This is a known CPython bug fixed in 3.11. Patch swallows the spurious error.
-import sys as _sys
-if _sys.platform == 'win32':
-    try:
-        from asyncio.proactor_events import _ProactorBasePipeTransport as _T
-        _orig_ccl = _T._call_connection_lost
-        def _patched_ccl(self, exc):
-            try:
-                _orig_ccl(self, exc)
-            except ConnectionResetError:
-                pass
-        _T._call_connection_lost = _patched_ccl
-    except Exception as _degrade_error:
-        _swallowed("run.py:147", _degrade_error, "fallback continued")
-        pass
+# Windows asyncio fixes (Python 3.10 ProactorEventLoop): a peer aborting an
+# accept must not close the LISTENING socket, and a pipe closing under a
+# transport must not raise from the loop's own callback. Both live in
+# roop.win_asyncio_compat so api.run_api applies them on every entry path too.
+from roop.win_asyncio_compat import install as _install_win_asyncio_compat
+_install_win_asyncio_compat()
 
 from roop import core
 import argparse

@@ -124,5 +124,59 @@ class TargetSelectionContractTests(unittest.TestCase):
         self.assertEqual(selection_face_indices(target_groups, selection, parallel_ids), [0, 1])
 
 
+class LegacyDirectCallerSelection(unittest.TestCase):
+    """A caller with NO canonical request (Gradio, virtualcam, every bench that
+    builds ProcessOptions itself) means "the captured people" by "selected".
+
+    Since Stage 13 that path normalized to selection_mode "none" and selected
+    nobody, so four standing benches rendered untouched video for a week and
+    reported fps for it (`no track entry matched 807 100.0%`). The API path,
+    which always carries a request, keeps its explicit-selection contract.
+    """
+
+    def _options(self, swap_mode, **kw):
+        from roop.ProcessOptions import ProcessOptions
+        options = ProcessOptions([], 0.6, 0.8, swap_mode, 0, "", None, 1, 256,
+                                 False, False, **kw)
+        options.legacy_target_face_groups = [0, 1]
+        return options
+
+    def test_no_request_selected_mode_selects_every_captured_person(self):
+        from roop.target_selection import resolve_processing_selection
+        groups, selection, selected = resolve_processing_selection(self._options("selected"), 2)
+        self.assertEqual(groups, [0, 1])
+        self.assertTrue(selection["valid"])
+        self.assertEqual(selected, {0, 1})
+
+    def test_no_request_all_faces_mode_is_unchanged(self):
+        from roop.target_selection import resolve_processing_selection
+        _g, selection, selected = resolve_processing_selection(self._options("all"), 2)
+        self.assertEqual(selection["selection_mode"], "none")
+        self.assertEqual(selected, set())
+
+    def test_no_request_with_no_captured_person_selects_nobody(self):
+        from roop.target_selection import resolve_processing_selection
+        _g, _s, selected = resolve_processing_selection(self._options("selected"), 0)
+        self.assertEqual(selected, set())
+
+    def test_an_explicit_legacy_selection_is_respected(self):
+        from roop.target_selection import resolve_processing_selection
+        options = self._options("selected", selection_state={
+            "selection_mode": "selected", "person_id": 1})
+        _g, _s, selected = resolve_processing_selection(options, 2)
+        self.assertEqual(selected, {1})
+
+    def test_a_request_that_selects_nobody_still_selects_nobody(self):
+        """The API contract: an invalid/absent selection is a refusal, never a
+        silent widening to everyone."""
+        from roop.target_selection import resolve_processing_selection
+        request = {"target_groups": [0, 1], "target_person_ids": ["tp_a", "tp_b"],
+                   "selection_state": {"selection_mode": "selected", "person_id": None}}
+        options = self._options("selected", processing_request=request)
+        _g, selection, selected = resolve_processing_selection(options, 2)
+        self.assertFalse(selection["valid"])
+        self.assertEqual(selected, set())
+
+
 if __name__ == "__main__":
     unittest.main()

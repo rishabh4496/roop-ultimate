@@ -77,6 +77,56 @@ class SourceFacesetMappingTests(unittest.TestCase):
             request["selection_state"]["person_id"],
         )
 
+    def test_selected_people_with_only_the_second_person_mapped_uses_that_persons_slot(self):
+        # Two people captured, source 0 = "akansha", source 1 = "anshita".
+        # The user maps ONLY the second person (B -> anshita). ProcessMgr treats a
+        # one-person selection as `single_person` in EITHER selected mode and
+        # reads `selected_index` as the mapped-list slot, so that slot has to be
+        # B's rank (1) -- not the gallery-highlighted source, which maps to
+        # nobody here and resolved to -1: B was refused "no source faceset"
+        # while A, whom the user had NOT mapped, was the only one able to swap.
+        people = ["tp_a", "tp_b"]
+        request = normalize_processing_request(
+            {
+                "detection": "Selected people",
+                "selection_state": {"selection_mode": "multi_person", "person_ids": ["tp_b"]},
+                "target_person_source_mapping": {"tp_b": "src_anshita"},
+            },
+            target_groups=[0, 1],
+            source_count=2,
+            selected_source_gallery_index=0,
+            current_source_ids=["src_akansha", "src_anshita"],
+            target_person_ids=people,
+        )
+        self.assertEqual(request["swap_mode"], "selected_multi")
+        self.assertEqual(request["source_index_mapping"], [-1, 1])
+        self.assertEqual(request["source_index"], 1)
+
+        # Both mapped: two people, so ProcessMgr indexes by rank and the single
+        # slot is irrelevant -- but it must still not be a lie (-1 is honest).
+        both = normalize_processing_request(
+            {
+                "detection": "Selected people",
+                "selection_state": {"selection_mode": "multi_person", "person_ids": people},
+                "target_person_source_mapping": {"tp_a": "src_akansha", "tp_b": "src_anshita"},
+            },
+            target_groups=[0, 1], source_count=2, selected_source_gallery_index=0,
+            current_source_ids=["src_akansha", "src_anshita"], target_person_ids=people,
+        )
+        self.assertEqual(both["source_index_mapping"], [0, 1])
+
+        # One person mapped to a source that no longer exists: honest skip.
+        gone = normalize_processing_request(
+            {
+                "detection": "Selected people",
+                "selection_state": {"selection_mode": "multi_person", "person_ids": ["tp_b"]},
+                "target_person_source_mapping": {"tp_b": "src_removed"},
+            },
+            target_groups=[0, 1], source_count=2, selected_source_gallery_index=0,
+            current_source_ids=["src_akansha", "src_anshita"], target_person_ids=people,
+        )
+        self.assertEqual(gone["source_index"], -1)
+
     def test_preview_and_render_receive_identical_source_mapping(self):
         payload = {
             "detection": "Selected people",

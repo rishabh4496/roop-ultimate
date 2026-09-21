@@ -201,6 +201,25 @@ class DetectionPolicyTest(unittest.TestCase):
         self.assertEqual(stats["roi_detections"], 35)
         self.assertEqual(stats["full_detections"] + stats["roi_detections"], 40)
 
+    def test_default_cadence_observes_every_frame(self):
+        """`auto` means ROI cadence 1 on every card.
+
+        The 2026-09-17 change defaulted pooled cards to cadence 2, so the
+        detector observed every OTHER frame and the rest were gap-filled from
+        their neighbours: on d2.mp4 51.7% of swapped faces carried interpolated
+        landmarks, which is the every-other-frame shift the audit warns about.
+        Detection cost never moved the render clock here, so the trade bought
+        nothing measurable. The env var still opts in to a wider cadence.
+        """
+        from unittest import mock
+        with mock.patch.dict(os.environ, {"ROOP_TEMPORAL_ROI_INTERVAL": "auto"}):
+            self.assertEqual(TemporalFaceTracker.from_env().roi_interval, 1)
+        with mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("ROOP_TEMPORAL_ROI_INTERVAL", None)
+            self.assertEqual(TemporalFaceTracker.from_env().roi_interval, 1)
+        with mock.patch.dict(os.environ, {"ROOP_TEMPORAL_ROI_INTERVAL": "2"}):
+            self.assertEqual(TemporalFaceTracker.from_env().roi_interval, 2)
+
 
 if __name__ == "__main__":
     unittest.main()

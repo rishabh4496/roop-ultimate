@@ -51,7 +51,7 @@ export default function PersonGroups({
   targetPersonIds, targetReferenceFaceIds, selectedTargetPersonId,
   setSelectedTargetPersonId, setTargetPersonIds, setTargetReferenceFaceIds,
   selTargetFace, setSelTargetFace,
-  sourceFaces, sourceFacesInfo, faceSelection, selectedSource, faceMapping, setFaceMapping,
+  sourceFaces, sourceFacesInfo, faceSelection, setFaceSelection, selectedSource, faceMapping, setFaceMapping,
   frame, selTarget, targetMediaId,
   setTargetFaces, setTargetGroups, setTargetNames, setTargetFacesInfo,
   notify, clearPreviewCache,
@@ -295,9 +295,29 @@ export default function PersonGroups({
   const setMapping = (targetPersonId, val) => {
     const sourceId = Number(val) >= 0 ? sourceIdentityAt(Number(val)) : null;
     const next = { ...(faceMapping || {}) };
+    // In "Selected face" the highlighted person is mapped IMPLICITLY (to the
+    // gallery-selected source) and never appears in `faceMapping`. Mapping a
+    // SECOND person from that state used to produce {P2: src2} only: the row
+    // for P1 kept showing "Face 1" (implicit), the mode stayed "Selected
+    // face", and the render swapped exactly one person -- whichever was
+    // highlighted. Materialise the implicit entry first, so the mapping the
+    // user can SEE is the mapping that runs.
+    if (faceSelection === 'Selected face' && selRank && selRank !== targetPersonId
+        && !Object.prototype.hasOwnProperty.call(next, selRank)) {
+      const implicit = sourceIdentityAt(Number(selectedSource));
+      if (implicit) next[selRank] = implicit;
+    }
     if (sourceId) next[targetPersonId] = sourceId;
     else delete next[targetPersonId];
     setFaceMapping(next);
+    // Two or more people bound to sources is a multi-person job. "Selected
+    // face" swaps ONE person by definition, so leaving it there silently drops
+    // every other mapping the user just made. Switch, and say so.
+    const mapped = Object.keys(next).filter((k) => next[k]);
+    if (faceSelection === 'Selected face' && mapped.length >= 2 && setFaceSelection) {
+      setFaceSelection('Selected people');
+      if (notify) notify(`${mapped.length} people mapped — switched to "Selected people" so all of them swap`, 'info');
+    }
     // Mapping is UI-owned, but it is still target-specific state. Persist it
     // immediately so a reload cannot reconstruct B from A's last mapping.
     // Through the versioned path when the parent provides it, so a preview

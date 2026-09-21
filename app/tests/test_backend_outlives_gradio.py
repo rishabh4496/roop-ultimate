@@ -64,14 +64,24 @@ class BackendOutlivesGradioTests(unittest.TestCase):
         helper_start = self.run_py.index("def _announce_react_backend_when_ready")
         helper_end = self.run_py.index("\n\nif __name__ == '__main__':", helper_start)
         helper = self.run_py[helper_start:helper_end]
-        self.assertIn('getattr(globals, "CFG", None)', helper)
-        self.assertIn('socket.create_connection', helper)
-        self.assertIn('api_thread.is_alive()', helper)
+        # The readiness gate moved into roop.startup_state_machine: run.py's
+        # helper delegates to execute_api_ready (CFG published + loopback
+        # socket accepts + API thread alive) and only then execute_ui_ready
+        # emits the URL Pinokio captures. Assert the gate where it lives.
+        self.assertIn('execute_api_ready', helper)
+        self.assertIn('execute_ui_ready', helper)
+        self.assertLess(helper.index('execute_api_ready'), helper.index('execute_ui_ready'))
+        sm = _read(os.path.join(_APP, "roop", "startup_state_machine.py"))
+        gate = sm[sm.index("def execute_api_ready"):sm.index("def execute_ui_ready")]
+        self.assertIn('getattr(roop_globals, "CFG", None)', gate)
+        self.assertIn('socket.create_connection', gate)
+        self.assertIn('api_thread.is_alive()', gate)
 
         main = self.run_py[self.run_py.index("api_thread = threading.Thread"):]
         self.assertIn('_announce_react_backend_when_ready', main)
-        react_branch = main[:main.index('else:', main.index('ROOP_REACT_CLIENT'))]
-        self.assertNotIn('[Backend] listening on http://', react_branch)
+        pre_core = main[:main.index('core.run()')]
+        self.assertNotIn('http://', pre_core,
+                         "run.py must not emit http:// before core.run() publishes CFG")
         tail = main[main.index('core.run()'):]
         self.assertNotIn('http://', tail[:tail.index('while api_thread.is_alive()')],
                          "run.py post-core.run() block must not emit http:// before socket readiness")
@@ -119,8 +129,7 @@ class BackendOutlivesGradioTests(unittest.TestCase):
     def test_run_py_legacy_branch_does_not_emit_http_url(self):
         """Legacy branch must not print http:// so start_legacy.js captures Gradio."""
         main = self.run_py[self.run_py.index("api_thread = threading.Thread"):]
-        else_branch = main[main.index('else:', main.index('ROOP_REACT_CLIENT')):]
-        else_block = else_branch[:else_branch.index('core.run()')]
+        else_block = main[main.index('ROOP_REACT_CLIENT'):main.index('core.run()')]
         self.assertNotIn('http://', else_block,
                          "run.py legacy branch must not emit http:// before Gradio launches")
 

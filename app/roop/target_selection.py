@@ -211,6 +211,26 @@ def resolve_processing_selection(options, target_face_count):
         person_count=len(set(groups)),
         target_person_ids=stable_ids or None,
     )
+    # Legacy direct callers -- the frozen Gradio UI, virtualcam and every
+    # bench that builds ProcessOptions itself -- have no canonical request and
+    # no selection_state. Since Stage 13 that normalized to mode "none" and
+    # selected NOBODY, so a "selected" render through those paths produced a
+    # clean, untouched video: `no track entry matched 807 100.0%` on a clip
+    # whose two tracks had both matched source 0. Four standing benches
+    # (compare_enhancers_video, ab_temporal_detection, sample_bench, the
+    # enhancer sweeps) timed renders that swapped nothing for a week. For a
+    # caller with NO request, "selected" means what it meant before Stage 13:
+    # the captured people. The API path is untouched -- it always carries a
+    # request, and its explicit-selection contract (409 without one) stands.
+    swap_mode = str(getattr(options, "swap_mode", "") or "")
+    if (request is None and target_face_count > 0
+            and swap_mode in ("selected", "selected_multi")
+            and selection.get("selection_mode") == SELECTION_NONE):
+        selection = normalize_target_selection(
+            {"selection_mode": SELECTION_MULTI_PERSON,
+             "person_ids": list(range(len(set(groups))))},
+            person_count=len(set(groups)),
+        )
     selected = selection_group_ids(groups, selection, stable_ids or None)
     return groups, selection, selected
 

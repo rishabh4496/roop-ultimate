@@ -1,5 +1,58 @@
 # Known Issues and Open Questions
 
+## 2026-09-21 - robustness audit (Pinokio tab switches, two people, cadence)
+
+### FIXED - the API port went deaf while the process stayed alive
+
+CPython 3.10's proactor loop closes the LISTENING socket when a peer aborts
+mid-accept (`WinError 64` in `IocpProactor.accept`, "Accept failed on a
+socket"). Chromium's speculative pre-connects on navigation trigger it, and a
+Pinokio RUN/DEV/Terminal switch reloads the webview. Symptom: Pinokio shows
+the script running, the UI shows "Reconnecting to the engine..." forever.
+`roop/win_asyncio_compat.py` re-arms the accept; installed from `run.py` and
+`api.run_api`; `tests/test_win_asyncio_compat.py` has a control arm.
+
+### FIXED - "Selected people" with one mapped person swapped nothing;
+### mapping a second person in the UI never made the mode multi-person
+
+`roop/processing_request.py` (slot rule for a one-person `selected_multi`),
+`PersonGroups.setMapping` (materialise the implicit mapping, switch to
+"Selected people" at >=2). Full table in `roop-keep/RECODE_STATUS.md`.
+
+### FIXED - ROI cadence 2 interpolated half of every swap
+
+`ROOP_TEMPORAL_ROI_INTERVAL` auto is 1 on every card again (was 2 on pooled
+cards since bd71e12). d2.mp4: 51.7% -> 1.6% gap-filled faces.
+
+### FIXED - "Lock face identities (video)" rendered an untouched video since 09-20
+
+Commit 7bb30bb made `exact` an int (`track_source_index`) and left
+`cand = exact[0]`; every tracked face raised TypeError and the frame worker
+wrote the original frame. The SWAP AUDIT now sums raised frames
+(`!! N frame(s) RAISED ... written UNTOUCHED`) so this class cannot read as a
+gate problem again.
+
+### FIXED - "Lock face identities" never armed in "Selected people" mode
+
+`procmgr_batch.py` armed `_track_mode` only for `swap_mode == "selected"`;
+the consumer accepts both selected modes. Two-person renders with the toggle
+on ran per-frame matching. Both gates now admit `selected_multi`.
+
+### FIXED - every self-contained bench rendered untouched video since Stage 13
+
+A direct caller with no canonical request normalized "selected" to nobody.
+`resolve_processing_selection` now selects the captured people for callers
+WITHOUT a request; the API contract (409 without an explicit selection) is
+unchanged.
+
+### OPEN - ~1,100 lines of `[h264 @ ...] Invalid NAL unit size` after a completed render
+
+The user's 2026-09-21 session log ends in a 5-minute burst of software-h264
+decoder errors (16 contexts) after project 88e3cd82 finished. The Pinokio log
+is capped, so the line that started it is gone. Ruled out: the input file
+(cv2 decodes all 83,600 frames cleanly), the HEVC output. Needs the full
+terminal the next time it happens.
+
 ## Stage 22 - persistent projects: three defects fixed, one left open (2026-09-02)
 
 Found while migrating the projects panel out of React UI 2.0 and verifying it

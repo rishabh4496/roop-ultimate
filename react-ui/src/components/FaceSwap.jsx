@@ -3061,6 +3061,7 @@ export default function FaceSwap({
               sourceFaces={sourceFaces}
               sourceFacesInfo={sourceFacesInfo}
               faceSelection={p.face_detection_mode}
+              setFaceSelection={(v) => set('face_detection_mode', v)}
               selectedSource={selSource}
               faceMapping={faceMapping}
               setFaceMapping={setFaceMapping}

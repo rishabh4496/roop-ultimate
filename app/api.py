@@ -5624,6 +5624,13 @@ async def _spa_fallback(request, exc):
 
 
 def run_api():
+    # A Chromium pre-connect that is aborted mid-accept used to CLOSE the
+    # listening socket on Windows (WinError 64 in the proactor's accept
+    # callback), leaving the process alive and the UI unreachable. See
+    # roop/win_asyncio_compat.py; installed here so every entry point that
+    # starts the server gets it, not only run.py.
+    from roop.win_asyncio_compat import install as _install_win_asyncio_compat
+    _install_win_asyncio_compat()
     try:
         port = int(os.environ.get("ROOP_API_PORT", 8001))
     except ValueError:

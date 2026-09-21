@@ -301,7 +301,7 @@ def _global_std(img):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Ultimate / Ultra finishing primitives (ported from roop-unleashed-wip)
+# Ultimate / Ultra finishing primitives (ported from the earlier WIP branch; provenance in NOTICE.md)
 #
 # These build the two "forced-FFHQ-alignment + anti-halo clarity" profiles:
 # `enhance_gpen_ultimate` (GPEN Ultimate) and `enhance_restore_ultra`

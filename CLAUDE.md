@@ -142,9 +142,10 @@ feature ran.
 
 - **Commit and push to the GitHub fork without asking.** Run the full suite first:
   `env/Scripts/python.exe -m unittest discover -s tests -t . -p "test_*.py"` from `app/`.
-  Current baseline: **2607 tests, 1 skipped, OK** in ~161 s (measured 2026-09-14). The
-  session logs quote 1698 and a pair of `test_nvdec_reader` ffmpeg-spawn errors; both are
-  stale.
+  Current baseline: **3060 tests, 2 skipped, OK** in ~324 s (measured 2026-09-21; it was
+  7 failures + 4 errors on a clean tree that morning — see `RECODE_STATUS.md` 09-21 §6).
+  The session logs quote 1698/2607 and a pair of `test_nvdec_reader` ffmpeg-spawn errors;
+  all stale.
 - Pytest-style tests are invisible to unittest (`Ran 0 tests ... OK`) — use
   `tests/unittest_shim.py`.
 - `G:\pinokio\roop-keep\` is NOT a git repo — `RECODE_STATUS.md` is saved by editing it,

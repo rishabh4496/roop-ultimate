@@ -312,9 +312,26 @@ def normalize_processing_request(payload=None, *, target_groups=None,
     # there, or refused P outright (-1) when nobody did.  ProcessMgr's
     # single-person path reads `selected_index` as the mapped-list slot, so
     # that slot must be the selected person's own rank.
-    if (swap_mode == "selected" and source_index_mapping is not None
-            and selection.get("valid") and selection.get("person_id") is not None):
-        person = selection["person_id"]
+    #
+    # The SAME slot rule applies to "Selected people" when exactly ONE person
+    # is mapped: ProcessMgr decides `single_person = len(persons) <= 1` from
+    # the selected set alone, not from the mode, and then reads
+    # `selected_index` instead of the person's rank. With two captured people
+    # and only the SECOND one mapped, the gallery-resolved index was -1 (source
+    # 0 is mapped to nobody), so that person was refused with "no source
+    # faceset" while the first person -- the one the user had NOT mapped --
+    # was the only one that could ever swap. Measured on d2.mp4: A-only swapped
+    # A, B-only swapped nothing.
+    single_person = None
+    if selection.get("valid"):
+        if swap_mode == "selected" and selection.get("person_id") is not None:
+            single_person = selection["person_id"]
+        elif swap_mode == "selected_multi":
+            people = [p for p in (selection.get("person_ids") or []) if p is not None]
+            if len(people) == 1:
+                single_person = people[0]
+    if single_person is not None and source_index_mapping is not None:
+        person = single_person
         if stable_person_ids and str(person) in stable_person_ids:
             rank = stable_person_ids.index(str(person))
         else:

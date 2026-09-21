@@ -239,6 +239,24 @@ class TestAuditBuckets(unittest.TestCase):
         self.assertEqual(len(where['_audit_report']), 1,
                          f'expected exactly one reporting scope, got {where}')
 
+    def test_identity_lock_admits_both_selected_modes(self):
+        """The swap branch that CONSUMES the lock accepts "selected" and
+        "selected_multi"; the two gates that ARM it in procmgr_batch admitted
+        only "selected", so "Lock face identities" was inert in exactly the
+        Selected-people case it exists for (two people crossing): the toggle
+        read as on, the pre-pass printed its per-track assignment, and the swap
+        ran per-frame. Both arming gates must name the same modes as the
+        consumer."""
+        with open(_BATCH, encoding='utf-8') as fh:
+            batch = fh.read()
+        arming = batch.count('self.options.swap_mode in ("selected", "selected_multi")')
+        self.assertEqual(arming, 2, 'both _track_mode gates must admit selected_multi')
+        self.assertNotIn('self.options.swap_mode == "selected"', batch)
+        with open(_PROCMGR, encoding='utf-8') as fh:
+            consumer = fh.read()
+        self.assertIn('self.options.swap_mode in ("selected", "selected_multi") '
+                      "and getattr(self, '_track_mode', False)", consumer)
+
 
 if __name__ == '__main__':
     unittest.main()

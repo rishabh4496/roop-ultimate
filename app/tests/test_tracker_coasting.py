@@ -132,12 +132,17 @@ class CoastingTest(unittest.TestCase):
 
     def test_a_reappearing_face_resets_the_coast_budget(self):
         """A blink-out, a re-detection, then a second blink-out is two occlusions."""
+        # Walk SLOWLY. The budget under test is the base one; a face moving
+        # faster than FAST_MOTION_SPEED gets a longer budget on purpose (see
+        # `dynamic_max_coast`), and the default 5 px/frame walk sits right on
+        # that threshold, so the Kalman velocity estimate after the
+        # re-detection decided which budget applied.
         tracker = FaceTracker()
-        n = self._established(tracker)
+        n = self._established(tracker, step=2.0)
         for k in range(3):
             tracker.update([], n + k)
             tracker.coast(n + k, frame_shape=FRAME)
-        tracker.update([_face(100.0 + 5.0 * (n + 3))], n + 3)
+        tracker.update([_face(100.0 + 2.0 * (n + 3))], n + 3)
         self.assertEqual(tracker.tracks[0].coasted_run, 0)
 
         produced = 0
@@ -145,6 +150,16 @@ class CoastingTest(unittest.TestCase):
             tracker.update([], n + 4 + k)
             produced += len(tracker.coast(n + 4 + k, frame_shape=FRAME))
         self.assertEqual(produced, MAX_COAST_FRAMES)
+
+    def test_a_fast_moving_face_gets_the_longer_budget(self):
+        """Motion blur and detector latency peak right after a fast move."""
+        tracker = FaceTracker()
+        n = self._established(tracker, step=12.0)
+        produced = 0
+        for k in range(MAX_COAST_FRAMES * 2 + 2):
+            tracker.update([], n + k)
+            produced += len(tracker.coast(n + k, frame_shape=FRAME))
+        self.assertGreater(produced, MAX_COAST_FRAMES)
 
     # -- the guards -----------------------------------------------------------
 

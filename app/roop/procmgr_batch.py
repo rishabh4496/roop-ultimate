@@ -732,9 +732,15 @@ class BatchProcessingMixin:
                 # found nothing usable, and then its identity assignments are empty
                 # too — so fall through to the standalone track pass below rather
                 # than locking identities off an empty scan.
+                # Both selected modes: the swap branch that consumes the lock
+                # already accepts ("selected", "selected_multi"), but this gate
+                # admitted only "selected", so "Lock face identities" was inert
+                # in exactly the "Selected people" case it exists for (two
+                # people crossing) -- the toggle read as on, the pre-pass
+                # printed its per-track assignment, and the swap ran per-frame.
                 self._track_mode = (self._temporal_mode
                                     and roop.globals.track_identities
-                                    and self.options.swap_mode == "selected"
+                                    and self.options.swap_mode in ("selected", "selected_multi")
                                     and len(self.target_face_datas) > 0)
                 self._log_memory_stage('phase3:temporal-prepass-complete')
                 self._release_replayed_analysis(frame_count)
@@ -746,7 +752,7 @@ class BatchProcessingMixin:
                 self._log_memory_stage('phase3:temporal-prepass-fallback')
 
         if (not self._temporal_mode and roop.globals.track_identities and not is_awebp
-                and self.options.swap_mode == "selected"
+                and self.options.swap_mode in ("selected", "selected_multi")
                 and len(self.target_face_datas) > 0):
             try:
                 self._precompute_tracks(source_video, frame_start, frame_end, frame_count)

@@ -245,14 +245,19 @@ class TemporalFaceTracker:
 
         roi_interval = os.environ.get("ROOP_TEMPORAL_ROI_INTERVAL", "auto")
         if str(roi_interval).strip().lower() in ("", "auto"):
-            # session_pool already owns the VRAM-tier policy used by the
-            # detector. Reuse it instead of probing CUDA here, and never make
-            # the <7GB profile allocate an additional context.
-            try:
-                from roop import session_pool
-                roi_interval = 2 if session_pool.detmask_pooling_enabled() else 1
-            except Exception:
-                roi_interval = 1
+            # Every frame. The 2026-09-17 "coast between ROI detections" change
+            # defaulted this to 2 on cards with detmask pooling (the 4070), so
+            # the detector observed every OTHER frame and the frames between
+            # were gap-filled from their neighbours. On d2.mp4 (two people,
+            # 119 frames) the audit read "152 of the 294 faces actually swapped
+            # (51.7%) had INTERPOLATED landmarks" -- every second swap
+            # registered from a guess, which on a moving head is the every-
+            # other-frame shift the audit itself warns about, and which the
+            # user reported as flicker. Detection cost has never moved the
+            # render clock here (det_size 640->512 measured NEUTRAL end to
+            # end), so the cadence bought nothing measurable and cost half the
+            # registrations. ROOP_TEMPORAL_ROI_INTERVAL=2 still opts in.
+            roi_interval = 1
         try:
             roi_interval = max(1, int(roi_interval))
         except (TypeError, ValueError):

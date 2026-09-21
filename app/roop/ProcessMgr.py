@@ -57,7 +57,7 @@ from roop import recognizer_adaface as _ada
 from roop.target_selection import (normalize_target_selection, resolve_processing_selection,
                                    selection_group_ids)
 from roop import live_preview as _live_preview
-from roop.procmgr_runtime import _PROFILE, _TRACK_VETO_DIST, _TRACK_VETO_MARGIN, _TRACK_VETO_SINGLE, _TRACK_EMB_MAX, _DEBUG_MATCH, COLOR_RESET, COLOR_CYAN, COLOR_YELLOW, COLOR_PURPLE, _prof, _prof_report, _prof_reset, _gpu_guard, PROGRESS_BAR_FORMAT, wait_while_paused, pause_controller, pause_scope, pause_aware, ChunkedProgress, bar_write, publish_eta as _publish_eta, _audit_hit, audit_over_threshold as _audit_over_threshold, audit_frame_seen, audit_detect_frame_begin, audit_detect_miss, audit_face_begin, _audit_swapped_gapfill, _audit_reset, _audit_report, VETO_SOURCE_REUSED, VETO_SINGLE_ABS, VETO_OTHER_FITS, VETO_FAR_FROM_OWN, AUDIT_SWAP_MOVED, VERIFY_MIN_OFFAXIS, VERIFY_SWAP, set_runtime_monitor, set_detailed_profiler
+from roop.procmgr_runtime import _PROFILE, _TRACK_VETO_DIST, _TRACK_VETO_MARGIN, _TRACK_VETO_SINGLE, _TRACK_EMB_MAX, _DEBUG_MATCH, COLOR_RESET, COLOR_CYAN, COLOR_YELLOW, COLOR_PURPLE, _prof, _prof_report, _prof_reset, _gpu_guard, PROGRESS_BAR_FORMAT, wait_while_paused, pause_controller, pause_scope, pause_aware, ChunkedProgress, bar_write, publish_eta as _publish_eta, _audit_hit, audit_over_threshold as _audit_over_threshold, audit_frame_seen, audit_detect_frame_begin, audit_detect_miss, audit_face_begin, _audit_swapped_gapfill, _audit_reset, _audit_report, audit_frame_failed, VETO_SOURCE_REUSED, VETO_SINGLE_ABS, VETO_OTHER_FITS, VETO_FAR_FROM_OWN, AUDIT_SWAP_MOVED, VERIFY_MIN_OFFAXIS, VERIFY_SWAP, set_runtime_monitor, set_detailed_profiler
 from roop.stage_profiler import StageProfiler
 from roop.runtime_optimizer import RuntimeOptimizer, RuntimeMonitor, SafeAdaptiveController
 from roop.runtime_scheduler import UnifiedRuntimeScheduler
@@ -1730,6 +1730,7 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                     # the snapshot taken above rather than the partially swapped
                     # array. This also covers CUDA/ORT, OpenCV, and model errors.
                     err_str = str(exc)
+                    audit_frame_failed(exc)
                     bar_write(
                         f'[ProcessMgr] frame {frame_idx} processing failed '
                         f'({type(exc).__name__}): {err_str[:200]} — '
@@ -1924,6 +1925,7 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                     return fallback_frame
             except Exception as exc:
                 message = str(exc)
+                audit_frame_failed(exc)
                 bar_write('[ProcessMgr] scheduler frame %s processing failed '
                           '(%s): %s — writing original/interpolated target frame'
                           % (frame_idx, type(exc).__name__, message[:200]))
@@ -2534,6 +2536,7 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                                 pause_interrupted.set()
                                 return
                         except Exception as _degrade_error:
+                            audit_frame_failed(_degrade_error)
                             bar_write(
                                 f'[ProcessMgr] stabilization frame {gi} processing '
                                 f'failed ({type(_degrade_error).__name__}): '
@@ -3604,7 +3607,14 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                     # incapable of ever rescuing the face.
                     vetoed_gate = None
                     if exact is not None or best_j >= 0:
-                        cand = exact[0] if exact is not None else entries[best_j][1]
+                        # `exact` is the bare source index (track_source_index
+                        # unpacked the (source, embedding) binding above, since
+                        # 7bb30bb). `exact[0]` on that int raised TypeError for
+                        # EVERY tracked face, the frame worker caught it and
+                        # wrote the original frame: with "Lock face identities"
+                        # on, nothing swapped and the audit showed 638 faces
+                        # seen with no refusal bucket at all.
+                        cand = exact if exact is not None else entries[best_j][1]
                         if cand is not None and cand < len(self.input_face_datas):
                             src_index = cand
                         # ── Source veto ──────────────────────────────────────

@@ -27,6 +27,9 @@ _PROJECT = os.path.dirname(_APP)
 
 class _Req:
     headers = {}
+    # _stream_file_response answers HEAD without a body; a GET probe is
+    # what these roots tests are about.
+    method = "GET"
 
 
 class FileEndpointRoots(unittest.TestCase):
