@@ -16,9 +16,9 @@ from fastapi import APIRouter, Body, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 
 import roop.globals as roop_globals
+import safe_paths
 from roop import utilities as util
 from roop.degrade import swallowed as _swallowed
-from routes_faceset import _faceset_library_dir
 
 
 router = APIRouter()
@@ -49,9 +49,14 @@ def delete_output(payload: dict = Body(...)):
     out = getattr(roop_globals, "output_path", None)
     if not filename or not out or not os.path.isdir(out):
         return JSONResponse(status_code=400, content={"message": "invalid parameters"})
-    filename = os.path.basename(filename)
-    full_path = os.path.join(out, filename)
-    if os.path.isfile(full_path):
+    # A basename only, and the real file must be inside the output folder: a
+    # symlink there pointing elsewhere is refused rather than followed.
+    filename = safe_paths.sanitize_filename(filename)
+    candidate = os.path.join(out, filename)
+    full_path = safe_paths.confine_file(candidate, roots=[out])
+    if full_path and os.path.islink(candidate):
+        full_path = None
+    if full_path:
         try:
             os.remove(full_path)
             global _last_output
@@ -70,7 +75,10 @@ def reveal_output(payload: dict = Body(default={})):
     target = payload.get("path") or getattr(roop_globals, "output_path", None)
     if not target:
         return JSONResponse(status_code=404, content={"message": "no output folder"})
-    target = os.path.abspath(target)
+    # Only the app's own folders can be opened: output, facesets, uploads.
+    target = safe_paths.confine(target)
+    if not target:
+        return JSONResponse(status_code=403, content={"message": "path is outside the allowed folders"})
     is_file = os.path.isfile(target)
     folder = os.path.dirname(target) if is_file else target
     if not os.path.isdir(folder):
@@ -200,15 +208,9 @@ def get_output_file(filename: str, request: Request):
     if not out_dir or not os.path.isdir(out_dir):
         return JSONResponse(status_code=404, content={"message": "output directory not configured"})
 
-    full_path = os.path.abspath(os.path.join(out_dir, filename))
-    norm_out = os.path.normcase(os.path.abspath(out_dir))
-    norm_full = os.path.normcase(full_path)
-    try:
-        if os.path.commonpath([norm_full, norm_out]) != norm_out or not os.path.isfile(full_path):
-            return JSONResponse(status_code=404, content={"message": "file not found"})
-    except ValueError:
-        return JSONResponse(status_code=403, content={"message": "forbidden"})
-
+    full_path = safe_paths.confine_file(os.path.join(out_dir, filename), roots=[out_dir])
+    if not full_path:
+        return JSONResponse(status_code=404, content={"message": "file not found"})
     return _stream_file_response(full_path, request)
 
 
@@ -224,39 +226,16 @@ def get_file(path: str, request: Request):
             clean_path = clean_path[len(prefix):]
             break
 
-    if out_dir and os.path.isdir(out_dir):
-        cand = os.path.abspath(os.path.join(out_dir, clean_path))
-        norm_out = os.path.normcase(os.path.abspath(out_dir))
-        try:
-            if os.path.commonpath([os.path.normcase(cand), norm_out]) == norm_out and os.path.isfile(cand):
-                return _stream_file_response(cand, request)
-        except ValueError:
-            pass
-
-    _app_dir = os.path.dirname(os.path.abspath(__file__))
-    _project_dir = os.path.dirname(_app_dir)
-    roots = [
-        API_TEMP,
-        os.path.join(os.getcwd(), "temp"),
-        os.path.join(os.getcwd(), ".pinokio-temp"),
-        os.path.join(_app_dir, ".pinokio-temp"),
-        os.path.join(_project_dir, ".pinokio-temp"),
-        _faceset_library_dir(),
-    ]
-    if out_dir:
-        roots.append(out_dir)
-    allowed = [os.path.normcase(os.path.abspath(r)) for r in roots]
-    ap = os.path.abspath(clean_path)
-    ap_n = os.path.normcase(ap)
-
-    def _within(child, parent):
-        try:
-            return os.path.commonpath([child, parent]) == parent
-        except ValueError:
-            return False
-
-    if not any(_within(ap_n, a) for a in allowed) or not os.path.isfile(ap):
+    # Relative names are output files; absolute paths must resolve (symlinks
+    # followed) into the output folder, the faceset library, the upload folder
+    # or a Pinokio drop folder. Anything else -- another folder, another drive,
+    # a UNC share, a symlink out of a root -- is 403.
+    if out_dir and os.path.isdir(out_dir) and not os.path.isabs(clean_path):
+        cand = safe_paths.confine_file(os.path.join(out_dir, clean_path), roots=[out_dir])
+        if cand:
+            return _stream_file_response(cand, request)
+    ap = safe_paths.confine_file(clean_path)
+    if not ap:
         return JSONResponse(status_code=403, content={"message": "forbidden"})
-
     return _stream_file_response(ap, request)
 

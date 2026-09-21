@@ -76,7 +76,8 @@ class TargetPathResolution(unittest.TestCase):
         os.makedirs(directory, exist_ok=True)
         target = os.path.join(directory, '_roop_add_path_probe.png')
         with open(target, 'wb') as fh:
-            fh.write(b'x')
+            # real PNG magic: add_path now checks content against the extension
+            fh.write(b'\x89PNG\r\n\x1a\n' + b'\x00' * 32)
         self.addCleanup(os.unlink, target)
         before = list(self.queue)
         self.addCleanup(lambda: (self.queue.clear(), self.queue.extend(before)))

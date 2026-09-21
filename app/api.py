@@ -27,7 +27,7 @@ import traceback
 import cv2
 import numpy as np
 import uvicorn
-from fastapi import FastAPI, UploadFile, File, Body, Request
+from fastapi import FastAPI, UploadFile, File, Body, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse, Response
 
@@ -88,6 +88,7 @@ from target_person_state import (
 import project_checkpoint as _project_checkpoint
 import ui.globals as ui_globals
 import api_access as _api_access
+import safe_paths as _safe_paths
 
 app = FastAPI()
 # CORS is only ever needed by a LOCAL page on another port (the Vite dev
@@ -106,6 +107,12 @@ app.add_middleware(
 # share mode a non-loopback caller without the launch token gets 401. Covers
 # every /api and /ws route, the telemetry WebSocket included. See api_access.
 app.add_middleware(_api_access.AccessControlMiddleware)
+
+
+@app.exception_handler(_safe_paths.UploadRejected)
+async def _upload_rejected(request, exc):
+    """An upload the filesystem boundary refused (name, kind, content, size, count)."""
+    return JSONResponse(status_code=400, content={"detail": exc.detail})
 
 # Preview updates several process-wide globals while it performs detection and
 # swapping. React can issue overlapping requests when a user scrubs frames or
@@ -248,6 +255,14 @@ def mapped_selected_index(mapping, mapped, selected):
     return resolve_selected_source_index(source_indices, selected)
 
 API_TEMP = os.path.join(os.getcwd(), "temp", "api_uploads")
+# The folders a request may name a file in (besides the output folder and
+# the faceset library, which safe_paths reads live): uploads, and the drop
+# folders Pinokio's own browser writes pasted/dropped files into.
+for _root in (API_TEMP, os.path.join(os.getcwd(), "temp"),
+              os.path.join(os.getcwd(), ".pinokio-temp"),
+              os.path.join(os.path.dirname(os.path.abspath(__file__)), ".pinokio-temp"),
+              os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".pinokio-temp")):
+    _safe_paths.register_root(_root)
 os.makedirs(API_TEMP, exist_ok=True)
 
 # ── Multi-angle target bank gates ────────────────────────────────────────────
@@ -1854,8 +1869,14 @@ def source_add(files: list[UploadFile] = File(...)):
     # Structured per-file failures.  A corrupt or empty .fsz used to be
     # swallowed into a traceback and a 200 that looked like "no face detected".
     errors = []
+    _safe_paths.check_count(files, ("image", "faceset"))
     for f in files:
-        path = _save_upload(f)
+        try:
+            path = _save_upload(f, kinds=("image", "faceset"))
+        except HTTPException as exc:
+            errors.append({"file": _safe_paths.sanitize_filename(f.filename),
+                           "error": "rejected", "message": str(exc.detail)})
+            continue
         try:
             if path.lower().endswith("fsz"):
                 try:
@@ -1896,8 +1917,9 @@ def source_add(files: list[UploadFile] = File(...)):
 def source_add_folder(files: list[UploadFile] = File(...)):
     """Treat a folder or multi-shot picker selection as one source identity."""
     paths = []
+    _safe_paths.check_count(files, ("image",))
     for file in files:
-        path = _save_upload(file)
+        path = _save_upload(file, kinds=("image",))
         if util.has_image_extension(path):
             paths.append(path)
     try:
@@ -1920,7 +1942,7 @@ def lipsync_audio_add(file: UploadFile = File(...)):
     endpoint stays JSON-only, like every other setting on it — the returned
     path is referenced from the JSON payload afterward via lipsync_audio_path.
     """
-    path = _save_upload(file)
+    path = _save_upload(file, kinds=("audio",))
     return {"path": path}
 
 
@@ -2091,11 +2113,13 @@ def target_add_path(payload: dict = Body(...)):
     when you re-add it later, and the run history's target name is the real
     one rather than a temp copy.
 
-    Paths are taken as given. That is the same trust model the app already
-    operates under — /api/file serves an arbitrary path and /api/reveal opens
-    one — and it is bounded by the server being loopback-only. The checks
-    below are for MISTAKES, not for an attacker: a directory, a typo, or a
-    .txt would otherwise be appended and fail much later, mid-render.
+    On loopback a path may name any regular file on this machine -- that is
+    the feature -- but it is resolved with realpath, a UNC path is refused
+    (opening one sends the machine's credentials to that server), and the
+    content must match the extension. In share mode the caller is on another
+    machine, so the path must lie inside the allowed roots like everywhere
+    else (safe_paths). The remaining checks catch MISTAKES: a directory, a
+    typo, or a .txt would otherwise be appended and fail much later, mid-render.
     """
     raw = payload.get("paths") or []
     if isinstance(raw, str):
@@ -2105,12 +2129,26 @@ def target_add_path(payload: dict = Body(...)):
         _save_active_target_context_locked()
     first_new = len(list_files_process)
     added, rejected = [], []
+    share = _api_access.get_policy().share
     for p in raw:
+        if not isinstance(p, str) or _safe_paths.is_unc(p):
+            rejected.append({"path": p, "why": "network (UNC) paths are not accepted"})
+            continue
         path = _resolve_user_path(p)
+        if share:
+            path = _safe_paths.confine_file(path) or ""
+            if not path:
+                rejected.append({"path": p, "why": "outside the allowed folders (share mode)"})
+                continue
+        else:
+            path = os.path.realpath(path)
+            if _safe_paths.is_unc(path):
+                rejected.append({"path": p, "why": "network (UNC) paths are not accepted"})
+                continue
         if not os.path.isfile(path):
             rejected.append({"path": p, "why": "not a file on this machine"})
             continue
-        if not _is_usable_target(path):
+        if not _is_usable_target(path) or not _safe_paths.check_magic(path):
             rejected.append({"path": p, "why": "not a supported image or video"})
             continue
         entry = ProcessEntry(path, 0, 0, 0)
@@ -2144,8 +2182,9 @@ def target_add(files: list[UploadFile] = File(...)):
     with _target_context_lock:
         _save_active_target_context_locked()
     first_new = len(list_files_process)
+    _safe_paths.check_count(files, ("image", "video"))
     for f in files:
-        path = _save_upload(f)
+        path = _save_upload(f, kinds=("image", "video"))
         entry = ProcessEntry(path, 0, 0, 0)
         _ensure_target_media_id(entry)
         list_files_process.append(entry)

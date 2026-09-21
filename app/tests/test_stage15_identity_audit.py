@@ -251,7 +251,7 @@ class FacesetErrorsAreStructured(unittest.TestCase):
             file = open(path, "rb")
 
         old_save = api._save_upload
-        api._save_upload = lambda f: path
+        api._save_upload = lambda f, **kw: path   # bypass the boundary: this tests ingestion
         try:
             payload = api.source_add([_Upload()])
         finally:

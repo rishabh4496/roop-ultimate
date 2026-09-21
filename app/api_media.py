@@ -7,11 +7,12 @@ from roop.degrade import swallowed as _swallowed
 
 import base64
 import os
-import shutil
 
 import cv2
 import numpy as np
-from fastapi import UploadFile
+from fastapi import HTTPException, UploadFile
+
+import safe_paths
 
 
 # Injected by api.py at import time — the same object, never rebound.
@@ -19,22 +20,23 @@ API_TEMP = None
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
-def _save_upload(file: UploadFile) -> str:
-    # Recreate the upload dir every time — the Gradio "clean temp" action and
-    # prepare_environment() can delete the whole temp/ tree out from under us.
-    os.makedirs(API_TEMP, exist_ok=True)
-    base = os.path.basename(file.filename)
-    path = os.path.join(API_TEMP, base)
-    # Never overwrite an earlier upload with the same name — existing target
-    # entries keep pointing at the old path, so clobbering it corrupts them.
-    stem, ext = os.path.splitext(base)
-    n = 1
-    while os.path.exists(path):
-        path = os.path.join(API_TEMP, f"{stem}_{n}{ext}")
-        n += 1
-    with open(path, "wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
-    return path
+ALL_UPLOAD_KINDS = ("image", "video", "audio", "faceset")
+
+
+def _save_upload(file: UploadFile, kinds=ALL_UPLOAD_KINDS) -> str:
+    """Stream an upload into API_TEMP under a sanitized, unique name.
+
+    The filename is never used as a path, the extension must be one of
+    `kinds`, the leading bytes must agree with it, and the byte cap is the
+    kind's (see safe_paths.UPLOAD_LIMITS). A refusal is a 400 with the reason;
+    nothing is left on disk. API_TEMP is recreated every time -- the Gradio
+    "clean temp" action and prepare_environment() can delete the whole temp/
+    tree out from under us.
+    """
+    try:
+        return safe_paths.save_upload(file, API_TEMP, kinds)
+    except safe_paths.UploadRejected as exc:
+        raise HTTPException(status_code=400, detail=exc.detail)
 
 def _rgb_to_dataurl(rgb) -> str:
     """rgb: HxWx3 RGB numpy (as produced by util.convert_to_gradio) -> data URL."""
