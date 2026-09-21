@@ -89,6 +89,7 @@ import project_checkpoint as _project_checkpoint
 import ui.globals as ui_globals
 import api_access as _api_access
 import safe_paths as _safe_paths
+import intended_use as _intended_use
 
 app = FastAPI()
 # CORS is only ever needed by a LOCAL page on another port (the Vite dev
@@ -1638,6 +1639,40 @@ def _get_provider_meta():
             "tensorrt_session_usable": trt_session_ok,
         },
     }
+
+
+def _terms_refusal():
+    """403 unless this install has accepted NOTICE.md's intended-use terms."""
+    if _intended_use.acknowledged(roop_globals.CFG):
+        return None
+    return JSONResponse(status_code=403, content={
+        "message": "Accept the intended-use terms first (Settings, or the first-run screen).",
+        "terms_required": True, "terms_version": _intended_use.terms_version()})
+
+
+@app.get("/api/terms")
+def get_terms():
+    """The intended-use terms and whether this install has accepted them."""
+    return {"text": _intended_use.terms_text(), "version": _intended_use.terms_version(),
+            "acknowledged": _intended_use.acknowledged(roop_globals.CFG),
+            "source": os.path.relpath(_intended_use.NOTICE_PATH, os.path.dirname(_intended_use.NOTICE_PATH))}
+
+
+@app.post("/api/terms/acknowledge")
+def acknowledge_terms(payload: dict = Body(default={})):
+    """Record acceptance of the CURRENT terms version (the client sends what it showed)."""
+    if roop_globals.CFG is None:
+        return _configuration_initializing()
+    shown = str((payload or {}).get("version", "") or "")
+    current = _intended_use.terms_version()
+    if shown != current:
+        return JSONResponse(status_code=409, content={
+            "message": "The terms changed since they were shown; reload and read them again.",
+            "terms_version": current})
+    if not bool((payload or {}).get("accept")):
+        return JSONResponse(status_code=400, content={"message": "accept must be true"})
+    _intended_use.acknowledge(roop_globals.CFG)
+    return {"acknowledged": True, "version": current}
 
 
 @app.get("/api/meta")
@@ -4476,6 +4511,9 @@ def preview_upscale(payload: dict = Body(...)):
 def trigger_swap(payload: dict = Body(...)):
     if not _configuration_ready():
         return _configuration_initializing()
+    _refused = _terms_refusal()
+    if _refused is not None:
+        return _refused
     if _progress["processing"]:
         return JSONResponse(status_code=409, content={"message": "already processing"})
     # The benchmark holds several pools of TensorRT contexts and is timing them.

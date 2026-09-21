@@ -9,6 +9,7 @@ import os
 import sys
 import types
 import unittest
+from unittest import mock
 
 import numpy as np
 
@@ -38,6 +39,10 @@ class TargetMediaIsolation(unittest.TestCase):
         self.old_entries = list(api.list_files_process)
         self.old_faces = list(roop_globals.TARGET_FACES)
         self.old_groups = list(roop_globals.TARGET_FACE_GROUP)
+        # These tests drive /api/swap; run them as an install that has accepted the
+        # intended-use terms (the gate itself is tested in test_synthetic_label.py).
+        _accepted = mock.patch('intended_use.acknowledged', return_value=True)
+        _accepted.start(); self.addCleanup(_accepted.stop)
         self.old_names = dict(getattr(roop_globals, 'TARGET_FACE_NAMES', {}) or {})
         self.old_thumbs = list(ui_globals.ui_target_thumbs)
         self.old_selected = state.selected_target_index

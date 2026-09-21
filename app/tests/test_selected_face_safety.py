@@ -30,6 +30,10 @@ class SelectedFaceSafetyTests(unittest.TestCase):
         self.roop_globals = roop_globals
         self.previous_targets = roop_globals.TARGET_FACES
         self.addCleanup(self._restore_targets)
+        # These tests drive /api/swap; run them as an install that has accepted the
+        # intended-use terms (the gate itself is tested in test_synthetic_label.py).
+        _accepted = patch('intended_use.acknowledged', return_value=True)
+        _accepted.start(); self.addCleanup(_accepted.stop)
 
     def _restore_targets(self):
         self.roop_globals.TARGET_FACES = self.previous_targets

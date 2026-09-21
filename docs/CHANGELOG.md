@@ -7,6 +7,15 @@ folder). Entries before 2026-09-21 were moved here from the README on 2026-09-22
 
 ## 2026-09-22
 
+- **Consent and labelling.** Audit found no content or consent safeguard anywhere in
+  `app/roop`. Added: a first-run screen that requires accepting NOTICE.md's intended-use
+  terms (`/api/terms`, enforced on `/api/swap`; re-asked when the text changes); a
+  default-on metadata tag on every output (`roop/synthetic_label.py`: MP4/MKV/WebM
+  `comment` + `synthetic_media=true`, PNG text chunk, JPEG EXIF + comment, all without
+  re-encoding); an opt-in visible watermark. Settings `synthetic_label`,
+  `synthetic_watermark`, `synthetic_watermark_text`, `synthetic_label_text`,
+  `intended_use_acknowledged`. Swap output pixels are unchanged unless the watermark
+  is turned on.
 - **Settings have one source.** `app/settings.py` now carries `UI_SETTINGS` (panel
   label/section) and `ENV_SETTINGS` (the `ROOP_*` mapping, applied by
   `settings.apply_env`); `tools/gen_settings.py` renders `app/settings.schema.json` and

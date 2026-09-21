@@ -17,6 +17,13 @@ from fastapi.responses import JSONResponse
 
 import roop.globals as roop_globals
 from roop import utilities as util
+from roop import synthetic_label as _synthetic_label
+
+
+def _label_output(path):
+    """Edited media derived from a swap is still synthetic: keep the tag on it."""
+    if _synthetic_label.label_enabled():
+        _synthetic_label.label_file(path)
 from roop.capturer import (get_image_frame, get_video_frame,
                            get_video_frame_total)
 from api_media import _save_upload
@@ -75,6 +82,7 @@ def extras_apply(file: UploadFile = File(...),
         out = _process_frame(img)
         outpath = os.path.join(out_dir, "edited_" + os.path.splitext(os.path.basename(path))[0] + ".png")
         cv2.imwrite(outpath, out)
+        _label_output(outpath)
         url = f"/outputs/{os.path.basename(outpath)}"; return {"path": url, "url": url, "name": os.path.basename(outpath), "absolute_path": outpath, "kind": "image"}
 
     total = get_video_frame_total(path) or 1
@@ -98,6 +106,7 @@ def extras_apply(file: UploadFile = File(...),
     if not finalize_web_video(raw_tmp, outpath, audio_source=path, delete_raw=True):
         if os.path.isfile(raw_tmp):
             os.replace(raw_tmp, outpath)
+    _label_output(outpath)
     url = f"/outputs/{os.path.basename(outpath)}"; return {"path": url, "url": url, "name": os.path.basename(outpath), "absolute_path": outpath, "kind": "video"}
 
 def _make_frame_processor(operation: str, subtype: str):
@@ -155,6 +164,7 @@ def extras_enhance(file: UploadFile = File(...),
             out = proc.Run(img)
             outpath = os.path.join(out_dir, f"{operation}_{subtype}_{stem}.png")
             cv2.imwrite(outpath, out)
+            _label_output(outpath)
             url = f"/outputs/{os.path.basename(outpath)}"; return {"path": url, "url": url, "name": os.path.basename(outpath), "absolute_path": outpath, "kind": "image"}
 
         total = get_video_frame_total(path) or 1
@@ -187,6 +197,7 @@ def extras_enhance(file: UploadFile = File(...),
         if not finalize_web_video(raw_tmp, outpath, audio_source=path, delete_raw=True):
             if os.path.isfile(raw_tmp):
                 os.replace(raw_tmp, outpath)
+        _label_output(outpath)
         url = f"/outputs/{os.path.basename(outpath)}"; return {"path": url, "url": url, "name": os.path.basename(outpath), "absolute_path": outpath, "kind": "video"}
     except Exception as e:
         traceback.print_exc()

@@ -691,6 +691,9 @@ export default function Settings({ meta, settings, setSettings, notify }) {
           })()}
           <Toggle label="Use OS temp folder" {...bindToggle('use_os_temp_folder')} />
           <Toggle label="Show video in browser (re-encodes)" {...bindToggle('output_show_video')} />
+          <Toggle label="Label output as synthetic media (metadata tag)" info="Writes a comment + synthetic_media=true tag into MP4/MKV/WebM, PNG and JPEG output. Pixels are untouched. A label, not a signature: a re-encode can strip it." {...bindToggle('synthetic_label')} />
+          <Toggle label="Visible watermark on output" info="Stamps the text below on every output frame (bottom-right). Alters pixels; off by default." {...bindToggle('synthetic_watermark')} />
+          <TextInput label="Watermark text" {...bind('synthetic_watermark_text', 'AI face swap')} placeholder="AI face swap" />
         </FilterSection>
       </div>
 

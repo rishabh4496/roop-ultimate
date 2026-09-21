@@ -65,6 +65,9 @@ export const SETTINGS_CATALOG = [
   { key: 'video_quality', label: 'Video quality', section: 'Output' },
   { key: 'use_os_temp_folder', label: 'Use OS temp folder', section: 'Output' },
   { key: 'output_show_video', label: 'Show video in browser (re-encodes)', section: 'Output' },
+  { key: 'synthetic_label', label: 'Label output as synthetic media (metadata tag)', section: 'Output' },
+  { key: 'synthetic_watermark', label: 'Visible watermark on output', section: 'Output' },
+  { key: 'synthetic_watermark_text', label: 'Watermark text', section: 'Output' },
 ];
 
 // The event the palette fires to send the Settings panel to one control. The

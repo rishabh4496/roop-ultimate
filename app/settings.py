@@ -81,6 +81,9 @@ UI_SETTINGS = (
     ('video_quality', 'Video quality', 'Output'),
     ('use_os_temp_folder', 'Use OS temp folder', 'Output'),
     ('output_show_video', 'Show video in browser (re-encodes)', 'Output'),
+    ('synthetic_label', 'Label output as synthetic media (metadata tag)', 'Output'),
+    ('synthetic_watermark', 'Visible watermark on output', 'Output'),
+    ('synthetic_watermark_text', 'Watermark text', 'Output'),
 )
 
 # kinds:
@@ -873,6 +876,17 @@ class Settings:
         self.faceset_library_path = self.default_get(data, 'faceset_library_path', '')
         self.use_os_temp_folder = self.default_get(data, 'use_os_temp_folder', False)
         self.output_show_video = self.default_get(data, 'output_show_video', True)
+        # Synthetic-media labelling (roop/synthetic_label.py). The metadata tag is
+        # on by default and touches no pixels; the visible watermark is opt-in.
+        # `synthetic_label_text` has no UI control; edit config.yaml to change it.
+        self.synthetic_label = self.default_get(data, 'synthetic_label', True)
+        self.synthetic_label_text = self.default_get(data, 'synthetic_label_text',
+            'AI-generated synthetic media: face swap (Roop Ultimate). Not a real recording.')
+        self.synthetic_watermark = self.default_get(data, 'synthetic_watermark', False)
+        self.synthetic_watermark_text = self.default_get(data, 'synthetic_watermark_text', 'AI face swap')
+        # The version (hash) of NOTICE.md's intended-use terms the user accepted on
+        # the first-run screen; '' until they do, and stale again if the terms change.
+        self.intended_use_acknowledged = self.default_get(data, 'intended_use_acknowledged', '')
         self.launch_browser = self.default_get(data, 'launch_browser', False)
         self.max_face_distance = self.default_get(data, 'max_face_distance', 0.75)
         # Faceswap session settings
@@ -1182,6 +1196,11 @@ class Settings:
             'faceset_library_path' : self.faceset_library_path,
             'use_os_temp_folder' : self.use_os_temp_folder,
             'output_show_video' : self.output_show_video,
+            'synthetic_label': self.synthetic_label,
+            'synthetic_label_text': self.synthetic_label_text,
+            'synthetic_watermark': self.synthetic_watermark,
+            'synthetic_watermark_text': self.synthetic_watermark_text,
+            'intended_use_acknowledged': self.intended_use_acknowledged,
             'launch_browser': self.launch_browser,
             'max_face_distance': self.max_face_distance,
             # Faceswap session settings

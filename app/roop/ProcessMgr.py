@@ -23,6 +23,7 @@ from roop.processors.FaceSwapInsightFace import (verify_tol_for as _swap_verify_
                                                   batch_swap_enabled as _batch_swap_enabled)
 from roop import orientation
 from roop import runtime_banner as _runtime_banner
+from roop import synthetic_label as _synthetic_label
 from roop import selected_routing
 from roop.face_util import estimate_norm, solve_pose_5pt, solve_pose_jaw_5pt
 from roop.face_util import offaxis_deg, swap_template_points
@@ -1469,7 +1470,7 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                                 pause_controller.pending_output(1)
                                 try:
                                     i = source_files.index(f)
-                                    cv2.imwrite(target_files[i], resimg)
+                                    cv2.imwrite(target_files[i], _synthetic_label.maybe_stamp(resimg))
                                 finally:
                                     pause_controller.pending_output(-1)
                     else:
@@ -1490,7 +1491,7 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                         raise   # non-GPU errors propagate normally
                 if resimg is not None and not self.options.frame_processing:
                     i = source_files.index(f)
-                    cv2.imwrite(target_files[i], resimg)
+                    cv2.imwrite(target_files[i], _synthetic_label.maybe_stamp(resimg))
                 if pause_controller.snapshot()["acknowledged"]:
                     self._checkpoint_at_safe_output(source_files.index(f) if resimg is not None else idx)
                 del temp_frame

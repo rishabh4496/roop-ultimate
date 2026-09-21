@@ -1567,6 +1567,10 @@ def batch_process(output_method, files:list[ProcessEntry], use_new_method) -> No
                 fakeimages.append(f.finalname)
 
             process_mgr.run_batch(origimages, fakeimages, roop.globals.execution_threads)
+            from roop import synthetic_label
+            if synthetic_label.label_enabled():
+                for _out in fakeimages:
+                    synthetic_label.label_file(_out)
             origimages.clear()
             fakeimages.clear()
 
@@ -1722,6 +1726,12 @@ def batch_process(output_method, files:list[ProcessEntry], use_new_method) -> No
                                 _remove_file_retry(video_file_name)
                         else:
                             shutil.move(video_file_name, destination)
+                    # Synthetic-media tag on the file the user receives (after the
+                    # A/V remux, which maps the ORIGINAL's metadata and would drop it).
+                    if destination and os.path.isfile(destination):
+                        from roop import synthetic_label
+                        if synthetic_label.label_enabled():
+                            synthetic_label.label_file(destination)
 
                 elif is_streaming_only == False and not stopped:
                     update_status(f'Failed processing {os.path.basename(v.finalname)}!')

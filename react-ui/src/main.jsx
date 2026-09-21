@@ -2,6 +2,7 @@ import { StrictMode, Component } from 'react'
 import { createRoot } from 'react-dom/client'
 import './index.css'
 import App from './App.jsx'
+import TermsGate from './components/TermsGate.jsx'
 
 // Top-level Error Boundary — catches uncaught render/lifecycle errors in the
 // entire React tree and shows a human-readable fallback instead of a blank page.
@@ -67,7 +68,10 @@ class ErrorBoundary extends Component {
 createRoot(document.getElementById('root')).render(
   <StrictMode>
     <ErrorBoundary>
-      <App />
+      {/* NOTICE.md's intended-use terms, once per install, before anything else. */}
+      <TermsGate>
+        <App />
+      </TermsGate>
     </ErrorBoundary>
   </StrictMode>,
 )

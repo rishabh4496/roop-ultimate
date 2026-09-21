@@ -381,6 +381,28 @@ sampling, TensorRT I/O binding, and NVENC remain on device. Set
 `ROOP_STRICT_NVDEC=1` and `ROOP_OPT_STRICT_TRT=1` to fail loudly if either
 hardware path is unavailable.
 
+### Synthetic-media labels and the intended-use screen
+
+The first time the app opens on an install it shows the **Intended use** section of
+[`NOTICE.md`](NOTICE.md) and asks you to accept it; rendering (`POST /api/swap`) is
+refused until you do, and the screen returns if that text changes. Acceptance is
+stored in `app/config.yaml` (`intended_use_acknowledged`).
+
+Every rendered file is **tagged as synthetic media in its metadata by default**
+(Settings → Output → *Label output as synthetic media*): MP4/MOV/MKV/WebM get the
+container tags `comment` and `synthetic_media=true`, PNG a `Comment` text chunk, JPEG an
+EXIF `ImageDescription` plus a comment segment. The tag is added to the finished file
+without re-encoding, so pixels are untouched; `ffprobe`, `exiftool` and most asset
+managers show it. An optional **visible watermark** (off by default, text configurable)
+stamps a caption on every output frame instead.
+
+What the labels do and do not guarantee: a metadata tag is a *label*, not a signature
+or a content credential. Any re-encode, screenshot, or metadata editor removes it, and
+nothing here can stop a recipient from doing that. The visible watermark survives
+re-encoding but can be cropped. GIF and WebP output carry no tag (their containers offer
+no comparable field here). The labels help you meet a duty to mark synthetic media;
+they do not prove provenance, and they are not a substitute for consent.
+
 ### Storage review
 
 The React Settings screen includes a Storage Manager backed by `GET /api/storage`.

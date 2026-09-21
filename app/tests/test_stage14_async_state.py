@@ -102,6 +102,10 @@ class Stage14Base(unittest.TestCase):
         self.old_entries = list(api.list_files_process)
         self.old_faces = list(roop_globals.TARGET_FACES)
         self.old_groups = list(roop_globals.TARGET_FACE_GROUP)
+        # These tests drive /api/swap; run them as an install that has accepted the
+        # intended-use terms (the gate itself is tested in test_synthetic_label.py).
+        _accepted = mock.patch('intended_use.acknowledged', return_value=True)
+        _accepted.start(); self.addCleanup(_accepted.stop)
         self.old_people = list(roop_globals.TARGET_FACE_PERSON_IDS)
         self.old_refs = list(roop_globals.TARGET_REFERENCE_FACE_IDS)
         self.old_names = dict(roop_globals.TARGET_FACE_NAMES)

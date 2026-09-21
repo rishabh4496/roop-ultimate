@@ -46,7 +46,10 @@
     "output_video_codec",
     "video_quality",
     "use_os_temp_folder",
-    "output_show_video"
+    "output_show_video",
+    "synthetic_label",
+    "synthetic_watermark",
+    "synthetic_watermark_text"
   ],
   "settings": {
     "hardware": {
@@ -312,6 +315,38 @@
         "label": "Show video in browser (re-encodes)",
         "section": "Output"
       }
+    },
+    "synthetic_label": {
+      "default": true,
+      "type": "bool",
+      "ui": {
+        "label": "Label output as synthetic media (metadata tag)",
+        "section": "Output"
+      }
+    },
+    "synthetic_label_text": {
+      "default": "AI-generated synthetic media: face swap (Roop Ultimate). Not a real recording.",
+      "type": "str"
+    },
+    "synthetic_watermark": {
+      "default": false,
+      "type": "bool",
+      "ui": {
+        "label": "Visible watermark on output",
+        "section": "Output"
+      }
+    },
+    "synthetic_watermark_text": {
+      "default": "AI face swap",
+      "type": "str",
+      "ui": {
+        "label": "Watermark text",
+        "section": "Output"
+      }
+    },
+    "intended_use_acknowledged": {
+      "default": "",
+      "type": "str"
     },
     "launch_browser": {
       "default": false,

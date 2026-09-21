@@ -17,6 +17,7 @@ import numpy as np
 
 from roop.ffmpeg_path import NVENC_PRESET_DEFAULT, NVENC_PRESETS, ffmpeg_binary
 from roop.util_ffmpeg import clamp_quality
+from roop import synthetic_label as _synthetic_label
 
 logger = logging.getLogger("roop.video")
 
@@ -625,6 +626,9 @@ class NVHardwareVideoWriter:
                 "NVENC/FFmpeg video writer exited before accepting a frame"
                 + (f": {self._error_detail()[-500:]}" if self._error_detail() else "")
             )
+        # Optional visible watermark, stamped on a copy so the pipeline's own
+        # frame is untouched; a no-op unless the setting is on.
+        frame = _synthetic_label.maybe_stamp(frame)
         owned = _frame_for_write(frame)
         if owned.shape[:2] != (self.height, self.width):
             raise ValueError(
