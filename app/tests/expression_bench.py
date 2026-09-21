@@ -19,7 +19,7 @@ output reproduces: a swap that damps a blink to half depth still correlates at
 1.0 and is still wrong, which is why both are reported.
 
 Usage:
-    env/Scripts/python.exe tests/expression_bench.py --source harjot
+    env/Scripts/python.exe tests/expression_bench.py --source person_a
     env/Scripts/python.exe tests/expression_bench.py --only e3 --tag mine
 """
 
@@ -104,7 +104,7 @@ def fmt(d, k):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--source", default="harjot")
+    ap.add_argument("--source", default="person_a")
     ap.add_argument("--provider", default="tensorrt")
     ap.add_argument("--swap-model", default="realswap")
     ap.add_argument("--mask-engine", default=None, help="default: config.yaml")

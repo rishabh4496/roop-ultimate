@@ -4,7 +4,7 @@ correctly across mismatched fps between plate and output.
 
 Usage:
     env/Scripts/python.exe tests/extract_frames.py --plate P.mp4 --swapped S.mp4 \
-        --times 0,30,90,150 --out G:/pinokio/cache/TEMP/.../scratchpad/frames
+        --times 0,30,90,150 --out <PINOKIO_HOME>/cache/TEMP/.../scratchpad/frames
 """
 import argparse
 import os

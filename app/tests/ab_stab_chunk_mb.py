@@ -1,7 +1,7 @@
 """A/B the stabilized render's chunk size: ROOP_STAB_CHUNK_MB.
 
     env/Scripts/python.exe tests/ab_stab_chunk_mb.py \
-        --clip "G:/pinokio/roop-keep/inverted/Cervical....mp4" --source harjot
+        --clip "<MEDIA_DIR>/inverted/Cervical....mp4" --source person_a
 
 WHAT IS BEING TESTED. `_run_stab_parallel` hands blocks to workers through a
 shared queue. The chunk holds `width * (fits // width)` blocks, and `fits` comes
@@ -120,7 +120,7 @@ def summarize(r, drop=1):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--clip', required=True)
-    ap.add_argument('--source', default='harjot')
+    ap.add_argument('--source', default='person_a')
     ap.add_argument('--enhancer', default='UltraMax')
     ap.add_argument('--reps', type=int, default=1, help='passes over the arm set')
     ap.add_argument('--only', default='', help='comma-separated arm labels to run')

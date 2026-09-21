@@ -1,4 +1,4 @@
-"""Stage 15 real-file acceptance: D:\\Monica Bellucci .mp4 x the user's harjot.fsz.
+"""Stage 15 real-file acceptance: <MEDIA_DIR>/target_clip.mp4 x the user's person_a.fsz.
 
 External harness against the SHIPPING backend over HTTP.  It sends the same
 canonical `processing_selection` the React UI sends (Stage 14), reads the
@@ -8,8 +8,8 @@ inputs are discovered and their identity (size/sha256) is written into the
 report, and the run aborts if either is missing.
 
     python tools/acceptance_stage15.py [--base http://127.0.0.1:17860]
-                                       [--target "D:/Monica Bellucci .mp4"]
-                                       [--faceset app/facesets/harjot.fsz]
+                                       [--target "<MEDIA_DIR>/target_clip.mp4"]
+                                       [--faceset app/facesets/person_a.fsz]
                                        [--render-frames 60]
 
 Report: output/acceptance_stage15/report.json (+ preview PNGs).
@@ -186,8 +186,9 @@ def wait_render(api, log, timeout_s=3600):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--base", default="http://127.0.0.1:17860")
-    ap.add_argument("--target", default="D:/Monica Bellucci .mp4")
-    ap.add_argument("--faceset", default=str(ROOT / "app" / "facesets" / "harjot.fsz"))
+    ap.add_argument("--target", default=os.environ.get("ROOP_TARGET_CLIP"),
+                    help="real target clip (default: $ROOP_TARGET_CLIP)")
+    ap.add_argument("--faceset", default=str(ROOT / "app" / "facesets" / "person_a.fsz"))
     ap.add_argument("--render-frames", type=int, default=60)
     ap.add_argument("--skip-render", action="store_true")
     ap.add_argument("--providers", default="",
@@ -196,7 +197,7 @@ def main():
     ap.add_argument("--tag", default="", help="report/preview subfolder, e.g. the provider under test")
     ap.add_argument("--face-index", type=int, default=None,
                     help="detected-face index (left-to-right) to capture as the intended target on the first "
-                         "face frame; default = largest box. Use 1 for Monica on frame 1 of the real clip.")
+                         "face frame; default = largest box. Use 1 for target_person on frame 1 of the real clip.")
     args = ap.parse_args()
 
     global OUT
@@ -241,12 +242,12 @@ def main():
                "target_faces": len(st.get("target_faces") or [])})
 
     # ── 2/3. faceset ───────────────────────────────────────────────────
-    print("== 2/3. load Harjot faceset")
+    print("== 2/3. load person_a faceset")
     code, res = api.upload("/api/source/add", str(faceset))
     info = (res.get("source_faces_info") or [None])[0]
-    rep.check("harjot.fsz loads as ONE source identity", code == 200 and res.get("faceset_count") == 1 and not res.get("errors"),
+    rep.check("person_a.fsz loads as ONE source identity", code == 200 and res.get("faceset_count") == 1 and not res.get("errors"),
               {"http": code, "faceset_count": res.get("faceset_count"), "errors": res.get("errors")})
-    rep.check("harjot angles stay under one identity (5 refs, front+profiles)",
+    rep.check("person_a angles stay under one identity (5 refs, front+profiles)",
               bool(info) and info.get("count", 0) >= 2 and len(set(info.get("poses") or [])) >= 2,
               {"count": info and info.get("count"), "poses": info and info.get("poses"), "id": info and info.get("id")})
     source_id = info["id"] if info else None
@@ -328,8 +329,8 @@ def main():
               and (st.get("source_faces_info") or [{}])[0].get("count") == info.get("count"),
               {"source_after": (st.get("source_faces_info") or [{}])[0]})
 
-    # ── 11-13. map to Harjot, preview: only the selected identity routes ─
-    print("== 11-13. map person -> Harjot, preview")
+    # ── 11-13. map to person_a, preview: only the selected identity routes ─
+    print("== 11-13. map person -> person_a, preview")
     code, ctx = api.post("/api/target/context", {"target_media_id": media_id, "selection_version": int(time.time()*1000),
                                                  "selected_target_person_id": person_a,
                                                  "target_person_source_mapping": {person_a: source_id}})

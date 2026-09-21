@@ -13,7 +13,7 @@ something unrelated to it.** From the launcher's own log:
     Exception When localhost is not accessible, a shareable link must be
       created. ... when launching Gradio Server!
     Closing server running on port: 42005
-    (env) (base) G:\pinokio\api\roop-ultimate\app>       <- process exited
+    (env) (base) <PINOKIO_HOME>/api/roop-ultimate\app>       <- process exited
 
 `run.py` starts the FastAPI backend on a **daemon** thread and then calls
 `core.run()`, which launches the legacy Gradio UI on the main thread. The API

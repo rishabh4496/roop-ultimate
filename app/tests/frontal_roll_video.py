@@ -29,7 +29,7 @@ column is the plate's own round trip and is the tell that that has been avoided.
 
 Usage:
     env/Scripts/python.exe tests/frontal_roll_video.py --tag before
-    env/Scripts/python.exe tests/frontal_roll_video.py --tag after --source rhythm
+    env/Scripts/python.exe tests/frontal_roll_video.py --tag after --source person_d
 """
 
 import argparse
@@ -217,7 +217,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--tag", required=True)
     ap.add_argument("--video", default=fixtures.clip('vidssave.mp4'))
-    ap.add_argument("--source", default="rhythm", help="source faceset name")
+    ap.add_argument("--source", default="person_d", help="source faceset name")
     ap.add_argument("--frame", type=int, default=-1,
                     help="plate frame index; -1 picks the most frontal")
     ap.add_argument("--provider", default="cuda")

@@ -22,10 +22,14 @@ import { spawn } from 'node:child_process';
 import net from 'node:net';
 import path from 'node:path';
 
-const REQ = createRequire('G:/pinokio/cache/npm_config_cache/_npx/e41f203b7505f1fb/');
+// PLAYWRIGHT_REQUIRE_FROM: a directory whose node_modules holds playwright-core
+// (e.g. an npx cache entry); defaults to this package. CHROME_PATH: the
+// Chromium executable to drive.
+const REQ = createRequire(process.env.PLAYWRIGHT_REQUIRE_FROM || import.meta.url);
 const { chromium } = REQ('playwright-core');
 
-const CHROME = 'C:/Users/rishr/AppData/Local/ms-playwright/chromium-1234/chrome-win64/chrome.exe';
+const CHROME = process.env.CHROME_PATH;
+if (!CHROME) throw new Error('set CHROME_PATH to a Chromium executable');
 const REPO = path.resolve('..');
 const PY = path.join(REPO, 'app', 'env', 'Scripts', 'python.exe');
 

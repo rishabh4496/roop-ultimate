@@ -1,8 +1,16 @@
-"""Run the roop-keep video folders with one fresh GPU process per video.
+"""Run the retained video folders with one fresh GPU process per video.
+
+The media folder and faceset names are machine-specific and never live in
+the tree. Give them on the command line or in the environment:
+
+    --root / ROOP_BATCH_ROOT                    folder holding single/ and double/
+    --single-faceset / ROOP_BATCH_SINGLE_FACESET   faceset for single/*.mp4
+    --double-facesets / ROOP_BATCH_DOUBLE_FACESETS two names, left to right
 
 Examples:
-    python pinokio_batch_runner.py --dry-run
-    python pinokio_batch_runner.py
+    python pinokio_batch_runner.py --root <MEDIA_DIR> --single-faceset my_faceset \
+        --double-facesets my_faceset,other_faceset --dry-run
+    set ROOP_BATCH_ROOT=<MEDIA_DIR> && python pinokio_batch_runner.py ...
 
 The parent process is intentionally lightweight.  It never imports the Roop
 application or CUDA; all GPU state is created and destroyed in a spawn child
@@ -220,11 +228,17 @@ def _configure_logging(log_path: Path) -> logging.Logger:
 
 def main(argv: Iterable[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--root", type=Path, default=Path(r"G:\pinokio\roop-keep"),
-                        help="folder containing single/ and double/")
-    parser.add_argument("--single-faceset", default="rhythm")
-    parser.add_argument("--double-facesets", default="ashna,rhythm",
-                        help="two comma-separated faceset names, left to right")
+    env = os.environ
+    parser.add_argument("--root", type=Path, default=env.get("ROOP_BATCH_ROOT"),
+                        required="ROOP_BATCH_ROOT" not in env,
+                        help="folder containing single/ and double/ (or $ROOP_BATCH_ROOT)")
+    parser.add_argument("--single-faceset", default=env.get("ROOP_BATCH_SINGLE_FACESET"),
+                        required="ROOP_BATCH_SINGLE_FACESET" not in env,
+                        help="faceset name for single/ (or $ROOP_BATCH_SINGLE_FACESET)")
+    parser.add_argument("--double-facesets", default=env.get("ROOP_BATCH_DOUBLE_FACESETS"),
+                        required="ROOP_BATCH_DOUBLE_FACESETS" not in env,
+                        help="two comma-separated faceset names, left to right "
+                             "(or $ROOP_BATCH_DOUBLE_FACESETS)")
     parser.add_argument("--overwrite", action="store_true",
                         help="replace already completed outputs")
     parser.add_argument("--dry-run", action="store_true",
@@ -232,7 +246,7 @@ def main(argv: Iterable[str] | None = None) -> int:
     parser.add_argument("--log", type=Path, default=None,
                         help="defaults to <root>/pinokio_batch_runner.log")
     args = parser.parse_args(argv)
-    root = args.root.resolve()
+    root = Path(args.root).resolve()
     double_facesets = tuple(item.strip() for item in args.double_facesets.split(",") if item.strip())
     if len(double_facesets) != 2:
         parser.error("--double-facesets must contain exactly two names")

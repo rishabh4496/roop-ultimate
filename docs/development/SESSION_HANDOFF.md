@@ -73,7 +73,7 @@ something unrelated to it.** From the launcher's own log:
     Exception When localhost is not accessible, a shareable link must be
       created. ... when launching Gradio Server!
     Closing server running on port: 42005
-    (env) (base) G:\pinokio\api\roop-ultimate\app>       <- process exited
+    (env) (base) <PINOKIO_HOME>/api/roop-ultimate\app>       <- process exited
 
 `run.py` starts the FastAPI backend on a **daemon** thread and then calls
 `core.run()`, which launches the legacy Gradio UI on the main thread. The API
@@ -948,7 +948,7 @@ not update rollback or complete model identity.
   were inspected at audit start.
 - `logs/api/update.js/latest` records a successful React UI 1.0 `npm install`;
   historical update logs record the root fast-forward and Python/Node steps.
-- `G:\pinokio\prototype\system\examples\comfy\update.js` and relevant
+- `<PINOKIO_HOME>\prototype\system\examples\comfy\update.js` and relevant
   `PINOKIO.md` update/menu/shell sections were inspected.
 - No application or launcher update was executed by this gate.
 
@@ -1495,7 +1495,7 @@ substitute Device A for the requested RTX 3060.
 ### NOT VERIFIED / FAILURES
 
 - Device A still-image processing failed twice: canonical `single/s1.mp4`,
-  source `harjot`, frame 200 returned `0.00/255` face-region delta and zero
+  source `person_a`, frame 200 returned `0.00/255` face-region delta and zero
   identity gain under both configured TensorRT and CUDA/no-enhancer paths.
 - Device A long-run stability was not completed. The latest available long run
   stopped after 1,588.72 seconds with partial output.
@@ -1595,7 +1595,7 @@ browser, Device B, offline-adapter, and final playback limits remain.
 - `update_health.py` returned failure because its launch probe timed out, even
   though the child output reported loopback listening; a separate direct launch
   on port 14561 returned HTTP 200. The validator issue remains open.
-- The long-run harness re-measured 71 of 467 gradable `harjot` frames as the
+- The long-run harness re-measured 71 of 467 gradable `person_a` frames as the
   other person. Zero wrong-faceset applications does not eliminate this visual
   quality failure.
 - Device B RTX 3060 Laptop was unavailable; no result is extrapolated from the
@@ -1670,7 +1670,7 @@ not production-ready.
 - Preserved the distinction between source/control-plane evidence and missing
   live browser, physical hardware, shutdown, offline, and visual evidence.
 - Recorded the explicit failures: the Stage 15 health launch-probe timeout and
-  the 71/467 `harjot` long-run visual-quality mismatch.
+  the 71/467 `person_a` long-run visual-quality mismatch.
 
 ### VERIFIED
 

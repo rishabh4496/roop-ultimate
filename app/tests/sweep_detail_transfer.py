@@ -1,7 +1,7 @@
 """Sweep `detail_transfer_strength` against the skin-texture gap it exists to close.
 
     env/Scripts/python.exe tests/sweep_detail_transfer.py \
-        --clip "G:/pinokio/roop-keep/inverted/s1.mp4" --source harjot \
+        --clip "<MEDIA_DIR>/inverted/s1.mp4" --source person_a \
         --values 0,0.4,0.7,1.0
 
 WHY A FULL RENDER PER ARM. Detail transfer runs in face-template space and the
@@ -246,7 +246,7 @@ def means(clip, source_name, frames=GRADE_FRAMES):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--clip", default=fixtures.clip('inverted/s1.mp4'))
-    ap.add_argument("--source", default="harjot")
+    ap.add_argument("--source", default="person_a")
     ap.add_argument("--enhancer", default="UltraMax")
     ap.add_argument("--values", default="0,0.4,0.7,1.0")
     ap.add_argument("--threads", type=int, default=None)

@@ -1,8 +1,8 @@
 """Locate the shared benchmark clips on whichever validation target is running.
 
-WHY THIS EXISTS. Every harness here baked in a `G:/pinokio/roop-keep/...`
+WHY THIS EXISTS. Every harness here baked in a `<MEDIA_DIR>/...`
 fixture path. That is one machine's drive layout -- the RTX 4070 workstation's.
-On the physical RTX 3060 laptop `PINOKIO_HOME` is `C:\\pinokio` and there is no
+On the physical RTX 3060 laptop `PINOKIO_HOME` is on another drive and there is no
 `G:` drive at all, so a hardcoded fixture is not merely wrong, it is
 unreachable.
 
@@ -188,7 +188,7 @@ def clip_dir(rel, required=False):
 
     The folder analogue of `clip`. Harnesses that sweep a whole category
     (`final/`, `double/`, `expression/`, `single/`, `3d model/`) hardcoded the
-    4070's `G:/pinokio/roop-keep/<name>`, which does not exist on the 3060 --
+    4070's `<MEDIA_DIR>/<name>`, which does not exist on the 3060 --
     and a missing directory does not raise the way a missing file does. Several
     of those harnesses simply iterate nothing and report a clean empty result,
     which is the silent-empty failure this project has already been caught by

@@ -118,7 +118,7 @@ something unrelated to it.** From the launcher's own log:
     Exception When localhost is not accessible, a shareable link must be
       created. ... when launching Gradio Server!
     Closing server running on port: 42005
-    (env) (base) G:\pinokio\api\roop-ultimate\app>       <- process exited
+    (env) (base) <PINOKIO_HOME>/api/roop-ultimate\app>       <- process exited
 
 `run.py` starts the FastAPI backend on a **daemon** thread and then calls
 `core.run()`, which launches the legacy Gradio UI on the main thread. The API
@@ -423,7 +423,7 @@ newer writer-options identity are conservatively not trusted for continuation.
     detected only the RTX 4070. The target guard correctly marked the RTX 3060
     run pending; historical 3060 records are not fresh Stage 14 evidence.
 41. **Stage 14 Device A still-image processing failed.** The canonical
-    `single/s1.mp4` smoke with source `harjot` produced a 0.00/255 face-region
+    `single/s1.mp4` smoke with source `person_a` produced a 0.00/255 face-region
     delta and zero identity gain at frame 200 under both the configured
     TensorRT path and the documented CUDA/no-enhancer path. The separate
     short d4 video path passed; the still-path failure remains unresolved.
@@ -446,7 +446,7 @@ newer writer-options identity are conservatively not trusted for continuation.
 
 45. **Stage 15 long-run visual quality is not clean.** The 600-frame Device A
     soak completed and made 886 swaps with zero wrong-faceset applications, but
-    its quality harness re-measured 71 of 467 gradable `harjot` output frames
+    its quality harness re-measured 71 of 467 gradable `person_a` output frames
     as the other person. This is a real quality limitation; no corrective
     feature change was made during the validation-only gate.
 
@@ -622,13 +622,13 @@ showed the 22 "hidden" landmarks were all 2d106 jaw-contour points (0-13,
 landmarks (33-105) on the 106-point layout (`roop.tracker.
 occlusion_gate_population`); the 8% threshold is unchanged and an occluder
 across the face still trips it (`tests/test_occlusion_gate_population.py`).
-Re-run of the real-file acceptance: 29 PASS / 0 FAIL, Monica paints (0.384
+Re-run of the real-file acceptance: 29 PASS / 0 FAIL, target_person paints (0.384
 changed inside her box, 0.0 on the two men). The original record follows.
 
 `roop.tracker.occlusion_state_for` marks a face `partial` when >= 8% of its
 106 landmarks fall outside the occluder mask, and `ProcessMgr.process_face`
 then discards the whole swap (`refused: partial occlusion`). On
-`D:\Monica Bellucci .mp4` frame 1 the occluder reads Monica's fully visible
+`<MEDIA_DIR>/target_clip.mp4` frame 1 the occluder reads target_person's fully visible
 face at 0.208 (0.17-0.21 across the first 60 frames) and the man on the right
 at 0.17; the man on the left reads 0.094 on CPU and < 0.08 on CUDA/TensorRT,
 so the SAME face paints on the GPU and is refused on CPU. Identity routing is

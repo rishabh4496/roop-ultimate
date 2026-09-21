@@ -3,8 +3,8 @@
 TWO defects are pinned here, and the second was introduced while fixing the
 first.
 
-1. **Hardcoded `G:/pinokio/roop-keep/...`.** That is the RTX 4070
-   workstation's layout. On the RTX 3060 laptop `PINOKIO_HOME` is `C:\\pinokio`
+1. **Hardcoded `<MEDIA_DIR>/...`.** That is the RTX 4070
+   workstation's layout. On the RTX 3060 laptop `PINOKIO_HOME` is on another drive
    and there is no `G:` drive at all, so every documented dual-GPU command died
    on a missing file -- or worse, swept an empty directory and reported a clean
    result. `tests/fixtures.py` exists precisely to resolve this at runtime; it

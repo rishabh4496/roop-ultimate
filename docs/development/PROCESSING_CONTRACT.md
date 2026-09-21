@@ -1,6 +1,6 @@
 # Processing Contract
 
-## Selection Stage 15 amendment (2026-09-21): real-file acceptance, D:\Monica Bellucci .mp4 x harjot.fsz
+## Selection Stage 15 amendment (2026-09-21): real-file acceptance, <MEDIA_DIR>/target_clip.mp4 x person_a.fsz
 
 Audit-first stage; four defects were found and fixed, each pinned in
 `app/tests/test_stage15_identity_audit.py` (mutation-checked: the tests go red
@@ -30,16 +30,16 @@ a discarded swap logs `[Occlusion] swap discarded (partial occlusion): bbox=
 hidden_landmark_frac= gate=0.08`.
 
 **Real-file result (tools/acceptance_stage15.py, reports under
-`output/acceptance_stage15/<provider>_monica/`):** identity routing is correct
+`output/acceptance_stage15/<provider>_target_person/`):** identity routing is correct
 and exclusive on TensorRT, CUDA and CPU (no target -> `target_required`, 0
 swaps, `/api/swap` 409; explicit capture -> one person; only the selected
 person is routed; preview and final freeze the same media/person/source/
 mapping; media A/B isolated; session restore by id; clean-state retest fresh).
-**Painting is still refused for Monica's face by the occlusion admission gate**
+**Painting is still refused for target_person's face by the occlusion admission gate**
 (`refused: partial occlusion`, `hidden_landmark_frac` 0.17-0.21 against 0.08
 on a fully visible face; 26 of 67 routed swaps discarded in a 60-frame render).
 With the gate's own A/B override `ROOP_OCCLUSION_MASK=0` the selected face and
-only that face paints (Monica 0.386, man-left 0.298, man-right 0.307 changed
+only that face paints (target_person 0.386, man-left 0.298, man-right 0.307 changed
 fraction inside the box). The gate was deliberately NOT tuned in this stage;
 see KNOWN_ISSUES.
 

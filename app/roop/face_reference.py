@@ -40,7 +40,7 @@ class PersistentReferenceEmbeddingCache:
     video frame is matched.  This cache accepts those already-normalized
     512-D results once, retains their CUDA ``float32`` matrix, and exposes
     ``torch.mm(frame_faces_emb, ref_emb.T)`` for every later frame.  It is
-    intentionally a small, process-wide cache: one Mehak/Misbah bank is
+    intentionally a small, process-wide cache: one person_k/person_e bank is
     shared rather than copied into every inner detection loop.
     """
 
@@ -516,13 +516,13 @@ class IdentityTrackState:
 
 
 class MultiIdentityReferenceRouter:
-    """Disambiguates and routes multiple face identities (e.g., 'mehak' and 'misbah').
+    """Disambiguates and routes multiple face identities (e.g., 'person_k' and 'person_e').
 
     Maintains a sliding window of face embeddings per target identity.
     Uses cosine similarity with dual-threshold hysteresis (S_match >= 0.62,
     S_track >= 0.50 when paired with spatial IoU >= 0.50 from previous frame)
-    and optimal bipartite matching to prevent identity flipping when 'mehak'
-    and 'misbah' cross paths, occlude each other, or turn away from camera.
+    and optimal bipartite matching to prevent identity flipping when 'person_k'
+    and 'person_e' cross paths, occlude each other, or turn away from camera.
     """
 
     def __init__(
@@ -545,7 +545,7 @@ class MultiIdentityReferenceRouter:
             self.register_identities(identities)
 
     def register_identities(self, identities: Dict[str, Any]) -> None:
-        """Register one or more target identities (e.g. {'mehak': ..., 'misbah': ...})."""
+        """Register one or more target identities (e.g. {'person_k': ..., 'person_e': ...})."""
         with self._lock:
             for name, data in identities.items():
                 emb = None

@@ -107,7 +107,7 @@ is the target on which Gate D's CPU-distribution matrix can actually be run.
 
 ### RESOLVED: the fixture was replicated, and the baseline is MEASURED
 
-The operator replicated the clip tree to `C:\pinokio\roop-keep\` mid-session.
+The operator replicated the clip tree to `<MEDIA_DIR>\` mid-session.
 `double/d4.mp4` fingerprints as **1280x720, 13305 frames**, matching the locked
 identity exactly, so the run below is on the real Phase 2 workload. The
 resolver prefers the hyphen root, so no flag or config edit was needed.
@@ -1209,8 +1209,8 @@ isolated application environment:
 cd app
 env/Scripts/python.exe tests/phase12_benchmark.py --target "RTX 3060" --video <720p-d4> --start 0 --end 120 --out output/phase16_validation/phase12_3060
 env/Scripts/python.exe tests/phase13_benchmark.py --target "RTX 3060" --video <720p-d4> --start 0 --end 120 --codecs libx264,h264_nvenc,hevc_nvenc --segment-sizes 120 --out output/phase16_validation/phase13_3060
-env/Scripts/python.exe tests/compat_one.py --precision fp32 --provider tensorrt --mask-engine None --enhancer None --clip <1080p> --source harjot --out output/phase16_validation/resolution_3060/1080_fp32
-env/Scripts/python.exe tests/compat_one.py --precision mixed --provider tensorrt --mask-engine None --enhancer None --clip <1080p> --source harjot --out output/phase16_validation/resolution_3060/1080_mixed
+env/Scripts/python.exe tests/compat_one.py --precision fp32 --provider tensorrt --mask-engine None --enhancer None --clip <1080p> --source person_a --out output/phase16_validation/resolution_3060/1080_fp32
+env/Scripts/python.exe tests/compat_one.py --precision mixed --provider tensorrt --mask-engine None --enhancer None --clip <1080p> --source person_a --out output/phase16_validation/resolution_3060/1080_mixed
 ```
 
 Repeat the accepted enhancer, feature-toggle, and codec arms with the same
@@ -1927,7 +1927,7 @@ configuration is silently reused on the 3060.
 
 Run on the RTX 3060 Laptop 6GB, driver 616.56, compute 8.6, i7-12700H
 (14 physical / 20 logical), 15.8 GB RAM. Locked fixture verified on this
-machine as `C:\pinokio\roop-keep\double\d4.mp4`, **1280x720, 13305 frames** —
+machine as `<MEDIA_DIR>\double\d4.mp4`, **1280x720, 13305 frames** —
 the correct clip, not the 854x480 impostor that shares the filename. 40 renders
 of the 600-frame fixture. Suite 1506 tests, 1 skipped, 2 pre-existing
 `test_nvdec_reader` ffmpeg-spawn environment errors.

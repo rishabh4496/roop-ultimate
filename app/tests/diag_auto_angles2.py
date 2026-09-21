@@ -5,7 +5,7 @@ compare SWAP AUDIT numbers against the single-angle baseline.
 
 Usage:
     env/Scripts/python.exe tests/diag_auto_angles2.py --video PATH \
-        --swap-video PATH --sources harjot,shambhavi
+        --swap-video PATH --sources person_a,person_f
 """
 import argparse
 import os

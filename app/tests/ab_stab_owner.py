@@ -150,7 +150,7 @@ def run_arm(args, cfg, tag, streaming, out_dir):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--clip', default=fixtures.clip('double/d1.mp4'))
-    ap.add_argument('--sources', default='harjot,gargee')
+    ap.add_argument('--sources', default='person_a,person_c')
     ap.add_argument('--end', type=int, default=600)
     ap.add_argument('--reps', type=int, default=1,
                     help='ABBA passes; one pass is already counterbalanced')

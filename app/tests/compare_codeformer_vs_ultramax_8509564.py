@@ -81,7 +81,7 @@ def create_side_by_side_video(video_cf_path, video_um_path, out_path, fps_cf, fp
         cv2.rectangle(canvas, (0, 0), (out_w, 65), (15, 15, 15), -1)
         cv2.putText(canvas, "8509564 Inverted 4K UHD Face Swap Benchmark",
                     (out_w // 2 - 360, 30), font, 0.9, (255, 255, 255), 2, cv2.LINE_AA)
-        cv2.putText(canvas, f"Frame: {f_idx + 1}/{total_f} | Source: Harjot | Swapper: RealSwap (100% Eyelash Isolation)",
+        cv2.putText(canvas, f"Frame: {f_idx + 1}/{total_f} | Source: person_a | Swapper: RealSwap (100% Eyelash Isolation)",
                     (out_w // 2 - 380, 55), font, 0.55, (180, 180, 180), 1, cv2.LINE_AA)
 
         # Left HUD (CodeFormer)
@@ -110,7 +110,7 @@ def create_side_by_side_video(video_cf_path, video_um_path, out_path, fps_cf, fp
 
 def main():
     ensure_ffmpeg()
-    source_name = "harjot"
+    source_name = "person_a"
     swapper_name = "realswap"
     mask_name = "mask_realityux"
 

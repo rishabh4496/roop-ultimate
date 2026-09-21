@@ -178,7 +178,7 @@ def resolve_faceset(name):
     """Resolve a faceset name, tolerating a misspelling but never silently.
 
     Returns (resolved_name, note). A near-miss is resolved and REPORTED -- the
-    brief asks for `mehak`, the library holds `mahek`. Substituting quietly
+    brief asks for `persno_k`, the library holds `person_k`. Substituting quietly
     would put a different person's face in a verification report; refusing
     outright would fail the whole run on a transposition. So it resolves and
     says so, in the console and in the JSON.
@@ -1234,8 +1234,8 @@ def main():
                         help="restrict the corpus class; used by the isolated runner")
     parser.add_argument("--save-strips", action="store_true",
                         help="write 4-column diagnostic strips per video")
-    parser.add_argument("--single-faceset", default="mehak")
-    parser.add_argument("--double-facesets", default="mehak,misbah")
+    parser.add_argument("--single-faceset", default="person_k")
+    parser.add_argument("--double-facesets", default="person_k,person_e")
     parser.add_argument("--swap-model", default=None,
                         help="default: whatever config.yaml runs")
     parser.add_argument("--enhancer", default=None)

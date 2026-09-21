@@ -24,7 +24,7 @@ def main():
 
     A.post("/api/source/clear", {})
     A.post("/api/target/clear", {})
-    src = fixtures.clip("faceset-v1-backup-2026-09-03/harjot.png")
+    src = fixtures.clip("faceset-v1-backup-2026-09-03/person_a.png")
     with open(src, "rb") as fh:
         A.post_file("/api/source/add", "files", os.path.basename(src),
                     fh.read(), "image/png")

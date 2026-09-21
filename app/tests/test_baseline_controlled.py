@@ -63,9 +63,9 @@ class ParseRunFpsTest(unittest.TestCase):
 
     def test_swap_audit_is_carried_through(self):
         txt = self.GOOD + (
-            "  box 0 from the left (harjot): 477 frames, swapped 473\n"
-            "      WRONG FACESET APPLIED on 0 of 206 swaps attributed to harjot\n"
-            "      WRONG FACESET APPLIED on 0 of 436 swaps attributed to gargee\n")
+            "  box 0 from the left (person_a): 477 frames, swapped 473\n"
+            "      WRONG FACESET APPLIED on 0 of 206 swaps attributed to person_a\n"
+            "      WRONG FACESET APPLIED on 0 of 436 swaps attributed to person_c\n")
         r = bc.parse_run(txt)
         self.assertEqual(r["wrong_faceset"], 0)
         self.assertEqual(r["attributed_swaps"], 642)

@@ -89,7 +89,7 @@ def find_existing_complete(dir_path, clip_stem, expected_frames):
     return None
 
 
-def run_ultramax_swap(clip, source_name="harjot", threads=12):
+def run_ultramax_swap(clip, source_name="person_a", threads=12):
     ensure_ffmpeg()
     swapper_name = "realswap"
     enhancer_name = "UltraMax"
@@ -130,7 +130,7 @@ def run_ultramax_swap(clip, source_name="harjot", threads=12):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--source", default="harjot")
+    ap.add_argument("--source", default="person_a")
     ap.add_argument("--only", default="")
     ap.add_argument("--threads", type=int, default=12)
     args = ap.parse_args()

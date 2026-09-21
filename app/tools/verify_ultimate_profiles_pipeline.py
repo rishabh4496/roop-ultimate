@@ -47,8 +47,8 @@ def main():
     from roop.FaceSet import FaceSet
     import roop.core as core
 
-    src_path = os.path.join(FACESETS, 'lori.png')
-    tgt_path = os.path.join(FACESETS, 'simran.png')
+    src_path = os.path.join(FACESETS, 'person_h.png')
+    tgt_path = os.path.join(FACESETS, 'person_l.png')
     for p in (src_path, tgt_path):
         assert os.path.exists(p), p
 

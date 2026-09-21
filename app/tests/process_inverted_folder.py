@@ -1,4 +1,4 @@
-"""Process and test all video clips in G:/pinokio/roop-keep/inverted/
+"""Process and test all video clips in <MEDIA_DIR>/inverted/
 using RealSwap + RealityUX + UltraMax, extracting preview frames for verification.
 """
 
@@ -54,7 +54,7 @@ def extract_inspection_frames(video_path, out_dir, prefix, num_samples=6):
 
 def main():
     ensure_ffmpeg()
-    source_name = "harjot"
+    source_name = "person_a"
     swapper_name = "realswap"
     enhancer_name = "UltraMax"
     mask_name = "mask_realityux"

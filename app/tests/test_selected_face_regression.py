@@ -8,8 +8,8 @@ SYNTHETIC embeddings, so the contract is checked with no GPU, no detector, and
 no randomness.
 
 Scenario (shared across the assertions):
-  source faceset  = Harjot                    -> source index 0
-  target person A = group 0, meant to receive Harjot   (detected face A)
+  source faceset  = person_a                    -> source index 0
+  target person A = group 0, meant to receive person_a   (detected face A)
   target person B = group 1, an unrelated person       (detected face B)
   a third detected face C = a bystander, nobody's target
   mode = Selected Face, exactly one target person selected
@@ -122,7 +122,7 @@ class AReceivesSource(unittest.TestCase):
         faces, td, groups = _scenario()
         r = _run(faces, td, groups, selected_groups={0})
         self.assertIn(A, r.swapped_face_indices(), "person A must be swapped")
-        self.assertEqual(r.source_for_face(A), 0, "A must receive source 0 (Harjot)")
+        self.assertEqual(r.source_for_face(A), 0, "A must receive source 0 (person_a)")
 
 
 class BUnchanged(unittest.TestCase):

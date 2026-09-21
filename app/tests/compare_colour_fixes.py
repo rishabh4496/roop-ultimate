@@ -31,7 +31,7 @@ import cv2
 
 ap = argparse.ArgumentParser()
 ap.add_argument('--clip', default=fixtures.clip('inverted/s1.mp4'))
-ap.add_argument('--fsz', default='facesets/harjot.fsz')
+ap.add_argument('--fsz', default='facesets/person_a.fsz')
 ap.add_argument('--frames', type=int, default=4)
 ap.add_argument('--enhancer', default='UltraMax',
                 help="default UltraMax -- the processor the chroma fix is in. "

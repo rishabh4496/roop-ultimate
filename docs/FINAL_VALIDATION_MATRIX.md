@@ -6,9 +6,9 @@ current code produced the evidence named in its own cell.
 
 > **Two campaigns, two machines, one document.** Everything from
 > `## Hardware targets` to `## Open / not attempted` is the **RTX 3060 Laptop**
-> campaign, run on `C:\pinokio\`. The **RTX 4070** campaign is the section
+> campaign, run on `<PINOKIO_HOME>\`. The **RTX 4070** campaign is the section
 > `## RTX 4070 campaign (2026-09-01)` at the end of this file, run on
-> `G:\pinokio\`. Neither upgrades the other's `NOT TESTED` cells: the two
+> `<PINOKIO_HOME>\`. Neither upgrades the other's `NOT TESTED` cells: the two
 > machines are physically separate and approval rule 7 applies in both
 > directions.
 
@@ -38,8 +38,8 @@ from the other GPU.
 
 | target | present in this campaign | notes |
 |---|---|---|
-| RTX 3060 Laptop 6GB, driver 616.56 | **YES** - every run below is on it | `C:\pinokio\`, 17 GB host RAM, 14P/20L CPU, CUDA 12.8, ORT 1.23.2 |
-| RTX 4070 12GB | **NO - physically absent from this host** | lives on the other machine (`G:\pinokio\`). Every 4070 cell is `NOT TESTED`; prior 4070 values are cited as history, never as this campaign's evidence |
+| RTX 3060 Laptop 6GB, driver 616.56 | **YES** - every run below is on it | `<PINOKIO_HOME>\`, 17 GB host RAM, 14P/20L CPU, CUDA 12.8, ORT 1.23.2 |
+| RTX 4070 12GB | **NO - physically absent from this host** | lives on the other machine (`<PINOKIO_HOME>\`). Every 4070 cell is `NOT TESTED`; prior 4070 values are cited as history, never as this campaign's evidence |
 
 Under the campaign's own approval rule 7, a decision needing the other physical
 machine is recorded and deferred, not guessed.
@@ -127,8 +127,8 @@ TensorRT runtime. Current code does not reject TensorRT based on VRAM tier.
 
 | # | test | level | actual | status | 3060 | 4070 |
 |---|---|---|---|---|---|---|
-| 5.1 | legacy V1 `.fsz` loads and swaps | INTEGRATION | `harjot`/`gargee` (5 root PNGs, no metadata) work in every arm | PASS | PASS | NOT TESTED |
-| 5.2 | V2 build from V1, identities unchanged | INTEGRATION | `harjot_v2`/`gargee_v2`: version 2, 5/5 sources, `identity_detail_ok=5`, 5 distinct pose bins, quality 0.81-0.87 | PASS | PASS | NOT TESTED |
+| 5.1 | legacy V1 `.fsz` loads and swaps | INTEGRATION | `person_a`/`person_c` (5 root PNGs, no metadata) work in every arm | PASS | PASS | NOT TESTED |
+| 5.2 | V2 build from V1, identities unchanged | INTEGRATION | `person_a_v2`/`person_c_v2`: version 2, 5/5 sources, `identity_detail_ok=5`, 5 distinct pose bins, quality 0.81-0.87 | PASS | PASS | NOT TESTED |
 | 5.3 | **a valid V2 archive can still be inert** | UNIT | `migrate_legacy_fsz` yields version 2 with EMPTY `identity_details` | **FIXED** | PASS | N/A |
 | 5.4 | identity detail executes on real footage | VIDEO | `identity_detail` stage **799 calls @ 9.55 ms** - first real V2 exercise anywhere | PASS | PASS | NOT TESTED |
 | 5.5 | identity detail throughput cost | PERFORMANCE | -5.2%, inside the set's own 8.2% floor - and see the throughput caveat above, which applies to every FPS row in this document | **N/R** | N/R | NOT TESTED |
@@ -263,7 +263,7 @@ with GPU utilization recorded beside every arm - or the 4070.
 | # | defect | why it mattered | evidence | status |
 |---|---|---|---|---|
 | D.1 | `face_util.get_all_faces` swallowed EVERY detector exception silently | the exact cause of two prior investigations: yoloface returning 0 faces at "329 fps", and a bench grading 0/600 frames and blaming the footage. A run finishes rc 0, valid output, audit 100% | 6 contracts in `test_detector_failure_visibility.py`; return contract deliberately unchanged | **FIXED** |
-| D.2 | 35 harnesses hard-coded `G:/pinokio/...` | the other machine's drive. On this target every default was unreachable, and folder sweeps silently swept nothing | all migrated to `fixtures.clip()/clip_dir()`; 8/8 fixture paths resolve here; guarded by `test_fixture_paths.py` | **FIXED** |
+| D.2 | 35 harnesses hard-coded `<PINOKIO_HOME>/...` | the other machine's drive. On this target every default was unreachable, and folder sweeps silently swept nothing | all migrated to `fixtures.clip()/clip_dir()`; 8/8 fixture paths resolve here; guarded by `test_fixture_paths.py` | **FIXED** |
 | D.3 | `test_phase14_profile` imported `pytest`, absent from `app/env` | the module never ran, including the ONLY check that `ROOP_BLEND_ROI_WARP` is bit-identical. A collection error reads as an environment complaint, not an untested optimization | converted to unittest; 3 tests pass | **FIXED** |
 | D.4 | `test_nvdec_reader` x2 carried as "pre-existing environment errors" | not environmental. The tests skipped the ffmpeg resolution the app performs; ffmpeg lives under `PINOKIO_HOME/bin`, not on PATH | resolves like the app, skips honestly if truly absent; 4/4 pass | **FIXED** |
 | D.5 | `baseline_controlled` could not express the Phase 10 arm | the documented 3060 appearance arm would have silently measured the baseline twice | `--target-appearance-mode`; 4 of 6 new contracts verified to FAIL on the unpatched harness | **FIXED** |
@@ -309,10 +309,10 @@ nothing here upgrades a 3060 cell and nothing there upgrades a 4070 cell.
 |---|---|
 | GPU / driver | RTX 4070 12GB, driver 616.56, compute 8.9 |
 | runtime | TensorRT 10.9.0.34, ORT 1.23.2, torch 2.7.0+cu128, cv2 4.9.0 |
-| host | 24P/32L CPU, 31.7 GB RAM, Windows 11, `G:\pinokio\` |
+| host | 24P/32L CPU, 31.7 GB RAM, Windows 11, `<PINOKIO_HOME>\` |
 | live config | `realswap` / `RealityUX` / `UltraMax` / `tensorrt` / `hevc_nvenc` / 12 threads / `retinaface_r50` at 512 |
 | notable | `target_conditioned_appearance: true` is LIVE here. It is `False` in `settings.py` and in `roop/globals.py`, so on this machine it is not an experiment -- it is the shipped path |
-| fixture | `double/d4.mp4` 1280x720, sources `harjot,gargee`, capture frame 4930 (pinned) |
+| fixture | `double/d4.mp4` 1280x720, sources `person_a,person_c`, capture frame 4930 (pinned) |
 
 **No adaptive downgrade is active on this card.** Unlike the 3060, TensorRT is
 admitted, the enhancer is not stripped, RealityUX runs both engines and NVDEC is
@@ -591,7 +591,7 @@ behind: every end-to-end harness here renders VIDEO, so the still path
 (`roop.core.live_swap` -- no tracker, no temporal engines, no stabilizer
 geometry, no encoder) was covered only by unit tests.
 `tests/image_swap_smoke.py` closes it. Production stack, `single/s1.mp4`,
-`harjot`:
+`person_a`:
 
 | frame | face-region delta | identity to source, before -> after |
 |---:|---:|---|
@@ -612,7 +612,7 @@ Without that, a rubber stamp and a real check are indistinguishable.
 
 One full-length render of `double/d3.mp4` -- **5,979 frames, 15,684 detected
 faces, 1109 s at 5.39 fps** -- production stack (RealSwap / RealityUX /
-UltraMax / TensorRT / hevc_nvenc / 12 workers), sources `harjot,gargee`. This is
+UltraMax / TensorRT / hevc_nvenc / 12 workers), sources `person_a,person_c`. This is
 the interacting-faces workload and the long-run soak in one pass.
 
 ### What the pipeline decided
@@ -633,8 +633,8 @@ clip's swaps are not gated the way the other two thirds are.
 
 | person | frames | swapped | wrong faceset | re-measured as the other person |
 |---|---:|---:|---:|---|
-| harjot (box 0) | 5,975 | 5,622 (94.1%) | **13 of 1,340 attributed swaps** | 193 of 2,765 gradable |
-| gargee (box 1) | 5,774 | 5,267 (91.2%) | **4 of 1,612 attributed swaps** | 37 of 1,880 gradable |
+| person_a (box 0) | 5,975 | 5,622 (94.1%) | **13 of 1,340 attributed swaps** | 193 of 2,765 gradable |
+| person_c (box 1) | 5,774 | 5,267 (91.2%) | **4 of 1,612 attributed swaps** | 37 of 1,880 gradable |
 
 **17 wrong-faceset applications of 2,952 attributable swaps (0.58%)**, from the
 pipeline's own decision log rather than from re-detecting the output.
@@ -694,7 +694,7 @@ eyes fully closed for a sustained run, and teeth visibility.
 
 `tests/build_faceset_v2.py` built V2 archives from the locked V1 sources with
 real detection: `version=2, sources=5, identity_detail_ok=5,
-migrated_without_detection=False` for both `harjot_v2` and `gargee_v2`.
+migrated_without_detection=False` for both `person_a_v2` and `person_c_v2`.
 
 That closes the "can it even run" half of D4070.2, in both directions:
 

@@ -1,16 +1,17 @@
 """Small provider-change arm used by the actual acceptance report."""
 from __future__ import annotations
-import base64, json, re, sys, time
+import base64, json, os, re, sys, time
 from pathlib import Path
 import cv2
 import numpy as np
 import requests
 
 ROOT = Path(__file__).resolve().parents[1]
-OUT = ROOT / "output" / "acceptance_monica_harjot"
+OUT = ROOT / "output" / "acceptance_real_clip"
 BASE = "http://127.0.0.1:17862"
-TARGET = Path(r"D:\Monica Bellucci .mp4")
-SOURCE = ROOT / "app" / "facesets" / "harjot.fsz"
+# ROOP_TARGET_CLIP / ROOP_SOURCE_FACESET: see tools/acceptance_real_clip.py
+TARGET = Path(os.environ["ROOP_TARGET_CLIP"])
+SOURCE = ROOT / "app" / "facesets" / (os.environ.get("ROOP_SOURCE_FACESET", "my_faceset") + ".fsz")
 LOG = OUT / "server_cpu.log"
 
 def req(method, path, **kw):
@@ -108,7 +109,7 @@ def main():
     (OUT/"acceptance_report.json").write_text(json.dumps(report,indent=2,ensure_ascii=False,default=str),encoding="utf-8")
     stages = report["stages"]
     lines = [
-        "# Roop Ultimate acceptance test: Harjot → Monica Bellucci", "",
+        "# Roop Ultimate acceptance test: person_a → target_person", "",
         f"Status: **{report['status']}**", "",
         f"Requested target: `{report['requested']['target_literal']}` — literal exists: `{report['discovery']['literal_exists']}`.",
         f"Tested discovered target: `{report['discovery']['selected_path']}`.",

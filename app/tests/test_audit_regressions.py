@@ -62,12 +62,12 @@ class AuditRegressionTests(unittest.TestCase):
         self.assertIn('return', guard)
         self.assertGreater(history, upscale)
 
-    def test_sample_runner_uses_requested_ashna_rhythm_facesets(self):
+    def test_sample_runner_uses_requested_person_b_person_d_facesets(self):
         source = _read('tests', 'run_all_samples.py')
-        self.assertIn('load_library_faceset("rhythm")', source)
-        self.assertIn('load_library_faceset("ashna")', source)
-        self.assertNotIn('load_library_faceset("harjot")', source)
-        self.assertNotIn('load_library_faceset("shambhavi")', source)
+        self.assertIn('load_library_faceset("person_d")', source)
+        self.assertIn('load_library_faceset("person_b")', source)
+        self.assertNotIn('load_library_faceset("person_a")', source)
+        self.assertNotIn('load_library_faceset("person_f")', source)
 
     def test_realswap_eye_band_default_matches_measured_safe_opacity(self):
         source = _read('roop', 'processors', 'FaceSwapInsightFace.py')

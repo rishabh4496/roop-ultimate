@@ -88,7 +88,7 @@ def parse(out):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--sources", default="harjot,gargee")
+    ap.add_argument("--sources", default="person_a,person_c")
     ap.add_argument("--in-dir", default=fixtures.clip_dir('duo'))
     ap.add_argument("--clips", default="", help="comma-separated stems, default all")
     ap.add_argument("--threads", type=int, default=20)

@@ -114,7 +114,7 @@ something unrelated to it.** From the launcher's own log:
     Exception When localhost is not accessible, a shareable link must be
       created. ... when launching Gradio Server!
     Closing server running on port: 42005
-    (env) (base) G:\pinokio\api\roop-ultimate\app>       <- process exited
+    (env) (base) <PINOKIO_HOME>/api/roop-ultimate\app>       <- process exited
 
 `run.py` starts the FastAPI backend on a **daemon** thread and then calls
 `core.run()`, which launches the legacy Gradio UI on the main thread. The API
@@ -467,7 +467,7 @@ production readiness.
   for this run, not a proof for the unavailable RTX 3060.
 - Both retained encoded intermediates passed `ffprobe` with 600 frames,
   1280x720, 30 FPS, and 20 seconds. A final user-output playback/visual review
-  was not performed. The harness re-measured 71 of 467 gradable `harjot`
+  was not performed. The harness re-measured 71 of 467 gradable `person_a`
   frames as the other person; this is a real visual-quality limitation despite
   zero wrong-faceset decisions.
 - The fresh health worker passed dependencies, provider, GPU, model sessions,
@@ -913,7 +913,7 @@ in Stage 9A.
   loaders, version/compatibility code, and checkpoint code were inspected with
   line-level evidence recorded in `UPDATE_AUDIT.md`.
 - The closest matching Pinokio application update example was inspected at
-  `G:\pinokio\prototype\system\examples\comfy\update.js`; relevant
+  `<PINOKIO_HOME>\prototype\system\examples\comfy\update.js`; relevant
   `PINOKIO.md` update/menu/shell sections were inspected.
 - No update or runtime tests were run because this gate changes documentation
   only; no test result is claimed as a Stage 9A implementation result.

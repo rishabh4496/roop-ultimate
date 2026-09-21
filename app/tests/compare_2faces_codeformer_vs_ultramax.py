@@ -1,7 +1,7 @@
 """Comparative benchmark between CodeFormer and UltraMax on 8509564-uhd_3840_2160_25fps.mp4
 swapping BOTH faces:
-- Left person (Target 0) -> Harjot
-- Right person (Target 1) -> Ashna
+- Left person (Target 0) -> person_a
+- Right person (Target 1) -> person_b
 """
 
 # NOTE 2026-08-23: this arm used to name the enhancer in a spelling
@@ -72,7 +72,7 @@ def create_side_by_side_video(video_cf_path, video_um_path, out_path, fps_cf, fp
         cv2.rectangle(canvas, (0, 0), (out_w, 65), (15, 15, 15), -1)
         cv2.putText(canvas, "8509564 Inverted 4K Dual Face Swap Benchmark",
                     (out_w // 2 - 340, 30), font, 0.9, (255, 255, 255), 2, cv2.LINE_AA)
-        cv2.putText(canvas, f"Frame: {f_idx + 1}/{total_f} | Left: Harjot | Right: Ashna | Swapper: RealSwap",
+        cv2.putText(canvas, f"Frame: {f_idx + 1}/{total_f} | Left: person_a | Right: person_b | Swapper: RealSwap",
                     (out_w // 2 - 370, 55), font, 0.55, (180, 180, 180), 1, cv2.LINE_AA)
 
         # Left HUD (CodeFormer)
@@ -112,7 +112,7 @@ def main():
 
     print("=" * 80)
     print(f"[Benchmark Dual] Target Video: {video_path}")
-    print(f"[Benchmark Dual] Sources: Left=Harjot, Right=Ashna")
+    print(f"[Benchmark Dual] Sources: Left=person_a, Right=person_b")
     print("=" * 80)
 
     # 1. Initialize Pipeline & Global Configuration
@@ -132,10 +132,10 @@ def main():
     g.color_match_after_enhance = True
     g.detail_transfer_strength = 0.40
 
-    # 2. Ingest Source Facesets (Harjot for Left Person, Ashna for Right Person)
-    fs_harjot = load_library_faceset("harjot")
-    fs_ashna = load_library_faceset("ashna")
-    sources = [fs_harjot, fs_ashna]
+    # 2. Ingest Source Facesets (person_a for Left Person, person_b for Right Person)
+    fs_person_a = load_library_faceset("person_a")
+    fs_person_b = load_library_faceset("person_b")
+    sources = [fs_person_a, fs_person_b]
 
     # 3. Create representative 4K segment (50 frames)
     cap = cv2.VideoCapture(video_path)
@@ -165,11 +165,11 @@ def main():
     if len(faces_frame20) < 2:
         raise SystemExit(f"Expected 2 faces in frame 20, found {len(faces_frame20)}")
     
-    # Left face -> Group 0 (Harjot), Right face -> Group 1 (Ashna)
+    # Left face -> Group 0 (person_a), Right face -> Group 1 (person_b)
     targets = [faces_frame20[0], faces_frame20[1]]
     groups = [0, 1]
-    print(f"[Capture] Target 0 (Left Person, center_x={(targets[0].bbox[0]+targets[0].bbox[2])//2}) -> Harjot")
-    print(f"[Capture] Target 1 (Right Person, center_x={(targets[1].bbox[0]+targets[1].bbox[2])//2}) -> Ashna")
+    print(f"[Capture] Target 0 (Left Person, center_x={(targets[0].bbox[0]+targets[0].bbox[2])//2}) -> person_a")
+    print(f"[Capture] Target 1 (Right Person, center_x={(targets[1].bbox[0]+targets[1].bbox[2])//2}) -> person_b")
 
     # ── ARM 1: CodeFormer (FP16) ─────────────────────────────────────────────
     print("\n" + "=" * 80)
@@ -268,10 +268,10 @@ def main():
             right_cf = f_cf[:, cw//2:]
             right_um = f_um[:, cw//2:]
             
-            cv2.imwrite(os.path.join(inspect_dir, f"crop_left_harjot_frame_{sample_idx:04d}_cf.png"), left_cf)
-            cv2.imwrite(os.path.join(inspect_dir, f"crop_left_harjot_frame_{sample_idx:04d}_um.png"), left_um)
-            cv2.imwrite(os.path.join(inspect_dir, f"crop_right_ashna_frame_{sample_idx:04d}_cf.png"), right_cf)
-            cv2.imwrite(os.path.join(inspect_dir, f"crop_right_ashna_frame_{sample_idx:04d}_um.png"), right_um)
+            cv2.imwrite(os.path.join(inspect_dir, f"crop_left_person_a_frame_{sample_idx:04d}_cf.png"), left_cf)
+            cv2.imwrite(os.path.join(inspect_dir, f"crop_left_person_a_frame_{sample_idx:04d}_um.png"), left_um)
+            cv2.imwrite(os.path.join(inspect_dir, f"crop_right_person_b_frame_{sample_idx:04d}_cf.png"), right_cf)
+            cv2.imwrite(os.path.join(inspect_dir, f"crop_right_person_b_frame_{sample_idx:04d}_um.png"), right_um)
 
     cap_cf.release()
     cap_um.release()
@@ -280,7 +280,7 @@ def main():
     print("DUAL FACE SWAP BENCHMARK COMPLETE")
     print("=" * 90)
     print(f"Target Video:     8509564-uhd_3840_2160_25fps.mp4 (4K UHD Inverted)")
-    print(f"Swapped Faces:    Left=Harjot, Right=Ashna (Both faces swapped)")
+    print(f"Swapped Faces:    Left=person_a, Right=person_b (Both faces swapped)")
     print(f"CodeFormer (fp16): {swap_fps_cf:.2f} Swap FPS | {total_fps_cf:.2f} Pipeline FPS (Time: {swap_time_cf:.2f}s)")
     print(f"UltraMax (HD):    {swap_fps_um:.2f} Swap FPS | {total_fps_um:.2f} Pipeline FPS (Time: {swap_time_um:.2f}s)")
     print(f"Comparison Video: {sbs_path}")

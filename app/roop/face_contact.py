@@ -1,7 +1,7 @@
 """What the DETECTOR and the RECOGNISER do when two faces touch.
 
 Two separate failures, both visible only while two people are close enough to
-interact, both measured on `G:/pinokio/roop-keep/sample1.mp4` (two heads that
+interact, both measured on `<MEDIA_DIR>/sample1.mp4` (two heads that
 meet in profile and kiss). `roop/face_overlap.py` is the third member of the
 family and handles the one that comes after — who owns a pixel once both faces
 have been swapped.

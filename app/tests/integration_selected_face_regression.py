@@ -13,12 +13,12 @@ and judges the result two ways -- neither of them a screenshot:
 The frame is composed once from four DISTINCT real identities so a correct swap
 is unambiguous and reproducible on any machine that has the facesets:
 
-    [ Ashna ]    [ Jaya ]     [ Lori ]
+    [ person_b ]    [ person_i ]     [ person_h ]
      person A     person B      bystander
       group 0      group 1      nobody's target
 
-    source faceset = Harjot (index 0) -- an identity NOT on the frame, so a
-    correct swap of the selected person turns that face INTO Harjot and every
+    source faceset = person_a (index 0) -- an identity NOT on the frame, so a
+    correct swap of the selected person turns that face INTO person_a and every
     other face keeps its own identity.
 
 Two things about the SCENARIO, both documented rather than worked around:
@@ -33,13 +33,13 @@ Two things about the SCENARIO, both documented rather than worked around:
 
 Assertions (the eight the task lists):
   1 person A receives the source        -- A's box -> source 0, and A's OUTPUT
-                                           identity is Harjot's, not Ashna's
+                                           identity is person_a's, not person_b's
   2 person B is unchanged                -- B's box absent; B's OUTPUT identity
-                                           still Jaya's
+                                           still person_i's
   3 no third detected face is swapped    -- exactly one box swapped; bystander's
                                            identity unchanged
-  4 changing the selected person         -- select B: B swaps to Harjot, A stays
-    changes which person is eligible        Ashna
+  4 changing the selected person         -- select B: B swaps to person_a, A stays
+    changes which person is eligible        person_b
   5 removing the selection -> zero swaps -- empty selection: nothing routed, no
                                            identity moves anywhere
   6 preview and render pick the same     -- process_frame is_preview True vs
@@ -70,10 +70,14 @@ for _p in (APP, HERE):
         sys.path.insert(0, _p)
 import fixtures  # noqa: E402
 
-SOURCE_FACESET = "harjot"          # the identity applied to the selected person
-PERSON_A_FACESET = "ashna"         # person A: the target meant to receive Harjot
-PERSON_B_FACESET = "jaya"          # person B: an unrelated person
-BYSTANDER_FACESET = "lori"         # a third face nobody captured
+# Four DISTINCT local facesets (app/facesets/<name>.png + .fsz). The names are
+# machine-specific, so they come from the environment; the defaults are
+# placeholders that exist on no machine, and the harness says so and exits.
+_env = os.environ.get
+SOURCE_FACESET = _env("ROOP_TEST_SOURCE", "person_a")        # the identity applied to the selected person
+PERSON_A_FACESET = _env("ROOP_TEST_PERSON_A", "person_b")    # person A: the target meant to receive the source
+PERSON_B_FACESET = _env("ROOP_TEST_PERSON_B", "person_i")    # person B: an unrelated person
+BYSTANDER_FACESET = _env("ROOP_TEST_BYSTANDER", "person_h")  # a third face nobody captured
 LABELS = ["A", "B", "bystander"]
 DEFAULT_OUT = os.path.join(APP, "output", "selected_face_integration")
 
@@ -300,7 +304,7 @@ def check_single_provider(provider, out_dir):
     _ok(a["routed"].get("A") == 0, f"[1] A routed to source 0 ({a['routed']})")
     _ok(ai.get("A", {}).get("to_source", 9) < SAME
         and ai.get("A", {}).get("to_original", 0) > DIFF,
-        f"[1] A's output identity is the source, not Ashna ({ai.get('A')})")
+        f"[1] A's output identity is the source, not person_b ({ai.get('A')})")
     # 2 person B unchanged
     _ok("B" not in a["routed"], f"[2] B not routed when A selected ({a['routed']})")
     _ok(ai.get("B", {}).get("to_original", 9) < SAME,
@@ -314,7 +318,7 @@ def check_single_provider(provider, out_dir):
         f"[4] selecting B routes B not A ({b['routed']})")
     _ok(bi.get("B", {}).get("to_source", 9) < SAME
         and bi.get("A", {}).get("to_original", 9) < SAME,
-        f"[4] B became the source, A kept Ashna (A={bi.get('A')}, B={bi.get('B')})")
+        f"[4] B became the source, A kept person_b (A={bi.get('A')}, B={bi.get('B')})")
     # 5 removing the selection -> zero swaps
     _ok(none["routed"] == {}, f"[5] no selection -> nothing routed ({none['routed']})")
     _ok(bool(ni) and all(v.get("to_original", 9) < SAME for v in ni.values()),

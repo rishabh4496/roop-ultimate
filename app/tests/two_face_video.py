@@ -220,7 +220,7 @@ def separated_frame(video, stride=1, limit=400):
     (roop-recode phase 2, d11 dropout investigation): its first separated
     frame (idx 110) is a wide establishing shot where the two leads are
     background-scale, 46-47px, det_score 0.69-0.76 — a marginal enough
-    embedding that two independent runs bound harjot and shambhavi to
+    embedding that two independent runs bound person_a and person_f to
     OPPOSITE physical people (confirmed via embedding-distance grading, not
     assumed). A confident, reasonably-sized seed removes that ambiguity at
     the source rather than hoping the refinement scan corrects for it later.
@@ -949,7 +949,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--tag", required=True)
     ap.add_argument("--video", default=fixtures.clip('sample1.mp4'))
-    ap.add_argument("--sources", default="harjot,ashna",
+    ap.add_argument("--sources", default="person_a,person_b",
                     help="faceset names, left person first")
     ap.add_argument("--start", type=int, default=0)
     ap.add_argument("--end", type=int, default=0, help="0 = to the end")

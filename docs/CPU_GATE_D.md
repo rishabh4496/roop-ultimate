@@ -86,7 +86,7 @@ Physical validation: available; runtime detected NVIDIA GeForce RTX 4070, Ada
 Lovelace, SM 8.9, 11.994 GiB, driver 616.56, CUDA 12.8, TensorRT 10.9.0.34,
 ORT 1.23.2. Host CPU 24 physical / 32 logical, 16 P logical + 16 E logical.
 
-Workload: `d4.mp4` frames 0-120, two facesets (harjot, gargee), realswap /
+Workload: `d4.mp4` frames 0-120, two facesets (person_a, person_c), realswap /
 GPEN 256 Pro / RealityUX / libx264. Every arm pins ORT intra/inter, OpenCV and
 FFmpeg pools to one thread so the CPU-distribution policy is the variable
 under test; that is not the production threading configuration, so these FPS

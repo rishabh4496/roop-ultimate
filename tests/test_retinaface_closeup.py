@@ -54,14 +54,14 @@ def _create_synthetic_face_image(size: int = 1024, zoom_factor: float = 0.85) ->
     or generates a detailed facial pattern with skin tones, eyes, nose, and mouth.
     """
     # Prefer real fixture image if available
-    sample_path = APP_DIR / 'facesets' / 'akansha.png'
+    sample_path = APP_DIR / 'facesets' / 'person_g.png'
     if not sample_path.exists():
-        sample_path = REPO_ROOT / 'facesets' / 'akansha.png'
+        sample_path = REPO_ROOT / 'facesets' / 'person_g.png'
     if sample_path.exists():
         img = cv2.imread(str(sample_path))
         if img is not None:
             h, w = img.shape[:2]
-            # Face region in akansha.png is around [75, 75, 180, 220]
+            # Face region in person_g.png is around [75, 75, 180, 220]
             # Crop tightly to simulate zoomed close-up
             y1 = int(75 + (1.0 - zoom_factor) * 20)
             y2 = int(220 - (1.0 - zoom_factor) * 15)

@@ -14,7 +14,7 @@ glasses -- plus how much of that residue the gate is structurally unable to
 rescue ("gate-blocked": xseg < 0.05, where permission is exactly zero).
 
     env/Scripts/python.exe tests/probe_parser_protection.py \
-        --video G:/pinokio/roop-keep/single/s4.mp4 --frames 40
+        --video <MEDIA_DIR>/single/s4.mp4 --frames 40
 """
 import argparse
 import os

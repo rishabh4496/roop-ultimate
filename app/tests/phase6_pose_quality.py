@@ -13,7 +13,7 @@ pixels.  A physical target GPU that is not present is recorded as ``pending``.
 Example (run from ``app``):
 
     env/Scripts/python.exe tests/phase6_pose_quality.py \
-        --target "RTX 4070" --source ashna --target-faceset harjot \
+        --target "RTX 4070" --source person_b --target-faceset person_a \
         --provider auto --rolls 0,90,180 --tag phase6_4070
 """
 
@@ -204,8 +204,8 @@ def main(argv=None):
     parser.add_argument("--target", required=True, choices=("RTX 3060", "RTX 4070"))
     parser.add_argument("--device-id", type=int, default=0)
     parser.add_argument("--provider", default="auto")
-    parser.add_argument("--source", default="ashna")
-    parser.add_argument("--target-faceset", default="harjot")
+    parser.add_argument("--source", default="person_b")
+    parser.add_argument("--target-faceset", default="person_a")
     parser.add_argument("--rolls", default="0,90,180")
     parser.add_argument("--tag", required=True)
     parser.add_argument("--out", default=os.path.join(APP, "output", "phase6_pose_quality"))

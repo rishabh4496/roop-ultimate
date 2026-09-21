@@ -77,7 +77,7 @@ def main():
     ap.add_argument("--clip", default=fixtures.clip('inverted/s1.mp4'))
     ap.add_argument("--arm", default=None,
                     help="rendered output to probe (default: the dt=0 sweep arm)")
-    ap.add_argument("--source", default="harjot")
+    ap.add_argument("--source", default="person_a")
     ap.add_argument("--gains", default="0,0.5,1.0,1.5,2.0")
     args = ap.parse_args()
 

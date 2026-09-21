@@ -447,7 +447,7 @@ def stage_projects(api, report):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--clip", default="")
-    parser.add_argument("--source", default="harjot")
+    parser.add_argument("--source", default="person_a")
     parser.add_argument("--frames", type=int, default=120)
     parser.add_argument("--skip-queue", action="store_true")
     parser.add_argument("--projects-only", action="store_true",

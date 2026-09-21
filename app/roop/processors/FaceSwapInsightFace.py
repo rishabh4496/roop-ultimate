@@ -322,23 +322,23 @@ SWAP_MODELS = {
     # opt-in: on a 6GB card that is a real fraction of the budget.
     #
     # ── MEASURED 2026-08-24, AND THE CLAIM DOES NOT HOLD HERE ────────────────
-    # d2.mp4 (2268 frames, harjot+gargee), counterbalanced A/B/C then C/B/A, all
+    # d2.mp4 (2268 frames, person_a+person_c), counterbalanced A/B/C then C/B/A, all
     # six arms on the live production stack (RealityUX, GPEN Realistic, tensorrt,
     # 20 threads). `own` = cosine DISTANCE from the rendered face to the faceset
     # that was applied, judged by buffalo_l re-detecting the output. LOWER WINS.
     #
-    #     model              harjot    gargee      both
+    #     model              person_a    person_c      both
     #     realswap           1.0017    0.4052    0.7896
     #     cscs               1.0175    0.6993    0.9850
     #     instyleswapper_a   1.0181    0.4177    0.9760
     #
     # Forward and reverse agreed to three decimals on every arm, so position did
     # not move identity (the engine-build penalty is a SPEED effect). Paired per
-    # (frame, person), cscs is worse by +0.1018 on harjot (t=+38) and +0.2902 on
-    # gargee (t=+125), winning only 5.6% of gargee's rows.
+    # (frame, person), cscs is worse by +0.1018 on person_a (t=+38) and +0.2902 on
+    # person_c (t=+125), winning only 5.6% of person_c's rows.
     #
     # THE STRUCTURAL FINDING, which outlives the ranking: all three models score
-    # ~1.00 on harjot, the profile-limited person, and the swap rate was
+    # ~1.00 on person_a, the profile-limited person, and the swap rate was
     # IDENTICAL at 52.1% / 94.8% across all six arms — because the assign and
     # verify gates sit UPSTREAM of the swapper. A swap model cannot rescue a
     # track that never bound a source, so "best for challenging angles" is not a
@@ -1475,7 +1475,7 @@ class FaceSwapInsightFace():
     # The user's report: hyperswap's lips read pale and washed out, hififace's
     # read "beautiful and authentic" -- and the ask is that colour ALONE, no
     # structure. Measured before building anything, on 40 frames of s1.mp4 with
-    # harjot.fsz (`tests/diag_realswap_lip_colour.py`), and the first cut of the
+    # person_a.fsz (`tests/diag_realswap_lip_colour.py`), and the first cut of the
     # measurement was the WRONG STATISTIC, which is the part worth recording.
     #
     # Asking "how far apart are the two nets on the lips" gives:

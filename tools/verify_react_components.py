@@ -1,11 +1,15 @@
 """Automated verification script testing the React UI preview and video player logic."""
 import os
 import sys
+import shutil
+import shutil
+import shutil
+import shutil
 import subprocess
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 REACT_SRC = os.path.join(ROOT, "react-ui", "src")
-NODE = "G:\\pinokio\\bin\\miniforge\\node.exe"
+NODE = os.environ.get("ROOP_NODE") or shutil.which("node") or "node"
 
 # Node script testing objectUrls and frameDecoder URL normalization
 test_js = """
@@ -53,7 +57,6 @@ def main():
 
     try:
         env = dict(os.environ)
-        env["PATH"] = "G:\\pinokio\\bin\\miniforge;" + env.get("PATH", "")
         res = subprocess.run([NODE, test_file], cwd=REACT_SRC, capture_output=True, text=True)
         print("STDOUT:")
         print(res.stdout)

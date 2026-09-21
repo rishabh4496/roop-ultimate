@@ -1,8 +1,8 @@
 # Roop Ultimate — working guide
 
-**Pinokio launcher rules are NOT repeated here.** They live in `G:\pinokio\CLAUDE.md`,
+**Pinokio launcher rules are NOT repeated here.** They live in `<PINOKIO_HOME>\CLAUDE.md`,
 which Claude Code loads automatically from the parent directory, with the API reference
-at `G:\pinokio\prototype\PINOKIO.md` and examples in `G:\pinokio\prototype\system\examples`.
+at `<PINOKIO_HOME>\prototype\PINOKIO.md` and examples in `<PINOKIO_HOME>\prototype\system\examples`.
 This file used to carry a stale copy of that guide; it was removed on 2026-09-14, not lost.
 
 Everything below is about the **face-swap app itself**, which is what work in this repo
@@ -16,10 +16,10 @@ are about to quote came from before that date.
 
 ## Start every session here
 
-1. **Read `G:\pinokio\roop-keep\RECODE_STATUS.md`, newest section first.** It is the
+1. **Read `<MEDIA_DIR>\RECODE_STATUS.md`, newest section first.** It is the
    running state of a multi-session recode. The top section is current; older sections go
    stale — when a table and a prose summary disagree, trust the table.
-   On the SECONDARY device (3060, under `C:\pinokio\`) there is no G: drive; `roop-keep`
+   On the SECONDARY device (3060) the main machine's drive does not exist; `roop-keep`
    exists there with the clip folders but holds no `RECODE_STATUS.md`, so
    `docs/SESSION_LOGS.md` is the whole record. Do not conclude the state is unknown.
 2. **Phase numbering stopped at PHASE 5 and the work moved past it.** Phase 4
@@ -38,7 +38,7 @@ are about to quote came from before that date.
 | | MAIN | SECONDARY |
 |---|---|---|
 | GPU | RTX 4070 12GB | RTX 3060 Laptop 6GB |
-| root | `G:\pinokio\` | `C:\pinokio\` |
+| root | `<PINOKIO_HOME>` (one drive) | `<PINOKIO_HOME>` (a different drive) |
 | RAM | 31.7 GB | 15.8 GB |
 | resolution at 600 frames | ~4-5% spread | ~3.3% spread |
 
@@ -148,7 +148,7 @@ feature ran.
   all stale.
 - Pytest-style tests are invisible to unittest (`Ran 0 tests ... OK`) — use
   `tests/unittest_shim.py`.
-- `G:\pinokio\roop-keep\` is NOT a git repo — `RECODE_STATUS.md` is saved by editing it,
+- `<MEDIA_DIR>\` is NOT a git repo — `RECODE_STATUS.md` is saved by editing it,
   not by committing.
 - The Gradio UI under `app/ui/` is **frozen**. All new UI work is the React app in
   `react-ui/`. `api.py` is a non-reloading uvicorn thread — the backend needs a restart

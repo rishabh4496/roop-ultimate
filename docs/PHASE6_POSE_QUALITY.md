@@ -11,7 +11,7 @@ changed.
 
 ## Measurement contract
 
-- Load the existing V1 `ashna.fsz` source and `harjot.fsz` target archives with
+- Load the existing V1 `person_b.fsz` source and `person_a.fsz` target archives with
   the established `angle_bench` ingestion path.
 - Promote the loaded faces in memory to V2 metadata so legacy archives can be
   evaluated without a migration write.
@@ -32,8 +32,8 @@ changed.
 From `app`:
 
 ```powershell
-env/Scripts/python.exe tests/phase6_pose_quality.py --target "RTX 4070" --provider auto --source ashna --target-faceset harjot --rolls 0,90,180 --tag phase6_4070_balanced
-env/Scripts/python.exe tests/phase6_pose_quality.py --target "RTX 3060" --provider auto --source ashna --target-faceset harjot --rolls 0,90,180 --tag phase6_3060_pending
+env/Scripts/python.exe tests/phase6_pose_quality.py --target "RTX 4070" --provider auto --source person_b --target-faceset person_a --rolls 0,90,180 --tag phase6_4070_balanced
+env/Scripts/python.exe tests/phase6_pose_quality.py --target "RTX 3060" --provider auto --source person_b --target-faceset person_a --rolls 0,90,180 --tag phase6_3060_pending
 ```
 
 Artifacts are written to the ignored `app/output/phase6_pose_quality/` tree:

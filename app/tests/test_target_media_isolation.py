@@ -102,7 +102,7 @@ class TargetMediaIsolation(unittest.TestCase):
         a = self._add('duplicate.mp4')
         b = self._add('duplicate.mp4')
         self.assertNotEqual(a, b, 'duplicate filenames must still receive distinct ids')
-        self._configure(0, 'Harjot')
+        self._configure(0, 'person_a')
         response = api.target_select({'index': 1, 'target_media_id': b})
         self.assertEqual(response['target_media_id'], b)
         self.assertEqual(self._active_labels(), [], 'B must not inherit A identity')
@@ -110,12 +110,12 @@ class TargetMediaIsolation(unittest.TestCase):
     def test_switch_a_b_a_restores_exact_context(self):
         a = self._add('a.mp4')
         b = self._add('b.mp4')
-        self._configure(0, 'Harjot', {'0': 2})
+        self._configure(0, 'person_a', {'0': 2})
         api.target_select({'target_media_id': b})
         self._configure(1, 'Other', {'0': 1})
         api.target_select({'target_media_id': a})
-        self.assertEqual(self._active_labels(), ['Harjot'])
-        self.assertEqual(roop_globals.TARGET_FACE_NAMES, {0: 'Harjot'})
+        self.assertEqual(self._active_labels(), ['person_a'])
+        self.assertEqual(roop_globals.TARGET_FACE_NAMES, {0: 'person_a'})
         self.assertEqual(state.active_target_source_mapping, {'0': 2})
 
     def test_removing_first_and_middle_targets_preserves_survivors(self):
@@ -156,7 +156,7 @@ class TargetMediaIsolation(unittest.TestCase):
     def test_failed_target_load_does_not_replace_active_context(self):
         self._add('a.mp4')
         b = self._add('missing.mp4')
-        self._configure(0, 'Harjot')
+        self._configure(0, 'person_a')
 
         def fail(index):
             if index == 1:
@@ -165,7 +165,7 @@ class TargetMediaIsolation(unittest.TestCase):
         api._refresh_target_frames = fail
         response = api.target_select({'target_media_id': b})
         self.assertEqual(response.status_code, 409)
-        self.assertEqual(self._active_labels(), ['Harjot'])
+        self.assertEqual(self._active_labels(), ['person_a'])
         self.assertEqual(state.active_target_media_id, api.list_files_process[0].media_id)
 
     def test_preview_and_final_request_carry_the_active_media_id(self):
@@ -262,7 +262,7 @@ class TargetMediaIsolation(unittest.TestCase):
         first_id = store.ensure_media_id(first)
         second_id = store.ensure_media_id(second)
         self.assertNotEqual(first_id, second_id)
-        store.save(first_id, target_faces=['Harjot'], source_mapping={'0': 1})
+        store.save(first_id, target_faces=['person_a'], source_mapping={'0': 1})
         store.remove(first_id)
         self.assertEqual(store.load(first_id).target_faces, [])
         self.assertEqual(store.load(second_id).target_faces, [])
@@ -282,7 +282,7 @@ class TargetMediaIsolation(unittest.TestCase):
             cfg=None,
             target_context={
                 'target_media_id': media_id,
-                'target_face_names': {'0': 'Harjot'},
+                'target_face_names': {'0': 'person_a'},
                 'selected_target_face_index': 0,
                 'face_mapping': {'0': 4},
             },
@@ -292,7 +292,7 @@ class TargetMediaIsolation(unittest.TestCase):
             restored = project_checkpoint.load(record['id'])
             restored_context = (restored.get('inputs') or {}).get('target_context') or {}
             self.assertEqual(restored_context['target_media_id'], media_id)
-            self.assertEqual(restored_context['target_face_names'], {'0': 'Harjot'})
+            self.assertEqual(restored_context['target_face_names'], {'0': 'person_a'})
             self.assertEqual(restored_context['face_mapping'], {'0': 4})
         finally:
             try:

@@ -6,10 +6,10 @@ one-click [Pinokio](https://pinokio.computer) launcher.
 Runs on NVIDIA (CUDA / TensorRT), AMD (DirectML / ROCm), Apple Silicon and CPU.
 This repository contains both the launcher and the full application.
 
-> **Private software.** This repository is private and access is by invitation.
-> There is no public distribution, no public issue tracker and no support
-> channel. If you were given access, the terms in [`NOTICE.md`](NOTICE.md) apply
-> to you as a recipient.
+> **Public source, no support.** This repository is public on GitHub and is
+> licensed under the AGPL-3.0 (see [`LICENSE`](LICENSE) and
+> [`NOTICE.md`](NOTICE.md)). There is no support channel and no guarantee that
+> issues or pull requests will be answered.
 
 > **Independent project.** Roop Ultimate is not affiliated with, endorsed by or
 > connected to any other project. It derives from AGPL-3.0 code, which is
@@ -28,8 +28,7 @@ This repository contains both the launcher and the full application.
    ```
    https://github.com/rishabh4496/roop-ultimate.git
    ```
-   Because the repository is private, Pinokio needs git credentials that have
-   access to it — a credential helper or a personal access token.
+   The repository is public, so no git credentials are needed to clone it.
 3. Click **Download**, then **Install**, then **Start**.
 
 Pinokio detects the GPU and installs the matching PyTorch and ONNX Runtime
@@ -495,7 +494,7 @@ for the audited dependency boundary and known limitations.
 ## Licence and use
 
 GNU Affero General Public License v3 — see [`LICENSE`](LICENSE), and
-[`NOTICE.md`](NOTICE.md) for what that means for a private repository and for
+[`NOTICE.md`](NOTICE.md) for what that means for this repository and for
 people you share it with.
 
 Use this only on material you have the right to use, and only with the informed
@@ -550,8 +549,8 @@ real pitch or inversion coverage.
 Run from `app`:
 
 ```powershell
-env/Scripts/python.exe tests/phase6_pose_quality.py --target "RTX 4070" --provider auto --source ashna --target-faceset harjot --rolls 0,90,180 --tag phase6_4070
-env/Scripts/python.exe tests/phase6_pose_quality.py --target "RTX 3060" --provider auto --source ashna --target-faceset harjot --rolls 0,90,180 --tag phase6_3060
+env/Scripts/python.exe tests/phase6_pose_quality.py --target "RTX 4070" --provider auto --source person_b --target-faceset person_a --rolls 0,90,180 --tag phase6_4070
+env/Scripts/python.exe tests/phase6_pose_quality.py --target "RTX 3060" --provider auto --source person_b --target-faceset person_a --rolls 0,90,180 --tag phase6_3060
 ```
 
 Results are written under `app/output/phase6_pose_quality/<tag>/` and are
@@ -690,18 +689,20 @@ codec choices remain untouched.
 
 ### Isolated Pinokio folder batch
 
-Use the root-level runner for the retained `G:\pinokio\roop-keep` media
-folders. It renders one video in a fresh Windows `spawn` process, then waits
+Use the root-level runner for a retained media folder (`<MEDIA_DIR>`, holding
+`single/` and `double/` subfolders). It renders one video in a fresh Windows `spawn` process, then waits
 for that worker to exit before starting the next video. This prevents CUDA,
 ONNX Runtime, FFmpeg, and DirectShow state from accumulating across a batch.
 
 ```powershell
-python pinokio_batch_runner.py --dry-run
-python pinokio_batch_runner.py
+python pinokio_batch_runner.py --root <MEDIA_DIR> --single-faceset my_faceset --double-facesets my_faceset,other_faceset --dry-run
+python pinokio_batch_runner.py --root <MEDIA_DIR> --single-faceset my_faceset --double-facesets my_faceset,other_faceset
 ```
 
-`single/*.mp4` is written to `single_results/` using the `rhythm` faceset;
-`double/*.mp4` is written to `double_results/` using `ashna,rhythm`. Existing
-outputs are retained unless `--overwrite` is supplied. Progress events include
-the frame index, FPS, and ETA; the parent writes them to
-`G:\pinokio\roop-keep\pinokio_batch_runner.log`.
+The same three values can come from `ROOP_BATCH_ROOT`,
+`ROOP_BATCH_SINGLE_FACESET` and `ROOP_BATCH_DOUBLE_FACESETS` instead of flags.
+`single/*.mp4` is written to `single_results/` using the single faceset;
+`double/*.mp4` is written to `double_results/` using the two double facesets.
+Existing outputs are retained unless `--overwrite` is supplied. Progress
+events include the frame index, FPS, and ETA; the parent writes them to
+`<MEDIA_DIR>/pinokio_batch_runner.log`.

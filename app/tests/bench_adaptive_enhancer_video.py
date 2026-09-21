@@ -7,7 +7,7 @@ plate-referenced texture/edge behavior, and source-embedding similarity.
 
 Example:
     env/Scripts/python.exe tests/bench_adaptive_enhancer_video.py \
-      --clip G:/pinokio/roop-keep/double/d4.mp4 --source harjot \
+      --clip <MEDIA_DIR>/double/d4.mp4 --source person_a \
       --enhancers "Adaptive,GPEN 256 Pro,GPEN Realistic,UltraMax"
 
 The quality values are screening metrics, not a substitute for retained-output
@@ -140,7 +140,7 @@ def measure_video(path, clip, source_embedding, stride=5, limit=0):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--clip", required=True)
-    ap.add_argument("--source", default="harjot")
+    ap.add_argument("--source", default="person_a")
     ap.add_argument("--enhancers", default="Adaptive,GPEN 256 Pro,GPEN Realistic,UltraMax")
     ap.add_argument("--adaptive-profile", default="BALANCED",
                     choices=("FAST", "BALANCED", "REALISTIC", "MAX QUALITY"))

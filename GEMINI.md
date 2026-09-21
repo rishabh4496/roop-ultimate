@@ -4,8 +4,8 @@
 
 To guarantee every contribution follows this guide precisely, obey this checklist **before any edits** and **again before finalizing**. Do not skip or reorder.
 1. **AGENTS Snapshot:** Re-open this file and write down (in your working notes or response draft) the exact sections relevant to the requested task. No work begins until this snapshot exists.
-2. **Example Lock-in:** Identify the closest matching script in `G:\pinokio\prototype\system\examples`. Record its path and keep it open while editing. Every launcher change must mirror that reference unless the user explicitly instructs otherwise.
-3. **Pre-flight Checklist:** Convert the applicable rules from this document and `PINOKIO.md` at G:\pinokio\prototype\PINOKIO.md into a task-specific checklist (install/start/reset/update structure, regex patterns, menu defaults, log checks, etc.). Confirm each item is ticked **before** making changes.
+2. **Example Lock-in:** Identify the closest matching script in `<PINOKIO_HOME>\prototype\system\examples`. Record its path and keep it open while editing. Every launcher change must mirror that reference unless the user explicitly instructs otherwise.
+3. **Pre-flight Checklist:** Convert the applicable rules from this document and `PINOKIO.md` at <PINOKIO_HOME>\prototype\PINOKIO.md into a task-specific checklist (install/start/reset/update structure, regex patterns, menu defaults, log checks, etc.). Confirm each item is ticked **before** making changes.
 4. **Mid-task Verification:** Any time you touch a Pinokio script, cross-check the corresponding example line to ensure syntax and structure match. Document the reference (example path + line) in your reasoning.
 5. **Exit Checklist:** Before responding to the user, revisit the pre-flight checklist and explicitly confirm every item is satisfied. If anything diverges from the example or these rules, fix it first.
 
@@ -61,9 +61,9 @@ This codebase is actively developed and deployed across **two distinct hardware 
 
 ---
 
-- Make sure to keep this entire document and `PINOKIO.md` at G:\pinokio\prototype\PINOKIO.md in memory with high priority before making any decision. Pinokio is a system that makes it easy to write launchers through scripting by providing various cross-platform APIs, so whenever possible you should prioritize using Pinokio API over lower level APIs.
-- When writing pinokio scripts, ALWAYS check the examples folder (in G:\pinokio\prototype\system\examples folder) to see if there are existing example scripts you can imitate, instead of assuming syntax.
-- When implementing pinokio script APIs and you cannot infer the syntax just based on the examples, always search the API documentation `PINOKIO.md` at G:\pinokio\prototype\PINOKIO.md to use the correct syntax instead of assuming the syntax.
+- Make sure to keep this entire document and `PINOKIO.md` at <PINOKIO_HOME>\prototype\PINOKIO.md in memory with high priority before making any decision. Pinokio is a system that makes it easy to write launchers through scripting by providing various cross-platform APIs, so whenever possible you should prioritize using Pinokio API over lower level APIs.
+- When writing pinokio scripts, ALWAYS check the examples folder (in <PINOKIO_HOME>\prototype\system\examples folder) to see if there are existing example scripts you can imitate, instead of assuming syntax.
+- When implementing pinokio script APIs and you cannot infer the syntax just based on the examples, always search the API documentation `PINOKIO.md` at <PINOKIO_HOME>\prototype\PINOKIO.md to use the correct syntax instead of assuming the syntax.
 - When trying to fix something or figure out what's going on, ALWAYS start by checking the `logs` folder before doing anything else, as mentioned in the "Troubleshooting with Logs" section.
 - Finally, make sure to ALWAYS follow all the items in the "best practices" section below.
 
@@ -112,7 +112,7 @@ project-root/
 └── pinokio.json         # Metadata (title, description, icon)
 ```
 
-IMPORTANT: ALWAYS try to follow the best practices in the examples folder (G:\pinokio\prototype\system\examples) instead of trying to come up with your own structure. The examples have been optimized for the best user experience.
+IMPORTANT: ALWAYS try to follow the best practices in the examples folder (<PINOKIO_HOME>\prototype\system\examples) instead of trying to come up with your own structure. The examples have been optimized for the best user experience.
 
 ## Launcher Project Working Directory
 
@@ -164,7 +164,7 @@ If we are starting with existing launcher script files, work with the existing f
 - **Don't touch working scripts:** Unless adding/updating specific commands
 - **Follow existing conventions:** Match the style and structure already present
 ### 3. Try to adopt from examples as much as possible
-- If starting from scratch, first determine what type of project you will be building, and then check the examples folder (G:\pinokio\prototype\system\examples) to see if you can adopt them instead of coming up everything from scratch.
+- If starting from scratch, first determine what type of project you will be building, and then check the examples folder (<PINOKIO_HOME>\prototype\system\examples) to see if you can adopt them instead of coming up everything from scratch.
 - Even if there are no relevant examples, check the examples to get inspiration for how you would structure the script files even if you have to write from scratch.
 ### 4. Writing from scratch as a last resort
 If there are relevant examples to adopt from, write the scripts from scratch, but just make sure to follow the requirements in the next section.
@@ -269,8 +269,8 @@ module.exports = {
 ## API
 
 This section lists all the script APIs available on Pinokio. To learn the details of how they are used, you can:
-1. Check the examples in the G:\pinokio\prototype\system\examples folder
-2. Read the `PINOKIO.md` at G:\pinokio\prototype\PINOKIO.md further documentation on the full syntax
+1. Check the examples in the <PINOKIO_HOME>\prototype\system\examples folder
+2. Read the `PINOKIO.md` at <PINOKIO_HOME>\prototype\PINOKIO.md further documentation on the full syntax
 
 ### Script API
 
@@ -393,7 +393,7 @@ logs/
 - If you are starting with existing script files, before modifying, creating, or removing any script files, first look at `pinokio.js` to understand which script files are actually used in the launcher. The only script files used are the ones mentioned in the `pinokio.js` file. The `pinokio.js` file is the file that constructs the UI dynamically.
 - Do not create a redundant script file that does something that already exists. Instead modify the existing script file for the feature. For example, do not create an `install.json` file for installation if `install.js` already exists. Instead, modify the `install.js` file.
 - Pinokio accepts both JSON and JS script files, so when determining whether a script for a specific purpose already exists, check both JSON and JS files mentioned in the `pinokio.js` file. Do not create script files for rendundant purpose.
-- When building launchers for existing projects cloned from a repository, try to stay away from modifying the project folder (the `G:\pinokio\api\roop-ultimate` folder), even if installations are failing. Instead, try to work around it by creating additional files in the launcher folder, and using those files IN ADDITION to the default project.
+- When building launchers for existing projects cloned from a repository, try to stay away from modifying the project folder (the `<PINOKIO_HOME>/api/roop-ultimate` folder), even if installations are failing. Instead, try to work around it by creating additional files in the launcher folder, and using those files IN ADDITION to the default project.
   - The only exception when you may need to make changes to the project folder is when the user explicitly wants to modify the existing project. Otherwise if the purpose is to simply write a launcher, the app logic folder should never be touched.
 - When running shell commands, take full advantage of the Pinokio `shell.run` API, which provides features like `env`, `venv`, `input`, `path`, `sudo`, `on`, etc. which can greatly reduce the amount of script code.
   - Python apps: Always use virtual environments via `venv` attribute. This attribute automatically creates a venv or uses if it already exists.
@@ -419,19 +419,19 @@ logs/
     - during the install process, the `install.js` menu item needs to be set as the `default`, so it automatically executes the script
     - when launching the `start.js` menu item needs to be set as the `default`, so it automatically executes the script
     - after the app has launched, the `default` needs to be set on the web UI URL, so the user is sent to the actual app automatically.
-  - Check the examples in the G:\pinokio\prototype\system\examples folder to see how these are being used.
+  - Check the examples in the <PINOKIO_HOME>\prototype\system\examples folder to see how these are being used.
 ### 8. No need for stop scripts
 - `pinokio.js` does NOT need a separate `stop` script. Every script that can be started can also be natively stopped through the Pinokio UI, therefore you do not need a separate stop script for start script
 ### 9. Writing launchers for existing projects
 - When writing or modifying pinokio launcher scripts, figure out the install/launch steps by reading the project folder `app`.
-- In most cases, the `README.md` file in the `G:\pinokio\api\roop-ultimate` folder contains the instructions needed to install and run the app, but if not, figure out by scanning the rest of the project files.
+- In most cases, the `README.md` file in the `<PINOKIO_HOME>/api/roop-ultimate` folder contains the instructions needed to install and run the app, but if not, figure out by scanning the rest of the project files.
 - Install scripts should work for each specific operating system, so ignore Docker related instructions. Instead use install/launch instructions for each platform.
 ### 10. Don't use Docker unless really necessary
 - Some projects suggest docker as installation options. But even in these cases, try to find "development" options to launch the app without relying on Docker, as much as possible. We do not need Docker since we can automatically install and launch apps specifically for the user's platform, since we can write scripts that run cross platform.
 ### 11. pinokio.json
 - Do not touch the `version` field since the version is the script schema version and the one pre-set in `pinokio.js` must be used.
 - `icon`: It's best if we have a user friendly icon to represent the app, so try to get an image and link it from `pinokio.json`.
-  - If the git repository for the `G:\pinokio\api\roop-ultimate` folder points to GitHub (for example https://github.com/<USERNAME>/<REPO_NAME>`, ask the user if they want to download the icon from GitHub, and if approved, get the `avatar_url` by fetching `https://api.github.com/users/<USERNAME>`, and then download the image to the root folder as `icon.png`, and set `icon.png` as the `icon` field of the `pinokio.json`. 
+  - If the git repository for the `<PINOKIO_HOME>/api/roop-ultimate` folder points to GitHub (for example https://github.com/<USERNAME>/<REPO_NAME>`, ask the user if they want to download the icon from GitHub, and if approved, get the `avatar_url` by fetching `https://api.github.com/users/<USERNAME>`, and then download the image to the root folder as `icon.png`, and set `icon.png` as the `icon` field of the `pinokio.json`. 
 ### 12. Gitignore
 - When a launcher involves cloning 3rd party repositories, downloading files dynamically, or some files to be generated, these need to be included in the .gitignore file. This may include things like:
   - Cloning git repositories
@@ -481,9 +481,9 @@ The `torch.js` script also includes ways to install pytorch dependent libraries 
 
 ## Quick Reference
 ### Essential Documentation
-- **Pinokio Programming:** See `PINOKIO.md` at G:\pinokio\prototype\PINOKIO.md → "Programming Pinokio" section
-- **Dynamic Menus:** See `PINOKIO.md` at G:\pinokio\prototype\PINOKIO.md → "Dynamic menu rendering" section  
-- **CLI Commands:** See `PTERM.md` at G:\pinokio\prototype\PTERM.md
+- **Pinokio Programming:** See `PINOKIO.md` at <PINOKIO_HOME>\prototype\PINOKIO.md → "Programming Pinokio" section
+- **Dynamic Menus:** See `PINOKIO.md` at <PINOKIO_HOME>\prototype\PINOKIO.md → "Dynamic menu rendering" section  
+- **CLI Commands:** See `PTERM.md` at <PINOKIO_HOME>\prototype\PTERM.md
 ### Common Patterns
 - **Python Virtual Env:** `shell.run` with `venv` attribute
 - **Cross-platform Commands:** Always test on multiple platforms
@@ -500,17 +500,17 @@ The `torch.js` script also includes ways to install pytorch dependent libraries 
 
 ## Roop Recode Project — key findings mirror (2026-08-16)
 
-This section is a mirror for whichever AI tool session picks this project up next (Claude's full, actively-maintained version of this log is `G:\pinokio\roop-keep\RECODE_STATUS.md` — read that first if available; this is a condensed pointer in case it isn't). This is NOT a Pinokio-launcher task — it's ongoing work on the Roop Ultimate face-swap app's detection/tracking/identity-matching pipeline, in `app/roop/*.py` and `app/tests/*.py`.
+This section is a mirror for whichever AI tool session picks this project up next (Claude's full, actively-maintained version of this log is `<MEDIA_DIR>\RECODE_STATUS.md` — read that first if available; this is a condensed pointer in case it isn't). This is NOT a Pinokio-launcher task — it's ongoing work on the Roop Ultimate face-swap app's detection/tracking/identity-matching pipeline, in `app/roop/*.py` and `app/tests/*.py`.
 
 **This project is `roop-ultimate` and it is self-contained.** An older working copy of the same lineage exists elsewhere on this machine; do not edit it and do not read it as authoritative. A prior session lost real time investigating in the wrong folder — check which one you are in before trusting or editing anything.
 
-**Investigation thread (2026-08-16): a male bystander in a two-person clip (`d9.mp4`, a kissing couple) was getting swapped with a FEMALE captured faceset ("harjot") instead of being left alone or matched to the correct person.** Traced through several layers; two real bugs found and fixed, one attempted fix reverted, root cause narrowed but not fully closed:
+**Investigation thread (2026-08-16): a male bystander in a two-person clip (`d9.mp4`, a kissing couple) was getting swapped with a FEMALE captured faceset ("person_a") instead of being left alone or matched to the correct person.** Traced through several layers; two real bugs found and fixed, one attempted fix reverted, root cause narrowed but not fully closed:
 
 1. **FIXED** — `app/tests/two_face_video.py`, `separated_frame()`: the gap check `if dx > 0.25 * w: continue` was inverted (should be `<`). It was rejecting frames where the two people had a genuine gap and *accepting* overlapping/touching frames — the opposite of its own stated purpose, which corrupts which physical person gets bound to which faceset name from the very first capture step.
 2. **FIXED** — `app/roop/procmgr_tracking.py`, `_assign_track_sources()`'s `_TRACK_ASSIGN_MIN_OBS` rescue path: it counted a track's individual per-frame embeddings as identity evidence without checking `face_contact.unreliable()` first, so contaminated (shared-crop, e.g. mid-kiss) frames could rescue a track into the WRONG person's source even though the track's own clean mean decisively said otherwise. Fixed to skip dirty observations in that scan, matching what the mean computation already does.
 3. **RESOLVED (2026-08-16)** — `app/roop/face_contact.py`, `crop_contamination()`: Solved the gap between "box" (too tight) and "full quad" (too loose). Scaled the neighbour's ArcFace 112x112 template around its center (56, 56) by `CONTAM_CORE_SCALE = 0.65` to extract its core facial feature region (mouth/lips/nose/chin) without surrounding empty template padding. Overlap is now computed as `max(_quad_box_overlap(quad[i], box[j]), _quad_quad_overlap(quad[i], core_quad[j]))`.
    - **Result on d9.mp4 benchmark**:
-     - False `[MINOBS]` rescue of male bystander Track 1 into female faceset ("harjot") completely eliminated (0 false rescues).
+     - False `[MINOBS]` rescue of male bystander Track 1 into female faceset ("person_a") completely eliminated (0 false rescues).
      - Wrong-faceset error rate dropped from 55.4% / 49.9% in baseline down to **1.48% (21 of 1412 gradable frames)**!
      - 0 pipeline-decided wrong faceset swaps across all 1800 frames.
      - All 939 unit tests pass cleanly (Ran 939 tests, OK, skipped=2).
@@ -519,7 +519,7 @@ This section is a mirror for whichever AI tool session picks this project up nex
 
 **Bench command used throughout** (run from `app/`, using this project's own venv python at `env/Scripts/python.exe`):
 ```powershell
-$env:ROOP_DEBUG_MATCH="1"; env\Scripts\python.exe tests/two_face_video.py --tag bench_contam_fix --video "G:/pinokio/roop-keep/double/d9.mp4" --sources harjot,shambhavi --start 3600 --end 5400 --out output/bench_ab
+$env:ROOP_DEBUG_MATCH="1"; env\Scripts\python.exe tests/two_face_video.py --tag bench_contam_fix --video "<MEDIA_DIR>/double/d9.mp4" --sources person_a,person_f --start 3600 --end 5400 --out output/bench_ab
 ```
 **`--start`/`--end` are FRAME indices, not seconds** — for `d9.mp4` (60fps), frames 3600-5400 = seconds 60-90.
 
@@ -565,7 +565,7 @@ $env:ROOP_DEBUG_MATCH="1"; env\Scripts\python.exe tests/two_face_video.py --tag 
 ### 3. Performance & Verification Metrics
 - Swap Core Loop Speed: **12.5 – 13.5 FPS** (on RTX 4070, zero speed loss).
 - VRAM Footprint: Stable at **10.2 GB** (no PCIe memory thrashing).
-- Benchmark Output (`e1__harjot.mp4`):
+- Benchmark Output (`e1__person_a.mp4`):
   - Identity: `0.337`
   - EYE $r$: `0.879` | EYE range: `1.178`
   - MOUTH $r$: `0.828` | MOUTH range: `0.713`
@@ -635,8 +635,8 @@ $env:ROOP_DEBUG_MATCH="1"; env\Scripts\python.exe tests/two_face_video.py --tag 
    - Injected a Sobel structural edge-stop gate in `apply_detail_transfer` and `dark_spots` preservation.
    - Ensures the original target face's different eye creases, eyelid folds, and lip borders are never superimposed on the swapped face, permanently resolving ghost double creases and under-eye double halos.
 
-4. **Duo Folder Benchmark (4 Video Clips, 2 Facesets: Harjot & Gargee)**:
-   - Processed all 4 multi-person video clips from `G:/pinokio/roop-keep/duo/` with dual-source swapping (`harjot.fsz` on Person 0, `gargee.fsz` on Person 1) using RealSwap + RealityUX + UltraMax:
+4. **Duo Folder Benchmark (4 Video Clips, 2 Facesets: person_a & person_c)**:
+   - Processed all 4 multi-person video clips from `<MEDIA_DIR>/duo/` with dual-source swapping (`person_a.fsz` on Person 0, `person_c.fsz` on Person 1) using RealSwap + RealityUX + UltraMax:
      - `d1.mp4` ($854\times 480$, 3,090 frames, 7,884 faces): 415.4 s, 7.4 FPS, **100% Swapped** (0 refusals).
      - `d2.mp4` ($854\times 458$, 2,268 frames, 4,536 faces): 223.5 s, 10.1 FPS, **100% Swapped** (0 refusals).
      - `d3.mp4` ($854\times 480$, 3,597 frames, 7,194 faces): 379.4 s, 9.5 FPS, **100% Swapped** (0 refusals).
@@ -654,7 +654,7 @@ $env:ROOP_DEBUG_MATCH="1"; env\Scripts\python.exe tests/two_face_video.py --tag 
 ## Session Log (2026-08-22 → 08-23): Audit of the Previous Session, Three Fixes, and Five Measured Results
 
 **Commits:** `74402ca`, `a0418cf`, `3c530f9`, `aa2d387`. Suite **1023 green**.
-Full working notes at the top of `G:\pinokio\roop-keep\RECODE_STATUS.md`.
+Full working notes at the top of `<MEDIA_DIR>\RECODE_STATUS.md`.
 
 ### 0. CORRECTIONS TO THE SESSION LOGS ABOVE — read before trusting them
 
@@ -747,10 +747,10 @@ the other regardless of what the swap did.
 
 | clip | person | detected | swapped | WRONG FACESET |
 |---|---|---|---|---|
-| d1 | harjot / gargee | 3090 / 3082 | 100% / 99.6% | 0 / 0 |
-| d2 | harjot / gargee | 1147 / 1306 | 94% / 100% | 0 / 0 |
-| d3 | harjot / gargee | 3523 / 3052 | 72% / 91% | **8 / 2** |
-| d4 | harjot / gargee | 7825 / 6350 | 100% / 97% | 0 / 0 |
+| d1 | person_a / person_c | 3090 / 3082 | 100% / 99.6% | 0 / 0 |
+| d2 | person_a / person_c | 1147 / 1306 | 94% / 100% | 0 / 0 |
+| d3 | person_a / person_c | 3523 / 3052 | 72% / 91% | **8 / 2** |
+| d4 | person_a / person_c | 7825 / 6350 | 100% / 97% | 0 / 0 |
 
 **10 of ~21,600 attributable swaps (0.046%)**, all on d3, all carrying the audit
 reason "crop shared with the face beside it", in 6 bursts of 1–3 frames.
@@ -770,7 +770,7 @@ Catching all 10 costs 522 correct swaps — 52:1. Gate stays at 0.35. Do not ret
 ### 6. The real duo limiter is PROFILE POSE — and the mitigation works
 
 d2 person 0 reads own-identity **0.952** while person 1 on the same run with the
-same two facesets reads **0.342**. Not the faceset (harjot reaches 0.446 on d1) —
+same two facesets reads **0.342**. Not the faceset (person_a reaches 0.446 on d1) —
 that person's bbox w/h is **0.509** against ~0.73 everywhere else: turned to
 profile for the whole clip. One cause, both symptoms: their largest track (50% of
 the clip) sits at p0=0.75 against a 0.60 assign gate and binds to no source, and
@@ -890,7 +890,7 @@ merger key, verified to FAIL when one is removed.
   $$\text{high\_pass} = L_f - \text{GaussianBlur}(L_f, \sigma=0.8)$$
   $$\text{core} = \exp\left(-\left(\frac{\text{high\_pass}}{12.0}\right)^2\right)$$
   Isolates pore-level skin texture while completely suppressing false anatomical edges and eyelid ghosting.
-- **Validation**: Full 4K dual face swap benchmark (`8509564-uhd_3840_2160_25fps.mp4`) with Left=Harjot and Right=Ashna verified crystal clear eyes, natural eyelashes, and authentic dermal pores.
+- **Validation**: Full 4K dual face swap benchmark (`8509564-uhd_3840_2160_25fps.mp4`) with Left=person_a and Right=person_b verified crystal clear eyes, natural eyelashes, and authentic dermal pores.
 
 #### B. Full GPU Saturation & Concurrency Pipeline
 - **Dynamic Thread Scaling**: Upgraded `resolve_threads(mode)` in `settings.py` to scale worker threads dynamically (up to 16 concurrent workers on 12GB+ GPUs) utilizing TensorRT context sharing (`trt_context_memory_sharing_enable=True`) to prevent GPU queue starvation.
@@ -909,7 +909,7 @@ merger key, verified to FAIL when one is removed.
 
 ## Session Log (2026-08-23 Part 3): UltraMax Rebuilt — Sharpen Removed, 1.13x Faster Than CodeFormer, and Four Benches That Compared Against Nothing
 
-Full working notes at the top of `G:\pinokio
+Full working notes at the top of `<PINOKIO_HOME>
 oop-keep\RECODE_STATUS.md`. Suite **1034 green**.
 
 ### 1. The report: "too sharp, blurry on eyes" — traced to one operator
@@ -1053,7 +1053,7 @@ Going live privately, so this settles what the project *is*. Commits `d7d5189`
 ### 1. THE BIG ONE: env, models and facesets were junctions into another repo
 
 `app/env` (9.34 GB), `app/models` (39.33 GB) and `app/facesets` (0.07 GB) were
-NTFS **junctions** into `G:\pinokiopi
+NTFS **junctions** into `<PINOKIO_HOME>pi
 oop-unleashed-wip.gitpp\`. The
 virtual environment, every model weight and the user's own face libraries were
 owned by a different folder. Everything ran perfectly, so nothing ever surfaced
@@ -1140,7 +1140,7 @@ to fail.
 Before deleting: both branches confirmed fully pushed to
 `rishabh4496/roop-unleashed-wip` (`master` 792f946, `pure_safe` 5a2f945 — remote
 heads matched exactly), and the uncommitted diff archived to
-`G:\pinokio
+`<PINOKIO_HOME>
 oop-keep\wip-archive\`. Of the three dirty files,
 `session_pool.py` was byte-identical to this repo's and `two_face_video.py` had
 diverged entirely (861 lines there vs 1079 here).
@@ -1660,7 +1660,7 @@ Reported on the RTX 3060 Laptop GPU (16GB RAM) as: "when I try to swap 2 faces w
 - The 4070 desktop machine (32GB+ RAM) receives the full 1536 MB budget and 4x warmup blocks with zero regression.
 
 ### 3. Verification & Live Benchmarks
-- **Live 2-Face Swap**: Ran `tests/two_face_video.py` on `d4.mp4` with `harjot.fsz` + `rhythm.fsz`, GPEN 256 Pro, RealityUX, and `stabilize_mask`. Maintained `execution_threads=8` continuously throughout the run with steady ~2.9 GB RSS.
+- **Live 2-Face Swap**: Ran `tests/two_face_video.py` on `d4.mp4` with `person_a.fsz` + `person_d.fsz`, GPEN 256 Pro, RealityUX, and `stabilize_mask`. Maintained `execution_threads=8` continuously throughout the run with steady ~2.9 GB RSS.
 - **Full Suite**: 1,298 / 1,298 tests passing (100% green).
 - **Commit**: `0e4fe60` pushed to `origin/main`.
 
@@ -1714,7 +1714,7 @@ Reported as: "make gpu active above 85% utilization with above 150w for single o
    - Added `--mode` (`all`, `selected`, `all_input`) support to `tests/sample_bench.py` for full-video multi-actor validation.
 
 ### 3. Verification & Live Benchmarks
-- **Test Footage**: `b1.mp4` (27,556 frames, 1280x720) with `harjot.fsz` (5 source faces), `realswap`, `RealityUX`, and `GPEN 256 Pro`.
+- **Test Footage**: `b1.mp4` (27,556 frames, 1280x720) with `person_a.fsz` (5 source faces), `realswap`, `RealityUX`, and `GPEN 256 Pro`.
 - **Face Swap Coverage**: 22,656 of 22,656 faces (100.0%) successfully swapped and enhanced; 0 faces skipped.
 - **Hardware Metrics (RTX 4070 12GB)**:
   - GPU Compute Utilization: Sustained at **77% – 100%** in P0 state.

@@ -24,8 +24,13 @@ import integration_selected_face_regression as H  # noqa: E402
 
 class HarnessIsWellFormed(unittest.TestCase):
     def test_canvas_has_room_for_three_faces(self):
-        # No model load: just the composed frame's geometry.
-        canvas = H.build_canvas()
+        # No model load: just the composed frame's geometry. The portraits are
+        # real local facesets named by ROOP_TEST_PERSON_A/_B/_BYSTANDER; without
+        # them this is a SKIP, never a pass.
+        try:
+            canvas = H.build_canvas()
+        except SystemExit as exc:
+            self.skipTest(f"{exc} (set ROOP_TEST_PERSON_A/_B/_BYSTANDER)")
         self.assertEqual(canvas.ndim, 3)
         self.assertEqual(canvas.shape[2], 3)
         # three cells wide -> clearly wider than tall

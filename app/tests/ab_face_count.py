@@ -20,8 +20,8 @@ COUNTERBALANCED (2,1,1,2 by default): the first arm in a process pays the
 TensorRT engine build and reads several fps slow, which on its own has produced
 false +21.8% results in this repo.
 
-    env/Scripts/python.exe tests/ab_face_count.py --video G:/pinokio/roop-keep/duo/d1.mp4 \
-        --sources harjot,gargee --start 0 --end 300 --threads 10
+    env/Scripts/python.exe tests/ab_face_count.py --video <MEDIA_DIR>/duo/d1.mp4 \
+        --sources person_a,person_c --start 0 --end 300 --threads 10
 """
 import argparse
 import os
@@ -78,7 +78,7 @@ def run_arm(label, clip, facesets, targets, groups, options, workroot):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--video", default=fixtures.clip('duo/d1.mp4'))
-    ap.add_argument("--sources", default="harjot,gargee")
+    ap.add_argument("--sources", default="person_a,person_c")
     ap.add_argument("--start", type=int, default=0)
     ap.add_argument("--end", type=int, default=300)
     ap.add_argument("--order", default="2,1,1,2",

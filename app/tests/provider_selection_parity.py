@@ -260,7 +260,7 @@ def main():
     ap.add_argument("--threads", type=int, default=4)
     ap.add_argument("--swap-model", default=None, help="default: config.yaml swap_model")
     ap.add_argument("--mask-engine", default=None, help="default: config.yaml mask_engine")
-    ap.add_argument("--source", default="harjot",
+    ap.add_argument("--source", default="person_a",
                     help="one faceset, or comma-separated for multi-source")
     ap.add_argument("--tracking", default="1")
     ap.add_argument("--capture-provider", default="cuda")

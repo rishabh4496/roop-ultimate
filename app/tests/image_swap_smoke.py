@@ -27,7 +27,7 @@ The stack comes from config.yaml, not from CLI defaults, for the same reason
 every other harness here now does.
 
     env/Scripts/python.exe tests/image_swap_smoke.py
-    env/Scripts/python.exe tests/image_swap_smoke.py --frames 5 --source gargee
+    env/Scripts/python.exe tests/image_swap_smoke.py --frames 5 --source person_c
 """
 import argparse
 import os
@@ -87,7 +87,7 @@ def main():
     ap.add_argument("--frames", type=int, default=3)
     ap.add_argument("--stride", type=int, default=400)
     ap.add_argument("--start", type=int, default=200)
-    ap.add_argument("--source", default="harjot", help="faceset library name")
+    ap.add_argument("--source", default="person_a", help="faceset library name")
     ap.add_argument("--provider", default=None, help="defaults to config.yaml")
     ap.add_argument("--swap-model", default=None, help="defaults to config.yaml")
     ap.add_argument("--enhancer", default=None, help="defaults to config.yaml")

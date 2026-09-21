@@ -70,7 +70,7 @@ def main():
     parser.add_argument("--target", choices=VALIDATION_TARGETS, required=True)
     parser.add_argument("--device-id", "--cuda-device-id", type=int, default=0)
     parser.add_argument("--video", default=fixtures.clip("double/d4.mp4"))
-    parser.add_argument("--sources", default="harjot,gargee")
+    parser.add_argument("--sources", default="person_a,person_c")
     parser.add_argument("--start", type=int, default=0)
     parser.add_argument("--end", type=int, default=120,
                         help="representative frames per candidate; use 600 for final")

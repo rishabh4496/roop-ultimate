@@ -154,7 +154,7 @@ def main():
     ap.add_argument("--fixture-frames", type=int, default=24)
     ap.add_argument("--fixture-start", type=int, default=60)
     ap.add_argument("--clip", default=None, help="skip fixture generation")
-    ap.add_argument("--source", default="harjot", help="faceset name")
+    ap.add_argument("--source", default="person_a", help="faceset name")
     ap.add_argument("--enhancer", default="GPEN 256 Pro")
     ap.add_argument("--mask-engine", default="RealityUX")
     ap.add_argument("--cold-timeout", type=float, default=2700.0,
@@ -168,9 +168,9 @@ def main():
     # ffmpeg both makes the fixture and runs inside the render.
     #
     # DO NOT reintroduce a hardcoded drive here. This block previously probed
-    # "G:/pinokio/bin/{miniforge,miniconda}/Library/bin" literally, which is the
+    # "<PINOKIO_HOME>/bin/{miniforge,miniconda}/Library/bin" literally, which is the
     # main workstation's PINOKIO_HOME. On the RTX 3060 laptop -- where
-    # PINOKIO_HOME is C:\pinokio -- both candidates missed and the harness died
+    # PINOKIO_HOME is <PINOKIO_HOME> -- both candidates missed and the harness died
     # on its first line with "ffmpeg not found", so Phase 5 could never run on
     # the second mandatory validation target at all. Reuse the resolver that
     # already derives PINOKIO_HOME from the environment, ~/.pinokio/config.json

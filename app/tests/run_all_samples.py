@@ -13,8 +13,8 @@ core code changed). Delete the file to resume instantly from the same frame,
 no model reload. This is finer-grained than killing the process: no VRAM/model
 reload cost, and no risk of losing an in-flight segment.
 
-    touch "G:/pinokio/roop-keep/PAUSE_TESTS"     # pause
-    rm "G:/pinokio/roop-keep/PAUSE_TESTS"        # resume
+    touch "<MEDIA_DIR>/PAUSE_TESTS"     # pause
+    rm "<MEDIA_DIR>/PAUSE_TESTS"        # resume
 
 Usage:
     env/Scripts/python.exe tests/run_all_samples.py
@@ -247,15 +247,15 @@ def main():
     start_pause_watcher()
 
     if args.only in ("single", "both"):
-        rhythm = load_library_faceset("rhythm")
-        print(f"[run_all] rhythm: {len(rhythm.faces)} faces", flush=True)
+        person_d = load_library_faceset("person_d")
+        print(f"[run_all] person_d: {len(person_d.faces)} faces", flush=True)
         out_dir = os.path.join(OUT_ROOT, "baseline_single" + args.tag_suffix)
         videos = sorted(glob.glob(os.path.join(SINGLE_DIR, "*.mp4")))
         print(f"[run_all] {len(videos)} single/ video(s): {[os.path.basename(v) for v in videos]}",
               flush=True)
         for video in videos:
             try:
-                run_one(video, ["rhythm"], [rhythm], options, out_dir)
+                run_one(video, ["person_d"], [person_d], options, out_dir)
             except (Exception, SystemExit):
                 # SystemExit (raised by e.g. separated_frame's hard-fail path)
                 # is a BaseException, NOT an Exception — bare `except Exception`
@@ -265,9 +265,9 @@ def main():
                 traceback.print_exc()
 
     if args.only in ("double", "both"):
-        ashna = load_library_faceset("ashna")
-        rhythm = load_library_faceset("rhythm")
-        print(f"[run_all] ashna: {len(ashna.faces)} faces, rhythm: {len(rhythm.faces)} faces",
+        person_b = load_library_faceset("person_b")
+        person_d = load_library_faceset("person_d")
+        print(f"[run_all] person_b: {len(person_b.faces)} faces, person_d: {len(person_d.faces)} faces",
               flush=True)
         out_dir = os.path.join(OUT_ROOT, "baseline_double" + args.tag_suffix)
         videos = sorted(glob.glob(os.path.join(DOUBLE_DIR, "*.mp4")))
@@ -275,7 +275,7 @@ def main():
               flush=True)
         for video in videos:
             try:
-                run_one(video, ["ashna", "rhythm"], [ashna, rhythm], options, out_dir)
+                run_one(video, ["person_b", "person_d"], [person_b, person_d], options, out_dir)
             except Exception:
                 print(f"[run_all] EXCEPTION on {video}:", flush=True)
                 traceback.print_exc()

@@ -62,7 +62,7 @@ something unrelated to it.** From the launcher's own log:
     Exception When localhost is not accessible, a shareable link must be
       created. ... when launching Gradio Server!
     Closing server running on port: 42005
-    (env) (base) G:\pinokio\api\roop-ultimate\app>       <- process exited
+    (env) (base) <PINOKIO_HOME>/api/roop-ultimate\app>       <- process exited
 
 `run.py` starts the FastAPI backend on a **daemon** thread and then calls
 `core.run()`, which launches the legacy Gradio UI on the main thread. The API
@@ -517,7 +517,7 @@ The cited commits, `docs/FINAL_VALIDATION_MATRIX.md`, `docs/HARDWARE_VALIDATION_
 |---|---|---|
 | Repository baseline for Stage 9A | Branch `main`, HEAD `459dd4082e60ae1b153b2e65c393eb8a2d6d9198`, clean tree, remote `origin` inspected before documentation edits | PASS for audit capture |
 | Existing update execution | `update.js`, `install.js`, `reset.js`, `torch.js`, `fix_tensorrt.js`, model loaders, version/compatibility code, and update logs inspected | PASS for audit capture |
-| Pinokio convention review | `G:\pinokio\prototype\system\examples\comfy\update.js` and relevant `PINOKIO.md` sections inspected | PASS for audit capture |
+| Pinokio convention review | `<PINOKIO_HOME>\prototype\system\examples\comfy\update.js` and relevant `PINOKIO.md` sections inspected | PASS for audit capture |
 | Safe update implementation | No manifest-gated, snapshot-backed, staged, rollback-capable implementation exists | MISSING / NOT IMPLEMENTED |
 | Update runtime test | No update was executed in Stage 9A; no update test pass is claimed | NOT RUN |
 | Both hardware targets | No physical RTX 4070 or RTX 3060 update validation was run | NOT VERIFIED |
@@ -636,7 +636,7 @@ for the other GPU.
 | Hardware detection | `nvidia-smi` and health worker identified RTX 4070, driver 616.56, CC 8.9 | PASS |
 | Provider selection | Requested `tensorrt` resolved to TensorRT/CUDA/CPU; separate CUDA smoke resolved CUDA/CPU | PASS |
 | Model loading | `realswap` and `hififace` sessions initialized; finite inference completed for both | PASS |
-| Image processing | Canonical `single/s1.mp4`, source `harjot`, frame 200: region delta `0.00/255`, identity `0.0579 -> 0.0579`; repeated with configured TensorRT and CUDA/no-enhancer | **FAIL** |
+| Image processing | Canonical `single/s1.mp4`, source `person_a`, frame 200: region delta `0.00/255`, identity `0.0579 -> 0.0579`; repeated with configured TensorRT and CUDA/no-enhancer | **FAIL** |
 | Video processing | Canonical `double/d4.mp4`, frames 0–30, target profile pool 2/2; 30 frames, 60/60 faces swapped, wrong facesets 0 | PASS for this short workload |
 | Preview | Existing route and telemetry contract tests pass; no interactive preview session was possible | NOT VERIFIED interactively |
 | Batching | Queue/batching automated tests pass; no separate physical batch-width acceptance run in this gate | PARTIAL |
@@ -718,7 +718,7 @@ B row.
 ### Device A long-run soak
 
 Command: `app/tests/baseline_controlled.py --tag stage15_4070_long_600`
-against `double/d4.mp4`, frames 0–600, sources `harjot,gargee`, TensorRT,
+against `double/d4.mp4`, frames 0–600, sources `person_a,person_c`, TensorRT,
 pool 2/2, 12 threads, `realswap / GPEN 256 Pro / RealityUX`, and
 `hevc_nvenc`.
 
@@ -736,7 +736,7 @@ pool 2/2, 12 threads, `realswap / GPEN 256 Pro / RealityUX`, and
 | Post-run GPU state | 1,973 MiB used / 10,038 MiB free; baseline was 1,983 / 10,028 | PASS for observed release |
 | MPEG-4 intermediate | `ffprobe`: 1280x720, 30 FPS, 20.0 s, 600 frames | PASS structural integrity |
 | HEVC intermediate | `ffprobe`: 1280x720, 30 FPS, 20.0 s, 600 frames | PASS structural integrity |
-| Visual-quality harness | `harjot`: 468/477 swapped; 71/467 gradable output frames re-measured as the other person; `gargee`: 206/206 swapped | **FAIL / limitation** |
+| Visual-quality harness | `person_a`: 468/477 swapped; 71/467 gradable output frames re-measured as the other person; `person_c`: 206/206 swapped | **FAIL / limitation** |
 
 The output report and log are retained under the ignored
 `output/stage15_device_a/long_600/` directory. The two valid encoded files are
@@ -792,7 +792,7 @@ when the required live/browser/hardware evidence is absent.
 | Rollback/health validation | FAIL | Fresh health validation failed its launch probe timeout; rollback/real candidate transaction was not exercised. |
 | Cleanup safety | PASS | Reference-aware inventory, guarded deletion tests, and read-only live audit passed; real-user deletion and launch-after-delete were not tested. |
 | Terminal information redesign | PASS | Structured sections, runtime state, terminal metadata, and long-run technical logs were observed; no useful raw diagnostic feed was removed. |
-| RTX 4070 validation | FAIL | Physical Device A long-run completed, but the still-image smoke failed and the 600-frame harness reported 71/467 `harjot` frames re-measured as the other person. |
+| RTX 4070 validation | FAIL | Physical Device A long-run completed, but the still-image smoke failed and the 600-frame harness reported 71/467 `person_a` frames re-measured as the other person. |
 | RTX 3060 validation | BLOCKED | RTX 3060 Laptop was unavailable on the test host; no Device A extrapolation is made. |
 | Long-run stability | BLOCKED | Device A completed the 600-frame soak with worker exit and near-baseline VRAM, but Device B and final playback remain untested. |
 | No known critical regression | FAIL | Known acceptance-blocking issues remain: still-image failure, health launch-probe failure, and long-run visual-quality mismatch. |

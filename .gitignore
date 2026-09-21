@@ -25,6 +25,7 @@ app/models
 app/temp
 app/output
 app/config.yaml
+config.yaml
 app/saved_configs
 app/facesets
 
@@ -74,11 +75,13 @@ app/sidecar_keep/KEEP/
 app/sidecar_keep/weights/
 
 # Gemini CLI ignore file: tools rewrite it with a machine-specific
-# absolute workspace path (G:\pinokio vs C:\pinokio), so tracking it
+# absolute workspace path (it differs per machine), so tracking it
 # makes every cross-machine pull abort. Kept local per machine.
 .geminiignore
 
-# Generated benchmark video assets
+# Generated benchmark assets. source_reference.png is copied from the local
+# faceset library (a real face) or synthesised; never commit it.
+app/roop/assets/benchmark/source_reference.png
 roop/assets/benchmark/*.mp4
 app/roop/assets/benchmark/*.mp4
 # Agent/tool binaries dropped into the repo root by local tooling.

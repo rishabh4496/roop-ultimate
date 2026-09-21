@@ -28,7 +28,7 @@ marked **PROPOSED** and is not implemented by this gate.
 | Launcher source update | **PARTIAL** | `update.js:3-8` says the pull updates launcher scripts and runs `git pull` from the project root. `README.md:26-33,43` identifies GitHub as the installation source. | The launcher is versioned by the same Git repository, but has no separate signed/reviewed launcher channel, staged activation, or rollback UI. |
 | Current `update.js` behavior | **UNSAFE** | `update.js:2-24` performs, in order: root `git pull`; `uv pip install -r requirements.txt` in `app` with `venv: "env"`; `npm install` in `react-ui`. There is no `when`, user confirmation, backup, health check, or rollback step. | A source update can succeed while a later environment install fails, leaving a partially updated installation. |
 | Observed update execution | **PARTIAL** | `logs/api/update.js/latest` records only a successful React UI 1.0 `npm install` (`up to date`, `0 vulnerabilities`). Historical `1788249261347` records a root fast-forward, followed by Python and Node install steps. | Logs prove those runs occurred; they do not prove transactional safety or complete runtime validation. |
-| Pinokio update convention | **PARTIAL** | The closest application example inspected was `G:\pinokio\prototype\system\examples\comfy\update.js:1-54`; it uses root/app `git pull` and a requirements install. `PINOKIO.md:2446-2503` documents the Update menu pattern, and `PINOKIO.md:3004-3052` shows an update action using `git pull` plus package installation. | The existing script follows the ordinary Pinokio convention, but the convention itself does not provide snapshotting, signatures, compatibility, or rollback. No launcher change is proposed in this gate. |
+| Pinokio update convention | **PARTIAL** | The closest application example inspected was `<PINOKIO_HOME>\prototype\system\examples\comfy\update.js:1-54`; it uses root/app `git pull` and a requirements install. `PINOKIO.md:2446-2503` documents the Update menu pattern, and `PINOKIO.md:3004-3052` shows an update action using `git pull` plus package installation. | The existing script follows the ordinary Pinokio convention, but the convention itself does not provide snapshotting, signatures, compatibility, or rollback. No launcher change is proposed in this gate. |
 
 ## Dependency and environment paths
 
@@ -252,7 +252,7 @@ not download models. It runs as a child process and exits after the check so
 provider/model memory is released. Temporary transaction paths are ignored by
 Git. The Pinokio script remains the documented `shell.run` + relative `app`
 path + `env` venv shape from
-`G:\pinokio\prototype\system\examples\comfy\update.js`.
+`<PINOKIO_HOME>\prototype\system\examples\comfy\update.js`.
 
 ## Stage 9C verification and limits
 

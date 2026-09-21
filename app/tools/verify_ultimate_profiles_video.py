@@ -108,11 +108,11 @@ def main():
     tmp = tempfile.mkdtemp(prefix='ultimate_video_')
     try:
         clip = build_clip(os.path.join(tmp, 'clip.mp4'),
-                          os.path.join(FACESETS, 'simran.png'))
+                          os.path.join(FACESETS, 'person_l.png'))
         expected = count_frames(clip)
         print(f'built {clip} with {expected} frames\n')
 
-        src = extract_face_images(os.path.join(FACESETS, 'lori.png'), (False, 0))
+        src = extract_face_images(os.path.join(FACESETS, 'person_h.png'), (False, 0))
         assert src, 'no face in the source image'
         fs = FaceSet()
         face = src[0][0]

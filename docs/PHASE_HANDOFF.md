@@ -494,7 +494,7 @@ Three things from this session change how you should read any benchmark here.
    `faces_seen` beside fps.**
 
 3. **The locked 1280x720 `double/d4.mp4` fixture is outside this repository.**
-   It is available at `G:/pinokio/roop-keep/double/d4.mp4` on the 4070 host and
+   It is available at `<MEDIA_DIR>/double/d4.mp4` on the 4070 host and
    was used for three Phase 11 feature-level renders. The 3060 still has no
    Phase 11 run.
 
@@ -651,7 +651,7 @@ Validation already completed:
 - 4070 controlled V1-backed smoke, GPEN 256 Pro / RealityUX / TensorRT /
   RealSwap, locked `double/d4.mp4`, strength 0.35 → **120/120**, return code
   0, no identity-detail runtime errors. It did not exercise V2 metadata because
-  the locked `harjot/gargee` archives are legacy V1.
+  the locked `person_a/person_c` archives are legacy V1.
 
 Exact next-phase starting point:
 
@@ -1053,7 +1053,7 @@ Validation already completed for this implementation:
 Required gates before marking Phase 15 complete:
 
 1. Run the full repository suite from the repository root and record its exact count after the final Phase 15 edits: `app/env/Scripts/python.exe -m pytest -q`.
-2. On the RTX 4070, run fresh-process precision arms using the same locked clip/source/models/codec and record PASS/FAIL plus identity, detail, finiteness, FPS, VRAM, RSS, provider, and precision: `app/env/Scripts/python.exe app/tests/precision_matrix.py --clip G:/pinokio/roop-keep/double/d4.mp4 --source harjot --out app/output/phase15_validation/rtx4070_precision`. Use fresh processes for every provider/precision; never switch precision in a live ORT/TensorRT process.
+2. On the RTX 4070, run fresh-process precision arms using the same locked clip/source/models/codec and record PASS/FAIL plus identity, detail, finiteness, FPS, VRAM, RSS, provider, and precision: `app/env/Scripts/python.exe app/tests/precision_matrix.py --clip <MEDIA_DIR>/double/d4.mp4 --source person_a --out app/output/phase15_validation/rtx4070_precision`. Use fresh processes for every provider/precision; never switch precision in a live ORT/TensorRT process.
 3. Run the complete enhancer/profile video matrix on the same locked inputs with `bench_adaptive_enhancer_video.py`, including every label accepted by `compare_enhancers_video.VALID_ENHANCERS` and FAST, BALANCED, REALISTIC, and MAX QUALITY. Grade outputs independently with `app/tests/phase16_integrity.py`; a successful process is not sufficient.
 4. Exercise image swap, multi-face swap, new and legacy faceset loading, faceset creation, preview, batch, and a long-video run. Record startup, shutdown, model release, memory release, repeated jobs, provider changes, precision changes, output ordering/finiteness, and anomaly logs. Re-run the audit report after each provider/device switch so cache namespaces are compared to the active runtime.
 5. Repeat the supported provider rows on the physical RTX 3060 laptop with the single-context/global GPU guard, 1536 MB stabilization cap, RSS under 2.5 GB, and preserved look values: `blend_ratio=0.85`, `face_mask_blend=25`, `merger_sharpen=0.55`, `stabilize_enhancer_strength=0.6`. Do not transfer RTX 4070 engines or results. A missing physical device remains `pending`, not pass.

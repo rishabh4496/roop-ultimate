@@ -952,7 +952,7 @@ def occlusion_gate_population(visible: np.ndarray) -> np.ndarray:
     On the 106-point layout the jaw contour is excluded.  It runs under hair,
     a collar or a shoulder on ordinary footage and is not inside the region a
     swap pastes, so counting it measured the wardrobe, not the face: on
-    `D:\Monica Bellucci .mp4` frame 1 the gate read a fully visible face at
+    `<MEDIA_DIR>/target_clip.mp4` frame 1 the gate read a fully visible face at
     hidden fraction 0.208 (22 landmarks) and every one of the 22 was a contour
     point (0-13, 18-24, 32); the swap of the selected person was then thrown
     away on 26 of 67 routed frames.  A real occluder across the face still hides

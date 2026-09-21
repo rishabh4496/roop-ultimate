@@ -42,8 +42,8 @@ YAWS = ab.YAW_LABEL
 # caller to remember, and leave any existing ffmpeg ahead of it untouched.
 def ensure_ffmpeg():
     # DO NOT reintroduce a hardcoded drive here. This probed
-    # "G:/pinokio/bin/ffmpeg-env/Library/bin" literally -- the main
-    # workstation's PINOKIO_HOME -- so on the RTX 3060 laptop (C:\pinokio) the
+    # "<PINOKIO_HOME>/bin/ffmpeg-env/Library/bin" literally -- the main
+    # workstation's PINOKIO_HOME -- so on the RTX 3060 laptop (<PINOKIO_HOME>) the
     # candidate missed and every clip aborted before encoding. Reuse the
     # resolver that derives PINOKIO_HOME from the environment,
     # ~/.pinokio/config.json, or this file's own location.
@@ -164,7 +164,7 @@ def main():
                          "25; the default is 0 because that is what every arm "
                          "saved before 2026-08-21 used, and changing it would "
                          "make this run incomparable to them.")
-    ap.add_argument("--facesets", default="ashna,harjot")
+    ap.add_argument("--facesets", default="person_b,person_a")
     ap.add_argument("--yaws", default="",
                     help="comma-separated yaws to render, e.g. -90,90; default all five")
     # NOT under app/temp. roop.utilities.delete_temp_frames does an unguarded

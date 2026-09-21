@@ -9,7 +9,7 @@ ECONNREFUSED on every poll against a backend that had started perfectly:
     Exception When localhost is not accessible, a shareable link must be
       created. ... when launching Gradio Server!
     Closing server running on port: 42005
-    (env) (base) G:\pinokio\api\roop-ultimate\app>   <- process exited
+    (env) (base) <PINOKIO_HOME>/api/roop-ultimate\app>   <- process exited
 
 THE TRAP, and the reason this file asserts what it asserts.  `run.py` starts the
 API on a DAEMON thread and then calls `core.run()` on the main thread, so the API

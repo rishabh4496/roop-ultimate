@@ -1,6 +1,6 @@
 """The occlusion admission gate is judged on the face, not the jaw contour.
 
-Real-file finding (D:\\Monica Bellucci .mp4, frame 1): a fully visible face was
+Real-file finding (<MEDIA_DIR>/target_clip.mp4, frame 1): a fully visible face was
 marked `partial` at hidden fraction 0.208 and its swap thrown away; all 22
 "hidden" landmarks were 2d106 contour points (0-13, 18-24, 32) under a fur
 collar and hair.  The 8% gate is unchanged; the population it reads is the
@@ -32,7 +32,7 @@ class OcclusionGatePopulation(unittest.TestCase):
         visible[list(hidden)] = False
         return visible
 
-    def test_monica_frame_1_reading_is_visible(self):
+    def test_target_person_frame_1_reading_is_visible(self):
         hidden = list(range(0, 14)) + list(range(18, 25)) + [32]
         visible = self._visible106(hidden)
         self.assertAlmostEqual(1.0 - visible.mean(), 22 / 106, places=6)  # the old reading, 0.208

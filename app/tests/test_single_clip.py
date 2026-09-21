@@ -69,7 +69,7 @@ import sample_bench as sb
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--video", default=fixtures.clip('final/5155179-hd_1920_1080_30fps.mp4'))
-    ap.add_argument("--source", default="harjot")
+    ap.add_argument("--source", default="person_a")
     ap.add_argument("--threads", type=int, default=12)
     args = ap.parse_args()
 

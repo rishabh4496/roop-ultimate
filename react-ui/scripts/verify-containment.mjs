@@ -19,10 +19,14 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 
-const REQ = createRequire('G:/pinokio/cache/npm_config_cache/_npx/e41f203b7505f1fb/');
+// PLAYWRIGHT_REQUIRE_FROM: a directory whose node_modules holds playwright-core
+// (e.g. an npx cache entry); defaults to this package. CHROME_PATH: the
+// Chromium executable to drive.
+const REQ = createRequire(process.env.PLAYWRIGHT_REQUIRE_FROM || import.meta.url);
 const { chromium } = REQ('playwright-core');
-const CHROME = 'C:/Users/rishr/AppData/Local/ms-playwright/chromium-1234/chrome-win64/chrome.exe';
-const DIST = 'G:/pinokio/api/roop-ultimate/react-ui/dist/assets';
+const CHROME = process.env.CHROME_PATH;
+if (!CHROME) throw new Error('set CHROME_PATH to a Chromium executable');
+const DIST = path.resolve(path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1')), '../dist/assets');
 
 const CSS = fs.readFileSync(path.join(DIST, fs.readdirSync(DIST).find((f) => f.endsWith('.css'))), 'utf8');
 

@@ -236,7 +236,7 @@ def main():
     ap.add_argument("--pool", type=int, default=None,
                     help="pool_size for pooled processors (default: the app's own "
                          "session_pool.pool_size(), i.e. what production resolves)")
-    ap.add_argument("--source", default="harjot",
+    ap.add_argument("--source", default="person_a",
                     help="faceset name; only DMDNet consumes it")
     ap.add_argument("--only", default="", help="comma-separated labels to run")
     ap.add_argument("--json", default="", help="write rows here")

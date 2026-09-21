@@ -105,7 +105,7 @@ def run_arm(args, temporal, tag, swapper, mask, threads):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--clip', default=fixtures.clip('inverted/s1.mp4'))
-    ap.add_argument('--source', default='harjot')
+    ap.add_argument('--source', default='person_a')
     ap.add_argument('--enhancer', default='GPEN Realistic')
     ap.add_argument('--reps', type=int, default=2)
     ap.add_argument('--vary', default='temporal_detection',

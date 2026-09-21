@@ -128,7 +128,7 @@ class TargetPersonIdentityTests(unittest.TestCase):
     def test_media_contexts_have_independent_people_and_duplicate_names(self):
         a = self._add("duplicate.mp4")
         b = self._add("duplicate.mp4")
-        self._configure(0, ["Harjot"], {})
+        self._configure(0, ["person_a"], {})
         a_id = api._target_person_records()[0]["target_person_id"]
         state.active_target_person_source_mapping = {a_id: "source-a"}
         api._save_active_target_context_locked()

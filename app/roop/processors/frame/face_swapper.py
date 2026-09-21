@@ -2461,8 +2461,8 @@ def process_frame_tracked(source_faces: Any, detections: Sequence[Any],
     bipartite identity matching.
 
     `source_faces` is either:
-      - Single faceset / Face (e.g., 'mehak')
-      - Sequence of facesets / Faces (e.g., ['mehak', 'misbah'])
+      - Single faceset / Face (e.g., 'person_k')
+      - Sequence of facesets / Faces (e.g., ['person_k', 'person_e'])
       - Mapping of identity names to facesets / Faces
     
     `detections` is this frame's raw detector output -- possibly empty.

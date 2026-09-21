@@ -212,7 +212,7 @@ def run_one(name, args, out_root):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--video", default=fixtures.clip("double/d4.mp4"))
-    ap.add_argument("--sources", default="harjot,gargee")
+    ap.add_argument("--sources", default="person_a,person_c")
     ap.add_argument("--start", type=int, default=0)
     ap.add_argument("--end", type=int, default=30)
     ap.add_argument("--capture", type=int, default=4930)

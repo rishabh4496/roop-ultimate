@@ -10,7 +10,7 @@ and cannot poison the next video or leave a fragmented CUDA allocator behind.
 Examples
 --------
     python scripts/verify_roop_keep.py
-    python scripts/verify_roop_keep.py --base-dir "G:\\pinokio\\roop-keep" --device cuda
+    python scripts/verify_roop_keep.py --base-dir "<MEDIA_DIR>" --device cuda
     python scripts/verify_roop_keep.py --resume --save-strips
 
 Outputs are written only beneath ``<base-dir>/output_verified`` unless an
@@ -37,7 +37,8 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 REPO_ROOT = Path(__file__).resolve().parents[1]
 APP_HARNESS = REPO_ROOT / "app" / "tests" / "verify_roop_keep.py"
 VIDEO_EXTS = {".mp4", ".mkv", ".avi", ".mov", ".webm", ".m4v"}
-DEFAULT_BASE = Path(os.environ.get("ROOP_KEEP_DIR", r"G:\pinokio\roop-keep"))
+# The media folder is machine-specific: $ROOP_KEEP_DIR or --base-dir, no default.
+DEFAULT_BASE = Path(os.environ["ROOP_KEEP_DIR"]) if os.environ.get("ROOP_KEEP_DIR") else None
 
 
 def video_jobs(base_dir: Path) -> Iterable[Tuple[str, Path]]:
@@ -343,7 +344,7 @@ def make_command(python: str, base: Path, output: Path, kind: str, name: str,
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Isolated RealSwap + UltraMax roop-keep verification.")
-    parser.add_argument("--base-dir", type=Path, default=DEFAULT_BASE,
+    parser.add_argument("--base-dir", type=Path, default=DEFAULT_BASE, required=DEFAULT_BASE is None,
                         help="corpus containing single/ and double/")
     parser.add_argument("--output-dir", type=Path, default=None,
                         help="default: <base-dir>/output_verified")
@@ -452,7 +453,7 @@ def main() -> int:
 
         if not entry:
             entry = {"name": source.name, "kind": kind,
-                     "facesets": ["mehak"] if kind == "single" else ["mehak", "misbah"],
+                     "facesets": ["person_k"] if kind == "single" else ["person_k", "person_e"],
                      "criteria": [],
                      "error": "worker exited %d without a report entry" % code,
                      "worker_log": str(output / "logs" / ("%s__%s.attempt1.log" % (kind, source.stem)))}

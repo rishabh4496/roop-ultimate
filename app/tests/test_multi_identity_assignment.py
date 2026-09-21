@@ -1,7 +1,7 @@
 """Unit tests for Hungarian Bipartite Identity Matching & Hysteresis State Machine.
 
 Simulates multi-identity trajectory crossings and identity retention for multi-person videos
-(e.g., 'double' dataset with distinct identities: 'mehak' and 'misbah').
+(e.g., 'double' dataset with distinct identities: 'person_k' and 'person_e').
 
 Verifies:
 1. Global Cost Matrix Formulation:
@@ -14,9 +14,9 @@ Verifies:
    - IoU > 0.3 locks identity assignments and sets alpha = 1.0 (disabling spatial weight).
    - Unlocks when bounding boxes separate by >= 1.5x average face width.
 4. Trajectory Crossing Simulation:
-   - Trajectory crossing of 'mehak' and 'misbah' with zero identity flipping and zero track swapping.
-5. End-to-end integration with face_swapper.process_frame_tracked for single ('mehak') and
-   double ('mehak', 'misbah') facesets.
+   - Trajectory crossing of 'person_k' and 'person_e' with zero identity flipping and zero track swapping.
+5. End-to-end integration with face_swapper.process_frame_tracked for single ('person_k') and
+   double ('person_k', 'person_e') facesets.
 """
 
 from __future__ import annotations
@@ -159,8 +159,8 @@ class TestMathematicalFormulation(unittest.TestCase):
         emb_diff = create_synthetic_embedding(2)
 
         identity = TrackedIdentity(
-            identity_id='mehak',
-            name='mehak',
+            identity_id='person_k',
+            name='person_k',
             reference_embedding=emb_ref,
             current_bbox=np.array([100, 100, 200, 200], dtype=np.float32),
         )
@@ -184,8 +184,8 @@ class TestMathematicalFormulation(unittest.TestCase):
     def test_alpha_1_disables_spatial_weight(self):
         emb_ref = create_synthetic_embedding(1)
         identity = TrackedIdentity(
-            identity_id='mehak',
-            name='mehak',
+            identity_id='person_k',
+            name='person_k',
             reference_embedding=emb_ref,
             current_bbox=np.array([100, 100, 200, 200], dtype=np.float32),
         )
@@ -202,8 +202,8 @@ class TestOptimalBipartiteMatching(unittest.TestCase):
     """Test Jonker-Volgenant bipartite matching with gating threshold (0.45)."""
 
     def setUp(self):
-        self.emb_mehak = create_synthetic_embedding(100)
-        self.emb_misbah = create_synthetic_embedding(200)
+        self.emb_person_k = create_synthetic_embedding(100)
+        self.emb_person_e = create_synthetic_embedding(200)
         self.emb_bystander = create_synthetic_embedding(300)
 
         self.mgr = IdentityManager(
@@ -211,15 +211,15 @@ class TestOptimalBipartiteMatching(unittest.TestCase):
             gating_threshold=DEFAULT_GATING_THRESHOLD,
         )
         self.mgr.bind_facesets({
-            'mehak': {'name': 'mehak', 'embedding': self.emb_mehak},
-            'misbah': {'name': 'misbah', 'embedding': self.emb_misbah},
+            'person_k': {'name': 'person_k', 'embedding': self.emb_person_k},
+            'person_e': {'name': 'person_e', 'embedding': self.emb_person_e},
         })
 
     def test_clean_double_identity_assignment(self):
-        face_mehak = create_face_dict([50, 100, 150, 200], self.emb_mehak)
-        face_misbah = create_face_dict([350, 100, 450, 200], self.emb_misbah)
+        face_person_k = create_face_dict([50, 100, 150, 200], self.emb_person_k)
+        face_person_e = create_face_dict([350, 100, 450, 200], self.emb_person_e)
 
-        assignments = self.mgr.assign([face_mehak, face_misbah], frame_index=1)
+        assignments = self.mgr.assign([face_person_k, face_person_e], frame_index=1)
         self.assertEqual(len(assignments), 2)
         self.assertIsNotNone(assignments[0])
         self.assertIsNotNone(assignments[1])
@@ -227,23 +227,23 @@ class TestOptimalBipartiteMatching(unittest.TestCase):
         id_0, cost_0 = assignments[0]
         id_1, cost_1 = assignments[1]
 
-        self.assertEqual(id_0.name, 'mehak')
-        self.assertEqual(id_1.name, 'misbah')
+        self.assertEqual(id_0.name, 'person_k')
+        self.assertEqual(id_1.name, 'person_e')
         self.assertLess(cost_0, DEFAULT_GATING_THRESHOLD)
         self.assertLess(cost_1, DEFAULT_GATING_THRESHOLD)
 
     def test_gating_threshold_rejects_unmapped_bystander(self):
         """Bystander face must be rejected when cost > 0.45, rather than forced into swap."""
-        face_mehak = create_face_dict([50, 100, 150, 200], self.emb_mehak)
+        face_person_k = create_face_dict([50, 100, 150, 200], self.emb_person_k)
         face_bystander = create_face_dict([500, 500, 600, 600], self.emb_bystander)
 
-        # Frame has mehak and an unmapped bystander (misbah is off-screen)
-        assignments = self.mgr.assign([face_mehak, face_bystander], frame_index=2)
+        # Frame has person_k and an unmapped bystander (person_e is off-screen)
+        assignments = self.mgr.assign([face_person_k, face_bystander], frame_index=2)
         self.assertEqual(len(assignments), 2)
 
-        # Mehak is correctly assigned
+        # person_k is correctly assigned
         self.assertIsNotNone(assignments[0])
-        self.assertEqual(assignments[0][0].name, 'mehak')
+        self.assertEqual(assignments[0][0].name, 'person_k')
 
         # Bystander MUST be rejected as unmapped background face (assignment is None)
         self.assertIsNone(assignments[1], "Unmapped background face should be rejected by gating threshold")
@@ -269,8 +269,8 @@ class TestHysteresisStateMachine(unittest.TestCase):
         self.assertTrue(are_boxes_separated(box_a, box_separated_center, multiplier=1.5))
 
     def test_crossing_triggers_locked_state_and_alpha_1(self):
-        emb_mehak = create_synthetic_embedding(11)
-        emb_misbah = create_synthetic_embedding(22)
+        emb_person_k = create_synthetic_embedding(11)
+        emb_person_e = create_synthetic_embedding(22)
 
         mgr = IdentityManager(
             alpha=DEFAULT_ALPHA,
@@ -279,13 +279,13 @@ class TestHysteresisStateMachine(unittest.TestCase):
             separation_multiplier=SEPARATION_MULTIPLIER,
         )
         mgr.bind_facesets({
-            'mehak': {'name': 'mehak', 'embedding': emb_mehak},
-            'misbah': {'name': 'misbah', 'embedding': emb_misbah},
+            'person_k': {'name': 'person_k', 'embedding': emb_person_k},
+            'person_e': {'name': 'person_e', 'embedding': emb_person_e},
         })
 
         # Frame 1: Non-overlapping faces (IoU = 0.0) -> Normal state, alpha = 0.75
-        face_1 = create_face_dict([50, 100, 150, 200], emb_mehak, track_id=1)
-        face_2 = create_face_dict([350, 100, 450, 200], emb_misbah, track_id=2)
+        face_1 = create_face_dict([50, 100, 150, 200], emb_person_k, track_id=1)
+        face_2 = create_face_dict([350, 100, 450, 200], emb_person_e, track_id=2)
         mgr.assign([face_1, face_2], frame_index=1)
         self.assertEqual(mgr.state, HysteresisState.NORMAL)
 
@@ -293,8 +293,8 @@ class TestHysteresisStateMachine(unittest.TestCase):
         # Box 1: [190, 100, 290, 200]
         # Box 2: [210, 100, 310, 200]
         # Intersection width = 80, union width = 120 -> IoU = 80/120 = 0.667 > 0.3
-        crossing_face_1 = create_face_dict([190, 100, 290, 200], emb_mehak, track_id=1)
-        crossing_face_2 = create_face_dict([210, 100, 310, 200], emb_misbah, track_id=2)
+        crossing_face_1 = create_face_dict([190, 100, 290, 200], emb_person_k, track_id=1)
+        crossing_face_2 = create_face_dict([210, 100, 310, 200], emb_person_e, track_id=2)
         mgr.assign([crossing_face_1, crossing_face_2], frame_index=2)
 
         # State must transition to CROSSING_LOCKED
@@ -305,8 +305,8 @@ class TestHysteresisStateMachine(unittest.TestCase):
         # Box 1 moves left to [0, 100, 100, 200]
         # Box 2 moves right to [350, 100, 450, 200]
         # Separation gap = 350 - 100 = 250 > 1.5 * 100 = 150
-        sep_face_1 = create_face_dict([0, 100, 100, 200], emb_mehak, track_id=1)
-        sep_face_2 = create_face_dict([350, 100, 450, 200], emb_misbah, track_id=2)
+        sep_face_1 = create_face_dict([0, 100, 100, 200], emb_person_k, track_id=1)
+        sep_face_2 = create_face_dict([350, 100, 450, 200], emb_person_e, track_id=2)
         mgr.assign([sep_face_1, sep_face_2], frame_index=3)
 
         # State must return to NORMAL
@@ -315,14 +315,14 @@ class TestHysteresisStateMachine(unittest.TestCase):
 
 
 class TestTrajectoryCrossingSimulation(unittest.TestCase):
-    """Simulate a multi-frame trajectory crossing between 'mehak' and 'misbah'
+    """Simulate a multi-frame trajectory crossing between 'person_k' and 'person_e'
 
     Verifies 100% identity retention and zero identity flipping / track swapping.
     """
 
     def test_crossing_simulation_retains_identities_without_flipping(self):
-        emb_mehak = create_synthetic_embedding(101)
-        emb_misbah = create_synthetic_embedding(202)
+        emb_person_k = create_synthetic_embedding(101)
+        emb_person_e = create_synthetic_embedding(202)
 
         mgr = IdentityManager(
             alpha=DEFAULT_ALPHA,
@@ -332,29 +332,29 @@ class TestTrajectoryCrossingSimulation(unittest.TestCase):
             separation_multiplier=SEPARATION_MULTIPLIER,
         )
         mgr.bind_facesets({
-            'mehak': {'name': 'mehak', 'embedding': emb_mehak},
-            'misbah': {'name': 'misbah', 'embedding': emb_misbah},
+            'person_k': {'name': 'person_k', 'embedding': emb_person_k},
+            'person_e': {'name': 'person_e', 'embedding': emb_person_e},
         })
 
-        # Mehak moves left to right: x from 50 -> 450
-        # Misbah moves right to left: x from 450 -> 50
+        # person_k moves left to right: x from 50 -> 450
+        # person_e moves right to left: x from 450 -> 50
         # Face width = 100
         frames = 11
-        mehak_x_coords = np.linspace(50, 450, frames)
-        misbah_x_coords = np.linspace(450, 50, frames)
+        person_k_x_coords = np.linspace(50, 450, frames)
+        person_e_x_coords = np.linspace(450, 50, frames)
 
-        mehak_assignments = []
-        misbah_assignments = []
+        person_k_assignments = []
+        person_e_assignments = []
 
         for f_idx in range(frames):
-            mx = float(mehak_x_coords[f_idx])
-            sx = float(misbah_x_coords[f_idx])
+            mx = float(person_k_x_coords[f_idx])
+            sx = float(person_e_x_coords[f_idx])
 
-            box_mehak = [mx, 100.0, mx + 100.0, 200.0]
-            box_misbah = [sx, 100.0, sx + 100.0, 200.0]
+            box_person_k = [mx, 100.0, mx + 100.0, 200.0]
+            box_person_e = [sx, 100.0, sx + 100.0, 200.0]
 
-            face_m = create_face_dict(box_mehak, emb_mehak, track_id=10)
-            face_s = create_face_dict(box_misbah, emb_misbah, track_id=20)
+            face_m = create_face_dict(box_person_k, emb_person_k, track_id=10)
+            face_s = create_face_dict(box_person_e, emb_person_e, track_id=20)
 
             # Intentionally shuffle detector ordering in middle frames to test invariance
             if f_idx % 2 == 1:
@@ -368,20 +368,20 @@ class TestTrajectoryCrossingSimulation(unittest.TestCase):
 
             assignments = mgr.assign(targets, frame_index=f_idx)
 
-            assigned_to_mehak = assignments[m_target_idx]
-            assigned_to_misbah = assignments[s_target_idx]
+            assigned_to_person_k = assignments[m_target_idx]
+            assigned_to_person_e = assignments[s_target_idx]
 
-            self.assertIsNotNone(assigned_to_mehak, f"Mehak unassigned at frame {f_idx}")
-            self.assertIsNotNone(assigned_to_misbah, f"Misbah unassigned at frame {f_idx}")
+            self.assertIsNotNone(assigned_to_person_k, f"person_k unassigned at frame {f_idx}")
+            self.assertIsNotNone(assigned_to_person_e, f"person_e unassigned at frame {f_idx}")
 
-            mehak_assignments.append(assigned_to_mehak[0].name)
-            misbah_assignments.append(assigned_to_misbah[0].name)
+            person_k_assignments.append(assigned_to_person_k[0].name)
+            person_e_assignments.append(assigned_to_person_e[0].name)
 
         # Assert zero identity flips across all 11 frames
-        self.assertEqual(mehak_assignments, ['mehak'] * frames,
-                         "Identity flipping detected for 'mehak'")
-        self.assertEqual(misbah_assignments, ['misbah'] * frames,
-                         "Identity flipping detected for 'misbah'")
+        self.assertEqual(person_k_assignments, ['person_k'] * frames,
+                         "Identity flipping detected for 'person_k'")
+        self.assertEqual(person_e_assignments, ['person_e'] * frames,
+                         "Identity flipping detected for 'person_e'")
         # Confirm that a crossing was encountered and resolved
         self.assertGreaterEqual(mgr.stats['crossings_entered'], 1)
         self.assertGreaterEqual(mgr.stats['crossings_cleared'], 1)
@@ -392,47 +392,47 @@ class TestFaceSwapperIntegration(unittest.TestCase):
 
     def setUp(self):
         face_swapper.clear_temporal_state()
-        self.emb_mehak = create_synthetic_embedding(111)
-        self.emb_misbah = create_synthetic_embedding(222)
+        self.emb_person_k = create_synthetic_embedding(111)
+        self.emb_person_e = create_synthetic_embedding(222)
         self.emb_bystander = create_synthetic_embedding(333)
 
-        self.source_mehak = {'name': 'mehak', 'embedding': self.emb_mehak}
-        self.source_misbah = {'name': 'misbah', 'embedding': self.emb_misbah}
+        self.source_person_k = {'name': 'person_k', 'embedding': self.emb_person_k}
+        self.source_person_e = {'name': 'person_e', 'embedding': self.emb_person_e}
 
     def tearDown(self):
         face_swapper.clear_temporal_state()
 
     def test_single_faceset_mode(self):
-        """Single faceset 'mehak' must bind to mehak and reject bystander."""
+        """Single faceset 'person_k' must bind to person_k and reject bystander."""
         frame = np.zeros((480, 640, 3), dtype=np.uint8)
-        target_mehak = create_face_dict([50, 50, 150, 150], self.emb_mehak)
+        target_person_k = create_face_dict([50, 50, 150, 150], self.emb_person_k)
         target_bystander = create_face_dict([300, 300, 400, 400], self.emb_bystander)
 
         # Run process_frame_tracked with single faceset
         result = face_swapper.process_frame_tracked(
-            self.source_mehak, [target_mehak, target_bystander], frame, frame_index=0)
+            self.source_person_k, [target_person_k, target_bystander], frame, frame_index=0)
         self.assertIsNotNone(result)
 
         # Verify identity metadata stamped
-        self.assertEqual(target_mehak.get('_assigned_identity'), 'mehak')
+        self.assertEqual(target_person_k.get('_assigned_identity'), 'person_k')
         self.assertIsNone(target_bystander.get('_assigned_identity'))
 
     def test_double_faceset_mode(self):
-        """Double faceset ['mehak', 'misbah'] binds both targets correctly."""
+        """Double faceset ['person_k', 'person_e'] binds both targets correctly."""
         frame = np.zeros((480, 640, 3), dtype=np.uint8)
-        target_mehak = create_face_dict([50, 50, 150, 150], self.emb_mehak)
-        target_misbah = create_face_dict([300, 100, 400, 200], self.emb_misbah)
+        target_person_k = create_face_dict([50, 50, 150, 150], self.emb_person_k)
+        target_person_e = create_face_dict([300, 100, 400, 200], self.emb_person_e)
 
         result = face_swapper.process_frame_tracked(
-            [self.source_mehak, self.source_misbah],
-            [target_mehak, target_misbah],
+            [self.source_person_k, self.source_person_e],
+            [target_person_k, target_person_e],
             frame,
             frame_index=0
         )
         self.assertIsNotNone(result)
 
-        self.assertEqual(target_mehak.get('_assigned_identity'), 'mehak')
-        self.assertEqual(target_misbah.get('_assigned_identity'), 'misbah')
+        self.assertEqual(target_person_k.get('_assigned_identity'), 'person_k')
+        self.assertEqual(target_person_e.get('_assigned_identity'), 'person_e')
 
 
 if __name__ == '__main__':

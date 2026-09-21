@@ -82,9 +82,9 @@ def main():
                                bool(g.CFG.use_source_bank))
     options.stabilize_face = g.stabilize_face
 
-    harjot = load_library_faceset("harjot")
+    person_a = load_library_faceset("person_a")
     out_dir = os.path.join(APP, "output", "auto_angles_diag")
-    out, elapsed, face_log = run_swap(swap_video, [harjot], list(g.TARGET_FACES),
+    out, elapsed, face_log = run_swap(swap_video, [person_a], list(g.TARGET_FACES),
                                        list(g.TARGET_FACE_GROUP), options, out_dir)
     print(f"[diag] swap with multi-angle target -> {out} in {elapsed:.1f}s", flush=True)
 

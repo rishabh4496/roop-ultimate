@@ -3,14 +3,14 @@ two people's reference angles (leaving the other as a single best-frontal
 capture), for isolating whether a richer reference set helps a specific
 person's marginal match without also changing the other person's baseline.
 
-Built for d8: harjot (person 0, the man) reads as a middling d=0.5-0.7 match
+Built for d8: person_a (person 0, the man) reads as a middling d=0.5-0.7 match
 even when it succeeds, on a long sustained near-full-profile kiss pose --
 testing whether auto_angles gives the assignment gate a better profile
 reference for him specifically.
 
 Usage:
     env/Scripts/python.exe tests/diag_auto_angles_one.py --video PATH \
-        --sources harjot,shambhavi --person 0
+        --sources person_a,person_f --person 0
 """
 import argparse
 import os

@@ -105,7 +105,7 @@ def main():
     ap.add_argument("--start", type=int, default=0)
     ap.add_argument("--frames", type=int, default=60)
     ap.add_argument("--stride", type=int, default=4)
-    ap.add_argument("--source", default="harjot")
+    ap.add_argument("--source", default="person_a")
     ap.add_argument("--provider", default=None)
     ap.add_argument("--swap-model", default=None)
     ap.add_argument("--enhancer", default=None)

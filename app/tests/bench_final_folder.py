@@ -238,7 +238,7 @@ def run_pipeline_for_clip(clip, source_name, enhancer_name, out_dir, swapper_nam
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--source", default="harjot")
+    ap.add_argument("--source", default="person_a")
     ap.add_argument("--only", default="", help="filter substring (e.g. '01', '4915428')")
     ap.add_argument("--swapper", default="realswap")
     ap.add_argument("--mask", default="mask_realityux")

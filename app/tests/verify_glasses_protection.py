@@ -12,7 +12,7 @@ assumed: `--selfcheck` asserts the OFF arm is bit-identical to an independent
 reproduction of the old fusion.
 
     env/Scripts/python.exe tests/verify_glasses_protection.py \
-        --video G:/pinokio/roop-keep/single/s5.mp4 --frames 24 --dump out.png
+        --video <MEDIA_DIR>/single/s5.mp4 --frames 24 --dump out.png
 """
 import argparse
 import os

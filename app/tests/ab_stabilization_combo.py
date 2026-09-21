@@ -55,7 +55,7 @@ TWO THINGS THIS RUN ALSO ESTABLISHED, both worth not re-deriving:
   this analysis made exactly that error once.)
 
 CAVEAT ON ABSOLUTE VALUES. The swap audit for these arms reads 102 of 2199
-faces swapped (4.6%) -- `harjot,gargee` are not the people in this clip, so the
+faces swapped (4.6%) -- `person_a,person_c` are not the people in this clip, so the
 identity gate refused 95.4%. The A/B RATIO is valid (both arms did identical
 work), but the absolute fps and the stage mix are not representative of a run
 whose faces actually swap. Pass `--sources` that match the clip before quoting
@@ -123,7 +123,7 @@ def run_arm(args, arm, tag):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--video', default=fixtures.clip('b1.mp4'))
-    ap.add_argument('--sources', default='harjot,gargee')
+    ap.add_argument('--sources', default='person_a,person_c')
     ap.add_argument('--start', type=int, default=0)
     ap.add_argument('--end', type=int, default=600)
     ap.add_argument('--reps', type=int, default=2)

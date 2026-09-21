@@ -1,4 +1,4 @@
-"""Evidence-driven acceptance run for the discovered Monica Bellucci clip.
+"""Evidence-driven acceptance run for the discovered target_person clip.
 
 This is an external harness: it exercises the React/API surface and does not
 modify app logic or launcher files.  The server is expected to be started with
@@ -24,14 +24,18 @@ import requests
 
 
 ROOT = Path(__file__).resolve().parents[1]
-OUT = ROOT / "output" / "acceptance_monica_harjot"
+OUT = ROOT / "output" / "acceptance_real_clip"
 OUT.mkdir(parents=True, exist_ok=True)
 RAW_DIR = OUT / "raw_frames"
 RAW_DIR.mkdir(exist_ok=True)
 BASE = "http://127.0.0.1:17860"
-TARGET_LITERAL = r"D:\Monica Bellucci.mp4"
-SOURCE_LITERAL = "harjot faceset"
-SOURCE_PATH = ROOT / "app" / "facesets" / "harjot.fsz"
+# Machine-specific inputs come from the environment, never from the tree:
+#   ROOP_TARGET_CLIP     absolute path of the real target clip
+#   ROOP_SOURCE_FACESET  name of the .fsz in app/facesets (default my_faceset)
+TARGET_LITERAL = os.environ.get("ROOP_TARGET_CLIP", "")
+SOURCE_FACESET = os.environ.get("ROOP_SOURCE_FACESET", "my_faceset")
+SOURCE_LITERAL = f"{SOURCE_FACESET} faceset"
+SOURCE_PATH = ROOT / "app" / "facesets" / f"{SOURCE_FACESET}.fsz"
 
 
 def jdump(v):
@@ -76,15 +80,17 @@ def find_target():
         for p in d.iterdir():
             if p.is_file() and p.suffix.lower() in {".mp4", ".mov", ".mkv", ".avi", ".webm"}:
                 stem = p.stem.rstrip().lower()
-                if stem == "monica bellucci":
+                if TARGET_LITERAL and stem == Path(TARGET_LITERAL).stem.lower():
                     candidates.append(p)
-    literal = Path(TARGET_LITERAL)
-    return literal if literal.exists() else (candidates[0] if len(candidates) == 1 else None), candidates
+    literal = Path(TARGET_LITERAL) if TARGET_LITERAL else None
+    return literal if literal and literal.exists() else (candidates[0] if len(candidates) == 1 else None), candidates
 
 
 def ffprobe(path: Path):
-    exe = Path(r"G:\pinokio\bin\miniforge\Library\bin\ffprobe.exe")
-    if not exe.exists():
+    import shutil
+    found = shutil.which("ffprobe")
+    exe = Path(found) if found else None
+    if exe is None:
         return {"available": False, "error": f"ffprobe not found: {exe}"}
     import subprocess
     cmd = [str(exe), "-v", "error", "-select_streams", "v:0", "-show_entries",
@@ -364,7 +370,7 @@ def main():
                            "source_path": str(SOURCE_PATH), "source_exists": SOURCE_PATH.exists()}
     if not target or not SOURCE_PATH.exists():
         report["status"] = "NOT_PERFORMED_MISSING_INPUT"
-        report["errors"].append("Target or Harjot faceset unavailable after discovery")
+        report["errors"].append("Target or person_a faceset unavailable after discovery")
         write_json(OUT / "acceptance_report.json", report)
         return 3
 
@@ -574,8 +580,8 @@ def main():
     stage = report["stages"]
     all_routes = [r for s in stage.values() if isinstance(s, dict) for item in (s.get("frames", []) if isinstance(s.get("frames", []), list) else []) if isinstance(item, dict) for r in item.get("routes", [])]
     report["acceptance"] = {
-        "1_harjot_applied_to_explicit_target": bool(stage.get("D_preview", {}).get("pass") and any(x.get("swap_decision") for x in stage.get("E_multiple_frames", {}).get("frames", []))),
-        "2_no_unrelated_face_receives_harjot": bool(stage.get("D_preview", {}).get("pass") and all(set(r.get("swapped", [])) <= set(stage["D_preview"].get("target_face_indices", [])) for r in stage["D_preview"].get("routes", []))),
+        "1_person_a_applied_to_explicit_target": bool(stage.get("D_preview", {}).get("pass") and any(x.get("swap_decision") for x in stage.get("E_multiple_frames", {}).get("frames", []))),
+        "2_no_unrelated_face_receives_person_a": bool(stage.get("D_preview", {}).get("pass") and all(set(r.get("swapped", [])) <= set(stage["D_preview"].get("target_face_indices", [])) for r in stage["D_preview"].get("routes", []))),
         "3_selected_face_never_all_faces": bool(stage.get("B_no_target_selection", {}).get("pass") and stage.get("D_preview", {}).get("pass")),
         "4_preview_final_agree": bool(stage.get("D_preview", {}).get("pass") and stage.get("F_short_video", {}).get("pass")),
         "5_swap_active_across_tested_frames": bool(stage.get("E_multiple_frames", {}).get("pass") and stage.get("F_short_video", {}).get("pass")),
@@ -586,7 +592,7 @@ def main():
     report["finished_at"] = time.strftime("%Y-%m-%dT%H:%M:%S%z")
     write_json(OUT / "acceptance_report.json", report)
     summary = [
-        f"# Roop Ultimate acceptance test: Harjot → Monica Bellucci",
+        f"# Roop Ultimate acceptance test: person_a → target_person",
         "",
         f"Status: **{report['status']}**",
         "",

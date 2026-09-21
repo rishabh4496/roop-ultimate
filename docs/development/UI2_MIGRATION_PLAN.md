@@ -54,7 +54,7 @@ recovery. No V1 files were deleted or renamed in this audit.
 |---|---|---|
 | V2 complete required functionality | FAIL | `react-ui-v2/README.md` defines a deliberately parallel, partial scope. `CreateScreen.jsx` explicitly renders unavailable functionality, and V1 still contains feature surfaces and API consumers not present in V2. |
 | V2 passed the acceptance matrix | FAIL | `docs/development/VALIDATION_MATRIX.md` Stage 16 report explicitly concludes that V2 is not production-ready; several required rows are blocked, failed, or not tested. |
-| V2 validated on RTX 4070 | FAIL | Device A runtime evidence exists, but the still-image smoke failed and the long-run quality harness re-measured 71 of 467 gradable `harjot` frames as the other identity. V2 browser execution was not verified. |
+| V2 validated on RTX 4070 | FAIL | Device A runtime evidence exists, but the still-image smoke failed and the long-run quality harness re-measured 71 of 467 gradable `person_a` frames as the other identity. V2 browser execution was not verified. |
 | V2 validated on RTX 3060 | BLOCKED | The physical RTX 3060 Laptop was not present on the test host. No Device A result is extrapolated. |
 | Persistent projects remain recoverable | BLOCKED | Atomic checkpoint and control-plane validation passed, but application-close and PC-shutdown continuation were not physically tested and V2 browser reload was not verified. |
 | Existing user projects remain safe | BLOCKED | Protection and atomic persistence guards are tested, but a complete V1-to-V2 project migration and real-user project reload have not been accepted. |

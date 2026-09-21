@@ -1027,7 +1027,7 @@ Phase 9 is the validation every one of Phases 6, 6B, 7 and 8 named as its own
 `ROOP_TEMPORAL_EXPRESSION` off and on, measure cost and quality, and decide the
 defaults. Run on the physical RTX 4070 (driver 616.56) against the locked
 600-frame fixture (`double/d4.mp4`, 1280x720, frames 0..600, capture frame
-4930, sources `harjot,gargee`), stack as `config.yaml` ships it: realswap /
+4930, sources `person_a,person_c`), stack as `config.yaml` ships it: realswap /
 GPEN 256 Pro / RealityUX / hevc_nvenc / tensorrt / 12 threads.
 
 Two corrections to the record before the results. First, the Phase 6/6B/7/8
@@ -1035,7 +1035,7 @@ sections above each state "no new commit was created in this session ... remains
 uncommitted"; that is **stale**. All of it is committed in `1c0efd7` and pushed.
 Second, they each record their benchmarks as `pending` because "this checkout
 contains no supplied real video fixtures". Fixtures were present the whole time
-(`G:\pinokio\roop-keep\` holds `double/d1..d6.mp4`, four `expression/` clips,
+(`<MEDIA_DIR>\` holds `double/d1..d6.mp4`, four `expression/` clips,
 ten HD/4K `final/` clips, and 20+ `.fsz` facesets). The benches were simply
 never given `--video`.
 
@@ -1229,7 +1229,7 @@ pinning -- not the features -- was the entire 2.7x cost. This phase removes it.
 
 Run on the physical RTX 4070 against the locked 600-frame fixture
 (`double/d4.mp4`, 1280x720, frames 0..600, capture frame 4930, sources
-`harjot,gargee`), stack from `config.yaml`. Both flags remain **off by default**;
+`person_a,person_c`), stack from `config.yaml`. Both flags remain **off by default**;
 nothing about the shipped default path changes.
 
 ### The design: ordered is not the same as serial
@@ -1455,7 +1455,7 @@ callers cannot mutate temporal history accidentally.
 ### Feature-level real-footage benchmark audit
 
 The locked fixture was subsequently found at
-`G:/pinokio/roop-keep/double/d4.mp4` and three controlled 600-frame RTX 4070
+`<MEDIA_DIR>/double/d4.mp4` and three controlled 600-frame RTX 4070
 renders were completed. All used the expected 1280x720 fixture, full requested
 stack, TensorRT→CUDA→CPU provider chain, and returned 600/600 frames with
 `wrong_faceset=0`:
@@ -1568,7 +1568,7 @@ and swap API paths, defaulting to 0 for backwards-compatible output.
 - Controlled 4070 pipeline smoke with GPEN 256 Pro, RealityUX, TensorRT,
   RealSwap, temporal stabilizers, and the locked `double/d4.mp4` fixture:
   **120/120 frames**, return code 0, and no runtime identity-detail errors.
-  That locked run used legacy V1 `harjot/gargee` archives, so it validates
+  That locked run used legacy V1 `person_a/person_c` archives, so it validates
   pipeline safety and API plumbing, not V2 detail quality.
 
 ### Complete-phase checklist audit
@@ -1937,7 +1937,7 @@ TensorRT guard, worker ordering, enhancer, or quality setting was changed.
 ### Benchmark evidence
 
 All video arms used the same double/d4.mp4, frames 0..60, sources
-harjot,gargee, RealSwap, TensorRT, GPEN 256 Pro, RealityUX, HEVC NVENC,
+person_a,person_c, RealSwap, TensorRT, GPEN 256 Pro, RealityUX, HEVC NVENC,
 12 threads, and the locked stabilizer settings.
 
 - Detailed current control, ROI off: **86.35 s**, **2.75 FPS**,

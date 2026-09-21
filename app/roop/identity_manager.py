@@ -1,7 +1,7 @@
 """Hungarian Bipartite Identity Matching & Hysteresis State Machine.
 
 Prevents identity flipping and track swapping in multi-person videos (e.g.,
-'double' dataset containing distinct identities: 'mehak' and 'misbah').
+'double' dataset containing distinct identities: 'person_k' and 'person_e').
 
 MATHEMATICAL SPECIFICATION:
 1. Global Cost Matrix Formulation:
@@ -346,7 +346,7 @@ def set_face_meta(face: Any, key: str, value: Any) -> None:
 @dataclass
 class TrackedIdentity:
     """One reference identity being tracked across frames."""
-    identity_id: Any                                      # e.g., 'mehak', 'misbah', 0, 1
+    identity_id: Any                                      # e.g., 'person_k', 'person_e', 0, 1
     name: str                                            # String display name
     reference_embedding: np.ndarray                      # 512-D unit ArcFace embedding
     source_face: Any = None                              # Target source face/FaceSet for swapping
@@ -504,8 +504,8 @@ class IdentityManager:
         """Configure tracked reference identities from single or double facesets.
         
         Accepts:
-        - Single Face / FaceSet (e.g., 'mehak')
-        - Sequence of Face / FaceSet (e.g., ['mehak', 'misbah'])
+        - Single Face / FaceSet (e.g., 'person_k')
+        - Sequence of Face / FaceSet (e.g., ['person_k', 'person_e'])
         - Dictionary mapping identity names to Face / FaceSet
         """
         with self._lock:

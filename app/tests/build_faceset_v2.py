@@ -1,6 +1,6 @@
 """Build a FaceSet V2 archive from a legacy V1 `.fsz`, WITH real detection.
 
-The locked `harjot`/`gargee` archives are bare PNG bundles -- five root-level
+The locked `person_a`/`person_c` archives are bare PNG bundles -- five root-level
 `N.png` members and no metadata -- so `FaceSet.format_version` is 1 and
 `identity_detail_for()` returns nothing. Every identity-detail arm run against
 them measures a no-op, which is indistinguishable from "the feature does not
@@ -24,7 +24,7 @@ locked ones.
 It writes to a NEW path by default and never overwrites the input.
 
     app/env/Scripts/python.exe app/tests/build_faceset_v2.py \
-        --sources harjot,gargee --suffix _v2
+        --sources person_a,person_c --suffix _v2
 """
 
 from __future__ import annotations
@@ -105,7 +105,7 @@ def build(name, suffix, provider, swap_model, enhancer, mask_engine,
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--sources", default="harjot,gargee")
+    ap.add_argument("--sources", default="person_a,person_c")
     ap.add_argument("--suffix", default="_v2")
     ap.add_argument("--provider", default=None,
                     help="default: config.yaml's provider")

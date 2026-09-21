@@ -87,7 +87,7 @@ flowchart TD
 ### E. Inverted Face Orientation & Angle Swapping
 - **Hallucination Detection Guard**:
   - 3D-68 landmark models trained exclusively on upright faces hallucinate upright features on inverted crops (reporting $-14^\circ$ on an upside-down $166^\circ$ face).
-  - `face_down_axis` in [`face_util.py`](file:///G:/pinokio/api/roop-ultimate/app/roop/face_util.py) and `roll_from_face` in [`orientation.py`](file:///G:/pinokio/api/roop-ultimate/app/roop/orientation.py) cross-check detector keypoints (`tilt_kps`) against 68 landmarks (`tilt_68`).
+  - `face_down_axis` in [`face_util.py`](file:///<PINOKIO_HOME>/api/roop-ultimate/app/roop/face_util.py) and `roll_from_face` in [`orientation.py`](file:///<PINOKIO_HOME>/api/roop-ultimate/app/roop/orientation.py) cross-check detector keypoints (`tilt_kps`) against 68 landmarks (`tilt_68`).
   - When $|\text{tilt}_{\text{kps}}| > 90^\circ$ and $|\text{tilt}_{68}| < 50^\circ$, the system trusts detector keypoints and triggers `rotate_180`.
 - **Profile Pose Extent Floor**:
   - `swap_moved_the_face` floors the interocular distance with physical landmark span ($\text{extent} \cdot 0.70$), preventing false rejections on extreme profile turns ($>60^\circ$).
@@ -195,8 +195,8 @@ The React UI (`react-ui/`) is compiled with Vite and serves as the primary multi
    - Injected a Sobel structural edge-stop gate in `apply_detail_transfer` and `dark_spots` preservation.
    - Ensures the original target face's different eye creases, eyelid folds, and lip borders are never superimposed on the swapped face, permanently resolving ghost double creases and under-eye double halos.
 
-4. **Duo Folder Benchmark (4 Video Clips, 2 Facesets: Harjot & Gargee)**:
-   - Processed all 4 multi-person video clips from `G:/pinokio/roop-keep/duo/` with dual-source swapping (`harjot.fsz` on Person 0, `gargee.fsz` on Person 1) using RealSwap + RealityUX + UltraMax:
+4. **Duo Folder Benchmark (4 Video Clips, 2 Facesets: person_a & person_c)**:
+   - Processed all 4 multi-person video clips from `<MEDIA_DIR>/duo/` with dual-source swapping (`person_a.fsz` on Person 0, `person_c.fsz` on Person 1) using RealSwap + RealityUX + UltraMax:
      - `d1.mp4` ($854\times 480$, 3,090 frames, 7,884 faces): 415.4 s, 7.4 FPS, **100% Swapped** (0 refusals).
      - `d2.mp4` ($854\times 458$, 2,268 frames, 4,536 faces): 223.5 s, 10.1 FPS, **100% Swapped** (0 refusals).
      - `d3.mp4` ($854\times 480$, 3,597 frames, 7,194 faces): 379.4 s, 9.5 FPS, **100% Swapped** (0 refusals).
@@ -212,7 +212,7 @@ The React UI (`react-ui/`) is compiled with Vite and serves as the primary multi
 ## Session Log (2026-08-22 → 08-23): Audit of the Previous Session, Three Fixes, and Five Measured Results
 
 **Commits:** `74402ca`, `a0418cf`, `3c530f9`, `aa2d387`. Suite **1023 green**.
-Full working notes at the top of `G:\pinokio\roop-keep\RECODE_STATUS.md`.
+Full working notes at the top of `<MEDIA_DIR>\RECODE_STATUS.md`.
 
 ### 0. CORRECTIONS TO THE SESSION LOGS ABOVE — read before trusting them
 
@@ -305,10 +305,10 @@ the other regardless of what the swap did.
 
 | clip | person | detected | swapped | WRONG FACESET |
 |---|---|---|---|---|
-| d1 | harjot / gargee | 3090 / 3082 | 100% / 99.6% | 0 / 0 |
-| d2 | harjot / gargee | 1147 / 1306 | 94% / 100% | 0 / 0 |
-| d3 | harjot / gargee | 3523 / 3052 | 72% / 91% | **8 / 2** |
-| d4 | harjot / gargee | 7825 / 6350 | 100% / 97% | 0 / 0 |
+| d1 | person_a / person_c | 3090 / 3082 | 100% / 99.6% | 0 / 0 |
+| d2 | person_a / person_c | 1147 / 1306 | 94% / 100% | 0 / 0 |
+| d3 | person_a / person_c | 3523 / 3052 | 72% / 91% | **8 / 2** |
+| d4 | person_a / person_c | 7825 / 6350 | 100% / 97% | 0 / 0 |
 
 **10 of ~21,600 attributable swaps (0.046%)**, all on d3, all carrying the audit
 reason "crop shared with the face beside it", in 6 bursts of 1–3 frames.
@@ -328,7 +328,7 @@ Catching all 10 costs 522 correct swaps — 52:1. Gate stays at 0.35. Do not ret
 ### 6. The real duo limiter is PROFILE POSE — and the mitigation works
 
 d2 person 0 reads own-identity **0.952** while person 1 on the same run with the
-same two facesets reads **0.342**. Not the faceset (harjot reaches 0.446 on d1) —
+same two facesets reads **0.342**. Not the faceset (person_a reaches 0.446 on d1) —
 that person's bbox w/h is **0.509** against ~0.73 everywhere else: turned to
 profile for the whole clip. One cause, both symptoms: their largest track (50% of
 the clip) sits at p0=0.75 against a 0.60 assign gate and binds to no source, and
@@ -448,7 +448,7 @@ merger key, verified to FAIL when one is removed.
   $$\text{high\_pass} = L_f - \text{GaussianBlur}(L_f, \sigma=0.8)$$
   $$\text{core} = \exp\left(-\left(\frac{\text{high\_pass}}{12.0}\right)^2\right)$$
   Isolates pore-level skin texture while completely suppressing false anatomical edges and eyelid ghosting.
-- **Validation**: Full 4K dual face swap benchmark (`8509564-uhd_3840_2160_25fps.mp4`) with Left=Harjot and Right=Ashna verified crystal clear eyes, natural eyelashes, and authentic dermal pores.
+- **Validation**: Full 4K dual face swap benchmark (`8509564-uhd_3840_2160_25fps.mp4`) with Left=person_a and Right=person_b verified crystal clear eyes, natural eyelashes, and authentic dermal pores.
 
 #### B. Full GPU Saturation & Concurrency Pipeline
 - **Dynamic Thread Scaling**: Upgraded `resolve_threads(mode)` in `settings.py` to scale worker threads dynamically (up to 16 concurrent workers on 12GB+ GPUs) utilizing TensorRT context sharing (`trt_context_memory_sharing_enable=True`) to prevent GPU queue starvation.
@@ -467,7 +467,7 @@ merger key, verified to FAIL when one is removed.
 
 ## Session Log (2026-08-23 Part 3): UltraMax Rebuilt — Sharpen Removed, 1.13x Faster Than CodeFormer, and Four Benches That Compared Against Nothing
 
-Full working notes at the top of `G:\pinokio
+Full working notes at the top of `<PINOKIO_HOME>
 oop-keep\RECODE_STATUS.md`. Suite **1034 green**.
 
 ### 1. The report: "too sharp, blurry on eyes" — traced to one operator
@@ -611,7 +611,7 @@ Going live privately, so this settles what the project *is*. Commits `d7d5189`
 ### 1. THE BIG ONE: env, models and facesets were junctions into another repo
 
 `app/env` (9.34 GB), `app/models` (39.33 GB) and `app/facesets` (0.07 GB) were
-NTFS **junctions** into `G:\pinokiopi
+NTFS **junctions** into `<PINOKIO_HOME>pi
 oop-unleashed-wip.gitpp\`. The
 virtual environment, every model weight and the user's own face libraries were
 owned by a different folder. Everything ran perfectly, so nothing ever surfaced
@@ -698,7 +698,7 @@ to fail.
 Before deleting: both branches confirmed fully pushed to
 `rishabh4496/roop-unleashed-wip` (`master` 792f946, `pure_safe` 5a2f945 — remote
 heads matched exactly), and the uncommitted diff archived to
-`G:\pinokio
+`<PINOKIO_HOME>
 oop-keep\wip-archive\`. Of the three dirty files,
 `session_pool.py` was byte-identical to this repo's and `two_face_video.py` had
 diverged entirely (861 lines there vs 1079 here).
@@ -1218,7 +1218,7 @@ Reported on the RTX 3060 Laptop GPU (16GB RAM) as: "when I try to swap 2 faces w
 - The 4070 desktop machine (32GB+ RAM) receives the full 1536 MB budget and 4x warmup blocks with zero regression.
 
 ### 3. Verification & Live Benchmarks
-- **Live 2-Face Swap**: Ran `tests/two_face_video.py` on `d4.mp4` with `harjot.fsz` + `rhythm.fsz`, GPEN 256 Pro, RealityUX, and `stabilize_mask`. Maintained `execution_threads=8` continuously throughout the run with steady ~2.9 GB RSS.
+- **Live 2-Face Swap**: Ran `tests/two_face_video.py` on `d4.mp4` with `person_a.fsz` + `person_d.fsz`, GPEN 256 Pro, RealityUX, and `stabilize_mask`. Maintained `execution_threads=8` continuously throughout the run with steady ~2.9 GB RSS.
 - **Full Suite**: 1,298 / 1,298 tests passing (100% green).
 - **Commit**: `0e4fe60` pushed to `origin/main`.
 
@@ -1258,10 +1258,10 @@ Reported as: in multi-face footage (`d2.mp4`), when the target person (Person 0)
 ### 2. The Solution & Calibration
 1. **Calibrated Assignment Floor & Margin**: Configured `ROOP_TRACK_ASSIGN_FLOOR = 0.65` and `ROOP_TRACK_ASSIGN_MARGIN = 0.30` with multi-angle auto-capture. This binds spatial tracklets across high yaw and contact poses without cross-binding onto Person 1 ($d_{P1} > 0.85$).
 2. **RealityUX Occlusion Matte**: Maintained clean boundary segmentation between the interacting faces, ensuring no swap bleed onto the bystander.
-3. **Full End-to-End Render (`d2.mp4`)**: Rendered the entire 4,177-frame video with `ashna.fsz` on Person 0 using `realswap` + `GPEN_Realistic` + `RealityUX`.
+3. **Full End-to-End Render (`d2.mp4`)**: Rendered the entire 4,177-frame video with `person_b.fsz` on Person 0 using `realswap` + `GPEN_Realistic` + `RealityUX`.
 
 ### 3. Verification & Results
-- **Full Video Rendered**: [`d2_01-50-41.mp4`](file:///G:/pinokio/roop-keep/test_output/d2_01-50-41.mp4) (4,177 frames, 14.54 min total render time).
+- **Full Video Rendered**: [`d2_01-50-41.mp4`](file:///<MEDIA_DIR>/test_output/d2_01-50-41.mp4) (4,177 frames, 14.54 min total render time).
 - **Face Swap Rate**: 1,699 face swaps successfully applied to Person 0; 5,453 bystander instances refused and kept 100% unswapped.
 - **Visual Audit**: Frontal close-ups (e.g. frames 2800–3100) and intimate contact/kiss scenes (e.g. frames 300–600, 3300–3600) show seamless identity transfer with zero bystander contamination.
 
@@ -1334,7 +1334,7 @@ Reported as: GPU utilization remained under 50% during long video processing due
 
 ## Session Log (2026-08-26 Part 5): High GPU Utilization (>85%, >150W), Pipeline Concurrency, and Multi-GPU Tiering
 
-Reported as: GPU utilization remained under 50% on single/multiple facesets. User requested: (1) harnessing full GPU compute (>85% utilization, >150W power draw) on single and multiple facesets; (2) full compatibility across all NVIDIA GPUs; (3) full end-to-end multi-actor benchmark on `b1.mp4` with `harjot.fsz`, `realswap`, `RealityUX`, and `GPEN 256 Pro`.
+Reported as: GPU utilization remained under 50% on single/multiple facesets. User requested: (1) harnessing full GPU compute (>85% utilization, >150W power draw) on single and multiple facesets; (2) full compatibility across all NVIDIA GPUs; (3) full end-to-end multi-actor benchmark on `b1.mp4` with `person_a.fsz`, `realswap`, `RealityUX`, and `GPEN 256 Pro`.
 
 ### 1. Root Cause Analysis
 1. **Cross-Frame Batcher Serialization on Composite Models**:
@@ -1360,7 +1360,7 @@ Reported as: GPU utilization remained under 50% on single/multiple facesets. Use
    - Added `--mode` (`all`, `selected`, `all_input`) support to `tests/sample_bench.py` for full-video multi-actor validation.
 
 ### 3. Verification & Live Benchmarks
-- **Test Footage**: `b1.mp4` (27,556 frames, 1280x720) with `harjot.fsz` (5 source faces), `realswap`, `RealityUX`, and `GPEN 256 Pro`.
+- **Test Footage**: `b1.mp4` (27,556 frames, 1280x720) with `person_a.fsz` (5 source faces), `realswap`, `RealityUX`, and `GPEN 256 Pro`.
 - **Face Swap Coverage**: 22,656 of 22,656 faces (100.0%) successfully swapped and enhanced; 0 faces skipped.
 - **Hardware Metrics (RTX 4070 12GB)**:
   - GPU Compute Utilization: Sustained at **77% – 100%** in P0 state.

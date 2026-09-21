@@ -34,7 +34,7 @@ import roop.globals
 from roop.ProcessMgr import ProcessMgr
 from roop.face_util import get_all_faces, swap_template_points
 
-FSZ = os.environ.get('FSZ', 'facesets/harjot.fsz')
+FSZ = os.environ.get('FSZ', 'facesets/person_a.fsz')
 CLIP = os.environ.get('PROF_CLIP', fixtures.clip('inverted/s1.mp4'))
 src_fs = ab.load_faceset(FSZ)
 opts = ab.build_options(g, 'realswap', 'None')

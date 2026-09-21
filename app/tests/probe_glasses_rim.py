@@ -17,7 +17,7 @@ This probe measures whether that actually separates on real footage:
   eye in glasses -- the same for protecting class 6 wholesale (the baseline)
 
     env/Scripts/python.exe tests/probe_glasses_rim.py \
-        --video G:/pinokio/roop-keep/single/s5.mp4 --frames 24 --dump out.png
+        --video <MEDIA_DIR>/single/s5.mp4 --frames 24 --dump out.png
 """
 import argparse
 import os

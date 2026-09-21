@@ -47,7 +47,7 @@ Newest session is at the BOTTOM.
 ### 3. Performance & Verification Metrics
 - Swap Core Loop Speed: **12.5 – 13.5 FPS** (on RTX 4070, zero speed loss).
 - VRAM Footprint: Stable at **10.2 GB** (no PCIe memory thrashing).
-- Benchmark Output (`e1__harjot.mp4`):
+- Benchmark Output (`e1__person_a.mp4`):
   - Identity: `0.337`
   - EYE $r$: `0.879` | EYE range: `1.178`
   - MOUTH $r$: `0.828` | MOUTH range: `0.713`
@@ -117,8 +117,8 @@ Newest session is at the BOTTOM.
    - Injected a Sobel structural edge-stop gate in `apply_detail_transfer` and `dark_spots` preservation.
    - Ensures the original target face's different eye creases, eyelid folds, and lip borders are never superimposed on the swapped face, permanently resolving ghost double creases and under-eye double halos.
 
-4. **Duo Folder Benchmark (4 Video Clips, 2 Facesets: Harjot & Gargee)**:
-   - Processed all 4 multi-person video clips from `G:/pinokio/roop-keep/duo/` with dual-source swapping (`harjot.fsz` on Person 0, `gargee.fsz` on Person 1) using RealSwap + RealityUX + UltraMax:
+4. **Duo Folder Benchmark (4 Video Clips, 2 Facesets: person_a & person_c)**:
+   - Processed all 4 multi-person video clips from `<MEDIA_DIR>/duo/` with dual-source swapping (`person_a.fsz` on Person 0, `person_c.fsz` on Person 1) using RealSwap + RealityUX + UltraMax:
      - `d1.mp4` ($854\times 480$, 3,090 frames, 7,884 faces): 415.4 s, 7.4 FPS, **100% Swapped** (0 refusals).
      - `d2.mp4` ($854\times 458$, 2,268 frames, 4,536 faces): 223.5 s, 10.1 FPS, **100% Swapped** (0 refusals).
      - `d3.mp4` ($854\times 480$, 3,597 frames, 7,194 faces): 379.4 s, 9.5 FPS, **100% Swapped** (0 refusals).
@@ -136,7 +136,7 @@ Newest session is at the BOTTOM.
 ## Session Log (2026-08-22 → 08-23): Audit of the Previous Session, Three Fixes, and Five Measured Results
 
 **Commits:** `74402ca`, `a0418cf`, `3c530f9`, `aa2d387`. Suite **1023 green**.
-Full working notes at the top of `G:\pinokio\roop-keep\RECODE_STATUS.md`.
+Full working notes at the top of `<MEDIA_DIR>\RECODE_STATUS.md`.
 
 ### 0. CORRECTIONS TO THE SESSION LOGS ABOVE — read before trusting them
 
@@ -229,10 +229,10 @@ the other regardless of what the swap did.
 
 | clip | person | detected | swapped | WRONG FACESET |
 |---|---|---|---|---|
-| d1 | harjot / gargee | 3090 / 3082 | 100% / 99.6% | 0 / 0 |
-| d2 | harjot / gargee | 1147 / 1306 | 94% / 100% | 0 / 0 |
-| d3 | harjot / gargee | 3523 / 3052 | 72% / 91% | **8 / 2** |
-| d4 | harjot / gargee | 7825 / 6350 | 100% / 97% | 0 / 0 |
+| d1 | person_a / person_c | 3090 / 3082 | 100% / 99.6% | 0 / 0 |
+| d2 | person_a / person_c | 1147 / 1306 | 94% / 100% | 0 / 0 |
+| d3 | person_a / person_c | 3523 / 3052 | 72% / 91% | **8 / 2** |
+| d4 | person_a / person_c | 7825 / 6350 | 100% / 97% | 0 / 0 |
 
 **10 of ~21,600 attributable swaps (0.046%)**, all on d3, all carrying the audit
 reason "crop shared with the face beside it", in 6 bursts of 1–3 frames.
@@ -252,7 +252,7 @@ Catching all 10 costs 522 correct swaps — 52:1. Gate stays at 0.35. Do not ret
 ### 6. The real duo limiter is PROFILE POSE — and the mitigation works
 
 d2 person 0 reads own-identity **0.952** while person 1 on the same run with the
-same two facesets reads **0.342**. Not the faceset (harjot reaches 0.446 on d1) —
+same two facesets reads **0.342**. Not the faceset (person_a reaches 0.446 on d1) —
 that person's bbox w/h is **0.509** against ~0.73 everywhere else: turned to
 profile for the whole clip. One cause, both symptoms: their largest track (50% of
 the clip) sits at p0=0.75 against a 0.60 assign gate and binds to no source, and
@@ -372,7 +372,7 @@ merger key, verified to FAIL when one is removed.
   $$\text{high\_pass} = L_f - \text{GaussianBlur}(L_f, \sigma=0.8)$$
   $$\text{core} = \exp\left(-\left(\frac{\text{high\_pass}}{12.0}\right)^2\right)$$
   Isolates pore-level skin texture while completely suppressing false anatomical edges and eyelid ghosting.
-- **Validation**: Full 4K dual face swap benchmark (`8509564-uhd_3840_2160_25fps.mp4`) with Left=Harjot and Right=Ashna verified crystal clear eyes, natural eyelashes, and authentic dermal pores.
+- **Validation**: Full 4K dual face swap benchmark (`8509564-uhd_3840_2160_25fps.mp4`) with Left=person_a and Right=person_b verified crystal clear eyes, natural eyelashes, and authentic dermal pores.
 
 #### B. Full GPU Saturation & Concurrency Pipeline
 - **Dynamic Thread Scaling**: Upgraded `resolve_threads(mode)` in `settings.py` to scale worker threads dynamically (up to 16 concurrent workers on 12GB+ GPUs) utilizing TensorRT context sharing (`trt_context_memory_sharing_enable=True`) to prevent GPU queue starvation.
@@ -391,7 +391,7 @@ merger key, verified to FAIL when one is removed.
 
 ## Session Log (2026-08-23 Part 3): UltraMax Rebuilt — Sharpen Removed, 1.13x Faster Than CodeFormer, and Four Benches That Compared Against Nothing
 
-Full working notes at the top of `G:\pinokio
+Full working notes at the top of `<PINOKIO_HOME>
 oop-keep\RECODE_STATUS.md`. Suite **1034 green**.
 
 ### 1. The report: "too sharp, blurry on eyes" — traced to one operator
@@ -535,7 +535,7 @@ Going live privately, so this settles what the project *is*. Commits `d7d5189`
 ### 1. THE BIG ONE: env, models and facesets were junctions into another repo
 
 `app/env` (9.34 GB), `app/models` (39.33 GB) and `app/facesets` (0.07 GB) were
-NTFS **junctions** into `G:\pinokiopi
+NTFS **junctions** into `<PINOKIO_HOME>pi
 oop-unleashed-wip.gitpp\`. The
 virtual environment, every model weight and the user's own face libraries were
 owned by a different folder. Everything ran perfectly, so nothing ever surfaced
@@ -622,7 +622,7 @@ to fail.
 Before deleting: both branches confirmed fully pushed to
 `rishabh4496/roop-unleashed-wip` (`master` 792f946, `pure_safe` 5a2f945 — remote
 heads matched exactly), and the uncommitted diff archived to
-`G:\pinokio
+`<PINOKIO_HOME>
 oop-keep\wip-archive\`. Of the three dirty files,
 `session_pool.py` was byte-identical to this repo's and `two_face_video.py` had
 diverged entirely (861 lines there vs 1079 here).
@@ -1273,7 +1273,7 @@ Reported on the RTX 3060 Laptop GPU (16GB RAM) as: "when I try to swap 2 faces w
 - The 4070 desktop machine (32GB+ RAM) receives the full 1536 MB budget and 4x warmup blocks with zero regression.
 
 ### 3. Verification & Live Benchmarks
-- **Live 2-Face Swap**: Ran `tests/two_face_video.py` on `d4.mp4` with `harjot.fsz` + `rhythm.fsz`, GPEN 256 Pro, RealityUX, and `stabilize_mask`. Maintained `execution_threads=8` continuously throughout the run with steady ~2.9 GB RSS.
+- **Live 2-Face Swap**: Ran `tests/two_face_video.py` on `d4.mp4` with `person_a.fsz` + `person_d.fsz`, GPEN 256 Pro, RealityUX, and `stabilize_mask`. Maintained `execution_threads=8` continuously throughout the run with steady ~2.9 GB RSS.
 - **Full Suite**: 1,298 / 1,298 tests passing (100% green).
 - **Commit**: `0e4fe60` pushed to `origin/main`.
 
@@ -1370,7 +1370,7 @@ signature never reached the matcher. The probe now calls `disable_fallback()`.
 
 ### 2. Three harnesses hardcoded the OTHER machine's PINOKIO_HOME
 
-`phase5_quality_matrix.py` and `angle_video.py` probed `G:/pinokio/...` as a
+`phase5_quality_matrix.py` and `angle_video.py` probed `<PINOKIO_HOME>/...` as a
 literal string, so Phase 5 died on its first line here and every `compat_one`
 clip would have aborted before encoding. `phase13_benchmark.py` was worse: a
 bare `shutil.which('ffmpeg')` miss returned an **empty encoder set**, skipping
@@ -1993,7 +1993,7 @@ also using; NVENC frees contended CPU. Far smaller than the 4070's
 
 ### 7. Confirmed about this device, for the next session
 
-- `roop-keep` **DOES exist here** (`C:\pinokio\roop-keep`) with the clip
+- `roop-keep` **DOES exist here** (`<MEDIA_DIR>`) with the clip
   folders and the correct locked fixture. CLAUDE.md's claim that it is
   4070-only is stale — though it still holds no `RECODE_STATUS.md`, so these
   Session Logs remain the whole record on this device.
@@ -2071,7 +2071,7 @@ passes just as happily when there is one face in the whole clip. Verified to fai
 ### 1. The opt-in temporal stack, measured for the first time
 
 Every one of Phases 6/6B/7/8 recorded its benchmarks as `pending` for want of
-video fixtures. The fixtures were there the whole time (`G:\pinokio\roop-keep\`
+video fixtures. The fixtures were there the whole time (`<MEDIA_DIR>\`
 holds `double/d1..d6`, four `expression/` clips, ten HD/4K `final/` clips); the
 benches were simply never given `--video`.
 

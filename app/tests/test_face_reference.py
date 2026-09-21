@@ -59,9 +59,9 @@ class FaceReferenceTest(unittest.TestCase):
     def test_persistent_cuda_bank_uses_one_matrix_multiply(self):
         """The matching hot path must not renormalize reference vectors."""
         cache = PersistentReferenceEmbeddingCache()
-        matrix, names = cache.register({"mehak": vector(0, 5.0),
-                                        "misbah": vector(1, 3.0)})
-        self.assertEqual(names, ("mehak", "misbah"))
+        matrix, names = cache.register({"person_e": vector(0, 5.0),
+                                        "person_k": vector(1, 3.0)})
+        self.assertEqual(names, ("person_e", "person_k"))
         # This is a CPU-only CI-safe assertion.  On the 4070 the same public
         # call returns a resident CUDA float32 tensor and torch.mm scores.
         if matrix is None:

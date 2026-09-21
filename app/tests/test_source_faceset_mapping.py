@@ -78,8 +78,8 @@ class SourceFacesetMappingTests(unittest.TestCase):
         )
 
     def test_selected_people_with_only_the_second_person_mapped_uses_that_persons_slot(self):
-        # Two people captured, source 0 = "akansha", source 1 = "anshita".
-        # The user maps ONLY the second person (B -> anshita). ProcessMgr treats a
+        # Two people captured, source 0 = "person_g", source 1 = "person_j".
+        # The user maps ONLY the second person (B -> person_j). ProcessMgr treats a
         # one-person selection as `single_person` in EITHER selected mode and
         # reads `selected_index` as the mapped-list slot, so that slot has to be
         # B's rank (1) -- not the gallery-highlighted source, which maps to
@@ -90,12 +90,12 @@ class SourceFacesetMappingTests(unittest.TestCase):
             {
                 "detection": "Selected people",
                 "selection_state": {"selection_mode": "multi_person", "person_ids": ["tp_b"]},
-                "target_person_source_mapping": {"tp_b": "src_anshita"},
+                "target_person_source_mapping": {"tp_b": "src_person_j"},
             },
             target_groups=[0, 1],
             source_count=2,
             selected_source_gallery_index=0,
-            current_source_ids=["src_akansha", "src_anshita"],
+            current_source_ids=["src_person_g", "src_person_j"],
             target_person_ids=people,
         )
         self.assertEqual(request["swap_mode"], "selected_multi")
@@ -108,10 +108,10 @@ class SourceFacesetMappingTests(unittest.TestCase):
             {
                 "detection": "Selected people",
                 "selection_state": {"selection_mode": "multi_person", "person_ids": people},
-                "target_person_source_mapping": {"tp_a": "src_akansha", "tp_b": "src_anshita"},
+                "target_person_source_mapping": {"tp_a": "src_person_g", "tp_b": "src_person_j"},
             },
             target_groups=[0, 1], source_count=2, selected_source_gallery_index=0,
-            current_source_ids=["src_akansha", "src_anshita"], target_person_ids=people,
+            current_source_ids=["src_person_g", "src_person_j"], target_person_ids=people,
         )
         self.assertEqual(both["source_index_mapping"], [0, 1])
 
@@ -123,7 +123,7 @@ class SourceFacesetMappingTests(unittest.TestCase):
                 "target_person_source_mapping": {"tp_b": "src_removed"},
             },
             target_groups=[0, 1], source_count=2, selected_source_gallery_index=0,
-            current_source_ids=["src_akansha", "src_anshita"], target_person_ids=people,
+            current_source_ids=["src_person_g", "src_person_j"], target_person_ids=people,
         )
         self.assertEqual(gone["source_index"], -1)
 

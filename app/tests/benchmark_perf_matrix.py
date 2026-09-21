@@ -110,7 +110,7 @@ def run_benchmark(video_path, source_name, threads, trt_pool, det_pool, temp_ste
 
 def main():
     video = fixtures.clip('final/5155179-hd_1920_1080_30fps.mp4')
-    source = "harjot"
+    source = "person_a"
 
     configs = [
         {'threads': 12, 'trt_pool': 2, 'det_pool': 2, 'temp_step': 1, 'cadence': 4},

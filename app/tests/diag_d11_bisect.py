@@ -28,7 +28,7 @@ from angle_video import ensure_ffmpeg  # noqa: E402
 from two_face_video import load_library_faceset  # noqa: E402
 
 SRC = fixtures.clip('double/d11.mp4')
-NAMES = ["harjot", "shambhavi"]
+NAMES = ["person_a", "person_f"]
 
 
 def trim(video, end, out_path):

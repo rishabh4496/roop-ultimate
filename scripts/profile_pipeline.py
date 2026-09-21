@@ -161,9 +161,9 @@ def prepare_benchmark_video(base_video: str, target_frames: int, output_dir: str
 def get_default_source_face(faceset_dir: str) -> str:
     """Find a source face image from facesets or return default."""
     candidates = [
-        os.path.join(faceset_dir, "harjot.png"),
-        os.path.join(faceset_dir, "akansha.png"),
-        os.path.join(faceset_dir, "shambhavi.png"),
+        os.path.join(faceset_dir, "person_a.png"),
+        os.path.join(faceset_dir, "person_g.png"),
+        os.path.join(faceset_dir, "person_f.png"),
     ]
     for c in candidates:
         if os.path.isfile(c):

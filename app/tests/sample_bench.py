@@ -1,11 +1,11 @@
-"""Run one real sample clip (from G:/pinokio/roop-keep/single or /double) through
+"""Run one real sample clip (from <MEDIA_DIR>/single or /double) through
 the real pipeline with real library facesets, using the app's OWN live config.yaml
 settings (detector, tracking, mask engine, enhancer, swap model — whatever the user
 actually has configured), and drop the output where the user can watch it.
 
 Unlike angle_bench/angle_video/two_face_video (synthetic or grading-focused
 benches), this is not trying to measure anything automatically — phase 1 of the
-roop-recode project (see G:/pinokio/roop-keep/RECODE_STATUS.md) is being verified
+roop-recode project (see <MEDIA_DIR>/RECODE_STATUS.md) is being verified
 by eye, video by video, against every clip in single/ and double/. This script is
 just the plumbing: load faceset(s), capture target face(s) from the clip itself,
 run batch_process_with_options exactly like the app does in "selected" mode with
@@ -13,11 +13,11 @@ tracking on, and land the output in app/output/<tag>/<clip_stem>__<sources>.mp4.
 
 Usage (single face, one source):
     env/Scripts/python.exe tests/sample_bench.py --tag baseline \
-        --video "G:/pinokio/roop-keep/single/s1.mp4" --sources harjot
+        --video "<MEDIA_DIR>/single/s1.mp4" --sources person_a
 
 Usage (two faces, two sources):
     env/Scripts/python.exe tests/sample_bench.py --tag baseline \
-        --video "G:/pinokio/roop-keep/double/d1.mp4" --sources harjot,shambhavi
+        --video "<MEDIA_DIR>/double/d1.mp4" --sources person_a,person_f
 """
 
 import argparse

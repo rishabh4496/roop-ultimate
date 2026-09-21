@@ -1,7 +1,7 @@
 """Side-by-side A/B of two enhancers on one clip, with the fps each one ran at.
 
     env/Scripts/python.exe tests/compare_enhancers_video.py \
-        --clip "G:/pinokio/roop-keep/inverted/s1.mp4" --source harjot
+        --clip "<MEDIA_DIR>/inverted/s1.mp4" --source person_a
 
 Renders the clip twice — everything identical except `selected_enhancer` —
 times each arm, then builds one video with the two results next to each other
@@ -414,7 +414,7 @@ def grade(a_path, b_path, a_label, b_label, step=5):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--clip", default=fixtures.clip('inverted/s1.mp4'))
-    ap.add_argument("--source", default="harjot")
+    ap.add_argument("--source", default="person_a")
     ap.add_argument("--a", default="Codeformer (fp16)")
     ap.add_argument("--b", default="UltraMax")
     ap.add_argument("--swapper", default=None, help="default: config.yaml swap_model")

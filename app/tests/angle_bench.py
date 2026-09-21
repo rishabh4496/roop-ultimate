@@ -380,7 +380,7 @@ def prepare_plate(plate, margin=1.8):
     """One face, centred, on a square of that plate's own backdrop.
 
     Beyond de-letterboxing: some plates carry slivers of the NEIGHBOURING pose
-    at their left and right edges (five ashna plates yield seven detections),
+    at their left and right edges (five person_b plates yield seven detections),
     and a stray half-face is a second subject the swap can pick up and the
     grader can lock onto. Cropping to the primary face removes that confound
     rather than hoping the "biggest face" tie-break goes the right way on every
@@ -692,7 +692,7 @@ def main():
                          "harness's own measurement floor")
     ap.add_argument("--rolls", default=",".join(str(r) for r in ROLLS))
     ap.add_argument("--sheet-rolls", default="0,40,180")
-    ap.add_argument("--facesets", default="ashna,harjot")
+    ap.add_argument("--facesets", default="person_b,person_a")
     # NOT under app/temp. roop.utilities.delete_temp_frames does an unguarded
     # shutil.rmtree of os.path.dirname(os.path.dirname(frame_path)) as part of
     # normal post-processing, so anything a bench leaves two levels inside the

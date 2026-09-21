@@ -210,31 +210,23 @@ class BenchmarkAssetManager:
         """Ensure a high-quality standardized source face is ready for swapping.
 
         If `source_reference.png` does not exist in `roop/assets/benchmark`,
-        it is provisioned from `facesets/lori.png` (or `akansha.png`), or
-        procedurally synthesized if no faceset images are present.
+        it is provisioned from the first PNG in `facesets/`, or procedurally
+        synthesized if no faceset images are present. It is never committed.
         """
         ref_path = self.get_source_reference_path()
         if ref_path.is_file() and ref_path.stat().st_size > 0:
             return ref_path
 
-        # Try sourcing from existing local facesets
-        candidates = ["lori.png", "akansha.png", "ashna.png", "anshita.png"]
-        for candidate in candidates:
-            cand_path = self.facesets_dir / candidate
-            if cand_path.is_file() and cand_path.stat().st_size > 0:
-                try:
-                    shutil.copy2(cand_path, ref_path)
-                    LOGGER.info("Provisioned benchmark source reference from %s", cand_path)
-                    return ref_path
-                except OSError as exc:
-                    LOGGER.debug("Failed copying reference from %s: %s", cand_path, exc)
-
-        # Fallback: search for any PNG in facesets
+        # Try sourcing from existing local facesets (any PNG, deterministic order)
         if self.facesets_dir.is_dir():
-            for any_png in self.facesets_dir.glob("*.png"):
+            for any_png in sorted(self.facesets_dir.glob("*.png")):
                 if any_png.stat().st_size > 0:
-                    shutil.copy2(any_png, ref_path)
-                    return ref_path
+                    try:
+                        shutil.copy2(any_png, ref_path)
+                        LOGGER.info("Provisioned benchmark source reference from %s", any_png)
+                        return ref_path
+                    except OSError as exc:
+                        LOGGER.debug("Failed copying reference from %s: %s", any_png, exc)
 
         # Offline procedural fallback: create a calibrated 512x512 face image
         self._generate_synthetic_reference_face(ref_path)
@@ -287,27 +279,14 @@ class BenchmarkAssetManager:
     def _load_available_face_plates(self) -> list[np.ndarray]:
         """Load available cropped face images from facesets for realistic synthesis."""
         plates: list[np.ndarray] = []
-        preferred = [
-            "akansha.png", "anshita.png", "ashna.png", "debasmita.png",
-            "gargee.png", "harjot.png", "ishu.png", "jaya.png",
-            "lori.png", "mahek.png", "mahima.png", "misbah.png"
-        ]
+        # Whatever PNGs the local library holds, deterministic order, at most 12.
         if self.facesets_dir.is_dir():
-            for name in preferred:
-                p = self.facesets_dir / name
-                if p.is_file():
-                    img = cv2.imread(str(p))
-                    if img is not None and img.shape[0] >= 128 and img.shape[1] >= 128:
-                        plates.append(img)
-            # Add other faces if fewer than 6
-            if len(plates) < 6:
-                for p in self.facesets_dir.glob("*.png"):
-                    if p.name not in preferred:
-                        img = cv2.imread(str(p))
-                        if img is not None:
-                            plates.append(img)
-                    if len(plates) >= 12:
-                        break
+            for p in sorted(self.facesets_dir.glob("*.png")):
+                img = cv2.imread(str(p))
+                if img is not None and img.shape[0] >= 128 and img.shape[1] >= 128:
+                    plates.append(img)
+                if len(plates) >= 12:
+                    break
 
         if not plates:
             # Generate procedural face plates if no facesets exist

@@ -10,9 +10,9 @@ trusting either side's summary.
 
 Usage:
     env/Scripts/python.exe tests/verify_swap_visual.py \
-        --plate "G:/pinokio/roop-keep/single/s1.mp4" \
-        --swapped "G:/pinokio/api/roop-ultimate/app/output/baseline_single/s1__harjot.mp4" \
-        --sources harjot
+        --plate "<MEDIA_DIR>/single/s1.mp4" \
+        --swapped "<PINOKIO_HOME>/api/roop-ultimate/app/output/baseline_single/s1__person_a.mp4" \
+        --sources person_a
 """
 
 import argparse

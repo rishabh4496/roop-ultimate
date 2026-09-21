@@ -91,7 +91,7 @@ g.codeformer_fidelity = float(cfg.codeformer_fidelity)
 g.execution_threads = %(threads)d
 from roop.core import live_swap
 from roop import session_pool
-src = ab.load_faceset(os.path.join(APP, "facesets", "harjot.fsz"))
+src = ab.load_faceset(os.path.join(APP, "facesets", "person_a.fsz"))
 g.INPUT_FACESETS = [src]
 g.TARGET_FACES = []
 opts = ab.build_options(g, swapper, mask)

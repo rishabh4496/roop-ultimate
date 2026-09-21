@@ -749,7 +749,7 @@ def _dermal_patch(entries):
 
     "Frontal" widens in two steps before giving up, because the spec'd +-15
     degree pitch edge is tight enough to exclude genuinely frontal material: on
-    the real `harjot` bank the head-on reference solves to yaw -4.3 / pitch
+    the real `person_a` bank the head-on reference solves to yaw -4.3 / pitch
     -16.4, which lands in `center_down` and, under a strict `center_center`
     test, handed the dermal patch to a 38-degree profile instead. Yaw is what
     decides whether a face is presented to camera; a mild nod is not a profile.

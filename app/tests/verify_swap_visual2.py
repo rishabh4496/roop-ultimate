@@ -8,8 +8,8 @@ interchange or unswapped stretch is directly visible, not inferred from logs.
 
 Usage:
     env/Scripts/python.exe tests/verify_swap_visual2.py \
-        --swapped output/baseline_double/d2__harjot-shambhavi.mp4 \
-        --sources harjot,shambhavi --samples 60
+        --swapped output/baseline_double/d2__person_a-person_f.mp4 \
+        --sources person_a,person_f --samples 60
 """
 import argparse
 import os
@@ -32,7 +32,7 @@ from two_face_video import load_library_faceset, cos, faceset_mean  # noqa: E402
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--swapped", required=True)
-    ap.add_argument("--sources", required=True, help="comma-separated, e.g. harjot,shambhavi")
+    ap.add_argument("--sources", required=True, help="comma-separated, e.g. person_a,person_f")
     ap.add_argument("--samples", type=int, default=60)
     ap.add_argument("--provider", default=None)
     args = ap.parse_args()

@@ -10,7 +10,7 @@ never get a chance to use TensorRT again, even though batch=1 may never
 have actually been broken under TRT.
 
 Isolates JUST the swap processor (no detection/masking/tracking pipeline)
-so this runs in seconds, not minutes. Real source (harjot faceset) and a
+so this runs in seconds, not minutes. Real source (person_a faceset) and a
 real aligned target crop (from s1.mp4's first frame) are used so the timing
 reflects real inference cost, not synthetic-data shortcuts.
 
@@ -66,8 +66,8 @@ def main():
           f"trt_disabled_initially={p._trt_disabled} "
           f"batch_unsupported_initially={p._batch_unsupported}", flush=True)
 
-    harjot = load_library_faceset("harjot")
-    source_face = harjot.faces[0]
+    person_a = load_library_faceset("person_a")
+    source_face = person_a.faces[0]
 
     video = fixtures.clip("single/s1.mp4")
     cap = cv2.VideoCapture(video)

@@ -147,7 +147,7 @@ def main():
     # A source who is clearly NOT either person in the clip. A near-identical
     # source would move very few pixels and make the measurement ambiguous.
     src_img = None
-    for cand in ("faceset-v1-backup-2026-09-03/harjot.png",
+    for cand in ("faceset-v1-backup-2026-09-03/person_a.png",
                  "single/s1_preview.jpg"):
         p = fixtures.clip(cand)
         if p and os.path.exists(p):

@@ -38,7 +38,7 @@ g = ab.init_pipeline('tensorrt', 'realswap', 'None', 'None', 0.0)
 from roop.ProcessMgr import ProcessMgr
 from roop.face_util import get_all_faces, align_crop
 
-FSZ = os.environ.get('FSZ', 'facesets/harjot.fsz')
+FSZ = os.environ.get('FSZ', 'facesets/person_a.fsz')
 CLIP = os.environ.get('PROF_CLIP', fixtures.clip('inverted/s1.mp4'))
 src_fs = ab.load_faceset(FSZ)
 pm = ProcessMgr(None)

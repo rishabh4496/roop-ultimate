@@ -49,7 +49,7 @@ workload, so it is not the comparison point -- this block is.
 
 ## Workload
 
-- Input video: `G:/pinokio/roop-keep/double/d4.mp4` frames 0..600
+- Input video: `<MEDIA_DIR>/double/d4.mp4` frames 0..600
 - Resolution: 1280x720
 - Input FPS: 30
 - Codec: h264
@@ -150,7 +150,7 @@ for the eventual dual-GPU final baseline.
 
 ## Real-video workload
 
-- Input: `G:/pinokio/roop-keep/double/d1.mp4`
+- Input: `<MEDIA_DIR>/double/d1.mp4`
 - Resolution / source FPS / frames: 1280×720 / 25 FPS / 141 frames
 - Provider: TensorRT → CUDA → CPU
 - Swap model: RealSwap, mixed guarded precision
@@ -177,7 +177,7 @@ for the eventual dual-GPU final baseline.
 ## Reproduction command
 
 ```text
-app\\env\\Scripts\\python.exe app\\tests\\two_face_video.py --tag phase4_corrected_4070_d1 --video G:/pinokio/roop-keep/double/d1.mp4 --sources harjot,ashna --start 0 --end 141 --capture -1 --capture-budget 30 --provider tensorrt --swap-model realswap --enhancer "GPEN 256 Pro" --mask-engine RealityUX --stabilize-mask 1 --stabilize-mask-strength 0.6 --tracking 1 --threads 6 --swap-model-mask-strength 25 --merger-clarity 0.4 --out app/output/phase4_corrected_4070_d1
+app\\env\\Scripts\\python.exe app\\tests\\two_face_video.py --tag phase4_corrected_4070_d1 --video <MEDIA_DIR>/double/d1.mp4 --sources person_a,person_b --start 0 --end 141 --capture -1 --capture-budget 30 --provider tensorrt --swap-model realswap --enhancer "GPEN 256 Pro" --mask-engine RealityUX --stabilize-mask 1 --stabilize-mask-strength 0.6 --tracking 1 --threads 6 --swap-model-mask-strength 25 --merger-clarity 0.4 --out app/output/phase4_corrected_4070_d1
 ```
 
 The RTX 3060 Laptop row remains **PENDING**. Its prior strict Phase 4

@@ -91,49 +91,49 @@ class DoubleRouterVerificationTest(unittest.TestCase):
         self.assertFalse(matched_fail)
         self.assertEqual(reason_fail, "below_threshold")
 
-    def test_mehak_and_misbah_crossing_simulation(self):
-        emb_mehak = make_norm_emb(111)
-        emb_misbah = make_norm_emb(222)
+    def test_person_k_and_person_e_crossing_simulation(self):
+        emb_person_k = make_norm_emb(111)
+        emb_person_e = make_norm_emb(222)
         emb_bystander = make_norm_emb(333)
 
-        # Distance between mehak and misbah must be clear
-        dist = 1.0 - float(np.dot(emb_mehak, emb_misbah))
-        self.assertGreater(dist, 0.70, "Mehak and Misbah synthetic embeddings should be distinct")
+        # Distance between person_k and person_e must be clear
+        dist = 1.0 - float(np.dot(emb_person_k, emb_person_e))
+        self.assertGreater(dist, 0.70, "person_k and person_e synthetic embeddings should be distinct")
 
         router = MultiIdentityReferenceRouter(identities={
-            'mehak': {'embedding': emb_mehak},
-            'misbah': {'embedding': emb_misbah}
+            'person_k': {'embedding': emb_person_k},
+            'person_e': {'embedding': emb_person_e}
         })
 
         # Simulate 15 frames of trajectory crossing
-        # Mehak moves x: 50 -> 400
-        # Misbah moves x: 400 -> 50
+        # person_k moves x: 50 -> 400
+        # person_e moves x: 400 -> 50
         frames = 15
-        mehak_xs = np.linspace(50, 400, frames)
-        misbah_xs = np.linspace(400, 50, frames)
+        person_k_xs = np.linspace(50, 400, frames)
+        person_e_xs = np.linspace(400, 50, frames)
 
-        mehak_tracked = []
-        misbah_tracked = []
+        person_k_tracked = []
+        person_e_tracked = []
 
         for f in range(frames):
-            mx = float(mehak_xs[f])
-            mix = float(misbah_xs[f])
+            mx = float(person_k_xs[f])
+            mix = float(person_e_xs[f])
 
             # Small appearance variation during crossing
-            f_mehak_emb = emb_mehak + 0.05 * make_norm_emb(1000 + f)
-            f_mehak_emb /= np.linalg.norm(f_mehak_emb)
+            f_person_k_emb = emb_person_k + 0.05 * make_norm_emb(1000 + f)
+            f_person_k_emb /= np.linalg.norm(f_person_k_emb)
 
-            f_misbah_emb = emb_misbah + 0.05 * make_norm_emb(2000 + f)
-            f_misbah_emb /= np.linalg.norm(f_misbah_emb)
+            f_person_e_emb = emb_person_e + 0.05 * make_norm_emb(2000 + f)
+            f_person_e_emb /= np.linalg.norm(f_person_e_emb)
 
-            face_mehak = {
+            face_person_k = {
                 'bbox': [mx, 100.0, mx + 100.0, 200.0],
-                'embedding': f_mehak_emb,
+                'embedding': f_person_k_emb,
                 '_track_id': 1
             }
-            face_misbah = {
+            face_person_e = {
                 'bbox': [mix, 100.0, mix + 100.0, 200.0],
-                'embedding': f_misbah_emb,
+                'embedding': f_person_e_emb,
                 '_track_id': 2
             }
             face_bystander = {
@@ -143,21 +143,21 @@ class DoubleRouterVerificationTest(unittest.TestCase):
             }
 
             # Put faces in arbitrary order in detected list
-            detected = [face_mehak, face_bystander, face_misbah]
+            detected = [face_person_k, face_bystander, face_person_e]
             assignments = router.route(detected, frame_index=f)
 
-            # assignments[0] should be 'mehak'
+            # assignments[0] should be 'person_k'
             # assignments[1] should be None (bystander rejected)
-            # assignments[2] should be 'misbah'
-            self.assertEqual(assignments[0], 'mehak', f"Mehak misidentified at frame {f}")
+            # assignments[2] should be 'person_e'
+            self.assertEqual(assignments[0], 'person_k', f"person_k misidentified at frame {f}")
             self.assertIsNone(assignments[1], f"Bystander incorrectly matched at frame {f}")
-            self.assertEqual(assignments[2], 'misbah', f"Misbah misidentified at frame {f}")
+            self.assertEqual(assignments[2], 'person_e', f"person_e misidentified at frame {f}")
 
-            mehak_tracked.append(assignments[0])
-            misbah_tracked.append(assignments[2])
+            person_k_tracked.append(assignments[0])
+            person_e_tracked.append(assignments[2])
 
-        self.assertEqual(mehak_tracked, ['mehak'] * frames)
-        self.assertEqual(misbah_tracked, ['misbah'] * frames)
+        self.assertEqual(person_k_tracked, ['person_k'] * frames)
+        self.assertEqual(person_e_tracked, ['person_e'] * frames)
         print(f"[DoubleRouter] Verified 15 crossing frames: 0 identity flips, 0 bystander false positives!")
 
 if __name__ == '__main__':

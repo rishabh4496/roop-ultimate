@@ -54,13 +54,13 @@ import telemetry as tel
 # is recorded verbatim in every result. `video` is only where that same clip
 # happens to live on the machine now running, resolved at import because the two
 # validation targets do not share a drive layout (the 4070 has
-# `G:/pinokio/roop-keep/`, the 3060 has `C:\pinokio\roop keep\` and no G: at
+# `<MEDIA_DIR>/`, the 3060 has `<MEDIA_DIR>\` and no G: at
 # all). Resolving the location does NOT license changing the clip: a different
 # fixture is a different baseline, not a 3060 result.
 WORKLOAD = {
     "clip_id": "double/d4.mp4",
     "video": fixtures.clip("double/d4.mp4"),
-    "sources": "harjot,gargee",
+    "sources": "person_a,person_c",
     # The locked 2026-08-29 RTX 4070 baseline's own fixture identity, from
     # PERFORMANCE_BASELINE.md. Checked at run time because `double/d4.mp4` and
     # `duo/d4.mp4` are DIFFERENT CLIPS THAT SHARE A FILENAME -- 1280x720 versus

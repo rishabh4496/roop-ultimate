@@ -13,7 +13,7 @@ their own best frame's capture.
 
 Usage:
     env/Scripts/python.exe tests/diag_best_frontal_capture.py --video PATH \
-        --swap-video PATH --sources harjot,shambhavi
+        --swap-video PATH --sources person_a,person_f
 """
 import argparse
 import os

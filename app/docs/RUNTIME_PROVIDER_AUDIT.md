@@ -93,7 +93,7 @@ per frame. Each arm is its own process; the report carries each arm's
 ### Results — 2026-09-20, RTX 4070
 
 **Provider invariance (the core requirement).** `double/d1.mp4`, frames 0–119,
-Selected-face mode, hyperswap, tracking on, one source (harjot), captured
+Selected-face mode, hyperswap, tracking on, one source (person_a), captured
 targets frozen and shared:
 
 | comparison | person 0 | person 1 |

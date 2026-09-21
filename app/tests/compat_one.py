@@ -19,7 +19,7 @@ that were already built.
 
 Usage:
     env/Scripts/python.exe tests/compat_one.py --precision mixed \
-        --mask-engine RealityUX --enhancer None --clip <tiny.mp4> --source harjot
+        --mask-engine RealityUX --enhancer None --clip <tiny.mp4> --source person_a
 """
 
 import argparse
@@ -85,7 +85,7 @@ def main():
     ap.add_argument("--mask-engine", default="RealityUX")
     ap.add_argument("--enhancer", default="None")
     ap.add_argument("--clip", required=True)
-    ap.add_argument("--source", default="harjot")
+    ap.add_argument("--source", default="person_a")
     ap.add_argument("--out", default=None)
     args = ap.parse_args()
 

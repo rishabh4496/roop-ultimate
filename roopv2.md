@@ -29,11 +29,11 @@ Later changes are included as regression scope without renumbering the original 
 
 | Material | Purpose | Faceset assignment |
 | --- | --- | --- |
-| `G:\pinokio\roop-keep\3d model` | pose, yaw, roll, profile, synthetic detail | Rhythm unless the case needs two targets |
-| `G:\pinokio\roop-keep\single` | single-person identity continuity | Rhythm |
-| `G:\pinokio\roop-keep\double` | two-person isolation and target/source assignment | Ashna + Rhythm |
-| `G:\pinokio\roop-keep\expression` | eyes, mouth, expression and temporal stability | Rhythm |
-| `G:\pinokio\roop-keep\final` | end-to-end, real-footage regression | Rhythm; Ashna + Rhythm where a clip has two intended targets |
+| `<MEDIA_DIR>\3d model` | pose, yaw, roll, profile, synthetic detail | person_d unless the case needs two targets |
+| `<MEDIA_DIR>\single` | single-person identity continuity | person_d |
+| `<MEDIA_DIR>\double` | two-person isolation and target/source assignment | person_b + person_d |
+| `<MEDIA_DIR>\expression` | eyes, mouth, expression and temporal stability | person_d |
+| `<MEDIA_DIR>\final` | end-to-end, real-footage regression | person_d; person_b + person_d where a clip has two intended targets |
 
 All relevant visual checks use RetinaFace R50, RealityUX masking, RealSwap, and each enhancer independently: GPEN 256 Pro, GPEN Realistic, and UltraMax.
 
@@ -58,7 +58,7 @@ All relevant visual checks use RetinaFace R50, RealityUX masking, RealSwap, and 
 
 ### Repository baseline
 
-- Repository root: `G:\pinokio\api\roop-ultimate`
+- Repository root: `<PINOKIO_HOME>/api/roop-ultimate`
 - Branch / revision at audit start: `main` / `7088962`
 - `SPEC.md`: absent.
 - Source review surface (initial count):
@@ -107,14 +107,14 @@ Source: `logs\api\start_react.js\latest` at audit start.
 ### Facesets and samples
 
 - All five supplied sample folders are present and contain the expected single, double, expression, 3D-model, and final-footage media.
-- The app uses the project-root named-faceset library `G:\pinokio\api\roop-ultimate\facesets` when configured. Both required assets are present and available for Stage 4:
-  - `G:\pinokio\api\roop-ultimate\facesets\ashna.fsz` (1,268,223 bytes; thumbnail `ashna.png`).
-  - `G:\pinokio\api\roop-ultimate\facesets\rhythm.fsz` (1,013,437 bytes; thumbnail `rhythm.png`).
+- The app uses the project-root named-faceset library `<PINOKIO_HOME>/api/roop-ultimate\facesets` when configured. Both required assets are present and available for Stage 4:
+  - `<PINOKIO_HOME>/api/roop-ultimate\facesets\person_b.fsz` (1,268,223 bytes; thumbnail `person_b.png`).
+  - `<PINOKIO_HOME>/api/roop-ultimate\facesets\person_d.fsz` (1,013,437 bytes; thumbnail `person_d.png`).
 - The earlier search checked the wrong default (`app\facesets`) after reading the routes without accounting for the project-level library configuration. B-005 is therefore cleared; this correction is retained so later work uses the verified paths.
 
 ### Stage 1 next actions
 
-1. Locate and verify the actual Ashna and Rhythm faceset assets and their expected source identities.
+1. Locate and verify the actual person_b and person_d faceset assets and their expected source identities.
 2. Build a code/module ownership map and identify every executable entry point.
 3. Capture test-run baseline and current configuration provenance without changing it.
 4. Start Stage 2 only after the baseline map is complete.
@@ -127,14 +127,14 @@ Source: `logs\api\start_react.js\latest` at audit start.
 | B-002 | Investigation | Open | 31.5% detected faces left unswapped by safeguards | Verify that refusals prevent wrong-person swaps rather than produce avoidable flicker. |
 | B-003 | Info | Closed baseline | Latest render completed successfully | Treat as baseline performance/completion evidence only. |
 | B-004 | Info | Closed — intended | Persisted `config.yaml` performance settings override launcher defaults before Roop imports | The React settings panel explicitly documents this precedence. The active 2/2/2 pools are therefore intentional for the 12GB workstation, not a runtime defect. |
-| B-005 | Info | Closed | Ashna and Rhythm facesets verified | `facesets\ashna.fsz` and `facesets\rhythm.fsz` are present in the project-root library and ready for visual verification. |
+| B-005 | Info | Closed | person_b and person_d facesets verified | `facesets\person_b.fsz` and `facesets\person_d.fsz` are present in the project-root library and ready for visual verification. |
 | B-006 | High | Fixed & tested | `app\run.py` globally replaced Python's HTTPS default context with an unverified context | Removed the process-wide TLS bypass; ordinary certificate verification now remains enabled. |
 | B-007 | High | Fixed & tested | In-memory video `frame_count` was one too high | Corrected the video count to `frame_end - frame_start`, matching the end-exclusive contract used by readers, progress, resume, and temporal tracking. |
 | B-008 | Low | Fixed & tested | GPEN 256 Pro created a tensor directly from a deliberately non-writable NumPy grain cache | The shared cache remains immutable; its GPU path copies before `torch.from_numpy`, eliminating the PyTorch undefined-behaviour warning. |
 | B-009 | Low | Fixed & tested | Advanced-performance help stated the wrong auto pool size for 15.5GB+ GPUs | Updated the UI from 8 to the runtime's actual auto tier of 4. |
 | B-010 | Low | Fixed & tested | Runtime-estimator samples were keyed with configured, not effective, worker count | Calibration now records `execution_threads`, including the result of automatic thread selection. |
 | B-011 | Medium | Fixed & tested | A deliberately stopped batch returned from the core partial-finalization path, but the API continued into the success path and recorded it as a completed run | Added an immediate stop guard after `batch_process_regular`; stopped renders now keep their partial-output status and skip post-passes/completed-history telemetry. |
-| B-012 | Medium | Fixed & tested | The Stage 4 sample runner used legacy Harjot/Shambhavi facesets instead of the requested Rhythm single-face and Ashna+Rhythm double-face verification set | Updated `app\tests\run_all_samples.py` and added a regression guard; sample inputs remain unchanged. |
+| B-012 | Medium | Fixed & tested | The Stage 4 sample runner used legacy person_a/person_f facesets instead of the requested person_d single-face and person_b+person_d double-face verification set | Updated `app\tests\run_all_samples.py` and added a regression guard; sample inputs remain unchanged. |
 | B-013 | Medium | Fixed & tested | RealSwap's eye-band default was `1.0` even though the measured safe production setting documented in the same file is `0.5`, allowing full-strength secondary eyelid/brow overlays and visible tone seams | Changed the default to `0.5`; the override env var remains available and a regression test guards the default. |
 | B-014 | Medium | Fixed & tested | Profile/close-face mattes eroded by half the calculated feather radius before blur, exposing the untouched target along the nose and under-eye contour; this matches the supplied double-nose, pale-boundary, and duplicate-brow screenshots | Reduced the inner erosion to one quarter of the feather radius. Landmark-hull clipping, overlap ownership, and Gaussian anti-aliasing remain active. Added a regression guard. |
 | B-015 | Medium | Fixed; s1 verification running | RealSwap's secondary eyelid net remained active on extreme lateral crops where one eye collapses in the canonical alignment, smudging cornea/conjunctiva and distorting the profile eye structure | Added yaw-aware attenuation and suppresses the secondary band at extreme yaw (`abs(yaw) >= 0.95`); primary hyperswap geometry remains responsible for the profile. Focused tests pass. |
@@ -203,7 +203,7 @@ The user authorized automatic correction of confirmed defects. The following nar
 5. Recorded the actual resolved worker count in runtime-estimator signatures (B-010).
 6. Added `app\tests\test_audit_regressions.py` and GPEN-specific coverage to lock these seams in place.
 7. Added a stop-state guard in `app\api.py` so partial user-stopped renders cannot be marked Done or written to completed run history (B-011).
-8. Corrected the Stage 4 sample runner to use Rhythm for single-face runs and Ashna + Rhythm for double-face runs (B-012).
+8. Corrected the Stage 4 sample runner to use person_d for single-face runs and person_b + person_d for double-face runs (B-012).
 9. Corrected RealSwap's default secondary eye-band opacity from 1.0 to the measured 0.5 setting (B-013).
 10. Reduced profile matte inner erosion from half to one quarter of the feather radius, preventing the target face from showing through as a second nose/under-eye tone edge (B-014).
 11. Added extreme-yaw gating for RealSwap's secondary eyelid band so lateral profiles retain the primary eye structure instead of a collapsed secondary overlay (B-015).
@@ -216,30 +216,30 @@ The user authorized automatic correction of confirmed defects. The following nar
 **Current stage:** Stage 2 — static audit in progress; Stage 3 automated baseline completed once.  
 **Code changes by this audit:** fixed B-006 through B-013 as described in the fix checkpoint; application configuration and media assets remain untouched.  
 **Last completed actions:** Re-ran logs/pre-flight review, corrected RealSwap eye-band opacity, completed single/double smoke renders, completed a separated d2 double render, and ran 46 focused regression tests. The prior full suite remains 1,305 passed (1 skipped).  
-**Stage 4 assets:** Ashna and Rhythm facesets are verified at `facesets\ashna.fsz` and `facesets\rhythm.fsz`.  
-**Resume exactly here:** Stage 2 persistence/history and processing-completion review is complete through B-011. Next prepare Stage 4's controlled visual matrix: `single` with Rhythm; `double` with Ashna + Rhythm; use RetinaFace R50, RealityUX/RealSwap, and compare GPEN 256 Pro, GPEN Realistic, and UltraMax across `3d model`, `expression`, and `final`. Do not alter sample inputs or saved look settings while testing.  
+**Stage 4 assets:** person_b and person_d facesets are verified at `facesets\person_b.fsz` and `facesets\person_d.fsz`.  
+**Resume exactly here:** Stage 2 persistence/history and processing-completion review is complete through B-011. Next prepare Stage 4's controlled visual matrix: `single` with person_d; `double` with person_b + person_d; use RetinaFace R50, RealityUX/RealSwap, and compare GPEN 256 Pro, GPEN Realistic, and UltraMax across `3d model`, `expression`, and `final`. Do not alter sample inputs or saved look settings while testing.  
 **Open investigations:** B-001 (detector no-face rate) and B-002 (safeguard refusals) require visual classification before any threshold or detector change.  
 **Verified design decision:** B-004 is not a bug; persisted performance settings intentionally override launcher defaults.  
 **Environment note:** React production build was not run because this shell has no `node`/`npm`; backend and source regression coverage passed.  
-**New findings:** B-011 is fixed as above. B-012 is fixed: the sample runner now uses the requested Ashna/Rhythm identities for Stage 4. B-013 is fixed: RealSwap now defaults to the measured 0.5 eye-band opacity. B-014 is fixed: profile matte erosion no longer removes half the feather radius, which was allowing the original nose/under-eye pixels to show through.
+**New findings:** B-011 is fixed as above. B-012 is fixed: the sample runner now uses the requested person_b/person_d identities for Stage 4. B-013 is fixed: RealSwap now defaults to the measured 0.5 eye-band opacity. B-014 is fixed: profile matte erosion no longer removes half the feather radius, which was allowing the original nose/under-eye pixels to show through.
 
 ### Stage 4 smoke verification — 2026-08-27
 
-1. **Single:** `G:\pinokio\roop-keep\single\s4.mp4` with Rhythm, selected mode, RetinaFace R50, RealityUX, RealSwap, and GPEN 256 Pro. Completed successfully: 427/427 frames detected, 427/427 frames with a face, 427/427 faces composited, one finalized playable MP4. Representative start/middle/end frames were inspected; no obvious mask tear or temporal dropout was seen.
-2. **Double:** `G:\pinokio\roop-keep\double\d1.mp4` with Ashna + Rhythm and the same pipeline. Completed successfully: 282/282 faces composited over 141 frames and one finalized playable MP4. The clip's two faces overlap in every frame (capture separation 0.29; shared-crop count 282/282), so visible identity mixing/edge artifacts are expected and this asset is not a clean two-person verification sample. Use a more separated double clip (such as `d2` or later) for the next run.
+1. **Single:** `<MEDIA_DIR>\single\s4.mp4` with person_d, selected mode, RetinaFace R50, RealityUX, RealSwap, and GPEN 256 Pro. Completed successfully: 427/427 frames detected, 427/427 frames with a face, 427/427 faces composited, one finalized playable MP4. Representative start/middle/end frames were inspected; no obvious mask tear or temporal dropout was seen.
+2. **Double:** `<MEDIA_DIR>\double\d1.mp4` with person_b + person_d and the same pipeline. Completed successfully: 282/282 faces composited over 141 frames and one finalized playable MP4. The clip's two faces overlap in every frame (capture separation 0.29; shared-crop count 282/282), so visible identity mixing/edge artifacts are expected and this asset is not a clean two-person verification sample. Use a more separated double clip (such as `d2` or later) for the next run.
 3. Runtime evidence for both runs confirms the expected RTX 4070 policy: 12 execution threads and TRT/detection-mask/detector pools of 2/2/2. No OOM or encoder failure occurred.
 
 4. **User artifact review:** the supplied d2 screenshots show the exact failure signature addressed by B-013/B-014: a secondary eyelid/brow overlay plus an over-eroded profile boundary that reads as a pale second nose and a different tone below the eye. The source video itself is unchanged; the correction is in the RealSwap eye-band default and paste-back matte.
 
-5. **Post-fix render:** rendered `app\output\stage4_double_d1_maskquarter\d1__ashna-rhythm.mp4` with RetinaFace R50, RealityUX, RealSwap, GPEN 256 Pro, tracking/temporal stabilization, and the live 12-thread / 2-2-2 pool policy. All 141/141 frames and 282/282 faces completed. Representative frames were inspected: separated profiles now have continuous facial tone and no broad mask halo; the extreme kiss frame still contains the source clip's physically touching noses and remains a deliberately difficult overlap case rather than a clean-separation quality reference.
+5. **Post-fix render:** rendered `app\output\stage4_double_d1_maskquarter\d1__person_b-person_d.mp4` with RetinaFace R50, RealityUX, RealSwap, GPEN 256 Pro, tracking/temporal stabilization, and the live 12-thread / 2-2-2 pool policy. All 141/141 frames and 282/282 faces completed. Representative frames were inspected: separated profiles now have continuous facial tone and no broad mask halo; the extreme kiss frame still contains the source clip's physically touching noses and remains a deliberately difficult overlap case rather than a clean-separation quality reference.
 
-6. **Stage 4 matrix run started:** `tests\run_all_samples.py --only both` is running with the requested Rhythm single-face and Ashna+Rhythm double-face assignments. It is resumable and writes only under `app\output`; the first long single clip (`s1.mp4`, 19,672 frames) is currently in the detector/tracking pass. Existing outputs are not overwritten.
+6. **Stage 4 matrix run started:** `tests\run_all_samples.py --only both` is running with the requested person_d single-face and person_b+person_d double-face assignments. It is resumable and writes only under `app\output`; the first long single clip (`s1.mp4`, 19,672 frames) is currently in the detector/tracking pass. Existing outputs are not overwritten.
 
-7. **Stage 4 matrix completed:** the resumable run finalized 8 single outputs (`s1`–`s8`, Rhythm) and 6 double outputs (`d1`–`d6`, Ashna+Rhythm) under `app\output\baseline_single` and `app\output\baseline_double`. No process crash, OOM, decoder, or encoder failure was reported. Representative d2 frames were extracted for visual review; normal separated faces are stable, while heavily occluded/rotated contact frames remain the known hard boundary for this source material.
+7. **Stage 4 matrix completed:** the resumable run finalized 8 single outputs (`s1`–`s8`, person_d) and 6 double outputs (`d1`–`d6`, person_b+person_d) under `app\output\baseline_single` and `app\output\baseline_double`. No process crash, OOM, decoder, or encoder failure was reported. Representative d2 frames were extracted for visual review; normal separated faces are stable, while heavily occluded/rotated contact frames remain the known hard boundary for this source material.
 
-8. **Stage 5 s1-only lateral verification started:** a new render is running at `app\output\stage5_s1_lateral_gate`, using only `G:\pinokio\roop-keep\single\s1.mp4` and Rhythm. The run will record per-stage timings and inspect lateral-eye frames for cornea/conjunctiva preservation and profile alignment.
+8. **Stage 5 s1-only lateral verification started:** a new render is running at `app\output\stage5_s1_lateral_gate`, using only `<MEDIA_DIR>\single\s1.mp4` and person_d. The run will record per-stage timings and inspect lateral-eye frames for cornea/conjunctiva preservation and profile alignment.
 
-9. **Stage 5 correction completed — 2026-08-27:** RealSwap now uses calibrated `solve_pose_jaw_5pt` yaw for the eyelash-only HifiFace overlay. The overlay fades on the far side from 35° and skips HifiFace inference at 65°+, leaving HyperSwap responsible for the complete lateral eye structure. The run finalized `app\output\stage5_s1_realswap_pose_gate\s1__rhythm.mp4` successfully: 19,672/19,672 frames processed, 17,548 faces swapped, 3,322 lateral secondary skips, 14.98 end-to-end fps, stable ~9.9 GB memory, and no OOM/decoder/encoder errors. Representative profile frames were inspected; the visible eye remains structurally single with no broad secondary-eye overlay.
+9. **Stage 5 correction completed — 2026-08-27:** RealSwap now uses calibrated `solve_pose_jaw_5pt` yaw for the eyelash-only HifiFace overlay. The overlay fades on the far side from 35° and skips HifiFace inference at 65°+, leaving HyperSwap responsible for the complete lateral eye structure. The run finalized `app\output\stage5_s1_realswap_pose_gate\s1__person_d.mp4` successfully: 19,672/19,672 frames processed, 17,548 faces swapped, 3,322 lateral secondary skips, 14.98 end-to-end fps, stable ~9.9 GB memory, and no OOM/decoder/encoder errors. Representative profile frames were inspected; the visible eye remains structurally single with no broad secondary-eye overlay.
 
 ### Exit checklist for this checkpoint
 
@@ -370,7 +370,7 @@ the completed Stage 5 s1 artifact already provides the full correctness result
 and this invocation included the expensive all-frame tracking pre-pass.
 
 The existing completed artifact remains:
-`app/output/stage5_s1_realswap_pose_gate/s1__rhythm.mp4` — 19,672/19,672
+`app/output/stage5_s1_realswap_pose_gate/s1__person_d.mp4` — 19,672/19,672
 frames, 17,548 swaps, 3,322 lateral HifiFace skips, 14.98 end-to-end fps,
 approximately 9.9 GB memory, and no OOM/decoder/encoder errors.
 
@@ -610,9 +610,9 @@ enhancer). The run used the new `_lnfp32_seq_heur` cache namespace and logged
 
 | Enhancer | Output | Frames | Faces swapped | Render time / FPS | Peak memory |
 |---|---|---:|---:|---:|---:|
-| GPEN 256 Pro | `app/output/enhancer_matrix/stage4_mixed_gpen256/s1_10s__rhythm.mp4` | 240/240 | 238/238 | 346.50 s / 0.69 FPS | ~10.4 GB |
-| GPEN Realistic | `app/output/enhancer_matrix/stage4_mixed_gpenrealistic/s1_10s__rhythm.mp4` | 240/240 | 238/238 | 19.57 s / 12.26 FPS | ~9.45 GB |
-| UltraMax/CodeFormer | `app/output/enhancer_matrix/stage4_mixed_ultramax/s1_10s__rhythm.mp4` | 240/240 | 238/238 | 19.85 s / 12.09 FPS | ~9.44 GB |
+| GPEN 256 Pro | `app/output/enhancer_matrix/stage4_mixed_gpen256/s1_10s__person_d.mp4` | 240/240 | 238/238 | 346.50 s / 0.69 FPS | ~10.4 GB |
+| GPEN Realistic | `app/output/enhancer_matrix/stage4_mixed_gpenrealistic/s1_10s__person_d.mp4` | 240/240 | 238/238 | 19.57 s / 12.26 FPS | ~9.45 GB |
+| UltraMax/CodeFormer | `app/output/enhancer_matrix/stage4_mixed_ultramax/s1_10s__person_d.mp4` | 240/240 | 238/238 | 19.85 s / 12.09 FPS | ~9.44 GB |
 
 All three MP4 files are non-empty, decode as 1280x720 at 30 FPS, and contain
 the complete 240-frame output. The two detector misses are consistent across
@@ -654,7 +654,7 @@ Verification:
 - Re-rendered `s1_10s.mp4` with RetinaFace r50 + RealSwap + RealityUX + UltraMax
   under **TensorRT mixed precision only**.
 - Output:
-  `app/output/enhancer_matrix/stage4_mixed_ultramax_eyeprotect/s1_10s__rhythm.mp4`
+  `app/output/enhancer_matrix/stage4_mixed_ultramax_eyeprotect/s1_10s__person_d.mp4`
 - Result: 240/240 frames, 238/238 detected faces swapped, valid 1280x720 MP4 at
   30 FPS, no CUDA/CPU fallback. Representative frame inspection shows the
 periocular result without the prior visible double-eye ring; no new duplicate
@@ -671,7 +671,7 @@ contours are introduced. A separate restrained structural sharpen
 before the protection pass.
 
 The revised mixed-TensorRT render is:
-`app/output/enhancer_matrix/stage4_mixed_ultramax_sharp/s1_10s__rhythm.mp4`
+`app/output/enhancer_matrix/stage4_mixed_ultramax_sharp/s1_10s__person_d.mp4`
 
 It decodes as 240 frames at 1280x720/30 FPS, with 238/238 detected faces
 swapped and no CUDA/CPU fallback. The focused UltraMax eye-protection test and
@@ -698,7 +698,7 @@ memory about 10.4 GB. The mixed runtime log records `trt_fp16_enable=1` with
 `trt_layer_norm_fp32_fallback=1`; no CUDA, CPU, or pure-FP16 fallback was used.
 
 The checked output is:
-`app/output/enhancer_matrix/stage4_mixed_ultramax_eyeprotect_v3/s1_10s__rhythm.mp4`
+`app/output/enhancer_matrix/stage4_mixed_ultramax_eyeprotect_v3/s1_10s__person_d.mp4`
 
 The representative face frame keeps both eyes single (no duplicate iris/lid
 ring) and removes the broad soft source band; nose, lips, cheek, jaw, and skin
@@ -718,7 +718,7 @@ so they cannot form a parallel eyelid, iris, brow, under-eye seam, or halo.
 The source geometry still receives a restrained source-only high-frequency
 lift, and the existing asymmetric-eye balancing remains bounded to the weaker
 eye. The focused enhancer/RealSwap suite passed 67 tests after this change.
-The full `G:/pinokio/roop-keep/single/s1.mp4` mixed-TensorRT verification is
+The full `<MEDIA_DIR>/single/s1.mp4` mixed-TensorRT verification is
 in progress; it uses the cached RTX 4070 mixed configuration with FP16 enabled
 and FP32 layer-norm fallback, not a CUDA/CPU or pure-FP16 fallback.
 
@@ -809,7 +809,7 @@ reference and identify the need for a fresh counterbalanced matrix.
 5. NVDEC/NVENC, queue depth, CPU↔GPU copies, and per-stage latency are not yet
    captured in one reproducible full-render report. The existing harness has
    partial probes; Phase 2 must extend/use it rather than infer from utilisation.
-6. A full `G:/pinokio/roop-keep/single/s1.mp4` mixed-TensorRT render from the
+6. A full `<MEDIA_DIR>/single/s1.mp4` mixed-TensorRT render from the
    UltraMax halo correction is still active. Its final output and frame-level
    quality review are pending and must not be mistaken for a completed baseline.
 

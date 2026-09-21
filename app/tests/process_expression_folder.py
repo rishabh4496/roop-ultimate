@@ -1,4 +1,4 @@
-"""Process all clips in G:/pinokio/roop-keep/expression with the updated
+"""Process all clips in <MEDIA_DIR>/expression with the updated
 RealSwap (85/15 + 100% hififace eyelashes) + RealityUX + UltraMax (natural saturation + dark spots) stack.
 """
 
@@ -54,7 +54,7 @@ def extract_inspection_frames(video_path, out_dir, prefix, num_samples=5):
 
 def main():
     ensure_ffmpeg()
-    source_name = "harjot"
+    source_name = "person_a"
     swapper_name = "realswap"
     enhancer_name = "UltraMax"
     mask_name = "mask_realityux"

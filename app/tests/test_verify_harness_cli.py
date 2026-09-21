@@ -62,10 +62,10 @@ class TestFacesetResolution(unittest.TestCase):
         self.assertIn("not found", note)
 
     def test_a_transposition_resolves_but_says_so(self):
-        """mehak -> mahek must never happen quietly: a verification report
+        """persno_k -> person_k must never happen quietly: a verification report
         naming the wrong person is worse than a failed run."""
-        name, note = resolve_faceset("mehak")
-        if name is not None and name != "mehak":
+        name, note = resolve_faceset("persno_k")
+        if name is not None and name != "persno_k":
             self.assertIsNotNone(note)
             self.assertIn("SPELLING", note)
             self.assertIn(name, note)
