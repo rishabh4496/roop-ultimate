@@ -145,6 +145,29 @@ def _git(*args: str, check: bool = True) -> str:
     return _run(["git", *args], check=check).stdout.strip()
 
 
+def _commit_date(reference: str) -> str | None:
+    """Committer date of `reference` as ISO-8601, or None if git cannot say."""
+    value = _git("log", "-1", "--format=%cI", reference, check=False)
+    return value or None
+
+
+def apply_channel_gated() -> bool | None:
+    """Whether Pinokio's Update action runs this gate at all.
+
+    update.js is the only apply channel.  Since 66d9e6d it has done a plain
+    `git pull` instead of `python update_manager.py apply`, so a candidate
+    this module would refuse is still installed by the Update button.  A UI
+    that says "not offered as an update" while that is true misleads; this
+    reads the launcher so the answer tracks the file, not a doc.  None when
+    update.js cannot be read.
+    """
+    try:
+        source = (ROOT / "update.js").read_text(encoding="utf-8")
+    except OSError:
+        return None
+    return "update_manager.py apply" in source
+
+
 def _sha256_bytes(value: bytes) -> str:
     return hashlib.sha256(value).hexdigest()
 
@@ -320,6 +343,7 @@ def _current_identity() -> dict[str, Any]:
     return {
         "branch": branch,
         "sha": sha,
+        "date": _commit_date("HEAD"),
         "version": f"{branch}@{describe}",
         "remote": remote,
         "dirty": dirty,
@@ -365,6 +389,36 @@ def _add_list(value: Any, label: str, unknown: list[str]) -> list[Any] | None:
     return value
 
 
+def manifest_integrity(manifest: dict[str, Any] | None,
+                       candidate_files: dict[str, str | None] | None) -> dict[str, Any]:
+    """Is the candidate's manifest one this checker can evaluate at all?
+
+    Present, the supported schema, the verified activation mode, and every
+    tracked hash equal to the fetched tree.  This is the "gated" question --
+    whether the commit carries valid evidence -- as distinct from whether that
+    evidence is compatible with THIS installation (evaluate_manifest).  A
+    commit that fails here cannot pass compatibility checks on any machine.
+    """
+    if not isinstance(manifest, dict):
+        return {"present": False, "valid": False,
+                "problems": [f"candidate does not contain a valid {MANIFEST_PATH}"]}
+    problems: list[str] = []
+    if manifest.get("schema_version") != MANIFEST_SCHEMA_VERSION:
+        problems.append("update manifest schema is missing or unsupported")
+    if manifest.get("activation") != "fast_forward_only":
+        problems.append("activation policy is not the verified fast-forward-only mode")
+    declared_hashes = manifest.get("tracked_file_hashes")
+    if not isinstance(declared_hashes, dict):
+        problems.append("tracked_file_hashes is missing")
+    else:
+        for relative in SENSITIVE_FILES:
+            declared = declared_hashes.get(relative)
+            candidate_hash = (candidate_files or {}).get(relative)
+            if not declared or not candidate_hash or declared != candidate_hash:
+                problems.append(f"candidate hash for {relative} is missing or does not match the fetched tree")
+    return {"present": True, "valid": not problems, "problems": problems}
+
+
 def evaluate_manifest(manifest: dict[str, Any] | None, candidate_sha: str,
                       current: dict[str, Any], candidate_files: dict[str, str | None] | None = None) -> dict[str, Any]:
     """Classify one immutable candidate using only explicit evidence."""
@@ -373,14 +427,16 @@ def evaluate_manifest(manifest: dict[str, Any] | None, candidate_sha: str,
     unknown: list[str] = []
     incompatible: list[str] = []
     if not isinstance(manifest, dict):
+        # Still name the commit: "a newer commit exists and is ungated" is a
+        # different fact from "nothing to report".
         return {"classification": "UNVERIFIED", "reasons": [
             f"candidate does not contain a valid {MANIFEST_PATH}"
-        ]}
+        ], "manifest": None, "candidate_sha": candidate_sha,
+            "candidate_manifest": manifest_integrity(None, candidate_files)}
 
-    if manifest.get("schema_version") != MANIFEST_SCHEMA_VERSION:
-        unknown.append("update manifest schema is missing or unsupported")
-    if manifest.get("activation") != "fast_forward_only":
-        unknown.append("activation policy is not the verified fast-forward-only mode")
+    integrity = manifest_integrity(manifest, candidate_files)
+    unknown.extend(problem for problem in integrity["problems"]
+                   if not problem.startswith("candidate hash for "))
 
     compatibility = manifest.get("compatibility")
     if not isinstance(compatibility, dict):
@@ -506,17 +562,19 @@ def evaluate_manifest(manifest: dict[str, Any] | None, candidate_sha: str,
         elif not result:
             incompatible.append(f"current {name} version {actual} does not satisfy {requirement}")
 
+    # Hash-vs-tree problems come from manifest_integrity (the "gated"
+    # question); here the verified hashes are compared with what is installed,
+    # which is the per-installation review signal.
+    unknown.extend(problem for problem in integrity["problems"]
+                   if problem.startswith("candidate hash for "))
     declared_hashes = manifest.get("tracked_file_hashes")
-    if not isinstance(declared_hashes, dict):
-        unknown.append("tracked_file_hashes is missing")
-    else:
+    if isinstance(declared_hashes, dict):
         for relative in SENSITIVE_FILES:
             declared = declared_hashes.get(relative)
             candidate_hash = (candidate_files or {}).get(relative)
             current_hash = (current.get("tracked_file_hashes") or {}).get(relative)
-            if not declared or not candidate_hash or declared != candidate_hash:
-                unknown.append(f"candidate hash for {relative} is missing or does not match the fetched tree")
-            elif current_hash and candidate_hash != current_hash:
+            if (declared and candidate_hash and declared == candidate_hash
+                    and current_hash and candidate_hash != current_hash):
                 review.append(f"sensitive file changes: {relative}")
 
     if current.get("dirty"):
@@ -538,7 +596,8 @@ def evaluate_manifest(manifest: dict[str, Any] | None, candidate_sha: str,
         classification = "SAFE"
         reasons.append("candidate satisfies the explicit compatibility manifest and changes no sensitive dependency/model/runtime files")
     return {"classification": classification, "reasons": reasons,
-            "manifest": manifest, "candidate_sha": candidate_sha}
+            "manifest": manifest, "candidate_sha": candidate_sha,
+            "candidate_manifest": integrity}
 
 
 def _candidate_report(current: dict[str, Any]) -> dict[str, Any]:
@@ -563,6 +622,9 @@ def _candidate_report(current: dict[str, Any]) -> dict[str, Any]:
     if remote_sha == current.get("sha"):
         return {"classification": "SAFE", "available": False,
                 "current": current, "candidate_sha": remote_sha,
+                "candidate_date": current.get("date"),
+                "candidate_manifest": manifest_integrity(
+                    _load_candidate_manifest("HEAD"), _candidate_file_hashes("HEAD")),
                 "reasons": ["no newer commit is available on the configured branch"]}
 
     fetch_ref = f"+refs/heads/{branch}:refs/remotes/{remote_name}/{branch}"
@@ -575,6 +637,7 @@ def _candidate_report(current: dict[str, Any]) -> dict[str, Any]:
     manifest = _load_candidate_manifest(reference)
     result = evaluate_manifest(manifest, remote_sha, current,
                                _candidate_file_hashes(reference))
+    result["candidate_date"] = _commit_date(reference)
     ancestry = _run(["git", "merge-base", "--is-ancestor", current["sha"], reference], check=False)
     if result.get("classification") == "SAFE":
         if ancestry.returncode == 1:

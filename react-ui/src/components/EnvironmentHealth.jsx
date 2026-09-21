@@ -27,6 +27,21 @@ const show = (v, suffix = '') => {
   return `${v}${suffix}`;
 };
 
+// A commit as "hash · date". Both come from git on the backend; the date is
+// the committer date, shown in the viewer's local time. Either missing reads
+// UNKNOWN rather than being invented.
+const commitLabel = (sha, iso) => {
+  if (!sha) return 'UNKNOWN';
+  let when = '';
+  if (iso) {
+    const d = new Date(iso);
+    when = Number.isNaN(d.getTime()) ? iso : d.toLocaleString(undefined, {
+      year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
+    });
+  }
+  return when ? `${sha.slice(0, 12)} · ${when}` : sha.slice(0, 12);
+};
+
 const Row = ({ label, value, tone = '' }) => (
   <div className="flex items-baseline justify-between gap-3 py-1 border-b border-white/[0.04] last:border-0">
     <span className="text-micro text-white/45 shrink-0">{label}</span>
@@ -46,7 +61,7 @@ const CLASS_TONE = {
   UNVERIFIED: 'text-white/60',
 };
 
-export default function EnvironmentHealth({ notify }) {
+export default function EnvironmentHealth({ notify, meta }) {
   const [hw, setHw] = useState(null);
   const [runtime, setRuntime] = useState(null);
   const [tele, setTele] = useState(null);
@@ -100,6 +115,20 @@ export default function EnvironmentHealth({ notify }) {
   const sec = runtime?.sections || {};
   const vram = sec.HARDWARE?.values?.vram || {};
   const available = hw?.available !== false;
+
+  // Installed identity comes from local git via /api/meta, so it renders
+  // offline and before any check. The remote side exists only after a check.
+  const installedSha = upd?.current?.sha || meta?.installed_commit?.sha;
+  const installedDate = upd?.current?.date || meta?.installed_commit?.date;
+  const branch = upd?.current?.branch || null;
+  const remoteAhead = Boolean(upd?.available);
+  // "Gated" is a property of the remote commit: does it carry a manifest the
+  // updater can evaluate at all. Distinct from the classification, which is
+  // whether that evidence fits THIS machine.
+  const remoteGated = upd?.candidate_manifest?.valid === true;
+  const manifestState = !upd ? null
+    : upd.candidate_manifest?.valid ? 'valid'
+      : upd.candidate_manifest?.present ? 'stale' : 'missing';
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -169,12 +198,13 @@ export default function EnvironmentHealth({ notify }) {
 
       <Section title="Updates" icon={Icon.settings}>
         <div className="text-micro text-white/45 mb-3">
-          This checks whether a newer commit exists <em>and</em> whether it is safe to take. It never
-          installs anything: applying an update is Pinokio’s <strong className="text-white/70">Update</strong>{' '}
-          action, which runs the manifest-gated updater, snapshots the environment first, health-checks the
-          result and rolls back if that fails. Python packages, CUDA, TensorRT, ONNX Runtime, FFmpeg,
-          drivers and models are never changed by a browser action.
+          This checks whether a newer commit exists <em>and</em> whether it has passed the compatibility
+          gate. It never installs anything: applying an update is Pinokio’s{' '}
+          <strong className="text-white/70">Update</strong> action. Python packages, CUDA, TensorRT,
+          ONNX Runtime, FFmpeg, drivers and models are never changed by a browser action.
         </div>
+
+        <Row label="Installed" value={commitLabel(installedSha, installedDate)} />
 
         <div className="flex flex-wrap items-center gap-2 mb-3">
           <button
@@ -194,26 +224,64 @@ export default function EnvironmentHealth({ notify }) {
 
         {upd ? (
           <>
-            <Row label="Newer commit available" value={upd.available ? 'yes' : 'no'} />
-            <Row label="Installed" value={show(upd.current?.version)} />
-            {upd.candidate_sha && <Row label="Candidate" value={upd.candidate_sha.slice(0, 12)} />}
-            <Row label="Applied by" value="Pinokio · Update" />
+            <Row
+              label={`Remote${branch ? ` (${branch})` : ''}`}
+              value={upd.candidate_sha ? commitLabel(upd.candidate_sha, upd.candidate_date) : 'UNKNOWN'}
+              tone={remoteAhead ? 'text-amber-300' : 'text-white/85'}
+            />
+            <Row label="Newer commit available" value={remoteAhead ? 'yes' : 'no'} />
+            {remoteAhead && (
+              <Row
+                label="Compatibility manifest at remote"
+                value={manifestState === 'valid' ? 'valid'
+                  : manifestState === 'stale' ? 'stale (does not match that commit)' : 'missing'}
+                tone={manifestState === 'valid' ? 'text-emerald-400' : 'text-amber-300'}
+              />
+            )}
+            <Row
+              label="Pinokio · Update does"
+              value={upd.apply_gated === true ? 'manifest-gated fast-forward'
+                : upd.apply_gated === false ? 'plain git pull — no compatibility gate' : 'UNKNOWN'}
+              tone={upd.apply_gated === false ? 'text-amber-300' : 'text-white/85'}
+            />
             {upd.reasons?.length > 0 && (
               <ul className="mt-2 ml-4 list-disc text-micro text-white/55 space-y-0.5">
                 {upd.reasons.map((r, i) => <li key={i}>{r}</li>)}
               </ul>
             )}
-            {upd.classification !== 'SAFE' && upd.available && (
+            {/* Three distinct situations, each said plainly. None of them may
+                read as "Update would do nothing": while update.js is a plain
+                pull, Pinokio's Update button installs the remote commit
+                whether or not it is gated. */}
+            {remoteAhead && !remoteGated && (
               <div className="mt-2 px-3 py-2 rounded-xl text-micro bg-amber-500/10 border border-amber-500/30 text-amber-200">
-                A newer commit exists but is not manifest-gated as safe for this environment. It is not
-                offered as a one-click update; review the reasons above first.
+                A newer version exists but hasn’t passed compatibility checks yet — the remote commit
+                {manifestState === 'stale' ? ' carries a manifest that does not match it' : ' carries no compatibility manifest'},
+                so the updater cannot evaluate it on any machine.
+                {upd.apply_gated === false
+                  ? ' Pinokio’s Update action will still pull it, ungated.'
+                  : ' Pinokio’s Update action will not install it until it is gated.'}
+              </div>
+            )}
+            {remoteAhead && remoteGated && upd.classification !== 'SAFE' && (
+              <div className="mt-2 px-3 py-2 rounded-xl text-micro bg-amber-500/10 border border-amber-500/30 text-amber-200">
+                A newer, gated version exists but is {upd.classification === 'INCOMPATIBLE' ? 'incompatible with' : 'not verified safe for'}{' '}
+                this environment — see the reasons above.
+                {upd.apply_gated === false
+                  ? ' Pinokio’s Update action will still pull it, ungated.'
+                  : ' Pinokio’s Update action will not install it.'}
+              </div>
+            )}
+            {remoteAhead && remoteGated && upd.classification === 'SAFE' && (
+              <div className="mt-2 px-3 py-2 rounded-xl text-micro bg-emerald-500/10 border border-emerald-500/30 text-emerald-200">
+                A compatible update is available. Apply it from Pinokio’s Update action.
               </div>
             )}
           </>
         ) : (
           <div className="text-micro text-white/35">
-            Not checked. This is the only part of the app that reaches the internet, so it runs only when
-            you ask — offline it simply reports UNVERIFIED and nothing else changes.
+            Remote not checked. This is the only part of the app that reaches the internet, so it runs only
+            when you ask — offline it simply reports UNVERIFIED and nothing else changes.
           </div>
         )}
       </Section>

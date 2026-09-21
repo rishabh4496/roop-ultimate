@@ -1556,6 +1556,21 @@ def _get_git_version() -> str:
             return "main"
 
 
+def _get_installed_commit() -> dict:
+    """Installed commit hash + date from local git. Never touches the network;
+    the remote side lives behind GET /api/update/check, on request only."""
+    import subprocess
+    try:
+        out = subprocess.check_output(
+            ["git", "log", "-1", "--format=%H%n%cI", "HEAD"],
+            stderr=subprocess.DEVNULL).decode("ascii").strip().splitlines()
+        sha, date = (out + [None, None])[:2]
+        return {"sha": sha or None, "short": (sha or "")[:12] or None, "date": date or None}
+    except Exception as _degrade_error:
+        _swallowed("api.py:_get_installed_commit", _degrade_error, "fallback continued")
+        return {"sha": None, "short": None, "date": None}
+
+
 def _get_provider_meta():
     from roop.core import suggest_execution_providers
     try:
@@ -1681,6 +1696,7 @@ def get_meta():
     prov_meta = _get_provider_meta()
     return {
         "git_version": _get_git_version(),
+        "installed_commit": _get_installed_commit(),
         "providers": prov_meta["providers"],
         "available_providers": prov_meta["available_providers"],
         "requested_provider": prov_meta["requested_provider"],

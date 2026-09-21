@@ -716,7 +716,7 @@ export default function Settings({ meta, settings, setSettings, notify }) {
           Both were previously unreachable while idle: the runtime report only
           rendered inside the Processing tab, and the updater's classification
           only existed once you had already run the updater. */}
-      <EnvironmentHealth notify={notify} />
+      <EnvironmentHealth notify={notify} meta={meta} />
 
       <StorageManager notify={notify} />
 

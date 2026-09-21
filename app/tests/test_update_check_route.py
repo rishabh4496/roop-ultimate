@@ -89,6 +89,60 @@ class DegradesHonestly(unittest.TestCase):
         self.assertFalse(result["available"])
         self.assertTrue(any("remote unreachable" in r for r in result["reasons"]),
                         result["reasons"])
+        # Offline still knows what is INSTALLED (local git, no network) and
+        # must not claim the candidate is gated.
+        self.assertIn("current", result)
+        self.assertEqual(result["candidate_manifest"], {"present": False, "valid": False, "problems": []})
+
+
+class ReportShape(unittest.TestCase):
+    """What the Settings screen renders. Installed + remote commit hash and
+    date, whether the remote commit carries an evaluable manifest, and
+    whether Pinokio's Update button would apply it without that gate."""
+
+    def _run_with(self, report):
+        original = sys.modules.get("update_manager")
+
+        class Fake:
+            @staticmethod
+            def check():
+                return report
+
+            @staticmethod
+            def apply_channel_gated():
+                return False
+
+        sys.modules["update_manager"] = Fake
+        try:
+            routes_diagnostics._UPDATE_CHECK_CACHE.update({"at": 0.0, "value": None})
+            return routes_diagnostics.update_check(refresh=True)
+        finally:
+            if original is None:
+                sys.modules.pop("update_manager", None)
+            else:
+                sys.modules["update_manager"] = original
+            routes_diagnostics._UPDATE_CHECK_CACHE.update({"at": 0.0, "value": None})
+
+    def test_ungated_newer_commit_is_reported_as_such(self):
+        result = self._run_with({
+            "classification": "UNVERIFIED", "available": True,
+            "candidate_sha": "b" * 40, "candidate_date": "2026-09-21T12:00:00+00:00",
+            "candidate_ref": "origin/main",
+            "candidate_manifest": {"present": False, "valid": False,
+                                   "problems": ["candidate does not contain a valid update_manifest.json"]},
+            "current": {"sha": "a" * 40, "date": "2026-09-01T00:00:00+00:00", "branch": "main",
+                        "tracked_file_hashes": {"torch.js": "x"}},
+            "reasons": ["candidate does not contain a valid update_manifest.json"],
+        })
+        self.assertTrue(result["available"])
+        self.assertEqual(result["candidate_sha"], "b" * 40)
+        self.assertEqual(result["candidate_date"], "2026-09-21T12:00:00+00:00")
+        self.assertFalse(result["candidate_manifest"]["valid"])
+        self.assertEqual(result["current"]["sha"], "a" * 40)
+        self.assertEqual(result["current"]["date"], "2026-09-01T00:00:00+00:00")
+        self.assertNotIn("tracked_file_hashes", result["current"])
+        self.assertIs(result["apply_gated"], False)
+        self.assertEqual(result["apply_channel"], "pinokio")
 
 
 if __name__ == "__main__":

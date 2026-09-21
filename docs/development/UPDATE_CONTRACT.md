@@ -84,6 +84,18 @@ The manifest is repository-provided evidence. It is not independent proof of
 physical acceptance on either GPU. The updater therefore reports the local
 runtime evidence and keeps unknown facts out of `SAFE`.
 
+## Gated versus compatible
+
+`manifest_integrity()` answers whether the candidate commit is *gated* at all:
+its manifest is present, on the supported schema, fast-forward-only, and every
+tracked hash equals the fetched tree. That is a property of the commit and is
+the same on every machine. `evaluate_manifest()` then answers whether that
+evidence is compatible with *this* installation. Both are reported
+(`candidate_manifest` and `classification`) by `update_manager.check()` and by
+`GET /api/update/check`, together with the installed and candidate commit hash
+and committer date, so a UI can say "a newer version exists but has not
+passed compatibility checks yet" instead of a bare `UNVERIFIED`.
+
 ## Classification
 
 The decision precedence is:

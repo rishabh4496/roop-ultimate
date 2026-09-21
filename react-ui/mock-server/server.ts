@@ -470,6 +470,7 @@ async function startServer() {
     res.json({
       mock: true,
       git_version: 'v2.5.0-ultimate',
+      installed_commit: { sha: 'a'.repeat(40), short: 'a'.repeat(12), date: '2026-09-22T00:00:00+00:00' },
       providers: ['cuda', 'tensorrt', 'cpu'],
       trt_precisions: ['fp32', 'fp16', 'mixed'],
       enhancers: [
@@ -1089,7 +1090,13 @@ async function startServer() {
   app.post('/api/projects/:action', (req, res) => res.json({ ok: true }));
   app.get('/api/faceset/library', (req, res) => res.json({ items: [] }));
   app.post('/api/faceset/library/:action', (req, res) => res.json({ ok: true }));
-  app.get('/api/update/check', (req, res) => res.json({ update_available: false, current_version: '3.1.0' }));
+  app.get('/api/update/check', (req, res) => res.json({
+    classification: 'SAFE', available: false, reasons: ['no newer commit is available on the configured branch'],
+    candidate_sha: 'a'.repeat(40), candidate_date: '2026-09-22T00:00:00+00:00', candidate_ref: null,
+    candidate_manifest: { present: true, valid: true, problems: [] },
+    current: { sha: 'a'.repeat(40), date: '2026-09-22T00:00:00+00:00', branch: 'main', version: 'main@mock' },
+    apply_channel: 'pinokio', apply_gated: false, checked_at: Date.now() / 1000, cached: false,
+  }));
   app.get('/api/storage', (req, res) => res.json({ total_gb: 512, used_gb: 128, temp_gb: 4.2 }));
   app.post('/api/storage/delete', (req, res) => res.json({ ok: true }));
   app.get('/api/runtime/state', (req, res) => res.json({ state: 'ready', initialized: true }));

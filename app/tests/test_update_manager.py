@@ -231,6 +231,65 @@ class UpdateManagerTests(unittest.TestCase):
         self.assertEqual(result, 3)
         rollback_mock.assert_called_once_with(fake_snapshot, "a" * 40)
 
+    def test_manifest_integrity_is_the_gated_question(self):
+        # Valid = evaluable by any machine: schema, activation and every hash
+        # equal to the fetched tree. Compatibility with THIS machine is not
+        # part of it, so a foreign provider still reads as gated.
+        state = _state()
+        manifest = _manifest(state)
+        self.assertTrue(update_manager.manifest_integrity(manifest, state["tracked_file_hashes"])["valid"])
+        stale = copy.deepcopy(state["tracked_file_hashes"])
+        stale["torch.js"] = "tree-moved-on"
+        verdict = update_manager.manifest_integrity(manifest, stale)
+        self.assertFalse(verdict["valid"])
+        self.assertTrue(verdict["present"])
+        self.assertTrue(any("torch.js" in item for item in verdict["problems"]))
+        missing = update_manager.manifest_integrity(None, stale)
+        self.assertEqual((missing["present"], missing["valid"]), (False, False))
+
+    def test_report_names_an_ungated_newer_commit(self):
+        """Remote ahead, no manifest at the candidate: the report must say a
+        newer commit EXISTS and that it is not gated -- with its date -- rather
+        than collapsing to an anonymous UNVERIFIED."""
+        state = _state()
+        state.update({"branch": "main", "sha": "a" * 40, "remote": "https://example/repo",
+                      "date": "2026-09-01T00:00:00+00:00"})
+        candidate = "b" * 40
+
+        def fake_run(command, cwd=None, check=True, timeout=None):
+            if command[:2] == ["git", "ls-remote"]:
+                return mock.Mock(returncode=0, stdout=f"{candidate}\trefs/heads/main\n")
+            if command[:2] == ["git", "fetch"]:
+                return mock.Mock(returncode=0, stdout="")
+            if command[:2] == ["git", "merge-base"]:
+                return mock.Mock(returncode=0, stdout="")
+            raise AssertionError(f"unexpected command {command}")
+
+        with mock.patch.object(update_manager, "_run", side_effect=fake_run), \
+                mock.patch.object(update_manager, "_load_candidate_manifest", return_value=None), \
+                mock.patch.object(update_manager, "_candidate_file_hashes", return_value={}), \
+                mock.patch.object(update_manager, "_commit_date", return_value="2026-09-21T12:00:00+00:00"):
+            report = update_manager._candidate_report(state)
+        self.assertTrue(report["available"])
+        self.assertEqual(report["classification"], "UNVERIFIED")
+        self.assertEqual(report["candidate_sha"], candidate)
+        self.assertEqual(report["candidate_date"], "2026-09-21T12:00:00+00:00")
+        self.assertFalse(report["candidate_manifest"]["present"])
+        self.assertFalse(report["candidate_manifest"]["valid"])
+
+    def test_apply_channel_gated_reads_update_js(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "update.js").write_text('message: ["git pull"]', encoding="utf-8")
+            with mock.patch.object(update_manager, "ROOT", root):
+                self.assertFalse(update_manager.apply_channel_gated())
+            (root / "update.js").write_text('message: ["python update_manager.py apply"]', encoding="utf-8")
+            with mock.patch.object(update_manager, "ROOT", root):
+                self.assertTrue(update_manager.apply_channel_gated())
+            (root / "update.js").unlink()
+            with mock.patch.object(update_manager, "ROOT", root):
+                self.assertIsNone(update_manager.apply_channel_gated())
+
 
 if __name__ == "__main__":
     unittest.main()

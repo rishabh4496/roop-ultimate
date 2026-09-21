@@ -553,6 +553,19 @@ _UPDATE_CHECK_CACHE = {"at": 0.0, "value": None}
 _UPDATE_CHECK_TTL = 60.0
 
 
+def _installed_commit():
+    """Local git identity only -- no network. What the failure path can still
+    say when the remote is unreachable."""
+    try:
+        import update_manager
+        return {"sha": update_manager._git("rev-parse", "HEAD", check=False) or None,
+                "date": update_manager._commit_date("HEAD"),
+                "branch": update_manager._git("rev-parse", "--abbrev-ref", "HEAD", check=False) or None}
+    except Exception as exc:
+        _swallowed("routes_diagnostics.py:_installed_commit", exc, "fallback continued")
+        return {"sha": None, "date": None, "branch": None}
+
+
 @router.get("/api/update/check")
 def update_check(refresh: bool = False):
     """Classify the available update. Never installs, never changes settings."""
@@ -570,20 +583,39 @@ def update_check(refresh: bool = False):
         _swallowed("routes_diagnostics.py:539", exc, "fallback continued")
         return {"classification": "UNVERIFIED", "available": False,
                 "reasons": [f"compatibility evidence could not be collected: {exc}"],
-                "apply_channel": "pinokio"}
+                "candidate_sha": None, "candidate_date": None,
+                "candidate_manifest": {"present": False, "valid": False, "problems": []},
+                "current": _installed_commit(),
+                "apply_channel": "pinokio", "apply_gated": None}
     # `current` carries the full local identity; the file-hash map inside it is
     # large and of no use to a reader, so it is dropped rather than shipped.
     current = dict(report.get("current") or {})
     current.pop("files", None)
+    current.pop("tracked_file_hashes", None)
+    # "Gated" is a property of the CANDIDATE COMMIT (does it carry a manifest
+    # the checker can evaluate), separate from the classification, which is
+    # about this machine. A newer commit without one has not passed
+    # compatibility checks anywhere yet -- and, while update.js runs a plain
+    # `git pull`, Pinokio's Update button installs it regardless. Both facts
+    # are reported so the UI cannot imply Update is a no-op.
+    candidate_manifest = report.get("candidate_manifest") or {
+        "present": False, "valid": False, "problems": []}
     result = {
         "classification": report.get("classification", "UNVERIFIED"),
         "available": bool(report.get("available")),
         "reasons": list(report.get("reasons") or []),
         "candidate_sha": report.get("candidate_sha"),
+        "candidate_date": report.get("candidate_date"),
         "candidate_ref": report.get("candidate_ref"),
+        "candidate_manifest": {
+            "present": bool(candidate_manifest.get("present")),
+            "valid": bool(candidate_manifest.get("valid")),
+            "problems": list(candidate_manifest.get("problems") or []),
+        },
         "current": current,
         # Says plainly where the install lives. The browser cannot start one.
         "apply_channel": "pinokio",
+        "apply_gated": update_manager.apply_channel_gated(),
         "checked_at": now,
     }
     with _UPDATE_CHECK_LOCK:

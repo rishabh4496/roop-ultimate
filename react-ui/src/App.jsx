@@ -1057,7 +1057,12 @@ export default function App() {
               Roop Ultimate <span className="text-white/35 font-medium">Studio</span>
             </h1>
             {meta?.git_version && (
-              <span className="text-nano font-mono text-white/45 tracking-wider block mt-0.5">
+              <span
+                className="text-nano font-mono text-white/45 tracking-wider block mt-0.5"
+                title={meta.installed_commit?.sha
+                  ? `commit ${meta.installed_commit.sha}${meta.installed_commit.date ? ` · ${meta.installed_commit.date}` : ''}`
+                  : undefined}
+              >
                 Engine {meta.git_version}
               </span>
             )}

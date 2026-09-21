@@ -52,7 +52,7 @@
     "app/provision_runtime.py": "24213832346a9386d1fd33a3e179b14550f0ae5697bc51c3e2355465553f49de",
     "app/requirements.txt": "f8cfd244340b195fa4c76c6203d8d779e7ebce15c16d40ea07262a9f70081b53",
     "app/update_health.py": "7e9323cee2b05a60f14b8c71970263c6904209dfffb0f64333c30f9342f1304e",
-    "app/update_manager.py": "224f672589666e13c4001df597e8593d2ec6fdef06c1cb3aa0beec1e5a7a971b",
+    "app/update_manager.py": "9c909789c2c0f5a995c4f6a825c97db8c4d20322ecfa7b7d5fc4747da91e9f92",
     "react-ui/package-lock.json": "4577a58679a6698a5848ade7885ea9f0e96349138f1d500936ac94136810c34c",
     "react-ui/package.json": "09411ca44e7dea0318075e1a4b40d205eeb707fc61ac5826a43b000ec4cc80ae",
     "scripts/fix_tensorrt.js": "1084ea447a5076b65469ca2b4824142245946908620c0c11d960531f5a0721ac",

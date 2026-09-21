@@ -21,7 +21,9 @@ evidence that Internet access is available.
 | MuseTalk Hugging Face repositories | DOWNLOAD-ONLY; feature-scoped | `app/roop/processors/Lipsync_MuseTalk.py` loads VAE, UNet, and Whisper assets. Stage 12 first requests local cache-only loading and contacts `huggingface.co` only after a cache miss. |
 | KEEP repository, wheel index, and checkpoint | DOWNLOAD-ONLY and INSTALL-ONLY; optional feature | `app/sidecar_keep/setup_sidecar.py` clones `github.com/jnjaby/KEEP`, installs a CUDA torch environment, and downloads the checkpoint. It is not used unless KEEP is selected and installed. |
 | KEEP runtime HTTP calls | REQUIRED FOR LOCAL PROCESSING only when KEEP is selected | `app/roop/processors/Enhance_KEEP.py` starts and calls `127.0.0.1`; this is an optional local sidecar, not a remote Internet service. Failure passes frames through with a warning. |
-| GitHub application update source | UPDATE-ONLY | `update.js` invokes `app/update_manager.py apply`; the updater discovers a Git candidate and only permits a manifest-gated source fast-forward. |
+| GitHub application update source | UPDATE-ONLY | `update.js` runs `git checkout main && git pull origin main` (since `66d9e6d`; it no longer invokes `app/update_manager.py apply`). Only Pinokio's Update action reaches it. |
+| Update compatibility check (`GET /api/update/check`) | ON REQUEST ONLY | `app/routes_diagnostics.py` runs `update_manager.check()` -- one `git ls-remote` plus a fetch of the candidate -- only when the Settings screen's "Check compatibility" button is pressed; cached 60 s, never polled, never run on boot. Read-only: reports installed and remote commit hash + date, whether the remote commit carries a valid `update_manifest.json` (`candidate_manifest`), the classification, and whether `update.js` is gated (`apply_gated`). Offline it returns `UNVERIFIED` with the installed identity from local git. |
+| Installed identity (`GET /api/meta.installed_commit`) | LOCAL ONLY | `app/api.py:_get_installed_commit` reads the commit hash and date from local git; no network. |
 | Update health HTTP call | REQUIRED FOR UPDATE VALIDATION only | `app/update_health.py` calls `http://127.0.0.1:<port>/api/meta` for the locally launched health worker. It does not call a remote service. |
 | Remote inference or account service | MISSING / NONE VERIFIED | No application processing path was found that sends media to an Internet inference service. This is a repository audit result, not a claim about arbitrary third-party packages. |
 | Unpinned/transitive package network behavior | UNKNOWN | The repository does not contain a complete lockfile or a proof of every transitive package's optional telemetry/update behavior. Local processing does not intentionally depend on those behaviors. |
@@ -62,7 +64,8 @@ not claim that it can.
 ## Version, integrity, compatibility, and rollback audit
 
 - Application version tracking is the Git description/commit returned by
-  `app/api.py:_get_git_version` and the Git identity collected by
+  `app/api.py:_get_git_version`, the full hash + committer date in
+  `/api/meta.installed_commit`, and the Git identity collected by
   `app/update_manager.py`.
 - Dependency/environment installation is represented by `app/env` and the
   installer scripts. No complete reproducible lock for all Python transitive
