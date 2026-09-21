@@ -20,6 +20,10 @@
       "env": { "node": true }
     },
     {
+      "files": ["mock-server/**"],
+      "env": { "node": true }
+    },
+    {
       "files": ["src/motion.jsx", "src/icons.jsx", "src/components/confirm.jsx", "src/components/QualityProfilesModal.jsx"],
       "rules": {
         "react/only-export-components": "off"

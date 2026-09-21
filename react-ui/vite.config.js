@@ -27,7 +27,8 @@ const port = process.env.PORT ? Number(process.env.PORT) : undefined
 // HTTP Upgrade handshake at all.
 // The proxy below is only needed when running Vite as a standalone dev server
 // alongside a separate Python backend on ROOP_API_PORT. When running inside
-// server.ts, Express handles /api directly.
+// mock-server/server.ts (npm run dev:mock at the repo root), Express handles
+// /api directly with simulated data.
 const useProxy = Boolean(process.env.ROOP_STANDALONE_DEV || process.env.ROOP_API_PORT)
 const proxy = useProxy ? {
   '/api': {

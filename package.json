@@ -5,9 +5,7 @@
     "react-ui"
   ],
   "scripts": {
-    "dev": "tsx server.ts",
-    "build": "npm run build --workspace=react-ui && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
-    "start": "node dist/server.cjs",
+    "dev:mock": "tsx react-ui/mock-server/server.ts",
     "lint": "npm run lint --workspace=react-ui"
   },
   "dependencies": {
@@ -20,7 +18,6 @@
     "@types/multer": "^2.2.0",
     "@types/node": "^22.10.1",
     "@types/ws": "^8.5.13",
-    "esbuild": "^0.24.0",
     "tsx": "^4.19.2",
     "vite": "^8.1.0"
   }

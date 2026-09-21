@@ -1,10 +1,16 @@
 import express from 'express';
 import http from 'http';
 import path from 'path';
-import fs from 'fs';
+import { fileURLToPath } from 'url';
 import { WebSocketServer, WebSocket } from 'ws';
 import { createServer as createViteServer } from 'vite';
 import multer from 'multer';
+
+// This is a MOCK of app/api.py: simulated swaps, invented telemetry, SVG
+// placeholders instead of frames. It exists so the React UI can be developed
+// without a GPU or the Python backend. Nothing in production runs it.
+// Paths are relative to this file, not to the working directory.
+const UI_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 const upload = multer({ limits: { fileSize: 500 * 1024 * 1024 } });
 
@@ -422,8 +428,14 @@ function simulateSwapProcess() {
 
 async function startServer() {
   const app = express();
-  const PORT = 3000;
+  const PORT = Number(process.env.PORT) || 3000;
 
+  // Every response says so, so a UI pointed at the wrong port cannot mistake
+  // simulated numbers for a real render.
+  app.use((req, res, next) => {
+    res.setHeader('X-Mock-Server', 'true');
+    next();
+  });
   app.use(express.json({ limit: '50mb' }));
   app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
@@ -456,6 +468,7 @@ async function startServer() {
   // ── Meta & Settings Endpoints ──────────────────────────────────────────
   app.get('/api/meta', (req, res) => {
     res.json({
+      mock: true,
       git_version: 'v2.5.0-ultimate',
       providers: ['cuda', 'tensorrt', 'cpu'],
       trt_precisions: ['fp32', 'fp16', 'mixed'],
@@ -638,7 +651,15 @@ async function startServer() {
     if (sourceThumbs.length > 1 && idx >= 0 && idx < sourceThumbs.length) {
       sourceThumbs.splice(idx, 1);
       sourceInfo.splice(idx, 1);
-      selectedSourceIndex = Math.max(0, selectedSourceIndex - 1);
+      sourceInfo.forEach((info, i) => { info.index = i; });
+      // Removing an entry BEFORE the selection shifts the selection down by
+      // one; removing the selected entry keeps the slot (now the next face),
+      // clamped to the end; removing one after it changes nothing.
+      if (idx < selectedSourceIndex) {
+        selectedSourceIndex -= 1;
+      } else if (idx === selectedSourceIndex) {
+        selectedSourceIndex = Math.min(selectedSourceIndex, sourceThumbs.length - 1);
+      }
     }
     res.json({ source_faces: sourceThumbs, source_faces_info: sourceInfo, selected_source_index: selectedSourceIndex });
   });
@@ -829,6 +850,7 @@ async function startServer() {
     const frame = Number(req.query.frame ?? currentFrame);
     const target = targetEntries[idx] || targetEntries[0];
     const thumb = createSampleTargetSvg(target?.name || 'media', frame, target?.frames || 100, target?.is_video || false, idx + 200 + frame);
+    res.setHeader('Content-Type', 'image/svg+xml');
     res.send(Buffer.from(thumb.split(',')[1], 'base64'));
   });
 
@@ -1617,14 +1639,14 @@ async function startServer() {
   // ── Vite middleware (Dev) OR Static files (Prod) ────────────────────
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
-      configFile: path.resolve(process.cwd(), 'react-ui/vite.config.js'),
-      root: path.resolve(process.cwd(), 'react-ui'),
+      configFile: path.join(UI_ROOT, 'vite.config.js'),
+      root: UI_ROOT,
       server: { middlewareMode: true, proxy: {} },
       appType: 'spa',
     });
     app.use(vite.middlewares);
   } else {
-    const distPath = path.resolve(process.cwd(), 'react-ui/dist');
+    const distPath = path.join(UI_ROOT, 'dist');
     app.use(express.static(distPath));
     app.get('*all', (req, res) => {
       res.sendFile(path.join(distPath, 'index.html'));
@@ -1632,7 +1654,17 @@ async function startServer() {
   }
 
   server.listen(PORT, '0.0.0.0', () => {
-    console.log(`Roop Ultimate Server running on http://0.0.0.0:${PORT}`);
+    console.log([
+      '',
+      '==========================================================',
+      '  ROOP ULTIMATE  --  MOCK API SERVER  (not the real backend)',
+      '  Swaps are simulated, telemetry is invented, previews are SVG.',
+      '  The real backend is app/api.py (python run.py).',
+      `  Listening on http://0.0.0.0:${PORT}  (PORT env var)`,
+      '  Every response carries X-Mock-Server: true; /api/meta has mock: true.',
+      '==========================================================',
+      '',
+    ].join('\n'));
   });
 }
 

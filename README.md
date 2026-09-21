@@ -127,6 +127,24 @@ failed build stops the launch with the real error rather than a broken page.
 For UI development, `npm run dev` in `react-ui/` still gives HMR; the dev server
 proxies `/api` and `/ws` to a backend started separately.
 
+### Mock API (development only)
+
+`react-ui/mock-server/server.ts` is **not the real backend**. It is an Express
+stand-in for `app/api.py` that lets the React UI be developed without a GPU or
+the Python environment: swaps are simulated, the telemetry stream is invented
+(fixed "RTX" numbers), and every preview is a generated SVG placeholder. No
+launcher script, install step or build references it; `app/api.py` serves the
+built UI in production.
+
+```powershell
+npm install            # repo root: express, ws, multer, tsx (dev-only)
+npm run dev:mock       # http://localhost:3000; set PORT to change it
+```
+
+You can always tell it apart from the real backend: it prints a MOCK banner on
+startup, every response carries `X-Mock-Server: true`, and `GET /api/meta`
+returns `"mock": true`.
+
 ### Workstation features
 - **Full-bleed media canvas:** sub-pixel coordinate mapping, persistent crossfading, split comparison wipe, alpha blend, diff map, a 3.5x magnifier loupe and a paint/erase mask brush.
 - **Timeline:** filmstrip thumbnails, a measured timecode ruler, in/out trim points, chapter markers and 0.25x-4x playback.
