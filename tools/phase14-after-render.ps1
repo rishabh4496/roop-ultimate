@@ -21,7 +21,7 @@ while ($quiet -lt $QuietPolls) {
     Start-Sleep -Seconds 15
 }
 
-$root = $PSScriptRoot
+$root = Split-Path -Parent $PSScriptRoot   # repo root; this script lives in tools/
 $logDir = Join-Path $root 'logs\shell'
 $logPath = Join-Path $logDir 'phase14-autotune.latest.log'
 $python = Join-Path $root 'app\env\Scripts\python.exe'

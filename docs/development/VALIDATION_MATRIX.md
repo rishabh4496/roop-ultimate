@@ -516,7 +516,7 @@ The cited commits, `docs/FINAL_VALIDATION_MATRIX.md`, `docs/HARDWARE_VALIDATION_
 | Check | Evidence | State |
 |---|---|---|
 | Repository baseline for Stage 9A | Branch `main`, HEAD `459dd4082e60ae1b153b2e65c393eb8a2d6d9198`, clean tree, remote `origin` inspected before documentation edits | PASS for audit capture |
-| Existing update execution | `update.js`, `install.js`, `reset.js`, `torch.js`, `fix_tensorrt.js`, model loaders, version/compatibility code, and update logs inspected | PASS for audit capture |
+| Existing update execution | `update.js`, `install.js`, `reset.js`, `torch.js`, `scripts/fix_tensorrt.js`, model loaders, version/compatibility code, and update logs inspected | PASS for audit capture |
 | Pinokio convention review | `<PINOKIO_HOME>\prototype\system\examples\comfy\update.js` and relevant `PINOKIO.md` sections inspected | PASS for audit capture |
 | Safe update implementation | No manifest-gated, snapshot-backed, staged, rollback-capable implementation exists | MISSING / NOT IMPLEMENTED |
 | Update runtime test | No update was executed in Stage 9A; no update test pass is claimed | NOT RUN |
@@ -555,7 +555,7 @@ The cited commits, `docs/FINAL_VALIDATION_MATRIX.md`, `docs/HARDWARE_VALIDATION_
 
 | Check | Evidence | State |
 |---|---|---|
-| Existing cleanup audit | `clean.js`, `cleanup.py`, `reset.js`, `pinokio.js`, runtime roots, `.gitignore`, logs, and source references inspected; existing Clean path unchanged | PASS for audit |
+| Existing cleanup audit | `scripts/clean.js`, `scripts/cleanup.py`, `reset.js`, `pinokio.js`, runtime roots, `.gitignore`, logs, and source references inspected; existing Clean path unchanged | PASS for audit |
 | Pinokio convention review | `system/examples/MatAnyone/delete-cache.js`, `system/examples/flux-webui/clearcache.js`, and `PINOKIO.md` input/shell/cache/fs.rm sections inspected | PASS for audit |
 | Evidence-based inventory | Isolated tests cover verified roots, current references, active-work protection, category summaries, and unknown paths | PASS |
 | Guarded deletion | Isolated test requires confirmation, revalidation, safe-root ownership, and rejects protected/unknown IDs | PASS |
@@ -648,7 +648,7 @@ for the other GPU.
 | Terminal output | Video log retained provider, model, precision-adjacent cache identity, stage timing, FPS, memory, and warnings | PASS for observed run |
 | Offline operation | Deterministic disconnected unit tests pass; network adapter was not disconnected | PASS at simulated/control-plane level; physical offline NOT VERIFIED |
 | Online update check | `update_manager.py check --json`: no newer commit, classification `SAFE`, current checkout `dirty: true`, runtime/provider/GPU captured | PASS for no-op check |
-| Cleanup | `cleanup.py` read-only report completed; storage guard tests passed; no real deletion performed | PASS for review/guard; mutation NOT VERIFIED |
+| Cleanup | `scripts/cleanup.py` read-only report completed; storage guard tests passed; no real deletion performed | PASS for review/guard; mutation NOT VERIFIED |
 | Output correctness | Target-profile video produced 1280×720 HEVC, 30 frames, 1.0 s, 1,402,890 bytes; 60/60 swaps and zero wrong-faceset applications; still path failed and no visual review was performed | PARTIAL |
 | Long-run stability | No fresh soak completed; latest available long-run log records processing stopped after 1,588.72 s with partial output | NOT VERIFIED; prior failure recorded |
 
@@ -712,7 +712,7 @@ B row.
 | React UI 1.0 | `npm run build` and `npm run lint` in `react-ui`; build exit 0; lint exit 0 with existing Fast Refresh warnings | PASS; V1 preserved |
 | Processing/batch/pause/projects/recovery/preview/telemetry/terminal/offline/update/cleanup contracts | Included in the fresh full suite; prior focused Stage 14 control-plane run covered 89 tests across these boundaries | PASS at automated/control-plane level |
 | Online update check | `app/update_manager.py check --json` returned `available:false`, candidate `943eeab...`, no newer commit; current runtime/provider/GPU captured | PASS for no-op check |
-| Cleanup | `cleanup.py` completed a read-only categorized report; no deletion performed | PASS for review-only path; mutation not verified |
+| Cleanup | `scripts/cleanup.py` completed a read-only categorized report; no deletion performed | PASS for review-only path; mutation not verified |
 | Health validation | Dependencies/provider/GPU/models/inference passed, but `update_health.py` launch probe timed out; return code 2 | **FAIL**; direct launch probe was separately successful |
 
 ### Device A long-run soak

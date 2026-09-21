@@ -41,7 +41,7 @@ rather than crashing the detector, but still runs with default configuration.
 
 `pinokio.js` is the dynamic menu. It detects `app/env`, selects the running React or legacy start script, and exposes install, update, clean, TensorRT repair, link, and reset actions. `start_react.js` uses Pinokio-selected ports, starts `python run.py` from `app`, starts Vite from `react-ui`, binds services to loopback, and sets the displayed URL through the captured shell event (`input.event[1]`).
 
-`install.js` creates/uses the `app/env` virtual environment, installs `app/requirements.txt` with `uv`, installs React dependencies with `npm`, invokes `torch.js`, and installs SAM2-related packages. `update.js` now invokes `app/update_manager.py`, which requires an exact-commit compatibility manifest and only permits a source-only fast-forward. It does not reinstall Python/Node dependencies or invoke critical-runtime/model installers. `reset.js` removes `app/env` and `react-ui/node_modules`. `clean.js` delegates selectable cleanup to `cleanup.py`; its documented scope excludes models, environment, facesets, and output.
+`install.js` creates/uses the `app/env` virtual environment, installs `app/requirements.txt` with `uv`, installs React dependencies with `npm`, invokes `torch.js`, and installs SAM2-related packages. `update.js` now invokes `app/update_manager.py`, which requires an exact-commit compatibility manifest and only permits a source-only fast-forward. It does not reinstall Python/Node dependencies or invoke critical-runtime/model installers. `reset.js` removes `app/env` and `react-ui/node_modules`. `scripts/clean.js` delegates selectable cleanup to `scripts/cleanup.py`; its documented scope excludes models, environment, facesets, and output.
 
 Stage 10 adds the application-owned storage review at `GET /api/storage` and
 the explicit single-item deletion boundary at `POST /api/storage/delete`.
@@ -124,4 +124,4 @@ replacement for the established runtime health worker.
 
 ## Source basis
 
-`pinokio.js`, `install.js`, `start_react.js`, `start_legacy.js`, `update.js`, `reset.js`, `clean.js`, `torch.js`, `cleanup.py`, `app/requirements.txt`, `react-ui/package.json`, `app/settings.py`, `.gitignore`, and `AGENTS.md`.
+`pinokio.js`, `install.js`, `start_react.js`, `start_legacy.js`, `update.js`, `reset.js`, `scripts/clean.js`, `torch.js`, `scripts/cleanup.py`, `app/requirements.txt`, `react-ui/package.json`, `app/settings.py`, `.gitignore`, and `AGENTS.md`.

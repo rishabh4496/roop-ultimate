@@ -2406,3 +2406,92 @@ cannot decide the question. Visual review still owed.
 `enhancer_regression_sweep.py`, `image_swap_smoke.py`, `survey_fixtures.py`,
 `occlusion_ground_truth.py`, `exposure_ladder.py`, `expression_tracking.py`.
 Every one that can pass carries a `--control` arm that must fail.
+
+---
+
+## Sections recovered from GEMINI.md on 2026-09-22
+
+GEMINI.md carried a mirror of the session logs for other AI tools; the sections below existed only there. Verbatim.
+
+## Roop Recode Project — key findings mirror (2026-08-16)
+
+This section is a mirror for whichever AI tool session picks this project up next (Claude's full, actively-maintained version of this log is `<MEDIA_DIR>\RECODE_STATUS.md` — read that first if available; this is a condensed pointer in case it isn't). This is NOT a Pinokio-launcher task — it's ongoing work on the Roop Ultimate face-swap app's detection/tracking/identity-matching pipeline, in `app/roop/*.py` and `app/tests/*.py`.
+
+**This project is `roop-ultimate` and it is self-contained.** An older working copy of the same lineage exists elsewhere on this machine; do not edit it and do not read it as authoritative. A prior session lost real time investigating in the wrong folder — check which one you are in before trusting or editing anything.
+
+**Investigation thread (2026-08-16): a male bystander in a two-person clip (`d9.mp4`, a kissing couple) was getting swapped with a FEMALE captured faceset ("person_a") instead of being left alone or matched to the correct person.** Traced through several layers; two real bugs found and fixed, one attempted fix reverted, root cause narrowed but not fully closed:
+
+1. **FIXED** — `app/tests/two_face_video.py`, `separated_frame()`: the gap check `if dx > 0.25 * w: continue` was inverted (should be `<`). It was rejecting frames where the two people had a genuine gap and *accepting* overlapping/touching frames — the opposite of its own stated purpose, which corrupts which physical person gets bound to which faceset name from the very first capture step.
+2. **FIXED** — `app/roop/procmgr_tracking.py`, `_assign_track_sources()`'s `_TRACK_ASSIGN_MIN_OBS` rescue path: it counted a track's individual per-frame embeddings as identity evidence without checking `face_contact.unreliable()` first, so contaminated (shared-crop, e.g. mid-kiss) frames could rescue a track into the WRONG person's source even though the track's own clean mean decisively said otherwise. Fixed to skip dirty observations in that scan, matching what the mean computation already does.
+3. **RESOLVED (2026-08-16)** — `app/roop/face_contact.py`, `crop_contamination()`: Solved the gap between "box" (too tight) and "full quad" (too loose). Scaled the neighbour's ArcFace 112x112 template around its center (56, 56) by `CONTAM_CORE_SCALE = 0.65` to extract its core facial feature region (mouth/lips/nose/chin) without surrounding empty template padding. Overlap is now computed as `max(_quad_box_overlap(quad[i], box[j]), _quad_quad_overlap(quad[i], core_quad[j]))`.
+   - **Result on d9.mp4 benchmark**:
+     - False `[MINOBS]` rescue of male bystander Track 1 into female faceset ("person_a") completely eliminated (0 false rescues).
+     - Wrong-faceset error rate dropped from 55.4% / 49.9% in baseline down to **1.48% (21 of 1412 gradable frames)**!
+     - 0 pipeline-decided wrong faceset swaps across all 1800 frames.
+     - All 939 unit tests pass cleanly (Ran 939 tests, OK, skipped=2).
+4. **DOUBLE ROSTER FULLY VALIDATED (2026-08-16)** — `run_all_samples.py --only double --tag-suffix _phase3`:
+   - All 13 clips in `double/` (`d1`–`d12`, total 70,266 frames) rendered completely and cleanly end-to-end to `app/output/baseline_double_phase3/` with 0 crashes, 0 hangs, and 0 identity regressions.
+
+**Bench command used throughout** (run from `app/`, using this project's own venv python at `env/Scripts/python.exe`):
+```powershell
+$env:ROOP_DEBUG_MATCH="1"; env\Scripts\python.exe tests/two_face_video.py --tag bench_contam_fix --video "<MEDIA_DIR>/double/d9.mp4" --sources person_a,person_f --start 3600 --end 5400 --out output/bench_ab
+```
+**`--start`/`--end` are FRAME indices, not seconds** — for `d9.mp4` (60fps), frames 3600-5400 = seconds 60-90.
+
+**Not a quality regression:** bench output videos in `app/output/bench_ab/*` look heavily pixelated with no visible facial detail — this is EXPECTED, not a bug. The harness defaults to `--enhancer None --mask-engine None` (raw, unenhanced swapper output, meant to isolate identity/tracking logic, not represent final visual quality). Don't chase this as a regression in the real pipeline.
+
+---
+## Session Log (2026-08-26 Part 2): High GPU Utilization (>85%, >150W), Pipeline Concurrency, and Multi-GPU Tiering
+
+Reported as: "make gpu active above 85% utilization with above 150w for single or multiple facesets... processing should be able to fully harness the power of gpu... compatible with all other nvidia gpus".
+
+### 1. Root Cause Analysis
+- **Composite Swapper Sequential Batching**: In `ProcessMgr.py`, `_make_swap_batcher` intercepted `realswap` into `_swap_batcher`. Because `realswap` is a composite dual-net (`hyperswap_1b` + `hififace`), `_batch_unsupported = True` forced all 12 worker threads into a single queue where 1 thread executed `_sequential_fallback` 1 face at a time, keeping the other 11 workers stalled and capping GPU utilization at 30%–50%.
+- **TensorRT Context Pooling Constraints**: Concurrency pools in `session_pool.py` were clamped, creating thread contention on TRT inference contexts.
+- **Host-Side OpenCV Roundtrips in GPEN 256 Pro**: Micro-texture injection and grain computations incurred CPU conversions instead of running purely on GPU CUDA tensors.
+
+### 2. The Solution
+1. **Parallel Worker Execution for Composite Models**:
+   - In `roop/ProcessMgr.py`, `_make_swap_batcher` now checks `getattr(swap_p, '_batch_unsupported', False) or getattr(swap_p, 'secondary', None) is not None`, returning `None` so all 12 worker threads run concurrently in parallel across all CPU cores and GPU contexts.
+2. **Dynamic VRAM Auto-Tiering**:
+   - In `roop/session_pool.py`, auto pool defaults scale dynamically based on total VRAM:
+     - `< 7 GB` (e.g. GTX 1660, RTX 2060): `0 / 0` (memory-safe mode).
+     - `7–11.5 GB` (e.g. RTX 3070, 4060 Ti): `2 / 2` (balanced concurrency).
+     - `11.5–15.5 GB` (e.g. RTX 4070 12GB): `2 / 2` (9.1 GB VRAM footprint, clean 3GB headroom, peak compute).
+     - `≥ 15.5 GB` (e.g. RTX 3090, 4080, 4090): `4 / 4` (high concurrency).
+3. **GPU Tensor Pipeline in GPEN 256 Pro**:
+   - In `Enhance_GPEN256Pro.py`, texture injection, spatial Gaussian filtering, and sensor grain now execute directly on GPU PyTorch CUDA tensors with automatic CPU fallback.
+4. **Benchmarking Harness**:
+   - Added `--mode` (`all`, `selected`, `all_input`) support to `tests/sample_bench.py` for full-video multi-actor validation.
+
+### 3. Verification & Live Benchmarks
+- **Test Footage**: `b1.mp4` (27,556 frames, 1280x720) with `person_a.fsz` (5 source faces), `realswap`, `RealityUX`, and `GPEN 256 Pro`.
+- **Face Swap Coverage**: 22,656 of 22,656 faces (100.0%) successfully swapped and enhanced; 0 faces skipped.
+- **Hardware Metrics (RTX 4070 12GB)**:
+  - GPU Compute Utilization: Sustained at **77% – 100%** in P0 state.
+  - Power Delivery: Sustained at **130W – 140W** (up from 85W).
+  - VRAM: Stable at **9.07 GB / 12.28 GB** (zero PCIe paging thrash).
+- **Throughput**: ~18–31 frames/s (total execution time 1541s, down from 1692s).
+
+---
+## Session Log (2026-08-26 Part 3): Parallel Stabilization Chunk Concurrency & Work-Stealing Optimization
+
+Reported as: "currently running processing in the terminal but gpu memory usage is half and there is no fps increase in the stab chunk what is happening here? optimize it".
+
+### 1. Root Cause Analysis
+- **Fixed 1536MB RAM Budget Cap**: In `ProcessMgr.py` (`_default_stab_chunk_mb`), `hard_cap` was hardcoded to `1536.0 MB`. On high-RAM systems (32GB+), a 1536 MB budget only allowed 3–4 blocks per chunk at 1080p/720p, dropping worker concurrency from `threads=12` down to 3–4 workers while 8 cores sat idle.
+- **Barrier Idle Stalls (`w.join()`)**: When `rounds = 1`, each worker received exactly 1 block per chunk. Because face count and frame complexity varied, fast workers finished early and sat idle at 0% GPU load waiting for the slowest worker at the chunk join barrier.
+
+### 2. The Solution
+1. **Dynamic RAM Budget Scaling**:
+   - In `_default_stab_chunk_mb`, `hard_cap` now scales with total system memory:
+     - `≥ 55 GB RAM`: 8192 MB cap
+     - `≥ 28 GB RAM` (e.g. 32GB Desktop): **4096 MB cap**
+     - `< 28 GB RAM`: 1536 MB cap
+   - On 32GB machines, this provides enough decoded-frame buffer space to run all **12 worker threads** concurrently.
+2. **Auto-Enabled 2-Round Work Stealing**:
+   - In `_stab_parallel_geometry`, when `fits // width >= 2`, `rounds` automatically defaults to **2 rounds per chunk** (`blocks_per_chunk = width * 2`), allowing idle workers to steal remaining blocks from the queue and eliminating barrier stalls.
+
+### 3. Verification
+- `test_stab_block_dispatch.py`: 12 / 12 tests passing.
+- `test_hardware_portability.py`: 25 / 25 tests passing.

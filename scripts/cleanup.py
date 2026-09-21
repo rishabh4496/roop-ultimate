@@ -1,4 +1,4 @@
-"""Disk cleanup for the Roop Ultimate launcher (driven by clean.js).
+"""Disk cleanup for the Roop Ultimate launcher (driven by scripts/clean.js).
 
 Only ever touches things the app can rebuild by itself. Everything that would
 cost you work or a re-download is off-limits and is never referenced here:
@@ -17,7 +17,7 @@ import os
 import shutil
 import sys
 
-ROOT = os.path.dirname(os.path.abspath(__file__))
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # repo root; this file is in scripts/
 APP = os.path.join(ROOT, "app")
 
 

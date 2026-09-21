@@ -1,9 +1,11 @@
+// Lives in scripts/: a Pinokio script's working directory is its own folder,
+// so every path below is one level up from where it was at the root.
 module.exports = {
   run: [
     {
       method: "shell.run",
       params: {
-        path: "app",
+        path: "../app",
         message: ["python install_state.py begin --stage tensorrt_repair"]
       }
     },
@@ -16,7 +18,7 @@ module.exports = {
     {
       method: "shell.run",
       params: {
-        path: "app",
+        path: "../app",
         message: ["python install_state.py stage --stage runtime_verification"]
       }
     },
@@ -24,7 +26,7 @@ module.exports = {
       method: "shell.run",
       params: {
         venv: "env",
-        path: "app",
+        path: "../app",
         message: [
           "python provision_runtime.py --tensorrt-only"
         ]
@@ -33,14 +35,14 @@ module.exports = {
     {
       method: "fs.rm",
       params: {
-        path: "app/models/trt_cache"
+        path: "../app/models/trt_cache"
       }
     },
     {
       method: "shell.run",
       params: {
         venv: "env",
-        path: "app",
+        path: "../app",
         message: [
           "python verify_ort.py --manifest-out .runtime-verification.json"
         ]
@@ -49,7 +51,7 @@ module.exports = {
     {
       method: "shell.run",
       params: {
-        path: "app",
+        path: "../app",
         message: ["python install_state.py commit --manifest .runtime-verification.json"]
       }
     },

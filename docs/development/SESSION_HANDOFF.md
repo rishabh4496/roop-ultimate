@@ -1191,7 +1191,7 @@ regenerability, classifications, and current references.
 
 ## COMPLETED
 
-- Audited existing `clean.js` and `cleanup.py`; neither was broadened or
+- Audited existing `scripts/clean.js` and `scripts/cleanup.py`; neither was broadened or
   silently changed.
 - Added reference-aware protection for active/resumable queue/project work,
   loaded media, checkpoint and partial-output records, models, outputs,
@@ -1535,7 +1535,7 @@ change set.
   pending on this host.
 - Focused suite: 89 passed.
 - `app/update_manager.py check --json`: PASS, no newer commit available.
-- `cleanup.py`: PASS, read-only report.
+- `scripts/cleanup.py`: PASS, read-only report.
 - `nvidia-smi` post-run check and FFmpeg `ffprobe`: PASS for observed evidence.
 
 ### COMMIT
@@ -1633,7 +1633,7 @@ in Stage 15. Runtime artifacts are under ignored `output/stage15_device_a/`.
   probe timeout; other health checks passed.
 - Direct `run.py` launch on port 14561 plus `/api/meta`: PASS HTTP 200.
 - `app/update_manager.py check --json`: PASS no-op, no newer commit.
-- `cleanup.py`: PASS read-only report.
+- `scripts/cleanup.py`: PASS read-only report.
 - `ffprobe` on both retained encoded intermediates: PASS structural checks.
 - `git diff --check` and `node --check start_react.js`: pending final checklist.
 

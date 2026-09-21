@@ -571,7 +571,7 @@ in this session; no result below is extrapolated to it.
     React UI 1.0's browser tab title was still the Vite scaffold default
     `react-ui`. Both fixed; V2 now ships `react-ui-v2/public/favicon.svg`.
 
-56. **`cleanup.py` did not know about `react-ui-v2/dist`.** Both clients ship,
+56. **`scripts/cleanup.py` did not know about `react-ui-v2/dist`.** Both clients ship,
     both are served by the Vite dev server, and both `dist` trees are ignored -
     so V2's build output was disposable space the supported cleanup path could
     never report or reclaim. `node_modules` remains deliberately excluded from

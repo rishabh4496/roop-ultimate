@@ -909,7 +909,7 @@ in Stage 9A.
 
 - Repository state, recent history, remotes, tracked/generated paths, and update
   logs were inspected.
-- `update.js`, `install.js`, `reset.js`, `torch.js`, `fix_tensorrt.js`, model
+- `update.js`, `install.js`, `reset.js`, `torch.js`, `scripts/fix_tensorrt.js`, model
   loaders, version/compatibility code, and checkpoint code were inspected with
   line-level evidence recorded in `UPDATE_AUDIT.md`.
 - The closest matching Pinokio application update example was inspected at
@@ -1049,7 +1049,7 @@ Settings screen asks for confirmation per item, and the server revalidates one
 
 ### VERIFIED
 
-- Existing `clean.js`/`cleanup.py` behavior was audited and left unchanged.
+- Existing `scripts/clean.js`/`scripts/cleanup.py` behavior was audited and left unchanged.
 - The inventory reports application cache, preview-cache status, temp files,
   logs, model downloads, installer/package-cache unknowns, environments,
   orphan/unsupported limitations, incomplete downloads, and Pinokio disposable

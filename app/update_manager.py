@@ -44,7 +44,7 @@ SENSITIVE_FILES = (
     "app/update_manager.py",
     "app/update_health.py",
     "torch.js",
-    "fix_tensorrt.js",
+    "scripts/fix_tensorrt.js",
     "update.js",
     "react-ui/package.json",
     "react-ui/package-lock.json",

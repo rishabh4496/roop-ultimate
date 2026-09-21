@@ -837,7 +837,7 @@ M  app/tests/two_face_video.py
 A  app/tests/verify_realswap_lip_colour.py
 M  app/ui/main.py
 M  app/ui/tabs/faceswap_tab.py
-M  cleanup.py
+M  scripts/cleanup.py
 A  docs/CPU_GATE_D.md
 M  docs/ENV_FLAGS.md
 A  docs/GATE_ABE_4070.md
@@ -867,7 +867,7 @@ M  react-ui/src/components/faceswap/useProfiles.js
 M  react-ui/src/components/faceswap/useRunCompleteAlert.js
 M  react-ui/src/components/faceswap/useRuntimeEstimate.js
 M  react-ui/src/components/settingsCatalog.js
-A  repair_venv_paths.py
+A  tools/repair_venv_paths.py
 A  roopv2.md
 M  start_react.js
 ```

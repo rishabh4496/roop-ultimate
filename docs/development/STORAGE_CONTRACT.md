@@ -6,9 +6,9 @@ cleaner and it never deletes on startup or during an inventory request.
 
 ## Audit of existing cleanup behavior
 
-The existing Pinokio `Clean` action is `clean.js`. It runs
-`cleanup.py --report`, asks for a fixed set of checkbox choices, invokes
-`cleanup.py` for each selected key, and prints a second report. The existing
+The existing Pinokio `Clean` action is `scripts/clean.js`. It runs
+`scripts/cleanup.py --report`, asks for a fixed set of checkbox choices, invokes
+`scripts/cleanup.py` for each selected key, and prints a second report. The existing
 script targets uploaded scratch, Python bytecode, stale/all TensorRT cache
 directories, old logs, and React/build lint caches. It explicitly excludes
 models, `app/env`, output videos, saved facesets, React dependencies, source,
@@ -99,7 +99,7 @@ not a claim that the entire disk is clean.
 
 ## Source basis
 
-`cleanup.py`, `clean.js`, `app/storage_manager.py`, `app/routes_storage.py`,
+`scripts/cleanup.py`, `scripts/clean.js`, `app/storage_manager.py`, `app/routes_storage.py`,
 `app/api.py`, `app/project_checkpoint.py`, `app/routes_queue.py`,
 `app/api_media.py`, `app/ui/main.py`, `app/roop/live_preview.py`,
 `app/roop/utilities.py`, `start_react.js`, `.gitignore`, AGENTS.md, and the

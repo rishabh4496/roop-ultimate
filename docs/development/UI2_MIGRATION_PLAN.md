@@ -74,7 +74,7 @@ gate has passed:
 - `react-ui-v1-backup/`, until its provenance is replaced by a verified,
   independently restorable snapshot or tag.
 - `pinokio.js`, `start.js`, `start_react.js`, `start_legacy.js`, `install.js`,
-  `reset.js`, `update.js`, and `clean.js`.
+  `reset.js`, `update.js`, and `scripts/clean.js`.
 - `app/` and all backend route modules, including project, queue, checkpoint,
   storage, diagnostics, export, extras, face-manager, faceset, livecam,
   quality, and update/health paths. These are shared or still V1-consumed;

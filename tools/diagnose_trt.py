@@ -4,15 +4,15 @@ TensorRT is NOT loading. It surfaces the real reason onnxruntime silently falls
 back to CUDA.
 
 From the launcher folder:
-    app\env\Scripts\python.exe diagnose_trt.py     (Windows)
-    app/env/bin/python diagnose_trt.py             (Linux)
+    app\env\Scripts\python.exe tools/diagnose_trt.py     (Windows)
+    app/env/bin/python tools/diagnose_trt.py             (Linux)
 """
 import glob
 import os
 import sys
 import tempfile
 
-APP_ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "app")
+APP_ROOT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "app")  # this file is in tools/
 if APP_ROOT not in sys.path:
     sys.path.insert(0, APP_ROOT)
 

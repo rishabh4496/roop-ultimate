@@ -30,8 +30,8 @@ module.exports = {
       update: info.running("update.js"),
       reset: info.running("reset.js"),
       link: info.running("link.js"),
-      clean: info.running("clean.js"),
-      fix_tensorrt: info.running("fix_tensorrt.js")
+      clean: info.running("scripts/clean.js"),
+      fix_tensorrt: info.running("scripts/fix_tensorrt.js")
     }
     if (running.install) {
       return [{
@@ -123,7 +123,7 @@ module.exports = {
           default: true,
           icon: 'fa-solid fa-terminal',
           text: "Installing TensorRT",
-          href: "fix_tensorrt.js",
+          href: "scripts/fix_tensorrt.js",
         }]
       } else if (running.reset) {
         return [{
@@ -144,7 +144,7 @@ module.exports = {
           default: true,
           icon: 'fa-solid fa-terminal',
           text: "Cleaning",
-          href: "clean.js",
+          href: "scripts/clean.js",
         }]
       } else {
         return [{
@@ -167,11 +167,11 @@ module.exports = {
         }, {
           icon: "fa-solid fa-broom",
           text: "<div><strong>Clean</strong><div>Free disk space — regenerable caches only, never your output</div></div>",
-          href: "clean.js",
+          href: "scripts/clean.js",
         }, {
           icon: "fa-solid fa-bolt",
           text: "<div><strong>Fix TensorRT</strong><div>Install missing TensorRT runtime package</div></div>",
-          href: "fix_tensorrt.js",
+          href: "scripts/fix_tensorrt.js",
         }, {
           icon: "fa-solid fa-file-zipper",
           text: "<div><strong>Save Disk Space</strong><div>Deduplicates redundant library files</div></div>",

@@ -86,7 +86,7 @@ and only then performs `git merge --ff-only`. Post-activation health must pass
 before the transaction is reported healthy.
 
 It does not run `uv pip install`, `npm install`, `torch.js`,
-`fix_tensorrt.js`, model downloads, model replacement, or critical-runtime
+`scripts/fix_tensorrt.js`, model downloads, model replacement, or critical-runtime
 installation. A non-`SAFE` candidate is reported with user-readable reasons
 and is not activated. If activation or post-update health fails, diagnostics
 are written into the snapshot, the prior source commit/config are restored

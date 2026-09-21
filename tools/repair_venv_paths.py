@@ -26,10 +26,10 @@ app died at `import torch` with the venv sitting right there, intact.
 
 Usage — from the repository root, with any Python:
 
-    python repair_venv_paths.py                 # repair app/env
-    python repair_venv_paths.py --dry-run       # show what would change
-    python repair_venv_paths.py --venv other/env
-    python repair_venv_paths.py --old "D:/old/env"    # if detection misses one
+    python tools/repair_venv_paths.py                 # repair app/env
+    python tools/repair_venv_paths.py --dry-run       # show what would change
+    python tools/repair_venv_paths.py --venv other/env
+    python tools/repair_venv_paths.py --old "D:/old/env"    # if detection misses one
 
 Stale paths are discovered from the venv itself — from `activate` AND,
 separately, from the shebangs inside `Scripts/*.exe`. Those two can disagree:
@@ -42,7 +42,9 @@ import argparse
 import os
 import sys
 
-DEFAULT_VENV = os.path.join('app', 'env')
+# The repo root, so the default works from any working directory (this file is in tools/).
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DEFAULT_VENV = os.path.join(_REPO_ROOT, 'app', 'env')
 ZIP_MAGIC = b'PK' + bytes([3, 4])
 SEP = chr(92)
 

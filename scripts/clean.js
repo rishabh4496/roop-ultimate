@@ -1,3 +1,5 @@
+// Lives in scripts/: a Pinokio script's working directory is its own folder,
+// so every path below is one level up from where it was at the root.
 module.exports = {
   run: [
     // 1. Measure first, ask second. The sizes land in the terminal the user is
@@ -7,9 +9,9 @@ module.exports = {
       method: "shell.run",
       params: {
         venv: "env",
-        path: "app",
+        path: "../app",
         message: [
-          "python ../cleanup.py --report"
+          "python ../scripts/cleanup.py --report"
         ]
       }
     },
@@ -75,41 +77,41 @@ module.exports = {
     {
       when: "{{local.uploads}}",
       method: "shell.run",
-      params: { venv: "env", path: "app", message: ["python ../cleanup.py uploads"] }
+      params: { venv: "env", path: "../app", message: ["python ../scripts/cleanup.py uploads"] }
     },
     {
       when: "{{local.trt_stale}}",
       method: "shell.run",
-      params: { venv: "env", path: "app", message: ["python ../cleanup.py trt-stale"] }
+      params: { venv: "env", path: "../app", message: ["python ../scripts/cleanup.py trt-stale"] }
     },
     {
       when: "{{local.logs}}",
       method: "shell.run",
-      params: { venv: "env", path: "app", message: ["python ../cleanup.py logs"] }
+      params: { venv: "env", path: "../app", message: ["python ../scripts/cleanup.py logs"] }
     },
     {
       when: "{{local.pycache}}",
       method: "shell.run",
-      params: { venv: "env", path: "app", message: ["python ../cleanup.py pycache"] }
+      params: { venv: "env", path: "../app", message: ["python ../scripts/cleanup.py pycache"] }
     },
     {
       when: "{{local.build}}",
       method: "shell.run",
-      params: { venv: "env", path: "app", message: ["python ../cleanup.py build"] }
+      params: { venv: "env", path: "../app", message: ["python ../scripts/cleanup.py build"] }
     },
     {
       when: "{{local.trt_all}}",
       method: "shell.run",
-      params: { venv: "env", path: "app", message: ["python ../cleanup.py trt-all"] }
+      params: { venv: "env", path: "../app", message: ["python ../scripts/cleanup.py trt-all"] }
     },
     // 4. Show what is left, so the run ends with evidence of what it did.
     {
       method: "shell.run",
       params: {
         venv: "env",
-        path: "app",
+        path: "../app",
         message: [
-          "python ../cleanup.py --report"
+          "python ../scripts/cleanup.py --report"
         ]
       }
     },

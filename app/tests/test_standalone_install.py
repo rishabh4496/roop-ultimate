@@ -88,7 +88,7 @@ class TestStandaloneInstall(unittest.TestCase):
         the package sitting right there.
 
         That is precisely what happened on 2026-08-23 after `app/env` was moved
-        and its old location deleted. `repair_venv_paths.py` fixes it; this is
+        and its old location deleted. `tools/repair_venv_paths.py` fixes it; this is
         the check that catches it.
         """
         env = os.path.join(APP, 'env')
@@ -120,7 +120,7 @@ class TestStandaloneInstall(unittest.TestCase):
             f"the venv thinks it lives at {recorded!r} but it is at {env!r}. "
             f"`activate` will put a wrong (possibly nonexistent) folder on PATH "
             f"and the app will fail to import its own packages. "
-            f"Run: python repair_venv_paths.py")
+            f"Run: python tools/repair_venv_paths.py")
 
     def test_no_runtime_dir_is_tracked_by_git(self):
         """The flip side: now that they are real directories holding ~49 GB,
