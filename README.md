@@ -91,10 +91,32 @@ the compatibility verifier fails.
 
 ### Manually
 
+Toolchain: **Python 3.10**, **Node `^20.19 || >=22.12`** (declared in both
+`package.json` files under `engines`; Vite 8 refuses older), and **npm** -- the
+one JavaScript package manager this repository uses. Installs are reproducible
+because both lockfiles are committed and every install path uses them:
+`react-ui/package-lock.json` (the UI, what `install.js`, `update.js` and
+`start_react.js` run `npm ci` against) and `package-lock.json` at the root (the
+dev-only mock server and typecheck). Do not use bun or yarn here; they would
+write a second, competing lockfile.
+
+Windows (PowerShell):
+
+```powershell
+git clone https://github.com/rishabh4496/roop-ultimate.git
+cd roop-ultimate\app
+python -m venv env; .\env\Scripts\Activate.ps1
+uv pip install -r requirements.txt
+cd ..\react-ui; npm ci --no-audit --no-fund; npm run build
+cd ..\app; python run.py
+```
+
+Linux / macOS:
+
 ```bash
 git clone https://github.com/rishabh4496/roop-ultimate.git
 cd roop-ultimate/app
-python -m venv env && env/Scripts/activate        # Linux/macOS: source env/bin/activate
+python3 -m venv env && source env/bin/activate
 uv pip install -r requirements.txt
 cd ../react-ui && npm ci --no-audit --no-fund && npm run build
 cd ../app && python run.py
@@ -150,8 +172,9 @@ launcher script, install step or build references it; `app/api.py` serves the
 built UI in production.
 
 ```powershell
-npm install            # repo root: express, ws, multer, tsx (dev-only)
+npm ci                 # repo root, from package-lock.json: express, ws, multer, tsx, typescript (dev-only)
 npm run dev:mock       # http://localhost:3000; set PORT to change it
+npm run typecheck      # tsc --noEmit over the mock server (CI runs this)
 ```
 
 You can always tell it apart from the real backend: it prints a MOCK banner on
@@ -339,17 +362,58 @@ roop-ultimate/
 ├── react-ui/             the React client (Vite)
 ├── install.js start.js update.js reset.js    Pinokio launcher scripts
 ├── pinokio.js pinokio.json                   launcher UI and metadata
+├── package.json package-lock.json           dev-only mock server + typecheck (npm)
+├── conftest.py pytest.ini                    test configuration (pytest, gpu marker, light profile)
 ├── LICENSE               GNU AGPL-3.0
 └── NOTICE.md             attribution, licence explanation, intended use
 ```
 
 ## Development
 
-Run the test suite from `app/`:
+### Tests
+
+**pytest is the test runner.** `pytest.ini` at the repository root configures
+both trees (`app/tests/`, the application suite, and `tests/`, the repo-root
+harnesses) with `--import-mode=importlib`, so same-named files in the two trees
+cannot shadow each other. Do not use `unittest discover`: it silently drops the
+pytest-style tests (they collect as `Ran 0 tests ... OK`).
+
+Full suite, from the repository root (needs the GPU machine's venv; 8-20 min,
+the `tests/` harnesses build TensorRT engines and render clips):
+
+```powershell
+# Windows (PowerShell)
+app\env\Scripts\python.exe -m pytest
+```
 
 ```bash
-env/Scripts/python.exe -m unittest discover -s tests -t . -p "test_*.py"
+# Linux / macOS
+app/env/bin/python -m pytest
 ```
+
+Light profile -- no GPU, no model files, no torch/onnxruntime/OpenCV installed
+(what CI runs; also a fast pre-commit check, ~20 s):
+
+```powershell
+# Windows (PowerShell)
+$env:ROOP_TEST_LIGHT = "1"; python -m pytest -m "not gpu"
+```
+
+```bash
+# Linux / macOS
+ROOP_TEST_LIGHT=1 python -m pytest -m "not gpu"
+```
+
+With the profile on, `conftest.py` turns an import of a heavy package into a
+*skip*, at module level or inside a test, so the summary's skipped count says
+how much of the suite was not exercised (~360 of ~1,220 on 2026-09-22). Tests
+that need a CUDA device carry the `gpu` marker and are deselected by
+`-m "not gpu"`. `app/requirements-ci.txt` is the light profile's package list.
+
+CI (`.github/workflows/ci.yml`) runs on every push and pull request: react-ui
+lint and build, the root typecheck, and the light-profile tests on Ubuntu and
+Windows.
+
 
 Benchmarks and measurement harnesses also live in `app/tests/` and are not part
 of the unit-test run — for example `compare_enhancers_video.py` (renders a clip

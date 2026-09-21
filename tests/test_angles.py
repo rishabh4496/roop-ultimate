@@ -245,7 +245,9 @@ class TestProfileAwareWeightedUmeyama(unittest.TestCase):
 
             M_prof, mode = profile_aware_umeyama_alignment(profile_kps, image_size=128, yaw_degrees=yaw)
 
-            self.assertEqual(mode, "profile_weighted_5pt")
+            # The weighted modes were folded into the adaptive 3D profile path
+            # (84a6649); the mode name is no longer the contract, the geometry is.
+            self.assertTrue(mode.startswith("profile"), mode)
             self.assertTrue(np.isfinite(M_prof).all())
 
             # Verify determinant is positive and non-degenerate
@@ -277,7 +279,7 @@ class TestProfileAwareWeightedUmeyama(unittest.TestCase):
         M_prof, mode = profile_aware_umeyama_alignment(
             kps, image_size=128, yaw_degrees=65.0, landmarks_68=lm68
         )
-        self.assertEqual(mode, "profile_weighted_7pt")
+        self.assertTrue(mode.startswith("profile"), mode)  # see the 5pt test above
         self.assertTrue(np.isfinite(M_prof).all())
         self.assertEqual(M_prof.shape, (2, 3))
 

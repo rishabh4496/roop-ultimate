@@ -80,6 +80,10 @@ def _format_table_row(
 
 def test_dry_run_60_frames(temp_dir: Path) -> BenchmarkRunResult:
     """Execute the 60-frame dry-run benchmark with 1 face selected."""
+    # Both suites run in one pytest process; an app/tests module can leave
+    # roop.globals.processing True. The invariant under test is that the
+    # BENCHMARK leaves it False, so start from False.
+    roop.globals.processing = False
     print("=" * 78)
     print("Session 2 - 60-Frame Dry-Run Benchmark Verification (Solo: 1 Face)")
     print("=" * 78)

@@ -1,0 +1,19 @@
+# What the LIGHT test profile needs (ROOP_TEST_LIGHT=1, see conftest.py): the
+# packages the 861 light tests actually import, measured 2026-09-22. No torch,
+# no onnxruntime, no insightface, no OpenCV -- the light profile skips every
+# test that reaches for them. Pins match app/requirements.txt where that file
+# pins. This is for CI and quick local checks, not for running the app.
+numpy==1.26.4
+fastapi>=0.110.0
+starlette>=0.36
+httpx>=0.27            # fastapi.testclient
+python-multipart>=0.0.9
+pydantic==2.10.6
+PyYAML>=6.0
+psutil==5.9.6
+tqdm==4.66.4
+rich>=13
+omegaconf>=2.3
+hydra-core>=1.3
+orjson>=3.9
+pytest>=8.0

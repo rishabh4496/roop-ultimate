@@ -1,12 +1,13 @@
 {
   "name": "roop-ultimate",
   "private": true,
-  "workspaces": [
-    "react-ui"
-  ],
+  "engines": {
+    "node": "^20.19.0 || >=22.12.0"
+  },
   "scripts": {
     "dev:mock": "tsx react-ui/mock-server/server.ts",
-    "lint": "npm run lint --workspace=react-ui"
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "lint": "npm --prefix react-ui run lint"
   },
   "dependencies": {
     "express": "^4.21.2",
@@ -19,6 +20,7 @@
     "@types/node": "^22.10.1",
     "@types/ws": "^8.5.13",
     "tsx": "^4.19.2",
+    "typescript": "^5.6.0",
     "vite": "^8.1.0"
   }
 }

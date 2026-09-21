@@ -18,6 +18,8 @@ import sys
 import unittest
 import unittest.mock
 
+import pytest
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 APP = os.path.dirname(HERE)
 if APP not in sys.path:
@@ -43,6 +45,7 @@ def _trt():
 
 
 class TestDriverProbe(unittest.TestCase):
+    @pytest.mark.gpu
     @unittest.skipIf(_torch_cuda() is None, "no CUDA device")
     def test_driver_version_is_actually_resolved(self):
         """nvidia-smi is the only source that reports the display driver."""
@@ -83,6 +86,7 @@ class TestPrecisionProbe(unittest.TestCase):
         self.assertTrue(hasattr(trt.BuilderFlag, "FP8"))
         self.assertTrue(hasattr(trt.DataType, "FP8"))
 
+    @pytest.mark.gpu
     @unittest.skipIf(_trt() is None or _torch_cuda() is None,
                      "needs TensorRT and a CUDA device")
     def test_fp8_exposure_follows_compute_capability(self):

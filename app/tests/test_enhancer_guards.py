@@ -16,6 +16,8 @@ import re
 import sys
 import unittest
 
+import pytest
+
 import numpy as np
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -154,6 +156,7 @@ class UltraMaxEyeProtection(unittest.TestCase):
 
         self.assertGreater(int(out[240, 192, 0]), int(source[240, 192, 0]))
 
+    @pytest.mark.gpu
     @unittest.skipUnless(__import__('torch').cuda.is_available(),
                          'requires CUDA for tensor-path parity')
     def test_cuda_eye_protection_is_bit_identical_to_the_cpu_operator(self):
@@ -188,6 +191,7 @@ class UltraMaxEyeProtection(unittest.TestCase):
                              f'seed {seed}: CUDA eye protection diverged from '
                              f'the CPU operator by {int(delta.max())}/255')
 
+    @pytest.mark.gpu
     @unittest.skipUnless(__import__('torch').cuda.is_available(),
                          'requires CUDA for tensor-path parity')
     def test_cuda_rebalance_matches_the_cpu_operator(self):
