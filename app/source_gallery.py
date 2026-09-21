@@ -35,6 +35,13 @@ API_TEMP = None
 
 def _mask_offsets_from_cfg():
     c = roop_globals.CFG
+    # Faceset uploads can arrive while the API is still publishing its runtime
+    # configuration.  Source ingestion only needs a valid mask-offset tuple at
+    # this point; the configured values are applied on the next update once CFG
+    # is ready.  Do not turn that startup race into a request hang or a 500.
+    if c is None:
+        return [0.0, 0.0, 0.0, 0.0,
+                12.0, 10.0, 1.0, 1.0, 1.0, 1.0]
     return [c.mask_top, c.mask_bottom, c.mask_left, c.mask_right,
             c.face_mask_blend, c.mouth_mask_blend,
             c.mouth_top_scale, c.mouth_bottom_scale,

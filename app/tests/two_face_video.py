@@ -157,6 +157,7 @@ def load_library_faceset(name):
     from roop.FaceSet import FaceSet
     from roop.face_util import extract_face_images
     from roop.faceset_v2 import read_faceset_archive
+    from source_gallery import _mask_offsets_from_cfg
 
     path = os.path.join(LIB, name if name.endswith(".fsz") else name + ".fsz")
     if not os.path.exists(path):
@@ -175,7 +176,7 @@ def load_library_faceset(name):
         p = os.path.join(tmp, fn)
         frame = cv2.imdecode(np.fromfile(p, dtype=np.uint8), cv2.IMREAD_COLOR)
         for fd in extract_face_images(p, (False, 0)):
-            fd[0].mask_offsets = ab._mask_offsets()
+            fd[0].mask_offsets = _mask_offsets_from_cfg()
             fs.faces.append(fd[0])
             fs.ref_images.append(frame)
     if not fs.faces:
@@ -1162,7 +1163,6 @@ def main():
                                stabilize_landmarks=args.stabilize_landmarks,
                                stabilize_hf_texture=args.stabilize_hf_texture,
                                stabilize_hf_texture_weight=args.stabilize_hf_texture_weight)
-
     # The settings that decide what this arm measured, on the arm's own log, so
     # a later comparison does not have to guess them from the tag. Recovering
     # them by hash-matching a re-render is possible but costs a full arm.
@@ -1221,6 +1221,20 @@ def main():
         targets, groups = auto_capture_targets(
             args.video, expect=len(names), time_budget=args.capture_budget,
             log_prefix="[bench]")
+
+    # This harness runs the production "selected" mode, but it is not going
+    # through the API boundary that normally supplies the canonical selection
+    # state.  Leaving ProcessOptions.selection_state at its default therefore
+    # normalizes to selection_mode="none", making ProcessMgr correctly refuse
+    # every face and turning a swap acceptance run into a no-op video render.
+    # The two captured people are the explicit subjects of this benchmark, so
+    # mirror the UI's multi-person selection contract here.
+    from roop.target_selection import normalize_target_selection
+    options.selection_state = normalize_target_selection(
+        {"selection_mode": "multi_person",
+         "person_ids": sorted(set(groups))},
+        person_count=len(set(groups)),
+    )
 
     clip = trim(args.video, args.start, args.end,
                 os.path.join(work, "clip.mp4"))

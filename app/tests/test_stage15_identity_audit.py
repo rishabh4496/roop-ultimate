@@ -202,6 +202,13 @@ class FacesetErrorsAreStructured(unittest.TestCase):
         ui_globals.ui_input_thumbs[:] = self.old_thumbs
         roop_globals.CFG = self.old_cfg
 
+    def test_mask_offsets_are_safe_before_configuration_is_ready(self):
+        roop_globals.CFG = None
+        self.assertEqual(
+            source_gallery._mask_offsets_from_cfg(),
+            [0.0, 0.0, 0.0, 0.0, 12.0, 10.0, 1.0, 1.0, 1.0, 1.0],
+        )
+
     def _archive(self, name, members):
         path = os.path.join(self.tmp, name)
         with zipfile.ZipFile(path, "w") as zf:

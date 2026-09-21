@@ -221,6 +221,16 @@ def main():
         # route returns the untouched frame and every comparison below is
         # trivially equal. `detection` selects the swap mode whose contract the
         # mapping belongs to.
+        selected_people = [person for person, source in enumerate(mapping)
+                           if source is not None and int(source) >= 0]
+        if len(selected_people) == 1:
+            selection_state = {"selection_mode": "selected",
+                               "person_id": selected_people[0]}
+        elif selected_people:
+            selection_state = {"selection_mode": "multi_person",
+                               "person_ids": selected_people}
+        else:
+            selection_state = {"selection_mode": "none"}
         res = post("/api/preview", {
             "frame": frame_no,
             "index": 0,
@@ -229,6 +239,7 @@ def main():
             "fake_preview": True,
             "detection": "Selected face",
             "face_mapping": mapping,
+            "selection_state": selection_state,
         })
         img = decode(res["image"])
         if img is None:
