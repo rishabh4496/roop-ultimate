@@ -5,3 +5,5 @@
 *.bin filter=lfs diff=lfs merge=lfs -text
 *.mp4 filter=lfs diff=lfs merge=lfs -text
 *.png filter=lfs diff=lfs merge=lfs -text
+# Shell hooks must stay LF: a CRLF shebang is "bad interpreter" on Linux/macOS.
+.githooks/* text eol=lf
