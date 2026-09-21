@@ -129,6 +129,30 @@ class MergedDetections(unittest.TestCase):
         man = (568.6, 139.2, 632.5, 247.1)
         self.assertEqual(merged_indices([woman, phantom, man]), [1])
 
+    def test_junction_over_a_wider_real_gap_is_dropped(self):
+        """double/d6.mp4 frame 179 (4K, two heads lying face to face). The
+        heads are 323px apart -- 0.42 of the smaller radius, past the old 0.4
+        bridge cap -- and the phantom between them measured 0.774 raw cover,
+        under the 0.80 floor. It survived, its box covered 0.43 of the upright
+        face's recognition crop, and that face was refused as "crop shared"
+        on and off for the rest of the clip. Bridged, the cover is 1.0."""
+        upright = (775.0, 156.0, 2232.0, 1832.0)
+        phantom = (1453.0, 102.0, 3190.0, 1661.0)
+        inverted = (2555.0, -1.0, 3839.0, 1555.0)
+        self.assertEqual(merged_indices([upright, phantom, inverted]), [1])
+
+    def test_a_real_head_between_two_others_is_not_bridged_into_a_junction(self):
+        """The wider radius cap must not reach test_three_overlapping_faces_
+        in_a_row_survive's layout: that middle head is mostly GAP (the gap is
+        0.43 of its width), a junction is mostly the two faces it is made of
+        (0.19-0.28). The span condition is what keeps it."""
+        a, m, b = box(100, 100, 140, 200), box(200, 100, 140, 200), box(300, 100, 140, 200)
+        gap = face_contact._edge_gap(a, b)
+        self.assertLessEqual(gap, face_contact.MERGE_BRIDGE_GAP * face_contact._radius(a),
+                             'the radius cap alone would bridge this')
+        self.assertGreater(gap, face_contact.MERGE_BRIDGE_SPAN * face_contact._min_side(m))
+        self.assertEqual(merged_indices([a, m, b]), [])
+
     def test_a_duplicate_box_is_not_treated_as_a_junction(self):
         """Two boxes on one face plus a second face. The duplicate pair is
         concentric, so it cannot play the role of the two parents."""
@@ -232,6 +256,59 @@ class CropContamination(unittest.TestCase):
         finally:
             face_contact.CONTAM_MAX = old
 
+    def test_an_inverted_neighbour_does_not_contaminate_through_its_reflected_fit(self):
+        """The two-person flicker on d6.mp4, with the frame-1 keypoints as the
+        detector emitted them (3840x2160, one person lying across the other).
+
+        RAW, the inverted face's eyes are labelled by image side, so the
+        ArcFace fit needs a reflection the similarity solver cannot express:
+        its scale collapses and the crop reads ~5 widths wide. Measured
+        against that phantom the UPRIGHT face read 0.71 covered and was
+        refused as "crop shared" on and off across the clip.
+
+        Two layers now: `_fit_reflected` keeps a reflected neighbour's core
+        region out of the measurement (its box, real geometry, still counts),
+        and face_util stamps AFTER `_upright_remeasure` has handed back the
+        same head re-detected upright (a proper 180-degree turn, 1.4 widths
+        wide) -- which `Wiring` below pins."""
+        upright = _Face([393, 151, 1824, 1856],
+                        [[835, 679], [1580, 741], [1196, 949], [840, 1342], [1401, 1393]])
+        inverted_raw = _Face([2105, 3, 3287, 1766],
+                             [[2364, 1111], [3025, 1124], [2647, 726], [2470, 177], [2785, 179]])
+        inverted_fixed = _Face([2051, -1, 3408, 1748],
+                               [[3084, 1017], [2423, 1062], [2750, 702], [2933, 360], [2403, 411]])
+        w = 3287 - 2105
+        span_raw = float(np.ptp(_crop_quad(inverted_raw.kps)[:, 0]))
+        span_fixed = float(np.ptp(_crop_quad(inverted_fixed.kps)[:, 0]))
+        self.assertGreater(span_raw, 4.0 * w, "the raw inverted fit is the phantom")
+        self.assertLess(span_fixed, 2.0 * w, "the uprighted fit is a real crop")
+        self.assertTrue(face_contact._fit_reflected(inverted_raw.kps))
+        self.assertFalse(face_contact._fit_reflected(inverted_fixed.kps))
+        self.assertFalse(face_contact._fit_reflected(upright.kps))
+        # The phantom core region is what carried the 0.71; without it the
+        # upright face reads the same against either version of its neighbour.
+        old = face_contact.CONTAM_CORE_SCALE
+        try:
+            self.assertLess(crop_contamination([upright, inverted_raw])[0], 0.1)
+            self.assertLess(crop_contamination([upright, inverted_fixed])[0], 0.1)
+        finally:
+            face_contact.CONTAM_CORE_SCALE = old
+
+    def test_stamp_contamination_tags_from_the_current_keypoints(self):
+        """`_upright_remeasure` replaces the face OBJECT, so a stamp taken
+        before it is stale; the stamp must be re-taken from what the list
+        holds now, and every survivor must carry one."""
+        w, h = 120.0, 190.0
+        a = _Face(box(100, 100, w, h), profile_kps(100, 100, w, h, +1))
+        b = _Face(box(184, 100, w, h), profile_kps(184, 100, w, h, -1))
+        faces = [a, b]
+        face_contact.stamp_contamination(faces)
+        self.assertTrue(unreliable(a) or unreliable(b), "touching profiles are dirty")
+        faces[1] = _Face(box(400, 100, w, h), profile_kps(400, 100, w, h, -1))
+        face_contact.stamp_contamination(faces)
+        self.assertFalse(unreliable(a))
+        self.assertIn('_emb_contam', faces[1])
+
     def test_annotate_tags_every_survivor(self):
         w, h = 120.0, 190.0
         faces = [_Face(box(100, 100, w, h), profile_kps(100, 100, w, h, +1)),
@@ -270,9 +347,24 @@ class Wiring(unittest.TestCase):
     def test_detection_annotates_every_frame(self):
         # Lives in _enrich_detected_faces, shared by _detect_faces AND
         # get_all_faces_hires (the higher-resolution retry), not duplicated.
+        # Two halves in a fixed order: the junction phantom is dropped before
+        # the orientation probe can measure it, and the contamination stamp is
+        # taken AFTER `_upright_remeasure` has replaced an inverted face's
+        # keypoints (see test_an_inverted_neighbour_contaminates_only_before_
+        # it_is_uprighted) and BEFORE the 68-point refinement moves them off
+        # the crop the embedding was taken from.
         body = self._function_body(self._source('roop/face_util.py'),
                                    '_enrich_detected_faces')
-        self.assertIn('face_contact.annotate', body)
+        self.assertNotIn('face_contact.annotate', body,
+                         'the combined form stamps before the remeasure')
+        i_drop = body.find('face_contact.suppress_merged')
+        i_lm68 = body.find('ensure_landmark_3d_68')
+        i_up = body.find('_upright_remeasure(')
+        i_stamp = body.find('face_contact.stamp_contamination')
+        i_refine = body.find('_refine_kps_from_68')
+        self.assertTrue(0 <= i_drop < i_lm68, 'drop the phantom before measuring orientation')
+        self.assertTrue(0 <= i_up < i_stamp, 'stamp after the upright remeasure')
+        self.assertTrue(i_stamp < i_refine, 'stamp before the keypoints are refined')
 
     def test_the_tracking_scan_disbelieves_a_shared_crop(self):
         body = self._function_body(self._source('roop/procmgr_tracking.py'),

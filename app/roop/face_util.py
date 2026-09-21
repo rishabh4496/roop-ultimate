@@ -1212,13 +1212,14 @@ def _enrich_detected_faces(frame, faces):
     exact same enrichment a normal detect would have applied, rather than a
     partial/divergent pipeline."""
     # Two faces in contact, before anything reads the detections: drop the
-    # phantom the detector fires at the junction between them, and record how
-    # much of each survivor's recognition crop belongs to its neighbour. Both
-    # are properties of the FRAME's set of faces, so they are decided once here
-    # rather than re-derived by each consumer from whatever subset it holds.
-    # See roop/face_contact.py.
+    # phantom the detector fires at the junction between them. A property of
+    # the FRAME's set of faces, decided once here rather than re-derived by
+    # each consumer from whatever subset it holds. See roop/face_contact.py.
+    # (The companion stamp, how much of each survivor's recognition crop
+    # belongs to its neighbour, is taken further down, once the keypoints are
+    # the ones the recogniser really cropped with.)
     if faces:
-        faces, _merged = face_contact.annotate(faces)
+        faces, _merged = face_contact.suppress_merged(faces)
         if _merged:
             _note_merged(_merged)
 
@@ -1240,6 +1241,17 @@ def _enrich_detected_faces(frame, faces):
     # Before anything downstream reads the keypoints or the embedding.
     if faces and UPRIGHT_REMEASURE:
         faces = _upright_remeasure(frame, faces)
+
+    # How much of each recognition crop belongs to the face beside it. AFTER
+    # the upright remeasure, which is what fixes an inverted face's keypoints,
+    # and BEFORE the 68-point refinement, which moves them off the crop the
+    # embedding was taken from. Stamped one step earlier, an inverted face's
+    # raw keypoints fit the ArcFace template as a ~5-width phantom crop and its
+    # upright neighbour was refused as "crop shared" on and off across the
+    # clip (d6.mp4: 0.71 here, 0.07 once remeasured). See
+    # face_contact.stamp_contamination.
+    if faces:
+        face_contact.stamp_contamination(faces)
 
     if faces and getattr(roop.globals, 'refine_landmarks', False):
         for f in faces:

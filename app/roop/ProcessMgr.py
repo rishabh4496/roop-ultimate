@@ -3297,10 +3297,19 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                 return num_faces_found, frame
             self._tls.last_found_bboxes = np.array([f.bbox for f in faces])   # cache for next frame
             if os.environ.get('ROOP_DEBUG_FACELIST') == '1' and frame_idx is not None:
+                # One tuple per face: box, track id, and the three flags that
+                # decide its fate before identity is even read -- interpolated,
+                # coasted, and how much of its recognition crop is somebody
+                # else's (None = never stamped, which is itself a finding).
                 bar_write(f"[FaceList] f={frame_idx} n={len(faces)} " +
                           str([(round(float(f.bbox[0]),0), round(float(f.bbox[1]),0),
                                 round(float(f.bbox[2]),0), round(float(f.bbox[3]),0),
-                                bool(f.get('_interpolated')) if isinstance(f, dict) else False)
+                                f.get('_track_id'),
+                                bool(f.get('_interpolated')), bool(f.get('_coasted')),
+                                (None if f.get('_emb_contam') is None
+                                 else round(float(f.get('_emb_contam')), 3)),
+                                [[int(v) for v in p] for p in np.asarray(f.kps).tolist()]
+                                if getattr(f, 'kps', None) is not None else None)
                                for f in faces]))
             if self.options.swap_mode == "all":
                 # Audited like every other mode. Nothing is ever refused here, so

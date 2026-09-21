@@ -122,8 +122,30 @@ MERGE_BETWEEN = _env_float('ROOP_FACE_MERGE_BETWEEN', 0.15)
 # Capped as a fraction of the smaller face's radius so this never reaches
 # out to genuinely distant faces (see
 # test_small_distant_face_between_two_near_ones_survives, whose gap is a
-# full face-width and must stay refused).
-MERGE_BRIDGE_GAP = _env_float('ROOP_FACE_MERGE_BRIDGE_GAP', 0.4)
+# full face-width -- 2.0 radii -- and must stay refused).
+#
+# 0.4 -> 0.6 on 2026-09-21, from a census of every 3-detection frame of
+# double/d6.mp4 (two heads lying face to face, 4K): 41 frames, the middle box
+# a junction on all 41 (score 0.52-0.93, interocular 0.16-0.32 of its width
+# against ~0.45 for a real face). 36 were dropped; the 5 that survived sat at
+# a gap of 0.42-0.48 radii with raw cover 0.76-0.78, i.e. the gap between the
+# two heads was a little wider than the cap and the middle of it belonged to
+# neither parent. Each survivor cost the upright neighbour its swap ("crop
+# shared with the face beside it", 0.43 of its crop under the phantom's box)
+# and, in the tracking scan, took over the inverted head's track id, which is
+# how a 31-frame third track with no source was born at frame 179.
+MERGE_BRIDGE_GAP = _env_float('ROOP_FACE_MERGE_BRIDGE_GAP', 0.6)
+
+# ...and the gap may be at most this fraction of the CANDIDATE's smaller side.
+# The radius cap alone cannot tell a junction from a real third head in an
+# overlapping row (test_three_overlapping_faces_in_a_row_survive: gap 0.6
+# radii, which the wider cap above would bridge and then drop). What does tell
+# them apart is what the candidate is made of: a junction is built from the
+# two faces, so the gap it spans is small next to it -- 0.19-0.21 of its width
+# on d6, 0.28 on the d2 fixture -- while a real head between two others is
+# mostly gap (0.43 in that test). Two conditions, each with a wide margin,
+# instead of one threshold sitting 4% from the measured population.
+MERGE_BRIDGE_SPAN = _env_float('ROOP_FACE_MERGE_BRIDGE_SPAN', 0.35)
 
 
 def _centre(b):
@@ -188,13 +210,16 @@ def _edge_gap(a, b):
     return float(np.hypot(dx, dy))
 
 
-def _bridged(a, b):
+def _bridged(a, b, m=None):
     """`a`, `b` grown toward each other just enough to close a small real
-    gap, for the coverage check only -- see MERGE_BRIDGE_GAP."""
+    gap, for the coverage check only -- see MERGE_BRIDGE_GAP and, when the
+    candidate `m` is given, MERGE_BRIDGE_SPAN."""
     gap = _edge_gap(a, b)
     if gap <= 0.0:
         return a, b
     if gap > MERGE_BRIDGE_GAP * min(_radius(a), _radius(b)):
+        return a, b
+    if m is not None and gap > MERGE_BRIDGE_SPAN * _min_side(m):
         return a, b
     pad = gap * 0.5 + 1.0
     return ((a[0] - pad, a[1] - pad, a[2] + pad, a[3] + pad),
@@ -238,7 +263,7 @@ def merged_indices(boxes):
                     continue
                 if _min_side(m) < MERGE_SIZE * min(_min_side(a), _min_side(b)):
                     continue
-                ba, bb = _bridged(a, b)
+                ba, bb = _bridged(a, b, m)
                 if _union_cover(m, ba, bb) < MERGE_COVER:
                     continue
                 out.append(k)
@@ -340,6 +365,26 @@ def _crop_quad(kps, size=112.0, scale=1.0):
     return ((corners - t) @ inv.T).astype(np.float32)
 
 
+def _fit_reflected(kps):
+    """Does fitting these keypoints to the template need a reflection?
+
+    The detector labels the eyes by IMAGE side, so on a head rolled past ~90
+    degrees the pair is mirrored relative to the template and only a reflected
+    similarity fits. `_crop_quad` (like insightface) can only return a proper
+    rotation, so what it returns for such a face is a degenerate fit whose
+    scale has collapsed: a "crop" several face widths wide that is not a place
+    on the frame. The recogniser's own crop is equally broken there, which is
+    what `face_util._upright_remeasure` exists to fix; this is the check that
+    keeps the broken geometry from being used AGAINST a neighbour when that
+    step has not run.
+    """
+    src = np.asarray(kps, dtype=np.float64).reshape(5, 2)
+    sc = src - src.mean(axis=0)
+    dc = _ARCFACE_DST - _ARCFACE_DST.mean(axis=0)
+    cov = dc.T @ sc / 5.0
+    return bool(np.linalg.det(cov) < 0)
+
+
 def _quad_box_overlap(quad, box):
     """Fraction of `quad`'s area covered by axis-aligned `box`."""
     rect = np.array([[box[0], box[1]], [box[2], box[1]],
@@ -392,7 +437,11 @@ def crop_contamination(faces):
         kps = getattr(f, 'kps', None)
         if kps is not None:
             quads.append(_crop_quad(kps, scale=1.0))
-            core_quads.append(_crop_quad(kps, scale=CONTAM_CORE_SCALE) if CONTAM_CORE_SCALE > 0 else None)
+            # A neighbour whose fit is reflected has no core region to speak
+            # of (see _fit_reflected); its detection box, which is real
+            # geometry, still counts against the subject below.
+            core_quads.append(_crop_quad(kps, scale=CONTAM_CORE_SCALE)
+                              if CONTAM_CORE_SCALE > 0 and not _fit_reflected(kps) else None)
         else:
             quads.append(None)
             core_quads.append(None)
@@ -409,15 +458,23 @@ def crop_contamination(faces):
     return out
 
 
-def annotate(faces):
-    """Suppress junction detections, then tag what is left with how much of each
-    recognition crop belongs to somebody else.
+def stamp_contamination(faces):
+    """Tag each face with how much of its recognition crop belongs to somebody
+    else, from the keypoints it carries NOW.
 
-    Called once per detection, so every consumer downstream — the tracking scan,
-    the identity-lock matcher, the per-frame matcher — reads the same verdict
-    instead of each re-deriving it from a different subset of the faces.
+    Call this on the keypoints the recogniser actually cropped with. In
+    face_util that is AFTER `_upright_remeasure`, not before: an inverted face
+    (one person lying across the other, d6.mp4) comes out of the raw detector
+    with its eyes labelled by IMAGE side, so fitting them to the ArcFace
+    template needs a reflection. The similarity fit only allows a proper
+    rotation, its scale collapses, and the "crop" balloons to ~5 face widths
+    (measured: a 1200px face read as a 5800px quad). Stamped at that moment the
+    UPRIGHT neighbour reads 0.63-0.71 covered by a crop that does not exist,
+    and is refused as "crop shared with the face beside it" on the frames the
+    remeasure would have fixed a step later — an intermittent refusal, which is
+    exactly the two-person flicker. Re-detected upright, the same face's quad
+    is 1.4 widths and the neighbour reads 0.07.
     """
-    faces, dropped = suppress_merged(faces)
     if faces and CONTAM_MAX > 0:
         for f, c in zip(faces, crop_contamination(faces)):
             try:
@@ -425,6 +482,25 @@ def annotate(faces):
             except Exception as _degrade_error:
                 _swallowed("roop/face_contact.py:420", _degrade_error, "fallback continued")
                 pass
+    return faces
+
+
+def annotate(faces):
+    """Suppress junction detections, then tag what is left with how much of each
+    recognition crop belongs to somebody else.
+
+    Called once per detection, so every consumer downstream — the tracking scan,
+    the identity-lock matcher, the per-frame matcher — reads the same verdict
+    instead of each re-deriving it from a different subset of the faces.
+
+    face_util's detection path calls the two halves separately, because the
+    junction suppression has to run before the orientation probe (a phantom
+    must not be measured) while the contamination stamp has to wait for
+    `_upright_remeasure` (see `stamp_contamination`). This combined form stays
+    for callers that hold a final face list.
+    """
+    faces, dropped = suppress_merged(faces)
+    stamp_contamination(faces)
     return faces, dropped
 
 
