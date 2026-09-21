@@ -35,7 +35,7 @@ import roop.vr_util as vr
 from typing import Any, List, Callable
 from roop.typing import Frame, Face
 from roop.procmgr_masking import (MaskingMixin, nonfrontal_routing_enabled,
-                                  _DEBUG_ANGLE, landmark_hull)
+                                  _DEBUG_ANGLE)
 from roop.procmgr_color import ColorTransferMixin
 from roop.procmgr_merger import MergerMixin
 from roop.identity_detail import (restore_identity_detail,
@@ -48,8 +48,7 @@ from roop.temporal_quality import (TemporalQualityController, make_observation,
                                    merge_decisions)
 from roop.adaptive_enhancer import evaluate_face_frame
 from roop.procmgr_tiling import PixelBoostMixin
-from roop.procmgr_tracking import (TrackingMixin, is_synthetic_face,
-                                   track_source_index)
+from roop.procmgr_tracking import TrackingMixin, track_source_index
 from roop.procmgr_batch import BatchProcessingMixin
 from roop.procmgr_stabilization import StabilizationSchedulingMixin
 from roop.face_overlap import build_regions as build_face_regions, FaceRegion
@@ -80,56 +79,6 @@ def _owned_fallback_frame(frame):
     except Exception as _degrade_error:
         _swallowed("roop/ProcessMgr.py:71", _degrade_error, "fallback continued")
         return frame
-
-
-def _restore_partial_occlusion(result, plate, target_face, region=None):
-    """Restore the target face when the occluder model marks it partial.
-
-    The occluder mask protects the foreground object during compositing, but it
-    cannot undo a swap model that already hallucinated the visible face around
-    that object.  A partial occlusion is therefore an admission failure for the
-    whole generated identity on this observation.  Restore only the same
-    landmark hull used by the face matte, leaving neighbouring faces and the
-    object itself untouched.
-    """
-    try:
-        if result is None or plate is None or target_face is None:
-            return result
-        if result.shape[:2] != plate.shape[:2]:
-            return result
-        state = (target_face.get('occlusion_state')
-                 if isinstance(target_face, dict)
-                 else getattr(target_face, 'occlusion_state', None))
-        if state != 'partial':
-            return result
-        landmarks = (target_face.get('landmark_2d_106')
-                     if isinstance(target_face, dict)
-                     else getattr(target_face, 'landmark_2d_106', None))
-        if landmarks is None:
-            landmarks = (target_face.get('kps') if isinstance(target_face, dict)
-                         else getattr(target_face, 'kps', None))
-        kps = (target_face.get('kps') if isinstance(target_face, dict)
-               else getattr(target_face, 'kps', None))
-        hull, _, _ = landmark_hull(landmarks, kps)
-        if hull is None or len(hull) < 3:
-            return result
-        matte = np.zeros(result.shape[:2], dtype=np.float32)
-        cv2.fillConvexPoly(matte, np.asarray(hull, dtype=np.int32), 1.0)
-        # Match the feather scale to the face size, not the video resolution.
-        bbox = (target_face.get('bbox') if isinstance(target_face, dict)
-                else getattr(target_face, 'bbox', None))
-        face_w = float(bbox[2] - bbox[0]) if bbox is not None else 32.0
-        radius = max(1, min(7, int(round(face_w * 0.015))))
-        matte = cv2.GaussianBlur(matte, (2 * radius + 1, 2 * radius + 1), 0)
-        if region is not None:
-            region.trim_frame(matte)
-        alpha = matte[..., None]
-        restored = (result.astype(np.float32) * (1.0 - alpha)
-                    + plate.astype(np.float32) * alpha)
-        return np.clip(restored, 0, 255).astype(np.uint8)
-    except Exception as _degrade_error:
-        _swallowed("roop/ProcessMgr.py:84", _degrade_error, "fallback continued")
-        return result
 
 
 def get_thread_tracker(shared=None, epoch=None, fresh=False):
@@ -4384,14 +4333,22 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
         competing with another face for pixels; None when it has the frame to
         itself.
         """
-        # A temporal gap-fill/coast carries a track embedding but its landmarks
-        # are guessed.  Letting the swap model align on that geometry creates the
-        # exact reported failure: one-frame wrong identities and severe warps
-        # when an object crosses the face.  Keep the untouched/accumulated frame
-        # for this observation instead of painting a synthetic face.
-        if is_synthetic_face(target_face):
-            _audit_hit('refused: synthetic face geometry')
-            return frame
+        # Gap-filled (`_interpolated`) and coasted (`_coasted`) faces ARE swap
+        # candidates. They exist to hold the swap across the frames the detector
+        # misses -- a hand or a microphone crossing the face, motion blur, a
+        # brief profile -- and are bounded by their own guards (a 10-frame
+        # interpolation between two real observations; MAX_COAST_FRAMES,
+        # MIN_HITS_TO_COAST, the on-screen and collision tests, the shot-cut
+        # test in `_coast_track_gaps`).
+        #
+        # NEGATIVE RESULT, 2026-09-18 -> 2026-09-21: 3a4bb18 refused every such
+        # face here (`is_synthetic_face` -> return frame). That turned the
+        # anti-flicker machinery into a flicker source: on every detector miss
+        # the face popped back to the original for the length of the gap and
+        # re-appeared when detection resumed, and with `temporal_detection: true`
+        # in the live config that is the common case, not the edge case. If a
+        # coast is ever seen painting onto background again, tighten the coast
+        # guards in roop/tracker.py; do not refuse the class.
 
         from roop.face_util import align_crop
 
@@ -5907,36 +5864,31 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
             fake_frame = self.auto_unrotate_frame(result, rotation_action)
             result = self.paste_simple(fake_frame, saved_frame, startX, startY)
 
-        # The mask engine has now classified this observation.  If a foreign
-        # object hides part of the face, discard the generated identity over the
-        # face hull rather than returning a plausible-looking but wrong face.
-        # This is intentionally after autorotate has returned to full-frame
-        # coordinates and before the optional moved-face verifier.
+        # A foreign object in front of the face is handled by the MASK, not by
+        # refusing the swap. `inject_occlusion_engine` appends the occluder to
+        # every chain, and its mask composites the plate back over the object
+        # (`keep_face * (1 - m_occlusion)`, see roop/occlusion_mask.py), so the
+        # object survives and the visible skin is swapped -- the same contract
+        # every mask engine has always had.
+        #
+        # NEGATIVE RESULT, 2026-09-19 -> 2026-09-21: `occlusion_state == 'partial'`
+        # used to discard the whole generated face here (restore the landmark
+        # hull from the plate). It was gated at 8% of the interior 2d106
+        # landmarks reading HIGH in the occluder mask, i.e. six landmarks, and
+        # the occluder's "not visible face" is also hair, eyebrows at the
+        # hairline and any soft mask edge, so on the user's clip it fired on 14
+        # of 24 single-face previews (start_react.js log, 2026-09-21) with the
+        # identity matcher already satisfied. The verdict also flips frame to
+        # frame at the mask boundary, so the face appeared and disappeared --
+        # the reported "flicker" -- and any real hand or microphone turned the
+        # swap off entirely instead of being masked. Moving the stamp after the
+        # mask stabilizer (778a40e) did not change that. The stamp itself is
+        # kept for diagnostics; nothing in the render path refuses on it.
         _occlusion_state = (target_face.get('occlusion_state')
                             if isinstance(target_face, dict)
                             else getattr(target_face, 'occlusion_state', None))
-        if rotation_action is None and _occlusion_state == 'partial':
-            restored = _restore_partial_occlusion(result, plate, target_face, region=region)
-            if restored is not result:
-                _audit_hit('refused: partial occlusion')
-                if _DEBUG_MATCH:
-                    # The Stage 15 acceptance found a routed, eligible face that
-                    # never painted, with nothing in the log saying why. Name
-                    # the gate and the number it read.
-                    try:
-                        _frac = (target_face.get('_occluded_landmark_frac')
-                                 if isinstance(target_face, dict)
-                                 else getattr(target_face, '_occluded_landmark_frac', None))
-                        _idx = (target_face.get('_occluded_landmark_indices')
-                                if isinstance(target_face, dict)
-                                else getattr(target_face, '_occluded_landmark_indices', None))
-                        bar_write(f"[Occlusion] swap discarded (partial occlusion): "
-                                  f"bbox={[round(float(v)) for v in target_face.bbox]} "
-                                  f"hidden_landmark_frac={None if _frac is None else round(float(_frac), 3)} "
-                                  f"gate=0.08 hidden_indices={_idx}")
-                    except Exception as _degrade_error:
-                        _swallowed("roop/ProcessMgr.py:occlusion-diag", _degrade_error, "fallback continued")
-                result = restored
+        if _occlusion_state == 'partial':
+            _audit_hit('  of those, partly behind an object (masked, still swapped)')
 
         if _vs is not None and self._verify_worth_it(rotation_action, _head_angles):
             # Profiled, because it is a detection and it used to be invisible:

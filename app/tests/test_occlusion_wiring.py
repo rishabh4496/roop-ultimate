@@ -165,6 +165,39 @@ class OcclusionStateIsStampedTest(unittest.TestCase):
                         'occlusion admission must read the temporally stabilized mask')
 
 
+class OcclusionDoesNotRefuseTheSwapTest(unittest.TestCase):
+    """An object in front of the face is MASKED, never a reason to not swap.
+
+    Two whole-face refusals were added on 2026-09-18/19 and both read as the
+    reported "extensive flicker, no swap when something is in front of the
+    face": `is_synthetic_face` -> return frame (every gap-filled or coasted
+    face popped back to the original for the length of the gap) and
+    `occlusion_state == 'partial'` -> restore the landmark hull (fired on 14 of
+    24 single-face previews in the user's log, flipping frame to frame at the
+    mask boundary). The audit still COUNTS both populations; neither may turn
+    the swap off.
+    """
+
+    def test_process_face_does_not_return_early_on_synthetic_geometry(self):
+        self.assertNotIn('is_synthetic_face',
+                         _calls_in(APP / 'roop' / 'ProcessMgr.py', 'process_face'))
+
+    def test_partial_occlusion_is_counted_and_still_swapped(self):
+        source = (APP / 'roop' / 'ProcessMgr.py').read_text(encoding='utf-8')
+        self.assertNotIn("refused: partial occlusion", source)
+        self.assertNotIn("refused: synthetic face geometry", source)
+        self.assertNotIn("_restore_partial_occlusion", source)
+        self.assertIn("partly behind an object (masked, still swapped)", source)
+
+    def test_the_occluder_mask_is_what_protects_the_object(self):
+        """The composition the refusal was standing in for still runs."""
+        from roop.occlusion_mask import inject_occlusion_engine
+
+        chain = {'faceswap': {}, 'mask_xseg': {}}
+        updated, _ = inject_occlusion_engine(chain, enabled=True)
+        self.assertEqual(list(updated), ['faceswap', 'mask_xseg', 'mask_occluder'])
+
+
 class SwapperSurfaceTest(unittest.TestCase):
     """Spec 2: `face_swapper.py`'s own surface, and its honesty about scope."""
 

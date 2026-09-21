@@ -252,8 +252,26 @@ class NVHardwareVideoReader:
         try:
             assert self.proc is not None and self.proc.stdout is not None
             while True:
+                # `release()` is called from ANOTHER thread on cancellation
+                # (ProcessMgr._run_stab_parallel's cleanup does it on purpose,
+                # to interrupt a blocking pipe read before joining the reader).
+                # It nulls `self.proc`, so re-reading the attribute here raised
+                # AttributeError on 'stdout' inside the reader thread, which
+                # `_reader` recorded as a decode failure and re-raised after
+                # cleanup -- a user's Stop ended in a traceback in the log.
+                # A released pipe is end of stream, nothing else.
+                proc = self.proc
+                if proc is None or proc.stdout is None:
+                    break
                 frame = np.empty((self.height, self.width, 3), dtype=np.uint8)
-                bytes_read = self._read_into(self.proc.stdout, frame)
+                try:
+                    bytes_read = self._read_into(proc.stdout, frame)
+                except (ValueError, OSError):
+                    # "read of closed file": the pipe was closed under us by
+                    # release()/close(). Same answer as above.
+                    if self.proc is None:
+                        break
+                    raise
                 if bytes_read < self.frame_size:
                     if bytes_read:
                         logger.warning(
