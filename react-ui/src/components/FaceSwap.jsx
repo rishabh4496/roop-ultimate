@@ -10,6 +10,7 @@ import FileDrop from './faceswap/FileDrop';
 import {
   buildFaceMappingArray,
   buildTargetSelectionState,
+  defaultSourceIndexForTarget,
   stableTargetSourceMapping,
   mappingObjectFromArray,
   remapSourceMappingAfterRemoval,
@@ -359,6 +360,21 @@ export default function FaceSwap({
       ? res.selected_target_face_index
       : (Number.isInteger(saved.selTargetFace) ? saved.selTargetFace : 0);
     const boundedFace = Math.max(0, Math.min(selectedFace, Math.max(0, faces.length - 1)));
+    const targetIndex = Number.isInteger(res?.selected_target_index)
+      ? res.selected_target_index
+      : targets.findIndex((target) => (target.media_id || target.id) === mediaId);
+    const availableSourceInfo = Array.isArray(res?.source_faces_info)
+      ? res.source_faces_info : sourceFacesInfo;
+    const availableSourceCount = Math.max(sourceFaces.length, availableSourceInfo.length);
+    const serverSourceIndex = res?.target_selected_source_id
+      ? availableSourceInfo.findIndex((info) => String(info?.id || '')
+        === String(res.target_selected_source_id)) : -1;
+    const storedSourceIndex = Number.isInteger(saved.selSource) ? saved.selSource
+      : serverSourceIndex >= 0 ? serverSourceIndex : undefined;
+    const restoredSelSource = storedSourceIndex !== undefined
+      && storedSourceIndex >= 0 && storedSourceIndex < availableSourceCount
+      ? storedSourceIndex
+      : defaultSourceIndexForTarget(targetIndex, availableSourceCount, selSource);
     setTargetFaces(faces);
     setTargetGroups(groups);
     setTargetNames(names);
@@ -377,14 +393,11 @@ export default function FaceSwap({
     setFrame(restoredFrame);
     setPreviewSrc(saved.previewSrc || '');
     setPreviewFor(saved.previewFor || '');
-    const restoredSelSource = (Number.isInteger(saved.selSource) && saved.selSource >= 0
-      && (sourceFaces.length === 0 || saved.selSource < sourceFaces.length))
-      ? saved.selSource
-      : undefined;
-    if (restoredSelSource !== undefined) {
-      setSelSource(restoredSelSource);
-      postJSON('/api/source/select', { index: restoredSelSource }).catch(() => {});
-    }
+    setSelSource(restoredSelSource);
+    // Keep the backend's target-scoped source selection in step with the
+    // preview. This is also what makes a webview reload restore target 2's
+    // faceset instead of falling back to the globally selected source.
+    postJSON('/api/source/select', { index: restoredSelSource }).catch(() => {});
     targetContextsRef.current[mediaId] = {
       ...saved,
       targetFaces: faces,
@@ -400,7 +413,7 @@ export default function FaceSwap({
       faceMapping: restoredMapping || {},
       previewSrc: saved.previewSrc || '',
       previewFor: saved.previewFor || '',
-      selSource: restoredSelSource !== undefined ? restoredSelSource : saved.selSource,
+      selSource: restoredSelSource,
     };
   };
 
@@ -1084,6 +1097,7 @@ export default function FaceSwap({
       target_person_source_mapping: getStableTargetSourceMapping(activeParams),
       target_person_ids: targetPersonIds,
       source_mapping_names: getSourceMappingNames(activeParams),
+      selected_source_id: sourceIdAt(selSource),
       selected_source_name: sourceNameAt(selSource),
       target_media_id: requestedMediaId || targetIdAt(index) || activeTargetMediaId,
       selection_state: getTargetSelectionState(activeParams),

@@ -22,7 +22,10 @@ import {
   sameSelectionIdentity,
   selectionIdentity,
 } from '../src/components/faceswap/processingSelection.js';
-import { buildTargetSelectionState } from '../src/components/faceswap/faceMapping.js';
+import {
+  buildTargetSelectionState,
+  defaultSourceIndexForTarget,
+} from '../src/components/faceswap/faceMapping.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -265,6 +268,12 @@ await check('a diagnostic answer (server person null) for the wanted request is 
 });
 
 group('Source A -> source B');
+await check('new target previews pair with its own source by target index', () => {
+  assert.equal(defaultSourceIndexForTarget(0, 2), 0);
+  assert.equal(defaultSourceIndexForTarget(1, 2), 1);
+  assert.equal(defaultSourceIndexForTarget(2, 2), 0);
+  assert.equal(defaultSourceIndexForTarget(null, 2, 1), 1);
+});
 await check('the source-A answer is discarded; source B is displayed', async () => {
   const flow = makePreviewFlow(makeServer(() => 20));
   await flow.refresh();
@@ -424,6 +433,9 @@ await check('target context preserves selSource across target selection switches
   assert.ok(rememberBody.includes('selSource,'), 'rememberTargetContext must include selSource');
   assert.ok(applyBody.includes('saved.selSource'), 'applyTargetContext must restore saved.selSource');
   assert.ok(applyBody.includes('setSelSource(restoredSelSource)'), 'applyTargetContext must call setSelSource');
+  assert.ok(applyBody.includes('defaultSourceIndexForTarget'), 'new targets need a deterministic source default');
+  assert.ok(applyBody.includes('target_selected_source_id'), 'backend target source selection must be restored');
+  assert.ok(faceSwap.includes('selected_source_id: sourceIdAt(selSource)'), 'preview must carry the selected source identity');
 });
 
 console.log(`\n${fails.length ? `FAILED: ${fails.length} (${fails.join(', ')})` : `ALL GREEN: ${pass}/${pass} checks passed`}`);

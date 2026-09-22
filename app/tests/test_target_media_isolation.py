@@ -48,6 +48,7 @@ class TargetMediaIsolation(unittest.TestCase):
         self.old_selected = state.selected_target_index
         self.old_active = getattr(state, 'active_target_media_id', None)
         self.old_selected_face = getattr(state, 'selected_target_face_index', 0)
+        self.old_selected_source_id = getattr(state, 'active_target_selected_source_id', None)
         self.old_mapping = getattr(state, 'active_target_source_mapping', {})
         self.old_cfg = roop_globals.CFG
         self.old_refresh = api._refresh_target_frames
@@ -61,6 +62,7 @@ class TargetMediaIsolation(unittest.TestCase):
         state.selected_target_index = 0
         state.active_target_media_id = None
         state.selected_target_face_index = 0
+        state.active_target_selected_source_id = None
         state.active_target_source_mapping = {}
         # Media loading is orthogonal to these tests; keep selection deterministic.
         api._refresh_target_frames = lambda _idx: None
@@ -81,6 +83,7 @@ class TargetMediaIsolation(unittest.TestCase):
         state.selected_target_index = self.old_selected
         state.active_target_media_id = self.old_active
         state.selected_target_face_index = self.old_selected_face
+        state.active_target_selected_source_id = self.old_selected_source_id
         state.active_target_source_mapping = self.old_mapping
         roop_globals.CFG = self.old_cfg
 

@@ -385,6 +385,7 @@ def _save_active_target_context_locked():
             selected_reference_face_id=getattr(state, "selected_reference_face_id", None),
             target_person_source_mapping=stable_mapping,
             target_person_names=getattr(state, "active_target_person_names", {}) or {},
+            selected_source_id=getattr(state, "active_target_selected_source_id", None),
         )
 
 
@@ -400,6 +401,7 @@ def _clear_active_target_globals_locked():
     ui_globals.ui_target_thumbs.clear()
     state.active_target_source_mapping = {}
     state.active_target_person_source_mapping = {}
+    state.active_target_selected_source_id = None
     state.active_target_person_names = {}
     state.selected_target_person_id = None
     state.selected_reference_face_id = None
@@ -430,6 +432,13 @@ def _load_target_context_locked(media_id: str):
         else list(context.source_mapping or []))
     state.active_target_person_source_mapping = dict(
         context.target_person_source_mapping or {})
+    state.active_target_selected_source_id = context.selected_source_id
+    if state.active_target_selected_source_id:
+        source_id = str(state.active_target_selected_source_id)
+        for index, info in enumerate(_get_source_faces_info()):
+            if str(info.get("id") or "") == source_id:
+                state.selected_input_face_index = index
+                break
     state.active_target_person_names = dict(context.target_person_names or {})
     state.selected_target_person_id = context.selected_target_person_id
     state.selected_reference_face_id = context.selected_reference_face_id
@@ -557,6 +566,8 @@ def _target_context_payload():
         # view for older UI builds; it is never used as durable identity.
         "face_mapping": dict(stable_mapping),
         "target_person_source_mapping": dict(stable_mapping),
+        "target_selected_source_id": (
+            getattr(state, "active_target_selected_source_id", None)),
         "legacy_face_mapping": _target_legacy_mapping_array(),
         "target_faces": [_rgb_to_dataurl(t) for t in ui_globals.ui_target_thumbs],
         "target_groups": _target_groups_ranked(),
@@ -773,6 +784,7 @@ def _create_processing_project(payload, job_id=None):
             "target_reference_face_ids": list(getattr(roop_globals, "TARGET_REFERENCE_FACE_IDS", [])),
             "selected_target_person_id": getattr(state, "selected_target_person_id", None),
             "selected_reference_face_id": getattr(state, "selected_reference_face_id", None),
+            "target_selected_source_id": getattr(state, "active_target_selected_source_id", None),
             "target_person_source_mapping": dict(getattr(state, "active_target_person_source_mapping", {}) or {}),
             "target_person_names": dict(getattr(state, "active_target_person_names", {}) or {}),
         },
@@ -2020,6 +2032,9 @@ def source_clear():
 @app.post("/api/source/select")
 def source_select(payload: dict = Body(...)):
     state.selected_input_face_index = int(payload.get("index", 0))
+    state.active_target_selected_source_id = _selected_source_identity()
+    with _target_context_lock:
+        _save_active_target_context_locked()
     return {"selected": state.selected_input_face_index}
 
 

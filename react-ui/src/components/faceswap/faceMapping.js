@@ -14,6 +14,21 @@ export const SKIP = -1;
 
 const hasOwn = (object, key) => Object.prototype.hasOwnProperty.call(object || {}, key);
 
+// A target without an explicit source binding follows the same deterministic
+// pairing used by the batch uploader: target 0 -> source 0, target 1 -> source
+// 1, then wrap. Keeping this in one pure helper lets the preview and the
+// regression harness agree instead of leaving a new target pointing at the
+// source selected for the previous target.
+export function defaultSourceIndexForTarget(targetIndex, sourceCount, fallback = 0) {
+  const count = Number(sourceCount);
+  if (!Number.isInteger(count) || count <= 0) return 0;
+  const target = targetIndex === null || targetIndex === undefined || targetIndex === ''
+    ? NaN : Number(targetIndex);
+  if (Number.isInteger(target) && target >= 0) return target % count;
+  const previous = Number(fallback);
+  return Number.isInteger(previous) && previous >= 0 && previous < count ? previous : 0;
+}
+
 // Source-gallery indices are a separate namespace from target-person ranks.
 // Normalize malformed values to the explicit skip sentinel; never coerce them
 // to source 0, because source 0 is a real user's identity.

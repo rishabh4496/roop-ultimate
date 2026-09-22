@@ -116,7 +116,7 @@ class Stage14Base(unittest.TestCase):
             "selected_target_face_index", "active_target_source_mapping",
             "active_target_person_source_mapping", "active_target_person_names",
             "selected_target_person_id", "selected_reference_face_id",
-            "selected_input_face_index")}
+            "selected_input_face_index", "active_target_selected_source_id")}
         self.old_refresh = api._refresh_target_frames
         self.old_versions = dict(api._selection_versions)
         self.old_cfg = roop_globals.CFG
@@ -139,6 +139,7 @@ class Stage14Base(unittest.TestCase):
         state.selected_target_face_index = 0
         state.active_target_source_mapping = {}
         state.active_target_person_source_mapping = {}
+        state.active_target_selected_source_id = None
         state.active_target_person_names = {}
         state.selected_target_person_id = None
         state.selected_reference_face_id = None
@@ -713,6 +714,25 @@ class SessionPersistence(Stage14Base):
         st = self._reload()
         self.assertEqual(st["target_media_id"], self.a)
         self.assertEqual(st["selected_target_person_id"], a2)
+
+    def test_implicit_source_selection_is_per_target_media(self):
+        """The preview's highlighted faceset must follow the target, not a global slot."""
+        api.source_select({"index": 0})
+        api.target_select({"target_media_id": self.b})
+        api.source_select({"index": 1})
+
+        api.target_select({"target_media_id": self.a})
+        self.assertEqual(state.active_target_selected_source_id, "source-a")
+        self.assertEqual(api.get_state()["target_selected_source_id"], "source-a")
+
+        api.target_select({"target_media_id": self.b})
+        self.assertEqual(state.active_target_selected_source_id, "source-b")
+        self.assertEqual(api.get_state()["target_selected_source_id"], "source-b")
+
+        # A webview reload must retain B's source selection as well.
+        st = api.get_state()
+        self.assertEqual(st["target_selected_source_id"], "source-b")
+        self.assertEqual(st["selected_source_id"], "source-b")
 
     def test_deleted_person_cannot_come_back(self):
         """RACE 6."""

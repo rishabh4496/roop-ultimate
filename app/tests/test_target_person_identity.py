@@ -52,6 +52,7 @@ class TargetPersonIdentityTests(unittest.TestCase):
         self.old_person_names = state.active_target_person_names
         self.old_person = state.selected_target_person_id
         self.old_ref = state.selected_reference_face_id
+        self.old_selected_source_id = getattr(state, "active_target_selected_source_id", None)
         self.old_refresh = api._refresh_target_frames
 
         api.list_files_process.clear()
@@ -66,6 +67,7 @@ class TargetPersonIdentityTests(unittest.TestCase):
         state.active_target_media_id = None
         state.selected_target_index = 0
         state.selected_target_face_index = 0
+        state.active_target_selected_source_id = None
         state.active_target_source_mapping = {}
         state.active_target_person_source_mapping = {}
         state.active_target_person_names = {}
@@ -89,6 +91,7 @@ class TargetPersonIdentityTests(unittest.TestCase):
         state.active_target_media_id = self.old_active
         state.selected_target_index = self.old_selected
         state.selected_target_face_index = self.old_face
+        state.active_target_selected_source_id = self.old_selected_source_id
         state.active_target_source_mapping = self.old_mapping
         state.active_target_person_source_mapping = self.old_person_mapping
         state.active_target_person_names = self.old_person_names

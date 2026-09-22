@@ -165,6 +165,13 @@ def _load_into_runtime(record):
         target_context.get("target_person_names") or {})
     api.state.selected_target_person_id = target_context.get("selected_target_person_id")
     api.state.selected_reference_face_id = target_context.get("selected_reference_face_id")
+    api.state.active_target_selected_source_id = target_context.get("target_selected_source_id")
+    if api.state.active_target_selected_source_id:
+        selected_source_id = str(api.state.active_target_selected_source_id)
+        for index, info in enumerate(api._get_source_faces_info()):
+            if str(info.get("id") or "") == selected_source_id:
+                api.state.selected_input_face_index = index
+                break
     try:
         api.state.selected_target_face_index = max(
             0, int(target_context.get("selected_target_face_index", 0) or 0))

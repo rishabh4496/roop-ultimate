@@ -37,6 +37,7 @@ class TargetMediaContext:
     selected_reference_face_id: str | None = None
     target_person_source_mapping: dict = field(default_factory=dict)
     target_person_names: dict = field(default_factory=dict)
+    selected_source_id: str | None = None
 
     def clone(self) -> "TargetMediaContext":
         return TargetMediaContext(
@@ -53,6 +54,7 @@ class TargetMediaContext:
             selected_reference_face_id=self.selected_reference_face_id,
             target_person_source_mapping=dict(self.target_person_source_mapping),
             target_person_names=dict(self.target_person_names),
+            selected_source_id=self.selected_source_id,
         )
 
 
@@ -74,7 +76,8 @@ class TargetMediaContextStore:
              selected_target_face_index=0, source_mapping=None,
              target_person_ids=None, target_reference_face_ids=None,
              selected_target_person_id=None, selected_reference_face_id=None,
-             target_person_source_mapping=None, target_person_names=None) -> TargetMediaContext:
+             target_person_source_mapping=None, target_person_names=None,
+             selected_source_id=None) -> TargetMediaContext:
         context = TargetMediaContext(
             target_faces=list(target_faces or []),
             target_face_group=list(target_face_group or []),
@@ -94,6 +97,8 @@ class TargetMediaContextStore:
                 if isinstance(target_person_source_mapping, dict) else {}),
             target_person_names=(dict(target_person_names)
                                 if isinstance(target_person_names, dict) else {}),
+            selected_source_id=(str(selected_source_id)
+                               if selected_source_id else None),
         )
         self._contexts[str(media_id)] = context
         return context.clone()

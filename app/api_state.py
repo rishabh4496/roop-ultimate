@@ -17,6 +17,7 @@ active_target_media_id = None          # stable id for the selected target file
 selected_target_face_index = 0         # compatibility mirror of active context
 active_target_source_mapping = {}      # per-target source mapping compatibility mirror
 active_target_person_source_mapping = {}  # target_person_id -> source_identity_id
+active_target_selected_source_id = None  # target-scoped implicit source selection
 active_target_person_names = {}           # target_person_id -> display name
 selected_target_person_id = None
 selected_reference_face_id = None
