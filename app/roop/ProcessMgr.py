@@ -58,7 +58,7 @@ from roop import recognizer_adaface as _ada
 from roop.target_selection import (normalize_target_selection, resolve_processing_selection,
                                    selection_group_ids)
 from roop import live_preview as _live_preview
-from roop.procmgr_runtime import _PROFILE, _SELECTED_HOLD_DIST, _TRACK_VETO_DIST, _TRACK_VETO_MARGIN, _TRACK_VETO_SINGLE, _TRACK_EMB_MAX, _DEBUG_MATCH, COLOR_RESET, COLOR_CYAN, COLOR_YELLOW, COLOR_PURPLE, _prof, _prof_report, _prof_reset, _gpu_guard, PROGRESS_BAR_FORMAT, wait_while_paused, pause_controller, pause_scope, pause_aware, ChunkedProgress, bar_write, publish_eta as _publish_eta, _audit_hit, audit_over_threshold as _audit_over_threshold, audit_frame_seen, audit_detect_frame_begin, audit_detect_miss, audit_face_begin, _audit_swapped_gapfill, _audit_reset, _audit_report, audit_frame_failed, VETO_SOURCE_REUSED, VETO_SINGLE_ABS, VETO_OTHER_FITS, VETO_FAR_FROM_OWN, AUDIT_SWAP_MOVED, VERIFY_MIN_OFFAXIS, VERIFY_SWAP, set_runtime_monitor, set_detailed_profiler
+from roop.procmgr_runtime import AUDIT_BOUND_CHILD as _BOUND_CHILD, AUDIT_UNBOUND_CHILD as _UNBOUND_CHILD, _PROFILE, _SELECTED_HOLD_DIST, _UNBOUND_SAME_PERSON, _TRACK_VETO_DIST, _TRACK_VETO_MARGIN, _TRACK_VETO_SINGLE, _TRACK_EMB_MAX, _DEBUG_MATCH, COLOR_RESET, COLOR_CYAN, COLOR_YELLOW, COLOR_PURPLE, _prof, _prof_report, _prof_reset, _gpu_guard, PROGRESS_BAR_FORMAT, wait_while_paused, pause_controller, pause_scope, pause_aware, ChunkedProgress, bar_write, publish_eta as _publish_eta, _audit_hit, audit_over_threshold as _audit_over_threshold, audit_frame_seen, audit_detect_frame_begin, audit_detect_miss, audit_face_begin, _audit_swapped_gapfill, _audit_reset, _audit_report, audit_frame_failed, VETO_SOURCE_REUSED, VETO_SINGLE_ABS, VETO_OTHER_FITS, VETO_FAR_FROM_OWN, AUDIT_SWAP_MOVED, VERIFY_MIN_OFFAXIS, VERIFY_SWAP, set_runtime_monitor, set_detailed_profiler
 from roop.stage_profiler import StageProfiler
 from roop.runtime_optimizer import RuntimeOptimizer, RuntimeMonitor, SafeAdaptiveController
 from roop.runtime_scheduler import UnifiedRuntimeScheduler
@@ -3957,6 +3957,10 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                 for _i, _g in enumerate(_groups[:len(self.target_face_datas)]):
                     if _g in _sel:
                         _sel_persons.add(_g)
+                _sel_persons_angles = {}
+                for _i, _g in enumerate(_groups[:len(self.target_face_datas)]):
+                    if _g in _sel:
+                        _sel_persons_angles.setdefault(_g, []).append(_i)
                 _single_sel = len(_sel_persons) <= 1
                 _sel_sources = {
                     (self.options.selected_index if _single_sel else _rank_all[_g])
@@ -3988,6 +3992,49 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                     # compare equal into a set of Python ints on every path.
                     src = int(src)
                     return src if src in _sel_sources else None
+
+                # The captured person's own embeddings, once per frame, for
+                # the probe below. Same space as a track's emb_mean.
+                _person_embs = [e for e in
+                                (getattr(self.target_face_datas[_i], 'embedding', None)
+                                 for _g2, _tis in _sel_persons_angles.items()
+                                 for _i in _tis)
+                                if e is not None]
+
+                def _track_looks_like_this_person(face):
+                    """Distance from this face's TRACK MEAN to the nearest
+                    captured angle -- None when there is no track or no mean.
+
+                    A refusal count cannot tell "the other person, correctly
+                    refused" from "the selected person on a fragment the
+                    pre-pass failed to bind", and those call for opposite
+                    fixes. The track mean can: it is built over the whole
+                    track, so it is not the contaminated single-frame reading
+                    the refusal was made on."""
+                    if not _tsm or not _person_embs or not isinstance(face, dict):
+                        return None
+                    tid = face.get('_track_id')
+                    if tid is None:
+                        return None
+                    info = _tsm.get(tid)
+                    mean = info[1] if info else None
+                    if mean is None:
+                        return None
+                    return min(compute_cosine_distance(e, mean)
+                               for e in _person_embs)
+
+                def _neighbour_in_crop(face):
+                    """Was another face inside this one's recognition crop,
+                    below the fraction that makes the embedding disbelieved?
+
+                    Above CONTAM_MAX the face is refused as contaminated and
+                    never reaches a distance; below it the pollution is silent.
+                    0.1 is a tenth of the crop -- enough to be the neighbour,
+                    not a rounding artefact of the quad fit."""
+                    if not isinstance(face, dict):
+                        return False
+                    c = face.get('_emb_contam')
+                    return c is not None and 0.1 <= float(c) < face_contact.CONTAM_MAX
 
                 _assign = selected_routing.compute_selected_assignment(
                     faces, self.target_face_datas, self.target_face_groups,
@@ -4090,11 +4137,41 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                     if reason is None or reason.startswith('swapped'):
                         continue
                     _audit_hit(reason)
+                    # Per bucket, not just the threshold one. "The swap blinks
+                    # whenever another face is near" is a statement about WHICH
+                    # refusal fires while two people interact, and three of
+                    # them can: the crop is shared, the neighbour claimed the
+                    # person, or the neighbour polluted the embedding and the
+                    # distance went past the gate. Only a per-bucket count
+                    # against the track binding tells them apart.
+                    _child = _BOUND_CHILD.get(reason)
+                    if _child:
+                        if _bound_source(faces[fidx]) is not None:
+                            _audit_hit(_child)
+                        else:
+                            # Not bound -- but is it this person anyway? The
+                            # answer decides where the fix goes: a bystander
+                            # means the refusal is correct, and a fragment of
+                            # the selected person means the pre-pass failed to
+                            # bind a track it should have, which no gate in
+                            # this file can repair.
+                            _d = _track_looks_like_this_person(faces[fidx])
+                            _same, _other = _UNBOUND_CHILD[reason]
+                            if _d is not None and _d <= _UNBOUND_SAME_PERSON:
+                                _audit_hit(_same)
+                            elif _d is not None:
+                                _audit_hit(_other)
                     if reason == selected_routing.REFUSED_OVER_THRESHOLD:
                         _audit_over_threshold(_best_d.get(fidx), id_threshold)
-                        if _bound_source(faces[fidx]) is not None:
-                            _audit_hit('  of those, on a track the pre-pass '
-                                       'bound to this person')
+                        # Contaminated, but under the gate that disbelieves a
+                        # crop outright — so this face's distance was measured
+                        # from an embedding with somebody else inside it and
+                        # then judged as though it were clean. face_contact's
+                        # own table: at 0.2-0.3 coverage the mean distance to
+                        # the RIGHT person is already 0.43, against a 0.75 gate.
+                        if _neighbour_in_crop(faces[fidx]):
+                            _audit_hit('  of those, with the neighbour inside '
+                                       'the recognition crop')
                     if _DEBUG_MATCH and reason == selected_routing.REFUSED_NO_SOURCE:
                         bar_write(f"[MATCH] a selected person matched face {fidx} "
                                   f"but has no source faceset — NOT swapped")

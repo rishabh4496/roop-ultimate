@@ -7,6 +7,52 @@ folder). Entries before 2026-09-21 were moved here from the README on 2026-09-22
 
 ## 2026-09-22
 
+- **Flicker while another, un-swapped face is in contact — measured, and the obvious
+  fix REJECTED.** Second report the same day. The refusals here are enormous: on the
+  reported clip's densest contact stretch, **1173 of 1485 detected faces (79%) went
+  un-swapped**, 886 of them as `refused: crop shared with the face beside it` — and 406
+  of those sat on a track the pre-pass had bound to the selected person. The cause is
+  in `roop/face_contact.py`'s own table: when two faces touch the neighbour is *inside*
+  this face's aligned recognition crop, and the distance to the person climbs 0.05 →
+  0.63 on the *same* person as coverage grows. The gate stops measuring identity and
+  starts measuring how close the other head is.
+
+  A third claim tier was built — a face too contaminated to measure is claimed by the
+  person its track is bound to — and measured three ways with
+  `tests/diag_contact_identity.py`, which asks the output "is this face the source
+  now?" and the plate "was this face the selected person?" (the only non-circular form
+  of the question, since the target-side crop in these frames is the contaminated one):
+
+  | variant | faces painted | of those, the WRONG person |
+  |---|---|---|
+  | track binding alone | 21 | **14** |
+  | + distance cap 0.85, no gap-filled faces | 8 | 2 |
+  | + claimed closest-first | 8 | 2 |
+
+  Rejected and removed. During the contact the detector loses the occluded face, the
+  neighbour's detection is associated to the bound track on position alone, and every
+  rule that trusts the track paints through that error; a contaminated reading of the
+  *wrong* face drags toward the target (0.98 on the plate, under 0.85 inside the
+  pipeline, same face), so no absolute cap separates them, and on the failing frames
+  the neighbour is the only candidate, so the relative comparison has nothing to
+  compare against. Un-swapped is a bad frame; wrong-person is a worse one. The fix
+  belongs in track association and detection recall, and the audit now counts the
+  population it would have to reach (`of those, on an UNBOUND track that still looks
+  like this person`: 178 and 274 in two of the four windows).
+
+  Kept from the attempt: the instrumentation that settled it, and three diagnostics —
+  `tests/diag_contact_scan.py` (where in a clip do faces actually share a crop; four
+  windows picked from overlapping track *spans* contained none), `diag_contact_identity.py`
+  and `diag_contact_panel.py`.
+
+- **A pixel diff between two renders cannot attribute a change to a face.** The
+  stabilizers carry state across frames, so an arm that swaps a face the other refused
+  diverges on later frames and on pixels around the face — which made the change look,
+  for an hour, as though it had been painted onto the neighbour. The same comparison
+  with `--no-stabilize` put it squarely on the intended face. The null control is
+  bit-identical for this config, so the difference was real; only its
+  *location* was not readable that way.
+
 - **The swapped face blinked on and off (Selected-person mode).** Reported on a
   246k-frame clip, one selected person, one faceset. The run's SWAP AUDIT said 24.4% of
   detected faces were never swapped, with "refused: over the identity threshold" the

@@ -41,6 +41,43 @@ frame of that track, not this one), the face must still be within
 track veto has to the match threshold -- and no other selected person may fit
 it better. A track whose identity really did change therefore stops being held
 as soon as the face stops resembling the person at all.
+
+REJECTED, 2026-09-22: deciding a face in CONTACT by its track binding.
+
+When two faces touch, the neighbour is inside this face's aligned recognition
+crop (roop/face_contact.py measures the fraction), so the distance stops
+measuring the person: that module's table has d(own) climbing 0.05 -> 0.63
+across the coverage bands on the SAME person. The refusals that follow are
+large and real -- on the reported clip's densest contact window, 886 of 1485
+detected faces were refused as "crop shared", 406 of them on a track the
+pre-pass had bound to the selected person, and 79% of faces went un-swapped.
+
+So a third tier was built: a face too contaminated to measure is claimed by the
+person its track is bound to. It was measured three ways and rejected.
+
+    tests/diag_contact_identity.py asks the output, per face, "is this the
+    source now?", and the plate, per face, "was this the selected person?" --
+    the only non-circular form of the question, since the target-side crop in
+    these frames is the contaminated one.
+
+    binding alone            21 faces painted, 14 NOT the selected person
+    + distance cap 0.85,
+      no gap-filled faces     8 faces painted,  2 NOT the selected person
+    + claimed closest-first   8 faces painted,  2 NOT the selected person
+
+The cause is upstream and no rule here can see past it: during the contact the
+detector loses the occluded face, the neighbour's detection is associated to
+the bound track on position alone, and every rule that trusts the track then
+paints through that error. The distance cannot catch it either -- contamination
+drags the WRONG face's reading toward the target (0.98 measured on the plate,
+under 0.85 inside the pipeline on the same face). Claiming closest-first, which
+is the relative comparison face_contact recommends, changed nothing, because on
+the failing frames the neighbour is the only candidate there is.
+
+Un-swapped is a bad frame; wrong-person is a worse one. The fix belongs in the
+track association (and in detection recall on the occluded face), not in this
+function -- and the audit now counts the population it would have to fix:
+`of those, on an UNBOUND track that still looks like this person`.
 """
 
 from __future__ import annotations
@@ -132,6 +169,7 @@ def compute_selected_assignment(
     the looser gate such a face is still required to pass. Both absent (or a
     binding that answers None, which is every face on a run with no pre-pass)
     leaves the decision exactly as it was.
+
     """
     selected = set(selected_target_groups or ())
 

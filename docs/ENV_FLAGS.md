@@ -751,6 +751,9 @@ refusal line names the gate to loosen:
 | `fallback missed (over match threshold)` | Per-frame matching also failed — raise **max face distance** |
 | `refused: over the identity threshold` | The default (Selected-person) path's own threshold refusal. Read the two lines under it first: the recovery curve says whether the refused faces are near the gate at all, and `of those, on a track the pre-pass bound to this person` says whether they are the selected person or a bystander. Only the first is a threshold question — see `ROOP_SELECTED_HOLD` |
 | `swapped (track continuity)` | Not a refusal: faces past the gate that `ROOP_SELECTED_HOLD` held because their track was already bound to that person |
+| `refused: crop shared with the face beside it` | The neighbour is inside this face's recognition crop, so its identity cannot be measured and it is offered to nobody (`ROOP_EMB_CONTAM` is the measure). Deciding these by the track binding instead was measured and rejected — it painted the wrong person; see `roop/selected_routing.py`'s docstring |
+| `  of those, on an UNBOUND track that still looks like this person` | The population a fix would have to reach: the selected person on a track the pre-pass failed to bind. Large here means a track-assignment problem, not a gate problem |
+| `  of those, on a track that looks like somebody else` | The refusals that are correct. Large here means the run is behaving and the flicker is elsewhere |
 | `discarded: the swap put the face somewhere it was not` | The post-swap outcome check pasted the plate back — as un-swapped as any refusal, and on hard footage it can be the largest one. `ROOP_VERIFY_SWAP=0` turns it off; note that for every swap model but hififace its clean and wrecked bands overlap, so it cannot separate them |
 | `  of those, gap-filled` | How many swapped faces were *invented* by gap-fill rather than detected (see `ROOP_INTERP_MAX_SCALE` / `ROOP_TEMPORAL_GAP`) |
 

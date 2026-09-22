@@ -14,6 +14,14 @@ track binding may only hold a decision already made. A hold never outranks a
 confirmed match, never applies without the binding, and stops at a deliberately
 looser second gate.
 
+The second half of the file is the same defect with a different cause, reported
+next: the swap flickers while another, un-swapped face is in front of, around,
+or interacting with the swapped one. There the distance is not noisy, it is
+meaningless -- the neighbour is inside this face's aligned recognition crop, so
+what the gate measures is how close the other head is. Deciding those faces by
+their track instead was measured and REJECTED; the class that says so carries
+the numbers.
+
 Pure: synthetic embeddings, no GPU, no detector.
 """
 
@@ -63,11 +71,14 @@ def _at_distances(d0, d1):
 
 
 class _Face:
-    def __init__(self, embedding, track=None, unreliable=False):
+    def __init__(self, embedding, track=None, unreliable=False, contam=0.0):
         self.embedding = np.asarray(embedding, np.float64)
         self.bbox = (0, 0, 10, 10)
         self.track = track
         self._unreliable = unreliable
+        # the fraction of this face's recognition crop that is the face next
+        # to it, as face_contact stamps it
+        self.contam = float(contam)
 
 
 def _identity_match(reference_faces, probe):
@@ -209,12 +220,51 @@ class TheBindingHasToBeForThisPerson(unittest.TestCase):
 
 class ContaminatedFacesAreUntouchedByTheHold(unittest.TestCase):
     def test_a_shared_crop_is_still_offered_to_nobody(self):
-        """Its identity reading is the one this file refuses to trust; a
-        binding does not make the reading trustworthy, so nothing changes here
-        until that case is measured on its own."""
+        """The hold widens a gate; a contaminated face's distance is not a
+        reading of the person at all, so widening cannot reach it. What that
+        face needs is a different kind of evidence -- see the class below for
+        the one that was tried and rejected."""
         face = _Face(_at_distance(PERSON_0, 0.80), track=7, unreliable=True)
         r = _run([face], [_Face(PERSON_0)], [0], {0}, bindings={7: 0})
         self.assertEqual(r.reasons[0], sr.REFUSED_CONTAMINATED)
+
+
+class AFaceInContactIsStillRefused(unittest.TestCase):
+    """The REJECTED experiment, pinned so it is not quietly re-attempted.
+
+    Deciding a face in contact by its track binding -- because its distance has
+    stopped measuring the person -- was built and measured on 2026-09-22
+    against the reported clip's densest contact window, with
+    tests/diag_contact_identity.py asking the output "is this the source now?"
+    and the plate "was this the selected person?":
+
+        binding alone                        21 painted, 14 the WRONG person
+        + distance cap, no gap-filled faces   8 painted,  2 the WRONG person
+        + claimed closest-first               8 painted,  2 the WRONG person
+
+    The cause is upstream: the detector loses the occluded face, the
+    neighbour's detection is associated to the bound track on position alone,
+    and a contaminated reading of the wrong face drags TOWARD the target (0.98
+    on the plate, under 0.85 inside the pipeline, same face), so no absolute
+    cap separates them. On the failing frames the neighbour is the only
+    candidate, so the relative comparison has nothing to compare against
+    either. Un-swapped is a bad frame; wrong-person is a worse one.
+    """
+
+    def test_a_shared_crop_is_offered_to_nobody_even_with_a_binding(self):
+        face = _Face(_at_distance(PERSON_0, 0.80), track=7, unreliable=True)
+        r = _run([face], [_Face(PERSON_0)], [0], {0}, bindings={7: 0})
+        self.assertEqual(r.reasons[0], sr.REFUSED_CONTAMINATED)
+        self.assertEqual(r.pending, [])
+
+    def test_the_routing_takes_no_contamination_arguments(self):
+        """A re-attempt has to read the docstring first, not rediscover it."""
+        import inspect
+        params = inspect.signature(sr.compute_selected_assignment).parameters
+        for gone in ('contamination', 'contamination_floor', 'contact_max',
+                     'gap_filled'):
+            self.assertNotIn(gone, params)
+        self.assertIn('REJECTED', sr.__doc__)
 
 
 class TheDefaultIsUnchangedWithoutAPrePass(unittest.TestCase):

@@ -106,6 +106,12 @@ def main():
                     help="restore the captured target faces from this saved "
                          "project json instead of re-capturing -- the exact "
                          "identity references the reported run used")
+    ap.add_argument("--no-stabilize", action="store_true",
+                    help="turn every stabilizer off in BOTH arms. The "
+                         "stabilizers carry state across frames, so an arm "
+                         "that swaps a face where the other did not diverges "
+                         "on later frames too -- which makes a pixel diff "
+                         "unable to say WHICH face the change belongs to.")
     ap.add_argument("--tracking", default="0",
                     help="1 = 'Lock face identities'; default 0, the mode the "
                          "audit under test comes from")
@@ -138,14 +144,15 @@ def main():
     g.video_encoder = cfg.get("video_encoder") or "libx264"
     g.video_quality = 12
 
+    _stab = not args.no_stabilize
     options = ab.build_options(
         g, swap_model, tfv.map_mask_engine(mask_engine), False,
-        stabilize_mask=bool(cfg.get("stabilize_mask")),
+        stabilize_mask=_stab and bool(cfg.get("stabilize_mask")),
         stabilize_mask_strength=float(cfg.get("stabilize_mask_strength", 0.5) or 0.5),
-        stabilize_face=bool(cfg.get("stabilize_face")),
-        stabilize_enhancer=bool(cfg.get("stabilize_enhancer")),
-        stabilize_landmarks=bool(cfg.get("stabilize_landmarks")),
-        stabilize_hf_texture=bool(cfg.get("stabilize_hf_texture")),
+        stabilize_face=_stab and bool(cfg.get("stabilize_face")),
+        stabilize_enhancer=_stab and bool(cfg.get("stabilize_enhancer")),
+        stabilize_landmarks=_stab and bool(cfg.get("stabilize_landmarks")),
+        stabilize_hf_texture=_stab and bool(cfg.get("stabilize_hf_texture")),
         stabilize_hf_texture_weight=float(
             cfg.get("stabilize_hf_texture_weight", 0.15) or 0.15))
 

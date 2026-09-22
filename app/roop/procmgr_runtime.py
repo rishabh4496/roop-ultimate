@@ -457,6 +457,23 @@ _TRACK_ASSIGN_MARGIN = float(os.environ.get('ROOP_TRACK_ASSIGN_MARGIN', '0.15'))
 _SELECTED_HOLD_DIST = float(os.environ.get('ROOP_SELECTED_HOLD', '0.95'))
 
 
+# A THIRD tier here -- deciding a face in CONTACT by its track binding, because
+# its distance has stopped measuring the person -- was built and REJECTED on
+# 2026-09-22. It painted the wrong person on 14 of 21 faces, and still on 2 of 8
+# with a distance cap and gap-filled faces excluded. The full measurement and
+# why no rule at this layer can separate the two faces is in
+# roop/selected_routing.py's module docstring. Do not re-add it without fixing
+# the track association first; `tests/diag_contact_identity.py` is the test that
+# says whether the right person was painted.
+# Reporting only. A refused face whose TRACK MEAN sits this close to a captured
+# angle is that person on a track the pre-pass did not bind -- as opposed to a
+# bystander, which on real footage reads 0.85-1.0. Halfway between the two
+# populations the assignment gates already name (ROOP_TRACK_ASSIGN_FLOOR 0.45,
+# and the 0.84-0.97 the other person's tracks actually measure), so it does not
+# need to be exact to separate them. Nothing is gated on this value.
+_UNBOUND_SAME_PERSON = float(os.environ.get('ROOP_UNBOUND_SAME', '0.65'))
+
+
 # Floor under the margin above. The margin is relative to the person's best
 # track, so an unusually GOOD anchor makes it unusually strict: a clean frontal
 # capture matching a clean frontal track can anchor at 0.15, which would then
@@ -777,15 +794,45 @@ AUDIT_SWAP_MOVED = 'discarded: the swap put the face somewhere it was not'
 # are three of those and a child cannot name one, so it prints after the last
 # of them.
 AUDIT_SWAP_TOTAL = object()
+# One per refusal bucket: how many of ITS faces sat on a track the whole-clip
+# pre-pass had already bound to the selected person. Same question three times,
+# and the answers mean different things, so they cannot share a line.
+AUDIT_BOUND_CHILD = {
+    'refused: over the identity threshold':
+        '  of those, on a track bound to this person (over the gate)',
+    'refused: crop shared with the face beside it':
+        '  of those, on a track bound to this person (shared crop)',
+    'refused: that person matched a closer face':
+        '  of those, on a track bound to this person (closer face)',
+}
+
+# The two ways a refused face can have NO binding, PER BUCKET. One pair shared
+# across the three buckets was the same mistake the parent map exists to stop:
+# the counts summed over all three and printed under one, so a real run showed
+# 655 of them under a line reading 148.
+AUDIT_UNBOUND_CHILD = {
+    parent: ('  of those, on an UNBOUND track that still looks like this '
+             'person (%s)' % tag,
+             '  of those, on a track that looks like somebody else (%s)' % tag)
+    for parent, tag in (('refused: over the identity threshold', 'over the gate'),
+                        ('refused: crop shared with the face beside it', 'shared crop'),
+                        ('refused: that person matched a closer face', 'closer face'))
+}
+
 AUDIT_CHILD_OF = {
     '  of those, gap-filled': 'faces seen',
-    '  of those, crop shared with the face beside it': 'faces seen',
-    '  of those, on a track the pre-pass bound to this person':
+    '  of those, with the neighbour inside the recognition crop':
         'refused: over the identity threshold',
+    '  of those, crop shared with the face beside it': 'faces seen',
     '  of those, partly behind an object (masked, still swapped)':
         AUDIT_SWAP_TOTAL,
     AUDIT_SWAPPED_GAPFILL: AUDIT_SWAP_TOTAL,
 }
+AUDIT_CHILD_OF.update({child: parent
+                       for parent, child in AUDIT_BOUND_CHILD.items()})
+AUDIT_CHILD_OF.update({child: parent
+                       for parent, pair in AUDIT_UNBOUND_CHILD.items()
+                       for child in pair})
 
 # A frame whose processing RAISED. The worker writes the original frame and
 # carries on (a bad frame must not lose a long render), and the per-frame line
