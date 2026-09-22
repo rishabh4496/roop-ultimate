@@ -164,6 +164,37 @@ check('All faces: rank past the gallery becomes Skip, not out of range', () => {
     [0, 1, SKIP],
   );
 });
+check('stable target ids keep the rank fallback for multiple faces', () => {
+  assert.deepEqual(
+    build({
+      targetGroups: [0, 1], targetPersonIds: ['tp-a', 'tp-b'],
+      sourceIdentityIds: ['src-a', 'src-b'], sourceCount: 2,
+      selTargetFace: 0, selectedSource: 0, faceSelection: 'All faces',
+    }),
+    [0, 1],
+  );
+});
+check('stable target ids keep both default bindings in Selected people mode', () => {
+  const options = {
+    targetGroups: [0, 1], targetPersonIds: ['tp-a', 'tp-b'],
+    sourceIdentityIds: ['src-a', 'src-b'], sourceCount: 2,
+    faceMapping: {}, selTargetFace: 0, selectedSource: 0,
+    selectedTargetPersonId: 'tp-a', faceSelection: 'Selected people',
+  };
+  assert.deepEqual(build(options), [0, 1]);
+  assert.deepEqual(buildTargetSelectionState(options).person_ids, ['tp-a', 'tp-b']);
+});
+check('an explicit stable Skip still overrides the rank fallback', () => {
+  assert.deepEqual(
+    build({
+      targetGroups: [0, 1], targetPersonIds: ['tp-a', 'tp-b'],
+      sourceIdentityIds: ['src-a', 'src-b'], sourceCount: 2,
+      faceMapping: { 'tp-b': -1 }, selTargetFace: 0, selectedSource: 0,
+      faceSelection: 'Selected people',
+    }),
+    [0, SKIP],
+  );
+});
 
 group('The payload never violates the backend contract');
 check('every entry is -1 or a valid gallery index, across a mode/size sweep', () => {

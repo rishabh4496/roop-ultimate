@@ -154,9 +154,9 @@ export function stableTargetSourceMapping({
     const key = record.targetPersonId;
     const hasStable = hasOwn(faceMapping, key);
     const legacyRank = record.displayRank;
-    const raw = hasStable ? faceMapping[key]
-      : (hasOwn(faceMapping, legacyRank) ? faceMapping[legacyRank] : undefined);
-    if (raw !== undefined) {
+    const hasLegacy = hasOwn(faceMapping, legacyRank);
+    if (hasStable || hasLegacy) {
+      const raw = hasStable ? faceMapping[key] : faceMapping[legacyRank];
       const byIdentity = sourceIds.findIndex((id) => String(id) === String(raw));
       const sourceIndex = byIdentity >= 0
         ? byIdentity : normalizeSourceIndex(raw, sourceCount);
@@ -165,6 +165,17 @@ export function stableTargetSourceMapping({
     }
     if (faceSelection === 'Selected face' && selectedId === key) {
       const sourceIndex = normalizeSourceIndex(selectedSource, sourceCount);
+      if (sourceIndex >= 0 && sourceIds[sourceIndex]) result[key] = sourceIds[sourceIndex];
+      return;
+    }
+    // Stable target-person ids were added after the original rank-based
+    // fallback. Keep the old default for modes that process more than the one
+    // highlighted person: target person 0 uses source 0, person 1 uses source
+    // 1, and so on. Without this fallback a fresh multi-face context emitted
+    // an empty stable mapping, which normalized to [-1, -1, ...] and made the
+    // runtime refuse every face before it reached the swap loop.
+    if (faceSelection !== 'Selected face') {
+      const sourceIndex = normalizeSourceIndex(legacyRank, sourceCount);
       if (sourceIndex >= 0 && sourceIds[sourceIndex]) result[key] = sourceIds[sourceIndex];
     }
   });
