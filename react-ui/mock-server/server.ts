@@ -5,10 +5,14 @@ import { fileURLToPath } from 'url';
 import { WebSocketServer, WebSocket } from 'ws';
 import { createServer as createViteServer } from 'vite';
 import multer from 'multer';
+import { installMockQueue } from './mockQueue';
 
 // This is a MOCK of app/api.py: simulated swaps, invented telemetry, SVG
 // placeholders instead of frames. It exists so the React UI can be developed
 // without a GPU or the Python backend. Nothing in production runs it.
+// The batch queue (/api/queue/*) is simulated in mockQueue.ts: per-job progress
+// is a counter, "dispatch validation" is a lookup against these arrays, and no
+// guarantee of app/routes_queue.py is proven by anything the mock does.
 // Paths are relative to this file, not to the working directory.
 const UI_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -115,14 +119,22 @@ const sourceThumbs = [
   createSampleFaceSvg('Source Gamma (Studio)', 'Pitch: 1.1° · Yaw: -8.4° · Roll: -0.2°', '#14532d', '#052e16', 3),
 ];
 
+// `id` and `name` are what the real /api/state.source_faces_info carries
+// (source_gallery._get_source_faces_info): the queue re-resolves a job's
+// faceset by `id`, the Batch Matrix labels it by `name`.
 const sourceInfo = [
-  { index: 0, path: 'source_alpha.png', width: 512, height: 512, count: 1, poses: ['Frontal'], angles: { pitch: 0.0, yaw: -1.2, roll: 0.5 }, quality: 0.98, landmarks: 106 },
-  { index: 1, path: 'source_beta.png', width: 512, height: 512, count: 1, poses: ['Right 3/4'], angles: { pitch: -2.4, yaw: 24.1, roll: 1.1 }, quality: 0.95, landmarks: 106 },
-  { index: 2, path: 'source_gamma.png', width: 512, height: 512, count: 1, poses: ['Frontal'], angles: { pitch: 1.1, yaw: -8.4, roll: -0.2 }, quality: 0.97, landmarks: 106 },
+  { index: 0, id: '/mock/facesets/source_alpha.png', name: 'source_alpha.png', path: 'source_alpha.png', width: 512, height: 512, count: 1, poses: ['Frontal'], angles: { pitch: 0.0, yaw: -1.2, roll: 0.5 }, quality: 0.98, landmarks: 106 },
+  { index: 1, id: '/mock/facesets/source_beta.png', name: 'source_beta.png', path: 'source_beta.png', width: 512, height: 512, count: 1, poses: ['Right 3/4'], angles: { pitch: -2.4, yaw: 24.1, roll: 1.1 }, quality: 0.95, landmarks: 106 },
+  { index: 2, id: '/mock/facesets/source_gamma.png', name: 'source_gamma.png', path: 'source_gamma.png', width: 512, height: 512, count: 1, poses: ['Frontal'], angles: { pitch: 1.1, yaw: -8.4, roll: -0.2 }, quality: 0.97, landmarks: 106 },
 ];
 
+// `media_id` is the stable id the real queue prefers for target resolution;
+// the Batch Matrix does not forward it (F1 in BATCH_MATRIX_DATA_FLOW.md), so
+// its jobs resolve by basename here exactly as they do on the real backend.
 const targetEntries = [
   {
+    id: 0,
+    media_id: 'mock-media-0001',
     name: 'interview_scene_1080p.mp4',
     filename: 'interview_scene_1080p.mp4',
     preview_available: true,
@@ -135,6 +147,8 @@ const targetEntries = [
     is_video: true,
   },
   {
+    id: 1,
+    media_id: 'mock-media-0002',
     name: 'commercial_portrait.png',
     filename: 'commercial_portrait.png',
     preview_available: true,
@@ -626,6 +640,8 @@ async function startServer() {
       sourceThumbs.push(createSampleFaceSvg(f.originalname, 'Custom Upload · 512px', '#1e293b', '#334155', idx + 10));
       sourceInfo.push({
         index: idx,
+        id: `/mock/facesets/${f.originalname}`,
+        name: f.originalname,
         path: f.originalname,
         width: 512,
         height: 512,
@@ -684,6 +700,8 @@ async function startServer() {
     for (const f of files) {
       const isVid = /\.(mp4|avi|mkv|mov|webm)$/i.test(f.originalname);
       targetEntries.push({
+        id: targetEntries.length,
+        media_id: `mock-media-${String(targetEntries.length + 1).padStart(4, '0')}`,
         name: f.originalname,
         filename: f.originalname,
         preview_available: true,
@@ -1082,8 +1100,51 @@ async function startServer() {
 
   app.post('/api/export/apply', (req, res) => res.json({ ok: true }));
 
-  app.get('/api/queue', (req, res) => res.json({ queue: [], running: progressState.processing }));
-  app.post('/api/queue/join', (req, res) => res.json({ ok: true }));
+  // ── Batch queue (SIMULATED; see mockQueue.ts) ─────────────────────────
+  // A queued job drives the same progressState /api/progress and the telemetry
+  // socket read, as the real queue shares api.py's `_progress` -- so the
+  // ProcessingDock shows a batch exactly as it shows a single run. /api/swap's
+  // 409 while `processing` therefore also holds during a batch.
+  installMockQueue(app, {
+    targets: () => targetEntries.map((t) => ({ name: t.name, media_id: t.media_id, frames: t.frames,
+      start_frame: t.start_frame, end_frame: t.end_frame, fps: t.fps })),
+    sources: () => sourceInfo.map((s) => ({ id: s.id, name: s.name })),
+    personCount: () => new Set(targetGroupsList).size,
+    fps: () => (activeHardwareProfile === 'desktop' ? 31.4 : 18.2),
+    singleRunActive: () => progressState.processing && swapInterval !== null,
+    onProgress: (job, phase) => {
+      if (!job || phase === 'end') {
+        const done = job?.state === 'COMPLETED';
+        progressState = { ...progressState, processing: false, paused: false, pause_requested: false,
+          progress: done ? 1.0 : progressState.progress,
+          desc: job ? `[MOCK queue] ${job.label || job.target_name} -> ${job.state}${job.error ? ` (${job.error})` : ''}` : 'Ready',
+          error: job && job.state === 'FAILED' ? job.error : '',
+          output_filename: done ? job.outputs[0] || '' : '', runtime: getHardwareTelemetry(false) };
+        return;
+      }
+      const p = job.progress;
+      progressState = { ...progressState, processing: true,
+        paused: job.state === 'PAUSED', pause_requested: job.state === 'PAUSE_REQUESTED',
+        stop_requested: false, progress: p.fraction, current_frame: p.frames_done || 0,
+        total_frames: p.frames_total || 0, fps: p.fps || 0, eta_seconds: p.eta_s || 0, error: '',
+        desc: job.state === 'PAUSED' ? 'Paused' : job.state === 'PAUSE_REQUESTED' ? 'Pause requested...'
+          : `[MOCK queue] ${job.target_name} <- ${job.source_name} · frame ${p.frames_done}/${p.frames_total}`,
+        runtime: getHardwareTelemetry(true) };
+    },
+    onOutput: (job) => {
+      const tIdx = Number(job.payload.target_index ?? 0);
+      const outName = `output_${Date.now().toString().slice(-4)}_${job.target_name || 'media.mp4'}`;
+      outputFiles.unshift({ name: outName, size: '9.8 MB', date: new Date().toISOString(),
+        url: `/api/file/${outName}`, thumb: targetThumbs[tIdx], frames: job.progress.frames_total,
+        resolution: '1920x1080' });
+      historyRuns.unshift({ id: `run_${Date.now()}`, timestamp: Date.now(), target: job.target_name,
+        source: job.source_name, frames: job.progress.frames_total, duration: 'simulated',
+        avg_fps: job.progress.fps, enhancer: job.payload.enhancer || appSettings.selected_enhancer,
+        model: job.payload.swap_model || appSettings.swap_model, output: `/api/file/${outName}`,
+        mock_queue_job: job.id });
+      return outName;
+    },
+  });
 
   app.get('/api/jobs/active', (req, res) => res.json({ jobs: [] }));
   app.get('/api/projects', (req, res) => res.json({ projects: [] }));

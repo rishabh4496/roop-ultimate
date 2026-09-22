@@ -7,6 +7,16 @@ the staging logic lives in `react-ui/src/components/faceswap/batchMatrix.js`
 the code by `app/tests/test_batch_matrix_queue.py` and
 `react-ui/.render-check/batch-matrix-check.mjs` (`npm run test:batch`).
 
+`react-ui/mock-server/mockQueue.ts` (`npm run dev:mock`) **simulates** this
+queue for UI development: same routes, same snapshot and job shape, the same
+400/409 refusals, per-job progress counters, and dispatch "validation" that
+is a lookup against the mock's own arrays (one shared person bank, not one
+per target). It reproduces the observable HTTP behaviour described here so
+the Batch Matrix and queue panel can be driven without a GPU; it proves
+nothing about the real pipeline, and every snapshot it returns carries a
+`mock` field saying so. When the two disagree, this document and
+`app/routes_queue.py` are right.
+
 The Batch Matrix (`react-ui/src/components/BatchSwap.jsx`) offers four
 strategies. **All four converge on one job shape and one request**: each
 strategy is only a different way of producing a list of *staged jobs*, and a
