@@ -1891,9 +1891,17 @@ export default function FaceSwap({
       setSelTargetFace(Math.max(0, (res.target_faces || []).length - 1));
       setSelectedDetectedFace(null);
       applyTargetContext(res, res.target_media_id || activeTargetMediaId);
-      set('face_detection_mode', 'Selected face');
+      // Capturing more than one target person must not leave the preview in
+      // the single-person mode. That made "Capture all people" visibly add
+      // several boxes while the next preview still swapped only the selected
+      // one. Keep the explicit single-face behavior for one capture, but make
+      // a multi-person capture immediately preview every captured person.
+      const capturedPeople = new Set(
+        (res.target_person_ids || []).filter((id) => id !== null && id !== undefined && id !== ''),
+      );
+      set('face_detection_mode', capturedPeople.size > 1 ? 'Selected people' : 'Selected face');
       notify(captureAll
-        ? `Added ${res.count} target person(s)`
+        ? `Added ${res.count} target person(s)${capturedPeople.size > 1 ? ' — previewing all captured people' : ''}`
         : `Added Face ${faceIndex + 1} as a target person`);
       return res.selected_target_person_id || null;
     } catch (e) { notify(e.message, 'error'); return null; }

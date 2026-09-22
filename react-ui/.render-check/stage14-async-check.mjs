@@ -433,6 +433,17 @@ await check('a preview face-box click captures that face (or selects its person)
   assert.ok(body.includes('capturedBoxesRef.current[boxKey]'), 'a repeated click must select, not capture twice');
   assert.ok(body.includes('captureBusyRef.current'), 'clicks during an in-flight capture are ignored');
 });
+await check('capturing multiple people switches the preview to multi-person mode', () => {
+  const body = faceSwap.slice(
+    faceSwap.indexOf('const captureTargetFaceFromFrame = async'),
+    faceSwap.indexOf('const useFaceFromFrame = async'),
+  );
+  assert.ok(body.includes('new Set('), 'capture must count stable target people');
+  assert.ok(body.includes("capturedPeople.size > 1 ? 'Selected people' : 'Selected face'"),
+    'multi-person capture must not remain in single-face mode');
+  assert.ok(body.includes('previewing all captured people'),
+    'the UI should confirm that the preview includes every captured person');
+});
 await check('session restore goes through reconcileRestoredSelection and restores the source by id', () => {
   assert.ok(faceSwap.includes('reconcileRestoredSelection({'));
   assert.ok(faceSwap.includes('st.selected_source_id'));
