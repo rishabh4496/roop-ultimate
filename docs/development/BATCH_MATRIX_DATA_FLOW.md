@@ -87,6 +87,12 @@ source_mapping_ids[r]   = source_faces_info[face_mapping[r]].id   | null
 primarySourceIdx        = mappings[0].sourceIdx (if valid) else -1
 ```
 
+The server allocates every gallery id (`_get_source_faces_info`: the absolute
+source path, else `memory:<uuid>`), so `.id` is always present when the
+`source_faces_info` entry is. The client's `memory-slot-<idx>` fallback only
+fires when `source_faces` (thumbnails) is longer than `source_faces_info`;
+such an id matches nothing at render time and resolves to `-1` (§6).
+
 Returned `payload` = `{...FACESWAP_DEFAULTS, ...settings}` (the whole Settings
 snapshot) plus these job-specific fields:
 
@@ -240,10 +246,11 @@ dispatch except through `POST /api/queue/update`.
     (`inputface is None`, 4738) it **returns the frame untouched**.
 * Outputs: every file new or newer in `roop_globals.output_path` since the
   pre-run snapshot (`post_swap._outputs_since`). History:
-  `_record_run_history(payload, produced)` (4999) prepends
-  `{id, time, outputs:[basenames], settings:<payload minus face_mapping,
-  enhancer, detection, video_method, upscale, clip_text, face_distance,
-  autorotate>, duration_s, frames, fps}` to `app/run_history.json`
+  `_record_run_history(payload, produced)` (def 3902, called at 4999)
+  prepends `{id, time, outputs:[basenames], settings:<payload minus
+  _HISTORY_STRIP (3872) = face_mapping, enhancer, detection, video_method,
+  upscale, clip_text, face_distance, autorotate>, duration_s, frames, fps}`
+  to `app/run_history.json`
   (`GET /api/history`). `source_mapping_ids`, `selected_source_id`,
   `selection_state` and `processing_selection` survive in `settings`;
   `face_mapping` does not (F5). The project checkpoint is marked `COMPLETED`.
