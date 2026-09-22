@@ -433,20 +433,20 @@ export default function FaceSwap({
 
   // Single source of truth, shared with the PersonGroups dropdown so the row
   // the user reads and the payload the backend receives cannot disagree.
-  const getFaceMappingArray = (params = p) => buildFaceMappingArray({
+  const getFaceMappingArray = (params = p, selectedSource = selSource) => buildFaceMappingArray({
     targetGroups,
     faceMapping,
     sourceCount: sourceFaces.length,
     faceSelection: params.face_detection_mode,
     selTargetFace,
-    selectedSource: selSource,
+    selectedSource,
     targetPersonIds,
     selectedTargetPersonId,
     selectedReferenceFaceId,
     sourceIdentityIds: sourceFacesInfo.map((info, index) => info?.id || `memory-slot-${index}`),
   });
 
-  const getStableTargetSourceMapping = (params = p) => stableTargetSourceMapping({
+  const getStableTargetSourceMapping = (params = p, selectedSource = selSource) => stableTargetSourceMapping({
     targetGroups,
     targetPersonIds,
     faceMapping,
@@ -454,18 +454,19 @@ export default function FaceSwap({
     sourceIdentityIds: sourceFacesInfo.map((info, index) => info?.id || `memory-slot-${index}`),
     faceSelection: params.face_detection_mode,
     selectedTargetPersonId,
-    selectedSource: selSource,
+    selectedSource,
   });
 
-  const getTargetSelectionState = (params = p) => buildTargetSelectionState({
+  const getTargetSelectionState = (params = p, selectedSource = selSource,
+    targetMediaIndex = selTarget) => buildTargetSelectionState({
     faceSelection: params.face_detection_mode,
     targetGroups,
     faceMapping,
     sourceCount: sourceFaces.length,
     selTargetFace,
-    selectedSource: selSource,
+    selectedSource,
     targetReferenceIndex: selTargetFace,
-    targetMediaIndex: selTarget,
+    targetMediaIndex,
     targetPersonIds,
     selectedTargetPersonId,
     sourceIdentityIds: sourceFacesInfo.map((info, index) => info?.id || `memory-slot-${index}`),
@@ -499,15 +500,20 @@ export default function FaceSwap({
 
   // One object, built from one snapshot of the UI, sent by preview, swap and
   // queue alike. Nothing downstream may re-derive any of these fields.
-  const buildProcessingSelection = (params = p, { requestId = null } = {}) => buildCanonicalSelection({
-    targetMediaId: activeTargetMediaId,
+  const buildProcessingSelection = (params = p, {
+    requestId = null,
+    selectedSource = selSource,
+    targetMediaId = activeTargetMediaId,
+    targetMediaIndex = selTarget,
+  } = {}) => buildCanonicalSelection({
+    targetMediaId,
     targetGroups, targetPersonIds, faceMapping,
     sourceCount: sourceFaces.length,
     sourceIdentityIds: sourceFacesInfo.map((info, index) => info?.id || `memory-slot-${index}`),
     faceSelection: params.face_detection_mode,
     selectedTargetPersonId, selectedReferenceFaceId,
-    selectedSource: selSource,
-    selectionState: getTargetSelectionState(params),
+    selectedSource,
+    selectionState: getTargetSelectionState(params, selectedSource, targetMediaIndex),
     selectionVersion,
     requestId,
   });
@@ -530,9 +536,9 @@ export default function FaceSwap({
     }
   };
 
-  const getSourceMappingNames = (params = p) => getFaceMappingArray(params)
+  const getSourceMappingNames = (params = p, selectedSource = selSource) => getFaceMappingArray(params, selectedSource)
     .map((sourceIndex) => sourceIndex >= 0 ? sourceNameAt(sourceIndex) : null);
-  const getSourceMappingIds = (params = p) => getFaceMappingArray(params)
+  const getSourceMappingIds = (params = p, selectedSource = selSource) => getFaceMappingArray(params, selectedSource)
     .map((sourceIndex) => sourceIndex >= 0 ? sourceIdAt(sourceIndex) : null);
 
   // Profile Management — named setting presets (see faceswap/useProfiles).
@@ -801,8 +807,13 @@ export default function FaceSwap({
   // `target_index` is deliberately absent: the queue resolves the target from
   // the immutable target_media_id at dispatch time, because a stored index goes
   // stale as soon as a target is removed.
-  const buildSwapPayload = (params = p) => {
+  const buildSwapPayload = (params = p, {
+    sourceIndex = selSource,
+    targetMediaId = activeTargetMediaId,
+    targetMediaIndex = selTarget,
+  } = {}) => {
     const sp = withSliderBypass(params);
+    const selectedSource = Number.isInteger(sourceIndex) ? sourceIndex : selSource;
     return {
       ...sp,
       enhancer: sp.selected_enhancer, adaptive_enhancer_profile: sp.adaptive_enhancer_profile || 'BALANCED', detection: sp.face_detection_mode,
@@ -813,16 +824,20 @@ export default function FaceSwap({
       autorotate: sp.autorotate_faces,
       face_distance: num(sp.max_face_distance, 0.75), blend_ratio: num(sp.blend_ratio, 0.8),
       num_swap_steps: num(sp.num_swap_steps, 1),
-      face_mapping: getFaceMappingArray(sp),
-      target_person_source_mapping: getStableTargetSourceMapping(sp),
+      face_mapping: getFaceMappingArray(sp, selectedSource),
+      target_person_source_mapping: getStableTargetSourceMapping(sp, selectedSource),
       target_person_ids: targetPersonIds,
-      source_mapping_names: getSourceMappingNames(sp),
-      source_mapping_ids: getSourceMappingIds(sp),
-      selected_source_name: sourceNameAt(selSource),
-      selected_source_id: sourceIdAt(selSource),
-      target_media_id: activeTargetMediaId,
-      selection_state: getTargetSelectionState(sp),
-      processing_selection: buildProcessingSelection(sp),
+      source_mapping_names: getSourceMappingNames(sp, selectedSource),
+      source_mapping_ids: getSourceMappingIds(sp, selectedSource),
+      selected_source_name: sourceNameAt(selectedSource),
+      selected_source_id: sourceIdAt(selectedSource),
+      target_media_id: targetMediaId,
+      selection_state: getTargetSelectionState(sp, selectedSource, targetMediaIndex),
+      processing_selection: buildProcessingSelection(sp, {
+        selectedSource,
+        targetMediaId,
+        targetMediaIndex,
+      }),
       selection_version: selectionVersion,
       imagemask: maskJson,
     };
@@ -1685,10 +1700,16 @@ export default function FaceSwap({
       const newTargets = newTargetsList.slice(beforeCount);
       const newVideos = newTargets.filter(t => t.frames > 1);
       if (newVideos.length > 1) {
-        const payload = buildSwapPayload();
         await queue.addMany(newVideos.map((t, idx) => {
           const srcIdx = sourceFaces.length > 1 ? (idx % sourceFaces.length) : selSource;
           const targetMediaId = t.media_id || t.id || null;
+          const targetMediaIndex = newTargetsList.findIndex((candidate) =>
+            (candidate.media_id || candidate.id) === targetMediaId);
+          const targetPayload = buildSwapPayload(p, {
+            sourceIndex: srcIdx,
+            targetMediaId,
+            targetMediaIndex: targetMediaIndex >= 0 ? targetMediaIndex : beforeCount + idx,
+          });
           return {
             target_name: t.name || '',
             target_media_id: targetMediaId,
@@ -1697,11 +1718,8 @@ export default function FaceSwap({
               || (sourceFaces[srcIdx] ? `Face ${srcIdx + 1}` : 'Selected face'),
             source_id: sourceIdAt(srcIdx),
             payload: {
-              ...payload,
-              target_media_id: targetMediaId,
+              ...targetPayload,
               source_index: srcIdx,
-              selected_source_id: sourceIdAt(srcIdx),
-              selected_source_name: sourceNameAt(srcIdx),
             },
           };
         }));

@@ -404,6 +404,16 @@ await check('preview, swap and queue payloads all carry processing_selection', (
   }
   assert.ok(jobBody.includes('processing_selection: payload.processing_selection'));
 });
+await check('automatic target queue rebuilds canonical source selection per target', () => {
+  const swapBody = faceSwap.slice(faceSwap.indexOf('const buildSwapPayload = ('), faceSwap.indexOf('const currentJob = ('));
+  const addBody = faceSwap.slice(faceSwap.indexOf('const applyTargetAdd = async'), faceSwap.indexOf('const onAddTarget = async'));
+  assert.ok(swapBody.includes('sourceIndex = selSource'));
+  assert.ok(swapBody.includes('processing_selection: buildProcessingSelection(sp, {'));
+  assert.ok(addBody.includes('const targetPayload = buildSwapPayload(p, {'));
+  assert.ok(addBody.includes('sourceIndex: srcIdx'));
+  assert.ok(addBody.includes('targetMediaId'));
+  assert.ok(addBody.includes('payload: {\n              ...targetPayload'));
+});
 await check('the preview signature strips per-request bookkeeping', () => {
   const sig = faceSwap.slice(faceSwap.indexOf('const previewSignature = ('), faceSwap.indexOf('const previewKey ='));
   assert.ok(sig.includes('selectionIdentity('));
