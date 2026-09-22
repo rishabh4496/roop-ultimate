@@ -316,6 +316,7 @@ export default function FaceSwap({
       frame,
       previewSrc,
       previewFor,
+      selSource,
       ...patch,
     };
   };
@@ -376,6 +377,14 @@ export default function FaceSwap({
     setFrame(restoredFrame);
     setPreviewSrc(saved.previewSrc || '');
     setPreviewFor(saved.previewFor || '');
+    const restoredSelSource = (Number.isInteger(saved.selSource) && saved.selSource >= 0
+      && (sourceFaces.length === 0 || saved.selSource < sourceFaces.length))
+      ? saved.selSource
+      : undefined;
+    if (restoredSelSource !== undefined) {
+      setSelSource(restoredSelSource);
+      postJSON('/api/source/select', { index: restoredSelSource }).catch(() => {});
+    }
     targetContextsRef.current[mediaId] = {
       ...saved,
       targetFaces: faces,
@@ -391,6 +400,7 @@ export default function FaceSwap({
       faceMapping: restoredMapping || {},
       previewSrc: saved.previewSrc || '',
       previewFor: saved.previewFor || '',
+      selSource: restoredSelSource !== undefined ? restoredSelSource : saved.selSource,
     };
   };
 
@@ -406,7 +416,7 @@ export default function FaceSwap({
   }, [activeTargetMediaId, targetFaces, targetGroups, targetNames,
     targetFacesInfo, targetPersonIds, targetReferenceFaceIds,
     selectedTargetPersonId, selectedReferenceFaceId, faceMapping,
-    selTargetFace, frame, previewSrc, previewFor]);
+    selTargetFace, frame, previewSrc, previewFor, selSource]);
 
   // Single source of truth, shared with the PersonGroups dropdown so the row
   // the user reads and the payload the backend receives cannot disagree.
@@ -838,6 +848,9 @@ export default function FaceSwap({
   const loadJobSettings = (job) => {
     if (!job?.payload) return;
     setSettings((s) => ({ ...(s || {}), ...job.payload }));
+    if (Number.isInteger(job.source_index) && job.source_index >= 0) {
+      setSelSource(job.source_index);
+    }
     const idx = job.target_media_id
       ? targets.findIndex((t) => (t.media_id || t.id) === job.target_media_id)
       : targets.findIndex((t) => t.name === job.target_name);
@@ -1659,15 +1672,25 @@ export default function FaceSwap({
       const newVideos = newTargets.filter(t => t.frames > 1);
       if (newVideos.length > 1) {
         const payload = buildSwapPayload();
-        await queue.addMany(newVideos.map((t) => ({
-          target_name: t.name || '',
-          target_media_id: t.media_id || t.id || null,
-          source_index: selSource,
-          source_name: sourceFacesInfo[selSource]?.name
-            || (sourceFaces[selSource] ? `Face ${selSource + 1}` : 'Selected face'),
-          source_id: sourceIdAt(selSource),
-          payload,
-        })));
+        await queue.addMany(newVideos.map((t, idx) => {
+          const srcIdx = sourceFaces.length > 1 ? (idx % sourceFaces.length) : selSource;
+          const targetMediaId = t.media_id || t.id || null;
+          return {
+            target_name: t.name || '',
+            target_media_id: targetMediaId,
+            source_index: srcIdx,
+            source_name: sourceFacesInfo[srcIdx]?.name
+              || (sourceFaces[srcIdx] ? `Face ${srcIdx + 1}` : 'Selected face'),
+            source_id: sourceIdAt(srcIdx),
+            payload: {
+              ...payload,
+              target_media_id: targetMediaId,
+              source_index: srcIdx,
+              selected_source_id: sourceIdAt(srcIdx),
+              selected_source_name: sourceNameAt(srcIdx),
+            },
+          };
+        }));
         notify(`Automatically queued ${newVideos.length} uploaded videos`, 'success');
       }
   };
@@ -1809,8 +1832,13 @@ export default function FaceSwap({
     setSelSource(to);
     try { await postJSON('/api/source/select', { index: to }); } catch { /* best effort */ }
   };
-
-  const selectSource = async (i) => { setSelSource(i); await postJSON('/api/source/select', { index: i }); };
+  const selectSource = async (i) => {
+    setSelSource(i);
+    if (activeTargetMediaId) {
+      rememberTargetContext(activeTargetMediaId, { selSource: i });
+    }
+    await postJSON('/api/source/select', { index: i });
+  };
 
   const captureTargetFaceFromFrame = async ({ faceIndex = null, captureAll = false } = {}) => {
     try {

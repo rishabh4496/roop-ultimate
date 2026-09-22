@@ -658,6 +658,7 @@ def _run_one(job):
     if not actual_media_id and _ensure_target_media_id is not None:
         actual_media_id = _ensure_target_media_id(list_files_process[idx])
     payload["target_media_id"] = media_id or actual_media_id
+    payload["source_index"] = src_idx
     # The worker consumes the job's frozen selection, not whatever selection
     # the UI has moved on to.  Any flat field the payload still carries is
     # overridden by the canonical object in _canonical_processing_request.

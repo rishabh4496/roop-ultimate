@@ -418,6 +418,13 @@ await check('session restore goes through reconcileRestoredSelection and restore
   assert.ok(faceSwap.includes('reconcileRestoredSelection({'));
   assert.ok(faceSwap.includes('st.selected_source_id'));
 });
+await check('target context preserves selSource across target selection switches', () => {
+  const rememberBody = faceSwap.slice(faceSwap.indexOf('const rememberTargetContext ='), faceSwap.indexOf('const applyTargetContext ='));
+  const applyBody = faceSwap.slice(faceSwap.indexOf('const applyTargetContext ='), faceSwap.indexOf('// Keep the ref current for changes'));
+  assert.ok(rememberBody.includes('selSource,'), 'rememberTargetContext must include selSource');
+  assert.ok(applyBody.includes('saved.selSource'), 'applyTargetContext must restore saved.selSource');
+  assert.ok(applyBody.includes('setSelSource(restoredSelSource)'), 'applyTargetContext must call setSelSource');
+});
 
 console.log(`\n${fails.length ? `FAILED: ${fails.length} (${fails.join(', ')})` : `ALL GREEN: ${pass}/${pass} checks passed`}`);
 process.exit(fails.length ? 1 : 0);

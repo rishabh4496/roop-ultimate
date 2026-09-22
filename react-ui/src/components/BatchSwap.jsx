@@ -471,7 +471,8 @@ export default function BatchSwap({ settings = {}, notify }) {
   // ── Strategy 3 Handlers ────────────────────────────────────────────────
   const addMatrixMapping = (tIdx) => {
     setMatrixConfig((prev) => {
-      const cfg = prev[tIdx] || { mappings: [] };
+      const target = targets[tIdx];
+      const cfg = prev[tIdx] || defaultMatrixRow(target, settings);
       const updatedMaps = [...(cfg.mappings || []), { personRank: cfg.mappings?.length || 0, sourceIdx: 0 }];
       return { ...prev, [tIdx]: { ...cfg, mappings: updatedMaps } };
     });
@@ -479,8 +480,8 @@ export default function BatchSwap({ settings = {}, notify }) {
 
   const removeMatrixMapping = (tIdx, mapIdx) => {
     setMatrixConfig((prev) => {
-      const cfg = prev[tIdx];
-      if (!cfg) return prev;
+      const target = targets[tIdx];
+      const cfg = prev[tIdx] || defaultMatrixRow(target, settings);
       const updatedMaps = (cfg.mappings || []).filter((_, i) => i !== mapIdx);
       return { ...prev, [tIdx]: { ...cfg, mappings: updatedMaps } };
     });
@@ -488,9 +489,10 @@ export default function BatchSwap({ settings = {}, notify }) {
 
   const updateMatrixMapping = (tIdx, mapIdx, patch) => {
     setMatrixConfig((prev) => {
-      const cfg = prev[tIdx];
-      if (!cfg) return prev;
-      const updatedMaps = (cfg.mappings || []).map((m, i) => (i === mapIdx ? { ...m, ...patch } : m));
+      const target = targets[tIdx];
+      const cfg = prev[tIdx] || defaultMatrixRow(target, settings);
+      const currentMaps = cfg.mappings?.length ? cfg.mappings : [{ personRank: 0, sourceIdx: 0 }];
+      const updatedMaps = currentMaps.map((m, i) => (i === mapIdx ? { ...m, ...patch } : m));
       return { ...prev, [tIdx]: { ...cfg, mappings: updatedMaps } };
     });
   };
