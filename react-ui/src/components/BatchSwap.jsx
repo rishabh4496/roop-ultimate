@@ -5,12 +5,18 @@ import { Icon } from '../icons';
 import useQueue from './faceswap/useQueue';
 import QueuePanel from './faceswap/QueuePanel';
 import FacesetLibrary from './faceswap/FacesetLibrary';
-import { FACESWAP_DEFAULTS } from './faceswap/defaults';
 import {
-  normalizeSourceMapping,
-  normalizeTargetSelectionState,
-  SKIP,
-} from './faceswap/faceMapping';
+  autoMatchMatrixConfig,
+  buildBatchJobPayload,
+  defaultMatrixRow,
+  queueRequestFromStagedJobs,
+  stageCartesian,
+  stageGrouped,
+  stageMatrix,
+  stageOneToMany,
+  stageSegments,
+  stageSequential,
+} from './faceswap/batchMatrix';
 
 // Helper to convert index to target preview URL
 const targetPreviewUrl = (idx, target) => (
@@ -109,15 +115,7 @@ export default function BatchSwap({ settings = {}, notify }) {
         const updated = { ...prev };
         tg.forEach((t, idx) => {
           if (!updated[idx]) {
-            updated[idx] = {
-              mappings: [{ personRank: 0, sourceIdx: 0 }],
-              swapMode: 'Selected face',
-              enabled: true,
-              enhancer: settings.selected_enhancer || 'Restoreformer++',
-              faceDistance: parseFloat(settings.max_face_distance || 0.75),
-              frameStart: t.start_frame || 1,
-              frameEnd: t.end_frame || t.frames || 1,
-            };
+            updated[idx] = defaultMatrixRow(t, settings);
           }
         });
         return updated;
@@ -267,84 +265,19 @@ export default function BatchSwap({ settings = {}, notify }) {
   };
 
   // ── Multi-Face Payload Builder (Dense & Robust) ────────────────────────
+  // The pure part lives in faceswap/batchMatrix.js so the staging logic can
+  // be run as code by .render-check/batch-matrix-check.mjs.
   const createJobPayload = useCallback(
-    (mappings = [], swapMode = 'Selected face', overrides = {}) => {
-      const base = { ...FACESWAP_DEFAULTS, ...settings };
-      
-      // Build a dense target-person mapping. Missing ranks are explicit skips;
-      // filling them with source 0 silently redirects a person to another
-      // identity when a mapping is sparse or imported from a recipe.
-      let maxRank = -1;
-      mappings.forEach((m) => {
-        const parsed = Number(m.personRank);
-        const r = Number.isInteger(parsed) && parsed >= 0 ? parsed : -1;
-        if (r > maxRank) maxRank = r;
-      });
-
-      const faceMapping = new Array(maxRank + 1).fill(SKIP);
-      mappings.forEach((m) => {
-        const rank = Number(m.personRank);
-        if (!Number.isInteger(rank) || rank < 0) return;
-        const srcIdx = Number(m.sourceIdx);
-        faceMapping[rank] = Number.isInteger(srcIdx) ? srcIdx : SKIP;
-      });
-      const normalizedFaceMapping = normalizeSourceMapping(faceMapping, sourceFaces.length) || [];
-      const sourceMappingNames = normalizedFaceMapping.map((sourceIndex) => {
-        if (sourceIndex < 0) return null;
-        return sourceFacesInfo[sourceIndex]?.name || `Face ${sourceIndex + 1}`;
-      });
-      const sourceMappingIds = normalizedFaceMapping.map((sourceIndex) => {
-        if (sourceIndex < 0) return null;
-        return sourceFacesInfo[sourceIndex]?.id || `memory-slot-${sourceIndex}`;
-      });
-
-      const primarySource = Number(mappings[0]?.sourceIdx);
-      const primarySourceIdx = Number.isInteger(primarySource) && primarySource >= 0
-        && primarySource < sourceFaces.length ? primarySource : SKIP;
-      const personIds = Array.from(new Set(mappings
-        .map((m) => Number(m.personRank))
-        .filter((rank) => Number.isInteger(rank) && rank >= 0)))
-        .sort((a, b) => a - b);
-      const selectionState = swapMode === 'Selected people'
-        ? { selection_mode: 'multi_person', person_id: null, person_ids: personIds }
-        : swapMode === 'Selected face'
-          ? { selection_mode: 'selected', person_id: personIds[0] ?? null, person_ids: personIds.slice(0, 1) }
-          : { selection_mode: 'none', person_id: null, person_ids: [] };
-      const normalizedSelectionState = normalizeTargetSelectionState(selectionState, targetGroups);
-
-      return {
-        payload: {
-          ...base,
-          enhancer: overrides.enhancer || base.selected_enhancer || 'Restoreformer++',
-          detection: swapMode || 'Selected face',
-          output_method: base.output_method || 'Images & Video',
-          video_method: base.video_swapping_method || 'In-Memory processing',
-          upscale: base.subsample_upscale || '128px',
-          mask_engine: base.mask_engine || 'DFL XSeg',
-          mask_engine_2: base.mask_engine_2 || 'None',
-          clip_text: base.mask_clip_text || '',
-          sam2_model_size: base.sam2_model_size || 'tiny',
-          track_identities: !!base.track_identities,
-          autorotate: !!base.autorotate_faces,
-          face_distance: parseFloat(overrides.faceDistance ?? base.max_face_distance ?? 0.75),
-          blend_ratio: parseFloat(base.blend_ratio || 0.8),
-          num_swap_steps: parseInt(base.num_swap_steps || 1, 10),
-          auto_fallback: autoFallbackEnabled,
-          face_mapping: normalizedFaceMapping,
-          source_mapping_names: sourceMappingNames,
-          source_mapping_ids: sourceMappingIds,
-          selected_source_name: primarySourceIdx >= 0
-            ? (sourceFacesInfo[primarySourceIdx]?.name || `Face ${primarySourceIdx + 1}`)
-            : null,
-          selected_source_id: primarySourceIdx >= 0
-            ? (sourceFacesInfo[primarySourceIdx]?.id || `memory-slot-${primarySourceIdx}`)
-            : null,
-          selection_state: normalizedSelectionState,
-        },
-        primarySourceIdx,
-        mappings,
-      };
-    },
+    (mappings = [], swapMode = 'Selected face', overrides = {}) => buildBatchJobPayload({
+      mappings,
+      swapMode,
+      overrides,
+      settings,
+      sourceCount: sourceFaces.length,
+      sourceFacesInfo,
+      targetGroups,
+      autoFallback: autoFallbackEnabled,
+    }),
     [settings, autoFallbackEnabled, sourceFaces.length, sourceFacesInfo, targetGroups],
   );
 
@@ -416,33 +349,9 @@ export default function BatchSwap({ settings = {}, notify }) {
       notify?.('Requires loaded target files and source facesets to auto-match', 'error');
       return;
     }
-
-    let matchCount = 0;
-    const updatedMatrix = { ...matrixConfig };
-
-    targets.forEach((target, tIdx) => {
-      const targetClean = target.name.toLowerCase().replace(/[^a-z0-9]/g, ' ');
-      let bestSourceIdx = -1;
-
-      sourceFacesInfo.forEach((srcInfo, sIdx) => {
-        const srcName = (srcInfo.name || `face_${sIdx}`).toLowerCase().replace(/[^a-z0-9]/g, ' ');
-        const tokens = srcName.split(/\s+/).filter((t) => t.length >= 3);
-        const isMatch = tokens.some((token) => targetClean.includes(token));
-        if (isMatch && bestSourceIdx === -1) {
-          bestSourceIdx = sIdx;
-        }
-      });
-
-      if (bestSourceIdx !== -1) {
-        updatedMatrix[tIdx] = {
-          ...(updatedMatrix[tIdx] || {}),
-          mappings: [{ personRank: 0, sourceIdx: bestSourceIdx }],
-          enabled: true,
-        };
-        matchCount++;
-      }
+    const { matrixConfig: updatedMatrix, matchCount } = autoMatchMatrixConfig({
+      targets, sourceFacesInfo, matrixConfig,
     });
-
     setMatrixConfig(updatedMatrix);
     if (matchCount > 0) {
       notify?.(`Smart Auto-Matched ${matchCount} target file(s) with source facesets!`);
@@ -452,114 +361,33 @@ export default function BatchSwap({ settings = {}, notify }) {
   };
 
   // ── Pro Recipe Generators ─────────────────────────────────────────────
-  const recipeCartesianProduct = () => {
-    if (targets.length === 0 || sourceFaces.length === 0) {
-      notify?.('Requires target files and source facesets', 'error');
+  const stageWith = (result, done) => {
+    if (result.error) {
+      notify?.(result.error, 'error');
       return;
     }
-    const newJobs = [];
-    targets.forEach((target, tIdx) => {
-      sourceFaces.forEach((_, sIdx) => {
-        const { payload, primarySourceIdx, mappings } = createJobPayload(
-          [{ personRank: 0, sourceIdx: sIdx }],
-          'Selected face'
-        );
-        const sName = sourceFacesInfo[sIdx]?.name || `Faceset #${sIdx + 1}`;
-        newJobs.push({
-          id: `staged_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,
-          target_name: target.name,
-          target_index: tIdx,
-          source_index: primarySourceIdx,
-          source_name: sName,
-          mappings,
-          frame_start: target.start_frame || 1,
-          frame_end: target.end_frame || target.frames || 1,
-          total_frames: target.frames || 1,
-          label: `NxM Combinatorial | ${target.name} ➔ ${sName}`,
-          payload,
-        });
-      });
-    });
-    setStagedJobs((prev) => [...prev, ...newJobs]);
-    notify?.(`Generated ${newJobs.length} Cartesian Combination Job(s) (${targets.length} targets × ${sourceFaces.length} sources)`);
+    setStagedJobs((prev) => [...prev, ...result.jobs]);
+    notify?.(done(result.jobs));
   };
 
-  const recipeSequentialMatch = () => {
-    if (targets.length === 0 || sourceFaces.length === 0) {
-      notify?.('Requires target files and source facesets', 'error');
-      return;
-    }
-    const newJobs = [];
-    targets.forEach((target, tIdx) => {
-      const sIdx = tIdx % sourceFaces.length;
-      const sName = sourceFacesInfo[sIdx]?.name || `Faceset #${sIdx + 1}`;
-      const { payload, primarySourceIdx, mappings } = createJobPayload(
-        [{ personRank: 0, sourceIdx: sIdx }],
-        'Selected face'
-      );
-      newJobs.push({
-        id: `staged_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,
-        target_name: target.name,
-        target_index: tIdx,
-        source_index: primarySourceIdx,
-        source_name: sName,
-        mappings,
-        frame_start: target.start_frame || 1,
-        frame_end: target.end_frame || target.frames || 1,
-        total_frames: target.frames || 1,
-        label: `Sequential | ${target.name} ➔ ${sName}`,
-        payload,
-      });
-    });
-    setStagedJobs((prev) => [...prev, ...newJobs]);
-    notify?.(`Generated ${newJobs.length} Sequential Match Job(s)`);
-  };
+  const recipeCartesianProduct = () => stageWith(
+    stageCartesian({ targets, sourceCount: sourceFaces.length, sourceFacesInfo, createJobPayload }),
+    (jobs) => `Generated ${jobs.length} Cartesian Combination Job(s) (${targets.length} targets × ${sourceFaces.length} sources)`,
+  );
+
+  const recipeSequentialMatch = () => stageWith(
+    stageSequential({ targets, sourceCount: sourceFaces.length, sourceFacesInfo, createJobPayload }),
+    (jobs) => `Generated ${jobs.length} Sequential Match Job(s)`,
+  );
 
   // ── Segment Splitter ────────────────────────────────────────────────
-  const splitTargetIntoSegments = () => {
-    const target = targets[splitTargetIdx];
-    if (!target) {
-      notify?.('Selected target file does not exist', 'error');
-      return;
-    }
-    const totalFrames = target.frames || 1;
-    if (totalFrames <= 1) {
-      notify?.('Target file is a single image or has no frames to split', 'error');
-      return;
-    }
-    const segs = Math.max(2, Math.min(splitSegmentCount, 32));
-    const step = Math.ceil(totalFrames / segs);
-    const newJobs = [];
-
-    for (let i = 0; i < segs; i++) {
-      const fs = i * step + 1;
-      const fe = Math.min((i + 1) * step, totalFrames);
-      if (fs > totalFrames) break;
-      const span = fe - fs + 1;
-
-      const { payload, primarySourceIdx, mappings } = createJobPayload(
-        [{ personRank: 0, sourceIdx: 0 }],
-        'Selected face'
-      );
-
-      newJobs.push({
-        id: `staged_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,
-        target_name: target.name,
-        target_index: splitTargetIdx,
-        source_index: primarySourceIdx,
-        source_name: sourceFacesInfo[primarySourceIdx]?.name || `Faceset #${primarySourceIdx + 1}`,
-        mappings,
-        frame_start: fs,
-        frame_end: fe,
-        total_frames: span,
-        label: `Segment ${i + 1}/${segs} (${fs}-${fe}) | ${target.name}`,
-        payload,
-      });
-    }
-
-    setStagedJobs((prev) => [...prev, ...newJobs]);
-    notify?.(`Split "${target.name}" into ${newJobs.length} segment jobs for parallel rendering`);
-  };
+  const splitTargetIntoSegments = () => stageWith(
+    stageSegments({
+      targets, targetIndex: splitTargetIdx, segmentCount: splitSegmentCount,
+      sourceFacesInfo, createJobPayload,
+    }),
+    (jobs) => `Split "${targets[splitTargetIdx]?.name}" into ${jobs.length} segment jobs for parallel rendering`,
+  );
 
   // ── Strategy 1 Handlers ────────────────────────────────────────────────
   const addMode1Mapping = () => {
@@ -572,44 +400,20 @@ export default function BatchSwap({ settings = {}, notify }) {
     setMode1Mappings((prev) => prev.map((m, i) => (i === idx ? { ...m, ...patch } : m)));
   };
 
-  const generateMode1Jobs = () => {
-    if (mode1SelectedTargets.length === 0) {
-      notify?.('Select at least one target file first', 'error');
-      return;
-    }
-    if (sourceFaces.length === 0) {
-      notify?.('Add a source faceset first', 'error');
-      return;
-    }
-
-    const newJobs = mode1SelectedTargets.map((tIdx) => {
-      const target = targets[tIdx];
-      const targetName = target?.name || `Target ${tIdx + 1}`;
-      const { payload, primarySourceIdx, mappings } = createJobPayload(mode1Mappings, mode1SwapMode, {
-        enhancer: mode1Enhancer,
-        faceDistance: mode1FaceDistance,
-      });
-
-      const mapDesc = mappings.map((m) => `P#${m.personRank + 1}➔F#${m.sourceIdx + 1}`).join(', ');
-
-      return {
-        id: `staged_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,
-        target_name: targetName,
-        target_index: tIdx,
-        source_index: primarySourceIdx,
-        source_name: sourceFacesInfo[primarySourceIdx]?.name || `Faceset ${primarySourceIdx + 1}`,
-        mappings,
-        frame_start: target?.start_frame || 1,
-        frame_end: target?.end_frame || target?.frames || 1,
-        total_frames: target?.frames || 1,
-        label: `1:M | ${targetName} (${mapDesc})`,
-        payload,
-      };
-    });
-
-    setStagedJobs((prev) => [...prev, ...newJobs]);
-    notify?.(`Generated ${newJobs.length} multi-face batch job(s) for review`);
-  };
+  const generateMode1Jobs = () => stageWith(
+    stageOneToMany({
+      targets,
+      selectedTargets: mode1SelectedTargets,
+      mappings: mode1Mappings,
+      swapMode: mode1SwapMode,
+      enhancer: mode1Enhancer,
+      faceDistance: mode1FaceDistance,
+      sourceCount: sourceFaces.length,
+      sourceFacesInfo,
+      createJobPayload,
+    }),
+    (jobs) => `Generated ${jobs.length} multi-face batch job(s) for review`,
+  );
 
   // ── Strategy 2 Handlers ────────────────────────────────────────────────
   const addGroup = () => {
@@ -660,53 +464,10 @@ export default function BatchSwap({ settings = {}, notify }) {
     );
   };
 
-  const generateGroupJobs = () => {
-    if (sourceFaces.length === 0) {
-      notify?.('Add a source faceset first', 'error');
-      return;
-    }
-
-    let totalGen = 0;
-    const newJobs = [];
-
-    groups.forEach((grp) => {
-      if (grp.targetIndices.length === 0) return;
-      grp.targetIndices.forEach((tIdx) => {
-        const target = targets[tIdx];
-        if (!target) return;
-        const targetName = target.name;
-        const { payload, primarySourceIdx, mappings } = createJobPayload(grp.mappings, grp.swapMode, {
-          enhancer: grp.enhancer,
-          faceDistance: grp.faceDistance,
-        });
-
-        const mapDesc = mappings.map((m) => `P#${m.personRank + 1}➔F#${m.sourceIdx + 1}`).join(', ');
-
-        newJobs.push({
-          id: `staged_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,
-          target_name: targetName,
-          target_index: tIdx,
-          source_index: primarySourceIdx,
-          source_name: sourceFacesInfo[primarySourceIdx]?.name || `Faceset ${primarySourceIdx + 1}`,
-          mappings,
-          frame_start: target.start_frame || 1,
-          frame_end: target.end_frame || target.frames || 1,
-          total_frames: target.frames || 1,
-          label: `${grp.label} | ${targetName} (${mapDesc})`,
-          payload,
-        });
-        totalGen++;
-      });
-    });
-
-    if (totalGen === 0) {
-      notify?.('No target files assigned to any group', 'error');
-      return;
-    }
-
-    setStagedJobs((prev) => [...prev, ...newJobs]);
-    notify?.(`Generated ${totalGen} group batch job(s)`);
-  };
+  const generateGroupJobs = () => stageWith(
+    stageGrouped({ targets, groups, sourceCount: sourceFaces.length, sourceFacesInfo, createJobPayload }),
+    (jobs) => `Generated ${jobs.length} group batch job(s)`,
+  );
 
   // ── Strategy 3 Handlers ────────────────────────────────────────────────
   const addMatrixMapping = (tIdx) => {
@@ -735,54 +496,10 @@ export default function BatchSwap({ settings = {}, notify }) {
     });
   };
 
-  const generateMatrixJobs = () => {
-    if (targets.length === 0) {
-      notify?.('No target files available', 'error');
-      return;
-    }
-    if (sourceFaces.length === 0) {
-      notify?.('Add a source faceset first', 'error');
-      return;
-    }
-
-    const newJobs = [];
-    targets.forEach((target, tIdx) => {
-      const cfg = matrixConfig[tIdx];
-      if (!cfg || !cfg.enabled) return;
-
-      const { payload, primarySourceIdx, mappings } = createJobPayload(cfg.mappings || [], cfg.swapMode, {
-        enhancer: cfg.enhancer,
-        faceDistance: cfg.faceDistance,
-      });
-
-      const fs = cfg.frameStart != null ? cfg.frameStart : target.start_frame || 1;
-      const fe = cfg.frameEnd != null ? cfg.frameEnd : target.end_frame || target.frames || 1;
-      const spanFrames = Math.max(1, fe - fs + 1);
-      const mapDesc = mappings.map((m) => `P#${m.personRank + 1}➔F#${m.sourceIdx + 1}`).join(', ');
-
-      newJobs.push({
-        id: `staged_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,
-        target_name: target.name,
-        target_index: tIdx,
-        source_index: primarySourceIdx,
-        source_name: sourceFacesInfo[primarySourceIdx]?.name || `Faceset ${primarySourceIdx + 1}`,
-        mappings,
-        frame_start: fs,
-        frame_end: fe,
-        total_frames: spanFrames,
-        label: `Matrix | ${target.name} (${mapDesc})`,
-        payload,
-      });
-    });
-
-    if (newJobs.length === 0) {
-      notify?.('No files enabled for matrix batch', 'error');
-      return;
-    }
-
-    setStagedJobs((prev) => [...prev, ...newJobs]);
-    notify?.(`Generated ${newJobs.length} matrix batch job(s)`);
-  };
+  const generateMatrixJobs = () => stageWith(
+    stageMatrix({ targets, matrixConfig, sourceCount: sourceFaces.length, sourceFacesInfo, createJobPayload }),
+    (jobs) => `Generated ${jobs.length} matrix batch job(s)`,
+  );
 
   // Bulk Matrix Actions
   const bulkSetMatrixSource = (srcIdx) => {
@@ -892,16 +609,7 @@ export default function BatchSwap({ settings = {}, notify }) {
     }
 
     try {
-      const jobsToAdd = stagedJobs.map((j) => ({
-        target_name: j.target_name,
-        source_index: j.source_index,
-        source_name: j.source_name,
-        source_id: j.source_id || j.payload?.selected_source_id || null,
-        payload: j.payload,
-        frame_start: j.frame_start,
-        frame_end: j.frame_end,
-        label: j.label,
-      }));
+      const jobsToAdd = queueRequestFromStagedJobs(stagedJobs);
 
       // Uses atomic /api/queue/add_batch via useQueue hook
       await queue.addMany(jobsToAdd);
