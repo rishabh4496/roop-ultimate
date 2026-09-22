@@ -1,7 +1,11 @@
 # Batch Matrix Data Flow
 
 Traced 2026-09-22 from the code, not from the UI copy. Line numbers are as of
-commit `d355803`; the function names are the stable handles.
+commit `d355803`; the function names are the stable handles. Since `4a38666`
+the staging logic lives in `react-ui/src/components/faceswap/batchMatrix.js`
+(`BatchSwap.jsx` keeps the state and the toasts) and this document is held to
+the code by `app/tests/test_batch_matrix_queue.py` and
+`react-ui/.render-check/batch-matrix-check.mjs` (`npm run test:batch`).
 
 The Batch Matrix (`react-ui/src/components/BatchSwap.jsx`) offers four
 strategies. **All four converge on one job shape and one request**: each
@@ -48,10 +52,12 @@ enqueueStagedJobs()                  _loop → _run_one (per job)      │   (ru
 strategies inherit from this single read:
 
 * `target_groups`/`target_names` describe the person bank of the target that
-  is active **at page load**, and `createJobPayload` normalizes every job's
-  `selection_state` against that one bank (`normalizeTargetSelectionState(…,
-  targetGroups)`). Rank→person-id conversion for the *job's own* target
-  happens later, server-side, at dispatch (§5).
+  is active **at page load**. They feed the person picker only; the job
+  payload is built without them (`normalizeTargetSelectionState(…, [])`),
+  because a rank addresses a person on the *job's own* target and only the
+  server can check that — at dispatch (§5). Until `4a38666`+1 the builder
+  range-checked ranks against the active bank; see §8, "Ranks vs. the active
+  bank" (fixed).
 * `targets[i].media_id` is available here but is **not** forwarded into the
   job (see §4, finding F1).
 
@@ -71,7 +77,11 @@ target list and the assignment differs; the resulting job is identical in shape.
 Preconditions enforced in the browser only: every builder refuses with a toast
 when `sourceFaces.length === 0` ("Add a source faceset first") and when its
 target list is empty. A `mappings` entry whose `sourceIdx` is not a valid
-gallery index is not refused — it is normalized to `-1` (§3).
+gallery index is not refused — it is normalized to `-1` (§3). A grouped
+`targetIndices` entry that no longer names a loaded target is dropped
+without a message (the group's other targets still stage); a per-file
+matrix row is skipped when its target index has no config or is disabled,
+and the following rows keep their own indices.
 
 ## 3. The per-job payload (`createJobPayload`, BatchSwap.jsx:270)
 
@@ -280,7 +290,25 @@ A `FAILED` job does not stop the batch; `_loop` (743) moves to the next
 `QUEUED` job. Failed jobs stay in the snapshot with `error` set and can be
 retried from the queue panel (`POST /api/queue/retry`).
 
-## 8. Findings worth fixing (not fixed here)
+## 8. Findings
+
+* **Ranks vs. the active bank — FIXED.** `createJobPayload` passed the ACTIVE
+  target's `targetGroups` to `normalizeTargetSelectionState`, which drops
+  any rank `>= persons.length`. Repro: load A (2 people) and B (1 person),
+  make B active, stage a per-file-matrix row for A with
+  `[{personRank: 1, sourceIdx: bob}]` — expected one job with
+  `selection_state = {selected, person_id: 1}`; actual
+  `{selected, person_id: null, valid: false, diagnostic: invalid_person_id}`,
+  and at render the server refused it: `FAILED "The selected target person is
+  no longer available; select another person"`. Same for a grouped or
+  one-to-many mapping with more people than the active target has. The
+  builder now normalizes shape only; the dispatch check (`target person N was
+  removed`) is the range check. Pinned by `batch-matrix-check.mjs` ("Ranks are
+  validated against the job's target") and
+  `test_batch_matrix_queue.py::test_matrix_rank1_with_a_smaller_active_bank_reaches_the_second_person`.
+
+Not fixed here:
+
 
 * **F1 — `target_media_id` is dropped.** `/api/state.targets[i].media_id`
   exists and `_run_one` prefers it, but `enqueueStagedJobs` forwards only

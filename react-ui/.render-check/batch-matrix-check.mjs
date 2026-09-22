@@ -39,7 +39,7 @@ const group = (t) => console.log(`\n── ${t} ${'─'.repeat(Math.max(0, 50 - 
 
 // ── Fixture ───────────────────────────────────────────────────────────────
 // /api/state as the strategies read it. Target A and C have two captured
-// people, B has one; the ACTIVE target at page load is A (targetGroups=[0,1]).
+// people, B has one. Which target is active in the UI does not matter here.
 const TARGETS = [
   { id: 0, media_id: 'media-a', name: 'clip_a.mp4', frames: 300, start_frame: 1, end_frame: 300, fps: 30 },
   { id: 1, media_id: 'media-b', name: 'clip_b.mp4', frames: 120, start_frame: 1, end_frame: 120, fps: 30 },
@@ -53,14 +53,16 @@ const ALICE = 0;
 const BOB = 1;
 const SETTINGS = { selected_enhancer: 'None', max_face_distance: 0.65 };
 
-const payloadBuilder = (targetGroups) => (mappings, swapMode, overrides = {}) =>
+// The builder is independent of which target is active in the UI: ranks
+// are resolved server-side against the JOB'S target at dispatch.
+const payloadBuilder = () => (mappings, swapMode, overrides = {}) =>
   buildBatchJobPayload({
     mappings, swapMode, overrides, settings: SETTINGS,
-    sourceCount: SOURCES.length, sourceFacesInfo: SOURCES, targetGroups,
+    sourceCount: SOURCES.length, sourceFacesInfo: SOURCES,
   });
-const common = (targetGroups = [0, 1]) => ({
+const common = () => ({
   targets: TARGETS, sourceCount: SOURCES.length, sourceFacesInfo: SOURCES,
-  createJobPayload: payloadBuilder(targetGroups),
+  createJobPayload: payloadBuilder(),
 });
 
 // One job reduced to the triple the queue must preserve.
@@ -74,7 +76,7 @@ const triple = (j) => ({
 });
 
 const emitted = {
-  fixture: { targets: TARGETS, sources: SOURCES, active_target_groups: [0, 1] },
+  fixture: { targets: TARGETS, sources: SOURCES },
   scenarios: {},
 };
 const emit = (name, jobs, expected) => {
@@ -305,10 +307,11 @@ group('One-to-many');
 // dispatch; the active target's bank must not decide whether a rank exists.
 group('Ranks are validated against the job\'s target, not the active one');
 {
-  // Active target = B (one captured person). Staging a per-file-matrix row
-  // for A that addresses A's SECOND person.
-  const active = [0];
-  const { jobs } = stageMatrix({ ...common(active), matrixConfig: {
+  // A per-file-matrix row for A that addresses A's SECOND person, staged
+  // while a one-person target is the active one. (Before the fix the
+  // builder took the active bank as its range and staged this with
+  // person_id null; the server then refused the job.)
+  const { jobs } = stageMatrix({ ...common(), matrixConfig: {
     0: { ...defaultMatrixRow(TARGETS[0], SETTINGS), mappings: [{ personRank: 1, sourceIdx: BOB }] } } });
   check('matrix: rank 1 for target A survives when the ACTIVE target has one person', () => {
     assert.deepEqual(jobs[0].payload.face_mapping, [-1, BOB]);
@@ -316,7 +319,7 @@ group('Ranks are validated against the job\'s target, not the active one');
     assert.deepEqual(jobs[0].payload.selection_state.person_ids, [1]);
     assert.equal(jobs[0].payload.selection_state.valid, true);
   });
-  const { jobs: grouped } = stageGrouped({ ...common(active), groups: [{ id: 1, label: 'G', targetIndices: [2],
+  const { jobs: grouped } = stageGrouped({ ...common(), groups: [{ id: 1, label: 'G', targetIndices: [2],
     mappings: [{ personRank: 0, sourceIdx: ALICE }, { personRank: 1, sourceIdx: BOB }],
     swapMode: 'Selected people', enhancer: 'None', faceDistance: 0.75 }] });
   check('grouped: a two-person mapping for target C survives when the ACTIVE target has one person', () => {

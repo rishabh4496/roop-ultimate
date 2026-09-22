@@ -57,7 +57,6 @@ export function buildBatchJobPayload({
   settings = {},
   sourceCount = 0,
   sourceFacesInfo = [],
-  targetGroups = [],
   autoFallback = true,
 } = {}) {
   const base = { ...FACESWAP_DEFAULTS, ...settings };
@@ -98,13 +97,15 @@ export function buildBatchJobPayload({
     : swapMode === 'Selected face'
       ? { selection_mode: 'selected', person_id: personIds[0] ?? null, person_ids: personIds.slice(0, 1) }
       : { selection_mode: 'none', person_id: null, person_ids: [] };
-  // The ranks address people on the JOB'S target, which the server resolves
-  // at dispatch (_run_one -> _selection_invalidation_for_active_context).
-  // `targetGroups` here is the person bank of whichever target is active in
-  // the UI, so it is only a fallback range check when the caller has nothing
-  // better; see batch-matrix-check.mjs "active bank" for why it must not be
-  // the bank of a different target.
-  const normalizedSelectionState = normalizeTargetSelectionState(selectionState, targetGroups);
+  // The ranks address people on the JOB'S target. Only the server can check
+  // them -- at dispatch, against that target's own bank (_run_one ->
+  // _selection_invalidation_for_active_context, "target person N was
+  // removed"). This used to pass the ACTIVE target's person bank as the
+  // range, so with a one-person target open, a row addressing another
+  // target's second person was staged with person_id null and the job was
+  // refused at render ("The selected target person is no longer available").
+  // Normalize the shape only; never range-check here.
+  const normalizedSelectionState = normalizeTargetSelectionState(selectionState, []);
 
   return {
     payload: {

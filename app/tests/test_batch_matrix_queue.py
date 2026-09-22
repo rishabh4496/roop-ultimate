@@ -39,14 +39,17 @@ import time
 import unittest
 from pathlib import Path
 
-APP = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+HERE = os.path.dirname(os.path.abspath(__file__))
+APP = os.path.dirname(HERE)
 sys.path.insert(0, APP)
+if HERE not in sys.path:
+    sys.path.insert(0, HERE)
 os.environ.setdefault("ROOP_SKIP_STARTUP", "1")
 
+import fixtures  # noqa: E402
 import api_state as state  # noqa: E402
 import roop.globals as roop_globals  # noqa: E402
 import routes_queue as q  # noqa: E402
-from tests import fixtures  # noqa: E402
 from tests.test_queue import QueueTestBase, _Entry as _QueueEntry  # noqa: E402
 
 try:

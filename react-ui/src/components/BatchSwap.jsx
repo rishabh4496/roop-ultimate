@@ -275,10 +275,9 @@ export default function BatchSwap({ settings = {}, notify }) {
       settings,
       sourceCount: sourceFaces.length,
       sourceFacesInfo,
-      targetGroups,
       autoFallback: autoFallbackEnabled,
     }),
-    [settings, autoFallbackEnabled, sourceFaces.length, sourceFacesInfo, targetGroups],
+    [settings, autoFallbackEnabled, sourceFaces.length, sourceFacesInfo],
   );
 
   // ── Portable Preset Export & Import ─────────────────────────────────────
