@@ -49,7 +49,13 @@ class ItCannotInstallAnything(unittest.TestCase):
     def test_the_module_never_calls_the_updater_apply_path(self):
         with open(self.SOURCE, encoding="utf-8") as handle:
             source = handle.read()
-        for forbidden in (r"update_manager\.apply", r"\bapply\(\)",
+        # `update_manager\.apply` without the paren also matched
+        # `apply_channel_gated()`, a read-only question about where an update
+        # would be applied -- which is the very thing
+        # test_the_response_names_where_an_update_is_actually_applied requires
+        # this module to answer. A guard that forbids naming the installer, as
+        # opposed to calling it, forbids the fix.
+        for forbidden in (r"update_manager\.apply\(", r"\bapply\(\)",
                           r"_stage_candidate", r"_rollback", r"_create_snapshot"):
             self.assertIsNone(
                 re.search(forbidden, source),

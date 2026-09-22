@@ -7,6 +7,40 @@ folder). Entries before 2026-09-21 were moved here from the README on 2026-09-22
 
 ## 2026-09-22
 
+- **The swapped face blinked on and off (Selected-person mode).** Reported on a
+  246k-frame clip, one selected person, one faceset. The run's SWAP AUDIT said 24.4% of
+  detected faces were never swapped, with "refused: over the identity threshold" the
+  largest bucket — but nothing recorded *which* faces those were, so the bucket mixed the
+  bystanders the run is right to pass over with the target herself on a hard frame.
+  Instrumented first (the default path never fed the refusal-distance curve; only the
+  identity-lock fallback did), then measured on the reported clip, 800-frame windows,
+  the user's own config:
+
+  | window | faces | refused over the gate | of those, on a track already bound to that person |
+  |---|---|---|---|
+  | 60000 | 996 | 190 | **178 (93.7%)**, median 1.04x the gate |
+  | 140000 | 265 | 46 | 7 |
+  | 180000 | 844 | 476 | 0 |
+  | 220000 | 1376 | 779 | 0 |
+
+  So in the flicker windows the refused faces *were* the selected person — swapped on the
+  frames either side, refused on this one because a single frame's embedding is a noisy
+  reading of a person. **Fix:** a face whose track the whole-clip pre-pass already bound
+  to this person is held through such a frame (`roop/selected_routing.py`, second claim
+  tier). The per-frame gate still decides who is who and always claims first; a hold needs
+  the binding, a looser second gate (`ROOP_SELECTED_HOLD`, 0.95), and no other selected
+  person fitting better. Window 60000: un-swapped faces **283 → 131 of 996 (28.4% → 13.2%)**.
+  Windows 180000/220000, where the refusals are other people: **byte-identical**, zero held.
+  The pre-pass already computed this binding on every run with `temporal_detection` on and
+  threw it away unless "Lock face identities" was also on.
+
+- **Three defects in the audit that hid the above.** A sub-count printed under whichever
+  unrelated bucket its own number sorted next to ("of those, partly behind an object
+  (masked, still swapped)" filed under a *refusal* line); a swap undone by the outcome
+  check was still counted as a swap, so a window with 283 untouched faces reported 190;
+  and more swaps than faces seen produced a negative total, which printed as no defect at
+  all. All three now say what they mean, the last one loudly.
+
 - **Consent and labelling.** Audit found no content or consent safeguard anywhere in
   `app/roop`. Added: a first-run screen that requires accepting NOTICE.md's intended-use
   terms (`/api/terms`, enforced on `/api/swap`; re-asked when the text changes); a

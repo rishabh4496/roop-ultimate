@@ -435,6 +435,28 @@ _TRACK_OVERLAP_FRAC = float(os.environ.get('ROOP_TRACK_OVERLAP_FRAC', '0.15'))
 _TRACK_ASSIGN_MARGIN = float(os.environ.get('ROOP_TRACK_ASSIGN_MARGIN', '0.15'))
 
 
+# ── Holding a swap through one bad frame ─────────────────────────────────────
+# The per-frame identity gate is a reading of a PERSON taken from ONE frame, and
+# on a turned head, a motion blur or a shadow that reading moves well past the
+# gate for a face the run swapped a frame earlier and swaps again a frame later.
+# Answering it with "do not paint this face" is what the user sees as the
+# swapped face blinking on and off -- the same defect class as the occlusion and
+# geometry gates removed on 2026-09-21, which also refused a whole face per
+# frame on a noisy verdict.
+#
+# So a face whose TRACK the whole-clip pre-pass already bound to this person is
+# held through those frames, up to this distance. Deliberately looser than the
+# match threshold, and for the same reason the track veto is (see
+# recognizer_adaface.scale): the gate that CONFIRMS an identity and the gate
+# that gives one up cannot be the same number, or the decision flips with the
+# noise. Runs on the AdaFace scale rescale it by the same ratio, like every
+# other w600k-tuned constant here.
+#
+# ROOP_SELECTED_HOLD=0 disables the hold and restores the per-frame-only
+# decision.
+_SELECTED_HOLD_DIST = float(os.environ.get('ROOP_SELECTED_HOLD', '0.95'))
+
+
 # Floor under the margin above. The margin is relative to the person's best
 # track, so an unusually GOOD anchor makes it unusually strict: a clean frontal
 # capture matching a clean frontal track can anchor at 0.15, which would then
@@ -732,10 +754,38 @@ def _audit_hit(key, n=1):
 # must never begin with "swapped" — _audit_report sums that prefix to get the
 # total and would count these twice.
 AUDIT_SWAPPED_GAPFILL = '  of those SWAPPED, gap-filled'
+# Registered below, once AUDIT_CHILD_OF exists.
 
 # Discarded after the fact by the outcome check, so it is visible rather than
 # silently missing from the output.
 AUDIT_SWAP_MOVED = 'discarded: the swap put the face somewhere it was not'
+
+# Which line each indented SUB-COUNT belongs under.
+#
+# The table is sorted by count, and a sub-count is just another key in it, so a
+# child landed wherever its own number fell -- under whichever unrelated bucket
+# happened to be next largest. On a real run that printed
+#
+#   refused: over the identity threshold                     60784   22.1%
+#     of those, partly behind an object (masked, still swapped)  38661
+#
+# which reads as "38661 of the refusals were masked and still swapped": a
+# self-contradiction, and the indentation is what asserts it. The counts were
+# right and the table said something false about them.
+#
+# SWAP_TOTAL means "a fraction of every bucket that counts as a swap" -- there
+# are three of those and a child cannot name one, so it prints after the last
+# of them.
+AUDIT_SWAP_TOTAL = object()
+AUDIT_CHILD_OF = {
+    '  of those, gap-filled': 'faces seen',
+    '  of those, crop shared with the face beside it': 'faces seen',
+    '  of those, on a track the pre-pass bound to this person':
+        'refused: over the identity threshold',
+    '  of those, partly behind an object (masked, still swapped)':
+        AUDIT_SWAP_TOTAL,
+    AUDIT_SWAPPED_GAPFILL: AUDIT_SWAP_TOTAL,
+}
 
 # A frame whose processing RAISED. The worker writes the original frame and
 # carries on (a bad frame must not lose a long render), and the per-frame line
@@ -1025,12 +1075,33 @@ def _audit_report():
     # the two longest refusal names push their own counts out of the column and
     # the table stops being scannable — which is the only thing it is for.
     kw = max(34, max(len(k) for k in _audit))
-    for k in sorted(_audit, key=lambda x: -_audit[x]):
-        if k in ('frames with no face detected at all', AUDIT_FRAME_FAILED):
-            continue    # frame-denominated — reported below, with frames as the base
-        if k.startswith('  first failure:'):
-            continue    # a message riding on AUDIT_FRAME_FAILED, printed with it
-        print(f"  {k:{kw}s} {_audit[k]:8d} {100.0 * _audit[k] / seen:6.1f}%", flush=True)
+
+    def _row(k):
+        print(f"  {k:{kw}s} {_audit[k]:8d} {100.0 * _audit[k] / seen:6.1f}%",
+              flush=True)
+
+    ordered = [k for k in sorted(_audit, key=lambda x: -_audit[x])
+               if k not in ('frames with no face detected at all',
+                            AUDIT_FRAME_FAILED)
+               and not k.startswith('  first failure:')]
+    children = [k for k in ordered if k in AUDIT_CHILD_OF]
+    parents = [k for k in ordered if k not in AUDIT_CHILD_OF]
+    # The last bucket that counts as a swap: where a SWAP_TOTAL child belongs.
+    swap_rows = [k for k in parents if k.startswith('swapped')]
+    last_swap = swap_rows[-1] if swap_rows else None
+    shown = set()
+    for k in parents:
+        _row(k)
+        for c in children:
+            owner = AUDIT_CHILD_OF[c]
+            if owner == k or (owner is AUDIT_SWAP_TOTAL and k == last_swap):
+                _row(c)
+                shown.add(c)
+    # A sub-count whose parent line is absent still has to appear: it is a real
+    # measurement, and dropping it would be the same failure as misfiling it.
+    for c in children:
+        if c not in shown:
+            _row(c)
     failed = _audit.get(AUDIT_FRAME_FAILED, 0)
     if failed:
         _fr = _audit_frames[0]
@@ -1041,10 +1112,31 @@ def _audit_report():
         for k in _audit:
             if k.startswith('  first failure:'):
                 print(f"   {k.strip()}", flush=True)
-    missed = seen - swapped
+    # The outcome check pastes the plate back over a swap it has already
+    # counted, so a discarded face is a face that reached the output UNSWAPPED
+    # and was being reported as swapped. Measured on the reported clip, one
+    # 800-frame window: 190 refusals and 93 discards, summarised as "190 were
+    # NOT swapped" while 283 frames carried the original face. Exactly the
+    # instrument failure this report exists to prevent.
+    discarded = _audit.get(AUDIT_SWAP_MOVED, 0)
+    missed = seen - swapped + discarded
+    if swapped > seen:
+        # Every face reaches exactly one bucket, so this cannot happen -- and
+        # when it did (a swap bucket counted at the decision AND again in the
+        # loop that accounts for the leftovers) the report did not complain: it
+        # printed more swaps than faces, `missed` went negative, and the
+        # un-swapped line simply vanished, which reads as a perfect run.
+        print(f"  !! the swap buckets total {swapped} over {seen} faces seen — a face "
+              "is being counted more than once, so every percentage above is wrong. "
+              "This is a code defect in the audit, not a result.", flush=True)
     if missed > 0:
         print(f"  -> {missed} of {seen} detected faces ({100.0 * missed / seen:.1f}%) were NOT swapped.",
               flush=True)
+        if discarded:
+            print(f"     {discarded} of those were swapped and then DISCARDED by the outcome "
+                  "check, which pastes the original face back — a refusal like any other "
+                  "as far as the output is concerned. ROOP_VERIFY_SWAP=0 turns it off.",
+                  flush=True)
         print("     Frames where a face was found but left un-swapped are what reads as "
               "flicker. The largest refusal line above is the gate to loosen.", flush=True)
     interp = _audit.get(AUDIT_SWAPPED_GAPFILL, 0)

@@ -36,6 +36,26 @@ def _swap_faces_body():
     raise AssertionError('swap_faces not found in ProcessMgr.py')
 
 
+def _names_a_swap_bucket(node):
+    """Does this `_audit_hit` argument name a bucket that counts as a swap?
+
+    Either a literal ("swapped (identity lock)"), or one of
+    `selected_routing`'s exported bucket constants -- including a choice
+    between two of them, which is what a site that can claim a face on either
+    of two tiers looks like. Still structural: an `_audit_hit(some_variable)`
+    does not satisfy any site, so a swap recorded under a name this file cannot
+    see remains a failure.
+    """
+    if isinstance(node, ast.Constant):
+        return str(node.value).startswith('swapped')
+    if isinstance(node, ast.Attribute):
+        return node.attr.startswith('SWAPPED')
+    if isinstance(node, ast.IfExp):
+        return (_names_a_swap_bucket(node.body)
+                and _names_a_swap_bucket(node.orelse))
+    return False
+
+
 def _swap_site_counts():
     """(pending.append, _audit_swapped_gapfill, 'swapped ...' hits) in swap_faces.
 
@@ -60,8 +80,7 @@ def _swap_site_counts():
                     gapfills += 1
                 elif (isinstance(fn, ast.Name) and fn.id == '_audit_hit'
                         and stmt.value.args
-                        and isinstance(stmt.value.args[0], ast.Constant)
-                        and str(stmt.value.args[0].value).startswith('swapped')):
+                        and _names_a_swap_bucket(stmt.value.args[0])):
                     successes += 1
     return appends, gapfills, successes
 
@@ -197,6 +216,64 @@ class TestAuditBuckets(unittest.TestCase):
         self.assertIn('SWAP AUDIT', out)
         self.assertIn('3 of 10 detected faces', out)   # 10 seen, 7 swapped
         self.assertIn(VETO_BUCKETS[1], out)
+
+    def test_a_discarded_swap_counts_as_an_unswapped_face(self):
+        """The outcome check pastes the plate back over a swap already counted.
+
+        Reported as swapped, the audit said "190 were NOT swapped" on a window
+        where 283 faces reached the output untouched -- the report reading clean
+        over a real defect is the failure it exists to prevent.
+        """
+        import contextlib
+        import io
+        from roop.procmgr_runtime import AUDIT_SWAP_MOVED
+        _audit_hit('faces seen', 10)
+        _audit_hit('swapped (identity match)', 8)
+        _audit_hit('refused: over the identity threshold', 2)
+        _audit_hit(AUDIT_SWAP_MOVED, 3)
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            _audit_report()
+        out = buf.getvalue()
+        self.assertIn('5 of 10 detected faces', out)      # 2 refused + 3 undone
+        self.assertIn('DISCARDED by the outcome check', out)
+
+    def test_the_report_says_so_when_a_face_is_counted_twice(self):
+        """More swaps than faces is arithmetically impossible, and the report
+        used to absorb it silently: `missed` went negative, the un-swapped line
+        vanished, and the run read as perfect."""
+        import contextlib
+        import io
+        _audit_hit('faces seen', 10)
+        _audit_hit('swapped (identity match)', 8)
+        _audit_hit('swapped (track continuity)', 6)
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            _audit_report()
+        self.assertIn('counted more than once', buf.getvalue())
+
+    def test_a_sub_count_prints_under_the_line_it_is_a_fraction_of(self):
+        """The table is sorted by count and a sub-count is just another key, so
+        a child used to land under whichever unrelated bucket its own number
+        fell next to -- and the indentation then asserted something false about
+        it."""
+        import contextlib
+        import io
+        from roop.procmgr_runtime import AUDIT_SWAPPED_GAPFILL
+        _audit_hit('faces seen', 100)
+        _audit_hit('swapped (identity match)', 40)
+        _audit_hit('refused: over the identity threshold', 60)
+        _audit_hit(AUDIT_SWAPPED_GAPFILL, 50)      # between the two above
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            _audit_report()
+        rows = [ln for ln in buf.getvalue().splitlines()
+                if ln.startswith('  ')
+                and ('swapped' in ln.lower() or 'refused' in ln.lower())]
+        child = next(i for i, ln in enumerate(rows)
+                     if AUDIT_SWAPPED_GAPFILL.strip() in ln)
+        self.assertIn('swapped (identity match)', rows[child - 1],
+                      'the sub-count is filed under the wrong line: %r' % rows)
 
     def test_report_says_nothing_missed_when_all_swapped(self):
         import contextlib

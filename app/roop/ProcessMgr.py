@@ -58,7 +58,7 @@ from roop import recognizer_adaface as _ada
 from roop.target_selection import (normalize_target_selection, resolve_processing_selection,
                                    selection_group_ids)
 from roop import live_preview as _live_preview
-from roop.procmgr_runtime import _PROFILE, _TRACK_VETO_DIST, _TRACK_VETO_MARGIN, _TRACK_VETO_SINGLE, _TRACK_EMB_MAX, _DEBUG_MATCH, COLOR_RESET, COLOR_CYAN, COLOR_YELLOW, COLOR_PURPLE, _prof, _prof_report, _prof_reset, _gpu_guard, PROGRESS_BAR_FORMAT, wait_while_paused, pause_controller, pause_scope, pause_aware, ChunkedProgress, bar_write, publish_eta as _publish_eta, _audit_hit, audit_over_threshold as _audit_over_threshold, audit_frame_seen, audit_detect_frame_begin, audit_detect_miss, audit_face_begin, _audit_swapped_gapfill, _audit_reset, _audit_report, audit_frame_failed, VETO_SOURCE_REUSED, VETO_SINGLE_ABS, VETO_OTHER_FITS, VETO_FAR_FROM_OWN, AUDIT_SWAP_MOVED, VERIFY_MIN_OFFAXIS, VERIFY_SWAP, set_runtime_monitor, set_detailed_profiler
+from roop.procmgr_runtime import _PROFILE, _SELECTED_HOLD_DIST, _TRACK_VETO_DIST, _TRACK_VETO_MARGIN, _TRACK_VETO_SINGLE, _TRACK_EMB_MAX, _DEBUG_MATCH, COLOR_RESET, COLOR_CYAN, COLOR_YELLOW, COLOR_PURPLE, _prof, _prof_report, _prof_reset, _gpu_guard, PROGRESS_BAR_FORMAT, wait_while_paused, pause_controller, pause_scope, pause_aware, ChunkedProgress, bar_write, publish_eta as _publish_eta, _audit_hit, audit_over_threshold as _audit_over_threshold, audit_frame_seen, audit_detect_frame_begin, audit_detect_miss, audit_face_begin, _audit_swapped_gapfill, _audit_reset, _audit_report, audit_frame_failed, VETO_SOURCE_REUSED, VETO_SINGLE_ABS, VETO_OTHER_FITS, VETO_FAR_FROM_OWN, AUDIT_SWAP_MOVED, VERIFY_MIN_OFFAXIS, VERIFY_SWAP, set_runtime_monitor, set_detailed_profiler
 from roop.stage_profiler import StageProfiler
 from roop.runtime_optimizer import RuntimeOptimizer, RuntimeMonitor, SafeAdaptiveController
 from roop.runtime_scheduler import UnifiedRuntimeScheduler
@@ -3939,12 +3939,64 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                 # the numbers it reports are unchanged.
                 threshold = self.options.face_distance_threshold
                 id_threshold = _ada.active_threshold(threshold)
+
+                # The source index the whole-clip pre-pass bound a face's TRACK
+                # to, when that source belongs to a person this run selected --
+                # otherwise None. `_track_source_map` is built by the temporal
+                # pre-pass unconditionally (procmgr_tracking), and every face it
+                # hands out carries `_track_id`, so this costs a dict lookup and
+                # is available on every run with temporal_detection on. It is
+                # empty, and this is None for every face, when the pre-pass did
+                # not run -- then nothing below changes.
+                _tsm = getattr(self, '_track_source_map', None) or {}
+                _groups = self.target_face_groups
+                _rank_all = ({g: r for r, g in enumerate(sorted(set(_groups)))}
+                             if _groups else {})
+                _sel = set(self.selected_target_groups or ())
+                _sel_persons = set()
+                for _i, _g in enumerate(_groups[:len(self.target_face_datas)]):
+                    if _g in _sel:
+                        _sel_persons.add(_g)
+                _single_sel = len(_sel_persons) <= 1
+                _sel_sources = {
+                    (self.options.selected_index if _single_sel else _rank_all[_g])
+                    for _g in _sel_persons
+                }
+                _sel_sources = {int(s) for s in _sel_sources
+                                if 0 <= int(s) < len(self.input_face_datas)}
+
+                # On the AdaFace scale a w600k-tuned constant means nothing;
+                # _ada.scale keeps its RATIO to the match threshold instead, the
+                # same treatment every other gate constant here gets. 0 (or any
+                # value not above the match gate) turns the hold off.
+                _hold_threshold = _ada.scale(_SELECTED_HOLD_DIST, threshold)
+
+                def _bound_source(face, _tsm=_tsm, _sel_sources=_sel_sources):
+                    # Typed rather than wrapped: a Face IS a dict here, and a
+                    # caller that hands this something else has a defect worth
+                    # seeing, not a swap to silently stop holding.
+                    if not _tsm or not _sel_sources or not isinstance(face, dict):
+                        return None
+                    tid = face.get('_track_id')
+                    if tid is None:
+                        return None
+                    info = _tsm.get(tid)
+                    src = info[0] if info else None
+                    if src is None:
+                        return None
+                    # int(): the map can hold a numpy integer, which does not
+                    # compare equal into a set of Python ints on every path.
+                    src = int(src)
+                    return src if src in _sel_sources else None
+
                 _assign = selected_routing.compute_selected_assignment(
                     faces, self.target_face_datas, self.target_face_groups,
                     self.selected_target_groups, self.options.selected_index,
                     len(self.input_face_datas), id_threshold,
                     identity_match=lambda refs, f: _ada.best_identity_match(refs, f, frame),
                     unreliable=face_contact.unreliable,
+                    track_binding=_bound_source,
+                    hold_threshold=_hold_threshold,
                 )
 
                 if _DEBUG_MATCH:
@@ -3990,11 +4042,38 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                 if _gapfilled:
                     _audit_hit('  of those, gap-filled', _gapfilled)
 
+                _held_faces = {fidx for _d, _g, fidx in _assign.held}
                 for src_index, fidx in _assign.pending:
                     pending.append((src_index, faces[fidx]))
                     num_faces_found += 1
-                    _audit_hit('swapped (identity match)')
+                    _audit_hit(selected_routing.SWAPPED_TRACK_HOLD
+                               if fidx in _held_faces
+                               else selected_routing.SWAPPED)
                     _audit_swapped_gapfill(faces[fidx])
+
+                # The distance behind each refusal, and how many of the
+                # refused faces the pre-pass had ALREADY bound to this person
+                # by track.
+                #
+                # Both are new instruments for the DEFAULT path. `_audit_over`
+                # was fed only by the identity-lock fallback, so in the mode
+                # most runs actually use, the largest refusal bucket printed a
+                # count and nothing else -- and the audit's own advice ("the
+                # largest refusal line above is the gate to loosen") could not
+                # be checked against the population it names.
+                #
+                # The track sub-count separates the two populations that bucket
+                # mixes, which no count can: a bystander the run is RIGHT to
+                # refuse, and the SELECTED person on a frame whose own embedding
+                # drifted past the gate. The second one is the on/off flicker --
+                # the same track swapped on the frames either side of it.
+                _best_d = {}
+                for cd in _assign.distances:
+                    if cd.distance is None:
+                        continue
+                    prev = _best_d.get(cd.face_index)
+                    if prev is None or cd.distance < prev:
+                        _best_d[cd.face_index] = float(cd.distance)
 
                 # Every face that was NOT swapped, accounted for by the same
                 # reason strings the decision assigned (over threshold / crop
@@ -4002,9 +4081,20 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                 # the person has no source faceset -- never redirected).
                 for fidx in range(len(faces)):
                     reason = _assign.reasons.get(fidx)
-                    if reason is None or reason == selected_routing.SWAPPED:
+                    # By PREFIX, not by name. Tested against SWAPPED alone, a
+                    # face claimed on the second tier fell through to here and
+                    # was counted a second time under its own swap bucket --
+                    # 178 held faces reported as 356, more swaps than faces
+                    # seen, and the "were NOT swapped" line disappeared because
+                    # the total came out negative.
+                    if reason is None or reason.startswith('swapped'):
                         continue
                     _audit_hit(reason)
+                    if reason == selected_routing.REFUSED_OVER_THRESHOLD:
+                        _audit_over_threshold(_best_d.get(fidx), id_threshold)
+                        if _bound_source(faces[fidx]) is not None:
+                            _audit_hit('  of those, on a track the pre-pass '
+                                       'bound to this person')
                     if _DEBUG_MATCH and reason == selected_routing.REFUSED_NO_SOURCE:
                         bar_write(f"[MATCH] a selected person matched face {fidx} "
                                   f"but has no source faceset — NOT swapped")

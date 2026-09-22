@@ -184,14 +184,31 @@ class RefusalBucketsAreDistinct(unittest.TestCase):
         for bucket in self.BUCKETS:
             self.assertIn(bucket, src, "missing refusal bucket: %s" % bucket)
 
-    def test_distance_is_only_collected_for_the_threshold_bucket(self):
-        """Collecting it for the other three would put unrelated faces into the
-        recovery curve and overstate what loosening the gate buys."""
+    # The refusals a distance may be collected for: one per swap path. The
+    # identity-lock fallback's, and the default per-frame matcher's -- which
+    # went uninstrumented until 2026-09-22, so the mode most runs use printed
+    # its largest refusal bucket as a bare count.
+    THRESHOLD_BUCKETS = ('fallback missed (over match threshold)',
+                         'REFUSED_OVER_THRESHOLD')
+
+    def test_distance_is_only_collected_for_a_threshold_bucket(self):
+        """Collecting it for the other refusals would put unrelated faces into
+        the recovery curve and overstate what loosening the gate buys.
+
+        Every call site is checked, rather than there being only one: the curve
+        is spoiled by a site that feeds it the WRONG population, not by there
+        being more than one that feeds it the right one.
+        """
         src = self._src()
-        self.assertEqual(src.count('_audit_over_threshold('), 1)
-        i = src.index('_audit_over_threshold(')
-        window = src[max(0, i - 400):i]
-        self.assertIn('fallback missed (over match threshold)', window)
+        sites = [i for i in range(len(src))
+                 if src.startswith('_audit_over_threshold(', i)]
+        self.assertTrue(sites, 'nothing collects the refusal distances')
+        for i in sites:
+            window = src[max(0, i - 400):i]
+            self.assertTrue(
+                any(b in window for b in self.THRESHOLD_BUCKETS),
+                'a distance is collected for a refusal that is not a '
+                'threshold refusal, near: %r' % src[max(0, i - 120):i + 40])
 
 
 class VetoDecidedRefusalsAreNotThresholdRefusals(unittest.TestCase):
