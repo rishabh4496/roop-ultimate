@@ -1480,7 +1480,13 @@ def reset_detector_failures():
 
 def get_all_faces(frame: Frame, expected_count: Optional[int] = None) -> Any:
     try:
-        faces = _detect_faces(frame, expected_count=expected_count)
+        if expected_count is not None:
+            try:
+                faces = _detect_faces(frame, expected_count=expected_count)
+            except TypeError:
+                faces = _detect_faces(frame)
+        else:
+            faces = _detect_faces(frame)
         if not faces:
             return []
         return sorted(faces, key=lambda x: x.bbox[0])
