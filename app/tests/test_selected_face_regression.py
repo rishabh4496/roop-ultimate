@@ -265,6 +265,24 @@ class DistancesAreLoggedForEveryCandidate(unittest.TestCase):
         self.assertIn("d=0.011", line)        # the real distance, not a verdict
 
 
+class CrossBoundTrackProtection(unittest.TestCase):
+    def test_person_a_cannot_steal_track_bound_to_person_b(self):
+        faces, td, groups = _scenario()
+        # Suppose face B has an embedding that is slightly closer to Person A (e.g. noisy lighting),
+        # but Face B's track is bound to Source 1 (Person B).
+        # Person A must NOT steal Face B!
+        track_map = {A: 0, B: 1}  # Face A bound to Source 0, Face B bound to Source 1
+        r = sr.compute_selected_assignment(
+            faces, td, groups, selected_target_groups={0, 1},
+            selected_index=0, num_sources=2, id_threshold=THRESHOLD,
+            identity_match=_identity_match, unreliable=_unreliable,
+            track_binding=lambda f: track_map.get(faces.index(f)),
+        )
+        pairs = dict((fidx, src) for src, fidx in r.pending)
+        self.assertEqual(pairs.get(B), 1, "Face B must remain assigned to Source 1")
+        self.assertEqual(pairs.get(A), 0, "Face A must remain assigned to Source 0")
+
+
 class MatchesTheShippingBranchShape(unittest.TestCase):
     """Guards that the render path still routes through this function, so these
     unit tests keep describing the code that actually runs."""

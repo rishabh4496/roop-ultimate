@@ -4484,6 +4484,74 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
 
 
     @staticmethod
+    def _unrotate_face_to_parent(target_face, rotface, rotation_action, orig_cut_w, orig_cut_h, startX, startY):
+        """Map re-detected face keypoints/landmarks from the rotated cutout back to full-frame space.
+
+        This eliminates the destructive rotcutframe cutout / paste_simple rectangular box replacement,
+        allowing canonicalize_face_alignment and paste_upscale to composite directly in full-frame
+        coordinates with smooth feathered masks, avoiding hard edge seams and roll-boundary flicker.
+        """
+        def unrot_pts(pts):
+            pts_arr = np.asarray(pts, dtype=np.float32)
+            res = pts_arr.copy()
+            if rotation_action == 'rotate_180':
+                res[..., 0] = orig_cut_w - 1 - pts_arr[..., 0]
+                res[..., 1] = orig_cut_h - 1 - pts_arr[..., 1]
+            elif rotation_action == 'rotate_clockwise':
+                res[..., 0] = pts_arr[..., 1]
+                res[..., 1] = orig_cut_h - 1 - pts_arr[..., 0]
+            elif rotation_action == 'rotate_anticlockwise':
+                res[..., 0] = orig_cut_w - 1 - pts_arr[..., 1]
+                res[..., 1] = pts_arr[..., 0]
+            res[..., 0] += startX
+            res[..., 1] += startY
+            return res
+
+        if hasattr(rotface, 'kps') and rotface.kps is not None:
+            new_kps = unrot_pts(rotface.kps)
+            target_face.kps = new_kps
+            if isinstance(target_face, dict):
+                target_face['kps'] = new_kps
+
+        if hasattr(rotface, 'bbox') and rotface.bbox is not None:
+            x0, y0, x1, y1 = rotface.bbox[:4]
+            corners = np.array([[x0, y0], [x1, y0], [x1, y1], [x0, y1]], dtype=np.float32)
+            unrot_corners = unrot_pts(corners)
+            new_bbox = np.array([
+                unrot_corners[:, 0].min(),
+                unrot_corners[:, 1].min(),
+                unrot_corners[:, 0].max(),
+                unrot_corners[:, 1].max()
+            ], dtype=np.float32)
+            target_face.bbox = new_bbox
+            if isinstance(target_face, dict):
+                target_face['bbox'] = new_bbox
+
+        if hasattr(rotface, 'landmark_2d_106') and rotface.landmark_2d_106 is not None:
+            new_106 = unrot_pts(rotface.landmark_2d_106)
+            target_face.landmark_2d_106 = new_106
+            if isinstance(target_face, dict):
+                target_face['landmark_2d_106'] = new_106
+
+        if hasattr(rotface, 'landmark_3d_68') and rotface.landmark_3d_68 is not None:
+            pts3d = np.asarray(rotface.landmark_3d_68, dtype=np.float32).copy()
+            pts3d[:, :2] = unrot_pts(pts3d[:, :2])
+            target_face.landmark_3d_68 = pts3d
+            if isinstance(target_face, dict):
+                target_face['landmark_3d_68'] = pts3d
+
+        if hasattr(rotface, 'embedding') and rotface.embedding is not None:
+            target_face.embedding = rotface.embedding
+            if isinstance(target_face, dict):
+                target_face['embedding'] = rotface.embedding
+
+        if hasattr(rotface, 'normed_embedding') and rotface.normed_embedding is not None:
+            target_face.normed_embedding = rotface.normed_embedding
+            if isinstance(target_face, dict):
+                target_face['normed_embedding'] = rotface.normed_embedding
+
+
+    @staticmethod
     def _explode_mask(masks, model_size, total, out_size):
         """Reassemble per-tile model masks into one (out_size, out_size) float32
         map in [0, 1].
@@ -4611,29 +4679,15 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                                        and not rotation_improves_upright(target_face, rotface)):
                     rotation_action = None
                 else:
-                    saved_frame = frame.copy()
-                    frame = rotcutframe
-                    plate = rotcutplate
-                    target_face = rotface
-                    # Ownership is expressed in FULL-frame coordinates; inside a
-                    # rotated cut it lands somewhere else entirely, so it has to
-                    # be RE-EXPRESSED in the cut's own coordinate space, not
-                    # discarded. Discarding it (the previous behaviour) left this
-                    # face free to paint over a bystander or the other selected
-                    # person whenever autorotate engaged for it — measured: a
-                    # swapped face's eye/eyebrow bleeding onto an adjacent
-                    # untouched face specifically on the frames where autorotate
-                    # turned it, and only those, since autorotate does not engage
-                    # on every frame of a moving head. Crop the same box `cutout`
-                    # used, rotate it exactly as frame/plate were rotated above,
-                    # and rebuild it as a region over the (now full-extent)
-                    # rotated cut — startX/startY/endX/endY are the CLAMPED box
-                    # cutout returned, not the pre-clamp request.
-                    if region is not None:
-                        own = region.crop(startX, startY, endX, endY)
-                        region = (FaceRegion(0, 0, own.shape[1], own.shape[0],
-                                             self.apply_rotation(own, rotation_action))
-                                 if own is not None else None)
+                    # Map rotface's coordinates back to full frame so the entire
+                    # pipeline (canonicalize_face_alignment, paste_upscale, lip-sync,
+                    # expression restore, occluder) runs seamlessly in full-frame
+                    # space without stamping a hard rectangular cut-out box.
+                    orig_cut_w = endX - startX
+                    orig_cut_h = endY - startY
+                    self._unrotate_face_to_parent(target_face, rotface, rotation_action,
+                                                  orig_cut_w, orig_cut_h, startX, startY)
+                    rotation_action = None
 
         # ── Model output size (inswapper uses 128 × 128) ─────────────────────
         swap_p = next((p for p in self.processors if p.type == 'swap'), None)
@@ -6047,9 +6101,6 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                 getattr(roop.globals, 'jaw_reshape_strength', 0.5),
             )
 
-        if rotation_action is not None:
-            fake_frame = self.auto_unrotate_frame(result, rotation_action)
-            result = self.paste_simple(fake_frame, saved_frame, startX, startY)
 
         # A foreign object in front of the face is handled by the MASK, not by
         # refusing the swap. `inject_occlusion_engine` appends the occluder to

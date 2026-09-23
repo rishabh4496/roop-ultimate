@@ -518,17 +518,35 @@ def enrich_targets_auto_angles(video, targets, groups, log_prefix="[capture]"):
     g.TARGET_FACE_GROUP = list(groups)
     n_people = len(set(groups))
 
-    prev_files, prev_idx, prev_processing = (
-        api.list_files_process, api.state.selected_target_index, api._progress["processing"])
+    entry = types.SimpleNamespace(filename=video, endframe=0, startframe=0)
+    media_id = api._ensure_target_media_id(entry)
+
+    prev_files, prev_idx, prev_processing, prev_media_id = (
+        api.list_files_process, api.state.selected_target_index, api._progress["processing"],
+        getattr(api.state, "active_target_media_id", None))
     try:
-        api.list_files_process = [types.SimpleNamespace(filename=video)]
+        api.list_files_process = [entry]
         api.state.selected_target_index = 0
+        api.state.active_target_media_id = str(media_id)
+        api._refresh_target_frames(0)
+        g.TARGET_FACES = list(targets)
+        g.TARGET_FACE_GROUP = list(groups)
+        with api._target_context_lock:
+            api._normalize_target_identity_locked()
+            api._save_active_target_context_locked()
         api._progress["processing"] = False
         for person in range(n_people):
-            api.target_auto_angles({"person": person, "index": 0})
+            api.target_auto_angles({"person": person, "index": 0, "target_media_id": str(media_id)})
     finally:
         api.list_files_process, api.state.selected_target_index, api._progress["processing"] = (
             prev_files, prev_idx, prev_processing)
+        if prev_media_id is not None:
+            api.state.active_target_media_id = prev_media_id
+
+    if not g.TARGET_FACES and targets:
+        print(f"{log_prefix} auto_angles returned 0 faces, falling back to seed targets", flush=True)
+        g.TARGET_FACES = list(targets)
+        g.TARGET_FACE_GROUP = list(groups)
 
     print(f"{log_prefix} auto_angles enrichment: {len(targets)} -> {len(g.TARGET_FACES)} "
           f"angle(s) total for {n_people} person(s)", flush=True)
@@ -801,7 +819,9 @@ def plate_person(plate_faces, targets, groups, contam):
                     for g, tis in persons.items())
         # Nearest, and clearly nearest — 0.25 is the same margin the pipeline's
         # own track inheritance uses to call an identity decisive.
-        if len(ds) > 1 and ds[1][0] - ds[0][0] < 0.25:
+        if not ds:
+            out.append(None)
+        elif len(ds) > 1 and ds[1][0] - ds[0][0] < 0.25:
             out.append(None)
         else:
             out.append(ds[0][1])
@@ -1189,12 +1209,11 @@ def main():
     os.makedirs(work, exist_ok=True)
 
     names = [s.strip() for s in args.sources.split(",") if s.strip()]
-    if len(names) != 2:
-        raise SystemExit("--sources needs exactly two faceset names")
+    if len(names) not in (1, 2):
+        raise SystemExit("--sources needs one or two faceset names")
     facesets = [load_library_faceset(n) for n in names]
     means = [faceset_mean(fs) for fs in facesets]
-    print(f"[bench] sources: {names[0]} ({len(facesets[0].faces)} faces), "
-          f"{names[1]} ({len(facesets[1].faces)} faces)", flush=True)
+    print(f"[bench] sources: {', '.join(f'{names[i]} ({len(facesets[i].faces)} faces)' for i in range(len(names)))}", flush=True)
 
     if args.capture >= 0 or args.capture_extra.strip():
         # Manual override path, unchanged: an explicit frame (and/or extra
@@ -1292,7 +1311,7 @@ def main():
         w.writerows(rows)
 
     print(f"\n[bench] {csv_path}")
-    for person in (0, 1):
+    for person in range(len(names)):
         rs = [r for r in rows if r["person"] == person]
         if not rs:
             continue

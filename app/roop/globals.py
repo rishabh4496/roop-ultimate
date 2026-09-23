@@ -55,7 +55,7 @@ detector_scale_pyramid = 'auto'  # Multi-scale pyramid levels: 'auto', '0.5,0.75
 detector_padding_border = 64     # Frame boundary context padding (px) for close-ups and edge cuts
 detector_padding_mode = 'reflect' # Padding mode: 'reflect' or 'constant'
 sam2_model_size = 'tiny'   # SAM2 tracked-mask checkpoint: tiny|small|base_plus|large
-track_identities = False   # video: lock each tracked person to one source (anti identity-flip)
+track_identities = True    # video: lock each tracked person to one source (anti identity-flip)
 # Skin-tone / lighting match of the swapped crop to the original crop.
 # 'rct' = LAB mean/std (Reinhard, legacy default), 'lct' = LAB covariance
 # whitening (handles color casts RCT can't), 'mkl' = Monge-Kantorovitch linear

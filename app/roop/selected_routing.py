@@ -202,12 +202,16 @@ def compute_selected_assignment(
                 face_index=fidx, group=-1, rank=-1, best_reference_angle=None,
                 distance=None, eligible=False, contaminated=True))
             continue
+        bound = track_binding(face) if track_binding is not None else None
         measured: List[Tuple[int, Optional[float]]] = []
         for g, tis in persons.items():
             best_angle, d = identity_match(
                 [target_face_datas[ti] for ti in tis], face)
             actual_angle = tis[best_angle] if best_angle is not None else None
-            eligible = d is not None and d <= id_threshold
+            # In multi-person runs, if this face is on a track bound to another person's source,
+            # person g must not steal this track (anti identity-flip / anti hopping).
+            cross_bound = (bound is not None and not single_person and source_of.get(g) != bound)
+            eligible = d is not None and d <= id_threshold and not cross_bound
             result.distances.append(CandidateDistance(
                 face_index=fidx, group=g, rank=rank[g],
                 best_reference_angle=actual_angle,

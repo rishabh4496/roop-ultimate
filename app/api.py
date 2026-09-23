@@ -2287,9 +2287,9 @@ def _refresh_target_frames(idx):
     entry.total_frames = total
     # Keep the user's trim markers on re-select; only (re)initialise when unset
     # or out of range.
-    if not entry.endframe or entry.endframe > total:
+    if not getattr(entry, 'endframe', None) or entry.endframe > total:
         entry.endframe = total
-    if entry.startframe > total:
+    if getattr(entry, 'startframe', 0) > total:
         entry.startframe = 0
 
 
