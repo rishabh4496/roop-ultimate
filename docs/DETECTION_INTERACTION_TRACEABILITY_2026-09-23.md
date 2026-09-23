@@ -45,6 +45,7 @@ This matrix maps every explicit scenario in the request and every changed public
 - Exact required gate after the selected-face fix: `app\\env\\Scripts\\python.exe -m pytest -q` -> **3288 passed, 6 skipped, 2 xfailed, 8 warnings, 1009 subtests passed** in 500.08 seconds.
 - Post-fix focused selected-routing gate: **33 passed** in 3.70 seconds.
 - Post-fix GPU selected-face identity harness: **VERDICT: PASS** in 114.95 seconds. It used four available facesets and verified selected A, selected B, explicit no-selection, preview/render parity, and per-candidate route logging.
+- Served API startup reached `API_READY` and `UI_READY` on `http://127.0.0.1:8001` with TensorRT active. The public acceptance rerun reached the backend but skipped before upload because its shared source fixture was unavailable; the local `app/facesets` identities used by the GPU harness are present. The temporary backend was stopped after this check.
 - Focused changed-behavior set: **95 passed, 3 skipped** in 10.43 seconds.
 - Prior light gate: **3233 passed, 6 skipped, 2 xfailed, 54 deselected**.
 - The selected-face fix is staged for the next commit. The prior implementation state was clean and pushed to `origin/main` at `2c10ea6`.
