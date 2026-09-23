@@ -294,7 +294,8 @@ def parse_scale_pyramid(
                     continue
             scales = sorted(list(set(scales)))[:5]
             return scales if scales else [1.0]
-        except Exception:
+        except Exception as _degrade_error:
+            _swallowed("roop/face_detector.py:297", _degrade_error, "fallback continued")
             return [1.0]
 
     spec_str = str(spec).strip().lower()
@@ -317,7 +318,8 @@ def parse_scale_pyramid(
                     continue
         scales = sorted(list(set(parts)))[:5]
         return scales if scales else [1.0]
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/face_detector.py:320", _degrade_error, "fallback continued")
         return None
 
 

@@ -1330,7 +1330,8 @@ def _is_face_duplicate(candidate, existing_items, iou_thresh=0.35, min_sep_ratio
                     kps_dist = float(np.mean(np.linalg.norm(ka - kb, axis=1)))
                     if kps_dist >= 0.50 * min_r:
                         continue
-            except Exception:
+            except Exception as _degrade_error:
+                _swallowed("roop/face_util.py:1333", _degrade_error, "fallback continued")
                 pass
 
         if iou >= iou_thresh:
