@@ -327,7 +327,7 @@ def _ensure_face_analyser():
                     _swallowed("roop/face_util.py:analyser_pool_label", _degrade_error,
                                "provider label fell back to GPU")
                     _prov = 'GPU'
-                print(f"[FaceAnalysis] pool of {n} {_prov} instances — detection runs {n}-way concurrent (lock-free).")
+                print(f"[FaceAnalysis] pool of {n} {_prov} instances -- detection runs {n}-way concurrent (lock-free).")
     return FACE_ANALYSER
 
 

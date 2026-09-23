@@ -360,7 +360,7 @@ def _ensure_pool(model_type):
         pool = {'items': items, 'q': q}
         _POOLS[model_type] = pool
         if n > 1:
-            print(f'[RetinaFace] pool of {n} {model_type} instances — '
+            print(f'[RetinaFace] pool of {n} {model_type} instances -- '
                   f'detection runs {n}-way concurrent (lock-free).')
     return pool
 
