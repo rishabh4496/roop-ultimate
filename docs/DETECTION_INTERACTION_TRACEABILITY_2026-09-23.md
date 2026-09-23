@@ -16,7 +16,7 @@ This matrix maps every explicit scenario in the request and every changed public
 | Half faces and missing keypoints | Box-only `crop_contamination` regression and boundary/close-up detector tests | Box-only overlap returned contamination above 0.70. Multi-scale odd-dimension and close-up tests passed | PARTIAL. No dedicated real half-face clip was accepted |
 | Two faces touching or kissing | Contact-junction sweep and `face_contact` tests | Phantom junction index `[2]` was removed, both parents remained, three real faces remained, distant small face remained, and profile crop contamination was `[0.454, 0.429]` | PASS for geometry and junction handling |
 | Kissing on cheeks, lips, or forehead | Contact geometry and overlap demarcation tests with interacting profiles, overlapping boxes, and facial hulls | Duplicate candidates were rejected, distinct touching faces were preserved, contested overlap was partitioned, and minimum sequential coverage was 1.0000 | PASS for geometry. No complete real-video visual acceptance was established |
-| Two facesets interacting with each other | `app/tests/ab_face_count.py` is the concrete two-faceset full-video harness. Public selected-face acceptance and the short live smoke were also attempted | Selected-face public acceptance captured faces but changed 0 pixels for either detected person. The 418-frame live render timed out without a complete output. The 10-frame smoke changed pixels but did not prove source identity application | BLOCKED for applied-source acceptance |
+| Two facesets interacting with each other | `app/tests/ab_face_count.py` is the concrete two-faceset full-video harness. The real-identity selected-face compositor harness, public selected-face acceptance, and the short live smoke were also attempted | The GPU identity harness now passes for selecting A, selecting B, and explicitly selecting nobody. It proves source identity and bystander preservation on a three-face real-faceset canvas. The earlier public acceptance still captured faces but changed 0 pixels for either detected person, and the 418-frame live render timed out without a complete output. The 10-frame smoke changed pixels but did not prove source identity application | PARTIAL. Selected compositor routing is fixed and verified, but complete applied-source acceptance on the real source video remains blocked |
 | No change to face-angle formulas | `TestStrictAngleFormulasUntouched`, golden angle tests, and source diff over the implementation commits | Protected signatures and golden calculations passed. No protected angle implementation changed | PASS |
 
 ## Changed public behavior
@@ -37,14 +37,17 @@ This matrix maps every explicit scenario in the request and every changed public
 | Detector fallback observability | `test_no_new_silent_broad_handlers`, fallback reporter tests, and exact suite | New broad handlers are observable. Repeated fallback counts aggregate once per site, and strict mode re-raises |
 | Pool and detector startup logging | Focused live initialization logs and the exact suite | Pool messages render with ASCII separators and report the active provider and instance count without changing detection behavior |
 | `get_all_faces` compatibility with one-argument detector mocks | Full exact regression gate, including the compatibility regression | The compatibility fallback passes without changing the production empty-list contract |
+| Explicit selected-face state is not widened to legacy all-captured fallback | `app/tests/test_target_selection_contract.py` plus the GPU `integration_selected_face_regression.py` harness using `akansha`, `anshita`, `anushree`, and `ashna` facesets | The prior harness exposed an explicit `selection_mode=none` being widened to person A. ProcessOptions now tracks constructor and post-construction selection assignment. Focused contract tests pass, and the GPU identity harness reports `VERDICT: PASS`: A and B selections swap only the selected person, no selection routes `{}`, and all identities remain unchanged |
 | Real pipeline output production | 10-frame smoke artifact check | 10 input frames produced 10 output frames and all 10 changed pixels, but source identity and selected-face application were not proven |
 
 ## Regression and integration gates
 
-- Exact required gate: `app\\env\\Scripts\\python.exe -m pytest -q` -> **3287 passed, 6 skipped, 2 xfailed, 8 warnings, 1009 subtests passed** in 501.71 seconds.
+- Exact required gate after the selected-face fix: `app\\env\\Scripts\\python.exe -m pytest -q` -> **3288 passed, 6 skipped, 2 xfailed, 8 warnings, 1009 subtests passed** in 500.08 seconds.
+- Post-fix focused selected-routing gate: **33 passed** in 3.70 seconds.
+- Post-fix GPU selected-face identity harness: **VERDICT: PASS** in 114.95 seconds. It used four available facesets and verified selected A, selected B, explicit no-selection, preview/render parity, and per-candidate route logging.
 - Focused changed-behavior set: **95 passed, 3 skipped** in 10.43 seconds.
 - Prior light gate: **3233 passed, 6 skipped, 2 xfailed, 54 deselected**.
-- Repository state after implementation: clean and pushed to `origin/main` at `2c10ea6`.
+- The selected-face fix is staged for the next commit. The prior implementation state was clean and pushed to `origin/main` at `2c10ea6`.
 
 ## Acceptance boundary
 

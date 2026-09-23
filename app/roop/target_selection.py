@@ -223,7 +223,8 @@ def resolve_processing_selection(options, target_face_count):
     # the captured people. The API path is untouched -- it always carries a
     # request, and its explicit-selection contract (409 without one) stands.
     swap_mode = str(getattr(options, "swap_mode", "") or "")
-    if (request is None and target_face_count > 0
+    if (request is None and not getattr(options, "selection_state_provided", False)
+            and target_face_count > 0
             and swap_mode in ("selected", "selected_multi")
             and selection.get("selection_mode") == SELECTION_NONE):
         selection = normalize_target_selection(

@@ -166,6 +166,14 @@ class LegacyDirectCallerSelection(unittest.TestCase):
         _g, _s, selected = resolve_processing_selection(options, 2)
         self.assertEqual(selected, {1})
 
+    def test_an_explicit_legacy_no_selection_is_respected(self):
+        from roop.target_selection import resolve_processing_selection
+        options = self._options("selected", selection_state={
+            "selection_mode": "none"})
+        _g, selection, selected = resolve_processing_selection(options, 2)
+        self.assertEqual(selection["selection_mode"], "none")
+        self.assertEqual(selected, set())
+
     def test_a_request_that_selects_nobody_still_selects_nobody(self):
         """The API contract: an invalid/absent selection is a refusal, never a
         silent widening to everyone."""

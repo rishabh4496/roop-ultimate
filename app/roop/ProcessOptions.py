@@ -3,6 +3,20 @@ from roop.target_selection import normalize_target_selection
 
 class ProcessOptions:
 
+    @property
+    def selection_state(self):
+        return self._selection_state
+
+    @selection_state.setter
+    def selection_state(self, value):
+        self._selection_state = value
+        # ProcessOptions is also a compatibility object. Several direct callers
+        # construct it first and attach the UI selection afterward. Treat that
+        # assignment exactly like a constructor argument, while keeping the
+        # initial canonical projection from counting as an explicit selection.
+        if getattr(self, "_selection_state_initialized", False):
+            self.selection_state_provided = True
+
     def __init__(self, processordefines:dict, face_distance,  blend_ratio, swap_mode, selected_index, masking_text, imagemask, num_steps, subsample_size, show_face_area, restore_original_mouth, show_mask=False, use_3d_recon=False,
                  use_source_bank=False, use_frontalization=False, frontalization_threshold=25.0, swap_model='inswapper',
                  stabilize_face=False, stabilize_method='one_euro', stabilize_min_cutoff=0.05, stabilize_beta=0.02,
@@ -23,6 +37,15 @@ class ProcessOptions:
             dict(processing_request)
             if isinstance(processing_request, dict) else None
         )
+        # Distinguish a legacy caller that omitted selection_state from a caller
+        # that explicitly requested selection_mode="none".  Both normalize to
+        # the same canonical shape, but only the former may use the historical
+        # selected-mode fallback that swaps every captured person.
+        self.selection_state_provided = (
+            selection_state is not None
+            or (self.processing_request is not None
+                and "selection_state" in self.processing_request)
+        )
         if self.processing_request and selection_state is None:
             selection_state = self.processing_request.get("selection_state")
         # Canonical target-person selection. This is deliberately separate from
@@ -32,8 +55,9 @@ class ProcessOptions:
         # and the whole run swapped nothing (Stage 15 acceptance finding).
         stable_ids = (self.processing_request.get("target_person_ids")
                       if self.processing_request else None)
-        self.selection_state = normalize_target_selection(
+        self._selection_state = normalize_target_selection(
             selection_state, target_person_ids=stable_ids or None)
+        self._selection_state_initialized = True
         self.masking_text = masking_text
         self.imagemask = imagemask
         self.num_swap_steps = num_steps
