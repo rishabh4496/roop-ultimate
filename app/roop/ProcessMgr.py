@@ -4641,6 +4641,7 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
         self._tls.swap_model_mask = None
 
         rotation_action = None
+        applied_rotation_action = None
         if roop.globals.autorotate_faces:
             rotation_action = self.rotation_action(target_face, frame)
             if rotation_action is not None:
@@ -4687,7 +4688,10 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                     orig_cut_h = endY - startY
                     self._unrotate_face_to_parent(target_face, rotface, rotation_action,
                                                   orig_cut_w, orig_cut_h, startX, startY)
+                    applied_rotation_action = rotation_action
                     rotation_action = None
+                    if _vs is not None:
+                        _vs = self._verify_before(plate, target_face)
 
         # ── Model output size (inswapper uses 128 × 128) ─────────────────────
         swap_p = next((p for p in self.processors if p.type == 'swap'), None)
@@ -6128,7 +6132,8 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
         if _occlusion_state == 'partial':
             _audit_hit('  of those, partly behind an object (masked, still swapped)')
 
-        if _vs is not None and self._verify_worth_it(rotation_action, _head_angles):
+        verify_rotation = applied_rotation_action or rotation_action
+        if _vs is not None and self._verify_worth_it(verify_rotation, _head_angles):
             # Profiled, because it is a detection and it used to be invisible:
             # every other model stage in this function reports into STAGE TIMING,
             # and an unprofiled one that runs once per swapped face is exactly
@@ -6142,7 +6147,7 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
             with _prof('verify'), _gpu_guard(pooled=analysis_pooled(), owner='analysis'):
                 result = self._verify_after(
                     result, _vs, tol=_swap_verify_tol_for(swap_p),
-                    rotation_action=rotation_action)
+                    rotation_action=verify_rotation)
 
         return result
 

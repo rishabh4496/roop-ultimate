@@ -4,7 +4,7 @@ import os
 import threading
 import contextlib
 from queue import Queue
-from typing import Any
+from typing import Any, Optional
 import insightface
 
 import roop.globals
@@ -1259,30 +1259,73 @@ def _enrich_detected_faces(frame, faces):
     return faces or []
 
 
-def _detect_faces(frame):
+def _bbox_iou_simple(a, b):
+    ax0, ay0, ax1, ay1 = (float(v) for v in a)
+    bx0, by0, bx1, by1 = (float(v) for v in b)
+    iw = max(0.0, min(ax1, bx1) - max(ax0, bx0))
+    ih = max(0.0, min(ay1, by1) - max(ay0, by0))
+    inter = iw * ih
+    union = max(1e-6, (ax1 - ax0) * (ay1 - ay0) + (bx1 - bx0) * (by1 - by0) - inter)
+    return inter / union
+
+
+def _detect_faces(frame, expected_count=None):
     """Run the selected detector engine and return raw Face objects (unsorted).
     Applies small-face (upscale), close-up scale (downscale), clipped boundary
-    (padded), rotated face, and dark/backlit lighting (CLAHE) rescues."""
-    faces = _detect_faces_raw(frame)
+    (padded), rotated face, and dark/backlit lighting (CLAHE) rescues.
+    When multiple target identities are expected, applies partial-miss rotated rescue
+    to recover rotated or inverted faces (e.g. interacting/kissing faces in d1.mp4)."""
+    if expected_count is None:
+        tg = getattr(roop.globals, 'TARGET_FACE_GROUP', None)
+        if tg and len(set(tg)) > 1:
+            expected_count = len(set(tg))
+        else:
+            ifs = getattr(roop.globals, 'INPUT_FACESETS', None)
+            if ifs and len(ifs) > 1:
+                expected_count = len(ifs)
+
+    faces = _detect_faces_raw(frame) or []
     if not faces:
         engine = getattr(roop.globals, 'detector_engine', 'scrfd')
         has_multiscale = (engine in ('retinaface', 'retinaface_r50')
                           or bool(getattr(roop.globals, 'detector_scale_pyramid', None)))
         # 1. Small-face rescue
         if getattr(roop.globals, 'rescue_small_faces', False):
-            faces = _rescue_upscaled(frame)
+            faces = _rescue_upscaled(frame) or []
         # 2. Close-up rescue (skip if multiscale detector already ran downscaled passes)
         if not faces and not has_multiscale:
-            faces = _rescue_downscaled(frame)
+            faces = _rescue_downscaled(frame) or []
         # 3. Boundary padding rescue (skip if multiscale detector already applied border context padding)
         if not faces and not has_multiscale:
-            faces = _rescue_padded(frame)
+            faces = _rescue_padded(frame) or []
         # 4. Rotated face rescue
         if not faces:
-            faces = _rescue_rotated(frame)
+            faces = _rescue_rotated(frame) or []
         # 5. Lighting rescue (dark/backlit footage; CLAHE contrast normalization)
         if not faces:
-            faces = _rescue_clahe(frame)
+            faces = _rescue_clahe(frame) or []
+    elif expected_count and len(faces) < expected_count:
+        # Partial miss rescue: when multiple target people are active and one or more
+        # is tilted, inverted, or lying sideways (e.g. interacting/kissing in d1.mp4),
+        # try rotated variants to recover the missing face(s) without duplicating existing ones.
+        try:
+            h, w = frame.shape[:2]
+            new_faces = []
+            for angle, rot in (("180", rotate_image_180),
+                               ("clockwise", rotate_clockwise),
+                               ("anticlockwise", rotate_anticlockwise)):
+                r_faces = _detect_faces_raw(rot(frame)) or []
+                for rf in r_faces:
+                    _unrotate_face_coords(rf, w, h, angle)
+                    if not any(_bbox_iou_simple(rf.bbox, ef.bbox) >= 0.35 for ef in faces + new_faces):
+                        new_faces.append(rf)
+                if len(faces) + len(new_faces) >= expected_count:
+                    break
+            if new_faces:
+                faces = list(faces) + new_faces
+        except Exception as _degrade_error:
+            _swallowed("roop/face_util.py:1287", _degrade_error, "fallback continued")
+            pass
 
     return _enrich_detected_faces(frame, faces)
 
@@ -1360,9 +1403,9 @@ def reset_detector_failures():
         _DETECT_FAIL_SEEN.clear()
 
 
-def get_all_faces(frame: Frame) -> Any:
+def get_all_faces(frame: Frame, expected_count: Optional[int] = None) -> Any:
     try:
-        faces = _detect_faces(frame)
+        faces = _detect_faces(frame, expected_count=expected_count)
         if not faces:
             return []
         return sorted(faces, key=lambda x: x.bbox[0])
@@ -2903,6 +2946,18 @@ def swap_moved_the_face(result, plate_kps, bbox, tol=None, rotation_action=None)
         if not found:
             return False
         best = max(found, key=lambda f: _bbox_iou_1d(f.bbox, bbox))
+        # Ensure best is actually the target face, not a neighbor in the 0.6-padded ROI
+        bx0, by0, bx1, by1 = (float(v) for v in bbox)
+        fx0, fy0, fx1, fy1 = (float(v) for v in best.bbox)
+        iw = min(bx1, fx1) - max(bx0, fx0)
+        ih = min(by1, fy1) - max(by0, fy0)
+        inter = iw * ih if (iw > 0 and ih > 0) else 0.0
+        union = max(1e-6, (bx1 - bx0) * (by1 - by0) + (fx1 - fx0) * (fy1 - fy0) - inter)
+        iou = inter / union
+        cdist = math.hypot((bx0 + bx1 - fx0 - fx1) * 0.5, (by0 + by1 - fy0 - fy1) * 0.5)
+        box_radius = 0.55 * max(bx1 - bx0, by1 - by0)
+        if iou < 0.20 and cdist > box_radius:
+            return False
         k2 = np.asarray(best.kps, dtype=np.float64)
         moved = float(np.linalg.norm(k2 - kps, axis=1).mean() / scale)
         if moved <= float(tol):

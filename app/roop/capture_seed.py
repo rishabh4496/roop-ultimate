@@ -112,7 +112,7 @@ def min_pair_gap(faces):
     return worst if faces else 0.0
 
 
-def scan_video(video, samples=None, time_budget=90.0, on_progress=None):
+def scan_video(video, samples=None, time_budget=90.0, on_progress=None, expect=None):
     """One sampled decode+detect pass, keeping every usable face it finds.
 
     Everything else in this module reads from the result rather than touching
@@ -160,7 +160,7 @@ def scan_video(video, samples=None, time_budget=90.0, on_progress=None):
             ok, fr = cap.read()
             if not ok:
                 continue
-            faces = [f for f in (get_all_faces(fr) or []) if _usable(f)]
+            faces = [f for f in (get_all_faces(fr, expected_count=expect) or []) if _usable(f)]
             if faces:
                 rows.append((fpos, sorted(faces, key=lambda f: float(f.bbox[0]))))
             if on_progress is not None:
@@ -284,7 +284,7 @@ def auto_capture(video, expect=None, samples=None, max_match_gate=0.85,
                 "complete": False}
 
     rows, meta = scan_video(video, samples=samples, time_budget=time_budget,
-                            on_progress=on_progress)
+                            on_progress=on_progress, expect=expect)
     if not meta["complete"]:
         notes.append(f"scan stopped at frame {meta['stopped_at']} of {meta['total']} on the "
                      f"{time_budget:.0f}s budget — a longer budget may find better frames")

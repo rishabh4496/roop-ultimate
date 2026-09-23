@@ -368,7 +368,7 @@ class TrackingMixin:
                 faces = get_all_faces_in_roi(fr, crop_bbox)
                 if faces:
                     return _DetectionResult(_cache_identity_embeddings(faces), mode='roi')
-            faces = get_all_faces(fr) or []
+            faces = get_all_faces(fr, expected_count=expected_count) or []
             if HIRES_MISS and expected_count and len(faces) < expected_count:
                 hi_faces = get_all_faces_hires(fr, HIRES_DET_SIZE)
                 # MERGE, do not replace: the already-found face(s) keep the
@@ -851,7 +851,13 @@ class TrackingMixin:
                     crop_bbox = (_predict_bbox(active[0], idx)
                                  if ROI_CROP and len(active) == 1 else None)
                     skip_detection = False
-                expected_count = len(active) if HIRES_MISS and len(active) > 1 else None
+                target_expected = (
+                    len(set(getattr(roop.globals, 'TARGET_FACE_GROUP', [])))
+                    if getattr(roop.globals, 'TARGET_FACE_GROUP', None)
+                    else (len(getattr(roop.globals, 'INPUT_FACESETS', []))
+                          if getattr(roop.globals, 'INPUT_FACESETS', None) else None)
+                )
+                expected_count = len(active) if (len(active) > 1) else target_expected
 
                 if det_executor is not None:
                     # A request can arrive after the frame was decoded/planned but
@@ -2195,6 +2201,19 @@ class TrackingMixin:
         self._interp_refused_cut = 0
         total_coasted = 0
         total_coasts = 0
+        temporal_identity = getattr(self, '_temporal_identity', None)
+        identity_enabled = bool(
+            temporal_identity is not None and temporal_identity.enabled)
+        temporal_occlusion = getattr(self, '_temporal_occlusion', None)
+        occlusion_enabled = bool(
+            temporal_occlusion is not None and temporal_occlusion.enabled)
+        temporal_expression = getattr(self, '_temporal_expression', None)
+        expression_enabled = bool(
+            temporal_expression is not None and temporal_expression.enabled)
+        temporal_enabled = (identity_enabled or occlusion_enabled
+                            or expression_enabled)
+        pose_annotation_enabled = bool(
+            getattr(self.options, 'use_source_bank', False) or temporal_enabled)
         # Frame indices where the picture cuts, recorded by the tracking scan.
         # Empty when tracking ran without a scene tracker (stills, symbolic
         # test frames), in which case every test below is a no-op and the
