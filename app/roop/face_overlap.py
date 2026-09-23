@@ -334,38 +334,31 @@ def build_regions(faces, frame_shape, order=None, feather=None, depth_bias=None)
     if len(hot) < 2:
         return None
 
-    h_frame, w_frame = frame_shape[:2]
-    x0 = max(0, min(claims[i][1][0] for i in hot))
-    y0 = max(0, min(claims[i][1][1] for i in hot))
-    x1 = min(w_frame, max(claims[i][1][2] for i in hot))
-    y1 = min(h_frame, max(claims[i][1][3] for i in hot))
-    if x1 - x0 < 2 or y1 - y0 < 2:
-        return None
+    # Partition hot claims into connected overlap components
+    adj = {i: set() for i in hot}
+    for i in hot:
+        for j in hot:
+            if i != j and _rects_overlap(claims[i][1], claims[j][1]):
+                adj[i].add(j)
 
-    # Reference scale for the depth bias: the geometric mean of the competing
-    # face radii, so the bias is a pure comparison between them and adds nothing
-    # when they are the same size.
-    radii = [claims[i][2] for i in hot]
-    r_ref = float(np.exp(np.mean(np.log(radii))))
+    components = []
+    visited = set()
+    for node in sorted(hot):
+        if node not in visited:
+            comp = []
+            queue = [node]
+            visited.add(node)
+            while queue:
+                curr = queue.pop(0)
+                comp.append(curr)
+                for neighbor in adj[curr]:
+                    if neighbor not in visited:
+                        visited.add(neighbor)
+                        queue.append(neighbor)
+            if len(comp) >= 2:
+                components.append(comp)
 
-    fields = {}
-    for i in sorted(hot):
-        pts, _, r = claims[i]
-        m = np.zeros((y1 - y0, x1 - x0), dtype=np.uint8)
-        cv2.fillConvexPoly(m, pts - np.array([x0, y0], dtype=np.int32), 255)
-        if not m.any():
-            continue        # claim is entirely off the ROI — no say in it
-        inside = cv2.distanceTransform(m, cv2.DIST_L2, 3)
-        outside = cv2.distanceTransform(255 - m, cv2.DIST_L2, 3)
-        # Depth relative to this face's OWN size: without the normalisation a
-        # big face is deeper everywhere simply for being big, and would take the
-        # whole of a small face standing in front of it.
-        field = (inside - outside) / r
-        if depth_bias:
-            field += depth_bias * float(np.log2(r / r_ref))
-        fields[i] = field
-
-    if len(fields) < 2:
+    if not components:
         return None
 
     if order is None:
@@ -378,39 +371,61 @@ def build_regions(faces, frame_shape, order=None, feather=None, depth_bias=None)
     def _best(fs):
         return fs[0] if len(fs) == 1 else np.maximum.reduce(fs)
 
-    # `field` is a distance divided by the face radius, so a band of B pixels is
-    # B / r_ref in field units. r_ref is the geometric mean of the competing
-    # radii — the same common scale the depth bias is measured against, and the
-    # right one here because the two fields are normalised by their OWN radii and
-    # then compared with each other.
-    band = max(1e-4, 2.0 * feather, min(MIN_BAND_PX / max(r_ref, 1.0), MAX_BAND_FRAC))
+    h_frame, w_frame = frame_shape[:2]
     regions = {}
-    for i, field in fields.items():
-        if i not in painted:
-            continue            # a claimant, not a paste — nothing to trim
-        own = np.ones_like(field)
-        # Against faces ALREADY painted: stop at the boundary. Going past it
-        # would paint this face's swap over one that is already down, which is
-        # the bleed being removed. Unswapped bystanders count as already painted
-        # (paint_pos -1): what is on the canvas there is the original footage,
-        # and it should stay.
-        earlier = [f for j, f in fields.items()
-                   if j != i and paint_pos.get(j, -1) < paint_pos[i]]
-        if earlier:
-            own *= np.clip(0.5 + (field - _best(earlier)) / band, 0.0, 1.0)
-        # Against faces STILL TO COME: carry on one band past the boundary. They
-        # will paint over it, and their own hand-over ramp needs something under
-        # it — without this backing the ramp blends into the untouched plate and
-        # leaves a hairline of original footage along the join.
-        #
-        # One band is enough and more does not help (measured): what remains
-        # after it is the part of the boundary that runs OUTSIDE the other
-        # face's matte, most often where one face's invented forehead sat over
-        # the other's hair. Withdrawing it uncovers the real plate there, which
-        # is the right answer, not a gap to be filled.
-        later = [f for j, f in fields.items()
-                 if j != i and paint_pos.get(j, -1) > paint_pos[i]]
-        if later:
-            own *= np.clip(_BACKING + (field - _best(later)) / band, 0.0, 1.0)
-        regions[i] = FaceRegion(x0, y0, x1, y1, own.astype(np.float32))
-    return regions
+
+    for comp in components:
+        x0 = max(0, min(claims[i][1][0] for i in comp))
+        y0 = max(0, min(claims[i][1][1] for i in comp))
+        x1 = min(w_frame, max(claims[i][1][2] for i in comp))
+        y1 = min(h_frame, max(claims[i][1][3] for i in comp))
+        if x1 - x0 < 2 or y1 - y0 < 2:
+            continue
+
+        # Reference scale for the depth bias: the geometric mean of the competing
+        # face radii in this component, so the bias is a pure comparison between
+        # them and adds nothing when they are the same size.
+        radii = [claims[i][2] for i in comp]
+        r_ref = float(np.exp(np.mean(np.log(radii))))
+
+        fields = {}
+        for i in sorted(comp):
+            pts, _, r = claims[i]
+            m = np.zeros((y1 - y0, x1 - x0), dtype=np.uint8)
+            cv2.fillConvexPoly(m, pts - np.array([x0, y0], dtype=np.int32), 255)
+            if not m.any():
+                continue        # claim is entirely off the ROI — no say in it
+            inside = cv2.distanceTransform(m, cv2.DIST_L2, 3)
+            outside = cv2.distanceTransform(255 - m, cv2.DIST_L2, 3)
+            # Depth relative to this face's OWN size: without the normalisation a
+            # big face is deeper everywhere simply for being big, and would take the
+            # whole of a small face standing in front of it.
+            field = (inside - outside) / r
+            if depth_bias:
+                field += depth_bias * float(np.log2(r / r_ref))
+            fields[i] = field
+
+        if len(fields) < 2:
+            continue
+
+        # `field` is a distance divided by the face radius, so a band of B pixels is
+        # B / r_ref in field units. r_ref is the geometric mean of the competing
+        # radii in this component.
+        band = max(1e-4, 2.0 * feather, min(MIN_BAND_PX / max(r_ref, 1.0), MAX_BAND_FRAC))
+        for i, field in fields.items():
+            if i not in painted:
+                continue            # a claimant, not a paste — nothing to trim
+            own = np.ones_like(field)
+            # Against faces ALREADY painted: stop at the boundary.
+            earlier = [f for j, f in fields.items()
+                       if j != i and paint_pos.get(j, -1) < paint_pos[i]]
+            if earlier:
+                own *= np.clip(0.5 + (field - _best(earlier)) / band, 0.0, 1.0)
+            # Against faces STILL TO COME: carry on one band past the boundary.
+            later = [f for j, f in fields.items()
+                     if j != i and paint_pos.get(j, -1) > paint_pos[i]]
+            if later:
+                own *= np.clip(_BACKING + (field - _best(later)) / band, 0.0, 1.0)
+            regions[i] = FaceRegion(x0, y0, x1, y1, own.astype(np.float32))
+
+    return regions if regions else None

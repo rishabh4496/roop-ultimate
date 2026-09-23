@@ -950,7 +950,7 @@ def _rescue_rotated(frame: Frame, expected_count=None):
                 if faces:
                     for f in faces:
                         _unrotate_face_coords(f, w, h, angle)
-                        if not _is_face_duplicate(f.bbox, [af.bbox for af in accumulated]):
+                        if not _is_face_duplicate(f, accumulated):
                             accumulated.append(f)
                     if expected_count and len(accumulated) >= expected_count:
                         break
@@ -1389,7 +1389,7 @@ def _detect_faces(frame, expected_count=None):
                     r_faces = _detect_faces_raw(rot(frame)) or []
                     for rf in r_faces:
                         _unrotate_face_coords(rf, w, h, angle)
-                        if not _is_face_duplicate(rf.bbox, [ef.bbox for ef in list(faces) + new_faces]):
+                        if not _is_face_duplicate(rf, list(faces) + new_faces):
                             new_faces.append(rf)
                     if len(faces) + len(new_faces) >= expected_count:
                         break

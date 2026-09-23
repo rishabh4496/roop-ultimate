@@ -448,6 +448,13 @@ def crop_contamination(faces):
     out = [0.0] * n
     for i in range(n):
         if quads[i] is None:
+            if boxes[i] is not None:
+                for j in range(n):
+                    if i == j or boxes[j] is None:
+                        continue
+                    ia = _inter_area(boxes[i], boxes[j])
+                    ba = _area(boxes[i])
+                    out[i] = max(out[i], float(ia / ba) if ba > 0 else 0.0)
             continue
         for j in range(n):
             if i == j:
