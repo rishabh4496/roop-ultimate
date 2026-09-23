@@ -280,9 +280,22 @@ def parse_scale_pyramid(
     if spec is None:
         return None
 
+    import math
+
     if isinstance(spec, (list, tuple)):
-        scales = [float(s) for s in spec if float(s) > 0.0]
-        return sorted(list(set(scales))) if scales else [1.0]
+        try:
+            scales = []
+            for s in spec:
+                try:
+                    val = float(s)
+                    if math.isfinite(val) and 0.05 <= val <= 4.0:
+                        scales.append(val)
+                except (ValueError, TypeError):
+                    continue
+            scales = sorted(list(set(scales)))[:5]
+            return scales if scales else [1.0]
+        except Exception:
+            return [1.0]
 
     spec_str = str(spec).strip().lower()
     if spec_str in ('auto', ''):
@@ -292,17 +305,26 @@ def parse_scale_pyramid(
         return [1.0]
 
     try:
-        parts = [float(p.strip()) for p in spec_str.split(',') if p.strip()]
-        scales = [s for s in parts if s > 0.0]
-        return sorted(list(set(scales))) if scales else [1.0]
-    except ValueError:
+        parts = []
+        for p in spec_str.split(','):
+            p = p.strip()
+            if p:
+                try:
+                    val = float(p)
+                    if math.isfinite(val) and 0.05 <= val <= 4.0:
+                        parts.append(val)
+                except (ValueError, TypeError):
+                    continue
+        scales = sorted(list(set(parts)))[:5]
+        return scales if scales else [1.0]
+    except Exception:
         return None
 
 
 def generate_scale_pyramid(
     frame: np.ndarray,
     scales: Sequence[float],
-) -> List[Tuple[float, np.ndarray]]:
+) -> List[Tuple[Union[float, Tuple[float, float]], np.ndarray]]:
     """Generate scaled images for each level in the scale pyramid.
 
     Args:
@@ -312,7 +334,7 @@ def generate_scale_pyramid(
     Returns:
         List of (scale_factor, scaled_image) tuples.
     """
-    pyramid: List[Tuple[float, np.ndarray]] = []
+    pyramid: List[Tuple[Union[float, Tuple[float, float]], np.ndarray]] = []
     h, w = frame.shape[:2]
 
     for s in scales:
@@ -321,9 +343,12 @@ def generate_scale_pyramid(
         else:
             new_w = max(16, int(round(w * s)))
             new_h = max(16, int(round(h * s)))
+            actual_sx = float(new_w) / float(w)
+            actual_sy = float(new_h) / float(h)
+            scale_repr = float(s) if (abs(actual_sx - s) < 1e-5 and abs(actual_sy - s) < 1e-5) else (actual_sx, actual_sy)
             interp = cv2.INTER_AREA if s < 1.0 else cv2.INTER_LINEAR
             scaled = cv2.resize(frame, (new_w, new_h), interpolation=interp)
-            pyramid.append((s, scaled))
+            pyramid.append((scale_repr, scaled))
 
     return pyramid
 
@@ -331,7 +356,7 @@ def generate_scale_pyramid(
 def rescale_detections(
     dets: np.ndarray,
     kpss: Optional[np.ndarray] = None,
-    scale_factor: float = 1.0,
+    scale_factor: Union[float, Tuple[float, float], Sequence[float]] = 1.0,
 ) -> Tuple[np.ndarray, Optional[np.ndarray]]:
     """Rescale detections from a scaled frame back to the original coordinate space.
 
@@ -341,16 +366,23 @@ def rescale_detections(
     if dets is None or len(dets) == 0:
         return dets, kpss
 
-    if abs(scale_factor - 1.0) < 1e-4:
+    if isinstance(scale_factor, (tuple, list)):
+        sx, sy = float(scale_factor[0]), float(scale_factor[1])
+    else:
+        sx = sy = float(scale_factor)
+
+    if abs(sx - 1.0) < 1e-4 and abs(sy - 1.0) < 1e-4:
         return dets.copy(), (kpss.copy() if kpss is not None else None)
 
     rescaled_dets = dets.copy()
-    rescaled_dets[:, :4] /= float(scale_factor)
+    rescaled_dets[:, [0, 2]] /= sx
+    rescaled_dets[:, [1, 3]] /= sy
 
     rescaled_kpss = None
     if kpss is not None and len(kpss) > 0:
         rescaled_kpss = kpss.copy()
-        rescaled_kpss /= float(scale_factor)
+        rescaled_kpss[:, :, 0] /= sx
+        rescaled_kpss[:, :, 1] /= sy
 
     return rescaled_dets, rescaled_kpss
 
@@ -476,8 +508,14 @@ class MultiScaleFaceDetector:
                 if not should_trigger_pyramid(frame.shape[:2], initial_dets=unpad_b):
                     return unpad_b, (unpad_k if unpad_k is not None else np.zeros((0, 5, 2), dtype=np.float32))
 
+        # Explicit single-scale / pyramid disabled (e.g. parsed_scales == [1.0])
+        if parsed_scales == [1.0]:
+            b_single, k_single = detect_fn(padded_frame, int(det_size), float(det_thresh))
+            unpad_b, unpad_k = remove_context_padding(b_single, k_single, pad_offsets)
+            return unpad_b, (unpad_k if unpad_k is not None else np.zeros((0, 5, 2), dtype=np.float32))
+
         # 4. Multi-scale dynamic image pyramid execution
-        active_scales = parsed_scales if (parsed_scales and parsed_scales != [1.0]) else self.default_scales
+        active_scales = parsed_scales if parsed_scales is not None else self.default_scales
         pyramid = generate_scale_pyramid(padded_frame, active_scales)
 
         all_candidate_boxes: List[np.ndarray] = []
@@ -485,7 +523,7 @@ class MultiScaleFaceDetector:
 
         concurrency = max_workers or self._resolve_concurrency()
 
-        def _detect_scale_worker(item: Tuple[float, np.ndarray]) -> Tuple[np.ndarray, np.ndarray]:
+        def _detect_scale_worker(item: Tuple[Union[float, Tuple[float, float]], np.ndarray]) -> Tuple[np.ndarray, np.ndarray]:
             scale_val, scaled_img = item
             b_scaled, k_scaled = detect_fn(scaled_img, int(det_size), float(det_thresh))
             b_orig, k_orig = rescale_detections(b_scaled, k_scaled, scale_factor=scale_val)
@@ -501,8 +539,15 @@ class MultiScaleFaceDetector:
         for b_cand, k_cand in results:
             if b_cand is not None and len(b_cand) > 0:
                 all_candidate_boxes.append(b_cand)
-                if k_cand is not None and len(k_cand) > 0:
+                n_b = len(b_cand)
+                if k_cand is not None and len(k_cand) == n_b:
                     all_candidate_kpss.append(k_cand)
+                else:
+                    k_filled = np.zeros((n_b, 5, 2), dtype=np.float32)
+                    if k_cand is not None and len(k_cand) > 0:
+                        valid_len = min(n_b, len(k_cand))
+                        k_filled[:valid_len] = k_cand[:valid_len]
+                    all_candidate_kpss.append(k_filled)
 
         if not all_candidate_boxes:
             return np.zeros((0, 5), dtype=np.float32), np.zeros((0, 5, 2), dtype=np.float32)

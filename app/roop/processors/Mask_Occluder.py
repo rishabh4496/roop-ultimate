@@ -75,11 +75,11 @@ class Mask_Occluder():
             # run the mask concurrently, each on its own TensorRT context.
             if session_pool.detmask_pooling_enabled():
                 n = session_pool.detmask_pool_size(
-                    model_key='mask:occluder', input_shape=(1, 3, 512, 512))
+                    model_key='mask:occluder', input_shape=(1, 256, 256, 3))
                 extras = [_build(i) for i in range(n - 1)]
                 self.pool = session_pool.SessionPool(
                     lambda i, _e=([self.model_occluder] + extras): _e[i], n,
-                    model_key='mask:occluder', input_shape=(1, 3, 512, 512))
+                    model_key='mask:occluder', input_shape=(1, 256, 256, 3))
 
     def _run_session(self, sess, temp_frame):
         io_binding = sess.io_binding()

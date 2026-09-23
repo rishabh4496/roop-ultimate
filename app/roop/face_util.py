@@ -867,17 +867,26 @@ def _rescue_clahe(frame: Frame):
     room) footage can put a face's geometry intact but its edge/gradient signal
     under the detector's confidence floor — none of the size/rotation rescues
     above address this, since the face is neither too small, too close, nor
-    misoriented. CLAHE redistributes local contrast in the L channel only
-    (color untouched) without changing resolution or coordinates, so unlike
-    the upscale/downscale/rotate rescues, the returned boxes/kps need no
-    remapping — they already sit in the input frame's coordinate space."""
+    misoriented. Detection is performed on the CLAHE frame with aux=False so
+    embeddings are not contaminated by contrast alterations, allowing downstream
+    enrichment from the untouched original input frame."""
     try:
         lab = cv2.cvtColor(frame, cv2.COLOR_BGR2LAB)
         l, a, b = cv2.split(lab)
         eq = cv2.cvtColor(cv2.merge((_clahe_for_current_worker().apply(l), a, b)),
                           cv2.COLOR_LAB2BGR)
-        faces = _detect_faces_raw(eq)
+        faces = _detect_faces_raw(eq, aux=False)
         if faces:
+            with lease_face_analyser() as fa:
+                for face in faces:
+                    if getattr(face, 'kps', None) is not None:
+                        for taskname, model in fa.models.items():
+                            if taskname == 'detection':
+                                continue
+                            try:
+                                model.get(frame, face)
+                            except Exception as _aux_err:
+                                _swallowed("roop/face_util.py:clahe_aux", _aux_err, "fallback continued")
             return faces
     except Exception as _degrade_error:
         _swallowed("roop/face_util.py:790", _degrade_error, "fallback continued")
@@ -921,26 +930,35 @@ def _unrotate_face_coords(face, orig_w, orig_h, angle):
         face.landmark_3d_68 = lm
 
 
-def _rescue_rotated(frame: Frame):
-    """Retry detection on rotated frame variants when the upright pass finds nothing.
+def _rescue_rotated(frame: Frame, expected_count=None):
+    """Retry detection on rotated frame variants.
 
-    All THREE turns are tried, not just the quarter ones. A detector that misses
-    a face on its side misses an inverted one too, and neither quarter turn
-    reaches it — both leave an upside-down face lying sideways, which is the
-    orientation the pass already failed on. The half turn is the only one that
-    presents it upright, so leaving it out means an inverted face in an
-    otherwise empty frame is simply never found.
+    All THREE cardinal turns are tried (clockwise, anticlockwise, 180).
+    Accumulates faces across orientations to recover faces that appear at different
+    angles in the same frame (e.g. one face tilted clockwise, another inverted or
+    anticlockwise, interacting or lying down).
     """
     try:
         h, w = frame.shape[:2]
+        accumulated = []
         for angle, rotated in (("clockwise", rotate_clockwise),
                                ("anticlockwise", rotate_anticlockwise),
                                ("180", rotate_image_180)):
-            faces = _detect_faces_raw(rotated(frame))
-            if faces:
-                for f in faces:
-                    _unrotate_face_coords(f, w, h, angle)
-                return faces
+            try:
+                r_frame = rotated(frame)
+                faces = _detect_faces_raw(r_frame)
+                if faces:
+                    for f in faces:
+                        _unrotate_face_coords(f, w, h, angle)
+                        if not _is_face_duplicate(f.bbox, [af.bbox for af in accumulated]):
+                            accumulated.append(f)
+                    if expected_count and len(accumulated) >= expected_count:
+                        break
+            except Exception as _rot_err:
+                _swallowed("roop/face_util.py:rot_angle", _rot_err, "fallback continued")
+                continue
+        if accumulated:
+            return accumulated
     except Exception as _degrade_error:
         _swallowed("roop/face_util.py:835", _degrade_error, "fallback continued")
         pass
@@ -1269,6 +1287,58 @@ def _bbox_iou_simple(a, b):
     return inter / union
 
 
+def _is_face_duplicate(candidate, existing_items, iou_thresh=0.35, min_sep_ratio=0.35):
+    """Check if candidate face/bbox is a duplicate of an existing face.
+    Two genuine touching or kissing faces often overlap with IoU >= 0.35, but have distinct
+    centers (centre separation / min_radius >= 0.35) or distinct landmarks.
+    Only concentric boxes (IoU >= 0.35 AND sep < 0.35 without landmark divergence)
+    or near-identical boxes (IoU >= 0.85) are duplicates of the same face.
+    """
+    c_box = getattr(candidate, 'bbox', candidate)
+    cx0, cy0, cx1, cy1 = (float(v) for v in c_box[:4])
+    ccx = (cx0 + cx1) * 0.5
+    ccy = (cy0 + cy1) * 0.5
+    crad = 0.5 * max(cx1 - cx0, cy1 - cy0)
+    c_kps = getattr(candidate, 'kps', None)
+
+    for item in existing_items:
+        e_box = getattr(item, 'bbox', item)
+        ex0, ey0, ex1, ey1 = (float(v) for v in e_box[:4])
+        iou = _bbox_iou_simple((cx0, cy0, cx1, cy1), (ex0, ey0, ex1, ey1))
+        if iou < 0.20:
+            continue
+        if iou >= 0.85:
+            return True
+
+        ecx = (ex0 + ex1) * 0.5
+        ecy = (ey0 + ey1) * 0.5
+        erad = 0.5 * max(ex1 - ex0, ey1 - ey0)
+        min_r = max(1.0, min(crad, erad))
+        sep = float(np.hypot(ccx - ecx, ccy - ecy)) / min_r
+
+        # If centers are separated by >= min_sep_ratio, distinct touching/kissing faces
+        if sep >= min_sep_ratio:
+            continue
+
+        # If keypoints exist on both, verify landmark divergence
+        e_kps = getattr(item, 'kps', None)
+        if c_kps is not None and e_kps is not None:
+            try:
+                ka = np.asarray(c_kps, dtype=np.float32)[:, :2]
+                kb = np.asarray(e_kps, dtype=np.float32)[:, :2]
+                if len(ka) == 5 and len(kb) == 5:
+                    kps_dist = float(np.mean(np.linalg.norm(ka - kb, axis=1)))
+                    if kps_dist >= 0.50 * min_r:
+                        continue
+            except Exception:
+                pass
+
+        if iou >= iou_thresh:
+            return True
+
+    return False
+
+
 def _detect_faces(frame, expected_count=None):
     """Run the selected detector engine and return raw Face objects (unsorted).
     Applies small-face (upscale), close-up scale (downscale), clipped boundary
@@ -1300,27 +1370,32 @@ def _detect_faces(frame, expected_count=None):
             faces = _rescue_padded(frame) or []
         # 4. Rotated face rescue
         if not faces:
-            faces = _rescue_rotated(frame) or []
+            faces = _rescue_rotated(frame, expected_count=expected_count) or []
         # 5. Lighting rescue (dark/backlit footage; CLAHE contrast normalization)
         if not faces:
             faces = _rescue_clahe(frame) or []
-    elif expected_count and len(faces) < expected_count:
-        # Partial miss rescue: when multiple target people are active and one or more
-        # is tilted, inverted, or lying sideways (e.g. interacting/kissing in d1.mp4),
-        # try rotated variants to recover the missing face(s) without duplicating existing ones.
+
+    # Unified partial miss rescue: when multiple target people are expected and one or more
+    # is tilted, inverted, or lying sideways (e.g. interacting/kissing in d1.mp4),
+    # try rotated variants to recover the missing face(s) without duplicating existing ones.
+    if expected_count and len(faces) < expected_count:
         try:
             h, w = frame.shape[:2]
             new_faces = []
             for angle, rot in (("180", rotate_image_180),
                                ("clockwise", rotate_clockwise),
                                ("anticlockwise", rotate_anticlockwise)):
-                r_faces = _detect_faces_raw(rot(frame)) or []
-                for rf in r_faces:
-                    _unrotate_face_coords(rf, w, h, angle)
-                    if not any(_bbox_iou_simple(rf.bbox, ef.bbox) >= 0.35 for ef in faces + new_faces):
-                        new_faces.append(rf)
-                if len(faces) + len(new_faces) >= expected_count:
-                    break
+                try:
+                    r_faces = _detect_faces_raw(rot(frame)) or []
+                    for rf in r_faces:
+                        _unrotate_face_coords(rf, w, h, angle)
+                        if not _is_face_duplicate(rf.bbox, [ef.bbox for ef in list(faces) + new_faces]):
+                            new_faces.append(rf)
+                    if len(faces) + len(new_faces) >= expected_count:
+                        break
+                except Exception as _rot_err:
+                    _swallowed("roop/face_util.py:rot_partial", _rot_err, "fallback continued")
+                    continue
             if new_faces:
                 faces = list(faces) + new_faces
         except Exception as _degrade_error:
