@@ -64,17 +64,13 @@ class OfflineOperationTests(unittest.TestCase):
     def test_download_commits_atomically_after_connected_transfer(self):
         response = mock.MagicMock()
         response.headers = {"Content-Length": "10"}
+        response.status = 200
+        response.read.side_effect = [b"0123456789", b""]
         response.__enter__.return_value = response
-
-        def write_partial(_url, path, reporthook=None):
-            Path(path).write_bytes(b"0123456789")
 
         with tempfile.TemporaryDirectory() as directory, \
                 mock.patch.object(utilities, "is_online", return_value=True), \
-                mock.patch.object(utilities.urllib.request, "urlopen",
-                                   return_value=response), \
-                mock.patch.object(utilities.urllib.request, "urlretrieve",
-                                   side_effect=write_partial):
+                mock.patch("urllib.request.urlopen", return_value=response):
             utilities.conditional_download(directory, [
                 "https://model.test/connected.onnx"
             ])

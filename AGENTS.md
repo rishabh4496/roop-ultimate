@@ -76,6 +76,10 @@ removing work per face.**
   model, mask engine, provider, detector and threads explicitly. Violated twice,
   invalidating whole sessions. `tests/config_sync.py` is now the one place this happens —
   `init_pipeline(sync_config=True)`.
+- **After touching matching, selection or the frame loop, run the regression benchmark**
+  (`python run.py --benchmark --benchmark-mode regression`, ~3 min on the 4070). It is the
+  only check that fails when a render stops swapping: 4bd577d shipped a render that swapped
+  nothing with the suite green. See `docs/development/REGRESSION_BENCHMARK.md`.
 - **`--threads 20`** on every bench run.
 - **Report processing fps to the user roughly every 3 minutes** during a run.
 - **One render at a time.** A render holds ~12-15 GB; anything else that loads models
@@ -144,8 +148,8 @@ feature ran.
   `app/env/Scripts/python.exe -m pytest` from the repo root (pytest is the runner since
   2026-09-22; `unittest discover` drops the pytest-style tests). Light profile without the
   GPU stack: `ROOP_TEST_LIGHT=1 python -m pytest -m "not gpu"` (~20 s; what CI runs).
-  Current baseline: **3190 passed, 6 skipped, 2 xfailed** over both trees (2026-09-22,
-  pytest; 8-20 min). Any number quoted from the session logs (1698/2607, 3064) is stale.
+  Current baseline: **3458 passed, 6 skipped, 2 xfailed** over both trees (2026-09-25,
+  pytest; 8-20 min). Any number quoted from the session logs (1698/2607, 3064, 3190) is stale.
 - Pytest-style tests are invisible to unittest (`Ran 0 tests ... OK`) — another reason
   the runner is pytest; `tests/unittest_shim.py` is only for the legacy command.
 - `<MEDIA_DIR>\` is NOT a git repo — `RECODE_STATUS.md` is saved by editing it,

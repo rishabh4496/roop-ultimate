@@ -174,8 +174,21 @@ parser.add_argument('--benchmark-faces', dest='benchmark_faces',
                     choices=['1', '2', 'all'], default='1',
                     help='target face complexity: 1 face, 2 faces, or a crowd')
 parser.add_argument('--benchmark-mode', dest='benchmark_mode',
-                    choices=['quick', 'full'], default='quick',
-                    help='quick profile (~30s) or full stress and thermal test (~90s)')
+                    choices=['quick', 'full', 'regression'], default='quick',
+                    help='quick profile (~30s), full stress and thermal test (~90s), '
+                         'or regression: a real 300-frame 1080p render checked '
+                         'for fps, VRAM, frame latency and SSIM/PSNR against a baseline')
+parser.add_argument('--benchmark-frames', dest='benchmark_frames', type=int, default=300,
+                    help='regression: frames in the timed render')
+parser.add_argument('--benchmark-clip', dest='benchmark_clip', default=None,
+                    help='regression: clip to render (default: a generated 1080p clip)')
+parser.add_argument('--benchmark-source', dest='benchmark_source', default=None,
+                    help='regression: source face image')
+parser.add_argument('--benchmark-threads', dest='benchmark_threads', type=int, default=None,
+                    help='regression: worker threads (default: config max_threads)')
+parser.add_argument('--benchmark-update-baseline', dest='benchmark_update_baseline',
+                    action='store_true',
+                    help='regression: record this run as the new baseline')
 parser.add_argument('--benchmark-apply', dest='benchmark_apply',
                     action='store_true',
                     help='apply the recommended settings when the run finishes '
@@ -239,6 +252,9 @@ def _announce_react_backend_when_ready(api_thread, api_port):
 
 
 if __name__ == '__main__':
+    if getattr(args, 'benchmark', False) and args.benchmark_mode == 'regression':
+        from roop.benchmark.regression import run_regression_from_args
+        sys.exit(run_regression_from_args(args))
     if getattr(args, 'benchmark', False):
         import time
         sys.exit(_run_cli_benchmark(args.benchmark_faces, args.benchmark_mode,

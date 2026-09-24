@@ -138,7 +138,12 @@ def parse_args() -> None:
     # so they cannot disagree.
     program.add_argument('--benchmark', help='Run the hardware benchmark and print the results dashboard, then exit', dest='benchmark', action='store_true', default=False)
     program.add_argument('--benchmark-faces', help='Target face complexity for the benchmark', dest='benchmark_faces', choices=['1', '2', 'all'], default='1')
-    program.add_argument('--benchmark-mode', help='Benchmark duration: quick (~30s) or full stress and thermal (~90s)', dest='benchmark_mode', choices=['quick', 'full'], default='quick')
+    program.add_argument('--benchmark-mode', help='Benchmark duration: quick (~30s) or full stress and thermal (~90s)', dest='benchmark_mode', choices=['quick', 'full', 'regression'], default='quick')
+    program.add_argument('--benchmark-frames', help='Regression benchmark: frames in the timed render', dest='benchmark_frames', type=int, default=300)
+    program.add_argument('--benchmark-clip', help='Regression benchmark: clip to render', dest='benchmark_clip', default=None)
+    program.add_argument('--benchmark-source', help='Regression benchmark: source face image', dest='benchmark_source', default=None)
+    program.add_argument('--benchmark-threads', help='Regression benchmark: worker threads', dest='benchmark_threads', type=int, default=None)
+    program.add_argument('--benchmark-update-baseline', help='Regression benchmark: record this run as the new baseline', dest='benchmark_update_baseline', action='store_true', default=False)
     program.add_argument('--benchmark-apply', help='Apply the recommended settings when the benchmark finishes', dest='benchmark_apply', action='store_true', default=False)
     program.add_argument('--source', '--source-path', dest='source_reference_path', default=None,
                          help='Source image or folder of same-identity reference images')
@@ -576,6 +581,19 @@ def pre_check() -> bool:
         update_status('Python version is not supported - please upgrade to 3.9 or higher.')
         return False
     
+    # SHA256-verify the manifest models (app/model_manifest.json) and fetch
+    # what is missing or corrupt, resumably. Runs while the API thread is
+    # already serving, so the React splash shows its progress. Hashes are
+    # cached against size+mtime, so a normal boot costs one stat per model.
+    # The health probe verifies but must not download.
+    from roop import model_integrity
+    try:
+        model_integrity.verify_and_repair(
+            download=os.environ.get('ROOP_UPDATE_HEALTH') != '1')
+    except (OSError, ValueError, KeyError) as exc:
+        print(f'[ModelIntegrity] check could not run: {exc}', flush=True)
+        model_integrity.STATUS.finish('degraded', f'integrity check failed: {exc}')
+
     # A health probe must be read-only: it validates the installed local model
     # set and must not turn application startup into a download operation.
     if os.environ.get('ROOP_UPDATE_HEALTH') == '1':
@@ -2009,6 +2027,9 @@ def run() -> None:
         # Placed AFTER CFG and the runtime globals are established, so the
         # benchmark measures the user's real configuration -- and BEFORE the
         # UI starts, so it is not sharing the GPU with a server.
+        if getattr(roop.globals.startup_args, 'benchmark_mode', 'quick') == 'regression':
+            from roop.benchmark.regression import run_regression_from_args
+            raise SystemExit(run_regression_from_args(roop.globals.startup_args))
         from roop.benchmark.ui_dashboard import run_cli_benchmark
         raise SystemExit(run_cli_benchmark(
             faces=getattr(roop.globals.startup_args, 'benchmark_faces', '1'),

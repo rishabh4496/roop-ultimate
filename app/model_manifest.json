@@ -1,0 +1,61 @@
+{
+  "schema": 1,
+  "comment": "SHA256 + size for every model the startup integrity check verifies. Each hash was checked against the host's own published digest (Hugging Face X-Linked-ETag, GitHub release asset digest) on 2026-09-25, so the manifest and the download cannot disagree. Paths are relative to app/models. urls are tried in order.",
+  "models": [
+    {
+      "file": "inswapper_128.onnx",
+      "family": "inswapper",
+      "description": "InsightFace inswapper 128 (face swap; also the identity-embedding reference for the swap models)",
+      "size": 554253681,
+      "sha256": "e4a3f08c753cb72d04e10aa0f7dbe3deebbf39567d4ead6dce08e98aa49e16af",
+      "required": true,
+      "urls": [
+        "https://huggingface.co/CountFloyd/deepfake/resolve/main/inswapper_128.onnx"
+      ]
+    },
+    {
+      "file": "retinaface_r50.onnx",
+      "family": "retinaface",
+      "description": "RetinaFace ResNet-50 face detector",
+      "size": 109110500,
+      "sha256": "ea3f7d12894980d52d3fd7f3f5cab463d48e9cfbcc06f40616bdeeab3e3f31d1",
+      "required": true,
+      "urls": [
+        "https://huggingface.co/nakamura196/retinaface-r50-onnx/resolve/main/retinaface_r50.onnx"
+      ]
+    },
+    {
+      "file": "GPEN-BFR-512.onnx",
+      "family": "gpen",
+      "description": "GPEN BFR 512 face restorer (GPEN, GPEN Realistic)",
+      "size": 284250449,
+      "sha256": "0960f836488735444d508b588e44fb5dfd19c68fde9163ad7878aa24d1d5115e",
+      "required": true,
+      "urls": [
+        "https://huggingface.co/CountFloyd/deepfake/resolve/main/GPEN-BFR-512.onnx"
+      ]
+    },
+    {
+      "file": "gpen_bfr_256.onnx",
+      "family": "gpen",
+      "description": "GPEN BFR 256 face restorer (GPEN 256 Pro, the 3060's enhancer)",
+      "size": 75792988,
+      "sha256": "bad8bf0426873828df2dbf4e3b3d9ababba9da7965b8b72426569486f7ae5c25",
+      "required": true,
+      "urls": [
+        "https://huggingface.co/facefusion/models-3.0.0/resolve/main/gpen_bfr_256.onnx"
+      ]
+    },
+    {
+      "file": "resnet18.onnx",
+      "family": "bisenet",
+      "description": "BiSeNet ResNet-18 face parser (Face Parser mask engine)",
+      "size": 53205364,
+      "sha256": "0d9bd318e46987c3bdbfacae9e2c0f461cae1c6ac6ea6d43bbe541a91727e33f",
+      "required": true,
+      "urls": [
+        "https://github.com/yakhyo/face-parsing/releases/download/weights/resnet18.onnx"
+      ]
+    }
+  ]
+}

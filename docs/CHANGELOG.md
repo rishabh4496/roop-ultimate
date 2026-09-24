@@ -5,6 +5,42 @@ full session record is [`SESSION_LOGS.md`](SESSION_LOGS.md); the running enginee
 state lives outside the repository (`RECODE_STATUS.md` in the operator's `roop-keep`
 folder). Entries before 2026-09-21 were moved here from the README on 2026-09-22.
 
+## 2026-09-25
+
+- **Selected-mode renders swapped nothing (4bd577d, fixed in a76091a).** Commit 4bd577d
+  built `allowed_source_indices` in `ProcessMgr.swap_faces` with
+  `faces = getattr(src_data, 'faces', None)`, which overwrote the frame's detected faces
+  with the source faceset's. The per-face loop then matched the source photo against the
+  target, refused it, and never saw the real face. Every render in the default mode was
+  untouched video from 2026-09-24 23:32 until the fix. The suite stayed green (3454
+  passed). The new regression benchmark found it on its first real run: 0/300 frames
+  swapped, 83% "faster". `tests/test_swap_faces_detected_list.py` now pins every
+  assignment to `faces` in `swap_faces`.
+- **Regression benchmark**: `run.py --benchmark --benchmark-mode regression`. It runs a
+  real 300-frame 1080p render of the user's configuration and reports raw decode/encode
+  fps, per-stage throughput, end-to-end fps, p99 frame latency, VRAM peak and GPU
+  utilisation. It fails on dropped frames, a stage that never ran, lost swap coverage, or
+  face-crop SSIM/PSNR below the per-machine golden render. FPS is advisory only. See
+  [`development/REGRESSION_BENCHMARK.md`](development/REGRESSION_BENCHMARK.md) for the
+  positive and null controls.
+- **Model integrity at startup**: `app/model_manifest.json` pins size and SHA-256 for
+  inswapper, RetinaFace, GPEN 512/256 and BiSeNet. Each hash was checked against the
+  host's own published digest. `roop/model_integrity.py` verifies them at boot (cached
+  against size and mtime) and fetches missing or corrupt ones with HTTP Range resume.
+  `conditional_download` now keeps a failed `.part` for resume instead of deleting it.
+  Progress is served at `GET /api/models/integrity` and shown in the React
+  `ModelSplash`. The update health probe verifies but never downloads.
+- **Portable runtime** (`portable/run.bat`, `portable/run.sh`, `portable/bootstrap.py`):
+  it runs with no Pinokio, system Python or Conda. It installs uv, a uv-managed CPython
+  3.10 and a venv under `portable/runtime/`; runs the install.js dependency steps (PyTorch
+  2.7 cu128, ONNX Runtime GPU 1.23.2 and TensorRT 10.9 via `provision_runtime.py`); adds
+  static FFmpeg 8.1; and opens the browser when the API answers. `--build-bundle` fills
+  `portable/wheels` and `portable/vendor` for a no-network install; `provision_runtime.py`
+  gained `ROOP_WHEELHOUSE`, `ROOP_OFFLINE` and `ROOP_PROVISION_RECORD` (all unset under
+  Pinokio). Verified on the 4070: TensorRT provider active, all 5 manifest models
+  verified, React served. Not yet run on Linux or macOS. See
+  [`../portable/README.md`](../portable/README.md).
+
 ## 2026-09-24
 
 - **VRAM governor, auto-tune, and six performance settings.** Asked for: a VRAM governor that

@@ -185,6 +185,22 @@ def set_runtime_monitor(monitor):
     _RUNTIME_MONITOR = monitor
 
 
+_STAGE_SINK = None
+
+
+def set_stage_sink(sink):
+    """Attach/detach an observer called as ``sink(stage, seconds)`` per stage.
+
+    Unlike the runtime monitor, nothing inside a render resets this, so a
+    caller outside the pipeline (the regression benchmark) can watch every
+    ``_prof`` stage of a real render -- including one sample per frame from
+    ``frame_total`` -- and read the calls as proof the stage executed.
+    ``None`` keeps ``_prof`` at its historical no-op cost.
+    """
+    global _STAGE_SINK
+    _STAGE_SINK = sink
+
+
 def set_detailed_profiler(profiler):
     """Attach/detach the opt-in Phase 14 profiler."""
     global _DETAILED_PROFILER
@@ -658,7 +674,8 @@ _prof_counts = _defaultdict(int)
 def _prof(stage):
     monitor = _RUNTIME_MONITOR
     profiler = _DETAILED_PROFILER
-    if not _PROFILE and monitor is None and profiler is None:
+    sink = _STAGE_SINK
+    if not _PROFILE and monitor is None and profiler is None and sink is None:
         yield
         return
     t0 = time.perf_counter()
@@ -675,6 +692,8 @@ def _prof(stage):
             monitor.record_stage(stage, dt)
         if profiler is not None:
             profiler.end(profile_token)
+        if sink is not None:
+            sink(stage, dt)
 
 
 def _prof_reset():

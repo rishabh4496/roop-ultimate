@@ -5586,6 +5586,7 @@ import routes_trt_cache as _routes_trt_cache
 import routes_autotune as _routes_autotune
 import routes_telemetry as _routes_telemetry
 import routes_frames as _routes_frames
+import routes_models as _routes_models
 app.include_router(_routes_diagnostics.router)
 app.include_router(_routes_livecam.router)
 app.include_router(_routes_quality.router)
@@ -5599,6 +5600,7 @@ app.include_router(_routes_trt_cache.router)
 app.include_router(_routes_autotune.router)
 app.include_router(_routes_telemetry.router)
 app.include_router(_routes_frames.router)
+app.include_router(_routes_models.router)
 
 
 def _ws_frame_source(index: int, frame: int, width: int, quality: int):

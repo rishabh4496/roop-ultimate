@@ -1051,33 +1051,32 @@ def conditional_download(download_directory_path: str, urls: List[str], required
         # truncated file that the exists() check above then treats as a
         # complete model forever (cryptic ONNX load error until the user
         # deletes it by hand).
-        partial_path = download_file_path + ".part"
+        #
+        # The .part is KEPT on a network failure: model_integrity resumes it
+        # with an HTTP Range request next time instead of restarting at byte
+        # zero. A model listed in app/model_manifest.json is also held to its
+        # size and SHA256 before it is renamed into place.
+        from roop import model_integrity
+        entry = model_integrity.lookup(download_file_path)
         try:
-            total = 0
-            try:
-                with urllib.request.urlopen(url) as response:
-                    total = int(response.headers.get("Content-Length", 0))
-            except Exception as _degrade_error:
-                _swallowed("roop/utilities.py:971", _degrade_error, "fallback continued")
-                pass
             with tqdm(
-                total=total,
+                total=entry.size if entry else 0,
                 desc=f"Downloading {url}",
                 unit="B",
                 unit_scale=True,
                 unit_divisor=1024,
             ) as progress:
-                urllib.request.urlretrieve(url, partial_path, reporthook=lambda count, block_size, total_size: progress.update(block_size))  # type: ignore[attr-defined]
-            if total and os.path.getsize(partial_path) < total:
-                raise IOError(f"Incomplete download: got {os.path.getsize(partial_path)} of {total} bytes")
-            os.replace(partial_path, download_file_path)
+                def _report(done, total, _bar=progress):
+                    if total and _bar.total != total:
+                        _bar.total = total
+                    _bar.update(done - _bar.n)
+                model_integrity.download_resumable(
+                    url, download_file_path,
+                    expected_size=entry.size if entry else None,
+                    expected_sha256=entry.sha256 if entry else None,
+                    progress=_report)
         except Exception as exc:
             _swallowed("roop/utilities.py:984", exc, "fallback continued")
-            if os.path.exists(partial_path):
-                try:
-                    os.remove(partial_path)
-                except OSError:
-                    pass
             # A failed download (transient network error, host down, partial
             # transfer) is handled the same way as offline: clear error if the
             # model is required now, otherwise warn and move on.

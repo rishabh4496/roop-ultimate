@@ -108,11 +108,36 @@ def _installed_distributions() -> dict[str, str]:
 
 
 def _remove_installed(names: Iterable[str]) -> None:
+    if _record_path():
+        return
     installed = _installed_distributions()
     for name in names:
         key = _normalise(name)
         if key in installed:
             _uv_pip(["uninstall", name])
+
+
+# Portable runtime hooks (portable/bootstrap.py). All three are unset under
+# Pinokio, where every install below behaves exactly as before.
+#   ROOP_WHEELHOUSE        a directory of pre-downloaded wheels (--find-links)
+#   ROOP_OFFLINE=1         never reach an index: install from the wheelhouse only
+#   ROOP_PROVISION_RECORD  a JSON path: record each install instead of running
+#                          it, so the bundle builder downloads exactly the
+#                          packages provisioning would install on this machine
+def _record_path() -> str | None:
+    return os.environ.get("ROOP_PROVISION_RECORD") or None
+
+
+def _record(entry: dict) -> None:
+    path = _record_path()
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            rows = json.load(handle)
+    except (OSError, ValueError):
+        rows = []
+    rows.append(entry)
+    with open(path, "w", encoding="utf-8") as handle:
+        json.dump(rows, handle, indent=1)
 
 
 def _install(
@@ -123,11 +148,24 @@ def _install(
     force_reinstall: bool = False,
     no_deps: bool = False,
 ) -> None:
+    if _record_path():
+        _record({"packages": list(packages), "index_url": index_url,
+                 "extra_index_url": extra_index_url, "no_deps": no_deps})
+        return
     arguments = ["install", *packages]
-    if index_url:
-        arguments.extend(["--index-url", index_url])
-    if extra_index_url:
-        arguments.extend(["--extra-index-url", extra_index_url])
+    wheelhouse = os.environ.get("ROOP_WHEELHOUSE")
+    offline = os.environ.get("ROOP_OFFLINE") == "1"
+    if offline:
+        if not wheelhouse:
+            raise ProvisioningError("ROOP_OFFLINE=1 needs ROOP_WHEELHOUSE")
+        arguments.append("--no-index")
+    else:
+        if index_url:
+            arguments.extend(["--index-url", index_url])
+        if extra_index_url:
+            arguments.extend(["--extra-index-url", extra_index_url])
+    if wheelhouse:
+        arguments.extend(["--find-links", wheelhouse])
     if force_reinstall:
         arguments.append("--force-reinstall")
     if no_deps:

@@ -3,6 +3,7 @@ import { getJSON, postJSON } from './api';
 import { Toasts, Confetti, MotionIcon } from './components/ui';
 import QualityProfilesModal, { BUILTIN_PROFILES } from './components/QualityProfilesModal';
 import CommandPalette from './components/CommandPalette';
+import ModelSplash from './components/ModelSplash';
 import ErrorBoundary from './components/ErrorBoundary';
 import { ConfirmHost, confirmDialog, promptDialog } from './components/confirm';
 import { fmtTime } from './components/faceswap/utils';
@@ -1060,6 +1061,7 @@ export default function App() {
   return (
     <MotionConfig reducedMotion="user">
     <div className="min-h-screen flex flex-col relative overflow-hidden select-none">
+      <ModelSplash />
       {/* Floating Ambient Background Glows — static.
           These are two very large filter-blur discs. When they animated
           (transform translate/scale on an infinite loop) the compositor had to
