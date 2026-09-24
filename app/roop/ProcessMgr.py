@@ -951,6 +951,11 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
         # and be read by nobody.
         self._reset_dispatch_tracker()
         self.options = options
+        import os
+        self.identity_confidence_threshold = float(
+            os.environ.get('ROOP_IDENTITY_CONFIDENCE_THRESHOLD',
+                           getattr(options, 'identity_confidence_threshold', 0.0) or 0.0)
+        )
         from roop.temporal_identity import TemporalIdentityStabilizer
         self._temporal_identity = TemporalIdentityStabilizer.from_env()
         from roop.temporal_occlusion import TemporalOcclusionEngine
@@ -3189,6 +3194,13 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                         _stab.reset()
                 bar_write(f'[Stabilize] scene cut at frame {frame_idx}; rolling history reset')
                 gc.collect()
+        cuts = getattr(self, '_shot_boundaries', None)
+        if cuts and frame_idx is not None and frame_idx in cuts:
+            from roop.scene_detector import flush_pipeline_temporal_buffers
+            flush_pipeline_temporal_buffers(self)
+            for _stab in (self.kps_stabilizer, self.enh_stabilizer, self.mask_stabilizer):
+                if _stab is not None:
+                    _stab.reset()
         do_kps_stab = stabilize and self._stab_active and self._cur_kps_stab() is not None
         # 2-pass parallel stabilization: replace kps with the value precomputed
         # for this frame in pass 1 instead of running the (stateful) stabilizer.
@@ -3449,19 +3461,23 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                     if g in self.selected_target_groups
                 }
                 single_person = len(persons) <= 1
-                allowed_source_indices = {
-                    self.options.selected_index if single_person else rank[g]
-                    for g in persons
-                    if 0 <= (self.options.selected_index if single_person else rank[g])
-                    < len(self.input_face_datas)
-                }
+                allowed_source_indices = set()
+                for g in persons:
+                    src_idx = self._resolve_target_person_source(g, rank[g])
+                    if src_idx is not None and 0 <= src_idx < len(self.input_face_datas):
+                        src_data = self.input_face_datas[src_idx]
+                        faces = getattr(src_data, 'faces', None)
+                        if faces is None or len(faces) > 0:
+                            allowed_source_indices.add(src_idx)
+
                 # source index -> the captured angles of the person that source
                 # belongs to, so a track's source can be checked against the face
                 # actually in front of us.
                 rank_to_tis = {}
                 for g, tis in persons.items():
-                    r = self.options.selected_index if single_person else rank[g]
-                    rank_to_tis.setdefault(r, []).extend(tis)
+                    r = self._resolve_target_person_source(g, rank[g])
+                    if r is not None and r in allowed_source_indices:
+                        rank_to_tis.setdefault(r, []).extend(tis)
 
                 def _dist_to_source(face, src):
                     """Cosine distance from *face* to the closest captured angle of
@@ -3480,7 +3496,7 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                     """Closest captured angle of ANY selected person (inf if none)."""
                     ds = []
                     for g, tis in persons.items():
-                        source = self.options.selected_index if single_person else rank[g]
+                        source = self._resolve_target_person_source(g, rank[g])
                         if source not in allowed_source_indices:
                             continue
                         for ti in tis:
@@ -3770,6 +3786,16 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                                   + (f" VETO: {veto}" if veto else ""))
 
                     if src_index is not None:
+                        id_conf_thresh = getattr(self, 'identity_confidence_threshold', 0.0)
+                        if id_conf_thresh <= 0.0:
+                            id_conf_thresh = float(getattr(roop.globals, 'identity_confidence_threshold', 0.0) or 0.0)
+                        if id_conf_thresh > 0.0:
+                            d_own_check = _dist_to_source(face, src_index)
+                            if d_own_check is not None and (1.0 - d_own_check) < id_conf_thresh:
+                                _audit_hit('skipped (below identity confidence threshold)')
+                                src_index = None
+
+                    if src_index is not None:
                         _audit_hit('swapped (identity lock)')
                         _audit_swapped_gapfill(face)
                         claimed_sources_in_frame.add(src_index)
@@ -3838,7 +3864,7 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                         n_src_claimed = 0           # their source was already used this frame
                         best_any = None             # nearest candidate REGARDLESS of the gate
                         for g, tis in candidate_persons.items():
-                            r_src = self.options.selected_index if single_person else rank.get(g, 0)
+                            r_src = self._resolve_target_person_source(g, rank.get(g, 0))
                             if r_src not in allowed_source_indices:
                                 continue
                             if r_src in claimed_sources_in_frame:
@@ -3872,13 +3898,19 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                                       f"claimed_src={sorted(claimed_sources_in_frame)} thr={threshold} d={_dd}")
 
                         if best_g is not None:
-                            src_index = self.options.selected_index if single_person else rank[best_g]
-                            if 0 <= src_index < len(self.input_face_datas):
-                                claimed_sources_in_frame.add(src_index)
-                                pending.append((src_index, face))
-                                num_faces_found += 1
-                                _audit_hit('swapped (per-frame match)')
-                                _audit_swapped_gapfill(face)
+                            src_index = self._resolve_target_person_source(best_g, rank[best_g])
+                            id_conf_thresh = getattr(self, 'identity_confidence_threshold', 0.0)
+                            if id_conf_thresh <= 0.0:
+                                id_conf_thresh = float(getattr(roop.globals, 'identity_confidence_threshold', 0.0) or 0.0)
+                            if src_index is not None and 0 <= src_index < len(self.input_face_datas):
+                                if id_conf_thresh > 0.0 and best_d is not None and (1.0 - best_d) < id_conf_thresh:
+                                    _audit_hit('skipped (below identity confidence threshold)')
+                                else:
+                                    claimed_sources_in_frame.add(src_index)
+                                    pending.append((src_index, face))
+                                    num_faces_found += 1
+                                    _audit_hit('swapped (per-frame match)')
+                                    _audit_swapped_gapfill(face)
                             else:
                                 _audit_hit('fallback missed (no source for person)')
                         elif dirty:

@@ -199,6 +199,32 @@ export default function PersonGroups({
     }
   };
 
+  const scanFaceBank = async () => {
+    if (targetFaces.length && !(await confirmDialog({
+      title: 'Scan Face Bank?',
+      message: 'Face Bank will scan the clip across scenes, extract 512-d normalized embeddings, and cluster all unique people (DBSCAN/Agglomerative) into distinct character thumbnails.',
+      confirmLabel: 'Scan and cluster',
+    }))) return;
+    setScanning(true);
+    try {
+      const res = await postJSON('/api/target/face_bank', {
+        index: selTarget, clustering_method: 'dbscan', target_media_id: targetMediaId, apply: true,
+      });
+      applyPayload(res);
+      if (!res.count) {
+        notify(res.message || 'Face Bank found no faces in this clip', 'warning');
+        return;
+      }
+      setExpanded({});
+      setSelTargetFace(0);
+      notify(`Face Bank: Discovered ${res.characters?.length || res.count} unique character(s)`, 'success');
+    } catch (e) {
+      notify(e.message, 'error');
+    } finally {
+      setScanning(false);
+    }
+  };
+
   const autoCluster = async () => {
     const res = await call('/api/target/autocluster', { target_media_id: targetMediaId });
     if (res) { setExpanded({}); notify(`Grouped into ${res.people} ${res.people === 1 ? 'person' : 'people'}`); }
@@ -355,11 +381,18 @@ export default function PersonGroups({
       <div className="rounded-xl border border-dashed border-white/10 bg-black/10 p-4 text-center space-y-2.5 select-none">
         <div className="flex justify-center opacity-40"><Icon.faces size={22} /></div>
         <div className="text-xs text-white/50 font-semibold">No people captured yet</div>
-        <button type="button" disabled={scanning} onClick={autoCapture}
-          title="Scan the clip, find everyone in it, and capture each person from their own clearest frame"
-          className="mx-auto px-3 py-1.5 rounded-lg text-mini font-bold bg-[var(--accent)]/15 border border-[var(--accent)]/40 text-[var(--accent)] hover:bg-[var(--accent)]/25 transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
-          {scanning ? 'Scanning the clip…' : 'Auto-capture people'}
-        </button>
+        <div className="flex justify-center gap-2">
+          <button type="button" disabled={scanning} onClick={scanFaceBank}
+            title="Scan clip into Face Bank, cluster unique faces with DBSCAN, and build distinct character thumbnails"
+            className="px-3 py-1.5 rounded-lg text-mini font-bold bg-[var(--accent)]/20 border border-[var(--accent)]/50 text-[var(--accent)] hover:bg-[var(--accent)]/30 transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
+            {scanning ? 'Scanning Face Bank…' : 'Scan Face Bank (Clustering)'}
+          </button>
+          <button type="button" disabled={scanning} onClick={autoCapture}
+            title="Scan the clip, find everyone in it, and capture each person from their own clearest frame"
+            className="px-3 py-1.5 rounded-lg text-mini font-bold bg-white/[0.05] border border-white/10 text-white/70 hover:bg-white/10 transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
+            Auto-capture
+          </button>
+        </div>
         <div className="text-mini text-white/45 leading-relaxed">
           Recommended: finds everyone, captures each from their clearest frame, then harvests
           the angles they turn through. Takes a couple of minutes and is worth it — a single
@@ -386,6 +419,11 @@ export default function PersonGroups({
           {people.length} {people.length === 1 ? 'person' : 'people'} · {targetFaces.length} {targetFaces.length === 1 ? 'angle' : 'angles'}
         </span>
         <div className="flex gap-1.5">
+          <button type="button" disabled={busy || scanning} onClick={scanFaceBank}
+            title="Scan video into Face Bank: extract 512-d embeddings and cluster all unique people (DBSCAN/Agglomerative)"
+            className="px-2 py-1 rounded-lg text-micro font-bold bg-[var(--accent)]/20 border border-[var(--accent)]/50 text-[var(--accent)] hover:bg-[var(--accent)]/30 transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
+            {scanning ? 'Scanning…' : 'Face Bank'}
+          </button>
           <button type="button" disabled={busy || scanning} onClick={autoCapture}
             title="Re-scan the clip and capture everyone from their own clearest frame, replacing the current people"
             className="px-2 py-1 rounded-lg text-micro font-bold bg-[var(--accent)]/10 border border-[var(--accent)]/30 text-[var(--accent)] hover:bg-[var(--accent)]/20 transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
@@ -488,9 +526,9 @@ export default function PersonGroups({
                   title="Which source face this person becomes"
                   className={`px-2 py-1 rounded-lg glass-input text-white text-mini font-bold focus:outline-none cursor-pointer max-w-[120px] shrink-0 ${mapValid ? '' : 'text-white/50'}`}
                 >
-                  <option value={-1} className="bg-[#121420]">Skip</option>
+                  <option value={-1} className="bg-[#121420]">Ignore / Skip</option>
                   {sourceFaces.map((_, sfIdx) => (
-                    <option key={sfIdx} value={sfIdx} className="bg-[#121420]">Face {sfIdx + 1}</option>
+                    <option key={sfIdx} value={sfIdx} className="bg-[#121420]">Source Face {sfIdx + 1}</option>
                   ))}
                 </select>
               )}

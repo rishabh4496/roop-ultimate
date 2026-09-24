@@ -1078,6 +1078,7 @@ export default function FaceSwap({
       enhancer: activeParams.selected_enhancer, adaptive_enhancer_profile: activeParams.adaptive_enhancer_profile || 'BALANCED', codeformer_fidelity: num(activeParams.codeformer_fidelity, 0.5),
       detection: previewDetection,
       face_distance: num(activeParams.max_face_distance, 0.75), blend_ratio: num(activeParams.blend_ratio, 0.8),
+      identity_confidence_threshold: num(activeParams.identity_confidence_threshold, 0.0),
       mask_engine: activeParams.mask_engine, mask_engine_2: activeParams.mask_engine_2,
       clip_text: activeParams.mask_clip_text,
       no_face_action: activeParams.no_face_action, vr_mode: activeParams.vr_mode, autorotate: activeParams.autorotate_faces,
@@ -3093,6 +3094,7 @@ export default function FaceSwap({
 
           <Section title="Enhancements">
             <Toggle label="Lock face identities (video)" info="For 'Selected face' mode on video: tracks each person across the clip and keeps them on one source, so identities don't flip frame-to-frame when faces cross or turn. Adds a short tracking pre-pass; the swap stays multi-threaded." checked={!!p.track_identities} onChange={(v) => set('track_identities', v)} />
+            <Slider label="Identity confidence threshold" info="Minimum cosine similarity required to swap a face. If similarity drops below this (due to extreme profile angle or motion blur), the swap is cleanly skipped rather than mapping onto an incorrect person. 0.0 = disabled." min={0.0} max={1.0} step={0.05} value={num(p.identity_confidence_threshold, 0.0)} onChange={(v) => set('identity_confidence_threshold', v)} />
             <Toggle label="Stabilize face (video)" info="Temporal keypoint smoothing — reduces swap wobble. Runs at Max Threads (2-pass) unless Enhancer Flicker is on." checked={!!p.stabilize_face} onChange={(v) => set('stabilize_face', v)} />
             {p.stabilize_face && (
               <>

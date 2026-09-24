@@ -41,6 +41,7 @@ export const FACESWAP_DEFAULTS = {
   adaptive_enhancer_profile: 'BALANCED',
   codeformer_fidelity: 0.55,
   max_face_distance: 0.75,
+  identity_confidence_threshold: 0.0,
   subsample_upscale: '256px',
   upscale_after_swap: false,
   upscale_model_after: 'fsr_x2',

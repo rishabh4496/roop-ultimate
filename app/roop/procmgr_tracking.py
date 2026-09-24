@@ -8,6 +8,7 @@ no detection of its own for tracked runs.
 A mixin, so the method bodies move verbatim and `self` is unchanged.
 """
 from roop.degrade import swallowed as _swallowed
+from typing import Optional, Any, Dict, List, Set, Tuple
 
 import os
 from concurrent.futures import ThreadPoolExecutor
@@ -434,6 +435,7 @@ class TrackingMixin:
             # means anything across a boundary. What is refused is inheriting a
             # track on position alone.
             if f_idx in shot_boundaries:
+                flush_pipeline_temporal_buffers(self)
                 if active:
                     retired.extend(active)
                     active = []
@@ -450,41 +452,40 @@ class TrackingMixin:
                     (fresh if t['last_seen'] >= f_idx - STALE else retired).append(t)
                 active = fresh
             entries, used = [], set()
-            for face in faces:
+            # Global Hungarian matching (Linear Sum Assignment) for detected faces to active tracks
+            best_assignments = {}
+            if active and faces:
+                from scipy.optimize import linear_sum_assignment
+                cost_matrix = np.full((len(faces), len(active)), 1e5, dtype=np.float32)
+                for fi, face in enumerate(faces):
+                    bb = np.asarray(face.bbox, dtype=np.float32)
+                    e = np.asarray(face.embedding, dtype=np.float32)
+                    is_dirty = face_contact.unreliable(face)
+                    for ti, t in enumerate(active):
+                        pred_bb = _predict_bbox(t, f_idx)
+                        iou = self._bbox_iou(bb, pred_bb)
+                        if iou < IOU_MIN:
+                            continue
+                        cos_dist = compute_cosine_distance(t['emb_mean'], e)
+                        if cos_dist > EMB_MAX and not is_dirty:
+                            continue
+                        cost = (1.0 - iou) if is_dirty else ((1.0 - iou) + cos_dist)
+                        cost_matrix[fi, ti] = cost
+                row_ind, col_ind = linear_sum_assignment(cost_matrix)
+                for r, c in zip(row_ind, col_ind):
+                    if cost_matrix[r, c] < 1e4:
+                        best_assignments[r] = active[c]
+
+            for face_idx, face in enumerate(faces):
                 bbox = np.asarray(face.bbox, dtype=np.float32)
                 emb = np.asarray(face.embedding, dtype=np.float32)
                 ada_emb = (_ada.face_embedding(face) if _ada.ready() else None)
-                # Two faces in contact put most of each other INSIDE each
-                # other's recognition crop, so both embeddings drift toward the
-                # same picture. Believing one here is how a person's track
-                # snaps in two the moment they lean in: association is
-                # embedding-gated, the gate fails, a fresh track is born from
-                # the contaminated frame and is then judged on a mean built
-                # entirely out of contaminated frames. So a contaminated
-                # observation keeps its place in the track on POSITION and is
-                # not allowed to say who anybody is. See roop/face_contact.py.
                 dirty = face_contact.unreliable(face)
                 if dirty:
                     contam_seen += 1
-                best, best_score = None, -1.0
-                for t in active:
-                    if t['id'] in used:
-                        continue
-                    predicted_bbox = _predict_bbox(t, f_idx)
-                    iou = self._bbox_iou(bbox, predicted_bbox)
-                    if iou < IOU_MIN:
-                        continue
-
-                    cos_dist = compute_cosine_distance(t['emb_mean'], emb)
-                    if cos_dist > EMB_MAX and not dirty:
-                        continue
-
-                    # Score: Higher IoU and lower Cosine Distance is better.
-                    # A contaminated distance is not evidence either way, so it
-                    # is not allowed to rank the candidates: IoU alone decides.
-                    score = iou if dirty else iou * (1.0 - cos_dist)
-                    if score > best_score:
-                        best, best_score = t, score
+                best = best_assignments.get(face_idx)
+                if best is not None:
+                    used.add(best['id'])
 
                 is_reid = False
                 # Re-ID matches on appearance ALONE. A contaminated face is
@@ -760,8 +761,8 @@ class TrackingMixin:
                 # join() on a thread that failed to start raises, which would
                 # come out of the finally block and mask the real failure.
                 reader = _t
-            from roop.one_euro import StreamingStabilizationHistory
-            _scene_tracker = StreamingStabilizationHistory()
+            from roop.scene_detector import ContentAwareSceneDetector, flush_pipeline_temporal_buffers
+            _scene_tracker = ContentAwareSceneDetector()
             idx = 0
             while roop.globals.processing:
                 wait_while_paused()
@@ -823,6 +824,7 @@ class TrackingMixin:
                 if _scene_tracker is not None and isinstance(frame, np.ndarray):
                     if _scene_tracker.observe_frame(frame, idx):
                         shot_boundaries.add(idx)
+                        flush_pipeline_temporal_buffers(self)
                         # Freeing the previous shot's cached frames here is the
                         # behaviour this hook already had; it is kept, but it is
                         # no longer the ONLY thing a cut does.
@@ -1339,6 +1341,58 @@ class TrackingMixin:
 
         return [t for t in tracks if int(t.get('id')) not in alias], alias
 
+    def _resolve_target_person_source(self, group_id: int, rank_idx: int) -> Optional[int]:
+        """Resolve which source face index is mapped to target character/person group.
+
+        Returns:
+            - integer >= 0: valid mapped source face index
+            - -1: explicitly mapped to Ignore/Skip
+            - None: unmapped
+        """
+        req = getattr(self, 'processing_request', None) or {}
+        if not isinstance(req, dict):
+            req = {}
+
+        # 1. Check target_person_source_mapping by stable target_person_id
+        stable_ids = getattr(self, 'target_person_ids', None) or req.get('target_person_ids') or []
+        person_id = None
+        if 0 <= rank_idx < len(stable_ids):
+            person_id = str(stable_ids[rank_idx])
+        elif hasattr(roop.globals, 'TARGET_FACE_PERSON_IDS') and 0 <= rank_idx < len(roop.globals.TARGET_FACE_PERSON_IDS):
+            person_id = str(roop.globals.TARGET_FACE_PERSON_IDS[rank_idx])
+
+        person_mapping = req.get('target_person_source_mapping') or {}
+        if person_id and person_id in person_mapping:
+            val = person_mapping[person_id]
+            if val in (-1, '-1', 'skip', 'ignore', 'none', None):
+                return -1
+            try:
+                if isinstance(val, str) and val.startswith('source-'):
+                    return int(val.split('-')[-1])
+                return int(val)
+            except (ValueError, TypeError):
+                return -1
+
+        # 2. Check source_index_mapping by rank index
+        src_mapping = req.get('source_index_mapping')
+        if src_mapping is not None and isinstance(src_mapping, list):
+            if 0 <= rank_idx < len(src_mapping):
+                val = src_mapping[rank_idx]
+                if val == -1 or val in ('-1', 'skip', 'ignore'):
+                    return -1
+                try:
+                    return int(val)
+                except (ValueError, TypeError):
+                    return -1
+
+        # 3. Default fallback
+        groups = getattr(self, 'target_face_groups', None) or list(getattr(roop.globals, 'TARGET_FACE_GROUP', []))
+        uniq = sorted(set(groups)) if groups else []
+        single_person = len(uniq) <= 1
+        opt = getattr(self, 'options', None)
+        selected_index = getattr(opt, 'selected_index', 0) if opt else 0
+        return selected_index if single_person else rank_idx
+
     def _assign_track_sources(self, tracks, per_frame=None):
         """Bind each tracklet to at most one source (person rank) by mean embedding.
 
@@ -1536,7 +1590,10 @@ class TrackingMixin:
                               for a, b in person_assigned_spans[g])
             if overlap and overlap > _TRACK_OVERLAP_FRAC * t_len:
                 continue
-            track_src[tid] = self.options.selected_index if single_person else rank[g]
+            mapped_src = self._resolve_target_person_source(g, rank[g])
+            if mapped_src is None or mapped_src == -1:
+                continue
+            track_src[tid] = mapped_src
             person_anchor.setdefault(g, d)
             person_owner.setdefault(g, tid)
             if t_frames is not None:
@@ -1691,7 +1748,10 @@ class TrackingMixin:
                     if best is None:
                         continue
                     d, g, via = best
-                    track_src[tid] = self.options.selected_index if single_person else rank[g]
+                    mapped_src = self._resolve_target_person_source(g, rank[g])
+                    if mapped_src is None or mapped_src == -1:
+                        continue
+                    track_src[tid] = mapped_src
                     inherited[tid] = (via, d)
                     person_tracks.setdefault(g, []).append(tid)
                     progress = True
@@ -1819,7 +1879,9 @@ class TrackingMixin:
                     print(f"[ELIM] track {tid} (len={t_len}) -> assigned to {target_g} by "
                           f"elimination (claimant={claimant}, sep={sep:.2f})  overlaps={overlap}",
                           flush=True)
-                track_src[tid] = rank[target_g]
+                mapped_src = self._resolve_target_person_source(target_g, rank[target_g])
+                if mapped_src is not None and mapped_src != -1:
+                    track_src[tid] = mapped_src
                 inherited[tid] = (claimant, -1.0)  # negative distance = elimination, not a distance
                 person_tracks.setdefault(target_g, []).append(tid)
                 person_assigned_frames[target_g].update(t_frames)
@@ -2347,7 +2409,12 @@ class TrackingMixin:
                 if bool(getattr(self.options, 'stabilize_landmarks', True)):
                     from roop.temporal_smoother import AdaptiveLandmarkSmoother
                     coupled = AdaptiveLandmarkSmoother.from_env()
+                cuts = getattr(self, '_shot_boundaries', None) or set()
                 for i in sorted(merged):
+                    if i in cuts:
+                        if coupled is not None and hasattr(coupled, 'reset'):
+                            coupled.reset()
+                        _filters.clear()
                     f = merged[i]
                     kps = getattr(f, 'kps', None)
                     lm = getattr(f, 'landmark_2d_106', None)

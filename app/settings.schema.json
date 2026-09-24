@@ -42,6 +42,7 @@
     "perf_pinned_buffers",
     "temporal_step",
     "recognizer",
+    "identity_confidence_threshold",
     "face_demarcate",
     "track_stitch",
     "verify_swap",
@@ -641,6 +642,18 @@
     "identity_detail_strength": {
       "default": 0.0,
       "type": "float"
+    },
+    "identity_confidence_threshold": {
+      "default": 0.0,
+      "type": "float",
+      "ui": {
+        "label": "Identity confidence threshold",
+        "section": "Identity & tracking"
+      },
+      "env": {
+        "var": "ROOP_IDENTITY_CONFIDENCE_THRESHOLD",
+        "kind": "value"
+      }
     },
     "temporal_compositing": {
       "default": false,

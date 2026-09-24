@@ -75,6 +75,7 @@ UI_SETTINGS = (
     ('temporal_step', 'Face tracking interval (frames)', 'Advanced performance'),
     # Identity & tracking
     ('recognizer', 'Recognition model', 'Identity & tracking'),
+    ('identity_confidence_threshold', 'Identity confidence threshold', 'Identity & tracking'),
     ('face_demarcate', 'Interacting-face demarcation', 'Identity & tracking'),
     ('track_stitch', 'Track stitching', 'Identity & tracking'),
     ('verify_swap', 'Swap outcome guard', 'Identity & tracking'),
@@ -141,6 +142,7 @@ ENV_SETTINGS = (
     ('upright_remeasure', 'ROOP_UPRIGHT_REMEASURE', 'tristate'),
     # Not tri-state: a model choice and a priority class.
     ('recognizer', 'ROOP_ADAFACE', 'recognizer'),
+    ('identity_confidence_threshold', 'ROOP_IDENTITY_CONFIDENCE_THRESHOLD', 'value'),
     ('process_priority', 'ROOP_PRIORITY', 'priority'),
 )
 
@@ -150,7 +152,7 @@ ENV_SETTINGS = (
 # key here whose variable IS read at import would make the panel lie: it would
 # re-export a value nothing reads again.
 LIVE_ENV_SETTINGS = ('perf_batch_max', 'perf_nvenc_preset', 'perf_gpu_affine',
-                     'perf_pinned_buffers', 'temporal_step')
+                     'perf_pinned_buffers', 'temporal_step', 'identity_confidence_threshold')
 
 # Variables apply_env/apply_live_env set from config in this process -- as
 # opposed to ones the launcher or a benchmark put in the environment, which
@@ -1043,6 +1045,7 @@ class Settings:
         # FaceSet V2 persistent source identity detail restoration. Opt-in to
         # keep V1 archives and existing looks unchanged.
         self.identity_detail_strength = self.default_get(data, 'identity_detail_strength', 0.0)
+        self.identity_confidence_threshold = float(self.default_get(data, 'identity_confidence_threshold', 0.0))
         # Phase 12 adaptive temporal paste-back. Opt-in to preserve existing
         # look settings and the historical linear compositor by default.
         self.temporal_compositing = self.default_get(data, 'temporal_compositing', False)
@@ -1342,6 +1345,7 @@ class Settings:
             'jaw_reshape_strength': self.jaw_reshape_strength,
             'detail_transfer_strength': self.detail_transfer_strength,
             'identity_detail_strength': self.identity_detail_strength,
+            'identity_confidence_threshold': float(self.identity_confidence_threshold),
             'temporal_compositing': self.temporal_compositing,
             'temporal_compositing_strength': self.temporal_compositing_strength,
             'temporal_compositing_mask_alpha': self.temporal_compositing_mask_alpha,

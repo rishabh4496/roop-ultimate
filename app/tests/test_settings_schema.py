@@ -164,7 +164,7 @@ class GeneratedFilesAreCurrent(unittest.TestCase):
 # oracle above cannot know them; each instead has to behave exactly like an
 # existing key of the same kind (test_new_keys_behave_like_their_kind).
 ADDED_AFTER_REGISTRY = ('perf_batch_max', 'perf_nvenc_preset', 'perf_gpu_affine',
-                        'perf_pinned_buffers', 'temporal_step')
+                        'perf_pinned_buffers', 'temporal_step', 'identity_confidence_threshold')
 
 
 class EnvMappingMatchesTheOldRunPy(unittest.TestCase):

@@ -3839,55 +3839,110 @@ def target_name(payload: dict = Body(...)):
     return _target_faces_payload()
 
 
+@app.post("/api/target/face_bank")
+def target_face_bank(payload: dict = Body(...)):
+    """Scan target video across frames/scenes, extract 512-d embeddings, cluster
+    all unique faces into distinct physical people using DBSCAN/Agglomerative
+    clustering, and build a UI Face Bank with representative thumbnails."""
+    idx, _media_id, error = _activate_target_from_payload(
+        payload, index=payload.get("index", state.selected_target_index), refresh=False)
+    if error:
+        return error
+    if idx < 0 or idx >= len(list_files_process):
+        return _target_faces_payload({"count": 0, "characters": [], "message": "invalid target index"})
+    target_path = list_files_process[idx].filename
+    if not util.is_video(target_path):
+        return _target_faces_payload({"count": 0, "characters": [], "message": "Face Bank scan requires a video target"})
+    roop_globals.target_path = target_path
+
+    from roop.face_bank import get_face_bank
+    bank = get_face_bank()
+
+    method = payload.get("method", payload.get("clustering_method", "dbscan"))
+    time_budget = float(payload.get("time_budget", 90.0))
+    eps = float(payload.get("eps", 0.45))
+    dist_threshold = float(payload.get("distance_threshold", 0.45))
+
+    characters = bank.scan_video(
+        target_path,
+        time_budget=time_budget,
+        clustering_method=method,
+        eps=eps,
+        distance_threshold=dist_threshold,
+    )
+
+    if not characters:
+        return _target_faces_payload({"count": 0, "characters": [], "message": "no faces found in clip"})
+
+    if bool(payload.get("apply", True)):
+        bank.apply_to_globals(characters)
+        state.active_target_person_source_mapping = {}
+        state.active_target_person_names = {ch["person_id"]: ch["name"] for ch in characters}
+        state.selected_target_face_index = 0
+        _save_active_target_context_locked()
+
+    payload_out = _target_faces_payload({
+        "count": len(roop_globals.TARGET_FACES),
+        "characters": [
+            {
+                "person_id": ch["person_id"],
+                "display_rank": ch["display_rank"],
+                "name": ch["name"],
+                "thumbnail": ch["thumbnail"],
+                "cluster_size": ch["cluster_size"],
+                "best_frame": ch["best_frame"],
+                "angles_count": ch["angles_count"],
+            }
+            for ch in characters
+        ],
+        "scene_cuts_count": len(bank.scene_cuts),
+    })
+    return payload_out
+
+
 @app.post("/api/target/autocluster")
 def target_autocluster(payload: dict = Body(...)):
     """Auto-assign every captured target face to a person by clustering their
-    recognition embeddings — same identity within `threshold` cosine distance
-    lands in one group. Replaces the current manual grouping."""
+    recognition embeddings using DBSCAN or Agglomerative Clustering."""
     _target_idx, _media_id, error = _activate_target_from_payload(payload, refresh=False)
     if error:
         return error
     threshold = float(payload.get("threshold", 0.55))
     faces = roop_globals.TARGET_FACES
-    groups = [-1] * len(faces)
-    next_id = 0
-    for i, face in enumerate(faces):
-        if groups[i] != -1:
-            continue
-        emb_i = getattr(face, 'embedding', None)
-        groups[i] = next_id
-        if emb_i is not None:
-            for j in range(i + 1, len(faces)):
-                if groups[j] != -1:
-                    continue
-                emb_j = getattr(faces[j], 'embedding', None)
-                if emb_j is None:
-                    continue
-                try:
-                    d = util.compute_cosine_distance(emb_i, emb_j)
-                except Exception as _degrade_error:
-                    _swallowed("api.py:2348", _degrade_error, "fallback continued")
-                    continue
-                if d < threshold:
-                    groups[j] = next_id
-        next_id += 1
-    # Reclustering changes structure.  Give each resulting cluster fresh stable
-    # identities and explicitly invalidate all old mappings/names.  This is
-    # conservative by design: no old source can silently transfer to a new
-    # cluster merely because it moved into the same display rank.
+    if not faces:
+        return _target_faces_payload({"people": 0, "mappings_invalidated": False})
+
+    from roop.face_clustering import cluster_face_embeddings
+    embeddings = []
+    for face in faces:
+        emb = getattr(face, 'embedding', None)
+        if emb is None and isinstance(face, dict):
+            emb = face.get('embedding')
+        embeddings.append(emb if emb is not None else np.zeros(512, dtype=np.float32))
+
+    method = payload.get("method", payload.get("clustering_method", "dbscan"))
+    eps = float(payload.get("eps", threshold))
+    groups = list(cluster_face_embeddings(embeddings, method=method, eps=eps, distance_threshold=threshold))
+    num_people = len(set(groups)) if groups else 0
+
+    group_to_person = {}
+    person_ids = []
+    for grp in groups:
+        if grp not in group_to_person:
+            group_to_person[grp] = new_target_person_id()
+        person_ids.append(group_to_person[grp])
+
     old_people = list(getattr(roop_globals, "TARGET_FACE_PERSON_IDS", []))
     roop_globals.TARGET_FACE_GROUP[:] = groups
-    roop_globals.TARGET_FACE_PERSON_IDS[:] = [
-        new_target_person_id() for _ in faces]
+    roop_globals.TARGET_FACE_PERSON_IDS[:] = person_ids
     roop_globals.TARGET_REFERENCE_FACE_IDS[:] = [
         new_target_reference_face_id() for _ in faces]
     state.active_target_person_source_mapping = {}
     state.active_target_person_names = {}
-    # Names keyed by old raw ids are meaningless after a full re-cluster.
     if getattr(roop_globals, 'TARGET_FACE_NAMES', None):
         roop_globals.TARGET_FACE_NAMES.clear()
     _save_active_target_context_locked()
-    return _target_faces_payload({"people": next_id,
+    return _target_faces_payload({"people": num_people,
                                   "mappings_invalidated": bool(old_people)})
 
 
