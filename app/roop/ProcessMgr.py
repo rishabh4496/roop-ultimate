@@ -3465,9 +3465,12 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                 for g in persons:
                     src_idx = self._resolve_target_person_source(g, rank[g])
                     if src_idx is not None and 0 <= src_idx < len(self.input_face_datas):
-                        src_data = self.input_face_datas[src_idx]
-                        faces = getattr(src_data, 'faces', None)
-                        if faces is None or len(faces) > 0:
+                        # NOT `faces`: that name is this frame's detected
+                        # faces, iterated below. 4bd577d reused it here, so
+                        # every selected-mode render matched the SOURCE photo's
+                        # face against the target and swapped nothing.
+                        src_faces = getattr(self.input_face_datas[src_idx], 'faces', None)
+                        if src_faces is None or len(src_faces) > 0:
                             allowed_source_indices.add(src_idx)
 
                 # source index -> the captured angles of the person that source
