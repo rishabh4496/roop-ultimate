@@ -23,13 +23,31 @@ export default function useLiveCam({ notify }) {
   const [liveCamNum, setLiveCamNum] = useState(0);
   const [liveRes, setLiveRes] = useState('1280x720');
   const [liveObs, setLiveObs] = useState(false);
+  const [liveFps, setLiveFps] = useState(30);
+  const [liveInterval, setLiveInterval] = useState(6);
+  const [liveAudio, setLiveAudio] = useState(false);
+  const [liveAudioInput, setLiveAudioInput] = useState('');
+  const [liveAudioOutput, setLiveAudioOutput] = useState('');
+  const [liveAudioDevices, setLiveAudioDevices] = useState([]);
+  const [liveStatus, setLiveStatus] = useState(null);
   const [liveTick, setLiveTick] = useState(0);
 
   useEffect(() => {
     if (!liveActive) return undefined;
-    const id = setInterval(() => setLiveTick((t) => t + 1), PREVIEW_INTERVAL_MS);
+    const id = setInterval(async () => {
+      setLiveTick((t) => t + 1);
+      try { setLiveStatus(await getJSON('/api/livecam/status')); } catch { /* backend gone */ }
+    }, PREVIEW_INTERVAL_MS);
     return () => clearInterval(id);
   }, [liveActive]);
+
+  // SoundDevice is optional. Empty device lists keep webcam mode usable when
+  // no virtual audio cable is installed.
+  useEffect(() => {
+    getJSON('/api/livecam/audio/devices')
+      .then((data) => setLiveAudioDevices(data.devices || []))
+      .catch(() => {});
+  }, []);
 
   // If the tab remounts while a cam session is running, pick its state back up.
   useEffect(() => {
@@ -39,7 +57,15 @@ export default function useLiveCam({ notify }) {
   const startLiveCam = async () => {
     setLiveBusy(true);
     try {
-      await postJSON('/api/livecam/start', { cam_number: liveCamNum, resolution: liveRes, stream_obs: liveObs });
+      await postJSON('/api/livecam/start', {
+        cam_number: liveCamNum,
+        resolution: liveRes,
+        fps: liveFps,
+        detector_interval: liveInterval,
+        stream_obs: liveObs,
+        audio_input_device: liveAudio ? (liveAudioInput || null) : null,
+        audio_output_device: liveAudio ? (liveAudioOutput || null) : null,
+      });
       setTimeout(async () => {
         try {
           const st = await getJSON('/api/livecam/status');
@@ -65,6 +91,12 @@ export default function useLiveCam({ notify }) {
     liveCamNum, setLiveCamNum,
     liveRes, setLiveRes,
     liveObs, setLiveObs,
+    liveFps, setLiveFps,
+    liveInterval, setLiveInterval,
+    liveAudio, setLiveAudio,
+    liveAudioInput, setLiveAudioInput,
+    liveAudioOutput, setLiveAudioOutput,
+    liveAudioDevices, liveStatus,
     startLiveCam, stopLiveCam,
   };
 }

@@ -437,3 +437,8 @@ people you share it with.
 Use this only on material you have the right to use, and only with the informed
 consent of the people whose likenesses are involved. See the intended-use
 section of [`NOTICE.md`](NOTICE.md).
+## Real-time webcam mode
+
+The dedicated low-latency webcam path, virtual camera output, optical-flow
+tracking, scene-cut flushing, and optional delayed microphone passthrough are
+documented in [`docs/LIVE_MODE.md`](docs/LIVE_MODE.md).

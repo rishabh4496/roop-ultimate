@@ -24,7 +24,8 @@ class ProcessOptions:
                  stabilize_mask=False, stabilize_mask_strength=0.5,
                  stabilize_landmarks=True, stabilize_hf_texture=False,
                  stabilize_hf_texture_weight=0.15, selection_state=None,
-                 processing_request=None, identity_confidence_threshold=None):
+                 processing_request=None, identity_confidence_threshold=None,
+                 live_mode=False):
         self.processors = processordefines
         self.face_distance_threshold = face_distance
         self.blend_ratio = blend_ratio
@@ -91,6 +92,9 @@ class ProcessOptions:
         self.stabilize_landmarks = stabilize_landmarks
         self.stabilize_hf_texture = stabilize_hf_texture
         self.stabilize_hf_texture_weight = stabilize_hf_texture_weight
+        # Dedicated live mode is intentionally explicit so the batch renderer
+        # never inherits its low-latency shortcuts.
+        self.live_mode = bool(live_mode)
         import os
         if identity_confidence_threshold is not None:
             self.identity_confidence_threshold = float(identity_confidence_threshold)

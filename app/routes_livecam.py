@@ -28,10 +28,21 @@ _progress = None
 def livecam_status():
     try:
         from roop import virtualcam
-        return {"active": bool(virtualcam.cam_active)}
+        return virtualcam.live_camera_status()
     except Exception as _degrade_error:
         _swallowed("routes_livecam.py:31", _degrade_error, "fallback continued")
-        return {"active": False}
+        return {"active": False, "error": str(_degrade_error)}
+
+
+@router.get("/api/livecam/audio/devices")
+def livecam_audio_devices():
+    try:
+        from roop import virtualcam
+        return {"devices": virtualcam.audio_devices()}
+    except Exception as _degrade_error:
+        _swallowed("routes_livecam.py:audio_devices", _degrade_error, "audio unavailable")
+        return {"devices": [], "error": str(_degrade_error)}
+
 
 @router.post("/api/livecam/start")
 def livecam_start(payload: dict = Body(...)):
@@ -42,25 +53,22 @@ def livecam_start(payload: dict = Body(...)):
     except Exception as e:
         _swallowed("routes_livecam.py:40", e, "fallback continued")
         return JSONResponse(status_code=500,
-                            content={"message": f"virtual camera support unavailable: {e}"})
+                            content={"message": f"live camera support unavailable: {e}"})
     if virtualcam.cam_active:
         return {"active": True}
     try:
-        cam_number = int(payload.get("cam_number", 0))
+        payload = dict(payload or {})
+        payload["cam_number"] = int(payload.get("cam_number", 0))
+        payload["detector_interval"] = max(1, min(30, int(payload.get("detector_interval", 6))))
         resolution = str(payload.get("resolution", "1280x720"))
-        if "x" not in resolution:
-            resolution = "1280x720"
-        virtualcam.start_virtual_cam(
-            bool(payload.get("stream_obs", False)),
-            bool(payload.get("use_xseg", False)),
-            bool(payload.get("restore_mouth", False)),
-            cam_number, resolution)
+        if "x" not in resolution.lower():
+            payload["resolution"] = "1280x720"
+        virtualcam.start_live_camera(payload)
     except Exception as e:
         traceback.print_exc()
-        return JSONResponse(status_code=500, content={"message": f"could not start camera: {e}"})
-    # The capture thread opens the device asynchronously — the UI re-polls
-    # /status shortly after to confirm it actually came up.
-    return {"starting": True}
+        return JSONResponse(status_code=500, content={"message": f"could not start live camera: {e}"})
+    return {"starting": True, "detector_interval": payload["detector_interval"], "buffer_size": 1}
+
 
 @router.post("/api/livecam/stop")
 def livecam_stop():

@@ -2689,6 +2689,12 @@ export default function FaceSwap({
     liveCamNum, setLiveCamNum,
     liveRes, setLiveRes,
     liveObs, setLiveObs,
+    liveFps, setLiveFps,
+    liveInterval, setLiveInterval,
+    liveAudio, setLiveAudio,
+    liveAudioInput, setLiveAudioInput,
+    liveAudioOutput, setLiveAudioOutput,
+    liveAudioDevices, liveStatus,
     startLiveCam, stopLiveCam,
   } = useLiveCam({ notify });
 
@@ -2811,7 +2817,23 @@ export default function FaceSwap({
             <Select label="Resolution" value={liveRes} onChange={setLiveRes}
               options={['640x480', '1280x720', '1920x1080']} />
           </div>
+          <div className="flex gap-2">
+            <Select label="Capture FPS" value={String(liveFps)} onChange={(v) => setLiveFps(parseInt(v, 10) || 30)}
+              options={['30', '60']} />
+            <Select label="Detect every" value={String(liveInterval)} onChange={(v) => setLiveInterval(parseInt(v, 10) || 6)}
+              options={['3', '6', '9']} />
+          </div>
           <Toggle label="Stream to virtual camera (OBS)" info="Publishes the swapped feed as a system camera device via pyvirtualcam — pick 'OBS Virtual Camera' in any app." checked={liveObs} onChange={setLiveObs} />
+          <Toggle label="Microphone passthrough" info="Routes microphone audio through an in-memory delay line. Select a virtual audio cable output such as VB-CABLE for Zoom, Discord, or OBS." checked={liveAudio} onChange={setLiveAudio} />
+          {liveAudio && (
+            <div className="space-y-2">
+              <Select label="Microphone input" value={String(liveAudioInput)} onChange={setLiveAudioInput}
+                options={['', ...liveAudioDevices.filter((d) => d.max_input_channels > 0).map((d) => d.name)]} />
+              <Select label="Virtual audio output" value={String(liveAudioOutput)} onChange={setLiveAudioOutput}
+                options={['', ...liveAudioDevices.filter((d) => d.max_output_channels > 0).map((d) => d.name)]} />
+              <div className="text-micro text-white/40">Audio delay follows measured visual latency automatically.</div>
+            </div>
+          )}
           {!liveActive ? (
             <button type="button" disabled={liveBusy || progress.processing} onClick={startLiveCam}
               className="w-full py-2 rounded-lg text-note font-bold bg-[var(--accent)]/10 border border-[var(--accent)]/30 text-[var(--accent)] hover:bg-[var(--accent)]/20 transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2">
@@ -2828,6 +2850,14 @@ export default function FaceSwap({
                   <span className="h-1.5 w-1.5 rounded-full bg-red-500 animate-pulse" /> LIVE
                 </span>
               </div>
+              {liveStatus?.stats && (
+                <div className="text-micro text-white/45 flex flex-wrap gap-x-3 gap-y-1">
+                  <span>{Number(liveStatus.stats.processing_fps || 0).toFixed(1)} FPS</span>
+                  <span>{Number(liveStatus.stats.average_latency_ms || 0).toFixed(1)} ms avg</span>
+                  <span>{liveStatus.stats.tracked_frames || 0} flow frames</span>
+                  <span>{liveStatus.stats.dropped_capture_frames || 0} dropped</span>
+                </div>
+              )}
               <button type="button" disabled={liveBusy} onClick={stopLiveCam}
                 className="w-full py-2 rounded-lg text-note font-bold bg-white/[0.04] border border-white/10 text-white/70 hover:text-white hover:border-white/25 transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
                 ⏹ Stop live camera

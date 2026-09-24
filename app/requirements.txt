@@ -22,6 +22,7 @@ tqdm==4.66.4
 ftfy
 regex
 pyvirtualcam
+sounddevice>=0.4.6
 pydantic==2.10.6
 # Lip-sync (MuseTalk) — torch/onnxruntime/insightface/huggingface_hub above
 # are already present; these three are new for this one processor.
