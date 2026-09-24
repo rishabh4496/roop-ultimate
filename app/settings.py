@@ -67,6 +67,12 @@ UI_SETTINGS = (
     ('perf_ort_arena_strategy', 'ONNX memory arena', 'Advanced performance'),
     ('perf_cudnn_conv_algo', 'cuDNN conv algorithm search', 'Advanced performance'),
     ('perf_gpu_mem_limit', 'Provider memory limit (MiB)', 'Advanced performance'),
+    ('vram_safety_margin_gb', 'VRAM safety margin (GB)', 'Advanced performance'),
+    ('perf_batch_max', 'Cross-frame swap batch', 'Advanced performance'),
+    ('perf_nvenc_preset', 'NVENC preset', 'Advanced performance'),
+    ('perf_gpu_affine', 'CUDA affine warp', 'Advanced performance'),
+    ('perf_pinned_buffers', 'Pinned host buffers (zero-copy)', 'Advanced performance'),
+    ('temporal_step', 'Face tracking interval (frames)', 'Advanced performance'),
     # Identity & tracking
     ('recognizer', 'Recognition model', 'Identity & tracking'),
     ('face_demarcate', 'Interacting-face demarcation', 'Identity & tracking'),
@@ -120,6 +126,12 @@ ENV_SETTINGS = (
     ('perf_profile', 'ROOP_PROFILE', 'tristate'),
     ('perf_batch_swap', 'ROOP_BATCH_SWAP', 'tristate_on'),
     ('perf_nvdec', 'ROOP_NVDEC', 'tristate'),
+    # Read at USE time, not import time -- see LIVE_ENV_SETTINGS below.
+    ('perf_batch_max', 'ROOP_BATCH_SWAP_MAX', 'value'),
+    ('perf_nvenc_preset', 'ROOP_NVENC_PRESET', 'value'),
+    ('perf_gpu_affine', 'ROOP_GPU_AFFINE', 'tristate'),
+    ('perf_pinned_buffers', 'ROOP_PINNED_BUFFERS', 'tristate'),
+    ('temporal_step', 'ROOP_TEMPORAL_STEP', 'value'),
     # Identity/tracking features that used to be reachable only by editing a
     # launcher's environment. Same 'auto' contract: leave the env alone and let
     # each module keep its own default, so exposing them changed no behaviour.
@@ -132,13 +144,26 @@ ENV_SETTINGS = (
     ('process_priority', 'ROOP_PRIORITY', 'priority'),
 )
 
+# ENV_SETTINGS whose variable is read each time it is used (per render, per
+# call), not once at import. A settings save re-exports exactly these, so the
+# control takes effect on the next render instead of after a restart. Adding a
+# key here whose variable IS read at import would make the panel lie: it would
+# re-export a value nothing reads again.
+LIVE_ENV_SETTINGS = ('perf_batch_max', 'perf_nvenc_preset', 'perf_gpu_affine',
+                     'perf_pinned_buffers', 'temporal_step')
+
+# Variables apply_env/apply_live_env set from config in this process -- as
+# opposed to ones the launcher or a benchmark put in the environment, which
+# a settings save must never overwrite.
+_SETTINGS_OWNED_VARS = set()
+
 # Only the names keep_awake._PRIORITY_CLASSES accepts; it falls back to 'high'
 # for anything else, so passing a value it does not know through would present
 # as a working setting that does nothing.
 _PRIORITY_NAMES = ('high', 'above_normal', 'normal')
 
 
-def apply_env(cfg, environ):
+def apply_env(cfg, environ, keys=None):
     """Export the ENV_SETTINGS of a config mapping into `environ`.
 
     The contract every kind shares: a value already in the environment wins. A
@@ -153,8 +178,12 @@ def apply_env(cfg, environ):
     def _put(var, value):
         environ[var] = value
         applied.append(var)
+        if environ is os.environ:
+            _SETTINGS_OWNED_VARS.add(var)
 
     for key, var, kind in ENV_SETTINGS:
+        if keys is not None and key not in keys:
+            continue
         # mib_to_bytes is the one kind that has never deferred to the environment
         # (run.py before 2026-09-22 set ROOP_CUDA_MEM_LIMIT unconditionally); kept
         # as it was so this refactor changes nothing. Candidate for a later fix.
@@ -203,6 +232,21 @@ def apply_env(cfg, environ):
         else:
             raise ValueError(f"ENV_SETTINGS: unknown kind {kind!r} for {key}")
     return applied
+
+
+def apply_live_env(cfg, environ=None):
+    """Re-export LIVE_ENV_SETTINGS after a settings save.
+
+    A variable this process set from config is dropped and re-derived, so
+    'auto' really returns to the module default. A variable the launcher or a
+    benchmark set is left alone -- the same 'explicit environment wins'
+    contract as apply_env. Returns the names it set.
+    """
+    environ = os.environ if environ is None else environ
+    for key, var, _kind in ENV_SETTINGS:
+        if key in LIVE_ENV_SETTINGS and var in _SETTINGS_OWNED_VARS:
+            environ.pop(var, None)
+    return apply_env(cfg, environ, keys=LIVE_ENV_SETTINGS)
 
 
 # --- Make the TensorRT execution provider actually loadable on Windows ---
@@ -1109,6 +1153,28 @@ class Settings:
             data, 'perf_cudnn_conv_algo', 'auto')      # auto|DEFAULT|HEURISTIC|EXHAUSTIVE
         self.perf_profile = self.default_get(data, 'perf_profile', 'auto')       # auto|on|off
         self.perf_batch_swap = self.default_get(data, 'perf_batch_swap', 'auto')  # auto|on|off
+        # Cross-frame swap batch ceiling (ROOP_BATCH_SWAP_MAX). 'auto' keeps
+        # ProcessMgr's tiered default (8 on >=11.5GB, 4 below); 1 turns
+        # cross-frame batching off. The VRAM governor can lower it per render.
+        self.perf_batch_max = self.default_get(data, 'perf_batch_max', 'auto')
+        # NVENC preset (ROOP_NVENC_PRESET), p1 fastest .. p7 best. 'auto' = p5,
+        # the preset the encoder settings were validated against.
+        self.perf_nvenc_preset = self.default_get(data, 'perf_nvenc_preset', 'auto')
+        # utilities.cuda_warp_affine (ROOP_GPU_AFFINE). auto = on, as it has
+        # shipped; off = OpenCV everywhere, for an exact-pixel comparison.
+        self.perf_gpu_affine = self.default_get(data, 'perf_gpu_affine', 'auto')
+        # Page-locked host buffers for decoded frames and crops
+        # (ROOP_PINNED_BUFFERS). auto = on whenever CUDA is available.
+        self.perf_pinned_buffers = self.default_get(data, 'perf_pinned_buffers', 'auto')
+        # Tracking pre-pass scan stride (ROOP_TEMPORAL_STEP). 1 detects every
+        # frame. N > 1 detects every Nth frame and INTERPOLATES the rest:
+        # measured 6x worse landmark error on turned heads at 2 (13.9% of
+        # interocular distance p95), and interpolated faces bypass the identity
+        # gates. Keep 1 unless the footage is near-frontal and static.
+        self.temporal_step = self.default_get(data, 'temporal_step', 1)
+        # Free VRAM the governor keeps in reserve when it plans a render (GB,
+        # 0.5-4.0). Below it, it lowers the swap batch, then GPEN's resolution.
+        self.vram_safety_margin_gb = self.default_get(data, 'vram_safety_margin_gb', 1.5)
 
         # ── Identity & tracking behaviour ────────────────────────────────────
         # Features that shipped reachable only through a ROOP_* environment
@@ -1325,6 +1391,12 @@ class Settings:
             'perf_cudnn_conv_algo': self.perf_cudnn_conv_algo,
             'perf_profile': self.perf_profile,
             'perf_batch_swap': self.perf_batch_swap,
+            'perf_batch_max': self.perf_batch_max,
+            'perf_nvenc_preset': self.perf_nvenc_preset,
+            'perf_gpu_affine': self.perf_gpu_affine,
+            'perf_pinned_buffers': self.perf_pinned_buffers,
+            'temporal_step': self.temporal_step,
+            'vram_safety_margin_gb': self.vram_safety_margin_gb,
             'recognizer': self.recognizer,
             'face_demarcate': self.face_demarcate,
             'track_stitch': self.track_stitch,

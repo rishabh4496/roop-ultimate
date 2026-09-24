@@ -921,6 +921,10 @@ def _start_existing_project(project_id, payload):
     """Start a validated project using its existing durable identity."""
     if _progress["processing"]:
         return JSONResponse(status_code=409, content={"message": "already processing"})
+    import routes_autotune
+    if routes_autotune.is_running():
+        return JSONResponse(status_code=409, content={
+            "message": "Auto-tune is measuring this GPU -- stop it or wait for it to finish."})
     if _benchmark_state["running"]:
         return JSONResponse(status_code=409, content={
             "message": "The hardware benchmark is running — cancel it first, or wait for it to finish."})
@@ -1386,6 +1390,17 @@ def save_settings(settings: dict = Body(...)):
             except Exception:
                 pass
         roop_globals.CFG.save()
+        # Flags read per render (batch cap, NVENC preset, GPU warp, pinned
+        # buffers, tracking interval) take effect on the next render rather
+        # than after a restart. See settings.LIVE_ENV_SETTINGS.
+        try:
+            import settings as _settings_mod
+            _settings_mod.apply_live_env(
+                {k: getattr(roop_globals.CFG, k, None)
+                 for k in _settings_mod.LIVE_ENV_SETTINGS})
+        except Exception as _degrade_error:
+            _swallowed("api.py:save_settings live env", _degrade_error,
+                       "live flags apply after restart")
     return {"status": "success"}
 
 
@@ -4609,6 +4624,9 @@ def trigger_swap(payload: dict = Body(...)):
     # the guard above and run concurrently.
     response = _start_existing_project(project["id"], payload)
     if isinstance(response, dict):
+        # Auto-tune replays exactly this normalized request on a short stretch.
+        import routes_autotune
+        routes_autotune.remember_payload(payload)
         # The selection this render will use is frozen HERE, in
         # payload["normalized_request"]; the worker never re-reads UI state.
         response.update(_selection_response_fields(processing_request))
@@ -4864,15 +4882,19 @@ def _run_swap(payload):
         # Stash the settings signature so the completion hook (core.py) can
         # record actual ms/frame for the learned runtime estimator, using the
         # same signature the /api/runtime_estimate endpoint predicts from.
+        # An auto-tune arm varies batch/provider under one settings signature;
+        # folding it into the estimator would teach it noise.
+        roop_globals._run_signature = None
         try:
-            from roop import runtime_calib
-            roop_globals._run_signature = runtime_calib.signature_from_payload(
-                payload, gpu=_gpu_name(),
-                # Auto selection may intentionally choose a narrower worker
-                # count than the configured manual maximum. Calibration keys
-                # must describe the count that actually processed this render.
-                threads=roop_globals.execution_threads,
-                precision=getattr(roop_globals.CFG, 'trt_precision', 'mixed'))
+            if not payload.get("_autotune"):
+                from roop import runtime_calib
+                roop_globals._run_signature = runtime_calib.signature_from_payload(
+                    payload, gpu=_gpu_name(),
+                    # Auto selection may intentionally choose a narrower worker
+                    # count than the configured manual maximum. Calibration keys
+                    # must describe the count that actually processed this render.
+                    threads=roop_globals.execution_threads,
+                    precision=getattr(roop_globals.CFG, 'trt_precision', 'mixed'))
         except Exception as _degrade_error:
             _swallowed("api.py:3180", _degrade_error, "fallback continued")
             roop_globals._run_signature = None
@@ -5013,9 +5035,10 @@ def _run_swap(payload):
                     _project_checkpoint.file_identity(path) for path in produced
                     if os.path.isfile(path)], state="COMPLETED")
             _set_processing_project_state(project_id, "COMPLETED")
-        _record_run_history(payload, produced)
-        _record_last_output(
-            source_entry=files_to_process[0] if len(files_to_process) == 1 else None)
+        if not payload.get("_autotune"):
+            _record_run_history(payload, produced)
+            _record_last_output(
+                source_entry=files_to_process[0] if len(files_to_process) == 1 else None)
     except Exception as e:
         traceback.print_exc()
         _progress["error"] = str(e)
@@ -5490,6 +5513,8 @@ import routes_projects as _routes_projects
 import routes_export as _routes_export
 import routes_storage as _routes_storage
 import routes_benchmark as _routes_benchmark
+import routes_trt_cache as _routes_trt_cache
+import routes_autotune as _routes_autotune
 import routes_telemetry as _routes_telemetry
 import routes_frames as _routes_frames
 app.include_router(_routes_diagnostics.router)
@@ -5501,6 +5526,8 @@ app.include_router(_routes_projects.router)
 app.include_router(_routes_export.router)
 app.include_router(_routes_storage.router)
 app.include_router(_routes_benchmark.router)
+app.include_router(_routes_trt_cache.router)
+app.include_router(_routes_autotune.router)
 app.include_router(_routes_telemetry.router)
 app.include_router(_routes_frames.router)
 
@@ -5547,6 +5574,8 @@ get_file = _routes_output.get_file
 _api_media.API_TEMP = API_TEMP
 _routes_diagnostics._progress = _progress
 _routes_benchmark.bind_progress(_progress)
+_routes_trt_cache.bind_progress(_progress)
+_routes_autotune.bind(_progress, _run_swap)
 _routes_diagnostics.list_files_process = list_files_process
 _routes_livecam._progress = _progress
 _routes_quality._last_output = _last_output

@@ -171,6 +171,11 @@ def cuda_warp_affine(image: np.ndarray, matrix: np.ndarray,
     shortcut.  The result is returned to NumPy solely because the surrounding
     mature pipeline is still CPU-frame based.
     """
+    # ROOP_GPU_AFFINE=0 ("CUDA affine warp: off" in Settings) sends every
+    # caller to its OpenCV fallback -- the gate lives here, not per call site,
+    # so no caller can keep warping on the GPU after the user turned it off.
+    if os.environ.get('ROOP_GPU_AFFINE', '1') == '0':
+        return None
     if not torch.cuda.is_available() or image is None:
         return None
     try:

@@ -45,6 +45,9 @@ react-ui-v2/dist/
 
 # Learned runtime-estimate store (per-machine, grows over time)
 app/runtime_calibration.json
+# VRAM governor's learned peak/estimate ratios and the last auto-tune result
+app/vram_calibration.json
+app/autotune_result.json
 app/run_history.json
 app/profiles.json
 .pinokio-install-complete.json

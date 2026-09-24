@@ -11,6 +11,8 @@ import { Icon } from '../icons';
 import StorageManager from './StorageManager';
 import EnvironmentHealth from './EnvironmentHealth';
 import BenchmarkPanel from './BenchmarkPanel';
+import TrtCachePanel from './TrtCachePanel';
+import AutoTunePanel from './AutoTunePanel';
 
 // A Section that participates in the settings search and the "only changed"
 // filter. With either active it keeps just the controls that match (or the
@@ -562,6 +564,13 @@ export default function Settings({ meta, settings, setSettings, notify }) {
           </div>
 
           {showTrtSettings && (
+            <div className="-mt-1 mb-1">
+              <div className="text-xs font-medium text-white/50 mb-1">TensorRT engine cache</div>
+              <TrtCachePanel notify={notify} />
+            </div>
+          )}
+
+          {showTrtSettings && (
             <Select
               label="Precision mode (TensorRT)"
               info={
@@ -654,6 +663,12 @@ export default function Settings({ meta, settings, setSettings, notify }) {
           <Select label="ONNX memory arena" info="ROOP_CUDA_ARENA_STRATEGY — How the CUDA allocator grows its arena. 'kSameAsRequested' allocates exactly what each request needs, which keeps the footprint tight when several pooled contexts each hold their own arena; 'kNextPowerOfTwo' rounds up, trading memory for fewer allocations and less fragmentation over a long render. 'auto' leaves core.py's own default (kSameAsRequested) alone. TAKES EFFECT ON RESTART: the value is read once when the CUDA provider is built." {...bind('perf_ort_arena_strategy', 'auto')} options={['auto', 'kSameAsRequested', 'kNextPowerOfTwo']} />
           <Select label="cuDNN conv algorithm search" info="ROOP_CUDNN_CONV_ALGO — How ONNX Runtime plans convolutions. HEURISTIC is the default and is 55-241% faster than DEFAULT across this app's models. It is NOT safe everywhere: on some devices the CodeFormer family (Codeformer, Codeformer fp16, UltraMax, Restoreformer++) fails every convolution under HEURISTIC and the pipeline silently writes the ORIGINAL frame while the swap audit still reports 100% success. The per-device probe already lowers just the affected models, so leave this on 'auto' unless you are deliberately testing — a global override here does not bypass that probe, but it does change every other model. TAKES EFFECT ON RESTART." {...bind('perf_cudnn_conv_algo', 'auto')} options={['auto', 'DEFAULT', 'HEURISTIC', 'EXHAUSTIVE']} />
           <TextInput label="Provider memory limit (MiB)" info="ROOP_CUDA_MEM_LIMIT — A ceiling on how much VRAM the CUDA provider's allocator may take, in MiB. 'auto' means no limit, which is the default and is usually right: the limit does not make models smaller, it makes an over-large pool fail sooner and louder instead of paging. Useful when sharing the GPU with another application. TAKES EFFECT ON RESTART." {...bind('perf_gpu_mem_limit', 'auto')} placeholder="auto" />
+          <Slider label="VRAM safety margin (GB)" info="Free VRAM the governor keeps in reserve when it plans a render. It estimates the job (models x contexts x swap batch, NVDEC surfaces at the video's resolution), learns the real peak after each render, and when the job would eat into this margin lowers the cross-frame swap batch first, then GPEN 2048/1024 to 512 (which changes the look -- the terminal says so). It never refuses a render. Takes effect on the next render." min={0.5} max={4} step={0.25} {...bind('vram_safety_margin_gb', 1.5)} />
+          <Select label="Cross-frame swap batch" info="ROOP_BATCH_SWAP_MAX -- how many face crops the batcher coalesces into one swap inference. 'auto' keeps the tiered default (up to the worker count on 12GB+, 4 below); 1 turns cross-frame batching off. The VRAM governor can lower it per render. Takes effect on the next render." {...bind('perf_batch_max', 'auto')} options={['auto', '1', '2', '4', '8']} />
+          <Select label="NVENC preset" info="ROOP_NVENC_PRESET -- p1 fastest ... p7 slowest/best compression at the same quality (-cq). The encoder runs alongside the render, so a preset that already keeps up buys no wall clock; auto-tune picks the best one that encodes at 2x your render rate. 'auto' = p5. Only used with h264_nvenc / hevc_nvenc. Takes effect on the next render." {...bind('perf_nvenc_preset', 'auto')} options={['auto', 'p1', 'p2', 'p3', 'p4', 'p5', 'p6', 'p7']} />
+          <Select label="CUDA affine warp" info="ROOP_GPU_AFFINE -- warp the swapper's secondary crop on the GPU (bicubic) instead of OpenCV (Lanczos). 'auto' = on, as shipped. 'off' is for an exact-pixel comparison against OpenCV. Takes effect on the next render." {...bind('perf_gpu_affine', 'auto')} options={m.tristate || ['auto', 'on', 'off']} />
+          <Select label="Pinned host buffers (zero-copy)" info="ROOP_PINNED_BUFFERS -- page-locked host memory for decoded frames and crops, so GPU uploads skip a staging copy. 'auto' = on whenever CUDA is present. 'off' falls back to ordinary memory (useful if the system is short of RAM). Takes effect on the next render." {...bind('perf_pinned_buffers', 'auto')} options={m.tristate || ['auto', 'on', 'off']} />
+          <Slider label="Face tracking interval (frames)" info={`ROOP_TEMPORAL_STEP -- detect faces every Nth frame in the tracking pre-pass and INTERPOLATE the ones between. Leave it at 1: at 2, landmark error on turned heads measured 6x worse (13.9% of eye distance at p95), and interpolated faces skip the identity checks. Raise it only for static, near-frontal footage.${Number(p.temporal_step ?? 1) > 1 ? ' CURRENTLY ABOVE 1.' : ''}`} min={1} max={10} step={1} {...bind('temporal_step', 1)} />
         </FilterSection>
 
         <FilterSection title="Identity &amp; tracking (restart to apply)" icon={Icon.users ?? Icon.meter} query={query} onlyModified={onlyModified} onResetKeys={resetKeys}>
@@ -696,6 +711,20 @@ export default function Settings({ meta, settings, setSettings, notify }) {
           <TextInput label="Watermark text" {...bind('synthetic_watermark_text', 'AI face swap')} placeholder="AI face swap" />
         </FilterSection>
       </div>
+
+      <Section title="Auto-tune (provider, swap batch, NVENC)" icon={Icon.meter} className="mb-4">
+        <AutoTunePanel
+          notify={notify}
+          onSettingsApplied={async () => {
+            try {
+              const fresh = await getJSON('/api/settings');
+              if (fresh && typeof fresh === 'object') setSettings((s) => ({ ...s, ...fresh }));
+            } catch {
+              // ignore
+            }
+          }}
+        />
+      </Section>
 
       {/* Hardware Benchmark & Optimization Suite */}
       <BenchmarkPanel

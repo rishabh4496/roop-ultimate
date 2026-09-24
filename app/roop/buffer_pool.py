@@ -24,7 +24,13 @@ except ImportError:
 
 
 def is_pinned_supported() -> bool:
-    """Check if CUDA pinned host memory is available."""
+    """Check if CUDA pinned host memory is available and allowed.
+
+    ROOP_PINNED_BUFFERS=0 ("Pinned host buffers: off" in Settings) falls back
+    to ordinary pageable NumPy arrays everywhere this module allocates.
+    """
+    if os.environ.get('ROOP_PINNED_BUFFERS', '1') == '0':
+        return False
     if not _HAS_TORCH:
         return False
     try:

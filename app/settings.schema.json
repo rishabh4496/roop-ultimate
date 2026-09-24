@@ -35,6 +35,12 @@
     "perf_ort_arena_strategy",
     "perf_cudnn_conv_algo",
     "perf_gpu_mem_limit",
+    "vram_safety_margin_gb",
+    "perf_batch_max",
+    "perf_nvenc_preset",
+    "perf_gpu_affine",
+    "perf_pinned_buffers",
+    "temporal_step",
     "recognizer",
     "face_demarcate",
     "track_stitch",
@@ -924,6 +930,74 @@
       "env": {
         "var": "ROOP_BATCH_SWAP",
         "kind": "tristate_on"
+      }
+    },
+    "perf_batch_max": {
+      "default": "auto",
+      "type": "str",
+      "ui": {
+        "label": "Cross-frame swap batch",
+        "section": "Advanced performance"
+      },
+      "env": {
+        "var": "ROOP_BATCH_SWAP_MAX",
+        "kind": "value"
+      }
+    },
+    "perf_nvenc_preset": {
+      "default": "auto",
+      "type": "str",
+      "ui": {
+        "label": "NVENC preset",
+        "section": "Advanced performance"
+      },
+      "env": {
+        "var": "ROOP_NVENC_PRESET",
+        "kind": "value"
+      }
+    },
+    "perf_gpu_affine": {
+      "default": "auto",
+      "type": "str",
+      "ui": {
+        "label": "CUDA affine warp",
+        "section": "Advanced performance"
+      },
+      "env": {
+        "var": "ROOP_GPU_AFFINE",
+        "kind": "tristate"
+      }
+    },
+    "perf_pinned_buffers": {
+      "default": "auto",
+      "type": "str",
+      "ui": {
+        "label": "Pinned host buffers (zero-copy)",
+        "section": "Advanced performance"
+      },
+      "env": {
+        "var": "ROOP_PINNED_BUFFERS",
+        "kind": "tristate"
+      }
+    },
+    "temporal_step": {
+      "default": 1,
+      "type": "int",
+      "ui": {
+        "label": "Face tracking interval (frames)",
+        "section": "Advanced performance"
+      },
+      "env": {
+        "var": "ROOP_TEMPORAL_STEP",
+        "kind": "value"
+      }
+    },
+    "vram_safety_margin_gb": {
+      "default": 1.5,
+      "type": "float",
+      "ui": {
+        "label": "VRAM safety margin (GB)",
+        "section": "Advanced performance"
       }
     },
     "recognizer": {

@@ -385,6 +385,9 @@ def decode_execution_providers(execution_providers: List[str]) -> List[str]:
                     builder_config=builder_config)
                 precision_cache = os.path.join(trt_cache, cache_label)
                 os.makedirs(precision_cache, exist_ok=True)
+                # Read by routes_trt_cache: the namespace this process builds
+                # into is the one "clear stale engines" must never touch.
+                roop.globals.trt_active_cache_dir = precision_cache
 
                 trt_opts = {
                     'device_id': roop.globals.cuda_device_id,
@@ -890,10 +893,13 @@ def get_processing_plugins(masking_engine, swap_model='inswapper', target_face=N
         # finish (bilateral detail, eye clarity, bounded sharpen). No extra
         # network and no extra VRAM over 'GPEN' -- see Enhance_GPENUltimate.
         processors.update({"gpen_ultimate": {}})
-    elif roop.globals.selected_enhancer == 'GPEN 1024':
-        processors.update({"gpen": {"size": 1024}})
-    elif roop.globals.selected_enhancer == 'GPEN 2048':
-        processors.update({"gpen": {"size": 2048}})
+    elif roop.globals.selected_enhancer in ('GPEN 1024', 'GPEN 2048'):
+        # The VRAM governor may step a render's GPEN down (2048 -> 1024 -> 512)
+        # when the job would not leave the safety margin free. Outside a
+        # governed render (preview, benches) this is the requested size.
+        from roop.vram_governor import governed_gpen_size, gpen_size_for
+        processors.update({"gpen": {"size": governed_gpen_size(
+            gpen_size_for(roop.globals.selected_enhancer))}})
     elif roop.globals.selected_enhancer == 'UltraMax':
         # codeformer.fp16.onnx -- the same weights as 'Codeformer (fp16)' -- on
         # a leaner host path, followed by a structure-gated texture restore. See
@@ -1333,74 +1339,102 @@ def batch_process_regular(output_method, files:list[ProcessEntry], masking_engin
             f"floor={render_headroom['required_free_vram_gb']:.2f}GB",
             flush=True,
         )
-    if progress is None:
-        progress = create_throughput_progress(desc="Processing", unit="frames")
-    if process_mgr is None:
-        process_mgr = ProcessMgr(progress)
-    # imagemask is a JSON string produced by the canvas masking modal
-    # (keys: "include" and/or "exclude", values: grayscale PNG data-URLs).
-    # ProcessMgr.initialize decodes it into include_mask / exclude_mask arrays.
-    # `input_facesets` lets the caller hand in a person-ordered remap of the
-    # sources without mutating the global (see api.mapped_facesets).
-    facesets = roop.globals.INPUT_FACESETS if input_facesets is None else input_facesets
-    # A canonical request owns the source index. Keep the old selected_index
-    # argument for direct callers, but do not reinterpret it when the API has
-    # already resolved the preview/render request.
-    if isinstance(processing_request, dict):
-        try:
-            selected_index = int(processing_request.get("source_index", selected_index))
-        except (TypeError, ValueError):
-            pass
-    if not (0 <= selected_index < len(facesets)):
-        # A canonical request may deliberately carry -1 when its source
-        # mapping is invalid or the selected source was removed.  Keep that
-        # explicit skip all the way to ProcessMgr; falling back to source 0 can
-        # swap a different identity.  Direct legacy callers retain the old
-        # default only when no canonical request was supplied.
-        selected_index = -1 if isinstance(processing_request, dict) else 0
-    options = ProcessOptions(get_processing_plugins(masking_engine, swap_model=swap_model),
-                              roop.globals.distance_threshold, roop.globals.blend_ratio,
-                              roop.globals.face_swap_mode, selected_index, new_clip_text, imagemask, num_swap_steps,
-                              roop.globals.subsample_size, False, restore_original_mouth,
-                              use_3d_recon=use_3d_recon,
-                              use_source_bank=use_source_bank,
-                              use_frontalization=use_frontalization,
-                              frontalization_threshold=frontalization_threshold,
-                              swap_model=swap_model,
-                              stabilize_face=stabilize_face,
-                              stabilize_method=stabilize_method,
-                              stabilize_min_cutoff=stabilize_min_cutoff,
-                              stabilize_beta=stabilize_beta,
-                              stabilize_enhancer=stabilize_enhancer,
-                              stabilize_enhancer_strength=stabilize_enhancer_strength,
-                              stabilize_mask=stabilize_mask,
-                              stabilize_mask_strength=stabilize_mask_strength,
-                              stabilize_landmarks=stabilize_landmarks,
-                              stabilize_hf_texture=stabilize_hf_texture,
-                              stabilize_hf_texture_weight=stabilize_hf_texture_weight,
-                              selection_state=selection_state,
-                              processing_request=processing_request)
-    process_mgr.initialize(facesets, roop.globals.TARGET_FACES, options)
+        _admit_vram_governor(files, masking_engine, swap_model, input_facesets,
+                             render_headroom['total_vram_gb'])
+    # Everything from here to the end runs under the governor's plan, so the
+    # finally is what guarantees a failed render cannot leave that plan
+    # applied to the previews that follow it.
+    try:
+        if progress is None:
+            progress = create_throughput_progress(desc="Processing", unit="frames")
+        if process_mgr is None:
+            process_mgr = ProcessMgr(progress)
+        # imagemask is a JSON string produced by the canvas masking modal
+        # (keys: "include" and/or "exclude", values: grayscale PNG data-URLs).
+        # ProcessMgr.initialize decodes it into include_mask / exclude_mask arrays.
+        # `input_facesets` lets the caller hand in a person-ordered remap of the
+        # sources without mutating the global (see api.mapped_facesets).
+        facesets = roop.globals.INPUT_FACESETS if input_facesets is None else input_facesets
+        # A canonical request owns the source index. Keep the old selected_index
+        # argument for direct callers, but do not reinterpret it when the API has
+        # already resolved the preview/render request.
+        if isinstance(processing_request, dict):
+            try:
+                selected_index = int(processing_request.get("source_index", selected_index))
+            except (TypeError, ValueError):
+                pass
+        if not (0 <= selected_index < len(facesets)):
+            # A canonical request may deliberately carry -1 when its source
+            # mapping is invalid or the selected source was removed.  Keep that
+            # explicit skip all the way to ProcessMgr; falling back to source 0 can
+            # swap a different identity.  Direct legacy callers retain the old
+            # default only when no canonical request was supplied.
+            selected_index = -1 if isinstance(processing_request, dict) else 0
+        options = ProcessOptions(get_processing_plugins(masking_engine, swap_model=swap_model),
+                                  roop.globals.distance_threshold, roop.globals.blend_ratio,
+                                  roop.globals.face_swap_mode, selected_index, new_clip_text, imagemask, num_swap_steps,
+                                  roop.globals.subsample_size, False, restore_original_mouth,
+                                  use_3d_recon=use_3d_recon,
+                                  use_source_bank=use_source_bank,
+                                  use_frontalization=use_frontalization,
+                                  frontalization_threshold=frontalization_threshold,
+                                  swap_model=swap_model,
+                                  stabilize_face=stabilize_face,
+                                  stabilize_method=stabilize_method,
+                                  stabilize_min_cutoff=stabilize_min_cutoff,
+                                  stabilize_beta=stabilize_beta,
+                                  stabilize_enhancer=stabilize_enhancer,
+                                  stabilize_enhancer_strength=stabilize_enhancer_strength,
+                                  stabilize_mask=stabilize_mask,
+                                  stabilize_mask_strength=stabilize_mask_strength,
+                                  stabilize_landmarks=stabilize_landmarks,
+                                  stabilize_hf_texture=stabilize_hf_texture,
+                                  stabilize_hf_texture_weight=stabilize_hf_texture_weight,
+                                  selection_state=selection_state,
+                                  processing_request=processing_request)
+        process_mgr.initialize(facesets, roop.globals.TARGET_FACES, options)
 
-    # Stash per-frame mask map and batch options on globals so batch_process can access them
-    roop.globals.mask_per_frame = _parse_per_frame_masks(mask_per_frame_json)
-    roop.globals._batch_selected_index    = selected_index
-    roop.globals._batch_clip_text         = new_clip_text
-    roop.globals._batch_num_steps         = num_swap_steps
-    roop.globals._batch_restore_mouth     = restore_original_mouth
-    roop.globals._batch_use_3d_recon      = use_3d_recon
-    roop.globals._batch_use_source_bank   = use_source_bank
-    roop.globals._batch_use_frontalization= use_frontalization
-    roop.globals._batch_front_threshold   = frontalization_threshold
-    roop.globals._batch_swap_model        = swap_model
-    roop.globals._batch_selection_state   = selection_state
-    roop.globals._batch_processing_request = processing_request
-    roop.globals._batch_stabilize_landmarks = stabilize_landmarks
-    roop.globals._batch_stabilize_hf_texture = stabilize_hf_texture
-    roop.globals._batch_stabilize_hf_texture_weight = stabilize_hf_texture_weight
+        # Stash per-frame mask map and batch options on globals so batch_process can access them
+        roop.globals.mask_per_frame = _parse_per_frame_masks(mask_per_frame_json)
+        roop.globals._batch_selected_index    = selected_index
+        roop.globals._batch_clip_text         = new_clip_text
+        roop.globals._batch_num_steps         = num_swap_steps
+        roop.globals._batch_restore_mouth     = restore_original_mouth
+        roop.globals._batch_use_3d_recon      = use_3d_recon
+        roop.globals._batch_use_source_bank   = use_source_bank
+        roop.globals._batch_use_frontalization= use_frontalization
+        roop.globals._batch_front_threshold   = frontalization_threshold
+        roop.globals._batch_swap_model        = swap_model
+        roop.globals._batch_selection_state   = selection_state
+        roop.globals._batch_processing_request = processing_request
+        roop.globals._batch_stabilize_landmarks = stabilize_landmarks
+        roop.globals._batch_stabilize_hf_texture = stabilize_hf_texture
+        roop.globals._batch_stabilize_hf_texture_weight = stabilize_hf_texture_weight
 
-    batch_process(output_method, files, use_new_method)
+        batch_process(output_method, files, use_new_method)
+    finally:
+        from roop import vram_governor
+        vram_governor.finish()
     return
+
+
+def _admit_vram_governor(files, masking_engine, swap_model, input_facesets,
+                         total_vram_gb) -> None:
+    """Plan this render's VRAM (see roop/vram_governor.py). Advisory: a failure
+    here leaves the render exactly as it was before the governor existed."""
+    try:
+        from roop import vram_governor
+        facesets = roop.globals.INPUT_FACESETS if input_facesets is None else input_facesets
+        job = vram_governor.job_from_render(files, masking_engine, swap_model,
+                                            facesets, float(total_vram_gb or 0.0))
+        vram_governor.admit(
+            job, getattr(roop.globals.CFG, 'vram_safety_margin_gb',
+                         vram_governor.DEFAULT_MARGIN_GB),
+            int(getattr(roop.globals, 'cuda_device_id', 0) or 0))
+    except Exception as _degrade_error:
+        _swallowed("roop/core.py:_admit_vram_governor", _degrade_error,
+                   "render continues ungoverned")
+
 
 def batch_process_with_options(files:list[ProcessEntry], options, progress):
     global clip_text, process_mgr
@@ -1747,6 +1781,16 @@ def batch_process(output_method, files:list[ProcessEntry], use_new_method) -> No
                     return
                 average_fps = (v.endframe - v.startframe) / elapsed_time
                 update_status(f'\nProcessing {os.path.basename(destination or v.filename)} took {elapsed_time:.2f} secs, {average_fps:.2f} frames/s')
+                # The auto-tuner reads this rather than parsing the line above:
+                # models are loaded and warmed before start_processing, so this
+                # is the render's own rate, and the swap count is its guard.
+                roop.globals.last_render_timing = {
+                    'frames': int(v.endframe - v.startframe),
+                    'elapsed': float(elapsed_time),
+                    'fps': float(average_fps),
+                    'swaps': int(getattr(process_mgr, 'total_swaps', 0) - _swaps_before),
+                    'output': destination,
+                }
                 # Fold this run into the learned runtime estimator. Signature =
                 # settings (stashed at run start) + measured face-density bucket
                 # (avg faces/frame for THIS video). Guarded — never fatal.

@@ -2017,6 +2017,9 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
         """Build the cross-frame swap batcher when opted in. Requires >1 thread,
         a swapper exposing RunBatchMulti, and the batch-dynamic session
         (ROOP_BATCH_SWAP). Returns None otherwise (→ normal per-call swap)."""
+        # What this render actually batches at (1 = no batcher), for the
+        # auto-tuner's "did the arm run as labelled" check.
+        roop.globals.last_swap_batch_max = 1
         if not swap_batcher.xframe_enabled(default=_BATCH_SWAP) or threads <= 1:
             return None
         if not _BATCH_SWAP:
@@ -2055,6 +2058,11 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                 str(_auto_batch_cap)))
         except ValueError:
             max_b = _auto_batch_cap
+        if 'ROOP_BATCH_SWAP_MAX' in os.environ and max_b <= 1:
+            # Batch 1 is "no cross-frame batching": the floor of 2 below would
+            # otherwise turn an explicit 1 into 2 without a word.
+            print("[BatchSwap] cross-frame batching OFF (ROOP_BATCH_SWAP_MAX=1).")
+            return None
         if 'ROOP_BATCH_SWAP_MAX' not in os.environ:
             # Cross-frame batching and independent contexts are alternatives
             # for the same swap stage. Once the desktop batch path is enabled,
@@ -2078,6 +2086,17 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                 max_b = min(max_b, max(2, int(
                     getattr(self, '_runtime_face_concurrency', max_b) or max_b)))
         max_b = max(2, min(max_b, threads))
+        # The VRAM governor's cap applies AFTER an explicit ROOP_BATCH_SWAP_MAX:
+        # an explicit value is a policy choice, free VRAM is physics (see the
+        # pools that bypassed the VRAM guard, 2026-09-06). A cap of 1 means no
+        # cross-frame batching at all.
+        from roop.vram_governor import governed_batch_cap
+        governed = governed_batch_cap(max_b)
+        if governed < max_b:
+            print(f"[BatchSwap] VRAM governor capped max_batch {max_b} -> {governed}.")
+            if governed < 2:
+                return None
+            max_b = governed
         try:
             wait_ms = float(os.environ.get('ROOP_BATCH_SWAP_WAIT_MS', '4.0'))
         except ValueError:
@@ -2086,6 +2105,7 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
             swap_p.RunBatchMulti, lambda: _gpu_guard(pooled=pooled, owner='swap'),
             max_batch=max_b, max_wait_ms=wait_ms)
         print(f"[BatchSwap] cross-frame batching ON (max_batch={max_b}, threads={threads}, wait={wait_ms}ms).")
+        roop.globals.last_swap_batch_max = max_b
         return b
 
 

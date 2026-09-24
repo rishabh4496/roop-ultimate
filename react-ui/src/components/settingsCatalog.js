@@ -49,6 +49,12 @@ export const SETTINGS_CATALOG = [
   { key: 'perf_ort_arena_strategy', label: 'ONNX memory arena', section: 'Advanced performance' },
   { key: 'perf_cudnn_conv_algo', label: 'cuDNN conv algorithm search', section: 'Advanced performance' },
   { key: 'perf_gpu_mem_limit', label: 'Provider memory limit (MiB)', section: 'Advanced performance' },
+  { key: 'vram_safety_margin_gb', label: 'VRAM safety margin (GB)', section: 'Advanced performance' },
+  { key: 'perf_batch_max', label: 'Cross-frame swap batch', section: 'Advanced performance' },
+  { key: 'perf_nvenc_preset', label: 'NVENC preset', section: 'Advanced performance' },
+  { key: 'perf_gpu_affine', label: 'CUDA affine warp', section: 'Advanced performance' },
+  { key: 'perf_pinned_buffers', label: 'Pinned host buffers (zero-copy)', section: 'Advanced performance' },
+  { key: 'temporal_step', label: 'Face tracking interval (frames)', section: 'Advanced performance' },
 
   // Identity & tracking
   { key: 'recognizer', label: 'Recognition model', section: 'Identity & tracking' },

@@ -160,11 +160,31 @@ class GeneratedFilesAreCurrent(unittest.TestCase):
             self.assertTrue(schema[key].get("derived"), key)
 
 
+# Keys added to ENV_SETTINGS after the registry replaced run.py's block. The
+# oracle above cannot know them; each instead has to behave exactly like an
+# existing key of the same kind (test_new_keys_behave_like_their_kind).
+ADDED_AFTER_REGISTRY = ('perf_batch_max', 'perf_nvenc_preset', 'perf_gpu_affine',
+                        'perf_pinned_buffers', 'temporal_step')
+
+
 class EnvMappingMatchesTheOldRunPy(unittest.TestCase):
     """apply_env(cfg, env) == the pre-registry block, for any config values."""
 
     def _keys(self):
-        return [k for k, _, _ in settings.ENV_SETTINGS]
+        return [k for k, _, _ in settings.ENV_SETTINGS if k not in ADDED_AFTER_REGISTRY]
+
+    def test_new_keys_behave_like_their_kind(self):
+        rows = {k: (var, kind) for k, var, kind in settings.ENV_SETTINGS}
+        reference = {'value': 'perf_trt_pool', 'tristate': 'perf_nvdec'}
+        for key in ADDED_AFTER_REGISTRY:
+            var, kind = rows[key]
+            ref_key = reference[kind]
+            ref_var = rows[ref_key][0]
+            for value in VALUES:
+                a, b = {}, {}
+                settings.apply_env({key: value}, a, keys=(key,))
+                settings.apply_env({ref_key: value}, b, keys=(ref_key,))
+                self.assertEqual(a.get(var), b.get(ref_var), f"{key}={value!r}")
 
     def test_every_single_value_shape(self):
         for key in self._keys():

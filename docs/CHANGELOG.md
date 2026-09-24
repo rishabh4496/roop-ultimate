@@ -7,6 +7,44 @@ folder). Entries before 2026-09-21 were moved here from the README on 2026-09-22
 
 ## 2026-09-24
 
+- **VRAM governor, auto-tune, and six performance settings.** Asked for: a VRAM governor that
+  budgets a job and steps it down below 1.5 GB free; a 100-frame CUDA/TensorRT x batch
+  1/2/4/8 x NVENC p1-p7 auto-tune saving the fastest profile; and a React settings panel for
+  them. Audited first: `render_guard` already refused low-VRAM renders, pools already sized
+  from live VRAM, and `/api/benchmark` already existed -- but it runs `process_frame` one
+  frame at a time on one thread in preview mode, so the batcher, the worker pool and the
+  writer never execute there: a batch axis through it would have measured nothing.
+  - `roop/vram_governor.py`: at render admission, budget = models x contexts x swap batch
+    (session_pool's specs, scaled onto the 3060's measured 2346 MB) + NVDEC surfaces at the
+    video's resolution + process overhead; below `vram_safety_margin_gb` it lowers the swap
+    batch 8->4->2->1, then GPEN 2048->1024->512. A sampler records the real peak and learns
+    peak/estimate per configuration (`vram_calibration.json`). The prior errs LOW on
+    purpose (inert, like before, until it has learned): live 4070, b1 600 frames, estimate
+    3814 MB vs measured 8248 MB (2.16x), no step-down; the learned ratio now applies.
+  - Auto-tune (`roop/benchmark/autotune.py`, `routes_autotune.py`, Settings panel): every
+    arm is a real trimmed render of the LAST render's normalized request through
+    `_run_swap`. 100-frame screen (each arm twice, A..Z Z..A), swap-count guard, "ran as
+    labelled" check (effective batch/provider), then the top 2 vs the current setting at 600
+    frames A/B/B/A; saved only if it wins both pairs by more than the baseline's own spread
+    and 3%. NVENC: best-quality preset encoding at >= 2x the confirmed render rate. Writes
+    config.yaml; Revert restores. Live 4070 (b1.mp4, hyperswap/Restore Ultra/TRT, 10
+    workers), 26 arms, 13/13 checks, 0 arms not as labelled: CUDA ~3.2 fps vs TensorRT ~6.5
+    in screening; `tensorrt/b1` +5.4% vs noise 2.6% (both pairs), `b2` +1.1% inside noise;
+    NVENC hevc p7 325 fps vs 17 needed (5.23 vs p5's 5.36 Mbps). One clip, one ABBA: the
+    b1 result is this workload's, not a general rule.
+  - New settings (Advanced performance): `vram_safety_margin_gb`, `perf_batch_max`
+    (ROOP_BATCH_SWAP_MAX; 1 now really means no cross-frame batching -- it was floored to
+    2), `perf_nvenc_preset`, `perf_gpu_affine` (the gate moved into `cuda_warp_affine`, so it
+    reaches every caller), `perf_pinned_buffers` (new ROOP_PINNED_BUFFERS in buffer_pool),
+    `temporal_step` (defaults 1, warns). These are `LIVE_ENV_SETTINGS`: a save re-exports
+    them, so they apply on the next render, not after a restart.
+  - TensorRT engine cache panel (`/api/trt_cache`): status, per-namespace size, "clear
+    stale" (namespaces other than the one this process builds into -- ~3 GB of orphaned
+    a0/a-1 namespaces on the 4070) and "clear all".
+  - Not built: QuickSync / VideoToolbox decode (only NVDEC exists; the codec list already
+    offers qsv/amf encoders the ffmpeg build has). `optimized_processor.VramGovernor` is
+    unrelated (vectorized pipeline, not reached by renders).
+
 - **Trimmed renders came out with the video starting late against the audio. Fixed.**
   `restore_audio` cut the source audio with an INPUT-side `-ss` and `-c:a copy`. For
   stream copy that seeks the file to the video keyframe BEFORE the trim point and keeps

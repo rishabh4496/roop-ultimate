@@ -150,7 +150,9 @@ RUN_ONLY_OUTPUT = {
 # Internal checkpoint transport, not a user setting sent by FaceSwap.jsx.
 # The render worker consumes the already-normalized request persisted by
 # /api/swap; preview constructs the same request directly at its boundary.
-INTERNAL_TRANSPORT_KEYS = {"normalized_request", "target_media_id"}
+# `_autotune` marks an auto-tune arm (routes_autotune.py): it only skips run
+# history, the runtime estimator and "last output" -- bookkeeping, not pixels.
+INTERNAL_TRANSPORT_KEYS = {"normalized_request", "target_media_id", "_autotune"}
 
 
 class TestFrontendReachesBackend(unittest.TestCase):
