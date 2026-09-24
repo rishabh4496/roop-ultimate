@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import {
   Layers, Play, Pause, Square, Trash2, ArrowUp, ArrowDown, FolderOpen,
-  Volume2, VolumeX, Bell, BellOff, Power, ChevronUp, ChevronDown, RefreshCw
+  Volume2, VolumeX, Bell, BellOff, ChevronUp, ChevronDown, RefreshCw
 } from 'lucide-react';
 import { postJSON } from '../../api';
 import useQueue, {
@@ -12,55 +12,7 @@ import useQueue, {
   TERMINAL_STATES,
 } from '../faceswap/useQueue';
 import { useTelemetryStore } from '../../store/telemetryStore';
-
-/**
- * High-performance 100-frame rolling moving average ETA tracker.
- */
-class Rolling100FrameEtaTracker {
-  constructor(windowFrames = 100) {
-    this.windowFrames = windowFrames;
-    this.samples = [];
-  }
-
-  reset() {
-    this.samples = [];
-  }
-
-  addSample(frame) {
-    const now = performance.now();
-    const f = Number(frame);
-    if (!Number.isFinite(f) || f < 0) return;
-    if (this.samples.length && f < this.samples[this.samples.length - 1].frame) {
-      this.samples = [];
-    }
-    this.samples.push({ time: now, frame: f });
-
-    while (this.samples.length > 2 && (f - this.samples[0].frame) > this.windowFrames) {
-      this.samples.shift();
-    }
-  }
-
-  getFps() {
-    if (this.samples.length < 2) return null;
-    const first = this.samples[0];
-    const last = this.samples[this.samples.length - 1];
-    const dt = (last.time - first.time) / 1000.0;
-    const df = last.frame - first.frame;
-    if (dt <= 0 || df <= 0) return null;
-    return df / dt;
-  }
-
-  getEtaSeconds(totalFrames) {
-    const total = Number(totalFrames);
-    if (!total || total <= 0 || !this.samples.length) return null;
-    const currentFrame = this.samples[this.samples.length - 1].frame;
-    const remaining = Math.max(0, total - currentFrame);
-    if (remaining === 0) return 0;
-    const fps = this.getFps();
-    if (!fps || fps <= 0) return null;
-    return remaining / fps;
-  }
-}
+import { RollingEtaTracker, summarizeQueueOutcome } from './queueMetrics';
 
 /**
  * Synthesize a clean dual-tone render completion chime via Web Audio API.
@@ -119,7 +71,7 @@ function formatDuration(sec) {
 
 /**
  * Advanced Render Queue Drawer with 100-frame rolling ETA, multi-job prioritize,
- * post-render audio/desktop notification, and auto-shutdown controls.
+ * and post-render audio/desktop notification.
  */
 export default function RenderQueueDrawer({
   isOpen = true,
@@ -135,7 +87,6 @@ export default function RenderQueueDrawer({
 
   const [audioNotify, setAudioNotify] = useState(true);
   const [desktopNotify, setDesktopNotify] = useState(false);
-  const [autoShutdown, setAutoShutdown] = useState(false);
   const [activeJobDetails, setActiveJobDetails] = useState({
     fps: 0,
     etaSeconds: null,
@@ -144,7 +95,7 @@ export default function RenderQueueDrawer({
     progress: 0,
   });
 
-  const etaTrackerRef = useRef(new Rolling100FrameEtaTracker(100));
+  const etaTrackerRef = useRef(new RollingEtaTracker(100));
   const prevRunningRef = useRef(running);
 
   // Active / current job
@@ -205,32 +156,32 @@ export default function RenderQueueDrawer({
     if (prevRunningRef.current && !running && jobs.length > 0) {
       const allDone = jobs.every((j) => TERMINAL_STATES.includes(jobState(j)));
       if (allDone) {
+        // Terminal is not the same as successful: FAILED, CANCELLED and
+        // INTERRUPTED end a queue too, and must not be announced as success.
+        const outcome = summarizeQueueOutcome(jobs.map(jobState));
+
         // Play Audio Chime
         if (audioNotify) {
           playCompletionChime();
         }
 
+        if (notify) notify(outcome.body, outcome.allSucceeded ? 'success' : 'warning');
+
         // Send Desktop Notification
         if (desktopNotify && typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
           try {
-            new Notification('Render Queue Complete', {
-              body: `All ${jobs.length} jobs finished successfully.`,
+            new Notification(outcome.title, {
+              body: outcome.body,
               icon: '/favicon.ico',
             });
           } catch {
             // Ignored
           }
         }
-
-        // Auto-shutdown if armed
-        if (autoShutdown) {
-          if (notify) notify('Queue complete: executing auto-shutdown sequence...', 'warning');
-          postJSON('/api/system/shutdown', {}).catch(() => {});
-        }
       }
     }
     prevRunningRef.current = running;
-  }, [running, jobs, audioNotify, desktopNotify, autoShutdown, notify]);
+  }, [running, jobs, audioNotify, desktopNotify, notify]);
 
   // Prioritize job: Move Up
   const handleMoveUp = (index) => {
@@ -331,22 +282,6 @@ export default function RenderQueueDrawer({
               }`}
             >
               {desktopNotify ? <Bell size={13} aria-hidden="true" /> : <BellOff size={13} aria-hidden="true" />}
-            </button>
-
-            {/* Auto-Shutdown Toggle */}
-            <button
-              type="button"
-              onClick={() => setAutoShutdown(!autoShutdown)}
-              aria-label={autoShutdown ? 'Disable auto-shutdown on completion' : 'Enable auto-shutdown on completion'}
-              title="Shutdown system when queue finishes"
-              className={`flex items-center gap-1 px-1.5 py-1 rounded text-nano font-medium transition-colors ${
-                autoShutdown
-                  ? 'bg-rose-500/20 text-rose-300 border border-rose-500/40'
-                  : 'text-white/40 hover:text-white/70'
-              }`}
-            >
-              <Power size={11} aria-hidden="true" />
-              <span>Shutdown</span>
             </button>
           </div>
 

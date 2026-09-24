@@ -280,13 +280,17 @@ def _nvidia_smi_stats():
     try:
         proc = subprocess.run(
             ["nvidia-smi",
-             "--query-gpu=utilization.gpu,utilization.memory,temperature.gpu,power.draw,clocks.sm",
+             "--query-gpu=utilization.gpu,utilization.memory,temperature.gpu,power.draw,clocks.sm,power.limit",
              "--format=csv,noheader,nounits"],
             capture_output=True, text=True, timeout=3,
             creationflags=(subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0))
         line = (proc.stdout or "").strip().splitlines()[0]
         vals = [v.strip() for v in line.split(",")]
-        keys = ["gpu_util", "gpu_mem_util", "gpu_temp", "gpu_power", "gpu_clock"]
+        # gpu_power_limit is the board's enforced limit (200 W on the 4070, far
+        # lower on a 3060 Laptop), so the HUD can judge "at the limit" per card.
+        # A laptop part may report [N/A]; the ValueError below skips the key.
+        keys = ["gpu_util", "gpu_mem_util", "gpu_temp", "gpu_power", "gpu_clock",
+                "gpu_power_limit"]
         for k, v in zip(keys, vals):
             try:
                 data[k] = round(float(v), 1)

@@ -5,6 +5,10 @@
  */
 import process from 'node:process';
 import { useWorkspaceLayoutStore } from '../src/components/studio/workspaceLayoutStore.js';
+import { RollingEtaTracker, summarizeQueueOutcome } from '../src/components/queue/queueMetrics.js';
+import {
+  frameTimeMs, vramUsage, thermalLevel, isPowerLimited, sparkNorm,
+} from '../src/components/telemetry/hudMetrics.js';
 
 let checks = 0;
 let failures = 0;
@@ -19,39 +23,10 @@ const ok = (name, cond, detail = '') => {
   console.log(`  FAIL  ${name}${detail ? `\n          ${detail}` : ''}`);
 };
 
-// Rolling 100-frame ETA test implementation mirroring component logic
-class TestRollingEtaTracker {
-  constructor(windowFrames = 100) {
-    this.windowFrames = windowFrames;
-    this.samples = [];
-  }
-  addSample(timeMs, frame) {
-    this.samples.push({ time: timeMs, frame });
-    while (this.samples.length > 2 && (frame - this.samples[0].frame) > this.windowFrames) {
-      this.samples.shift();
-    }
-  }
-  getFps() {
-    if (this.samples.length < 2) return null;
-    const first = this.samples[0];
-    const last = this.samples[this.samples.length - 1];
-    const dt = (last.time - first.time) / 1000.0;
-    const df = last.frame - first.frame;
-    return dt > 0 && df > 0 ? df / dt : null;
-  }
-  getEtaSeconds(totalFrames) {
-    if (!this.samples.length) return null;
-    const current = this.samples[this.samples.length - 1].frame;
-    const remaining = Math.max(0, totalFrames - current);
-    const fps = this.getFps();
-    return fps && fps > 0 ? remaining / fps : null;
-  }
-}
-
 async function runTests() {
   console.log('── Rolling 100-Frame ETA Moving Average Engine ───────────');
   {
-    const tracker = new TestRollingEtaTracker(100);
+    const tracker = new RollingEtaTracker(100);
 
     // Initial state
     ok('Initial ETA is null when no samples', tracker.getEtaSeconds(1000) === null);
@@ -59,7 +34,7 @@ async function runTests() {
     // Add samples at steady 40 FPS: 25ms per frame
     // Feed 150 frames: from t=0 to t=3750ms
     for (let f = 1; f <= 150; f++) {
-      tracker.addSample(f * 25, f);
+      tracker.addSample(f, f * 25);
     }
 
     const calculatedFps = tracker.getFps();
@@ -74,9 +49,28 @@ async function runTests() {
     const etaSec = tracker.getEtaSeconds(1000);
     ok('ETA for remaining 850 frames at 40 FPS is 21.25s', Math.abs(etaSec - 21.25) < 0.1, `Got ${etaSec}s`);
 
-    // Speed multiplier check vs 30fps target
-    const speedMult = calculatedFps / 30.0;
-    ok('Speed multiplier is ~1.33x real-time', Math.abs(speedMult - 1.333) < 0.05, `Got ${speedMult}`);
+    // Next job: the frame counter restarts. The window must restart too.
+    tracker.addSample(5, 10000);
+    ok('Counter going backwards resets the window (no negative rate)',
+      tracker.samples.length === 1 && tracker.getFps() === null);
+    tracker.addSample(25, 11000);
+    ok('Rate after reset uses only the new job', Math.abs(tracker.getFps() - 20) < 1e-9);
+    ok('ETA is 0 at the last frame', tracker.getEtaSeconds(25) === 0);
+    ok('ETA is null without a total', tracker.getEtaSeconds(0) === null);
+  }
+
+  console.log('── Queue completion outcome (real summarizeQueueOutcome) ─');
+  {
+    const good = summarizeQueueOutcome(['COMPLETED', 'COMPLETED']);
+    ok('All COMPLETED is a success', good.allSucceeded && good.title === 'Render Queue Complete');
+    const bad = summarizeQueueOutcome(['FAILED', 'FAILED', 'FAILED']);
+    ok('All FAILED is NOT a success', !bad.allSucceeded && bad.title === 'Render Queue Failed');
+    ok('All FAILED body reports the failures', bad.body === '0 of 3 completed, 3 failed.', bad.body);
+    const mixed = summarizeQueueOutcome(['COMPLETED', 'CANCELLED', 'INTERRUPTED', 'FAILED']);
+    ok('Mixed queue is NOT a success', !mixed.allSucceeded);
+    ok('Mixed body counts every outcome',
+      mixed.body === '1 of 4 completed, 1 failed, 1 cancelled, 1 interrupted.', mixed.body);
+    ok('Empty queue is not a success', !summarizeQueueOutcome([]).allSucceeded);
   }
 
   console.log('── Workspace Layout Store & Preset Transitions ───────────');
@@ -114,26 +108,35 @@ async function runTests() {
     ok('resetLayout restores studioTheme to obsidian', resetState.studioTheme === 'obsidian');
   }
 
-  console.log('── Hardware Telemetry Throttling Bounds & Math ───────────');
+  console.log('── HUD metrics (real hudMetrics used by HardwareTelemetryHud) ─');
   {
-    // Thermal threshold rules
-    const isThermalThrottling = (temp) => temp >= 80;
-    const isCriticalThermal = (temp) => temp >= 86;
+    ok('75°C is no alert', thermalLevel(75) === null);
+    ok('81°C is a warning', thermalLevel(81) === 'warn');
+    ok('88°C is critical', thermalLevel(88) === 'critical');
+    ok('Missing temperature is no alert', thermalLevel(undefined) === null);
 
-    ok('75°C does not trigger thermal throttling', !isThermalThrottling(75));
-    ok('81°C triggers thermal warning', isThermalThrottling(81) && !isCriticalThermal(81));
-    ok('88°C triggers critical thermal alert', isCriticalThermal(88));
+    // Power: relative to the board's own limit, never a fixed wattage.
+    ok('4070: 150 of 200W is not limited', !isPowerLimited(150, 200));
+    ok('4070: 195 of 200W is limited', isPowerLimited(195, 200));
+    ok('3060 Laptop: 92 of 95W is limited (a fixed 190W could never fire)', isPowerLimited(92, 95));
+    ok('3060 Laptop: 60 of 95W is not limited', !isPowerLimited(60, 95));
+    ok('No reported limit -> no alert, even at 250W', !isPowerLimited(250, undefined));
 
-    // Power limit detection (190W threshold for 200W TDP card)
-    const isPowerThrottling = (watts, tdp = 200) => watts >= tdp * 0.95;
-    ok('150W is normal power', !isPowerThrottling(150, 200));
-    ok('195W triggers power throttling warning', isPowerThrottling(195, 200));
+    // VRAM: unknown total is unknown, not a share of a 12 GB card.
+    ok('VRAM with no total is null', vramUsage({ vram_used: 3 }) === null);
+    ok('VRAM with total 0 (CPU only) is null', vramUsage({ vram_used: 0, vram_total: 0 }) === null);
+    const v = vramUsage({ vram_used: 3, vram_total: 6 });
+    ok('6 GB card: 3 GB used is 50%', v && v.pct === 50 && v.total === 6);
+    ok('VRAM pct clamps at 100', vramUsage({ vram_used: 9, vram_total: 6 }).pct === 100);
 
-    // Sparkline normalization safety: value clamp 0..1
-    const normalize = (val, min, max) => Math.max(0, Math.min(1, (val - min) / Math.max(1e-5, max - min)));
-    ok('Sparkline normalizes midpoint 30 in [0, 60] to 0.5', normalize(30, 0, 60) === 0.5);
-    ok('Sparkline clamps negative value to 0.0', normalize(-10, 0, 60) === 0.0);
-    ok('Sparkline clamps overflow value to 1.0', normalize(80, 0, 60) === 1.0);
+    // Frame time: the backend's number or nothing; no invented default.
+    ok('frame_ms passes through', frameTimeMs({ frame_ms: 96.2 }) === 96.2);
+    ok('No frame_ms -> null (not 25ms)', frameTimeMs({ fps: 10 }) === null);
+    ok('frame_ms null -> null', frameTimeMs({ frame_ms: null }) === null);
+
+    ok('Sparkline normalizes midpoint 30 in [0, 60] to 0.5', sparkNorm(30, 0, 60) === 0.5);
+    ok('Sparkline clamps negative value to 0.0', sparkNorm(-10, 0, 60) === 0.0);
+    ok('Sparkline clamps overflow value to 1.0', sparkNorm(80, 0, 60) === 1.0);
   }
 
   console.log('── Summary ────────────────────────────────────────────────');

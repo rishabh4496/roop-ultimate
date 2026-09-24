@@ -6,7 +6,10 @@
  */
 import process from 'node:process';
 import {
+  anchoredPan,
   computeTransformMatrix,
+  DoubleBufferedTexture,
+  sniffImageMime,
   evalTurbo,
   evalInferno,
 } from '../src/components/preview/cinematicRenderer.js';
@@ -82,53 +85,46 @@ console.log('── CinematicPreview Transform Matrix & Aspect Ratio ───�
 }
 
 console.log('── Cursor Anchor Point Invariance Math ───────────────────');
+console.log('── Cursor Anchor Point Invariance (anchoredPan + real matrix) ──');
 {
-  // Test that when zooming at cursor point (mx, my),
-  // the corresponding normalized image coordinate remains invariant!
+  // Map a canvas pixel back to quad coordinates through the matrix the
+  // shader actually uses. anchoredPan must keep that point fixed.
   const W = 1200;
   const H = 800;
   const imgW = 1920;
   const imgH = 1080;
+  const quadAt = (cx, cy, zoom, pan) => {
+    const m = computeTransformMatrix({
+      viewportWidth: W, viewportHeight: H, imageWidth: imgW, imageHeight: imgH,
+      zoom, panX: pan.x, panY: pan.y,
+    });
+    const clipX = (cx / W) * 2 - 1;
+    const clipY = 1 - (cy / H) * 2;
+    return { qx: (clipX - m[6]) / m[0], qy: (clipY - m[7]) / m[4] };
+  };
 
-  let zoom = 1.0;
-  let panX = 0;
-  let panY = 0;
-
-  // Let cursor be at (800, 300) in canvas pixels
   const mx = 800;
   const my = 300;
   const dx = mx - W / 2;
   const dy = my - H / 2;
-
-  // Function to calculate image UV for a canvas point
-  const getUv = (cx, cy, curZoom, curPanX, curPanY) => {
-    const baseScale = Math.min(W / imgW, H / imgH);
-    const dispW = imgW * baseScale * curZoom;
-    const dispH = imgH * baseScale * curZoom;
-    const left = W / 2 + curPanX - dispW / 2;
-    const top = H / 2 + curPanY - dispH / 2;
-    return {
-      u: (cx - left) / dispW,
-      v: (cy - top) / dispH,
-    };
-  };
-
-  const uvBefore = getUv(mx, my, zoom, panX, panY);
-
-  // Zoom in to 3.5x with cursor anchoring
-  const newZoom = 3.5;
-  const alpha = newZoom / zoom;
-  panX = dx - (dx - panX) * alpha;
-  panY = dy - (dy - panY) * alpha;
-  zoom = newZoom;
-
-  const uvAfter = getUv(mx, my, zoom, panX, panY);
-
-  ok('Cursor anchor invariance: U coordinate unchanged under cursor', Math.abs(uvBefore.u - uvAfter.u) < 1e-6);
-  ok('Cursor anchor invariance: V coordinate unchanged under cursor', Math.abs(uvBefore.v - uvAfter.v) < 1e-6);
+  let zoom = 1.0;
+  let pan = { x: 0, y: 0 };
+  const before = quadAt(mx, my, zoom, pan);
+  // Several lerp steps, as the hook's animation loop takes them.
+  for (const nextZoom of [1.4, 2.1, 3.5]) {
+    pan = anchoredPan(pan, dx, dy, zoom, nextZoom);
+    zoom = nextZoom;
+  }
+  const after = quadAt(mx, my, zoom, pan);
+  ok('Cursor anchor invariance: X unchanged under cursor', Math.abs(before.qx - after.qx) < 1e-5,
+    `${before.qx} -> ${after.qx}`);
+  ok('Cursor anchor invariance: Y unchanged under cursor', Math.abs(before.qy - after.qy) < 1e-5,
+    `${before.qy} -> ${after.qy}`);
+  const off = quadAt(mx + 100, my, zoom, pan);
+  ok('A point away from the cursor DOES move (test is not vacuous)', Math.abs(off.qx - before.qx) > 1e-3);
 }
 
-console.log('── Double Buffering Texture State Machine ────────────────');
+console.log('── DoubleBufferedTexture (real class, mock GL) ───────────');
 {
   class MockGl {
     constructor() {
@@ -143,100 +139,53 @@ console.log('── Double Buffering Texture State Machine ───────
       this.RGBA = 0x1908;
       this.UNSIGNED_BYTE = 0x1401;
       this.nextId = 1;
-      this.deleted = [];
       this.boundTexture = null;
-      this.subImageCalls = 0;
-      this.imageCalls = 0;
+      this.uploads = []; // { kind, texId }
     }
     createTexture() { return { id: this.nextId++ }; }
-    deleteTexture(t) { this.deleted.push(t.id); }
+    deleteTexture() {}
     bindTexture(target, t) { this.boundTexture = t; }
     texParameteri() {}
-    texImage2D() { this.imageCalls += 1; }
-    texSubImage2D() { this.subImageCalls += 1; }
+    texImage2D() { this.uploads.push({ kind: 'image', texId: this.boundTexture.id }); }
+    texSubImage2D() { this.uploads.push({ kind: 'sub', texId: this.boundTexture.id }); }
   }
 
-  // Import DoubleBufferedTexture logic
   const gl = new MockGl();
-
-  class TestDoubleBufferedTexture {
-    constructor(gl) {
-      this.gl = gl;
-      this.textures = [gl.createTexture(), gl.createTexture()];
-      this.front = 0;
-      this.width = 0;
-      this.height = 0;
-      this.hasData = false;
-      this.filter = gl.LINEAR;
-    }
-    getFront() { return this.textures[this.front]; }
-    getBack() { return this.textures[1 - this.front]; }
-    uploadImageSource(source) {
-      const w = source.width;
-      const h = source.height;
-      if (!w || !h) return false;
-      const back = this.getBack();
-      this.gl.bindTexture(this.gl.TEXTURE_2D, back);
-      if (this.width === w && this.height === h) {
-        this.gl.texSubImage2D();
-      } else {
-        this.gl.texImage2D();
-        this.width = w;
-        this.height = h;
-      }
-      this.front = 1 - this.front;
-      this.hasData = true;
-      return true;
-    }
-  }
-
-  const dbt = new TestDoubleBufferedTexture(gl);
-  ok('Initial front texture is tex 0', dbt.front === 0);
+  const dbt = new DoubleBufferedTexture(gl);
   const tex0 = dbt.getFront();
   const tex1 = dbt.getBack();
   ok('Front and back textures are distinct handles', tex0.id !== tex1.id);
+  ok('Rejects a source with no dimensions', dbt.uploadImageSource({}) === false && gl.uploads.length === 0);
 
-  // First frame upload (1920x1080)
   dbt.uploadImageSource({ width: 1920, height: 1080 });
-  ok('Uploaded to back texture and flipped front index to 1', dbt.front === 1);
-  ok('Current front texture is now tex1', dbt.getFront().id === tex1.id);
-  ok('Allocated with texImage2D on first frame', gl.imageCalls === 1 && gl.subImageCalls === 0);
+  ok('First upload writes the BACK texture', gl.uploads[0].texId === tex1.id);
+  ok('First upload allocates (texImage2D)', gl.uploads[0].kind === 'image');
+  ok('Front flips to the texture just written', dbt.getFront().id === tex1.id && dbt.hasData);
 
-  // Second frame upload of same dimensions
   dbt.uploadImageSource({ width: 1920, height: 1080 });
-  ok('Second upload flipped front index back to 0', dbt.front === 0);
-  ok('Reused buffer with texSubImage2D without reallocation', gl.subImageCalls === 1);
+  ok('Second upload writes the other texture', gl.uploads[1].texId === tex0.id);
+  ok('Same size reuses storage (texSubImage2D)', gl.uploads[1].kind === 'sub');
+
+  dbt.uploadImageSource({ videoWidth: 1280, videoHeight: 720 });
+  ok('Size change reallocates, reading videoWidth/videoHeight', gl.uploads[2].kind === 'image' && dbt.width === 1280);
 }
 
-console.log('── Colormaps & Difference Heatmap Math ───────────────────');
+console.log('── Colormaps ─────────────────────────────────────────────');
 {
-  // Turbo colormap validation
   const t0 = evalTurbo(0.0);
   const tMid = evalTurbo(0.5);
   const t1 = evalTurbo(1.0);
-
   ok('Turbo at 0.0 is deep blue/purple', t0[0] < 0.25 && t0[2] > 0.05);
   ok('Turbo at 0.5 is bright green/yellow', tMid[1] > 0.8 && tMid[2] < 0.35);
   ok('Turbo at 1.0 is dark wine red', t1[0] > 0.5 && t1[1] < 0.1 && t1[2] < 0.05);
 
-  // Inferno colormap validation
   const i0 = evalInferno(0.0);
   const iMid = evalInferno(0.5);
   const i1 = evalInferno(1.0);
-
   ok('Inferno at 0.0 is near-black/dark purple', i0[0] < 0.05 && i0[1] < 0.05 && i0[2] < 0.05);
   ok('Inferno at 0.5 is reddish orange', iMid[0] > 0.5 && iMid[1] > 0.2);
   ok('Inferno at 1.0 is bright yellow/white', i1[0] > 0.95 && i1[1] > 0.95);
-
-  // Difference gain calculation
-  const colA = [0.8, 0.4, 0.2];
-  const colB = [0.75, 0.42, 0.2];
-  const gain = 3.0;
-  const diffR = Math.abs(colA[0] - colB[0]) * gain; // 0.05 * 3 = 0.15
-  const diffG = Math.abs(colA[1] - colB[1]) * gain; // 0.02 * 3 = 0.06
-  const diffB = Math.abs(colA[2] - colB[2]) * gain; // 0
-  const maxDiff = Math.max(diffR, diffG, diffB);
-  ok('Difference gain calculates channel maximum correctly', Math.abs(maxDiff - 0.15) < 1e-6);
+  ok('Colormaps clamp out-of-range input', evalTurbo(-1).join() === t0.join() && evalInferno(2).join() === i1.join());
 }
 
 console.log('── Binary Frame Packet Wire Ingestion ───────────────────');
@@ -246,25 +195,23 @@ console.log('── Binary Frame Packet Wire Ingestion ────────�
     { kind: KIND_LIVE, stream: 42, frame: 100, width: 1920, height: 1080 },
     fakeJpeg.buffer
   );
-
   const parsed = parseFrameMessage(msg);
   ok('Wire message parsed correctly with width and height', parsed && parsed.width === 1920 && parsed.height === 1080);
   ok('Wire payload preserved exact JPEG magic bytes',
     new Uint8Array(parsed.bytes)[0] === 0xff && new Uint8Array(parsed.bytes)[1] === 0xd8);
 
-  // Detect WebP magic: 'RIFF' + 'WEBP'
-  const fakeWebP = new Uint8Array([
-    0x52, 0x49, 0x46, 0x46, // RIFF
-    0x20, 0x00, 0x00, 0x00,
-    0x57, 0x45, 0x42, 0x50, // WEBP
-    0x56, 0x50, 0x38, 0x20, // VP8
-  ]);
-
-  const isWebP = fakeWebP.length >= 12 &&
-    fakeWebP[0] === 0x52 && fakeWebP[1] === 0x49 && fakeWebP[2] === 0x46 && fakeWebP[3] === 0x46 &&
-    fakeWebP[8] === 0x57 && fakeWebP[9] === 0x45 && fakeWebP[10] === 0x42 && fakeWebP[11] === 0x50;
-
-  ok('WebP magic byte detection is accurate', isWebP === true);
+  const webp = new Uint8Array([0x52, 0x49, 0x46, 0x46, 0x20, 0, 0, 0, 0x57, 0x45, 0x42, 0x50, 0x56, 0x50, 0x38, 0x20]);
+  const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  const riffWav = new Uint8Array([0x52, 0x49, 0x46, 0x46, 0x20, 0, 0, 0, 0x57, 0x41, 0x56, 0x45]);
+  const riffAvi = new Uint8Array([0x52, 0x49, 0x46, 0x46, 0x20, 0, 0, 0, 0x41, 0x56, 0x49, 0x20]);
+  ok('sniffImageMime: WebP', sniffImageMime(webp) === 'image/webp');
+  ok('sniffImageMime: PNG', sniffImageMime(png) === 'image/png');
+  ok('sniffImageMime: JPEG', sniffImageMime(new Uint8Array(parsed.bytes)) === 'image/jpeg');
+  ok('sniffImageMime: RIFF WAVE is not an image', sniffImageMime(riffWav) === null);
+  ok('sniffImageMime: RIFF AVI is not an image', sniffImageMime(riffAvi) === null);
+  const nearWebp = webp.slice(); nearWebp[8] = 0x58; // 'XEBP': one byte off
+  ok('sniffImageMime: one wrong fourcc byte is not WebP', sniffImageMime(nearWebp) === null);
+  ok('sniffImageMime: raw pixels are not an image', sniffImageMime(new Uint8Array([1, 2, 3, 4])) === null);
 }
 
 console.log(`\n${failures === 0 ? 'ALL GREEN' : 'FAILURES'}: ${checks - failures}/${checks} checks passed`);

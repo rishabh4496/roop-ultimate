@@ -1,8 +1,11 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import {
-  Activity, Cpu, HardDrive, Zap, Flame, AlertTriangle, Minimize2, Maximize2,
+  Activity, Cpu, HardDrive, Zap, Flame, Minimize2, Maximize2,
   X, GripHorizontal, Gauge, Layers
 } from 'lucide-react';
+import {
+  frameTimeMs, vramUsage, thermalLevel, isPowerLimited, sparkNorm,
+} from './hudMetrics';
 import { getJSON } from '../../api';
 import { useTelemetryStore } from '../../store/telemetryStore';
 
@@ -35,7 +38,7 @@ function drawSparkline(canvas, history, color, minVal = 0, maxVal = null) {
   ctx.beginPath();
   history.forEach((val, i) => {
     const x = (startIdx + i) * step;
-    const norm = Math.max(0, Math.min(1, (val - min) / range));
+    const norm = sparkNorm(val, min, min + range);
     const y = h - norm * (h - 4) - 2;
     if (i === 0) ctx.moveTo(x, y);
     else ctx.lineTo(x, y);
@@ -98,29 +101,19 @@ export default function HardwareTelemetryHud({
   const gpuCoreTextRef = useRef(null);
   const gpuCanvasRef = useRef(null);
 
-  const latDetRef = useRef(null);
-  const latSwapRef = useRef(null);
-  const latRestRef = useRef(null);
-  const latEncRef = useRef(null);
   const latTotalRef = useRef(null);
 
-  const barDetRef = useRef(null);
-  const barSwapRef = useRef(null);
-  const barRestRef = useRef(null);
-  const barEncRef = useRef(null);
 
   const thermalAlertRef = useRef(null);
   const thermalValRef = useRef(null);
   const powerAlertRef = useRef(null);
   const powerValRef = useRef(null);
-  const droppedTextRef = useRef(null);
 
   // History buffers for sparkline rendering
   const historyRef = useRef({
     fps: [0],
     vram: [0],
     gpu: [0],
-    latency: [0],
   });
 
   // Dragging state
@@ -179,8 +172,6 @@ export default function HardwareTelemetryHud({
   // ── ZERO-REACT-RENDER METRICS STREAM ──────────────────────────────────────
   useEffect(() => {
     let isMounted = true;
-    let droppedFramesCount = 0;
-    let lastSeq = -1;
 
     // Helper to push history
     const pushHist = (arr, val) => {
@@ -194,14 +185,7 @@ export default function HardwareTelemetryHud({
       const run = state?.run || {};
       const fps = Number(run.fps) || 0;
       const fpsNow = Number(run.fps_now) || fps;
-      const frameMs = Number(run.frame_ms) || (fpsNow > 0 ? 1000 / fpsNow : 0);
-
-      // Dropped frames detection via sequence gap
-      const curSeq = Number(run.live_seq) || 0;
-      if (lastSeq !== -1 && curSeq > lastSeq + 1) {
-        droppedFramesCount += (curSeq - lastSeq - 1);
-      }
-      lastSeq = curSeq;
+      const frameMs = frameTimeMs(run);
 
       // Update FPS texts directly
       if (fpsTextRef.current) {
@@ -211,35 +195,18 @@ export default function HardwareTelemetryHud({
         fpsInstantTextRef.current.textContent = fpsNow > 0 ? `(${fpsNow.toFixed(1)} live)` : '';
       }
 
-      // Latency Breakdown (estimates/approximations based on pipeline stages)
-      // Standard Roop split: Detection ~20%, Swap ~45%, Restoration ~25%, Encoding ~10%
-      const totalMs = frameMs > 0 ? frameMs : 25;
-      const detMs = Math.round(totalMs * 0.20);
-      const swapMs = Math.round(totalMs * 0.45);
-      const restMs = Math.round(totalMs * 0.25);
-      const encMs = Math.max(1, Math.round(totalMs * 0.10));
-
-      if (latDetRef.current) latDetRef.current.textContent = `${detMs}ms`;
-      if (latSwapRef.current) latSwapRef.current.textContent = `${swapMs}ms`;
-      if (latRestRef.current) latRestRef.current.textContent = `${restMs}ms`;
-      if (latEncRef.current) latEncRef.current.textContent = `${encMs}ms`;
-      if (latTotalRef.current) latTotalRef.current.textContent = `${Math.round(totalMs)}ms`;
-
-      if (barDetRef.current) barDetRef.current.style.width = '20%';
-      if (barSwapRef.current) barSwapRef.current.style.width = '45%';
-      if (barRestRef.current) barRestRef.current.style.width = '25%';
-      if (barEncRef.current) barEncRef.current.style.width = '10%';
-
-      if (droppedTextRef.current) {
-        droppedTextRef.current.textContent = String(droppedFramesCount);
+      // Wall-clock time per output frame, straight from the backend. There is
+      // no per-stage split to show: ROOP_PROFILE measures stages, and its
+      // shares are thread time summed across workers, not parts of this.
+      if (latTotalRef.current) {
+        latTotalRef.current.textContent = frameMs !== null ? `${frameMs.toFixed(1)} ms` : '-- ms';
       }
 
       // Update sparklines
       pushHist(historyRef.current.fps, fpsNow);
-      pushHist(historyRef.current.latency, totalMs);
 
       if (fpsCanvasRef.current) {
-        drawSparkline(fpsCanvasRef.current, historyRef.current.fps, '#10B981', 0, 60);
+        drawSparkline(fpsCanvasRef.current, historyRef.current.fps, '#10B981', 0, null);
       }
     };
 
@@ -255,21 +222,25 @@ export default function HardwareTelemetryHud({
         const sys = await getJSON('/api/system/telemetry');
         if (!isMounted || !sys) return;
 
-        const vramUsed = Number(sys.vram_used) || 0;
-        const vramTotal = Number(sys.vram_total) || 12;
-        const vramPct = Math.min(100, Math.round((vramUsed / Math.max(1, vramTotal)) * 100));
+        // Unknown total (CPU-only, probe failed) renders as unknown rather
+        // than as a percentage of some other card's VRAM.
+        const vram = vramUsage(sys);
 
         const gpuUtil = Number(sys.gpu_util) || 0;
         const gpuTemp = Number(sys.gpu_temp) || 0;
         const gpuPower = Number(sys.gpu_power) || 0;
+        const thermal = thermalLevel(gpuTemp);
 
         // VRAM elements
         if (vramTextRef.current) {
-          vramTextRef.current.textContent = `${vramUsed.toFixed(1)} / ${vramTotal.toFixed(1)} GB (${vramPct}%)`;
+          vramTextRef.current.textContent = vram
+            ? `${vram.used.toFixed(1)} / ${vram.total.toFixed(1)} GB (${vram.pct}%)`
+            : '-- / -- GB';
         }
         if (vramBarRef.current) {
-          vramBarRef.current.style.width = `${vramPct}%`;
-          vramBarRef.current.style.backgroundColor = vramPct > 90 ? '#EF4444' : vramPct > 75 ? '#F59E0B' : '#3B82F6';
+          const pct = vram ? vram.pct : 0;
+          vramBarRef.current.style.width = `${pct}%`;
+          vramBarRef.current.style.backgroundColor = pct > 90 ? '#EF4444' : pct > 75 ? '#F59E0B' : '#3B82F6';
         }
 
         // GPU Core elements
@@ -277,35 +248,36 @@ export default function HardwareTelemetryHud({
           gpuCoreTextRef.current.textContent = `${Math.round(gpuUtil)}%`;
         }
 
-        // Thermal Alert (>80°C warning, >86°C critical)
+        // Thermal Alert (warn / critical thresholds in hudMetrics)
         if (thermalAlertRef.current && thermalValRef.current) {
-          if (gpuTemp >= 80) {
+          if (thermal) {
             thermalAlertRef.current.style.display = 'flex';
             thermalValRef.current.textContent = `${Math.round(gpuTemp)}°C`;
             thermalAlertRef.current.className = `flex items-center gap-1 px-1.5 py-0.5 rounded text-nano font-medium ${
-              gpuTemp >= 86 ? 'bg-rose-500/20 text-rose-300 border border-rose-500/40 animate-pulse' : 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+              thermal === 'critical' ? 'bg-rose-500/20 text-rose-300 border border-rose-500/40 animate-pulse' : 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
             }`;
           } else {
             thermalAlertRef.current.style.display = 'none';
           }
         }
 
-        // Power throttling alert (power >= 195W on 4070 or near max TDP)
+        // Power-limit alert, relative to THIS board's enforced limit
+        // (nvidia-smi power.limit). No limit reported -> no alert.
         if (powerAlertRef.current && powerValRef.current) {
-          if (gpuPower >= 190) {
+          if (isPowerLimited(gpuPower, sys.gpu_power_limit)) {
             powerAlertRef.current.style.display = 'flex';
-            powerValRef.current.textContent = `${Math.round(gpuPower)}W`;
+            powerValRef.current.textContent = `${Math.round(gpuPower)} / ${Math.round(Number(sys.gpu_power_limit))}W`;
           } else {
             powerAlertRef.current.style.display = 'none';
           }
         }
 
         // Sparklines for VRAM and GPU
-        pushHist(historyRef.current.vram, vramUsed);
+        pushHist(historyRef.current.vram, vram ? vram.used : 0);
         pushHist(historyRef.current.gpu, gpuUtil);
 
-        if (vramCanvasRef.current) {
-          drawSparkline(vramCanvasRef.current, historyRef.current.vram, '#3B82F6', 0, vramTotal);
+        if (vramCanvasRef.current && vram) {
+          drawSparkline(vramCanvasRef.current, historyRef.current.vram, '#3B82F6', 0, vram.total);
         }
         if (gpuCanvasRef.current) {
           drawSparkline(gpuCanvasRef.current, historyRef.current.gpu, '#8B5CF6', 0, 100);
@@ -406,14 +378,7 @@ export default function HardwareTelemetryHud({
             >
               <Zap size={10} aria-hidden="true" />
               <span>Power Limit:</span>
-              <span ref={powerValRef} className="font-mono">200W</span>
-            </div>
-
-            {/* Dropped Frames Badge */}
-            <div className="flex items-center gap-1 px-1.5 py-0.5 rounded text-nano bg-white/5 border border-white/10 text-white/60 ml-auto font-mono">
-              <AlertTriangle size={10} className="text-white/40" aria-hidden="true" />
-              <span>Drops:</span>
-              <span ref={droppedTextRef} className="font-semibold text-white/90">0</span>
+              <span ref={powerValRef} className="font-mono">--W</span>
             </div>
           </div>
 
@@ -459,42 +424,17 @@ export default function HardwareTelemetryHud({
             <canvas ref={gpuCanvasRef} width={280} height={24} className="w-full h-6 rounded" />
           </div>
 
-          {/* 4. INFERENCE LATENCY BREAKDOWN (MS BREAKDOWN) */}
+          {/* 4. FRAME TIME (wall clock per output frame; not a stage split) */}
           <div className="flex flex-col gap-1.5 p-2 rounded-xl bg-white/[0.025] border border-white/5">
             <div className="flex items-center justify-between text-mini">
-              <div className="flex items-center gap-1.5">
+              <div
+                className="flex items-center gap-1.5"
+                title="Wall-clock time per output frame, all workers together. Not a model latency; per-stage cost is measured with ROOP_PROFILE."
+              >
                 <Layers size={13} className="text-amber-400" aria-hidden="true" />
-                <span className="font-medium text-white/80">Inference Latency</span>
+                <span className="font-medium text-white/80">Frame Time</span>
               </div>
               <span ref={latTotalRef} className="text-micro font-bold font-mono text-amber-400">-- ms</span>
-            </div>
-
-            {/* Stacked Latency Bar */}
-            <div className="flex w-full h-1.5 rounded-full overflow-hidden bg-white/10">
-              <div ref={barDetRef} style={{ width: '20%' }} className="bg-sky-400 h-full" title="Detection" />
-              <div ref={barSwapRef} style={{ width: '45%' }} className="bg-rose-400 h-full" title="Swap" />
-              <div ref={barRestRef} style={{ width: '25%' }} className="bg-emerald-400 h-full" title="Restoration" />
-              <div ref={barEncRef} style={{ width: '10%' }} className="bg-amber-400 h-full" title="Encoding" />
-            </div>
-
-            {/* Legend / Values Breakdown */}
-            <div className="grid grid-cols-4 gap-1 pt-1 text-nano font-mono text-center">
-              <div className="flex flex-col items-center">
-                <span className="text-sky-300">Detect</span>
-                <span ref={latDetRef} className="text-white/60">--ms</span>
-              </div>
-              <div className="flex flex-col items-center">
-                <span className="text-rose-300">Swap</span>
-                <span ref={latSwapRef} className="text-white/60">--ms</span>
-              </div>
-              <div className="flex flex-col items-center">
-                <span className="text-emerald-300">Restore</span>
-                <span ref={latRestRef} className="text-white/60">--ms</span>
-              </div>
-              <div className="flex flex-col items-center">
-                <span className="text-amber-300">Encode</span>
-                <span ref={latEncRef} className="text-white/60">--ms</span>
-              </div>
             </div>
           </div>
         </div>

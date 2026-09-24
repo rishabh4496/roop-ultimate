@@ -5,6 +5,7 @@ import {
 } from 'lucide-react';
 import { PERSON_COLORS } from '../constants';
 import { cacheCrop, getCachedCrop } from './faceBankDb';
+import { assignSource, removeSource, normalizeOverrides } from './mappingOps';
 
 /**
  * Format a frame number into SMPTE timecode (HH:MM:SS:FF).
@@ -131,14 +132,9 @@ export default function FaceBankRouter({
 
   // Normalized active overrides for the selected cluster
   const currentOverrides = useMemo(() => {
-    if (!selectedCluster) return { cosineThreshold: 0.60, maskOffset: 0, action: 'swap' };
+    if (!selectedCluster) return normalizeOverrides();
     const key = String(selectedCluster.person_id || selectedCluster.id);
-    const existing = parameterOverrides[key] || {};
-    return {
-      cosineThreshold: existing.cosineThreshold !== undefined ? existing.cosineThreshold : 0.60,
-      maskOffset: existing.maskOffset !== undefined ? existing.maskOffset : 0,
-      action: existing.action || 'swap', // 'swap' | 'keep' | 'censor'
-    };
+    return normalizeOverrides(parameterOverrides[key]);
   }, [selectedCluster, parameterOverrides]);
 
   // Filtered clusters
@@ -237,42 +233,14 @@ export default function FaceBankRouter({
   // Assign a source face to a target cluster
   const assignSourceToCluster = (clusterId, sourceId, append = false) => {
     if (!onMappingChange) return;
-    const strClusterId = String(clusterId);
-    const existing = mapping[strClusterId];
-
-    let newMapping;
-    if (append && existing !== undefined && existing !== -1) {
-      const arr = Array.isArray(existing) ? [...existing] : [existing];
-      if (!arr.includes(sourceId)) {
-        arr.push(sourceId);
-      }
-      newMapping = { ...mapping, [strClusterId]: arr };
-    } else {
-      newMapping = { ...mapping, [strClusterId]: sourceId };
-    }
-
-    onMappingChange(newMapping);
+    onMappingChange(assignSource(mapping, clusterId, sourceId, append));
   };
 
   // Remove a specific source assignment from a target cluster
   const removeSourceFromCluster = (clusterId, sourceIdToRemove) => {
     if (!onMappingChange) return;
-    const strClusterId = String(clusterId);
-    const existing = mapping[strClusterId];
-    if (existing === undefined) return;
-
-    let newMapping;
-    if (Array.isArray(existing)) {
-      const filtered = existing.filter((id) => String(id) !== String(sourceIdToRemove));
-      newMapping = {
-        ...mapping,
-        [strClusterId]: filtered.length > 0 ? (filtered.length === 1 ? filtered[0] : filtered) : -1,
-      };
-    } else {
-      newMapping = { ...mapping, [strClusterId]: -1 };
-    }
-
-    onMappingChange(newMapping);
+    if (mapping[String(clusterId)] === undefined) return;
+    onMappingChange(removeSource(mapping, clusterId, sourceIdToRemove));
   };
 
   // HTML5 drop handler on cluster card

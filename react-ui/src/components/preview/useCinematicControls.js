@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
+import { anchoredPan } from './cinematicRenderer';
 
 const MIN_ZOOM = 0.1;  // 10%
 const MAX_ZOOM = 16.0; // 1600%
@@ -40,13 +41,10 @@ export function useCinematicControls({ canvasRef, onTransformChange, onCursorMov
 
     if (Math.abs(diff) > 0.0005) {
       const nextZoom = curZoom + diff * LERP_SPEED;
-      const alpha = nextZoom / curZoom;
-
       // Adjust pan to preserve anchor under cursor
       if (anchorRef.current) {
         const { dx, dy } = anchorRef.current;
-        panRef.current.x = dx - (dx - panRef.current.x) * alpha;
-        panRef.current.y = dy - (dy - panRef.current.y) * alpha;
+        panRef.current = anchoredPan(panRef.current, dx, dy, curZoom, nextZoom);
       }
 
       zoomRef.current = nextZoom;

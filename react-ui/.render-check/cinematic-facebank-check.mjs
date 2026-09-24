@@ -11,6 +11,12 @@ import {
   clearCropCache,
   getCacheStats,
 } from '../src/components/facebank/faceBankDb.js';
+import {
+  assignSource,
+  removeSource,
+  normalizeOverrides,
+  UNASSIGNED,
+} from '../src/components/facebank/mappingOps.js';
 
 let checks = 0;
 let failures = 0;
@@ -71,71 +77,42 @@ async function runTests() {
     ok('clearCropCache empties cache completely', stats2.count === 0);
   }
 
-  console.log('── 1-to-Many & Many-to-1 Mapping Contracts ───────────────');
+  console.log('── Mapping mutations (real mappingOps used by FaceBankRouter) ──');
   {
-    // Simulating mapping mutations
-    let mapping = {};
+    const m0 = Object.freeze({});
+    const m1 = assignSource(m0, 'tp_1', 0);
+    const m2 = assignSource(m1, 'tp_3', 0);
+    ok('1-to-many: one source on two targets', m2.tp_1 === 0 && m2.tp_3 === 0);
+    ok('assignSource never mutates its input', Object.keys(m0).length === 0 && m1.tp_3 === undefined);
 
-    // 1-to-many: Assign Source 0 to Target 1 and Target 3 simultaneously
-    mapping['tp_1'] = 0;
-    mapping['tp_3'] = 0;
-    ok('1-to-many: Target 1 maps to Source 0', mapping['tp_1'] === 0);
-    ok('1-to-many: Target 3 maps to Source 0 simultaneously', mapping['tp_3'] === 0);
+    const m3 = assignSource(m2, 'tp_2', 0, true);
+    ok('append onto an EMPTY target assigns a scalar', m3.tp_2 === 0);
+    const m4 = assignSource(m3, 'tp_2', 2, true);
+    ok('Many-to-1: append makes [0, 2]', Array.isArray(m4.tp_2) && m4.tp_2.join() === '0,2');
+    const m5 = assignSource(m4, 'tp_2', 2, true);
+    ok('append does not duplicate a source', m5.tp_2.join() === '0,2');
+    ok('append onto UNASSIGNED replaces it', assignSource({ tp_9: UNASSIGNED }, 'tp_9', 4, true).tp_9 === 4);
+    ok('non-append replaces a set with a scalar', assignSource(m5, 'tp_2', 7).tp_2 === 7);
+    ok('numeric cluster ids key as strings', assignSource({}, 3, 1)['3'] === 1);
 
-    // Many-to-1: Target 2 receives multiple sources (e.g. multi-angle references [0, 2])
-    mapping['tp_2'] = [0, 2];
-    ok('Many-to-1: Target 2 maps to multiple sources ([0, 2])',
-      Array.isArray(mapping['tp_2']) && mapping['tp_2'].length === 2 && mapping['tp_2'].includes(0) && mapping['tp_2'].includes(2)
-    );
-
-    // Removal of single source from many-to-1
-    const target2Sources = Array.isArray(mapping['tp_2']) ? mapping['tp_2'] : [mapping['tp_2']];
-    const filteredSources = target2Sources.filter((s) => s !== 2);
-    mapping['tp_2'] = filteredSources.length === 1 ? filteredSources[0] : filteredSources;
-    ok('Removing source 2 simplifies Target 2 back to single source 0', mapping['tp_2'] === 0);
-
-    // Unassign / Skip target 1
-    mapping['tp_1'] = -1;
-    ok('Unassigning target 1 sets sentinel -1 without affecting target 3', mapping['tp_1'] === -1 && mapping['tp_3'] === 0);
+    const r1 = removeSource(m5, 'tp_2', 2);
+    ok('removing from [0, 2] collapses to scalar 0', r1.tp_2 === 0);
+    const r2 = removeSource(m5, 'tp_2', '2');
+    ok('removal matches ids across string/number', r2.tp_2 === 0);
+    ok('removing the last source unassigns', removeSource(r1, 'tp_2', 0).tp_2 === UNASSIGNED);
+    ok('removing from [a, b, c] keeps an array', removeSource({ t: [1, 2, 3] }, 't', 2).t.join() === '1,3');
+    ok('removing on an unknown cluster returns the same mapping', removeSource(m5, 'nope', 0) === m5);
+    ok('removal leaves other targets alone', r1.tp_1 === 0 && r1.tp_3 === 0);
   }
 
-  console.log('── Parameter Overrides & Boundary Validation ──────────────');
+  console.log('── Override defaults (real normalizeOverrides) ────────────');
   {
-    const overrides = {
-      tp_1: {
-        cosineThreshold: 0.65,
-        maskOffset: -4,
-        action: 'swap',
-      },
-      tp_2: {
-        cosineThreshold: 0.75,
-        maskOffset: 8,
-        action: 'keep',
-      },
-      tp_3: {
-        cosineThreshold: 0.40,
-        maskOffset: 0,
-        action: 'censor',
-      },
-    };
-
-    // Cosine threshold range [0.30, 0.85]
-    ok('Cosine threshold for tp_1 is in valid range [0.30, 0.85]',
-      overrides.tp_1.cosineThreshold >= 0.30 && overrides.tp_1.cosineThreshold <= 0.85
-    );
-
-    // Mask offset range [-20, 20]
-    ok('Erosion offset -4px is within valid range [-20, 20]',
-      overrides.tp_1.maskOffset >= -20 && overrides.tp_1.maskOffset <= 20
-    );
-    ok('Dilation offset +8px is within valid range [-20, 20]',
-      overrides.tp_2.maskOffset >= -20 && overrides.tp_2.maskOffset <= 20
-    );
-
-    // Action modes
-    ok('Action "swap" recognized', overrides.tp_1.action === 'swap');
-    ok('Action "keep" recognized (bypass)', overrides.tp_2.action === 'keep');
-    ok('Action "censor" recognized (blur/privacy)', overrides.tp_3.action === 'censor');
+    const d = normalizeOverrides();
+    ok('defaults: threshold 0.60, offset 0, action swap',
+      d.cosineThreshold === 0.60 && d.maskOffset === 0 && d.action === 'swap');
+    const z = normalizeOverrides({ cosineThreshold: 0, maskOffset: 0 });
+    ok('an explicit 0 is kept, not replaced by the default', z.cosineThreshold === 0 && z.maskOffset === 0);
+    ok('an explicit action is kept', normalizeOverrides({ action: 'keep' }).action === 'keep');
   }
 
   console.log('── Summary ────────────────────────────────────────────────');

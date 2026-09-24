@@ -283,6 +283,32 @@ export class DoubleBufferedTexture {
   }
 }
 
+/**
+ * Image MIME type from a payload's magic bytes, or null for anything else
+ * (raw pixels). WebP = 'RIFF' .... 'WEBP', JPEG = FF D8, PNG = 89 'PNG'.
+ */
+export function sniffImageMime(u8) {
+  if (u8.length >= 12 &&
+      u8[0] === 0x52 && u8[1] === 0x49 && u8[2] === 0x46 && u8[3] === 0x46 &&
+      u8[8] === 0x57 && u8[9] === 0x45 && u8[10] === 0x42 && u8[11] === 0x50) return 'image/webp';
+  if (u8.length >= 4 && u8[0] === 0x89 && u8[1] === 0x50 && u8[2] === 0x4e && u8[3] === 0x47) return 'image/png';
+  if (u8.length >= 2 && u8[0] === 0xff && u8[1] === 0xd8) return 'image/jpeg';
+  return null;
+}
+
+/**
+ * Pan that keeps the image point under the cursor fixed while zoom changes
+ * from curZoom to nextZoom. (dx, dy) is the cursor offset from the viewport
+ * centre, in the same pixel units as pan.
+ */
+export function anchoredPan(pan, dx, dy, curZoom, nextZoom) {
+  const alpha = nextZoom / curZoom;
+  return {
+    x: dx - (dx - pan.x) * alpha,
+    y: dy - (dy - pan.y) * alpha,
+  };
+}
+
 /** Compute 3x3 affine transformation matrix mapping [-1, 1] quad to clip space. */
 export function computeTransformMatrix({
   viewportWidth,
@@ -634,19 +660,8 @@ export class CinematicRenderer {
     if (!bytes || bytes.byteLength === 0) return false;
     const u8 = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
 
-    // Detect WebP magic: 'RIFF' + 'WEBP'
-    const isWebP = u8.length >= 12 &&
-      u8[0] === 0x52 && u8[1] === 0x49 && u8[2] === 0x46 && u8[3] === 0x46 &&
-      u8[8] === 0x57 && u8[9] === 0x45 && u8[10] === 0x42 && u8[11] === 0x50;
-
-    // Detect JPEG magic: 0xFF, 0xD8
-    const isJpeg = u8.length >= 2 && u8[0] === 0xff && u8[1] === 0xd8;
-
-    // Detect PNG magic: 0x89, 'P', 'N', 'G'
-    const isPng = u8.length >= 4 && u8[0] === 0x89 && u8[1] === 0x50 && u8[2] === 0x4e && u8[3] === 0x47;
-
-    if (isWebP || isJpeg || isPng) {
-      const mime = isWebP ? 'image/webp' : (isPng ? 'image/png' : 'image/jpeg');
+    const mime = sniffImageMime(u8);
+    if (mime) {
       try {
         const blob = new Blob([u8], { type: mime });
         const bitmap = await createImageBitmap(blob, {
