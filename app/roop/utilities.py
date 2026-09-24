@@ -443,28 +443,59 @@ if platform.system().lower() == "darwin":
 
 
 # https://github.com/facefusion/facefusion/blob/master/facefusion
-def detect_fps_fractional(target_path: str) -> str:
-    """Extract exact fractional r_frame_rate string (e.g. '24000/1001', '30/1') using ffprobe.
+def _probe_frame_rate(target_path: str):
+    """The stream's playback rate as an exact ``Fraction``, or None.
 
-    Falls back to stringified detect_fps() if ffprobe is unavailable or fails.
+    Prefers ``avg_frame_rate`` (frames / duration) over ``r_frame_rate``.
+    ``r_frame_rate`` is the timebase-derived "lowest common" rate, not the
+    rate frames are shown at: on a VFR clip (4 s @30 + 4 s @15) it reads 30/1
+    while 180 frames span 7.93 s, so encoding at it made a 6.0 s video and
+    ``restore_audio``'s ``-shortest`` cut 2 s of audio; on downloaded mp4s it
+    is often 48000/1001 over true 24000/1001 content (see nvdec_reader's
+    passthrough note). The two agree to within ffprobe's rounding on CFR
+    material, and then the nominal rate is returned so NTSC stays exact.
+    """
+    from fractions import Fraction
+    from roop.ffmpeg_path import ffprobe_binary
+    cmd = [
+        ffprobe_binary(), "-v", "0", "-of", "default=noprint_wrappers=1",
+        "-select_streams", "v:0",
+        "-show_entries", "stream=r_frame_rate,avg_frame_rate",
+        target_path
+    ]
+    res = subprocess.run(cmd, capture_output=True, text=True, check=False,
+                         timeout=30)
+    rates = {}
+    for line in (res.stdout or "").splitlines():
+        key, _, value = line.strip().partition("=")
+        num, slash, den = value.partition("/")
+        try:
+            rate = Fraction(int(num), int(den)) if slash else Fraction(value)
+        except (ValueError, ZeroDivisionError):
+            continue
+        if 0 < rate <= 240:
+            rates[key] = rate
+    nominal, average = rates.get("r_frame_rate"), rates.get("avg_frame_rate")
+    if average is None:
+        return nominal
+    if nominal is not None and abs(nominal - average) <= average * Fraction(1, 10000):
+        return nominal
+    return average
+
+
+# https://github.com/facefusion/facefusion/blob/master/facefusion
+def detect_fps_fractional(target_path: str) -> str:
+    """The playback rate as an exact FFmpeg rational string (e.g. '24000/1001').
+
+    Same rate as ``detect_fps`` (see ``_probe_frame_rate``); falls back to the
+    stringified ``detect_fps()`` if ffprobe is unavailable or fails.
     """
     if target_path and target_path.lower().endswith('.webp'):
         return str(detect_fps(target_path))
     try:
-        from roop.ffmpeg_path import ffprobe_binary
-        cmd = [
-            ffprobe_binary(), "-v", "0", "-of", "csv=p=0",
-            "-select_streams", "v:0",
-            "-show_entries", "stream=r_frame_rate",
-            target_path
-        ]
-        res = subprocess.run(cmd, capture_output=True, text=True, check=False)
-        out = (res.stdout or "").strip()
-        if out and "/" in out:
-            num, den = out.split("/", 1)
-            num_i, den_i = int(num), int(den)
-            if den_i > 0 and num_i > 0:
-                return out
+        rate = _probe_frame_rate(target_path)
+        if rate is not None:
+            return f"{rate.numerator}/{rate.denominator}"
     except Exception as _degrade_error:
         _swallowed("utilities.py:detect_fps_fractional", _degrade_error, "fallback continued")
     return str(detect_fps(target_path))
@@ -494,24 +525,11 @@ def detect_fps(target_path: str) -> float:
             print(f"[detect_fps] WebP duration read failed: {exc}")
         return 10.0
 
-    # Primary: Dynamic fractional FPS extraction using ffprobe
+    # Primary: ffprobe's average rate (see _probe_frame_rate)
     try:
-        from roop.ffmpeg_path import ffprobe_binary
-        cmd = [
-            ffprobe_binary(), "-v", "0", "-of", "csv=p=0",
-            "-select_streams", "v:0",
-            "-show_entries", "stream=r_frame_rate",
-            target_path
-        ]
-        res = subprocess.run(cmd, capture_output=True, text=True, check=False)
-        out = (res.stdout or "").strip()
-        if out and "/" in out:
-            num, den = out.split("/", 1)
-            num_i, den_i = int(num), int(den)
-            if den_i > 0 and num_i > 0:
-                val = num_i / den_i
-                if np.isfinite(val) and 0.0 < val <= 240.0:
-                    return constant_frame_rate(val)
+        rate = _probe_frame_rate(target_path)
+        if rate is not None:
+            return constant_frame_rate(float(rate))
     except Exception as _degrade_error:
         _swallowed("utilities.py:detect_fps", _degrade_error, "fallback continued")
 

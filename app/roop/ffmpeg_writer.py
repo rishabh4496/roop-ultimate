@@ -21,7 +21,7 @@ STDOUT = -2
 DEVNULL = -3
 
 from roop.ffmpeg_path import (NVENC_PRESET_DEFAULT, NVENC_PRESETS,
-                              ffmpeg_binary)
+                              ffmpeg_binary, frame_rate_arg)
 from roop.env import env_str
 
 # Resolved rather than assumed: a bare "ffmpeg" only works inside a
@@ -227,7 +227,7 @@ class FFMPEG_VideoWriter:
             '-s', '%dx%d' % (size[0], size[1]),
             #'-pix_fmt', 'rgba' if withmask else 'rgb24',
             '-pix_fmt', 'bgr24',
-            '-r', str(fps),
+            '-r', frame_rate_arg(fps),
             '-an', '-i', '-'
         ]
 

@@ -50,6 +50,31 @@ NVENC_PRESET_DEFAULT = "p5"
 NVENC_PRESETS = frozenset(f"p{i}" for i in range(1, 8))
 
 
+def frame_rate_arg(fps) -> str:
+    """Return *fps* as the exact rational FFmpeg should stamp, e.g. '24000/1001'.
+
+    The pipeline carries frame rates as floats rounded to 6 decimals
+    (``utilities.constant_frame_rate``), and ``str(23.976024)`` handed to
+    ``-r`` is re-approximated by FFmpeg itself. A rate within that rounding of a
+    small-denominator fraction (NTSC 24000/1001, a VFR average like 2700/119) is
+    snapped back to it; any other value keeps a fine-grained rational so no
+    rate is quantised coarsely enough to drift against the audio.
+    """
+    from fractions import Fraction
+    try:
+        value = float(fps)
+    except (TypeError, ValueError):
+        return str(fps)
+    if not (value > 0.0 and value < 1e6):
+        return str(fps)
+    exact = Fraction(value)
+    snapped = exact.limit_denominator(1001)
+    if abs(float(snapped) - value) <= 1e-6 * value:
+        return f"{snapped.numerator}/{snapped.denominator}"
+    fine = exact.limit_denominator(1_000_000)
+    return f"{fine.numerator}/{fine.denominator}"
+
+
 def _pinokio_home():
     """PINOKIO_HOME, in the order the project guide requires."""
     home = os.environ.get("PINOKIO_HOME")

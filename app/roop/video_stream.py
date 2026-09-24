@@ -15,7 +15,8 @@ from typing import Generator, Optional, Tuple
 
 import numpy as np
 
-from roop.ffmpeg_path import NVENC_PRESET_DEFAULT, NVENC_PRESETS, ffmpeg_binary
+from roop.ffmpeg_path import (NVENC_PRESET_DEFAULT, NVENC_PRESETS, ffmpeg_binary,
+                              frame_rate_arg)
 from roop.util_ffmpeg import clamp_quality
 from roop import synthetic_label as _synthetic_label
 
@@ -250,6 +251,7 @@ class NVHardwareVideoReader:
         self._start()
         frame_idx = 0
         last_valid_frame: Optional[np.ndarray] = None
+        reached_end = False
         try:
             assert self.proc is not None and self.proc.stdout is not None
             while True:
@@ -263,6 +265,7 @@ class NVHardwareVideoReader:
                 # A released pipe is end of stream, nothing else.
                 proc = self.proc
                 if proc is None or proc.stdout is None:
+                    reached_end = True
                     break
                 frame = np.empty((self.height, self.width, 3), dtype=np.uint8)
                 try:
@@ -271,9 +274,11 @@ class NVHardwareVideoReader:
                     # "read of closed file": the pipe was closed under us by
                     # release()/close(). Same answer as above.
                     if self.proc is None:
+                        reached_end = True
                         break
                     raise
                 if bytes_read < self.frame_size:
+                    reached_end = True
                     if bytes_read:
                         logger.warning(
                             "Frame %d decode ended after %d/%d bytes. "
@@ -305,7 +310,15 @@ class NVHardwareVideoReader:
                 frame_idx += 1
         finally:
             self._eof = True
-            self._finish()
+            if reached_end:
+                self._finish()
+            else:
+                # Closed early (a trimmed range stops before the file ends, or
+                # the consumer raised). _finish()'s communicate() would drain
+                # the REST of the decode for up to 10 s, then kill FFmpeg and
+                # log that kill as a decode failure (measured: 10.1 s stall and
+                # "exited with code 1" after 600 of 27555 frames).
+                self.release()
 
         # If the exact rawvideo pipe failed before producing a frame, do not
         # turn that into a clean empty video.  Feed the original capture through
@@ -509,7 +522,7 @@ class NVHardwareVideoWriter:
             "-pix_fmt",
             "bgr24",
             "-r",
-            str(self.fps),
+            frame_rate_arg(self.fps),
             "-an",
             "-i",
             "-",

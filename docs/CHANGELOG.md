@@ -5,6 +5,32 @@ full session record is [`SESSION_LOGS.md`](SESSION_LOGS.md); the running enginee
 state lives outside the repository (`RECODE_STATUS.md` in the operator's `roop-keep`
 folder). Entries before 2026-09-21 were moved here from the README on 2026-09-22.
 
+## 2026-09-24
+
+- **VFR renders lost audio again — `detect_fps` reverted to the AVERAGE rate.** `52acd20`
+  (2026-09-20) switched `detect_fps` to ffprobe's `r_frame_rate`. That is the timebase
+  rate, not the playback rate: on a VFR fixture (4 s @30 + 4 s @15; `r=30/1`,
+  `avg=2700/119`, 180 frames over 7.933 s) the render came out **6.000 s** and
+  `restore_audio`'s `-shortest` cut **2 s of audio**. After the fix: 7.933 s video,
+  7.924 s audio (the same 9 ms `-shortest` residual measured 2026-09-04). The rate now
+  comes from `utilities._probe_frame_rate`: `avg_frame_rate`, unless it agrees with
+  `r_frame_rate` to 1e-4, in which case the exact nominal (e.g. 24000/1001) is kept.
+- **Writers stamp an exact rational `-r`.** `ffmpeg_path.frame_rate_arg` turns the
+  pipeline's 6-decimal float back into `24000/1001` / `2700/119` for both
+  `FFMPEG_VideoWriter` and `NVHardwareVideoWriter`.
+- **Closing the NVDEC reader early no longer stalls 10 s.** Closing
+  `NVHardwareVideoReader.read_frames()` before EOF ran `communicate()`, which drained
+  the rest of the decode for up to 10 s, then killed FFmpeg and logged it as a decode
+  failure (measured 10.10 s → 0.03 s). Production's `read()` + `release()` path was not
+  affected.
+- **Requested and declined: a PyAV / 3-process shared-memory I/O rewrite.** Measured on
+  the 4070, `b1.mp4` 720p, 600 frames: production NVDEC pipe **440–461 fps**, NVENC
+  writer **506–748 fps**, against a render of ~8–13 fps. Both codecs already run in
+  FFmpeg child processes, off the GIL. The ceiling for any I/O rewrite is ~2–5% of wall
+  clock, and the pipeline is GPU-bound. Audio in the encode pass was also not done: the
+  default writer is the resumable `SegmentedVideoWriter`, whose parts are concatenated
+  before the audio remux, and a per-segment AAC stream would gap at every join.
+
 ## 2026-09-22
 
 - **Flicker while another, un-swapped face is in contact — measured, and the obvious
