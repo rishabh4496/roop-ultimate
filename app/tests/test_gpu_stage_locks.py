@@ -117,7 +117,7 @@ class EveryAnalyserCallSharesOneLock(unittest.TestCase):
         when there is no pool, so with pooling off -- which is the default below
         7GB -- two workers could enter one TensorRT context at once. Invisible on
         a big card, because the lease hands each thread its own instance there."""
-        i = self.pm.index('rotface = face_util.get_first_face_detector_only(rotcutplate)')
+        i = self.pm.index('rotfaces = face_util.get_faces_detector_only(rotcutplate)')
         window = self.pm[max(0, i - 400):i]
         self.assertIn("_gpu_guard(pooled=analysis_pooled(), owner='analysis')",
                       window)

@@ -7,6 +7,32 @@ folder). Entries before 2026-09-21 were moved here from the README on 2026-09-22
 
 ## 2026-09-24
 
+- **Faces in contact were swapped with the NEIGHBOUR's geometry after autorotate. Fixed.**
+  `process_face`'s autorotate re-detects in a cut padded 45% each side, took the
+  LEFTMOST detection, and since 09-23 `_unrotate_face_to_parent` writes that detection's
+  kps, bbox, landmarks and embedding over the target. With two faces in contact the cut
+  holds both, so on `d2.mp4` the upside-down woman was aligned, swapped and
+  enhancer-stabilized from keypoints on the upright woman's face: her own swap came out
+  pale and smeared with a ghost ring, and the enhancer stabilizer (matching by centroid)
+  blended her crop into the upright woman's track, painting a pale hard-edged patch across
+  that cheek. The swap audit read 100% swapped / 0 wrong faceset throughout -- it counts
+  intent, not where a face was pasted. Now `_match_rotated_face` picks the detection whose
+  frame-space box overlaps the target's (IoU >= 0.3) or declines the rotation.
+  Measured with the new `tests/diag_landmark_jitter.py` (independent SCRFD on source and
+  render; `rel` = wobble of the pasted face against the head, % interocular, median/p95):
+
+  | clip, arm | before | after |
+  |---|---|---|
+  | d2, enhancer stabilizer only | 5.30 / 29.9 | 3.45 / 21.1 |
+  | d2, config.yaml (all stabilizers) | 5.01 / 30.6 | 3.36 / 21.3 |
+  | d2, no stabilization | 3.44 / 21.0 | 3.50 / 19.6 |
+  | d1, config.yaml | 16.71 / 58.7 | 13.90 / 46.4 |
+
+  Swap coverage identical (d2 432/432 both people; d1 418/418 and 414/418). The request
+  that led here -- detect every K frames with Kalman/LK tracking, EMA/One-Euro landmarks,
+  CUDA warp/blend -- was declined: all exist or were measured and reverted (`bd71e12`
+  cadence-2 flicker, `ROOP_TEMPORAL_STEP` 6x error on turned heads, `bf96c1f` GPU pre/post
+  1.1-40x slower).
 - **Unstabilized renders ran ALL inference on one thread — 3.4x slower. Fixed.**
   `ba607a3` (2026-09-02, "Optimize video render pipeline", never A/B'd) turned the unified
   scheduler's frame pipeline into a single CUDA owner: `run()` does `del workers`, and

@@ -1429,6 +1429,21 @@ def get_first_face_detector_only(frame: Frame) -> Any:
     return None
 
 
+def get_faces_detector_only(frame: Frame) -> list:
+    """Every detector result, without auxiliary model inference.
+
+    For a caller that must pick ITS face out of a crop that can hold more than
+    one -- autorotate's padded cut around a face in contact with another holds
+    both, and "the leftmost" is then the neighbour as often as not.
+    """
+    try:
+        return list(_detect_faces_raw(frame, aux=False) or [])
+    except Exception as _degrade_error:
+        _swallowed("roop/face_util.py:get_faces_detector_only", _degrade_error,
+                   "fallback continued")
+        return []
+
+
 # Detector failures reported once per distinct signature. The RETURN VALUE of
 # `get_all_faces` is deliberately unchanged -- an exception still yields an empty
 # list, because callers throughout the pipeline treat "no faces here" as normal

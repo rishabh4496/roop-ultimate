@@ -4484,28 +4484,90 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
 
 
     @staticmethod
+    def _unrotate_points(pts, rotation_action, orig_cut_w, orig_cut_h, startX, startY):
+        """Points in the rotated cutout -> the same points in full-frame space."""
+        pts_arr = np.asarray(pts, dtype=np.float32)
+        res = pts_arr.copy()
+        if rotation_action == 'rotate_180':
+            res[..., 0] = orig_cut_w - 1 - pts_arr[..., 0]
+            res[..., 1] = orig_cut_h - 1 - pts_arr[..., 1]
+        elif rotation_action == 'rotate_clockwise':
+            res[..., 0] = pts_arr[..., 1]
+            res[..., 1] = orig_cut_h - 1 - pts_arr[..., 0]
+        elif rotation_action == 'rotate_anticlockwise':
+            res[..., 0] = orig_cut_w - 1 - pts_arr[..., 1]
+            res[..., 1] = pts_arr[..., 0]
+        res[..., 0] += startX
+        res[..., 1] += startY
+        return res
+
+    @staticmethod
+    def _unrotated_bbox(bbox, rotation_action, orig_cut_w, orig_cut_h, startX, startY):
+        x0, y0, x1, y1 = [float(v) for v in bbox[:4]]
+        corners = np.array([[x0, y0], [x1, y0], [x1, y1], [x0, y1]], dtype=np.float32)
+        c = ProcessMgr._unrotate_points(corners, rotation_action, orig_cut_w, orig_cut_h,
+                                        startX, startY)
+        return np.array([c[:, 0].min(), c[:, 1].min(), c[:, 0].max(), c[:, 1].max()],
+                        dtype=np.float32)
+
+    # The re-detected face must overlap the face we were asked to rotate at
+    # least this much, mapped back to frame space, or the rotation is declined.
+    _ROTATED_MATCH_MIN_IOU = 0.3
+
+    @staticmethod
+    def _match_rotated_face(target_face, rotfaces, rotation_action, orig_cut_w, orig_cut_h,
+                            startX, startY):
+        """The detection in the rotated cut that IS `target_face`, or None.
+
+        The cut is padded 45% of the face size each side, so a face in contact
+        with another has BOTH people in it. This used to take the leftmost
+        detection (`get_first_face_detector_only`), and `_unrotate_face_to_parent`
+        then overwrote the target's kps, bbox, landmarks and embedding with it.
+        On d2.mp4 (two women lying head to head, 2026-09-24) that handed one
+        woman the other's geometry: a face was aligned, swapped and
+        enhancer-stabilized from keypoints 17 px from the OTHER woman's, which
+        painted a pale hard-edged patch across the upright woman's cheek. The
+        pasted face's wobble against the head (tests/diag_landmark_jitter.py)
+        read 5.30% of interocular with enhancer stabilization on vs 3.44% off.
+
+        Pick by IoU with the target's own box in frame space; below
+        `_ROTATED_MATCH_MIN_IOU` none of them is this face and the caller
+        declines the rotation, the same path as a failed re-detection.
+        """
+        try:
+            tb = np.asarray(target_face.bbox, dtype=np.float32)[:4]
+        except Exception as _degrade_error:
+            _swallowed("roop/ProcessMgr.py:_match_rotated_face", _degrade_error,
+                       "rotation declined")
+            return None
+        best, best_iou = None, ProcessMgr._ROTATED_MATCH_MIN_IOU
+        for f in rotfaces or ():
+            if getattr(f, 'bbox', None) is None:
+                continue
+            ub = ProcessMgr._unrotated_bbox(f.bbox, rotation_action, orig_cut_w, orig_cut_h,
+                                            startX, startY)
+            ix0, iy0 = max(tb[0], ub[0]), max(tb[1], ub[1])
+            ix1, iy1 = min(tb[2], ub[2]), min(tb[3], ub[3])
+            inter = max(0.0, ix1 - ix0) * max(0.0, iy1 - iy0)
+            union = ((tb[2] - tb[0]) * (tb[3] - tb[1]) + (ub[2] - ub[0]) * (ub[3] - ub[1])
+                     - inter)
+            iou = inter / union if union > 0 else 0.0
+            if iou >= best_iou:
+                best, best_iou = f, iou
+        return best
+
+    @staticmethod
     def _unrotate_face_to_parent(target_face, rotface, rotation_action, orig_cut_w, orig_cut_h, startX, startY):
         """Map re-detected face keypoints/landmarks from the rotated cutout back to full-frame space.
 
         This eliminates the destructive rotcutframe cutout / paste_simple rectangular box replacement,
         allowing canonicalize_face_alignment and paste_upscale to composite directly in full-frame
         coordinates with smooth feathered masks, avoiding hard edge seams and roll-boundary flicker.
+        `rotface` must be the target's own detection: see `_match_rotated_face`.
         """
         def unrot_pts(pts):
-            pts_arr = np.asarray(pts, dtype=np.float32)
-            res = pts_arr.copy()
-            if rotation_action == 'rotate_180':
-                res[..., 0] = orig_cut_w - 1 - pts_arr[..., 0]
-                res[..., 1] = orig_cut_h - 1 - pts_arr[..., 1]
-            elif rotation_action == 'rotate_clockwise':
-                res[..., 0] = pts_arr[..., 1]
-                res[..., 1] = orig_cut_h - 1 - pts_arr[..., 0]
-            elif rotation_action == 'rotate_anticlockwise':
-                res[..., 0] = orig_cut_w - 1 - pts_arr[..., 1]
-                res[..., 1] = pts_arr[..., 0]
-            res[..., 0] += startX
-            res[..., 1] += startY
-            return res
+            return ProcessMgr._unrotate_points(pts, rotation_action, orig_cut_w, orig_cut_h,
+                                               startX, startY)
 
         if hasattr(rotface, 'kps') and rotface.kps is not None:
             new_kps = unrot_pts(rotface.kps)
@@ -4514,15 +4576,8 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                 target_face['kps'] = new_kps
 
         if hasattr(rotface, 'bbox') and rotface.bbox is not None:
-            x0, y0, x1, y1 = rotface.bbox[:4]
-            corners = np.array([[x0, y0], [x1, y0], [x1, y1], [x0, y1]], dtype=np.float32)
-            unrot_corners = unrot_pts(corners)
-            new_bbox = np.array([
-                unrot_corners[:, 0].min(),
-                unrot_corners[:, 1].min(),
-                unrot_corners[:, 0].max(),
-                unrot_corners[:, 1].max()
-            ], dtype=np.float32)
+            new_bbox = ProcessMgr._unrotated_bbox(rotface.bbox, rotation_action, orig_cut_w,
+                                                  orig_cut_h, startX, startY)
             target_face.bbox = new_bbox
             if isinstance(target_face, dict):
                 target_face['bbox'] = new_bbox
@@ -4666,7 +4721,10 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                 # is the corruption the lock exists to prevent, and it was
                 # reachable ONLY on small cards.
                 with _gpu_guard(pooled=analysis_pooled(), owner='analysis'):
-                    rotface = face_util.get_first_face_detector_only(rotcutplate)
+                    rotfaces = face_util.get_faces_detector_only(rotcutplate)
+                rotface = self._match_rotated_face(
+                    target_face, rotfaces, rotation_action,
+                    endX - startX, endY - startY, startX, startY)
                 # Only commit to the rotation if re-detection confirms it left
                 # the face MORE upright. Without this the orientation heuristic
                 # gets the last word, and a wrong call feeds the swapper an
