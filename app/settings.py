@@ -1020,11 +1020,14 @@ class Settings:
         # `face_mask_blend` was calibrated against the Gaussian's behaviour, so
         # the distance ramp is offered rather than substituted.
         self.mask_edge_mode = self.default_get(data, 'mask_edge_mode', 'gaussian')
+        self.mask_erode_dilate_radius = self.default_get(data, 'mask_erode_dilate_radius', 0)
         # Rim-only low-frequency grade of the paste toward the plate. 0 disables
         # and is a bit-identical no-op.
         self.boundary_illumination_strength = self.default_get(data, 'boundary_illumination_strength', 0.0)
         # Skin-tone / lighting match of swapped crop → original: none|rct|lct|mkl
         self.color_transfer_mode = self.default_get(data, 'color_transfer_mode', 'lct')
+        self.skin_tone_warmth = self.default_get(data, 'skin_tone_warmth', 0.0)
+        self.saturation_match = self.default_get(data, 'saturation_match', 0.0)
         # Target-conditioned appearance is opt-in; it extends the existing
         # target-referenced colour path with spatial illumination and dark-scene
         # restoration safeguards.
@@ -1333,8 +1336,11 @@ class Settings:
             'stabilize_hf_texture': self.stabilize_hf_texture,
             'stabilize_hf_texture_weight': self.stabilize_hf_texture_weight,
             'mask_edge_mode': self.mask_edge_mode,
+            'mask_erode_dilate_radius': self.mask_erode_dilate_radius,
             'boundary_illumination_strength': self.boundary_illumination_strength,
             'color_transfer_mode': self.color_transfer_mode,
+            'skin_tone_warmth': self.skin_tone_warmth,
+            'saturation_match': self.saturation_match,
             'target_conditioned_appearance': self.target_conditioned_appearance,
             'target_conditioned_appearance_strength': self.target_conditioned_appearance_strength,
             'target_conditioned_appearance_temporal_alpha': self.target_conditioned_appearance_temporal_alpha,

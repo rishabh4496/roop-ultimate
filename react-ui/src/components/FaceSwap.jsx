@@ -1115,6 +1115,8 @@ export default function FaceSwap({
       face_detector_size: activeParams.face_detector_size, face_detector_threshold: activeParams.face_detector_threshold,
       face_detector_nms: activeParams.face_detector_nms,
       color_transfer_mode: activeParams.color_transfer_mode,
+      skin_tone_warmth: num(activeParams.skin_tone_warmth, 0),
+      saturation_match: num(activeParams.saturation_match, 0),
       target_conditioned_appearance: !!activeParams.target_conditioned_appearance,
       target_conditioned_appearance_strength: num(activeParams.target_conditioned_appearance_strength, 0.75),
       target_conditioned_appearance_temporal_alpha: num(activeParams.target_conditioned_appearance_temporal_alpha, 0.30),
@@ -1139,6 +1141,7 @@ export default function FaceSwap({
       mask_right: activeParams.mask_right,
       face_mask_blend: activeParams.face_mask_blend,
       mask_edge_mode: activeParams.mask_edge_mode,
+      mask_erode_dilate_radius: num(activeParams.mask_erode_dilate_radius, 0),
       boundary_illumination_strength: activeParams.boundary_illumination_strength,
       mouth_mask_blend: activeParams.mouth_mask_blend,
       mouth_top_scale: activeParams.mouth_top_scale,
@@ -2898,6 +2901,8 @@ export default function FaceSwap({
           <Select label="Frame interpolation (after swap)" info="Raises the output frame rate with motion-interpolated in-between frames as the final pass (after any upscale). RIFE = AI motion interpolation (recommended, fast); minterpolate = classical ffmpeg motion estimation (no model, much slower). Duration is unchanged — frame count and fps are multiplied together, audio untouched." value={p.interp_after_swap || 'off'} onChange={(v) => set('interp_after_swap', v)}
             options={[{ value: 'off', label: 'Off' }, { value: 'rife_2x', label: 'RIFE ×2 fps' }, { value: 'rife_4x', label: 'RIFE ×4 fps' }, { value: 'minterpolate_2x', label: 'ffmpeg minterpolate ×2' }]} />
           <Select label="Color/lighting match" info="Matches the swapped face's skin tone & lighting to the original scene. RCT = per-channel (fast, default). LCT = corrects hue casts. MKL = fullest match. IDT = matches the full non-Gaussian colour distribution, which the other three cannot: under mixed lighting (warm key, cool fill) skin is bimodal and no single linear map lands it. IDT is the quality ceiling here and also much the dearest: measured ~65 ms per 512² face against ~11 ms for RCT and ~17 ms for LCT/MKL, because it makes several passes over every pixel instead of one matrix multiply. Reach for it on hard lighting or stills, not by default. None = off." value={p.color_transfer_mode || 'rct'} onChange={(v) => set('color_transfer_mode', v)} options={meta.color_transfer_modes || ['none', 'rct', 'lct', 'mkl', 'idt']} />
+          <Slider label="Skin tone warmth" info="Fine LAB chroma correction applied only inside a conservative skin-region estimate. Negative values cool toward blue/green, positive values warm toward red/yellow. 0 is neutral." min={-100} max={100} step={1} value={num(p.skin_tone_warmth, 0)} onChange={(v) => set('skin_tone_warmth', v)} />
+          <Slider label="Saturation match" info="Matches swapped skin saturation to the original target skin region using robust HSV statistics. 0 is off, 1 is a full match. Hair, eyes, lips, glasses, and background are excluded from the estimate." min={0} max={1} step={0.05} value={num(p.saturation_match, 0)} onChange={(v) => set('saturation_match', v)} />
           <Toggle label="Target-conditioned lighting" info="SOURCE supplies identity while TARGET controls exposure, white balance, scene color cast, spatial shadows, highlights and local contrast. It uses a low-frequency target field, never a wholesale texture paste. DARK/VERY DARK scenes reduce restoration and sharpening; VERY DARK avoids aggressive exposure correction. Temporal EMA prevents warm/neutral/blue flicker. Off preserves the legacy color-transfer path." checked={!!p.target_conditioned_appearance} onChange={(v) => set('target_conditioned_appearance', v)} />
           {p.target_conditioned_appearance && <>
             <Slider label="Appearance conditioning strength" min={0} max={1} step={0.05} value={num(p.target_conditioned_appearance_strength, 0.75)} onChange={(v) => set('target_conditioned_appearance_strength', v)} />
@@ -2950,6 +2955,7 @@ export default function FaceSwap({
           <Slider label="Face mask edge blend" min={0} max={200} step={1} value={num(p.face_mask_blend, 20)} onChange={(v) => set('face_mask_blend', v)} />
           <Select label="Mask edge falloff" info="Shape of the ramp between swapped and original pixels. 'Gaussian' is the shipped behaviour and what 'Face mask edge blend' was calibrated against. 'Distance (soft)' derives the ramp from a distance transform, so it is the SAME WIDTH everywhere along the boundary — a Gaussian narrows wherever the mask is locally convex or thin, which is why one setting can look soft along the cheek and hard at the temple in the same frame." value={p.mask_edge_mode || 'gaussian'} onChange={(v) => set('mask_edge_mode', v)} options={[['gaussian', 'Gaussian (default)'], ['distance', 'Distance (soft, constant width)']]} />
           <Slider label="Boundary illumination match" info="Grades only the LOW frequencies of the pasted face toward the original plate, and only at the rim — exactly zero where the mask is fully opaque, so the identity region is untouched and no target texture is copied in. Use when a seam is still visible after the edge is soft: that residual line is a brightness step, not a geometry problem. 0 disables it entirely." min={0} max={1} step={0.05} value={num(p.boundary_illumination_strength, 0)} onChange={(v) => set('boundary_illumination_strength', v)} />
+          <Slider label="Mask erode / dilate radius" info="Signed frame-pixel adjustment to the facial landmark convex hull before Gaussian feathering. Negative values erode the swap to keep hair, hands, microphones, and accessories out. Positive values dilate it to recover clipped skin. 0 preserves the detected contour." min={-32} max={32} step={1} value={num(p.mask_erode_dilate_radius, 0)} onChange={(v) => set('mask_erode_dilate_radius', v)} />
         </Section>
 
         <Section title="Mouth & Angle math" collapsible defaultOpen={false}>

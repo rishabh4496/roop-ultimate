@@ -61,6 +61,11 @@ track_identities = True    # video: lock each tracked person to one source (anti
 # whitening (handles color casts RCT can't), 'mkl' = Monge-Kantorovitch linear
 # (fuller distribution match), 'none' = off.
 color_transfer_mode = 'rct'
+# Fine-grained photometric controls.  The base transfer mode remains the
+# authoritative identity/lighting transform; these are bounded corrections
+# applied only inside a robust skin-region estimate.
+skin_tone_warmth = 0.0       # -100 cool .. 0 neutral .. +100 warm
+saturation_match = 0.0       # 0 off .. 1 match target skin saturation
 # Target-conditioned appearance: the target crop supplies low-frequency
 # illumination, scene cast, shadows, highlights, and skin chroma. Disabled by
 # default so existing renders/custom looks remain bit-identical until enabled.
@@ -100,6 +105,10 @@ detail_transfer_strength = 0.0
 # Paste-matte edge ramp shape: 'gaussian' (shipped) | 'distance'. See
 # procmgr_masking.blur_area and roop/temporal_smoother.soft_distance_matte.
 mask_edge_mode = 'gaussian'
+# Signed radius in frame pixels applied to the landmark contour.  Positive
+# values dilate the contour, negative values erode it.  Zero preserves the
+# established hull path.
+mask_erode_dilate_radius = 0
 # Rim-only low-frequency grade of the paste toward the plate; 0 is a no-op.
 boundary_illumination_strength = 0.0
 # Persistent source identity detail from FaceSet V2. Unlike the setting above,

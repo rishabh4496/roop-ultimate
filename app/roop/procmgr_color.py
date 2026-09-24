@@ -12,6 +12,93 @@ from roop.appearance_conditioning import VERY_DARK, _soft_mask
 
 
 class ColorTransferMixin:
+    @staticmethod
+    def _skin_region_mask(image):
+        """Return a soft, conservative skin-region mask for an aligned crop.
+
+        The parser remains the authoritative semantic mask when it is selected,
+        but photometric correction also runs with XSeg, SAM, or no parser.  A
+        central face prior combined with YCrCb/HSV skin evidence avoids using
+        hair, eyes, lips, glasses, and background pixels as colour statistics.
+        If a dark or stylised frame has too little chroma evidence, the central
+        prior is retained instead of disabling correction entirely.
+        """
+        image = np.asarray(image)
+        if image.ndim != 3 or image.shape[2] < 3:
+            return None
+        h, w = image.shape[:2]
+        hsv = cv2.cvtColor(image[:, :, :3], cv2.COLOR_BGR2HSV)
+        ycrcb = cv2.cvtColor(image[:, :, :3], cv2.COLOR_BGR2YCrCb)
+        yy, xx = np.ogrid[:h, :w]
+        cx, cy = (w - 1) * 0.5, (h - 1) * 0.50
+        rx, ry = max(1.0, w * 0.43), max(1.0, h * 0.43)
+        prior = ((xx - cx) / rx) ** 2 + ((yy - cy) / ry) ** 2 <= 1.0
+        cr, cb = ycrcb[:, :, 1], ycrcb[:, :, 2]
+        value = hsv[:, :, 2]
+        # Keep the thresholds explicit and integer-valued rather than relying
+        # on a broad learned skin heuristic that behaves poorly on dark footage.
+        evidence = (prior & (cr >= 118) & (cr <= 195) &
+                    (cb >= 72) & (cb <= 150) & (value >= 25))
+        if int(evidence.sum()) < max(64, int(0.015 * h * w)):
+            soft = prior.astype(np.float32)
+        else:
+            soft = cv2.GaussianBlur(evidence.astype(np.float32), (0, 0),
+                                    sigmaX=max(1.0, min(h, w) / 64.0))
+            soft = np.maximum(soft, prior.astype(np.float32) * 0.12)
+        return np.clip(soft, 0.0, 1.0).astype(np.float32)
+
+    def _apply_skin_photometric_controls(self, source, target):
+        """Apply bounded warmth and saturation matching in the face skin area."""
+        try:
+            warmth = float(getattr(roop.globals, 'skin_tone_warmth', 0.0) or 0.0)
+        except (TypeError, ValueError):
+            warmth = 0.0
+        try:
+            sat_strength = float(getattr(roop.globals, 'saturation_match', 0.0) or 0.0)
+        except (TypeError, ValueError):
+            sat_strength = 0.0
+        warmth = float(np.clip(warmth, -100.0, 100.0)) / 100.0
+        sat_strength = float(np.clip(sat_strength, 0.0, 1.0))
+        if abs(warmth) < 1e-6 and sat_strength <= 1e-6:
+            return source
+
+        out = np.asarray(source).copy()
+        ref = np.asarray(target)
+        if ref.shape[:2] != out.shape[:2]:
+            ref = cv2.resize(ref, (out.shape[1], out.shape[0]),
+                             interpolation=cv2.INTER_AREA)
+        mask = self._skin_region_mask(ref)
+        if mask is None:
+            return out
+
+        if sat_strength > 1e-6:
+            out_hsv = cv2.cvtColor(out[:, :, :3], cv2.COLOR_BGR2HSV).astype(np.float32)
+            ref_hsv = cv2.cvtColor(ref[:, :, :3], cv2.COLOR_BGR2HSV).astype(np.float32)
+            sample = mask > 0.35
+            if int(sample.sum()) >= 64:
+                src_s = float(np.median(out_hsv[:, :, 1][sample]))
+                ref_s = float(np.median(ref_hsv[:, :, 1][sample]))
+                scale = float(np.clip(ref_s / max(src_s, 1.0), 0.55, 1.65))
+                desired = np.clip(out_hsv[:, :, 1] * scale, 0.0, 255.0)
+                out_hsv[:, :, 1] = (out_hsv[:, :, 1] +
+                                     (desired - out_hsv[:, :, 1]) *
+                                     (sat_strength * mask))
+                out[:, :, :3] = cv2.cvtColor(
+                    np.clip(out_hsv, 0.0, 255.0).astype(np.uint8),
+                    cv2.COLOR_HSV2BGR)
+
+        if abs(warmth) > 1e-6:
+            lab = cv2.cvtColor(out[:, :, :3], cv2.COLOR_BGR2LAB).astype(np.float32)
+            # OpenCV LAB uses A for red/green and B for yellow/blue.  The
+            # bounded offsets are intentionally subtle at +/-100 and are
+            # spatially limited to skin, avoiding a warm hairline or lips.
+            lab[:, :, 1] += 1.5 * warmth * mask
+            lab[:, :, 2] += 4.0 * warmth * mask
+            out[:, :, :3] = cv2.cvtColor(
+                np.clip(lab, 0.0, 255.0).astype(np.uint8),
+                cv2.COLOR_LAB2BGR)
+        return out
+
     def apply_detail_transfer(self, face_img, orig_crop, strength):
         """Inject the original target crop's high-frequency skin texture onto the swapped/enhanced face.
 
@@ -74,7 +161,11 @@ class ColorTransferMixin:
                  _color_transfer_idt.
         """
         mode = getattr(roop.globals, 'color_transfer_mode', 'rct')
-        if mode == 'none':
+        controls_active = (
+            abs(float(getattr(roop.globals, 'skin_tone_warmth', 0.0) or 0.0)) > 1e-6
+            or float(getattr(roop.globals, 'saturation_match', 0.0) or 0.0) > 1e-6
+        )
+        if mode == 'none' and not controls_active:
             return source
 
         # If source is effectively grayscale (B&W media), skip color transfer.
@@ -87,11 +178,14 @@ class ColorTransferMixin:
             gr = cv2.absdiff(source[:, :, 1], source[:, :, 2])
             if (float(cv2.mean(bg)[0]) < 5.0 and
                     float(cv2.mean(gr)[0]) < 5.0 and
+                    not controls_active and
                     not (getattr(roop.globals, 'target_conditioned_appearance', False)
                          and appearance is not None)):
                 return source
 
-        if mode == 'lct':
+        if mode == 'none':
+            out = source
+        elif mode == 'lct':
             out = self._color_transfer_lct(source, target)
         elif mode == 'mkl':
             out = self._color_transfer_mkl(source, target)
@@ -100,6 +194,8 @@ class ColorTransferMixin:
         else:
             # Default: rct (LAB mean/std).
             out = self._color_transfer_rct(source, target)
+
+        out = self._apply_skin_photometric_controls(out, target)
 
         if (getattr(roop.globals, 'target_conditioned_appearance', False)
                 and appearance is not None):

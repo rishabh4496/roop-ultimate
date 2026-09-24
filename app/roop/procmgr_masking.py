@@ -916,7 +916,7 @@ class MaskingMixin:
         return cv2.GaussianBlur(img_matte, (blur_size, blur_size), 0)
 
     def create_landmark_mask(self, landmarks_2d, frame_shape, blend_amount, kps=None):
-        """Build a binary mask from the convex hull of the 106-pt face landmarks.
+        """Build a binary mask from the convex hull of facial landmarks.
 
         Works in target-frame space so the shape naturally matches the actual
         visible face area regardless of yaw/pitch — unlike the ellipse which is
@@ -925,7 +925,13 @@ class MaskingMixin:
 
         The hull itself is built by `landmark_hull` (shared with the overlap
         demarcation in roop.face_overlap, so both agree on where a face is);
-        everything here is the rasterisation and the edge dilation.
+        everything here is the rasterisation and the edge dilation.  The
+        optional signed ``mask_erode_dilate_radius`` control is applied after
+        the legacy blend expansion: positive values grow the contour to retain
+        more skin, negative values shrink it to keep hair and foreground
+        objects out of the swap.  The operation is in frame pixels, so its
+        visual meaning is stable across crop sizes and is safe for 68, 106, or
+        468 point landmark providers.
         """
         mask = np.zeros(frame_shape[:2], dtype=np.uint8)
         hull, face_h, face_w = landmark_hull(landmarks_2d, kps)
@@ -938,6 +944,23 @@ class MaskingMixin:
             kernel    = cv2.getStructuringElement(
                 cv2.MORPH_ELLIPSE, (expand_px * 2 + 1, expand_px * 2 + 1))
             mask = cv2.dilate(mask, kernel, iterations=1)
+
+        # Explicit contour control.  Read it per frame because preview and
+        # render requests can update globals without restarting the process.
+        # Clamp defensively so malformed API payloads cannot allocate a huge
+        # kernel on a full-resolution frame.
+        try:
+            signed_radius = int(np.clip(
+                int(getattr(roop.globals, 'mask_erode_dilate_radius', 0) or 0),
+                -64, 64))
+        except (TypeError, ValueError, OverflowError):
+            signed_radius = 0
+        if signed_radius:
+            radius = abs(signed_radius)
+            kernel = cv2.getStructuringElement(
+                cv2.MORPH_ELLIPSE, (radius * 2 + 1, radius * 2 + 1))
+            mask = (cv2.dilate if signed_radius > 0 else cv2.erode)(
+                mask, kernel, iterations=1)
 
         return mask
 

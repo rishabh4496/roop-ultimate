@@ -327,7 +327,13 @@ def composite_linear(paste, target, alpha):
 
 
 def composite_multiband(paste, target, alpha, plan=None):
-    """Cheap two-band blend with target-conditioned low-frequency adaptation."""
+    """Laplacian blend with a CUDA fast path and a deterministic CPU fallback.
+
+    Temporal compositing is already an opt-in quality layer. When CUDA is
+    available, the shared bounded pyramid implementation keeps the active ROI
+    on-device for the blend. CPU-only installs and unsupported buffers retain
+    the measured two-band implementation below.
+    """
     paste = np.asarray(paste, dtype=np.uint8)
     target = np.asarray(target, dtype=np.uint8)
     a = np.clip(np.asarray(alpha, dtype=np.float32), 0.0, 1.0)
@@ -335,6 +341,19 @@ def composite_multiband(paste, target, alpha, plan=None):
         a = a[..., 0]
     if paste.shape != target.shape or paste.ndim != 3 or a.shape != paste.shape[:2]:
         raise ValueError("paste, target and alpha must share an image shape")
+    try:
+        import os
+        enabled = os.environ.get('ROOP_GPU_LAPLACIAN_BLEND', '1').strip().lower() not in {
+            '0', 'off', 'false', 'no'
+        }
+        if enabled:
+            from roop.utilities import cuda_laplacian_pyramid_blend
+            gpu_out = cuda_laplacian_pyramid_blend(target, paste, a, levels=3)
+            if gpu_out is not None:
+                return gpu_out
+    except Exception as exc:
+        _swallowed("roop/temporal_compositing.py:cuda_laplacian", exc,
+                   "using CPU multiband fallback")
     sigma = max(1.0, min(8.0, float((plan or {}).get("feather_px", 1.0)) * 1.35))
     p = paste.astype(np.float32)
     t = target.astype(np.float32)

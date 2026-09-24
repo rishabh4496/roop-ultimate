@@ -47,6 +47,8 @@ export const FACESWAP_DEFAULTS = {
   upscale_model_after: 'fsr_x2',
   interp_after_swap: 'off',
   color_transfer_mode: 'lct',
+  skin_tone_warmth: 0,
+  saturation_match: 0,
   // Target-conditioned appearance is opt-in and preserves source identity.
   target_conditioned_appearance: false,
   target_conditioned_appearance_strength: 0.75,
@@ -70,6 +72,7 @@ export const FACESWAP_DEFAULTS = {
   // face_mask_blend was calibrated against; 'distance' gives a ramp of
   // constant width regardless of the matte's local curvature.
   mask_edge_mode: 'gaussian',
+  mask_erode_dilate_radius: 0,
   boundary_illumination_strength: 0,
 
   // Mouth & Angle math

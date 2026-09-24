@@ -595,6 +595,10 @@
       "default": "gaussian",
       "type": "str"
     },
+    "mask_erode_dilate_radius": {
+      "default": 0,
+      "type": "int"
+    },
     "boundary_illumination_strength": {
       "default": 0.0,
       "type": "float"
@@ -602,6 +606,14 @@
     "color_transfer_mode": {
       "default": "lct",
       "type": "str"
+    },
+    "skin_tone_warmth": {
+      "default": 0.0,
+      "type": "float"
+    },
+    "saturation_match": {
+      "default": 0.0,
+      "type": "float"
     },
     "target_conditioned_appearance": {
       "default": false,

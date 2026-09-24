@@ -4384,6 +4384,9 @@ def preview(payload: dict = Body(...)):
         roop_globals.jaw_reshape_strength = float(payload.get("jaw_reshape_strength", getattr(roop_globals.CFG, "jaw_reshape_strength", 0.5)))
         roop_globals.detail_transfer_strength = float(payload.get("detail_transfer_strength", getattr(roop_globals.CFG, "detail_transfer_strength", 0.0)))
         roop_globals.mask_edge_mode = payload.get("mask_edge_mode", getattr(roop_globals.CFG, "mask_edge_mode", "gaussian"))
+        roop_globals.mask_erode_dilate_radius = int(payload.get(
+            "mask_erode_dilate_radius",
+            getattr(roop_globals.CFG, "mask_erode_dilate_radius", 0)))
         roop_globals.boundary_illumination_strength = float(payload.get("boundary_illumination_strength", getattr(roop_globals.CFG, "boundary_illumination_strength", 0.0)))
         roop_globals.identity_detail_strength = float(payload.get("identity_detail_strength", getattr(roop_globals.CFG, "identity_detail_strength", 0.0)))
         roop_globals.expression_restore_strength = float(payload.get("expression_restore_strength", getattr(roop_globals.CFG, "expression_restore_strength", 0.0)))
@@ -4418,6 +4421,10 @@ def preview(payload: dict = Body(...)):
         roop_globals.subsample_size = int(str(payload.get("upscale", "256px"))[:3])
         roop_globals.execution_threads = roop_globals.CFG.max_threads
         roop_globals.color_transfer_mode = payload.get("color_transfer_mode", getattr(roop_globals.CFG, "color_transfer_mode", "rct"))
+        roop_globals.skin_tone_warmth = float(payload.get(
+            "skin_tone_warmth", getattr(roop_globals.CFG, "skin_tone_warmth", 0.0)))
+        roop_globals.saturation_match = float(payload.get(
+            "saturation_match", getattr(roop_globals.CFG, "saturation_match", 0.0)))
         roop_globals.sam2_model_size = payload.get("sam2_model_size", getattr(roop_globals.CFG, "sam2_model_size", "tiny"))
 
         # Pre-align analysis modules so get_all_faces and live_swap build the exact same FaceAnalysis set
@@ -4868,6 +4875,10 @@ def _run_swap(payload):
         else:
             roop_globals.execution_threads = roop_globals.CFG.max_threads
         roop_globals.color_transfer_mode = payload.get("color_transfer_mode", roop_globals.CFG.color_transfer_mode)
+        roop_globals.skin_tone_warmth = float(payload.get(
+            "skin_tone_warmth", getattr(roop_globals.CFG, "skin_tone_warmth", 0.0)))
+        roop_globals.saturation_match = float(payload.get(
+            "saturation_match", getattr(roop_globals.CFG, "saturation_match", 0.0)))
         _apply_target_appearance_settings(payload)
         _apply_temporal_compositing_settings(payload)
         _apply_temporal_quality_settings(payload)
@@ -4877,6 +4888,9 @@ def _run_swap(payload):
         roop_globals.jaw_reshape_strength = float(payload.get("jaw_reshape_strength", getattr(roop_globals.CFG, "jaw_reshape_strength", 0.5)))
         roop_globals.detail_transfer_strength = float(payload.get("detail_transfer_strength", getattr(roop_globals.CFG, "detail_transfer_strength", 0.0)))
         roop_globals.mask_edge_mode = payload.get("mask_edge_mode", getattr(roop_globals.CFG, "mask_edge_mode", "gaussian"))
+        roop_globals.mask_erode_dilate_radius = int(payload.get(
+            "mask_erode_dilate_radius",
+            getattr(roop_globals.CFG, "mask_erode_dilate_radius", 0)))
         roop_globals.boundary_illumination_strength = float(payload.get("boundary_illumination_strength", getattr(roop_globals.CFG, "boundary_illumination_strength", 0.0)))
         roop_globals.identity_detail_strength = float(payload.get("identity_detail_strength", getattr(roop_globals.CFG, "identity_detail_strength", 0.0)))
         roop_globals.expression_restore_strength = float(payload.get("expression_restore_strength", getattr(roop_globals.CFG, "expression_restore_strength", 0.0)))
