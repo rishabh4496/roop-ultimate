@@ -19,7 +19,8 @@
     "test:player": "node .render-check/player-check.mjs",
     "test:preview": "node .render-check/cinematic-preview-check.mjs",
     "test:timeline": "node .render-check/cinematic-timeline-check.mjs",
-    "test:facebank": "node .render-check/cinematic-facebank-check.mjs"
+    "test:facebank": "node .render-check/cinematic-facebank-check.mjs",
+    "test:telemetry-queue": "node .render-check/telemetry-queue-check.mjs"
   },
   "dependencies": {
     "framer-motion": "^12.42.2",
