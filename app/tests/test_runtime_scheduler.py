@@ -128,12 +128,21 @@ class RuntimeSchedulerTests(unittest.TestCase):
         self.assertGreaterEqual(scheduler.effective_inflight, 1)
         self.assertEqual(scheduler.metrics.errors, [])
 
-    def test_stateful_stabilization_uses_the_ordered_stream(self):
+    def test_only_streaming_stabilization_uses_the_one_owner_stream(self):
+        # The stream runs all inference on ONE thread: 3.88 fps against 13.2
+        # threaded on the 4070 two-person fixture (2026-09-24). Everything that
+        # does not need a single in-order owner must take the threaded path.
         scheduler = UnifiedRuntimeScheduler(
             _hardware(12.0), _workload(),
             RuntimeTuning(worker_count=4, queue_depth=3, in_flight_frames=4))
-        self.assertTrue(scheduler.frame_pipeline_allowed(stateful_stabilization=True))
-        self.assertTrue(scheduler.frame_pipeline_allowed(stateful_stabilization=False))
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("ROOP_SCHEDULER_FRAME_PIPELINE", None)
+            self.assertTrue(scheduler.frame_pipeline_allowed(stateful_stabilization=True))
+            self.assertFalse(scheduler.frame_pipeline_allowed(stateful_stabilization=False))
+        with patch.dict(os.environ, {"ROOP_SCHEDULER_FRAME_PIPELINE": "1"}):
+            self.assertTrue(scheduler.frame_pipeline_allowed(stateful_stabilization=False))
+        with patch.dict(os.environ, {"ROOP_SCHEDULER_FRAME_PIPELINE": "0"}):
+            self.assertFalse(scheduler.frame_pipeline_allowed(stateful_stabilization=True))
 
     def test_external_ordered_pipeline_can_publish_progress_counters(self):
         scheduler = UnifiedRuntimeScheduler(

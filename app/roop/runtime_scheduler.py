@@ -282,14 +282,26 @@ class UnifiedRuntimeScheduler:
             return max(1, int(self._effective_inflight))
 
     def frame_pipeline_allowed(self, stateful_stabilization: bool = False) -> bool:
-        """Whether the ordered one-owner frame stream is enabled.
+        """Whether the ordered one-owner frame stream runs this render.
 
-        Stateful stabilization used to select a block scheduler that re-ran a
-        warm-up prefix for every block.  The stream has exactly one inference
-        owner, so it preserves the recurrence naturally and is safe for both
-        stateful and stateless workloads.
+        Only for streaming stabilization (``ROOP_STAB_STREAMING=1``), whose
+        FIFO needs one owner advancing frames in order. Every other render --
+        including stabilized ones, which the parallel/2-pass stabilizers
+        already order -- takes the threaded worker path, which also builds the
+        cross-frame swap batcher.
+
+        The stream ran ALL inference on one thread and discarded ``threads``
+        (``run`` does ``del workers``); it was the default from ba607a3
+        (2026-09-02) without an A/B. Measured 2026-09-24, RTX 4070, d4.mp4
+        two-person, 600 frames, live config, ABBA: stream 3.88 / 3.88 fps,
+        threaded 13.38 / 13.03 fps (3.4x), identical swap counts (677 of 732)
+        and 0 wrong-faceset swaps in every arm. ``ROOP_SCHEDULER_FRAME_PIPELINE=1``
+        still forces the stream, for re-measuring.
         """
-        return _enabled(os.environ.get("ROOP_SCHEDULER_FRAME_PIPELINE", "1"), True)
+        forced = os.environ.get("ROOP_SCHEDULER_FRAME_PIPELINE")
+        if forced is not None and forced.strip():
+            return _enabled(forced, False)
+        return bool(stateful_stabilization)
 
     def stage(self, name: str):
         """Return a context manager recording a scheduler-owned stage."""

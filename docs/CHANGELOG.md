@@ -7,6 +7,34 @@ folder). Entries before 2026-09-21 were moved here from the README on 2026-09-22
 
 ## 2026-09-24
 
+- **Unstabilized renders ran ALL inference on one thread — 3.4x slower. Fixed.**
+  `ba607a3` (2026-09-02, "Optimize video render pipeline", never A/B'd) turned the unified
+  scheduler's frame pipeline into a single CUDA owner: `run()` does `del workers`, and
+  choosing that path also skipped building the cross-frame swap batcher. It was the
+  default for every render without stabilization. RTX 4070, `d4.mp4` two-person, 600
+  frames, live config (TensorRT, hyperswap, Restore Ultra, XSeg), `--threads 20`, ABBA:
+
+  | arm | fps | path | not swapped |
+  |---|---:|---|---|
+  | stream (old default) | 3.88, 3.88 | one owner, `batch_mode=sequential` | 55 / 732 |
+  | threaded | 13.38, 13.03 | 20 workers, xframe avg batch 1.58-1.68, max 8 | 55 / 732 |
+  | after the fix, no env | 13.16 | threaded + batcher | 55 / 732 |
+
+  0 wrong-faceset swaps in every arm. `frame_pipeline_allowed` now returns true only for
+  streaming stabilization (`ROOP_STAB_STREAMING=1`, whose FIFO needs one in-order owner);
+  `ROOP_SCHEDULER_FRAME_PIPELINE=1` still forces it. **Stabilized renders — the shipped
+  config — were never affected**: parallel stabilization is chosen ahead of the stream
+  (old 9.27 vs fixed 9.08 fps, same path). Every harness run with stabilization at its
+  default OFF (e.g. `two_face_video.py`) since 09-02 measured the one-thread path: those
+  absolute fps are ~3.4x low. The cross-frame batcher itself is healthy on hyperswap under
+  TensorRT (no batch-2 fallback).
+- **Requested and declined: blanket IOBinding-to-torch, FP16 everywhere, fixed batch
+  profiles, a batch aggregator, an EP fallback chain.** All exist or were measured and
+  rejected: GPU crop/warp 1.1-40x slower (`bf96c1f`); FP16 breaks inswapper, GFPGAN and
+  GPEN and costs identity 0.352 -> 0.407; the live swapper and every restorer are static
+  graphs (`trt_shape_profile.py`); `swap_batcher.py`; `core.py`'s TRT -> CUDA
+  (`kSameAsRequested`, `ROOP_CUDA_MEM_LIMIT`) -> CPU chain.
+
 - **VFR renders lost audio again — `detect_fps` reverted to the AVERAGE rate.** `52acd20`
   (2026-09-20) switched `detect_fps` to ffprobe's `r_frame_rate`. That is the timebase
   rate, not the playback rate: on a VFR fixture (4 s @30 + 4 s @15; `r=30/1`,
