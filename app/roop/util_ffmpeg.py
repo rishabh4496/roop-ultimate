@@ -1,4 +1,5 @@
 
+import contextlib
 import os
 import subprocess
 import roop.globals
@@ -678,6 +679,24 @@ def create_gif_from_frames_dir(frames_dir: str, output_path: str, fps: float,
     ])
 
 
+def _stream_duration(path: str, selector: str):
+    """Seconds of one stream (ffprobe `-select_streams selector`), or None."""
+    exe = ffmpeg_binary()
+    probe = 'ffprobe'
+    if exe:
+        cand = os.path.join(os.path.dirname(exe), 'ffprobe' + ('.exe' if os.name == 'nt' else ''))
+        if os.path.isfile(cand):
+            probe = cand
+    try:
+        out = subprocess.run([probe, '-v', 'error', '-select_streams', selector,
+                              '-show_entries', 'stream=duration', '-of', 'default=nw=1:nk=1', path],
+                             capture_output=True, text=True, timeout=15, check=False).stdout
+        value = float((out or '').strip().splitlines()[0])
+        return value if value > 0 else None
+    except (OSError, ValueError, IndexError, subprocess.SubprocessError):
+        return None
+
+
 def restore_audio(intermediate_video: str, original_video: str, trim_frame_start, trim_frame_end, final_video: str) -> bool:
     """Mux audio from *original_video* into *intermediate_video*, writing *final_video*.
 
@@ -704,6 +723,63 @@ def restore_audio(intermediate_video: str, original_video: str, trim_frame_start
     rate = util.audio_sample_rate(original_video)
     if rate is not None:
         print(f"[A/V] stream-copying {rate} Hz source audio with CFR video PTS")
+
+    # A TRIMMED render cuts its audio in a separate, audio-only pass.
+    #
+    # The single command below seeks with `-ss` as an INPUT option, and with
+    # `-c:a copy` that is not a cut: the demuxer seeks the whole file to the
+    # VIDEO keyframe before the trim point and keeps the audio from there with
+    # negative timestamps (ffmpeg's documented stream-copy behaviour), and
+    # `-avoid_negative_ts make_zero` then shifts every stream by that amount.
+    # The delivered file had its VIDEO start late by (trim point - preceding
+    # source keyframe): b1.mp4 trimmed at frame 200 came out with video
+    # start_time 3.788 s against audio at 0 (found 2026-09-24 through the output
+    # player's compare view, which showed the two sides on different scenes).
+    #
+    # An OUTPUT-side `-ss` on an audio-only output is exact to the audio packet
+    # (every AAC packet is a sync point) and still a stream copy, so the fix
+    # costs no re-encode. Measured on that clip: both streams start together,
+    # audio within 17.5 ms (one AAC packet) of an exact cut of the source.
+    # Any failure (no audio stream, an odd container) falls through to the
+    # original single command, which is right whenever trim_start is 0.
+    start_s = (trim_frame_start / fps) if (trim_frame_start and fps) else 0.0
+    if start_s > 0:
+        audio_cut = os.path.splitext(final_video)[0] + '.__audio_cut.mka'
+        try:
+            cut = ['-i', original_video, '-map', '0:a:0?', '-vn', '-sn', '-dn',
+                   '-ss', format(start_s, '.6f')]
+            if duration is not None:
+                cut += ['-t', format(duration, '.6f')]
+            cut += ['-c:a', 'copy', audio_cut]
+            if run_ffmpeg(cut) and os.path.isfile(audio_cut) and os.path.getsize(audio_cut) > 0:
+                muxed = (
+                    ['-i', intermediate_video,
+                     # Input 1 stays the ORIGINAL (global metadata, see below);
+                     # the already-cut audio is input 2.
+                     '-i', original_video,
+                     '-i', audio_cut,
+                     '-map', '0:v:0',
+                     '-map', '2:a:0?',
+                     '-map_metadata', '1',
+                     '-c:v', 'copy', '-c:a', 'copy',
+                     '-avoid_negative_ts', 'make_zero']
+                )
+                # Bounded by the VIDEO's own length, not `-shortest`. The cut
+                # audio is packet-aligned and so a few ms shorter than the
+                # video, and `-shortest` (interleave-buffered) then dropped the
+                # render's last 3 frames on b1.mp4 (120 -> 117). A render that
+                # was STOPPED is shorter than its trim, and this bound keeps
+                # its audio from running on past the last frame.
+                video_s = _stream_duration(intermediate_video, 'v:0')
+                if video_s:
+                    muxed += ['-t', format(video_s, '.6f')]
+                if final_video.lower().endswith(('.mp4', '.mov', '.m4v')):
+                    muxed += ['-movflags', '+faststart']
+                if run_ffmpeg(muxed + [final_video]):
+                    return True
+        finally:
+            with contextlib.suppress(OSError):
+                os.remove(audio_cut)
 
     commands = (
         ['-i', intermediate_video]
