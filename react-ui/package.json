@@ -17,7 +17,8 @@
     "test:render:mutations": "node .render-check/mutation-check.mjs",
     "preview": "vite preview",
     "test:player": "node .render-check/player-check.mjs",
-    "test:preview": "node .render-check/cinematic-preview-check.mjs"
+    "test:preview": "node .render-check/cinematic-preview-check.mjs",
+    "test:timeline": "node .render-check/cinematic-timeline-check.mjs"
   },
   "dependencies": {
     "framer-motion": "^12.42.2",
