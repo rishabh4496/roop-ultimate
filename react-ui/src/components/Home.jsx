@@ -5,6 +5,8 @@ import { Stagger, Reveal, motion, spring } from '../motion';
 import { CHIP_KEYS, LABELS, fmtVal, fmtDur } from './settingsDiff';
 import { TERMINAL_STATES, jobState } from './faceswap/useQueue';
 import { Icon } from '../icons';
+import { LiveText, LiveValue } from './LiveTelemetry';
+import { selectProg } from '../store/telemetryStore';
 
 // ── Home ──────────────────────────────────────────────────────────────────
 // Everything on this page already existed somewhere — the run history, the
@@ -131,7 +133,7 @@ export default function Home({ progress, setTab, setSettings, notify }) {
             </h2>
             <p className="text-compact text-white/45 mt-1.5 max-w-prose">
               {progress?.processing
-                ? (progress.desc || 'Working…')
+                ? <LiveText select={(s) => s.run.desc || progress.desc || 'Working…'} />
                 : stats.runs > 0
                   ? `${stats.runs} run${stats.runs === 1 ? '' : 's'} so far, ${stats.frames.toLocaleString()} frames rendered in ${fmtDur(stats.renderTime) || 'no time at all'}.`
                   : 'Load a source face and a target, and the first run will show up here.'}
@@ -141,7 +143,9 @@ export default function Home({ progress, setTab, setSettings, notify }) {
             {progress?.processing ? (
               <div className="flex items-center gap-3 px-4 py-3 rounded-xl bg-[var(--accent)]/10 border border-[var(--accent)]/25">
                 <span className="text-display font-bold text-[var(--accent)] tabular-nums leading-none">
-                  <AnimatedNumber value={Math.round((progress.progress || 0) * 100)} suffix="%" />
+                  <LiveValue select={(s) => Math.round(selectProg(s) * 100)}>
+                    {(pct) => <AnimatedNumber value={pct} suffix="%" />}
+                  </LiveValue>
                 </span>
               </div>
             ) : null}

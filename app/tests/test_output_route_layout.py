@@ -41,7 +41,9 @@ class OutputRouteBoundaryTest(unittest.TestCase):
     def test_output_handlers_are_owned_by_the_output_router(self):
         paths = _paths(OUTPUT)
         media = {"/api/file", "/outputs/{filename:path}",
-                 "/api/media/{filename:path}", "/static/outputs/{filename:path}"}
+                 "/api/media/{filename:path}", "/static/outputs/{filename:path}",
+                 # The original target of the latest output (compare view).
+                 "/api/output/source"}
         expected = {
             ("GET", "/api/output"),
             ("POST", "/api/output/delete"),

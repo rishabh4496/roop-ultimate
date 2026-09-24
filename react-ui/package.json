@@ -15,7 +15,8 @@
     "test:stage14": "node .render-check/stage14-async-check.mjs",
     "test:batch": "node .render-check/batch-matrix-check.mjs",
     "test:render:mutations": "node .render-check/mutation-check.mjs",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test:player": "node .render-check/player-check.mjs"
   },
   "dependencies": {
     "framer-motion": "^12.42.2",

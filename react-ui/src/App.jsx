@@ -10,6 +10,8 @@ import useRunCompleteAlert from './components/faceswap/useRunCompleteAlert';
 import useJobRecovery from './components/faceswap/useJobRecovery';
 import useTelemetrySocket from './useTelemetrySocket';
 import { useJobStore } from './store/jobStore';
+import { setRunTelemetry, selectProg, etaMsOf } from './store/telemetryStore';
+import { LiveText, LiveBar } from './components/LiveTelemetry';
 import { themeByName, allThemes, applyThemeToDom } from './themes';
 import { SETTINGS_CATALOG, focusSetting } from './components/settingsCatalog';
 import { motion, AnimatePresence, MotionConfig, spring, viewTransition } from './motion';
@@ -210,6 +212,12 @@ export default function App() {
   // Merging keeps whichever source last had something to say about a field.
   // The poll remains authoritative for everything it actually sends.
   const mergeProgress = useCallback((pr) => {
+    // The fast fields also go to the telemetry store, which is what the live
+    // readouts subscribe to (see store/telemetryStore.js). With the socket down
+    // this poll is their only source.
+    setRunTelemetry(pr.processing ? pr : {
+      ...pr, current_frame: 0, total_frames: 0, fps: 0, fps_now: null, frame_ms: null,
+    });
     setProgress((prev) => {
       const next = { ...prev, ...pr };
       // A run that has ENDED must not keep the last live counters around, or
@@ -384,28 +392,45 @@ export default function App() {
   // that change, not the rolling log or the parts snapshot. So they are
   // merged into existing state rather than replacing it, or a pushed frame
   // would blank the console mid-render.
+  //
+  // AND ONLY THE STRUCTURAL PART REACHES REACT. A frame's fast fields
+  // (progress, desc, fps, frame counters, eta, live_seq) go to the telemetry
+  // store, where the readouts that show them subscribe at <= 10 Hz. This used
+  // to be one setProgress per frame, i.e. App plus the whole mounted tab
+  // re-rendered at the socket's 4 Hz for the entire render. `setProgress` now
+  // runs only when processing / paused / error / a pause or stop request
+  // actually changes — and then carries the fast fields too, so anything that
+  // reads `progress` AT a transition (the completion check, the finished view)
+  // sees the numbers the run ended on.
+  const structuralRef = useRef('');
   const onTelemetry = useCallback((frame) => {
     if (!frame || (frame.event !== 'progress' && frame.event !== 'hello'
         && frame.event !== 'heartbeat')) return;
     reportNet(true);
-    setProgress((prev) => ({
-      ...prev,
+    setRunTelemetry(frame);
+    const structural = {
       processing: frame.processing,
       paused: frame.paused,
-      progress: frame.progress,
-      desc: frame.desc,
       error: frame.error,
-      eta_s: frame.eta_s,
       started_at: frame.started_at,
-      live_seq: frame.live_seq,
-      // Derived counters the poll never carried on their own.
-      current_frame: frame.current_frame,
-      total_frames: frame.total_frames,
-      fps: frame.fps,
       ...(Object.prototype.hasOwnProperty.call(frame, 'pause_requested')
         ? { pause_requested: frame.pause_requested } : {}),
       ...(Object.prototype.hasOwnProperty.call(frame, 'stop_requested')
         ? { stop_requested: frame.stop_requested } : {}),
+    };
+    const key = JSON.stringify(structural);
+    if (key === structuralRef.current) return;
+    structuralRef.current = key;
+    setProgress((prev) => ({
+      ...prev,
+      ...structural,
+      progress: frame.progress,
+      desc: frame.desc,
+      eta_s: frame.eta_s,
+      live_seq: frame.live_seq,
+      current_frame: frame.current_frame,
+      total_frames: frame.total_frames,
+      fps: frame.fps,
     }));
   }, [reportNet]);
 
@@ -1084,7 +1109,9 @@ export default function App() {
                 title="Open the Processing tab"
                 className={`hover:underline ${stopping ? 'text-red-400/90' : progress.paused || progress.pause_requested ? 'text-amber-400/90' : 'text-[var(--accent)]'}`}
               >
-                {stopping ? 'Stopping' : progress.paused ? 'Paused' : progress.pause_requested ? 'Pause requested' : `Processing ${Math.round((progress.progress || 0) * 100)}%`}
+                {stopping ? 'Stopping' : progress.paused ? 'Paused' : progress.pause_requested ? 'Pause requested' : (
+                  <LiveText select={(s) => `Processing ${Math.round(selectProg(s) * 100)}%`} />
+                )}
               </button>
               {/* Same "time left" the Processing tab and the terminal show:
                   eta_s is the render's own progress bar, and the extrapolation
@@ -1093,19 +1120,15 @@ export default function App() {
                   pre-pass as swap time and comes out roughly twice too high —
                   which is exactly what this chip used to say while the tab beside
                   it said something else. */}
-              {(() => {
-                if (progress.paused || progress.pause_requested || stopping) return null;
-                const eta = typeof progress.eta_s === 'number' && progress.eta_s > 0
-                  ? progress.eta_s * 1000
-                  : (startTime && (progress.progress || 0) > 0.01
-                      ? ((Date.now() - startTime) * (1 - progress.progress)) / progress.progress
-                      : 0);
-                return eta > 0 ? (
-                  <span className="text-white/40 normal-case font-mono font-medium ml-1">
-                    ETA: {fmtTime(eta)}
-                  </span>
-                ) : null;
-              })()}
+              {!(progress.paused || progress.pause_requested || stopping) && (
+                <LiveText
+                  className="text-white/40 normal-case font-mono font-medium ml-1 empty:hidden"
+                  select={(s) => {
+                    const eta = etaMsOf(s.run, startTime ? Date.now() - startTime : 0);
+                    return eta > 0 ? `ETA: ${fmtTime(eta)}` : '';
+                  }}
+                />
+              )}
               <div className="flex items-center gap-1.5 border-l border-white/10 pl-2 ml-1">
                 {progress.paused ? (
                   <button
@@ -1466,16 +1489,20 @@ export default function App() {
       {/* Screen-reader status channel: toast messages + live processing state,
           announced politely without stealing focus. */}
       <div className="sr-only" role="status" aria-live="polite" aria-atomic="true">{liveMsg}</div>
-      <div className="sr-only" role="status" aria-live="polite">
-        {progress.processing ? `${progress.paused ? 'Paused' : 'Processing'} ${Math.round((progress.progress || 0) * 100)} percent` : ''}
-      </div>
+      {/* Polite live region at 0.2 Hz: a screen reader told the percentage ten
+          times a second is a screen reader that cannot say anything else. */}
+      <LiveText
+        className="sr-only" role="status" aria-live="polite" hz={0.2}
+        select={(s) => (progress.processing
+          ? `${progress.paused ? 'Paused' : 'Processing'} ${Math.round(selectProg(s) * 100)} percent` : '')}
+      />
 
       <Confetti active={confetti} />
 
       {progress.processing && (
-        <div
+        <LiveBar
           className="fixed top-0 left-0 h-[3px] bg-[var(--accent)] z-[60] transition-all duration-300 shadow-[0_0_8px_var(--accent-glow)]"
-          style={{ width: `${Math.round((progress.progress || 0) * 100)}%` }}
+          select={selectProg}
         />
       )}
 

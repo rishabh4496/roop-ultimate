@@ -97,7 +97,12 @@ const render = (label, element) => {
   }
 };
 
-const tab = (progress) => React.createElement(Processing, {
+// The live readouts read the telemetry STORE, not the `progress` prop (App
+// writes each telemetry frame and poll there; see store/telemetryStore.js), so
+// every render seeds it exactly the way App.mergeProgress does.
+const { setRunTelemetry, resetRunTelemetry } = await import('../src/store/telemetryStore.js');
+
+const tab = (progress) => (resetRunTelemetry(), setRunTelemetry(progress), React.createElement(Processing, {
   progress,
   settings,
   notify: () => {},
@@ -108,7 +113,7 @@ const tab = (progress) => React.createElement(Processing, {
   onResumeRun: () => {},
   onStopRun: () => {},
   controlBusy: '',
-});
+}));
 
 // The states the backend actually goes through. `base` is a real finished run;
 // the mid-render values are the ones this session observed live.

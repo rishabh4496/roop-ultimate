@@ -2,7 +2,7 @@ import OutputVideoPlayer from './OutputVideoPlayer';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { getJSON, postJSON, postFile, postFiles, API } from '../api';
-import { Section, Select, Slider, Toggle, TextInput, Button, FaceGallery, Card, Skeleton } from './ui';
+import { Section, Select, Slider, Toggle, TextInput, Button, FaceGallery, Card } from './ui';
 import { Icon } from '../icons';
 import PersonGroups from './PersonGroups';
 import QualityReport from './QualityReport';
@@ -45,7 +45,8 @@ import { popoutManager } from './faceswap/PopoutPreviewManager';
 import { setLastPreview } from './faceswap/lastPreview';
 import { num, fmtTime } from './faceswap/utils';
 import useProfiles from './faceswap/useProfiles';
-import useTelemetry from './faceswap/useTelemetry';
+import { useSystemTelemetryPoller } from './faceswap/useTelemetry';
+import SystemTelemetryHud from './faceswap/SystemTelemetryHud';
 import useThrottledFrameRequest from './faceswap/useThrottledFrameRequest';
 import {
   dataUrlToOwnedBlobUrl, releaseOwner, revokeUrl, blobUrlToDataUrl,
@@ -62,6 +63,10 @@ import useGridPreviewLoader from './faceswap/useGridPreviewLoader';
 import useWorkspaceLayout from './faceswap/useWorkspaceLayout';
 import { TRACKER_DEFAULT_VALUES, TRACKER_BYPASS_VALUES } from './faceswap/trackerConfig';
 import { TiltCard } from '../motion';
+import { LiveText, LiveValue } from './LiveTelemetry';
+import { selectProg, etaMsOf, useTelemetryStore } from '../store/telemetryStore';
+import { outputMediaUrl, outputSource } from './outputUrl';
+import { useFrameSocketHold } from '../transport/useFrameSocket';
 
 // AI upscale models folded into the swap pass (mirrors the Extras post-processor
 // list). value = backend subtype, label = friendly name.
@@ -262,7 +267,12 @@ export default function FaceSwap({
   });
 
   // Telemetry HUD — GPU/VRAM/CPU/RAM/threads poller (see faceswap/useTelemetry).
-  const telemetry = useTelemetry();
+  // System telemetry: the poll runs for as long as this panel is mounted, but
+  // the panel itself only subscribes to the thread count (for the estimate);
+  // the HUD that shows GPU/VRAM/CPU is its own subscriber (SystemTelemetryHud),
+  // so a 3-second reading no longer re-renders everything here.
+  useSystemTelemetryPoller();
+  const telemetryThreads = useTelemetryStore((s) => s.system?.threads);
 
   // Target-to-Source visual mapping state
   const [faceMapping, setFaceMapping] = useState({});
@@ -948,8 +958,12 @@ export default function FaceSwap({
     isPlaying, setIsPlaying,
     isLooping, setIsLooping,
     playbackRate, setPlaybackRate,
-    bufferedSrc, playStalled,
+    playStalled, playbackSource, clearPlaybackFrame,
   } = usePlaybackBuffer({ frame, setFrame, selTarget, maxFrames, targets });
+  // Keep /ws/frames connected while this panel is up, so pressing Play streams
+  // over the socket from the first frame instead of first paying a handshake
+  // (the buffer falls back to HTTP chunks whenever it is not open).
+  useFrameSocketHold();
 
   const [isScrubbing, setIsScrubbing] = useState(false);
   const [dragType, setDragType] = useState('playhead'); // 'playhead', 'start', 'end'
@@ -2041,28 +2055,14 @@ export default function FaceSwap({
   // until the new job finishes, so we gate on `processing` rather than clearing
   // progress.output (which the next poll tick would just restore).
   const out = progress.processing ? null : progress.output;
-  const outUrl = out ? (out.url ? `${API}${out.url}?t=${progress.progress || 0}` : (out.path?.startsWith('/') ? `${API}${out.path}?t=${progress.progress || 0}` : `${API}/api/file?path=${encodeURIComponent(out.path)}&t=${progress.progress}`)) : '';
-  const prog = progress.progress || 0;
+  // Versioned by the file itself (see outputUrl.js). It used to carry
+  // `?t=${progress.progress}`, which tied the URL of a finished file to a
+  // number that has nothing to do with it.
+  const outUrl = outputMediaUrl(out);
 
-  const elapsedMs = progress.processing && startTime ? Date.now() - startTime : 0;
-
-  // "Time left" comes from the terminal's own progress bar (`eta_s`), so the two
-  // agree by construction. It is not derived here any more:
-  // elapsed * (1 - prog) / prog assumes the whole run so far went at the rate
-  // the finished frames went at, and it did not — model loads, TensorRT engine
-  // builds and the temporal pre-pass all bill minutes against a frame counter
-  // still sitting at zero, then get extrapolated over the remaining 84%. On a
-  // real run (12m47s in, 7,233/44,755 frames, 22.5 fps) the bar said 28 minutes
-  // and this formula said 66.
-  //
-  // The old formula stays as the fallback for the windows where no bar is
-  // counting frames — start-up, and the encode/mux tail — because a rough
-  // number that moves beats a blank. `eta_s` is null in exactly those windows.
-  const etaMs = progress.processing
-    ? (typeof progress.eta_s === 'number' && progress.eta_s > 0
-        ? progress.eta_s * 1000
-        : (prog > 0.01 ? (elapsedMs * (1 - prog)) / prog : 0))
-    : 0;
+  // The render's "N% · time left" readout is a <LiveText> subscribed to the
+  // telemetry store (see the header strip below): computing it here re-rendered
+  // this whole panel on every telemetry frame.
   // While actively scrubbing the timeline (or playing back) each frame is a
   // fresh server fetch, so request a lightweight downscaled frame — a full-res
   // HD/4K JPEG per frame makes dragging feel sluggish. Snap back to full
@@ -2079,7 +2079,11 @@ export default function FaceSwap({
   // could not do — the superseded request is ABORTED rather than left to finish
   // into a frame nobody will look at. See useThrottledFrameRequest.
   const { frame: rawFrameBitmap, frameSrc: loadedRawUrl } =
-    useThrottledFrameRequest(rawReqUrl, { throttleMs: 150 });
+    // NOT while playing: playback frames come from the buffered player (see
+    // usePlaybackBuffer). Left enabled, every played frame also queued a
+    // random-access still request on the same single decoder the playback
+    // stream reads sequentially — a seek per request, fighting the stream.
+    useThrottledFrameRequest(rawReqUrl, { throttleMs: 150, enabled: !isPlaying });
   // Until the first frame of a new target has loaded there is nothing better to
   // show, so fall through to the request URL rather than blanking the box.
   const rawUrl = loadedRawUrl || rawReqUrl;
@@ -2094,6 +2098,14 @@ export default function FaceSwap({
     return !!m && Number(m[1]) === selTarget && Number(m[2]) === frame;
   }, [loadedRawUrl, selTarget, frame]);
 
+  // Hand the stage back from the playback layer. After Pause the layer keeps
+  // showing the frame playback stopped on — the still underneath is still the
+  // frame playback STARTED on — and is cleared only once that still has
+  // caught up to the playhead, so stopping never flashes back to an old frame.
+  useEffect(() => {
+    if (!isPlaying && rawIsCurrent) clearPlaybackFrame();
+  }, [isPlaying, rawIsCurrent, clearPlaybackFrame]);
+
   // What the stage's "after" layer shows, in strict preference order. The rule
   // this encodes is that the picture may only ever move FORWARD onto the frame
   // the playhead is on — never back onto one already left. Stepping used to
@@ -2101,7 +2113,9 @@ export default function FaceSwap({
   // jump forward once the new one landed, which read as the image flicking
   // between two frames.
   const stageAfterSrc = (() => {
-    if (isPlaying && bufferedSrc) return bufferedSrc;             // buffered player owns it
+    // The playback layer covers the stage while playing; hold the still
+    // underneath rather than churning decodes nobody can see.
+    if (isPlaying) return rawUrl;
     // Mid-drag there is no render for most frames and none is coming; the
     // freshest decoded raw frame is what keeps a scrub feeling continuous.
     if (scrubbingNow) return getCachedPreview(selTarget, frame)?.image || rawUrl;
@@ -2652,7 +2666,7 @@ export default function FaceSwap({
     faceCount: previewFaces.length,   // density hint from the current frame
     processing: progress.processing,
     hasTargets: targets.length > 0,
-    threads: telemetry?.threads,
+    threads: telemetryThreads,
   });
 
   const heavyVram = (p.selected_enhancer && p.selected_enhancer !== 'None') &&
@@ -3025,75 +3039,7 @@ export default function FaceSwap({
 
         <div>
           <Section title="Live Telemetry & Diagnostics" collapsible defaultOpen={false}>
-            {telemetry ? (
-              <div className="space-y-4 text-xs font-mono">
-                {/* GPU & VRAM */}
-                <div className="bg-black/25 p-3 rounded-xl border border-white/5 space-y-2">
-                  <div className="flex justify-between items-center">
-                    <span className="text-white/45 text-micro uppercase font-bold tracking-wider">GPU</span>
-                    <span className="text-white font-semibold truncate max-w-[200px]">{telemetry.gpu}</span>
-                  </div>
-                  {telemetry.vram_total > 0 && (
-                    <div className="space-y-1">
-                      <div className="flex justify-between text-micro">
-                        <span className="text-white/40">VRAM Usage</span>
-                        <span className="text-emerald-400 font-bold">{telemetry.vram_used} GB / {telemetry.vram_total} GB</span>
-                      </div>
-                      <div className="w-full bg-white/10 h-1.5 rounded-full overflow-hidden">
-                        <div 
-                          className="bg-emerald-500 h-full rounded-full transition-all duration-500" 
-                          style={{ width: `${Math.min(100, (telemetry.vram_used / telemetry.vram_total) * 100)}%` }} 
-                        />
-                      </div>
-                    </div>
-                  )}
-                </div>
-
-                {/* CPU & Memory */}
-                <div className="bg-black/25 p-3 rounded-xl border border-white/5 space-y-2.5">
-                  <div className="space-y-1">
-                    <div className="flex justify-between items-center text-micro">
-                      <span className="text-white/40 uppercase font-bold tracking-wider">CPU Utilization</span>
-                      <span className="text-orange-400 font-bold">{telemetry.cpu_percent}%</span>
-                    </div>
-                    <div className="w-full bg-white/10 h-1.5 rounded-full overflow-hidden">
-                      <div 
-                        className="bg-orange-500 h-full rounded-full transition-all duration-500" 
-                        style={{ width: `${Math.min(100, telemetry.cpu_percent)}%` }} 
-                      />
-                    </div>
-                  </div>
-
-                  <div className="space-y-1">
-                    <div className="flex justify-between items-center text-micro">
-                      <span className="text-white/40 uppercase font-bold tracking-wider">System RAM</span>
-                      <span className="text-blue-300 font-bold">{telemetry.ram_used} GB / {telemetry.ram_total} GB</span>
-                    </div>
-                    {telemetry.ram_total > 0 && (
-                      <div className="w-full bg-white/10 h-1.5 rounded-full overflow-hidden">
-                        <div 
-                          className="bg-blue-500 h-full rounded-full transition-all duration-500" 
-                          style={{ width: `${Math.min(100, (telemetry.ram_used / telemetry.ram_total) * 100)}%` }} 
-                        />
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                {/* Active threads info */}
-                <div className="bg-black/25 px-3 py-2 rounded-xl border border-white/5 flex items-center justify-between">
-                  <span className="text-micro text-white/45 uppercase font-bold tracking-wider">Active Python Threads</span>
-                  <span className="text-pink-400 font-bold text-xs bg-pink-500/10 px-2 py-0.5 rounded-md border border-pink-500/20">{telemetry.threads}</span>
-                </div>
-              </div>
-            ) : (
-              <div className="space-y-4">
-                <Skeleton className="h-16 w-full" />
-                <Skeleton className="h-20 w-full" />
-                <Skeleton className="h-9 w-full" />
-                <div className="text-micro text-white/45 italic text-center">Connecting to hardware diagnostics…</div>
-              </div>
-            )}
+            <SystemTelemetryHud />
             <div className="mt-3 flex justify-between items-center">
               <Button size="sm" variant="secondary" onClick={() => setShowShortcutHUD(true)}>Keyboard Shortcuts Info</Button>
             </div>
@@ -3437,10 +3383,15 @@ export default function FaceSwap({
                     {progress.processing ? (
                       <>
                         <span className={`h-2.5 w-2.5 rounded-full ${progress.paused ? 'bg-amber-400' : 'bg-[var(--accent)] animate-pulse shadow-[0_0_8px_var(--accent-glow)]'}`} />
-                        <span className="tabular-nums">
-                          {progress.paused ? 'Paused' : `Rendering ${Math.round(prog * 100)}%`}
-                          {etaMs > 0 ? ` · ${fmtTime(etaMs)} left` : ''}
-                        </span>
+                        {progress.paused ? <span className="tabular-nums">Paused</span> : (
+                          <LiveText
+                            className="tabular-nums"
+                            select={(s) => {
+                              const eta = etaMsOf(s.run, startTime ? Date.now() - startTime : 0);
+                              return `Rendering ${Math.round(selectProg(s) * 100)}%${eta > 0 ? ` · ${fmtTime(eta)} left` : ''}`;
+                            }}
+                          />
+                        )}
                       </>
                     ) : (
                       <>
@@ -3557,10 +3508,10 @@ export default function FaceSwap({
                       that fetched the frame: during playback the buffered
                       player owns it and supplies a url instead. */}
                   <InteractivePreview
-                    beforeSrc={(isPlaying && bufferedSrc) ? bufferedSrc : rawUrl}
+                    beforeSrc={rawUrl}
                     afterSrc={stageAfterSrc}
-                    beforeFrame={(isPlaying && bufferedSrc) ? null : (
-                      rawFrameBitmap && loadedRawUrl === rawUrl ? rawFrameBitmap : null)}
+                    beforeFrame={rawFrameBitmap && loadedRawUrl === rawUrl ? rawFrameBitmap : null}
+                    playbackSource={playbackSource}
                     afterFrame={scrubbingNow && !isPlaying
                       && stageAfterSrc === rawUrl
                       && loadedRawUrl === rawUrl ? rawFrameBitmap : null}
@@ -3848,7 +3799,7 @@ export default function FaceSwap({
                 <div className="space-y-2">
                   <div className="text-xs text-[var(--text-muted)]">Latest output</div>
                   {out.kind === 'video'
-                    ? <OutputVideoPlayer src={outUrl} renderKey={out?.path || out?.url} className="w-full rounded-xl border border-white/5" />
+                    ? <OutputVideoPlayer src={outUrl} renderKey={out?.path || out?.url} source={outputSource(out)} className="w-full rounded-xl border border-white/5" />
                     : <img src={outUrl} alt="output" className="w-full rounded-xl border border-white/5" />}
                   <div className="flex flex-wrap gap-2">
                     <a href={outUrl} download
@@ -3934,22 +3885,27 @@ export default function FaceSwap({
       )}
 
       {/* Floating Action Dock HUD */}
-      <FloatingActionDock
-        workspaceMode={workspaceMode}
-        setWorkspaceMode={setWorkspaceMode}
-        isRendering={!!progress.processing}
-        onStartSwap={start}
-        onCancelSwap={stop}
-        progress={Math.round((progress.progress || 0) * 100)}
-        onPreview={() => refreshPreview({ force: true })}
-        previewing={previewing}
-        ambilightEnabled={ambilightEnabled}
-        setAmbilightEnabled={setAmbilightEnabled}
-        onOpenPopout={() => popoutManager.openPopout(previewSrc || rawUrl)}
-        onOpenPresetStudio={() => setShowPresetStudio(true)}
-        drawers={drawers}
-        setDrawers={setDrawers}
-      />
+      {/* The dock shows the render's percentage; only IT re-renders for it. */}
+      <LiveValue select={(s) => Math.round(selectProg(s) * 100)}>
+        {(pct) => (
+          <FloatingActionDock
+            workspaceMode={workspaceMode}
+            setWorkspaceMode={setWorkspaceMode}
+            isRendering={!!progress.processing}
+            onStartSwap={start}
+            onCancelSwap={stop}
+            progress={pct}
+            onPreview={() => refreshPreview({ force: true })}
+            previewing={previewing}
+            ambilightEnabled={ambilightEnabled}
+            setAmbilightEnabled={setAmbilightEnabled}
+            onOpenPopout={() => popoutManager.openPopout(previewSrc || rawUrl)}
+            onOpenPresetStudio={() => setShowPresetStudio(true)}
+            drawers={drawers}
+            setDrawers={setDrawers}
+          />
+        )}
+      </LiveValue>
 
       {/* Preset Studio & Recipe Manager Modal */}
       <PresetStudioModal

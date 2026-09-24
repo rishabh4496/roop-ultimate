@@ -58,33 +58,82 @@ def _strip_comments(line):
     return line.split('//', 1)[0]
 
 
+# A top-level declaration: where one component (or hook) body can begin.
+# The TDZ hazard is per FUNCTION BODY, so the scan for early uses starts at the
+# top-level declaration that encloses the hook call, not at line 1. A file with
+# one component (FaceSwap.jsx) scans exactly as before; a file with several
+# (Processing.jsx's live children each call useLiveRun) is not charged with a
+# SIBLING component's use of the same names.
+TOP_LEVEL = re.compile(r'^(?:export\s+(?:default\s+)?)?(?:function\b|const\s+\w+\s*=)')
+
+
+def _enclosing_start(lines, decl_line):
+    """1-based line of the last top-level declaration at or before decl_line."""
+    for i in range(decl_line - 1, 0, -1):
+        if TOP_LEVEL.match(lines[i - 1]):
+            return i
+    return 1
+
+
+def _offenders(src, rel):
+    """Every read of a hook's destructured result above its declaration,
+    within the enclosing top-level function."""
+    found = []
+    lines = src.split('\n')
+    for m in DESTRUCTURE.finditer(src):
+        # Line the `const {` sits on — everything at or after it is fine.
+        decl_line = src[:m.start()].count('\n') + 1
+        names = {b for b in BINDING.findall(m.group('names')) if b}
+
+        first = _enclosing_start(lines, decl_line)
+        for i, raw in enumerate(lines[first - 1:decl_line - 1], start=first):
+            stripped = raw.strip()
+            if stripped.startswith(('//', '*', '/*')):
+                continue
+            code = _strip_comments(raw)
+            for n in sorted(names):
+                # Not a property access (`x.isPlaying`) and not a
+                # substring of a longer identifier.
+                if re.search(r'(?<![\w.$])' + re.escape(n) + r'(?![\w$])', code):
+                    found.append(
+                        f'{rel}:{i} uses `{n}` from {m.group("call")}(), '
+                        f'which is declared at line {decl_line}')
+    return found
+
+
 class HookDeclarationOrder(unittest.TestCase):
+    def test_the_checker_still_catches_a_read_above_the_hook(self):
+        """Scoping the scan to one function must not blind it inside one."""
+        bad = (
+            "export default function Panel() {\n"
+            "  useEffect(() => {}, [isPlaying]);\n"
+            "  const { isPlaying } = usePlaybackBuffer();\n"
+            "}\n"
+        )
+        self.assertEqual(len(_offenders(bad, 'x.jsx')), 1)
+
+    def test_a_sibling_component_is_not_charged(self):
+        ok = (
+            "function A() {\n"
+            "  const { prog } = useLiveRun();\n"
+            "  return prog;\n"
+            "}\n"
+            "\n"
+            "function B() {\n"
+            "  const { prog } = useLiveRun();\n"
+            "  return prog;\n"
+            "}\n"
+        )
+        self.assertEqual(_offenders(ok, 'x.jsx'), [])
+
     def test_hook_results_are_declared_before_they_are_used(self):
         offenders = []
 
         for path in _components():
             with open(path, encoding='utf-8') as fh:
                 src = fh.read()
-            lines = src.split('\n')
             rel = os.path.relpath(path, SRC).replace('\\', '/')
-
-            for m in DESTRUCTURE.finditer(src):
-                # Line the `const {` sits on — everything at or after it is fine.
-                decl_line = src[:m.start()].count('\n') + 1
-                names = {b for b in BINDING.findall(m.group('names')) if b}
-
-                for i, raw in enumerate(lines[:decl_line - 1], start=1):
-                    stripped = raw.strip()
-                    if stripped.startswith(('//', '*', '/*')):
-                        continue
-                    code = _strip_comments(raw)
-                    for n in sorted(names):
-                        # Not a property access (`x.isPlaying`) and not a
-                        # substring of a longer identifier.
-                        if re.search(r'(?<![\w.$])' + re.escape(n) + r'(?![\w$])', code):
-                            offenders.append(
-                                f'{rel}:{i} uses `{n}` from {m.group("call")}(), '
-                                f'which is declared at line {decl_line}')
+            offenders.extend(_offenders(src, rel))
 
         self.assertEqual(
             offenders, [],

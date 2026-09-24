@@ -23,14 +23,15 @@ const MUTATIONS = [
   {
     name: 'progress clamp removed (the full-ring bug)',
     file: join(src, 'components', 'Processing.jsx'),
-    from: 'const prog = Number.isFinite(rawProg) ? Math.min(1, Math.max(0, rawProg)) : 0;',
-    to: 'const prog = progress.progress || 0;',
+    // The LIVE clamp (useLiveRun) — the one the ring and bars are drawn from.
+    from: 'const rawProg = Number(run.progress);\n  const prog = Number.isFinite(rawProg) ? Math.min(1, Math.max(0, rawProg)) : 0;',
+    to: 'const prog = Number(run.progress) || 0;',
   },
   {
     name: 'ETA no longer suppressed while paused',
     file: join(src, 'components', 'Processing.jsx'),
-    from: 'const etaMs = processing && !progress.paused && !pauseRequested && !stopping',
-    to: 'const etaMs = processing',
+    from: 'const etaMs = !paused && !pauseRequested && !stopping ? etaMsOf(run, elapsedMs) : 0;',
+    to: 'const etaMs = etaMsOf(run, elapsedMs);',
   },
   {
     name: 'pipeline rail back to whole-run progress',
@@ -41,7 +42,7 @@ const MUTATIONS = [
   {
     name: 'ARIA removed from the progress bar',
     file: join(src, 'components', 'Processing.jsx'),
-    from: '              role="progressbar"',
+    from: '        role="progressbar"',
     to: '',
   },
   {

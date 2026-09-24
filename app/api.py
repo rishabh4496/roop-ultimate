@@ -4682,6 +4682,8 @@ def _run_swap(payload):
         # to the UI's own estimate rather than inheriting a finished run's figure.
         _procmgr_runtime.reset_eta()
         _last_output.update({"path": "", "kind": ""})
+        _last_output.update({"version": "", "source": None})
+        _routes_output._output_source["path"] = ""
         _push_log("▶ Starting job…", force=True)
         _resume_context.update({"base": 0.0, "total": 0})
         if project_id:
@@ -5012,7 +5014,8 @@ def _run_swap(payload):
                     if os.path.isfile(path)], state="COMPLETED")
             _set_processing_project_state(project_id, "COMPLETED")
         _record_run_history(payload, produced)
-        _record_last_output()
+        _record_last_output(
+            source_entry=files_to_process[0] if len(files_to_process) == 1 else None)
     except Exception as e:
         traceback.print_exc()
         _progress["error"] = str(e)
@@ -5059,7 +5062,38 @@ from post_swap import _snapshot_output_mtimes, _outputs_since, _classical_spec, 
 import post_swap as _post_swap  # noqa: E402
 
 
-def _record_last_output():
+def _output_source_record(entry, output_version: str):
+    """What the client may know about the target an output came from.
+
+    Only for a run with exactly ONE target: with several, "the source of the
+    latest file" is a guess, and a compare view that pairs a render with the
+    wrong original is worse than none. The absolute path stays server-side
+    (routes_output._output_source); the client gets a URL that can serve only
+    that file. `start_frame`/`fps` are what the player needs to line the two
+    clocks up on a trimmed render -- the same offset restore_audio seeks the
+    soundtrack by (start_frame / fps).
+    """
+    if entry is None:
+        return None
+    path = getattr(entry, "filename", "") or ""
+    if not path or not os.path.isfile(path):
+        return None
+    try:
+        fps = float(getattr(entry, "fps", 0) or 0)
+    except (TypeError, ValueError):
+        fps = 0.0
+    src_version = _routes_output.file_version(path)
+    return path, {
+        "url": f"/api/output/source?v={src_version}-{output_version}",
+        "name": os.path.basename(path),
+        "kind": "video" if util.is_video(path) else ("image" if util.is_image(path) else "file"),
+        "start_frame": int(getattr(entry, "startframe", 0) or 0),
+        "end_frame": int(getattr(entry, "endframe", 0) or 0),
+        "fps": fps,
+    }
+
+
+def _record_last_output(source_entry=None):
     out = roop_globals.output_path
     if not out or not os.path.isdir(out):
         return
@@ -5071,12 +5105,19 @@ def _record_last_output():
     kind = "video" if util.is_video(latest) else ("image" if util.is_image(latest) else "file")
     rel_name = os.path.basename(latest)
     web_url = f"/outputs/{rel_name}"
+    # Identity of the file's CONTENTS, for the player's cache key: changes when
+    # the same name is re-rendered, stays put across remounts and tab switches.
+    version = _routes_output.file_version(latest)
+    source = _output_source_record(source_entry, version)
+    _routes_output._output_source["path"] = source[0] if source else ""
     _last_output.update({
         "path": web_url,
         "url": web_url,
         "name": rel_name,
         "absolute_path": latest,
-        "kind": kind
+        "kind": kind,
+        "version": version,
+        "source": source[1] if source else None,
     })
 
 
@@ -5450,6 +5491,7 @@ import routes_export as _routes_export
 import routes_storage as _routes_storage
 import routes_benchmark as _routes_benchmark
 import routes_telemetry as _routes_telemetry
+import routes_frames as _routes_frames
 app.include_router(_routes_diagnostics.router)
 app.include_router(_routes_livecam.router)
 app.include_router(_routes_quality.router)
@@ -5460,6 +5502,36 @@ app.include_router(_routes_export.router)
 app.include_router(_routes_storage.router)
 app.include_router(_routes_benchmark.router)
 app.include_router(_routes_telemetry.router)
+app.include_router(_routes_frames.router)
+
+
+def _ws_frame_source(index: int, frame: int, width: int, quality: int):
+    """One target frame for a /ws/frames PLAY stream: (jpeg, w, h) or None.
+
+    The same decode and encode /api/target/preview_seq does per frame --
+    get_video_frame (capture lock + frame cache) then _encode_frame -- so a
+    socket stream and an HTTP chunk cost the server exactly the same.
+    ValueError for a target that is not a clip, which ends the stream with the
+    error flag instead of looping on a still."""
+    if index < 0 or index >= len(list_files_process):
+        raise ValueError("no target")
+    filename = list_files_process[index].filename
+    if not (util.is_video(filename) or filename.lower().endswith("gif")
+            or util.is_animated_webp(filename)):
+        raise ValueError("not a video")
+    frame_img = get_video_frame(filename, frame)
+    if frame_img is None:
+        return None
+    data, _media = _encode_frame(frame_img, width, "jpg", quality)
+    if data is None:
+        return None
+    h, w = frame_img.shape[:2]
+    if width and width > 0 and w > width:
+        h, w = max(1, round(h * width / w)), width
+    return data, int(w), int(h)
+
+
+_routes_frames.frame_source = _ws_frame_source
 
 # Backwards-compatible Python imports for callers that used these handlers
 # directly. Route ownership stays in routes_output.router, so these aliases do
@@ -5565,8 +5637,17 @@ def _telemetry_snapshot():
         _swallowed('api.py:_telemetry_snapshot', _degrade_error,
                    'telemetry frame sent without an ETA')
         eta = None
+    processing = bool(_progress.get('processing'))
+    # The CURRENT rate, beside the run average above. Idle clears the window
+    # and reports None, so an idle backend's frames stay identical and the
+    # change-only sampler keeps sending nothing.
+    if processing and not _progress.get('paused'):
+        fps_now = _telemetry_rate.add(time.time(), done)
+    else:
+        _telemetry_rate.reset()
+        fps_now = None
     return {
-        'processing': bool(_progress.get('processing')),
+        'processing': processing,
         'paused': bool(_progress.get('paused')),
         'progress': round(float(_progress.get('progress') or 0.0), 4),
         'desc': desc,
@@ -5574,10 +5655,19 @@ def _telemetry_snapshot():
         'current_frame': done,
         'total_frames': total,
         'fps': round(fps, 1),
+        # Recent frames/s and its reciprocal, the wall-clock time one frame is
+        # currently taking end to end (all workers together, so NOT a model's
+        # inference latency -- ROOP_PROFILE measures that). None until two
+        # samples exist or while the counter is not moving.
+        'fps_now': round(fps_now, 2) if fps_now else None,
+        'frame_ms': round(1000.0 / fps_now, 1) if fps_now else None,
         'eta_s': eta,
         'started_at': started,
         'live_seq': live_preview.seq(),
     }
+
+
+_telemetry_rate = _routes_telemetry.RateWindow(3.0)
 
 
 _routes_telemetry.progress_snapshot = _telemetry_snapshot

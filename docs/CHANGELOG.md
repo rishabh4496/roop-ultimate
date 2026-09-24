@@ -7,6 +7,77 @@ folder). Entries before 2026-09-21 were moved here from the README on 2026-09-22
 
 ## 2026-09-24
 
+- **Trimmed renders came out with the video starting late against the audio. Fixed.**
+  `restore_audio` cut the source audio with an INPUT-side `-ss` and `-c:a copy`. For
+  stream copy that seeks the file to the video keyframe BEFORE the trim point and keeps
+  the audio from there with negative timestamps; `-avoid_negative_ts make_zero` then
+  shifted every stream, so the video started (trim point - preceding keyframe) late:
+  `b1.mp4` trimmed at frame 200 -> video `start_time` 3.788 s, audio 0, audio 8.78 s long
+  for a 5.0 s render. Found through the new output compare view, whose two sides showed
+  different scenes while the clocks agreed to 16 ms. A trimmed render now cuts its audio
+  in an audio-only pass with an OUTPUT-side `-ss` (exact to the packet, still a stream
+  copy), then muxes, bounded by the video's own duration rather than `-shortest` (which,
+  against a packet-aligned audio cut, dropped the last 3 frames: 120 -> 117). Untrimmed
+  renders keep the single command. Real render, b1 frames 200-320: video and audio both
+  start at 0, 120/120 frames, audio within 17.5 ms (one AAC packet) of an exact source
+  cut. `tests/test_restore_audio_trim_offset.py` fails on the old code (1.58 s late on a
+  synthetic mid-GOP trim) and on a `-shortest` mux (99/100 frames). Present since at least
+  2026-09-20; renders starting at frame 0 were never affected.
+- **React UI: binary frame socket, off-thread canvas player, telemetry out of React state,
+  hardened output player with an original-vs-result compare.** Asked for: binary WebSocket
+  frame streaming into a WebGL/OffscreenCanvas `<FastCanvasPlayer />`, high-frequency
+  telemetry kept out of React at <= 10 Hz, proper HTTP 206 with cache busting, and a WebGL
+  split / side-by-side compare. Audited first: the scrub path was already binary
+  (length-prefixed JPEG chunks, worker decode, an uncontrolled canvas) and telemetry
+  already came over `/ws/telemetry`. What was actually wrong, and what changed:
+  - **Timeline playback committed the whole Face Swap panel on every played frame**
+    (`setBufferedSrc(blobUrl)` + `setFrame`), and kept firing random-access still requests
+    at the single decoder its own stream was reading sequentially. Now frames go as JPEG
+    bytes to a `<FastCanvasPlayer>` over the stage (worker `createImageBitmap` -> WebGL
+    double-buffered textures, drawn on the display's clock); the playhead is written at
+    <= 10 Hz; still requests stop while playing.
+  - **New `/ws/frames`** (`app/routes_frames.py`): 20-byte little-endian header + JPEG.
+    LIVE pushes each newly published render frame (and counts as a viewer, like a
+    `/api/live_frame` poll); PLAY streams target frames under client-granted CREDIT, so a
+    slow or hidden tab stops the decode. An accelerator only: the HTTP paths are unchanged
+    and used whenever the socket is down. Does NOT raise the live preview's publish rate
+    (`ROOP_LIVE_PREVIEW_MS` is still the knob; the render is GPU-bound).
+  - **Found while measuring, pre-existing:** the loop-wrap prefetch scanned `[start,
+    start + overflow]` even at overflow 0, so whenever the look-ahead was full it asked
+    for the clip's first frame again (a decoder seek back to the start, evicted next
+    tick). On the socket path: 164 streams / 1,715 frames for 290 played -> 1 stream /
+    408 frames after the fix (`faceswap/playbackWindow.js`).
+  - **Telemetry frames no longer re-render App and the mounted tab** (4 Hz for a whole
+    render). Fast fields go to a Zustand store (`store/telemetryStore.js`); readouts
+    subscribe through `<LiveText>` / `<LiveBar>` / `<LiveValue>` (direct DOM or leaf
+    re-render, <= 10 Hz). `setProgress` runs only on structural edges. Processing's live
+    readouts are leaf components, so its 250-line terminal re-renders on the poll only.
+    The frame now also carries `fps_now` / `frame_ms` (3 s window) — end-to-end time per
+    frame, not a model's inference latency.
+  - **HTTP 206 was wrong for three requests a player sends**: `bytes=-N` (suffix) was
+    served as the first N+1 bytes, a start past EOF got 206 instead of 416, an inverted
+    range was "repaired". Now RFC 9110 (`routes_output.parse_byte_range`), plus ETag /
+    Last-Modified / If-Range / 304, `Cache-Control: no-cache`, and no hand-written `*`
+    CORS header. Output URLs are versioned by file identity (`?v=<size>-<mtime_ns>`)
+    instead of `Date.now()`, which re-downloaded a finished render on every remount.
+  - **Compare view**: `/api/output/source` serves the one target the latest output came
+    from (the server records it; no path parameter). `OutputVideoPlayer` offers Result /
+    Split / Side by side, drawn by `player/VideoCompareStage.jsx` (both videos as WebGL
+    textures in one draw; the original follows the output's clock with rate-nudge sync,
+    offset by `start_frame / fps` like the audio).
+
+  Real-browser A/B, `app/tests/frame_transport_ab.py` (one backend, both clients via
+  `vite preview`, headless Chromium with GPU, A/B/B/A, `b1.mp4` 720p 23.976 fps, 10 s of
+  timeline playback on the RTX 4070 host):
+
+  | client | React commits/s | main-thread script ms/s | main-thread task ms/s | playhead fps |
+  |---|---:|---:|---:|---:|
+  | before | 55.5, 50.8 | 183.9, 162.0 | 523.4, 477.4 | 24.00, 21.77 |
+  | after | 16.4, 16.5 | 45.5, 54.5 | 226.6, 250.6 | 23.96, 23.96 |
+
+  No long tasks in any arm at 720p. The decode and draw moved to a worker, so its cost is
+  not in the main-thread columns by design. Not measured: 4K targets, the 3060.
+
 - **Faces in contact were swapped with the NEIGHBOUR's geometry after autorotate. Fixed.**
   `process_face`'s autorotate re-detects in a cut padded 45% each side, took the
   LEFTMOST detection, and since 09-23 `_unrotate_face_to_parent` writes that detection's

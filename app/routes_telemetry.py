@@ -83,6 +83,46 @@ SAMPLE_INTERVAL = 1.0 / SAMPLE_HZ
 HEARTBEAT_S = 15.0
 
 
+class RateWindow:
+    """Frames per second over the last `window_s` seconds of samples.
+
+    The telemetry frame's `fps` is the average over the WHOLE run, which is the
+    right number for an ETA and the wrong one for "how fast is it going now":
+    ten minutes in, a stall or a speed-up moves it by a fraction of a percent.
+    This is the recent rate, from the same `done` counter, so the UI can show a
+    current per-frame time without the pipeline timing anything.
+
+    Fed by the sampler (4 Hz) and the per-connection greeting, i.e. only while
+    somebody is listening; a gap simply means the next rate spans it. A counter
+    that goes BACKWARDS (a new run, a resume that re-bases) starts a new window
+    rather than reporting a negative rate.
+    """
+
+    def __init__(self, window_s: float = 3.0) -> None:
+        self.window_s = float(window_s)
+        self._samples: list[tuple[float, int]] = []
+
+    def reset(self) -> None:
+        self._samples.clear()
+
+    def add(self, now: float, done: int) -> Optional[float]:
+        """Record a sample; return the recent rate, or None when unknown."""
+        if self._samples and done < self._samples[-1][1]:
+            self._samples.clear()
+        if not self._samples or now > self._samples[-1][0]:
+            self._samples.append((now, int(done)))
+        cutoff = now - self.window_s
+        # Keep one sample at or before the cutoff so the window stays full.
+        while len(self._samples) > 2 and self._samples[1][0] <= cutoff:
+            self._samples.pop(0)
+        if len(self._samples) < 2:
+            return None
+        (t0, d0), (t1, d1) = self._samples[0], self._samples[-1]
+        if t1 - t0 <= 0:
+            return None
+        return (d1 - d0) / (t1 - t0)
+
+
 class TelemetryHub:
     """Fan-out to connected clients, safe to poke from a non-async thread.
 

@@ -11,6 +11,7 @@ import mimetypes
 import os
 import subprocess
 import sys
+from email.utils import formatdate
 
 from fastapi import APIRouter, Body, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
@@ -27,6 +28,10 @@ router = APIRouter()
 # shared objects, not copies: output state is mutated in place by the run path.
 API_TEMP = None
 _last_output = {"path": "", "kind": ""}
+# Absolute path of the target the latest output was rendered from. Kept apart
+# from _last_output because that dict is published verbatim in /api/progress;
+# the client only ever gets the /api/output/source URL, never this path.
+_output_source = {"path": ""}
 
 @router.get("/api/output")
 def list_output():
@@ -134,14 +139,134 @@ def _open_shared(path: str):
     return os.fdopen(fd, "rb")
 
 
+def file_etag(size: int, mtime_ns: int) -> str:
+    """The validator both ends agree on for a served file.
+
+    Weak (W/) because the bytes are identified by size + mtime rather than
+    hashed -- hashing a multi-GB render per request is not an option, and "the
+    same file as before" is exactly the promise a weak tag makes.
+    """
+    return f'W/"{size:x}-{mtime_ns:x}"'
+
+
+def file_version(path: str) -> str:
+    """URL-safe identity of a file's current contents: ``<size>-<mtime_ns>``.
+
+    The output player versions its URL with this (``?v=...``) instead of a
+    timestamp. A timestamp made every remount -- every Pinokio tab switch -- a
+    new URL, so the browser re-downloaded a finished render it already had,
+    while a re-render at the SAME path is precisely the case a timestamp and
+    this both catch. Empty string when the file cannot be stat'ed.
+    """
+    try:
+        st = os.stat(path)
+    except OSError:
+        return ""
+    return f"{int(st.st_size):x}-{int(st.st_mtime_ns):x}"
+
+
+def parse_byte_range(header, size: int):
+    """Resolve a ``Range`` header against a file of ``size`` bytes (RFC 9110 14.1.2).
+
+    Returns
+      * ``None``            -- no usable range: serve the whole file with 200.
+                               (No header, another unit, or a malformed spec:
+                               a server MUST ignore those, not fail the request.)
+      * ``"unsatisfiable"`` -- answer 416 with ``Content-Range: bytes */size``.
+      * ``(start, end)``    -- inclusive byte offsets for a 206.
+
+    What the inline parser this replaces got wrong, each of which a media
+    element can send:
+      * a SUFFIX range ``bytes=-500`` means "the last 500 bytes"; it was read as
+        ``0-500`` -- the first 501 bytes, labelled as the tail. That is the
+        request a player makes for an MP4 whose ``moov`` atom is at the end.
+      * a range starting at or past EOF was clamped onto the last byte and
+        answered 206 with data nobody asked for, instead of 416.
+      * ``bytes=9-3`` (end before start) was "repaired" rather than ignored.
+    Multiple ranges are not served as multipart; the first is honoured, which
+    is all any browser media stack asks for.
+    """
+    if not header:
+        return None
+    unit, sep, spec = str(header).strip().partition("=")
+    if not sep or unit.strip().lower() != "bytes":
+        return None
+    first = spec.split(",", 1)[0].strip()
+    start_s, dash, end_s = first.partition("-")
+    if not dash:
+        return None
+    start_s, end_s = start_s.strip(), end_s.strip()
+    try:
+        if not start_s:
+            if not end_s:
+                return None
+            n = int(end_s)
+            if n < 0:
+                return None
+            if n == 0 or size <= 0:
+                return "unsatisfiable"
+            return (max(0, size - n), size - 1)
+        start = int(start_s)
+        end = int(end_s) if end_s else None
+    except ValueError:
+        return None
+    if start < 0 or (end is not None and end < start):
+        return None
+    if start >= size:
+        return "unsatisfiable"
+    return (start, size - 1 if end is None else min(end, size - 1))
+
+
 def _stream_file_response(ap: str, request: Request):
-    """Serve a file with full HTTP 206 Byte-Range support and Windows share-delete handle."""
+    """Serve a file with HTTP 206 byte ranges, validators and a share-delete handle.
+
+    Validators matter for the output player: its URL is versioned by the file's
+    identity (``file_version``), so re-opening a player on the same render
+    revalidates with ``If-None-Match`` / ``If-Range`` and is answered from a stat
+    instead of a re-download.
+
+    No hand-written CORS headers. This used to add ``Access-Control-Allow-Origin:
+    *`` itself, contradicting the loopback-only policy CORSMiddleware applies to
+    every other route (api_access refuses a foreign Origin before this runs, so
+    the header only ever misdescribed the policy).
+    """
+    try:
+        st = os.stat(ap)
+    except OSError:
+        return JSONResponse(status_code=404, content={"message": "file not found"})
     if not os.path.isfile(ap):
         return JSONResponse(status_code=404, content={"message": "file not found"})
 
-    file_size = os.path.getsize(ap)
+    file_size = int(st.st_size)
+    etag = file_etag(file_size, int(st.st_mtime_ns))
+    last_modified = formatdate(st.st_mtime, usegmt=True)
     media_type = mimetypes.guess_type(ap)[0] or "application/octet-stream"
-    range_header = request.headers.get("range") or request.headers.get("Range")
+    validators = {
+        "Accept-Ranges": "bytes",
+        "ETag": etag,
+        "Last-Modified": last_modified,
+        # Revalidate rather than trust: the same name can be re-rendered. The
+        # validator makes that revalidation a stat, not a transfer.
+        "Cache-Control": "no-cache",
+    }
+
+    range_header = request.headers.get("range")
+    # If-Range: "the range only if the file is still the one I have". On a
+    # mismatch the client's partial copy is stale, so it gets the whole new
+    # file rather than a slice of it spliced onto the old one.
+    if_range = request.headers.get("if-range")
+    if range_header and if_range and if_range.strip() not in (etag, last_modified):
+        range_header = None
+
+    if not range_header:
+        inm = request.headers.get("if-none-match")
+        if inm and etag in [t.strip() for t in inm.split(",")]:
+            return Response(status_code=304, headers=validators)
+
+    resolved = parse_byte_range(range_header, file_size)
+    if resolved == "unsatisfiable":
+        return Response(status_code=416, headers={
+            **validators, "Content-Range": f"bytes */{file_size}"})
 
     def _iter(start: int, length: int, chunk: int = 1024 * 1024):
         remaining = length
@@ -157,43 +282,18 @@ def _stream_file_response(ap: str, request: Request):
         finally:
             f.close()
 
-    cors_headers = {
-        "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Methods": "GET, HEAD, OPTIONS",
-        "Access-Control-Allow-Headers": "Range, Content-Range, Accept-Ranges, Content-Type",
-        "Access-Control-Expose-Headers": "Content-Range, Accept-Ranges, Content-Length, Content-Type",
-    }
-
-    if range_header and range_header.strip().lower().startswith("bytes="):
-        spec = range_header.split("=", 1)[1].split(",", 1)[0].strip()
-        start_s, _, end_s = spec.partition("-")
-        try:
-            start = int(start_s) if start_s else 0
-        except ValueError:
-            start = 0
-        try:
-            end = int(end_s) if end_s else file_size - 1
-        except ValueError:
-            end = file_size - 1
-        start = max(0, min(start, file_size - 1))
-        end = max(start, min(end, file_size - 1))
+    if resolved is not None:
+        start, end = resolved
         length = end - start + 1
-        headers = {
-            "Accept-Ranges": "bytes",
-            "Content-Range": f"bytes {start}-{end}/{file_size}",
-            "Content-Length": str(length),
-            **cors_headers,
-        }
+        headers = {**validators,
+                   "Content-Range": f"bytes {start}-{end}/{file_size}",
+                   "Content-Length": str(length)}
         if request.method == "HEAD":
             return Response(status_code=206, media_type=media_type, headers=headers)
         return StreamingResponse(_iter(start, length), status_code=206,
                                  media_type=media_type, headers=headers)
 
-    headers = {
-        "Accept-Ranges": "bytes",
-        "Content-Length": str(file_size),
-        **cors_headers,
-    }
+    headers = {**validators, "Content-Length": str(file_size)}
     if request.method == "HEAD":
         return Response(status_code=200, media_type=media_type, headers=headers)
     return StreamingResponse(_iter(0, file_size), media_type=media_type, headers=headers)
@@ -212,6 +312,25 @@ def get_output_file(filename: str, request: Request):
     if not full_path:
         return JSONResponse(status_code=404, content={"message": "file not found"})
     return _stream_file_response(full_path, request)
+
+
+@router.api_route("/api/output/source", methods=["GET", "HEAD"])
+def get_output_source(request: Request):
+    """The ORIGINAL target the latest output was rendered from.
+
+    The output player's compare mode plays this beside the render. It takes no
+    path on purpose: the one file it can serve is the one the server itself
+    recorded when the render finished (``_output_source``), so it cannot be
+    pointed anywhere else. That file is the target the user loaded -- the same
+    one /api/target/preview already decodes frames from -- and may live outside
+    the output roots, which is why it cannot go through /api/file.
+    404 when the last run had no single source (a multi-target batch) or the
+    source has since been moved.
+    """
+    src = _output_source.get("path") or ""
+    if not src or not os.path.isfile(src):
+        return JSONResponse(status_code=404, content={"message": "no source for the latest output"})
+    return _stream_file_response(src, request)
 
 
 @router.api_route("/api/file", methods=["GET", "HEAD"])

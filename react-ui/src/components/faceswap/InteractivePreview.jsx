@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState, useMemo } from 'react'
 import AIScannerOverlay from './AIScannerOverlay';
 import PreviewCanvas from './PreviewCanvas';
 import CompareSlider from './CompareSlider';
+import FastCanvasPlayer from '../player/FastCanvasPlayer';
 import {
   clampPan, panAnchoredAt, panCenteringAt, transformFor, uiScale, wheelZoom,
 } from './zoomPan';
@@ -46,6 +47,12 @@ export default function InteractivePreview({
   scrubbing = false,
   onMaskChange,
   maskApplied = false,
+  // Timeline playback's frame bus (usePlaybackBuffer). Frames are drawn by a
+  // <FastCanvasPlayer> layered over the stage canvas: transparent until
+  // playback presents a frame, cleared again once the still underneath has
+  // caught up to the playhead. Never unmounted, so starting playback costs no
+  // canvas setup and stopping cannot flash.
+  playbackSource = null,
 }) {
   const [sliderPosition, setSliderPosition] = useState(50);
   // The live value during a drag. `sliderPosition` only ever holds the value
@@ -913,6 +920,10 @@ export default function InteractivePreview({
                 onDimensions={setImgDim}
                 className="w-full h-full object-contain pointer-events-none"
               />
+              {playbackSource && (
+                <FastCanvasPlayer source={playbackSource} label="Playback frame"
+                  className="absolute inset-0 w-full h-full pointer-events-none" />
+              )}
               <div className="absolute inset-0 pointer-events-none">{faceBoxes}{debugOverlay}</div>
             </div>
             <span className="absolute bottom-3 left-3 px-2.5 py-1 rounded-lg bg-black/75 backdrop-blur-md text-micro font-bold uppercase tracking-[0.14em] text-white/80 border border-white/10">
@@ -928,6 +939,10 @@ export default function InteractivePreview({
                 fadeMs={isPlaying ? 0 : scrubbing ? 60 : 200}
                 className="w-full h-full object-contain pointer-events-none"
               />
+              {playbackSource && (
+                <FastCanvasPlayer source={playbackSource} label="Playback frame"
+                  className="absolute inset-0 w-full h-full pointer-events-none" />
+              )}
             </div>
             <span className="absolute bottom-3 left-3 px-2.5 py-1 rounded-lg bg-[var(--accent)]/90 backdrop-blur-md text-micro font-bold uppercase tracking-[0.14em] text-white border border-white/20 shadow-lg">
               {isPeekingOriginal ? 'Original (Peek)' : 'After (Swapped)'}
@@ -1195,6 +1210,10 @@ export default function InteractivePreview({
             onDimensions={setImgDim}
             className="relative z-[1] w-full h-full object-contain pointer-events-none"
           />
+          {playbackSource && (
+            <FastCanvasPlayer source={playbackSource} label="Playback frame"
+              className="absolute inset-0 z-[2] w-full h-full pointer-events-none" />
+          )}
           <div className="absolute inset-0 pointer-events-none z-30">{faceBoxes}{debugOverlay}</div>
 
           {/* Interactive Mask Paint Canvas Overlay */}
