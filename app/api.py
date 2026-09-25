@@ -10,6 +10,7 @@ from roop.degrade import swallowed as _swallowed
 
 import os
 import io
+import copy
 import collections
 import hashlib
 from collections import OrderedDict
@@ -86,6 +87,7 @@ from target_person_state import (
     new_target_reference_face_id,
 )
 import project_checkpoint as _project_checkpoint
+from roop import project_io as _project_io
 import ui.globals as ui_globals
 import api_access as _api_access
 import safe_paths as _safe_paths
@@ -587,6 +589,7 @@ _progress = {"processing": False, "paused": False, "pause_requested": False,
 _resume_context = {"base": 0.0, "total": 0}
 _active_project_id = ""
 _last_output = {"path": "", "kind": ""}
+_project_autosave = None
 
 # Per-run accumulator, reset at the start of every swap and read back when the
 # run is recorded into history. Wall time + the highest "done / total" frame
@@ -742,6 +745,25 @@ def _project_target_faces():
     return result
 
 
+def _project_face_bank(target_path):
+    """Return JSON-safe Face Bank summaries associated with the target clip."""
+    try:
+        from roop.face_bank import get_face_bank
+        bank = get_face_bank()
+        if os.path.abspath(str(getattr(bank, "last_video_path", "") or "")) != os.path.abspath(str(target_path)):
+            return {"clusters": [], "scene_cuts": []}
+        clusters = []
+        for item in list(getattr(bank, "characters", []) or []):
+            clusters.append({key: item.get(key) for key in (
+                "person_id", "display_rank", "name", "cluster_size", "best_frame",
+                "off_axis", "det_score", "mean_embedding", "angles_count")
+                if key in item})
+        return {"clusters": clusters, "scene_cuts": sorted(int(frame) for frame in getattr(bank, "scene_cuts", set()) or set())}
+    except Exception as exc:
+        _swallowed("api.py:project_face_bank", exc, "face-bank metadata omitted")
+        return {"clusters": [], "scene_cuts": []}
+
+
 def _create_processing_project(payload, job_id=None):
     target_index = payload.get("target_index", state.selected_target_index)
     try:
@@ -751,6 +773,7 @@ def _create_processing_project(payload, job_id=None):
     if not (0 <= target_index < len(list_files_process)):
         raise ValueError("target is no longer loaded")
     entry = list_files_process[target_index]
+    face_bank = _project_face_bank(entry.filename)
     target = _project_checkpoint.file_identity(entry.filename)
     target["target_media_id"] = _ensure_target_media_id(entry)
     cfg = roop_globals.CFG
@@ -764,7 +787,7 @@ def _create_processing_project(payload, job_id=None):
         "method": str(payload.get("output_method") or getattr(cfg, "output_method", "File")),
         "template": str(getattr(cfg, "output_template", "") or ""),
     }
-    return _project_checkpoint.new_project(
+    record = _project_checkpoint.new_project(
         job_id=job_id,
         name=os.path.basename(entry.filename),
         payload=_checkpoint_payload(payload),
@@ -787,9 +810,35 @@ def _create_processing_project(payload, job_id=None):
             "target_selected_source_id": getattr(state, "active_target_selected_source_id", None),
             "target_person_source_mapping": dict(getattr(state, "active_target_person_source_mapping", {}) or {}),
             "target_person_names": dict(getattr(state, "active_target_person_names", {}) or {}),
+            "clusters": face_bank["clusters"],
         },
         app_version=_get_git_version(),
     )
+    record["timeline"] = {"scene_cuts": face_bank["scene_cuts"]}
+    record["automation"] = {
+        "keyframes": list(payload.get("keyframes") or payload.get("automation_keyframes") or []),
+        "fidelity_ramps": list(payload.get("fidelity_ramps") or []),
+        "mask_parameters": copy.deepcopy(payload.get("mask_parameters") or payload.get("mask_per_frame") or []),
+    }
+    _project_checkpoint.save(record)
+    # The checkpoint is an internal recovery record.  Write the portable
+    # user-facing session beside it so every render can be reopened in another
+    # installation without depending on the queue database.
+    roop_path = os.path.splitext(_project_checkpoint.project_path(record["id"]))[0] + ".roop"
+    _project_io.save_project(roop_path, _project_io.from_checkpoint(record, roop_path))
+    global _project_autosave
+    try:
+        if _project_autosave is not None:
+            _project_autosave.stop(save=False)
+        _project_autosave = _project_io.AutosaveController(
+            roop_path,
+            lambda: _project_io.from_checkpoint(
+                _project_checkpoint.load(record["id"]), roop_path),
+        ).start()
+    except Exception as exc:
+        _swallowed("api.py:project_autosave_start", exc, "fallback continued")
+    record["project_file"] = roop_path
+    return record
 
 
 def _unavailable_target_entries(payload=None):
@@ -5150,6 +5199,13 @@ def _run_swap(payload):
             _run_stats["duration_s"] = round(max(0.0, time.time() - _run_stats["start"]), 1)
         if project_id:
             roop_globals._checkpoint_segment_callback = None
+        global _project_autosave
+        if _project_autosave is not None and project_id:
+            try:
+                _project_autosave.stop(save=True)
+            except Exception as _degrade_error:
+                _swallowed("api.py:project_autosave_stop", _degrade_error, "fallback continued")
+            _project_autosave = None
         _active_project_id = ""
         if target_context_lock_held:
             _target_context_lock.release()

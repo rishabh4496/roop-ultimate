@@ -164,6 +164,18 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--execution-provider', default=None, help='Execution provider override: auto, cpu, cuda, tensorrt, rocm, or dml')
 parser.add_argument('--source', '--source-path', dest='source_reference_path', default=None,
                     help='source image or folder of same-identity reference images')
+parser.add_argument('--project', dest='project', default=None,
+                    help='portable .roop project session to load')
+parser.add_argument('--render', action='store_true', default=False,
+                    help='render the --project headlessly and exit')
+parser.add_argument('--output', dest='output', default=None,
+                    help='override the output directory or exact filename for a headless project render')
+parser.add_argument('--export-fcpxml', dest='export_fcpxml', default=None,
+                    help='export the --project timeline as Final Cut Pro XML')
+parser.add_argument('--export-edl', dest='export_edl', default=None,
+                    help='export the --project timeline as a Resolve CMX3600 EDL')
+parser.add_argument('--scene-detect', action='store_true', default=False,
+                    help='run scene-cut detection before NLE export')
 # Headless benchmark. Runs the same engine, scoring and recommendation the
 # React panel drives -- the CLI renders the dashboard as text rather than
 # computing anything of its own.
@@ -200,6 +212,9 @@ parser.add_argument('--react', action='store_true', default=False,
 parser.add_argument('--diagnose-runtime', action='store_true', default=False,
                     help='run standalone diagnostic probe and print runtime environment report without launching servers or models')
 args = parser.parse_args()
+_project_flags = ('render', 'output', 'export_fcpxml', 'export_edl', 'scene_detect')
+if not getattr(args, 'project', None) and any(getattr(args, flag, None) for flag in _project_flags):
+    parser.error('--render, --output, --export-fcpxml, --export-edl, and --scene-detect require --project')
 if getattr(args, 'diagnose_runtime', False):
     from roop.runtime_diagnostics import run_diagnose_runtime
     sys.exit(run_diagnose_runtime())
@@ -259,6 +274,21 @@ if __name__ == '__main__':
         import time
         sys.exit(_run_cli_benchmark(args.benchmark_faces, args.benchmark_mode,
                                     args.benchmark_apply))
+
+    if getattr(args, 'project', None) and (
+            getattr(args, 'render', False) or getattr(args, 'export_fcpxml', None)
+            or getattr(args, 'export_edl', None) or getattr(args, 'scene_detect', False)):
+        # Project execution is dispatched by core after provider admission so
+        # the headless path uses the same model/runtime initialization as the UI.
+        os.environ['ROOP_HEADLESS_PROJECT'] = '1'
+
+    if getattr(args, 'project', None) and (
+            getattr(args, 'render', False) or getattr(args, 'export_fcpxml', None)
+            or getattr(args, 'export_edl', None) or getattr(args, 'scene_detect', False)):
+        # The core project dispatcher owns the headless lifecycle. Do not start
+        # the HTTP daemon or a UI thread for a non-interactive render/export.
+        core.run()
+        raise SystemExit(0)
 
     # Opt out of Windows background throttling (EcoQoS) and raise process
     # priority so analysis/processing speed is identical whether the app

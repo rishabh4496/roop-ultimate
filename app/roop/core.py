@@ -147,11 +147,27 @@ def parse_args() -> None:
     program.add_argument('--benchmark-apply', help='Apply the recommended settings when the benchmark finishes', dest='benchmark_apply', action='store_true', default=False)
     program.add_argument('--source', '--source-path', dest='source_reference_path', default=None,
                          help='Source image or folder of same-identity reference images')
+    program.add_argument('--project', dest='project', default=None,
+                         help='Portable .roop project session to load')
+    program.add_argument('--render', action='store_true', default=False,
+                         help='Render the --project headlessly and exit')
+    program.add_argument('--output', dest='output', default=None,
+                         help='Override the output directory or exact filename for a headless project render')
+    program.add_argument('--export-fcpxml', dest='export_fcpxml', default=None,
+                         help='Export the --project timeline as Final Cut Pro XML')
+    program.add_argument('--export-edl', dest='export_edl', default=None,
+                         help='Export the --project timeline as a Resolve CMX3600 EDL')
+    program.add_argument('--scene-detect', action='store_true', default=False,
+                         help='Run scene-cut detection before NLE export')
     program.add_argument('--ui', choices=['react', 'gradio', 'legacy'], default=None,
                          help='UI to launch: react (default for React launcher) or legacy/gradio')
     program.add_argument('--react', action='store_true', default=False,
                          help='Force React client mode')
     roop.globals.startup_args = program.parse_args()
+    project_flags = ("render", "output", "export_fcpxml", "export_edl", "scene_detect")
+    if not getattr(roop.globals.startup_args, "project", None) and any(
+            getattr(roop.globals.startup_args, flag, None) for flag in project_flags):
+        program.error("--render, --output, --export-fcpxml, --export-edl, and --scene-detect require --project")
     if getattr(roop.globals.startup_args, 'react', False) or getattr(roop.globals.startup_args, 'ui', None) == 'react':
         os.environ['ROOP_REACT_CLIENT'] = '1'
     elif getattr(roop.globals.startup_args, 'ui', None) in ('gradio', 'legacy'):
@@ -1763,7 +1779,12 @@ def batch_process(output_method, files:list[ProcessEntry], use_new_method) -> No
                             _remove_file_retry(video_file_name)
                     else:
                         skip_audio = roop.globals.skip_audio
-                        destination = util.replace_template(video_file_name, index=index)
+                        fixed_output = getattr(roop.globals, '_project_output_file', None)
+                        destination = (
+                            os.path.join(roop.globals.output_path, fixed_output)
+                            if fixed_output and index == 0
+                            else util.replace_template(video_file_name, index=index)
+                        )
                         pathlib.Path(os.path.dirname(destination)).mkdir(parents=True, exist_ok=True)
 
                         if not skip_audio:
@@ -2023,8 +2044,20 @@ def run() -> None:
     roop.globals.video_encoder = roop.globals.CFG.output_video_codec
     roop.globals.video_quality = roop.globals.CFG.video_quality
     roop.globals.max_memory = roop.globals.CFG.memory_limit if roop.globals.CFG.memory_limit > 0 else None
+    project_action = getattr(roop.globals.startup_args, 'project', None) and (
+            getattr(roop.globals.startup_args, 'render', False)
+            or getattr(roop.globals.startup_args, 'export_fcpxml', None)
+            or getattr(roop.globals.startup_args, 'export_edl', None)
+            or getattr(roop.globals.startup_args, 'scene_detect', False)
+    )
+    if project_action and not getattr(roop.globals.startup_args, 'render', False):
+        from roop.project_render import run_project_cli
+        raise SystemExit(run_project_cli(roop.globals.startup_args, roop.globals.CFG))
     if not pre_check():
         return
+    if project_action:
+        from roop.project_render import run_project_cli
+        raise SystemExit(run_project_cli(roop.globals.startup_args, roop.globals.CFG))
     if getattr(roop.globals.startup_args, 'benchmark', False):
         # Placed AFTER CFG and the runtime globals are established, so the
         # benchmark measures the user's real configuration -- and BEFORE the

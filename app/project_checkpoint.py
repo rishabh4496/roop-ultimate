@@ -443,6 +443,8 @@ def summarize(record: Mapping[str, Any], validation: list[str] | None = None) ->
         "recoverable": not validation,
         "validation_errors": list(validation or []),
         "error": record.get("error", ""),
+        "project_file": os.path.splitext(project_path(str(record.get("id") or "")))[0] + ".roop"
+        if record.get("id") else "",
     }
 
 
