@@ -415,6 +415,26 @@
       "default": 0.55,
       "type": "float"
     },
+    "restoration_mode": {
+      "default": "balanced",
+      "type": "str"
+    },
+    "tile_diffusion_strength": {
+      "default": 0.65,
+      "type": "float"
+    },
+    "tile_diffusion_steps": {
+      "default": 2,
+      "type": "int"
+    },
+    "tile_diffusion_tile_size": {
+      "default": 512,
+      "type": "int"
+    },
+    "tile_diffusion_overlap": {
+      "default": 64,
+      "type": "int"
+    },
     "subsample_upscale": {
       "default": "256px",
       "type": "str"

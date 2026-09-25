@@ -562,6 +562,7 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
         'restore_ultra'     : 'Enhance_RestoreUltra',
         'keep'              : 'Enhance_KEEP',
         'adaptive_enhancer' : 'AdaptiveEnhancer',
+        'tile_diffusion'    : 'Enhance_TileDiffusion',
         'colorizer'         : 'Frame_Colorizer',
         'filter_generic'    : 'Frame_Filter',
         'removebg'          : 'Frame_Masking',

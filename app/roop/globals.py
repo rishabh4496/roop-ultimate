@@ -37,6 +37,11 @@ selected_enhancer = None
 # continue to select exactly one of the existing processor paths.
 adaptive_enhancer_profile = 'BALANCED'
 codeformer_fidelity = 0.5
+restoration_mode = 'balanced'
+tile_diffusion_strength = 0.65
+tile_diffusion_steps = 2
+tile_diffusion_tile_size = 512
+tile_diffusion_overlap = 64
 subsample_size = 256
 # AI upscale folded into the swap pipeline (runs as the last frame processor,
 # strictly after the face is swapped/enhanced, producing one output file).

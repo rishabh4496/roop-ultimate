@@ -1744,7 +1744,8 @@ def get_meta():
                        "GPEN 2048",
                        "GPEN Ultimate",
                        "Restoreformer++", "Restore Ultra", "UltraMax",
-                       "KEEP (sidecar)"],
+                       "KEEP (sidecar)", "Tile Diffusion Synthesizer"],
+        "restoration_modes": ["Fast / Realtime", "Balanced", "VFX / Master Quality", "Custom"],
         "swap_models": ["realswap", "inswapper", "reswapper", "hyperswap",
                          "hyperswap_1b", "hyperswap_1c", "ghost_1", "ghost_2",
                          "ghost_3", "simswap", "simswap_512", "hififace",
@@ -4215,7 +4216,7 @@ def _apply_eye_restore_settings(payload):
 
 
 def _apply_enhancer_settings(payload):
-    """Enhancer alignment + the second colour pass, onto roop.globals.
+    """Enhancer alignment + the second colour pass + tile diffusion, onto roop.globals.
 
     Both are opt-in and both change pixels, so preview and run must agree —
     same reason as the other helpers here.
@@ -4224,6 +4225,20 @@ def _apply_enhancer_settings(payload):
                          ("color_match_after_enhance", False)):
         fallback = getattr(roop_globals.CFG, key, default)
         setattr(roop_globals, key, bool(payload.get(key, fallback)))
+
+    roop_globals.restoration_mode = str(payload.get("restoration_mode", getattr(roop_globals.CFG, "restoration_mode", "balanced")))
+    for key, default, caster in (
+        ("tile_diffusion_strength", 0.65, float),
+        ("tile_diffusion_steps", 2, int),
+        ("tile_diffusion_tile_size", 512, int),
+        ("tile_diffusion_overlap", 64, int),
+    ):
+        fallback = getattr(roop_globals.CFG, key, default)
+        try:
+            val = caster(payload.get(key, fallback))
+        except (TypeError, ValueError):
+            val = default
+        setattr(roop_globals, key, val)
 
 
 def _apply_target_appearance_settings(payload):

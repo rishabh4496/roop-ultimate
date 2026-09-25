@@ -20,6 +20,9 @@ import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 APP = os.path.dirname(HERE)
+import sys
+if APP not in sys.path:
+    sys.path.insert(0, APP)
 
 
 def _read(rel):

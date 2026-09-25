@@ -935,6 +935,8 @@ def get_processing_plugins(masking_engine, swap_model='inswapper', target_face=N
         # (dependency conflict with the main env); passes through unenhanced
         # when the sidecar isn't installed. See app/sidecar_keep/README.md.
         processors.update({"keep": {}})
+    elif roop.globals.selected_enhancer in ('Tile Diffusion Synthesizer', 'Tile Diffusion', 'TileDiffusion'):
+        processors.update({"tile_diffusion": {}})
 
     # A bare string stays a bare string for every existing caller (the Gradio
     # tab, virtualcam, the per-frame mask path) — none of them has to learn

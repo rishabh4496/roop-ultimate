@@ -976,6 +976,11 @@ class Settings:
         self.selected_enhancer = self.default_get(data, 'selected_enhancer', 'UltraMax')
         self.adaptive_enhancer_profile = self.default_get(data, 'adaptive_enhancer_profile', 'BALANCED')
         self.codeformer_fidelity = float(self.default_get(data, 'codeformer_fidelity', 0.55))
+        self.restoration_mode = self.default_get(data, 'restoration_mode', 'balanced')
+        self.tile_diffusion_strength = float(self.default_get(data, 'tile_diffusion_strength', 0.65))
+        self.tile_diffusion_steps = int(self.default_get(data, 'tile_diffusion_steps', 2))
+        self.tile_diffusion_tile_size = int(self.default_get(data, 'tile_diffusion_tile_size', 512))
+        self.tile_diffusion_overlap = int(self.default_get(data, 'tile_diffusion_overlap', 64))
         self.subsample_upscale = self.default_get(data, 'subsample_upscale', '256px')
         self.upscale_after_swap = self.default_get(data, 'upscale_after_swap', False)
         self.upscale_model_after = self.default_get(data, 'upscale_model_after', 'fsr_x2')
@@ -1322,6 +1327,11 @@ class Settings:
             'selected_enhancer': self.selected_enhancer,
             'adaptive_enhancer_profile': self.adaptive_enhancer_profile,
             'codeformer_fidelity': self.codeformer_fidelity,
+            'restoration_mode': self.restoration_mode,
+            'tile_diffusion_strength': self.tile_diffusion_strength,
+            'tile_diffusion_steps': self.tile_diffusion_steps,
+            'tile_diffusion_tile_size': self.tile_diffusion_tile_size,
+            'tile_diffusion_overlap': self.tile_diffusion_overlap,
             'subsample_upscale': self.subsample_upscale,
             'upscale_after_swap': self.upscale_after_swap,
             'upscale_model_after': self.upscale_model_after,
