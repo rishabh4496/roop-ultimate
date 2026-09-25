@@ -1,0 +1,160 @@
+{
+ "measured": "2026-09-26, RTX 4070, tests/identity_algebra_bench.py --sweep; swap hyperswap, enhancer Restore Ultra; 65 paired faces",
+ "note": "Render validation: does moving the vector along the direction move the SWAPPED face's label monotonically? A direction can predict a label (fit score) and still not be writable through the swapper.",
+ "base": {
+  "cos_A": 0.6348,
+  "d_age_mean": 0.0,
+  "d_male_mean": 0.0,
+  "d_jaw_mean": 0.0,
+  "d_mouth_mean": 0.0
+ },
+ "directions": {
+  "age": {
+   "writable": false,
+   "verdict": "non-monotone: both signs read OLDER (t=-0.75 +6.3y, t=+0.75 +3.7y) while identity falls 0.64->0.47-0.55",
+   "sweep": {
+    "age t=-0.75": {
+     "cos_A": 0.5505,
+     "d_age_mean": 6.3354,
+     "d_male_mean": 1.4382,
+     "d_jaw_mean": 0.0066,
+     "d_mouth_mean": -0.0245
+    },
+    "age t=-0.40": {
+     "cos_A": 0.618,
+     "d_age_mean": 2.3177,
+     "d_male_mean": 0.6664,
+     "d_jaw_mean": -0.0,
+     "d_mouth_mean": -0.0081
+    },
+    "age t=+0.40": {
+     "cos_A": 0.6053,
+     "d_age_mean": 0.6568,
+     "d_male_mean": -0.2971,
+     "d_jaw_mean": -0.0024,
+     "d_mouth_mean": 0.0008
+    },
+    "age t=+0.75": {
+     "cos_A": 0.4694,
+     "d_age_mean": 3.6825,
+     "d_male_mean": 1.45,
+     "d_jaw_mean": 0.0016,
+     "d_mouth_mean": -0.0016
+    }
+   }
+  },
+  "gender": {
+   "writable": false,
+   "verdict": "no signed response of genderage's male score at t=+/-0.4, +/-0.75",
+   "sweep": {
+    "gender t=-0.75": {
+     "cos_A": 0.547,
+     "d_age_mean": 1.647,
+     "d_male_mean": -0.2701,
+     "d_jaw_mean": 0.0026,
+     "d_mouth_mean": 0.0019
+    },
+    "gender t=-0.40": {
+     "cos_A": 0.6094,
+     "d_age_mean": 0.5533,
+     "d_male_mean": -0.1489,
+     "d_jaw_mean": -0.0017,
+     "d_mouth_mean": -0.0
+    },
+    "gender t=+0.40": {
+     "cos_A": 0.5999,
+     "d_age_mean": 0.7117,
+     "d_male_mean": -0.2152,
+     "d_jaw_mean": -0.0025,
+     "d_mouth_mean": -0.0093
+    },
+    "gender t=+0.75": {
+     "cos_A": 0.5194,
+     "d_age_mean": 1.1237,
+     "d_male_mean": -0.1331,
+     "d_jaw_mean": -0.0055,
+     "d_mouth_mean": -0.0136
+    }
+   }
+  },
+  "jawline": {
+   "writable": true,
+   "verdict": "monotone but weak: jaw ratio -0.011..+0.009 over t=-0.75..+0.75 for -0.11..-0.15 identity",
+   "step_per_dial": 0.75,
+   "sweep": {
+    "jawline t=-0.75": {
+     "cos_A": 0.5244,
+     "d_age_mean": 3.2108,
+     "d_male_mean": 1.4468,
+     "d_jaw_mean": -0.0107,
+     "d_mouth_mean": -0.0002
+    },
+    "jawline t=-0.40": {
+     "cos_A": 0.6123,
+     "d_age_mean": 1.9687,
+     "d_male_mean": 0.1968,
+     "d_jaw_mean": -0.0059,
+     "d_mouth_mean": -0.0028
+    },
+    "jawline t=+0.40": {
+     "cos_A": 0.5977,
+     "d_age_mean": 0.9343,
+     "d_male_mean": 0.0145,
+     "d_jaw_mean": 0.0034,
+     "d_mouth_mean": 0.001
+    },
+    "jawline t=+0.75": {
+     "cos_A": 0.4833,
+     "d_age_mean": 1.0642,
+     "d_male_mean": 0.2573,
+     "d_jaw_mean": 0.0089,
+     "d_mouth_mean": 0.0046
+    }
+   }
+  },
+  "expression": {
+   "writable": false,
+   "verdict": "null at the calibrated dial (mouth -0.003/+0.012 at +/-1, within noise); the swapper takes expression from the target",
+   "calibrated": {
+    "expression -1": {
+     "cos_A": 0.6001,
+     "d_age_mean": 0.0635,
+     "d_age_sd": 1.9324,
+     "d_male_mean": 0.0041,
+     "d_jaw_mean": -0.0005,
+     "d_mouth_mean": -0.0034
+    },
+    "expression +1": {
+     "cos_A": 0.5979,
+     "d_age_mean": -0.3188,
+     "d_age_sd": 2.192,
+     "d_male_mean": -0.1482,
+     "d_jaw_mean": 0.0042,
+     "d_mouth_mean": 0.0121
+    }
+   }
+  }
+ },
+ "blend": {
+  "base (A)": {
+   "cos_A": 0.601,
+   "cos_B": 0.066
+  },
+  "blend A75/B25": {
+   "cos_A": 0.566,
+   "cos_B": 0.184
+  },
+  "blend A50/B50": {
+   "cos_A": 0.304,
+   "cos_B": 0.498
+  },
+  "blend A25/B75": {
+   "cos_A": 0.169,
+   "cos_B": 0.616
+  },
+  "blend A0/B100": {
+   "cos_A": 0.072,
+   "cos_B": 0.63
+  }
+ }
+}

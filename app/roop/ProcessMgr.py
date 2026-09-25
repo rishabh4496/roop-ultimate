@@ -966,6 +966,32 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
         self._temporal_compositing = TemporalCompositeController.from_config(
             roop.globals)
         self._temporal_quality = TemporalQualityController.from_config(roop.globals)
+        # Identity Blender recipe (React dock -> /api/identity/blend). A queued
+        # job's snapshot on options wins over the live global. Resolved once
+        # here against this run's facesets and the gallery, by `_source_id`.
+        self._identity_blend = None
+        try:
+            from roop.identity_algebra import BlendRecipe, resolve_recipe
+            _recipe = BlendRecipe.from_payload(
+                getattr(options, 'identity_blend', None)
+                or getattr(roop.globals, 'identity_blend', None))
+            self._identity_blend = resolve_recipe(
+                _recipe, list(input_faces or []) + list(roop.globals.INPUT_FACESETS))
+            _b = self._identity_blend
+            _line = None if _b is None else (
+                f"[IdentityBlend] {len(_b.facesets)} source(s) "
+                f"weights={[round(float(w), 3) for w in _b.weights]} "
+                f"dials={ {k: v for k, v in _recipe.dials.items() if v} } "
+                f"directions={'yes' if _b.directions is not None else 'MISSING'}"
+                + (f" missing={list(_b.missing_ids)}" if _b.missing_ids else ""))
+            # live_swap re-initializes on every preview frame: say it once
+            # per recipe, not once per scrub.
+            if _line != getattr(ProcessMgr, '_identity_blend_last_line', None):
+                ProcessMgr._identity_blend_last_line = _line
+                if _line:
+                    print(_line)
+        except Exception as e:
+            print(f"[IdentityBlend] recipe ignored: {e}")
         devicename = get_device()
 
         # A measured 6GB end-to-end run with an enhancer exceeds the strict
@@ -5275,6 +5301,29 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                     inputface = pose_input
             except Exception as e:
                 bar_write(f"[ProcessMgr] V2 pose embedding selection failed: {e}")
+
+        # Identity Blender: latent blend + attribute offsets on the (already
+        # pose-selected) unit ArcFace vector. Same copy-then-override contract
+        # as the V2 block above. The raw embedding's norm is kept so the
+        # converter-MLP swappers (which read `embedding`, not `normed_`) see
+        # the magnitude they were trained on. cscs_dual reads its own
+        # recognizers' vectors from a crop, a different space: skipped.
+        _blend = getattr(self, '_identity_blend', None)
+        if (_blend is not None and not _swap_is_image and inputface is not None
+                and getattr(swap_p, 'embedding_mode', '') != 'cscs_dual'):
+            try:
+                _raw = inputface.get('embedding') if hasattr(inputface, 'get') else None
+                _new = _blend.transform(_raw, target_face, source_faceset)
+                if _new is not None:
+                    _norm = float(np.linalg.norm(np.asarray(_raw, dtype=np.float32))) if _raw is not None else 1.0
+                    blend_input = type(inputface)(inputface)
+                    blend_input['embedding'] = (_new * (_norm if _norm > 1e-6 else 1.0)).astype(np.float32)
+                    for key in list(blend_input.keys()):
+                        if str(key).startswith('_latent_'):
+                            del blend_input[key]
+                    inputface = blend_input
+            except Exception as e:
+                bar_write(f"[ProcessMgr] identity blend failed: {e}")
 
         # ── Option 2: Target frontalization ──────────────────────────────────
         # Warp the aligned crop toward frontal before the swap, then apply

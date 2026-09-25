@@ -37,6 +37,8 @@ import SegmentBar from './faceswap/SegmentBar';
 import SliderTrackerBar from './faceswap/SliderTrackerBar';
 import Timeline from './faceswap/Timeline';
 import FacesetLibrary from './faceswap/FacesetLibrary';
+import IdentityBlender from './faceswap/IdentityBlender';
+import { EMPTY_BLEND, fetchIdentityBlend } from './faceswap/identityBlend';
 import AmbilightGlow from './faceswap/AmbilightGlow';
 import FloatingActionDock from './faceswap/FloatingActionDock';
 import MediaTabSessionBar from './faceswap/MediaTabSessionBar';
@@ -96,6 +98,15 @@ export default function FaceSwap({
 }) {
   const [sourceFaces, setSourceFaces] = useState([]);
   const [sourceFacesInfo, setSourceFacesInfo] = useState([]);
+  // Identity Blender recipe. Rides inside every preview/swap payload, so the
+  // preview cache keys on it and a queued job freezes it. Rehydrated from the
+  // backend's live global on mount (a Pinokio tab switch reloads this app).
+  const [identityBlend, setIdentityBlend] = useState(EMPTY_BLEND);
+  useEffect(() => {
+    let live = true;
+    fetchIdentityBlend().then((r) => { if (live && r) setIdentityBlend(r); });
+    return () => { live = false; };
+  }, []);
   const [targetFaces, setTargetFaces] = useState([]);
   const [targetGroups, setTargetGroups] = useState([]);
   const [targetNames, setTargetNames] = useState([]);
@@ -850,6 +861,7 @@ export default function FaceSwap({
       }),
       selection_version: selectionVersion,
       imagemask: maskJson,
+      identity_blend: identityBlend,
     };
   };
 
@@ -1162,6 +1174,7 @@ export default function FaceSwap({
       mouth_right_scale: activeParams.mouth_right_scale,
       // Manual brush mask (JSON string, '' when nothing is painted).
       imagemask: maskJson,
+      identity_blend: identityBlend,
       ...overrides,
     };
   };
@@ -1684,7 +1697,8 @@ export default function FaceSwap({
       } else if (added > 0) notify(`Loaded ${added} face(s) — ${res.faceset_count} faceset(s) total`);
       else if (res.errors?.length) { /* already reported above */ }
       else notify('No face detected in the uploaded file(s)', 'error');
-    } catch (err) { reportUploadError(err); }
+      return res;
+    } catch (err) { reportUploadError(err); return null; }
     finally { setUploadingSrc(false); setSrcProgress(null); srcAbortRef.current = null; }
   };
 
@@ -3582,6 +3596,8 @@ export default function FaceSwap({
             </div>
           )}
         </Section>
+        <IdentityBlender sourceFaces={sourceFaces} sourceFacesInfo={sourceFacesInfo}
+          value={identityBlend} onChange={setIdentityBlend} onUploadSource={onAddSource} notify={notify} />
       </div>
 
         {/* COLUMN 3: Active Canvas, Timeline & Outputs */}

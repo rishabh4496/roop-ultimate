@@ -254,6 +254,87 @@ source = requests.post(f'{base_url}/api/source/add-folder', files=files, timeout
 curl -F "files=@front.jpg" -F "files=@left.jpg" -F "files=@right.jpg" "$BASE_URL/api/source/add-folder"
 ```
 
+#### Identity Blender: latent blends and attribute dials
+
+The **Identity Blender** panel (under the source gallery in Face Swap) blends up
+to four source identities and shifts attributes of the result. Everything happens
+on the unit ArcFace vector (buffalo_l / w600k_r50, 512-D) that the embedding
+swappers consume:
+
+- **Blend:** `z = normalize(Σ wᵢ·zᵢ)`. The weights are renormalised to sum to 1.
+  Two different people sit at cosine ~0.0-0.2, so an un-normalised 50/50 mix is
+  only ~0.7 long, and the normalisation is required. Each component's vector
+  is pose-matched to the target when its faceset supports that (V2 cells or
+  folder banks). The blend replaces the identity of every face assigned to any
+  of the blended sources.
+- **Attribute dials:** `z' = normalize(z + P_z(Σ αₖ·vₖ))`, where `P_z` projects
+  onto the tangent plane at `z`. The result is exactly
+  `cos(z', z) = 1/√(1+|t|²)`, which gives the **identity guard** a closed form:
+  past the minimum cosine (default 0.80), the whole offset is scaled back
+  uniformly, keeping its direction. **Age Shift** is in years, limited to ±30.
+  **Femininity ↔ Masculinity**, **Feature Dominance** (jaw squareness) and
+  **Expression Intensity** run from -1 to 1, where ±1 is two standard
+  deviations of how real faces vary along that direction.
+- **Directions** ship in `app/roop/assets/identity_directions.npz` and were
+  fitted by `tools/fit_identity_directions.py`. They are ridge regressions of
+  genderage age/sex and 68-landmark geometry on 14,582 faces (5,845 identities:
+  LFW plus the local clips and facesets), orthonormalised with Gram-Schmidt,
+  and scored on identity-disjoint held-out folds: age r 0.57, sex AUC 0.78,
+  jaw r 0.44, expression r 0.21. The labels are model predictions, and ArcFace
+  is trained to ignore expression.
+- **Render validation.** A direction can *predict* a label and still not
+  *write* it through the swapper. `app/tests/identity_algebra_bench.py`
+  re-measures the swapped faces (hyperswap + Restore Ultra, 65–100 paired faces,
+  RTX 4070). The verdicts are stored in
+  `app/roop/assets/identity_render_validation.json`, and dials that fail are
+  disabled with the reason shown:
+  - **Age:** not monotone. Both directions read *older* (+6.3 / +3.7 years
+    at a 0.75 step) while identity falls from 0.64 to 0.47–0.55. Disabled.
+  - **Sex:** no signed response in the rendered face. Disabled.
+  - **Expression:** null, because the swapper takes expression from the
+    target. Disabled.
+  - **Feature Dominance (jaw):** monotone but weak. The jaw ratio moves
+    −0.011 to +0.009 over the full range, for −0.11 to −0.15 identity.
+    Enabled, with ±1 set to the measured 0.75 step.
+
+  The blend itself is verified on the render. Cosine of the swapped face to
+  A/B was 0.60/0.07 at A100, 0.57/0.18 at 75/25, 0.30/0.50 at 50/50,
+  0.17/0.62 at 25/75, and 0.07/0.63 at B100.
+
+Blending applies to the embedding swappers only. Image-source models
+(BlendSwap/UniFace) and CSCS compute identity from a crop in a different space,
+so they are skipped. Programmatic access uses `GET`/`POST /api/identity/blend`.
+A `/api/preview` or `/api/swap` payload can also carry `identity_blend`, and
+the queue stores that payload, so queued jobs keep the recipe they were
+queued with. Source ids are the `id` fields from `source_faces_info`.
+
+```javascript
+const recipe = {
+  enabled: true,
+  components: [{ source_id: idA, weight: 60 }, { source_id: idB, weight: 40 }],
+  dials: { age: 10, gender: 0, jawline: 0.3, expression: 0 },
+  min_cosine: 0.8,
+};
+const res = await fetch(`${baseUrl}/api/identity/blend`, {
+  method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(recipe),
+}).then(r => r.json());
+console.log(res.diagnostics.components, res.diagnostics.clamped);
+```
+
+```python
+import requests
+recipe = {"enabled": True,
+          "components": [{"source_id": id_a, "weight": 60}, {"source_id": id_b, "weight": 40}],
+          "dials": {"age": -15}}
+res = requests.post(f"{base_url}/api/identity/blend", json=recipe, timeout=10).json()
+print(res["diagnostics"]["cosine_to_anchor"], res["directions"]["heldout"])
+```
+
+```bash
+curl -X POST "$BASE_URL/api/identity/blend" -H "Content-Type: application/json" \
+  -d '{"enabled":true,"components":[{"source_id":"A","weight":60},{"source_id":"B","weight":40}],"dials":{"age":10}}'
+```
+
 Video processing forces constant frame rate and explicit generated video PTS;
 audio is muxed with `-c:a copy` and the original audio bitstream when possible.
 `python scripts/verify_roop_keep.py` records CFR, copied-audio codec/sample

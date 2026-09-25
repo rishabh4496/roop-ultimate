@@ -4407,6 +4407,7 @@ def preview(payload: dict = Body(...)):
         payload = dict(payload or {})
         roop_globals.is_preview = True
         _update_mask_offsets_from_payload(payload)
+        _routes_identity.apply_identity_blend_from_payload(payload)
         idx, media_id, target_error = _activate_target_from_payload(
             payload, index=payload.get("index", state.selected_target_index), refresh=False)
         if target_error:
@@ -4881,6 +4882,7 @@ def _run_swap(payload):
                           "error": ""})
         _run_stats.update({"start": time.time(), "frames_done": 0, "frames_total": 0, "duration_s": 0.0})
         _update_mask_offsets_from_payload(payload)
+        _routes_identity.apply_identity_blend_from_payload(payload)
         processing_request = payload.get("normalized_request")
         if not isinstance(processing_request, dict):
             processing_request = _canonical_processing_request(
@@ -5683,6 +5685,7 @@ import routes_autotune as _routes_autotune
 import routes_telemetry as _routes_telemetry
 import routes_frames as _routes_frames
 import routes_models as _routes_models
+import routes_identity as _routes_identity
 app.include_router(_routes_diagnostics.router)
 app.include_router(_routes_livecam.router)
 app.include_router(_routes_quality.router)
@@ -5693,6 +5696,7 @@ app.include_router(_routes_export.router)
 app.include_router(_routes_storage.router)
 app.include_router(_routes_benchmark.router)
 app.include_router(_routes_trt_cache.router)
+app.include_router(_routes_identity.router)
 app.include_router(_routes_autotune.router)
 app.include_router(_routes_telemetry.router)
 app.include_router(_routes_frames.router)

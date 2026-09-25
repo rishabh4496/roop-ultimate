@@ -257,6 +257,11 @@ lm68_lazy = False
 FACE_ENHANCER = 'GPEN'
 
 INPUT_FACESETS = []
+# Identity Blender recipe (roop.identity_algebra.BlendRecipe payload): which
+# gallery sources to blend by `_source_id`, their weights, and the attribute
+# dials. Runtime state like INPUT_FACESETS -- it names session sources, so it
+# is not a persisted setting. Set by /api/identity/blend.
+identity_blend = None
 TARGET_FACES = []
 # Parallel to TARGET_FACES: the person/group id each target face belongs to.
 # Multiple angles of the same person share a group id; each group maps (by rank)

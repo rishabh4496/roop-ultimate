@@ -5,6 +5,46 @@ full session record is [`SESSION_LOGS.md`](SESSION_LOGS.md); the running enginee
 state lives outside the repository (`RECODE_STATUS.md` in the operator's `roop-keep`
 folder). Entries before 2026-09-21 were moved here from the README on 2026-09-22.
 
+## 2026-09-26
+
+- **Identity Blender: latent blends shipped; three of four attribute dials measured
+  unwritable and disabled.** `roop/identity_algebra.py` blends up to four sources as
+  `normalize(Σ wᵢzᵢ)` on the w600k unit sphere, each pose-matched to the target. It
+  applies attribute offsets on the tangent plane, so `cos = 1/√(1+|t|²)` exactly, with a
+  uniform-scaling identity guard (default cos ≥ 0.80). The hook sits in `ProcessMgr`
+  directly after the V2 pose-embedding override. It keeps the raw norm for the
+  converter-MLP swappers and skips image-source models and CSCS. The recipe arrives via
+  `/api/identity/blend` or `identity_blend` in the preview/swap payload, which is also
+  how queued jobs freeze it. The React dock has 4 drop slots, weight sliders, per-source
+  share and cosine, and the dials.
+  Directions come from `tools/fit_identity_directions.py`: 14,582 faces, 5,845 identities
+  (LFW plus the local clips and facesets), ridge λ=1e-3, identity-disjoint folds. The
+  local corpus alone (99 identities) gave sex AUC 0.60 at every λ; a planted-direction
+  test recovers only cos 0.57 at 60 identities. Held-out scores: age r 0.57, sex AUC 0.78,
+  jaw r 0.44, expression r 0.21. The held-out metric is Pearson r, not R², because R²
+  rewards weak ridge while the direction gets *less* accurate (planted: R² 0.70 at cos
+  0.80 vs R² 0.51 at cos 0.87).
+  **Render validation** (`app/tests/identity_algebra_bench.py`, hyperswap + Restore
+  Ultra, RTX 4070, paired faces re-measured by an independent buffalo_l):
+
+  | arm | cos A | cos B | Δ rendered age | Δ jaw ratio |
+  |---|---:|---:|---:|---:|
+  | A100 (base) | 0.601 | 0.066 | – | – |
+  | blend 75/25 | 0.566 | 0.184 | | |
+  | blend 50/50 | 0.304 | 0.498 | | |
+  | blend 25/75 | 0.169 | 0.616 | | |
+  | B100 | 0.072 | 0.630 | | |
+  | age dial ±30 y (fitted calibration, t=±0.17) | 0.60 / 0.59 | | +0.6 / −0.7 (noise ±2.5) | |
+  | age step t=−0.75 / +0.75 | 0.55 / 0.47 | | **+6.3 / +3.7** (both older) | |
+  | jaw step t=−0.75 / +0.75 | 0.52 / 0.48 | | | −0.011 / +0.009 |
+
+  Age is not monotone, sex has no signed response, and expression is null, so those
+  dials are disabled with the verdict shown (`roop/assets/identity_render_validation.json`).
+  Jaw is monotone but weak; it stays enabled with ±1 = t 0.75. Blending is off until
+  the user enables it. Not tried: other swap models, per-model directions, or a
+  direction fitted in the swapper's own latent (hyperswap uses w600k directly, so a
+  different space would need a different model).
+
 ## 2026-09-25
 
 - **Swap-model INT8 / FP8 quantization, off by default (measured, not shipped).**
