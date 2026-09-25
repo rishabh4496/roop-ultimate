@@ -87,6 +87,10 @@ UI_SETTINGS = (
     ('output_video_format', 'Video format', 'Output'),
     ('output_video_codec', 'Video codec', 'Output'),
     ('video_quality', 'Video quality', 'Output'),
+    ('hdr_pipeline', 'HDR / high-bit-depth colour path', 'Output'),
+    ('hdr_source_transfer', 'Source transfer curve (HDR)', 'Output'),
+    ('hdr_source_primaries', 'Source colour primaries (HDR)', 'Output'),
+    ('hdr_output_codec', 'HDR output codec', 'Output'),
     ('use_os_temp_folder', 'Use OS temp folder', 'Output'),
     ('output_show_video', 'Show video in browser (re-encodes)', 'Output'),
     ('synthetic_label', 'Label output as synthetic media (metadata tag)', 'Output'),
@@ -157,6 +161,12 @@ ENV_SETTINGS = (
     ('upright_remeasure', 'ROOP_UPRIGHT_REMEASURE', 'tristate'),
     # Not tri-state: a model choice and a priority class.
     ('recognizer', 'ROOP_ADAFACE', 'recognizer'),
+    # The managed HDR / high-bit-depth path (roop/hdr_pipeline.py) reads all
+    # four per render and per preview probe; 'auto' leaves the env alone.
+    ('hdr_pipeline', 'ROOP_HDR', 'value'),
+    ('hdr_source_transfer', 'ROOP_HDR_TRANSFER', 'value'),
+    ('hdr_source_primaries', 'ROOP_HDR_PRIMARIES', 'value'),
+    ('hdr_output_codec', 'ROOP_HDR_CODEC', 'value'),
     ('identity_confidence_threshold', 'ROOP_IDENTITY_CONFIDENCE_THRESHOLD', 'value'),
     ('process_priority', 'ROOP_PRIORITY', 'priority'),
 )
@@ -167,7 +177,9 @@ ENV_SETTINGS = (
 # key here whose variable IS read at import would make the panel lie: it would
 # re-export a value nothing reads again.
 LIVE_ENV_SETTINGS = ('perf_batch_max', 'perf_nvenc_preset', 'perf_gpu_affine',
-                     'perf_pinned_buffers', 'temporal_step', 'identity_confidence_threshold')
+                     'perf_pinned_buffers', 'temporal_step', 'identity_confidence_threshold',
+                     'hdr_pipeline', 'hdr_source_transfer', 'hdr_source_primaries',
+                     'hdr_output_codec')
 
 # Variables apply_env/apply_live_env set from config in this process -- as
 # opposed to ones the launcher or a benchmark put in the environment, which
@@ -795,6 +807,14 @@ class Settings:
                       f"back to libx264.")
                 self.output_video_codec = 'libx264'
         self.video_quality = self.default_get(data, 'video_quality', 14)
+        # Managed HDR / high-bit-depth colour path (roop/hdr_pipeline.py).
+        # 'auto' takes it for PQ/HLG and >8-bit sources only; the two source
+        # overrides exist because Log curves (S-Log3, Canon Log) and camera
+        # gamuts have no H.273 tag -- cameras label them bt709 or nothing.
+        self.hdr_pipeline = self.default_get(data, 'hdr_pipeline', 'auto')
+        self.hdr_source_transfer = self.default_get(data, 'hdr_source_transfer', 'auto')
+        self.hdr_source_primaries = self.default_get(data, 'hdr_source_primaries', 'auto')
+        self.hdr_output_codec = self.default_get(data, 'hdr_output_codec', 'auto')
         self.clear_output = self.default_get(data, 'clear_output', True)
         # Dynamically scale threads to saturate GPU without OOM
         default_threads = 3
@@ -1326,6 +1346,10 @@ class Settings:
             'output_video_format' : self.output_video_format,
             'output_video_codec' : self.output_video_codec,
             'video_quality' : self.video_quality,
+            'hdr_pipeline': self.hdr_pipeline,
+            'hdr_source_transfer': self.hdr_source_transfer,
+            'hdr_source_primaries': self.hdr_source_primaries,
+            'hdr_output_codec': self.hdr_output_codec,
             'clear_output' : self.clear_output,
             'max_threads' : self.max_threads,
             # Provenance for the line above: did the app derive this number, and

@@ -13,6 +13,7 @@ import math
 import os
 
 import numpy as np
+from roop.degrade import swallowed as _swallowed
 
 
 def frame_time(frame_start: int, frame_idx: int, fps: float) -> float:
@@ -143,8 +144,9 @@ def load_audio_16k(audio_path: str) -> np.ndarray:
         import librosa
         samples, _ = librosa.load(audio_path, sr=MEL_SR, mono=True)
         return samples.astype(np.float32)
-    except Exception:
-        pass
+    except Exception as _degrade_error:
+        _swallowed("roop/lipsync_audio.py:146", _degrade_error,
+                   "scipy audio fallback continued")
 
     try:
         from scipy.io import wavfile
@@ -164,7 +166,9 @@ def load_audio_16k(audio_path: str) -> np.ndarray:
             from scipy import signal
             samples = signal.resample(samples, target_len).astype(np.float32)
         return samples
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/lipsync_audio.py:167", _degrade_error,
+                   "empty audio fallback continued")
         return np.array([], dtype=np.float32)
 
 
@@ -186,8 +190,9 @@ def extract_mel_spectrogram(samples: np.ndarray, sr: int = MEL_SR,
             win_length=win_length, n_mels=n_mels, fmin=fmin, fmax=fmax)
         log_mel = np.log(np.clip(mel, a_min=1e-5, a_max=None))
         return log_mel.astype(np.float32)
-    except Exception:
-        pass
+    except Exception as _degrade_error:
+        _swallowed("roop/lipsync_audio.py:189", _degrade_error,
+                   "numpy/scipy mel fallback continued")
 
     # Pure numpy/scipy fallback STFT
     try:
@@ -214,7 +219,9 @@ def extract_mel_spectrogram(samples: np.ndarray, sr: int = MEL_SR,
         mel = fb @ power_spec
         log_mel = np.log(np.clip(mel, a_min=1e-5, a_max=None))
         return log_mel.astype(np.float32)
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("roop/lipsync_audio.py:217", _degrade_error,
+                   "zero mel fallback continued")
         return np.zeros((n_mels, max(1, len(samples) // hop_length)), dtype=np.float32)
 
 

@@ -17,6 +17,7 @@ from roop.processors.Lipsync_MuseTalk import face_bbox_crop, crop_box_to_local
 from roop.lipsync_audio import (
     AudioFeatureCache, build_mel_audio_cache, MEL_N_MELS, MEL_FPS
 )
+from roop.degrade import swallowed as _swallowed
 
 INPUT_SIZE = 96  # Standard Wav2Lip input resolution; Wav2Lip-HQ operates on 96x96 / 192x192 / 256x256
 _WAV2LIP_URL = 'https://github.com/primefaces/roop-models/releases/download/v1.0/wav2lip_hq_fp16.onnx'
@@ -51,8 +52,9 @@ class Lipsync_Wav2Lip:
                 from roop.utilities import is_online
                 if is_online(hosts=("github.com",)):
                     conditional_download(model_dir, [_WAV2LIP_URL])
-            except Exception:
-                pass
+            except Exception as _degrade_error:
+                _swallowed("roop/processors/Lipsync_Wav2Lip.py:54", _degrade_error,
+                           "optional model download skipped")
 
         if os.path.isfile(self.model_path):
             try:
@@ -183,8 +185,9 @@ class Lipsync_Wav2Lip:
                 out = np.transpose(out[0], (1, 2, 0))
                 out = np.clip(out * 255.0, 0, 255).astype(np.uint8)
                 return out
-            except Exception:
-                pass
+            except Exception as _degrade_error:
+                _swallowed("roop/processors/Lipsync_Wav2Lip.py:186", _degrade_error,
+                           "viseme synthesis fallback continued")
 
         # Neural viseme synthesis engine:
         # Generates natural phoneme-to-viseme mouth deformation conditioned on

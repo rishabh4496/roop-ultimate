@@ -41,6 +41,7 @@ class BatchProcessingMixin:
             open_video_capture,
         )
         from roop import face_util
+        from roop import hdr_pipeline as _hdr_pipeline
         from roop import runtime_banner as _runtime_banner
         import roop.util_ffmpeg as util_ffmpeg
         from roop.degrade import swallowed as _swallowed
@@ -320,6 +321,7 @@ class BatchProcessingMixin:
         awebp_frames = None
 
         if is_awebp:
+            _hdr_pipeline.end_session()
             from roop.capturer import _load_animated_webp
             import roop.capturer as _capturer_mod
             _load_animated_webp(source_video)
@@ -330,13 +332,24 @@ class BatchProcessingMixin:
                 width, height = 0, 0
             frame_count = len(awebp_frames[frame_start:frame_end]) if frame_end > frame_start else len(awebp_frames[frame_start:])
         else:
-            cap = cv2.VideoCapture(source_video)
+            # High-bit-depth / HDR sources take the managed colour path: every
+            # reader of this source yields the 8-bit working view and the
+            # writer composites into the 16-bit master (roop/hdr_pipeline.py).
+            _hdr_spec = _hdr_pipeline.begin_session(source_video, target_video)
+            if _hdr_spec is not None:
+                # Do not ask OpenCV for dimensions on a professional source;
+                # it can report 0x0 or refuse HEVC 4:2:2 even though FFmpeg
+                # can decode it correctly.
+                width, height = _hdr_spec.width, _hdr_spec.height
+                cap = None
+            else:
+                cap = cv2.VideoCapture(source_video)
+                width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+                height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
             # `endframe` is exclusive throughout core.py and both readers. Keep
             # progress, resume, and temporal-prepass accounting on that same
             # contract: frames [start, end) contains exactly end - start frames.
             frame_count = frame_end - frame_start
-            width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-            height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
             # NVDEC: swap the cv2 reader for a GPU-decode ffmpeg pipe when the
             # file probes OK (no-op otherwise; ROOP_NVDEC=0 disables). Must use
             # the SOURCE dims, before any processed_resolution override.
@@ -626,6 +639,7 @@ class BatchProcessingMixin:
                     self.videowriter = None
                     if cap is not None:
                         cap.release()
+                    _hdr_pipeline.end_session()
                     return
                 if skip > 0:
                     print(f'[Resume] found {skip} already-encoded frames from an '
@@ -635,7 +649,13 @@ class BatchProcessingMixin:
                     frame_count -= skip
             else:
                 codec = roop.globals.video_encoder
-                if (hardware_stream_enabled() and
+                _hdr_spec = _hdr_pipeline.active_for(source_video)
+                if _hdr_spec is not None:
+                    self.videowriter = _hdr_pipeline.HdrVideoWriter(
+                        target_video, width, height, fps, _hdr_spec, source_video,
+                        start_frame=frame_start, codec=codec,
+                        quality=roop.globals.video_quality)
+                elif (hardware_stream_enabled() and
                         codec in {'h264_nvenc', 'hevc_nvenc', 'av1_nvenc'}):
                     self.videowriter = NVHardwareVideoWriter(
                         target_video,
@@ -904,6 +924,7 @@ class BatchProcessingMixin:
             if self.output_to_cam and self.streamwriter is not None:
                 self.streamwriter.Close()
                 self.streamwriter = None
+            _hdr_pipeline.end_session()
             self.frames_queue.clear()
             self.processed_queue.clear()
             self._precomputed_mode = False

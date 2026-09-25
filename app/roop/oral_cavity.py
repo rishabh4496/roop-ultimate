@@ -12,6 +12,7 @@ import numpy as np
 
 import roop.globals
 from roop.typing import Frame
+from roop.degrade import swallowed as _swallowed
 
 
 def _get_landmarks_106(face):
@@ -107,8 +108,9 @@ def detect_oral_cavity_mask(frame: Frame, face, parser=None) -> tuple[np.ndarray
                                 'bbox': (int(xs.min()), int(ys.min()), int(xs.max()), int(ys.max()))
                             }
                             return mask, metrics
-        except Exception:
-            pass
+        except Exception as _degrade_error:
+            _swallowed("roop/oral_cavity.py:110", _degrade_error,
+                       "landmark fallback continued")
 
     # 2. Geometric landmark fallback
     inner_pts = _get_inner_mouth_landmarks(face)
@@ -381,8 +383,8 @@ def coarticulate_jawline_frame(frame: Frame, target_face, phoneme_energy: float 
                 out = frame.copy()
                 out[ry0:ry1, rx0:rx1] = out_roi
                 return out
-        except Exception:
-            pass
+        except Exception as _degrade_error:
+            _swallowed("roop/oral_cavity.py:384", _degrade_error,
+                       "jaw warp fallback continued")
 
     return frame
-

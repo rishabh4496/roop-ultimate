@@ -146,7 +146,8 @@ class TrackingMixin:
 
         tmp = tempfile.mkdtemp(prefix='sam2_')
         try:
-            cap = cv2.VideoCapture(source_video)
+            from roop import hdr_pipeline as _hdr_pipeline
+            cap = _hdr_pipeline.video_capture(source_video)
             try:
                 if frame_start and frame_start > 0:
                     cap.set(cv2.CAP_PROP_POS_FRAMES, frame_start)
@@ -2749,7 +2750,8 @@ class TrackingMixin:
                     break
                 handle(idx, frame)
         else:
-            cap = cv2.VideoCapture(source_video)
+            from roop import hdr_pipeline as _hdr_pipeline
+            cap = _hdr_pipeline.video_capture(source_video)
             try:
                 if frame_start > 0:
                     cap.set(cv2.CAP_PROP_POS_FRAMES, frame_start)

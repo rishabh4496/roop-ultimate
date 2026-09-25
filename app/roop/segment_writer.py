@@ -179,6 +179,13 @@ class SegmentedVideoWriter:
             "signature": signature or "",
             "writer_options": self._writer_options,
         }
+        # Only present for a managed HDR render (roop/hdr_pipeline.py), so an
+        # SDR manifest written before this key existed still matches (None ==
+        # absent) while an HDR run never resumes into SDR parts or back.
+        from roop import hdr_pipeline
+        _hdr = hdr_pipeline.session_descriptor() if source_video else None
+        if _hdr is not None:
+            self._identity["hdr"] = _hdr
 
         self.segments, self.resume_frames = self._load_resume()
         self._seg_index = len(self.segments)
@@ -219,6 +226,11 @@ class SegmentedVideoWriter:
         try:
             with open(manifest_path(self.target_video), "r", encoding="utf-8") as fh:
                 m = json.load(fh)
+            # Check both directions. A current SDR identity has no ``hdr``
+            # key, but an older HDR manifest does; ignoring extra manifest
+            # keys would otherwise resume HDR segments through an SDR writer.
+            if ("hdr" in m) != ("hdr" in self._identity):
+                return [], 0
             for key, want in self._identity.items():
                 have = m.get(key)
                 if key == "fps":
@@ -272,7 +284,19 @@ class SegmentedVideoWriter:
         self._cur_seg_file = f"{self._seg_prefix}{self._seg_index:04d}{self._seg_ext}"
         path = os.path.join(self._dir, self._cur_seg_file)
         active_codec = self._effective_codec or self.codec
-        if (hardware_stream_enabled() and
+        from roop import hdr_pipeline
+        hdr_spec = hdr_pipeline.active_for(self._identity["source"]) if self._identity["source"] else None
+        if hdr_spec is not None:
+            # The segment's first source frame: the trim start plus every frame
+            # already committed (inherited parts included -- _next_first counts
+            # them), so the writer's own master decode lines up with it.
+            self._writer = hdr_pipeline.HdrVideoWriter(
+                path, self.size[0], self.size[1], self.fps, hdr_spec,
+                self._identity["source"],
+                start_frame=self._identity["frame_start"] + self._next_first - 1,
+                codec=active_codec, quality=self.crf,
+                preset=self._writer_options.get("preset"))
+        elif (hardware_stream_enabled() and
                 active_codec in {"h264_nvenc", "hevc_nvenc", "av1_nvenc"}):
             self._writer = NVHardwareVideoWriter(
                 path,

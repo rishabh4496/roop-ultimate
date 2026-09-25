@@ -53,6 +53,10 @@
     "output_video_format",
     "output_video_codec",
     "video_quality",
+    "hdr_pipeline",
+    "hdr_source_transfer",
+    "hdr_source_primaries",
+    "hdr_output_codec",
     "use_os_temp_folder",
     "output_show_video",
     "synthetic_label",
@@ -131,6 +135,54 @@
       "ui": {
         "label": "Video quality",
         "section": "Output"
+      }
+    },
+    "hdr_pipeline": {
+      "default": "auto",
+      "type": "str",
+      "ui": {
+        "label": "HDR / high-bit-depth colour path",
+        "section": "Output"
+      },
+      "env": {
+        "var": "ROOP_HDR",
+        "kind": "value"
+      }
+    },
+    "hdr_source_transfer": {
+      "default": "auto",
+      "type": "str",
+      "ui": {
+        "label": "Source transfer curve (HDR)",
+        "section": "Output"
+      },
+      "env": {
+        "var": "ROOP_HDR_TRANSFER",
+        "kind": "value"
+      }
+    },
+    "hdr_source_primaries": {
+      "default": "auto",
+      "type": "str",
+      "ui": {
+        "label": "Source colour primaries (HDR)",
+        "section": "Output"
+      },
+      "env": {
+        "var": "ROOP_HDR_PRIMARIES",
+        "kind": "value"
+      }
+    },
+    "hdr_output_codec": {
+      "default": "auto",
+      "type": "str",
+      "ui": {
+        "label": "HDR output codec",
+        "section": "Output"
+      },
+      "env": {
+        "var": "ROOP_HDR_CODEC",
+        "kind": "value"
       }
     },
     "clear_output": {

@@ -2223,10 +2223,19 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                 for fr in subset:
                     yield fr
             else:
-                cap = cv2.VideoCapture(source_video)
-                source_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-                source_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-                source_fps = cap.get(cv2.CAP_PROP_FPS)
+                from roop import hdr_pipeline as _hdr_pipeline
+                _hdr_spec = _hdr_pipeline.active_for(source_video)
+                if _hdr_spec is not None:
+                    # The OpenCV probe is not reliable for 10/12-bit HEVC;
+                    # the managed spec is already authoritative.
+                    source_width, source_height = _hdr_spec.width, _hdr_spec.height
+                    source_fps = getattr(self, '_lipsync_fps', 0.0)
+                    cap = None
+                else:
+                    cap = cv2.VideoCapture(source_video)
+                    source_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+                    source_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+                    source_fps = cap.get(cv2.CAP_PROP_FPS)
                 cap = open_video_capture(
                     source_video,
                     source_width,

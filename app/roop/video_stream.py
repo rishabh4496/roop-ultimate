@@ -19,6 +19,7 @@ from roop.ffmpeg_path import (NVENC_PRESET_DEFAULT, NVENC_PRESETS, ffmpeg_binary
                               frame_rate_arg)
 from roop.util_ffmpeg import clamp_quality
 from roop import synthetic_label as _synthetic_label
+from roop.degrade import swallowed as _swallowed
 
 logger = logging.getLogger("roop.video")
 
@@ -215,8 +216,9 @@ class NVHardwareVideoReader:
         except subprocess.TimeoutExpired:
             try:
                 proc.kill()
-            except Exception:
-                pass
+            except Exception as _degrade_error:
+                _swallowed("roop/video_stream.py:219", _degrade_error,
+                           "fallback continued")
             _, stderr = proc.communicate()
         except Exception as exc:
             logger.debug("NVDEC process cleanup failed: %s", exc)
@@ -781,6 +783,21 @@ def open_video_capture(
     FFmpeg/CUDA, explicit small-card policy, or an operator rollback.  This
     keeps both the RTX 4070 and the sub-7GB RTX 3060 behavior bounded.
     """
+    from roop import hdr_pipeline
+    hdr_spec = hdr_pipeline.active_for(video_path)
+    if hdr_spec is not None:
+        # A managed HDR render reads the 8-bit working view of the 16-bit
+        # master whatever the NVDEC policy says (it decodes on the GPU when it
+        # can and falls back to software on its own).
+        if fallback_capture is not None:
+            try:
+                fallback_capture.release()
+            except Exception as _degrade_error:
+                _swallowed("roop/video_stream.py:793", _degrade_error,
+                           "fallback continued")
+        logger.info("%s: managed HDR working view", tag)
+        return hdr_pipeline.HdrFrameReader(video_path, hdr_spec, fps=fps,
+                                           start_frame=start_frame, share=True)
     if fallback_capture is None:
         import cv2
         fallback_capture = cv2.VideoCapture(video_path)

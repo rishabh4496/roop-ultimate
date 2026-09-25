@@ -312,6 +312,12 @@ def _needs_pipe(video_path: str) -> bool:
         return True
     if mode == "0":
         return False
+    # A high-bit-depth / HDR source previews through the same managed working
+    # view the render reads (roop/hdr_pipeline.py): cv2 would show a PQ or Log
+    # signal as flat gamma video, and a face captured from that picture is not
+    # the face the render will match against.
+    if _hdr_spec(video_path) is not None:
+        return True
     info = _probe_video(video_path)
     if not info:
         return False
@@ -331,6 +337,15 @@ def _release_pipe():
     _pipe_reader = None
     _pipe_path = None
     _pipe_next = None
+
+
+def _hdr_spec(video_path: str):
+    try:
+        from roop import hdr_pipeline
+        return hdr_pipeline.spec_for(video_path)
+    except Exception as _degrade_error:
+        _swallowed("roop/capturer.py:_hdr_spec", _degrade_error, "fallback continued")
+        return None
 
 
 def _read_via_pipe(video_path: str, target: int):
@@ -360,10 +375,16 @@ def _read_via_pipe(video_path: str, target: int):
         _release_pipe()
     if _pipe_reader is None:
         try:
-            from roop.nvdec_reader import FFmpegVideoReader, _probe, nvdec_wanted
-            hw = "cuda" if (nvdec_wanted() and _probe(video_path)) else None
-            reader = FFmpegVideoReader(video_path, info["w"], info["h"], info["fps"],
-                                       hwaccel=hw)
+            hdr_spec = _hdr_spec(video_path)
+            if hdr_spec is not None:
+                from roop.hdr_pipeline import HdrFrameReader
+                reader = HdrFrameReader(video_path, hdr_spec, fps=info.get("fps", 0.0),
+                                        prefetch=1)
+            else:
+                from roop.nvdec_reader import FFmpegVideoReader, _probe, nvdec_wanted
+                hw = "cuda" if (nvdec_wanted() and _probe(video_path)) else None
+                reader = FFmpegVideoReader(video_path, info["w"], info["h"], info["fps"],
+                                           hwaccel=hw)
             # set() is only honoured before the first read, which is exactly the
             # state a freshly constructed reader is in.
             reader.set(cv2.CAP_PROP_POS_FRAMES, target)
@@ -508,11 +529,26 @@ def get_video_frame(video_path: str, frame_number: int = 0) -> Optional[Frame]:
         # one where cv2 silently returns the WRONG frame (see _needs_pipe).
         if video_path not in _pipe_needed and _needs_pipe(video_path):
             _pipe_needed.add(video_path)
+            # The cv2 handle was only used for timeline metadata. Release it
+            # before starting the managed FFmpeg reader so a 4K/10-bit preview
+            # cannot hold two decoders and two frame buffers for one source.
+            if current_capture is not None:
+                try:
+                    current_capture.release()
+                except Exception as _degrade_error:
+                    _swallowed("roop/capturer.py:536", _degrade_error,
+                               "fallback continued")
+                current_capture = None
             info = _probe_video(video_path) or {}
-            print(f"[Capturer] {os.path.basename(video_path)} is "
-                  f"{info.get('codec', '?')}/{info.get('pix_fmt', '?')} — OpenCV mis-seeks "
-                  f"this format silently, so preview/timeline will decode it through "
-                  f"ffmpeg instead.", flush=True)
+            if _hdr_spec(video_path) is not None:
+                print(f"[Capturer] {os.path.basename(video_path)} is "
+                      f"{info.get('pix_fmt', '?')} — preview/timeline show the managed "
+                      f"HDR working view the render swaps on.", flush=True)
+            else:
+                print(f"[Capturer] {os.path.basename(video_path)} is "
+                      f"{info.get('codec', '?')}/{info.get('pix_fmt', '?')} — OpenCV mis-seeks "
+                      f"this format silently, so preview/timeline will decode it through "
+                      f"ffmpeg instead.", flush=True)
         if video_path in _pipe_needed:
             frame = _read_via_pipe(video_path, target)
             _cache_put(key, frame)

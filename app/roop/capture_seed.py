@@ -134,7 +134,8 @@ def scan_video(video, samples=None, time_budget=90.0, on_progress=None, expect=N
     from roop.face_util import get_all_faces
 
     t0 = time.time()
-    cap = cv2.VideoCapture(video)
+    from roop import hdr_pipeline
+    cap = hdr_pipeline.open_capture(video)
     try:
         total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         fps = cap.get(cv2.CAP_PROP_FPS) or 30.0

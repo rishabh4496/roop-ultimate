@@ -1680,6 +1680,17 @@ def batch_process(output_method, files:list[ProcessEntry], use_new_method) -> No
                 _swaps_before = getattr(process_mgr, 'total_swaps', 0)
                 _has_per_frame_masks = bool(getattr(roop.globals, 'mask_per_frame', {}))
                 if (is_streaming_only == False and roop.globals.keep_frames) or not use_new_method or (is_streaming_only == False and _has_per_frame_masks):
+                    try:
+                        from roop import hdr_pipeline as _hdr_pipeline
+                        if _hdr_pipeline.spec_for(v.filename) is not None:
+                            # The frame-folder path round-trips through 8-bit
+                            # images; only the in-memory render carries the
+                            # managed HDR / 10-bit path. Say so, don't pretend.
+                            update_status('HDR / high-bit-depth source: Keep Frames and per-frame '
+                                          'masks render through 8-bit frame files, so this output '
+                                          'is 8-bit SDR-tagged. Turn them off for a 10-bit HDR render.')
+                    except Exception as _degrade_error:
+                        _swallowed("roop/core.py:hdr-extract-notice", _degrade_error, "fallback continued")
                     util.create_temp(v.filename)
                     update_status('Extracting frames...')
                     extraction_ok = ffmpeg.extract_frames(v.filename,v.startframe,v.endframe, fps)

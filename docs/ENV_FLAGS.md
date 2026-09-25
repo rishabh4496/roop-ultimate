@@ -118,6 +118,10 @@ thing from a terminal and prints the tables without touching the config.
 | `ROOP_NVDEC` | auto (on) | Hardware NVDEC video reader. `0` disables; `1` forces (skips the auto probe). |
 | `ROOP_NVENC_PRESET` | `p5` | NVENC encoder preset (`p1`–`p7`). |
 | `ROOP_ENCODER_PRESET` | model default | CPU x264/x265 preset (e.g. `faster`) — lossless encode speedup at fixed CRF. |
+| `ROOP_HDR` | `auto` | Managed HDR / high-bit-depth colour path ([HDR_PIPELINE.md](HDR_PIPELINE.md)). `auto`: on for PQ/HLG, a Log override, or any >8-bit source; `on`: every video; `off`: legacy 8-bit. Setting `hdr_pipeline`. |
+| `ROOP_HDR_TRANSFER` | `auto` | Source curve override: `pq`, `hlg`, `bt709`, `slog3`, `clog`, `clog2`, `clog3`. Log curves have no stream tag, so Log footage needs this. Setting `hdr_source_transfer`. |
+| `ROOP_HDR_PRIMARIES` | `auto` | Source primaries override: `bt709`, `bt2020`, `p3d65`, `dcip3`, `sgamut3`, `sgamut3cine`, `cinemagamut`. Setting `hdr_source_primaries`. |
+| `ROOP_HDR_CODEC` | `auto` | HDR output encoder: `hevc_nvenc`, `av1_nvenc` or `libx265` (only libx265 carries HDR10 mastering-display / MaxCLL SEI). Setting `hdr_output_codec`. |
 | `ROOP_FFMPEG_COLORSPACE` | `bt709` | Keep the established BGR→BT.709 conversion, or explicitly use `off` when the producer already converted the frames. |
 | `ROOP_OUTPUT_QUEUE_DEPTH` | auto | Explicit per-worker processed-frame handoff depth, bounded to 1–4; automatic mode remains RAM/profile controlled. |
 | `ROOP_RESUME` | 1 (on) | Crash-resume: write segments every chunk + manifest so an interrupted run continues. `0` disables. |

@@ -173,6 +173,10 @@ export const FACESWAP_DEFAULTS = {
   lipsync_enabled: false,
   lipsync_audio_source: 'original',
   lipsync_audio_path: null,
+  lipsync_model: 'wav2lip',
+  lipsync_coarticulation_mode: 'keep_target_lips',
+  oral_cavity_restore: true,
+  jaw_coarticulation_strength: 0.6,
 
   // Output
   output_method: 'File',

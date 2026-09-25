@@ -111,7 +111,8 @@ class FaceBank:
         self.clear()
         self.last_video_path = video_path
 
-        cap = cv2.VideoCapture(video_path)
+        from roop import hdr_pipeline
+        cap = hdr_pipeline.open_capture(video_path)
         if not cap.isOpened():
             return []
 

@@ -426,6 +426,17 @@ def wrap_capture(cap, video_path, width, height, fps, tag="decode",
     """Swap a cv2.VideoCapture for the NVDEC pipe reader when enabled and the
     file probes OK; otherwise return the cv2 capture untouched. The returned
     object always supports set/read/get/release."""
+    from roop import hdr_pipeline
+    hdr_spec = hdr_pipeline.active_for(video_path)
+    if hdr_spec is not None:
+        # Pre-passes must see the same working view the render does, or a
+        # track's identity is measured on a different picture from the swap's.
+        try:
+            cap.release()
+        except Exception as _degrade_error:
+            _swallowed("roop/nvdec_reader.py:wrap_capture-hdr", _degrade_error, "fallback continued")
+        return hdr_pipeline.HdrFrameReader(video_path, hdr_spec, fps=fps,
+                                           prefetch=max(1, int(prefetch_depth or 2)))
     if not nvdec_wanted() or width <= 0 or height <= 0:
         return cap
     hwaccel = "cuda"
