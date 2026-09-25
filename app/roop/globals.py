@@ -114,6 +114,10 @@ mask_edge_mode = 'gaussian'
 # procmgr_masking.refine_mask_edges and one_euro.MaskStabilizer.
 mask_guided_filter = False
 mask_flow_warp = False
+# Restore Ultra recombination; see roop/enhance_blend.py.
+restore_ultra_frequency_blend = True
+restore_ultra_detail_weight = 0.75
+restore_ultra_inner_only = False
 # Signed radius in frame pixels applied to the landmark contour.  Positive
 # values dilate the contour, negative values erode it.  Zero preserves the
 # established hull path.

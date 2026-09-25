@@ -112,3 +112,13 @@ def test_guided_filter_is_gated_by_the_setting():
         assert pm.mask_guided_filter_enabled() is True
     finally:
         g.mask_guided_filter = prev
+
+
+def load_tests(loader, tests, pattern):
+    """Expose this module's bare `test_*` functions to `unittest discover`
+    (see tests/unittest_shim.py). pytest never calls load_tests."""
+    try:
+        from tests.unittest_shim import load_tests_for
+    except ImportError:  # discovery started from inside tests/
+        from unittest_shim import load_tests_for
+    return load_tests_for(globals())

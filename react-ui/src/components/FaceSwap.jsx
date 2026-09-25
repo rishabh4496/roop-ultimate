@@ -1145,6 +1145,9 @@ export default function FaceSwap({
       mask_edge_mode: activeParams.mask_edge_mode,
       mask_flow_warp: !!activeParams.mask_flow_warp,
       mask_guided_filter: !!activeParams.mask_guided_filter,
+      restore_ultra_frequency_blend: activeParams.restore_ultra_frequency_blend !== false,
+      restore_ultra_detail_weight: num(activeParams.restore_ultra_detail_weight, 0.75),
+      restore_ultra_inner_only: !!activeParams.restore_ultra_inner_only,
       mask_erode_dilate_radius: num(activeParams.mask_erode_dilate_radius, 0),
       boundary_illumination_strength: activeParams.boundary_illumination_strength,
       mouth_mask_blend: activeParams.mouth_mask_blend,
@@ -2916,6 +2919,17 @@ export default function FaceSwap({
           <Slider label="🧩 Swap model's own face mask" info="Only hififace and hyperswap emit this — every other swapper ignores the setting, so it is safe to leave on. Those two nets output a face mask alongside the swapped image, saying where they actually synthesised a face, and the pipeline used to throw it away. That matters because the paste mask cannot know: it is an ellipse intersected with the convex hull of the 106 landmarks, whose forehead extension runs 60% above the eyebrows and therefore into the HAIR. Measured against hififace's own verdict, 15–27% of the paste mask is territory the model says is not face on a FRONTAL head, and 31% on a profile — and looking at where that excess lands, it is the band above the hairline frontally, and a wedge of hair plus background behind the head on a profile. That is very likely why eyes/nose/mouth read as distorted at angles: not the features themselves, but the invalid territory around them being composited. Not pose-gated, unlike the two angle controls above, because the net derives this from the actual image and its verdict is right at every angle. 100 = trust the model fully, 0 = off (previous behaviour), which is the default — this is new and has not been judged on real footage yet. It is the first thing to raise if a hififace or hyperswap paste reaches up into hair." min={0} max={100} step={5} value={num(p.swap_model_mask_strength, 0)} onChange={(v) => set('swap_model_mask_strength', v)} />
           <Toggle label="Rescue small faces" info="When a frame has no detected face, retries on a 2x upscale to catch tiny/distant faces — without raising the global detection resolution for every frame." checked={!!p.rescue_small_faces} onChange={(v) => set('rescue_small_faces', v)} />
           <Slider label="Swapping steps" info="more = more likeness" min={1} max={5} step={1} value={num(p.num_swap_steps, 1)} onChange={(v) => set('num_swap_steps', v)} />
+          {p.selected_enhancer === 'Restore Ultra' && (
+            <>
+              <Toggle label="Restore Ultra: keep the swap's tone and shape" info="Takes lighting, skin tone and the face's large-scale shape from the SWAP and only the fine detail (pores, lash and lip edges) from the restorer, instead of the restorer's whole output. Measured on 72 real faces: identity to the source 0.573 -> 0.613 (better on 67/72), skin texture 1.58x -> 1.09x that of the real footage. Off = the restorer's full output, as before." checked={p.restore_ultra_frequency_blend !== false} onChange={(v) => set('restore_ultra_frequency_blend', v)} />
+              {p.restore_ultra_frequency_blend !== false && (
+                <>
+                  <Slider label="Restore Ultra detail fidelity" info="How much of the restorer's fine detail goes on top of the swap. 0 = the swap's own detail, 1 = all of the restorer's. Measured: 0.5 keeps the most identity but reads softer than real footage; 1.0 is as textured as the plain restorer." min={0} max={1} step={0.05} value={num(p.restore_ultra_detail_weight, 0.75)} onChange={(v) => set('restore_ultra_detail_weight', v)} />
+                  <Toggle label="Restore only eyes, brows, nose and lips" info="Applies the restorer only to the facial features, feathered into the swap's own skin. Keeps the most identity (0.612) but the skin is the swap's, which is softer than real footage (0.84x)." checked={!!p.restore_ultra_inner_only} onChange={(v) => set('restore_ultra_inner_only', v)} />
+                </>
+              )}
+            </>
+          )}
           {p.selected_enhancer === 'Adaptive' && (
             <Select
               label="Adaptive enhancer profile"

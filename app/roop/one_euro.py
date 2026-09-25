@@ -546,7 +546,10 @@ class MaskStabilizer(EnhancerStabilizer):
             return None
         try:
             return self._flow._observation(guide, self._flow.flow_size)
-        except Exception:
+        except Exception as exc:
+            from roop.degrade import swallowed
+            swallowed("roop/one_euro.py:MaskStabilizer._flow_gray", exc,
+                      "flow warp declined for this face")
             return None
 
     def apply(self, mask, kps, t, guide=None):
@@ -597,7 +600,12 @@ class MaskStabilizer(EnhancerStabilizer):
                     else:
                         previous = warped
                         self.flow_stats['applied'] += 1
-                else:
+                elif t != tr['last_t']:
+                    # t == last_t is the same frame's mask handed back in a
+                    # second time (ProcessMgr re-applies the stabilizer after
+                    # process_mask already did); blending it with itself is a
+                    # no-op, and counting it would read as half the faces
+                    # declined.
                     self.flow_stats['declined'] += 1
             if self.fast_restore_alpha > 0.0:
                 # Positive delta means more of the original should be restored.

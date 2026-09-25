@@ -607,6 +607,18 @@
       "default": false,
       "type": "bool"
     },
+    "restore_ultra_frequency_blend": {
+      "default": true,
+      "type": "bool"
+    },
+    "restore_ultra_detail_weight": {
+      "default": 0.75,
+      "type": "float"
+    },
+    "restore_ultra_inner_only": {
+      "default": false,
+      "type": "bool"
+    },
     "stabilize_landmarks": {
       "default": true,
       "type": "bool"

@@ -4450,6 +4450,9 @@ def preview(payload: dict = Body(...)):
         roop_globals.mask_edge_mode = payload.get("mask_edge_mode", getattr(roop_globals.CFG, "mask_edge_mode", "gaussian"))
         roop_globals.mask_guided_filter = bool(payload.get("mask_guided_filter", getattr(roop_globals.CFG, "mask_guided_filter", False)))
         roop_globals.mask_flow_warp = bool(payload.get("mask_flow_warp", getattr(roop_globals.CFG, "mask_flow_warp", False)))
+        roop_globals.restore_ultra_frequency_blend = bool(payload.get("restore_ultra_frequency_blend", getattr(roop_globals.CFG, "restore_ultra_frequency_blend", True)))
+        roop_globals.restore_ultra_detail_weight = float(payload.get("restore_ultra_detail_weight", getattr(roop_globals.CFG, "restore_ultra_detail_weight", 0.75)))
+        roop_globals.restore_ultra_inner_only = bool(payload.get("restore_ultra_inner_only", getattr(roop_globals.CFG, "restore_ultra_inner_only", False)))
         roop_globals.mask_erode_dilate_radius = int(payload.get(
             "mask_erode_dilate_radius",
             getattr(roop_globals.CFG, "mask_erode_dilate_radius", 0)))
@@ -4959,6 +4962,9 @@ def _run_swap(payload):
         roop_globals.mask_edge_mode = payload.get("mask_edge_mode", getattr(roop_globals.CFG, "mask_edge_mode", "gaussian"))
         roop_globals.mask_guided_filter = bool(payload.get("mask_guided_filter", getattr(roop_globals.CFG, "mask_guided_filter", False)))
         roop_globals.mask_flow_warp = bool(payload.get("mask_flow_warp", getattr(roop_globals.CFG, "mask_flow_warp", False)))
+        roop_globals.restore_ultra_frequency_blend = bool(payload.get("restore_ultra_frequency_blend", getattr(roop_globals.CFG, "restore_ultra_frequency_blend", True)))
+        roop_globals.restore_ultra_detail_weight = float(payload.get("restore_ultra_detail_weight", getattr(roop_globals.CFG, "restore_ultra_detail_weight", 0.75)))
+        roop_globals.restore_ultra_inner_only = bool(payload.get("restore_ultra_inner_only", getattr(roop_globals.CFG, "restore_ultra_inner_only", False)))
         roop_globals.mask_erode_dilate_radius = int(payload.get(
             "mask_erode_dilate_radius",
             getattr(roop_globals.CFG, "mask_erode_dilate_radius", 0)))

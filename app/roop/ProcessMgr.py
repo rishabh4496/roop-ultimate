@@ -3079,6 +3079,34 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
     def _cur_enh_stab(self):
         return getattr(self._tls, 'enh', None) if self._parallel_stab else self.enh_stabilizer
 
+    def _restore_ultra_recombine(self, restored, swap, target_face, M,
+                                 scale_factor):
+        """Restore Ultra: low band from the swap, w x high band from the
+        restorer (setting `restore_ultra_frequency_blend`, weight
+        `restore_ultra_detail_weight`), optionally only over eyes/brows/nose/
+        lips (`restore_ultra_inner_only`). See roop.enhance_blend for the
+        measurement. Never raises: a failure returns the restorer's output."""
+        if not bool(getattr(roop.globals, 'restore_ultra_frequency_blend', True)):
+            return restored
+        try:
+            from roop import enhance_blend
+            w = float(getattr(roop.globals, 'restore_ultra_detail_weight', 0.75))
+            region = None
+            if bool(getattr(roop.globals, 'restore_ultra_inner_only', False)):
+                lm = getattr(target_face, 'landmark_2d_106', None)
+                if lm is not None and M is not None:
+                    lm = cv2.transform(np.asarray(lm, np.float32)[None], M)[0]
+                    lm *= float(scale_factor)
+                    region = enhance_blend.inner_feature_weight(
+                        lm, restored.shape)
+            with _prof('enhance_recombine'):
+                return enhance_blend.frequency_blend(swap, restored, weight=w,
+                                                     region=region)
+        except Exception as exc:
+            _swallowed("roop/ProcessMgr.py:_restore_ultra_recombine", exc,
+                       "restorer output used as-is")
+            return restored
+
     def _cur_mask_stab(self):
         return getattr(self._tls, 'mask', None) if self._parallel_stab else self.mask_stabilizer
 
@@ -5596,6 +5624,11 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                     enhanced_frame = protect_restorer_output(
                         enhanced_frame, fake_frame,
                         _target_appearance.get('tier'))
+                if (enhanced_frame is not None
+                        and getattr(p, 'processorname', None) == 'restore_ultra'):
+                    enhanced_frame = self._restore_ultra_recombine(
+                        enhanced_frame, fake_frame, target_face, M,
+                        scale_factor)
 
         # ── Anti-flicker: temporally smooth the enhanced aligned crop ─────────
         # enhanced_frame is registered to the canonical face template, so a
