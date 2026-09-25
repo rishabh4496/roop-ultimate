@@ -41,6 +41,32 @@ Status labels:
 | IS-Net / foreground masking | ORT + TRT/CUDA | safe/reference | not-validated | candidate | unsupported | unsupported | unsupported | available | available | yes |
 | DMDNet | PyTorch | required/reference | unsafe | unsupported | unsupported | unsupported | unsupported | available if PyTorch model is explicitly validated | available | no |
 
+## Swap-model INT8 / FP8 (native TensorRT, 2026-09-25)
+
+`swap_quantization` (default `off`) moves the swap net's batch-1 calls onto a native
+TensorRT engine from `roop/trt_quant.py`. The ORT session stays loaded for batched calls
+and as the fallback. `auto` picks FP8 at compute capability 8.9 or above, INT8 from 8.0
+to 8.6, and FP16 below that. FP8 is explicit-only in TensorRT: amax over the calibration
+set, then E4M3 Q/DQ on every Conv/ConvTranspose except the final projections, with FP32
+scales. An FP16 graph is lifted to FP32 first, because TensorRT folds constants to FP32
+and an FP16 scale then matches no tactic. INT8 uses `IInt8EntropyCalibrator2`, which is
+deprecated in TensorRT 10.1+ but still functional. There is no E5M2 in TensorRT
+inference; scales are FP32.
+
+hyperswap_1a on the RTX 4070 (TensorRT 10.9.0.34, 186 held-out faces; the calibration
+set is 500 faces over 27 pose/light/tone/occlusion strata):
+
+| Tier | Layers at tier | GPU ms/call | Identity vs FP16 | Faces losing >0.02 | Decision |
+|---|---:|---:|---:|---:|---|
+| FP16 native | 240 half | 4.17 | reference | - | no gain: 8.9 ms wall vs ORT 6.4 |
+| INT8 | 56 | 3.69 | -0.0260 (worst -0.11) | 59.1% | **unsafe**: identity loss in every stratum |
+| FP8 | **0** | 14.48 | +0.0043 | 2.2% | **unsupported on Ada**: fake-quant kernels; rejected at build |
+
+An engine that runs no layer at its tier is rejected, and the rejection is cached under
+the same identity, so it is not rebuilt on each start. The RTX 3060 (the INT8 tier) is
+**pending**. Run `tools/build_calibration_set.py`, then `tests/quant_quality_bench.py`,
+on that machine.
+
 ## Safety decisions
 
 GPEN 1024/2048 retain the existing FP32 TensorRT guard because FP16

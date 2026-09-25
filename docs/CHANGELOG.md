@@ -7,6 +7,37 @@ folder). Entries before 2026-09-21 were moved here from the README on 2026-09-22
 
 ## 2026-09-25
 
+- **Swap-model INT8 / FP8 quantization, off by default (measured, not shipped).**
+  `roop/trt_quant.py` builds a native TensorRT engine for the swap net, calibrated on
+  500 real face crops, and runs it with zero-copy I/O: persistent torch CUDA tensors
+  bound with `set_tensor_address`, and `execute_async_v3` on a torch stream. The tier
+  is picked by compute capability: FP8 at 8.9 or above, INT8 from 8.0 to 8.6, FP16
+  below that. The setting is `swap_quantization`: `off`, `auto`, `fp8`, `int8` or
+  `fp16`. `tools/build_calibration_set.py` harvests the set: it wraps the swapper's own
+  `_infer` during `live_swap`, so the crops went through the live preprocessing by
+  construction, and it asserts the blob is exact. The 500 samples are stratified by
+  pose, light, ITA skin tone and occlusion over 17 clips; two more clips are held out.
+  Engines and calibration caches carry a manifest (model SHA, set SHA, TensorRT, GPU,
+  capability, recipe). A mismatch recalibrates headlessly with a tqdm bar.
+  Measured on the RTX 4070 against 186 held-out faces (`tests/quant_quality_bench.py`):
+
+  | arm | id to source | vs FP16 | faces losing >0.02 | PSNR vs FP16 | GPU ms/call |
+  |---|---:|---:|---:|---:|---:|
+  | ORT + TRT mixed (shipped) | 0.6663 | 0.0000 | 0.0% | 62.8 | (6.37 wall) |
+  | native FP16 | 0.6663 | - | - | - | 4.17 |
+  | native INT8 (56 layers INT8) | 0.6403 | **-0.0260** | **59.1%** | 28.0 | 3.69 |
+  | native FP8 Q/DQ | 0.6707 | +0.0043 | 2.2% | 44.0 | **14.48** |
+
+  **INT8 fails the identity gate.** It saves 0.48 ms of GPU per face and costs 0.026
+  of identity, the worst face 0.11. The drop is in every stratum, from -0.018 to
+  -0.034. **FP8 does not execute on Ada with TensorRT 10.9**: 0 layers run in FP8, and
+  the Q/DQ pairs become standalone fake-quant kernels, 3.5x slower than FP16. The
+  builder now rejects any reduced-precision engine that runs no layer at its precision,
+  and remembers the rejection. So `auto` on the 4070 says why in the log and stays on
+  ORT. Native FP16 costs 8.9 ms per call wall time against ORT's 6.4: the H2D/D2H
+  round trip from numpy outweighs the 2.2 ms of GPU it saves. No arm is a candidate, so
+  no end-to-end fps A/B was run. The RTX 3060 (INT8 tier) is not measured.
+
 - **Blink sync, Eye-gaze follow, and expression split by region.** The LivePortrait
   expression restorer now weights each keypoint separately. Expression strength drives
   every keypoint except the eyes. `expression_gaze_follow` drives the eye keypoints.

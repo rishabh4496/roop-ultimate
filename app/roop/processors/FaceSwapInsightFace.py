@@ -603,6 +603,11 @@ class FaceSwapInsightFace():
         # independent TensorRT contexts, therefore each session needs its own
         # binding and must never borrow another session's output pointer.
         self._io_bindings = {}
+        # Native TensorRT INT8/FP8/FP16 engine (roop.trt_quant), used in place
+        # of the ORT session for batch-1 calls when `swap_quantization` is on.
+        self._native = None
+        self._native_tier = None
+        self._native_order = None
         # Contract consumed by ProcessMgr — defaults match inswapper_128.
         self.model_output_size = 128
         self.model_mean = [0.0, 0.0, 0.0]
@@ -794,6 +799,8 @@ class FaceSwapInsightFace():
                     lambda i, _e=([self.model_swap_insightface] + extras): _e[i], n,
                     model_key=f"swapper:{swap_model}",
                     input_shape=(1, 3, spec["output_size"], spec["output_size"]))
+
+            self._load_quantized(model_path, swap_model)
 
             # Publish the per-model contract ProcessMgr reads.
             self.model_output_size = spec["output_size"]
@@ -1066,6 +1073,54 @@ class FaceSwapInsightFace():
             masks if masks and all(m is not None for m in masks) else None
         )
 
+    def _load_quantized(self, model_path, swap_model):
+        """Move the batch-1 path onto a native reduced-precision engine.
+
+        `swap_quantization`: 'off' (ORT, the default), 'auto' (FP8 on compute
+        capability >= 8.9, INT8 on 8.0-8.6, FP16 below), or a tier forced by
+        name. The ORT session stays loaded: batched calls, the tensor names and
+        the fallback all still use it. Every failure here is printed and leaves
+        the ORT path in charge -- a quantized engine that did not load must not
+        look like one that did.
+        """
+        self._native, self._native_tier = None, None
+        cfg = getattr(roop.globals, 'CFG', None)
+        mode = str(getattr(cfg, 'swap_quantization', 'off') or 'off').lower()
+        if mode in ('off', '', 'none'):
+            return
+        if not any(self._is_trt(p) for p in (self._swap_providers or ())):
+            print(f"[swap] swap_quantization={mode} needs the TensorRT provider; "
+                  f"staying on ORT {self._swap_providers}", flush=True)
+            return
+        from roop import trt_quant
+        device_id = int(getattr(roop.globals, 'cuda_device_id', 0) or 0)
+        try:
+            engine, tier, rebuilt = trt_quant.ensure_engine(
+                model_path, tier=None if mode == 'auto' else mode, device_id=device_id)
+            contexts = self.pool._admission_limit if self.pool is not None else 1
+            runner = trt_quant.NativeTRTRunner(engine, device_id=device_id, contexts=contexts)
+            order = [o.name for o in self.model_swap_insightface.get_outputs()]
+            if sorted(order) != sorted(runner.outputs):
+                raise trt_quant.QuantizationError(
+                    f"engine outputs {runner.outputs} != graph outputs {order}")
+            probe = {n: np.zeros(runner.shapes[n], np.float32) for n in runner.inputs}
+            if not all(np.isfinite(o).all() for o in runner.run(probe)):
+                raise trt_quant.QuantizationError("engine produced non-finite output")
+        except trt_quant.CalibrationSetMissing as error:
+            print(f"[swap] swap_quantization={mode}: no calibration set at {error}. "
+                  f"Run tools/build_calibration_set.py; staying on ORT.", flush=True)
+            return
+        except Exception as error:
+            print(f"[swap] swap_quantization={mode}: native engine unavailable "
+                  f"({type(error).__name__}: {error}); staying on ORT.", flush=True)
+            return
+        self._native_order = order
+        self._native, self._native_tier = runner, tier
+        note = f", rebuilt: {', '.join(rebuilt)}" if rebuilt else ""
+        print(f"[swap] '{swap_model}' batch-1 swaps run on a native TensorRT "
+              f"{tier.upper()} engine ({engine.name}, {contexts} context(s){note})",
+              flush=True)
+
     def _infer(self, feed):
         """Run the swap net, transparently falling back off a broken TensorRT
         engine to CUDA/CPU the first time a SINGLE-FRAME (batch=1) call fails
@@ -1084,6 +1139,16 @@ class FaceSwapInsightFace():
         that a batch-shape problem, not a real TRT failure, forced onto them.
         """
         is_batch1 = feed[self.image_input_name].shape[0] <= 1
+        native = getattr(self, '_native', None)
+        if native is not None and is_batch1:
+            try:
+                outs = native.run(feed)
+                return [outs[native.outputs.index(n)] for n in self._native_order]
+            except Exception as error:
+                self._native = None
+                print(f"[swap] native {self._native_tier} engine failed "
+                      f"({type(error).__name__}: {error}); back on ORT for this run.",
+                      flush=True)
         def _run(session):
             # IO binding is intentionally tried inside the session lease.  This
             # keeps the preallocated CUDA buffers associated with the exact ORT
@@ -2116,6 +2181,9 @@ class FaceSwapInsightFace():
         if self.pool is not None:
             self.pool.release()
             self.pool = None
+        if getattr(self, '_native', None) is not None:
+            self._native.release()
+            self._native = None
         if getattr(self, '_io_bindings', None) is not None:
             self._io_bindings.clear()
         del self.model_swap_insightface

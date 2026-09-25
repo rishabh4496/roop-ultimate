@@ -41,6 +41,7 @@ UI_SETTINGS = (
     # Performance
     ('provider', 'Provider', 'Performance'),
     ('trt_precision', 'Precision mode (TensorRT)', 'Performance'),
+    ('swap_quantization', 'Swap model quantization (INT8/FP8)', 'Performance'),
     ('force_cpu', 'Force CPU for face analyser', 'Performance'),
     ('auto_thread_selection', 'Auto thread selection', 'Performance'),
     ('face_detector_threshold', 'Face detection threshold', 'Performance'),
@@ -923,6 +924,9 @@ class Settings:
         self.memory_limit = self.default_get(data, 'memory_limit', 0)
         # TensorRT precision mode: 'fp32' | 'fp16' | 'mixed' (only used when provider == 'tensorrt')
         self.trt_precision = self.default_get(data, 'trt_precision', 'mixed')
+        # Native TensorRT engine for the swap net: 'off' | 'auto' | 'fp8' |
+        # 'int8' | 'fp16'. 'auto' picks by compute capability (roop.trt_quant).
+        self.swap_quantization = self.default_get(data, 'swap_quantization', 'off')
         # TensorRT tuning. Level 3 is the documented performance baseline;
         # CUDA graphs remain opt-in because they require stable shapes.
         self.trt_builder_optimization_level = self.default_get(
@@ -1304,6 +1308,7 @@ class Settings:
             'memory_limit' : self.memory_limit,
             'provider' : self.provider,
             'trt_precision' : self.trt_precision,
+            'swap_quantization': self.swap_quantization,
             'trt_builder_optimization_level': self.trt_builder_optimization_level,
             'trt_auxiliary_streams': self.trt_auxiliary_streams,
             'trt_cuda_graph': self.trt_cuda_graph,

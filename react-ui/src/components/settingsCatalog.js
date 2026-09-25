@@ -22,6 +22,7 @@ export const SETTINGS_CATALOG = [
   // Performance
   { key: 'provider', label: 'Provider', section: 'Performance' },
   { key: 'trt_precision', label: 'Precision mode (TensorRT)', section: 'Performance' },
+  { key: 'swap_quantization', label: 'Swap model quantization (INT8/FP8)', section: 'Performance' },
   { key: 'force_cpu', label: 'Force CPU for face analyser', section: 'Performance' },
   { key: 'auto_thread_selection', label: 'Auto thread selection', section: 'Performance' },
   { key: 'face_detector_threshold', label: 'Face detection threshold', section: 'Performance' },

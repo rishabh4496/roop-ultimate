@@ -583,6 +583,15 @@ export default function Settings({ meta, settings, setSettings, notify }) {
               disabled={!isTrtActive}
             />
           )}
+          {showTrtSettings && (
+            <Select
+              label="Swap model quantization (INT8/FP8)"
+              info="Experimental. Runs the swap model on a native TensorRT engine calibrated on real face crops (tools/build_calibration_set.py). auto = FP8 on RTX 40-series, INT8 on RTX 30-series, FP16 on older cards. Measured on an RTX 4070: FP8 does not execute on TensorRT 10.9 (stays on ORT), and INT8 loses identity (-0.026). Keep off. Applies after app restart."
+              {...bind('swap_quantization', 'off')}
+              options={['off', 'auto', 'fp8', 'int8', 'fp16']}
+              disabled={!isTrtActive}
+            />
+          )}
           <Toggle label="Force CPU for face analyser" {...bindToggle('force_cpu')} />
 
           <Toggle

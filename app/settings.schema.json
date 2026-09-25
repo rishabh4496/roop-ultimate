@@ -10,6 +10,7 @@
     "faceset_library_path",
     "provider",
     "trt_precision",
+    "swap_quantization",
     "force_cpu",
     "auto_thread_selection",
     "face_detector_threshold",
@@ -196,6 +197,14 @@
       "type": "str",
       "ui": {
         "label": "Precision mode (TensorRT)",
+        "section": "Performance"
+      }
+    },
+    "swap_quantization": {
+      "default": "off",
+      "type": "str",
+      "ui": {
+        "label": "Swap model quantization (INT8/FP8)",
         "section": "Performance"
       }
     },
