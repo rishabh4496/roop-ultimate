@@ -71,6 +71,27 @@ MODEL_REGISTRY: Mapping[str, Mapping[str, Any]] = {
     },
 }
 
+# Keep the original ORT-EP preparation set stable for existing automation.
+# Native precision-segmented builds cover every requested face-model family.
+NATIVE_MODEL_REGISTRY: Mapping[str, Mapping[str, Any]] = {
+    **MODEL_REGISTRY,
+    "gpen_bfr_256.onnx": {
+        "url": "https://huggingface.co/facefusion/models-3.0.0/resolve/main/gpen_bfr_256.onnx",
+        "family": "gpen",
+        "shapes": {"min": "input:1x3x256x256", "opt": "input:2x3x256x256", "max": "input:4x3x256x256"},
+    },
+    "restoreformer_plus_plus.onnx": {
+        "url": "https://huggingface.co/countfloyd/deepfake/resolve/main/restoreformer_plus_plus.onnx",
+        "family": "restoreformer_pp",
+        "shapes": {"min": "input:1x3x512x512", "opt": "input:2x3x512x512", "max": "input:4x3x512x512"},
+    },
+    "xseg.onnx": {
+        "url": "https://huggingface.co/countfloyd/deepfake/resolve/main/xseg.onnx",
+        "family": "dfl_xseg",
+        "shapes": {"min": "input:1x256x256x3", "opt": "input:1x256x256x3", "max": "input:1x256x256x3"},
+    },
+}
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 MODELS_DIR = Path(os.environ.get("ROOP_TRT_MODELS_DIR", REPO_ROOT / "models")).resolve()
 CACHE_DIR = Path(
@@ -91,16 +112,26 @@ def _parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     parser.add_argument(
         "--model",
         action="append",
-        choices=tuple(MODEL_REGISTRY),
+        choices=tuple(NATIVE_MODEL_REGISTRY),
         help="build only this registered model; repeat the option for multiple models",
+    )
+    parser.add_argument(
+        "--native",
+        action="store_true",
+        help="use the native TensorRT builder with precision segmentation and validation",
     )
     return parser.parse_args(argv)
 
 
-def _selected_models(names: Optional[list[str]]) -> dict[str, Mapping[str, Any]]:
+def _selected_models(
+    names: Optional[list[str]], *, native: bool = False
+) -> dict[str, Mapping[str, Any]]:
+    registry = NATIVE_MODEL_REGISTRY if native or any(
+        name not in MODEL_REGISTRY for name in (names or ())
+    ) else MODEL_REGISTRY
     if not names:
-        return dict(MODEL_REGISTRY)
-    return {name: MODEL_REGISTRY[name] for name in names}
+        return dict(registry)
+    return {name: registry[name] for name in names}
 
 
 def _sha256(path: Path) -> str:
@@ -399,11 +430,43 @@ def compile_engine(model_name: str, config: Mapping[str, Any], ort: Any) -> None
     )
 
 
+def _parse_native_profiles(shapes: Mapping[str, Any]) -> dict[str, dict[str, tuple[int, ...]]]:
+    """Convert the registry's ORT profile strings to native TRT shapes."""
+    result: dict[str, dict[str, tuple[int, ...]]] = {}
+    for tier, text in shapes.items():
+        for entry in str(text).split(","):
+            if not entry.strip() or ":" not in entry:
+                continue
+            name, encoded = entry.split(":", 1)
+            result.setdefault(name, {})[str(tier)] = tuple(
+                int(value) for value in encoded.split("x")
+            )
+    return result
+
+
+def compile_native_engine(model_name: str, config: Mapping[str, Any]) -> None:
+    """Build one precision-segmented native TensorRT engine."""
+    from roop.trt_graph_surgery import build_native_engine
+
+    model_path = download_file(
+        config["url"], MODELS_DIR / model_name, tuple(config.get("fallback_urls", ()))
+    )
+    engine_path = CACHE_DIR / "native" / f"{Path(model_name).stem}.engine"
+    logger.info("Building native precision-segmented TensorRT engine for %s", model_name)
+    build_native_engine(
+        model_path,
+        engine_path,
+        model_family=config.get("family", Path(model_name).stem),
+        workspace_bytes=_workspace_bytes(_total_vram_bytes(_device_id())),
+        input_profiles=_parse_native_profiles(config.get("shapes", {})),
+    )
+
+
 def main(argv: Optional[list[str]] = None) -> int:
     global _OFFLINE
     args = _parse_args(argv)
     _OFFLINE = bool(args.offline)
-    selected = _selected_models(args.model)
+    selected = _selected_models(args.model, native=bool(args.native))
     MODELS_DIR.mkdir(parents=True, exist_ok=True)
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -416,9 +479,13 @@ def main(argv: Optional[list[str]] = None) -> int:
             tuple(config.get("fallback_urls", ())),
         )
 
-    ort = load_onnxruntime()
-    for model_name, config in selected.items():
-        compile_engine(model_name, config, ort)
+    if args.native:
+        for model_name, config in selected.items():
+            compile_native_engine(model_name, config)
+    else:
+        ort = load_onnxruntime()
+        for model_name, config in selected.items():
+            compile_engine(model_name, config, ort)
     logger.info("All TensorRT engines successfully built and cached in %s.", CACHE_DIR)
     return 0
 

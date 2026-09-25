@@ -11,6 +11,8 @@ timm>=0.9.16
 # Existing UI and processing dependencies.
 gradio==5.50.0
 onnx==1.16.0
+onnx-graphsurgeon>=0.5.8
+polygraphy>=0.49.9
 # ONNX Runtime is provisioned by provision_runtime.py after the machine is
 # classified. Keeping it out of this common file prevents CPU/DirectML installs
 # from inheriting the NVIDIA GPU wheel and gives every platform one final ORT
