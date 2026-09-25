@@ -189,6 +189,18 @@ def signature_from_payload(payload, gpu="", threads="", precision=""):
     if active:
         parts.append(f"merger={active}")
 
+    # Blink sync adds two model calls per face, and gaze follow alone runs the
+    # whole restorer while `expr` above reads 0. Appended only when on, so every
+    # signature recorded before these existed stays byte-identical.
+    if bool(payload.get('expression_blink_sync', False)):
+        parts.append("blink=1")
+    try:
+        if (float(payload.get('expression_gaze_follow') or 0.0) > 0.0
+                and float(payload.get('expression_restore_strength') or 0.0) == 0.0):
+            parts.append("gaze_only=1")
+    except (TypeError, ValueError):
+        pass
+
     parts.append(f"threads={_norm(threads)}")
     parts.append(f"precision={_norm(precision)}")
     parts.append(f"gpu={_norm(gpu)}")

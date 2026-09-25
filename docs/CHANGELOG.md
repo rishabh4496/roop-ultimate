@@ -7,6 +7,51 @@ folder). Entries before 2026-09-21 were moved here from the README on 2026-09-22
 
 ## 2026-09-25
 
+- **Blink sync, Eye-gaze follow, and expression split by region.** The LivePortrait
+  expression restorer now weights each keypoint separately. Expression strength drives
+  every keypoint except the eyes. `expression_gaze_follow` drives the eye keypoints.
+  `expression_blink_sync` uses LivePortrait's own eyelid-retargeting network
+  (`stitching_eye.onnx`). That network is driven by lid openings measured with
+  LivePortrait's 203-point landmarker (`landmark.onnx`). Both models are fetched on
+  first use, and their SHA256 matches Hugging Face's published digest. A config without
+  the gaze key derives it from strength and region, so it renders bit-identically to
+  before; a unit test compares the output byte for byte. Measured with
+  `tests/expression_eye_bench.py`: hyperswap + Restore Ultra + XSeg, TensorRT, 1014
+  frames, 66 of them with the eyes closed. The harness is deterministic: a repeated arm
+  matched to the last digit.
+
+  | arm | lid err | blinks caught | false closes | pupil err | id to source |
+  |---|---:|---:|---:|---:|---:|
+  | swap only | 0.044 | 33% | 0.0% | 0.041 | 0.596 |
+  | **blink sync** | **0.019** | **97%** | 0.1% | 0.043 | **0.590** |
+  | gaze follow 1.0 | 0.043 | 100% | 1.5% | 0.052 | 0.573 |
+  | expression 1.0, eyes 0 | 0.046 | 35% | 0.0% | 0.039 | 0.512 |
+  | old strength 1.0 'all' | 0.028 | 100% | 0.2% | 0.049 | 0.492 |
+  | gaze 1.0 + blink | 0.040 | 100% | 2.7% | 0.056 | 0.575 |
+
+  - **The plain swap kept the eyes open on 67% of the target's blinks.** Blink sync
+    fixes that at almost no identity cost, and a contact sheet across a squeezed blink
+    agrees.
+  - **Gaze follow makes eye direction worse, not better.** The dark-iris position error
+    rises on wide-open eyes (0.043 → 0.055). The swap already keeps the target's eye
+    direction, and re-rendering the eyes adds error. The control is kept, and its help
+    text says this.
+  - **Gaze + blink first double-counted the lids** (6.4% false closes). The eye network
+    now receives the post-delta keypoints (`blink_retarget_state`), which brings it to
+    2.7%. Blink alone is still the recommended setting.
+  - **Expression restore at 1.0 costs identity** (0.596 → 0.49–0.51), because
+    LivePortrait re-renders the whole face. This was true before the split too.
+  - **The fake gaze retargeter is removed.** `roop/processors/frame/face_swapper.py` had
+    a "LivePortrait neural gaze retargeter". Its model was a 257-byte ONNX file the code
+    wrote itself: a single Gemm layer with an identity weight and zero bias. Its only
+    caller was `swap_face`, which nothing calls.
+- **Frontalization (`use_frontalization`) loses the swap on angled faces.** Measured with
+  `tests/frontalize_yaw_bench.py` on 218 frames from the angle clips, binned by yaw.
+  Wherever it fires, identity to the source falls from 0.52 to 0.03 at 45–75° yaw. The
+  output stays 0.57 similar to the ORIGINAL person, with visible tearing and doubled
+  features. Leaving it off measured better in every yaw band. It was already off by
+  default. The UI now warns, and no new projective unwarp was built on top of it. The
+  cause is not yet found: the inverse warp IS applied. The null control repeated exactly.
 - **Selected-mode renders swapped nothing (4bd577d, fixed in a76091a).** Commit 4bd577d
   built `allowed_source_indices` in `ProcessMgr.swap_faces` with
   `faces = getattr(src_data, 'faces', None)`, which overwrote the frame's detected faces

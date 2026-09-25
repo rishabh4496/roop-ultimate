@@ -148,7 +148,7 @@ feature ran.
   `app/env/Scripts/python.exe -m pytest` from the repo root (pytest is the runner since
   2026-09-22; `unittest discover` drops the pytest-style tests). Light profile without the
   GPU stack: `ROOP_TEST_LIGHT=1 python -m pytest -m "not gpu"` (~20 s; what CI runs).
-  Current baseline: **3458 passed, 6 skipped, 2 xfailed** over both trees (2026-09-25,
+  Current baseline: **3471 passed, 6 skipped, 2 xfailed** over both trees (2026-09-25 late,
   pytest; 8-20 min). Any number quoted from the session logs (1698/2607, 3064, 3190) is stale.
 - Pytest-style tests are invisible to unittest (`Ran 0 tests ... OK`) — another reason
   the runner is pytest; `tests/unittest_shim.py` is only for the legacy command.

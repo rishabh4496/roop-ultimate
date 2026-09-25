@@ -29,6 +29,9 @@ const sigPayload = (p) => ({
   stabilize_mask: p.stabilize_mask,
   // Both are whole GPU stages and part of the calibration signature.
   expression_restore_strength: num(p.expression_restore_strength, 0),
+  // Either alone runs the restorer; blink adds two model calls per face.
+  expression_gaze_follow: num(p.expression_gaze_follow, 0),
+  expression_blink_sync: !!p.expression_blink_sync,
   upscale_after_swap: p.upscale_after_swap,
   // The merger post-ops cost up to 15 ms/face, so runtime_calib folds a COUNT
   // of the active ones into the signature. They have to be sent here as well:
@@ -93,7 +96,8 @@ export default function useRuntimeEstimate({
       p.swap_model, p.selected_enhancer, p.face_detection_mode, p.face_detector_size,
       p.detector_engine, p.num_swap_steps, p.subsample_upscale, p.track_identities,
       p.temporal_detection, p.mask_engine, p.stabilize_face, p.stabilize_enhancer,
-      p.stabilize_mask, p.expression_restore_strength, p.upscale_after_swap,
+      p.stabilize_mask, p.expression_restore_strength, p.expression_gaze_follow,
+      p.expression_blink_sync, p.upscale_after_swap,
       p.merger_hist_match, p.merger_sharpen, p.merger_motion_blur,
       p.merger_grain_match, p.merger_degrade, p.merger_clarity]);
   /* eslint-enable react-hooks/exhaustive-deps */

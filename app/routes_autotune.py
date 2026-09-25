@@ -140,7 +140,8 @@ def _render_threads(payload) -> int:
             mode = "enhanced"
         if mask and mask not in ("None", "DFL XSeg"):
             mode = "heavy"
-        if payload.get("expression_restore_strength", 0) > 0 or payload.get("lipsync_enabled"):
+        from settings import expression_stage_active
+        if expression_stage_active(payload.get) or payload.get("lipsync_enabled"):
             mode = "heavy"
         return int(cfg.resolve_threads(mode))
     return int(cfg.max_threads)

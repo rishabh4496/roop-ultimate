@@ -40,6 +40,8 @@ export const LABELS = {
   autorotate_faces: 'Autorotate',
   vr_mode: 'VR mode',
   expression_restore_strength: 'Expression restore',
+  expression_gaze_follow: 'Eye-gaze follow',
+  expression_blink_sync: 'Blink sync',
   detail_transfer_strength: 'Detail transfer',
   merger_hist_match: 'Histogram match',
   merger_sharpen: 'Sharpen / soften',

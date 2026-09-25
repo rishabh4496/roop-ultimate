@@ -618,10 +618,10 @@ def build_catalogue(faces_per_frame=1.0):
     # the raw file does not fail gracefully — it throws. The app rewrites those
     # nodes once into `warping_spade-trt.onnx` and runs that; so does this.
     warp = _exists('liveportrait/warping_spade.onnx')
-    expression_strength = float(
-        getattr(cfg, 'expression_restore_strength', 0.0) or 0.0)
+    from settings import expression_stage_active
+    expression_on = expression_stage_active(lambda k, d: getattr(cfg, k, d))
     lipsync_enabled = bool(getattr(cfg, 'lipsync_enabled', False))
-    if warp and (expression_strength > 0.0 or lipsync_enabled):
+    if warp and (expression_on or lipsync_enabled):
         try:
             from roop.gridsample5d import ensure_patched_model
             warp = ensure_patched_model(warp, verbose=False) or warp

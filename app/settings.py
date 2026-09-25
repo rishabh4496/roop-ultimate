@@ -165,6 +165,33 @@ _SETTINGS_OWNED_VARS = set()
 _PRIORITY_NAMES = ('high', 'above_normal', 'normal')
 
 
+def legacy_gaze_follow(strength, region):
+    """The Eye-Gaze Follow Ratio a pre-split config implied: its eye keypoints
+    took the expression strength whenever the region included them."""
+    try:
+        strength = float(strength or 0.0)
+    except (TypeError, ValueError):
+        strength = 0.0
+    return strength if region in ('all', 'eyes') else 0.0
+
+
+def expression_stage_active(get):
+    """Whether the expression restorer runs, from any settings source.
+
+    `get(key, default)` reads a payload, a Settings object or roop.globals. The
+    stage used to be gated on strength alone; gaze follow or blink sync on
+    their own now run it too, and every gate (thread mode, the bench, the
+    runtime estimate) has to agree with ProcessMgr about that."""
+    def _f(key):
+        try:
+            return float(get(key, 0.0) or 0.0)
+        except (TypeError, ValueError):
+            return 0.0
+    return (_f('expression_restore_strength') > 0.0
+            or _f('expression_gaze_follow') > 0.0
+            or bool(get('expression_blink_sync', False)))
+
+
 def apply_env(cfg, environ, keys=None):
     """Export the ENV_SETTINGS of a config mapping into `environ`.
 
@@ -1103,6 +1130,17 @@ class Settings:
         # Expression restorer (LivePortrait) — see roop.globals
         self.expression_restore_strength = self.default_get(data, 'expression_restore_strength', 0.0)
         self.expression_restore_region = self.default_get(data, 'expression_restore_region', 'all')
+        # Eye-Gaze Follow Ratio: the weight on LivePortrait's eye keypoints,
+        # independent of the strength above. A config written before the split
+        # has no key, and its eyes followed `strength` wherever the region
+        # included them — so that is the default it gets, and it renders exactly
+        # as it did.
+        self.expression_gaze_follow = self.default_get(
+            data, 'expression_gaze_follow', legacy_gaze_follow(
+                self.expression_restore_strength, self.expression_restore_region))
+        # Blink sync: pin the swapped lids to the target's measured opening
+        # (LivePortrait eye retargeting). Loads ~115 MB of models on first use.
+        self.expression_blink_sync = self.default_get(data, 'expression_blink_sync', False)
         self.rescue_small_faces = self.default_get(data, 'rescue_small_faces', True)
         self.detector_engine = self.default_get(data, 'detector_engine', 'retinaface_r50')
         self.detector_scale_pyramid = self.default_get(data, 'detector_scale_pyramid', 'auto')
@@ -1385,6 +1423,8 @@ class Settings:
             'output_face_scale': self.output_face_scale,
             'expression_restore_strength': self.expression_restore_strength,
             'expression_restore_region': self.expression_restore_region,
+            'expression_gaze_follow': self.expression_gaze_follow,
+            'expression_blink_sync': self.expression_blink_sync,
             'rescue_small_faces': self.rescue_small_faces,
             'detector_engine': self.detector_engine,
             'detector_scale_pyramid': self.detector_scale_pyramid,

@@ -5411,6 +5411,13 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                     try:
                         from roop.face_frontalize import defrontalize_crop
                         fake_frame = defrontalize_crop(fake_frame, M_frontal)
+                        # The net's own mask was produced from the FRONTALIZED
+                        # crop too; left in frontal space it would trim the
+                        # paste to a face that is not where this one is.
+                        _mm = getattr(self._tls, 'swap_model_mask', None)
+                        if _mm is not None:
+                            self._tls.swap_model_mask = defrontalize_crop(
+                                np.ascontiguousarray(_mm), M_frontal)
                     except Exception as e:
                         bar_write(f"[ProcessMgr] Defrontalization failed: {e}")
             elif p.type == 'mask':
@@ -5619,7 +5626,12 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
         # the untouched target crop in the same face-template space, so it is
         # the driving face — no extra detection or alignment needed.
         _ex = float(getattr(roop.globals, 'expression_restore_strength', 0.0) or 0.0)
-        if _ex > 0.0:
+        # Eye-Gaze Follow Ratio (None = eyes follow _ex, the pre-split
+        # behaviour) and Blink Sync. Either alone is enough to run the stage.
+        _gz = getattr(roop.globals, 'expression_gaze_follow', None)
+        _gz = None if _gz is None else float(_gz)
+        _bk = bool(getattr(roop.globals, 'expression_blink_sync', False))
+        if _ex > 0.0 or (_gz is not None and _gz > 0.0) or _bk:
             try:
                 # Built before the guard because the restorer decides the guard:
                 # self_excluding is true when it already keeps its own TensorRT
@@ -5636,9 +5648,10 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                     # every other worker thread wait on work that never touched
                     # the GPU. Same split as the swap path above, which keeps
                     # prepare_crop_frame / normalize_swap_frame outside the guard.
-                    _prepared = restorer.prepare(_crop, aligned_img)
+                    _prepared = restorer.prepare(_crop, aligned_img, _bk)
                     with _gpu_guard(pooled=restorer.self_excluding, owner='expression'):
-                        _raw = restorer.infer(_prepared, _ex, _region)
+                        _raw = restorer.infer(_prepared, _ex, _region,
+                                              gaze=_gz, blink=_bk)
                     _crop = restorer.finish(_raw, _crop)
                 if enhanced_frame is not None:
                     enhanced_frame = _crop

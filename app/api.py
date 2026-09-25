@@ -4391,6 +4391,8 @@ def preview(payload: dict = Body(...)):
         roop_globals.identity_detail_strength = float(payload.get("identity_detail_strength", getattr(roop_globals.CFG, "identity_detail_strength", 0.0)))
         roop_globals.expression_restore_strength = float(payload.get("expression_restore_strength", getattr(roop_globals.CFG, "expression_restore_strength", 0.0)))
         roop_globals.expression_restore_region = payload.get("expression_restore_region", getattr(roop_globals.CFG, "expression_restore_region", "all"))
+        roop_globals.expression_gaze_follow = float(payload.get("expression_gaze_follow", getattr(roop_globals.CFG, "expression_gaze_follow", 0.0)) or 0.0)
+        roop_globals.expression_blink_sync = bool(payload.get("expression_blink_sync", getattr(roop_globals.CFG, "expression_blink_sync", False)))
         roop_globals.rescue_small_faces = bool(payload.get("rescue_small_faces", getattr(roop_globals.CFG, "rescue_small_faces", False)))
         roop_globals.detector_engine = payload.get("detector_engine", getattr(roop_globals.CFG, "detector_engine", "scrfd"))
         roop_globals.detector_scale_pyramid = payload.get("detector_scale_pyramid", getattr(roop_globals.CFG, "detector_scale_pyramid", "auto"))
@@ -4868,7 +4870,8 @@ def _run_swap(payload):
                 _mode = 'enhanced'
             if selected_mask_engine and selected_mask_engine != 'None' and selected_mask_engine != 'DFL XSeg':
                 _mode = 'heavy'
-            if payload.get('expression_restore_strength', 0) > 0 or payload.get('lipsync_enabled'):
+            from settings import expression_stage_active
+            if expression_stage_active(payload.get) or payload.get('lipsync_enabled'):
                 _mode = 'heavy'
             roop_globals.execution_threads = roop_globals.CFG.resolve_threads(_mode)
             print(f"[Auto Thread Selection] Resolved {roop_globals.execution_threads} threads for '{_mode}' workload mode.", flush=True)
@@ -4895,6 +4898,8 @@ def _run_swap(payload):
         roop_globals.identity_detail_strength = float(payload.get("identity_detail_strength", getattr(roop_globals.CFG, "identity_detail_strength", 0.0)))
         roop_globals.expression_restore_strength = float(payload.get("expression_restore_strength", getattr(roop_globals.CFG, "expression_restore_strength", 0.0)))
         roop_globals.expression_restore_region = payload.get("expression_restore_region", getattr(roop_globals.CFG, "expression_restore_region", "all"))
+        roop_globals.expression_gaze_follow = float(payload.get("expression_gaze_follow", getattr(roop_globals.CFG, "expression_gaze_follow", 0.0)) or 0.0)
+        roop_globals.expression_blink_sync = bool(payload.get("expression_blink_sync", getattr(roop_globals.CFG, "expression_blink_sync", False)))
         roop_globals.rescue_small_faces = bool(payload.get("rescue_small_faces", roop_globals.CFG.rescue_small_faces))
         roop_globals.detector_engine = payload.get("detector_engine", roop_globals.CFG.detector_engine)
         roop_globals.detector_scale_pyramid = payload.get("detector_scale_pyramid", getattr(roop_globals.CFG, "detector_scale_pyramid", "auto"))

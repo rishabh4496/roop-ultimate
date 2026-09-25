@@ -23,61 +23,6 @@ from roop.core import (
     AdaptiveLODDecision,
     get_processing_plugins
 )
-from roop.processors.frame import face_swapper
-
-
-def create_mock_68_landmarks(
-    left_eye_center=(80.0, 95.0),
-    right_eye_center=(176.0, 95.0),
-    eye_width=30.0,
-    eye_height=16.0
-) -> np.ndarray:
-    """Generate canonical 68-point facial landmark array in 256x256 coordinate space."""
-    pts = np.zeros((68, 2), dtype=np.float32)
-
-    # Jaw (0..16)
-    for i in range(17):
-        pts[i] = [40.0 + i * 10.0, 100.0 + abs(i - 8) * 10.0]
-
-    # Eyebrows (17..26)
-    for i in range(5):
-        pts[17 + i] = [55.0 + i * 12.0, 70.0]
-        pts[22 + i] = [145.0 + i * 12.0, 70.0]
-
-    # Nose (27..35)
-    for i in range(9):
-        pts[27 + i] = [128.0, 85.0 + i * 7.0]
-
-    # Left eye (36..41)
-    lx, ly = float(left_eye_center[0]), float(left_eye_center[1])
-    hw, hh = eye_width / 2.0, eye_height / 2.0
-    pts[36] = [lx - hw, ly]
-    pts[37] = [lx - hw * 0.33, ly - hh]
-    pts[38] = [lx + hw * 0.33, ly - hh]
-    pts[39] = [lx + hw, ly]
-    pts[40] = [lx + hw * 0.33, ly + hh]
-    pts[41] = [lx - hw * 0.33, ly + hh]
-
-    # Right eye (42..47)
-    rx, ry = float(right_eye_center[0]), float(right_eye_center[1])
-    pts[42] = [rx - hw, ry]
-    pts[43] = [rx - hw * 0.33, ry - hh]
-    pts[44] = [rx + hw * 0.33, ry - hh]
-    pts[45] = [rx + hw, ry]
-    pts[46] = [rx + hw * 0.33, ry + hh]
-    pts[47] = [rx - hw * 0.33, ry + hh]
-
-    # Mouth (48..67)
-    pts[48] = [95.0, 180.0]
-    pts[54] = [161.0, 180.0]
-    for i in range(49, 54):
-        pts[i] = [95.0 + (i - 48) * 13.0, 175.0]
-    for i in range(55, 60):
-        pts[i] = [161.0 - (i - 54) * 13.0, 185.0]
-    for i in range(60, 68):
-        pts[i] = [105.0 + (i - 60) * 6.0, 180.0]
-
-    return pts
 
 
 class AdaptiveLODDispatcherTest(unittest.TestCase):
@@ -194,91 +139,10 @@ class AdaptiveLODDispatcherTest(unittest.TestCase):
         self.assertEqual(plugins_lod2['gpen']['size'], 512)
 
 
-class NeuralGazeRetargeterTest(unittest.TestCase):
-    """Test suite asserting pupil extraction, gaze displacement vectors, and neural retargeting."""
-
-    def setUp(self):
-        self.size = 256
-        self.landmarks = create_mock_68_landmarks(
-            left_eye_center=(80.0, 95.0),
-            right_eye_center=(176.0, 95.0)
-        )
-
-    def test_pupil_center_extraction_from_landmarks(self):
-        """Pupil centers must be accurately extracted from target facial landmarks."""
-        l_pupil, r_pupil = face_swapper.extract_pupil_coordinates(self.landmarks)
-        self.assertAlmostEqual(float(l_pupil[0]), 80.0, places=1)
-        self.assertAlmostEqual(float(l_pupil[1]), 95.0, places=1)
-        self.assertAlmostEqual(float(r_pupil[0]), 176.0, places=1)
-        self.assertAlmostEqual(float(r_pupil[1]), 95.0, places=1)
-
-    def test_gaze_displacement_vectors_adjust_correctly(self):
-        """Gaze displacement vectors must adjust in sign and magnitude with target gaze shifts."""
-        # Baseline: swap face with pupils looking straight at (80, 95) and (176, 95)
-        swap_left = np.array([80.0, 95.0], dtype=np.float32)
-        swap_right = np.array([176.0, 95.0], dtype=np.float32)
-
-        # Case 1: Target looking to the right (+6px X displacement)
-        target_rightward_left = np.array([86.0, 95.0], dtype=np.float32)
-        target_rightward_right = np.array([182.0, 95.0], dtype=np.float32)
-        disp_rightward = face_swapper.compute_gaze_displacement_vector(target_rightward_left, swap_left)
-        self.assertGreater(disp_rightward[0], 0.0)
-        self.assertAlmostEqual(float(disp_rightward[0]), 6.0, places=2)
-        self.assertAlmostEqual(float(disp_rightward[1]), 0.0, places=2)
-
-        # Case 2: Target looking to the left (-6px X displacement)
-        target_leftward_left = np.array([74.0, 95.0], dtype=np.float32)
-        disp_leftward = face_swapper.compute_gaze_displacement_vector(target_leftward_left, swap_left)
-        self.assertLess(disp_leftward[0], 0.0)
-        self.assertAlmostEqual(float(disp_leftward[0]), -6.0, places=2)
-
-        # Case 3: Target looking up (-4px Y displacement)
-        target_upward_left = np.array([80.0, 91.0], dtype=np.float32)
-        disp_upward = face_swapper.compute_gaze_displacement_vector(target_upward_left, swap_left)
-        self.assertLess(disp_upward[1], 0.0)
-        self.assertAlmostEqual(float(disp_upward[1]), -4.0, places=2)
-
-    def test_pupil_projection_onto_swapped_face_reduces_disparity(self):
-        """Projecting pupil position onto swapped face must align pupil and eliminate gaze mismatch."""
-        # Create mock target crop with eyes shifted right (gaze = right)
-        target_crop = np.full((self.size, self.size, 3), 180, dtype=np.uint8)
-        cv2.circle(target_crop, (86, 95), 5, (25, 25, 25), -1)  # shifted pupil (+6px)
-        cv2.circle(target_crop, (182, 95), 5, (25, 25, 25), -1)
-
-        # Create mock swap crop with eyes looking straight (gaze = center)
-        swap_crop = np.full((self.size, self.size, 3), 180, dtype=np.uint8)
-        cv2.circle(swap_crop, (80, 95), 5, (25, 25, 25), -1)    # center pupil
-        cv2.circle(swap_crop, (176, 95), 5, (25, 25, 25), -1)
-
-        # Apply neural gaze retargeting
-        retargeted_crop, meta = face_swapper.retarget_eye_gaze(
-            swap_crop, target_crop, self.landmarks, strength=1.0)
-
-        self.assertTrue(meta['applied'])
-        # Target displacement was +6.0 on left eye
-        self.assertAlmostEqual(float(meta['displacement_left'][0]), 6.0, delta=1.0)
-
-        # Post-retargeting pupil center must have shifted towards target (86, 95)
-        ret_left = meta['retargeted_left_pupil']
-        ret_right = meta['retargeted_right_pupil']
-        self.assertGreater(ret_left[0], 83.0)
-        self.assertGreater(ret_right[0], 179.0)
-
-    def test_fp16_onnx_gaze_session_executes(self):
-        """The lightweight FP16 ONNX gaze-retargeting session must load and execute valid FP16 inference."""
-        session = face_swapper.get_gaze_retargeter()
-        self.assertIsNotNone(session)
-
-        # Test FP16 inference
-        input_name = session.get_inputs()[0].name
-        raw_delta = np.array([[5.0, -2.0, 5.0, -2.0]], dtype=np.float16)
-        outputs = session.run(None, {input_name: raw_delta})
-        self.assertEqual(len(outputs), 1)
-        out = outputs[0]
-        self.assertEqual(out.dtype, np.float16)
-        self.assertEqual(out.shape, (1, 4))
-        self.assertFalse(np.isnan(out).any())
-        self.assertFalse(np.isinf(out).any())
+# NeuralGazeRetargeterTest was removed 2026-09-25 with the code it tested: the
+# "LivePortrait gaze retargeter" in frame/face_swapper.py was an identity-matrix
+# Gemm on a dead path. Eye handling is Expression_LivePortrait's gaze follow /
+# blink sync now; see tests/expression_eye_bench.py and test_expression_gaze_blink.py.
 
 
 if __name__ == '__main__':

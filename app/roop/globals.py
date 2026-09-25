@@ -183,6 +183,13 @@ output_face_scale = 0.0
 # transfer to 'all' | 'lips' | 'eyes'.
 expression_restore_strength = 0.0
 expression_restore_region = 'all'
+# Eye-Gaze Follow Ratio: weight on LivePortrait's eye keypoints (eyeball
+# direction AND lid), independent of the strength above. None = the eyes follow
+# `expression_restore_strength` per the region, i.e. the pre-split behaviour.
+expression_gaze_follow = None
+# Blink sync: pin the swapped lids to the target's measured opening with
+# LivePortrait's eye retargeting MLP. Runs the stage even at strength 0.
+expression_blink_sync = False
 # Lip-sync (MuseTalk): regenerate the mouth region to match a driving audio
 # track, post-composite (same slot as restore_original_mouth — the two are
 # mutually exclusive, see ProcessMgr.process_face). audio_source picks what

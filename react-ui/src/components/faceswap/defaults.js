@@ -113,6 +113,8 @@ export const FACESWAP_DEFAULTS = {
   // but was missing here — so "Reset defaults" left it at whatever it was.
   expression_restore_strength: 0,
   expression_restore_region: 'all',
+  expression_gaze_follow: 0,
+  expression_blink_sync: false,
 
   // Video parameters
   video_swapping_method: 'In-Memory processing',

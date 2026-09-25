@@ -105,7 +105,7 @@ ENUMS = {
 
 # Every setting the Face Swap tab can change, straight from its set('key', …)
 # calls, intersected with the real settings in settings.py.
-_SETTINGS_KEYS = set(re.findall(r"self\.default_get\(data,\s*'([^']+)'",
+_SETTINGS_KEYS = set(re.findall(r"self\.default_get\(\s*data,\s*'([^']+)'",
                                 _read(APP, 'settings.py')))
 FACESWAP_TAB_KEYS = set(re.findall(
     r"\bset\(\s*'([a-z0-9_]+)'", _read(UI, 'FaceSwap.jsx'))) & _SETTINGS_KEYS

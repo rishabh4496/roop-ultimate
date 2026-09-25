@@ -805,6 +805,14 @@
       "default": "all",
       "type": "str"
     },
+    "expression_gaze_follow": {
+      "default": 0.0,
+      "type": "float"
+    },
+    "expression_blink_sync": {
+      "default": false,
+      "type": "bool"
+    },
     "rescue_small_faces": {
       "default": true,
       "type": "bool"
