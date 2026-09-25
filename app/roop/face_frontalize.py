@@ -73,8 +73,15 @@ def get_frontal_landmarks_from_pose(
     if not ok:
         return None
 
-    # 2. Re-project with zero rotation (frontal) — keep same translation/scale
-    rvec_frontal = np.zeros((3, 1), dtype=np.float64)
+    # 2. Re-project facing the camera — keep same translation/scale.
+    # "Facing the camera" is NOT the zero rotation: _REF3D_68 is y-up with the
+    # nose toward +z, while an OpenCV camera is y-down looking along +z. Zero
+    # rotation projects the head upside down and facing away, and the affine fit
+    # to that is a vertical MIRROR (det < 0). That shipped: every frontalized
+    # face was swapped upside down, the swapper returned no identity, and the
+    # inverse warp pasted a ghost of the original (id to source 0.52 -> 0.02 at
+    # 45-75 deg yaw, 2026-09-25, tests/frontalize_yaw_bench.py).
+    rvec_frontal = np.array([[np.pi], [0.0], [0.0]], dtype=np.float64)
     frontal_2d, _ = cv2.projectPoints(pts3d, rvec_frontal, tvec, cam, _DIST)
     return frontal_2d.reshape(-1, 2).astype(np.float32)
 
@@ -126,6 +133,11 @@ def frontalize_crop(
         return aligned_img, None
 
     if M is None:
+        return aligned_img, None
+    # A pose change never mirrors a face. A reflection here means the frontal
+    # reference is in the wrong convention (see get_frontal_landmarks_from_pose)
+    # and the swapper would be handed a flipped face — refuse, swap unwarped.
+    if float(np.linalg.det(M[:, :2])) <= 0.0:
         return aligned_img, None
 
     frontalized = cv2.warpAffine(

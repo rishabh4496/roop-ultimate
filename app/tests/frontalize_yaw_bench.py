@@ -79,7 +79,7 @@ def main():
     if args.clips:
         clips = sorted(glob.glob(args.clips))
     else:
-            clips = [fixtures.clip(n, required=True)
+        clips = [fixtures.clip(n, required=True)
                  for n in ("angle.mp4", "angle_inverted.mp4")]
     if not clips:
         raise SystemExit(f"no clips match {args.clips}")

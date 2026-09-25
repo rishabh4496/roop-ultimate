@@ -45,13 +45,30 @@ folder). Entries before 2026-09-21 were moved here from the README on 2026-09-22
     a "LivePortrait neural gaze retargeter". Its model was a 257-byte ONNX file the code
     wrote itself: a single Gemm layer with an identity weight and zero bias. Its only
     caller was `swap_face`, which nothing calls.
-- **Frontalization (`use_frontalization`) loses the swap on angled faces.** Measured with
-  `tests/frontalize_yaw_bench.py` on 218 frames from the angle clips, binned by yaw.
-  Wherever it fires, identity to the source falls from 0.52 to 0.03 at 45–75° yaw. The
-  output stays 0.57 similar to the ORIGINAL person, with visible tearing and doubled
-  features. Leaving it off measured better in every yaw band. It was already off by
-  default. The UI now warns, and no new projective unwarp was built on top of it. The
-  cause is not yet found: the inverse warp IS applied. The null control repeated exactly.
+- **Frontalization (`use_frontalization`) swapped every face UPSIDE DOWN. Fixed; still
+  net-negative.** `face_frontalize.get_frontal_landmarks_from_pose` re-projected the
+  frontal reference at rvec = 0. `_REF3D_68` is y-up with the nose at +z, and an OpenCV
+  camera is y-down looking along +z, so that reference was the head upside down and
+  facing away. The affine fit to it was a vertical mirror (M[1,1] = -1.19, det < 0). The
+  swapper was handed an inverted face and returned no identity, and the inverse warp
+  pasted a ghost of the original. The reference now faces the camera (rvec = (pi,0,0)), and
+  `frontalize_crop` refuses any fit with det <= 0
+  (`tests/test_face_frontalize_orientation.py` fails on the old code). The swap net's own
+  mask is now defrontalized with the face (it was inert: `swap_model_mask_strength` is 0).
+  `verify_swap` was ruled out first: ROOP_VERIFY_SWAP=0 gave the same numbers.
+  `tests/frontalize_yaw_bench.py`, 218 frames from the angle clips, 4070, live config,
+  null arms repeated exactly. Identity to the source by yaw band:
+
+  | arm | 0-30 | 30-45 | 45-60 | 60-75 | 75-90 |
+  |---|---:|---:|---:|---:|---:|
+  | off | 0.639 | 0.472 | 0.530 | 0.515 | 0.350 |
+  | front_30, mirrored (before) | 0.529 | 0.066 | 0.017 | 0.028 | 0.039 |
+  | front_30, fixed | 0.596 | 0.404 | 0.371 | 0.218 | 0.183 |
+
+  Still worse than off in every band. One global affine cannot undo an out-of-plane
+  turn: it shears the face, and the reflected border shows as a seam on the far cheek.
+  It does place the features better past 75 deg (eye error 0.47 to 0.27). It stays off
+  by default, and the UI warning now carries these numbers.
 - **Selected-mode renders swapped nothing (4bd577d, fixed in a76091a).** Commit 4bd577d
   built `allowed_source_indices` in `ProcessMgr.swap_faces` with
   `faces = getattr(src_data, 'faces', None)`, which overwrote the frame's detected faces
