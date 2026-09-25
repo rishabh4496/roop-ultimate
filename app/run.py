@@ -161,6 +161,8 @@ _install_win_asyncio_compat()
 from roop import core
 import argparse
 parser = argparse.ArgumentParser()
+parser.add_argument('--cuda_device_id', type=int, default=0,
+                    help='CUDA device index within CUDA_VISIBLE_DEVICES (distributed workers use 0)')
 parser.add_argument('--execution-provider', default=None, help='Execution provider override: auto, cpu, cuda, tensorrt, rocm, or dml')
 parser.add_argument('--source', '--source-path', dest='source_reference_path', default=None,
                     help='source image or folder of same-identity reference images')

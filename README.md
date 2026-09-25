@@ -32,6 +32,7 @@ renders the result locally on your GPU; nothing leaves the machine.
 - **Batch matrix:** four strategies (one-to-many, grouped, per-file matrix, recipe matrix) with automatic video segment splitting.
 - **Persistent projects:** every render writes a checkpoint of its exact inputs, settings, provider and hardware. Close the app, shut the machine down, come back, and a project whose inputs still validate can be loaded and resumed.
 - **Queue:** the backend owns it, so it survives closing the tab and restarting. Ten job states, per-job progress, per-job cancel, drag reorder, duplicate, retry and clip joining.
+- **Distributed video render (CLI):** GOP-aligned stream-copy slices are dispatched to isolated NVIDIA GPU workers; timestamped chunks are concat-copied and source audio is remuxed without a second video encode.
 - **Diagnostics:** a live GPU/VRAM/CPU HUD, a structured runtime report with 14 named sections, a thread/pool benchmark runner, a standing environment-health card and a read-only update compatibility check.
 - **Screens:** Home (`#/home`), Face Swap (`#/faceswap`), Batch Matrix (`#/batch`), Processing (`#/processing`), Face Manager (`#/facemgr`), Editor (`#/extras`), Outputs (`#/gallery`), History (`#/history`), Settings (`#/settings`). Each is a deep link, so a Pinokio tab switch returns you where you were.
 
@@ -154,6 +155,27 @@ socket need no proxy.
 
 For UI development, `npm run dev` in `react-ui/` still gives HMR; the dev server
 proxies `/api` and `/ws` to a backend started separately.
+
+### Multi-GPU project render (CLI)
+
+Save a `.roop` project in the UI, then run this with the UI/backend stopped:
+
+```powershell
+cd app
+.\env\Scripts\python.exe -m roop.distributed_render --project C:\media\job.roop --output C:\media\finished.mp4 --chunk-seconds 10
+```
+
+The command detects all visible NVIDIA GPUs, gives each isolated worker one
+GPU, and dispatches GOP chunks from a shared queue. It requires an H.264/HEVC
+constant-frame-rate source, a trim starting/ending on keyframe boundaries, the
+in-memory video method, and an H.264/HEVC output encoder in `config.yaml`.
+Packet hashes and IDR NALs are verified after each stream-copy slice. It
+rejects unsupported timeline automation rather than shifting it silently.
+The final video is assembled with FFmpeg concat demuxer and `-c copy`; original
+audio is stream-copied back once. Timestamped chunk MP4s, per-chunk H.264/HEVC
+elementary streams, and worker logs remain in `finished.mp4.chunks/`. Raw
+elementary streams carry no timestamps, so the MP4s—not the raw streams—are
+used for the lossless concat. This is a CLI feature; the React queue is unchanged.
 
 Why the UI is served by the backend rather than `vite preview` is recorded in
 [`docs/CHANGELOG.md`](docs/CHANGELOG.md).
