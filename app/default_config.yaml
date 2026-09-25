@@ -119,6 +119,11 @@ stabilize_enhancer_strength: 0.6
 stabilize_face: true
 stabilize_hf_texture: true
 stabilize_hf_texture_weight: 0.15
+hf_flow_backend: auto
+hf_flow_vram: auto
+hf_flow_weights: ''
+hf_flow_cycle_sigma: 1.5
+hf_flow_bilateral_sigma: 10.0
 stabilize_landmarks: true
 stabilize_mask: true
 stabilize_mask_strength: 0.6

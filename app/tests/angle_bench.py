@@ -237,7 +237,7 @@ def build_options(g, swap_model, mask_engine, source_bank=None,
             getattr(g.CFG, "stabilize_landmarks", True)
             if stabilize_landmarks is None else stabilize_landmarks),
         stabilize_hf_texture=bool(
-            getattr(g.CFG, "stabilize_hf_texture", False)
+            getattr(g.CFG, "stabilize_hf_texture", True)
             if stabilize_hf_texture is None else stabilize_hf_texture),
         stabilize_hf_texture_weight=float(
             getattr(g.CFG, "stabilize_hf_texture_weight", 0.15)

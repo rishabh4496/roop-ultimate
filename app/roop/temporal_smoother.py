@@ -77,6 +77,14 @@ import cv2
 import numpy as np
 
 
+# RAFT is optional.  The production install already carries torch/torchvision
+# on CUDA machines, but the CPU test profile must be able to import this module
+# without either package.  Models are cached process-wide because a separate
+# RAFT copy per render worker would waste hundreds of MiB of VRAM.
+_RAFT_CACHE = {}
+_RAFT_LOCK = threading.RLock()
+
+
 # ---------------------------------------------------------------------------
 # environment helpers (same contract as roop/occlusion_mask.py)
 # ---------------------------------------------------------------------------
@@ -649,20 +657,35 @@ class HighFrequencyFlowStabilizer:
 
       * FRAME CONTIGUITY. See the module docstring. Without it this warps
         texture from N frames away onto the current face.
-      * FLOW RESIDUAL. If the warped previous crop does not predict the
-        current one, the flow is wrong (occlusion, cut, a fast turn) and the
-        carry is dropped for that face rather than smeared.
+      * FORWARD/BACKWARD CONSISTENCY. A forward and reverse field must close
+        their cycle at the destination pixel.  Occlusions and disocclusions
+        fail this test even when a one-way flow looks plausible.
+      * PHOTOMETRIC CONSISTENCY. A brightness jump is not texture motion.  It
+        reduces the historical mask instead of dragging an old highlight or
+        shadow into the new frame.
       * SHAPE. A crop that changed size between frames cannot share a state.
+
+    The final blend is a three-frame temporal bilateral filter.  The current
+    high band is always present, while the two motion-compensated historical
+    bands are range-weighted by their high-band distance from the current band.
+    When CUDA torch is available the small blend is evaluated in FP16 on the
+    GPU; CPU numpy remains the deterministic fallback used by tests and by
+    installations without CUDA.
     """
 
     FLOW_SIZE = 64          # flow is solved on a 64x64 grid; see _dense_flow
     WEIGHT = 0.15
     HF_SIGMA = 1.0          # pore scale; larger starts carrying structure
     RESET_RESIDUAL = 18.0   # mean abs prediction error, 0-255, above which we bail
+    CYCLE_SIGMA = 1.5        # flow-cycle error in pixels
+    PHOTO_SIGMA = 0.10       # grayscale error in [0, 1]
+    BILATERAL_SIGMA = 10.0   # high-band range sigma in 8-bit units
     MAX_TRACKS = 64
 
     def __init__(self, weight=None, flow_size=None, hf_sigma=None,
-                 reset_residual=None, enabled=True, max_tracks=None):
+                 reset_residual=None, enabled=True, max_tracks=None,
+                 consistency_threshold=None, bilateral_sigma=None,
+                 backend=None, vram_filter=None, flow_weights=None):
         self.enabled = bool(enabled)
         self.weight = min(1.0, max(0.0, float(self.WEIGHT if weight is None
                                               else weight)))
@@ -670,6 +693,15 @@ class HighFrequencyFlowStabilizer:
         self.hf_sigma = float(self.HF_SIGMA if hf_sigma is None else hf_sigma)
         self.reset_residual = float(self.RESET_RESIDUAL if reset_residual is None
                                     else reset_residual)
+        self.consistency_threshold = float(
+            self.CYCLE_SIGMA if consistency_threshold is None
+            else max(0.1, consistency_threshold))
+        self.bilateral_sigma = float(
+            self.BILATERAL_SIGMA if bilateral_sigma is None
+            else max(0.5, bilateral_sigma))
+        self.backend = str(backend or 'auto').strip().lower()
+        self.vram_filter = str(vram_filter or 'auto').strip().lower()
+        self.flow_weights = str(flow_weights or '').strip()
         self.max_tracks = int(max_tracks or self.MAX_TRACKS)
         self._states = {}
         self._order = []
@@ -686,6 +718,13 @@ class HighFrequencyFlowStabilizer:
             flow_size=int(_env_float('ROOP_HF_FLOW_SIZE', cls.FLOW_SIZE, 32, 256)),
             reset_residual=_env_float('ROOP_HF_FLOW_RESIDUAL',
                                       cls.RESET_RESIDUAL, 1.0, 255.0),
+            consistency_threshold=_env_float('ROOP_HF_FLOW_CYCLE_SIGMA',
+                                              cls.CYCLE_SIGMA, 0.1, 32.0),
+            bilateral_sigma=_env_float('ROOP_HF_FLOW_BILATERAL_SIGMA',
+                                        cls.BILATERAL_SIGMA, 0.5, 64.0),
+            backend=os.environ.get('ROOP_HF_FLOW_BACKEND', 'auto'),
+            vram_filter=os.environ.get('ROOP_HF_FLOW_VRAM', 'auto'),
+            flow_weights=os.environ.get('ROOP_HF_FLOW_WEIGHTS', ''),
             enabled=bool(enabled),
         )
 
@@ -725,6 +764,94 @@ class HighFrequencyFlowStabilizer:
             cur_small, prev_small, None, 0.5, 2, 13, 2, 5, 1.1, 0)
 
     @staticmethod
+    def _torch_cuda_available():
+        try:
+            import torch
+            return bool(torch.cuda.is_available())
+        except Exception as _degrade_error:
+            _swallowed("roop/temporal_smoother.py:torch_cuda_probe",
+                       _degrade_error, "falling back to CPU temporal filtering")
+            return False
+
+    def _raft_model(self):
+        """Load a local torchvision RAFT-Small checkpoint lazily.
+
+        No network download is performed here.  A deployment can opt into the
+        FP16 CUDA model by setting ROOP_HF_FLOW_WEIGHTS to a local checkpoint.
+        Without that file, auto mode deliberately uses the already bundled
+        DIS/Farneback path instead of blocking the first render on a download.
+        """
+        if self.backend not in ('auto', 'raft', 'raft_small'):
+            return None
+        if not self.flow_weights or not os.path.isfile(self.flow_weights):
+            return None
+        if not self._torch_cuda_available():
+            return None
+        key = os.path.abspath(self.flow_weights)
+        with _RAFT_LOCK:
+            if key in _RAFT_CACHE:
+                return _RAFT_CACHE[key]
+            try:
+                import torch
+                from torchvision.models.optical_flow import raft_small
+                model = raft_small(weights=None)
+                checkpoint = torch.load(key, map_location='cpu')
+                if isinstance(checkpoint, dict) and 'state_dict' in checkpoint:
+                    checkpoint = checkpoint['state_dict']
+                if isinstance(checkpoint, dict):
+                    checkpoint = {str(k).removeprefix('module.'): v
+                                  for k, v in checkpoint.items()}
+                model.load_state_dict(checkpoint, strict=True)
+                model.eval().to('cuda').half()
+                _RAFT_CACHE[key] = model
+                return model
+            except Exception as _degrade_error:
+                _swallowed("roop/temporal_smoother.py:raft_load",
+                           _degrade_error, "falling back to DIS")
+                _RAFT_CACHE[key] = False
+                return None
+
+    def _raft_flow(self, first, second):
+        model = self._raft_model()
+        if model is None:
+            return None
+        try:
+            import torch
+            # RAFT expects RGB tensors in [-1, 1] and spatial dimensions that
+            # are divisible by 8.  The grayscale observation is replicated to
+            # RGB so the flow backend remains independent of face colour.
+            h, w = first.shape[:2]
+            ph = (8 - h % 8) % 8
+            pw = (8 - w % 8) % 8
+            a = np.pad(first, ((0, ph), (0, pw)), mode='edge')
+            b = np.pad(second, ((0, ph), (0, pw)), mode='edge')
+            ta = torch.from_numpy(a).to('cuda', non_blocking=True)
+            tb = torch.from_numpy(b).to('cuda', non_blocking=True)
+            ta = ta[None, None].repeat(1, 3, 1, 1).half() / 127.5 - 1.0
+            tb = tb[None, None].repeat(1, 3, 1, 1).half() / 127.5 - 1.0
+            with torch.inference_mode(), torch.autocast(
+                    device_type='cuda', dtype=torch.float16):
+                flow = model(ta, tb)[-1]
+            return flow[0, :, :h, :w].permute(1, 2, 0).float().cpu().numpy()
+        except Exception as _degrade_error:
+            _swallowed("roop/temporal_smoother.py:raft_flow",
+                       _degrade_error, "falling back to DIS")
+            return None
+
+    def _flow_pair(self, cur_small, prev_small):
+        """Return backward and forward fields plus the backend actually used."""
+        if self.backend in ('auto', 'raft', 'raft_small'):
+            backward = self._raft_flow(cur_small, prev_small)
+            forward = self._raft_flow(prev_small, cur_small) if backward is not None else None
+            if backward is not None and forward is not None:
+                return backward, forward, 'raft-fp16-cuda'
+        # DIS is the fast CPU fallback already used by the shipped path.  It
+        # remains preferable to silently pretending CUDA exists when the wheel
+        # was built without OpenCV CUDA modules.
+        return (self._dense_flow(cur_small, prev_small),
+                self._dense_flow(prev_small, cur_small), 'dis-cpu')
+
+    @staticmethod
     def _warp(image, flow, shape):
         h, w = int(shape[0]), int(shape[1])
         fh, fw = flow.shape[:2]
@@ -757,6 +884,48 @@ class HighFrequencyFlowStabilizer:
         self._order.append(key)
         while len(self._order) > self.max_tracks:
             self._states.pop(self._order.pop(0), None)
+
+    def _temporal_bilateral(self, current, historical, masks):
+        """Blend up to two warped bands with a three-frame bilateral kernel."""
+        if not historical:
+            return current
+        cur = np.asarray(current, dtype=np.float32)
+        vals = [cur]
+        weights = [np.ones(cur.shape[:2], dtype=np.float32)]
+        sigma = max(0.5, float(self.bilateral_sigma))
+        for value, mask, age_weight in zip(historical, masks, (1.0, 0.5)):
+            if value is None:
+                continue
+            value = np.asarray(value, dtype=np.float32)
+            if value.shape != cur.shape:
+                continue
+            # The range term is what makes this bilateral rather than a plain
+            # temporal EMA: a new pore edge is retained instead of being
+            # averaged into a soft ridge.
+            range_weight = np.exp(-np.mean(np.abs(value - cur), axis=2)
+                                  / sigma).astype(np.float32)
+            weights.append(np.clip(mask, 0.0, 1.0) * range_weight
+                           * float(age_weight) * self.weight)
+            vals.append(value)
+
+        if len(vals) == 1:
+            return cur
+        stacked = np.stack(vals, axis=0)
+        w = np.stack(weights, axis=0)
+        if self.vram_filter != 'off' and self._torch_cuda_available():
+            try:
+                import torch
+                with torch.inference_mode(), torch.autocast(
+                        device_type='cuda', dtype=torch.float16):
+                    tv = torch.from_numpy(stacked).to('cuda', non_blocking=True)
+                    tw = torch.from_numpy(w).to('cuda', non_blocking=True)
+                    out = (tv * tw[..., None]).sum(dim=0) / tw.sum(dim=0).clamp_min(1e-4)[..., None]
+                    return out.float().cpu().numpy()
+            except Exception as _degrade_error:
+                _swallowed("roop/temporal_smoother.py:temporal_cuda",
+                           _degrade_error, "falling back to numpy")
+        return ((stacked * w[..., None]).sum(axis=0)
+                / np.maximum(w.sum(axis=0)[..., None], 1e-4))
 
     def reset(self):
         with self._lock:
@@ -820,7 +989,8 @@ class HighFrequencyFlowStabilizer:
                               and state['frame_index'] == frame_index - 1
                               and state['hf'].shape == hf.shape)
                 if contiguous:
-                    flow = self._dense_flow(small, state['gray'])
+                    flow, forward_flow, backend = self._flow_pair(
+                        small, state['gray'])
                     # VALIDATE THE FIELD BEFORE TRUSTING IT, on the same small
                     # grid the flow was solved on. Warping the full-resolution
                     # low band instead would answer the identical question --
@@ -830,14 +1000,45 @@ class HighFrequencyFlowStabilizer:
                     pred = self._warp(state['gray'].astype(np.float32), flow,
                                       small.shape[:2])
                     residual = float(np.mean(np.abs(pred - small.astype(np.float32))))
+                    # Both observations are grayscale, so the photometric
+                    # term is already one scalar per destination pixel.  A
+                    # reduction over axis 0 would collapse the image to one
+                    # value per column and silently disable the spatial mask.
+                    photo_error = (np.abs(
+                        pred - small.astype(np.float32)) / 255.0)
+                    sampled_forward = self._warp(
+                        forward_flow.astype(np.float32), flow,
+                        small.shape[:2])
+                    cycle_error = np.linalg.norm(
+                        flow + sampled_forward, axis=2)
+                    consistency = np.exp(-cycle_error /
+                                         max(0.1, self.consistency_threshold))
+                    consistency *= np.exp(-photo_error /
+                                          max(0.01, self.PHOTO_SIGMA))
+                    consistency = np.clip(consistency, 0.0, 1.0).astype(np.float32)
+                    consistency_full = cv2.resize(
+                        consistency, (hf.shape[1], hf.shape[0]),
+                        interpolation=cv2.INTER_LINEAR)
                     if residual > self.reset_residual:
                         self._counts.bump('reset_residual')
                     else:
                         warped_hf = self._warp(state['hf'], flow, hf.shape[:2])
-                        out_hf = ((1.0 - self.weight) * hf
-                                  + self.weight * warped_hf)
+                        # M_consistent is intentionally spatial. A partial
+                        # occlusion preserves carry on the stable cheek while
+                        # releasing it immediately at the newly revealed edge.
+                        history = [warped_hf]
+                        masks = [consistency_full]
+                        if state.get('history_hf') is not None:
+                            history.append(self._warp(state['history_hf'], flow,
+                                                      hf.shape[:2]))
+                            masks.append(consistency_full)
+                        out_hf = self._temporal_bilateral(hf, history, masks)
                         out = np.clip(low + out_hf, 0, 255).astype(cur.dtype)
                         self._counts.bump('applied')
+                        self._counts.bump('raft_fp16' if backend.startswith('raft')
+                                          else 'dis_cpu')
+                        self._counts.bump('photo_reject' if float(
+                            consistency.mean()) < 0.20 else 'photo_accept')
                 elif state is None:
                     self._counts.bump('seeded')
                 else:
@@ -846,6 +1047,13 @@ class HighFrequencyFlowStabilizer:
                 self._states[key] = {
                     'gray': small,
                     'hf': np.array(out_hf, dtype=np.float32, copy=True),
+                    # `history_hf` is the previous frame's band already
+                    # expressed in this frame's coordinates.  Keeping that
+                    # representation makes the next call a true sliding
+                    # three-frame window without retaining full RGB crops.
+                    'history_hf': (np.array(warped_hf, dtype=np.float32, copy=True)
+                                   if contiguous and 'warped_hf' in locals()
+                                   else None),
                     'frame_index': int(frame_index),
                 }
                 self._touch(key)
@@ -864,6 +1072,10 @@ class HighFrequencyFlowStabilizer:
                 'skipped_no_key': c.get('skipped_no_key', 0),
                 'reset_residual': c.get('reset_residual', 0),
                 'errors': c.get('errors', 0),
+                'photo_accept': c.get('photo_accept', 0),
+                'photo_reject': c.get('photo_reject', 0),
+                'raft_fp16': c.get('raft_fp16', 0),
+                'dis_cpu': c.get('dis_cpu', 0),
                 'weight': self.weight}
 
     def summary_line(self):
@@ -872,10 +1084,12 @@ class HighFrequencyFlowStabilizer:
                  + s['skipped_no_key'] + s['reset_residual'])
         if total == 0:
             return None
-        return ('[HFStabilize] flow-warped HF carry w=%.2f: applied %d/%d '
+        return ('[HFStabilize] flow-warped HF bilateral w=%.2f: applied %d/%d '
                 '(%.1f%%), seeded %d, non-contiguous %d, no-key %d, '
-                'flow-reset %d, errors %d'
+                'flow-reset %d, photo-accept %d, photo-reject %d, '
+                'raft-fp16 %d, dis-cpu %d, errors %d'
                 % (s['weight'], s['applied'], total,
                    100.0 * s['applied'] / total, s['seeded'],
                    s['skipped_noncontiguous'], s['skipped_no_key'],
-                   s['reset_residual'], s['errors']))
+                   s['reset_residual'], s['photo_accept'], s['photo_reject'],
+                   s['raft_fp16'], s['dis_cpu'], s['errors']))

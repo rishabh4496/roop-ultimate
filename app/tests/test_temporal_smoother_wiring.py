@@ -387,15 +387,15 @@ class SettingsReachTheRunPath(unittest.TestCase):
             self.assertIn("'%s'" % key, save_src, '%s is not saved' % key)
 
 
-class DefaultsAreNoOps(unittest.TestCase):
-    """Everything but the landmark smoother ships off, and 'off' has to mean
-    bit-identical, not nearly."""
+class DefaultsAreSafe(unittest.TestCase):
+    """Temporal stabilizers ship on when they decline safely, and explicit
+    opt-outs remain available for bit-identical comparisons."""
 
-    def test_hf_texture_is_opt_in(self):
+    def test_hf_texture_ships_on(self):
         import settings
         # Defaults must be tested independently of the user's persisted config.
         cfg = settings.Settings(str(APP / '__missing_defaults_test__.yaml'))
-        self.assertFalse(cfg.stabilize_hf_texture)
+        self.assertTrue(cfg.stabilize_hf_texture)
 
     def test_landmark_smoothing_ships_on(self):
         """It IS the boundary-crawl fix rather than an experiment, and it
@@ -410,7 +410,7 @@ class DefaultsAreNoOps(unittest.TestCase):
         src = (APP.parent / 'react-ui' / 'src' / 'components' / 'faceswap'
                / 'defaults.js').read_text(encoding='utf-8')
         for key, expected in (('stabilize_landmarks', 'true'),
-                              ('stabilize_hf_texture', 'false'),
+                              ('stabilize_hf_texture', 'true'),
                               ('stabilize_hf_texture_weight', '0.15'),
                               ('boundary_illumination_strength', '0')):
             m = re.search(r'^\s*%s:\s*([^,]+),' % key, src, re.M)

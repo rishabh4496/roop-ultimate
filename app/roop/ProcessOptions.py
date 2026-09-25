@@ -22,7 +22,7 @@ class ProcessOptions:
                  stabilize_face=False, stabilize_method='one_euro', stabilize_min_cutoff=0.05, stabilize_beta=0.02,
                  stabilize_enhancer=False, stabilize_enhancer_strength=0.5,
                  stabilize_mask=False, stabilize_mask_strength=0.5,
-                 stabilize_landmarks=True, stabilize_hf_texture=False,
+                 stabilize_landmarks=True, stabilize_hf_texture=True,
                  stabilize_hf_texture_weight=0.15, selection_state=None,
                  processing_request=None, identity_confidence_threshold=None,
                  live_mode=False):

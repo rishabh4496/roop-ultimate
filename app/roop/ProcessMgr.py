@@ -1248,6 +1248,15 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
             _has_enhancer = any(getattr(p, 'type', None) == 'enhance'
                                 for p in newprocessors)
             self._hf_stabilizer.enabled = _has_enhancer
+            print('[HFStabilize] request=%s enhancer_processors=%s active=%s '
+                  'backend=%s vram_filter=%s' % (
+                      bool(self._want_hf_stabilize),
+                      [getattr(p, 'processorname', type(p).__name__)
+                       for p in newprocessors if getattr(p, 'type', None) == 'enhance'],
+                      bool(self._hf_stabilizer.enabled),
+                      getattr(self._hf_stabilizer, 'backend', 'unknown'),
+                      getattr(self._hf_stabilizer, 'vram_filter', 'unknown')),
+                  flush=True)
             if not _has_enhancer:
                 print('[HFStabilize] stabilize_hf_texture is on but no enhancer '
                       'is in the chain; the filter has nothing to damp and '

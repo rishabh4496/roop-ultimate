@@ -143,7 +143,7 @@ export const FACESWAP_DEFAULTS = {
   // Dense-landmark smoothing rides on stabilize_face; it is what keeps the
   // paste matte's OUTLINE steady, which the 5-point kps filter never touched.
   stabilize_landmarks: true,
-  stabilize_hf_texture: false,
+  stabilize_hf_texture: true,
   stabilize_hf_texture_weight: 0.15,
 
   // System options

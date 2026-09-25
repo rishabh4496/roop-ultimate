@@ -342,6 +342,37 @@ class HighFrequencyCarry(unittest.TestCase):
         np.testing.assert_array_equal(out, bright)
         self.assertEqual(h.stats()['reset_residual'], 1)
 
+    def test_forward_backward_cycle_reduces_history_at_inconsistent_pixels(self):
+        """A plausible one-way field must not be enough to carry old pores.
+
+        The injected fields deliberately disagree by eight pixels.  Raising
+        the residual ceiling isolates the forward/backward consistency mask
+        from the older whole-frame residual guard.
+        """
+        h = HighFrequencyFlowStabilizer(weight=0.9, reset_residual=255.0,
+                                        vram_filter='off')
+        h._flow_pair = lambda cur, prev: (
+            np.dstack((np.full(cur.shape, 8.0, dtype=np.float32),
+                       np.zeros_like(cur, dtype=np.float32))),
+            np.zeros((*cur.shape, 2), dtype=np.float32),
+            'test-inconsistent')
+        a = self._crop(12)
+        b = self._crop(13)
+        h.stabilize(a, track_id=1, frame_index=0)
+        h.stabilize(b, track_id=1, frame_index=1)
+        self.assertEqual(h.stats()['applied'], 1)
+        self.assertEqual(h.stats()['photo_reject'], 1)
+
+    def test_history_is_retained_as_a_three_frame_window(self):
+        h = HighFrequencyFlowStabilizer(weight=0.5, vram_filter='off')
+        crop = self._crop(21)
+        for i in range(3):
+            h.stabilize(crop, track_id=1, frame_index=i)
+        state = h._states[('track', 1)]
+        self.assertIsNotNone(state['history_hf'])
+        self.assertEqual(h.stats()['applied'], 2)
+        self.assertIn('bilateral', h.summary_line())
+
     def test_disabled_is_a_pass_through_that_records_nothing(self):
         h = HighFrequencyFlowStabilizer(enabled=False)
         crop = self._crop()

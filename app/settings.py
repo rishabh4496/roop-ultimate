@@ -140,6 +140,14 @@ ENV_SETTINGS = (
     ('perf_gpu_affine', 'ROOP_GPU_AFFINE', 'tristate'),
     ('perf_pinned_buffers', 'ROOP_PINNED_BUFFERS', 'tristate'),
     ('temporal_step', 'ROOP_TEMPORAL_STEP', 'value'),
+    # Flow-texture locking.  These are config-only performance knobs: the
+    # visible Face Swap control intentionally remains the on/off + carry weight
+    # pair, while backend selection and local RAFT weights are deployment facts.
+    ('hf_flow_backend', 'ROOP_HF_FLOW_BACKEND', 'value'),
+    ('hf_flow_vram', 'ROOP_HF_FLOW_VRAM', 'value'),
+    ('hf_flow_weights', 'ROOP_HF_FLOW_WEIGHTS', 'value'),
+    ('hf_flow_cycle_sigma', 'ROOP_HF_FLOW_CYCLE_SIGMA', 'value'),
+    ('hf_flow_bilateral_sigma', 'ROOP_HF_FLOW_BILATERAL_SIGMA', 'value'),
     # Identity/tracking features that used to be reachable only by editing a
     # launcher's environment. Same 'auto' contract: leave the env alone and let
     # each module keep its own default, so exposing them changed no behaviour.
@@ -1058,11 +1066,16 @@ class Settings:
         # jittered. Defaults on because that IS the boundary-crawl fix, not an
         # experiment -- it declines safely wherever frames are non-contiguous.
         self.stabilize_landmarks = self.default_get(data, 'stabilize_landmarks', True)
-        # Flow-warped high-frequency carry over the restorer's output. Opt-in:
-        # it is new per-face CPU work and its quality claim has not yet been
-        # settled by a counterbalanced rendered A/B on this footage.
-        self.stabilize_hf_texture = self.default_get(data, 'stabilize_hf_texture', False)
+        # Flow-warped high-frequency carry over the restorer's output. It is
+        # safe to decline on non-contiguous worker frames, so ship the temporal
+        # lock on by default while retaining an explicit persisted opt-out.
+        self.stabilize_hf_texture = self.default_get(data, 'stabilize_hf_texture', True)
         self.stabilize_hf_texture_weight = self.default_get(data, 'stabilize_hf_texture_weight', 0.15)
+        self.hf_flow_backend = self.default_get(data, 'hf_flow_backend', 'auto')
+        self.hf_flow_vram = self.default_get(data, 'hf_flow_vram', 'auto')
+        self.hf_flow_weights = self.default_get(data, 'hf_flow_weights', '')
+        self.hf_flow_cycle_sigma = self.default_get(data, 'hf_flow_cycle_sigma', 1.5)
+        self.hf_flow_bilateral_sigma = self.default_get(data, 'hf_flow_bilateral_sigma', 10.0)
         # Paste-matte edge ramp: 'gaussian' (shipped) | 'distance'.
         # `face_mask_blend` was calibrated against the Gaussian's behaviour, so
         # the distance ramp is offered rather than substituted.
@@ -1410,6 +1423,11 @@ class Settings:
             'stabilize_landmarks': self.stabilize_landmarks,
             'stabilize_hf_texture': self.stabilize_hf_texture,
             'stabilize_hf_texture_weight': self.stabilize_hf_texture_weight,
+            'hf_flow_backend': self.hf_flow_backend,
+            'hf_flow_vram': self.hf_flow_vram,
+            'hf_flow_weights': self.hf_flow_weights,
+            'hf_flow_cycle_sigma': self.hf_flow_cycle_sigma,
+            'hf_flow_bilateral_sigma': self.hf_flow_bilateral_sigma,
             'mask_edge_mode': self.mask_edge_mode,
             'mask_erode_dilate_radius': self.mask_erode_dilate_radius,
             'boundary_illumination_strength': self.boundary_illumination_strength,

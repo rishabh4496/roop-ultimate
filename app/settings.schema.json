@@ -638,12 +638,52 @@
       "type": "bool"
     },
     "stabilize_hf_texture": {
-      "default": false,
+      "default": true,
       "type": "bool"
     },
     "stabilize_hf_texture_weight": {
       "default": 0.15,
       "type": "float"
+    },
+    "hf_flow_backend": {
+      "default": "auto",
+      "type": "str",
+      "env": {
+        "var": "ROOP_HF_FLOW_BACKEND",
+        "kind": "value"
+      }
+    },
+    "hf_flow_vram": {
+      "default": "auto",
+      "type": "str",
+      "env": {
+        "var": "ROOP_HF_FLOW_VRAM",
+        "kind": "value"
+      }
+    },
+    "hf_flow_weights": {
+      "default": "",
+      "type": "str",
+      "env": {
+        "var": "ROOP_HF_FLOW_WEIGHTS",
+        "kind": "value"
+      }
+    },
+    "hf_flow_cycle_sigma": {
+      "default": 1.5,
+      "type": "float",
+      "env": {
+        "var": "ROOP_HF_FLOW_CYCLE_SIGMA",
+        "kind": "value"
+      }
+    },
+    "hf_flow_bilateral_sigma": {
+      "default": 10.0,
+      "type": "float",
+      "env": {
+        "var": "ROOP_HF_FLOW_BILATERAL_SIGMA",
+        "kind": "value"
+      }
     },
     "mask_edge_mode": {
       "default": "gaussian",
