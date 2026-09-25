@@ -1103,6 +1103,10 @@ export default function FaceSwap({
       enhancer_align: activeParams.enhancer_align,
       color_match_after_enhance: activeParams.color_match_after_enhance,
       lipsync_enabled: activeParams.lipsync_enabled,
+      lipsync_model: activeParams.lipsync_model,
+      lipsync_coarticulation_mode: activeParams.lipsync_coarticulation_mode,
+      oral_cavity_restore: activeParams.oral_cavity_restore,
+      jaw_coarticulation_strength: num(activeParams.jaw_coarticulation_strength, 0.6),
       lipsync_audio_source: activeParams.lipsync_audio_source,
       lipsync_audio_path: activeParams.lipsync_audio_path,
       restore_original_eyes: activeParams.restore_original_eyes,
@@ -3319,13 +3323,48 @@ export default function FaceSwap({
               <Toggle label="Restore original mouth area" checked={!!p.restore_original_mouth} onChange={(v) => set('restore_original_mouth', v)} />
             )}
             <Toggle
-              label="Lip-sync (MuseTalk)"
+              label="Lip-sync & Viseme Refinement"
               info="Regenerates the mouth region to match a driving audio track, after everything else — same slot as 'Restore original mouth area', so the two are mutually exclusive (this one wins when both would apply). 'Original audio' re-syncs the mouth to this clip's own soundtrack, repairing drift the swap itself introduces; 'Uploaded track' dubs against a separate audio file instead."
               checked={!!p.lipsync_enabled}
               onChange={(v) => set('lipsync_enabled', v)}
             />
             {p.lipsync_enabled && (
               <>
+                <Select
+                  label="Lip-sync Engine / Model"
+                  value={p.lipsync_model || 'wav2lip'}
+                  onChange={(v) => set('lipsync_model', v)}
+                  options={[
+                    { value: 'wav2lip', label: 'Wav2Lip-HQ (Ultra-low Latency ONNX FP16)' },
+                    { value: 'musetalk', label: 'MuseTalk (Diffusion UNet)' }
+                  ]}
+                />
+                <Select
+                  label="Audio/Visual Co-articulation Mode"
+                  value={p.lipsync_coarticulation_mode || 'keep_target_lips'}
+                  onChange={(v) => set('lipsync_coarticulation_mode', v)}
+                  options={[
+                    { value: 'keep_target_lips', label: 'Keep Target Lips (Matches original actor mouth motion)' },
+                    { value: 'redub_sync', label: 'Re-dub Sync (Alters mouth & jawline geometry to new voiceover)' }
+                  ]}
+                />
+                <Toggle
+                  label="Mouth Cavity & Teeth Restoration (BiSeNet)"
+                  info="Reconstructs crisp enamel edges, interdental crevices, and natural tongue depth. Completely prevents clamped-lip and blurry teeth artifacts when swapping closed-mouth sources onto open-mouthed targets."
+                  checked={p.oral_cavity_restore !== false}
+                  onChange={(v) => set('oral_cavity_restore', v)}
+                />
+                {p.lipsync_coarticulation_mode === 'redub_sync' && (
+                  <Slider
+                    label="Jaw Co-articulation Strength"
+                    info="Deforms mandibular contours and jawline synchronized with acoustic energy and phoneme aperture."
+                    min={0}
+                    max={1}
+                    step={0.05}
+                    value={num(p.jaw_coarticulation_strength, 0.6)}
+                    onChange={(v) => set('jaw_coarticulation_strength', v)}
+                  />
+                )}
                 <Select
                   label="Lip-sync audio source"
                   value={p.lipsync_audio_source || 'original'}

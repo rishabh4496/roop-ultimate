@@ -4359,18 +4359,27 @@ def _apply_temporal_quality_settings(payload):
 
 
 def _apply_lipsync_settings(payload):
-    """Lip-sync (MuseTalk) toggle + audio source, onto roop.globals.
-
-    lipsync_audio_path is deliberately NOT read from payload's own default —
-    it comes only from CFG (there is no durable default for a per-job upload
-    reference) or the payload itself when the client sends one.
+    """Lip-sync (Wav2Lip / MuseTalk) toggle, model, co-articulation mode,
+    oral cavity restoration, onto roop.globals.
     """
     for key, default in (("lipsync_enabled", False),
-                         ("lipsync_audio_source", "original")):
+                         ("lipsync_audio_source", "original"),
+                         ("lipsync_model", "wav2lip"),
+                         ("lipsync_coarticulation_mode", "keep_target_lips"),
+                         ("oral_cavity_restore", True)):
         fallback = getattr(roop_globals.CFG, key, default)
         value = payload.get(key, fallback)
-        setattr(roop_globals, key, bool(value) if key == "lipsync_enabled" else value)
+        if key in ("lipsync_enabled", "oral_cavity_restore"):
+            setattr(roop_globals, key, bool(value))
+        else:
+            setattr(roop_globals, key, str(value) if value is not None else default)
     roop_globals.lipsync_audio_path = payload.get("lipsync_audio_path") or None
+    try:
+        jaw_str = float(payload.get("jaw_coarticulation_strength", getattr(roop_globals.CFG, "jaw_coarticulation_strength", 0.6)))
+    except (TypeError, ValueError):
+        jaw_str = 0.6
+    roop_globals.jaw_coarticulation_strength = jaw_str
+
 
 
 def _apply_parser_region_settings(payload):

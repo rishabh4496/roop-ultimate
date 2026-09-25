@@ -1151,6 +1151,10 @@ class Settings:
         # Lip-sync (MuseTalk) — see roop/globals.py. lipsync_audio_path is a
         # per-job temp upload reference, not a durable default.
         self.lipsync_enabled = self.default_get(data, 'lipsync_enabled', False)
+        self.lipsync_model = self.default_get(data, 'lipsync_model', 'wav2lip')
+        self.lipsync_coarticulation_mode = self.default_get(data, 'lipsync_coarticulation_mode', 'keep_target_lips')
+        self.oral_cavity_restore = self.default_get(data, 'oral_cavity_restore', True)
+        self.jaw_coarticulation_strength = self.default_get(data, 'jaw_coarticulation_strength', 0.6)
         self.lipsync_audio_source = self.default_get(data, 'lipsync_audio_source', 'original')
         # DeepFaceLab merger post-ops — see roop/procmgr_merger.py. All neutral
         # by default; each is a bit-identical no-op at 0.
@@ -1473,6 +1477,10 @@ class Settings:
             'enhancer_align': self.enhancer_align,
             'color_match_after_enhance': self.color_match_after_enhance,
             'lipsync_enabled': self.lipsync_enabled,
+            'lipsync_model': self.lipsync_model,
+            'lipsync_coarticulation_mode': self.lipsync_coarticulation_mode,
+            'oral_cavity_restore': self.oral_cavity_restore,
+            'jaw_coarticulation_strength': self.jaw_coarticulation_strength,
             'lipsync_audio_source': self.lipsync_audio_source,
             'merger_hist_match': self.merger_hist_match,
             'merger_sharpen': self.merger_sharpen,

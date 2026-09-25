@@ -3095,21 +3095,44 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
     def _lipsync_restorer(self):
         """Lazily built and shared across worker threads, mirroring
         _expression_restorer's construction-locking rationale."""
+        model_choice = str(getattr(roop.globals, 'lipsync_model', 'wav2lip') or 'wav2lip').lower()
         r = getattr(self, '_lipsync_restorer_inst', None)
-        if r is not None:
+        if r is not None and getattr(r, 'processorname', '') == f'lipsync_{model_choice}':
             return r
         with _LIPSYNC_BUILD_LOCK:
             r = getattr(self, '_lipsync_restorer_inst', None)
-            if r is None:
-                from roop.processors.Lipsync_MuseTalk import Lipsync_MuseTalk
+            if r is None or getattr(r, 'processorname', '') != f'lipsync_{model_choice}':
                 from roop.utilities import get_device
-                r = Lipsync_MuseTalk()
+                if model_choice == 'musetalk':
+                    from roop.processors.Lipsync_MuseTalk import Lipsync_MuseTalk
+                    r = Lipsync_MuseTalk()
+                else:
+                    from roop.processors.Lipsync_Wav2Lip import Lipsync_Wav2Lip
+                    r = Lipsync_Wav2Lip()
                 r.Initialize({"devicename": get_device()})
                 self._lipsync_restorer_inst = r
         return r
 
+    def _finish_lipsync_coart(self, result, plate, target_face, audio_cache, t_s, mode, region=None):
+        if mode == 'redub_sync' and audio_cache is not None:
+            p_en = getattr(audio_cache, 'phoneme_energy_for_time', lambda t: 0.0)(t_s)
+            v_op = getattr(audio_cache, 'viseme_openness_for_time', lambda t: 0.0)(t_s)
+            from roop.oral_cavity import coarticulate_jawline_frame
+            result = coarticulate_jawline_frame(result, target_face, phoneme_energy=p_en,
+                                               viseme_openness=v_op,
+                                               strength=float(getattr(roop.globals, 'jaw_coarticulation_strength', 0.6) or 0.6))
+        if getattr(roop.globals, 'oral_cavity_restore', True):
+            from roop.oral_cavity import reconstruct_inner_mouth_geometry
+            p_en = getattr(audio_cache, 'phoneme_energy_for_time', lambda t: 0.0)(t_s) if audio_cache else 0.0
+            v_op = getattr(audio_cache, 'viseme_openness_for_time', lambda t: 0.0)(t_s) if audio_cache else 0.0
+            result = reconstruct_inner_mouth_geometry(result, plate, target_face,
+                                                     phoneme_energy=p_en, viseme_openness=v_op, region=region)
+        return result
+
+
     def _cur_kps_stab(self):
         return getattr(self._tls, 'kps', None) if self._parallel_stab else self.kps_stabilizer
+
 
     def _cur_enh_stab(self):
         return getattr(self._tls, 'enh', None) if self._parallel_stab else self.enh_stabilizer
@@ -6296,22 +6319,28 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                     audio_feat = audio_cache.features_for_time(t_s)
                     mouth_cutout, mouth_bb, mouth_polygon = self.create_mouth_mask(target_face, plate, mask_offsets)
                     if audio_feat is not None and mouth_cutout is not None:
-                        restorer = self._lipsync_restorer()
-                        prepared = restorer.prepare(result, target_face, audio_feat)
-                        with _gpu_guard(pooled=getattr(restorer, 'pool', None) is not None, owner='expression'):
-                            raw = restorer.infer(prepared)
-                        # raw is the whole generated 256x256 FACE crop — slice
-                        # out just the region under mouth_bb before pasting, or
-                        # apply_mouth_area would resize the entire face to fit
-                        # the (much smaller) mouth box.
-                        crop_box = prepared.get('crop_box') if prepared else None
-                        lipsync_cutout = restorer.finish(raw, crop_box, mouth_bb)
+                        coart_mode = str(getattr(roop.globals, 'lipsync_coarticulation_mode', 'keep_target_lips') or 'keep_target_lips').lower()
+                        if coart_mode == 'keep_target_lips':
+                            lipsync_cutout = mouth_cutout
+                        else:
+                            restorer = self._lipsync_restorer()
+                            prepared = restorer.prepare(result, target_face, audio_feat)
+                            with _gpu_guard(pooled=getattr(restorer, 'pool', None) is not None, owner='expression'):
+                                raw = restorer.infer(prepared)
+                            # Slice mouth-region sub-crop so apply_mouth_area fits the mouth box.
+                            crop_box = prepared.get('crop_box') if prepared else None
+                            lipsync_cutout = restorer.finish(raw, crop_box, mouth_bb)
                         _hy, _hp = _head_angles()
                         result = self.apply_mouth_area(result, lipsync_cutout, mouth_bb, mouth_polygon,
                                                        mask_offsets[5], yaw=_hy, pitch=_hp,
                                                        region=region)
+                        result = self._finish_lipsync_coart(result, plate, target_face, audio_cache, t_s, coart_mode, region)
+
             except Exception as e:
                 bar_write(f"[ProcessMgr] lip-sync failed: {e}")
+
+
+
 
         # Restore only clearly visible target teeth after all mouth generators.
         # Unlike restore_original_mouth this does not paste the target's lips or
@@ -6324,8 +6353,14 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
             and float(_expression_plan.get('mouth_strength', 0.0) or 0.0) > 0.0)
         if (not self.options.restore_original_mouth and not lipsync_wins
                 and not _expression_mouth_active):
-            result = self.preserve_visible_teeth(result, plate, target_face,
-                                                  region=region)
+            if getattr(roop.globals, 'oral_cavity_restore', True):
+                from roop.oral_cavity import reconstruct_inner_mouth_geometry
+                result = reconstruct_inner_mouth_geometry(result, plate, target_face,
+                                                         region=region)
+            else:
+                result = self.preserve_visible_teeth(result, plate, target_face,
+                                                      region=region)
+
 
         # ── Face-shape reshape (post-composite) ───────────────────────────────
         # Warp the target's jaw/chin/cheek silhouette + lower face toward the

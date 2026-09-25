@@ -213,11 +213,14 @@ expression_blink_sync = False
 # track, post-composite (same slot as restore_original_mouth — the two are
 # mutually exclusive, see ProcessMgr.process_face). audio_source picks what
 # drives it: 'original' re-syncs to the target video's own audio (repairs
-# drift the swap itself introduces), 'upload' dubs against
 # lipsync_audio_path instead. Off by default (bit-exact no-op).
 lipsync_enabled = False
 lipsync_audio_source = 'original'
 lipsync_audio_path = None
+lipsync_model = 'wav2lip'
+lipsync_coarticulation_mode = 'keep_target_lips'
+oral_cavity_restore = True
+jaw_coarticulation_strength = 0.6
 # Small-face rescue: when a frame yields no detections, retry on a 2x upscale
 # so tiny/distant faces get picked up (without raising the global det size).
 rescue_small_faces = False

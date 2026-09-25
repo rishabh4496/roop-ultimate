@@ -22,10 +22,17 @@ import numpy as np
 APP = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, APP)
 
+from unittest.mock import patch
 from roop.lipsync_audio import (                                # noqa: E402
-    AudioFeatureCache, audio_index_for_frame, frame_time)
+    AudioFeatureCache, audio_index_for_frame, frame_time,
+    extract_mel_spectrogram, compute_phoneme_features,
+    MEL_N_MELS, MEL_SR)
 from roop.processors.Lipsync_MuseTalk import (                  # noqa: E402
-    INPUT_SIZE, crop_box_to_local, face_bbox_crop, resolve_device)
+    INPUT_SIZE, Lipsync_MuseTalk, crop_box_to_local, face_bbox_crop, resolve_device)
+from roop.processors.Lipsync_Wav2Lip import Lipsync_Wav2Lip     # noqa: E402
+from roop.oral_cavity import (                                  # noqa: E402
+    detect_oral_cavity_mask, detect_clamped_lip_artifact,
+    reconstruct_inner_mouth_geometry, coarticulate_jawline_frame)
 
 
 class TestFrameTime(unittest.TestCase):
@@ -312,6 +319,194 @@ class TestDefaultOffIsANoOp(unittest.TestCase):
         self.assertIn('try:', block)
         self.assertIn('except Exception as e:', block)
         self.assertIn('bar_write', block)
+
+
+class TestAudioFeatureCacheMelAndPhonemes(unittest.TestCase):
+    def setUp(self):
+        self.mel = np.arange(80 * 100, dtype=np.float32).reshape(80, 100)
+        self.energy = np.linspace(0.0, 1.0, 100, dtype=np.float32)
+        self.openness = np.linspace(0.1, 0.9, 100, dtype=np.float32)
+        self.cache = AudioFeatureCache(
+            features=None, audio_fps=25.0,
+            mel_spectrogram=self.mel, mel_fps=80.0,
+            phoneme_energy=self.energy, viseme_openness=self.openness
+        )
+
+    def test_mel_chunk_for_time_centered_window(self):
+        chunk = self.cache.mel_chunk_for_time(0.5, window_size=16)
+        self.assertEqual(chunk.shape, (80, 16))
+        np.testing.assert_array_equal(chunk, self.mel[:, 32:48])
+
+    def test_mel_chunk_boundary_padding(self):
+        chunk = self.cache.mel_chunk_for_time(0.0, window_size=16)
+        self.assertEqual(chunk.shape, (80, 16))
+        np.testing.assert_array_equal(chunk[:, 0], self.mel[:, 0])
+        np.testing.assert_array_equal(chunk[:, 8:16], self.mel[:, 0:8])
+
+    def test_mel_chunk_empty_cache_returns_zeros(self):
+        empty_cache = AudioFeatureCache(None, audio_fps=25.0)
+        chunk = empty_cache.mel_chunk_for_time(0.5, window_size=16)
+        self.assertEqual(chunk.shape, (80, 16))
+        self.assertTrue((chunk == 0).all())
+
+    def test_phoneme_energy_and_viseme_openness_for_time(self):
+        self.assertAlmostEqual(self.cache.phoneme_energy_for_time(0.0), 0.0, places=4)
+        self.assertAlmostEqual(self.cache.viseme_openness_for_time(0.0), 0.1, places=4)
+        self.assertAlmostEqual(self.cache.phoneme_energy_for_time(10.0), 1.0, places=4)
+        self.assertAlmostEqual(self.cache.viseme_openness_for_time(10.0), 0.9, places=4)
+
+    def test_is_speech_active(self):
+        self.assertFalse(self.cache.is_speech_active(0.0, threshold=0.05))
+        self.assertTrue(self.cache.is_speech_active(1.0, threshold=0.05))
+
+
+class TestMelSpectrogramAndPhonemeExtraction(unittest.TestCase):
+    def test_extract_mel_spectrogram_sine_wave(self):
+        t = np.linspace(0, 0.5, int(MEL_SR * 0.5), endpoint=False, dtype=np.float32)
+        samples = 0.5 * np.sin(2 * np.pi * 440 * t)
+        mel = extract_mel_spectrogram(samples)
+        self.assertEqual(mel.shape[0], MEL_N_MELS)
+        self.assertGreater(mel.shape[1], 0)
+        self.assertEqual(mel.dtype, np.float32)
+
+    def test_extract_mel_spectrogram_empty_input(self):
+        mel = extract_mel_spectrogram(np.array([], dtype=np.float32))
+        self.assertEqual(mel.shape, (MEL_N_MELS, 0))
+
+    def test_compute_phoneme_features_bounds(self):
+        mel = np.random.randn(80, 50).astype(np.float32)
+        energy, openness = compute_phoneme_features(mel)
+        self.assertEqual(len(energy), 50)
+        self.assertEqual(len(openness), 50)
+        self.assertTrue((energy >= 0.0).all() and (energy <= 1.0).all())
+        self.assertTrue((openness >= 0.0).all() and (openness <= 1.0).all())
+
+
+class TestLipsyncWav2Lip(unittest.TestCase):
+    def setUp(self):
+        self.proc = Lipsync_Wav2Lip()
+        self.proc.Initialize()
+
+    def tearDown(self):
+        self.proc.Release()
+
+    def test_initialization_state(self):
+        self.assertTrue(self.proc._ready)
+        self.assertEqual(self.proc.type, 'lipsync')
+        self.assertEqual(self.proc.processorname, 'lipsync_wav2lip')
+        self.assertEqual(self.proc.input_size, 96)
+
+    def test_prepare_and_infer(self):
+        frame = np.full((256, 256, 3), 128, dtype=np.uint8)
+        target_face = {'bbox': [40, 40, 200, 200]}
+        audio_feat = np.zeros((80, 16), dtype=np.float32)
+
+        data = self.proc.prepare(frame, target_face, audio_feat)
+        self.assertIsNotNone(data)
+        self.assertIn('crop', data)
+        self.assertEqual(data['crop'].shape, (96, 96, 3))
+
+        output = self.proc.infer(data)
+        self.assertIsNotNone(output)
+        self.assertEqual(output.shape, (96, 96, 3))
+        self.assertEqual(output.dtype, np.uint8)
+
+    def test_run_interface(self):
+        frame = np.full((256, 256, 3), 128, dtype=np.uint8)
+        target_face = {'bbox': [40, 40, 200, 200]}
+        audio_feat = np.zeros((80, 16), dtype=np.float32)
+        mouth_bb = (80, 140, 160, 180)
+        out = self.proc.Run(frame, target_face, audio_feat, mouth_bb)
+        self.assertIsNotNone(out)
+
+
+class TestOralCavityAndTeethRestoration(unittest.TestCase):
+    def setUp(self):
+        self.frame = np.tile(np.linspace(50, 200, 400, dtype=np.uint8)[:, None, None], (1, 400, 3))
+        pts106 = np.full((106, 2), 200.0, dtype=np.float32)
+        pts106[66] = [200.0, 195.0]
+        pts106[67] = [185.0, 200.0]
+        pts106[68] = [185.0, 215.0]
+        pts106[69] = [200.0, 220.0]
+        pts106[70] = [215.0, 215.0]
+        pts106[71] = [215.0, 200.0]
+
+        pts106[16] = [200.0, 320.0]
+        pts106[46] = [200.0, 160.0]
+        for idx in range(8, 25):
+            pts106[idx] = [120.0 + (idx - 8) * 10.0, 300.0 + (5 - abs(idx - 16)) * 4.0]
+
+        self.face = {'landmark_2d_106': pts106, 'bbox': [100, 100, 300, 350]}
+
+    def test_detect_oral_cavity_mask_landmark(self):
+        mask, metrics = detect_oral_cavity_mask(self.frame, self.face)
+        self.assertEqual(mask.shape, (400, 400))
+        self.assertTrue(metrics['is_open'])
+        self.assertGreater(metrics['area'], 0)
+        self.assertGreater(metrics['aperture_h'], 0)
+        self.assertIsNotNone(metrics['bbox'])
+
+    def test_detect_clamped_lip_artifact(self):
+        _, metrics = detect_oral_cavity_mask(self.frame, self.face)
+        plate = self.frame.copy()
+        plate[195:220, 185:215] = np.random.randint(0, 255, (25, 30, 3), dtype=np.uint8)
+        swapped = self.frame.copy()
+        swapped[195:220, 185:215] = 130
+
+        result = detect_clamped_lip_artifact(swapped, plate, self.face, metrics)
+        self.assertTrue(result['clamped_lip'] or result['blurry_teeth'])
+        self.assertGreater(result['severity'], 0.0)
+
+    def test_reconstruct_inner_mouth_geometry(self):
+        plate = self.frame.copy()
+        plate[200:208, 190:210] = [240, 240, 240]
+        swapped = self.frame.copy()
+        swapped[195:220, 185:215] = [100, 100, 100]
+
+        restored = reconstruct_inner_mouth_geometry(
+            swapped, plate, self.face,
+            phoneme_energy=0.8, viseme_openness=0.9, teeth_sharpness=1.0
+        )
+        self.assertEqual(restored.shape, (400, 400, 3))
+        self.assertGreater(int(restored[204, 200, 0]), 100)
+
+    def test_coarticulate_jawline_frame_active_vs_neutral(self):
+        neutral = coarticulate_jawline_frame(self.frame, self.face, phoneme_energy=0.0,
+                                             viseme_openness=0.0, strength=0.6)
+        np.testing.assert_array_equal(neutral, self.frame)
+
+        active = coarticulate_jawline_frame(self.frame, self.face, phoneme_energy=0.8,
+                                            viseme_openness=0.9, strength=0.8)
+        self.assertEqual(active.shape, (400, 400, 3))
+        diff = np.abs(active.astype(np.int32) - self.frame.astype(np.int32))
+        self.assertGreater(diff.sum(), 0)
+
+
+class TestCoarticulationModesAndGlobals(unittest.TestCase):
+    def test_lipsync_globals_defaults(self):
+        import roop.globals as g
+        self.assertEqual(getattr(g, 'lipsync_model', None), 'wav2lip')
+        self.assertEqual(getattr(g, 'lipsync_coarticulation_mode', None), 'keep_target_lips')
+        self.assertTrue(getattr(g, 'oral_cavity_restore', False))
+        self.assertEqual(getattr(g, 'jaw_coarticulation_strength', None), 0.6)
+
+    def test_lipsync_restorer_model_dispatch(self):
+        import roop.globals as g
+        from roop.ProcessMgr import ProcessMgr
+
+        class DummyMgr:
+            _lipsync_restorer = ProcessMgr._lipsync_restorer
+            _lipsync_restorer_inst = None
+
+        mgr = DummyMgr()
+        g.lipsync_model = 'wav2lip'
+        r1 = mgr._lipsync_restorer()
+        self.assertEqual(r1.processorname, 'lipsync_wav2lip')
+
+        with patch.object(Lipsync_MuseTalk, 'Initialize', return_value=None):
+            g.lipsync_model = 'musetalk'
+            r2 = mgr._lipsync_restorer()
+            self.assertEqual(r2.processorname, 'lipsync_musetalk')
 
 
 if __name__ == "__main__":
