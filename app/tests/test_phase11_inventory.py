@@ -22,7 +22,7 @@ def test_inventory_contains_all_source_discovered_paths():
         "LSiDIR x4", "UltraSharp x4", "Clear Reality x4", "SPAN x4",
         "Compact ESRGAN x4", "NOMOS 8K x4",
     } <= labels
-    assert len(entries()) == 32
+    assert len(entries()) == 33
 
 
 def test_matrix_keeps_missing_measurements_pending_per_hardware():

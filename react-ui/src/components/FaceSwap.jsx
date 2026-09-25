@@ -1122,6 +1122,11 @@ export default function FaceSwap({
       target_conditioned_appearance: !!activeParams.target_conditioned_appearance,
       target_conditioned_appearance_strength: num(activeParams.target_conditioned_appearance_strength, 0.75),
       target_conditioned_appearance_temporal_alpha: num(activeParams.target_conditioned_appearance_temporal_alpha, 0.30),
+      light_harmonizer: !!activeParams.light_harmonizer,
+      light_harmonizer_key_intensity: num(activeParams.light_harmonizer_key_intensity, 1.0),
+      light_harmonizer_ambient_bias: num(activeParams.light_harmonizer_ambient_bias, 0.0),
+      light_harmonizer_eye_specular: num(activeParams.light_harmonizer_eye_specular, 0.8),
+      light_harmonizer_shadow_occlusion: num(activeParams.light_harmonizer_shadow_occlusion, 0.6),
       sam2_model_size: activeParams.sam2_model_size,
       refine_landmarks: activeParams.refine_landmarks,
       swap_model_mask_strength: activeParams.swap_model_mask_strength,
@@ -2945,7 +2950,7 @@ export default function FaceSwap({
               <span className="text-xs font-semibold uppercase tracking-wider text-white/70">
                 Restoration Switcher
               </span>
-              <span className="text-[11px] text-white/45">
+              <span className="text-mini text-white/45">
                 Multi-Model Performance & Quality Selector
               </span>
             </div>
@@ -2964,12 +2969,12 @@ export default function FaceSwap({
               >
                 <div className="flex items-center justify-between mb-1">
                   <span className="text-xs font-bold text-emerald-400">⚡ Fast</span>
-                  <span className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-mono font-medium">25–60 FPS</span>
+                  <span className="text-nano px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-mono font-medium">25–60 FPS</span>
                 </div>
-                <div className="text-[11px] text-white/90 font-medium leading-tight">
+                <div className="text-mini text-white/90 font-medium leading-tight">
                   GPEN-512 / GFPGAN
                 </div>
-                <div className="text-[10px] text-white/45 mt-0.5">
+                <div className="text-micro text-white/45 mt-0.5">
                   Realtime scrubbing
                 </div>
               </button>
@@ -2988,12 +2993,12 @@ export default function FaceSwap({
               >
                 <div className="flex items-center justify-between mb-1">
                   <span className="text-xs font-bold text-blue-400">⚖️ Balanced</span>
-                  <span className="text-[9px] px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-300 font-mono font-medium">w = 0.6</span>
+                  <span className="text-nano px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-300 font-mono font-medium">w = 0.6</span>
                 </div>
-                <div className="text-[11px] text-white/90 font-medium leading-tight">
+                <div className="text-mini text-white/90 font-medium leading-tight">
                   CodeFormer
                 </div>
-                <div className="text-[10px] text-white/45 mt-0.5">
+                <div className="text-micro text-white/45 mt-0.5">
                   Optimal fidelity weight
                 </div>
               </button>
@@ -3011,12 +3016,12 @@ export default function FaceSwap({
               >
                 <div className="flex items-center justify-between mb-1">
                   <span className="text-xs font-bold text-purple-400">🎬 VFX Master</span>
-                  <span className="text-[9px] px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-300 font-mono font-medium">2–6 FPS</span>
+                  <span className="text-nano px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-300 font-mono font-medium">2–6 FPS</span>
                 </div>
-                <div className="text-[11px] text-white/90 font-medium leading-tight">
+                <div className="text-mini text-white/90 font-medium leading-tight">
                   Tile Diffusion
                 </div>
-                <div className="text-[10px] text-white/45 mt-0.5">
+                <div className="text-micro text-white/45 mt-0.5">
                   Offline rendering only
                 </div>
               </button>
@@ -3039,6 +3044,52 @@ export default function FaceSwap({
             <Slider label="Appearance conditioning strength" min={0} max={1} step={0.05} value={num(p.target_conditioned_appearance_strength, 0.75)} onChange={(v) => set('target_conditioned_appearance_strength', v)} />
             <Slider label="Appearance temporal stability" min={0.05} max={1} step={0.05} value={num(p.target_conditioned_appearance_temporal_alpha, 0.30)} onChange={(v) => set('target_conditioned_appearance_temporal_alpha', v)} />
           </>}
+          <Toggle
+            label="Light Harmonizer"
+            info="Neural environment re-lighting and normal harmonization: extracts 3D surface normals, diffuse albedo, and specular environment maps from the scene, re-shading the swapped face to match scene key/fill lighting, restoring corneal catchlights, and casting dynamic shadows."
+            checked={!!p.light_harmonizer}
+            onChange={(v) => set('light_harmonizer', v)}
+          />
+          {p.light_harmonizer && (
+            <>
+              <Slider
+                label="Key light intensity"
+                info="Intensity of the directional key light projected onto the swapped face normals. 1.0 matches scene lighting."
+                min={0}
+                max={2}
+                step={0.05}
+                value={num(p.light_harmonizer_key_intensity, 1.0)}
+                onChange={(v) => set('light_harmonizer_key_intensity', v)}
+              />
+              <Slider
+                label="Ambient light bias"
+                info="Offset to the ambient omnidirectional fill illumination. Positive values brighten shadows, negative values deepen contrast."
+                min={-0.5}
+                max={0.5}
+                step={0.05}
+                value={num(p.light_harmonizer_ambient_bias, 0.0)}
+                onChange={(v) => set('light_harmonizer_ambient_bias', v)}
+              />
+              <Slider
+                label="Eye specular catchlight restoration"
+                info="Restores sharp, directional corneal catchlights and glints from the target eyes onto the swapped face, preserving lifelike gaze direction and ocular vitality."
+                min={0}
+                max={1}
+                step={0.05}
+                value={num(p.light_harmonizer_eye_specular, 0.8)}
+                onChange={(v) => set('light_harmonizer_eye_specular', v)}
+              />
+              <Slider
+                label="Dynamic shadow casting"
+                info="Casts dynamic directional soft shadows across the face when foreground occluders (microphones, hair strands, hats, hands) intercept the key light path."
+                min={0}
+                max={1}
+                step={0.05}
+                value={num(p.light_harmonizer_shadow_occlusion, 0.6)}
+                onChange={(v) => set('light_harmonizer_shadow_occlusion', v)}
+              />
+            </>
+          )}
           <Slider label="Original/Enhanced blend" min={0} max={1} step={0.01} value={num(p.blend_ratio, 0.8)} onChange={(v) => set('blend_ratio', v)} />
           <Slider label="Skin detail transfer" info="Adds the ORIGINAL footage's real high-frequency texture (pores, stubble, grain) onto the swapped face. The generator smooths skin and the enhancer fakes flickery pores; this uses genuine detail from the scene instead. 0 = off. Start ~0.3–0.5; too high reintroduces the target's skin identity." min={0} max={1} step={0.05} value={num(p.detail_transfer_strength, 0)} onChange={(v) => set('detail_transfer_strength', v)} />
           <Slider label="Expression transfer strength" info="Puts the TARGET's own expression (mouth, brows, jaw) back onto the swapped face using LivePortrait. Swappers pull faces toward the average expression of their training data, so laughing, crying and grimacing come out flattened — this reads the expression off the original frame and re-applies it. 0 = off (bit-exact no-op); 1 adopts the target's expression; above 1 exaggerates past it. Head pose cannot drift by construction. The eyes are NOT moved by this slider — see Eye-gaze follow and Blink sync. Cost, measured 2026-09-25 on hyperswap + Restore Ultra over 1014 frames: identity to the source 0.596 → 0.512 at 1.0, because LivePortrait re-renders the whole face; ~34 ms per face on TensorRT. Downloads ~537MB on first use; needs TensorRT (the CPU fallback is ~1.9s per face)." min={0} max={2} step={0.05} value={num(p.expression_restore_strength, 0)} onChange={(v) => set('expression_restore_strength', v)} />
@@ -3313,7 +3364,7 @@ export default function FaceSwap({
                   <span className="text-xs font-semibold text-purple-300 flex items-center gap-1.5">
                     <span>✨</span> Tile Diffusion Synthesizer (VFX / Master Quality)
                   </span>
-                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-200 border border-purple-500/30 font-mono">
+                  <span className="text-micro px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-200 border border-purple-500/30 font-mono">
                     VRAM &lt; 8 GB · 512² Tiled (64px margin)
                   </span>
                 </div>
@@ -3335,7 +3386,7 @@ export default function FaceSwap({
                   value={num(p.tile_diffusion_steps, 2)}
                   onChange={(v) => set('tile_diffusion_steps', v)}
                 />
-                <div className="text-[11px] text-white/50 leading-relaxed bg-black/20 p-2 rounded border border-white/5">
+                <div className="text-mini text-white/50 leading-relaxed bg-black/20 p-2 rounded border border-white/5">
                   <strong className="text-white/70">Dynamic Tiling Engine:</strong> Automatically partitions 4K crops into 512×512 overlapping tiles with 64px Gaussian feathered margins for seamless boundary reconstruction and zero seam artifacts.
                 </div>
               </div>

@@ -57,7 +57,12 @@
     "output_show_video",
     "synthetic_label",
     "synthetic_watermark",
-    "synthetic_watermark_text"
+    "synthetic_watermark_text",
+    "light_harmonizer",
+    "light_harmonizer_key_intensity",
+    "light_harmonizer_ambient_bias",
+    "light_harmonizer_eye_specular",
+    "light_harmonizer_shadow_occlusion"
   ],
   "settings": {
     "hardware": {
@@ -679,6 +684,46 @@
     "target_conditioned_appearance_cache_size": {
       "default": 256,
       "type": "int"
+    },
+    "light_harmonizer": {
+      "default": false,
+      "type": "bool",
+      "ui": {
+        "label": "Light Harmonizer",
+        "section": "Lighting & Harmonization"
+      }
+    },
+    "light_harmonizer_key_intensity": {
+      "default": 1.0,
+      "type": "float",
+      "ui": {
+        "label": "Key light intensity",
+        "section": "Lighting & Harmonization"
+      }
+    },
+    "light_harmonizer_ambient_bias": {
+      "default": 0.0,
+      "type": "float",
+      "ui": {
+        "label": "Ambient light bias",
+        "section": "Lighting & Harmonization"
+      }
+    },
+    "light_harmonizer_eye_specular": {
+      "default": 0.8,
+      "type": "float",
+      "ui": {
+        "label": "Eye specular catchlight restoration",
+        "section": "Lighting & Harmonization"
+      }
+    },
+    "light_harmonizer_shadow_occlusion": {
+      "default": 0.6,
+      "type": "float",
+      "ui": {
+        "label": "Dynamic shadow casting",
+        "section": "Lighting & Harmonization"
+      }
     },
     "refine_landmarks": {
       "default": true,

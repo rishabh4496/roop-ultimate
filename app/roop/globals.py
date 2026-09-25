@@ -78,6 +78,12 @@ target_conditioned_appearance = False
 target_conditioned_appearance_strength = 0.75
 target_conditioned_appearance_temporal_alpha = 0.30
 target_conditioned_appearance_cache_size = 256
+# Environment Re-lighting and Normal Harmonization (neural relighting)
+light_harmonizer = False
+light_harmonizer_key_intensity = 1.0
+light_harmonizer_ambient_bias = 0.0
+light_harmonizer_eye_specular = 0.8
+light_harmonizer_shadow_occlusion = 0.6
 # Alignment refinement: derive the 5 arcface keypoints from the 68-point
 # landmarks (more stable at angles than the detector's raw 5 kps).
 refine_landmarks = False

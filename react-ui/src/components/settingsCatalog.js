@@ -76,6 +76,13 @@ export const SETTINGS_CATALOG = [
   { key: 'synthetic_label', label: 'Label output as synthetic media (metadata tag)', section: 'Output' },
   { key: 'synthetic_watermark', label: 'Visible watermark on output', section: 'Output' },
   { key: 'synthetic_watermark_text', label: 'Watermark text', section: 'Output' },
+
+  // Lighting & Harmonization
+  { key: 'light_harmonizer', label: 'Light Harmonizer', section: 'Lighting & Harmonization' },
+  { key: 'light_harmonizer_key_intensity', label: 'Key light intensity', section: 'Lighting & Harmonization' },
+  { key: 'light_harmonizer_ambient_bias', label: 'Ambient light bias', section: 'Lighting & Harmonization' },
+  { key: 'light_harmonizer_eye_specular', label: 'Eye specular catchlight restoration', section: 'Lighting & Harmonization' },
+  { key: 'light_harmonizer_shadow_occlusion', label: 'Dynamic shadow casting', section: 'Lighting & Harmonization' },
 ];
 
 // The event the palette fires to send the Settings panel to one control. The

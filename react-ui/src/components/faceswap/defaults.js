@@ -79,6 +79,11 @@ export const FACESWAP_DEFAULTS = {
   mask_edge_mode: 'gaussian',
   mask_erode_dilate_radius: 0,
   boundary_illumination_strength: 0,
+  light_harmonizer: false,
+  light_harmonizer_key_intensity: 1,
+  light_harmonizer_ambient_bias: 0,
+  light_harmonizer_eye_specular: 0.8,
+  light_harmonizer_shadow_occlusion: 0.6,
 
   // Mouth & Angle math
   mouth_top_scale: 1,

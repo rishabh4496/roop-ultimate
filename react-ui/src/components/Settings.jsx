@@ -720,6 +720,14 @@ export default function Settings({ meta, settings, setSettings, notify }) {
           <Toggle label="Visible watermark on output" info="Stamps the text below on every output frame (bottom-right). Alters pixels; off by default." {...bindToggle('synthetic_watermark')} />
           <TextInput label="Watermark text" {...bind('synthetic_watermark_text', 'AI face swap')} placeholder="AI face swap" />
         </FilterSection>
+
+        <FilterSection title="Lighting &amp; Harmonization" icon={Icon.theme} query={query} onlyModified={onlyModified} onResetKeys={resetKeys}>
+          <Toggle label="Light Harmonizer" info="Neural environment re-lighting and normal harmonization: decomposes 3D surface normals, diffuse albedo, and specular environment maps from the scene to re-shade the swapped face, restore corneal catchlights, and cast dynamic shadows." {...bindToggle('light_harmonizer')} />
+          <Slider label="Key light intensity" min={0} max={2} step={0.05} {...bind('light_harmonizer_key_intensity', 1.0)} />
+          <Slider label="Ambient light bias" min={-0.5} max={0.5} step={0.05} {...bind('light_harmonizer_ambient_bias', 0.0)} />
+          <Slider label="Eye specular catchlight restoration" min={0} max={1} step={0.05} {...bind('light_harmonizer_eye_specular', 0.8)} />
+          <Slider label="Dynamic shadow casting" min={0} max={1} step={0.05} {...bind('light_harmonizer_shadow_occlusion', 0.6)} />
+        </FilterSection>
       </div>
 
       <Section title="Auto-tune (provider, swap batch, NVENC)" icon={Icon.meter} className="mb-4">

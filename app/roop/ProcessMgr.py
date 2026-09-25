@@ -5749,6 +5749,22 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
             except Exception as e:
                 bar_write(f"[ProcessMgr] Post-enhance color match failed: {e}")
 
+        # ── Neural Environment Re-lighting and Normal Harmonization ───────────
+        if getattr(roop.globals, 'light_harmonizer', False):
+            try:
+                from roop.light_harmonizer import apply_light_harmonization
+                with _prof('lighting'):
+                    if enhanced_frame is not None:
+                        enhanced_frame = apply_light_harmonization(
+                            enhanced_frame, aligned_img, target_face=target_face,
+                            occluder_mask=_img_mask)
+                    else:
+                        fake_frame = apply_light_harmonization(
+                            fake_frame, aligned_img, target_face=target_face,
+                            occluder_mask=_img_mask)
+            except Exception as e:
+                bar_write(f"[ProcessMgr] Light harmonization failed: {e}")
+
         # ── DFL merger post-ops ───────────────────────────────────────────────
         # Histogram match, sharpen/soften, motion blur, grain match, degrade —
         # the cheap half of DeepFaceLab's merger, applied to the crop that is

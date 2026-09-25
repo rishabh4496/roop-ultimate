@@ -92,6 +92,12 @@ UI_SETTINGS = (
     ('synthetic_label', 'Label output as synthetic media (metadata tag)', 'Output'),
     ('synthetic_watermark', 'Visible watermark on output', 'Output'),
     ('synthetic_watermark_text', 'Watermark text', 'Output'),
+    # Lighting & Harmonization
+    ('light_harmonizer', 'Light Harmonizer', 'Lighting & Harmonization'),
+    ('light_harmonizer_key_intensity', 'Key light intensity', 'Lighting & Harmonization'),
+    ('light_harmonizer_ambient_bias', 'Ambient light bias', 'Lighting & Harmonization'),
+    ('light_harmonizer_eye_specular', 'Eye specular catchlight restoration', 'Lighting & Harmonization'),
+    ('light_harmonizer_shadow_occlusion', 'Dynamic shadow casting', 'Lighting & Harmonization'),
 )
 
 # kinds:
@@ -1076,6 +1082,12 @@ class Settings:
         self.target_conditioned_appearance_strength = self.default_get(data, 'target_conditioned_appearance_strength', 0.75)
         self.target_conditioned_appearance_temporal_alpha = self.default_get(data, 'target_conditioned_appearance_temporal_alpha', 0.30)
         self.target_conditioned_appearance_cache_size = self.default_get(data, 'target_conditioned_appearance_cache_size', 256)
+        # Environment Re-lighting and Normal Harmonization (neural relighting)
+        self.light_harmonizer = self.default_get(data, 'light_harmonizer', False)
+        self.light_harmonizer_key_intensity = float(self.default_get(data, 'light_harmonizer_key_intensity', 1.0))
+        self.light_harmonizer_ambient_bias = float(self.default_get(data, 'light_harmonizer_ambient_bias', 0.0))
+        self.light_harmonizer_eye_specular = float(self.default_get(data, 'light_harmonizer_eye_specular', 0.8))
+        self.light_harmonizer_shadow_occlusion = float(self.default_get(data, 'light_harmonizer_shadow_occlusion', 0.6))
         # Detection refinements
         self.refine_landmarks = self.default_get(data, 'refine_landmarks', True)
         # Swap-model face mask — only hififace/hyperswap emit one; the models that
@@ -1408,6 +1420,11 @@ class Settings:
             'target_conditioned_appearance_strength': self.target_conditioned_appearance_strength,
             'target_conditioned_appearance_temporal_alpha': self.target_conditioned_appearance_temporal_alpha,
             'target_conditioned_appearance_cache_size': self.target_conditioned_appearance_cache_size,
+            'light_harmonizer': self.light_harmonizer,
+            'light_harmonizer_key_intensity': self.light_harmonizer_key_intensity,
+            'light_harmonizer_ambient_bias': self.light_harmonizer_ambient_bias,
+            'light_harmonizer_eye_specular': self.light_harmonizer_eye_specular,
+            'light_harmonizer_shadow_occlusion': self.light_harmonizer_shadow_occlusion,
             'refine_landmarks': self.refine_landmarks,
             'swap_model_mask_strength': self.swap_model_mask_strength,
             'jaw_reshape': self.jaw_reshape,
