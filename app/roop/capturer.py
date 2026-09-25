@@ -43,7 +43,7 @@ current_next_pos = None
 # cv2.VideoCapture is NOT thread-safe: concurrent reads from multiple Gradio
 # worker threads corrupt FFmpeg's internal codec context, triggering:
 #   "Assertion fctx->async_lock failed at libavcodec/pthread_frame.c:173"
-_capture_lock = threading.Lock()
+_capture_lock = threading.RLock()
 
 # PIL-based cache for animated webp (PIL is already in the env via clip)
 _awebp_path = None
@@ -605,17 +605,16 @@ def get_video_frame(video_path: str, frame_number: int = 0) -> Optional[Frame]:
 def release_video():
     global current_capture, current_next_pos, current_video_path, current_frame_total
 
-    # Caller must hold _capture_lock when called from get_video_frame;
-    # direct callers (shutdown, etc.) should also acquire it.
-    if current_capture is not None:
-        current_capture.release()
-        current_capture = None
-    _release_pipe()
-    current_next_pos = None
-    # Clear the identity too, so the next request re-opens instead of matching a
-    # path whose capture is gone (and re-reads the frame count, which was stale).
-    current_video_path = None
-    current_frame_total = 0
+    with _capture_lock:
+        if current_capture is not None:
+            current_capture.release()
+            current_capture = None
+        _release_pipe()
+        current_next_pos = None
+        # Clear the identity too, so the next request re-opens instead of matching a
+        # path whose capture is gone (and re-reads the frame count, which was stale).
+        current_video_path = None
+        current_frame_total = 0
     # NOT clear_frame_cache(): this runs on every target switch, and the cache is
     # keyed by path, so cached frames of the file being switched away from are
     # still valid — and switching back is the common move. The byte budget, not

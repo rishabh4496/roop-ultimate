@@ -2374,16 +2374,18 @@ class TrackingMixin:
                           f"(missed frames: {sum(too_big)}, worst: {sorted(too_big, reverse=True)[:5]})")
 
             if stab_on:
-                # Per-track sequential smoothing. The default-arg captures keep
-                # each track's filter state independent of the loop variable.
+                # Per-track sequential smoothing. Explicit local dictionaries keep
+                # each track's filter state cleanly isolated and resettable.
+                _filters = {}
+                _state = {}
                 if method == 'ema':
-                    def _smooth(key, val, _t, _state={}):
+                    def _smooth(key, val, _t):
                         prev_v = _state.get(key)
                         cur = val if prev_v is None else 0.3 * val + 0.7 * prev_v
                         _state[key] = cur
                         return cur
                 else:
-                    def _smooth(key, val, _t, _filters={}):
+                    def _smooth(key, val, _t):
                         flt = _filters.get(key)
                         if flt is None:
                             flt = _filters[key] = OneEuroFilter(min_cutoff=mc, beta=bt)
@@ -2416,6 +2418,7 @@ class TrackingMixin:
                         if coupled is not None and hasattr(coupled, 'reset'):
                             coupled.reset()
                         _filters.clear()
+                        _state.clear()
                     f = merged[i]
                     kps = getattr(f, 'kps', None)
                     lm = getattr(f, 'landmark_2d_106', None)

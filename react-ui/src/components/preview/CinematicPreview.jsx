@@ -145,25 +145,33 @@ export const CinematicPreview = forwardRef(function CinematicPreview(
     const canvas = canvasRef.current;
     if (!container || !canvas) return;
 
+    let rafId = null;
     const ro = new ResizeObserver((entries) => {
       const entry = entries[0];
       if (!entry) return;
       const rect = entry.contentRect;
-      const dpr = Math.min(window.devicePixelRatio || 1, 2);
-      const w = Math.max(1, Math.round(rect.width * dpr));
-      const h = Math.max(1, Math.round(rect.height * dpr));
+      if (rafId) cancelAnimationFrame(rafId);
+      rafId = requestAnimationFrame(() => {
+        rafId = null;
+        const dpr = Math.min(window.devicePixelRatio || 1, 2);
+        const w = Math.max(1, Math.round(rect.width * dpr));
+        const h = Math.max(1, Math.round(rect.height * dpr));
 
-      if (canvas.width !== w || canvas.height !== h) {
-        canvas.width = w;
-        canvas.height = h;
-        if (rendererRef.current) {
-          rendererRef.current.draw();
+        if (canvas.width !== w || canvas.height !== h) {
+          canvas.width = w;
+          canvas.height = h;
+          if (rendererRef.current) {
+            rendererRef.current.draw();
+          }
         }
-      }
+      });
     });
 
     ro.observe(container);
-    return () => ro.disconnect();
+    return () => {
+      if (rafId) cancelAnimationFrame(rafId);
+      ro.disconnect();
+    };
   }, []);
 
   // Synchronize state props with renderer
@@ -291,25 +299,56 @@ export const CinematicPreview = forwardRef(function CinematicPreview(
   useEffect(() => {
     if (!wsUrl) return;
     let ws = null;
-    try {
-      ws = new WebSocket(wsUrl);
-      ws.binaryType = 'arraybuffer';
-      wsRef.current = ws;
+    let reconnectTimer = null;
+    let isDisposed = false;
+    let retryDelay = 1000;
 
-      ws.onmessage = async (e) => {
-        if (!rendererRef.current || !(e.data instanceof ArrayBuffer)) return;
-        // Ingest into swap layer (1) by default or stream based on header
-        await rendererRef.current.ingestBinaryPacket(1, e.data);
-        rendererRef.current.draw();
-        setImgDims(rendererRef.current.getImageDimensions());
-      };
+    function connect() {
+      if (isDisposed) return;
+      try {
+        ws = new WebSocket(wsUrl);
+        ws.binaryType = 'arraybuffer';
+        wsRef.current = ws;
 
-      ws.onerror = (err) => console.warn('[CinematicPreview] WebSocket error:', err);
-    } catch (err) {
-      console.warn('[CinematicPreview] Failed to open WebSocket:', err);
+        ws.onopen = () => {
+          retryDelay = 1000;
+        };
+
+        ws.onmessage = async (e) => {
+          if (!rendererRef.current || !(e.data instanceof ArrayBuffer) || isDisposed) return;
+          // Ingest into swap layer (1) by default or stream based on header
+          await rendererRef.current.ingestBinaryPacket(1, e.data);
+          if (isDisposed || !rendererRef.current) return;
+          rendererRef.current.draw();
+          setImgDims(rendererRef.current.getImageDimensions());
+        };
+
+        ws.onclose = () => {
+          wsRef.current = null;
+          if (!isDisposed) {
+            reconnectTimer = setTimeout(() => {
+              retryDelay = Math.min(retryDelay * 1.5, 10000);
+              connect();
+            }, retryDelay);
+          }
+        };
+
+        ws.onerror = (err) => {
+          console.warn('[CinematicPreview] WebSocket error:', err);
+        };
+      } catch (err) {
+        console.warn('[CinematicPreview] Failed to open WebSocket:', err);
+        if (!isDisposed) {
+          reconnectTimer = setTimeout(connect, retryDelay);
+        }
+      }
     }
 
+    connect();
+
     return () => {
+      isDisposed = true;
+      if (reconnectTimer) clearTimeout(reconnectTimer);
       if (ws) {
         try {
           ws.close();

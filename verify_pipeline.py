@@ -115,7 +115,7 @@ def main():
         print("\n[Step 3/3] Performing HTTP GET to static endpoint with Range: bytes=0-1024...")
         client = TestClient(app)
         static_url = f"/outputs/{os.path.basename(output_file)}"
-        range_header = {"Range": "bytes=0-1024"}
+        range_header = {"Range": "bytes=0-1024", "Origin": "http://127.0.0.1:3000"}
 
         print(f"Requesting: GET {static_url} with headers {range_header}")
         resp = client.get(static_url, headers=range_header)
@@ -137,7 +137,10 @@ def main():
         )
         assert len(resp.content) == 1025, f"Expected 1025 bytes in payload, got {len(resp.content)}"
         assert resp.headers.get("accept-ranges") == "bytes", "Expected Accept-Ranges: bytes"
-        assert resp.headers.get("access-control-allow-origin") == "*", "Expected CORS Allow-Origin: *"
+        cors_origin = resp.headers.get("access-control-allow-origin")
+        assert cors_origin in ("http://127.0.0.1:3000", "http://localhost:3000", "*"), (
+            f"Expected valid CORS Origin, got '{cors_origin}'"
+        )
 
         print("[OK] Confirmed: HTTP 206 Partial Content received with correct byte-range slice and CORS headers")
 

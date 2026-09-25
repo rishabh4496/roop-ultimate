@@ -36,6 +36,7 @@ from dataclasses import dataclass
 from multiprocessing import Condition, Lock, Value
 from multiprocessing import shared_memory
 from typing import Any, Iterator, Optional, Tuple
+import weakref
 
 import numpy as np
 from numpy.typing import NDArray
@@ -195,6 +196,11 @@ class SharedMemoryFrameRing:
             (self.capacity,), dtype=_METADATA_DTYPE, buffer=self._metadata_shm.buf
         )
         self._closed_local = False
+        self._unlinked = False
+        if self._owner:
+            self._finalizer = weakref.finalize(
+                self, self._cleanup_shm, self._data_shm, self._metadata_shm
+            )
 
     @classmethod
     def create(
@@ -373,17 +379,32 @@ class SharedMemoryFrameRing:
                 dropped=max(0, written - read - self.capacity),
             )
 
+    @staticmethod
+    def _cleanup_shm(data_shm: Any, metadata_shm: Any) -> None:
+        for shm in (data_shm, metadata_shm):
+            try:
+                shm.close()
+            except Exception as _degrade_error:
+                _swallowed("roop/hardware_streamer.py:387", _degrade_error, "shm finalizer close")
+            try:
+                shm.unlink()
+            except Exception as _degrade_error:
+                _swallowed("roop/hardware_streamer.py:391", _degrade_error, "shm finalizer unlink")
+
     def close(self, unlink: bool = False) -> None:
         """Close local mappings and optionally unlink blocks owned by creator."""
 
-        if self._closed_local:
-            return
-        self._closed_local = True
-        try:
-            self._data_shm.close()
-        finally:
-            self._metadata_shm.close()
-        if unlink and self._owner:
+        if not self._closed_local:
+            self._closed_local = True
+            try:
+                self._data_shm.close()
+            finally:
+                self._metadata_shm.close()
+
+        if unlink and self._owner and not self._unlinked:
+            self._unlinked = True
+            if hasattr(self, "_finalizer"):
+                self._finalizer.detach()
             try:
                 self._data_shm.unlink()
             finally:

@@ -248,32 +248,45 @@ export const CinematicTimeline = forwardRef(function CinematicTimeline(
     const canvas = canvasRef.current;
     if (!container || !canvas) return;
 
+    let rafId = null;
     const ro = new ResizeObserver((entries) => {
       const entry = entries[0];
       if (!entry) return;
       const rect = entry.contentRect;
-      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      if (rafId) cancelAnimationFrame(rafId);
+      rafId = requestAnimationFrame(() => {
+        rafId = null;
+        const dpr = Math.min(window.devicePixelRatio || 1, 2);
 
-      const targetH = computeCanvasHeight();
-      const w = Math.max(1, Math.round(rect.width));
-      const h = targetH;
+        const targetH = computeCanvasHeight();
+        const w = Math.max(1, Math.round(rect.width));
+        const h = targetH;
 
-      canvas.style.width = `${w}px`;
-      canvas.style.height = `${h}px`;
+        const targetWPhys = Math.round(w * dpr);
+        const targetHPhys = Math.round(h * dpr);
 
-      canvas.width = Math.round(w * dpr);
-      canvas.height = Math.round(h * dpr);
+        if (canvas.width !== targetWPhys || canvas.height !== targetHPhys) {
+          canvas.style.width = `${w}px`;
+          canvas.style.height = `${h}px`;
 
-      const ctx = canvas.getContext('2d');
-      if (ctx) {
-        ctx.scale(dpr, dpr);
-      }
+          canvas.width = targetWPhys;
+          canvas.height = targetHPhys;
 
-      useTimelineStore.getState().setDimensions(w, h);
+          const ctx = canvas.getContext('2d');
+          if (ctx) {
+            ctx.scale(dpr, dpr);
+          }
+
+          useTimelineStore.getState().setDimensions(w, h);
+        }
+      });
     });
 
     ro.observe(container);
-    return () => ro.disconnect();
+    return () => {
+      if (rafId) cancelAnimationFrame(rafId);
+      ro.disconnect();
+    };
   }, [computeCanvasHeight]);
 
   // Zoom to Fit whole clip on screen

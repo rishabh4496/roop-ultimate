@@ -3295,9 +3295,10 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                 # Seed this new shot from its first real frame.  A scene cut is
                 # a true discontinuity, not a missing-frame gap, so carrying an
                 # old face/mask/affine into it is the temporal artifact.
-                for _stab in (self.kps_stabilizer, self.enh_stabilizer,
+                for _stab in (self._cur_kps_stab(), self._cur_enh_stab(), self._cur_mask_stab(),
+                              self.kps_stabilizer, self.enh_stabilizer,
                               self.mask_stabilizer):
-                    if _stab is not None:
+                    if _stab is not None and hasattr(_stab, 'reset'):
                         _stab.reset()
                 bar_write(f'[Stabilize] scene cut at frame {frame_idx}; rolling history reset')
                 gc.collect()
@@ -3305,8 +3306,9 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
         if cuts and frame_idx is not None and frame_idx in cuts:
             from roop.scene_detector import flush_pipeline_temporal_buffers
             flush_pipeline_temporal_buffers(self)
-            for _stab in (self.kps_stabilizer, self.enh_stabilizer, self.mask_stabilizer):
-                if _stab is not None:
+            for _stab in (self._cur_kps_stab(), self._cur_enh_stab(), self._cur_mask_stab(),
+                          self.kps_stabilizer, self.enh_stabilizer, self.mask_stabilizer):
+                if _stab is not None and hasattr(_stab, 'reset'):
                     _stab.reset()
         do_kps_stab = stabilize and self._stab_active and self._cur_kps_stab() is not None
         # 2-pass parallel stabilization: replace kps with the value precomputed

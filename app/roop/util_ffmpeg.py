@@ -306,7 +306,7 @@ def create_video(target_path: str, dest_filename: str, fps: float = 24.0, temp_d
         *_rate_control('libx264', roop.globals.video_quality),
         '-pix_fmt', 'yuv420p',
         '-movflags', '+faststart',
-        '-vf', f'{vf},pad=ceil(iw/2)*2:ceil(ih/2)*2',
+        '-vf', vf,
         '-r', framerate_str,
         '-vsync', 'cfr',
         '-fps_mode', 'cfr',
