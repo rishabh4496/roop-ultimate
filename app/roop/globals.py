@@ -110,6 +110,10 @@ detail_transfer_strength = 0.0
 # Paste-matte edge ramp shape: 'gaussian' (shipped) | 'distance'. See
 # procmgr_masking.blur_area and roop/temporal_smoother.soft_distance_matte.
 mask_edge_mode = 'gaussian'
+# DFL XSeg edge refinement + motion-compensated mask stabilizer; see
+# procmgr_masking.refine_mask_edges and one_euro.MaskStabilizer.
+mask_guided_filter = False
+mask_flow_warp = False
 # Signed radius in frame pixels applied to the landmark contour.  Positive
 # values dilate the contour, negative values erode it.  Zero preserves the
 # established hull path.

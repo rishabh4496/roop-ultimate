@@ -599,6 +599,14 @@
       "default": 0.5,
       "type": "float"
     },
+    "mask_flow_warp": {
+      "default": false,
+      "type": "bool"
+    },
+    "mask_guided_filter": {
+      "default": false,
+      "type": "bool"
+    },
     "stabilize_landmarks": {
       "default": true,
       "type": "bool"

@@ -1143,6 +1143,8 @@ export default function FaceSwap({
       mask_right: activeParams.mask_right,
       face_mask_blend: activeParams.face_mask_blend,
       mask_edge_mode: activeParams.mask_edge_mode,
+      mask_flow_warp: !!activeParams.mask_flow_warp,
+      mask_guided_filter: !!activeParams.mask_guided_filter,
       mask_erode_dilate_radius: num(activeParams.mask_erode_dilate_radius, 0),
       boundary_illumination_strength: activeParams.boundary_illumination_strength,
       mouth_mask_blend: activeParams.mouth_mask_blend,
@@ -3102,9 +3104,13 @@ export default function FaceSwap({
           {p.stabilize_enhancer && (
             <Slider label="Flicker reduction strength" info="higher = smoother" min={0} max={1} step={0.05} value={num(p.stabilize_enhancer_strength, 0.5)} onChange={(v) => set('stabilize_enhancer_strength', v)} />
           )}
+          <Toggle label="XSeg edge refinement (guided filter)" info="DFL XSeg only. Re-fits XSeg's 256px mask boundary to the edges of the face crop with a guided filter. Measured on 10 clips against an independent face parser it did NOT move the boundary closer (placement unchanged, agreement worse on every clip); it only softens the edge. Off by default; kept for comparison. About 1 ms of CPU per face." checked={!!p.mask_guided_filter} onChange={(v) => set('mask_guided_filter', v)} />
           <Toggle label="Reduce mask flicker" info="Temporally blends the mask edge (the boundary between swapped and original pixels). XSeg/Face Parser/RealityUX all recompute this edge from scratch every frame with no memory of the last one, so on a close-up with hair moving across an eye it can jitter — most visible as the swapped face's own features flickering in and out right at the edge. Runs on the same multi-threaded chunked pipeline as the other stabilizers; unlike enhancer flicker reduction it does not back off during head motion, since the mask lives in the already motion-compensated aligned crop." checked={!!p.stabilize_mask} onChange={(v) => set('stabilize_mask', v)} />
           {p.stabilize_mask && (
             <Slider label="Mask flicker reduction strength" info="higher = smoother" min={0} max={1} step={0.05} value={num(p.stabilize_mask_strength, 0.5)} onChange={(v) => set('stabilize_mask_strength', v)} />
+          )}
+          {p.stabilize_mask && (
+            <Toggle label="Motion-compensated mask smoothing" info="Before blending last frame's mask into this one, moves it along the optical flow between the two face crops, so an edge that moves relative to the face (hair, a hand, an expression) is followed instead of leaving a fading trail. Measured on 10 clips against an independent face parser: less residual jitter than plain smoothing (0.040 vs 0.047) and closer to the parser boundary. Costs about 0.75 ms of CPU per face." checked={!!p.mask_flow_warp} onChange={(v) => set('mask_flow_warp', v)} />
           )}
           <Toggle label="Smooth face landmarks (boundary crawl)" info="Requires 'Stabilize face'. That filter smooths the 5 alignment keypoints only, leaving the 106-point landmarks raw — and those are what the paste mask's OUTLINE is drawn from, so the face sat still while its own edge crawled a pixel or two every frame along the jaw and hairline. This smooths both under one velocity-adaptive factor, so the crop and its outline cannot drift apart during motion: heavy smoothing when the head is nearly still, near-instant response on a fast turn." checked={p.stabilize_landmarks !== false} onChange={(v) => set('stabilize_landmarks', v)} />
           <Toggle label="Flow-warped texture carry (pore boiling)" info="Requires an enhancer. GPEN/CodeFormer/UltraMax invent pores and lashes from scratch on every frame, so nearly-still skin gets a different micro-texture 25 times a second. This warps the PREVIOUS frame's high-frequency layer along dense optical flow and carries a fraction of it forward, so only the invented noise is averaged — brightness, colour and expression still come wholly from the current frame and cannot ghost. Costs extra CPU per face." checked={!!p.stabilize_hf_texture} onChange={(v) => set('stabilize_hf_texture', v)} />

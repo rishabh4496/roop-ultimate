@@ -242,6 +242,53 @@ def _recover_undersized_mask(img_mask, kps, M):
     return recovered.reshape(orig_shape) if recovered.shape != orig_shape else recovered
 
 
+# Guided-filter edge refinement for DFL XSeg (setting `mask_guided_filter`).
+# XSeg predicts at 256x256 and the wrapper zeroes everything under 0.1, so its
+# boundary is a coarse, stair-stepped ramp that knows nothing about where the
+# hair strand, the glasses frame or the jawline actually is in THIS crop. A
+# guided filter (He et al.) with the aligned crop as guide re-fits the mask
+# locally as a linear function of the image: where the mask is flat (the face
+# interior, the background) the window has no covariance and the output is the
+# mask's own local mean -- unchanged -- so only the transition band moves, and
+# it moves onto the photographic edge.
+#
+# CPU, not CUDA, on purpose: the mask is consumed by NumPy compositing and a
+# per-face GPU round trip was measured 1.1-40x SLOWER than OpenCV for ops of
+# this size (gpu_math.py, reverted bf96c1f). At 256x256 with a grey guide this
+# is four box filters, ~1 ms of one worker thread, off the GPU entirely.
+#
+# radius / eps are in 256-mask pixels and [0,1]^2 guide units. See
+# tests/xseg_refine_bench.py for how they were chosen.
+XSEG_GF_RADIUS = 4
+XSEG_GF_EPS = 1e-3
+
+
+def mask_guided_filter_enabled():
+    return bool(getattr(roop.globals, 'mask_guided_filter', False))
+
+
+def refine_mask_edges(mask, crop, radius=XSEG_GF_RADIUS, eps=XSEG_GF_EPS):
+    """Snap a [0,1] float mask's transition band to the edges of `crop`.
+
+    `crop` is the aligned BGR crop the mask was predicted from, any size; it is
+    resized to the mask. Returns float32 in [0, 1], same shape as `mask`.
+    """
+    from roop.processors.frequency_split import guided_filter
+    m = np.asarray(mask, dtype=np.float32)
+    squeeze = m.ndim == 3
+    if squeeze:
+        m = m[..., 0]
+    h, w = m.shape[:2]
+    g = crop
+    if g.ndim == 3:
+        g = cv2.cvtColor(g, cv2.COLOR_BGR2GRAY)
+    if g.shape[:2] != (h, w):
+        g = cv2.resize(g, (w, h), interpolation=cv2.INTER_AREA)
+    g = g.astype(np.float32) * (1.0 / 255.0)
+    out = np.clip(guided_filter(m, radius=radius, eps=eps, guide=g), 0.0, 1.0)
+    return out[..., None] if squeeze else out
+
+
 def _edge_blur_kernel(M, crop_shape, mask_shape, target_px=None):
     """Odd GaussianBlur kernel, in MASK pixels, that puts an occluder's edge at
     roughly `target_px` frame pixels wide. 1 means "do not blur".
@@ -1326,6 +1373,9 @@ class MaskingMixin:
                     frame.shape)
             else:
                 img_mask = processor.Run(frame, self.options.masking_text)
+                if p_name == 'mask_xseg' and mask_guided_filter_enabled():
+                    with _prof('mask_refine'):
+                        img_mask = refine_mask_edges(img_mask, frame)
 
         # Specific improvement for the occluder family: threshold and blur to
         # prevent ghosting (xseg_3 shares the face_occluder output convention).
@@ -1353,7 +1403,13 @@ class MaskingMixin:
         if (self._stab_active and _ms is not None and kps is not None
                 and rotation_action is None):
             with _prof('stabilize'):
-                img_mask = _ms.apply(img_mask, kps, self._cur_stab_t())
+                if getattr(_ms, 'flow_warp', False):
+                    # mask_flow_warp: the aligned ORIGINAL crop is the flow
+                    # guide (never `target`, see test_mask_reuse).
+                    img_mask = _ms.apply(img_mask, kps, self._cur_stab_t(),
+                                         guide=frame)
+                else:
+                    img_mask = _ms.apply(img_mask, kps, self._cur_stab_t())
 
         # ── occlusion_state, read the mask AFTER temporal stabilization ───────
         # This is the ONLY engine in the chain trained to find a foreign object

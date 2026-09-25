@@ -46,6 +46,13 @@ along dense optical flow, then blend:
 
     Mask_t = 0.8 * Mask_t + 0.2 * Warp(Mask_{t-1}, flow)
 
+AUDIT 2026-09-25: `TemporalMaskSmoother` below is NOT constructed anywhere on
+the render path (nor is face_swapper.py's copy, whose caller is the legacy
+frame/ processor). Until then this paragraph described a filter no render ran.
+Its flow machinery (`_observation`, `_dense_flow`, `_warp`) now runs inside
+`one_euro.MaskStabilizer` behind the setting `mask_flow_warp`, which is where
+the live mask anti-flicker already was.
+
 READ THE CONTIGUITY GUARD BEFORE TRUSTING ANY "temporal" CLAIM HERE.
 `ProcessMgr.read_frames_thread` dispatches frames strict round-robin
 (`_thr = num_frame % num_threads`), so at N workers NO worker sees two adjacent

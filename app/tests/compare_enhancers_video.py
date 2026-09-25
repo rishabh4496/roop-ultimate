@@ -126,6 +126,14 @@ def render(clip, source_name, enhancer, out_dir, swapper, mask, threads,
     options.stabilize_enhancer = bool(getattr(g.CFG, 'stabilize_enhancer', False))
     options.stabilize_enhancer_strength = float(
         getattr(g.CFG, 'stabilize_enhancer_strength', 0.5) or 0.5)
+    # Same for the mask stabilizer: build_options defaults it OFF while the
+    # shipped config runs it ON, so every A/B through this harness measured a
+    # pipeline without it -- and a feature that lives inside it (the
+    # mask_flow_warp motion compensation) would have read as free because it
+    # never ran.
+    options.stabilize_mask = bool(getattr(g.CFG, 'stabilize_mask', False))
+    options.stabilize_mask_strength = float(
+        getattr(g.CFG, 'stabilize_mask_strength', 0.5) or 0.5)
 
     for k, v in (overrides or {}).items():
         if not hasattr(g, k):

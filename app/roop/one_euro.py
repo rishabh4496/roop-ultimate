@@ -490,14 +490,68 @@ class MaskStabilizer(EnhancerStabilizer):
     positive from a noisy segmenter, and existing renders must remain unchanged.
     """
 
-    def __init__(self, *args, fast_restore_alpha=0.0, **kwargs):
+    def __init__(self, *args, fast_restore_alpha=0.0, flow_warp=False,
+                 flow_stats=None, **kwargs):
         super().__init__(*args, **kwargs)
         try:
             self.fast_restore_alpha = min(1.0, max(0.0, float(fast_restore_alpha)))
         except (TypeError, ValueError):
             self.fast_restore_alpha = 0.0
+        # Motion compensation (setting `mask_flow_warp`). Without it the EMA
+        # below blends the previous mask IN PLACE: the aligned crop cancels
+        # the head's rigid motion, but not a hand crossing the face, hair
+        # swinging, or an expression, so anything that moves relative to the
+        # face leaves a trail -- the previous boundary fades out over several
+        # frames where it WAS, instead of following it. With it, the previous
+        # mask is first warped into the current crop along dense optical flow
+        # between the two aligned crops:
+        #
+        #     M_t = a * M_t + (1 - a) * Warp(M_{t-1}, flow)
+        #
+        # The flow machinery (DIS ultrafast at 128px, backward-flow argument
+        # order, per-thread engine) is occlusion_mask.TemporalMaskSmoother's,
+        # reused rather than copied. That class itself is not constructed by
+        # the render path; this is where its warp actually runs.
+        #
+        # Warps only across ADJACENT frames (t - last_t == 1). A gap means
+        # the stored crop is from further back than a flow field can bridge,
+        # and the plain EMA (the pre-existing behaviour) is used instead.
+        self.flow_warp = bool(flow_warp)
+        self._flow = None
+        if self.flow_warp:
+            from roop.occlusion_mask import TemporalMaskSmoother
+            self._flow = TemporalMaskSmoother(enabled=True)
+        # Shared across the per-chunk instances the parallel path builds, so
+        # the end-of-run line counts the whole render, not one chunk.
+        self.flow_stats = (flow_stats if flow_stats is not None
+                           else {'applied': 0, 'declined': 0, 'reset': 0})
 
-    def apply(self, mask, kps, t):
+    def flow_summary_line(self):
+        """Counts, printed at the end of a run. A warp that declined on every
+        face renders identically to one that is switched off."""
+        st = self.flow_stats
+        total = st['applied'] + st['declined'] + st['reset']
+        if not self.flow_warp:
+            return None
+        if total == 0:
+            return ('[Stabilize] mask flow-warp ENABLED BUT NEVER INVOKED: no '
+                    'matched face reached it; it had no effect on this run')
+        return ('[Stabilize] mask flow-warp: applied %d/%d (%.1f%%), '
+                'declined %d (gap or no guide), flow-reset %d'
+                % (st['applied'], total, 100.0 * st['applied'] / total,
+                   st['declined'], st['reset']))
+
+    def _flow_gray(self, guide):
+        if self._flow is None or guide is None:
+            return None
+        try:
+            return self._flow._observation(guide, self._flow.flow_size)
+        except Exception:
+            return None
+
+    def apply(self, mask, kps, t, guide=None):
+        """`guide` is the aligned crop the mask was computed from (BGR, any
+        size). Only read when `flow_warp` is on."""
         if mask is None:
             return mask
         kps = np.asarray(kps, dtype=np.float32)
@@ -523,6 +577,28 @@ class MaskStabilizer(EnhancerStabilizer):
             a = _alpha(t_e, cutoff)
             current = mask.astype(np.float32)
             previous = tr['prev']
+            gray = self._flow_gray(guide)
+            if self.flow_warp:
+                prev_gray = tr.get('gray')
+                if gray is not None and prev_gray is not None and t - tr['last_t'] == 1:
+                    flow = self._flow._dense_flow(gray, prev_gray)
+                    # XSeg hands back (H, W, 1) and cv2.remap drops a
+                    # trailing unit channel; without the reshape the blend
+                    # below broadcasts to (H, W, H) and the track never
+                    # matches again.
+                    warped = self._flow._warp(
+                        np.ascontiguousarray(previous.reshape(previous.shape[:2])),
+                        flow, current.shape[:2]).reshape(previous.shape)
+                    if float(np.mean(np.abs(warped - current))) > self._flow.reset_residual:
+                        # The flow did not explain the change (a cut, a
+                        # re-detect jump): keep the unwarped EMA rather than
+                        # drag a mask the field could not follow.
+                        self.flow_stats['reset'] += 1
+                    else:
+                        previous = warped
+                        self.flow_stats['applied'] += 1
+                else:
+                    self.flow_stats['declined'] += 1
             if self.fast_restore_alpha > 0.0:
                 # Positive delta means more of the original should be restored.
                 # Apply the larger factor only to those pixels. The reverse
@@ -540,9 +616,11 @@ class MaskStabilizer(EnhancerStabilizer):
                 # disabled; this is the default and the compatibility path.
                 out = a * current + (1.0 - a) * previous
             tr['prev'] = out
+            tr['gray'] = gray
             tr['centroid'] = centroid
             tr['last_t'] = t
             self.tracks = [x for x in self.tracks if (t - x['last_t']) <= self.max_missing]
             return np.clip(out, 0.0, 1.0).astype(np.float32)
-        self.tracks.append({'prev': mask.astype(np.float32), 'centroid': centroid, 'last_t': t})
+        self.tracks.append({'prev': mask.astype(np.float32), 'centroid': centroid,
+                            'last_t': t, 'gray': self._flow_gray(guide)})
         return mask

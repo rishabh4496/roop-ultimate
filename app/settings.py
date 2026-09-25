@@ -1037,6 +1037,8 @@ class Settings:
         self.stabilize_enhancer_strength = self.default_get(data, 'stabilize_enhancer_strength', 0.25)
         self.stabilize_mask = self.default_get(data, 'stabilize_mask', True)
         self.stabilize_mask_strength = self.default_get(data, 'stabilize_mask_strength', 0.5)
+        self.mask_flow_warp = self.default_get(data, 'mask_flow_warp', False)
+        self.mask_guided_filter = self.default_get(data, 'mask_guided_filter', False)
         # Dense-landmark smoothing. Rides on stabilize_face: the kps filter above
         # left `landmark_2d_106` raw, and that array is what the paste matte's
         # outline is drawn from, so the crop was stabilised while its own edge
@@ -1380,6 +1382,8 @@ class Settings:
             'stabilize_enhancer_strength': self.stabilize_enhancer_strength,
             'stabilize_mask': self.stabilize_mask,
             'stabilize_mask_strength': self.stabilize_mask_strength,
+            'mask_flow_warp': self.mask_flow_warp,
+            'mask_guided_filter': self.mask_guided_filter,
             'stabilize_landmarks': self.stabilize_landmarks,
             'stabilize_hf_texture': self.stabilize_hf_texture,
             'stabilize_hf_texture_weight': self.stabilize_hf_texture_weight,

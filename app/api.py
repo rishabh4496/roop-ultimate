@@ -4448,6 +4448,8 @@ def preview(payload: dict = Body(...)):
         roop_globals.jaw_reshape_strength = float(payload.get("jaw_reshape_strength", getattr(roop_globals.CFG, "jaw_reshape_strength", 0.5)))
         roop_globals.detail_transfer_strength = float(payload.get("detail_transfer_strength", getattr(roop_globals.CFG, "detail_transfer_strength", 0.0)))
         roop_globals.mask_edge_mode = payload.get("mask_edge_mode", getattr(roop_globals.CFG, "mask_edge_mode", "gaussian"))
+        roop_globals.mask_guided_filter = bool(payload.get("mask_guided_filter", getattr(roop_globals.CFG, "mask_guided_filter", False)))
+        roop_globals.mask_flow_warp = bool(payload.get("mask_flow_warp", getattr(roop_globals.CFG, "mask_flow_warp", False)))
         roop_globals.mask_erode_dilate_radius = int(payload.get(
             "mask_erode_dilate_radius",
             getattr(roop_globals.CFG, "mask_erode_dilate_radius", 0)))
@@ -4955,6 +4957,8 @@ def _run_swap(payload):
         roop_globals.jaw_reshape_strength = float(payload.get("jaw_reshape_strength", getattr(roop_globals.CFG, "jaw_reshape_strength", 0.5)))
         roop_globals.detail_transfer_strength = float(payload.get("detail_transfer_strength", getattr(roop_globals.CFG, "detail_transfer_strength", 0.0)))
         roop_globals.mask_edge_mode = payload.get("mask_edge_mode", getattr(roop_globals.CFG, "mask_edge_mode", "gaussian"))
+        roop_globals.mask_guided_filter = bool(payload.get("mask_guided_filter", getattr(roop_globals.CFG, "mask_guided_filter", False)))
+        roop_globals.mask_flow_warp = bool(payload.get("mask_flow_warp", getattr(roop_globals.CFG, "mask_flow_warp", False)))
         roop_globals.mask_erode_dilate_radius = int(payload.get(
             "mask_erode_dilate_radius",
             getattr(roop_globals.CFG, "mask_erode_dilate_radius", 0)))

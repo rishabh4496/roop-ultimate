@@ -1064,9 +1064,15 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
             if _fast_restore > 0.0:
                 print('[Stabilize] occlusion fast-restore enabled: '
                       f'alpha={_fast_restore:.2f}', flush=True)
+            # mask_flow_warp: motion-compensate the previous mask before the
+            # blend (see MaskStabilizer.__init__). One stats dict for every
+            # per-chunk instance so the end-of-run line covers the render.
+            _flow_warp = bool(getattr(roop.globals, 'mask_flow_warp', False))
+            _flow_stats = {'applied': 0, 'declined': 0, 'reset': 0}
             self._mask_stab_factory = lambda: MaskStabilizer(
                 strength=_mst, motion_beta=0.0,
-                fast_restore_alpha=_fast_restore)
+                fast_restore_alpha=_fast_restore,
+                flow_warp=_flow_warp, flow_stats=_flow_stats)
             self.mask_stabilizer = self._mask_stab_factory()
         else:
             self.mask_stabilizer = None
@@ -1991,6 +1997,11 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
         the only thing that separates them. (Session Log 2026-08-30 section 0:
         four enhancers failed on 60 of 60 frames while the audit read 100%.)
         """
+        _ms = getattr(self, 'mask_stabilizer', None)
+        if _ms is not None and hasattr(_ms, 'flow_summary_line'):
+            _line = _ms.flow_summary_line()
+            if _line:
+                print(_line, flush=True)
         for name in ('_landmark_smoother', '_hf_stabilizer'):
             engine = getattr(self, name, None)
             if engine is None or not getattr(engine, 'enabled', False):
