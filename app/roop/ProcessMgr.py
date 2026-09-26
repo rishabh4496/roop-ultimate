@@ -5351,10 +5351,24 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                 if _new is not None:
                     _norm = float(np.linalg.norm(np.asarray(_raw, dtype=np.float32))) if _raw is not None else 1.0
                     blend_input = type(inputface)(inputface)
-                    blend_input['embedding'] = (_new * (_norm if _norm > 1e-6 else 1.0)).astype(np.float32)
+                    _emb_val = (_new * (_norm if _norm > 1e-6 else 1.0)).astype(np.float32)
+                    blend_input['embedding'] = _emb_val
+                    _unit_normed = _new.astype(np.float32)
+                    if 'normed_embedding' in blend_input:
+                        blend_input['normed_embedding'] = _unit_normed
+                    if hasattr(blend_input, 'normed_embedding'):
+                        try:
+                            blend_input.normed_embedding = _unit_normed
+                        except (AttributeError, TypeError):
+                            pass
                     for key in list(blend_input.keys()):
-                        if str(key).startswith('_latent_'):
+                        if str(key).startswith('_latent_') or str(key) == '_normed_embedding':
                             del blend_input[key]
+                    if hasattr(blend_input, '_normed_embedding'):
+                        try:
+                            delattr(blend_input, '_normed_embedding')
+                        except (AttributeError, TypeError):
+                            pass
                     inputface = blend_input
             except Exception as e:
                 bar_write(f"[ProcessMgr] identity blend failed: {e}")

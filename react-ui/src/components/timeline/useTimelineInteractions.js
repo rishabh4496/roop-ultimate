@@ -8,7 +8,7 @@
 //   - Keyboard controls: Space (Play/Pause), J-K-L (Shuttle), Arrows (Step 1f), I/O (Trim)
 //   - Shift-key bypass for snapping engine
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { useTimelineStore } from './timelineStore.js';
 import { TRACK_CONFIG, xToFrame } from './timelineRenderer.js';
 

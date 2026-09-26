@@ -273,12 +273,14 @@ def reconstruct_inner_mouth_geometry(swapped_frame: Frame, plate_frame: Frame, f
     alpha = np.clip(alpha * speech_condition, 0.0, 1.0)[:, :, None]
 
     if region is not None:
-        own = region.crop(rx1, ry1, rx2 - rx1, ry2 - ry1)
+        own = region.crop(rx1, ry1, rx2, ry2)
         if own is not None:
             own = np.asarray(own, dtype=np.float32)
             if own.shape[:2] != alpha.shape[:2]:
                 own = cv2.resize(own, (rx2 - rx1, ry2 - ry1), interpolation=cv2.INTER_LINEAR)
-            alpha *= np.clip(own[:, :, None], 0.0, 1.0)
+            if own.ndim == 2:
+                own = own[:, :, None]
+            alpha *= np.clip(own, 0.0, 1.0)
 
     # Blend restored inner mouth into swapped ROI
     blended_roi = swap_roi * (1.0 - alpha) + restored_interior * alpha

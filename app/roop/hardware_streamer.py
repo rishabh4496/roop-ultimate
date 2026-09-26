@@ -87,7 +87,7 @@ class FrameMetadata:
     scene_cut: bool
     width: int
     height: int
-    sequence: int
+    sequence: int = 0
 
 
 @dataclass(frozen=True)
@@ -180,7 +180,11 @@ class SharedMemoryFrameRing:
             self.width = _positive_int(handle.width, 1)
             self.channels = _positive_int(handle.channels, 3)
             self._data_shm = shared_memory.SharedMemory(name=handle.data_name)
-            self._metadata_shm = shared_memory.SharedMemory(name=handle.metadata_name)
+            try:
+                self._metadata_shm = shared_memory.SharedMemory(name=handle.metadata_name)
+            except BaseException:
+                self._data_shm.close()
+                raise
             self._owner = False
             self._write_sequence = handle.write_sequence
             self._read_sequence = handle.read_sequence
@@ -401,14 +405,15 @@ class SharedMemoryFrameRing:
             finally:
                 self._metadata_shm.close()
 
-        if unlink and self._owner and not self._unlinked:
-            self._unlinked = True
+        if self._owner:
             if hasattr(self, "_finalizer"):
                 self._finalizer.detach()
-            try:
-                self._data_shm.unlink()
-            finally:
-                self._metadata_shm.unlink()
+            if unlink and not self._unlinked:
+                self._unlinked = True
+                try:
+                    self._data_shm.unlink()
+                finally:
+                    self._metadata_shm.unlink()
 
     def __enter__(self) -> "SharedMemoryFrameRing":
         return self

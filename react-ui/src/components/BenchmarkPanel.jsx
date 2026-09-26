@@ -1,6 +1,6 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { getJSON, postJSON } from '../api';
-import { AnimatedNumber, Button, Card, Section } from './ui';
+import { AnimatedNumber, Button, Section } from './ui';
 import { Icon } from '../icons';
 
 const WORKLOAD_OPTIONS = [
@@ -34,7 +34,7 @@ function formatTimestamp(isoStr) {
 export default function BenchmarkPanel({ notify, onSettingsApplied }) {
   const [activeTab, setActiveTab] = useState('runner'); // 'runner' | 'history'
   const [prompt, setPrompt] = useState(null);
-  const [loadingPrompt, setLoadingPrompt] = useState(true);
+  const [_loadingPrompt, setLoadingPrompt] = useState(true);
   const [selectedFaces, setSelectedFaces] = useState('1');
   const [selectedMode, setSelectedMode] = useState('quick');
   const [allowLossy, setAllowLossy] = useState(false);
@@ -131,7 +131,7 @@ export default function BenchmarkPanel({ notify, onSettingsApplied }) {
             fetchProfiles();
           }
         }
-      } catch (e) {
+      } catch {
         // Polling blip
       }
     }, 750);
@@ -259,11 +259,7 @@ export default function BenchmarkPanel({ notify, onSettingsApplied }) {
     }
   };
 
-  // Active presets comparison
-  const currentPreset = useMemo(() => {
-    if (!result?.presets) return null;
-    return result.presets[selectedPresetKey] || result.presets.balanced || null;
-  }, [result, selectedPresetKey]);
+
 
   return (
     <div id="benchmark-panel" className="w-full mb-6">

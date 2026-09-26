@@ -72,7 +72,6 @@ export default function Settings({ meta, settings, setSettings, notify }) {
 
   const isTrtRequested = requestedProvider === 'tensorrt';
   const isTrtActive = activeProvider === 'tensorrt';
-  const isTrtAdmitted = admittedProvider === 'tensorrt';
   const isTrtAvailable = Boolean(m.tensorrt_available || availableProviders.includes('tensorrt'));
   // VRAM tier controls safe contexts, pools, and streams. It is not a
   // TensorRT admission rule. A capable 6GB RTX card must not be presented as

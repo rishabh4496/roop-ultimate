@@ -470,6 +470,29 @@ class TestOralCavityAndTeethRestoration(unittest.TestCase):
         self.assertEqual(restored.shape, (400, 400, 3))
         self.assertGreater(int(restored[204, 200, 0]), 100)
 
+    def test_reconstruct_inner_mouth_geometry_respects_region(self):
+        from roop.face_overlap import FaceRegion
+        plate = self.frame.copy()
+        plate[200:208, 190:210] = [240, 240, 240]
+        swapped = self.frame.copy()
+        swapped[195:220, 185:215] = [100, 100, 100]
+
+        region_owned = FaceRegion(0, 0, 400, 400, np.ones((400, 400), dtype=np.float32))
+        restored = reconstruct_inner_mouth_geometry(
+            swapped, plate, self.face,
+            phoneme_energy=0.8, viseme_openness=0.9, teeth_sharpness=1.0,
+            region=region_owned,
+        )
+        self.assertGreater(int(restored[204, 200, 0]), 100)
+
+        region_blocked = FaceRegion(0, 0, 400, 400, np.zeros((400, 400), dtype=np.float32))
+        blocked = reconstruct_inner_mouth_geometry(
+            swapped, plate, self.face,
+            phoneme_energy=0.8, viseme_openness=0.9, teeth_sharpness=1.0,
+            region=region_blocked,
+        )
+        np.testing.assert_array_equal(blocked, swapped)
+
     def test_coarticulate_jawline_frame_active_vs_neutral(self):
         neutral = coarticulate_jawline_frame(self.frame, self.face, phoneme_energy=0.0,
                                              viseme_openness=0.0, strength=0.6)

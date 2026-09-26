@@ -21,6 +21,13 @@ from dataclasses import dataclass
 from fractions import Fraction
 from pathlib import Path
 
+_ROOP_DIR = Path(__file__).resolve().parent
+_APP_DIR = _ROOP_DIR.parent
+while str(_ROOP_DIR) in sys.path:
+    sys.path.remove(str(_ROOP_DIR))
+if str(_APP_DIR) not in sys.path:
+    sys.path.insert(0, str(_APP_DIR))
+
 from roop.ffmpeg_path import ffmpeg_binary, ffprobe_binary
 from roop import project_io
 

@@ -363,6 +363,41 @@ class WiringTests(unittest.TestCase):
         finally:
             g.identity_blend = saved
 
+    def test_blend_hook_updates_normed_embedding_and_clears_cached_latent(self):
+        from roop.identity_algebra import BlendRecipe, resolve_recipe
+        rng = np.random.RandomState(42)
+        v_a = _unit(rng)
+        v_b = _unit(rng)
+        fs_a = _FS("a", v_a)
+        fs_b = _FS("b", v_b)
+        recipe = BlendRecipe.from_payload({
+            "enabled": True,
+            "components": [{"source_id": "a", "weight": 50}, {"source_id": "b", "weight": 50}]
+        })
+        resolved = resolve_recipe(recipe, [fs_a, fs_b])
+        self.assertIsNotNone(resolved)
+        inputface = {
+            "embedding": v_a.copy() * 10.0,
+            "normed_embedding": v_a.copy(),
+            "_normed_embedding": v_a.copy(),
+            "_latent_model_x": np.zeros(512),
+        }
+        _raw = inputface.get("embedding")
+        _new = resolved.transform(_raw, None, fs_a)
+        self.assertIsNotNone(_new)
+        _norm = float(np.linalg.norm(np.asarray(_raw, dtype=np.float32)))
+        blend_input = type(inputface)(inputface)
+        blend_input["embedding"] = (_new * _norm).astype(np.float32)
+        _unit_normed = _new.astype(np.float32)
+        if "normed_embedding" in blend_input:
+            blend_input["normed_embedding"] = _unit_normed
+        for key in list(blend_input.keys()):
+            if str(key).startswith("_latent_") or str(key) == "_normed_embedding":
+                del blend_input[key]
+        self.assertNotIn("_latent_model_x", blend_input)
+        self.assertNotIn("_normed_embedding", blend_input)
+        np.testing.assert_allclose(blend_input["normed_embedding"], _new, atol=1e-5)
+
 
 if __name__ == "__main__":
     unittest.main()
