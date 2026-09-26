@@ -43,7 +43,7 @@ class _Face:
         return getattr(self, key)
 
 
-class TargetFaceCapture(unittest.TestCase):
+class TestTargetFaceCapture(unittest.TestCase):
     def setUp(self):
         self.old_entries = list(api.list_files_process)
         self.old_contexts = dict(api._target_contexts._contexts)
@@ -253,6 +253,21 @@ class TargetFaceCapture(unittest.TestCase):
         self.assertIn("data-face-index={i}", overlay_source)
         self.assertIn("onSelectFace(i)", overlay_source)
         self.assertIn("Capture all people", source)
+
+    def test_frontend_persongroups_syncs_reference_id_and_multi_person_mode(self):
+        face_swap = os.path.join(APP, "..", "react-ui", "src", "components", "FaceSwap.jsx")
+        person_groups = os.path.join(APP, "..", "react-ui", "src", "components", "PersonGroups.jsx")
+        with open(face_swap, "r", encoding="utf-8") as handle:
+            fs_source = handle.read()
+        with open(person_groups, "r", encoding="utf-8") as handle:
+            pg_source = handle.read()
+
+        self.assertIn("selectedReferenceFaceId={selectedReferenceFaceId}", fs_source)
+        self.assertIn("setSelectedReferenceFaceId={setSelectedReferenceFaceId}", fs_source)
+        self.assertIn("applyTargetContext={applyTargetContext}", fs_source)
+        self.assertIn("setSelectedReferenceFaceId(referenceId)", pg_source)
+        self.assertIn("setFaceSelection('Selected people')", pg_source)
+        self.assertIn("applyTargetContext(res", pg_source)
 
 
 if __name__ == "__main__":

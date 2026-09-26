@@ -458,6 +458,14 @@ await check('target context preserves selSource across target selection switches
   assert.ok(applyBody.includes('target_selected_source_id'), 'backend target source selection must be restored');
   assert.ok(faceSwap.includes('selected_source_id: sourceIdAt(selSource)'), 'preview must carry the selected source identity');
 });
+await check('PersonGroups autoCapture switches multi-person to Selected people and syncs reference face ID', () => {
+  const personGroups = readFileSync(join(here, '..', 'src', 'components', 'PersonGroups.jsx'), 'utf8');
+  assert.ok(personGroups.includes('capturedPeople.size > 1 && setFaceSelection'));
+  assert.ok(personGroups.includes("setFaceSelection('Selected people')"));
+  assert.ok(personGroups.includes('setSelectedReferenceFaceId(firstRefId)'));
+  assert.ok(faceSwap.includes('setSelectedReferenceFaceId={setSelectedReferenceFaceId}'));
+  assert.ok(faceSwap.includes('applyTargetContext={applyTargetContext}'));
+});
 
 console.log(`\n${fails.length ? `FAILED: ${fails.length} (${fails.join(', ')})` : `ALL GREEN: ${pass}/${pass} checks passed`}`);
 process.exit(fails.length ? 1 : 0);

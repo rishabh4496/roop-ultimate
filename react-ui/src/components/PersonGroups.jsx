@@ -49,12 +49,14 @@ function groupByPerson(groups, personIds) {
 export default function PersonGroups({
   targetFaces, targetGroups, targetNames, targetFacesInfo,
   targetPersonIds, targetReferenceFaceIds, selectedTargetPersonId,
-  setSelectedTargetPersonId, setTargetPersonIds, setTargetReferenceFaceIds,
+  setSelectedTargetPersonId, _selectedReferenceFaceId, setSelectedReferenceFaceId,
+  setTargetPersonIds, setTargetReferenceFaceIds,
   selTargetFace, setSelTargetFace,
   sourceFaces, sourceFacesInfo, faceSelection, setFaceSelection, selectedSource, faceMapping, setFaceMapping,
   frame, selTarget, targetMediaId,
   setTargetFaces, setTargetGroups, setTargetNames, setTargetFacesInfo,
   notify, clearPreviewCache,
+  applyTargetContext,
   // Stage 14: the versioned write path for target-scoped identity state.
   // When present, every selection/mapping change is persisted through it so
   // the backend (and therefore a reload) knows the selected person, not just
@@ -67,9 +69,12 @@ export default function PersonGroups({
   const choosePerson = (personId, faceIndex) => {
     setSelTargetFace(faceIndex);
     if (setSelectedTargetPersonId) setSelectedTargetPersonId(personId);
+    const referenceId = Array.isArray(targetReferenceFaceIds)
+      ? targetReferenceFaceIds[faceIndex] : undefined;
+    if (setSelectedReferenceFaceId && referenceId !== undefined) {
+      setSelectedReferenceFaceId(referenceId);
+    }
     if (commitTargetContext) {
-      const referenceId = Array.isArray(targetReferenceFaceIds)
-        ? targetReferenceFaceIds[faceIndex] : undefined;
       commitTargetContext({
         selected_target_person_id: personId,
         ...(referenceId ? { selected_reference_face_id: referenceId } : {}),
@@ -92,8 +97,12 @@ export default function PersonGroups({
     || targetPersonIds?.[selTargetFace]
     || people[0]?.[0];
 
-  // Push the four parallel arrays back to the parent from an API payload.
+  // Push the parallel arrays back to the parent from an API payload.
   const applyPayload = (res) => {
+    if (!res) return;
+    if (applyTargetContext) {
+      applyTargetContext(res, res.target_media_id || targetMediaId);
+    }
     if (res.target_faces) setTargetFaces(res.target_faces);
     if (res.target_groups) {
       const flat = res.target_groups.map((g) => Array.isArray(g) ? (g[0] ?? 0) : (typeof g === 'number' ? g : parseInt(g, 10) || 0));
@@ -109,6 +118,13 @@ export default function PersonGroups({
     if (res.target_person_ids && setTargetPersonIds) setTargetPersonIds(res.target_person_ids);
     if (res.target_reference_face_ids && setTargetReferenceFaceIds) setTargetReferenceFaceIds(res.target_reference_face_ids);
     if (res.selected_target_person_id && setSelectedTargetPersonId) setSelectedTargetPersonId(res.selected_target_person_id);
+    if (setSelectedReferenceFaceId) {
+      const refId = res.selected_reference_face_id
+        ?? (res.target_reference_face_ids?.[res.selected_target_face_index ?? 0] || null);
+      if (refId !== undefined) {
+        setSelectedReferenceFaceId(refId);
+      }
+    }
     if (clearPreviewCache) clearPreviewCache();
   };
 
@@ -165,6 +181,13 @@ export default function PersonGroups({
         target_person_id: targetPersonId, index: selTarget, target_media_id: targetMediaId,
       });
       applyPayload(res);
+      const personIndices = (res.target_person_ids || []).reduce((acc, id, idx) => {
+        if (id === targetPersonId) acc.push(idx);
+        return acc;
+      }, []);
+      if (personIndices.length > 0) {
+        choosePerson(targetPersonId, personIndices[0]);
+      }
       const detail = res.scanned
         ? ` — scanned ${res.scanned} frames in ${res.seconds}s, ${res.bins} pose bin${res.bins === 1 ? '' : 's'} covered`
         : '';
@@ -253,6 +276,25 @@ export default function PersonGroups({
       }
       setExpanded({});
       setSelTargetFace(0);
+      const capturedPeople = new Set(
+        (res.target_person_ids || []).filter((id) => id !== null && id !== undefined && id !== ''),
+      );
+      if (capturedPeople.size > 1 && setFaceSelection) {
+        setFaceSelection('Selected people');
+      }
+      const firstPersonId = res.target_person_ids?.[0];
+      const firstRefId = res.target_reference_face_ids?.[0];
+      if (firstPersonId) {
+        if (setSelectedTargetPersonId) setSelectedTargetPersonId(firstPersonId);
+        if (setSelectedReferenceFaceId && firstRefId) setSelectedReferenceFaceId(firstRefId);
+        if (commitTargetContext) {
+          commitTargetContext({
+            selected_target_person_id: firstPersonId,
+            ...(firstRefId ? { selected_reference_face_id: firstRefId } : {}),
+            selected_target_face_index: 0,
+          });
+        }
+      }
       // `separation` is the distance between the captured people, and it is the
       // number that decides whether any later identity decision can work: two
       // people captured 0.12 apart are one identity as far as the matcher is

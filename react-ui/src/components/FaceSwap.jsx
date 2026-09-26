@@ -490,6 +490,7 @@ export default function FaceSwap({
     targetMediaIndex,
     targetPersonIds,
     selectedTargetPersonId,
+    selectedReferenceFaceId,
     sourceIdentityIds: sourceFacesInfo.map((info, index) => info?.id || `memory-slot-${index}`),
   });
 
@@ -3280,6 +3281,9 @@ export default function FaceSwap({
               targetReferenceFaceIds={targetReferenceFaceIds}
               selectedTargetPersonId={selectedTargetPersonId}
               setSelectedTargetPersonId={setSelectedTargetPersonId}
+              selectedReferenceFaceId={selectedReferenceFaceId}
+              setSelectedReferenceFaceId={setSelectedReferenceFaceId}
+              applyTargetContext={applyTargetContext}
               commitTargetContext={commitTargetContext}
               setTargetPersonIds={setTargetPersonIds}
               setTargetReferenceFaceIds={setTargetReferenceFaceIds}

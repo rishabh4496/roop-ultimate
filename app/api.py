@@ -322,7 +322,7 @@ _ANGLE_MIN_PX      = float(os.environ.get('ROOP_ANGLE_MIN_PX', '64'))
 # applies them; re-reading them here would be a second source of truth for the
 # same gate. Only a per-request override is resolved below, and None means "use
 # the module default".
-_ANGLE_LONE_ACCEPT = float(os.environ.get('ROOP_ANGLE_LONE_ACCEPT', '0.45'))
+_ANGLE_LONE_ACCEPT = float(os.environ.get('ROOP_ANGLE_LONE_ACCEPT', '0.55'))
 # Banked angles this far from the seed are the ones nearest the drift limit, so
 # they are listed for review. NOT a rejection — a true extreme profile lands
 # here too; the point is that a polluted bank stops being invisible.
@@ -3576,6 +3576,13 @@ def target_auto_angles(payload: dict = Body(...)):
         print('[AutoAngles] turned away: '
               + ', '.join(f'{n} {why}' for why, n in rejected.most_common()))
 
+    person_indices = _target_face_indices_for_person(person_id)
+    if person_indices:
+        state.selected_target_person_id = person_id
+        state.selected_target_face_index = person_indices[0]
+        if person_indices[0] < len(roop_globals.TARGET_REFERENCE_FACE_IDS):
+            state.selected_reference_face_id = roop_globals.TARGET_REFERENCE_FACE_IDS[person_indices[0]]
+
     _save_active_target_context_locked()
     return _target_faces_payload({
         "count": added,
@@ -3706,7 +3713,11 @@ def target_auto_capture(payload: dict = Body(...)):
         enriched = len(roop_globals.TARGET_FACES) - before
 
     if roop_globals.TARGET_FACES:
-        state.selected_target_face_index = len(roop_globals.TARGET_FACES) - 1
+        state.selected_target_face_index = 0
+        state.selected_target_person_id = (
+            roop_globals.TARGET_FACE_PERSON_IDS[0] if roop_globals.TARGET_FACE_PERSON_IDS else None)
+        state.selected_reference_face_id = (
+            roop_globals.TARGET_REFERENCE_FACE_IDS[0] if roop_globals.TARGET_REFERENCE_FACE_IDS else None)
     _save_active_target_context_locked()
     return _target_faces_payload({
         "count": len(result["targets"]),
