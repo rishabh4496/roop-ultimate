@@ -28,9 +28,11 @@ scans (e.g. the upscale pass's _outputs_since) ignore them.
 """
 from roop.degrade import swallowed as _swallowed
 
+import errno
 import gc
 import json
 import os
+import shutil
 import subprocess
 import threading
 
@@ -446,9 +448,27 @@ class SegmentedVideoWriter:
         # A single segment is already a complete MP4. Promote it directly to
         # avoid a second ffmpeg process and stream-copy pass on short clips;
         # retain concat for multi-part files and ROOP_RESUME_KEEP=1.
-        ok = (self._promote_single()
-              if len(self.segments) == 1 and not preserve_parts
-              else self._concat())
+        promote = len(self.segments) == 1 and not preserve_parts
+        if not promote:
+            self._require_concat_space()
+        ok = self._promote_single() if promote else self._concat()
+        if not ok:
+            # A failed merge used to fall through: close() returned normally,
+            # the render logged "Done", and downstream picked up a truncated
+            # temp video (2026-09-27: 1.23 of 3.15 GB, drive full). The parts
+            # and the manifest are still on disk, so raising here loses
+            # nothing -- a re-run with the same settings resumes straight to
+            # this merge.
+            try:
+                os.remove(self.target_video)
+            except OSError:
+                pass
+            raise IOError(
+                f"could not merge {len(self.segments)} rendered part(s) into "
+                f"{os.path.basename(self.target_video)}; the parts and "
+                f"{os.path.basename(manifest_path(self.target_video))} are kept "
+                f"in {self._dir} -- run again with the same settings to finish "
+                f"the merge without re-rendering")
         if not completed and ok:
             n = len(self.segments)
             if keep_after_stop:
@@ -461,6 +481,37 @@ class SegmentedVideoWriter:
                       f"(set ROOP_RESUME_KEEP=1 to keep them for resuming).")
         if ok and (completed or not keep_after_stop):
             self.cleanup()
+
+    def _require_concat_space(self):
+        """Refuse the merge up front when the output drive cannot hold it.
+
+        The stream-copy concat writes a second full copy of every part before
+        cleanup() deletes them, so it needs the parts' total size free on the
+        output drive. Running out part-way used to leave a truncated temp video
+        and an ENOSPC traceback from whatever wrote next (the project
+        checkpoint), which named neither the drive nor the shortfall.
+        """
+        need = 0
+        for s in self.segments:
+            size = self._size_of(s["file"]) or int(s.get("bytes", 0) or 0)
+            need += size
+        # Headroom for the container rewrite (+faststart) and the checkpoint
+        # and log writes that follow.
+        need += max(64 * 1048576, need // 100)
+        try:
+            free = shutil.disk_usage(os.path.abspath(self._dir)).free
+        except OSError:
+            return          # cannot measure -> let the merge itself decide
+        if free < need:
+            drive = os.path.splitdrive(os.path.abspath(self._dir))[0] or self._dir
+            raise OSError(
+                errno.ENOSPC,
+                f"not enough space on {drive} to merge {len(self.segments)} "
+                f"rendered part(s): need {need / 1073741824:.2f} GB free, have "
+                f"{free / 1073741824:.2f} GB. The parts and "
+                f"{os.path.basename(manifest_path(self.target_video))} are kept "
+                f"in {self._dir}; free space and run again with the same "
+                f"settings to finish the merge without re-rendering")
 
     def _promote_single(self) -> bool:
         try:
