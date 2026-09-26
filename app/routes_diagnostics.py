@@ -271,10 +271,18 @@ def _nvidia_smi_stats():
     utilisation average anyway, so nothing readable is lost.
     """
     _NVSMI_TTL = 5.0
+    # A TIMEOUT is not a missing GPU: under a full render the driver can take
+    # longer than 3 s to answer. Back off and retry later instead of counting
+    # it toward the permanent disable (which a long render used to reach, killing
+    # the HUD for the session) and instead of respawning a 3 s probe every poll.
+    _NVSMI_TIMEOUT_BACKOFF = 15.0
+    now = time.time()
     with _nvsmi_lock:
         if _nvsmi_cache["fails"] >= 3:
             return {}
-        if time.time() - _nvsmi_cache["t"] < _NVSMI_TTL:
+        if now < _nvsmi_cache.get("retry_at", 0.0):
+            return dict(_nvsmi_cache["data"])
+        if now - _nvsmi_cache["t"] < _NVSMI_TTL:
             return dict(_nvsmi_cache["data"])
     data = {}
     try:
@@ -296,10 +304,15 @@ def _nvidia_smi_stats():
                 data[k] = round(float(v), 1)
             except ValueError:
                 pass
+    except subprocess.TimeoutExpired:
+        with _nvsmi_lock:
+            _nvsmi_cache["retry_at"] = time.time() + _NVSMI_TIMEOUT_BACKOFF
+            return dict(_nvsmi_cache["data"])
     except Exception as _degrade_error:
         _swallowed("routes_diagnostics.py:283", _degrade_error, "fallback continued")
         with _nvsmi_lock:
             _nvsmi_cache["fails"] += 1
+            _nvsmi_cache["retry_at"] = time.time() + _NVSMI_TTL
         return {}
     with _nvsmi_lock:
         _nvsmi_cache.update({"t": time.time(), "data": dict(data), "fails": 0})
