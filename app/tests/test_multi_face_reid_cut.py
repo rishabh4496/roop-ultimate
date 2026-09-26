@@ -208,6 +208,41 @@ class TestFaceBankAndMultiTargetMapping(unittest.TestCase):
         src2 = mgr._resolve_target_person_source(2, 2)
         self.assertEqual(src2, 0)
 
+    def test_resolve_target_person_source_identity_id_values(self):
+        # The shape the API actually sends: mapping values are source IDENTITY
+        # ids (a faceset path), resolved to indices in source_index_mapping.
+        # int() on the path used to return -1, so a render swapped nothing.
+        class DummyMgr(TrackingMixin):
+            def __init__(self):
+                self.processing_request = {
+                    'target_person_ids': ['tp_a', 'tp_b'],
+                    'target_person_source_mapping': {
+                        'tp_a': 'G:\\facesets\\gargee.fsz',
+                        'tp_b': 'G:\\facesets\\other.fsz',
+                    },
+                    'source_index_mapping': [1, 0],
+                }
+                self.target_person_ids = ['tp_a', 'tp_b']
+                self.target_face_groups = [0, 1]
+
+        mgr = DummyMgr()
+        self.assertEqual(mgr._resolve_target_person_source(0, 0), 1)
+        self.assertEqual(mgr._resolve_target_person_source(1, 1), 0)
+
+    def test_resolve_target_person_source_single_person_identity_id(self):
+        # The failing render: one selected person, mapping=[0].
+        class DummyMgr(TrackingMixin):
+            def __init__(self):
+                self.processing_request = {
+                    'target_person_ids': ['tp_x'],
+                    'target_person_source_mapping': {'tp_x': 'G:\\facesets\\gargee.fsz'},
+                    'source_index_mapping': [0],
+                }
+                self.target_person_ids = ['tp_x']
+                self.target_face_groups = [0]
+
+        self.assertEqual(DummyMgr()._resolve_target_person_source(0, 0), 0)
+
     def test_resolve_target_person_source_source_index_mapping_array(self):
         class DummyMgr(TrackingMixin):
             def __init__(self):

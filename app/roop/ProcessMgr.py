@@ -3975,9 +3975,11 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                         n_scored = 0                # candidates that got a distance
                         n_src_claimed = 0           # their source was already used this frame
                         best_any = None             # nearest candidate REGARDLESS of the gate
+                        n_unmapped = 0              # person resolved to no allowed source
                         for g, tis in candidate_persons.items():
                             r_src = self._resolve_target_person_source(g, rank.get(g, 0))
                             if r_src not in allowed_source_indices:
+                                n_unmapped += 1
                                 continue
                             if r_src in claimed_sources_in_frame:
                                 n_src_claimed += 1
@@ -4079,6 +4081,12 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                             # competing for one person, so the question is which
                             # of them is real, not how far apart they are.
                             _audit_hit("fallback missed (this person's source already used this frame)")
+                        elif candidate_persons and n_unmapped == len(candidate_persons):
+                            # Every candidate person resolved to no allowed source
+                            # (mapped to Skip, or a mapping that did not resolve).
+                            # Recognition never ran; filing this under "no usable
+                            # embedding" hid a render that swapped 0 faces.
+                            _audit_hit('fallback missed (person mapped to no source)')
                         elif candidate_persons:
                             # Candidates existed but none could be scored: no
                             # usable embedding on this face or on the captured

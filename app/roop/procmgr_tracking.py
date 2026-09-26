@@ -1362,6 +1362,7 @@ class TrackingMixin:
         elif hasattr(roop.globals, 'TARGET_FACE_PERSON_IDS') and 0 <= rank_idx < len(roop.globals.TARGET_FACE_PERSON_IDS):
             person_id = str(roop.globals.TARGET_FACE_PERSON_IDS[rank_idx])
 
+        src_mapping = req.get('source_index_mapping')
         person_mapping = req.get('target_person_source_mapping') or {}
         if person_id and person_id in person_mapping:
             val = person_mapping[person_id]
@@ -1372,10 +1373,31 @@ class TrackingMixin:
                     return int(val.split('-')[-1])
                 return int(val)
             except (ValueError, TypeError):
-                return -1
+                pass
+            # The API stores this mapping as {target_person_id:
+            # source_identity_id}, and a source identity id is a faceset PATH
+            # or an image id -- never an int. int() on it raised, and this
+            # branch used to return -1 ("skip this person") for it: every
+            # track was refused on "margin/concurrency" and the per-frame
+            # fallback skipped the person too, so a render swapped 0 of 99252
+            # faces while the preview (which never binds tracks) swapped fine.
+            # build_processing_request already resolved these ids to source
+            # indices in `source_index_mapping`, ordered like the request's own
+            # `target_person_ids` -- look the person up there.
+            req_ids = [str(p) for p in (req.get('target_person_ids') or [])]
+            if isinstance(src_mapping, list) and person_id in req_ids:
+                pos = req_ids.index(person_id)
+                if pos < len(src_mapping):
+                    try:
+                        resolved = int(src_mapping[pos])
+                    except (ValueError, TypeError):
+                        resolved = None
+                    if resolved is not None:
+                        return -1 if resolved < 0 else resolved
+            # Unresolvable here: fall through to the rank mapping / default
+            # rather than silently skipping a person the user mapped.
 
         # 2. Check source_index_mapping by rank index
-        src_mapping = req.get('source_index_mapping')
         if src_mapping is not None and isinstance(src_mapping, list):
             if 0 <= rank_idx < len(src_mapping):
                 val = src_mapping[rank_idx]
