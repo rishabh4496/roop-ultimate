@@ -140,6 +140,37 @@ def install_cleanup_handlers() -> None:
         signal.signal(signum, handler)
 
 
+def create_owned(size: int) -> shared_memory.SharedMemory:
+    """A new segment this process owns: closed and unlinked by :func:`cleanup_all`
+    (normal exit, exceptions, SIGINT/SIGTERM/SIGBREAK)."""
+    shm = shared_memory.SharedMemory(create=True, size=size)
+    with _REGISTRY_LOCK:
+        _OWNED[shm.name] = shm
+    return shm
+
+
+def attach_tracked(name: str) -> shared_memory.SharedMemory:
+    """Attach to another process's segment; closed (never unlinked) by :func:`cleanup_all`."""
+    shm = shared_memory.SharedMemory(name=name)
+    _untrack(shm)
+    with _REGISTRY_LOCK:
+        _ATTACHED[shm.name] = shm
+    return shm
+
+
+def release(shm: shared_memory.SharedMemory, *, unlink: bool) -> None:
+    """Close (and optionally unlink) a segment now and forget it."""
+    with _REGISTRY_LOCK:
+        _OWNED.pop(shm.name, None)
+        _ATTACHED.pop(shm.name, None)
+    _close(shm)
+    if unlink:
+        try:
+            shm.unlink()
+        except FileNotFoundError:
+            pass
+
+
 def _untrack(shm: shared_memory.SharedMemory) -> None:
     if os.name == "nt":
         return

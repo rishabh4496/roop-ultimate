@@ -193,24 +193,33 @@ class FFmpegWriter:
         self._stderr.start()
 
     # ------------------------------------------------------------------ command
+    #: Pixel format of the frames given to :meth:`write`.
+    input_pix_fmt = "bgr24"
+
+    def _video_args(self, crf: int, preset: str) -> list[str]:
+        """The video encoder; subclasses swap it (see ``encoder.NVENCVideoWriter``)."""
+        return ["-c:v", "libx264", "-preset", preset, "-crf", str(crf), "-pix_fmt", "yuv420p"]
+
+    def _vui_args(self, space: str, primaries: str, trc: str) -> list[str]:
+        # ffmpeg 8.1 does not forward -color_primaries/-color_trc to libx264
+        # (both read "unknown" in the output); x264's own options set all
+        # three in the H.264 VUI.
+        return ["-x264-params", f"colorprim={primaries}:transfer={trc}:colormatrix={space}"]
+
     def _command(self, audio_codec: str, crf: int, preset: str) -> list[str]:
         matrix, space, primaries, trc = _MATRIX[self.color]
         fps = f"{self.fps.numerator}/{self.fps.denominator}"
         cmd = [find_tool("ffmpeg"), "-y", "-hide_banner", "-nostats", "-progress", "pipe:2",
                "-f", "rawvideo", "-vcodec", "rawvideo", "-s", f"{self.width}x{self.height}",
-               "-pix_fmt", "bgr24", "-r", fps, "-i", "-"]
+               "-pix_fmt", self.input_pix_fmt, "-r", fps, "-i", "-"]
         if self.audio is not None:
             cmd += ["-i", str(self.audio)]
         cmd += ["-vf", "pad=ceil(iw/2)*2:ceil(ih/2)*2,"
                        f"scale=out_color_matrix={matrix}:out_range=tv"
                        ":flags=accurate_rnd+full_chroma_int,format=yuv420p",
-                "-c:v", "libx264", "-preset", preset, "-crf", str(crf), "-pix_fmt", "yuv420p",
+                *self._video_args(crf, preset),
                 "-colorspace", space, "-color_primaries", primaries, "-color_trc", trc,
-                "-color_range", "tv",
-                # ffmpeg 8.1 does not forward -color_primaries/-color_trc to
-                # libx264 (both read "unknown" in the output); x264's own
-                # options set all three in the H.264 VUI.
-                "-x264-params", f"colorprim={primaries}:transfer={trc}:colormatrix={space}"]
+                "-color_range", "tv", *self._vui_args(space, primaries, trc)]
         if self.audio is not None:
             cmd += ["-map", "0:v:0", "-map", "1:a:0?"]
             if self.expected_frames is not None:
@@ -266,7 +275,7 @@ class FFmpegWriter:
 
     # ------------------------------------------------------------------ frames
     def write(self, frame: np.ndarray) -> None:
-        """Append one ``(height, width, 3)`` uint8 BGR frame."""
+        """Append one ``(height, width, 3)`` uint8 frame in :attr:`input_pix_fmt` order."""
         if frame.shape != (self.height, self.width, 3) or frame.dtype != np.uint8:
             raise ValueError(f"expected ({self.height}, {self.width}, 3) uint8, "
                              f"got {frame.shape} {frame.dtype}")

@@ -271,7 +271,11 @@ class LucasKanadeTracker:
                 self.track(cur, prev, fwd)
         torch.cuda.current_stream(pts.device).wait_stream(side)
         graph = torch.cuda.CUDAGraph()
-        with torch.cuda.graph(graph):
+        # thread_local: in the default "global" mode a capture forbids unsafe
+        # CUDA calls from EVERY thread, and NVDEC decoding on the
+        # HardwareVideoDecoder thread makes them: the first capture mid-video
+        # deadlocked the render (2026-09-28). Only this thread is restricted.
+        with torch.cuda.graph(graph, capture_error_mode="thread_local"):
             fwd = self.track(prev, cur, pts)
             bwd = self.track(cur, prev, fwd)
         return _GraphEntry(graph, prev, cur, pts, fwd, bwd)

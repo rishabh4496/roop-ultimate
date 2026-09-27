@@ -26,6 +26,10 @@ under `app/`.
 | `media/capturer.py` | `VideoSource`: ffprobe metadata, frame-exact PyAV decode, keyframe segments, lossless demux |
 | `media/ipc_pool.py` | `SharedMemoryRingBuffer`, `FramePipeline`: zero-copy ingest -> N workers -> ordered assembly |
 | `media/ffmpeg_pipe.py` | `FFmpegWriter` (H.264/AAC faststart MP4), output inspection, HTTP 206 verification |
+| `media/decoder.py` | `HardwareVideoDecoder`: software (default) or NVDEC (child process) -> `(B,3,H,W)` CUDA batches |
+| `media/encoder.py` | `NVENCVideoWriter` / `open_video_writer`: GPU tensors -> pinned -> ffmpeg h264_nvenc (x264 fallback) |
+| `media/demuxer.py` | `demux` (audio/subtitles/chapters, lossless) and `remux` (`-c:v copy`, bounded by the video) |
+| `media/worker_pool.py` | `SegmentWorkerPool`: GOP-aligned segments per process/GPU, shared-memory progress, seamless concat |
 | `server/api.py` | FastAPI app: project, detection, pipeline start/stop, outputs (206 + CORS), UI hosting |
 | `server/ws.py` | `/ws/telemetry` (fps, latency, ETA, GPU temp/VRAM via NVML) and `/api/preview/frame` |
 | `server/processing.py` | `RenderParams`, `FrameProcessor` (shared by preview and render workers) |
@@ -381,6 +385,83 @@ Measured decisions (2026-09-27; synthetic clips with known properties):
   206/416. `verify_http_range_streaming` checks ranges, `moov` in the first
   64 KB, decoding over HTTP, and (files >= 8 MB) that a client seek issues a
   mid-file range - ffmpeg reads smaller files straight through.
+
+### GPU video I/O: decode to CUDA, NVENC, remux, segment workers
+
+```python
+from face_engine.media import HardwareVideoDecoder, open_video_writer, demux, remux, SegmentWorkerPool
+
+decoder = HardwareVideoDecoder("in.mp4", batch_size=4)       # (B, 3, H, W) uint8 CUDA batches
+info = decoder.info                                          # w, h, frame count, exact fps, SAR, colour
+writer = open_video_writer("video.mp4", info.width, info.height, info.fps,
+                           expected_frames=info.frame_count, color=info.color_profile)  # NVENC
+for batch in decoder:
+    writer.write_tensor(process(batch.frames))               # GPU -> pinned -> ffmpeg, on a thread
+writer.close()
+remux("video.mp4", "in.mp4", "out.mp4")                      # audio, subtitles, chapters; -c:v copy
+
+SegmentWorkerPool([0, 1]).run("in.mp4", "out.mp4", processor="my.module:factory")  # one process per GOP segment
+```
+
+`python -m face_engine.tests.verify_video_pipeline VIDEO` measures the whole
+pipeline (decode + inference + encode).
+
+Measured decisions (2026-09-28, RTX 4070, 1080p H.264 `d1.mp4`, 300 frames):
+
+- **End to end, NVENC is the win and NVDEC is not** (whole-run fps, arms
+  counterbalanced; the swap work is the Stage 2/3 GPU chain: strided
+  detection, batched HyperSwap, mask, paste):
+
+  | I/O | pass-through | face swap |
+  |---|---:|---:|
+  | software decode -> host -> libx264 (typical) | 74.3 | 25.3 |
+  | NVDEC (child process) -> GPU -> NVENC | 68.8 | 29.5 |
+  | **software decode (thread) -> GPU -> NVENC** (default) | **161.9** | **44.1** |
+
+  The default render runs 1.74x the typical pipeline with the face swap on.
+  NVDEC stays opt-in (`backend="nvdec"`) for decode-only work.
+- **Why NVDEC loses.** Through PyAV, NVDEC decodes 1080p at 411-496 fps to
+  NV12 on the host, but PyAV's own NV12 -> BGR conversion ran at 55 fps
+  (4x slower than software decode at 245). PyAV 17 exposes no DLPack / CUDA
+  pointer for hardware frames, so the decoder downloads NV12 and converts
+  on the GPU. That delivers 312-342 fps in isolation. It cannot run on a
+  thread of the rendering process: with ffmpeg's NVDEC context alive
+  beside torch and ONNX Runtime, GPU work **deadlocked after ~100 frames**
+  (reproduced with SCRFD alone; PyAV rejects `primary_ctx`, error -129). In
+  its own process, frames arrive through the shared-memory ring
+  (176-180 fps alone), but under inference load it drops to 56 fps against
+  software's 96: the two processes' CUDA contexts time-slice the GPU.
+- **NVENC**: 324-356 fps vs libx264's 160-170, PSNR vs input 42.11 vs
+  41.72 dB, files ~50% larger. The writer keeps `FFmpegWriter`'s audio
+  (stream copy bounded by `-t N/fps`) and colour handling. ffmpeg 8.1's
+  `h264_nvenc` left primaries/transfer untagged, so the `h264_metadata`
+  bitstream filter sets all four VUI fields. NVENC refuses frames below
+  145x49; `open_video_writer` routes those to libx264. Feeding ffmpeg NV12
+  converted on the GPU was only ~10% faster and 6 dB worse through
+  ffmpeg's rawvideo NV12 input, so the spec's RGB pipe is kept.
+- **GPU NV12 -> BGR** uses the stream's matrix and range (BT.709 HD, BT.601
+  SD, limited unless tagged `pc`). It sits +1.0/+1.5/+1.0 levels (B, G, R)
+  above PyAV's swscale output, max 3: swscale's default rounding biases low.
+  10-bit and non-NV12 streams fall back to software; HDR is refused.
+- **Tracker CUDA graphs** capture with `capture_error_mode="thread_local"`.
+  In the default global mode a capture forbids unsafe CUDA calls on every
+  thread, and the first capture mid-render hung the video pipeline.
+- **Remux**: `-c:v copy`, AAC stream-copied (else AAC 192k), text subtitles
+  as `mov_text`, chapters via `-map_chapters`. The spec's `.temp/audio.aac`
+  and bare `-shortest` are not used: raw ADTS plays 21.3 ms late, and
+  `-shortest` drops video frames (both measured on 2026-09-27). The output
+  is bounded by the video's own duration instead, and the frame count is
+  checked.
+- **Segment pool**: keyframe-aligned segments, one spawned process per
+  segment (GPUs round-robin), each decoding, processing and NVENC-encoding
+  its own range. The parts join with the concat demuxer and `-c copy`. On
+  `d1.mp4` split in two, PSNR across the seam stays at 43-44 dB like
+  everywhere else, timestamps step exactly 0.04 s, and audio matches video
+  (16.725 vs 16.720 s). Progress crosses in one shared-memory block that
+  the parent owns; `ipc_pool`'s handlers close and unlink it on exit and
+  on SIGINT/SIGTERM/SIGBREAK. Two workers with the full swap model set on
+  one 12 GB GPU exhausted this machine's host RAM, so the pool is for
+  several GPUs. That arm was not measured.
 
 ## Stage 5: server and web UI
 
