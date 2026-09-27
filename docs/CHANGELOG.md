@@ -7,6 +7,26 @@ folder). Entries before 2026-09-21 were moved here from the README on 2026-09-22
 
 ## 2026-09-27
 
+- **Upper-lip colour and kiss flicker (Love.mp4, harjot on the woman, AdaFace).**
+  1. `oral_cavity.py`: the landmark fallback took 106-point indices 66..71 as the
+     inner mouth. 67, 68 and 71 are the OUTER upper-lip edge, so the hull was the
+     upper-lip vermilion. It read a closed mouth as open on 118 of 120 sampled
+     frames, and pasted the target's own upper lip, sharpened and darkened up to
+     35%, over every swap (on by default). Now it uses the inner ring
+     (65 66 62 70 69 | 57 60 54), and "open" means an inner gap ≥ 0.10 of the mouth
+     width (70/120). Upper lip vs the original: 8.20 → 6.01 LAB, now equal to the
+     lower lip's 6.04. The mismatch between the two lips is gone.
+  2. `procmgr_tracking`: on AdaFace the track-assignment floor was the w600k 0.45
+     rescaled to 0.30, which sits inside the target's own band (measured 0.06-0.44;
+     bystanders 0.53+). That refused her 99-frame kiss track at 0.32. The floor is
+     now calibrated on AdaFace (`ROOP_TRACK_ASSIGN_FLOOR_ADAFACE`, 0.45).
+     Her profile in the kiss: swapped 47 → 66 of 108 faces. On/off transitions
+     13 → 8. No face of the man swapped (every swapped face ≥ 0.8 inspected).
+  Rejected: a second detector engine (SCRFD) as a partial-miss rescue. It added 151
+  faces over 1550 frames and none was recognisable as her (see `face_util`).
+  Still open: her face on the man's track in contact (39 frames); her profile
+  fragments at 0.71-0.81, past what a frontal capture vouches for.
+
 - **Flicker and "no swap when two faces are close": three causes, all fixed.** Measured on
   a 7647-frame, 135-cut, crowded single-person clip (Harjot on Monica Bellucci, live 4070
   config, AdaFace):

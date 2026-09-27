@@ -294,6 +294,33 @@ class TheMarginIsAnchoredPerShot(unittest.TestCase):
         self.assertEqual(inherited, {})
 
 
+class TheAdaFaceFloorIsMeasuredNotRescaled(unittest.TestCase):
+    """Rescaling the w600k floor by the threshold ratio gave 0.30 on AdaFace,
+    inside the target's own band. On Love.mp4 that refused the woman's 99-frame
+    kiss track at 0.32 (anchor 0.11 in the same shot) and every contact frame of
+    it went unswapped as "crop shared". Measured AdaFace populations:
+    target's own tracks 0.06-0.44, nearest bystanders 0.53+ (Monica, Love)."""
+    TARGET_OWN_MAX = 0.44
+    BYSTANDER_MIN = 0.53
+
+    def test_floor_separates_the_measured_populations(self):
+        from roop.procmgr_runtime import _TRACK_ASSIGN_FLOOR_ADAFACE as f
+        self.assertGreater(f, self.TARGET_OWN_MAX)
+        self.assertLess(f, self.BYSTANDER_MIN)
+
+    def test_the_rescaled_floor_would_have_refused_the_kiss_track(self):
+        from roop.procmgr_runtime import _TRACK_ASSIGN_FLOOR
+        rescaled = _TRACK_ASSIGN_FLOOR * 0.5 / 0.75
+        kiss_track, anchor, margin = 0.32, 0.11, 0.15 * 0.5 / 0.75
+        self.assertGreater(kiss_track, max(anchor + margin, rescaled))
+
+    def test_the_adaface_branch_uses_it_unscaled(self):
+        import re
+        src = open(_pt.__file__, encoding='utf-8').read()
+        self.assertRegex(src, r"gate_floor = \(_TRACK_ASSIGN_FLOOR_ADAFACE\s+if identity_active")
+        self.assertNotRegex(src, r"_ada\.scale\(_TRACK_ASSIGN_FLOOR,")
+
+
 class TheOutcomeGuardsShapeTerm(unittest.TestCase):
     """Real (plate, result) pairs lifted from the two measured sets.
 

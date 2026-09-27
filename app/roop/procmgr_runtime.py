@@ -503,6 +503,22 @@ _UNBOUND_SAME_PERSON = float(os.environ.get('ROOP_UNBOUND_SAME', '0.65'))
 # Re-ID for MORE fragments — each of which then has to pass this gate.
 _TRACK_ASSIGN_FLOOR = float(os.environ.get('ROOP_TRACK_ASSIGN_FLOOR', '0.45'))
 
+# The same floor, measured on the AdaFace scale instead of rescaled onto it.
+# recognizer_adaface.scale() keeps each w600k constant's RATIO to the match
+# threshold (0.45 * 0.5/0.75 = 0.30), but the two recognisers do not spread the
+# populations this floor separates by one ratio. Measured with AdaFace driving:
+#
+#   clip              target's own tracks     nearest bystander track
+#   Monica Bellucci   0.27-0.44               0.53-0.60
+#   Love.mp4          0.06-0.32               0.71+
+#
+# The rescaled 0.30 sits INSIDE the target's own band. On Love.mp4 it refused
+# the woman's 99-frame kiss track at 0.32 (anchor 0.11 in the same shot, margin
+# 0.10), leaving it unbound, so every frame where their faces touched was
+# refused as "crop shared" -- the reported on/off flicker in the kiss.
+# 0.45 is under the bystander band on both clips and under the 0.5 match gate.
+_TRACK_ASSIGN_FLOOR_ADAFACE = float(os.environ.get('ROOP_TRACK_ASSIGN_FLOOR_ADAFACE', '0.45'))
+
 
 # ── Stitching fragments back together ────────────────────────────────────────
 # Every gate above judges a track on its MEAN EMBEDDING against the captured

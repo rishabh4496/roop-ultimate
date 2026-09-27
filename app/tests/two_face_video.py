@@ -966,6 +966,11 @@ def main():
     ap.add_argument("--capture", type=int, default=-1,
                     help="frame to capture the two target faces from; "
                          "-1 finds the first well-separated one")
+    ap.add_argument("--capture-face", type=int, default=-1,
+                    help="with --capture FRAME: capture only this face (0 = "
+                         "leftmost) as the single target person, then enrich it "
+                         "with auto angles -- for one-faceset runs where "
+                         "auto-capture would pick the wrong person")
     ap.add_argument("--legacy-capture", action="store_true",
                     help="capture with this file's own capture_targets_best_frontal "
                          "fork instead of roop.capture_seed — the pre-2026-08-18 "
@@ -1205,7 +1210,30 @@ def main():
     means = [faceset_mean(fs) for fs in facesets]
     print(f"[bench] sources: {', '.join(f'{names[i]} ({len(facesets[i].faces)} faces)' for i in range(len(names)))}", flush=True)
 
-    if args.capture >= 0 or args.capture_extra.strip():
+    if args.capture_face >= 0:
+        # One chosen person, the way a user clicks one face box in the UI and
+        # then presses "auto angles". Auto-capture with one faceset picks the
+        # most capturable person, which on Love.mp4 was the man (frame 80)
+        # while every faceset in the library is a woman.
+        if args.capture < 0:
+            raise SystemExit("--capture-face needs --capture FRAME")
+        from roop.face_util import get_all_faces, _attach_source_crops
+        cap_img = frame_at(args.video, args.capture)
+        faces = sorted(get_all_faces(cap_img) or [], key=lambda f: float(f.bbox[0]))
+        if args.capture_face >= len(faces):
+            raise SystemExit(f"--capture-face {args.capture_face}: frame {args.capture} "
+                             f"has {len(faces)} face(s)")
+        targets, groups = [faces[args.capture_face]], [0]
+        # As the capture endpoint does. Without the aligned crop AdaFace has
+        # nothing to embed and the whole run silently matches on w600k
+        # ("[AdaFace] ... staying on w600k"), measured on the first Love.mp4 run.
+        _attach_source_crops(targets[0], cap_img)
+        print(f"[bench] target: face {args.capture_face} (left to right) of frame "
+              f"{args.capture}, box {[int(v) for v in faces[args.capture_face].bbox]}",
+              flush=True)
+        targets, groups = enrich_targets_auto_angles(args.video, targets, groups,
+                                                     log_prefix="[bench]")
+    elif args.capture >= 0 or args.capture_extra.strip():
         # Manual override path, unchanged: an explicit frame (and/or extra
         # angle frames) was asked for, so honor it exactly rather than
         # second-guessing it with the automatic capture below.

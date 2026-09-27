@@ -56,6 +56,7 @@ def track_source_index(binding):
 
 from roop.procmgr_runtime import (_DEBUG_MATCH, _TRACK_EMB_MAX, _TRACK_ASSIGN_MAX,
                                   _TRACK_ASSIGN_MARGIN, _TRACK_ASSIGN_FLOOR,
+                                  _TRACK_ASSIGN_FLOOR_ADAFACE,
                                   _TRACK_ASSIGN_MIN_OBS, _TRACK_REID_MAX,
                                   _TRACK_STITCH, _TRACK_STITCH_GAP,
                                   _TRACK_STITCH_DIST, _TRACK_STITCH_SIZE,
@@ -1479,7 +1480,8 @@ class TrackingMixin:
                     if identity_active else _TRACK_ASSIGN_MAX)
         gate_margin = (_ada.scale(_TRACK_ASSIGN_MARGIN, threshold)
                        if identity_active else _TRACK_ASSIGN_MARGIN)
-        gate_floor = (_ada.scale(_TRACK_ASSIGN_FLOOR, threshold)
+        # Not rescaled: calibrated on AdaFace itself (see the constant).
+        gate_floor = (_TRACK_ASSIGN_FLOOR_ADAFACE
                       if identity_active else _TRACK_ASSIGN_FLOOR)
         inherit_max = (_ada.scale(_TRACK_INHERIT_MAX, threshold)
                        if identity_active else _TRACK_INHERIT_MAX)

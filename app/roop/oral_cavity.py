@@ -28,16 +28,40 @@ def _get_landmarks_106(face):
     return pts if pts.shape[0] >= 71 else None
 
 
+# InsightFace 2d106det's mouth points are NOT in contour order. Plotted on a
+# real face (Love.mp4 frame 3024, 2026-09-27):
+#   outer lip ring  52 64 63 71 67 68 61 | 58 59 53 56 55   (52/61 = corners)
+#   inner lip ring  65 66 62 70 69 | 57 60 54               (upper | lower)
+# The old slice 66..71 took 67, 68 and 71 from the OUTER upper edge, so its
+# hull was the upper-lip vermilion itself: a CLOSED mouth measured 15px "open"
+# and every frame pasted the TARGET's upper lip (sharpened, darkened up to 35%)
+# over the swap -- the reported "upper lip colour does not match the faceset".
+INNER_LIP_106 = (65, 66, 62, 70, 69, 57, 60, 54)
+# (upper inner, lower inner) pairs across the aperture, left to right.
+INNER_GAP_PAIRS_106 = ((66, 54), (62, 60), (70, 57))
+MOUTH_CORNERS_106 = (52, 61)
+# Mean inner-lip gap, as a fraction of mouth width, above which the mouth is
+# open. Closed lips measure ~0.02-0.05 (landmark noise); the frame above: 0.03.
+OPEN_GAP_RATIO = 0.10
+
+
+def _inner_gap_ratio(face):
+    """Mean upper-to-lower inner lip distance / mouth width, or None."""
+    pts = _get_landmarks_106(face)
+    if pts is None or pts.shape[0] < 106:
+        return None
+    width = float(np.linalg.norm(pts[MOUTH_CORNERS_106[0]] - pts[MOUTH_CORNERS_106[1]]))
+    if width < 1.0:
+        return None
+    gap = float(np.mean([np.linalg.norm(pts[a] - pts[b]) for a, b in INNER_GAP_PAIRS_106]))
+    return gap / width
+
+
 def _get_inner_mouth_landmarks(face):
     """Extract inner lip / oral cavity landmark points."""
     pts106 = _get_landmarks_106(face)
-    if pts106 is not None:
-        # In 106-point landmark schema:
-        # 52..71: mouth contour. Points 66..71 define the inner oral cavity aperture.
-        # Points: 66 (upper center), 67 (upper left), 68 (lower left),
-        # 69 (lower center), 70 (lower right), 71 (upper right).
-        inner_pts = pts106[66:72] if pts106.shape[0] >= 72 else pts106[52:71]
-        return inner_pts
+    if pts106 is not None and pts106.shape[0] >= 106:
+        return pts106[list(INNER_LIP_106)]
 
     # Fallback to 68-point landmarks if present
     lm68 = getattr(face, 'landmarks_68', None)
@@ -123,7 +147,11 @@ def detect_oral_cavity_mask(frame: Frame, face, parser=None) -> tuple[np.ndarray
         ah = int(ys.max() - ys.min())
         aw = int(xs.max() - xs.min())
         area = int((mask > 0).sum())
-        is_open = ah >= 5 and area >= 20
+        # Hull height is not an aperture: it grows with head roll and with any
+        # lip thickness inside the hull. Measure the gap between the lips.
+        gap = _inner_gap_ratio(face)
+        is_open = (ah >= 5 and area >= 20
+                   and (gap is None or gap >= OPEN_GAP_RATIO))
         metrics = {
             'is_open': is_open,
             'area': area,

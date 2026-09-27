@@ -1389,6 +1389,13 @@ def _detect_faces(frame, expected_count=None):
         if not faces:
             faces = _rescue_clahe(frame) or []
 
+    # A SECOND DETECTOR ENGINE here was measured and REJECTED (2026-09-27,
+    # Love.mp4, 1550 frames at stride 2): SCRFD at 0.5 found 151 faces the
+    # live retinaface_r50 missed, and NONE was recognisable as the captured
+    # woman (all >= 0.75 from her); 116 failed landmarks_plausible. They were
+    # the other person, boxes spanning both faces of a kiss (keypoints split
+    # between two heads), and her profile, which no frontal capture vouches
+    # for. It would add only faces the matcher then refuses.
     # Unified partial miss rescue: when multiple target people are expected and one or more
     # is tilted, inverted, or lying sideways (e.g. interacting/kissing in d1.mp4),
     # try rotated variants to recover the missing face(s) without duplicating existing ones.
