@@ -14,8 +14,9 @@ GET      /api/pipeline/status         job snapshot
 GET      /api/outputs/{filename}      rendered file, HTTP 206 ranges, CORS
 GET      /api/media/target            the target file, HTTP 206 ranges
 GET      /api/thumbnails/{name}       face thumbnails (JPEG)
-GET      /api/preview/frame           single-frame preview (see ``ws.py``)
-WS       /ws/telemetry                live metrics (see ``ws.py``)
+POST     /api/preview/frame           one frame through the GPU pipeline -> JPEG (``preview.py``)
+GET      /api/preview/frame           the same, parameters in the query string
+WS       /ws/telemetry                render + GPU metrics at 4 Hz (``telemetry.py``)
 =======  ===========================  ===============================================
 
 The server binds 127.0.0.1 by default. Uploads are streamed to disk with a
@@ -37,8 +38,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from face_engine.server import ws
-from face_engine.server.processing import RenderParams
+from face_engine.server import preview, telemetry
+from face_engine.server.processing import PRESETS, RenderParams
 from face_engine.server.state import (
     IMAGE_EXTS,
     VIDEO_EXTS,
@@ -94,7 +95,8 @@ def _save_upload(upload: UploadFile, dest_dir: Path, allowed: frozenset[str],
 def create_app(settings: ServerSettings | None = None) -> FastAPI:
     settings = settings or ServerSettings()
     state = AppState(settings)
-    hub = ws.TelemetryHub(state)
+    hub = telemetry.TelemetryHub(state)
+    previews = preview.PreviewService(state)
 
     @contextlib.asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
@@ -106,15 +108,18 @@ def create_app(settings: ServerSettings | None = None) -> FastAPI:
             yield
         finally:
             await hub.stop()
+            await run_in_threadpool(previews.reset)
             await run_in_threadpool(state.shutdown)
 
     app = FastAPI(title="face_engine", version="0.1.0", lifespan=lifespan)
     app.state.app_state = state
     app.state.hub = hub
+    app.state.preview = previews
     app.add_middleware(CORSMiddleware, allow_origins=settings.cors_origins,
                        allow_methods=["GET", "POST", "OPTIONS"], allow_headers=["*"],
                        expose_headers=["Content-Range", "Accept-Ranges", "Content-Length",
-                                       "X-Render-Ms", "X-Faces", "X-Swapped"])
+                                       "X-Render-Ms", "X-Decode-Ms", "X-Process-Ms",
+                                       "X-Encode-Ms", "X-Cache", "X-Faces", "X-Swapped"])
 
     @app.exception_handler(ProjectError)
     async def project_error(_request: Request, exc: ProjectError) -> Any:
@@ -172,6 +177,7 @@ def create_app(settings: ServerSettings | None = None) -> FastAPI:
                             if not spec.available},
             "providers": {"tensorrt": "TensorrtExecutionProvider" in providers,
                           "cuda": "CUDAExecutionProvider" in providers, "cpu": True},
+            "presets": PRESETS,
         }
 
     # ------------------------------------------------------------------ pipeline
@@ -214,7 +220,8 @@ def create_app(settings: ServerSettings | None = None) -> FastAPI:
     async def thumbnails(name: str) -> FileResponse:
         return FileResponse(_inside(state.root / "thumbnails", name), media_type="image/jpeg")
 
-    app.include_router(ws.router)
+    app.include_router(preview.router)
+    app.include_router(telemetry.router)
 
     ui = settings.ui_dist
     if ui is not None and (ui / "index.html").is_file():

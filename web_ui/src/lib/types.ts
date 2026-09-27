@@ -40,6 +40,8 @@ export interface RenderParams {
   /** Gaussian feather of the box layer, fraction 0-1 */
   mask_blur: number;
   match_threshold: number;
+  /** Render only: full detection every N frames, optical flow between (1-8). */
+  detection_stride: number;
   workers: number;
 }
 
@@ -115,22 +117,47 @@ export interface Project {
   job: JobSnapshot | null;
 }
 
-/** ws.py: GpuSampler.sample() */
+/** telemetry.py: GuardedSampler.sample() */
 export interface GpuStats {
   name: string;
   temperature_c: number;
   utilization_pct: number;
   vram_used_mb: number;
   vram_total_mb: number;
-  source: "nvml" | "nvidia-smi";
+  source: "nvml" | "nvidia-smi" | string;
+  /** True when NVML stalled and this is the last good sample. */
+  stale?: boolean;
+  age_s?: number;
 }
 
-/** ws.py: TelemetryHub.snapshot() */
+/** telemetry.py: TelemetryHub._render() */
+export interface RenderTelemetry {
+  state: JobState;
+  fps: number;
+  frames_done: number;
+  frames_total: number;
+  /** 0-1 */
+  progress: number;
+  elapsed_s: number;
+  eta_s: number | null;
+}
+
+/** telemetry.py: TelemetryHub.snapshot() (4 Hz) */
 export interface Telemetry {
   type: "telemetry";
   time: number;
+  interval_s?: number;
+  render?: RenderTelemetry | null;
   gpu: GpuStats | null;
   job: JobSnapshot | null;
+}
+
+/** processing.py: PRESETS */
+export interface Preset {
+  label: string;
+  params: Partial<RenderParams>;
+  /** fps the preset rendered on the reference machine; null = not measured */
+  measured_fps: number | null;
 }
 
 /** api.py: GET /api/options */
@@ -139,11 +166,18 @@ export interface Options {
   /** model name -> reason it cannot be used */
   unavailable: Record<string, string>;
   providers: Record<ExecutionProvider, boolean>;
+  presets?: Record<string, Preset>;
 }
 
+/** preview.py: POST /api/preview/frame response (JPEG + timing headers) */
 export interface PreviewResult {
   url: string;
+  frame: number;
   renderMs: number | null;
+  decodeMs: number | null;
+  processMs: number | null;
+  encodeMs: number | null;
+  cache: "hit" | "miss" | null;
   faces: number | null;
   swapped: number | null;
 }

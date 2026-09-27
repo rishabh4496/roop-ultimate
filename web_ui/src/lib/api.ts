@@ -86,21 +86,25 @@ export const api = {
 
   status: () => request<{ job: JobSnapshot | null }>("/api/pipeline/status").then((r) => r.job),
 
-  /** Render one frame; the caller owns (and must revoke) the returned object URL. */
+  /**
+   * Render one frame (POST /api/preview/frame). The caller owns (and must
+   * revoke) the returned object URL. Pass `signal` to abort a stale request.
+   */
   async preview(
     frame: number,
     params: RenderParams,
     mode: "swapped" | "original" = "swapped",
+    signal?: AbortSignal,
   ): Promise<PreviewResult> {
-    const query = new URLSearchParams({
-      frame: String(Math.max(0, Math.round(frame))),
-      mode,
-      params: JSON.stringify(params),
-    });
+    const index = Math.max(0, Math.round(frame));
     let response: Response;
     try {
-      response = await fetch(`/api/preview/frame?${query}`);
+      response = await fetch("/api/preview/frame", {
+        ...json({ ...params, frame_index: index, mode }),
+        signal,
+      });
     } catch (err) {
+      if ((err as Error).name === "AbortError") throw err;
       throw new ApiError(0, `server unreachable (${(err as Error).message})`);
     }
     if (!response.ok) {
@@ -116,9 +120,15 @@ export const api = {
       const v = response.headers.get(h);
       return v === null || v === "" ? null : Number(v);
     };
+    const cache = response.headers.get("X-Cache");
     return {
       url: URL.createObjectURL(await response.blob()),
+      frame: index,
       renderMs: num("X-Render-Ms"),
+      decodeMs: num("X-Decode-Ms"),
+      processMs: num("X-Process-Ms"),
+      encodeMs: num("X-Encode-Ms"),
+      cache: cache === "hit" || cache === "miss" ? cache : null,
       faces: num("X-Faces"),
       swapped: num("X-Swapped"),
     };

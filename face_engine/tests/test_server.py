@@ -8,7 +8,6 @@ faces stay who they were, the file streams with 206 ranges.
 from __future__ import annotations
 
 import io
-import json
 import subprocess
 import time
 from pathlib import Path
@@ -161,12 +160,26 @@ def _person_nearest(faces: list[dict[str, Any]], x_center: float) -> dict[str, A
 
 @pytest.mark.gpu
 def test_preview_frame(client: TestClient, project: dict[str, Any]) -> None:
-    params = json.dumps({"execution_provider": "cuda"})
-    r = client.get("/api/preview/frame", params={"frame": 10, "params": params})
+    body = {"frame_index": 10, "execution_provider": "cuda", "swapper_model": "hyperswap_1a_256",
+            "enhancer_model": "none", "pixel_boost": "none", "mask_blur": 0.3,
+            "enhancer_blend": 80}
+    r = client.post("/api/preview/frame", json=body)
     assert r.status_code == 200 and r.headers["content-type"] == "image/jpeg"
     assert r.headers["x-faces"] == "6" and r.headers["x-swapped"] == "6"  # no assignment: all
+    assert r.headers["x-cache"] == "miss"
+    for key in ("x-render-ms", "x-decode-ms", "x-process-ms", "x-encode-ms"):
+        assert float(r.headers[key]) >= 0
     image = cv2.imdecode(np.frombuffer(r.content, np.uint8), cv2.IMREAD_COLOR)
     assert image.shape[:2] == (664, 960)
+    # The miss decoded the GOP up to frame 10 and prefetches the rest of it.
+    again = client.post("/api/preview/frame", json={**body, "frame_index": 5})
+    assert again.headers["x-cache"] == "hit"
+    original = client.post("/api/preview/frame", json={**body, "mode": "original"})
+    decoded = cv2.imdecode(np.frombuffer(original.content, np.uint8), cv2.IMREAD_COLOR)
+    changed = (np.abs(decoded.astype(int) - image).max(axis=2) > 20).mean()
+    assert 0.005 < changed < 0.5  # the faces changed, the rest of the frame did not
+    # Validation, and the query-string variant.
+    assert client.post("/api/preview/frame", json={**body, "pixel_boost": "3x"}).status_code == 422
     b64 = client.get("/api/preview/frame", params={"frame": 10, "format": "base64",
                                                    "mode": "original"}).json()
     assert b64["image"].startswith("data:image/jpeg;base64,")
@@ -236,18 +249,57 @@ def test_outputs_serve_ranges_with_cors(client: TestClient) -> None:
 def test_telemetry_websocket(client: TestClient) -> None:
     with client.websocket_connect("/ws/telemetry") as sock:
         msg = sock.receive_json()
-    assert msg["type"] == "telemetry"
+    assert msg["type"] == "telemetry" and msg["interval_s"] == 0.25  # 4 Hz
     gpu = msg["gpu"]
-    assert gpu is None or {"temperature_c", "vram_used_mb", "vram_total_mb", "utilization_pct"} <= set(gpu)
+    assert gpu is None or {"temperature_c", "vram_used_mb", "vram_total_mb", "utilization_pct",
+                           "stale"} <= set(gpu)
     assert msg["job"]["state"] in ("completed", "failed", "cancelled")
     assert {"fps", "elapsed_s", "eta_s", "latency_ms", "frames_done"} <= set(msg["job"])
+    render = msg["render"]
+    assert {"fps", "frames_done", "frames_total", "progress", "eta_s", "elapsed_s"} <= set(render)
+    assert 0.0 <= render["progress"] <= 1.0
+
+
+def test_stalled_gpu_query_backs_off_without_blocking() -> None:
+    """A hung NVML call must not stall telemetry: stale sample, then exponential back-off."""
+    import asyncio
+    import threading
+
+    from face_engine.server.telemetry import GuardedSampler
+
+    release = threading.Event()
+
+    class Flaky:
+        calls = 0
+
+        def query(self) -> dict[str, Any]:
+            Flaky.calls += 1
+            if Flaky.calls > 1:
+                release.wait(5)  # the driver "hangs"
+            return {"name": "gpu", "utilization_pct": 50, "vram_used_mb": 1, "vram_total_mb": 2,
+                    "temperature_c": 40, "source": "fake"}
+
+    guard = GuardedSampler(Flaky(), timeout=0.05)
+
+    async def run() -> list[Any]:
+        first = await guard.sample()
+        t0 = time.monotonic()
+        second = await guard.sample()          # times out -> stale copy of the first
+        third = await guard.sample()           # inside the back-off window: no new query
+        return [first, second, third, time.monotonic() - t0]
+
+    first, second, third, took = asyncio.run(run())
+    release.set()
+    guard.close()
+    assert first["stale"] is False and second["stale"] is True and third["stale"] is True
+    assert took < 0.5 and Flaky.calls == 2 and guard.failures == 1  # 3rd call: backed off
 
 
 @pytest.mark.gpu
 def test_stop_cancels_and_frees_everything(client: TestClient, project: dict[str, Any]) -> None:
     from face_engine.media import ipc_pool
 
-    r = client.post("/api/pipeline/start", json={"execution_provider": "cuda", "workers": 2,
+    r = client.post("/api/pipeline/start", json={"execution_provider": "cuda", "workers": 1,
                                                   "mask_types": ["box", "occlusion", "region"],
                                                   "enhancer_model": "gpen_bfr_512"})
     assert r.status_code == 200, r.text
@@ -263,6 +315,26 @@ def test_stop_cancels_and_frees_everything(client: TestClient, project: dict[str
     # The server is usable again immediately.
     assert client.post("/api/pipeline/start", json={"execution_provider": "cuda"}).status_code == 200
     assert _wait(client)["state"] == "completed"
+
+
+@pytest.mark.gpu
+def test_stop_cancels_a_segment_pool_render(client: TestClient, project: dict[str, Any]) -> None:
+    """workers > 1: keyframe segments in GPU processes; stop kills them and frees everything.
+
+    Lightest model set on purpose: two processes with the full cinema set ran this
+    machine out of host RAM (2026-09-28).
+    """
+    from face_engine.media import ipc_pool
+
+    r = client.post("/api/pipeline/start", json={"execution_provider": "cuda", "workers": 2,
+                                                  "mask_types": ["box"]})
+    assert r.status_code == 200, r.text
+    time.sleep(3.0)  # the workers are starting (spawn + model load)
+    stopped = client.post("/api/pipeline/stop").json()
+    assert stopped["job"]["state"] in ("cancelled", "completed")
+    assert stopped["shared_memory_segments"] == 0 and not ipc_pool._OWNED
+    outputs = client.app.state.app_state.outputs_dir()
+    assert not any(p.name.startswith(".") and p.is_dir() for p in outputs.iterdir())
 
 
 @pytest.mark.gpu

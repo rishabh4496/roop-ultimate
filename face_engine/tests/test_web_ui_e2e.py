@@ -115,11 +115,27 @@ async def _flow(url: str, media: dict[str, Path]) -> dict[str, object]:  # noqa:
             "document.querySelector('[data-testid=swap-mode]')?.textContent.includes('1 of 6')", 20)
         assert await _select(page, "#provider", "cuda")
 
+        # Live previews already run (after load, the assignment and the provider
+        # change); wait until the button is idle again, then ask explicitly.
+        assert await page.wait_for(
+            "[...document.querySelectorAll('button')].some("
+            "b => b.textContent === 'Preview frame' && !b.disabled)", 180)
         assert await page.click_text("button", "Preview frame")
         assert await page.wait_for(
             "(() => { const i = document.querySelector('[data-testid=right-media]');"
             " return i && i.complete && i.naturalWidth > 0; })()", 180)
         await page.screenshot(str(SHOTS / "1-preview.png"))
+
+        # Scrub the timeline: a debounced POST /api/preview/frame renders frame 20.
+        await page.evaluate(
+            "const r = document.querySelector('input[aria-label=Frame]');"
+            " const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;"
+            " set.call(r, '20'); r.dispatchEvent(new Event('input', {bubbles: true}));"
+            " return true;")
+        assert await page.wait_for(
+            "document.querySelector('[data-testid=player-badge]')?.textContent.includes('frame 21')", 120),             await page.evaluate("return document.body.innerText.slice(0, 2000);")
+        found["scrub_badge"] = await page.evaluate(
+            "return document.querySelector('[data-testid=player-badge]').textContent;")
 
         assert await page.click_text("button", "Start render")
         assert await page.wait_for(
@@ -139,12 +155,12 @@ async def _flow(url: str, media: dict[str, Path]) -> dict[str, object]:  # noqa:
         assert drawn["w"] == 960 and drawn["lit"] > 50, drawn
         found["canvas"] = drawn
         await page.click_text("button", "Pause")
-        await page.click("button[aria-pressed=false]")  # side-by-side
+        await page.click("[aria-label='Comparison mode'] button[aria-pressed=false]")  # side-by-side
         await asyncio.sleep(0.5)
         await page.screenshot(str(SHOTS / "2-rendered.png"))
 
         # Start again and stop from the UI.
-        await page.click("button[aria-pressed=false]")  # back to split
+        await page.click("[aria-label='Comparison mode'] button[aria-pressed=false]")  # back to split
         assert await _select(page, "#enhancer", "gpen_bfr_512")
         assert await page.click_text("button", "Start render")
         assert await page.wait_for(

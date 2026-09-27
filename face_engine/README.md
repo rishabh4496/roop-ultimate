@@ -31,8 +31,9 @@ under `app/`.
 | `media/demuxer.py` | `demux` (audio/subtitles/chapters, lossless) and `remux` (`-c:v copy`, bounded by the video) |
 | `media/worker_pool.py` | `SegmentWorkerPool`: GOP-aligned segments per process/GPU, shared-memory progress, seamless concat |
 | `server/api.py` | FastAPI app: project, detection, pipeline start/stop, outputs (206 + CORS), UI hosting |
-| `server/ws.py` | `/ws/telemetry` (fps, latency, ETA, GPU temp/VRAM via NVML) and `/api/preview/frame` |
-| `server/processing.py` | `RenderParams`, `FrameProcessor` (shared by preview and render workers) |
+| `server/preview.py` | GPU single-frame preview (GOP cache, nvJPEG) |
+| `server/telemetry.py` | `/ws/telemetry` at 4 Hz with a guarded NVML sampler |
+| `server/processing.py` | `RenderParams`, `PRESETS`, `GpuFrameProcessor` (shared by preview and render) |
 | `server/state.py` | Project state, people clustering, background render jobs |
 | `../web_ui/` | React 18 + TypeScript + Vite + Tailwind control UI |
 
@@ -471,32 +472,105 @@ python -m face_engine.server                   # http://127.0.0.1:8765 (serves t
 cd web_ui && npm run dev                       # UI development on :5173, proxied to :8765
 ```
 
-Flow: load 1-8 source face images and a target image/video -> the server
-detects faces on 8 sampled frames and groups them into people -> assign a
-source to any person (no assignment = every face gets the first source) ->
-preview any frame -> render. Renders run in worker processes through
-`FramePipeline` + `FFmpegWriter`; Stop aborts the rings, terminates the
-workers, frees shared memory and deletes the partial file.
+| Module | Purpose |
+|---|---|
+| `server/api.py` | FastAPI app: project load / assign / detect, options + presets, pipeline start / stop / status, outputs (206 + CORS), media, thumbnails |
+| `server/preview.py` | `POST /api/preview/frame` (+ `GET`): GOP frame cache -> warm `GpuFrameProcessor` -> nvJPEG; timing headers |
+| `server/telemetry.py` | `/ws/telemetry` at 4 Hz: render fps / progress / ETA, GPU util / VRAM / temperature; NVML on its own thread with timeout + back-off |
+| `server/processing.py` | `RenderParams`, `PRESETS`, `GpuFrameProcessor` (one class for preview and render) |
+| `server/state.py` | project, people grouping, jobs; render = decode -> GPU processor -> NVENC -> remux |
+| `web_ui/src/components/` | `DualCanvasPlayer`, `FaceSelectorGrid`, `ParameterSliders`, `TelemetryHUD` |
+
+Flow: load 1-8 source face images and a target image or video. The server
+detects faces on 8 sampled frames and groups them into people. Assign sources
+to people: click a source, then click people, or use each person's picker (no
+assignment = every face gets the first source). The first frame previews
+automatically, and from then on scrubbing (100 ms debounce, stale requests
+aborted) and every parameter change re-render the frame on screen. Render,
+then compare in the split player.
+
+**The GPU pipeline end to end.** Preview and render share
+`GpuFrameProcessor`:
+
+- SCRFD detection on the GPU (strided with optical flow for renders);
+- source choice by one batched ArcFace matmul;
+- batched swap with Pixel Boost;
+- the GPU tri-layer mask, then paste;
+- the batched enhancer, colour-locked to the original.
+
+A render job decodes in software on a thread and encodes with NVENC (the
+combination Stage 4 measured fastest), then remuxes audio, subtitles and
+chapters. `workers > 1` renders keyframe segments in that many GPU
+processes. Stop kills the workers, releases shared memory and deletes partial
+files.
+
+Measured (2026-09-28, RTX 4070, 1080p H.264 with two faces per frame,
+`face_engine/tests/bench_presets.py`):
+
+| preset | spec target | render, steady state | preview hit | preview miss |
+|---|---:|---:|---:|---:|
+| Ultra Fast (HyperSwap, box mask, detection stride 3) | 60+ fps | **43.0 fps** | 27 ms | 435 ms |
+| Balanced (HyperSwap, box + XSeg) | 30 fps | **34.8 fps** | 31 ms | 673 ms |
+| High-Fidelity Cinema (Pixel Boost 512, box + XSeg + BiSeNet, GPEN-512) | 12 fps | **8.3 fps** | 136 ms | 551 ms |
+
+The UI shows these measured numbers on the preset buttons, not the spec's
+targets. The whole job, including model loading and the remux, is slower on a
+short clip (19.7 / 17.4 / 5.8 fps over 300 frames).
+
+- **Preview < 50 ms holds for a cache hit** with Ultra Fast and Balanced. The
+  JPEG is not the cost: nvJPEG through `torchvision.io.encode_jpeg` on the
+  CUDA tensor takes 0.3-0.7 ms (8.7 ms for download + `cv2.imencode`, same
+  quality). The miss is: seeking to one frame decodes from its keyframe
+  (52-95 ms alone, 435-673 ms with the processing and the GOP read). So a miss
+  keeps every frame decoded on the way and a background thread fills the rest
+  of the GOP; scrubbing inside it is then a hit. Cinema (GPEN-512 FP32, 512
+  crops, BiSeNet) cannot meet 50 ms: 135 ms of processing. The first preview
+  after a parameter change loads models: 6-13 s with TensorRT engines cached,
+  minutes on a cold engine build (113-400 s measured).
+- **Render fps is counted from the end of the first batch.** Sessions and
+  their TensorRT engines load lazily on the first frames; counting them made
+  Ultra Fast read 24.7 fps and skewed the ETA.
+- **Ultra Fast uses HyperSwap, not inswapper.** inswapper's TensorRT FP16
+  engine ran 12.4 ms for two faces against HyperSwap FP32's 10.1 ms, so it
+  saves nothing. The savings come from the box-only mask (2.1 vs 5.9 ms with
+  XSeg) and strided detection.
+- **Telemetry never blocks.** Each NVML query runs on one dedicated thread
+  behind a 0.5 s timeout. A stalled query re-sends the last good sample marked
+  `stale` and backs off 1 s -> 60 s; the HUD shows it as stale instead of
+  live (`test_stalled_gpu_query_backs_off_without_blocking`).
 
 Checked:
 
-- 10 backend tests through the HTTP API with real models: upload validation
-  (type, empty, no face, unreadable video), people grouping (6 people on the
-  sample photo), preview, a render where ONLY the assigned person becomes the
-  source (ArcFace 0.70 vs <0.1 for the others; unassigned faces keep > 0.8
-  similarity to themselves), 206 + CORS on outputs, telemetry over WebSocket,
-  stop (no shared memory left, no partial file, immediately reusable), image
-  targets.
-- 18 UI unit tests (Vitest + Testing Library) and a strict `tsc` build.
+- 12 backend tests through the HTTP API with real models:
+  - upload validation and people grouping;
+  - preview over POST and GET (cache miss then hit, timing headers, only
+    the faces changed);
+  - a render where ONLY the assigned person becomes the source;
+  - 206 + CORS, and telemetry payload and rate;
+  - the stalled-NVML back-off;
+  - stop for an in-process and a 2-process segment render (no shared memory
+    left, no partial files, immediately reusable);
+  - image targets.
+- 26 UI unit tests (Vitest + Testing Library), a strict `tsc` build and the
+  production bundle (175 KB JS, 56 KB gzipped). They cover presets with
+  measured fps, click-to-assign matching, the dials and stale marker, the
+  player badge, and `usePreview` merging a scrub burst into one request and
+  aborting the stale one.
 - An end-to-end test that drives the production bundle in headless Chrome
-  against the real server: load -> detect -> assign -> preview -> render ->
-  the output plays in the comparison canvas -> start + stop; any console
-  error fails it (`face_engine/tests/test_web_ui_e2e.py`, screenshots in
-  `web_ui/e2e-shots/`).
+  against the real server: load -> detect -> assign -> preview -> scrub the
+  timeline (the badge reports the new frame) -> render -> the output plays in
+  the comparison canvas -> start + stop. Any console error fails it
+  (`face_engine/tests/test_web_ui_e2e.py`).
 
-Limits: identity matching is per frame with no tracking (a sharply turned head
-can miss for a few frames); one project and one render at a time per server;
-the server binds 127.0.0.1 and has no authentication.
+Limits:
+
+- Identity matching is per frame with no tracking, so a sharply turned head
+  can miss for a few frames.
+- One project and one render at a time per server.
+- The server binds 127.0.0.1 and has no authentication.
+- Two segment workers with the full Cinema model set exhausted this machine's
+  32 GB of host RAM (2026-09-28); keep `workers > 1` for machines with more
+  RAM or GPUs.
 
 ## Models without a source
 

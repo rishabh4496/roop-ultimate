@@ -7,11 +7,14 @@ import {
   SWAPPER_MODELS,
   type ExecutionProvider,
   type MaskType,
+  type Preset,
   type RenderParams,
 } from "../lib/types";
 
-export interface PipelineControlsProps {
+export interface ParameterSlidersProps {
   params: RenderParams;
+  /** Hardware profile presets from GET /api/options (with measured fps). */
+  presets?: Record<string, Preset>;
   onChange: (patch: Partial<RenderParams>) => void;
   /** model name -> reason it is unavailable */
   unavailable: Record<string, string>;
@@ -22,6 +25,60 @@ export interface PipelineControlsProps {
   onStop: () => void;
   onPreview: () => void;
   previewBusy?: boolean;
+}
+
+const BOOST_LABELS: Record<RenderParams["pixel_boost"], string> = {
+  none: "none",
+  "256x256": "256",
+  "512x512": "512",
+  "1024x1024": "1024",
+};
+
+/** True when every parameter the preset sets has the preset's value. */
+export function matchesPreset(params: RenderParams, preset: Preset): boolean {
+  return Object.entries(preset.params).every(([key, value]) => {
+    const current = params[key as keyof RenderParams];
+    return Array.isArray(value)
+      ? Array.isArray(current) && [...current].sort().join() === [...value].sort().join()
+      : current === value;
+  });
+}
+
+function PresetButtons({
+  presets,
+  params,
+  disabled,
+  onApply,
+}: {
+  presets: Record<string, Preset>;
+  params: RenderParams;
+  disabled: boolean;
+  onApply: (patch: Partial<RenderParams>) => void;
+}) {
+  return (
+    <div role="group" aria-label="Hardware profile presets" className="grid grid-cols-3 gap-2">
+      {Object.entries(presets).map(([key, preset]) => {
+        const active = matchesPreset(params, preset);
+        return (
+          <button
+            key={key}
+            type="button"
+            aria-pressed={active}
+            disabled={disabled}
+            onClick={() => onApply(preset.params)}
+            className={`flex flex-col items-start rounded border px-2 py-1.5 text-left ${
+              active ? "border-sky-400 bg-sky-950/60" : "border-zinc-700 hover:bg-zinc-800"
+            } disabled:opacity-40`}
+          >
+            <span className="text-xs font-semibold">{preset.label}</span>
+            <span className="text-[10px] text-zinc-400" data-testid={`preset-fps-${key}`}>
+              {preset.measured_fps == null ? "not measured yet" : `~${preset.measured_fps.toFixed(0)} fps measured`}
+            </span>
+          </button>
+        );
+      })}
+    </div>
+  );
 }
 
 const MASK_LABELS: Record<MaskType, string> = {
@@ -85,7 +142,12 @@ function Slider(props: {
 
 const pct = (v: number) => `${Math.round(v * 100)}%`;
 
-export function PipelineControls(props: PipelineControlsProps) {
+/**
+ * Render parameters: presets, models, Pixel Boost, masks, blends and the
+ * fine controls, plus Preview / Start / Stop. Everything is disabled while a
+ * render runs (the job's parameters are fixed once it starts).
+ */
+export function ParameterSliders(props: ParameterSlidersProps) {
   const { params, onChange, running } = props;
   const locked = running;
 
@@ -98,6 +160,9 @@ export function PipelineControls(props: PipelineControlsProps) {
 
   return (
     <section aria-label="Pipeline controls" className="flex flex-col gap-4">
+      {props.presets && Object.keys(props.presets).length > 0 && (
+        <PresetButtons presets={props.presets} params={params} disabled={locked} onApply={onChange} />
+      )}
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <Field label="Swapper" htmlFor="swapper">
           <select
@@ -125,7 +190,7 @@ export function PipelineControls(props: PipelineControlsProps) {
           >
             {PIXEL_BOOSTS.map((b) => (
               <option key={b} value={b}>
-                {b}
+                {BOOST_LABELS[b]}
               </option>
             ))}
           </select>
@@ -206,6 +271,17 @@ export function PipelineControls(props: PipelineControlsProps) {
           />
         ))}
       </div>
+      <Slider
+        id="detection-stride"
+        label="Detection stride (render)"
+        value={params.detection_stride}
+        min={1}
+        max={8}
+        step={1}
+        format={(v) => (v === 1 ? "every frame" : `every ${v} frames`)}
+        disabled={locked}
+        onChange={(v) => onChange({ detection_stride: v })}
+      />
       <Slider
         id="mask-blur"
         label="Gaussian feathering"

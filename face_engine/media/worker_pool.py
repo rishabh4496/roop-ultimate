@@ -58,6 +58,10 @@ logger = logging.getLogger(__name__)
 _PENDING, _RUNNING, _DONE, _FAILED = 0, 1, 2, 3
 
 
+class PoolCancelled(RuntimeError):
+    """``run()`` was cancelled through its ``cancel`` event."""
+
+
 def load_processor(spec: str) -> Callable[..., Any]:
     """``"package.module:attr"`` -> the attribute."""
     module, _, attr = spec.partition(":")
@@ -161,7 +165,14 @@ class SegmentWorkerPool:
     def run(self, source: str | Path, output: str | Path, *,
             processor: str = "face_engine.media.worker_pool:identity_processor",
             processor_kwargs: dict[str, Any] | None = None,
-            on_progress: Callable[[int, int], None] | None = None) -> PoolReport:
+            on_progress: Callable[[int, int], None] | None = None,
+            cancel: Any = None) -> PoolReport:
+        """Render ``source`` into ``output``.
+
+        ``cancel`` (a ``threading.Event``): when set, the worker processes are
+        killed, the shared memory is released, part files are deleted and
+        :class:`PoolCancelled` is raised.
+        """
         from face_engine.media.demuxer import remux
 
         install_cleanup_handlers()
@@ -187,6 +198,11 @@ class SegmentWorkerPool:
                 futures = [pool.submit(run_segment, job) for job in jobs]
                 pending = set(futures)
                 while pending:
+                    if cancel is not None and cancel.is_set():
+                        for proc in list(getattr(pool, "_processes", {}).values()):
+                            proc.kill()
+                        pool.shutdown(wait=False, cancel_futures=True)
+                        raise PoolCancelled("render cancelled")
                     done = {f for f in pending if f.done()}
                     for f in done:
                         results.append(f.result())  # re-raises a worker failure
@@ -200,6 +216,14 @@ class SegmentWorkerPool:
             report = remux(joined, source, output)
             if report.frames != total:
                 raise FFmpegError(f"{output.name}: {report.frames} frames, expected {total}")
+        except BaseException:
+            for p in [*parts, workdir / "joined.mp4", workdir / "concat.txt"]:
+                p.unlink(missing_ok=True)
+            try:
+                workdir.rmdir()
+            except OSError:
+                pass
+            raise
         finally:
             del progress
             release(shm, unlink=True)

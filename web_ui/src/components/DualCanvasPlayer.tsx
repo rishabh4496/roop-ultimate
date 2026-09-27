@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 
 export type CompareMode = "split" | "side-by-side";
 
@@ -7,7 +7,7 @@ export interface MediaSource {
   src: string;
 }
 
-export interface VideoCanvasPlayerProps {
+export interface DualCanvasPlayerProps {
   /** The original target. */
   left: MediaSource;
   /** Swapped output (video/image), or a single-frame preview image; null = nothing yet. */
@@ -15,10 +15,17 @@ export interface VideoCanvasPlayerProps {
   fps: number;
   frames: number;
   initialMode?: CompareMode;
-  /** Called (debounced by the caller) when the user scrubs while paused. */
+  /**
+   * Called on every scrub step while paused (the caller debounces: see
+   * ``usePreview``, 100 ms, aborting stale requests).
+   */
   onScrub?: (frame: number) => void;
   leftLabel?: string;
   rightLabel?: string;
+  /** Shown over the top-right of the canvas, e.g. preview latency. */
+  badge?: ReactNode;
+  /** Dim the output side while a newer frame is being rendered. */
+  pending?: boolean;
 }
 
 type Drawable = HTMLVideoElement | HTMLImageElement;
@@ -41,12 +48,16 @@ function context(canvas: HTMLCanvasElement | null): CanvasRenderingContext2D | n
 }
 
 /**
- * Dual-canvas comparison player. Both media elements stay hidden; frames are
- * drawn to canvas so split mode can clip the output at an arbitrary divider.
- * The output video (when present) is the clock; the original follows it and
- * is re-synced whenever the two drift more than 1.5 frames apart.
+ * Dual-canvas comparison player: the original target on the left, the swapped
+ * output on the right, compared through a draggable split (or side by side).
+ * Both media elements stay hidden; frames are drawn to canvas so split mode can
+ * clip the output at an arbitrary divider. The output video (when present) is
+ * the clock; the original follows it and is re-synced whenever the two drift
+ * more than 1.5 frames apart. While paused, the timeline scrubs the original
+ * and reports each frame through ``onScrub`` so the caller can fetch a GPU
+ * preview of it.
  */
-export function VideoCanvasPlayer(props: VideoCanvasPlayerProps) {
+export function DualCanvasPlayer(props: DualCanvasPlayerProps) {
   const { left, right, fps, frames } = props;
   const [mode, setMode] = useState<CompareMode>(props.initialMode ?? "split");
   const [divider, setDivider] = useState(0.5);
@@ -262,6 +273,12 @@ export function VideoCanvasPlayer(props: VideoCanvasPlayerProps) {
         </div>
       </div>
 
+      <div className="relative">
+      {props.badge && (
+        <div className="pointer-events-none absolute right-2 top-2 z-10" data-testid="player-badge">
+          {props.badge}
+        </div>
+      )}
       {mode === "split" ? (
         <canvas
           ref={splitCanvas}
@@ -280,9 +297,14 @@ export function VideoCanvasPlayer(props: VideoCanvasPlayerProps) {
       ) : (
         <div className="grid grid-cols-2 gap-2">
           <canvas ref={leftCanvas} data-testid="left-canvas" className={canvasClass} />
-          <canvas ref={rightCanvas} data-testid="right-canvas" className={canvasClass} />
+          <canvas
+            ref={rightCanvas}
+            data-testid="right-canvas"
+            className={`${canvasClass} ${props.pending ? "opacity-70" : ""}`}
+          />
         </div>
       )}
+      </div>
 
       <div className="flex items-center gap-3">
         <button

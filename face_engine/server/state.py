@@ -2,8 +2,12 @@
 
 Everything heavy (model loading, detection, rendering) runs off the event
 loop: request handlers call these methods through ``run_in_threadpool`` and
-renders run on their own thread, which drives worker PROCESSES through
-:class:`~face_engine.media.ipc_pool.FramePipeline`.
+renders run on their own thread. A render is the Stage 4 GPU pipeline:
+software decode on a thread (``HardwareVideoDecoder``; measured faster than
+NVDEC once the GPU is busy) -> :class:`GpuFrameProcessor` -> NVENC
+(``open_video_writer``, libx264 fallback) -> lossless remux of the source's
+audio, subtitles and chapters. ``workers > 1`` renders keyframe segments in
+that many GPU processes (``SegmentWorkerPool``).
 """
 from __future__ import annotations
 
@@ -22,10 +26,10 @@ import numpy as np
 from pydantic import BaseModel, Field
 
 from face_engine.server.processing import (
-    FaceSwapWorker,
-    FrameProcessor,
+    GpuFrameProcessor,
     ProcessorConfig,
     RenderParams,
+    config_kwargs,
     model_paths,
     required_models,
 )
@@ -145,7 +149,9 @@ class AppState:
         self.job: Job | None = None
         self._registry: Any = None
         self._services: dict[str, Any] = {}
-        self._preview: tuple[str, FrameProcessor] | None = None
+        # Bumped whenever sources, target, people or assignments change;
+        # the preview service rebuilds its caches when it moves.
+        self.revision = 0
 
     # ------------------------------------------------------------------ services
     @property
@@ -219,7 +225,7 @@ class AppState:
                 raise ProjectError("a render is running; stop it before loading a new project")
             self.sources, self.target = new_sources, new_target
             self.people, self.assignments = {}, {}
-            self._preview = None
+            self.revision += 1
 
     def _validate_target(self, name: str, path: Path) -> Target:
         ext = path.suffix.lower()
@@ -290,6 +296,7 @@ class AppState:
         with self.lock:
             self.people = people
             self.assignments = {}
+            self.revision += 1
         return list(people.values())
 
     def assign(self, mapping: dict[str, str | None]) -> dict[str, str]:
@@ -303,7 +310,7 @@ class AppState:
                     raise ProjectError(f"unknown source {source!r}")
                 else:
                     self.assignments[person] = source
-            self._preview = None
+            self.revision += 1
             return dict(self.assignments)
 
     def project_json(self) -> dict[str, Any]:
@@ -336,20 +343,6 @@ class AppState:
                 target_refs={k: p.embedding for k, p in self.people.items()},
                 assignments=dict(self.assignments))
 
-    def preview(self, index: int, params: RenderParams) -> tuple[np.ndarray, dict[str, int]]:
-        """Process one target frame with ``params`` in this process."""
-        config = self.processor_config(params)
-        key = params.model_dump_json() + repr(sorted(config.assignments.items()))
-        with self.lock:
-            if self._preview is None or self._preview[0] != key:
-                if self._preview is not None:
-                    self._preview[1].close()
-                self._preview = (key, FrameProcessor(config))
-            processor = self._preview[1]
-        frame = self.read_frame(index)
-        out, stats = processor.process(frame)
-        return out, {"faces": stats.faces, "swapped": stats.swapped}
-
     # ------------------------------------------------------------------ jobs
     def start_job(self, params: RenderParams) -> Job:
         with self.lock:
@@ -380,7 +373,7 @@ class AppState:
             if target.kind == "image":
                 job.state = "rendering"
                 out = self.outputs_dir() / f"{stem}_{job.id}.png"
-                processor = FrameProcessor(config)
+                processor = GpuFrameProcessor(config)
                 try:
                     result, _ = processor.process(self.read_frame(0))
                 finally:
@@ -408,41 +401,78 @@ class AppState:
             job.finished = time.monotonic()
 
     def _render_video(self, job: Job, config: ProcessorConfig, target: Target, stem: str) -> Path:
-        from face_engine.media.capturer import VideoSource
-        from face_engine.media.ffmpeg_pipe import FFmpegWriter
-        from face_engine.media.ipc_pool import FramePipeline, VideoFrames
-
-        info = VideoSource(target.path).info
         out = self.outputs_dir() / f"{stem}_{job.id}.mp4"
-        pipeline = FramePipeline(VideoFrames(str(target.path)), FaceSwapWorker(config),
-                                 (info.height, info.width, 3), workers=config.params.workers,
-                                 slots=max(4, 2 * config.params.workers + 2),
-                                 init=FaceSwapWorker(config).init, stall_timeout=600.0)
-        job.state = "rendering"
-        last = [time.monotonic()]
-        with FFmpegWriter(out, info.width, info.height, info.fps, audio=target.path,
-                          color=info.color_profile, expected_frames=info.frame_count) as writer:
-            def sink(seq: int, frame: np.ndarray) -> None:
-                writer.write(frame)
-                now = time.monotonic()
-                dt, last[0] = now - last[0], now
-                job.frames_done = seq + 1
-                if seq > 0:  # the first interval includes model loading
-                    job.latency_ms = 0.8 * job.latency_ms + 200.0 * dt if job.latency_ms else dt * 1e3
-                    job.fps = 1000.0 / job.latency_ms if job.latency_ms > 0 else 0.0
+        if config.params.workers > 1:
+            return self._render_segments(job, config, target, out)
+        import torch
 
+        from face_engine.media.decoder import HardwareVideoDecoder
+        from face_engine.media.demuxer import remux
+        from face_engine.media.encoder import open_video_writer
+
+        decoder = HardwareVideoDecoder(target.path, batch_size=4)
+        info = decoder.info
+        video = out.with_name(f".{out.stem}_video.mp4")
+        processor = GpuFrameProcessor(config, tracking=True)
+        try:
+            writer = open_video_writer(video, info.width, info.height, info.fps,
+                                       expected_frames=info.frame_count,
+                                       color=info.color_profile)
+            job.state = "rendering"
+            # fps counts from the end of the first batch: the sessions (and their
+            # TensorRT engines) load lazily on the first frames, several seconds
+            # that would otherwise read as a slow render and a wrong ETA.
+            warm: tuple[float, int] | None = None
             try:
-                pipeline.run(sink, cancel=job.cancel)
+                for batch in decoder:
+                    if job.cancel.is_set():
+                        raise _Cancelled()
+                    frames = torch.cat([processor.process_tensor(f[None])[0]
+                                        for f in batch.frames])
+                    writer.write_tensor(frames)
+                    job.frames_done += len(batch)
+                    now = time.monotonic()
+                    if warm is None:
+                        warm = (now, job.frames_done)
+                    elif now > warm[0]:
+                        job.fps = (job.frames_done - warm[1]) / (now - warm[0])
+                        job.latency_ms = 1000.0 / job.fps if job.fps > 0 else 0.0
+                writer.close()
             except BaseException:
                 writer.abort()
                 raise
-            writer.close()
+        finally:
+            processor.close()
+        try:
+            remux(video, target.path, out)
+        finally:
+            video.unlink(missing_ok=True)
+        return out
+
+    def _render_segments(self, job: Job, config: ProcessorConfig, target: Target,
+                         out: Path) -> Path:
+        from face_engine.media.worker_pool import PoolCancelled, SegmentWorkerPool
+
+        pool = SegmentWorkerPool([0] * config.params.workers, encoder="auto")
+        job.state = "rendering"
+        started = time.monotonic()
+
+        def progress(done: int, total: int) -> None:
+            job.frames_done = done
+            elapsed = time.monotonic() - started
+            job.fps = done / elapsed if elapsed > 0 else 0.0
+            job.latency_ms = 1000.0 / job.fps if job.fps > 0 else 0.0
+
+        try:
+            pool.run(target.path, out, processor="face_engine.server.processing:pool_processor",
+                     processor_kwargs=config_kwargs(config), on_progress=progress,
+                     cancel=job.cancel)
+        except PoolCancelled:
+            raise _Cancelled() from None
         return out
 
     def shutdown(self) -> None:
         self.stop_job(timeout=30)
-        if self._preview is not None:
-            self._preview[1].close()
         if "engine" in self._services:
             self._services["engine"].close()
 

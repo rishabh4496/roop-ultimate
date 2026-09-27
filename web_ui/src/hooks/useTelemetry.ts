@@ -17,17 +17,20 @@ export interface TelemetryState {
   history: TelemetrySample[];
 }
 
-export const HISTORY_LENGTH = 120;
+/** 60 s of history at the server's 4 Hz. */
+export const HISTORY_LENGTH = 240;
 
 export function toSample(t: Telemetry): TelemetrySample {
-  const rendering = t.job?.state === "rendering";
+  const state = t.render?.state ?? t.job?.state;
+  const rendering = state === "rendering";
+  const fps = t.render?.fps ?? t.job?.fps ?? null;
   return {
     time: t.time,
     vramUsedMb: t.gpu?.vram_used_mb ?? null,
     temperatureC: t.gpu?.temperature_c ?? null,
     utilizationPct: t.gpu?.utilization_pct ?? null,
-    fps: rendering ? t.job!.fps : null,
-    latencyMs: rendering ? t.job!.latency_ms : null,
+    fps: rendering ? fps : null,
+    latencyMs: rendering && t.job ? t.job.latency_ms : null,
   };
 }
 
