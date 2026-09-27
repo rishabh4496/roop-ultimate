@@ -20,6 +20,9 @@ under `app/`.
 | `processors/enhancer.py` | `FaceEnhancer`: GPEN-BFR 512/1024/2048, RestoreFormer++, LAB colour lock |
 | `processors/expression.py` | `ExpressionRestorer`: LivePortrait expression transfer + blink sync |
 | `utils/gridsample5d.py` | LivePortrait warping graph rewrite (copied from the app) |
+| `media/capturer.py` | `VideoSource`: ffprobe metadata, frame-exact PyAV decode, keyframe segments, lossless demux |
+| `media/ipc_pool.py` | `SharedMemoryRingBuffer`, `FramePipeline`: zero-copy ingest -> N workers -> ordered assembly |
+| `media/ffmpeg_pipe.py` | `FFmpegWriter` (H.264/AAC faststart MP4), output inspection, HTTP 206 verification |
 
 ## Usage
 
@@ -131,6 +134,49 @@ Measured decisions (2026-09-27, RTX 4070, insightface sample + four real clips):
 
   Lips improve on 100% of faces, brows on 94%. Gaze follow (`eyes > 0`) is off
   by default: roop-ultimate measured it worsening eye direction.
+
+## Stage 4: video I/O
+
+```python
+from face_engine.media import VideoSource, FramePipeline, VideoFrames, FFmpegWriter
+
+src = VideoSource("in.mp4"); info = src.info
+with FFmpegWriter("out.mp4", info.width, info.height, info.fps, audio=src.path,
+                  color=info.color_profile, expected_frames=info.frame_count) as writer:
+    FramePipeline(VideoFrames("in.mp4"), my_worker, (info.height, info.width, 3),
+                  workers=2).run(lambda seq, frame: writer.write(frame))
+    report = writer.close()        # verifies frames, codecs, faststart
+```
+
+Measured decisions (2026-09-27; synthetic clips with known properties):
+
+- **Frame rate:** exact `r_frame_rate` (24000/1001) only when it matches
+  `avg_frame_rate`; otherwise the average. On a VFR clip (nominal 30, real
+  22.689) the nominal rate was how roop-ultimate lost 2 s of audio.
+- **Audio sidecar is `.m4a` (AAC/ALAC) or `.mka`, not `.temp/audio.aac`.** A
+  click at t = 1.000 s: raw `.aac` +21.3 ms (the 1024 priming samples the MP4
+  edit list hides), `.mka` +21.3 ms, `.m4a` 0.0 ms, Opus in `.mka` 0.0 ms.
+- **`-shortest` drops video frames** when audio ends first (72 -> 70 frames
+  on a clip with 3 ms less audio). The writer bounds output with `-t N/fps`
+  when the frame count is known (audio stream-copied), else pads audio with
+  silence and re-encodes; `close()` checks the count.
+- **Colour:** the spec's command writes an untagged file with swscale's
+  default rounding (-1.6 levels on every channel even losslessly). The writer
+  converts with the source matrix, `accurate_rnd+full_chroma_int` (halves the
+  shift), and tags all four colour fields. ffmpeg 8.1 ignores
+  `-color_primaries`/`-color_trc` for libx264, so `-x264-params` sets them.
+- **Decoding:** PyAV matches the tag-honouring ffmpeg conversion byte for
+  byte; keyframe segments decoded separately are byte-identical to one
+  sequential decode. PyAV hardware decode is slower at 720p (CUDA 218 fps vs
+  software 333), so software is the default.
+- **Cleanup:** SIGINT/SIGTERM/SIGBREAK + `atexit` close and unlink. No Python
+  SIGSEGV handler (it cannot run safely after a real fault); a hard-killed
+  owner's segment is freed by the OS (Windows) / resource tracker (POSIX) -
+  tested by killing the owner outright.
+- **HTTP 206:** Python's `http.server` ignores `Range`; `RangeServer` serves
+  206/416. `verify_http_range_streaming` checks ranges, `moov` in the first
+  64 KB, decoding over HTTP, and (files >= 8 MB) that a client seek issues a
+  mid-file range - ffmpeg reads smaller files straight through.
 
 ## Models without a source
 
