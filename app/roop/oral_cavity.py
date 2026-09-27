@@ -235,6 +235,21 @@ def reconstruct_inner_mouth_geometry(swapped_frame: Frame, plate_frame: Frame, f
     if bbox is None:
         return swapped_frame
 
+    # Only repair a mouth the swap actually broke. This pasted the PLATE's
+    # interior (sharpened x1.64, darkened) on every open mouth, whether or not
+    # the swap had collapsed it. While the landmark ring was wrong (see
+    # INNER_LIP_106) it mostly hit the upper lip; once it hit the real aperture
+    # it replaced the swap's clean teeth with the original's blurry, sharpened
+    # ones at slightly different positions -- grey, mottled, doubled teeth.
+    # Measured on Love.mp4 + weeds.mp4 (swap without the restore): 174 open
+    # mouths, 0 clamped, 0 blurry. The detector below is the one this module
+    # was written around; nothing called it. Speech-driven openness (lip-sync)
+    # keeps restoring, since there the target mouth is being re-driven.
+    if viseme_openness < 0.20:
+        artifact = detect_clamped_lip_artifact(swapped_frame, plate_frame, face, metrics)
+        if not (artifact['clamped_lip'] or artifact['blurry_teeth']):
+            return swapped_frame
+
     x1, y1, x2, y2 = bbox
     # Add modest padding around oral cavity
     pad_x = max(2, int((x2 - x1) * 0.15))

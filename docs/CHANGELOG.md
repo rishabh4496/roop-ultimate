@@ -22,6 +22,16 @@ folder). Entries before 2026-09-21 were moved here from the README on 2026-09-22
      now calibrated on AdaFace (`ROOP_TRACK_ASSIGN_FLOOR_ADAFACE`, 0.45).
      Her profile in the kiss: swapped 47 → 66 of 108 faces. On/off transitions
      13 → 8. No face of the man swapped (every swapped face ≥ 0.8 inspected).
+  3. Follow-up, verified on weeds.mp4: once the mask covered the real aperture,
+     the restore pasted the original's blurry teeth, sharpened ×1.64, over the swap's
+     clean teeth on every open mouth. The result was grey, mottled, doubled teeth. It
+     now restores only when its own `detect_clamped_lip_artifact` says the swap
+     collapsed the mouth. Across 174 open mouths on both clips, 0 had. Speech-driven
+     (lip-sync) restores are unchanged.
+  Still open (weeds.mp4): on a head turned ~120° away the detector puts keypoints on
+  hair and cheek. Pose from those reads −8° to −68°, the outcome guard agrees with
+  them, and a faint face is painted on the hair. Detector score, eye spacing and
+  landmark plausibility all overlap real profiles, so there is no gate yet.
   Rejected: a second detector engine (SCRFD) as a partial-miss rescue. It added 151
   faces over 1550 frames and none was recognisable as her (see `face_util`).
   Still open: her face on the man's track in contact (39 frames); her profile

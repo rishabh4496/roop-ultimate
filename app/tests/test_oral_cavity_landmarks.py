@@ -72,6 +72,30 @@ class InnerLipRing(unittest.TestCase):
         upper_lip_y = int(CY - 6.0 - 4.0)                      # inside the upper lip
         self.assertEqual(mask[upper_lip_y, int(CX)], 0)
 
+    def _open_mouth_frames(self, swap_flat):
+        rng = np.random.default_rng(0)
+        plate = np.full((220, 220, 3), 90, np.uint8)
+        teeth = rng.integers(60, 250, (40, 60, 3), dtype=np.uint8)
+        plate[80:120, 70:130] = teeth                        # textured open mouth
+        swapped = plate.copy()
+        if swap_flat:
+            swapped[80:120, 70:130] = 110                    # collapsed: a flat line
+        else:
+            swapped[80:120, 70:130] = rng.integers(60, 250, (40, 60, 3), dtype=np.uint8)
+        return plate, swapped
+
+    def test_a_good_swapped_mouth_is_left_alone(self):
+        """weeds.mp4: pasting the plate's teeth over good swapped teeth gave
+        grey, mottled, doubled teeth. 0 of 174 open mouths needed repair."""
+        plate, swapped = self._open_mouth_frames(swap_flat=False)
+        out = oc.reconstruct_inner_mouth_geometry(swapped, plate, _face(inner_gap=12.0))
+        self.assertTrue(np.array_equal(out, swapped))
+
+    def test_a_collapsed_swapped_mouth_is_repaired(self):
+        plate, swapped = self._open_mouth_frames(swap_flat=True)
+        out = oc.reconstruct_inner_mouth_geometry(swapped, plate, _face(inner_gap=12.0))
+        self.assertFalse(np.array_equal(out, swapped))
+
     def test_the_outer_upper_edge_is_never_read(self):
         # Moving the outer upper lip must not change the mask.
         a, _ = oc.detect_oral_cavity_mask(FRAME, _face(inner_gap=12.0))
