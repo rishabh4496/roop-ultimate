@@ -48,9 +48,16 @@ from pydantic import BaseModel, ConfigDict, Field
 from face_engine.core.execution import ExecutionEngine, ManagedSession
 from face_engine.pipeline.aligner import (
     AlignedFace,
+    _exact_fp32,
     align_face,
+    compose_affine_cuda,
+    crop_valid_mask_cuda,
     invert_affine,
+    invert_affine_cuda,
     paste_mask_to_canvas,
+    similarity_is_valid,
+    similarity_matrices_cuda,
+    warp_face_cuda,
 )
 from face_engine.pipeline.detector import Face, as_bgr
 
@@ -369,3 +376,235 @@ class CompositeMasker:
 
     def __exit__(self, *_exc: object) -> None:
         self.close()
+
+
+# ---------------------------------------------------------------------------- CUDA-resident
+@dataclass
+class GPUMaskResult:
+    """Output of :meth:`GPUMasker.generate`; every tensor stays on the frames' device.
+
+    Attributes:
+        mask: ``(N, 1, S, S)`` float32 composite alpha, ready for
+            :func:`~face_engine.pipeline.aligner.warp_face_inverse_cuda`.
+        crops: ``(N, 3, S, S)`` the aligned swap crops the mask belongs to.
+        matrices: ``(N, 2, 3)`` frame -> crop affines.
+        layers: Each layer that ran, ``(N, 1, S, S)`` (``box`` is ``(1, 1, S, S)``).
+        labels: ``(N, 512, 512)`` int64 BiSeNet class map, if run.
+        failed_layers: Names of layers that raised (their factor was skipped).
+    """
+
+    mask: Any
+    crops: Any
+    matrices: Any
+    layers: dict[str, Any] = field(default_factory=dict)
+    labels: Any = None
+    failed_layers: tuple[str, ...] = ()
+
+    @property
+    def status(self) -> str:
+        return "degraded" if self.failed_layers else "ok"
+
+
+class GPUMasker:
+    """The tri-layer composite of :class:`CompositeMasker`, computed in VRAM.
+
+    ``mask = box x xseg x regions x valid``, batched over faces:
+
+    * **box** — the same padded, feathered rectangle, built once per crop
+      size, feathered with a cached separable Gaussian (``kornia.filters``);
+    * **xseg** — the 256px crop through XSeg (``xseg_3.onnx`` by default)
+      via ``run_binding``. Thresholded, NOT inverted: XSeg outputs the
+      probability of visible face (see the module docstring and
+      ``test_gpu_xseg_keeps_face_and_drops_the_occluder``);
+    * **regions** — BiSeNet on each face's own ``ffhq_512`` crop, the selected
+      classes (default: skin, brows, eyes, nose, lips, inner mouth; never hair,
+      background, glasses, hat...) feathered inward and mapped into the swap
+      crop through both matrices;
+    * **valid** — 0 where the crop samples outside the frame.
+
+    Frames are ``(B, 3, H, W)`` BGR ``[0, 255]`` tensors; ``frame_index`` says
+    which frame each face is on when ``B > 1``. Nothing is copied to the host.
+    """
+
+    def __init__(self, engine: ExecutionEngine, xseg_path: Path | str | None = None,
+                 bisenet_path: Path | str | None = None,
+                 config: MaskerConfig | None = None) -> None:
+        self.engine = engine
+        self.config = config or MaskerConfig()
+        self.xseg_path = xseg_path
+        self.bisenet_path = bisenet_path
+        self._box_cache: dict[tuple[int, str], Any] = {}
+        self._class_ids: dict[str, Any] = {}
+        self._constants: dict[str, Any] = {}
+
+    @property
+    def xseg_enabled(self) -> bool:
+        return self.config.xseg.enabled and self.xseg_path is not None
+
+    @property
+    def regions_enabled(self) -> bool:
+        return (self.config.regions.enabled and self.bisenet_path is not None
+                and bool(self.config.regions.regions))
+
+    # ------------------------------------------------------------------ layers
+    def box(self, crop_size: int, device: Any) -> torch.Tensor:
+        """Layer A ``(1, 1, S, S)``: padded rectangle, Gaussian feathered, 0 on the border."""
+        import torch
+        key = (crop_size, str(device))
+        if key not in self._box_cache:
+            c, s = self.config.box, crop_size
+            blur_px = c.blur * 0.5 * s
+            inset = int(round(blur_px * 0.5))
+            top = max(int(round(c.padding_top * s)), inset, 1)
+            bottom = max(int(round(c.padding_bottom * s)), inset, 1)
+            left = max(int(round(c.padding_left * s)), inset, 1)
+            right = max(int(round(c.padding_right * s)), inset, 1)
+            mask = torch.zeros((1, 1, s, s), device=device)
+            if top + bottom < s and left + right < s:
+                mask[..., top:s - bottom, left:s - right] = 1.0
+            if blur_px > 0:
+                mask = _gaussian(mask, blur_px * 0.25)
+            mask[..., [0, -1], :] = 0.0
+            mask[..., :, [0, -1]] = 0.0
+            self._box_cache[key] = mask.clamp(0, 1)
+        return self._box_cache[key]
+
+    def xseg(self, crops: torch.Tensor) -> torch.Tensor:
+        """Layer B on ``(N, 3, 256, 256)`` BGR crops -> visible-face probability ``(N, 1, 256, 256)``."""
+        import torch
+
+        if self.xseg_path is None:
+            raise RuntimeError("XSeg model not configured")
+        handle = self.engine.get_session(self.xseg_path)
+        blob = (crops.permute(0, 2, 3, 1) / 255.0).contiguous()  # NHWC, BGR, [0, 1]
+        out = handle.run_binding({handle.input_names[0]: blob})[handle.output_names[0]]
+        prob = out.reshape(crops.shape[0], 1, XSEG_SIZE, XSEG_SIZE).float().clamp(0, 1)
+        prob = torch.where(prob < self.config.xseg.threshold, torch.zeros_like(prob), prob)
+        if self.config.xseg.feather_sigma > 0:
+            prob = _gaussian(prob, self.config.xseg.feather_sigma)
+        return prob.clamp(0, 1)
+
+    def parse(self, parser_crops: torch.Tensor) -> torch.Tensor:
+        """BiSeNet class maps ``(N, 512, 512)`` int64 for ``ffhq_512`` BGR crops."""
+        import torch
+
+        if self.bisenet_path is None:
+            raise RuntimeError("BiSeNet model not configured")
+        handle = self.engine.get_session(self.bisenet_path)
+        n = parser_crops.shape[0]
+        key = f"imagenet:{parser_crops.device}"
+        if key not in self._constants:
+            self._constants[key] = (
+                torch.as_tensor(_IMAGENET_MEAN, device=parser_crops.device).view(1, 3, 1, 1),
+                torch.as_tensor(_IMAGENET_STD, device=parser_crops.device).view(1, 3, 1, 1))
+        mean, std = self._constants[key]
+        blob = ((parser_crops.flip(1) - mean) / std).contiguous()  # RGB, ImageNet
+        name = handle.output_names[0]
+        logits = handle.run_binding(
+            {handle.input_names[0]: blob},
+            output_shapes={name: (n, len(FaceRegion), PARSER_SIZE, PARSER_SIZE)},
+            unreturned_outputs=handle.output_names[1:])[name]
+        return logits.argmax(1)
+
+    def region_mask_from_labels(self, labels: torch.Tensor) -> torch.Tensor:
+        """Selected classes as a soft ``(N, 1, 512, 512)`` mask, feathered inward."""
+        import torch
+
+        key = str(labels.device)
+        if key not in self._class_ids:
+            self._class_ids[key] = torch.as_tensor(
+                sorted(REGION_CLASS[r] for r in self.config.regions.regions), device=labels.device)
+        mask = torch.isin(labels, self._class_ids[key]).float()[:, None]
+        sigma = self.config.regions.feather_sigma
+        if sigma > 0:
+            mask = _gaussian(mask, sigma)
+            mask = (mask.clamp(0.5, 1.0) - 0.5) * 2.0
+        return mask
+
+    # ------------------------------------------------------------------ composite
+    def generate(self, frames: torch.Tensor, kps: torch.Tensor, *,
+                 frame_index: torch.Tensor | None = None) -> GPUMaskResult:
+        """Crops, matrices and composite masks for ``(N, 5, 2)`` landmarks.
+
+        A failing model layer is skipped (its factor is 1) and reported in
+        ``failed_layers``, as on the CPU path; faces with a degenerate
+        landmark fit get an all-zero mask.
+        """
+        from kornia.geometry.transform import warp_affine
+
+        f = frames if frames.ndim == 4 else frames[None]
+        f = f if f.is_floating_point() else f.float()
+        size = self.config.crop_size
+        h, w = f.shape[-2:]
+        kps = kps.to(device=f.device, dtype=f.dtype)
+        n = kps.shape[0]
+        if n == 0:
+            empty = f.new_zeros((0, 1, size, size))
+            return GPUMaskResult(empty, f.new_zeros((0, 3, size, size)), f.new_zeros((0, 2, 3)))
+        matrices = similarity_matrices_cuda(kps, size, self.config.template)
+        ok = similarity_is_valid(matrices)
+        crops = warp_face_cuda(f, matrices, size, frame_index=frame_index)
+        layers: dict[str, Any] = {"box": self.box(size, f.device),
+                                  "valid": crop_valid_mask_cuda((h, w), matrices, size)
+                                  * ok.float().view(-1, 1, 1, 1)}
+        labels = None
+        failed: list[str] = []
+        if self.xseg_enabled:
+            try:
+                if size == XSEG_SIZE:
+                    xseg_crops = crops
+                else:  # same framing, resampled from the frame at 256
+                    xseg_crops = warp_face_cuda(f, matrices * (XSEG_SIZE / size), XSEG_SIZE,
+                                                frame_index=frame_index)
+                prob = self.xseg(xseg_crops)
+                if size != XSEG_SIZE:
+                    import torch.nn.functional as F
+
+                    prob = F.interpolate(prob, size=(size, size), mode="bilinear",
+                                         align_corners=False)
+                layers["xseg"] = prob
+            except Exception as exc:  # noqa: BLE001 - a failed layer degrades, never raises
+                logger.warning("mask layer xseg failed: %s", exc)
+                failed.append("xseg")
+        if self.regions_enabled:
+            try:
+                parser_m = similarity_matrices_cuda(kps, PARSER_SIZE, PARSER_TEMPLATE)
+                parser_crops = warp_face_cuda(f, parser_m, PARSER_SIZE, frame_index=frame_index)
+                labels = self.parse(parser_crops)
+                region = (self.region_mask_from_labels(labels)
+                          * crop_valid_mask_cuda((h, w), parser_m, PARSER_SIZE))
+                to_swap = compose_affine_cuda(matrices, invert_affine_cuda(parser_m))
+                with _exact_fp32():
+                    layers["regions"] = warp_affine(region, to_swap, dsize=(size, size),
+                                                    mode="bilinear", padding_mode="zeros",
+                                                    align_corners=True).clamp(0, 1)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("mask layer regions failed: %s", exc)
+                failed.append("regions")
+        composite = layers["box"].expand(n, -1, -1, -1).clone()
+        for name, layer in layers.items():
+            if name != "box":
+                composite = composite * layer
+        return GPUMaskResult(composite.clamp(0, 1), crops, matrices, layers, labels, tuple(failed))
+
+
+_GAUSSIAN_KERNELS: dict[tuple[float, str], Any] = {}
+
+
+def _gaussian(image: torch.Tensor, sigma: float) -> torch.Tensor:
+    """Separable Gaussian blur sized like ``cv2.GaussianBlur`` on float images
+    (4-sigma radius) with reflect-101 borders, so the GPU layers match the CPU
+    ones. The kernel is cached per sigma: ``kornia.filters.gaussian_blur2d``
+    rebuilds it from host values on every call, a copy and a sync each time.
+    """
+    import torch
+    from kornia.filters import filter2d_separable, get_gaussian_kernel1d
+
+    key = (float(sigma), str(image.device))
+    kernel = _GAUSSIAN_KERNELS.get(key)
+    if kernel is None:
+        radius = max(1, int(round(4.0 * sigma)))
+        kernel = get_gaussian_kernel1d(2 * radius + 1, float(sigma), device=image.device,
+                                       dtype=torch.float32)
+        _GAUSSIAN_KERNELS[key] = kernel
+    return filter2d_separable(image, kernel, kernel, border_type="reflect")

@@ -13,9 +13,10 @@ under `app/`.
 | `core/registry.py` | `ModelSpec` / `ModelRegistry`: declarative specs, verify, fetch |
 | `models/zoo.py` | `MODEL_ZOO`: the 15 declared models with URLs, SHA256 and sizes |
 | `utils/downloads.py` | resumable, retried, hash-verified downloads |
-| `pipeline/detector.py` | `SCRFDDetector`, `YOLOFaceDetector` -> `Face` (bbox, 5 kps, score, frame size) |
-| `pipeline/aligner.py` | templates, SVD similarity fit, ROI crop warp + paste-back, kornia GPU variants |
-| `pipeline/masker.py` | `CompositeMasker`: feathered box x XSeg x BiSeNet regions, crop + canvas masks |
+| `pipeline/detector.py` | `SCRFDDetector`, `YOLOFaceDetector` -> `Face` (bbox, 5 kps, score, frame size); `detect_cuda` -> `GPUDetections` |
+| `pipeline/tracker.py` | `StridedFaceTracker`: detection every N frames, GPU Lucas-Kanade between, histogram shot cuts |
+| `pipeline/aligner.py` | templates, SVD similarity fit, ROI crop warp + paste-back; `warp_face_cuda` / `warp_face_inverse_cuda` (kornia) |
+| `pipeline/masker.py` | `CompositeMasker` (host) / `GPUMasker` (VRAM): feathered box x XSeg x BiSeNet regions x valid |
 | `processors/swapper.py` | `IdentityEncoder` (ArcFace), `FaceSwapper`: HyperSwap 1a/1b/1c, inswapper, Pixel Boost |
 | `processors/enhancer.py` | `FaceEnhancer`: GPEN-BFR 512/1024/2048, RestoreFormer++, LAB colour lock |
 | `processors/expression.py` | `ExpressionRestorer`: LivePortrait expression transfer + blink sync |
@@ -85,6 +86,91 @@ Measured decisions (2026-09-27, RTX 4070; evidence in the module docstrings):
   `arcface_112_v1`; pass it by name.
 
 Test images are the photos shipped inside the `insightface` package.
+
+### CUDA-resident path
+
+```python
+import torch
+from face_engine.pipeline import (SCRFDDetector, StridedFaceTracker, TrackerConfig, GPUMasker,
+                                  MaskerConfig, warp_face_inverse_cuda)
+
+detector = SCRFDDetector(engine, registry.ensure("scrfd_10g_bnkps"))
+tracker = StridedFaceTracker(detector, TrackerConfig(detection_stride=3))
+masker = GPUMasker(engine, registry.ensure("xseg_3"), registry.ensure("bisenet_resnet34"),
+                   MaskerConfig(crop_size=256))
+for bgr in frames:                                            # numpy HxWx3 uint8
+    frame = torch.from_numpy(bgr).cuda().permute(2, 0, 1)[None].float()   # the one upload
+    faces = tracker.update(frame)                             # .detections: boxes/kps on cuda
+    m = masker.generate(frame, faces.detections.kps)          # crops, matrices, (N,1,S,S) mask
+    frame = warp_face_inverse_cuda(frame, swap(m.crops), m.matrices, m.mask)
+```
+
+Frames are `(B, 3, H, W)` BGR `[0, 255]` tensors. Detection, NMS
+(`torchvision.ops.batched_nms` on CUDA), tracking, warps (kornia) and both
+mask models (`run_binding`, ORT reading and writing torch memory) stay on the
+device. `test_pipeline_never_leaves_cuda0` runs the whole chain with every
+tensor host-copy API patched to raise.
+
+**Remaining device syncs per frame** (counted with `torch.cuda.set_sync_debug_mode`,
+6 faces): tracker 4 on a detection frame / 2 on a tracked frame; masker 14; paste 4.
+They are scalar or control-flow waits, not data copies: the ORT stream fence
+(below), the detector's variable-size score mask and NMS, the cut / lost
+decisions, and 4 inside every `kornia.geometry.transform.warp_affine` call
+(`normalize_homography` builds its matrices from host values and inverts with
+`torch.inverse`). Warps are batched so that is per batch, not per face.
+
+Measured decisions (2026-09-28, RTX 4070):
+
+- **ORT and torch need a stream fence.** ORT computes on its own non-blocking
+  CUDA stream. With a 20 ms kernel queued before the input fill, `run_binding`
+  read the stale input on 20 of 20 runs; it now synchronizes the caller's
+  stream first (0 of 20).
+- **`cudnn_conv_algo_search` is `HEURISTIC`, not `DEFAULT`.** With the cuDNN 9
+  torch cu128 loads, `DEFAULT` sent every convolution to ORT's "Conv running
+  in Fallback mode". FP32 with TF32 off, outputs equal to <= 1.6e-5:
+
+  | model | DEFAULT | HEURISTIC |
+  |---|---:|---:|
+  | SCRFD-10G 640 | 10.9 ms | 4.7 ms |
+  | XSeg-3 | 21.2 | 13.3 |
+  | BiSeNet-34 | 17.1 | 10.9 |
+  | HyperSwap-1a | 44.3 | 21.6 |
+  | GPEN-BFR-512 | 152.5 | 76.8 |
+  | ArcFace w600k | 12.0 | 3.4 |
+
+  TF32 stays off (`CUDAOptions.use_tf32`): it takes HyperSwap to 9.8 ms but
+  moves its output by up to 1.5e-2.
+- **Detection stride** (600 frames each, 720p, stride 3 vs 1, SCRFD at 640;
+  tracked landmarks compared with the detector run on the same frame,
+  error / sqrt(box area); one timing run per clip):
+
+  | clip | detector skipped | ms/frame, stride 1 -> 3 | tracked error median / p95 | holding last detection |
+  |---|---:|---:|---:|---:|
+  | Weeds | 65.8% | 7.26 -> 4.58 | 0.49% / 2.0% | 1.1% / 9.4% |
+  | Monica Bellucci | 63.0% | 7.36 -> 5.30 | 0.68% / 4.5% | 1.4% / 18.5% |
+  | Love (kiss, contact) | 53.0% | 7.24 -> 5.68 | 1.3% / 10.4% | 6.0% / 35.9% |
+
+  Tracked landmarks are an approximation of the detector's, not a copy: on
+  the contact-heavy clip 14% of tracked faces are more than 5% of the face
+  size off. Use `detection_stride=1` when every frame's landmarks matter more
+  than detector time. No hard cut occurs in these 1800 frames and none was
+  falsely reported; cuts are covered by `test_stride_schedule_ids_and_forced_detection`.
+  `python -m face_engine.tests.eval_detection_stride CLIP` reproduces the table.
+- **Tracking is optical flow, not a landmark network.** `hrffa` has no public
+  release (see the zoo), and `2dfan4` costs more per face than SCRFD per frame.
+  Eager PyTorch Lucas-Kanade was launch-bound (7.7 ms for 60 or 150 points
+  alike); forward + backward now replays as one CUDA graph: 1.8 ms for 60 points.
+- **`xseg_3` has `xseg`'s polarity** (visible-face probability; not inverted):
+  `test_gpu_xseg_keeps_face_and_drops_the_occluder`. The zoo's `xseg_3` SHA256
+  was wrong; it is now Hugging Face's LFS digest.
+- **The GPU masker matches the host masker** (composite mean difference
+  0.0002-0.001 on the six sample faces, 256 and 512 crops) and is 2.2x faster
+  for six faces (109 vs 240 ms). XSeg dominates: 12 ms per face even batched.
+- `warp_face_cuda` pads with reflection by default; the valid-area mask is what
+  excludes out-of-frame pixels, and inside the frame reflection and border
+  crops are identical. `antialias=True` supersamples crops that shrink a face
+  more than 2x (the host path's Gaussian prefilter). 1024 crops use the
+  `ffhq_512` template (GPEN-BFR-1024's framing).
 
 ## Stage 3: swap, restore, expression
 

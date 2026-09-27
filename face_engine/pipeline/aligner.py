@@ -16,7 +16,8 @@ name                   size    used by
 ``arcface_112_v1``     512     SimSwap 512
 =====================  ======  =====================================================
 
-:data:`CANONICAL_TEMPLATES` maps the three standard input sizes to a default;
+:data:`CANONICAL_TEMPLATES` maps the standard input sizes to a default (1024 is
+GPEN-BFR-1024's FFHQ framing, as :mod:`face_engine.processors.enhancer` cuts it);
 SimSwap and GPEN disagree at 512 (different templates), so 512 defaults to
 ``ffhq_512`` and SimSwap callers pass ``template="arcface_112_v1"``.
 
@@ -60,7 +61,8 @@ TEMPLATES: dict[str, np.ndarray] = {
                                 [0.62086607, 0.77687500]], dtype=np.float64),
 }
 
-CANONICAL_TEMPLATES: dict[int, str] = {112: "arcface_112", 256: "arcface_128", 512: "ffhq_512"}
+CANONICAL_TEMPLATES: dict[int, str] = {112: "arcface_112", 256: "arcface_128", 512: "ffhq_512",
+                                       1024: "ffhq_512"}
 
 
 class AlignmentError(ValueError):
@@ -444,3 +446,263 @@ def frames_to_tensor(frames: np.ndarray | list[np.ndarray], device: str = "cuda"
 def tensor_to_frames(tensor: torch.Tensor) -> np.ndarray:
     """``(B, C, H, W)`` float in ``[0, 255]`` -> ``(B, H, W, C)`` uint8."""
     return tensor.clamp(0, 255).round().to("cpu").permute(0, 2, 3, 1).numpy().astype(np.uint8)
+
+
+# ---------------------------------------------------------------------------- CUDA-resident
+# The functions below keep every tensor on the frames' device. The only host
+# read is explicit: ``antialias=True`` with no ``supersample=`` reads ONE
+# scalar (the smallest face scale in the batch) to size the supersampling grid.
+
+_TEMPLATE_TENSORS: dict[tuple[str, int, str, Any], Any] = {}
+
+
+def template_tensor(crop_size: int, template: str | None = None, *,
+                    device: Any = "cuda", dtype: Any = None) -> torch.Tensor:
+    """:func:`template_points` as a cached ``(5, 2)`` tensor on ``device``."""
+    import torch
+
+    name = template or CANONICAL_TEMPLATES.get(crop_size)
+    if name is None:
+        raise KeyError(f"no canonical template for {crop_size}px; pass template=")
+    dtype = dtype or torch.float32
+    key = (name, int(crop_size), str(torch.device(device)), dtype)
+    if key not in _TEMPLATE_TENSORS:
+        _TEMPLATE_TENSORS[key] = torch.as_tensor(TEMPLATES[name] * float(crop_size),
+                                                 dtype=dtype, device=device)
+    return _TEMPLATE_TENSORS[key]
+
+
+def estimate_similarity_transform_cuda(source_points: torch.Tensor, target_points: torch.Tensor,
+                                       weights: torch.Tensor | None = None) -> torch.Tensor:
+    """Batched least-squares similarity, closed form, on the points' device.
+
+    For 2-D points the optimal scaled rotation ``[[a, -b], [b, a]]`` has a
+    closed form over centred points, ``a = sum(s.d) / sum(|s|^2)`` and
+    ``b = sum(s x d) / sum(|s|^2)``. It is Umeyama's SVD solution (both
+    search rotation x uniform scale; neither reflects) without a batched SVD.
+    Degenerate input does not raise: its matrix comes back non-finite or with
+    zero scale, which :func:`similarity_is_valid` reports.
+
+    Args:
+        source_points: ``(B, N, 2)``.
+        target_points: ``(N, 2)`` or ``(B, N, 2)``.
+        weights: optional ``(B, N)`` non-negative point weights.
+
+    Returns:
+        ``(B, 2, 3)`` source -> target, in the source dtype.
+    """
+    import torch
+
+    src = source_points.to(torch.float64)
+    dst = target_points.to(device=src.device, dtype=torch.float64).expand_as(src)
+    if weights is None:
+        w = torch.ones(src.shape[:2], dtype=torch.float64, device=src.device)
+    else:
+        w = weights.to(device=src.device, dtype=torch.float64).clamp_min(0)
+    w = w / w.sum(dim=1, keepdim=True).clamp_min(1e-12)
+    mu_s = (w[..., None] * src).sum(dim=1)
+    mu_d = (w[..., None] * dst).sum(dim=1)
+    sc, dc = src - mu_s[:, None], dst - mu_d[:, None]
+    var = (w * (sc ** 2).sum(-1)).sum(1)
+    a = (w * (sc * dc).sum(-1)).sum(1) / var
+    b = (w * (sc[..., 0] * dc[..., 1] - sc[..., 1] * dc[..., 0])).sum(1) / var
+    rot = torch.stack([torch.stack([a, -b], -1), torch.stack([b, a], -1)], -2)
+    t = mu_d - (rot @ mu_s[..., None])[..., 0]
+    return torch.cat([rot, t[..., None]], dim=-1).to(source_points.dtype)
+
+
+def similarity_is_valid(matrices: torch.Tensor) -> torch.Tensor:
+    """``(B,)`` bool: finite with a positive scale (no host read)."""
+    import torch
+
+    det = matrices[:, 0, 0] * matrices[:, 1, 1] - matrices[:, 0, 1] * matrices[:, 1, 0]
+    return torch.isfinite(matrices).flatten(1).all(1) & (det > 1e-12)
+
+
+def invert_affine_cuda(matrices: torch.Tensor) -> torch.Tensor:
+    """``(B, 2, 3)`` -> inverse ``(B, 2, 3)`` (closed form, no host read)."""
+    import torch
+
+    a, b, c = matrices[:, 0, 0], matrices[:, 0, 1], matrices[:, 0, 2]
+    d, e, f = matrices[:, 1, 0], matrices[:, 1, 1], matrices[:, 1, 2]
+    det = a * e - b * d
+    ia, ib, id_, ie = e / det, -b / det, -d / det, a / det
+    return torch.stack([torch.stack([ia, ib, -(ia * c + ib * f)], -1),
+                        torch.stack([id_, ie, -(id_ * c + ie * f)], -1)], -2)
+
+
+def compose_affine_cuda(outer: torch.Tensor, inner: torch.Tensor) -> torch.Tensor:
+    """``outer o inner`` for ``(B, 2, 3)`` affines (``inner`` applies first)."""
+    import torch
+
+    return torch.cat([outer[:, :, :2] @ inner[:, :, :2],
+                      outer[:, :, :2] @ inner[:, :, 2:] + outer[:, :, 2:]], dim=-1)
+
+
+def transform_points_cuda(points: torch.Tensor, matrices: torch.Tensor) -> torch.Tensor:
+    """Apply ``(B, 2, 3)`` affines to ``(B, N, 2)`` points."""
+    return points @ matrices[:, :, :2].transpose(1, 2) + matrices[:, None, :, 2]
+
+
+def similarity_matrices_cuda(kps: torch.Tensor, crop_size: int,
+                             template: str | None = None) -> torch.Tensor:
+    """Frame -> crop matrices ``(B, 2, 3)`` float32 for ``(B, 5, 2)`` landmarks."""
+    import torch
+
+    dst = template_tensor(crop_size, template, device=kps.device, dtype=torch.float64)
+    return estimate_similarity_transform_cuda(kps.to(torch.float64), dst).to(torch.float32)
+
+
+def _select_frames(frames: torch.Tensor, count: int,
+                   frame_index: torch.Tensor | None) -> torch.Tensor:
+    """One frame per face: a broadcast view for a single frame, else a gather."""
+    if frame_index is not None:
+        return frames.index_select(0, frame_index.to(frames.device))
+    if frames.shape[0] == count:
+        return frames
+    if frames.shape[0] == 1:
+        return frames.expand(count, -1, -1, -1)
+    raise ValueError(f"{frames.shape[0]} frames for {count} matrices; pass frame_index")
+
+
+def _supersample_factor(matrices: torch.Tensor, antialias: bool,
+                        supersample: int | None) -> int:
+    if supersample is not None:
+        return max(1, int(supersample))
+    if not antialias or matrices.shape[0] == 0:
+        return 1
+    # ONE scalar host read: the smallest crop/frame scale in the batch.
+    det = (matrices[:, 0, 0] * matrices[:, 1, 1] - matrices[:, 0, 1] * matrices[:, 1, 0]).abs()
+    scale = float(det.min().sqrt())
+    if not np.isfinite(scale) or scale >= 0.5 or scale <= 0:
+        return 1
+    return int(min(4, np.ceil(1.0 / scale)))
+
+
+def warp_face_cuda(frame_tensor: torch.Tensor, matrix: torch.Tensor, crop_size: int, *,
+                   frame_index: torch.Tensor | None = None, padding_mode: str = "reflection",
+                   antialias: bool = False, supersample: int | None = None) -> torch.Tensor:
+    """Aligned face crops via ``kornia.geometry.transform.warp_affine``, in VRAM.
+
+    Args:
+        frame_tensor: ``(B, 3, H, W)`` tensor, BGR ``[0, 255]`` like the rest of
+            this package (uint8 is converted to float32). A single frame is
+            broadcast to every matrix as a view, without a copy.
+        matrix: ``(N, 2, 3)`` frame -> crop affines (``(2, 3)`` = one face).
+        crop_size: Output side, e.g. 256, 512 or 1024.
+        frame_index: ``(N,)`` int64, the frame each matrix samples, when
+            several frames are batched (a device-side gather, no host read).
+        padding_mode: ``"reflection"`` (default), ``"border"`` or ``"zeros"``.
+            Out-of-frame pixels carry no face either way; the valid-area mask
+            (:func:`crop_valid_mask_cuda`) is what excludes them from a paste.
+        antialias: Supersample a crop that shrinks its face by more than 2x
+            (``k = ceil(1/scale)``, at most 4) and box-filter it back: the
+            counterpart of the CPU path's Gaussian prefilter. Reads one
+            scalar from the device unless ``supersample`` is given.
+        supersample: Explicit supersampling factor (1 = none).
+
+    Returns:
+        ``(N, 3, crop_size, crop_size)`` float32 on the frames' device.
+
+    OpenCV's pixel-centre convention (``align_corners=True``), bilinear, and
+    exact FP32 (TF32 off while the grid is built; see :func:`_exact_fp32`).
+    """
+    import torch
+    import torch.nn.functional as F
+    from kornia.geometry.transform import warp_affine
+
+    m = matrix if matrix.ndim == 3 else matrix[None]
+    m = m.to(device=frame_tensor.device, dtype=torch.float32)
+    frames = frame_tensor if frame_tensor.is_floating_point() else frame_tensor.float()
+    source = _select_frames(frames, m.shape[0], frame_index)
+    k = _supersample_factor(m, antialias, supersample)
+    if k > 1:
+        # Fine pixel j sits at crop coordinate (j - (k-1)/2) / k, so each
+        # k x k block averages back onto a crop pixel centre exactly.
+        m = torch.cat([m[:, :, :2] * k, m[:, :, 2:] * k + (k - 1) / 2.0], dim=-1)
+    with _exact_fp32():
+        crops = warp_affine(source, m, dsize=(crop_size * k, crop_size * k), mode="bilinear",
+                            padding_mode=padding_mode, align_corners=True)
+    return F.avg_pool2d(crops, k) if k > 1 else crops
+
+
+def crop_valid_mask_cuda(frame_size: tuple[int, int], matrix: torch.Tensor,
+                         crop_size: int) -> torch.Tensor:
+    """``(N, 1, S, S)`` float32: 1 where the crop samples inside the frame.
+
+    Analytic, not an image warp: each crop pixel's frame coordinate gets a
+    1-px linear ramp across the frame edge, the soft edge the CPU
+    :func:`crop_valid_mask` produces with a bilinear warp.
+    """
+    import torch
+
+    h, w = int(frame_size[0]), int(frame_size[1])
+    m = (matrix if matrix.ndim == 3 else matrix[None]).to(torch.float32)
+    inv = invert_affine_cuda(m)
+    axis = torch.arange(crop_size, device=m.device, dtype=torch.float32)
+    gy, gx = torch.meshgrid(axis, axis, indexing="ij")
+    grid = torch.stack([gx, gy], -1).reshape(1, -1, 2).expand(m.shape[0], -1, -1)
+    xy = transform_points_cuda(grid, inv)
+    x, y = xy[..., 0], xy[..., 1]
+    ramp = ((x + 1.0).clamp(0, 1) * (w - x).clamp(0, 1)
+            * (y + 1.0).clamp(0, 1) * (h - y).clamp(0, 1))
+    return ramp.reshape(m.shape[0], 1, crop_size, crop_size)
+
+
+def warp_face_inverse_cuda(canvas: torch.Tensor, crops: torch.Tensor, matrix: torch.Tensor,
+                           mask: torch.Tensor | None = None, *,
+                           frame_index: torch.Tensor | None = None) -> torch.Tensor:
+    """Paste face crops back onto their frames, entirely in VRAM.
+
+    Each crop and its mask are inverse-warped together as ONE premultiplied
+    4-channel image (``crop * mask``, ``mask``) and composited
+    ``out = out * (1 - a) + premultiplied``, face by face in batch order, so
+    overlapping faces stack like successive pastes. Premultiplying is also
+    what makes bilinear resampling of a masked image correct at the mask
+    edge.
+
+    Args:
+        canvas: ``(B, 3, H, W)`` frames (not modified).
+        crops: ``(N, 3, S, S)`` swapped / enhanced crops.
+        matrix: ``(N, 2, 3)`` frame -> crop affines that cut the crops.
+        mask: ``(N, 1, S, S)`` blend weights in ``[0, 1]``; default ones.
+        frame_index: ``(N,)`` int64 frame of each face. Default: face ``i``
+            goes to frame ``i`` when ``N == B``, else every face to frame 0.
+
+    Returns:
+        A new ``(B, 3, H, W)`` float32 tensor.
+    """
+    import torch
+    from kornia.geometry.transform import warp_affine
+
+    out = canvas.float().clone()
+    n = crops.shape[0]
+    if n == 0:
+        return out
+    b, _, h, w = out.shape
+    m = (matrix if matrix.ndim == 3 else matrix[None]).to(device=out.device, dtype=torch.float32)
+    size = crops.shape[-1]
+    if mask is None:
+        mask = torch.ones((n, 1, size, size), device=out.device, dtype=torch.float32)
+    alpha = mask.to(device=out.device, dtype=torch.float32).clamp(0, 1)
+    premultiplied = torch.cat([crops.to(device=out.device, dtype=torch.float32) * alpha, alpha], 1)
+    if frame_index is None:
+        frame_index = (torch.arange(n, device=out.device) if n == b
+                       else torch.zeros(n, dtype=torch.int64, device=out.device))
+    frame_index = frame_index.to(device=out.device, dtype=torch.int64)
+    inverse = invert_affine_cuda(m)
+    # One warp_affine per chunk of faces, not per face: kornia's warp_affine
+    # synchronizes 4 times per call (normalize_homography builds its matrices
+    # from host values and inverts with torch.inverse). Chunks are capped at
+    # ~256 MB of warped output (7 faces at 1080p).
+    chunk = max(1, int(256 * 2 ** 20 // (4 * h * w * 4)))
+    for start in range(0, n, chunk):
+        stop = min(start + chunk, n)
+        with _exact_fp32():
+            placed = warp_affine(premultiplied[start:stop], inverse[start:stop], dsize=(h, w),
+                                 mode="bilinear", padding_mode="zeros", align_corners=True)
+        for j in range(stop - start):
+            idx = frame_index[start + j:start + j + 1]
+            blended = out.index_select(0, idx) * (1.0 - placed[j:j + 1, 3:]) + placed[j:j + 1, :3]
+            out.index_copy_(0, idx, blended)
+    return out

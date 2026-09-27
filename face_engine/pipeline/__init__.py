@@ -1,20 +1,33 @@
-"""Vision pipeline: detection, alignment, composite masking."""
+"""Vision pipeline: detection (+ stride tracking), alignment, composite masking.
+
+Two paths share one set of models and conventions: the host path (numpy
+frames; ``detect``, ``align_face``, ``CompositeMasker``) and the CUDA-resident
+path (``(B, 3, H, W)`` BGR tensors on the GPU; ``detect_cuda``,
+``StridedFaceTracker``, ``warp_face_cuda``, ``GPUMasker``,
+``warp_face_inverse_cuda``).
+"""
 from face_engine.pipeline.aligner import (
                                           CANONICAL_TEMPLATES,
                                           TEMPLATES,
                                           AlignedFace,
                                           AlignmentError,
                                           align_face,
+                                          crop_valid_mask_cuda,
                                           estimate_similarity_transform,
+                                          estimate_similarity_transform_cuda,
                                           paste_mask_to_canvas,
+                                          similarity_matrices_cuda,
                                           template_points,
                                           warp_face_by_translation,
+                                          warp_face_cuda,
                                           warp_face_gpu,
                                           warp_face_inverse,
+                                          warp_face_inverse_cuda,
                                           warp_face_inverse_gpu,
 )
 from face_engine.pipeline.detector import (
                                           Face,
+                                          GPUDetections,
                                           Normalization,
                                           SCRFDDetector,
                                           YOLOFaceDetector,
@@ -22,14 +35,26 @@ from face_engine.pipeline.detector import (
 from face_engine.pipeline.masker import (
                                           CompositeMasker,
                                           FaceRegion,
+                                          GPUMasker,
+                                          GPUMaskResult,
                                           MaskerConfig,
                                           MaskResult,
+)
+from face_engine.pipeline.tracker import (
+                                          LucasKanadeTracker,
+                                          SceneCutDetector,
+                                          StridedFaceTracker,
+                                          TrackedFaces,
+                                          TrackerConfig,
 )
 
 __all__ = [
     "CANONICAL_TEMPLATES", "TEMPLATES", "AlignedFace", "AlignmentError", "CompositeMasker",
-    "Face", "FaceRegion", "MaskResult", "MaskerConfig", "Normalization", "SCRFDDetector",
-    "YOLOFaceDetector", "align_face", "estimate_similarity_transform", "paste_mask_to_canvas",
-    "template_points", "warp_face_by_translation", "warp_face_gpu", "warp_face_inverse",
-    "warp_face_inverse_gpu",
+    "Face", "FaceRegion", "GPUDetections", "GPUMaskResult", "GPUMasker", "LucasKanadeTracker",
+    "MaskResult", "MaskerConfig", "Normalization", "SCRFDDetector", "SceneCutDetector",
+    "StridedFaceTracker", "TrackedFaces", "TrackerConfig", "YOLOFaceDetector", "align_face",
+    "crop_valid_mask_cuda", "estimate_similarity_transform", "estimate_similarity_transform_cuda",
+    "paste_mask_to_canvas", "similarity_matrices_cuda", "template_points",
+    "warp_face_by_translation", "warp_face_cuda", "warp_face_gpu", "warp_face_inverse",
+    "warp_face_inverse_cuda", "warp_face_inverse_gpu",
 ]

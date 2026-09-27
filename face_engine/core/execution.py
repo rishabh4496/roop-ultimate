@@ -193,6 +193,7 @@ class ManagedSession:
         output_tensors: Mapping[str, Any] | None = None,
         output_shapes: Mapping[str, Sequence[int]] | None = None,
         device_id: int | None = None,
+        unreturned_outputs: Sequence[str] = (),
     ) -> dict[str, Any]:
         """Run with zero-copy IOBinding directly on CUDA memory pointers."""
         return run_binding(
@@ -201,6 +202,7 @@ class ManagedSession:
             output_tensors=output_tensors,
             output_shapes=output_shapes,
             device_id=device_id,
+            unreturned_outputs=unreturned_outputs,
         )
 
 
@@ -353,6 +355,7 @@ class ExecutionEngine:
                 "device_id": self.config.device_id,
                 "arena_extend_strategy": self.config.cuda.arena_extend_strategy,
                 "cudnn_conv_algo_search": self.config.cuda.cudnn_conv_algo_search,
+                "use_tf32": "1" if self.config.cuda.use_tf32 else "0",
                 "do_copy_in_default_stream": self.config.cuda.do_copy_in_default_stream,
             }
             limit = self.cuda_mem_limit()
@@ -515,6 +518,7 @@ class ExecutionEngine:
         output_tensors: Mapping[str, Any] | None = None,
         output_shapes: Mapping[str, Sequence[int]] | None = None,
         device_id: int | None = None,
+        unreturned_outputs: Sequence[str] = (),
     ) -> dict[str, Any]:
         """Execute inference with zero-copy IOBinding directly on CUDA memory pointers."""
         return run_binding(
@@ -523,6 +527,7 @@ class ExecutionEngine:
             output_tensors=output_tensors,
             output_shapes=output_shapes,
             device_id=device_id if device_id is not None else self.config.device_id,
+            unreturned_outputs=unreturned_outputs,
         )
 
     # ------------------------------------------------------------------ cleanup
@@ -610,6 +615,7 @@ def run_binding(
     output_tensors: Mapping[str, Any] | None = None,
     output_shapes: Mapping[str, Sequence[int]] | None = None,
     device_id: int | None = None,
+    unreturned_outputs: Sequence[str] = (),
 ) -> dict[str, Any]:
     """Execute inference with zero-copy IOBinding directly on CUDA memory pointers.
 
@@ -627,6 +633,9 @@ def run_binding(
         input_tensors: Mapping of input node names to ``torch.Tensor`` buffers.
         output_tensors: Optional pre-allocated destination tensors.
         output_shapes: Optional explicit shapes for dynamic outputs.
+        unreturned_outputs: Outputs the caller does not need (auxiliary heads).
+            ORT allocates them on the device from its own arena; they are
+            neither returned nor copied to the host.
         device_id: CUDA device ordinal (default 0 or session's configured device).
 
     Returns:
@@ -697,6 +706,9 @@ def run_binding(
     cuda_device = torch.device("cuda", dev_id) if dev_type == "cuda" else torch.device("cpu")
 
     for out_node in ort_sess.get_outputs():
+        if out_node.name in unreturned_outputs:
+            binding.bind_output(out_node.name, dev_type, dev_id)
+            continue
         if output_tensors is not None and out_node.name in output_tensors:
             out_t = output_tensors[out_node.name]
             if not out_t.is_contiguous():
@@ -735,5 +747,13 @@ def run_binding(
             buffer_ptr=out_t.data_ptr(),
         )
 
+    if dev_type == "cuda":
+        # ORT computes on its own non-blocking CUDA stream, which does not wait
+        # for work torch has queued on the caller's stream. Without this fence
+        # ORT reads inputs torch has not finished writing: a 20 ms kernel
+        # queued before the input fill made xseg_3 read the stale buffer on
+        # 20/20 runs (2026-09-28). A stream fence, not a copy; ORT's own
+        # end-of-run synchronization makes the outputs safe to read.
+        torch.cuda.current_stream(torch.device("cuda", dev_id)).synchronize()
     ort_sess.run_with_iobinding(binding)
     return results

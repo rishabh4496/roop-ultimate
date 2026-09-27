@@ -70,7 +70,17 @@ class CUDAOptions(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     arena_extend_strategy: str = "kNextPowerOfTwo"
-    cudnn_conv_algo_search: str = "DEFAULT"
+    # HEURISTIC, not DEFAULT: with the cuDNN 9 that torch cu128 loads, DEFAULT
+    # sends every convolution down ORT's "Conv running in Fallback mode" path.
+    # Measured 2026-09-28 (RTX 4070, batch 1, FP32), DEFAULT -> HEURISTIC with
+    # TF32 off: SCRFD-10G 10.9 -> 4.7 ms, XSeg-3 21.2 -> 13.3, BiSeNet 17.1 ->
+    # 10.9, HyperSwap-1a 44.3 -> 21.6, GPEN-512 152.5 -> 76.8, ArcFace 12.0 ->
+    # 3.4; outputs equal to <= 1.6e-5 (HyperSwap 1.2e-2 either way).
+    cudnn_conv_algo_search: str = "HEURISTIC"
+    # TF32 off = exact FP32. On, HyperSwap runs 21.6 -> 9.8 ms but its output
+    # moves by up to 1.5e-2 (~1.9/255); swap identity is precision-sensitive,
+    # so it is opt-in.
+    use_tf32: bool = False
     do_copy_in_default_stream: bool = True
     vram_fraction: float = Field(default=0.80, gt=0.0, le=1.0)
     free_vram_fraction: float | None = Field(default=None, gt=0.0, le=1.0)

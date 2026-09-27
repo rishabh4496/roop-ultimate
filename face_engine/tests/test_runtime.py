@@ -117,7 +117,8 @@ def test_cuda_session_initializes_and_allocates_device_buffers(
 
         options = handle.session.get_provider_options()[Provider.CUDA.value]
         assert options["arena_extend_strategy"] == "kNextPowerOfTwo"
-        assert options["cudnn_conv_algo_search"] == "DEFAULT"
+        assert options["cudnn_conv_algo_search"] == "HEURISTIC"
+        assert options["use_tf32"] == "0"
         # The limit is derived from the VRAM free when the session was BUILT;
         # compare with what the session recorded, not a fresh query (other
         # processes allocate in between).
@@ -337,7 +338,8 @@ def test_shape_profile_validation() -> None:
 def test_default_config_matches_the_stage1_contract(config: EngineConfig) -> None:
     assert config.providers == [Provider.TENSORRT, Provider.CUDA, Provider.CPU]
     assert config.cuda.arena_extend_strategy == "kNextPowerOfTwo"
-    assert config.cuda.cudnn_conv_algo_search == "DEFAULT"
+    assert config.cuda.cudnn_conv_algo_search == "HEURISTIC"
+    assert config.cuda.use_tf32 is False
     assert config.cuda.do_copy_in_default_stream is True
     trt = config.tensorrt_provider_options()
     assert trt["device_id"] == 0

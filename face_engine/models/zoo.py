@@ -120,7 +120,7 @@ MODEL_ZOO: dict[str, ModelSpec] = {spec.name: spec for spec in (
     ModelSpec(
         name="xseg_3", task=ModelTask.OCCLUSION, filename="xseg_3.onnx",
         urls=(_FF32 + "xseg_3.onnx",),
-        sha256="c95ce1647991e8c1c185cece5ae7b73bdc2ab44830bfccda381e8c7045bc912e",
+        sha256="48ccd7e8541e159a5a754ec9e62df2f12065f7df8f9af842c1750342c6533559",
         size=70327709,
         inputs={"input": ("batch", 256, 256, 3)},
         description="Face Occluder v3 (XSeg-3) occlusion segmentation (NHWC input)",

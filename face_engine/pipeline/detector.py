@@ -201,6 +201,110 @@ class _Candidates:
 
 
 @dataclass
+class GPUDetections:
+    """Detections for a batch of frames, as tensors on the frames' device.
+
+    Rows are ordered by frame, then score (highest first).
+
+    Attributes:
+        boxes: ``(N, 4)`` float32 ``x1, y1, x2, y2`` in frame pixels, clipped.
+        kps: ``(N, 5, 2)`` float32 landmarks (not clipped).
+        scores: ``(N,)`` float32.
+        frame_index: ``(N,)`` int64, the batch frame each row belongs to.
+        frame_size: ``(height, width)`` shared by the batch.
+        num_frames: Batch size.
+    """
+
+    boxes: Any
+    kps: Any
+    scores: Any
+    frame_index: Any
+    frame_size: tuple[int, int]
+    num_frames: int
+
+    def __len__(self) -> int:
+        return int(self.boxes.shape[0])
+
+    @property
+    def device(self) -> Any:
+        return self.boxes.device
+
+    @staticmethod
+    def empty(device: Any, frame_size: tuple[int, int], num_frames: int = 1) -> GPUDetections:
+        import torch
+
+        return GPUDetections(torch.zeros((0, 4), device=device),
+                             torch.zeros((0, 5, 2), device=device),
+                             torch.zeros((0,), device=device),
+                             torch.zeros((0,), dtype=torch.int64, device=device),
+                             frame_size, num_frames)
+
+    def index(self, rows: Any) -> GPUDetections:
+        """Subset by an index or boolean tensor (a boolean mask costs one sync)."""
+        return GPUDetections(self.boxes[rows], self.kps[rows], self.scores[rows],
+                             self.frame_index[rows], self.frame_size, self.num_frames)
+
+    def to_faces(self) -> list[list[Face]]:
+        """Explicit host copy: one :class:`Face` list per frame."""
+        boxes, kps = self.boxes.cpu().numpy(), self.kps.cpu().numpy()
+        scores, frames = self.scores.cpu().numpy(), self.frame_index.cpu().numpy()
+        out: list[list[Face]] = [[] for _ in range(self.num_frames)]
+        for i in range(len(boxes)):
+            out[int(frames[i])].append(Face(bbox=boxes[i].astype(np.float32),
+                                            kps=kps[i].astype(np.float32),
+                                            score=float(scores[i]), frame_size=self.frame_size))
+        return out
+
+
+def letterbox_cuda(frames: Any, size: int) -> tuple[Any, Letterbox]:
+    """GPU :func:`letterbox`: ``(B, 3, H, W)`` -> ``(B, 3, size, size)`` float32, centred.
+
+    Downscales with ``antialias=True`` bilinear (the counterpart of
+    ``INTER_AREA``). The geometry depends only on the shape, so the
+    :class:`Letterbox` is computed on the host without a device read.
+    """
+    import torch
+    import torch.nn.functional as F
+
+    b, _, h, w = frames.shape
+    scale = min(size / w, size / h)
+    rw, rh = max(1, int(round(w * scale))), max(1, int(round(h * scale)))
+    data = frames if frames.is_floating_point() else frames.float()
+    resized = F.interpolate(data, size=(rh, rw), mode="bilinear", align_corners=False,
+                            antialias=scale < 1.0) if (rh, rw) != (h, w) else data
+    pad_x, pad_y = (size - rw) // 2, (size - rh) // 2
+    canvas = torch.zeros((b, 3, size, size), dtype=torch.float32, device=frames.device)
+    canvas[:, :, pad_y:pad_y + rh, pad_x:pad_x + rw] = resized.clamp(0, 255)
+    return canvas, Letterbox(scale=float(min(rw / w, rh / h)), pad_x=float(pad_x),
+                             pad_y=float(pad_y), input_size=size, frame_size=(h, w))
+
+
+def normalize_cuda(canvas: Any, mode: Normalization, swap_rb: bool) -> Any:
+    """GPU :func:`normalize` for a ``(B, 3, H, W)`` BGR float canvas."""
+    import torch
+
+    data = canvas.flip(1) if swap_rb else canvas
+    if mode is Normalization.SYMMETRIC_128:
+        return ((data - 127.5) / 128.0).contiguous()
+    if mode is Normalization.IMAGENET:
+        mean = _IMAGENET_MEAN if swap_rb else _IMAGENET_MEAN[::-1]
+        std = _IMAGENET_STD if swap_rb else _IMAGENET_STD[::-1]
+        m = torch.as_tensor(mean.copy(), device=data.device).view(1, 3, 1, 1)
+        s = torch.as_tensor(std.copy(), device=data.device).view(1, 3, 1, 1)
+        return ((data - m) / s).contiguous()
+    return (data / 255.0).contiguous()
+
+
+def _to_frame_cuda(points: Any, info: Letterbox) -> Any:
+    """Canvas -> frame coordinates for ``(..., 2)`` tensors (host scalars only:
+    building a pad tensor from host values would be a copy and a sync per call)."""
+    import torch
+
+    return torch.stack([(points[..., 0] - info.pad_x) / info.scale,
+                        (points[..., 1] - info.pad_y) / info.scale], dim=-1)
+
+
+@dataclass
 class BaseDetector:
     """Shared letterbox -> infer -> decode -> NMS pipeline.
 
@@ -302,6 +406,62 @@ class BaseDetector:
                                    score=float(scores[i]), frame_size=(h, w)))
         return results
 
+    def detect_cuda(self, frames: Any) -> GPUDetections:
+        """Detect faces in ``(B, 3, H, W)`` CUDA frames without leaving the GPU.
+
+        Letterbox, normalization, inference (``run_binding``: ORT reads and writes
+        torch memory directly), anchor decoding, thresholding and
+        ``torchvision.ops.batched_nms`` all run on the frames' device; nothing is
+        copied to the host. The data-dependent steps (the score mask and NMS
+        itself) synchronize with the device, as any variable-size result must.
+        """
+        import torch
+        from torchvision.ops import batched_nms as _tv_batched_nms
+
+        if frames.ndim == 3:
+            frames = frames[None]
+        b, _, h, w = frames.shape
+        handle = self.session
+        canvas, info = letterbox_cuda(frames, self.input_size)
+        blob = normalize_cuda(canvas, self.normalization, self.swap_rb)
+        shapes = self._output_shapes(handle, info.input_size)
+        boxes_all, kps_all, scores_all, index_all = [], [], [], []
+        for i in range(b):
+            outputs = handle.run_binding({handle.input_names[0]: blob[i:i + 1]},
+                                         output_shapes=shapes)
+            boxes, kps, scores = self._decode_cuda([outputs[n] for n in handle.output_names], info)
+            boxes_all.append(boxes)
+            kps_all.append(kps)
+            scores_all.append(scores)
+            index_all.append(torch.full_like(scores, i, dtype=torch.int64))
+        boxes = torch.cat(boxes_all)
+        kps = torch.cat(kps_all)
+        scores = torch.cat(scores_all)
+        frame_index = torch.cat(index_all)
+        boxes[:, 0::2] = boxes[:, 0::2].clamp(0, w)
+        boxes[:, 1::2] = boxes[:, 1::2].clamp(0, h)
+        ok = ((scores >= self.score_threshold)
+              & ((boxes[:, 2] - boxes[:, 0]) >= self.min_face_size)
+              & ((boxes[:, 3] - boxes[:, 1]) >= self.min_face_size)
+              & torch.isfinite(kps).flatten(1).all(1))
+        keep = ok.nonzero()[:, 0]
+        if keep.shape[0] == 0:
+            return GPUDetections.empty(frames.device, (h, w), b)
+        boxes, kps, scores, frame_index = boxes[keep], kps[keep], scores[keep], frame_index[keep]
+        kept = _tv_batched_nms(boxes, scores, frame_index, float(self.iou_threshold))
+        # Order by frame, then score: batched_nms returns score order over the batch.
+        kept = kept[torch.argsort(frame_index[kept], stable=True)]
+        return GPUDetections(boxes[kept], kps[kept], scores[kept], frame_index[kept], (h, w), b)
+
+    def _output_shapes(self, handle: ManagedSession,
+                       size: int) -> dict[str, tuple[int, ...]] | None:
+        """Explicit output shapes for ``run_binding`` when the export's are not usable."""
+        return None
+
+    def _decode_cuda(self, outputs: list[Any], info: Letterbox) -> tuple[Any, Any, Any]:
+        """``(boxes, kps, scores)`` for EVERY candidate, as device tensors (no threshold)."""
+        raise NotImplementedError(f"{type(self).__name__} has no CUDA decoder")
+
 
 def per_frame_size(frame: Any) -> tuple[int, int]:
     return int(frame.shape[0]), int(frame.shape[1])
@@ -319,7 +479,7 @@ class SCRFDDetector(BaseDetector):
     swap_rb: bool = True
     strides: tuple[int, ...] = (8, 16, 32)
     anchors_per_location: int = 2
-    _centers: dict[tuple[int, int], np.ndarray] = field(default_factory=dict, init=False,
+    _centers: dict[tuple[Any, ...], Any] = field(default_factory=dict, init=False,
                                                         repr=False)
 
     def _anchor_centers(self, size: int, stride: int) -> np.ndarray:
@@ -353,6 +513,46 @@ class SCRFDDetector(BaseDetector):
         return _Candidates(np.concatenate(boxes_all), np.concatenate(scores_all),
                            np.concatenate(kps_all))
 
+    def _output_shapes(self, handle: ManagedSession,
+                       size: int) -> dict[str, tuple[int, ...]]:
+        """The export's output shapes are recorded for 640 only; derive them for ``size``."""
+        names = handle.output_names
+        levels = len(self.strides)
+        shapes: dict[str, tuple[int, ...]] = {}
+        for level, stride in enumerate(self.strides):
+            n = (size // stride) ** 2 * self.anchors_per_location
+            shapes[names[level]] = (n, 1)
+            shapes[names[levels + level]] = (n, 4)
+            shapes[names[2 * levels + level]] = (n, 10)
+        return shapes
+
+    def _anchor_centers_cuda(self, size: int, stride: int, device: Any) -> Any:
+        import torch
+
+        key = ("cuda", size, stride, str(device))
+        cache = self._centers
+        if key not in cache:
+            cache[key] = torch.as_tensor(self._anchor_centers(size, stride), device=device)
+        return cache[key]
+
+    def _decode_cuda(self, outputs: list[Any], info: Letterbox) -> tuple[Any, Any, Any]:
+        """Every anchor decoded (no threshold yet), so the batch needs one mask."""
+        import torch
+
+        levels = len(self.strides)
+        if len(outputs) != 3 * levels:
+            raise RuntimeError(f"SCRFD expected {3 * levels} outputs, got {len(outputs)}")
+        boxes_all, kps_all, scores_all = [], [], []
+        for level, stride in enumerate(self.strides):
+            centers = self._anchor_centers_cuda(info.input_size, stride, outputs[level].device)
+            dist = outputs[levels + level].reshape(-1, 4) * stride
+            offs = outputs[2 * levels + level].reshape(-1, 5, 2) * stride
+            boxes = torch.cat([centers - dist[:, :2], centers + dist[:, 2:]], dim=1)
+            boxes_all.append(_to_frame_cuda(boxes.reshape(-1, 2, 2), info).reshape(-1, 4))
+            kps_all.append(_to_frame_cuda(centers[:, None, :] + offs, info))
+            scores_all.append(outputs[level].reshape(-1))
+        return torch.cat(boxes_all), torch.cat(kps_all), torch.cat(scores_all)
+
 
 @dataclass
 class YOLOFaceDetector(BaseDetector):
@@ -379,3 +579,16 @@ class YOLOFaceDetector(BaseDetector):
         kps = det[:, 5:20].reshape(-1, 5, 3)[:, :, :2]
         return _Candidates(info.to_frame(corners).reshape(-1, 4), det[:, 4].copy(),
                            info.to_frame(kps))
+
+    def _decode_cuda(self, outputs: list[Any], info: Letterbox) -> tuple[Any, Any, Any]:
+        import torch
+
+        pred = outputs[0]
+        if pred.ndim != 3 or pred.shape[1] < 20:
+            raise RuntimeError(f"YOLOFace output has unexpected shape {tuple(pred.shape)}")
+        det = pred[0].T
+        cxcy, wh = det[:, 0:2], det[:, 2:4]
+        corners = torch.stack([cxcy - wh / 2, cxcy + wh / 2], dim=1)
+        kps = det[:, 5:20].reshape(-1, 5, 3)[:, :, :2]
+        return (_to_frame_cuda(corners, info).reshape(-1, 4), _to_frame_cuda(kps, info),
+                det[:, 4].contiguous())
