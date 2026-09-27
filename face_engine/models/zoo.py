@@ -102,7 +102,7 @@ MODEL_ZOO: dict[str, ModelSpec] = {spec.name: spec for spec in (
     ModelSpec(
         name="inswapper_128_fp16", task=ModelTask.SWAP, filename="inswapper_128_fp16.onnx",
         urls=(_FF30 + "inswapper_128_fp16.onnx",),
-        sha256="98fae14454ae714f31b4fe43a8907661c6b496ccbc5cb62c7219d8196d92bf21",
+        sha256="c4eccca86ad177586c85c28bf1a64a9d9ed237e283a15818d831f7facfd3f420",
         size=277680829,
         inputs={"target": (1, 3, 128, 128), "source": (1, 512)},
         description="InsightFace inswapper 128 FP16 export; source = normed embedding @ emap",

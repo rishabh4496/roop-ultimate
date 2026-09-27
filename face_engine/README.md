@@ -17,9 +17,11 @@ under `app/`.
 | `pipeline/tracker.py` | `StridedFaceTracker`: detection every N frames, GPU Lucas-Kanade between, histogram shot cuts |
 | `pipeline/aligner.py` | templates, SVD similarity fit, ROI crop warp + paste-back; `warp_face_cuda` / `warp_face_inverse_cuda` (kornia) |
 | `pipeline/masker.py` | `CompositeMasker` (host) / `GPUMasker` (VRAM): feathered box x XSeg x BiSeNet regions x valid |
-| `processors/swapper.py` | `IdentityEncoder` (ArcFace), `FaceSwapper`: HyperSwap 1a/1b/1c, inswapper, Pixel Boost |
-| `processors/enhancer.py` | `FaceEnhancer`: GPEN-BFR 512/1024/2048, RestoreFormer++, LAB colour lock |
-| `processors/expression.py` | `ExpressionRestorer`: LivePortrait expression transfer + blink sync |
+| `processors/swapper.py` | `IdentityEncoder`/`GPUIdentityEncoder`, `FaceSwapper`/`BatchedFaceSwapper`: HyperSwap 1a/1b/1c, inswapper, Pixel Boost |
+| `processors/enhancer.py` | `FaceEnhancer`/`BatchedFaceEnhancer`: GPEN-BFR 512/1024/2048, RestoreFormer++, LAB colour lock |
+| `processors/expression.py` | `ExpressionRestorer` / `BatchedExpressionRestorer`: LivePortrait expression transfer + blink sync |
+| `processors/color.py` | `ColorMode`, `transfer_color` (host) / `transfer_color_cuda` (GPU LAB) |
+| `utils/onnx_batch.py` | verified dynamic-batch rewrites, InstanceNorm decomposition, TensorRT batch profiles |
 | `utils/gridsample5d.py` | LivePortrait warping graph rewrite (copied from the app) |
 | `media/capturer.py` | `VideoSource`: ffprobe metadata, frame-exact PyAV decode, keyframe segments, lossless demux |
 | `media/ipc_pool.py` | `SharedMemoryRingBuffer`, `FramePipeline`: zero-copy ingest -> N workers -> ordered assembly |
@@ -225,6 +227,117 @@ Measured decisions (2026-09-27, RTX 4070, insightface sample + four real clips):
 
   Lips improve on 100% of faces, brows on 94%. Gaze follow (`eyes > 0`) is off
   by default: roop-ultimate measured it worsening eye direction.
+
+### Batched GPU path
+
+```python
+from face_engine.processors import (GPUIdentityEncoder, BatchedFaceSwapper, BatchedFaceEnhancer,
+                                    BatchedExpressionRestorer)
+from face_engine.pipeline import warp_face_inverse_cuda
+
+encoder = GPUIdentityEncoder(engine, registry.ensure("arcface_w600k_r50"))
+swapper = BatchedFaceSwapper(engine, "hyperswap_1a_256", registry.ensure("hyperswap_1a_256"))
+swapper.set_source(encoder.embed(source_frame, source_kps)[0])   # cached on the GPU
+enhancer = BatchedFaceEnhancer(engine, "gpen_bfr_512", registry.ensure("gpen_bfr_512"))
+restorer = BatchedExpressionRestorer.from_registry(engine, registry)
+
+res = swapper.swap(frame, kps, pixel_boost=512)                   # all faces, one batch
+crops = restorer.restore(res.crops, res.target_crops)            # target's expression back
+frame2 = warp_face_inverse_cuda(frame, crops, res.matrices, mask)
+out = enhancer.enhance(frame2, kps, reference=frame).frames      # colour-locked to the original
+```
+
+Frames are `(B, 3, H, W)` BGR `[0, 255]` CUDA tensors; `kps` is `(N, 5, 2)`
+(add `frame_index` when faces come from several frames). Every class keeps
+the host classes' safeguards: non-finite / collapsed outputs keep their input
+per face (`ok` flags, `torch.where`, no host read), expression restore never
+costs a frame (and counts `failures`).
+
+Measured decisions (2026-09-28, RTX 4070):
+
+- **Every swap / restore export fixes batch 1**, in its input shape and inside
+  the graph (HyperSwap: 43 `Reshape` targets like `[1, 1024, 1, 1]`).
+  `utils/onnx_batch.py` rewrites them and **verifies** the result: the CPU,
+  one sample at a time, is the reference; the unmodified model on the target
+  provider sets the noise floor; the batched model must stay within 2x that.
+  It keeps a derived `<model>.batch.onnx` beside the source model.
+
+  | model | batched? |
+  |---|---|
+  | HyperSwap, inswapper, ArcFace, RestoreFormer++ | yes |
+  | LivePortrait motion, appearance, eye, stitching | yes |
+  | GPEN-BFR 512/1024 | no: StyleGAN2 modulated convs put the batch in the `Conv` group count |
+  | LivePortrait landmark | no: the rewrite runs but merges the batch (caught by the check) |
+  | LivePortrait warping | no |
+
+  Unbatchable models run one face per `run_binding` call, still on the GPU.
+- **ORT's CUDA `InstanceNormalization` (and TensorRT's) mixes batch rows.** At
+  B=2 on a `(2, 1024, 2, 2)` tensor in HyperSwap's generator, row 0 differed
+  from its B=1 value by 1.73 on CUDA (CPU: 1e-6); batched swaps bled into each
+  other by up to 136 levels. The rewrite replaces each InstanceNorm with
+  primitive ops (statistics in FP32). On real faces the batched graph then
+  matches the CPU reference as closely as the original does (0.48 vs 0.40
+  levels max). The first version of the check ran on the CPU and passed the
+  broken graph; `test_verifier_catches_instance_norm_cross_talk` keeps that
+  from coming back.
+- **FP16, per model, on 222 real-clip swaps** (37 faces from three clips x six
+  sources; identity = cosine of the re-detected swapped face to the source)
+  and 37 restored faces:
+
+  | model | FP32 | FP16 (TensorRT) | default |
+  |---|---:|---:|---|
+  | HyperSwap-1a | 0.5875 | 0.5867 on the original graph; **0.3338** on the batched one | FP32 (batched) |
+  | inswapper_128 | 0.8406 | 0.8406 (0.23 levels) | FP16 |
+  | inswapper_128_fp16 (FaceFusion export) | 0.8407 | 0.8086 (p5 0.38) | FP32 engine |
+  | GPEN-BFR-512 (identity kept) | 0.8068 | 0.7835 | FP32 |
+  | RestoreFormer++ (identity kept) | 0.8082 | 0.8080 on the original graph; **0.0332** on the batched one | FP16 |
+  | GPEN-BFR-1024/2048 | | collapses | FP32 |
+
+  A TensorRT FP16 engine does not keep the rewritten InstanceNorm in FP32, so
+  `batched_model(..., fp16=True)` refuses those graphs and FP16 runs the
+  original one, one face per call. ORT's own float16 converter is no
+  substitute: no speed-up on HyperSwap on the CUDA EP, NaN on inswapper,
+  collapsed GPEN-1024. The host `FaceEnhancer` still builds GPEN-512 as FP16
+  (`fp16_safe`); by the table that costs about 0.02-0.035 identity; unchanged
+  here.
+- **Throughput, B=4 vs one face at a time** (`bench_stage3.py`; each
+  sequential arm uses the ORIGINAL graph with static batch-1 engines, the best
+  single-face setup; TensorRT; arms counterbalanced; faces/s):
+
+  | stage | single | batched | x |
+  |---|---:|---:|---:|
+  | ArcFace | 309 | 1058 | 3.43 |
+  | HyperSwap FP32, 256 | 103 | 215 | 2.09 |
+  | HyperSwap FP32, Pixel Boost 512 | 33 | 61 | 1.84 |
+  | HyperSwap FP16 (unbatchable) | 148 | 204 | 1.38 |
+  | GPEN-512 FP32 (unbatchable) | 24.7 | 27.6 | 1.12 |
+  | RestoreFormer++ FP16 (original graph) | 35.2 | 41.0 | 1.16 |
+  | LivePortrait expression | 25.7 | 31.9 | 1.24 |
+  | swap 512 -> paste -> GPEN-512 | 13.7 | 18.5 | 1.35 |
+
+  Where the model itself cannot batch, the gain (x1.12-1.38) is the batched
+  warps, normalisation, colour and paste around it. Batched FP32 HyperSwap
+  (215 faces/s) beats one-face FP16 (204), so FP32 stays the default.
+- Three benchmark traps, each hit once here: a swallowed expression failure
+  read x16.5 (TensorRT had no batch profile; the restorer now counts
+  `failures` and the benchmark refuses the row); a profile helper that re-read
+  the 400 MB model on every inference made batched arms 7-25x slower; and one
+  process holding every stage's engines starved the card (RestoreFormer++
+  1.8 s/face vs 28 ms alone). The benchmark prints the granted provider per
+  arm and releases sessions between stages.
+- **Pixel Boost stays polyphase.** A fixed-input network cannot use a larger
+  crop, and upsampling a 256px crop adds no detail. The target is cut from
+  the frame at `k x 256` (GPU bicubic, supersampled when the face is larger
+  than the crop), split into `k*k` interleaved 256px faces that ride in the
+  same batch, then re-interleaved. `resample_crops` (bicubic, antialiased)
+  covers crops that arrive at another size.
+- **Colour** (`color.py`): CIE L\*a\*b\* on the GPU. OpenCV's 8-bit LAB is an
+  affine rescaling of it, and mean shifts and std ratios are invariant to
+  that, so it matches the host `transfer_color` to within 0.5-0.6 levels.
+- **Expression**: pose (yaw/pitch/roll) is not transferred. Both crops are
+  the same aligned crop of one frame, so it already matches. Gaze follow stays
+  off (measured worse in roop-ultimate). What transfers is the expression
+  deformation (lips, brows, cheeks, jaw) and, via the eye MLP, lid opening.
 
 ## Stage 4: video I/O
 

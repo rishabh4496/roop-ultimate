@@ -43,6 +43,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 import cv2
 import numpy as np
@@ -58,6 +59,9 @@ from face_engine.pipeline.aligner import (
     warp_face_inverse,
 )
 from face_engine.pipeline.detector import Face, as_bgr
+
+if TYPE_CHECKING:
+    import torch
 
 logger = logging.getLogger(__name__)
 
@@ -337,3 +341,218 @@ class ExpressionRestorer:
         if mask is not None and mask.shape[:2] != (crop_size, crop_size):
             mask = cv2.resize(np.asarray(mask, np.float32), (crop_size, crop_size))
         return warp_face_inverse(bgr, restored, matrix, mask)
+
+
+# ---------------------------------------------------------------------------- CUDA, batched
+def headpose_to_degrees_cuda(pred: torch.Tensor) -> torch.Tensor:
+    """``(N, 66)`` bins -> ``(N,)`` degrees (:func:`headpose_to_degrees` on the GPU)."""
+    import torch
+
+    prob = torch.softmax(pred.float().reshape(-1, NUM_BINS), dim=1)
+    bins = torch.arange(NUM_BINS, device=pred.device, dtype=torch.float32)
+    return (prob * bins).sum(dim=1) * 3.0 - 97.5
+
+
+def rotation_matrix_cuda(pitch: torch.Tensor, yaw: torch.Tensor,
+                         roll: torch.Tensor) -> torch.Tensor:
+    """Row-vector rotations ``(N, 3, 3)`` (:func:`rotation_matrix` on the GPU)."""
+    import torch
+
+    p, y, r = (torch.deg2rad(a.float().reshape(-1)) for a in (pitch, yaw, roll))
+    z, o = torch.zeros_like(p), torch.ones_like(p)
+    rx = torch.stack([o, z, z, z, p.cos(), -p.sin(), z, p.sin(), p.cos()], 1).view(-1, 3, 3)
+    ry = torch.stack([y.cos(), z, y.sin(), z, o, z, -y.sin(), z, y.cos()], 1).view(-1, 3, 3)
+    rz = torch.stack([r.cos(), -r.sin(), z, r.sin(), r.cos(), z, z, z, o], 1).view(-1, 3, 3)
+    return (rz @ ry @ rx).transpose(1, 2)
+
+
+def eye_close_ratio_cuda(pts203: torch.Tensor) -> torch.Tensor:
+    """``(N, 203, 2)`` landmarks -> ``(N, 2)`` lid gap / eye width (left, right)."""
+    def ratio(a: int, b: int, c: int, d: int) -> torch.Tensor:
+        return ((pts203[:, a] - pts203[:, b]).norm(dim=1)
+                / ((pts203[:, c] - pts203[:, d]).norm(dim=1) + 1e-6))
+
+    import torch
+
+    return torch.stack([ratio(6, 18, 0, 12), ratio(30, 42, 24, 36)], dim=1)
+
+
+class BatchedExpressionRestorer:
+    """:class:`ExpressionRestorer` over batches of faces, on the GPU.
+
+    Same model, same maths, same safeguards (inputs bound by name, the
+    gridsample5d-patched warping generator, FP32 for the motion extractor and
+    landmark net, blink sync on and gaze follow off by default). What moves:
+
+    * the keypoint algebra runs as batched torch ops;
+    * appearance, motion, eye and stitching nets run once per batch (verified
+      dynamic-batch copies); the landmark net and the warping generator fix
+      their batch inside the graph (:mod:`face_engine.utils.onnx_batch`) and
+      run once per face;
+    * a face whose warped output is non-finite keeps its input crop
+      (``torch.where``, no host read), so an expression tweak never costs a
+      frame.
+
+    Retargeted terms: LivePortrait's expression deformation (lips, brows,
+    cheeks, jaw; eyeballs only with ``eyes > 0``) and, via the eye MLP, lid
+    opening. Head pose (yaw/pitch/roll) is NOT transferred: both crops are the
+    same aligned crop of the same frame, so the pose already matches, and in
+    ``x_d - x_s`` the rotation cancels (a noisy pose estimate cannot move the
+    head).
+    """
+
+    def __init__(self, engine: ExecutionEngine, model_paths: dict[str, Path | str],
+                 weights: ExpressionWeights | None = None, blink: bool = True,
+                 stitching: bool = True, warping_fp16: bool = True, max_batch: int = 8,
+                 batching: bool = True) -> None:
+        from face_engine.utils.onnx_batch import batched_model
+
+        self.host = ExpressionRestorer(engine, model_paths, weights, blink, stitching,
+                                       warping_fp16)
+        self.engine = engine
+        self.max_batch = max_batch
+        # Calls that raised and returned their input unchanged. Benchmarks and
+        # tests must read this: a swallowed failure looks like a fast success.
+        self.failures = 0
+        self._batched: dict[str, Path] = {}
+        for key in ("appearance", "motion", "eye", "stitching") if batching else ():
+            if key in self.host.paths:
+                path = batched_model(self.host.paths[key])
+                if path is not None:
+                    self._batched[key] = path
+
+    @classmethod
+    def from_registry(cls, engine: ExecutionEngine, registry: ModelRegistry,
+                      **kwargs: Any) -> BatchedExpressionRestorer:
+        paths = {k: registry.ensure(f"liveportrait_{k}", show_progress=False) for k in MODELS}
+        return cls(engine, paths, **kwargs)
+
+    @property
+    def weights(self) -> ExpressionWeights:
+        return self.host.weights
+
+    def _session(self, key: str) -> tuple[ManagedSession, bool]:
+        if key in self._batched:
+            from face_engine.utils.onnx_batch import batch_shape_profile
+
+            path = self._batched[key]
+            profile = batch_shape_profile(path, max_batch=self.max_batch)
+            return self.engine.get_session(path, shape_profile=profile,
+                                           trt_fp16=_FP16_OK[key]), True
+        return self.host._session(key), False
+
+    def _run(self, key: str, feeds: dict[str, torch.Tensor],
+             shapes: dict[str, tuple[int, ...]] | None = None) -> dict[str, torch.Tensor]:
+        """Bound BY NAME; batched where the model batches, else one row at a time."""
+        import torch
+
+        handle, batched = self._session(key)
+        expected = set(handle.input_names)
+        missing = expected - set(feeds)
+        if missing:
+            raise KeyError(f"{key}: model expects {sorted(expected)}, missing {sorted(missing)}")
+        n = next(iter(feeds.values())).shape[0]
+        step = self.max_batch if batched else 1
+        parts: list[dict[str, torch.Tensor]] = []
+        for start in range(0, n, step):
+            stop = min(start + step, n)
+            out_shapes = None
+            if shapes is not None:
+                out_shapes = {k: (stop - start, *v) for k, v in shapes.items()}
+            parts.append(handle.run_binding(
+                {k: feeds[k][start:stop].contiguous() for k in expected},
+                output_shapes=out_shapes))
+        return {k: torch.cat([p[k] for p in parts]) for k in parts[0]}
+
+    @staticmethod
+    def _to_input(crops: torch.Tensor, size: int) -> torch.Tensor:
+        from face_engine.processors.swapper import resample_crops
+
+        return (resample_crops(crops.float(), size).clamp(0, 255).flip(1) / 255.0).contiguous()
+
+    def _motion(self, img: torch.Tensor) -> dict[str, torch.Tensor]:
+        out = self._run("motion", {"img": img})
+        n = img.shape[0]
+        return {"pitch": headpose_to_degrees_cuda(out["pitch"]),
+                "yaw": headpose_to_degrees_cuda(out["yaw"]),
+                "roll": headpose_to_degrees_cuda(out["roll"]),
+                "t": out["t"].float().reshape(n, 3), "exp": out["exp"].float().reshape(n, -1, 3),
+                "scale": out["scale"].float().reshape(n, 1), "kp": out["kp"].float().reshape(n, -1, 3)}
+
+    def expression_coefficients(self, crops: torch.Tensor) -> torch.Tensor:
+        """``(N, 21, 3)`` expression deformation of aligned crops."""
+        return self._motion(self._to_input(crops, INPUT_SIZE))["exp"]
+
+    def _eye_ratio(self, crops: torch.Tensor) -> torch.Tensor:
+        handle, _ = self._session("landmark")
+        names = handle.output_names
+        out = self._run("landmark", {"input": self._to_input(crops, LANDMARK_SIZE)})
+        pts = out[names[2]].float().reshape(crops.shape[0], -1, 2) * LANDMARK_SIZE
+        return eye_close_ratio_cuda(pts)
+
+    def restore(self, swapped: torch.Tensor, target: torch.Tensor,
+                weights: ExpressionWeights | None = None,
+                blink: bool | None = None) -> torch.Tensor:
+        """``(N, 3, S, S)`` swapped crops with the matching target crops' expression.
+
+        Both batches must be the SAME aligned crops (same matrices) of the same
+        frames. Returns the input unchanged where the network output is
+        unusable, and entirely on any exception.
+        """
+        weights = weights or self.host.weights
+        blink = self.host.blink if blink is None else blink
+        if swapped.shape[0] == 0 or not (weights.active or blink):
+            return swapped
+        try:
+            return self._restore(swapped.float(), target.float(), weights, blink)
+        except Exception as exc:  # noqa: BLE001 - never cost a frame
+            self.failures += 1
+            logger.warning("batched expression restore failed, keeping the swap: %s", exc)
+            return swapped
+
+    def _restore(self, swapped: torch.Tensor, target: torch.Tensor, weights: ExpressionWeights,
+                 blink: bool) -> torch.Tensor:
+        import torch
+
+        from face_engine.processors.swapper import resample_crops
+
+        n = swapped.shape[0]
+        src_in, drv_in = self._to_input(swapped, INPUT_SIZE), self._to_input(target, INPUT_SIZE)
+        feature = self._run("appearance", {"img": src_in})
+        feature = next(iter(feature.values())).float()
+        both = self._motion(torch.cat([src_in, drv_in]))
+        m_s = {k: v[:n] for k, v in both.items()}
+        m_d = {k: v[n:] for k, v in both.items()}
+        rot = rotation_matrix_cuda(m_s["pitch"], m_s["yaw"], m_s["roll"])
+        t = m_s["t"].clone()
+        t[:, 2] = 0.0
+        x_s = (m_s["kp"] @ rot + m_s["exp"]) * m_s["scale"].view(-1, 1, 1) + t[:, None, :]
+        k = x_s.shape[1]
+        w = torch.as_tensor(weights.per_keypoint(k), device=x_s.device).view(1, k, 1)
+        x_d = x_s + (m_d["exp"] - m_s["exp"]) * w * m_s["scale"].view(-1, 1, 1)
+
+        if blink and "eye" in self.host.paths and "landmark" in self.host.paths:
+            ratios = self._eye_ratio(torch.cat([swapped, target]))
+            ratio_s, ratio_t = ratios[:n], ratios[n:]
+            w_eye = float(np.clip(np.mean([weights.per_keypoint(k)[i] for i in EYE_INDICES]),
+                                  0.0, 1.0))
+            kp_in = x_d if w_eye > 0 else x_s
+            ratio_in = ratio_s + w_eye * (ratio_t - ratio_s)
+            eye_input = torch.cat([kp_in.reshape(n, -1), ratio_in, ratio_t[:, :1]], dim=1)
+            delta = next(iter(self._run("eye", {"input": eye_input}).values())).float()
+            x_d = x_d + delta.reshape(x_d.shape)
+
+        if self.host.stitching and "stitching" in self.host.paths:
+            delta = next(iter(self._run("stitching", {"input": torch.cat(
+                [x_s.reshape(n, -1), x_d.reshape(n, -1)], dim=1)}).values())).float()
+            if delta.shape[1] >= k * 3 + 2:
+                x_d = x_d + delta[:, :k * 3].reshape(n, k, 3)
+                x_d[:, :, :2] = x_d[:, :, :2] + delta[:, k * 3:k * 3 + 2].reshape(n, 1, 2)
+
+        warped = self._run("warping", {"feature_3d": feature, "kp_source": x_s.contiguous(),
+                                       "kp_driving": x_d.contiguous()})
+        img = next(iter(warped.values())).float()
+        ok = torch.isfinite(img).flatten(1).all(1)
+        bgr = (img.nan_to_num(0.0).clamp(0, 1) * 255.0).flip(1)
+        bgr = resample_crops(bgr, swapped.shape[-1])
+        return torch.where(ok.view(-1, 1, 1, 1), bgr, swapped)

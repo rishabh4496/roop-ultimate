@@ -24,8 +24,8 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from enum import Enum
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 import cv2
 import numpy as np
@@ -42,6 +42,10 @@ from face_engine.pipeline.aligner import (
 )
 from face_engine.pipeline.detector import Face, as_bgr
 from face_engine.pipeline.masker import BoxMaskConfig, box_mask
+from face_engine.processors.color import ColorMode, transfer_color
+
+if TYPE_CHECKING:
+    import torch
 
 logger = logging.getLogger(__name__)
 
@@ -63,22 +67,16 @@ ENHANCER_MODELS: dict[str, EnhancerSpec] = {
     "restoreformer_plus_plus": EnhancerSpec("restoreformer_plus_plus", 512, False),
 }
 
-
-class ColorMode(str, Enum):
-    """How the restored face's colour is tied back to a reference.
-
-    NONE        the network's colour as-is.
-    LAB_MEAN    shift the LAB channel means to the reference's (face region).
-    REINHARD    LAB mean AND standard deviation (Reinhard et al. 2001). Matching
-                L's spread also scales back texture contrast the restorer added.
-    KEEP_CHROMA take L from the restored face and a/b from the reference: all
-                restored luminance detail, none of its colour cast.
-    """
-
-    NONE = "none"
-    LAB_MEAN = "lab_mean"
-    REINHARD = "reinhard"
-    KEEP_CHROMA = "keep_chroma"
+# Default precision of the batched GPU enhancer (TensorRT engines), per model.
+# Measured 2026-09-28, RTX 4070, 37 real-clip faces (identity kept = cosine of the
+# restored face to the original):
+#   gpen_bfr_512             fp32 0.8068   fp16 0.7835 (30 dB vs fp32)  -> fp32
+#   restoreformer_plus_plus  fp32 0.8082   fp16 0.8080 (49 dB), original graph -> fp16
+#   gpen_bfr_1024 / 2048     fp16 collapses (flat / non-finite faces)          -> fp32
+# The HOST FaceEnhancer still builds GPEN-512 with TensorRT FP16 (fp16_safe=True
+# in ENHANCER_MODELS); by the numbers above that costs identity. Not changed here.
+ENHANCER_PRECISION: dict[str, str] = {name: "fp32" for name in ENHANCER_MODELS}
+ENHANCER_PRECISION["restoreformer_plus_plus"] = "fp16"
 
 
 def face_region_mask(size: int, grow: float = 1.0) -> np.ndarray:
@@ -106,33 +104,6 @@ def paste_mask(size: int, blur: float) -> np.ndarray:
     ellipse = face_region_mask(size, grow=1.2).astype(np.float32) / 255.0
     ellipse = cv2.GaussianBlur(ellipse, (0, 0), 0.03 * size)
     return ellipse * box_mask(size, BoxMaskConfig(blur=blur))
-
-
-def transfer_color(image: np.ndarray, reference: np.ndarray, mode: ColorMode,
-                   region: np.ndarray | None = None) -> np.ndarray:
-    """Match ``image``'s colour to ``reference`` in LAB (both uint8 BGR, same size).
-
-    Statistics are taken inside ``region`` (uint8/bool mask) when given; the
-    correction is applied to every pixel.
-    """
-    if mode is ColorMode.NONE:
-        return image
-    lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB).astype(np.float32)
-    ref = cv2.cvtColor(reference, cv2.COLOR_BGR2LAB).astype(np.float32)
-    sel = np.ones(image.shape[:2], bool) if region is None else np.asarray(region) > 0
-    if sel.sum() < 16:
-        return image
-    if mode is ColorMode.KEEP_CHROMA:
-        lab[:, :, 1:] = ref[:, :, 1:]
-    else:
-        for c in range(3):
-            mu_i, mu_r = lab[:, :, c][sel].mean(), ref[:, :, c][sel].mean()
-            if mode is ColorMode.REINHARD:
-                sd_i, sd_r = lab[:, :, c][sel].std(), ref[:, :, c][sel].std()
-                lab[:, :, c] = (lab[:, :, c] - mu_i) * (sd_r / max(sd_i, 1e-3)) + mu_r
-            else:
-                lab[:, :, c] += mu_r - mu_i
-    return cv2.cvtColor(np.clip(np.rint(lab), 0, 255).astype(np.uint8), cv2.COLOR_LAB2BGR)
 
 
 @dataclass(frozen=True)
@@ -249,3 +220,177 @@ class FaceEnhancer:
             paste = paste * cv2.resize(np.asarray(mask, np.float32), (self.size, self.size))
         out = warp_face_inverse(bgr, blended, matrix, paste)
         return EnhanceResult(out, crop_in, restored, matrix, "ok")
+
+
+# ---------------------------------------------------------------------------- CUDA, batched
+@dataclass
+class BatchedEnhanceResult:
+    """Attributes (tensors on the frames' device):
+        frames: ``(B, 3, H, W)`` output frames (float BGR ``[0, 255]``).
+        crops_in: ``(N, 3, S, S)`` ffhq crops fed to the network.
+        crops_out: ``(N, 3, S, S)`` restored + colour-corrected crops (before alpha;
+            equal to ``crops_in`` where rejected).
+        matrices: ``(N, 2, 3)`` frame -> crop affines.
+        ok: ``(N,)`` bool; False = rejected (non-finite or collapsed output),
+            nothing pasted for that face.
+    """
+
+    frames: Any
+    crops_in: Any
+    crops_out: Any
+    matrices: Any
+    ok: Any
+
+
+class BatchedFaceEnhancer:
+    """:class:`FaceEnhancer` over batches of faces, on the GPU.
+
+    Faces run as one batch when the model batches (RestoreFormer++); GPEN's
+    StyleGAN2 modulated convolutions fix the batch inside the graph (see
+    :mod:`face_engine.utils.onnx_batch`), so GPEN runs one face per
+    ``run_binding`` call, still without leaving the device.
+
+    Args:
+        precision: ``"fp32"`` / ``"fp16"``; default :data:`ENHANCER_PRECISION`.
+        batching: False = original graph, one face per call.
+    """
+
+    def __init__(self, engine: ExecutionEngine, model: str, model_path: Path | str, *,
+                 precision: str | None = None, color: ColorMode = ColorMode.LAB_MEAN,
+                 blur: float = 0.3, max_batch: int = 4, batching: bool = True) -> None:
+        from face_engine.utils.onnx_batch import batched_model
+
+        if model not in ENHANCER_MODELS:
+            raise KeyError(f"unknown enhancer {model!r}; known: {sorted(ENHANCER_MODELS)}")
+        self.spec = ENHANCER_MODELS[model]
+        self.name = model
+        self.engine = engine
+        self.precision = precision or ENHANCER_PRECISION.get(model, "fp32")
+        if self.precision not in ("fp32", "fp16"):
+            raise ValueError("precision must be 'fp32' or 'fp16'")
+        self.color = color
+        self.max_batch = max_batch
+        # FP16 + a rewritten InstanceNorm (RestoreFormer++) = the original
+        # graph, one face per call; see batched_model.
+        batched = (batched_model(model_path, fp16=self.precision == "fp16")
+                   if batching else None)
+        self.batched = batched is not None
+        self.model_path = batched or Path(model_path)
+        self._paste_np = paste_mask(self.spec.size, blur)
+        self._region_np = (face_region_mask(self.spec.size) > 0).astype(np.float32)
+        self._constants: dict[str, Any] = {}
+
+    @property
+    def size(self) -> int:
+        return self.spec.size
+
+    @property
+    def session(self) -> ManagedSession:
+        from face_engine.utils.onnx_batch import batch_shape_profile
+
+        profile = (batch_shape_profile(self.model_path, max_batch=self.max_batch)
+                   if self.batched else None)
+        return self.engine.get_session(self.model_path, shape_profile=profile,
+                                       trt_fp16=self.precision == "fp16")
+
+    def _masks(self, device: Any) -> tuple[Any, Any]:
+        import torch
+
+        key = str(device)
+        if key not in self._constants:
+            self._constants[key] = (torch.as_tensor(self._paste_np, device=device)[None, None],
+                                    torch.as_tensor(self._region_np, device=device)[None, None])
+        return self._constants[key]
+
+    def restore(self, crops: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        """Network pass on ``(N, 3, s, s)`` BGR crops of any size.
+
+        Crops are resampled to the native size with GPU bicubic (antialiased
+        when shrinking). Returns ``(restored, ok)``: ``(N, 3, S, S)`` BGR float
+        and ``(N,)`` bool; a non-finite or collapsed face (region std <
+        ``COLLAPSE_STD`` levels, GFPGAN's FP16 failure mode) is ``ok=False`` and
+        its output is the (resampled) input.
+        """
+        import torch
+
+        from face_engine.processors.swapper import _chunks, resample_crops
+
+        size = self.size
+        x = resample_crops(crops.float(), size).clamp(0, 255)
+        blob = (x.flip(1) / 127.5 - 1.0).contiguous()
+        handle = self.session
+        first = handle.output_names[0]
+        step = self.max_batch if self.batched else 1
+        outs = []
+        for part in _chunks(blob.shape[0], step):
+            b = part.stop - part.start
+            outs.append(handle.run_binding({handle.input_names[0]: blob[part]},
+                                           output_shapes={first: (b, 3, size, size)},
+                                           unreturned_outputs=handle.output_names[1:])[first])
+        raw = torch.cat(outs).float()
+        finite = torch.isfinite(raw).flatten(1).all(1)
+        restored = ((raw.nan_to_num(0.0).clamp(-1, 1) + 1.0) * 127.5).flip(1)
+        _, region = self._masks(raw.device)
+        weight = region.expand(raw.shape[0], 1, size, size)
+        total = weight.sum(dim=(1, 2, 3))
+        mean = (restored * weight).sum(dim=(2, 3), keepdim=True) / total.view(-1, 1, 1, 1)
+        std = ((((restored - mean) ** 2) * weight).sum(dim=(1, 2, 3))
+               / (total * 3)).clamp_min(0).sqrt()
+        ok = finite & (std >= COLLAPSE_STD)
+        return torch.where(ok.view(-1, 1, 1, 1), restored, x), ok
+
+    def enhance(self, frames: torch.Tensor, kps: torch.Tensor, *,
+                reference: torch.Tensor | None = None, frame_index: torch.Tensor | None = None,
+                alpha: float = 1.0, color: ColorMode | None = None,
+                mask: torch.Tensor | None = None) -> BatchedEnhanceResult:
+        """Restore every face ``kps`` ``(N, 5, 2)`` in ``frames`` ``(B, 3, H, W)``.
+
+        Args:
+            reference: Colour reference frames (the ORIGINAL targets), same
+                layout as ``frames``; default ``frames``.
+            alpha: ``Restored = (1 - alpha) * input + alpha * enhanced``.
+            mask: Extra ``(N, 1, s, s)`` paste mask in this enhancer's crop
+                space (any ``s``; resized).
+        """
+        import torch
+        import torch.nn.functional as F
+
+        from face_engine.pipeline.aligner import (
+            crop_valid_mask_cuda,
+            similarity_is_valid,
+            similarity_matrices_cuda,
+            warp_face_cuda,
+            warp_face_inverse_cuda,
+        )
+        from face_engine.processors.color import transfer_color_cuda
+
+        if not 0.0 <= alpha <= 1.0:
+            raise ValueError("alpha must be in [0, 1]")
+        f = frames if frames.ndim == 4 else frames[None]
+        f = f.float()
+        size = self.size
+        matrices = similarity_matrices_cuda(kps.to(f.device, torch.float32), size, TEMPLATE)
+        crops_in = warp_face_cuda(f, matrices, size, frame_index=frame_index,
+                                  padding_mode="border", antialias=True,
+                                  mode="bicubic").clamp(0, 255)
+        valid = crop_valid_mask_cuda(f.shape[-2:], matrices, size)
+        restored, ok = self.restore(crops_in)
+        ok = ok & similarity_is_valid(matrices) & (valid.flatten(1).amax(1) > 0)
+        paste, region = self._masks(f.device)
+        mode = color or self.color
+        if mode is not ColorMode.NONE:
+            ref = f if reference is None else (reference if reference.ndim == 4
+                                               else reference[None]).float()
+            ref_crops = crops_in if reference is None else warp_face_cuda(
+                ref, matrices, size, frame_index=frame_index, padding_mode="border",
+                antialias=True, mode="bicubic").clamp(0, 255)
+            restored = transfer_color_cuda(restored, ref_crops, mode,
+                                           region * (valid > 0.99).float())
+        restored = torch.where(ok.view(-1, 1, 1, 1), restored, crops_in)
+        blended = restored if alpha == 1.0 else alpha * restored + (1.0 - alpha) * crops_in
+        weight = paste * valid * ok.float().view(-1, 1, 1, 1)
+        if mask is not None:
+            weight = weight * F.interpolate(mask.float(), size=(size, size), mode="bilinear",
+                                            align_corners=False)
+        out = warp_face_inverse_cuda(f, blended, matrices, weight, frame_index=frame_index)
+        return BatchedEnhanceResult(out, crops_in, restored, matrices, ok)

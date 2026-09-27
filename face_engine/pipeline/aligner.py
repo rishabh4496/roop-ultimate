@@ -581,7 +581,8 @@ def _supersample_factor(matrices: torch.Tensor, antialias: bool,
 
 def warp_face_cuda(frame_tensor: torch.Tensor, matrix: torch.Tensor, crop_size: int, *,
                    frame_index: torch.Tensor | None = None, padding_mode: str = "reflection",
-                   antialias: bool = False, supersample: int | None = None) -> torch.Tensor:
+                   antialias: bool = False, supersample: int | None = None,
+                   mode: str = "bilinear") -> torch.Tensor:
     """Aligned face crops via ``kornia.geometry.transform.warp_affine``, in VRAM.
 
     Args:
@@ -600,6 +601,8 @@ def warp_face_cuda(frame_tensor: torch.Tensor, matrix: torch.Tensor, crop_size: 
             counterpart of the CPU path's Gaussian prefilter. Reads one
             scalar from the device unless ``supersample`` is given.
         supersample: Explicit supersampling factor (1 = none).
+        mode: ``"bilinear"`` or ``"bicubic"`` (sharper where the crop
+            upsamples a small face; the host path's Lanczos counterpart).
 
     Returns:
         ``(N, 3, crop_size, crop_size)`` float32 on the frames' device.
@@ -621,7 +624,7 @@ def warp_face_cuda(frame_tensor: torch.Tensor, matrix: torch.Tensor, crop_size: 
         # k x k block averages back onto a crop pixel centre exactly.
         m = torch.cat([m[:, :, :2] * k, m[:, :, 2:] * k + (k - 1) / 2.0], dim=-1)
     with _exact_fp32():
-        crops = warp_affine(source, m, dsize=(crop_size * k, crop_size * k), mode="bilinear",
+        crops = warp_affine(source, m, dsize=(crop_size * k, crop_size * k), mode=mode,
                             padding_mode=padding_mode, align_corners=True)
     return F.avg_pool2d(crops, k) if k > 1 else crops
 
