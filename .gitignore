@@ -18,6 +18,11 @@ venv
 cache
 logs
 models
+# ...but not the face_engine package's model declarations (the bare rule above
+# matches any directory named "models").
+!face_engine/models/
+# face_engine runtime cache (TensorRT engines, downloaded models)
+.cache/
 
 # App runtime directories (also covered by app/.gitignore)
 app/env

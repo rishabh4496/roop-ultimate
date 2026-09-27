@@ -1,0 +1,37 @@
+# Packaging for the standalone `face_engine` package only. The Roop Ultimate
+# app under app/ is not packaged here; it keeps its own app/requirements.txt.
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "face-engine"
+version = "0.1.0"
+description = "Accelerator runtime (ONNX Runtime TensorRT/CUDA/CPU) and verified model zoo for face pipelines"
+readme = "face_engine/README.md"
+requires-python = ">=3.11, <3.13"
+license = { text = "AGPL-3.0-only" }
+dependencies = [
+    "onnxruntime-gpu>=1.19.0,<=1.24.4",
+    # CUDA 12.4+ builds: install from the PyTorch index, e.g.
+    #   pip install -r requirements.txt   (carries --extra-index-url)
+    "torch>=2.4.0",
+    "torchvision>=0.19.0",
+    "kornia>=0.7.3",
+    "opencv-python-headless>=4.10.0",
+    "numpy>=1.26.0,<2.0.0",
+    "pydantic>=2.8.0",
+    # PyAV is published on PyPI as "av" (the "pyav" name is an unrelated, stale project).
+    "av>=12.0.0",
+    "tqdm",
+    "requests",
+    "rich",
+    "psutil",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=8.0", "onnx>=1.16"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["face_engine*"]
