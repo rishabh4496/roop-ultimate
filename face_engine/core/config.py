@@ -56,8 +56,15 @@ class CUDAOptions(BaseModel):
 
     ``gpu_mem_limit`` is not a field: it is derived per device from physical
     VRAM by :meth:`face_engine.core.execution.ExecutionEngine.cuda_mem_limit`
-    using ``vram_fraction`` (of total) capped by ``free_vram_fraction``
-    (of what is free right now). Set ``gpu_mem_limit_override`` to pin it.
+    as ``vram_fraction`` of TOTAL physical VRAM. Set
+    ``gpu_mem_limit_override`` to pin it.
+
+    ``free_vram_fraction`` (off by default) additionally caps it at a fraction
+    of the VRAM free when the session is built. Do not turn it on casually:
+    under Windows WDDM "free" reads ~0 on a busy card while allocations still
+    succeed (the driver pages), and a cap derived from it gave a 0-byte arena;
+    the CUDA session failed and, unless strict, fell back to CPU
+    (full test suite with the app running, 2026-09-27).
     """
 
     model_config = ConfigDict(frozen=True)
@@ -65,7 +72,7 @@ class CUDAOptions(BaseModel):
     arena_extend_strategy: str = "kNextPowerOfTwo"
     cudnn_conv_algo_search: str = "DEFAULT"
     vram_fraction: float = Field(default=0.80, gt=0.0, le=1.0)
-    free_vram_fraction: float = Field(default=0.95, gt=0.0, le=1.0)
+    free_vram_fraction: float | None = Field(default=None, gt=0.0, le=1.0)
     gpu_mem_limit_override: int | None = Field(default=None, gt=0)
 
     @field_validator("arena_extend_strategy")

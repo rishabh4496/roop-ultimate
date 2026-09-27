@@ -191,6 +191,18 @@ def test_every_chain_failing_raises(tiny_model: Path, engine: ExecutionEngine,
 
 
 # ---------------------------------------------------------------- session cache
+def test_cuda_limit_ignores_free_vram_by_default(engine: ExecutionEngine,
+                                                 monkeypatch: pytest.MonkeyPatch) -> None:
+    import face_engine.core.execution as execution
+
+    total = 12 * 1024 ** 3
+    monkeypatch.setattr(execution, "query_vram", lambda _device=0: (0, total))  # busy WDDM card
+    assert engine.cuda_mem_limit() == int(total * 0.8)
+    capped = ExecutionEngine(engine.config.model_copy(update={
+        "cuda": engine.config.cuda.model_copy(update={"free_vram_fraction": 0.9})}))
+    assert capped.cuda_mem_limit() == 1  # the opt-in cap is what starves the arena
+
+
 def test_identical_requests_share_one_session(tiny_model: Path, engine: ExecutionEngine) -> None:
     a = engine.get_session(tiny_model, providers=[Provider.CPU])
     b = engine.get_session(str(tiny_model), providers=[Provider.CPU])
@@ -328,7 +340,7 @@ def test_sidecar_trusts_only_files_older_than_their_hash(
     good, bad = b"a" * 4096, b"b" * 4096
     digest = hashlib.sha256(good).hexdigest()
     path = tmp_path / "m.onnx"
-    calls: List[Path] = []
+    calls: list[Path] = []
     real = downloads.sha256_file
     monkeypatch.setattr(downloads, "sha256_file", lambda p, *a: calls.append(p) or real(p, *a))
 

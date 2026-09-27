@@ -13,6 +13,9 @@ under `app/`.
 | `core/registry.py` | `ModelSpec` / `ModelRegistry`: declarative specs, verify, fetch |
 | `models/zoo.py` | `MODEL_ZOO`: the 15 declared models with URLs, SHA256 and sizes |
 | `utils/downloads.py` | resumable, retried, hash-verified downloads |
+| `pipeline/detector.py` | `SCRFDDetector`, `YOLOFaceDetector` -> `Face` (bbox, 5 kps, score, frame size) |
+| `pipeline/aligner.py` | templates, SVD similarity fit, ROI crop warp + paste-back, kornia GPU variants |
+| `pipeline/masker.py` | `CompositeMasker`: feathered box x XSeg x BiSeNet regions, crop + canvas masks |
 
 ## Usage
 
@@ -32,6 +35,44 @@ load. Set `EngineConfig(strict=True)` to raise instead.
 
 Environment: `FACE_ENGINE_CACHE_DIR`, `FACE_ENGINE_MODELS_DIR`,
 `FACE_ENGINE_DEVICE_ID`.
+
+## Stage 2: vision pipeline
+
+```python
+from face_engine.pipeline import SCRFDDetector, CompositeMasker, warp_face_inverse
+
+detector = SCRFDDetector(engine, registry.ensure("scrfd_10g_bnkps"))
+masker = CompositeMasker(engine, registry.ensure("xseg"), registry.ensure("bisenet_resnet34"))
+for face in detector.detect(frame):
+    result = masker.generate(frame, face)           # never raises; see result.status
+    crop, matrix = result.aligned.crop, result.aligned.matrix
+    frame = warp_face_inverse(frame, swapped_crop, matrix, result.crop_mask)
+```
+
+Measured decisions (2026-09-27, RTX 4070; evidence in the module docstrings):
+
+- **Detector normalization is not ImageNet.** On 240 frames from four real
+  clips, checked against SCRFD boxes: YOLOFace finds 333 faces with `x/255`
+  RGB, 302 with `(x-127.5)/128` BGR, 285 with ImageNet; SCRFD 349 with
+  `(x-127.5)/128` RGB vs 339 with ImageNet (which also shifts its landmarks).
+  SCRFD matches InsightFace's own decoder box for box (IoU > 0.9).
+- **XSeg is not inverted.** `xseg.onnx` outputs the probability of *visible
+  face*: a mask texture pasted over the mouth reads 0.00, the eyes 0.75-1.00.
+  Inverting it would keep the occluder and drop the face.
+- **BiSeNet parses its own whole-head `ffhq_512` crop** from the frame (as in
+  its training data), not an upscaled swap crop; the region mask is mapped
+  into the swap crop through both matrices. Its left/right eye and eyebrow
+  classes are not reliable (class 4 sometimes covers both eyes); select both
+  sides together.
+- **CPU vs GPU warps** (1080p frame, one face): crop warp 0.25 ms on the CPU
+  (ROI only) vs 0.83 ms kornia with the frame already on the GPU (2.3 ms with
+  upload); paste-back 2.4 ms CPU (uint8 blend) vs 3.4 ms kornia. The GPU
+  variants are for pipelines whose frames already live on the GPU.
+- The alignment templates: 112 `arcface_112`, 256 `arcface_128` (HyperSwap,
+  inswapper), 512 `ffhq_512` (GPEN, RestoreFormer). SimSwap 512 uses
+  `arcface_112_v1`; pass it by name.
+
+Test images are the photos shipped inside the `insightface` package.
 
 ## Models without a source
 

@@ -260,9 +260,11 @@ class ExecutionEngine:
     def cuda_mem_limit(self) -> int | None:
         """Byte limit for the CUDA EP arena, derived from physical VRAM.
 
-        ``min(total * vram_fraction, free * free_vram_fraction)``, so a card
-        another process already occupies is not over-committed. None when
-        VRAM cannot be queried (ORT then uses its default, i.e. unlimited).
+        ``total * vram_fraction``; with ``free_vram_fraction`` set, also capped
+        at that fraction of the VRAM free right now (see
+        :class:`~face_engine.core.config.CUDAOptions` for why that is off by
+        default). None when VRAM cannot be queried (ORT then uses its default,
+        i.e. unlimited).
         """
         opts = self.config.cuda
         if opts.gpu_mem_limit_override is not None:
@@ -271,7 +273,10 @@ class ExecutionEngine:
         if vram is None:
             return None
         free, total = vram
-        return max(1, int(min(total * opts.vram_fraction, free * opts.free_vram_fraction)))
+        limit = total * opts.vram_fraction
+        if opts.free_vram_fraction is not None:
+            limit = min(limit, free * opts.free_vram_fraction)
+        return max(1, int(limit))
 
     def _provider_options(self, provider: Provider,
                           profile: ShapeProfile | None) -> dict[str, Any]:
