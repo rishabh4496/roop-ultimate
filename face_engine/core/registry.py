@@ -33,6 +33,7 @@ class ModelTask(str, Enum):
     OCCLUSION = "occlusion"
     PARSING = "parsing"
     RESTORATION = "restoration"
+    EXPRESSION = "expression"
 
 
 class RegistryError(KeyError):

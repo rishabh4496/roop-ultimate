@@ -193,7 +193,7 @@ def test_every_chain_failing_raises(tiny_model: Path, engine: ExecutionEngine,
 # ---------------------------------------------------------------- session cache
 def test_cuda_limit_ignores_free_vram_by_default(engine: ExecutionEngine,
                                                  monkeypatch: pytest.MonkeyPatch) -> None:
-    import face_engine.core.execution as execution
+    from face_engine.core import execution
 
     total = 12 * 1024 ** 3
     monkeypatch.setattr(execution, "query_vram", lambda _device=0: (0, total))  # busy WDDM card
@@ -249,7 +249,9 @@ def test_zoo_declarations_are_complete() -> None:
     expected = {"scrfd_10g_bnkps", "yoloface_8n", "hrffa", "2dfan4", "arcface_w600k_r50",
                 "hyperswap_1a_256", "hyperswap_1b_256", "hyperswap_1c_256", "alphaface_256",
                 "inswapper_128", "xseg", "bisenet_resnet34", "gpen_bfr_512", "gpen_bfr_1024",
-                "restoreformer_plus_plus"}
+                "gpen_bfr_2048", "restoreformer_plus_plus",
+                *(f"liveportrait_{k}" for k in ("appearance", "motion", "warping", "stitching",
+                                                "eye", "landmark"))}
     assert set(MODEL_ZOO) == expected
     filenames = [s.filename for s in MODEL_ZOO.values()]
     assert len(filenames) == len(set(filenames))

@@ -278,10 +278,16 @@ class ExecutionEngine:
             limit = min(limit, free * opts.free_vram_fraction)
         return max(1, int(limit))
 
-    def _provider_options(self, provider: Provider,
-                          profile: ShapeProfile | None) -> dict[str, Any]:
+    def _provider_options(self, provider: Provider, profile: ShapeProfile | None,
+                          trt_fp16: bool | None = None) -> dict[str, Any]:
         if provider is Provider.TENSORRT:
             options = self.config.tensorrt_provider_options()
+            if trt_fp16 is not None and trt_fp16 != options["trt_fp16_enable"]:
+                # A separate engine cache per precision: an FP16 engine must never
+                # be served to a session that asked for FP32, or vice versa.
+                options["trt_fp16_enable"] = trt_fp16
+                options["trt_engine_cache_path"] = str(
+                    Path(options["trt_engine_cache_path"]) / ("fp16" if trt_fp16 else "fp32"))
             if self.config.tensorrt.trt_engine_cache_enable:
                 Path(options["trt_engine_cache_path"]).mkdir(parents=True, exist_ok=True)
             if profile is not None:
@@ -300,7 +306,8 @@ class ExecutionEngine:
         return {}
 
     def resolve_providers(self, providers: Sequence[Provider] | None = None,
-                          profile: ShapeProfile | None = None) -> list[ProviderSpec]:
+                          profile: ShapeProfile | None = None,
+                          trt_fp16: bool | None = None) -> list[ProviderSpec]:
         """Preference-ordered ``(name, options)`` pairs this build can offer.
 
         Raises:
@@ -308,7 +315,7 @@ class ExecutionEngine:
         """
         requested = list(providers) if providers is not None else list(self.config.providers)
         available = set(self.available_providers())
-        chain = [(p.value, self._provider_options(p, profile))
+        chain = [(p.value, self._provider_options(p, profile, trt_fp16))
                  for p in requested if p.value in available]
         dropped = [p.value for p in requested if p.value not in available]
         if dropped:
@@ -330,21 +337,25 @@ class ExecutionEngine:
 
     @staticmethod
     def _cache_key(model_path: Path, chain_names: Sequence[str],
-                   profile: ShapeProfile | None) -> tuple[Any, ...]:
+                   profile: ShapeProfile | None, trt_fp16: bool | None) -> tuple[Any, ...]:
         stat = model_path.stat()
         # Size + mtime: a model replaced on disk under the same name is a new model.
         return (str(model_path), stat.st_size, stat.st_mtime_ns, tuple(chain_names),
-                profile.cache_key() if profile is not None else None)
+                profile.cache_key() if profile is not None else None, trt_fp16)
 
     def get_session(self, model_path: os.PathLike[str] | str, *,
                     providers: Sequence[Provider] | None = None,
-                    shape_profile: ShapeProfile | None = None) -> ManagedSession:
+                    shape_profile: ShapeProfile | None = None,
+                    trt_fp16: bool | None = None) -> ManagedSession:
         """Return a cached or newly built session for ``model_path``.
 
         Args:
             model_path: ONNX file.
             providers: Override the configured provider preference.
             shape_profile: TensorRT optimisation profile for dynamic inputs.
+            trt_fp16: Override ``trt_fp16_enable`` for this session only (with
+                its own engine cache). Swap models need ``False``: FP16
+                overflows in them (see face_engine.processors.swapper).
 
         Raises:
             FileNotFoundError: the model file does not exist.
@@ -354,8 +365,8 @@ class ExecutionEngine:
         path = Path(model_path).expanduser().resolve()
         if not path.is_file():
             raise FileNotFoundError(f"model not found: {path}")
-        chain = self.resolve_providers(providers, shape_profile)
-        key = self._cache_key(path, [name for name, _ in chain], shape_profile)
+        chain = self.resolve_providers(providers, shape_profile, trt_fp16)
+        key = self._cache_key(path, [name for name, _ in chain], shape_profile, trt_fp16)
 
         with self._lock:
             cached = self._sessions.get(key)

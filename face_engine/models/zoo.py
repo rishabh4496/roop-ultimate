@@ -33,6 +33,7 @@ from face_engine.core.registry import ModelRegistry, ModelSpec, ModelTask
 _FF30 = "https://huggingface.co/facefusion/models-3.0.0/resolve/main/"
 _FF33 = "https://huggingface.co/facefusion/models-3.3.0/resolve/main/"
 _CF = "https://huggingface.co/CountFloyd/deepfake/resolve/main/"
+_FLP = "https://huggingface.co/warmshao/FasterLivePortrait/resolve/main/liveportrait_onnx/"
 _INSIGHT = "https://huggingface.co/public-data/insightface/resolve/main/models/buffalo_l/"
 
 _UNAVAILABLE = ("No public release located on 2026-09-27; register a pinned ModelSpec "
@@ -141,6 +142,14 @@ MODEL_ZOO: dict[str, ModelSpec] = {spec.name: spec for spec in (
         description="GPEN blind face restoration 1024",
         license="see upstream (GPEN)"),
     ModelSpec(
+        name="gpen_bfr_2048", task=ModelTask.RESTORATION, filename="gpen_bfr_2048.onnx",
+        urls=(_FF30 + "gpen_bfr_2048.onnx",),
+        sha256="66d12a637118d71b00f5a290b8dac13c81c1c0326a127a1978799c6e17bb8d1f",
+        size=285582766,
+        inputs={"input": (1, 3, 2048, 2048)},
+        description="GPEN blind face restoration 2048",
+        license="see upstream (GPEN)"),
+    ModelSpec(
         name="restoreformer_plus_plus", task=ModelTask.RESTORATION,
         filename="restoreformer_plus_plus.onnx",
         urls=(_CF + "restoreformer_plus_plus.onnx",),
@@ -149,6 +158,33 @@ MODEL_ZOO: dict[str, ModelSpec] = {spec.name: spec for spec in (
         inputs={"input": (1, 3, 512, 512)},
         description="RestoreFormer++ face restoration 512",
         license="see upstream (RestoreFormer)"),
+    # ------------------------------------------------------------- expression (LivePortrait)
+    *(ModelSpec(
+        name=f"liveportrait_{key}", task=ModelTask.EXPRESSION, filename=f"liveportrait_{file}",
+        urls=(_FLP + file,), sha256=digest, size=size, inputs=inputs,
+        description=f"LivePortrait {key} (FasterLivePortrait ONNX export)",
+        license="see upstream (LivePortrait / FasterLivePortrait)")
+      for key, file, digest, size, inputs in (
+          ("appearance", "appearance_feature_extractor.onnx",
+           "d070afccca7f528ffb0ef5052b21588b42225a996661833f7bdede562d1ab921", 3355896,
+           {"img": (1, 3, 256, 256)}),
+          ("motion", "motion_extractor.onnx",
+           "219a46174297b2b411bb3c5dce48d3a8c8e07a9d82120a0da21f49f58b67fca6", 112648514,
+           {"img": (1, 3, 256, 256)}),
+          ("warping", "warping_spade.onnx",
+           "b0e7a566db8fba690c23523bcd2faa4f0d13f05418db84a779397a851062ad69", 421233096,
+           {"feature_3d": (1, 32, 16, 64, 64), "kp_driving": (1, 21, 3),
+            "kp_source": (1, 21, 3)}),
+          ("stitching", "stitching.onnx",
+           "8e33658425e3f1014dc35b28f60ca7459189e8f78f20540262a2fe5ac1dc6ec7", 182363,
+           {"input": (1, 126)}),
+          ("eye", "stitching_eye.onnx",
+           "b9a2086c4d757c9be71b9b290d020678406da6a33c6247252c4bb0aeeff48afc", 580926,
+           {"input": (1, 66)}),
+          ("landmark", "landmark.onnx",
+           "31d22a5041326c31f19b78886939a634a5aedcaa5ab8b9b951a1167595d147db", 114666491,
+           {"input": (1, 3, 224, 224)}),
+      )),
 )}
 
 

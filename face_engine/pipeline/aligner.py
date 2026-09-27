@@ -191,7 +191,8 @@ def _crop_corners(crop_size: int) -> np.ndarray:
 
 def warp_face_by_translation(frame: np.ndarray, matrix: np.ndarray, crop_size: int,
                              antialias: bool = True,
-                             border_mode: int = cv2.BORDER_REPLICATE) -> np.ndarray:
+                             border_mode: int = cv2.BORDER_REPLICATE,
+                             interpolation: int = cv2.INTER_LINEAR) -> np.ndarray:
     """Warp the face region of ``frame`` into a ``crop_size`` square crop.
 
     Only the frame region the crop covers is touched. With ``antialias``, a
@@ -203,6 +204,8 @@ def warp_face_by_translation(frame: np.ndarray, matrix: np.ndarray, crop_size: i
         matrix: ``(2, 3)`` frame -> crop affine.
         crop_size: Output side.
         border_mode: How the crop is padded where it leaves the frame.
+        interpolation: OpenCV resampling filter (``INTER_LANCZOS4`` when the
+            crop upsamples a small face).
     """
     matrix = np.asarray(matrix, dtype=np.float64)
     h, w = frame.shape[:2]
@@ -223,7 +226,7 @@ def warp_face_by_translation(frame: np.ndarray, matrix: np.ndarray, crop_size: i
     # frame edge, so border_mode behaves exactly as on the full frame.
     shifted = matrix.copy()
     shifted[:, 2] += matrix[:, :2] @ np.array([x0, y0], dtype=np.float64)
-    return cv2.warpAffine(source, shifted, (crop_size, crop_size), flags=cv2.INTER_LINEAR,
+    return cv2.warpAffine(source, shifted, (crop_size, crop_size), flags=interpolation,
                           borderMode=border_mode)
 
 
