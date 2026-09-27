@@ -67,6 +67,26 @@ def tiny_model(tmp_path_factory: pytest.TempPathFactory) -> Path:
     path = tmp_path_factory.mktemp("models") / "tiny.onnx"
     onnx.save(model, str(path))
     return path
+@pytest.fixture(scope="module")
+def tiny_model_fp16(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """``y = x * scale + bias`` in FLOAT16 with a dynamic batch axis, opset 17."""
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT16, ["batch", 3, 16, 16])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT16, ["batch", 3, 16, 16])
+    scale_fp16 = _SCALE.astype(np.float16)
+    bias_fp16 = np.array(_BIAS, dtype=np.float16)
+    graph = helper.make_graph(
+        [helper.make_node("Mul", ["x", "scale"], ["scaled"]),
+         helper.make_node("Add", ["scaled", "bias"], ["y"])],
+        "tiny_fp16", [x], [y],
+        initializer=[numpy_helper.from_array(scale_fp16, "scale"),
+                     numpy_helper.from_array(bias_fp16, "bias")])
+    model = helper.make_model(graph, opset_imports=[helper.make_opsetid("", 17)])
+    model.ir_version = 8
+    onnx.checker.check_model(model)
+    path = tmp_path_factory.mktemp("models") / "tiny_fp16.onnx"
+    onnx.save(model, str(path))
+    return path
+
 
 
 @pytest.fixture()
@@ -142,6 +162,73 @@ def test_tensorrt_chain_reports_honestly(tiny_model: Path, config: EngineConfig)
         x = np.ones((3, 3, 16, 16), dtype=np.float32)
         (y,) = handle.run({"x": x})
         np.testing.assert_allclose(y, _expected(x), rtol=1e-3, atol=1e-3)  # FP16 tolerance
+
+@pytest.mark.gpu
+@pytest.mark.skipif(not (HAS_CUDA_EP or HAS_TRT_EP), reason="onnxruntime has neither CUDA nor TensorRT EP")
+@pytest.mark.parametrize("provider_chain", [
+    pytest.param([Provider.TENSORRT, Provider.CUDA, Provider.CPU], id="trt",
+                 marks=pytest.mark.skipif(not HAS_TRT_EP, reason="no TRT")),
+    pytest.param([Provider.CUDA, Provider.CPU], id="cuda",
+                 marks=pytest.mark.skipif(not HAS_CUDA_EP, reason="no CUDA")),
+])
+def test_zero_copy_iobinding_fp16_cuda_tensorrt_latency(
+        tiny_model_fp16: Path, config: EngineConfig, provider_chain: list[Provider]) -> None:
+    """Verifies dummy FP16 tensor loaded on CUDA runs through ExecutionEngine.run_binding()
+    using TensorRT/CUDA without copying back to CPU RAM, measuring forward execution latency in ms."""
+    import torch
+    assert torch.cuda.is_available(), "CUDA device required for zero-copy IOBinding test"
+
+    engine_cfg = config.model_copy(update={"providers": provider_chain})
+    with ExecutionEngine(engine_cfg) as engine:
+        handle = engine.get_session(tiny_model_fp16, trt_fp16=True)
+        assert handle.on_gpu, f"Session must run on GPU, granted: {handle.granted}"
+
+        # 1. Prepare dummy FP16 tensor directly on CUDA
+        batch_size = 2
+        dummy_x = torch.randn(batch_size, 3, 16, 16, dtype=torch.float16, device="cuda:0")
+        assert dummy_x.is_cuda and dummy_x.dtype == torch.float16
+
+        # 2. Run through ExecutionEngine.run_binding()
+        outputs = engine.run_binding(handle, {"x": dummy_x})
+
+        # 3. Assert zero-copy device residence (never transferred back to CPU host)
+        assert "y" in outputs
+        out_y = outputs["y"]
+        assert isinstance(out_y, torch.Tensor)
+        assert out_y.is_cuda
+        assert out_y.device.type == "cuda"
+        assert out_y.dtype == torch.float16
+        assert tuple(out_y.shape) == (batch_size, 3, 16, 16)
+
+        # Verify numerical accuracy
+        expected = (_SCALE.astype(np.float16) * dummy_x.cpu().numpy() + np.float16(_BIAS))
+        np.testing.assert_allclose(out_y.cpu().numpy(), expected, rtol=1e-2, atol=1e-2)
+
+        # 4. Chain tensors in VRAM without CPU roundtrip
+        chained = engine.run_binding(handle, {"x": out_y})
+        assert chained["y"].is_cuda
+        assert chained["y"].device.type == "cuda"
+        assert chained["y"].dtype == torch.float16
+
+        # 5. Measure forward execution latency in milliseconds
+        # Warmup
+        for _ in range(10):
+            engine.run_binding(handle, {"x": dummy_x})
+        torch.cuda.synchronize()
+
+        start_event = torch.cuda.Event(enable_timing=True)
+        end_event = torch.cuda.Event(enable_timing=True)
+        iterations = 50
+
+        start_event.record()
+        for _ in range(iterations):
+            engine.run_binding(handle, {"x": dummy_x})
+        end_event.record()
+        torch.cuda.synchronize()
+
+        latency_ms = start_event.elapsed_time(end_event) / iterations
+        assert latency_ms > 0.0, f"Expected positive execution latency, got {latency_ms}"
+        print(f"\n[Zero-Copy IOBinding] {handle.primary_provider} FP16 forward latency: {latency_ms:.4f} ms", flush=True)
 
 
 # ---------------------------------------------------------------- fallback (CPU-only)
@@ -233,9 +320,25 @@ def test_shape_profile_validation() -> None:
     with pytest.raises(ValueError):
         ShapeProfile({"x": (1,)}, {"y": (1,)}, {"x": (1,)})
 
+    # Dynamic batching presets:
+    bbox = ShapeProfile.bounding_box_mask_profile("input")
+    assert bbox.min_shapes["input"] == (1, 3, 256, 256)
+    assert bbox.opt_shapes["input"] == (4, 3, 256, 256)
+    assert bbox.max_shapes["input"] == (8, 3, 256, 256)
+    assert "input:1x3x256x256" in bbox.trt_options()["trt_profile_min_shapes"]
+
+    superres = ShapeProfile.super_resolution_profile("input")
+    assert superres.min_shapes["input"] == (1, 3, 512, 512)
+    assert superres.opt_shapes["input"] == (2, 3, 512, 512)
+    assert superres.max_shapes["input"] == (4, 3, 512, 512)
+    assert "input:1x3x512x512" in superres.trt_options()["trt_profile_min_shapes"]
+
 
 def test_default_config_matches_the_stage1_contract(config: EngineConfig) -> None:
     assert config.providers == [Provider.TENSORRT, Provider.CUDA, Provider.CPU]
+    assert config.cuda.arena_extend_strategy == "kNextPowerOfTwo"
+    assert config.cuda.cudnn_conv_algo_search == "DEFAULT"
+    assert config.cuda.do_copy_in_default_stream is True
     trt = config.tensorrt_provider_options()
     assert trt["device_id"] == 0
     assert trt["trt_max_workspace_size"] == 4294967296
@@ -248,7 +351,7 @@ def test_default_config_matches_the_stage1_contract(config: EngineConfig) -> Non
 def test_zoo_declarations_are_complete() -> None:
     expected = {"scrfd_10g_bnkps", "yoloface_8n", "hrffa", "2dfan4", "arcface_w600k_r50",
                 "hyperswap_1a_256", "hyperswap_1b_256", "hyperswap_1c_256", "alphaface_256",
-                "inswapper_128", "xseg", "bisenet_resnet34", "gpen_bfr_512", "gpen_bfr_1024",
+                "inswapper_128", "inswapper_128_fp16", "xseg", "xseg_3", "bisenet_resnet34", "gpen_bfr_512", "gpen_bfr_1024",
                 "gpen_bfr_2048", "restoreformer_plus_plus",
                 *(f"liveportrait_{k}" for k in ("appearance", "motion", "warping", "stitching",
                                                 "eye", "landmark"))}
@@ -268,7 +371,7 @@ def test_unavailable_model_fails_clearly(tmp_path: Path) -> None:
     registry = build_default_registry(tmp_path)
     with pytest.raises(ModelUnavailableError, match="hrffa"):
         registry.ensure("hrffa", show_progress=False)
-    assert len(registry.by_task(ModelTask.SWAP)) == 5
+    assert len(registry.by_task(ModelTask.SWAP)) == 6
 
 
 class _FakeResponse:

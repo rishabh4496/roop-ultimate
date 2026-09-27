@@ -71,6 +71,7 @@ class CUDAOptions(BaseModel):
 
     arena_extend_strategy: str = "kNextPowerOfTwo"
     cudnn_conv_algo_search: str = "DEFAULT"
+    do_copy_in_default_stream: bool = True
     vram_fraction: float = Field(default=0.80, gt=0.0, le=1.0)
     free_vram_fraction: float | None = Field(default=None, gt=0.0, le=1.0)
     gpu_mem_limit_override: int | None = Field(default=None, gt=0)

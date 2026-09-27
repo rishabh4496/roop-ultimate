@@ -31,6 +31,7 @@ from pathlib import Path
 from face_engine.core.registry import ModelRegistry, ModelSpec, ModelTask
 
 _FF30 = "https://huggingface.co/facefusion/models-3.0.0/resolve/main/"
+_FF32 = "https://huggingface.co/facefusion/models-3.2.0/resolve/main/"
 _FF33 = "https://huggingface.co/facefusion/models-3.3.0/resolve/main/"
 _CF = "https://huggingface.co/CountFloyd/deepfake/resolve/main/"
 _FLP = "https://huggingface.co/warmshao/FasterLivePortrait/resolve/main/liveportrait_onnx/"
@@ -99,6 +100,14 @@ MODEL_ZOO: dict[str, ModelSpec] = {spec.name: spec for spec in (
         name="alphaface_256", task=ModelTask.SWAP, filename="alphaface_256.onnx",
         description="AlphaFace 256px swapper", notes=_UNAVAILABLE),
     ModelSpec(
+        name="inswapper_128_fp16", task=ModelTask.SWAP, filename="inswapper_128_fp16.onnx",
+        urls=(_FF30 + "inswapper_128_fp16.onnx",),
+        sha256="98fae14454ae714f31b4fe43a8907661c6b496ccbc5cb62c7219d8196d92bf21",
+        size=277680829,
+        inputs={"target": (1, 3, 128, 128), "source": (1, 512)},
+        description="InsightFace inswapper 128 FP16 export; source = normed embedding @ emap",
+        license="InsightFace: non-commercial research"),
+    ModelSpec(
         name="inswapper_128", task=ModelTask.SWAP, filename="inswapper_128.onnx",
         urls=(_CF + "inswapper_128.onnx",),
         sha256="e4a3f08c753cb72d04e10aa0f7dbe3deebbf39567d4ead6dce08e98aa49e16af",
@@ -108,6 +117,14 @@ MODEL_ZOO: dict[str, ModelSpec] = {spec.name: spec for spec in (
                     "embedding @ emap",
         license="InsightFace: non-commercial research"),
     # ------------------------------------------------------------- occlusion / parsing
+    ModelSpec(
+        name="xseg_3", task=ModelTask.OCCLUSION, filename="xseg_3.onnx",
+        urls=(_FF32 + "xseg_3.onnx",),
+        sha256="c95ce1647991e8c1c185cece5ae7b73bdc2ab44830bfccda381e8c7045bc912e",
+        size=70327709,
+        inputs={"input": ("batch", 256, 256, 3)},
+        description="Face Occluder v3 (XSeg-3) occlusion segmentation (NHWC input)",
+        license="GPL-3.0 (FaceFusion / DeepFaceLab)"),
     ModelSpec(
         name="xseg", task=ModelTask.OCCLUSION, filename="xseg.onnx",
         urls=(_CF + "xseg.onnx",),

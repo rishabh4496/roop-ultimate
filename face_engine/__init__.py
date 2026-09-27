@@ -10,6 +10,7 @@ from face_engine.core.execution import (
                                         ProviderFallbackError,
                                         SessionCreationError,
                                         ShapeProfile,
+    run_binding,
 )
 from face_engine.core.registry import (
                                         ModelRegistry,
@@ -34,6 +35,7 @@ __all__ = [
                                         "ProviderFallbackError",
                                         "SessionCreationError",
                                         "ShapeProfile",
+    "run_binding",
                                         "__version__",
                                         "build_default_registry",
 ]

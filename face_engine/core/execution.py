@@ -101,6 +101,44 @@ class ShapeProfile:
         return (opts["trt_profile_min_shapes"], opts["trt_profile_opt_shapes"],
                 opts["trt_profile_max_shapes"])
 
+    @classmethod
+    def bounding_box_mask_profile(
+        cls,
+        input_name: str = "input",
+        *,
+        min_batch: int = 1,
+        opt_batch: int = 4,
+        max_batch: int = 8,
+        channels: int = 3,
+        height: int = 256,
+        width: int = 256,
+    ) -> ShapeProfile:
+        """Dynamic batching profile for bounding boxes / masks: [1, 3, 256, 256] to [8, 3, 256, 256]."""
+        return cls(
+            min_shapes={input_name: (min_batch, channels, height, width)},
+            opt_shapes={input_name: (opt_batch, channels, height, width)},
+            max_shapes={input_name: (max_batch, channels, height, width)},
+        )
+
+    @classmethod
+    def super_resolution_profile(
+        cls,
+        input_name: str = "input",
+        *,
+        min_batch: int = 1,
+        opt_batch: int = 2,
+        max_batch: int = 4,
+        channels: int = 3,
+        height: int = 512,
+        width: int = 512,
+    ) -> ShapeProfile:
+        """Dynamic batching profile for super-resolution: [1, 3, 512, 512] to [4, 3, 512, 512]."""
+        return cls(
+            min_shapes={input_name: (min_batch, channels, height, width)},
+            opt_shapes={input_name: (opt_batch, channels, height, width)},
+            max_shapes={input_name: (max_batch, channels, height, width)},
+        )
+
 
 @dataclass(frozen=True)
 class ManagedSession:
@@ -147,6 +185,23 @@ class ManagedSession:
             output_names: Sequence[str] | None = None) -> list[np.ndarray]:
         """Run the session with host-memory inputs and outputs."""
         return self.session.run(list(output_names) if output_names else None, dict(feeds))
+
+    def run_binding(
+        self,
+        input_tensors: Mapping[str, Any],
+        *,
+        output_tensors: Mapping[str, Any] | None = None,
+        output_shapes: Mapping[str, Sequence[int]] | None = None,
+        device_id: int | None = None,
+    ) -> dict[str, Any]:
+        """Run with zero-copy IOBinding directly on CUDA memory pointers."""
+        return run_binding(
+            self,
+            input_tensors,
+            output_tensors=output_tensors,
+            output_shapes=output_shapes,
+            device_id=device_id,
+        )
 
 
 def register_gpu_runtime_dirs() -> list[str]:
@@ -298,6 +353,7 @@ class ExecutionEngine:
                 "device_id": self.config.device_id,
                 "arena_extend_strategy": self.config.cuda.arena_extend_strategy,
                 "cudnn_conv_algo_search": self.config.cuda.cudnn_conv_algo_search,
+                "do_copy_in_default_stream": self.config.cuda.do_copy_in_default_stream,
             }
             limit = self.cuda_mem_limit()
             if limit is not None:
@@ -451,6 +507,24 @@ class ExecutionEngine:
         handle.session.run_with_iobinding(binding)
         binding.synchronize_outputs()
 
+    def run_binding(
+        self,
+        session: ManagedSession | ort.InferenceSession,
+        input_tensors: Mapping[str, Any],
+        *,
+        output_tensors: Mapping[str, Any] | None = None,
+        output_shapes: Mapping[str, Sequence[int]] | None = None,
+        device_id: int | None = None,
+    ) -> dict[str, Any]:
+        """Execute inference with zero-copy IOBinding directly on CUDA memory pointers."""
+        return run_binding(
+            session,
+            input_tensors,
+            output_tensors=output_tensors,
+            output_shapes=output_shapes,
+            device_id=device_id if device_id is not None else self.config.device_id,
+        )
+
     # ------------------------------------------------------------------ cleanup
     def release(self, model_path: os.PathLike[str] | str | None = None) -> int:
         """Drop cached sessions (all, or those for one model). Returns the count.
@@ -493,3 +567,173 @@ class ExecutionEngine:
 
     def __exit__(self, *_exc: object) -> None:
         self.close()
+
+_ONNX_TO_TORCH_DTYPE: dict[str, Any] = {}
+_TORCH_TO_NP_DTYPE: dict[Any, Any] = {}
+
+
+def _init_torch_types() -> None:
+    global _ONNX_TO_TORCH_DTYPE, _TORCH_TO_NP_DTYPE
+    if _ONNX_TO_TORCH_DTYPE:
+        return
+    try:
+        import torch
+        _ONNX_TO_TORCH_DTYPE.update({
+            "tensor(float)": torch.float32,
+            "tensor(float16)": torch.float16,
+            "tensor(double)": torch.float64,
+            "tensor(int32)": torch.int32,
+            "tensor(int64)": torch.int64,
+            "tensor(int8)": torch.int8,
+            "tensor(uint8)": torch.uint8,
+            "tensor(bool)": torch.bool,
+            "tensor(bfloat16)": getattr(torch, "bfloat16", torch.float16),
+        })
+        _TORCH_TO_NP_DTYPE.update({
+            torch.float32: np.float32,
+            torch.float16: np.float16,
+            torch.float64: np.float64,
+            torch.int32: np.int32,
+            torch.int64: np.int64,
+            torch.int8: np.int8,
+            torch.uint8: np.uint8,
+            torch.bool: np.bool_,
+        })
+    except Exception:
+        pass
+
+
+def run_binding(
+    session: ManagedSession | ort.InferenceSession,
+    input_tensors: Mapping[str, Any],
+    *,
+    output_tensors: Mapping[str, Any] | None = None,
+    output_shapes: Mapping[str, Sequence[int]] | None = None,
+    device_id: int | None = None,
+) -> dict[str, Any]:
+    """Execute inference with zero-copy IOBinding directly on CUDA memory pointers.
+
+    Pre-allocates output ``torch.empty(...)`` tensors directly on the target device
+    (device="cuda" when running on GPU), binds raw CUDA memory pointers via
+    ``tensor.data_ptr()``, and invokes ``session.run_with_iobinding(binding)``
+    without transferring tensors back to host CPU memory.
+
+    Memory strategy: session graphs remain warm in VRAM across frames; per-frame
+    allocator thrash is eliminated, and neither ``empty_cache()`` nor ``gc.collect()``
+    is invoked within the frame loop.
+
+    Args:
+        session: Live :class:`ManagedSession` or :class:`onnxruntime.InferenceSession`.
+        input_tensors: Mapping of input node names to ``torch.Tensor`` buffers.
+        output_tensors: Optional pre-allocated destination tensors.
+        output_shapes: Optional explicit shapes for dynamic outputs.
+        device_id: CUDA device ordinal (default 0 or session's configured device).
+
+    Returns:
+        Mapping of output node names to ``torch.Tensor`` results residing on
+        the execution device.
+    """
+    import torch
+    _init_torch_types()
+
+    if isinstance(session, ManagedSession):
+        ort_sess = session.session
+        on_gpu = session.on_gpu
+        target_dev_id = session.provider_options.get(session.primary_provider, {}).get("device_id", 0) if on_gpu else 0
+    else:
+        ort_sess = session
+        providers = ort_sess.get_providers()
+        on_gpu = len(providers) > 0 and providers[0] in (
+            Provider.TENSORRT.value, Provider.CUDA.value
+        )
+        target_dev_id = 0
+
+    if device_id is not None:
+        target_dev_id = device_id
+
+    first_tensor = next(iter(input_tensors.values())) if input_tensors else None
+    if first_tensor is not None and getattr(first_tensor, "is_cuda", False):
+        dev_type = "cuda"
+        dev_id = first_tensor.device.index if first_tensor.device.index is not None else target_dev_id
+    elif on_gpu:
+        dev_type = "cuda"
+        dev_id = target_dev_id
+    else:
+        dev_type = "cpu"
+        dev_id = 0
+
+    binding = ort_sess.io_binding()
+    dim_map: dict[str, int] = {}
+    batch_size: int | None = None
+
+    for inp_node in ort_sess.get_inputs():
+        if inp_node.name in input_tensors:
+            t = input_tensors[inp_node.name]
+            if not t.is_contiguous():
+                t = t.contiguous()
+            if dev_type == "cuda" and not t.is_cuda:
+                t = t.to(device=f"cuda:{dev_id}")
+            np_dtype = _TORCH_TO_NP_DTYPE.get(t.dtype, np.float32)
+            binding.bind_input(
+                name=inp_node.name,
+                device_type=dev_type,
+                device_id=dev_id,
+                element_type=np_dtype,
+                shape=tuple(t.shape),
+                buffer_ptr=t.data_ptr(),
+            )
+            for sym, val in zip(inp_node.shape, t.shape):
+                if isinstance(sym, str):
+                    dim_map[sym] = int(val)
+            if batch_size is None and len(t.shape) > 0:
+                batch_size = int(t.shape[0])
+
+    if batch_size is None and first_tensor is not None and len(first_tensor.shape) > 0:
+        batch_size = int(first_tensor.shape[0])
+    if batch_size is None:
+        batch_size = 1
+
+    results: dict[str, Any] = {}
+    cuda_device = torch.device("cuda", dev_id) if dev_type == "cuda" else torch.device("cpu")
+
+    for out_node in ort_sess.get_outputs():
+        if output_tensors is not None and out_node.name in output_tensors:
+            out_t = output_tensors[out_node.name]
+            if not out_t.is_contiguous():
+                out_t = out_t.contiguous()
+            np_dtype = _TORCH_TO_NP_DTYPE.get(out_t.dtype, np.float32)
+        else:
+            out_dtype = _ONNX_TO_TORCH_DTYPE.get(out_node.type, torch.float32)
+            np_dtype = _TORCH_TO_NP_DTYPE.get(out_dtype, np.float32)
+            if output_shapes is not None and out_node.name in output_shapes:
+                out_shape = tuple(output_shapes[out_node.name])
+            else:
+                resolved = []
+                for idx, dim in enumerate(out_node.shape):
+                    if isinstance(dim, int) and dim > 0:
+                        resolved.append(dim)
+                    elif isinstance(dim, str) and dim in dim_map:
+                        resolved.append(dim_map[dim])
+                    elif idx == 0 and batch_size is not None:
+                        resolved.append(batch_size)
+                    else:
+                        raise ValueError(
+                            f"Unable to resolve dynamic shape dimension {dim!r} at index {idx} "
+                            f"for output {out_node.name!r} of model {getattr(session, 'model_path', 'unknown')}. "
+                            f"Pass explicit output_shapes or output_tensors."
+                        )
+                out_shape = tuple(resolved)
+            out_t = torch.empty(out_shape, dtype=out_dtype, device=cuda_device)
+
+        results[out_node.name] = out_t
+        binding.bind_output(
+            name=out_node.name,
+            device_type=dev_type,
+            device_id=dev_id,
+            element_type=np_dtype,
+            shape=tuple(out_t.shape),
+            buffer_ptr=out_t.data_ptr(),
+        )
+
+    ort_sess.run_with_iobinding(binding)
+    return results

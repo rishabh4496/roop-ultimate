@@ -12,7 +12,7 @@ readme = "face_engine/README.md"
 requires-python = ">=3.11, <3.13"
 license = { text = "AGPL-3.0-only" }
 dependencies = [
-    "onnxruntime-gpu>=1.19.0,<=1.24.4",
+    "onnxruntime-gpu>=1.19.2",
     # CUDA 12.4+ builds: install from the PyTorch index, e.g.
     #   pip install -r requirements.txt   (carries --extra-index-url)
     "torch>=2.4.0",
