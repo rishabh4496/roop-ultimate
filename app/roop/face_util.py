@@ -1320,13 +1320,26 @@ def _is_face_duplicate(candidate, existing_items, iou_thresh=0.35, min_sep_ratio
         if sep >= min_sep_ratio:
             continue
 
-        # If keypoints exist on both, verify landmark divergence
+        # If keypoints exist on both, verify landmark divergence -- but never
+        # on a MIRRORED fit. The 180-degree pass of the partial-miss rescue
+        # finds an UPRIGHT face on the upside-down copy and, once un-rotated,
+        # its keypoints come back left/right swapped: same face, same box
+        # (IoU 0.68, centres 0.16 apart on the measured frame), keypoints 89px
+        # "apart". Read as landmark divergence, that admitted a second box on
+        # one face; the pair then stamped each other's recognition crop as
+        # shared (0.47, over CONTAM_MAX) and the REAL face was refused as
+        # "crop shared with the face beside it" -- with nobody beside it.
+        # In the pre-pass the extra box also kept a second track alive, which
+        # kept expected_count at 2 and re-ran the rescue every frame.
+        # Measured on Monica Bellucci .mp4 frames 676-728 (2026-09-27).
         e_kps = getattr(item, 'kps', None)
         if c_kps is not None and e_kps is not None:
             try:
                 ka = np.asarray(c_kps, dtype=np.float32)[:, :2]
                 kb = np.asarray(e_kps, dtype=np.float32)[:, :2]
-                if len(ka) == 5 and len(kb) == 5:
+                if (len(ka) == 5 and len(kb) == 5
+                        and not face_contact._fit_reflected(ka)
+                        and not face_contact._fit_reflected(kb)):
                     kps_dist = float(np.mean(np.linalg.norm(ka - kb, axis=1)))
                     if kps_dist >= 0.50 * min_r:
                         continue

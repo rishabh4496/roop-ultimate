@@ -38,15 +38,19 @@ def _src(path):
 class TestBenchPerfEnvMatchesApp(unittest.TestCase):
     RUN = os.path.join(APP, 'run.py')
     BENCH = os.path.join(APP, 'tests', 'compare_enhancers_video.py')
+    # The end-to-end harness. It kept a private perf-only copy after the other
+    # bench moved to apply_env, so it never exported ROOP_ADAFACE and every run
+    # matched identities on w600k while the app used AdaFace (2026-09-27).
+    TWO_FACE = os.path.join(APP, 'tests', 'two_face_video.py')
 
     def test_both_call_the_shared_mapping(self):
-        for path in (self.RUN, self.BENCH):
+        for path in (self.RUN, self.BENCH, self.TWO_FACE):
             src = _src(path)
             self.assertRegex(src, r"from settings import apply_env", os.path.basename(path))
             self.assertRegex(src, r"apply_env\(cfg, os\.environ\)", os.path.basename(path))
 
     def test_no_private_copy_came_back(self):
-        for path in (self.RUN, self.BENCH):
+        for path in (self.RUN, self.BENCH, self.TWO_FACE):
             src = _src(path)
             self.assertNotRegex(src, r"_set\('ROOP_", os.path.basename(path))
             self.assertNotRegex(src, r"for var, key in \(\('ROOP_", os.path.basename(path))

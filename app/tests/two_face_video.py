@@ -65,38 +65,17 @@ def _apply_perf_env():
     except Exception:
         return
 
-    def _set(var, val):
-        # An env var the CALLER already set wins over config.yaml. This used to
-        # overwrite unconditionally, so `--env ROOP_TRT_POOL=1` from
-        # baseline_controlled.py was silently replaced by the config's '2' and
-        # the run reported pool 2 while claiming to test pool 1 -- an isolation
-        # experiment that isolated nothing. Same family as every other control
-        # in this repo that looked wired and was not.
-        if var in os.environ:
-            return
-        if val is None:
-            return
-        s = str(val).strip()
-        if s and s.lower() != 'auto':
-            os.environ[var] = s
-
-    _set('ROOP_TRT_POOL', cfg.get('perf_trt_pool'))
-    _set('ROOP_DETMASK_POOL', cfg.get('perf_detmask_pool'))
-    _set('ROOP_DETECTOR_POOL', cfg.get('perf_detector_pool'))
-    _set('ROOP_EXPR_POOL', cfg.get('perf_expr_pool'))
-    _set('ROOP_ENCODER_PRESET', cfg.get('perf_encoder_preset'))
-    for var, key in (('ROOP_PROFILE', 'perf_profile'), ('ROOP_BATCH_SWAP', 'perf_batch_swap'),
-                     ('ROOP_NVDEC', 'perf_nvdec')):
-        v = str(cfg.get(key, 'auto')).strip().lower()
-        if v == 'on' or (v == 'auto' and var == 'ROOP_BATCH_SWAP'):
-            os.environ[var] = '1'
-            if var == 'ROOP_BATCH_SWAP':
-                os.environ['ROOP_BATCH_SWAP_XFRAME'] = '1'
-        elif v == 'off':
-            os.environ[var] = '0'
-            if var == 'ROOP_BATCH_SWAP':
-                os.environ['ROOP_BATCH_SWAP_XFRAME'] = '0'
-
+    # The one mapping the app uses (settings.ENV_SETTINGS via settings.apply_env)
+    # -- the same call run.py makes. This used to be a private copy of the perf
+    # keys only, so the RECOGNIZER never reached this bench: config.yaml's
+    # `recognizer: adaface` sets ROOP_ADAFACE=1 in the app, and every run of
+    # this harness matched identities on w600k instead, with its own gate
+    # scale. Found 2026-09-27 on the Monica/harjot run, where the track table
+    # printed "gate 0.75" (w600k) against an app that gates at AdaFace's 0.5.
+    # An env var the caller already set still wins (apply_env's contract), so
+    # `--env ROOP_TRT_POOL=1` from baseline_controlled.py keeps working.
+    from settings import apply_env
+    apply_env(cfg, os.environ)
 
 _apply_perf_env()
 
@@ -873,7 +852,18 @@ def grade(plate, swapped, means, targets=None, groups=None):
                 and bestc < GRADE_CONTAM_MAX):
             ident = [cos(best.embedding, m) if m is not None else float("nan")
                      for m in means]
+        # Plate face -> each captured person's nearest reference, raw. With a
+        # single captured person `plate_person` has no second group to be
+        # "clearly nearer" than, so it names EVERY face -- bystanders included --
+        # as person 0. This column lets a one-faceset run tell the target
+        # apart from the people around it.
+        tdist = []
+        if targets is not None and getattr(f, "embedding", None) is not None:
+            for gid in sorted(set(groups)):
+                tdist.append(min(cos(targets[ti].embedding, f.embedding)
+                                 for ti, gg in enumerate(groups) if gg == gid))
         rows.append({"box": (x0, y0, x1, y1), "touched": d, "ident": ident,
+                     "tdist": tdist,
                      "who": who[fi] if who else None,
                      "contam": bestc if best is not None else float("nan")})
     return rows
@@ -1302,6 +1292,7 @@ def main():
                 "why": reason(r["box"]),
                 "own": round(own, 4) if own == own else "",
                 "other": round(other, 4) if other == other else "",
+                "d_p0": round(r["tdist"][0], 4) if r.get("tdist") else "",
             })
 
     csv_path = os.path.join(outdir, "rows.csv")

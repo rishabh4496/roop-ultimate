@@ -1572,9 +1572,41 @@ class TrackingMixin:
 
         person_assigned_frames = {g: set() for g in persons}
         person_assigned_spans = {g: [] for g in persons}
-        # Distance of the closest track this person accepted. candidates is sorted
-        # ascending, so the first acceptance is that person's best evidence.
+        # Distance of the closest track this person accepted, PER SHOT:
+        # {(group, shot index): distance}. candidates is sorted ascending, so
+        # the first acceptance in a shot is that person's best evidence there.
+        #
+        # Per shot, not per clip. The margin below exists for a bystander's
+        # fragment in a stretch where the target is off screen, measured on
+        # single-shot footage, where every one of the target's tracks is filmed
+        # the same way as its anchor. Across a CUT that stops being true: the
+        # anchor is whichever shot matches the captured still best -- a clean
+        # frontal close-up -- and no crowd, profile or small-face shot of the
+        # same person can come within 0.10 (AdaFace) of it. Measured on Monica
+        # Bellucci .mp4 (single person, AdaFace, 135 cuts): 13 tracks refused
+        # by the margin, every one of them the target at 0.27-0.44 against a
+        # 0.50 gate, while the nearest bystander tracks sat at 0.53-0.60 and
+        # the rest at 0.79-1.03. An unbound track loses identity locking, so
+        # every frame where a neighbour touched her face was refused as
+        # "crop shared" (no binding to fall back on) and every hard pose fell
+        # to the tighter per-frame gate -- the reported "no swap when two
+        # faces are close" and the on/off flicker, on the same frames.
+        # Within a shot the margin applies exactly as before; a track in a shot
+        # this person has no accepted track in is held to the absolute gate,
+        # the same bar the per-frame matcher applies to its every frame.
         person_anchor = {}
+        _cut_list = sorted(int(c) for c in (getattr(self, '_shot_boundaries', None) or ()))
+
+        def _shots_of(t, t_frames):
+            import bisect
+            if not _cut_list:
+                return {0}
+            if t_frames:
+                return {bisect.bisect_right(_cut_list, int(f)) for f in t_frames}
+            lo = int(t.get('first_seen', t.get('last_seen', 0)))
+            hi = int(t.get('last_seen', lo))
+            return set(range(bisect.bisect_right(_cut_list, lo),
+                             bisect.bisect_right(_cut_list, hi) + 1))
         # The first (closest) track each person accepted — the one the second
         # pass below compares leftovers against.
         person_owner = {}
@@ -1588,12 +1620,15 @@ class TrackingMixin:
             # comparison of two floats and refuses outright. Never tighter than
             # _TRACK_ASSIGN_FLOOR: a very good anchor must not turn the margin
             # into a stricter gate than anything else applies to this person.
-            if (gate_margin > 0 and g in person_anchor
-                    and d > max(person_anchor[g] + gate_margin,
+            t = track_map[tid]
+            t_shots = _shots_of(t, self._track_frames(t, frames_of))
+            anchors = [person_anchor[(g, sh)] for sh in t_shots
+                       if (g, sh) in person_anchor]
+            if (gate_margin > 0 and anchors
+                    and d > max(min(anchors) + gate_margin,
                                 gate_floor)):
                 refused_margin += 1
                 continue
-            t = track_map[tid]
             # One person can't be in two places at once, so a track that runs
             # CONCURRENTLY with one already given to this person is someone else.
             # But a handoff — the same person's track breaking and restarting over
@@ -1617,7 +1652,8 @@ class TrackingMixin:
             if mapped_src is None or mapped_src == -1:
                 continue
             track_src[tid] = mapped_src
-            person_anchor.setdefault(g, d)
+            for sh in t_shots:
+                person_anchor.setdefault((g, sh), d)
             person_owner.setdefault(g, tid)
             if t_frames is not None:
                 person_assigned_frames[g].update(t_frames)

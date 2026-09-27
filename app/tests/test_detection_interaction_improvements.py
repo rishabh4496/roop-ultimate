@@ -208,6 +208,25 @@ class TestRotatedAndInteractingFaceRescue(unittest.TestCase):
             "Touching face with distinct facial landmarks must not be suppressed"
         )
 
+    def test_is_face_duplicate_rejects_mirrored_fit_of_the_same_face(self):
+        """A 180-degree rescue pass re-finds the upright face with its keypoints
+        left/right swapped. Concentric box + mirrored keypoints is the SAME face,
+        not a second one -- real geometry from Monica Bellucci .mp4 frame 700,
+        where admitting it refused the real face as "crop shared"."""
+        class MockFace:
+            def __init__(self, bbox, kps):
+                self.bbox = np.array(bbox, dtype=np.float32)
+                self.kps = np.array(kps, dtype=np.float32)
+
+        real = MockFace([466, 121, 729, 460],
+                        [[515, 261], [638, 265], [565, 343], [533, 381], [632, 382]])
+        mirrored = MockFace([464, 184, 711, 432],
+                            [[618, 294], [507, 274], [550, 337], [623, 409], [535, 391]])
+        self.assertTrue(_is_face_duplicate(mirrored, [real]))
+        # and the other way round: the real face is not a new face beside a
+        # mirrored one that happened to be found first
+        self.assertTrue(_is_face_duplicate(real, [mirrored]))
+
     def test_rescue_rotated_accumulates_across_different_orientations(self):
         """D1/D2: _rescue_rotated collects faces across orientations (e.g. 1 clockwise, 1 anticlockwise)."""
         class MockFace:

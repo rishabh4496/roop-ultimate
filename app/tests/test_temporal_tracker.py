@@ -188,8 +188,41 @@ class DetectionPolicyTest(unittest.TestCase):
         _step(tracker, 4, [], "full")
         self.assertEqual(tracker.plan(5, (480, 640, 3)).mode, "full")
         _step(tracker, 5, [], "full")
-        self.assertEqual(tracker.plan(6, (480, 640, 3)).mode, "coast")
+        # The track is lost and nothing is live: every frame is a full pass,
+        # never a coast -- a coasted frame is one the face cannot come back on.
+        self.assertEqual(tracker.plan(6, (480, 640, 3)).mode, "full")
         self.assertEqual(tracker.plan(9, (480, 640, 3)).mode, "full")
+
+    def test_only_the_roi_cadence_ever_coasts(self):
+        """A lost bystander must not stop the live face being observed.
+
+        Monica Bellucci .mp4: one track leaving put every face in the shot on
+        coasted frames between 8-frame full passes; the empty updates then
+        marked the live tracks lost too (4915 of 7647 frames coasted at ROI
+        cadence 1, 57% of swaps on interpolated landmarks)."""
+        tracker = TemporalFaceTracker(full_interval=8, max_misses=3, reid_age=45)
+        planned = []
+        for frame in range(40):
+            mode = tracker.plan(frame, (480, 640, 3)).mode
+            planned.append(mode)
+            # the selected face stays in shot; a bystander leaves at frame 5
+            observed = [_face(120 + frame, identity=0)]
+            if frame < 5:
+                observed.append(_face(420, identity=1))
+            _step(tracker, frame,
+                  observed if mode in ("full", "roi", "roi_fallback_full") else [],
+                  mode)
+        self.assertNotIn("coast", planned)
+        live = [t for t in tracker.tracks if t.status != "lost"]
+        self.assertEqual([t.track_id for t in live], [0])
+
+    def test_no_face_in_shot_is_searched_every_frame(self):
+        tracker = TemporalFaceTracker(full_interval=8)
+        modes = []
+        for frame in range(10):
+            modes.append(tracker.plan(frame, (480, 640, 3)).mode)
+            _step(tracker, frame, [], modes[-1])
+        self.assertEqual(modes, ["full"] * 10)
 
     def test_roi_policy_reduces_full_frame_calls_without_disabling_recovery(self):
         tracker = TemporalFaceTracker(full_interval=8)

@@ -5,6 +5,41 @@ full session record is [`SESSION_LOGS.md`](SESSION_LOGS.md); the running enginee
 state lives outside the repository (`RECODE_STATUS.md` in the operator's `roop-keep`
 folder). Entries before 2026-09-21 were moved here from the README on 2026-09-22.
 
+## 2026-09-27
+
+- **Flicker and "no swap when two faces are close": three causes, all fixed.** Measured on
+  a 7647-frame, 135-cut, crowded single-person clip (Harjot on Monica Bellucci, live 4070
+  config, AdaFace):
+  1. `temporal_tracker.py`: the pre-pass COASTED (no detection, landmarks interpolated
+     later) whenever any track was lost, e.g. a bystander walking out. That was 64% of
+     frames, so most swaps were registered on guessed landmarks. Only the opt-in ROI cadence
+     coasts now.
+  2. `face_util._is_face_duplicate`: the 180° partial-miss rescue re-found the target with
+     mirrored keypoints. Landmark divergence read that as a second person. The two boxes then
+     marked each other's crop "shared", and the real face was refused with nobody beside it.
+     Mirrored fits no longer count as divergence.
+  3. `procmgr_tracking`: the track-assignment margin anchored on the person's best track in
+     the whole clip, a frontal close-up in another shot. It refused 13 of the target's own
+     crowd, profile and small-face tracks. The margin is anchored per shot now.
+
+  | | before | after |
+  |---|---:|---:|
+  | target frames swapped | 87.8% | 96.0% |
+  | on/off transitions | 114 | 49 |
+  | refused "crop shared" | 195 | 21 |
+  | swaps on interpolated landmarks | 3,119 | 50 |
+  | end-to-end fps | 12.10 | 11.26 |
+
+  The regression benchmark's golden-SSIM gate reads 0.9691 < 0.9700 with fix 1 alone. Fixes
+  2 and 3 are bit-identical to HEAD there. On the synthetic clip, fix 1's only schedule
+  change is that frames 1-3 are detected instead of coasted. The render changes by a
+  constant ~1.4/255 inside the face from then on, with no colour or position shift. Its
+  identity to the source is unchanged: 0.8174 vs 0.8168, paired +0.0006, better on 153 of
+  300 frames. Registration error is identical (0.0240). Both beat the 09-25 golden (0.7883),
+  so the baseline was re-recorded. `two_face_video.py` now applies settings through
+  `apply_env`; its private copy never exported `ROOP_ADAFACE`, so the harness matched on
+  w600k.
+
 ## 2026-09-26
 
 - **Identity Blender: latent blends shipped; three of four attribute dials measured

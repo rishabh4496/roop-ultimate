@@ -228,6 +228,72 @@ class InheritingAcrossACut(unittest.TestCase):
         self.assertEqual(inherited, {})
 
 
+class TheMarginIsAnchoredPerShot(unittest.TestCase):
+    """The anchor margin compares a person's later tracks with their BEST one.
+
+    Across a cut that best track is a different camera set-up -- on Monica
+    Bellucci .mp4 a frontal close-up at 0.10 -- and the same person's crowd /
+    profile shots (0.27-0.44 against a 0.50 gate) were all refused, which left
+    them unbound: contact frames refused as "crop shared", hard poses dropped to
+    the per-frame gate. The margin now anchors per shot. Within one shot it is
+    exactly what it was, which is the case it was built for.
+    """
+    CLOSEUP = _at(PERSON_A, 0.10, 20)
+    CROWD = _at(PERSON_A, 0.55, 21)     # under the 0.75 gate, over anchor+margin
+
+    def _assign_cut(self, cuts, tracks, per_frame):
+        mgr = _Mgr([PERSON_A], (0,))
+        mgr._shot_boundaries = set(cuts)
+        return mgr._assign_track_sources(tracks, per_frame)
+
+    def _clip(self):
+        tracks = [_track(0, self.CLOSEUP, 0, 99), _track(1, self.CROWD, 100, 199)]
+        return tracks, _shots((0, 0, 99), (1, 100, 199))
+
+    def test_fixture_is_the_measured_shape(self):
+        self.assertLess(cd(self.CROWD, PERSON_A), 0.75)
+        self.assertGreater(cd(self.CROWD, PERSON_A),
+                           max(cd(self.CLOSEUP, PERSON_A) + 0.15, 0.45))
+
+    def test_the_same_person_in_another_shot_is_bound(self):
+        src, _m, refused, _i = self._assign_cut({100}, *self._clip())
+        self.assertEqual(src[0], 0)
+        self.assertEqual(src[1], 0)
+        self.assertEqual(refused, 0)
+
+    def test_inside_one_shot_the_margin_still_refuses(self):
+        """No cut between them: the margin's own case, unchanged."""
+        src, _m, refused, _i = self._assign_cut({200}, *self._clip())
+        self.assertEqual(src[0], 0)
+        self.assertIsNone(src[1])
+        self.assertEqual(refused, 1)
+
+    def test_no_cuts_recorded_is_the_old_behaviour(self):
+        src, _m, refused, _i = self._assign_cut((), *self._clip())
+        self.assertIsNone(src[1])
+        self.assertEqual(refused, 1)
+
+    def test_a_track_spanning_the_anchor_shot_is_held_to_it(self):
+        """Re-ID joins one face across cuts, so a track can sit in several
+        shots. If ANY of them already has an anchor, the margin applies."""
+        tracks = [_track(0, self.CLOSEUP, 0, 99), _track(1, self.CROWD, 50, 199)]
+        per_frame = _shots((0, 0, 49), (1, 100, 199))
+        _merge(per_frame, _shots((1, 60, 70)))
+        src, _m, refused, _i = self._assign_cut({100}, tracks, per_frame)
+        self.assertIsNone(src[1])
+        self.assertEqual(refused, 1)
+
+    def test_over_the_gate_in_another_shot_is_still_refused(self):
+        """The single-person guard above, with a real cut: a disjoint track is
+        never bound on anything looser than the absolute gate."""
+        far = _at(PERSON_A, 0.80, 22)
+        tracks = [_track(0, self.CLOSEUP, 0, 99), _track(1, far, 100, 199)]
+        src, _m, _r, inherited = self._assign_cut(
+            {100}, tracks, _shots((0, 0, 99), (1, 100, 199)))
+        self.assertIsNone(src[1])
+        self.assertEqual(inherited, {})
+
+
 class TheOutcomeGuardsShapeTerm(unittest.TestCase):
     """Real (plate, result) pairs lifted from the two measured sets.
 

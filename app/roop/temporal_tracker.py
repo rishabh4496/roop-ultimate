@@ -307,27 +307,46 @@ class TemporalFaceTracker:
             self._full_pending_frame = frame
             self._last_requested_frame = frame
 
+        # COASTING IS ONLY EVER THE OPT-IN ROI CADENCE.
+        #
+        # Three other branches used to coast -- "initial_detection_pending",
+        # "lost_recovery_pending" and "no_live_tracks" -- and on footage where
+        # people come and go they took over the clip: one bystander walking
+        # out left a LOST track retained for reid_age frames, during which
+        # every frame between the 8-frame full passes coasted for EVERY face,
+        # the selected one included. A coasted frame feeds the tracker an empty
+        # list, so after max_misses of them the live tracks went lost too and
+        # the recovery wait re-armed itself. Measured on Monica Bellucci .mp4
+        # (7647 frames, 135 cuts, crowds): 1248 full, 1484 ROI, 4915 COAST at
+        # ROI cadence 1 -- 69.5% of faces handed to the swap were gap-filled
+        # and 57% of the swaps were registered on interpolated landmarks,
+        # which on a moving head is the every-few-frames shift users see as
+        # flicker. A frame nobody detected on is also a frame a face that just
+        # entered cannot be swapped on (nothing to interpolate from).
+        #
+        # A frame planned while an earlier full pass is still in the detector
+        # pool is NOT covered by that pass either -- each frame needs its own
+        # observation -- so "pending" is no reason to skip one. Detection cost
+        # has never moved the render clock here (det_size 640->512 and the ROI
+        # cadence were both NEUTRAL end to end).
         if force_full:
             plan = DetectionPlan("full", reason="scene_cut",
                                  track_ids=tuple(t.track_id for t in live))
             _reserve_full(frame_index)
-        elif not self.tracks:
-            if self._last_full_frame < 0 or frame_index - self._last_full_frame >= self.full_interval:
-                plan = DetectionPlan("full", reason="initialization")
-                # Reserve the seed/recovery while detector-pool futures are in
-                # flight; pending frames coast until the result arrives.
-                _reserve_full(frame_index)
-            else:
-                plan = DetectionPlan("coast", reason="initial_detection_pending")
-        elif any(t.status == "lost" for t in self.tracks):
-            if (self._full_pending_frame is None
-                    and not (self._lost_recovery_wait
-                             and frame_index - self._last_full_frame < self.full_interval)):
-                plan = DetectionPlan("full", reason="track_lost",
-                                     track_ids=tuple(t.track_id for t in live))
-                _reserve_full(frame_index)
-            else:
-                plan = DetectionPlan("coast", reason="lost_recovery_pending")
+        elif not live:
+            plan = DetectionPlan(
+                "full",
+                reason=("initialization" if not self.tracks else "no_live_tracks"))
+            _reserve_full(frame_index)
+        elif (any(t.status == "lost" for t in self.tracks)
+              and self._full_pending_frame is None
+              and not (self._lost_recovery_wait
+                       and frame_index - self._last_full_frame < self.full_interval)):
+            # A lost track is looked for across the whole frame at the normal
+            # recovery cadence; the live ones are observed by ROI in between.
+            plan = DetectionPlan("full", reason="track_lost",
+                                 track_ids=tuple(t.track_id for t in live))
+            _reserve_full(frame_index)
         elif frame_index - self._last_full_frame >= self.full_interval:
             plan = DetectionPlan("full", reason="periodic_recovery",
                                  track_ids=tuple(t.track_id for t in live))
@@ -336,8 +355,6 @@ class TemporalFaceTracker:
             # without this reservation each pending frame sees the old
             # last-full value and schedules the same expensive full pass again.
             _reserve_full(frame_index)
-        elif not live:
-            plan = DetectionPlan("coast", reason="no_live_tracks")
         elif frame_index - self._last_requested_frame < self.roi_interval:
             plan = DetectionPlan("coast", reason="roi_cadence",
                                  track_ids=tuple(t.track_id for t in live))
