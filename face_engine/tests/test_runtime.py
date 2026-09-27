@@ -98,12 +98,15 @@ def test_cuda_session_initializes_and_allocates_device_buffers(
         options = handle.session.get_provider_options()[Provider.CUDA.value]
         assert options["arena_extend_strategy"] == "kNextPowerOfTwo"
         assert options["cudnn_conv_algo_search"] == "DEFAULT"
+        # The limit is derived from the VRAM free when the session was BUILT;
+        # compare with what the session recorded, not a fresh query (other
+        # processes allocate in between).
         limit = int(options["gpu_mem_limit"])
-        derived = engine.cuda_mem_limit()
-        assert derived is not None and limit == derived
+        assert limit == handle.provider_options[Provider.CUDA.value]["gpu_mem_limit"]
         from face_engine.core.execution import query_vram
         vram = query_vram(strict.device_id)
-        assert vram is not None and 0 < limit <= vram[1]
+        assert vram is not None
+        assert 0 < limit <= int(vram[1] * strict.cuda.vram_fraction)
 
         x = np.random.default_rng(0).standard_normal((4, 3, 16, 16)).astype(np.float32)
         x_dev = engine.allocate(handle, x)
@@ -317,3 +320,36 @@ def test_registry_ensure_verifies_a_local_file(tmp_path: Path) -> None:
     assert registry.ensure("local", show_progress=False) == tmp_path / "local.onnx"
     (tmp_path / "local.onnx").write_bytes(payload[:-1] + b"\xff")
     assert not registry.verify("local")
+
+
+
+def test_sidecar_trusts_only_files_older_than_their_hash(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    good, bad = b"a" * 4096, b"b" * 4096
+    digest = hashlib.sha256(good).hexdigest()
+    path = tmp_path / "m.onnx"
+    calls: List[Path] = []
+    real = downloads.sha256_file
+    monkeypatch.setattr(downloads, "sha256_file", lambda p, *a: calls.append(p) or real(p, *a))
+
+    # A freshly written file is re-hashed every time: NTFS keeps mtime_ns
+    # across a fast same-size rewrite, so (size, mtime) cannot tell them apart.
+    # Force the collision instead of hoping for one: restore the fresh mtime.
+    path.write_bytes(good)
+    fresh = path.stat().st_mtime_ns
+    assert verify_file(path, digest, len(good))
+    path.write_bytes(bad)
+    os.utime(path, ns=(fresh, fresh))
+    assert not verify_file(path, digest, len(good))
+    path.write_bytes(good)
+    os.utime(path, ns=(fresh, fresh))
+    assert verify_file(path, digest, len(good))
+    assert len(calls) == 3
+
+    # A file last modified well before it was hashed is trusted from the sidecar.
+    old = path.stat().st_mtime_ns - 10_000_000_000
+    os.utime(path, ns=(old, old))
+    assert verify_file(path, digest, len(good))  # hashes, writes a trusted sidecar
+    calls.clear()
+    assert verify_file(path, digest, len(good))
+    assert calls == []

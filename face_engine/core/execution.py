@@ -113,6 +113,10 @@ class ManagedSession:
         granted: ``session.get_providers()`` at creation.
         wanted: The first provider of the full, filtered preference chain —
             what the caller would have got had nothing failed.
+        provider_options: The options each provider in ``requested`` was
+            built with (e.g. the CUDA ``gpu_mem_limit`` derived from the VRAM
+            free at that moment — it differs from a later
+            :meth:`ExecutionEngine.cuda_mem_limit` call).
     """
 
     session: ort.InferenceSession
@@ -122,6 +126,7 @@ class ManagedSession:
     wanted: str
     input_names: tuple[str, ...] = field(default=())
     output_names: tuple[str, ...] = field(default=())
+    provider_options: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     @property
     def primary_provider(self) -> str:
@@ -384,7 +389,8 @@ class ExecutionEngine:
                 session=session, model_path=path, requested=tuple(names), granted=granted,
                 wanted=wanted,
                 input_names=tuple(i.name for i in session.get_inputs()),
-                output_names=tuple(o.name for o in session.get_outputs()))
+                output_names=tuple(o.name for o in session.get_outputs()),
+                provider_options={name: dict(opts) for name, opts in attempt})
             if handle.fell_back:
                 message = (f"{path.name}: wanted {wanted}, onnxruntime granted "
                            f"{handle.primary_provider} (providers {list(granted)})")

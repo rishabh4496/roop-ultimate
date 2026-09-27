@@ -4,8 +4,13 @@ A file is only ever moved to its final name after its size and SHA256 match
 the declaration; partial transfers live beside it as ``<name>.part`` and are
 resumed with an HTTP ``Range`` request. Hashing a multi-hundred-MB model on
 every start is slow, so a verified hash is remembered in a
-``<name>.sha256.json`` sidecar keyed by ``(size, mtime_ns)`` — touching or
-replacing the file invalidates it.
+``<name>.sha256.json`` sidecar keyed by ``(size, mtime_ns)``.
+
+Size + mtime alone is not enough: on NTFS a same-size rewrite within one
+timestamp tick keeps ``mtime_ns`` (measured 2026-09-27: 1822 of 2000 rapid
+rewrites). So, as git does for its index, a sidecar is trusted only when the
+file had last been modified at least ``RACY_WINDOW_NS`` BEFORE it was hashed;
+a file hashed while still "fresh" is re-hashed on the next check.
 """
 from __future__ import annotations
 
@@ -26,6 +31,7 @@ CHUNK_SIZE = 1024 * 1024
 DEFAULT_TIMEOUT = (10.0, 60.0)  # connect, read
 DEFAULT_RETRIES = 4  # attempts per URL; a .part file resumes between them
 BACKOFF_SECONDS = 1.5
+RACY_WINDOW_NS = 2_000_000_000
 
 
 class DownloadError(RuntimeError):
@@ -59,7 +65,8 @@ def verify_file(path: Path, sha256: str | None, size: int | None = None,
     """True when ``path`` exists and matches ``size`` and ``sha256``.
 
     A None ``sha256`` checks existence and size only. The sidecar is trusted
-    only for the exact size/mtime it was written for.
+    only for the exact size/mtime it was written for, and only when that
+    mtime predates the hashing by ``RACY_WINDOW_NS``.
     """
     if not path.is_file():
         return False
@@ -72,16 +79,20 @@ def verify_file(path: Path, sha256: str | None, size: int | None = None,
     if use_sidecar and sidecar.is_file():
         try:
             record = json.loads(sidecar.read_text(encoding="utf-8"))
-            if record.get("sha256") == expected and record.get("stamp") == _stamp(path):
+            stamp = _stamp(path)
+            if (record.get("sha256") == expected and record.get("stamp") == stamp
+                    and stamp["mtime_ns"] <= int(record.get("verified_ns", 0)) - RACY_WINDOW_NS):
                 return True
         except (OSError, ValueError):
             pass
+    verified_ns = time.time_ns()
     actual = sha256_file(path)
     if actual != expected:
         return False
     if use_sidecar:
         try:
-            sidecar.write_text(json.dumps({"sha256": actual, "stamp": _stamp(path)}),
+            sidecar.write_text(json.dumps({"sha256": actual, "stamp": _stamp(path),
+                                           "verified_ns": verified_ns}),
                                encoding="utf-8")
         except OSError:
             pass
