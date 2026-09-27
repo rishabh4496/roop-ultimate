@@ -374,6 +374,10 @@ class PipelineError(RuntimeError):
     """A pipeline stage failed; the message carries the child's traceback."""
 
 
+class PipelineCancelled(PipelineError):
+    """``run()`` was cancelled through its ``cancel`` event."""
+
+
 def _patient(call: Callable[[float], Any], timeout: float) -> Any:
     """Retry a timed wait until it succeeds or the ring aborts.
 
@@ -458,10 +462,14 @@ class FramePipeline:
         self.timeout = timeout
         self.stall_timeout = stall_timeout
 
-    def run(self, sink: Callable[[int, np.ndarray], None]) -> int:
+    def run(self, sink: Callable[[int, np.ndarray], None],
+            cancel: threading.Event | None = None) -> int:
         """Run to completion, calling ``sink(seq, frame)`` in sequence order.
 
         ``frame`` is a view valid only during the call. Returns frames delivered.
+        Setting ``cancel`` stops within one ``timeout``: the rings are aborted,
+        the children joined (terminated if they do not exit), and every segment
+        released, then :class:`PipelineCancelled` is raised.
 
         Raises:
             PipelineError: a stage raised, died, or made no progress for
@@ -485,6 +493,8 @@ class FramePipeline:
             workers_done = False
             last_progress = time.monotonic()
             while True:
+                if cancel is not None and cancel.is_set():
+                    raise PipelineCancelled(f"cancelled after {delivered} frames")
                 self._raise_child_errors(errors, raw, out)
                 dead = [p for p in procs if p.exitcode not in (None, 0)]
                 if dead:

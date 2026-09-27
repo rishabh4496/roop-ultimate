@@ -22,7 +22,7 @@ import cv2
 import numpy as np
 import pytest
 
-from face_engine.core.config import EngineConfig
+from face_engine.core.config import EngineConfig, Provider
 from face_engine.core.execution import ExecutionEngine
 from face_engine.core.registry import ModelUnavailableError
 from face_engine.models.zoo import build_default_registry
@@ -307,7 +307,10 @@ def stack():  # type: ignore[no-untyped-def]
     from face_engine.pipeline.detector import SCRFDDetector
 
     registry = build_default_registry()
-    engine = ExecutionEngine(EngineConfig())
+    # GPU required, TensorRT preferred: a TensorRT engine build can fail under memory
+    # pressure (seen in the full suite) and CUDA is a fine fallback; CPU is not offered,
+    # so a CPU fallback cannot happen silently (it crawled for an hour once).
+    engine = ExecutionEngine(EngineConfig(providers=[Provider.TENSORRT, Provider.CUDA]))
     image = cv2.imread(str(Path(insightface.__file__).parent / "data" / "images" / "t1.jpg"))
     detector = SCRFDDetector(engine, registry.ensure("scrfd_10g_bnkps", show_progress=False))
     encoder = IdentityEncoder(engine, registry.ensure("arcface_w600k_r50", show_progress=False))

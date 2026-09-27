@@ -23,6 +23,11 @@ under `app/`.
 | `media/capturer.py` | `VideoSource`: ffprobe metadata, frame-exact PyAV decode, keyframe segments, lossless demux |
 | `media/ipc_pool.py` | `SharedMemoryRingBuffer`, `FramePipeline`: zero-copy ingest -> N workers -> ordered assembly |
 | `media/ffmpeg_pipe.py` | `FFmpegWriter` (H.264/AAC faststart MP4), output inspection, HTTP 206 verification |
+| `server/api.py` | FastAPI app: project, detection, pipeline start/stop, outputs (206 + CORS), UI hosting |
+| `server/ws.py` | `/ws/telemetry` (fps, latency, ETA, GPU temp/VRAM via NVML) and `/api/preview/frame` |
+| `server/processing.py` | `RenderParams`, `FrameProcessor` (shared by preview and render workers) |
+| `server/state.py` | Project state, people clustering, background render jobs |
+| `../web_ui/` | React 18 + TypeScript + Vite + Tailwind control UI |
 
 ## Usage
 
@@ -177,6 +182,41 @@ Measured decisions (2026-09-27; synthetic clips with known properties):
   206/416. `verify_http_range_streaming` checks ranges, `moov` in the first
   64 KB, decoding over HTTP, and (files >= 8 MB) that a client seek issues a
   mid-file range - ffmpeg reads smaller files straight through.
+
+## Stage 5: server and web UI
+
+```
+cd web_ui && npm install && npm run build      # once, and after UI changes
+python -m face_engine.server                   # http://127.0.0.1:8765 (serves the UI)
+cd web_ui && npm run dev                       # UI development on :5173, proxied to :8765
+```
+
+Flow: load 1-8 source face images and a target image/video -> the server
+detects faces on 8 sampled frames and groups them into people -> assign a
+source to any person (no assignment = every face gets the first source) ->
+preview any frame -> render. Renders run in worker processes through
+`FramePipeline` + `FFmpegWriter`; Stop aborts the rings, terminates the
+workers, frees shared memory and deletes the partial file.
+
+Checked:
+
+- 10 backend tests through the HTTP API with real models: upload validation
+  (type, empty, no face, unreadable video), people grouping (6 people on the
+  sample photo), preview, a render where ONLY the assigned person becomes the
+  source (ArcFace 0.70 vs <0.1 for the others; unassigned faces keep > 0.8
+  similarity to themselves), 206 + CORS on outputs, telemetry over WebSocket,
+  stop (no shared memory left, no partial file, immediately reusable), image
+  targets.
+- 18 UI unit tests (Vitest + Testing Library) and a strict `tsc` build.
+- An end-to-end test that drives the production bundle in headless Chrome
+  against the real server: load -> detect -> assign -> preview -> render ->
+  the output plays in the comparison canvas -> start + stop; any console
+  error fails it (`face_engine/tests/test_web_ui_e2e.py`, screenshots in
+  `web_ui/e2e-shots/`).
+
+Limits: identity matching is per frame with no tracking (a sharply turned head
+can miss for a few frames); one project and one render at a time per server;
+the server binds 127.0.0.1 and has no authentication.
 
 ## Models without a source
 

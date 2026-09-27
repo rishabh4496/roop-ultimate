@@ -74,7 +74,7 @@ def registry():  # type: ignore[no-untyped-def]
 
 @pytest.fixture(scope="module")
 def engine() -> ExecutionEngine:
-    eng = ExecutionEngine(EngineConfig(providers=[Provider.CUDA, Provider.CPU]))
+    eng = ExecutionEngine(EngineConfig(providers=[Provider.CUDA, Provider.CPU], strict=True))
     yield eng
     eng.close()
 
