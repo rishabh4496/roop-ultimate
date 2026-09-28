@@ -108,7 +108,17 @@ SWAP_MODELS: dict[str, SwapModelSpec] = {
 #   inswapper_128       fp32 0.8406   fp16 0.8406 (0.23 lv), 16.0 -> 5.3 ms/face -> fp16
 #   inswapper_128_fp16  fp32 engine 0.8407, fp16 engine 0.8086 (p5 0.38)     -> fp32
 # hyperswap_1b/1c were not measured; they keep fp32.
+#
+# "auto" (HyperSwap): the AOT FP16 engine from tools/compile_engines.py when one
+# exists, else fp32. Measured 2026-09-28: ONNX Runtime's TensorRT "fp32"
+# HyperSwap engine is NOT numerically FP32 (1.55e-4 of range vs CUDA FP32; a
+# true FP32 engine is 9.6e-5, the pinned FP16 engine 1.67e-4) and runs at FP16
+# speed (b4 15.7 ms; true FP32 27.7 ms). The pinned FP16 AOT engine matches it
+# in accuracy, speed (214.9 vs 215.3 faces/s batched) and identity on 222
+# real-clip swaps (0.5874 vs 0.5875), and starts without an engine build. An
+# explicit precision="fp32" gets a true FP32 engine (exact, ~1.6x slower batched).
 SWAP_PRECISION: dict[str, str] = {name: "fp32" for name in SWAP_MODELS}
+SWAP_PRECISION.update({f"hyperswap_{v}_256": "auto" for v in ("1a", "1b", "1c")})
 SWAP_PRECISION["inswapper_128"] = "fp16"
 
 
@@ -502,7 +512,7 @@ class BatchedFaceSwapper:
     * **Zero copy**: inputs and outputs are bound with ``run_binding``.
 
     Args:
-        precision: ``"fp32"`` or ``"fp16"``; default :data:`SWAP_PRECISION`.
+        precision: ``"fp32"``, ``"fp16"`` or ``"auto"``; default :data:`SWAP_PRECISION`.
         batching: False = the model's original graph, one face (tile) per
             call: the single-face baseline the benchmark compares against.
     """
@@ -522,22 +532,41 @@ class BatchedFaceSwapper:
         self.engine = engine
         self.source_path = Path(model_path)
         self.precision = precision or SWAP_PRECISION.get(model, "fp32")
+        if self.precision == "auto":
+            from face_engine.core.trt_compiler import aot_available
+
+            self.precision = ("fp16" if aot_available(self.source_path, "fp16", engine.config)
+                              else "fp32")
         if self.precision not in ("fp32", "fp16"):
-            raise ValueError("precision must be 'fp32' or 'fp16'")
+            raise ValueError("precision must be 'fp32', 'fp16' or 'auto'")
         self.max_batch = max_batch
-        # FP16 + a rewritten InstanceNorm (HyperSwap) = the original graph,
-        # one face per call; see batched_model.
-        batched = (batched_model(self.source_path, fp16=self.precision == "fp16")
-                   if batching else None)
-        self.batched = batched is not None
-        self.model_path = batched or self.source_path
+        # A compiled engine (tools/compile_engines.py) for this model, precision
+        # and GPU replaces the ONNX Runtime session: no engine build at start-up,
+        # and FP16 HyperSwap can batch (its InstanceNorm layers are pinned to
+        # FP32 in the engine, which ORT's TensorRT EP cannot do).
+        from face_engine.core.trt_compiler import aot_engine
+
+        self.aot = aot_engine(self.source_path, self.precision, engine.config) if batching else None
+        if self.aot is not None:
+            self.batched = self.aot.max_batch > 1
+            self.max_batch = min(max_batch, self.aot.max_batch)
+            self.model_path = self.source_path
+        else:
+            # FP16 + a rewritten InstanceNorm (HyperSwap) = the original graph,
+            # one face per call; see batched_model.
+            batched = (batched_model(self.source_path, fp16=self.precision == "fp16")
+                       if batching else None)
+            self.batched = batched is not None
+            self.model_path = batched or self.source_path
         self._host = FaceSwapper(engine, model, self.source_path)  # emap, spec helpers
         self._source: Any = None
         self._constants: dict[str, Any] = {}
 
     # ------------------------------------------------------------------ session
     @property
-    def session(self) -> ManagedSession:
+    def session(self) -> Any:
+        if self.aot is not None:
+            return self.aot
         from face_engine.utils.onnx_batch import batch_shape_profile
 
         profile = (batch_shape_profile(self.model_path, max_batch=self.max_batch)

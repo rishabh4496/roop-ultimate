@@ -10,6 +10,7 @@ under `app/`.
 |---|---|
 | `core/config.py` | `EngineConfig` (pydantic): providers, TensorRT/CUDA options, cache and model dirs |
 | `core/execution.py` | `ExecutionEngine`: TensorRT → CUDA → CPU sessions, grant check, session cache, device buffers, VRAM cleanup |
+| `core/trt_compiler.py` | AOT TensorRT engines: build (profiles, FP32 pinning, timing cache), verify, lookup, `TensorRTEngine` runner (`tools/compile_engines.py` is the CLI) |
 | `core/registry.py` | `ModelSpec` / `ModelRegistry`: declarative specs, verify, fetch |
 | `models/zoo.py` | `MODEL_ZOO`: the 15 declared models with URLs, SHA256 and sizes |
 | `utils/downloads.py` | resumable, retried, hash-verified downloads |
@@ -571,6 +572,89 @@ Limits:
 - Two segment workers with the full Cinema model set exhausted this machine's
   32 GB of host RAM (2026-09-28); keep `workers > 1` for machines with more
   RAM or GPUs.
+
+## Stage 6: ahead-of-time TensorRT engines
+
+```
+python tools/compile_engines.py --precision fp16 --models all        # swappers, enhancers, maskers
+python tools/compile_engines.py --precision fp32 --models enhancer   # GPEN runs FP32 by default
+python tools/compile_engines.py --models swapper --workspace-size 1.5GB --device-id 0 --force
+```
+
+For each model the tool:
+
+1. fetches or verifies the ONNX file;
+2. builds a serialized TensorRT 10 plan for this GPU's compute capability
+   (read from NVML, e.g. SM 8.9 for the RTX 4070), with an explicit
+   optimisation profile per input;
+3. reuses and refreshes the shared `timing_cache.bin`;
+4. reloads the engine and **verifies** it:
+   - **fidelity**: its outputs on real face crops against ONNX Runtime FP32
+     on the original model;
+   - **latency**: HyperSwap-256 must be under 15 ms at batch 1.
+
+A failing engine is deleted. It writes
+`.cache/trt_engines/{model}_sm{SM}_{precision}_b{max}.engine` plus a `.json`
+sidecar. `BatchedFaceSwapper`, `BatchedFaceEnhancer` and `GPUMasker` load a
+matching engine instead of building one at run time. The sidecar has to match
+this GPU, this TensorRT version and the unchanged ONNX file, and the user has
+to have chosen the TensorRT provider. `FACE_ENGINE_AOT=0` turns engines off.
+
+Profiles use the graphs' real inputs. The brief's names and shapes did not
+match the models:
+
+| model | inputs | batch min/opt/max |
+|---|---|---|
+| hyperswap_1a/1b/1c_256 | `target` (B,3,256,256), `source` (B,512) (not `source_emb`) | 1 / 2 / 8 |
+| inswapper_128 | `target` (B,3,128,128), `source` (B,512) | 1 / 2 / 8 |
+| xseg_3 | `input` (B,256,256,3), **NHWC** | 1 / 2 / 8 |
+| bisenet_resnet34 | `input` (B,3,512,512) | 1 / 2 / 4 |
+| gpen_bfr_512 / 1024 | `input` (1,3,512,512) / (1,3,1024,1024) | **1 / 1 / 1** (StyleGAN2 cannot batch) |
+
+Measured (2026-09-28, RTX 4070, TensorRT 10.9):
+
+| engine | fidelity (mean, share of range) | batch 1 | opt batch | result |
+|---|---:|---:|---:|---|
+| hyperswap_1a_256 FP16 | 1.7e-4 | 5.33 ms | b2 7.69 ms | ok |
+| hyperswap_1a_256 FP32 | 1.0e-4 | 9.67 ms | b2 15.05 ms | ok |
+| inswapper_128 FP16 | 1.1e-3 | 5.58 ms | b2 9.71 ms | ok |
+| xseg_3 FP16 | 1.9e-3 | 2.52 ms | b2 2.70 ms | ok |
+| bisenet_resnet34 FP16 | 2.1e-4 | 1.57 ms | b2 2.01 ms | ok |
+| gpen_bfr_512 FP32 / FP16 | 9.9e-5 / **3.5e-2** | 35.8 / 18.0 ms | | ok / **rejected** |
+| gpen_bfr_1024 FP32 / FP16 | 4.8e-5 / **NaN** | 58.9 / 33.3 ms | | ok / **rejected** |
+
+- **Batched FP16 HyperSwap is correct only with FP32 pinning.** The batched
+  graph's decomposed InstanceNorm layers (272) are pinned to FP32 with
+  `OBEY_PRECISION_CONSTRAINTS`. With the pin, output is 1.7e-4 of range off;
+  without it, the same build is 6.3e-2 off (max 0.89), and the gate rejects
+  it. ONNX Runtime's TensorRT EP cannot pin layers, which is why Stage 3
+  found batched FP16 unusable there. On 222 real-clip swaps the pinned engine
+  keeps identity at 0.5874 against 0.5875 for FP32.
+- **The timing cache pays off.** HyperSwap-1a built in 214 s; 1b and 1c,
+  reusing its tactic timings, built in 8-9 s.
+- **A NaN once passed the gate.** GPEN-1024 in FP16 produces NaN (the
+  collapse Stage 3 documented), and `NaN > gate` is False, so it was marked
+  "ok". The gate is now `not (error <= gate)`
+  (`test_verification_rejects_nan_output`).
+- **ONNX Runtime's TensorRT "FP32" HyperSwap is not FP32.** It sits 1.55e-4
+  of range from CUDA FP32 (true FP32: 9.6e-5; pinned FP16: 1.67e-4) and runs
+  at FP16 speed (batch 4 in 15.7 ms; true FP32 in 27.7 ms). The HyperSwap
+  default precision is therefore `auto`: the pinned FP16 engine when one
+  exists, which matches what ran before in accuracy, identity and batched
+  throughput (214.9 vs 215.3 faces/s), else ONNX Runtime. `precision="fp32"`
+  gets a true FP32 engine, exact but about 1.6x slower batched.
+- **Startup and short jobs** (presets on 1080p `d1.mp4`, one run per arm;
+  ONNX Runtime with its engine cache WARM):
+
+  | preset | first preview (model load), AOT vs ORT | 300-frame job, AOT vs ORT | steady render, AOT vs ORT |
+  |---|---:|---:|---:|
+  | Ultra Fast | **1.1 s** vs 6.8 s | **40.4** vs 19.7 fps | 46.5 vs 42.6 fps |
+  | Balanced | **0.5 s** vs 6.5 s | **34.2** vs 16.9 fps | 38.8 vs 34.6 fps |
+  | Cinema | **0.8 s** vs 13.6 s | 8.0 vs 5.7 fps | 8.2 vs 8.3 fps |
+
+  With a cold ONNX Runtime cache the same first preview took 113-400 s
+  (Stage 5). Steady-state throughput is roughly unchanged (one run each).
+  The gain is start-up.
 
 ## Models without a source
 

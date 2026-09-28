@@ -270,12 +270,20 @@ class BatchedFaceEnhancer:
             raise ValueError("precision must be 'fp32' or 'fp16'")
         self.color = color
         self.max_batch = max_batch
-        # FP16 + a rewritten InstanceNorm (RestoreFormer++) = the original
-        # graph, one face per call; see batched_model.
-        batched = (batched_model(model_path, fp16=self.precision == "fp16")
-                   if batching else None)
-        self.batched = batched is not None
-        self.model_path = batched or Path(model_path)
+        from face_engine.core.trt_compiler import aot_engine
+
+        self.aot = aot_engine(model_path, self.precision, engine.config) if batching else None
+        if self.aot is not None:  # a compiled engine (tools/compile_engines.py)
+            self.batched = self.aot.max_batch > 1
+            self.max_batch = min(max_batch, self.aot.max_batch)
+            self.model_path = Path(model_path)
+        else:
+            # FP16 + a rewritten InstanceNorm (RestoreFormer++) = the original
+            # graph, one face per call; see batched_model.
+            batched = (batched_model(model_path, fp16=self.precision == "fp16")
+                       if batching else None)
+            self.batched = batched is not None
+            self.model_path = batched or Path(model_path)
         self._paste_np = paste_mask(self.spec.size, blur)
         self._region_np = (face_region_mask(self.spec.size) > 0).astype(np.float32)
         self._constants: dict[str, Any] = {}
@@ -285,7 +293,9 @@ class BatchedFaceEnhancer:
         return self.spec.size
 
     @property
-    def session(self) -> ManagedSession:
+    def session(self) -> Any:
+        if self.aot is not None:
+            return self.aot
         from face_engine.utils.onnx_batch import batch_shape_profile
 
         profile = (batch_shape_profile(self.model_path, max_batch=self.max_batch)

@@ -436,6 +436,33 @@ class GPUMasker:
         self._box_cache: dict[tuple[int, str], Any] = {}
         self._class_ids: dict[str, Any] = {}
         self._constants: dict[str, Any] = {}
+        self._aot: dict[str, Any] = {}
+
+    def _handle(self, path: Path | str) -> Any:
+        """A compiled TensorRT engine for ``path`` if one exists (FP16, like the
+        TensorRT EP default the maskers already ran at), else the ORT session."""
+        key = str(path)
+        if key not in self._aot:
+            from face_engine.core.trt_compiler import aot_engine
+
+            self._aot[key] = aot_engine(path, "fp16", self.engine.config)
+        return self._aot[key] or self.engine.get_session(path)
+
+    @staticmethod
+    def _run_chunked(handle: Any, blob: torch.Tensor, name: str, **kwargs: Any) -> torch.Tensor:
+        """Run in chunks of the engine's maximum batch (ORT sessions have none)."""
+        import torch
+
+        step = int(getattr(handle, "max_batch", 0) or blob.shape[0] or 1)
+        parts = []
+        for start in range(0, blob.shape[0], step):
+            chunk = blob[start:start + step]
+            shapes = kwargs.get("output_shapes")
+            extra = dict(kwargs)
+            if shapes is not None:
+                extra["output_shapes"] = {k: (chunk.shape[0], *v[1:]) for k, v in shapes.items()}
+            parts.append(handle.run_binding({handle.input_names[0]: chunk}, **extra)[name])
+        return torch.cat(parts)
 
     @property
     def xseg_enabled(self) -> bool:
@@ -475,9 +502,9 @@ class GPUMasker:
 
         if self.xseg_path is None:
             raise RuntimeError("XSeg model not configured")
-        handle = self.engine.get_session(self.xseg_path)
+        handle = self._handle(self.xseg_path)
         blob = (crops.permute(0, 2, 3, 1) / 255.0).contiguous()  # NHWC, BGR, [0, 1]
-        out = handle.run_binding({handle.input_names[0]: blob})[handle.output_names[0]]
+        out = self._run_chunked(handle, blob, handle.output_names[0])
         prob = out.reshape(crops.shape[0], 1, XSEG_SIZE, XSEG_SIZE).float().clamp(0, 1)
         prob = torch.where(prob < self.config.xseg.threshold, torch.zeros_like(prob), prob)
         if self.config.xseg.feather_sigma > 0:
@@ -490,7 +517,7 @@ class GPUMasker:
 
         if self.bisenet_path is None:
             raise RuntimeError("BiSeNet model not configured")
-        handle = self.engine.get_session(self.bisenet_path)
+        handle = self._handle(self.bisenet_path)
         n = parser_crops.shape[0]
         key = f"imagenet:{parser_crops.device}"
         if key not in self._constants:
@@ -500,10 +527,10 @@ class GPUMasker:
         mean, std = self._constants[key]
         blob = ((parser_crops.flip(1) - mean) / std).contiguous()  # RGB, ImageNet
         name = handle.output_names[0]
-        logits = handle.run_binding(
-            {handle.input_names[0]: blob},
+        logits = self._run_chunked(
+            handle, blob, name,
             output_shapes={name: (n, len(FaceRegion), PARSER_SIZE, PARSER_SIZE)},
-            unreturned_outputs=handle.output_names[1:])[name]
+            unreturned_outputs=handle.output_names[1:])
         return logits.argmax(1)
 
     def region_mask_from_labels(self, labels: torch.Tensor) -> torch.Tensor:
