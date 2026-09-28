@@ -1549,6 +1549,14 @@ def _progress_max_gap() -> float:
         return 4.0
 
 
+def _progress_rate_window() -> float:
+    """Seconds of completions the displayed rate is measured over."""
+    try:
+        return max(1.0, float(os.environ.get("ROOP_PROGRESS_RATE_WINDOW", "30")))
+    except (TypeError, ValueError):
+        return 30.0
+
+
 class ChunkedProgress(tqdm):
     """tqdm with a wall-clock, completion-based throughput display.
 
@@ -1558,8 +1566,19 @@ class ChunkedProgress(tqdm):
     """
 
     DISPLAY_INTERVAL_SECONDS = 0.5
-    RATE_WINDOW_SECONDS = 3.0
-    EMA_ALPHA = 0.15
+    RATE_WINDOW_SECONDS = _progress_rate_window()
+    # The ETA divides by the stage average once the stage has run this long;
+    # before that the average is mostly warm-up and the window rate is better.
+    AVERAGE_FOR_ETA_AFTER_SECONDS = 60.0
+
+    # WHY 30 s AND NO EMA, 2026-09-29: the old 3 s window + EMA(0.15) sampled
+    # every 500 ms read 20.8 -> 30.3 frames/s within one minute of a render
+    # whose frame counter said 24.5 over that minute, and 14.5 -> 16.4 against a
+    # measured 16.2. Per-frame cost swings with the face count (0, 1 or 2 faces
+    # per frame) and the stabilized path finishes frames in 24-frame blocks, so
+    # 3 s holds ~60 frames of content noise. 30 s of completed frames IS the
+    # real speed over that half-minute, exactly, with nothing smoothed on top.
+    # The stage average is shown beside it: that is the number to plan with.
 
     # The rate is COMPLETED / ELAPSED over a trailing window, never a mean of
     # per-update instantaneous rates. That distinction is the whole reason this
@@ -1590,6 +1609,7 @@ class ChunkedProgress(tqdm):
         self._last_rate = None
         self._completion_times = deque([(started, 0)])
         self._ema_rate = None
+        self._origin = (started, 0)
 
         # tqdm otherwise defaults to a 100-ms redraw. Make an interactive
         # terminal and Pinokio's captured log agree on exactly the same cadence.
@@ -1604,11 +1624,46 @@ class ChunkedProgress(tqdm):
         super().__init__(*args, **kwargs)
         self._last_n = int(self.n)
         self._completion_times = deque([(started, int(self.n))])
+        # A resumed run starts the bar at a non-zero n; those frames were not
+        # rendered by this stage and must not count toward its average.
+        self._origin = (started, int(self.n))
 
     @property
     def rolling_rate(self):
         """Frames completed per second, over the trailing RATE_WINDOW_SECONDS."""
         return getattr(self, "_ema_rate", None)
+
+    @property
+    def average_rate(self):
+        """Frames completed per second since this bar (this stage) started."""
+        try:
+            t0, n0 = self._origin
+            now, n = self._completion_times[-1]
+            if now - t0 <= 0.0 or n - n0 <= 0:
+                return None
+            return (n - n0) / (now - t0)
+        except Exception:
+            return None
+
+    def eta_rate(self):
+        """The rate the remaining frames are divided by: the stage average once
+        it is past warm-up (it has seen the most content), else the window."""
+        try:
+            t0, _ = self._origin
+            now, _ = self._completion_times[-1]
+            avg = self.average_rate
+            if avg and (now - t0) >= self.AVERAGE_FOR_ETA_AFTER_SECONDS:
+                return avg
+        except Exception:
+            pass
+        return self.rolling_rate
+
+    @property
+    def remaining_seconds(self):
+        rate = self.eta_rate()
+        if not rate or not self.total or self.n >= self.total:
+            return None
+        return (self.total - self.n) / rate
 
     @property
     def format_dict(self):
@@ -1626,7 +1681,7 @@ class ChunkedProgress(tqdm):
             self._completion_times.popleft()
 
     def _refresh_rate(self):
-        """Sample the rolling window and apply the fixed requested EMA."""
+        """Completed frames / elapsed seconds over the trailing window, as is."""
         if len(self._completion_times) < 2:
             return
         then, previous_n = self._completion_times[0]
@@ -1635,12 +1690,15 @@ class ChunkedProgress(tqdm):
         completed = current_n - previous_n
         if elapsed <= 0.0 or completed <= 0:
             return
-        window_rate = completed / elapsed
-        if self._ema_rate is None:
-            self._ema_rate = window_rate
-        else:
-            self._ema_rate = ((self.EMA_ALPHA * window_rate) +
-                              ((1.0 - self.EMA_ALPHA) * self._ema_rate))
+        self._ema_rate = completed / elapsed
+
+    def _rate_text(self, rate) -> str:
+        unit = self.unit or "it"
+        now_txt = f"{rate:.1f} {unit}/s" if rate else f"? {unit}/s"
+        avg = self.average_rate
+        if avg:
+            now_txt += f" (avg {avg:.1f})"
+        return now_txt
 
     # perf_counter, not time(): time() has ~15 ms granularity on Windows, so a
     # chunk that goes by quickly measures as having taken exactly zero seconds
@@ -1663,14 +1721,20 @@ class ChunkedProgress(tqdm):
                     if self.total and self.total > 0:
                         pct = (self.n / self.total) * 100.0
                         c = get_progress_color(pct)
+                        # Rate and ETA are written in as text rather than left to
+                        # tqdm's {rate_fmt}/{remaining}: tqdm would divide the ETA
+                        # by the 30 s window, and this one divides by eta_rate().
+                        rem = self.remaining_seconds
+                        eta_txt = self.format_interval(int(rem)) if rem is not None else "?"
+                        rate_txt = self._rate_text(self.rolling_rate)
                         self.bar_format = (
                             f"{COLOR_ACCENT}{{desc}}{COLOR_RESET}: "
                             f"{c}{{percentage:5.1f}}%{COLOR_RESET} "
                             f"{COLOR_GRAY}[{c}{{bar}}{COLOR_GRAY}]{COLOR_RESET} "
                             f"{COLOR_WHITE}{{n_fmt}}{COLOR_GRAY}/{COLOR_MUTED}{{total_fmt}}{COLOR_RESET} "
                             f"{COLOR_SEP}|{COLOR_RESET} {COLOR_MUTED}Elapsed:{COLOR_RESET} {COLOR_GREEN}{{elapsed}}{COLOR_RESET} "
-                            f"{COLOR_SEP}|{COLOR_RESET} {COLOR_MUTED}ETA:{COLOR_RESET} {COLOR_LIME}{{remaining}}{COLOR_RESET} "
-                            f"{COLOR_SEP}|{COLOR_RESET} {COLOR_YELLOW}{{rate_fmt}}{COLOR_RESET}"
+                            f"{COLOR_SEP}|{COLOR_RESET} {COLOR_MUTED}ETA:{COLOR_RESET} {COLOR_LIME}{eta_txt}{COLOR_RESET} "
+                            f"{COLOR_SEP}|{COLOR_RESET} {COLOR_YELLOW}{rate_txt}{COLOR_RESET}"
                             f"{{postfix}}"
                         )
                     self.refresh()
@@ -1717,10 +1781,11 @@ class ChunkedProgress(tqdm):
             bits.append(f"{COLOR_WHITE}{n:,} {unit}{COLOR_RESET}")
 
         if rate:
-            bits.append(f"{COLOR_YELLOW}{rate:.1f} {unit}/s{COLOR_RESET}")
+            bits.append(f"{COLOR_YELLOW}{self._rate_text(rate)}{COLOR_RESET}")
         bits.append(f"{COLOR_MUTED}Elapsed:{COLOR_RESET} {COLOR_GREEN}{self.format_interval(int(elapsed))}{COLOR_RESET}")
-        if rate and total and total > n:
-            rem_s = int((total - n) / rate)
+        eta_rate = self.eta_rate() or rate
+        if eta_rate and total and total > n:
+            rem_s = int((total - n) / eta_rate)
             bits.append(f"{COLOR_MUTED}ETA:{COLOR_RESET} {COLOR_LIME}{self.format_interval(rem_s)}{COLOR_RESET}")
             try:
                 finish_t = time.localtime(time.time() + rem_s)
@@ -1769,7 +1834,8 @@ def _bar_eta_seconds(bar):
         total = int(d.get("total") or 0)
         if not total or n >= total:
             return None
-        rate = getattr(bar, "rolling_rate", None)
+        eta_rate = getattr(bar, "eta_rate", None)
+        rate = eta_rate() if callable(eta_rate) else getattr(bar, "rolling_rate", None)
         if not rate:
             rate = (getattr(bar, "_last_rate", None) if getattr(bar, "_chunked", False)
                     else d.get("rate"))
@@ -1787,6 +1853,10 @@ def _bar_eta_seconds(bar):
 def publish_eta(bar):
     """Offer the current bar's remaining time to the web UI. Called per frame,
     so it does no work beyond the arithmetic above."""
+    now_rate = getattr(bar, "rolling_rate", None)
+    avg_rate = getattr(bar, "average_rate", None)
+    if now_rate or avg_rate:
+        _rate_state.update({"now": now_rate, "avg": avg_rate, "t": time.time()})
     secs = _bar_eta_seconds(bar)
     if secs is None:
         return
@@ -1794,8 +1864,23 @@ def publish_eta(bar):
     _eta_state["t"] = time.time()
 
 
+# The same two rates the terminal prints (30 s window, stage average), for the
+# web UI's telemetry. Without this the UI divided frames by time since the JOB
+# started, which charges the whole face-analysis pre-pass (22 min on a 79k-frame
+# clip) against the render's frame counter and read ~10 fps against a real 17.
+_rate_state = {"now": None, "avg": None, "t": 0.0}
+
+
+def rate_snapshot(max_age=15.0):
+    """(window_rate, stage_average) the bar last published, or None if stale."""
+    if (time.time() - _rate_state["t"]) > max_age:
+        return None
+    return _rate_state["now"], _rate_state["avg"]
+
+
 def reset_eta():
     _eta_state.update({"seconds": None, "t": 0.0})
+    _rate_state.update({"now": None, "avg": None, "t": 0.0})
 
 
 def eta_seconds(max_age=15.0):

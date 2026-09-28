@@ -218,7 +218,7 @@ class TestGCLifecycleAndCoreFastPath(unittest.TestCase):
     def test_chunked_progress_rate_needs_a_measurable_window(self):
         from roop.procmgr_runtime import ChunkedProgress
         prog = ChunkedProgress(total=5, desc="TestChunked", unit="frames", disable=True)
-        self.assertEqual(prog.EMA_ALPHA, 0.15)
+        self.assertEqual(prog.RATE_WINDOW_SECONDS, 30.0)
         self.assertEqual(prog.DISPLAY_INTERVAL_SECONDS, 0.5)
         # One frame, no elapsed time: no rate is claimed, and format_dict is
         # left carrying tqdm's own figure rather than an invented one.

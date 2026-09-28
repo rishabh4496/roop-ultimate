@@ -5866,6 +5866,21 @@ def _telemetry_snapshot():
     else:
         _telemetry_rate.reset()
         fps_now = None
+    # Prefer the progress bar's own rates: the current STAGE's average and the
+    # terminal's 30 s window. The job-wide average above charges the pre-pass
+    # and model loads to the render's frame counter (~10 fps shown vs a real 17).
+    try:
+        _bar_rates = _procmgr_runtime.rate_snapshot() if processing else None
+    except Exception as _degrade_error:
+        _swallowed('api.py:_telemetry_snapshot', _degrade_error,
+                   'telemetry frame sent with the job-wide rate')
+        _bar_rates = None
+    if _bar_rates:
+        _now_r, _avg_r = _bar_rates
+        if _avg_r:
+            fps = _avg_r
+        if _now_r and not _progress.get('paused'):
+            fps_now = _now_r
     return {
         'processing': processing,
         'paused': bool(_progress.get('paused')),
@@ -5887,7 +5902,7 @@ def _telemetry_snapshot():
     }
 
 
-_telemetry_rate = _routes_telemetry.RateWindow(3.0)
+_telemetry_rate = _routes_telemetry.RateWindow(30.0)
 
 
 _routes_telemetry.progress_snapshot = _telemetry_snapshot

@@ -181,16 +181,73 @@ class ChunkedOutputTest(ProgressEnv):
         # old rate implied.
         self.assertAlmostEqual(eta, (1000 - p.n) / 50.0, delta=1.0)
 
-    def test_rate_uses_the_rolling_completion_ema(self):
-        """``display = .15 * current + .85 * previous`` exactly."""
+    def test_rate_is_the_window_exactly_with_no_smoothing(self):
+        """The displayed rate is completed / elapsed over the window, as is.
+
+        The old 3 s window + EMA read 20.8..30.3 f/s in a minute the frame
+        counter measured at 24.5; an EMA on top only hides which it is.
+        """
         with redirect_stdout(io.StringIO()):
             with ChunkedProgress(total=100, desc="Processing", unit="frames") as p:
+                self.assertEqual(p.RATE_WINDOW_SECONDS, 30.0)
                 p._completion_times = deque([(0.0, 0), (1.0, 20)])
                 p._refresh_rate()
                 self.assertAlmostEqual(p.rolling_rate, 20.0)
                 p._completion_times = deque([(1.0, 20), (2.0, 60)])
                 p._refresh_rate()
-                self.assertAlmostEqual(p.rolling_rate, 23.0)
+                self.assertAlmostEqual(p.rolling_rate, 40.0)
+
+    def test_window_rate_tracks_a_speed_change_and_average_keeps_the_stage(self):
+        """30 f/s for 60 s, then 15 f/s for 60 s: the window reads the new
+        speed once it has turned over, the average reads the whole stage, and
+        past warm-up the ETA divides by the average."""
+        from roop.procmgr_runtime import _bar_eta_seconds
+        clock = [0.0]
+        with redirect_stdout(io.StringIO()), \
+                patch("roop.procmgr_runtime.time.perf_counter", lambda: clock[0]):
+            p = ChunkedProgress(total=10_000, desc="Processing", unit="frames")
+            for gap in [1 / 30] * 1800 + [1 / 15] * 900:
+                clock[0] += gap
+                p.update(1)
+            p._refresh_rate()
+            self.assertAlmostEqual(p.rolling_rate, 15.0, delta=0.3)
+            self.assertAlmostEqual(p.average_rate, 2700 / 120.0, delta=0.2)
+            self.assertAlmostEqual(_bar_eta_seconds(p), (10_000 - 2700) / p.average_rate,
+                                   delta=1.0)
+            p.close()
+
+    def test_eta_uses_the_window_during_warm_up(self):
+        clock = [0.0]
+        with redirect_stdout(io.StringIO()), \
+                patch("roop.procmgr_runtime.time.perf_counter", lambda: clock[0]):
+            p = ChunkedProgress(total=1000, desc="Processing", unit="frames")
+            for _ in range(100):
+                clock[0] += 0.1
+                p.update(1)
+            p._refresh_rate()
+            self.assertAlmostEqual(p.eta_rate(), p.rolling_rate)
+            p.close()
+
+    def test_resumed_frames_do_not_count_toward_the_average(self):
+        clock = [0.0]
+        with redirect_stdout(io.StringIO()), \
+                patch("roop.procmgr_runtime.time.perf_counter", lambda: clock[0]):
+            p = ChunkedProgress(total=1000, initial=500, desc="Processing", unit="frames")
+            for _ in range(100):
+                clock[0] += 0.1
+                p.update(1)
+            self.assertAlmostEqual(p.average_rate, 10.0, delta=0.01)
+            p.close()
+
+    def test_line_shows_live_rate_and_stage_average(self):
+        with redirect_stdout(io.StringIO()):
+            p = ChunkedProgress(total=1000, desc="Processing", unit="frames")
+            p.n = 300
+            p._origin = (0.0, 0)
+            p._completion_times = deque([(0.0, 0), (20.0, 300)])
+            line = p._progress_line(12.0)
+            p.close()
+        self.assertIn("12.0 frames/s (avg 15.0)", line)
 
     def test_draws_on_500ms_boundaries_not_completion_count(self):
         buf = io.StringIO()

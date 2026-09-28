@@ -2931,7 +2931,9 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                 rate = getattr(progress, 'rolling_rate', None)
                 if not rate:
                     rate = progress.format_dict.get('rate', 0.0) if hasattr(progress, 'format_dict') else 0.0
-                fps_str = f" ({rate:.1f} FPS)" if rate and rate > 0 else ""
+                avg = getattr(progress, 'average_rate', None)
+                fps_str = ((f" ({rate:.1f} FPS, avg {avg:.1f})" if avg else f" ({rate:.1f} FPS)")
+                           if rate and rate > 0 else "")
                 desc = f"Processing frame {n} / {total}{fps_str}"
                 _publish_eta(progress)
                 self.progress_gradio((n, total), desc=desc, total=total, unit='frames')
