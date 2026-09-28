@@ -23,6 +23,21 @@ differences are what the network is HANDED and what happens to what it returns:
    post-processing: no second inference, no extra engine, no extra VRAM.
 
 Exactly ONE inference and ONE finish per face.
+
+WHAT THE FINISH COSTS A RENDER: NOTHING MEASURABLE (2026-09-28). In isolation
+the finish is 12.4 ms of a 44.5 ms Run() (RestoreFormer++ Run 31.2 ms, the
+network alone 20.4 ms GPU-resident). Rendered end to end, 600 frames of s7.mp4,
+threads 20, counterbalanced in one process (tests/ab_enhancers_render.py):
+
+    Restoreformer++ (no finish)   5.98 / 10.01 fps   mean 7.99
+    Restore Ultra                 6.26 /  9.70 fps   mean 7.98
+
+It runs outside every lock (self_excluding, inherited) on otherwise idle
+cores, so it is not what the render waits on; porting it to the GPU would add
+GPU work to a render that IS waiting on the GPU. What Restore Ultra costs a
+render (+30.8 ms/frame against no enhancer) is the network, which already runs
+TensorRT FP16 ("mixed"); a native TensorRT engine of the same ONNX measured no
+faster (21.11 vs 20.44 ms).
 """
 
 import threading

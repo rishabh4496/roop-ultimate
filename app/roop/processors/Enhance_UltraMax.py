@@ -181,6 +181,14 @@ reported as "too sharp, blurry on the eyes". Both halves of that are fixed here.
    So the enhance stage's 25.5 ms/face of GPU work is the network, and there is
    no padding here to reclaim the way there was in the detector's 640 canvas.
 
+     - A NATIVE TENSORRT ENGINE IS NOT THE ESCAPE EITHER (2026-09-28). ORT's
+       TensorRT EP already runs these graphs whole: GPU-resident, warm,
+       GPEN-256 3.47 ms ORT vs 6.81 native, RestoreFormer++ 20.44 vs 21.11,
+       CodeFormer fp16 22.37 ms through ORT (its native build needs the scalar
+       `w` input given a shape; not pursued after the other two). End to end on
+       s7.mp4 (600 frames, hyperswap + DFL XSeg, threads 20) UltraMax costs
+       +25.7 ms/frame against no enhancer -- about the network's own time.
+
 Knobs, for re-measuring rather than for shipping a different default:
     ROOP_ULTRAMAX_CHROMA          0 = the swapper's colour (default),
                                   1 = CodeFormer's own (the old pale output)

@@ -426,7 +426,14 @@ class Enhance_GPEN256Pro:
     @classmethod
     def _enhance_textures_and_sharpness(cls, restored, source, input_size):
         """Applies structure-gated micro-texture injection and edge-targeted sharpening."""
-        if _TORCH_CUDA:
+        # Measurement lever (A/B the two filter paths in a render):
+        # ROOP_GPEN256PRO_FILTER=cpu forces the host path, anything else = auto.
+        # Measured 2026-09-28, 600 frames of s7.mp4, threads 20, counterbalanced
+        # (tests/ab_enhancers_render.py): GPU filter 7.19 / 7.01 fps, CPU filter
+        # 7.24 / 7.13 -- the same. The +16.9 ms/frame this enhancer costs a
+        # render against no enhancer is not the filter path.
+        force_cpu = os.environ.get('ROOP_GPEN256PRO_FILTER', 'auto').strip().lower() == 'cpu'
+        if _TORCH_CUDA and not force_cpu:
             try:
                 return cls._enhance_textures_and_sharpness_gpu(restored, source, input_size)
             except Exception as e:
