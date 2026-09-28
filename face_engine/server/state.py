@@ -2,12 +2,14 @@
 
 Everything heavy (model loading, detection, rendering) runs off the event
 loop: request handlers call these methods through ``run_in_threadpool`` and
-renders run on their own thread. A render is the Stage 4 GPU pipeline:
-software decode on a thread (``HardwareVideoDecoder``; measured faster than
-NVDEC once the GPU is busy) -> :class:`GpuFrameProcessor` -> NVENC
-(``open_video_writer``, libx264 fallback) -> lossless remux of the source's
-audio, subtitles and chapters. ``workers > 1`` renders keyframe segments in
-that many GPU processes (``SegmentWorkerPool``).
+renders run on their own thread. A render is the Stage 7 stream pipeline
+(:class:`~face_engine.core.cuda_streams.CUDAStreamPipeline`): software decode
+with the YUV -> BGR conversion on a decode CUDA stream, :class:`GpuFrameProcessor`
+inference on a high-priority stream, compositing + NVENC on an encode stream,
+then a lossless remux of the source's audio, subtitles and chapters. It
+replaced the Stage 4 sequential loop (``face_engine/tests/bench_streams.py``
+keeps that loop as its reference arm). ``workers > 1`` renders keyframe
+segments in that many GPU processes (``SegmentWorkerPool``).
 """
 from __future__ import annotations
 
@@ -404,49 +406,22 @@ class AppState:
         out = self.outputs_dir() / f"{stem}_{job.id}.mp4"
         if config.params.workers > 1:
             return self._render_segments(job, config, target, out)
-        import torch
+        from face_engine.core.cuda_streams import CUDAStreamPipeline, PipelineCancelled
 
-        from face_engine.media.decoder import HardwareVideoDecoder
-        from face_engine.media.demuxer import remux
-        from face_engine.media.encoder import open_video_writer
-
-        decoder = HardwareVideoDecoder(target.path, batch_size=4)
-        info = decoder.info
-        video = out.with_name(f".{out.stem}_video.mp4")
-        processor = GpuFrameProcessor(config, tracking=True)
-        try:
-            writer = open_video_writer(video, info.width, info.height, info.fps,
-                                       expected_frames=info.frame_count,
-                                       color=info.color_profile)
+        def progress(stats: Any) -> None:
+            # fps counts after the first frames (the pipeline's own warm-up
+            # rule): sessions and TensorRT engines load lazily on them.
             job.state = "rendering"
-            # fps counts from the end of the first batch: the sessions (and their
-            # TensorRT engines) load lazily on the first frames, several seconds
-            # that would otherwise read as a slow render and a wrong ETA.
-            warm: tuple[float, int] | None = None
-            try:
-                for batch in decoder:
-                    if job.cancel.is_set():
-                        raise _Cancelled()
-                    frames = torch.cat([processor.process_tensor(f[None])[0]
-                                        for f in batch.frames])
-                    writer.write_tensor(frames)
-                    job.frames_done += len(batch)
-                    now = time.monotonic()
-                    if warm is None:
-                        warm = (now, job.frames_done)
-                    elif now > warm[0]:
-                        job.fps = (job.frames_done - warm[1]) / (now - warm[0])
-                        job.latency_ms = 1000.0 / job.fps if job.fps > 0 else 0.0
-                writer.close()
-            except BaseException:
-                writer.abort()
-                raise
-        finally:
-            processor.close()
+            job.frames_done = stats.frames_done
+            job.fps = stats.fps
+            job.latency_ms = 1000.0 / stats.fps if stats.fps > 0 else 0.0
+
         try:
-            remux(video, target.path, out)
-        finally:
-            video.unlink(missing_ok=True)
+            stats = CUDAStreamPipeline().run(target.path, out, config, cancel=job.cancel,
+                                             on_progress=progress)
+        except PipelineCancelled:
+            raise _Cancelled() from None
+        job.frames_done = stats.frames_done
         return out
 
     def _render_segments(self, job: Job, config: ProcessorConfig, target: Target,

@@ -233,6 +233,9 @@ class BatchedEnhanceResult:
         matrices: ``(N, 2, 3)`` frame -> crop affines.
         ok: ``(N,)`` bool; False = rejected (non-finite or collapsed output),
             nothing pasted for that face.
+        paste: ``(crops, matrices, weights)`` still to paste when
+            :meth:`BatchedFaceEnhancer.enhance` ran with ``paste_back=False``
+            (``frames`` is then the unmodified input); None once pasted.
     """
 
     frames: Any
@@ -240,6 +243,7 @@ class BatchedEnhanceResult:
     crops_out: Any
     matrices: Any
     ok: Any
+    paste: Any = None
 
 
 class BatchedFaceEnhancer:
@@ -352,7 +356,7 @@ class BatchedFaceEnhancer:
     def enhance(self, frames: torch.Tensor, kps: torch.Tensor, *,
                 reference: torch.Tensor | None = None, frame_index: torch.Tensor | None = None,
                 alpha: float = 1.0, color: ColorMode | None = None,
-                mask: torch.Tensor | None = None) -> BatchedEnhanceResult:
+                mask: torch.Tensor | None = None, paste_back: bool = True) -> BatchedEnhanceResult:
         """Restore every face ``kps`` ``(N, 5, 2)`` in ``frames`` ``(B, 3, H, W)``.
 
         Args:
@@ -361,6 +365,9 @@ class BatchedFaceEnhancer:
             alpha: ``Restored = (1 - alpha) * input + alpha * enhanced``.
             mask: Extra ``(N, 1, s, s)`` paste mask in this enhancer's crop
                 space (any ``s``; resized).
+            paste_back: False leaves the paste-back to the caller (the stream
+                pipeline runs it on its encode stream): ``result.paste`` holds
+                what :func:`warp_face_inverse_cuda` would have pasted.
         """
         import torch
         import torch.nn.functional as F
@@ -402,5 +409,8 @@ class BatchedFaceEnhancer:
         if mask is not None:
             weight = weight * F.interpolate(mask.float(), size=(size, size), mode="bilinear",
                                             align_corners=False)
+        if not paste_back:
+            return BatchedEnhanceResult(f, crops_in, restored, matrices, ok,
+                                        paste=(blended, matrices, weight))
         out = warp_face_inverse_cuda(f, blended, matrices, weight, frame_index=frame_index)
         return BatchedEnhanceResult(out, crops_in, restored, matrices, ok)

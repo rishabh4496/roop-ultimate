@@ -74,8 +74,11 @@ class RenderParams(BaseModel):
 
 # Hardware profile presets. ``measured_fps`` is what the preset rendered on the
 # reference machine, not a promise: RTX 4070, 1080p H.264 with two faces per
-# frame, steady state after the first batch (face_engine/tests/bench_presets.py,
-# 2026-09-28). The spec's targets were 60+ / 30 / 12; measured 43.0 / 34.8 / 8.3.
+# frame (d1 looped), 600 frames, steady state after the first frames, through
+# the Stage 7 stream pipeline with AOT TensorRT engines
+# (face_engine/tests/bench_streams.py, 2026-09-28). The spec's targets were
+# 60+ / 30 / 12; measured 56.2 / 44.5 / 8.7 (the Stage 4-6 sequential render:
+# 50.3 / 40.4 / 8.6).
 PRESETS: dict[str, dict[str, Any]] = {
     # HyperSwap, not inswapper: inswapper's TensorRT FP16 engine ran 12.4 ms for
     # two faces vs HyperSwap FP32's 10.1 ms (2026-09-28), so it saves nothing.
@@ -84,14 +87,14 @@ PRESETS: dict[str, dict[str, Any]] = {
         "label": "Ultra Fast",
         "params": {"swapper_model": "hyperswap_1a_256", "pixel_boost": "none",
                    "mask_types": ["box"], "enhancer_model": "none", "detection_stride": 3},
-        "measured_fps": 43.0,
+        "measured_fps": 56.2,
     },
     "balanced": {
         "label": "Balanced",
         "params": {"swapper_model": "hyperswap_1a_256", "pixel_boost": "none",
                    "mask_types": ["box", "occlusion"], "enhancer_model": "none",
                    "detection_stride": 1},
-        "measured_fps": 34.8,
+        "measured_fps": 44.5,
     },
     "cinema": {
         "label": "High-Fidelity Cinema",
@@ -99,7 +102,7 @@ PRESETS: dict[str, dict[str, Any]] = {
                    "mask_types": ["box", "occlusion", "region"],
                    "enhancer_model": "gpen_bfr_512", "enhancer_blend": 80,
                    "detection_stride": 1},
-        "measured_fps": 8.3,
+        "measured_fps": 8.7,
     },
 }
 
@@ -120,6 +123,26 @@ def required_models(params: RenderParams) -> list[str]:
 class FrameStats:
     faces: int = 0
     swapped: int = 0
+
+
+@dataclass
+class FramePlan:
+    """What :meth:`GpuFrameProcessor.infer` leaves for :meth:`GpuFrameProcessor.composite`.
+
+    Attributes:
+        canvas: ``(1, 3, H, W)`` float frame the layers are pasted onto.
+        layers: ``(crops, matrices, masks)`` for :func:`warp_face_inverse_cuda`,
+            pasted in order.
+        stats: Faces seen / swapped.
+    """
+
+    canvas: Any
+    layers: list[tuple[Any, Any, Any]]
+    stats: FrameStats
+
+    def tensors(self) -> list[Any]:
+        """Every tensor :meth:`GpuFrameProcessor.composite` reads (for ``record_stream``)."""
+        return [self.canvas, *(t for layer in self.layers for t in layer if t is not None)]
 
 
 @dataclass
@@ -242,28 +265,51 @@ class GpuFrameProcessor:
         return keep, self._sources[self._ref_source[best[keep]]]
 
     # ------------------------------------------------------------------ frame
-    def process_tensor(self, frame: torch.Tensor) -> tuple[torch.Tensor, FrameStats]:
-        """``(1, 3, H, W)`` BGR frame on the GPU -> processed float frame + stats."""
+    def infer(self, frame: torch.Tensor) -> FramePlan:
+        """Detection, matching, swap, masks and enhancer inference; the last paste is left out.
+
+        The stream pipeline (:mod:`face_engine.core.cuda_streams`) runs this on
+        its inference stream and :meth:`composite` on its encode stream. With an
+        enhancer the swap is pasted here, because the enhancer re-crops the
+        swapped frame; the enhancer's own paste is the plan's layer.
+        """
         from face_engine.pipeline.aligner import warp_face_inverse_cuda
 
         f = frame.float()
         faces = self._faces(f)
         stats = FrameStats(faces=len(faces))
         if len(faces) == 0:
-            return f, stats
+            return FramePlan(f, [], stats)
         keep, sources = self._choose_sources(f, faces.kps)
         if keep.shape[0] == 0:
-            return f, stats
+            return FramePlan(f, [], stats)
         kps = faces.kps[keep]
         p = self.config.params
         result = self.swapper.swap(f, kps, source=sources, pixel_boost=p.boost_size)
         mask = self.masker.generate(f, kps).mask * result.ok.float().view(-1, 1, 1, 1)
-        out = warp_face_inverse_cuda(f, result.crops, result.matrices, mask)
-        if self.enhancer is not None:
-            out = self.enhancer.enhance(out, kps, reference=f,
-                                        alpha=p.enhancer_blend / 100.0).frames
         stats.swapped = int(keep.shape[0])
-        return out, stats
+        if self.enhancer is None:
+            return FramePlan(f, [(result.crops, result.matrices, mask)], stats)
+        out = warp_face_inverse_cuda(f, result.crops, result.matrices, mask)
+        enhanced = self.enhancer.enhance(out, kps, reference=f,
+                                         alpha=p.enhancer_blend / 100.0,
+                                         paste_back=False)
+        return FramePlan(out, [enhanced.paste], stats)
+
+    @staticmethod
+    def composite(plan: FramePlan) -> torch.Tensor:
+        """Paste the plan's layers: the processed ``(1, 3, H, W)`` float frame."""
+        from face_engine.pipeline.aligner import warp_face_inverse_cuda
+
+        out = plan.canvas
+        for crops, matrices, masks in plan.layers:
+            out = warp_face_inverse_cuda(out, crops, matrices, masks)
+        return out
+
+    def process_tensor(self, frame: torch.Tensor) -> tuple[torch.Tensor, FrameStats]:
+        """``(1, 3, H, W)`` BGR frame on the GPU -> processed float frame + stats."""
+        plan = self.infer(frame)
+        return self.composite(plan), plan.stats
 
     def process(self, frame: np.ndarray) -> tuple[np.ndarray, FrameStats]:
         """Host convenience: ``(H, W, 3)`` uint8 BGR in and out (image targets)."""

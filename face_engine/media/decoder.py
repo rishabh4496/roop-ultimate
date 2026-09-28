@@ -112,6 +112,28 @@ class FrameBatch:
         return len(self.indices)
 
 
+def ycbcr_to_bgr(y: torch.Tensor, u: torch.Tensor, v: torch.Tensor,
+                 profile: ColorProfile = ColorProfile.BT709, full_range: bool = False,
+                 dim: int = 1) -> torch.Tensor:
+    """Full-resolution float Y/Cb/Cr planes -> float BGR ``[0, 255]`` stacked on ``dim``.
+
+    The matrix and range follow the stream's tags (see the module docstring).
+    """
+    import torch
+
+    kr, kb = _KR_KB.get(profile, _KR_KB[ColorProfile.BT709])
+    kg = 1.0 - kr - kb
+    if full_range:
+        cb, cr = u - 128.0, v - 128.0
+    else:
+        y = (y - 16.0) * (255.0 / 219.0)
+        cb, cr = (u - 128.0) * (255.0 / 224.0), (v - 128.0) * (255.0 / 224.0)
+    red = y + (2.0 * (1.0 - kr)) * cr
+    blue = y + (2.0 * (1.0 - kb)) * cb
+    green = (y - kr * red - kb * blue) / kg
+    return torch.stack([blue, green, red], dim=dim).round_().clamp_(0, 255)
+
+
 def nv12_to_bgr(nv12: torch.Tensor, height: int, width: int,
                 profile: ColorProfile = ColorProfile.BT709, full_range: bool = False,
                 out: torch.Tensor | None = None) -> torch.Tensor:
@@ -122,23 +144,13 @@ def nv12_to_bgr(nv12: torch.Tensor, height: int, width: int,
     """
     import torch
 
-    kr, kb = _KR_KB.get(profile, _KR_KB[ColorProfile.BT709])
-    kg = 1.0 - kr - kb
     x = nv12.float()
     b = x.shape[0]
     y = x[:, :height]
     uv = x[:, height:height + height // 2].reshape(b, height // 2, width // 2, 2)
     u = uv[..., 0].repeat_interleave(2, 1).repeat_interleave(2, 2)
     v = uv[..., 1].repeat_interleave(2, 1).repeat_interleave(2, 2)
-    if full_range:
-        cb, cr = u - 128.0, v - 128.0
-    else:
-        y = (y - 16.0) * (255.0 / 219.0)
-        cb, cr = (u - 128.0) * (255.0 / 224.0), (v - 128.0) * (255.0 / 224.0)
-    red = y + (2.0 * (1.0 - kr)) * cr
-    blue = y + (2.0 * (1.0 - kb)) * cb
-    green = (y - kr * red - kb * blue) / kg
-    bgr = torch.stack([blue, green, red], dim=1).round_().clamp_(0, 255)
+    bgr = ycbcr_to_bgr(y, u, v, profile, full_range, dim=1)
     if out is not None:
         out.copy_(bgr)
         return out

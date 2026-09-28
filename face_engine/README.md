@@ -11,6 +11,7 @@ under `app/`.
 | `core/config.py` | `EngineConfig` (pydantic): providers, TensorRT/CUDA options, cache and model dirs |
 | `core/execution.py` | `ExecutionEngine`: TensorRT → CUDA → CPU sessions, grant check, session cache, device buffers, VRAM cleanup |
 | `core/trt_compiler.py` | AOT TensorRT engines: build (profiles, FP32 pinning, timing cache), verify, lookup, `TensorRTEngine` runner (`tools/compile_engines.py` is the CLI) |
+| `core/cuda_streams.py` | `CUDAStreamPipeline`: decode / inference / encode on three CUDA streams over a `CUDARingBuffer` (the server's render) |
 | `core/registry.py` | `ModelSpec` / `ModelRegistry`: declarative specs, verify, fetch |
 | `models/zoo.py` | `MODEL_ZOO`: the 15 declared models with URLs, SHA256 and sizes |
 | `utils/downloads.py` | resumable, retried, hash-verified downloads |
@@ -655,6 +656,82 @@ Measured (2026-09-28, RTX 4070, TensorRT 10.9):
   With a cold ONNX Runtime cache the same first preview took 113-400 s
   (Stage 5). Steady-state throughput is roughly unchanged (one run each).
   The gain is start-up.
+
+## Stage 7: decode / inference / encode on three CUDA streams
+
+```python
+import asyncio
+from face_engine.core.cuda_streams import CUDAStreamPipeline, process_video
+
+stats = CUDAStreamPipeline().run("in.mp4", "out.mp4", processor_config)   # blocking
+
+async def render():
+    async for s in process_video("in.mp4", "out.mp4", processor_config):  # ~4 updates/s
+        print(s.frames_done, s.frames_total, round(s.fps, 1))
+asyncio.run(render())
+```
+
+`pipeline_config` is a `ProcessorConfig` (a `GpuFrameProcessor` is built and
+closed per run), any object with `infer` / `composite`, or `None` (pass-through).
+The server's single-GPU render (`AppState._render_video`) runs through it.
+
+Three host threads, three `torch.cuda.Stream`s, a `CUDARingBuffer` of 3 VRAM
+slots `(H, W, 3)` uint8 with pinned ingress (YUV) / egress (RGB) buffers, all
+allocated before the first frame:
+
+| stage | stream | work |
+|---|---|---|
+| decode | `stream_decode` (priority 0) | PyAV software decode, YUV 4:2:0 planes -> pinned -> VRAM (1.5 B/px), YUV -> BGR on the GPU into slot k |
+| inference | `stream_inference` (highest priority) | `GpuFrameProcessor.infer`: detection/tracking, matching, kornia crop warps, swap, masks, enhancer inference |
+| encode | `stream_encode` (priority 0) | `GpuFrameProcessor.composite` (inverse warps), uint8 in the writer's channel order back into slot k, one D2H copy |
+| (pipe thread) | - | waits for that copy's event, writes ffmpeg (NVENC, libx264 fallback), then remux |
+
+Hand-offs are events, never `torch.cuda.synchronize()`:
+`event_decoded` -> `stream_inference.wait_event`, `event_inferred` ->
+`stream_encode.wait_event`, and `event_released` -> `stream_decode.wait_event`
+before slot k is refilled. Tensors made on the inference stream and read on the
+encode stream are `record_stream`-ed. Host threads block only on the event
+guarding a pinned buffer they are about to rewrite.
+
+Measured decisions (2026-09-28, RTX 4070, `d1.mp4` looped to 836 frames, 1080p,
+two faces; 600 frames per run, sequential / streams in A-B-B-A order after a
+warm-up; `python -m face_engine.tests.bench_streams VIDEO SOURCE`):
+
+| preset | Stage 4-6 sequential render | stream pipeline | |
+|---|---:|---:|---|
+| Ultra Fast | 49.7 / 50.9 fps | 56.2 / 56.1 fps | +11.7% |
+| Balanced | 39.1 / 41.7 | 45.0 / 43.9 | +10% |
+| High-Fidelity Cinema | 8.6 / 8.6 | 8.7 / 8.7 | +1%, not measurable |
+
+Cinema is GPU-saturated (92% utilization, 180 W) with nothing idle for the
+overlap to fill. The preset buttons' `measured_fps` are the stream numbers.
+
+- **Output is the sequential render's, bit for bit**, when colour conversion is
+  PyAV's (`gpu_color=False`): mean / max difference 0.00 over 600 frames on all
+  three presets. The default GPU conversion differs by 1.75 levels mean and is
+  the accurate one: 0.25 levels from a float64 reference on two real clips,
+  against swscale's 1.1-1.2 low.
+- **The inference stream needs the highest priority.** Without it the decode
+  stream's colour conversion delayed inference kernels: Ultra Fast (two runs
+  each) GPU colour 47.4 fps, PyAV colour 49.9, GPU colour + priority 51.8,
+  PyAV + priority 51.75. The priority reaches torch kernels and AOT TensorRT
+  engines; ONNX Runtime computes on its own stream.
+- **No host frame allocation per frame:** Python / numpy peak over a whole
+  render stays below half a frame (`tracemalloc`; a control that allocates one
+  numpy frame per frame is seen). libav's decode buffers come from its own pool.
+  Pixel formats other than 8-bit 4:2:0 fall back to PyAV BGR (counted in
+  `host_bgr_frames`).
+- **The stall tests catch a missing hand-off.** Each test stalls one stream
+  with `torch.cuda._sleep` and checks every output frame against its own input.
+  Deleting the `event_decoded` wait, the `event_inferred` wait or the
+  `record_stream` fails them. Deleting the `event_released` wait does NOT on
+  this machine: event timing with slot addresses shows each decode into slot k
+  starting after the encode stream's copy out of it, because Windows (WDDM) runs
+  host<->device copies of different streams in submission order. The wait
+  stays for drivers that run the two copy directions independently.
+- The rig drifted twice during these sessions (every arm ~30% slower for a few
+  minutes, GPU idle and cool afterwards, no cause found); the clean runs above
+  logged 2775-2820 MHz, 56-61 C throughout. Counterbalance every A/B.
 
 ## Models without a source
 
