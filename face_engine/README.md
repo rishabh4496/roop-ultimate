@@ -25,6 +25,7 @@ under `app/`.
 | `pipeline/masker.py` | `CompositeMasker` (host) / `GPUMasker` (VRAM): feathered box x XSeg x BiSeNet regions x valid |
 | `processors/swapper.py` | `IdentityEncoder`/`GPUIdentityEncoder`, `FaceSwapper`/`BatchedFaceSwapper`: HyperSwap 1a/1b/1c, inswapper, Pixel Boost |
 | `processors/enhancer.py` | `FaceEnhancer`/`BatchedFaceEnhancer`: GPEN-BFR 512/1024/2048, RestoreFormer++, LAB colour lock |
+| `enhancers/` | Ultra Restore: `FrequencySplitBlender`, `ScaleAwareEnhancerRouter`, `SemanticRegionalRestorer`, `UltraRestoreEngine` / `UltraRestorer` |
 | `processors/expression.py` | `ExpressionRestorer` / `BatchedExpressionRestorer`: LivePortrait expression transfer + blink sync |
 | `processors/color.py` | `ColorMode`, `transfer_color` (host) / `transfer_color_cuda` (GPU LAB) |
 | `utils/onnx_batch.py` | verified dynamic-batch rewrites, InstanceNorm decomposition, TensorRT batch profiles |
@@ -1121,6 +1122,86 @@ sideways face in a landscape frame, batch 3 == 3 x batch 1, no host copies,
 the empty-scene back-off, a mid-clip roll-over, the profile turn at score 0.22
 (and the single-threshold control that loses it), and 600 frames of upright
 1080p through detect + track + align: **170.8 fps, 0 sweeps, 6 ids**.
+
+## Ultra Restore (`enhancers/`): frequency-split detail, scale routing, region weights
+
+Not wired into the render yet (the render's enhancer is still
+`BatchedFaceEnhancer`, a linear `alpha` blend). Per face:
+
+1. **Route** by box diagonal `d` (frame px): `< 120` bypass (no network), `< 350`
+   GPEN-BFR-512, else GPEN-BFR-1024. One small host read (which net runs);
+   telemetry callback per batch (`RoutingPlan.to_dict`: counts, saving vs all-1024).
+2. `ffhq_512` crop `S` of the swapped frame at the model's size -> GPEN
+   (`UltraRestoreEngine`: AOT TensorRT FP16, input / output bound once with
+   `set_tensor_address`; batch 1..4 as consecutive enqueues, because GPEN's
+   modulated convolutions fix the batch in the graph) -> output guard.
+3. **LAB lock** of `R` to the original target: L\*, a\*, b\* mean and std, statistics
+   on 128 px copies.
+4. **Region weights** from BiSeNet (skin/nose/ears/lips 0.70, eyes + brows 0.95,
+   inner mouth 0.15, hair / glasses / background 0) or the 5 landmarks, feathered
+   `gaussian_blur2d((5, 5), 1.5)`, then **`fused = L_S + w H_R + (1 - w) H_S`**
+   (Gaussian split, crop sigma 2.5).
+5. Paste over the face ellipse, warped only onto each face's footprint (`paste_roi`).
+
+**Deviation from the brief: the crossfade.** The brief's `L_S + boost * H_R` at
+0.15 over the inner mouth also deletes the swap's own teeth detail (a blurred
+mouth), and at 0 blurs hair and background. The crossfade returns `S` exactly at
+`w = 0` (test: correlation with the swap's teeth 0.9+ vs < 0.3 for the brief form).
+`FrequencySplitBlender(swap_detail=0.0)` is the brief's formula.
+
+**GPEN-512 FP16 fixed.** Its engine failed fidelity (0.035 of range). The same
+14 layers pinned for GPEN-1024 (encoder final linear, style pixel-norm) fix it:
+fidelity 0.0004, 61 real faces identity kept 0.7609 vs 0.7614 FP32, PSNR vs
+FP32 64.5 dB, **17.8 vs 35.8 ms**. `ENHANCER_PRECISION["gpen_bfr_512"]` is now
+`"auto"`, so `BatchedFaceEnhancer` (the cinema preset) uses it too.
+
+**Measured on real footage** (Love / Weeds / Monica, 20 frames each, 78 faces
+routed to 512 / 1024, the footage face as `S`):
+
+| arm | identity med / p10 | skin texture vs plate | macro shift | ms/face |
+|---|---|---|---|---|
+| linear alpha 0.8 (the Ultra preset) | 0.916 / 0.693 | 232% | 1.12 levels | 27.3 |
+| **split, sigma 2.5 (default)** | **0.991 / 0.959** | **160%** | **0.03** | 32.2 |
+| split, paste-aware sigma | 0.994 / 0.922 | 166% | 0.03 | 31.5 |
+| split, LAB lock without L\* std | 0.989 / 0.945 | 182% | 0.04 | 33.1 |
+| split, no LAB lock | 0.989 / 0.944 | 181% | 0.04 | 29.8 |
+| brief's literal formula, 9-tap kernel | 0.991 / 0.962 | 172% | 0.03 | 31.9 |
+
+(identity = ArcFace cosine of the pasted face to `S`; texture = high-band std on
+cheek / forehead discs from the landmarks, as % of the footage's own; macro =
+mean |8 px low band - `S`'s|.)
+
+- The split removes the identity drift and leaves the macro luminance alone.
+  It still adds texture (160% of this soft footage); lower `RegionWeights.skin`
+  for less.
+- Paste-aware sigma (constant on screen) is an option, not the default: +6
+  points of texture for -0.04 identity at p10.
+- The LAB lock's MEAN part does nothing in the output (only `R`'s high band is
+  kept; "L\* mean only" == "no lock"); its std part is what helps.
+- The brief's `(9, 9)` kernel at sigma 2.5 is not that Gaussian: truncated at
+  1.6 sigma, it splits like a smaller sigma (27% less of a 24 px wave in the
+  detail band). The default kernel is `2 ceil(3 sigma) + 1` = 17.
+
+**Latency (RTX 4070, one face, end to end):** 29.3 ms at 1080p (GPEN-512
+network 19.0 + 10.3), 45.7 ms at 4K (GPEN-1024 33.3 + 12.4). **The brief's
+< 3.5 / < 9.0 ms cannot be met: the networks alone are 17.8 / 32.3 ms**
+(`test_briefs_end_to_end_latency_targets` is a strict xfail that records it).
+The ROI paste and 128 px colour statistics took the non-network part from
+12.1 / 19.5 ms to 10.3 / 12.4 ms. What is left is spread thin (LAB lock
+2.5-3.0, paste 2.3 with kornia's four syncs per warp, weights + split 1.9-3.1,
+BiSeNet 1.7, crop 1.3-1.6).
+
+**Iris stabilization** (`IrisStabilizer`): the eye-region high band is blended
+with the previous frame's, shifted by the eye landmarks' motion, reset on a jump
+> 6 px. Tested mechanically (flicker down > 30%, a moving pattern carried, reset
+on a saccade); off by default: not measured on real footage.
+
+`face_engine/tests/test_ultra_quality.py` (20 + 2 strict xfail): 200 synthetic
+cases with a known answer (split vs linear: PSNR 61.8 vs 29.7 dB, detail SSIM
+1.000 vs 0.984, macro shift 0.04 vs 6.60 levels), router thresholds + bypass
+without a network call, region table, the crossfade endpoints, LAB lock, ROI
+paste == full-frame paste, the iris stabilizer, TensorRT buffers bound once,
+t1 at 4K identity split > linear on all six faces.
 
 ## Models without a source
 

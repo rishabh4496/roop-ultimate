@@ -82,9 +82,16 @@ ENHANCER_MODELS: dict[str, EnhancerSpec] = {
 # real faces: 32.7 vs 57.2 ms/face, identity 0.9344 vs 0.9343, PSNR vs fp32
 # median 66.7 dB (min 61.4), no non-finite value. ONNX Runtime's own FP16 build
 # is still NaN, so "auto" never picks fp16 without the compiled engine.
+#
+# gpen_bfr_512 "auto" (2026-09-28): the same two blocks pinned FP32
+# (compile_engines) fix its FP16 engine too (fidelity 0.035 -> 0.0004 of range).
+# 61 real faces (Love / Weeds / Monica): identity kept fp16 0.7609 vs fp32
+# 0.7614, PSNR vs fp32 median 64.5 dB (min 46.9), 17.8 vs 35.8 ms. The 0.7835
+# above was the UNPINNED FP16 build.
 ENHANCER_PRECISION: dict[str, str] = {name: "fp32" for name in ENHANCER_MODELS}
 ENHANCER_PRECISION["restoreformer_plus_plus"] = "fp16"
 ENHANCER_PRECISION["gpen_bfr_1024"] = "auto"
+ENHANCER_PRECISION["gpen_bfr_512"] = "auto"
 
 
 def face_region_mask(size: int, grow: float = 1.0) -> np.ndarray:

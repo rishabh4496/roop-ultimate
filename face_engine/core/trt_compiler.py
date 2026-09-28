@@ -108,7 +108,10 @@ ENGINE_SPECS: dict[str, EngineSpec] = {s.model: s for s in (
     *(EngineSpec(f"hyperswap_{v}_256", "swapper",
                  {"source": (512,), "target": (3, 256, 256)}) for v in ("1a", "1b", "1c")),
     EngineSpec("inswapper_128", "swapper", {"target": (3, 128, 128), "source": (512,)}),
-    EngineSpec("gpen_bfr_512", "enhancer", {"input": (3, 512, 512)}, (1, 1, 1), False),
+    # GPEN-512 has the same two blocks (14 layers by name); unpinned its FP16
+    # engine failed fidelity (0.035 of range). Same pins as 1024 (2026-09-28).
+    EngineSpec("gpen_bfr_512", "enhancer", {"input": (3, 512, 512)}, (1, 1, 1), False,
+               fp32_layers=("/final_linear/", "/generator/style/style.0/")),
     # GPEN-1024 FP16 produced NaN (Stage 6). Measured per node in FP32 on real
     # 1024 crops (2026-09-28): the 18 per-layer demodulation chains stay within
     # FP16 (sums <= ~400); the encoder's final linear reaches 1.9e5 and the

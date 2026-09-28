@@ -28,7 +28,7 @@ from face_engine import run as launcher
     ("fast", [("scrfd_10g_bnkps", "fp16"), ("hyperswap_1a_256", "auto")]),
     ("balanced", [("scrfd_10g_bnkps", "fp16"), ("hyperswap_1a_256", "auto"), ("xseg_3", "fp16")]),
     ("cinema", [("scrfd_10g_bnkps", "fp16"), ("hyperswap_1a_256", "auto"), ("xseg_3", "fp16"),
-                ("bisenet_resnet34", "fp16"), ("gpen_bfr_512", "fp32")]),
+                ("bisenet_resnet34", "fp16"), ("gpen_bfr_512", "auto")]),
 ])
 def test_wanted_engines_match_what_the_processors_load(profile: str,
                                                        expected: list[tuple[str, str]]) -> None:
@@ -73,7 +73,7 @@ def test_missing_engines_are_compiled_present_ones_are_not(engine_env: dict[str,
     engine_env["built"].add(("hyperswap_1a_256", "fp16"))
     launcher.ensure_engines(params, _paths(params))
     assert engine_env["calls"] == [("xseg_3", "fp16"), ("bisenet_resnet34", "fp16"),
-                                   ("gpen_bfr_512", "fp32")]
+                                   ("gpen_bfr_512", "fp16")]
     launcher.ensure_engines(params, _paths(params))  # everything present now
     assert len(engine_env["calls"]) == 3
 
