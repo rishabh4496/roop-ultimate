@@ -62,9 +62,11 @@ from typing import Any
 
 import numpy as np
 
+from face_engine.core.config import DEFAULT_CACHE_DIR, _env_path
+
 logger = logging.getLogger(__name__)
 
-ENGINE_DIR = Path(".cache/trt_engines")
+ENGINE_DIR = _env_path("FACE_ENGINE_CACHE_DIR", DEFAULT_CACHE_DIR) / "trt_engines"
 TIMING_CACHE = "timing_cache.bin"
 FIDELITY_GATE = 0.01  # mean |engine - onnxruntime fp32| / output range
 HYPERSWAP_LATENCY_GATE_MS = 15.0

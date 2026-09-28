@@ -12,6 +12,9 @@ under `app/`.
 | `core/execution.py` | `ExecutionEngine`: TensorRT → CUDA → CPU sessions, grant check, session cache, device buffers, VRAM cleanup |
 | `core/trt_compiler.py` | AOT TensorRT engines: build (profiles, FP32 pinning, timing cache), verify, lookup, `TensorRTEngine` runner (`tools/compile_engines.py` is the CLI) |
 | `core/cuda_streams.py` | `CUDAStreamPipeline`: decode / inference / encode on three CUDA streams over a `CUDARingBuffer` (the server's render) |
+| `core/guardrails.py` | `safe_affine`, `valid_landmarks`, `estimate_yaw_5pt` / `choose_alignment_points`, `check_av_sync` |
+| `benchmark.py` | per-stage latency + sustained fps / VRAM / CPU / sync-lock harness (Rich table, exit 1 on failure) |
+| `run.py` | launcher: models + TensorRT engines + web UI, then `all` / `api` / `ui` / `worker` |
 | `core/registry.py` | `ModelSpec` / `ModelRegistry`: declarative specs, verify, fetch |
 | `models/zoo.py` | `MODEL_ZOO`: the 15 declared models with URLs, SHA256 and sizes |
 | `utils/downloads.py` | resumable, retried, hash-verified downloads |
@@ -732,6 +735,133 @@ overlap to fill. The preset buttons' `measured_fps` are the stream numbers.
 - The rig drifted twice during these sessions (every arm ~30% slower for a few
   minutes, GPU idle and cool afterwards, no cause found); the clean runs above
   logged 2775-2820 MHz, 56-61 C throughout. Counterbalance every A/B.
+
+## Stage 8: guardrails, benchmark harness, launcher
+
+```
+cd face_engine
+python run.py --mode all --profile balanced          # models + engines checked, API + UI on :8765
+python run.py --mode worker --profile fast --target in.mp4 --source face.jpg
+python benchmark.py --input tests/sample_1080p.mp4 --frames 500
+```
+
+Both scripts also run from the repository root as `python -m face_engine.run` /
+`python -m face_engine.benchmark`. They live in `face_engine/`, not at the
+repository root, whose `run.py` is the Roop Ultimate app launcher (Pinokio's
+`start_react.js` and the regression benchmark run it).
+
+### Guardrails (`core/guardrails.py`)
+
+Probed first: the three presets on a real 1080p frame with landmarks injected
+in place of detection.
+
+| landmarks | before | after |
+|---|---|---|
+| face partly / fully out of frame, at 1e7 px, 2 px, 5x the frame, collinear (extreme yaw) | finite, swap confined to the frame | unchanged |
+| all 5 points equal, NaN, inf | **raised** `linalg.inv: singular` in kornia: the render died | finite, nothing pasted, `swapped` 0 |
+| one good face + one NaN face | **the whole frame NaN** | the good face exactly as beside a valid face |
+
+- Out-of-frame faces were already handled (reflection-padded crops + the
+  valid-area mask). The defects were singular matrices reaching kornia, which
+  inverts every matrix it warps with, and a NaN inverse spreading through the
+  alpha blend. `safe_affine` swaps such matrices for the identity before every
+  kornia warp (inside `warp_face_cuda` / `warp_face_inverse_cuda`, so swapper,
+  masker and enhancer are covered) and zeroes those faces' alpha. No host read.
+- Faces are never refused for being partial or turned (refusing a face per
+  frame is what made the app flicker, 2026-09-21); only faces without usable
+  geometry paste nothing. `FrameStats.swapped` now counts outcome
+  (`result.ok`), not intent.
+- A batch of 2 faces is not bit-identical to a batch of 1 (batched engines pick
+  other kernels: 0.48 / 1.06 / 0.0001 levels on Ultra Fast / Balanced /
+  Cinema), whatever the second face is; the tests compare against that control.
+- **Zero faces:** `infer` returns a pass-through plan and the encode stream
+  sends the decoded slot as it is (a uint8 channel swap for the RGB writer).
+  1080p: 0.21 ms host + 0.037 ms GPU per frame on the encode stream, against
+  0.277 ms GPU for the old float round trip; pass-through 447 -> 536 fps.
+  Detection itself still runs: it is how a frame is known to have no face.
+- **Extreme rotation:** `choose_alignment_points` uses dense landmarks only
+  with confidence >= 0.35 and |yaw| <= 75 deg (`estimate_yaw_5pt`, geometry
+  only), else the detector's 5 points. Every crop in this package is aligned
+  on 5 points today (no dense landmark model with a confidence exists here:
+  `hrffa` is unreleased, LivePortrait's 203-point net reports none), so renders
+  are always on the fallback branch; the policy is what a dense aligner must use.
+- **A/V sync:** the frame rate is the exact rational one
+  (`choose_frame_rate`, Stage 4: `r_frame_rate` such as 24000/1001 when it
+  matches the average, else the average, which is the only rate that keeps a
+  VFR clip's duration). Every stream-pipeline render now ends with
+  `check_av_sync`: frame count, video duration = N / fps within a frame, audio
+  no longer than the video and not truncated. A mismatch fails the render.
+  Tested on 24000/1001 and VFR clips.
+
+### Benchmark (`benchmark.py`)
+
+Two passes: per-stage latency (each stage alone, synchronized, median per
+frame, the render's own components) and a sustained `CUDAStreamPipeline`
+render with VRAM (NVML, device-level: Windows reports no per-process VRAM)
+and CPU sampled. RTX 4070, `tests/sample_1080p.mp4` (d1 looped; not in git), 500 frames:
+
+| | fast | balanced |
+|---|---:|---:|
+| decode, render path (PyAV software + GPU YUV->BGR) | 1.31 ms | 1.34 ms |
+| NVDEC decode (reference) | 7.05 ms | 6.96 ms |
+| detection (SCRFD) | 6.09 ms | 6.09 ms |
+| alignment & kornia warps | 7.09 ms | 7.23 ms |
+| swap network (HyperSwap, TensorRT AOT) | 7.79 ms | 7.90 ms |
+| masks | 2.35 ms (box) | 5.42 ms (box + XSeg) |
+| NVENC output | 4.04 ms | 4.07 ms |
+| **sustained** | **49.7 fps** | 38.7 fps |
+| peak VRAM above baseline | 1680 MB | 2293 MB |
+| host CPU (process / system) | 6% / 17% | 6% / 18% |
+| device-wide syncs in the render loop | 0 | 0 |
+
+- **Gate:** exit 1 below 40 fps on the fast profile on RTX 3080/4080-class
+  GPUs (the 4070 family included; it benchmarks with the 3080). The Stage 5
+  targets are fast 60+ / balanced 30 / cinema 12, so a 40 floor only fits the
+  fast profile; others are gated with `--min-fps`. Also exit 1 when faces were
+  seen but none swapped.
+- **Sync lock** = a device-wide `torch.cuda.synchronize()` on a render
+  thread: it stalls all three streams. Stream-level waits (ONNX Runtime's
+  fence, NMS, kornia) are the design and are not counted. The first run found
+  one: `torch.cuda.graph` synchronizes the device when it starts a capture, so
+  the tracker's first tracked frame stalled the pipeline. Graphs are now
+  captured before the frame loop (`GpuFrameProcessor.prepare` ->
+  `StridedFaceTracker.prepare`, buckets for up to 8 faces); a larger face count
+  still captures on first use, and the benchmark would show it.
+- Balanced's 38.7 fps is below Stage 7's 44.5 on the same clip (not re-run;
+  the rig drifted twice that day).
+
+### Launcher (`run.py`)
+
+`--mode all | api | ui | worker`, `--profile fast | balanced | cinema`:
+
+1. models the profile renders with: downloaded if missing, SHA256-verified
+   (unchanged files through the size + mtime keyed digest sidecar, Stage 1);
+2. TensorRT engines: the engines the processors would load, same model and
+   precision (`wanted_engines`: swapper `auto` -> fp16, maskers fp16, GPEN
+   fp32), built with `tools/compile_engines.py` when missing; a failed or
+   rejected build is recorded and not retried until `--recompile`;
+3. `web_ui/dist`, built with npm once if missing.
+
+`all` serves API + UI on one port; the profile becomes the UI's starting
+parameters (`/api/options` `defaults`). `api` serves the API only. `ui` serves
+the built UI and proxies `/api/*` (streamed, ranges passed through) and
+`/ws/*` to `--api-url`: the UI calls the API with relative URLs. `worker`
+renders one video headless. `--check` prepares and exits.
+
+Checked by hand (2026-09-28): `all` on :8871 and `ui` on :8872 in front of it;
+UI page 200, a UI asset range 206, `/api/options` defaults = the profile
+through both, telemetry over the proxied WebSocket, a multipart upload
+through the proxy, a Range read of the target byte-identical to the file, a
+render started through the proxy (418 frames at 51.3 fps) and its output
+fetched with a 206; `worker` rendered d1 on Cinema (418 frames, 8.0 fps, A/V
+ok).
+
+**The cache location moved to the repository root.** `EngineConfig`,
+`ENGINE_DIR` and the server workspace used to resolve `.cache` against the
+working directory: running `benchmark.py` from `face_engine/` re-downloaded
+1.2 GB of models and rebuilt every TensorRT engine into `face_engine/.cache`.
+They now default to `<repo>/.cache` (`FACE_ENGINE_CACHE_DIR` /
+`FACE_ENGINE_MODELS_DIR` still override).
 
 ## Models without a source
 

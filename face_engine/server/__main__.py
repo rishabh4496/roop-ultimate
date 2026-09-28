@@ -13,7 +13,7 @@ from pathlib import Path
 import uvicorn
 
 from face_engine.server.api import create_app
-from face_engine.server.state import ServerSettings
+from face_engine.server.state import ServerSettings, _default_workspace
 
 
 def main() -> None:
@@ -21,7 +21,7 @@ def main() -> None:
     parser.add_argument("--host", default=os.environ.get("FACE_ENGINE_HOST", "127.0.0.1"))
     parser.add_argument("--port", type=int, default=int(os.environ.get("FACE_ENGINE_PORT", "8765")))
     parser.add_argument("--workspace", default=os.environ.get("FACE_ENGINE_WORKSPACE",
-                                                              ".cache/workspace"))
+                                                              str(_default_workspace())))
     parser.add_argument("--ui", default=str(Path(__file__).resolve().parents[2] / "web_ui" / "dist"))
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")

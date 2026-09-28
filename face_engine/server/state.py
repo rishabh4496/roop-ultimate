@@ -43,10 +43,17 @@ VIDEO_EXTS = frozenset({".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v"})
 SAFE_NAME = re.compile(r"[^A-Za-z0-9._-]+")
 
 
+def _default_workspace() -> Path:
+    """``<repo>/.cache/workspace`` (or under ``FACE_ENGINE_CACHE_DIR``)."""
+    from face_engine.core.config import DEFAULT_CACHE_DIR, _env_path
+
+    return _env_path("FACE_ENGINE_CACHE_DIR", DEFAULT_CACHE_DIR) / "workspace"
+
+
 class ServerSettings(BaseModel):
     """Server configuration (env: ``FACE_ENGINE_WORKSPACE`` etc., see ``__main__``)."""
 
-    workspace: Path = Path(".cache/workspace")
+    workspace: Path = Field(default_factory=lambda: _default_workspace())
     host: str = "127.0.0.1"
     port: int = 8765
     cors_origins: list[str] = Field(default_factory=lambda: [
@@ -56,6 +63,8 @@ class ServerSettings(BaseModel):
     max_sources: int = 8
     detect_frames: int = 8
     ui_dist: Path | None = None
+    #: RenderParams fields the UI starts from (``run.py --profile``); {} = RenderParams().
+    default_params: dict[str, Any] = Field(default_factory=dict)
 
 
 class ProjectError(ValueError):

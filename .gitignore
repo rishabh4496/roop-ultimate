@@ -95,3 +95,6 @@ app/roop/assets/benchmark/*.mp4
 # Agent/tool binaries dropped into the repo root by local tooling.
 # 123 MB and unreferenced by any script -- never commit one.
 jcode-*.exe
+
+# face_engine benchmark sample (made locally from any clip with faces; see face_engine/benchmark.py)
+face_engine/tests/sample_*.mp4

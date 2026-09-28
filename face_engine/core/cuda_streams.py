@@ -172,6 +172,7 @@ class PipelineStats:
     fps: float = 0.0
     elapsed: float = 0.0
     host_bgr_frames: int = 0
+    passthrough_frames: int = 0
     decode_s: float = 0.0
     decode_wait_s: float = 0.0
     infer_s: float = 0.0
@@ -265,6 +266,8 @@ class CUDAStreamPipeline:
 
         info = src.info
         device = torch.device(self.device)
+        if processor is not None and hasattr(processor, "prepare"):
+            processor.prepare(info.height, info.width)  # e.g. CUDA graph captures (device syncs)
         ring = CUDARingBuffer(self.capacity, (info.height, info.width, 3), torch.uint8, device)
         top = (torch.cuda.Stream.priority_range()[1] if self.inference_priority is None
                else self.inference_priority)
@@ -418,7 +421,15 @@ class CUDAStreamPipeline:
                     t0 = time.perf_counter()
                     streams["encode"].wait_event(ring.event_inferred[k])
                     out = plan if processor is None else processor.composite(plan)
-                    write_slot(out, ring.slots[k], rgb)
+                    if out is None:
+                        # No face: the decoded slot IS the output; only the
+                        # writer's channel order may differ (guardrails, Stage 8).
+                        if rgb:
+                            ring.slots[k].copy_(ring.slots[k].flip(2))
+                        with lock:
+                            stats.passthrough_frames += 1
+                    else:
+                        write_slot(out, ring.slots[k], rgb)
                     ring.egress[e].copy_(ring.slots[k], non_blocking=True)
                     ring.event_downloaded[e].record(streams["encode"])
                     ring.event_released[k].record(streams["encode"])
@@ -486,6 +497,14 @@ class CUDAStreamPipeline:
                 remux(video, source_path, target_path)
             finally:
                 video.unlink(missing_ok=True)
+        from face_engine.core.guardrails import check_av_sync
+
+        sync = check_av_sync(target_path, source_path, total, fps=info.fps, audio=self.remux)
+        stats.extra["av_sync"] = {"video_s": sync.video_duration, "audio_s": sync.audio_duration,
+                                  "fps": str(sync.fps)}
+        if not sync.ok:
+            raise RuntimeError(f"{target_path.name} failed the A/V check: "
+                               + "; ".join(sync.problems))
         stats.elapsed = time.perf_counter() - t_start
         stats.output = str(target_path)
         stats.done = True

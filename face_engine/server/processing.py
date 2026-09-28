@@ -130,7 +130,9 @@ class FramePlan:
     """What :meth:`GpuFrameProcessor.infer` leaves for :meth:`GpuFrameProcessor.composite`.
 
     Attributes:
-        canvas: ``(1, 3, H, W)`` float frame the layers are pasted onto.
+        canvas: ``(1, 3, H, W)`` float frame the layers are pasted onto, or
+            None when nothing is swapped: the frame passes through untouched
+            (the stream pipeline then encodes its decoded slot directly).
         layers: ``(crops, matrices, masks)`` for :func:`warp_face_inverse_cuda`,
             pasted in order.
         stats: Faces seen / swapped.
@@ -140,9 +142,14 @@ class FramePlan:
     layers: list[tuple[Any, Any, Any]]
     stats: FrameStats
 
+    @property
+    def passthrough(self) -> bool:
+        return self.canvas is None
+
     def tensors(self) -> list[Any]:
         """Every tensor :meth:`GpuFrameProcessor.composite` reads (for ``record_stream``)."""
-        return [self.canvas, *(t for layer in self.layers for t in layer if t is not None)]
+        canvas = [] if self.canvas is None else [self.canvas]
+        return [*canvas, *(t for layer in self.layers for t in layer if t is not None)]
 
 
 @dataclass
@@ -245,6 +252,15 @@ class GpuFrameProcessor:
         self._ref_source = (torch.as_tensor([ids.index(config.assignments[r]) for r in refs],
                                             device=self.device) if refs else None)
 
+    def prepare(self, height: int, width: int) -> None:
+        """One-time GPU set-up for ``H x W`` frames, before a render's frame loop.
+
+        Captures the tracker's CUDA graphs now: a capture synchronizes the whole
+        device, which inside the stream pipeline stalled all three streams.
+        """
+        if self.tracker is not None:
+            self.tracker.prepare(height, width, device=self.device)
+
     # ------------------------------------------------------------------ faces
     def _faces(self, frame: torch.Tensor) -> Any:
         if self.tracker is not None:
@@ -279,15 +295,17 @@ class GpuFrameProcessor:
         faces = self._faces(f)
         stats = FrameStats(faces=len(faces))
         if len(faces) == 0:
-            return FramePlan(f, [], stats)
+            return FramePlan(None, [], stats)
         keep, sources = self._choose_sources(f, faces.kps)
         if keep.shape[0] == 0:
-            return FramePlan(f, [], stats)
+            return FramePlan(None, [], stats)
         kps = faces.kps[keep]
         p = self.config.params
         result = self.swapper.swap(f, kps, source=sources, pixel_boost=p.boost_size)
         mask = self.masker.generate(f, kps).mask * result.ok.float().view(-1, 1, 1, 1)
-        stats.swapped = int(keep.shape[0])
+        # Outcome, not intent: faces with unusable geometry (non-finite or
+        # collapsed landmarks) come back ok=False and paste nothing.
+        stats.swapped = int(result.ok.sum())
         if self.enhancer is None:
             return FramePlan(f, [(result.crops, result.matrices, mask)], stats)
         out = warp_face_inverse_cuda(f, result.crops, result.matrices, mask)
@@ -297,10 +315,15 @@ class GpuFrameProcessor:
         return FramePlan(out, [enhanced.paste], stats)
 
     @staticmethod
-    def composite(plan: FramePlan) -> torch.Tensor:
-        """Paste the plan's layers: the processed ``(1, 3, H, W)`` float frame."""
+    def composite(plan: FramePlan) -> torch.Tensor | None:
+        """Paste the plan's layers: the processed ``(1, 3, H, W)`` float frame.
+
+        None for a pass-through plan (the input frame is the output).
+        """
         from face_engine.pipeline.aligner import warp_face_inverse_cuda
 
+        if plan.canvas is None:
+            return None
         out = plan.canvas
         for crops, matrices, masks in plan.layers:
             out = warp_face_inverse_cuda(out, crops, matrices, masks)
@@ -309,7 +332,8 @@ class GpuFrameProcessor:
     def process_tensor(self, frame: torch.Tensor) -> tuple[torch.Tensor, FrameStats]:
         """``(1, 3, H, W)`` BGR frame on the GPU -> processed float frame + stats."""
         plan = self.infer(frame)
-        return self.composite(plan), plan.stats
+        out = self.composite(plan)
+        return (frame.float() if out is None else out), plan.stats
 
     def process(self, frame: np.ndarray) -> tuple[np.ndarray, FrameStats]:
         """Host convenience: ``(H, W, 3)`` uint8 BGR in and out (image targets)."""

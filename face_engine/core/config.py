@@ -1,9 +1,12 @@
 """Typed configuration for the face engine runtime.
 
-Every knob the execution layer reads lives on :class:`EngineConfig`. Paths are
-kept relative in the defaults and resolved against the current working
-directory (or an environment override) at use time, so no machine-specific
-drive letter is ever baked into the package.
+Every knob the execution layer reads lives on :class:`EngineConfig`. The
+default cache and model folders are ``.cache`` at the repository root (the
+folder holding the ``face_engine`` package), found from this file's location,
+so no drive letter is baked in and the working directory does not matter:
+until 2026-09-28 they were relative to it, and running ``face_engine/benchmark.py``
+from ``face_engine/`` re-downloaded 1.2 GB of models and rebuilt every
+TensorRT engine into a second ``face_engine/.cache``.
 
 Environment overrides
 ---------------------
@@ -101,6 +104,10 @@ class CUDAOptions(BaseModel):
         return value
 
 
+#: ``<repo>/.cache``: the default root for models, engines and the server workspace.
+DEFAULT_CACHE_DIR = Path(__file__).resolve().parents[2] / ".cache"
+
+
 def _env_path(name: str, default: Path) -> Path:
     value = os.environ.get(name)
     return Path(value) if value else default
@@ -138,9 +145,10 @@ class EngineConfig(BaseModel):
     providers: list[Provider] = Field(default_factory=lambda: list(DEFAULT_PROVIDER_ORDER))
     strict: bool = False
     register_gpu_dlls: bool = True
-    cache_dir: Path = Field(default_factory=lambda: _env_path("FACE_ENGINE_CACHE_DIR", Path(".cache")))
+    cache_dir: Path = Field(
+        default_factory=lambda: _env_path("FACE_ENGINE_CACHE_DIR", DEFAULT_CACHE_DIR))
     models_dir: Path = Field(
-        default_factory=lambda: _env_path("FACE_ENGINE_MODELS_DIR", Path(".cache/models")))
+        default_factory=lambda: _env_path("FACE_ENGINE_MODELS_DIR", DEFAULT_CACHE_DIR / "models"))
     tensorrt: TensorRTOptions = Field(default_factory=TensorRTOptions)
     cuda: CUDAOptions = Field(default_factory=CUDAOptions)
     intra_op_num_threads: int = Field(default=0, ge=0)

@@ -614,8 +614,12 @@ def warp_face_cuda(frame_tensor: torch.Tensor, matrix: torch.Tensor, crop_size: 
     import torch.nn.functional as F
     from kornia.geometry.transform import warp_affine
 
+    from face_engine.core.guardrails import safe_affine
+
     m = matrix if matrix.ndim == 3 else matrix[None]
-    m = m.to(device=frame_tensor.device, dtype=torch.float32)
+    # kornia inverts every matrix it warps with; a singular one (degenerate or
+    # non-finite landmarks) raised and killed the render (core/guardrails.py).
+    m, _ = safe_affine(m.to(device=frame_tensor.device, dtype=torch.float32))
     frames = frame_tensor if frame_tensor.is_floating_point() else frame_tensor.float()
     source = _select_frames(frames, m.shape[0], frame_index)
     k = _supersample_factor(m, antialias, supersample)
@@ -682,13 +686,21 @@ def warp_face_inverse_cuda(canvas: torch.Tensor, crops: torch.Tensor, matrix: to
     n = crops.shape[0]
     if n == 0:
         return out
+    from face_engine.core.guardrails import safe_affine
+
     b, _, h, w = out.shape
     m = (matrix if matrix.ndim == 3 else matrix[None]).to(device=out.device, dtype=torch.float32)
+    # A singular / non-finite matrix raised in kornia, and one NaN face turned
+    # the whole frame NaN through the blend: such faces paste nothing.
+    m, valid = safe_affine(m)
     size = crops.shape[-1]
     if mask is None:
         mask = torch.ones((n, 1, size, size), device=out.device, dtype=torch.float32)
-    alpha = mask.to(device=out.device, dtype=torch.float32).clamp(0, 1)
-    premultiplied = torch.cat([crops.to(device=out.device, dtype=torch.float32) * alpha, alpha], 1)
+    alpha = mask.to(device=out.device, dtype=torch.float32).nan_to_num(0.0).clamp(0, 1)
+    alpha = torch.where(valid.view(-1, 1, 1, 1), alpha, torch.zeros_like(alpha))
+    face = crops.to(device=out.device, dtype=torch.float32).nan_to_num(0.0, posinf=255.0,
+                                                                          neginf=0.0)
+    premultiplied = torch.cat([face * alpha, alpha], 1)
     if frame_index is None:
         frame_index = (torch.arange(n, device=out.device) if n == b
                        else torch.zeros(n, dtype=torch.int64, device=out.device))

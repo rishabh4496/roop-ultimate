@@ -172,7 +172,7 @@ def create_app(settings: ServerSettings | None = None) -> FastAPI:
         schema = RenderParams.model_json_schema()["properties"]
         return {
             "params": schema,
-            "defaults": RenderParams().model_dump(),
+            "defaults": RenderParams(**settings.default_params).model_dump(),
             "unavailable": {name: "no public model release" for name, spec in SWAP_MODELS.items()
                             if not spec.available},
             "providers": {"tensorrt": "TensorrtExecutionProvider" in providers,

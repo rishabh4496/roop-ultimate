@@ -239,14 +239,7 @@ class LucasKanadeTracker:
 
         n = points.shape[0]
         capacity = -(-n // _POINT_BUCKET) * _POINT_BUCKET
-        key = (str(points.device), capacity, tuple(tuple(t.shape) for t in previous),
-               tuple(tuple(t.shape) for t in current))
-        entry = self._graphs.get(key)
-        if entry is None:
-            entry = self._capture(previous, current, capacity)
-            if len(self._graphs) >= _MAX_GRAPHS:
-                self._graphs.pop(next(iter(self._graphs)))
-            self._graphs[key] = entry
+        entry = self._graph(previous, current, capacity)
         for static, live in zip(entry.previous, previous):
             static.copy_(live)
         for static, live in zip(entry.current, current):
@@ -255,6 +248,32 @@ class LucasKanadeTracker:
         entry.points[n:].copy_(points[:1].expand(capacity - n, 2))
         entry.graph.replay()
         return entry.forward[:n].clone(), entry.backward[:n].clone()
+
+    def _graph(self, previous: list[torch.Tensor], current: list[torch.Tensor],
+               capacity: int) -> _GraphEntry:
+        key = (str(previous[0].device), capacity, tuple(tuple(t.shape) for t in previous),
+               tuple(tuple(t.shape) for t in current))
+        entry = self._graphs.get(key)
+        if entry is None:
+            entry = self._capture(previous, current, capacity)
+            if len(self._graphs) >= _MAX_GRAPHS:
+                self._graphs.pop(next(iter(self._graphs)))
+            self._graphs[key] = entry
+        return entry
+
+    def prepare(self, pyramid: list[torch.Tensor], points: int) -> None:
+        """Capture the graphs for up to ``points`` tracked points on this pyramid shape now.
+
+        ``torch.cuda.graph`` synchronizes the whole DEVICE when a capture
+        starts: the first tracked frame of a render stalled every CUDA stream
+        of the Stage 7 pipeline once (found by ``face_engine/benchmark.py``'s
+        sync counter, 2026-09-28). Capturing before the render keeps that out
+        of the frame loop.
+        """
+        if not (self.cuda_graphs and pyramid[0].is_cuda):
+            return
+        for capacity in range(_POINT_BUCKET, points + _POINT_BUCKET, _POINT_BUCKET):
+            self._graph(pyramid, pyramid, capacity)
 
     def _capture(self, previous: list[torch.Tensor], current: list[torch.Tensor],
                  capacity: int) -> _GraphEntry:
@@ -367,6 +386,18 @@ class StridedFaceTracker:
         self._since_detection = 0
 
     # ------------------------------------------------------------------ public
+    def prepare(self, height: int, width: int, max_faces: int = 8, device: Any = "cuda") -> None:
+        """Pre-capture the optical-flow CUDA graphs for ``H x W`` frames and up to ``max_faces``.
+
+        See :meth:`LucasKanadeTracker.prepare`; a face count beyond ``max_faces``
+        still works, capturing its graph on first use.
+        """
+        import torch
+
+        gray = torch.zeros((1, 1, height, width), device=device)
+        per_face = 5 + self.config.grid ** 2
+        self.flow.prepare(self.flow.pyramid(gray), max_faces * per_face)
+
     def update(self, frame: torch.Tensor) -> TrackedFaces:
         f = frame if frame.ndim == 4 else frame[None]
         number = self.stats.frames

@@ -346,7 +346,10 @@ def test_default_config_matches_the_stage1_contract(config: EngineConfig) -> Non
     assert trt["trt_max_workspace_size"] == 4294967296
     assert trt["trt_fp16_enable"] is True and trt["trt_engine_cache_enable"] is True
     default = EngineConfig()
-    assert default.resolved_trt_cache_dir() == (Path.cwd() / ".cache" / "trt_engines").resolve()
+    # Anchored at the repository root, not the working directory.
+    root = Path(__file__).resolve().parents[2]
+    if "FACE_ENGINE_CACHE_DIR" not in os.environ:
+        assert default.resolved_trt_cache_dir() == (root / ".cache" / "trt_engines").resolve()
 
 
 # ---------------------------------------------------------------- registry + downloads
