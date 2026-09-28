@@ -416,7 +416,6 @@ class BaseDetector:
         itself) synchronize with the device, as any variable-size result must.
         """
         import torch
-        from torchvision.ops import batched_nms as _tv_batched_nms
 
         if frames.ndim == 3:
             frames = frames[None]
@@ -434,10 +433,16 @@ class BaseDetector:
             kps_all.append(kps)
             scores_all.append(scores)
             index_all.append(torch.full_like(scores, i, dtype=torch.int64))
-        boxes = torch.cat(boxes_all)
-        kps = torch.cat(kps_all)
-        scores = torch.cat(scores_all)
-        frame_index = torch.cat(index_all)
+        return self._select_cuda(torch.cat(boxes_all), torch.cat(kps_all), torch.cat(scores_all),
+                                 torch.cat(index_all), (h, w), b, frames.device)
+
+    def _select_cuda(self, boxes: Any, kps: Any, scores: Any, frame_index: Any,
+                     frame_size: tuple[int, int], b: int, device: Any) -> GPUDetections:
+        """Clip, threshold, drop tiny / non-finite, ``batched_nms``: the shared tail."""
+        import torch
+        from torchvision.ops import batched_nms as _tv_batched_nms
+
+        h, w = frame_size
         boxes[:, 0::2] = boxes[:, 0::2].clamp(0, w)
         boxes[:, 1::2] = boxes[:, 1::2].clamp(0, h)
         ok = ((scores >= self.score_threshold)
@@ -446,7 +451,7 @@ class BaseDetector:
               & torch.isfinite(kps).flatten(1).all(1))
         keep = ok.nonzero()[:, 0]
         if keep.shape[0] == 0:
-            return GPUDetections.empty(frames.device, (h, w), b)
+            return GPUDetections.empty(device, (h, w), b)
         boxes, kps, scores, frame_index = boxes[keep], kps[keep], scores[keep], frame_index[keep]
         kept = _tv_batched_nms(boxes, scores, frame_index, float(self.iou_threshold))
         # Order by frame, then score: batched_nms returns score order over the batch.

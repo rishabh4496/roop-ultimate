@@ -75,8 +75,16 @@ ENHANCER_MODELS: dict[str, EnhancerSpec] = {
 #   gpen_bfr_1024 / 2048     fp16 collapses (flat / non-finite faces)          -> fp32
 # The HOST FaceEnhancer still builds GPEN-512 with TensorRT FP16 (fp16_safe=True
 # in ENHANCER_MODELS); by the numbers above that costs identity. Not changed here.
+#
+# gpen_bfr_1024 "auto": the AOT FP16 engine when compiled (tools/compile_engines.py
+# pins the encoder's final linear and the style pixel-norm to FP32, the only
+# layers that leave FP16's range), else fp32. Measured 2026-09-28, RTX 4070, 28
+# real faces: 32.7 vs 57.2 ms/face, identity 0.9344 vs 0.9343, PSNR vs fp32
+# median 66.7 dB (min 61.4), no non-finite value. ONNX Runtime's own FP16 build
+# is still NaN, so "auto" never picks fp16 without the compiled engine.
 ENHANCER_PRECISION: dict[str, str] = {name: "fp32" for name in ENHANCER_MODELS}
 ENHANCER_PRECISION["restoreformer_plus_plus"] = "fp16"
+ENHANCER_PRECISION["gpen_bfr_1024"] = "auto"
 
 
 def face_region_mask(size: int, grow: float = 1.0) -> np.ndarray:
@@ -255,7 +263,8 @@ class BatchedFaceEnhancer:
     ``run_binding`` call, still without leaving the device.
 
     Args:
-        precision: ``"fp32"`` / ``"fp16"``; default :data:`ENHANCER_PRECISION`.
+        precision: ``"fp32"`` / ``"fp16"`` / ``"auto"`` (the AOT FP16 engine when
+            compiled, else fp32); default :data:`ENHANCER_PRECISION`.
         batching: False = original graph, one face per call.
     """
 
@@ -270,8 +279,14 @@ class BatchedFaceEnhancer:
         self.name = model
         self.engine = engine
         self.precision = precision or ENHANCER_PRECISION.get(model, "fp32")
+        if self.precision == "auto":
+            from face_engine.core.trt_compiler import aot_available
+
+            self.precision = ("fp16" if batching and aot_available(model_path, "fp16",
+                                                                   engine.config)
+                              else "fp32")
         if self.precision not in ("fp32", "fp16"):
-            raise ValueError("precision must be 'fp32' or 'fp16'")
+            raise ValueError("precision must be 'fp32', 'fp16' or 'auto'")
         self.color = color
         self.max_batch = max_batch
         from face_engine.core.trt_compiler import aot_engine

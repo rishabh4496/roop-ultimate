@@ -45,7 +45,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--workspace-size", type=parse_size, default=parse_size("4GB"),
                     help="builder workspace limit, e.g. 4GB (default) or 1.5GB")
     ap.add_argument("--models", default="all",
-                    help="all | swapper | enhancer | masker | a model name")
+                    help="all | swapper | enhancer | masker | detector | a model name")
     ap.add_argument("--out", type=Path, default=REPO / ".cache" / "trt_engines")
     ap.add_argument("--force", action="store_true", help="rebuild even if a verified engine exists")
     args = ap.parse_args(argv)

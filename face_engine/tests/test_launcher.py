@@ -25,9 +25,9 @@ from face_engine import run as launcher
 
 # ---------------------------------------------------------------------------- engines
 @pytest.mark.parametrize(("profile", "expected"), [
-    ("fast", [("hyperswap_1a_256", "fp16")]),
-    ("balanced", [("hyperswap_1a_256", "fp16"), ("xseg_3", "fp16")]),
-    ("cinema", [("hyperswap_1a_256", "fp16"), ("xseg_3", "fp16"),
+    ("fast", [("hyperswap_1a_256", "auto")]),
+    ("balanced", [("hyperswap_1a_256", "auto"), ("xseg_3", "fp16")]),
+    ("cinema", [("hyperswap_1a_256", "auto"), ("xseg_3", "fp16"),
                 ("bisenet_resnet34", "fp16"), ("gpen_bfr_512", "fp32")]),
 ])
 def test_wanted_engines_match_what_the_processors_load(profile: str,
@@ -84,11 +84,29 @@ def test_a_failed_build_is_not_retried_until_recompile(engine_env: dict[str, Any
     launcher.ensure_engines(params, _paths(params))
     marker = tmp_path / ".launcher_failed_hyperswap_1a_256_sm89_fp16.json"
     assert json.loads(marker.read_text())["exit_code"] == 1
+    tried = [("hyperswap_1a_256", "fp16"), ("hyperswap_1a_256", "fp32")]  # "auto"
+    assert engine_env["calls"] == tried
     launcher.ensure_engines(params, _paths(params))
-    assert engine_env["calls"] == [("hyperswap_1a_256", "fp16")]  # skipped the 2nd time
+    assert engine_env["calls"] == tried  # neither retried the 2nd time
     engine_env["exit"] = 0
     launcher.ensure_engines(params, _paths(params), recompile=True)
-    assert len(engine_env["calls"]) == 2 and not marker.exists()
+    assert engine_env["calls"] == [*tried, ("hyperswap_1a_256", "fp16")]  # fp16 now builds
+    assert not marker.exists()
+
+
+def test_auto_builds_fp16_then_falls_back_to_fp32(engine_env: dict[str, Any],
+                                                  monkeypatch: pytest.MonkeyPatch) -> None:
+    params = launcher.profile_params("fast")
+    real = launcher.subprocess.run
+
+    def fp16_fails(cmd: list[str], **kwargs: Any) -> Any:
+        engine_env["exit"] = 1 if cmd[cmd.index("--precision") + 1] == "fp16" else 0
+        return real(cmd, **kwargs)
+
+    monkeypatch.setattr(launcher.subprocess, "run", fp16_fails)
+    launcher.ensure_engines(params, _paths(params))
+    assert engine_env["calls"] == [("hyperswap_1a_256", "fp16"), ("hyperswap_1a_256", "fp32")]
+    assert ("hyperswap_1a_256", "fp32") in engine_env["built"]
 
 
 def test_no_tensorrt_means_no_compile(engine_env: dict[str, Any],

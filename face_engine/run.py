@@ -85,7 +85,11 @@ def ensure_models(params: Any) -> dict[str, str]:
 
 
 def wanted_engines(params: Any) -> list[tuple[str, str]]:
-    """``(model, precision)`` of each AOT engine the processors would load for ``params``."""
+    """``(model, precision)`` of each AOT engine the processors would load for ``params``.
+
+    ``"auto"`` models load the FP16 engine when it exists, else FP32:
+    :func:`ensure_engines` builds FP16 first and FP32 if that build fails.
+    """
     from face_engine.core.trt_compiler import ENGINE_SPECS
     from face_engine.processors.enhancer import ENHANCER_PRECISION
     from face_engine.processors.swapper import SWAP_PRECISION
@@ -97,7 +101,6 @@ def wanted_engines(params: Any) -> list[tuple[str, str]]:
             continue
         if name == params.swapper_model:
             precision = SWAP_PRECISION.get(name, "fp32")
-            precision = "fp16" if precision == "auto" else precision  # auto prefers the AOT fp16
         elif name == params.enhancer_model:
             precision = ENHANCER_PRECISION.get(name, "fp32")
         else:  # maskers look their engines up as fp16 (pipeline/masker.py)
@@ -115,7 +118,6 @@ def _marker(model: str, precision: str) -> Path:
 def ensure_engines(params: Any, paths: dict[str, str], recompile: bool = False) -> None:
     """Build each missing engine of :func:`wanted_engines` with ``tools/compile_engines.py``."""
     from face_engine.core.execution import ExecutionEngine
-    from face_engine.core.trt_compiler import find_engine_for
 
     if params.execution_provider != "tensorrt":
         log.info("engines: provider %s, no TensorRT engines needed", params.execution_provider)
@@ -123,34 +125,42 @@ def ensure_engines(params: Any, paths: dict[str, str], recompile: bool = False) 
     if "TensorrtExecutionProvider" not in ExecutionEngine.available_providers():
         log.warning("engines: TensorRT is not available here; ONNX Runtime CUDA is used")
         return
-    for model, precision in wanted_engines(params):
-        found = find_engine_for(paths[model], precision)
-        if found is not None:
-            log.info("engine %-23s %s ready (%s)", model, precision, found.name)
-            continue
-        marker = _marker(model, precision)
-        if marker.is_file() and not recompile:
-            log.warning("engine %-23s %s: an earlier build failed (%s); using ONNX Runtime. "
-                        "--recompile retries.", model, precision, marker.name)
-            continue
-        log.info("engine %-23s %s missing: compiling (a cold build takes minutes)",
-                 model, precision)
-        t0 = time.perf_counter()
-        proc = subprocess.run([sys.executable, str(COMPILER), "--models", model,
-                               "--precision", precision], cwd=REPO, check=False,
-                              env={**os.environ, "PYTHONPATH": str(REPO)})
-        if proc.returncode == 0 and find_engine_for(paths[model], precision) is not None:
-            marker.unlink(missing_ok=True)
-            log.info("engine %-23s %s built in %.0f s", model, precision,
-                     time.perf_counter() - t0)
-        else:
-            marker.parent.mkdir(parents=True, exist_ok=True)
-            marker.write_text(json.dumps({"model": model, "precision": precision,
-                                          "exit_code": proc.returncode,
-                                          "time": time.strftime("%Y-%m-%d %H:%M:%S")}),
-                              encoding="utf-8")
-            log.warning("engine %-23s %s: build failed or was rejected (exit %s); "
-                        "using ONNX Runtime", model, precision, proc.returncode)
+    for model, wanted in wanted_engines(params):
+        for precision in (("fp16", "fp32") if wanted == "auto" else (wanted,)):
+            if _ensure_engine(model, precision, paths[model], recompile):
+                break
+
+
+def _ensure_engine(model: str, precision: str, path: str, recompile: bool) -> bool:
+    """True when a verified engine exists (or was just built)."""
+    from face_engine.core.trt_compiler import find_engine_for
+
+    found = find_engine_for(path, precision)
+    if found is not None:
+        log.info("engine %-23s %s ready (%s)", model, precision, found.name)
+        return True
+    marker = _marker(model, precision)
+    if marker.is_file() and not recompile:
+        log.warning("engine %-23s %s: an earlier build failed (%s); not retried. "
+                    "--recompile retries.", model, precision, marker.name)
+        return False
+    log.info("engine %-23s %s missing: compiling (a cold build takes minutes)",
+             model, precision)
+    t0 = time.perf_counter()
+    proc = subprocess.run([sys.executable, str(COMPILER), "--models", model,
+                           "--precision", precision], cwd=REPO, check=False,
+                          env={**os.environ, "PYTHONPATH": str(REPO)})
+    if proc.returncode == 0 and find_engine_for(path, precision) is not None:
+        marker.unlink(missing_ok=True)
+        log.info("engine %-23s %s built in %.0f s", model, precision, time.perf_counter() - t0)
+        return True
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    marker.write_text(json.dumps({"model": model, "precision": precision,
+                                  "exit_code": proc.returncode,
+                                  "time": time.strftime("%Y-%m-%d %H:%M:%S")}), encoding="utf-8")
+    log.warning("engine %-23s %s: build failed or was rejected (exit %s)",
+                model, precision, proc.returncode)
+    return False
 
 
 def ensure_web_ui() -> Path:

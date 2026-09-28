@@ -354,7 +354,7 @@ def test_default_config_matches_the_stage1_contract(config: EngineConfig) -> Non
 
 # ---------------------------------------------------------------- registry + downloads
 def test_zoo_declarations_are_complete() -> None:
-    expected = {"scrfd_10g_bnkps", "yoloface_8n", "hrffa", "2dfan4", "arcface_w600k_r50",
+    expected = {"scrfd_10g_bnkps", "retinaface_r50", "yoloface_8n", "hrffa", "2dfan4", "arcface_w600k_r50",
                 "hyperswap_1a_256", "hyperswap_1b_256", "hyperswap_1c_256", "alphaface_256",
                 "inswapper_128", "inswapper_128_fp16", "xseg", "xseg_3", "bisenet_resnet34", "gpen_bfr_512", "gpen_bfr_1024",
                 "gpen_bfr_2048", "restoreformer_plus_plus",

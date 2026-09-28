@@ -43,7 +43,8 @@ def test_cli_parses_sizes_and_groups() -> None:
     assert compile_engines.parse_size("512MB") == 512 << 20
     assert {s.model for s in tc.select_specs("swapper")} == {
         "hyperswap_1a_256", "hyperswap_1b_256", "hyperswap_1c_256", "inswapper_128"}
-    assert {s.group for s in tc.select_specs("all")} == {"swapper", "enhancer", "masker"}
+    assert {s.group for s in tc.select_specs("all")} == {"swapper", "enhancer", "masker",
+                                                           "detector"}
     assert [s.model for s in tc.select_specs("xseg_3")] == ["xseg_3"]
     with pytest.raises(KeyError):
         tc.select_specs("nonsense")

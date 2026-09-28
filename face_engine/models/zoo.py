@@ -52,6 +52,17 @@ MODEL_ZOO: dict[str, ModelSpec] = {spec.name: spec for spec in (
                     "run at 1x3x640x640",
         license="InsightFace: non-commercial research"),
     ModelSpec(
+        name="retinaface_r50", task=ModelTask.DETECTION, filename="retinaface_r50.onnx",
+        urls=("https://huggingface.co/nakamura196/retinaface-r50-onnx/resolve/main/"
+              "retinaface_r50.onnx",),
+        sha256="ea3f7d12894980d52d3fd7f3f5cab463d48e9cfbcc06f40616bdeeab3e3f31d1",
+        size=109110500,
+        inputs={"input": ("b", 3, "h", "w")},
+        description="RetinaFace ResNet-50 (biubug6 priors, softmax inside the graph); "
+                    "run at 1x3x640x640, direct square resize, BGR minus (104, 117, 123). "
+                    "Same file as roop-ultimate's app/models/retinaface_r50.onnx",
+        license="MIT (biubug6/Pytorch_Retinaface)"),
+    ModelSpec(
         name="yoloface_8n", task=ModelTask.DETECTION, filename="yoloface_8n.onnx",
         urls=(_FF30 + "yoloface_8n.onnx",),
         sha256="821cdbb1e65fbbabdde7dd0933f754797a343e56fd962729c61ffcefcd135929",

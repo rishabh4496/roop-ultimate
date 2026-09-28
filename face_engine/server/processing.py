@@ -42,6 +42,7 @@ PixelBoost = Literal["none", "256x256", "512x512", "1024x1024"]
 MaskType = Literal["box", "occlusion", "region"]
 EnhancerName = Literal["none", "gpen_bfr_512", "gpen_bfr_1024", "restoreformer_plus_plus"]
 ProviderName = Literal["cuda", "tensorrt", "cpu"]
+DetectorName = Literal["scrfd_10g_bnkps", "retinaface_r50"]
 
 
 class RenderParams(BaseModel):
@@ -49,6 +50,7 @@ class RenderParams(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    detector_model: DetectorName = "scrfd_10g_bnkps"
     swapper_model: SwapperName = "hyperswap_1a_256"
     pixel_boost: PixelBoost = "none"
     mask_types: list[MaskType] = Field(default_factory=lambda: ["box", "occlusion"])
@@ -109,7 +111,7 @@ PRESETS: dict[str, dict[str, Any]] = {
 
 def required_models(params: RenderParams) -> list[str]:
     """Zoo names a render with ``params`` needs."""
-    names = ["scrfd_10g_bnkps", "arcface_w600k_r50", params.swapper_model]
+    names = [params.detector_model, "arcface_w600k_r50", params.swapper_model]
     if "occlusion" in params.mask_types:
         names.append("xseg_3")
     if "region" in params.mask_types:
@@ -221,7 +223,7 @@ class GpuFrameProcessor:
         # engines, and SCRFD is 4.7 ms per frame there (Stage 2).
         self.detect_engine = ExecutionEngine(EngineConfig(providers=_providers(
             "cpu" if p.execution_provider == "cpu" else "cuda")))
-        self.detector = SCRFDDetector(self.detect_engine, paths["scrfd_10g_bnkps"])
+        self.detector = self._build_detector(p, paths, SCRFDDetector)
         self.tracker = (StridedFaceTracker(self.detector,
                                            TrackerConfig(detection_stride=p.detection_stride))
                         if tracking and p.detection_stride > 1 else None)
@@ -233,8 +235,8 @@ class GpuFrameProcessor:
                             blur=p.mask_blur if "box" in p.mask_types else 0.0)
         # The mask must use the swap crop's own template (arcface_128), at the
         # Pixel Boost size, so the two line up pixel for pixel.
-        self.masker = GPUMasker(
-            self.engine, paths.get("xseg_3") if "occlusion" in p.mask_types else None,
+        self.masker = self._build_masker(
+            GPUMasker, paths.get("xseg_3") if "occlusion" in p.mask_types else None,
             paths.get("bisenet_resnet34") if "region" in p.mask_types else None,
             MaskerConfig(crop_size=size, template=self.swapper.spec.template, box=box,
                          xseg=XSegConfig(), regions=RegionConfig(), concurrent=False))
@@ -251,6 +253,18 @@ class GpuFrameProcessor:
                       if refs else None)
         self._ref_source = (torch.as_tensor([ids.index(config.assignments[r]) for r in refs],
                                             device=self.device) if refs else None)
+
+    def _build_detector(self, p: RenderParams, paths: dict[str, str], scrfd: Any) -> Any:
+        """SCRFD on the CUDA EP, or RetinaFace R50 on its AOT TensorRT engine (fixed 640)."""
+        if p.detector_model == "retinaface_r50":
+            from face_engine.boosted.retinaface_gpu import RetinaFaceR50Detector
+
+            return RetinaFaceR50Detector(self.engine, paths["retinaface_r50"])
+        return scrfd(self.detect_engine, paths["scrfd_10g_bnkps"])
+
+    def _build_masker(self, cls: Any, xseg: str | None, bisenet: str | None, config: Any) -> Any:
+        """The mask builder (a subclass hook: the boosted pipeline feathers XSeg its own way)."""
+        return cls(self.engine, xseg, bisenet, config)
 
     def prepare(self, height: int, width: int) -> None:
         """One-time GPU set-up for ``H x W`` frames, before a render's frame loop.
@@ -301,8 +315,8 @@ class GpuFrameProcessor:
             return FramePlan(None, [], stats)
         kps = faces.kps[keep]
         p = self.config.params
-        result = self.swapper.swap(f, kps, source=sources, pixel_boost=p.boost_size)
-        mask = self.masker.generate(f, kps).mask * result.ok.float().view(-1, 1, 1, 1)
+        result, mask = self._swap_and_mask(f, kps, sources)
+        mask = mask * result.ok.float().view(-1, 1, 1, 1)
         # Outcome, not intent: faces with unusable geometry (non-finite or
         # collapsed landmarks) come back ok=False and paste nothing.
         stats.swapped = int(result.ok.sum())
@@ -313,6 +327,14 @@ class GpuFrameProcessor:
                                          alpha=p.enhancer_blend / 100.0,
                                          paste_back=False)
         return FramePlan(out, [enhanced.paste], stats)
+
+    def _swap_and_mask(self, f: torch.Tensor, kps: torch.Tensor,
+                       sources: torch.Tensor) -> tuple[Any, torch.Tensor]:
+        """``(swap result, composite mask)`` for the kept faces (sequential here;
+        the boosted processor runs the two on separate CUDA streams)."""
+        result = self.swapper.swap(f, kps, source=sources,
+                                   pixel_boost=self.config.params.boost_size)
+        return result, self.masker.generate(f, kps).mask
 
     @staticmethod
     def composite(plan: FramePlan) -> torch.Tensor | None:

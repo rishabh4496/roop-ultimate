@@ -84,6 +84,9 @@ class EngineSpec:
         inputs: Input name -> shape without the batch dimension.
         batch: ``(min, opt, max)``; ``(1, 1, 1)`` for a fixed-batch model.
         batched_graph: Build the verified dynamic-batch copy of the model.
+        fp32_layers: Layer / tensor name substrings pinned to FP32 in an FP16
+            build (on top of decomposed InstanceNorms): the layers measured to
+            leave FP16's range.
     """
 
     model: str
@@ -91,6 +94,7 @@ class EngineSpec:
     inputs: dict[str, tuple[int, ...]]
     batch: tuple[int, int, int] = (1, 2, 8)
     batched_graph: bool = True
+    fp32_layers: tuple[str, ...] = ()
 
     @property
     def max_batch(self) -> int:
@@ -102,8 +106,16 @@ ENGINE_SPECS: dict[str, EngineSpec] = {s.model: s for s in (
                  {"source": (512,), "target": (3, 256, 256)}) for v in ("1a", "1b", "1c")),
     EngineSpec("inswapper_128", "swapper", {"target": (3, 128, 128), "source": (512,)}),
     EngineSpec("gpen_bfr_512", "enhancer", {"input": (3, 512, 512)}, (1, 1, 1), False),
-    EngineSpec("gpen_bfr_1024", "enhancer", {"input": (3, 1024, 1024)}, (1, 1, 1), False),
+    # GPEN-1024 FP16 produced NaN (Stage 6). Measured per node in FP32 on real
+    # 1024 crops (2026-09-28): the 18 per-layer demodulation chains stay within
+    # FP16 (sums <= ~400); the encoder's final linear reaches 1.9e5 and the
+    # style pixel-norm's Pow 3.6e10 / ReduceMean 1.1e9 (its Div output ~3e-5 is
+    # below FP16's smallest normal). Those two blocks run FP32.
+    EngineSpec("gpen_bfr_1024", "enhancer", {"input": (3, 1024, 1024)}, (1, 1, 1), False,
+               fp32_layers=("/final_linear/", "/generator/style/style.0/")),
     EngineSpec("xseg_3", "masker", {"input": (256, 256, 3)}, (1, 2, 8), False),
+    # The boosted pipeline's detector (face_engine/boosted): fixed 640, batch <= 2.
+    EngineSpec("retinaface_r50", "detector", {"input": (3, 640, 640)}, (1, 1, 2), False),
     EngineSpec("bisenet_resnet34", "masker", {"input": (3, 512, 512)}, (1, 2, 4), False),
 )}
 
@@ -184,15 +196,17 @@ class _Logger:
         return Impl()
 
 
-def pin_decomposed_norms(network: Any) -> int:
-    """Pin every layer of a decomposed InstanceNorm to FP32. Returns the count."""
+def pin_decomposed_norms(network: Any, extra: tuple[str, ...] = ()) -> int:
+    """Pin every layer of a decomposed InstanceNorm, and every layer whose name or
+    output name contains one of ``extra``, to FP32. Returns the count."""
     trt = _trt()
     floating = (trt.float32, trt.float16)
     pinned = 0
     for i in range(network.num_layers):
         layer = network.get_layer(i)
         outputs = [layer.get_output(j) for j in range(layer.num_outputs)]
-        if not any(_IN_MARK in o.name for o in outputs):
+        names = [layer.name, *(o.name for o in outputs)]
+        if not any(_IN_MARK in n or any(e in n for e in extra) for n in names):
             continue
         if not all(o.dtype in floating for o in outputs):
             continue  # shape / index arithmetic
@@ -259,7 +273,7 @@ def build_engine(spec: EngineSpec, source: Path, precision: str, gpu: GpuInfo, *
     pinned = 0
     if precision == "fp16":
         config.set_flag(trt.BuilderFlag.FP16)
-        pinned = pin_decomposed_norms(network) if pin_norms else 0
+        pinned = pin_decomposed_norms(network, spec.fp32_layers) if pin_norms else 0
         if pinned:
             config.set_flag(trt.BuilderFlag.OBEY_PRECISION_CONSTRAINTS)
     # Timing cache: layer tactic timings are reused across builds and models.
@@ -428,6 +442,13 @@ def sample_inputs(spec: EngineSpec, batch: int) -> dict[str, np.ndarray]:
         norm = (rgb - np.array([0.485, 0.456, 0.406], np.float32)) / np.array(
             [0.229, 0.224, 0.225], np.float32)
         return {"input": np.ascontiguousarray(norm.transpose(0, 3, 1, 2))}
+    if name == "retinaface_r50":
+        import cv2
+
+        canvas = cv2.resize(image, (640, 640)).astype(np.float32) - np.array(
+            [104.0, 117.0, 123.0], np.float32)  # BGR, mean only (biubug6)
+        return {"input": np.ascontiguousarray(
+            np.repeat(canvas.transpose(2, 0, 1)[None], batch, axis=0))}
     if name.startswith("gpen"):
         size = spec.inputs["input"][-1]
         rgb = crops(size, "ffhq_512")[..., ::-1].astype(np.float32) / 127.5 - 1.0

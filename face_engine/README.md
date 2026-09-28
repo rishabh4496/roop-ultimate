@@ -15,6 +15,7 @@ under `app/`.
 | `core/guardrails.py` | `safe_affine`, `valid_landmarks`, `estimate_yaw_5pt` / `choose_alignment_points`, `check_av_sync` |
 | `benchmark.py` | per-stage latency + sustained fps / VRAM / CPU / sync-lock harness (Rich table, exit 1 on failure) |
 | `run.py` | launcher: models + TensorRT engines + web UI, then `all` / `api` / `ui` / `worker` |
+| `boosted/` | RetinaFace R50 detector, XSeg feathering, dual-stream `BoostedFrameProcessor`, `boosted` / `ultra` presets, engines, benchmark |
 | `core/registry.py` | `ModelSpec` / `ModelRegistry`: declarative specs, verify, fetch |
 | `models/zoo.py` | `MODEL_ZOO`: the 15 declared models with URLs, SHA256 and sizes |
 | `utils/downloads.py` | resumable, retried, hash-verified downloads |
@@ -862,6 +863,109 @@ working directory: running `benchmark.py` from `face_engine/` re-downloaded
 1.2 GB of models and rebuilt every TensorRT engine into `face_engine/.cache`.
 They now default to `<repo>/.cache` (`FACE_ENGINE_CACHE_DIR` /
 `FACE_ENGINE_MODELS_DIR` still override).
+
+## Boosted pipeline (`boosted/`): RetinaFace R50 + HyperSwap || XSeg (+ GPEN-1024 "Ultra")
+
+```
+python -m face_engine.boosted.trt_compiler                     # the four FP16 engines
+python -m face_engine.boosted.benchmark_boosted --input face_engine/tests/sample_1080p.mp4 --frames 500
+```
+
+```python
+from face_engine.boosted.ultra_pipeline import render
+stats = render("in.mp4", "out.mp4", "face.jpg", "boosted")   # or "ultra"
+```
+
+A thin package over Stages 2-8: `retinaface_gpu.py` (R50 detector),
+`xseg_masker.py` (XSeg with erosion + Gaussian feathering),
+`ultra_pipeline.py` (`BoostedFrameProcessor`: swap and mask on two CUDA
+streams; presets; `render`), `trt_compiler.py` (builds the four engines
+through `core/trt_compiler`), `benchmark_boosted.py`. Decoding is Stage 7's
+(software + GPU colour; in-process NVDEC deadlocked with torch + ONNX Runtime
+in Stage 4), the output NVENC `-preset p4 -cq 19`.
+
+| preset | detector | swap | mask | restore |
+|---|---|---|---|---|
+| `boosted` | R50 every 3rd frame, optical flow between | HyperSwap-1a-256 FP16 | box x XSeg (eroded, feathered) | - |
+| `ultra` | same | same | same | GPEN-BFR-1024, mixed FP16, LAB colour lock |
+
+### Measured (RTX 4070, 2026-09-28)
+
+1080p two-face clip (`d1` looped), 500 frames, `benchmark_boosted`:
+
+| | |
+|---|---:|
+| RetinaFace R50 engine (640, b1) | 2.05 ms |
+| R50 `detect_cuda` (letterbox + engine + decode + NMS, 1080p) | 3.91 ms |
+| HyperSwap-256 engine (b2) | 7.83 ms |
+| DFL XSeg engine + feathering (b2) | 3.67 ms |
+| GPEN-BFR-1024 engine (b1, per face) | 34.86 ms |
+| **boosted** | **42.5-50 fps**, 988 / 988 faces, +2.5 GB VRAM (5.0 GB device), CPU 7% |
+| **ultra** | **8.5-9.6 fps**, 988 / 988 faces, +3.6 GB VRAM (6.4 GB device) |
+
+- **The target is not met reliably.** Boosted read 48.4 / 49.8 fps in one
+  window and 42.5-45.1 in later ones with the GPU at 2820 MHz / 151 W and the
+  harness shown not to be the cause (plain vs instrumented renders alike). Ultra
+  cannot approach it: two faces x ~33 ms of GPEN-1024 is ~65 ms per frame.
+- **Dual streams:** +5% on boosted (48.4 / 49.8 vs 46.8 / 45.5 fps, A-B-B-A),
+  nothing measurable on ultra; outputs bit-identical to the single-stream path.
+- **VRAM:** the run adds 2.5 / 3.6 GB (under the 6 GB budget); the device
+  total including the desktop and other processes peaked at 5.0 / 6.4 GB.
+  `render` caps torch's allocator at 90% (`set_per_process_memory_fraction`);
+  TensorRT and ONNX Runtime allocate outside that cap.
+
+### GPEN-1024 in mixed FP16
+
+GPEN-1024's FP16 engine returned NaN (Stage 6). Every compute node's range was
+measured in FP32 on real 1024 crops: the 18 per-layer demodulation chains stay
+within FP16 (sums <= ~400); the encoder's `final_linear` reaches 1.9e5 and the
+style pixel-norm's `Pow` 3.6e10 / `ReduceMean` 1.1e9 (its `Div` output ~3e-5
+is below FP16's smallest normal). Pinning those two blocks (14 layers,
+`EngineSpec.fp32_layers`) gives:
+
+| 28 real faces | FP32 | mixed FP16 |
+|---|---:|---:|
+| latency | 57.2 ms | 32.7 ms |
+| identity (cosine to input) | 0.9343 | 0.9344 |
+| PSNR vs FP32 | - | median 66.7 dB, min 61.4 |
+| fidelity gate (verify) | 4.8e-5 | 3.45e-4 of range |
+
+`ENHANCER_PRECISION["gpen_bfr_1024"]` is now `"auto"`: the pinned FP16
+engine when compiled, else FP32 (ONNX Runtime's own FP16 is still NaN, so
+FP16 is never chosen without the engine). `run.py` builds FP16 first and
+FP32 if that build fails.
+
+### RetinaFace R50
+
+Registered in the zoo (the file roop-ultimate uses, same SHA256). BGR minus
+(104, 117, 123), softmax inside the graph (`conf[..., 1]`), biubug6 priors;
+FP16 engine 2.05 ms, fidelity 3.47e-4; TensorRT and ONNX Runtime detections
+agree to < 2 px. `RenderParams.detector_model = "retinaface_r50"` makes it
+available to the normal server too.
+
+**Letterboxed, not squashed.** roop-ultimate square-resizes frames for R50.
+On d1 that found the second face in 21 of 100 frames (letterbox: 94); across
+Weeds / Love / d2 it missed 13 / 7 / 8 faces SCRFD found (letterbox 4 / 1 / 0),
+and its extra boxes on 4K d6 were duplicates. The letterbox's detections
+beyond SCRFD's were real faces (upside down, turned away, behind a hand).
+Against roop-ultimate's reference decoder on 50 frames: median IoU 0.99,
+landmarks 0.14% of the face size; the reference keeps second boxes overlapping
+a stronger one at IoU 0.46-0.48, which NMS at 0.45 removes.
+
+The first boosted fps (57.5 / 58.2) came from the squashed detector finding
+375 faces in 300 frames instead of 591. Faces-per-frame is now part of every
+figure above.
+
+### Spec items that could not be built as written
+
+- GPEN-1024 `max=(2, ...)`: its StyleGAN2 modulated convolutions fix the batch
+  at 1 (the engine is b1; faces run one per call).
+- HyperSwap's embedding input is named `source`, not `source_emb`; the XSeg
+  input is NHWC `(N, 256, 256, 3)`. The existing engines' profiles (max 8)
+  cover the requested max 4.
+- In-process PyAV NVDEC: replaced by Stage 7's decode (see above).
+- "No H2D copies in the loop": one upload of the decoded YUV planes per frame
+  remains; frames are CPU-decoded (Stage 7).
 
 ## Models without a source
 
