@@ -2538,3 +2538,18 @@ not selected). **Still to do on the 3060 after the render ends:** counterbalance
 leaves shot, recording `mean_gpu_util_pct`, the `[Temporal]` line (tracks / faces / gap-filled)
 and the swap audit. Recall is the risk: a face only the rescue can see, reappearing inside 8
 frames of a futile streak, is found late. A fast pre-pass with fewer faces is not a win.
+
+### 5. Measured afterwards (2026-09-29, 3060, 900-frame slice of double/d4.mp4, no enhancer, counterbalanced)
+Pre-pass stage alone, exhaustive (`ROOP_SMALL_CARD_PREPASS=full`) vs fix: **23.1 / 21.4 fps -> 32.4 / 30.1 fps
+(about +40%)**. Detection output matches: faces on 783 frames in both, 990 vs 991 faces, 5 tracks in both;
+schedule 221 full / 679 ROI / 7 fallback vs 225 / 675 / 12 (ROI crops without the ladder miss a few more and
+fall back to the full frame). This clip has both people in shot nearly throughout, so it exercises cause 1
+(ROI crops) far more than cause 2 (a person out of shot); the gain on footage where someone leaves is UNMEASURED.
+
+**End-to-end is NOT comparable and must not be quoted.** The swap rate flipped, deterministically in both reps:
+1.5% (24 of 1559) exhaustive vs 57.9% (904 of 1561) with the fix. The faceset used (`akansha`) is not the
+person in this clip (best track distance p0=0.92 against a 0.75 gate), so the identity assignment sits on a
+decision boundary and a 1-face / 3-gap-fill difference in detections tipped it. That is a property of a
+wrong-person faceset, not evidence the fix is better or worse - but it also means recall parity is NOT proven.
+**Still needed:** rerun with a faceset that actually matches the two people in the clip and confirm swap rate
+and `[Temporal]` counts agree between arms before pushing.
