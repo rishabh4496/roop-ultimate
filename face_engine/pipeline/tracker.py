@@ -666,3 +666,347 @@ class TemporalFaceTracker:
                           torch.zeros(len(ids), dtype=torch.int64, device=dev),
                           detections.frame_size, 1),
             [ids[i] for i in order], [predicted[i] for i in order])
+
+
+# ---------------------------------------------------------------------------- ByteTrack
+class ByteTrackConfig(BaseModel):
+    """:class:`RobustByteTracker` settings.
+
+    Attributes:
+        high_threshold: Detections at or above this score are "high": they
+            are matched first and are the only ones that start tracks.
+        low_threshold: Detections in ``[low, high)`` only keep existing
+            tracks alive (the second association).
+        match_iou_high: Minimum IoU for the first association (ByteTrack's
+            ``match_thresh`` 0.8 as a distance).
+        match_iou_low: Minimum IoU for the second association (ByteTrack: 0.5).
+        new_track_threshold: A high detection left unmatched starts a track
+            only at this score or above.
+        max_lost_frames: Frames a track is kept (and predicted) without a match.
+        alpha: EMA weight of the NEW landmark measurement.
+        motion_compensated_ema: Move the previous smoothed landmarks with the
+            Kalman prediction (centre shift and height ratio) before blending,
+            so the EMA smooths jitter about the motion instead of trailing the
+            motion. Plain EMA (False) trails a face moving v px/frame by
+            ``v (1 - alpha) / alpha`` (1/3 v at alpha 0.75), which is what kept
+            :class:`TemporalFaceTracker`'s EMA off in the render (1.6-2.7x
+            the raw error on the fastest decile of four clips, 2026-09-28).
+        low_association: False disables the second association (plain
+            single-threshold tracking; the control arm of the tests).
+        emit_lost: Report lost tracks (at their predicted position, flagged
+            ``predicted``) until they are dropped.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    high_threshold: float = Field(default=0.50, ge=0.0, le=1.0)
+    low_threshold: float = Field(default=0.20, ge=0.0, le=1.0)
+    match_iou_high: float = Field(default=0.20, ge=0.0, le=1.0)
+    match_iou_low: float = Field(default=0.50, ge=0.0, le=1.0)
+    new_track_threshold: float = Field(default=0.50, ge=0.0, le=1.0)
+    max_lost_frames: int = Field(default=5, ge=0)
+    alpha: float = Field(default=0.75, gt=0.0, le=1.0)
+    motion_compensated_ema: bool = True
+    low_association: bool = True
+    emit_lost: bool = True
+
+
+@dataclass
+class ByteTracks:
+    """One frame's tracks.
+
+    Attributes:
+        detections: Kalman boxes and EMA landmarks (predicted for lost tracks),
+            ordered by track id; ``scores`` are each track's last matched score.
+        track_ids: Host list, stable while a face is followed.
+        predicted: True for a lost track reported at its predicted position.
+        low_matched: True for a track kept alive by a LOW detection this frame.
+    """
+
+    detections: GPUDetections
+    track_ids: list[int]
+    predicted: list[bool]
+    low_matched: list[bool]
+
+
+@dataclass
+class ByteTrackStats:
+    frames: int = 0
+    high_matches: int = 0
+    low_matches: int = 0
+    new_tracks: int = 0
+    lost_events: int = 0
+    removed: int = 0
+
+
+class _KalmanXYAH:
+    """ByteTrack's constant-velocity Kalman filter on ``(cx, cy, a, h)``, batched
+    over tracks in torch (``(T, 8)`` means, ``(T, 8, 8)`` covariances).
+
+    Noise is proportional to the box height as in ByteTrack
+    (``std_weight_position`` 1/20, ``std_weight_velocity`` 1/160). The gain
+    uses ``torch.linalg.solve_ex`` (no error check, so no host sync).
+    """
+
+    wp, wv = 1.0 / 20.0, 1.0 / 160.0
+
+    def __init__(self, device: Any, dtype: Any) -> None:
+        import torch
+
+        self.F = torch.eye(8, device=device, dtype=dtype)
+        self.F[:4, 4:] = torch.eye(4, device=device, dtype=dtype)
+        self.H = torch.eye(4, 8, device=device, dtype=dtype)
+
+    def _diag(self, h: Any, pos: tuple[float, float, float, float]) -> Any:
+        import torch
+
+        wp = torch.stack([pos[0] * h, pos[1] * h, torch.full_like(h, pos[2]), pos[3] * h], -1)
+        return torch.diag_embed(wp ** 2)
+
+    def initiate(self, z: Any) -> tuple[Any, Any]:
+        import torch
+
+        h = z[:, 3]
+        std = torch.stack([2 * self.wp * h, 2 * self.wp * h, torch.full_like(h, 1e-2),
+                           2 * self.wp * h, 10 * self.wv * h, 10 * self.wv * h,
+                           torch.full_like(h, 1e-5), 10 * self.wv * h], -1)
+        return torch.cat([z, torch.zeros_like(z)], 1), torch.diag_embed(std ** 2)
+
+    def predict(self, mean: Any, cov: Any) -> tuple[Any, Any]:
+        import torch
+
+        h = mean[:, 3]
+        std = torch.stack([self.wp * h, self.wp * h, torch.full_like(h, 1e-2), self.wp * h,
+                           self.wv * h, self.wv * h, torch.full_like(h, 1e-5), self.wv * h], -1)
+        mean = mean @ self.F.T
+        cov = self.F @ cov @ self.F.T + torch.diag_embed(std ** 2)
+        return mean, cov
+
+    def update(self, mean: Any, cov: Any, z: Any) -> tuple[Any, Any]:
+        import torch
+
+        r = self._diag(mean[:, 3], (self.wp, self.wp, 1e-1, self.wp))
+        s = self.H @ cov @ self.H.T + r                              # (M, 4, 4)
+        pht = cov @ self.H.T                                          # (M, 8, 4)
+        gain = torch.linalg.solve_ex(s, pht.transpose(1, 2), check_errors=False)[0]
+        gain = gain.transpose(1, 2)                                   # (M, 8, 4)
+        innovation = z - mean[:, :4]
+        mean = mean + (gain @ innovation[..., None])[..., 0]
+        cov = cov - gain @ s @ gain.transpose(1, 2)
+        return mean, cov
+
+
+def _xyah(boxes: Any) -> Any:
+    import torch
+
+    wh = (boxes[:, 2:] - boxes[:, :2]).clamp_min(1e-3)
+    return torch.cat([(boxes[:, :2] + boxes[:, 2:]) * 0.5, (wh[:, 0] / wh[:, 1])[:, None],
+                      wh[:, 1:2]], 1)
+
+
+def _tlbr(mean: Any) -> Any:
+    import torch
+
+    h = mean[:, 3]
+    w = mean[:, 2] * h
+    cx, cy = mean[:, 0], mean[:, 1]
+    return torch.stack([cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2], 1)
+
+
+class RobustByteTracker:
+    """ByteTrack for faces: two-stage association, Kalman boxes, EMA landmarks.
+
+    Per frame (:meth:`update`, frames in order):
+
+    1. Every live track (tracked and lost) is predicted one frame ahead by
+       the Kalman filter; a lost track's landmarks move with its box (centre
+       shift, height ratio): the "previous velocity" prediction.
+    2. **First association**: HIGH detections (score >= 0.50) vs all live
+       tracks, IoU distance, Hungarian assignment, IoU >= ``match_iou_high``.
+    3. **Second association**: tracks still unmatched that were TRACKED last
+       frame vs the LOW detections (0.20 <= score < 0.50), IoU >=
+       ``match_iou_low``. A head turning toward profile, or into shadow,
+       drops SCRFD's score to 0.25-0.35 while the box stays put; this keeps
+       the track (and its id) instead of losing it.
+    4. Matched tracks take a Kalman update and an EMA landmark update; the
+       unmatched become lost (kept ``max_lost_frames``); unmatched HIGH
+       detections start tracks. A low detection never starts a track (the
+       0.45-0.50 band alone held the back of a head and background specks,
+       2026-09-28).
+
+    One host read per frame: the ``tracks x detections`` IoU matrix for the
+    assignment (as :class:`TemporalFaceTracker`). ``on_lost`` is called when a
+    tracked face goes unmatched, e.g. ``AngleResilientSCRFD.note_track_lost``
+    so the detector sweeps other rotations on the next frames.
+    """
+
+    def __init__(self, config: ByteTrackConfig | None = None,
+                 on_lost: Any = None) -> None:
+        self.config = config or ByteTrackConfig()
+        self.on_lost = on_lost
+        self.stats = ByteTrackStats()
+        self._kf: _KalmanXYAH | None = None
+        self._mean: Any = None   # (T, 8)
+        self._cov: Any = None    # (T, 8, 8)
+        self._kps: Any = None    # (T, 5, 2) EMA landmarks
+        self._scores: Any = None
+        self._ids: list[int] = []
+        self._lost: list[int] = []   # 0 = tracked this frame
+        self._next_id = 0
+
+    def reset(self) -> None:
+        self.__init__(self.config, self.on_lost)  # type: ignore[misc]
+
+    def __len__(self) -> int:
+        return len(self._ids)
+
+    # --------------------------------------------------------------- inputs
+    def _split(self, detections: Any) -> tuple[GPUDetections, GPUDetections]:
+        """DualDetections -> (high, low); a plain GPUDetections is split here."""
+        high = getattr(detections, "high", None)
+        if high is not None:
+            return high, detections.low
+        s = detections.scores
+        c = self.config
+        return (detections.index(s >= c.high_threshold),
+                detections.index((s >= c.low_threshold) & (s < c.high_threshold)))
+
+    # --------------------------------------------------------------- update
+    def update(self, detections: Any) -> ByteTracks:
+        """Advance one frame with a ``DualDetections`` (or ``GPUDetections``)."""
+        import torch
+        from scipy.optimize import linear_sum_assignment
+        from torchvision.ops import box_iou
+
+        c = self.config
+        self.stats.frames += 1
+        high, low = self._split(detections)
+        frame_size = high.frame_size
+        dev = high.boxes.device
+        dtype = torch.float32
+        if self._kf is None:
+            self._kf = _KalmanXYAH(dev, dtype)
+        kf = self._kf
+        n_high, n_low = len(high), len(low)
+        n_tracks = len(self._ids)
+        det_boxes = torch.cat([high.boxes, low.boxes]).to(dtype)
+        det_kps = torch.cat([high.kps, low.kps]).to(dtype)
+        det_scores = torch.cat([high.scores, low.scores]).to(dtype)
+
+        # 1. predict (and carry the landmarks with the box)
+        pred_kps = None
+        if n_tracks:
+            prev = self._mean
+            self._mean, self._cov = kf.predict(self._mean, self._cov)
+            ratio = (self._mean[:, 3] / prev[:, 3].clamp_min(1e-3))[:, None, None]
+            pred_kps = ((self._kps - prev[:, None, :2]) * ratio + self._mean[:, None, :2])
+
+        # 2-3. associations on one host copy of the IoU matrix
+        pairs: list[tuple[int, int]] = []
+        if n_tracks and (n_high + n_low):
+            iou = box_iou(_tlbr(self._mean), det_boxes).cpu().numpy()
+            free_t = list(range(n_tracks))
+            if n_high:
+                cost = 1.0 - iou[:, :n_high]
+                rows, cols = linear_sum_assignment(cost)
+                for r, k in zip(rows, cols):
+                    if iou[r, k] >= c.match_iou_high:
+                        pairs.append((int(r), int(k)))
+                matched = {t for t, _ in pairs}
+                free_t = [t for t in free_t if t not in matched]
+            if c.low_association and n_low:
+                cand = [t for t in free_t if self._lost[t] == 0]  # tracked last frame
+                if cand:
+                    sub = iou[cand][:, n_high:]
+                    rows, cols = linear_sum_assignment(1.0 - sub)
+                    for r, k in zip(rows, cols):
+                        if sub[r, k] >= c.match_iou_low:
+                            pairs.append((cand[int(r)], n_high + int(k)))
+        self.stats.high_matches += sum(1 for _, d in pairs if d < n_high)
+        self.stats.low_matches += sum(1 for _, d in pairs if d >= n_high)
+
+        # 4. update matched, age unmatched, start new
+        matched_t = {t: d for t, d in pairs}
+        ids, lost, low_flag = [], [], []
+        keep_rows: list[int] = []
+        lost_now = 0
+        for t in range(n_tracks):
+            if t in matched_t:
+                keep_rows.append(t)
+                ids.append(self._ids[t])
+                lost.append(0)
+                low_flag.append(matched_t[t] >= n_high)
+            else:
+                if self._lost[t] == 0:
+                    lost_now += 1
+                if self._lost[t] + 1 > c.max_lost_frames:
+                    self.stats.removed += 1
+                    continue
+                keep_rows.append(t)
+                ids.append(self._ids[t])
+                lost.append(self._lost[t] + 1)
+                low_flag.append(False)
+        if n_tracks:
+            rows_t = torch.as_tensor(keep_rows, dtype=torch.int64, device=dev)
+            mean, cov = self._mean[rows_t], self._cov[rows_t]
+            kps, scores = pred_kps[rows_t], self._scores[rows_t]
+            m_pos = [i for i, t in enumerate(keep_rows) if t in matched_t]
+            if m_pos:
+                pos = torch.as_tensor(m_pos, dtype=torch.int64, device=dev)
+                d_idx = torch.as_tensor([matched_t[keep_rows[i]] for i in m_pos],
+                                        dtype=torch.int64, device=dev)
+                um, uc = kf.update(mean[pos], cov[pos], _xyah(det_boxes[d_idx]))
+                mean, cov = mean.index_copy(0, pos, um), cov.index_copy(0, pos, uc)
+                base = kps[pos] if c.motion_compensated_ema else self._kps[rows_t][pos]
+                ema = c.alpha * det_kps[d_idx] + (1.0 - c.alpha) * base
+                kps = kps.index_copy(0, pos, ema)
+                scores = scores.index_copy(0, pos, det_scores[d_idx])
+        else:
+            mean = torch.zeros((0, 8), device=dev, dtype=dtype)
+            cov = torch.zeros((0, 8, 8), device=dev, dtype=dtype)
+            kps = torch.zeros((0, 5, 2), device=dev, dtype=dtype)
+            scores = torch.zeros((0,), device=dev, dtype=dtype)
+        matched_d = set(matched_t.values())
+        if n_high:
+            h_scores = None
+            fresh = [d for d in range(n_high) if d not in matched_d]
+            if fresh and c.new_track_threshold > c.high_threshold:
+                h_scores = high.scores.cpu().numpy()  # only when the bar is above high
+                fresh = [d for d in fresh if h_scores[d] >= c.new_track_threshold]
+            if fresh:
+                f_idx = torch.as_tensor(fresh, dtype=torch.int64, device=dev)
+                nm, nc = kf.initiate(_xyah(det_boxes[f_idx]))
+                mean, cov = torch.cat([mean, nm]), torch.cat([cov, nc])
+                kps = torch.cat([kps, det_kps[f_idx]])
+                scores = torch.cat([scores, det_scores[f_idx]])
+                for _ in fresh:
+                    ids.append(self._next_id)
+                    self._next_id += 1
+                    lost.append(0)
+                    low_flag.append(False)
+                self.stats.new_tracks += len(fresh)
+        self._mean, self._cov, self._kps, self._scores = mean, cov, kps, scores
+        self._ids, self._lost = ids, lost
+        if lost_now:
+            self.stats.lost_events += lost_now
+            if self.on_lost is not None:
+                self.on_lost()
+        return self._emit(frame_size, dev, low_flag)
+
+    def _emit(self, frame_size: tuple[int, int], dev: Any, low_flag: list[bool]) -> ByteTracks:
+        import torch
+
+        show = [i for i, l in enumerate(self._lost) if l == 0 or self.config.emit_lost]
+        if not show:
+            return ByteTracks(GPUDetections.empty(dev, frame_size), [], [], [])
+        show.sort(key=lambda i: self._ids[i])
+        idx = torch.as_tensor(show, dtype=torch.int64, device=dev)
+        boxes = _tlbr(self._mean[idx])
+        h, w = frame_size
+        boxes[:, 0::2] = boxes[:, 0::2].clamp(0, w)
+        boxes[:, 1::2] = boxes[:, 1::2].clamp(0, h)
+        dets = GPUDetections(boxes, self._kps[idx], self._scores[idx],
+                             torch.zeros(len(show), dtype=torch.int64, device=dev),
+                             frame_size, 1)
+        return ByteTracks(dets, [self._ids[i] for i in show],
+                          [self._lost[i] > 0 for i in show], [low_flag[i] for i in show])

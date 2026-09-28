@@ -121,8 +121,10 @@ ENGINE_SPECS: dict[str, EngineSpec] = {s.model: s for s in (
     EngineSpec("retinaface_r50", "detector", {"input": (3, 640, 640)}, (1, 1, 2), False),
     # GPUSCRFDDetector: aspect-preserving canvas (long side 640, sides padded to
     # a multiple of 32), so the spatial size varies per clip: 1080p -> 384 x 640.
-    EngineSpec("scrfd_10g_bnkps", "detector", {"input.1": (3, 384, 640)}, (1, 1, 1), False,
-               shapes={"input.1": ((1, 3, 384, 384), (1, 3, 640, 640), (1, 3, 1024, 1024))}),
+    # Batch 1..3: AngleResilientSCRFD's rotation sweep runs 90/180/270 as one
+    # batch of three square canvases (opt stays batch 1, the per-frame pass).
+    EngineSpec("scrfd_10g_bnkps", "detector", {"input.1": (3, 384, 640)}, (1, 1, 3), False,
+               shapes={"input.1": ((1, 3, 384, 384), (1, 3, 640, 640), (3, 3, 1024, 1024))}),
     EngineSpec("bisenet_resnet34", "masker", {"input": (3, 512, 512)}, (1, 2, 4), False),
 )}
 

@@ -721,3 +721,126 @@ def warp_face_inverse_cuda(canvas: torch.Tensor, crops: torch.Tensor, matrix: to
             blended = out.index_select(0, idx) * (1.0 - placed[j:j + 1, 3:]) + placed[j:j + 1, :3]
             out.index_copy_(0, idx, blended)
     return out
+
+
+# ---------------------------------------------------------------------------- profile guard
+def profile_guarded_similarity_cuda(source_points: torch.Tensor, target_points: torch.Tensor,
+                                    min_ratio: float = 0.15
+                                    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Umeyama similarity with the covariance's weaker singular value floored.
+
+    Umeyama: ``S = cov(dst, src) = U diag(s1, s2) V^T``, rotation
+    ``R = U D V^T`` (``D`` fixes the determinant), scale
+    ``c = (s1 + d s2) / var(src)``. For 2x2 ``S`` the SVD has a closed form
+    (``E, F, G, H`` below): ``s1 = Q + R``, signed ``s2 = Q - R`` (negative
+    when ``det S < 0``, which folds ``D`` in), rotation angle
+    ``atan2(H, E)``. So nothing here calls a batched SVD (no cuSOLVER, no
+    host sync), and with ``min_ratio = 0`` the result equals
+    :func:`estimate_similarity_transform_cuda` exactly.
+
+    When ``s2 / s1 < min_ratio`` (a profile: the eye-to-eye and mouth-corner
+    spans collapse toward zero, so the source spread is nearly rank 1),
+    ``s2`` is clamped to ``min_ratio * s1`` before the scale is rebuilt.
+    What that does and does not do: a similarity cannot stretch, so there is
+    no "collapse" to prevent in the matrix itself; the rotation depends only
+    on ``U`` and ``V``, not on ``s1, s2``. The clamp changes the SCALE only:
+    it stops the crop zoom from swinging back as the face turns past the
+    threshold (unclamped, the fitted scale rises then falls again with
+    horizontal compression ``k``: ~``(1 + k) / (1 + k^2)`` for an isotropic
+    point set). Measured in ``test_angle_resilience``.
+
+    Args:
+        source_points: ``(B, N, 2)`` landmarks (frame pixels).
+        target_points: ``(N, 2)`` or ``(B, N, 2)`` template.
+        min_ratio: Floor for ``s2 / s1`` (0 disables the guard).
+
+    Returns:
+        ``(matrices (B, 2, 3) float32, ratio (B,) = s2 / s1 before the clamp,
+        clamped (B,) bool)``.
+    """
+    import torch
+
+    src = source_points.to(torch.float64)
+    dst = target_points.to(device=src.device, dtype=torch.float64).expand_as(src)
+    mu_s, mu_d = src.mean(1), dst.mean(1)
+    sc, dc = src - mu_s[:, None], dst - mu_d[:, None]
+    n = src.shape[1]
+    var = (sc ** 2).sum((1, 2)) / n
+    cov = dc.transpose(1, 2) @ sc / n                          # (B, 2, 2) dst x src
+    e = (cov[:, 0, 0] + cov[:, 1, 1]) * 0.5
+    f = (cov[:, 0, 0] - cov[:, 1, 1]) * 0.5
+    g = (cov[:, 1, 0] + cov[:, 0, 1]) * 0.5
+    h = (cov[:, 1, 0] - cov[:, 0, 1]) * 0.5
+    q, r = torch.sqrt(e * e + h * h), torch.sqrt(f * f + g * g)
+    s1, s2 = q + r, q - r
+    ratio = s2 / s1.clamp_min(1e-12)
+    clamped = ratio < min_ratio
+    s2 = torch.where(clamped, min_ratio * s1, s2)
+    scale = (s1 + s2) / var
+    theta = torch.atan2(h, e)
+    a, b = scale * torch.cos(theta), scale * torch.sin(theta)
+    rot = torch.stack([torch.stack([a, -b], -1), torch.stack([b, a], -1)], -2)
+    t = mu_d - (rot @ mu_s[..., None])[..., 0]
+    m = torch.cat([rot, t[..., None]], -1).to(torch.float32)
+    return m, ratio.to(torch.float32), clamped
+
+
+@dataclass
+class GuardedCrops:
+    """:meth:`ProfileGuardedAligner.align` output.
+
+    Attributes:
+        crops: ``(N, 3, S, S)`` float32 BGR ``[0, 255]``.
+        matrices: ``(N, 2, 3)`` frame -> crop.
+        ratio: ``(N,)`` covariance ``s2 / s1`` before the clamp.
+        clamped: ``(N,)`` bool, the profile guard fired.
+        valid: ``(N,)`` bool, a usable matrix (guardrails substitute the rest).
+    """
+
+    crops: torch.Tensor
+    matrices: torch.Tensor
+    ratio: torch.Tensor
+    clamped: torch.Tensor
+    valid: torch.Tensor
+
+
+class ProfileGuardedAligner:
+    """5-point alignment to the 256 ArcFace template with the profile guard.
+
+    :func:`profile_guarded_similarity_cuda` for the matrices (all on the
+    device), then the crop through :func:`warp_face_cuda`
+    (``kornia.geometry.transform.warp_affine`` behind the package's
+    singular-matrix guard, exact FP32).
+
+    Args:
+        crop_size: Output side (256: ``arcface_128`` scaled, HyperSwap's input).
+        template: Template name; default :data:`CANONICAL_TEMPLATES`.
+        min_ratio: The ``s2 / s1`` floor (0.15).
+        padding_mode: As :func:`warp_face_cuda`.
+    """
+
+    def __init__(self, crop_size: int = 256, template: str | None = None,
+                 min_ratio: float = 0.15, padding_mode: str = "reflection") -> None:
+        if not 0.0 <= min_ratio <= 1.0:
+            raise ValueError("min_ratio must be in [0, 1]")
+        self.crop_size = int(crop_size)
+        self.template = template
+        self.min_ratio = float(min_ratio)
+        self.padding_mode = padding_mode
+
+    def target(self, device: Any) -> torch.Tensor:
+        import torch
+
+        return template_tensor(self.crop_size, self.template, device=device, dtype=torch.float64)
+
+    def estimate(self, kps: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """``(B, 5, 2)`` landmarks -> ``(matrices, ratio, clamped)``."""
+        return profile_guarded_similarity_cuda(kps, self.target(kps.device), self.min_ratio)
+
+    def align(self, frames: torch.Tensor, kps: torch.Tensor,
+              frame_index: torch.Tensor | None = None) -> GuardedCrops:
+        """Crops for ``(N, 5, 2)`` landmarks from ``(B, 3, H, W)`` frames."""
+        m, ratio, clamped = self.estimate(kps)
+        crops = warp_face_cuda(frames, m, self.crop_size, frame_index=frame_index,
+                               padding_mode=self.padding_mode)
+        return GuardedCrops(crops, m, ratio, clamped, similarity_is_valid(m))

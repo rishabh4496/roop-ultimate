@@ -300,17 +300,24 @@ def named_spatial_dims(source: Path | str) -> Path:
     ("Dimensions with name ? must be equal. 448 != 640", 2026-09-28), and its
     outputs declare the 640 lengths (12800, ...), which ONNX Runtime enforces
     on every other canvas. Only value-info changes; the nodes are untouched.
+
+    Rule 3 (2026-09-28) also names the batch dim: SCRFD's heads end in
+    ``Transpose(2, 3, 0, 1) -> Reshape(-1, k)``, so a batch of B runs unchanged
+    and its outputs are ordered ``(h, w, image, anchor)`` (verified against B
+    single-image runs); :class:`~face_engine.pipeline.detector.AngleResilientSCRFD`
+    batches its rotation sweep through it.
     """
     import onnx
 
     source = Path(source)
     derived = source.with_name(f"{source.stem}.dims.onnx")
-    if _fresh(derived, source, {"kind": "dims", "rule": 2}) is not None:
+    if _fresh(derived, source, {"kind": "dims", "rule": 3}) is not None:
         return derived
     model = onnx.load(str(source))
     for inp in model.graph.input:
         dims = inp.type.tensor_type.shape.dim
         if len(dims) == 4:
+            dims[0].dim_param = "batch"  # replaces a fixed 1 (dim_value / dim_param are a oneof)
             for i, name in ((2, "height"), (3, "width")):
                 if not dims[i].dim_value:
                     dims[i].dim_param = name
@@ -319,7 +326,7 @@ def named_spatial_dims(source: Path | str) -> Path:
         if dims:
             dims[0].dim_param = f"n{k}"  # anchors: depends on the canvas
     onnx.save(model, str(derived))
-    _sidecar(derived).write_text(json.dumps({**_stamp(source), "kind": "dims", "rule": 2},
+    _sidecar(derived).write_text(json.dumps({**_stamp(source), "kind": "dims", "rule": 3},
                                             indent=1), encoding="utf-8")
     return derived
 

@@ -11,11 +11,14 @@ from face_engine.pipeline.aligner import (
                                           TEMPLATES,
                                           AlignedFace,
                                           AlignmentError,
+                                          GuardedCrops,
+                                          ProfileGuardedAligner,
                                           align_face,
                                           crop_valid_mask_cuda,
                                           estimate_similarity_transform,
                                           estimate_similarity_transform_cuda,
                                           paste_mask_to_canvas,
+                                          profile_guarded_similarity_cuda,
                                           similarity_matrices_cuda,
                                           template_points,
                                           warp_face_by_translation,
@@ -26,8 +29,11 @@ from face_engine.pipeline.aligner import (
                                           warp_face_inverse_gpu,
 )
 from face_engine.pipeline.detector import (
+                                          AngleResilientSCRFD,
+                                          DualDetections,
                                           Face,
                                           GPUDetections,
+                                          GPUSCRFDDetector,
                                           Normalization,
                                           SCRFDDetector,
                                           YOLOFaceDetector,
@@ -41,7 +47,10 @@ from face_engine.pipeline.masker import (
                                           MaskResult,
 )
 from face_engine.pipeline.tracker import (
+                                          ByteTrackConfig,
+                                          ByteTracks,
                                           LucasKanadeTracker,
+                                          RobustByteTracker,
                                           SceneCutDetector,
                                           StridedFaceTracker,
                                           TrackedFaces,
@@ -49,6 +58,9 @@ from face_engine.pipeline.tracker import (
 )
 
 __all__ = [
+    "AngleResilientSCRFD", "ByteTrackConfig", "ByteTracks", "DualDetections",
+    "GPUSCRFDDetector", "GuardedCrops", "ProfileGuardedAligner", "RobustByteTracker",
+    "profile_guarded_similarity_cuda",
     "CANONICAL_TEMPLATES", "TEMPLATES", "AlignedFace", "AlignmentError", "CompositeMasker",
     "Face", "FaceRegion", "GPUDetections", "GPUMaskResult", "GPUMasker", "LucasKanadeTracker",
     "MaskResult", "MaskerConfig", "Normalization", "SCRFDDetector", "SceneCutDetector",

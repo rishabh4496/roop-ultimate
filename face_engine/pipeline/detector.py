@@ -819,3 +819,424 @@ class GPUSCRFDDetector(BaseDetector):
             finally:
                 self.input_format = fmt
         return out
+
+
+# ---------------------------------------------------------------------------- angle-resilient
+def unrotate_points_cuda(points: Any, k: Any, height: float, width: float) -> Any:
+    """Undo ``torch.rot90(image, k, dims=[-2, -1])`` on ``(..., 2)`` ``x, y`` points.
+
+    ``height`` / ``width`` are the image's size BEFORE the rotation; points are
+    continuous pixel coordinates (pixel ``i`` spans ``[i, i + 1)``). ``k`` is an
+    int or a tensor broadcastable to ``points[..., 0]`` (one angle per row, no
+    host read). ``torch.rot90`` turns from the first dim toward the second, so
+    rotated ``(x', y')`` came from:
+
+    ====  ===================
+    k     original ``(x, y)``
+    ====  ===================
+    0     ``(x', y')``
+    1     ``(W - y', x')``
+    2     ``(W - x', H - y')``
+    3     ``(y', H - x')``
+    ====  ===================
+    """
+    import torch
+
+    x, y = points[..., 0], points[..., 1]
+    if not torch.is_tensor(k):
+        k = torch.full_like(x, int(k) % 4)
+    k = k.to(x.dtype) % 4
+    ox = torch.where(k == 0, x, torch.where(k == 1, width - y, torch.where(k == 2, width - x, y)))
+    oy = torch.where(k == 0, y, torch.where(k == 1, x, torch.where(k == 2, height - y,
+                                                                    height - x)))
+    return torch.stack([ox, oy], dim=-1)
+
+
+def unrotate_boxes_cuda(boxes: Any, k: Any, height: float, width: float) -> Any:
+    """:func:`unrotate_points_cuda` for ``(N, 4)`` boxes (exact for multiples of 90 deg)."""
+    import torch
+
+    x1, y1, x2, y2 = boxes.unbind(-1)
+    corners = torch.stack([torch.stack([x1, y1], -1), torch.stack([x2, y1], -1),
+                           torch.stack([x1, y2], -1), torch.stack([x2, y2], -1)], -2)
+    kk = k[:, None] if torch.is_tensor(k) and k.ndim == 1 else k
+    back = unrotate_points_cuda(corners, kk, height, width)
+    return torch.cat([back.amin(-2), back.amax(-2)], dim=-1)
+
+
+@dataclass
+class DualDetections:
+    """One frame's detections split at the high threshold (ByteTrack's input).
+
+    Attributes:
+        high: score ``>= score_threshold`` (0.50): new tracks start only from these.
+        low: ``low_threshold <= score < score_threshold`` (0.20 .. 0.50): used
+            only to keep EXISTING tracks alive (the second association).
+        angle: Rotation (degrees, counter-clockwise as ``torch.rot90``) of the
+            pass that produced the best face, 0 for upright.
+        swept: Whether the rotation sweep ran on this frame.
+        tilted: High faces whose landmarks are rolled more than
+            ``max_pass_roll`` in the pass that produced them (no pass saw
+            them upright; their landmarks are the least reliable).
+    """
+
+    high: GPUDetections
+    low: GPUDetections
+    angle: int = 0
+    swept: bool = False
+    tilted: int = 0
+
+
+@dataclass
+class SweepStats:
+    """Counters for :class:`AngleResilientSCRFD`. Read them: a sweep that never
+    runs and a sweep that runs every frame both look fine from the output."""
+
+    frames: int = 0
+    sweeps: int = 0
+    tilt_sweeps: int = 0
+    sweep_hits: int = 0
+    empty_skips: int = 0
+    angle_frames: dict[int, int] = field(default_factory=lambda: {0: 0, 90: 0, 180: 0, 270: 0})
+
+
+@dataclass
+class AngleResilientSCRFD(GPUSCRFDDetector):
+    """:class:`GPUSCRFDDetector` that also finds faces lying down or upside down.
+
+    Per frame, in order:
+
+    1. **Primary pass**: one batch-1 inference on the tight canvas at the
+       current angle: 0 deg, or the preferred angle for ``preferred_hold``
+       frames after a sweep found the best face at another angle. Upright
+       video pays exactly this, the plain detector's cost
+       (``test_angle_resilience`` checks that no sweep runs on it).
+    2. **Conditional sweep**: the three OTHER angles as one batch of three
+       square ``sweep_size`` canvases (``torch.rot90`` of one centred canvas,
+       so the three share a shape; the engine profile allows batch 3), only when
+
+       * the primary pass found no face (score >= ``score_threshold``) and the
+         scene is not in its "empty" state, or
+       * a face it found is rolled more than ``max_pass_roll`` (45 deg) in the
+         pass's own frame (the eye-midpoint -> mouth-midpoint axis). SCRFD
+         at 0 deg DOES find many rotated faces (t1.jpg rotated 90 deg: 4 of 6
+         at score >= 0.5; 180 deg: 2 of 6) but with landmarks 5-28% of the
+         face size off, so "sweep only when nothing is found" never fired on
+         them. Measured axis roll: upright t1 faces |roll| <= 33 deg; the
+         same faces found in a 90 deg frame 64-124 deg, in a 180 deg frame
+         ~170 deg (their eye line reads ~0 there: the network swaps the
+         eyes, so the eye line cannot be the test), or
+       * it found fewer faces than one of the last ``lost_window`` frames
+         (a face was lost in the last 2 frames: it may have rolled over), or
+       * :meth:`note_track_lost` asked for it (the tracker's view of the same).
+
+       A scene with no face for ``empty_after`` consecutive frames is
+       registered empty; it is then swept once per ``empty_rescan`` frames
+       instead of every frame, until a face appears (or :meth:`reset`).
+    3. Boxes and landmarks from rotated passes are mapped back to the upright
+       frame on the device (:func:`unrotate_points_cuda`, one angle per row,
+       no host read). Landmarks keep their semantic order (the person's left
+       eye stays point 0), so the similarity fit downstream carries the roll.
+    4. One ``batched_nms`` (IoU ``iou_threshold``) over every candidate with
+       score >= ``low_threshold``, ranked so that a candidate upright in its
+       own pass beats a tilted one whatever the scores (the same face found
+       at 0 deg with a higher score but rolled landmarks loses to its
+       upright rotated pass); then the split into :class:`DualDetections`
+       high / low by the real score.
+
+    Host reads per frame: the survivor positions in decode (as the parent),
+    the NMS result size, and the high count that decides the sweep. Scalars
+    and index lists only; no image, box or landmark data leaves the device.
+    """
+
+    score_threshold: float = 0.50
+    low_threshold: float = 0.20
+    iou_threshold: float = 0.45
+    sweep_size: int = 640
+    preferred_hold: int = 10
+    lost_window: int = 2
+    empty_after: int = 30
+    empty_rescan: int = 15
+    max_pass_roll: float = 45.0
+    stats: SweepStats = field(default_factory=SweepStats, init=False)
+    _preferred_k: int = field(default=0, init=False, repr=False)
+    _preferred_left: int = field(default=0, init=False, repr=False)
+    _recent: list[int] = field(default_factory=list, init=False, repr=False)
+    _empty_streak: int = field(default=0, init=False, repr=False)
+    _force_sweep: int = field(default=0, init=False, repr=False)
+    _k_rows: dict[tuple[Any, ...], Any] = field(default_factory=dict, init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        if not 0.0 <= self.low_threshold <= self.score_threshold:
+            raise ValueError("low_threshold must be in [0, score_threshold]")
+        if self.sweep_size % self.pad_multiple or self.sweep_size < self.input_size:
+            raise ValueError("sweep_size must be a multiple of pad_multiple and >= input_size")
+
+    # --------------------------------------------------------------- state
+    def reset(self) -> None:
+        """Forget the scene (call at a shot cut or a new clip)."""
+        self._preferred_k = self._preferred_left = self._empty_streak = self._force_sweep = 0
+        self._recent = []
+
+    def note_track_lost(self, frames: int = 2) -> None:
+        """Sweep on the next ``frames`` frames (a tracker lost a face)."""
+        self._force_sweep = max(self._force_sweep, int(frames))
+
+    @property
+    def scene_empty(self) -> bool:
+        return self._empty_streak >= self.empty_after
+
+    def prepare(self, height: int, width: int, device: Any = "cuda") -> None:
+        """Pre-build the anchor grids for ``H x W`` frames: the upright and the
+        sideways tight canvases, and the ``sweep_size`` square (640 x 640, the
+        largest)."""
+        for hw in ((height, width), (width, height)):
+            self._anchors(self.canvas_size(*hw)[3:], device)
+        self._anchors((self.sweep_size, self.sweep_size), device)
+
+    # --------------------------------------------------------------- canvases
+    def _resized(self, frame: Any) -> tuple[Any, float]:
+        """``(1, 3, rh, rw)`` normalized RGB in ``[-1, 1]``, and the scale."""
+        import torch.nn.functional as F
+
+        x = frame if frame.is_floating_point() else frame.float()
+        _, _, h, w = x.shape
+        scale, rh, rw, _, _ = self.canvas_size(h, w)
+        resized = F.interpolate(x, size=(rh, rw), mode="bilinear", align_corners=False,
+                                antialias=scale < 1.0) if (rh, rw) != (h, w) else x
+        if self.input_format == "bgr255":
+            return resized.flip(1).clamp(0, 255) * (2.0 / 255.0) - 1.0, scale
+        return resized.clamp(0, 1) * 2.0 - 1.0, scale
+
+    def _canvas(self, key: tuple[Any, ...], shape: tuple[int, ...], device: Any) -> Any:
+        """A reused canvas; its black (-1) padding never changes."""
+        import torch
+
+        canvas = self._canvases.get(key)
+        if canvas is None:
+            canvas = self._canvases[key] = torch.full(shape, -1.0, device=device)
+        return canvas
+
+    def _infer(self, canvas: Any) -> list[Any]:
+        """The 9 outputs as ``(B, anchors, k)`` per image, in anchor-grid order.
+
+        The heads end in ``Transpose(2, 3, 0, 1) -> Reshape(-1, k)``, so a batch
+        comes back ordered ``(h, w, image, anchor)``; this undoes that.
+        """
+        runner = self.runner
+        b, _, ch, cw = canvas.shape
+        shapes = None
+        if not self.uses_tensorrt_engine:  # ORT needs the canvas's output lengths
+            names = runner.output_names
+            shapes = {}
+            for level, stride in enumerate(self.strides):
+                n = (ch // stride) * (cw // stride) * self.anchors_per_location * b
+                shapes[names[level]] = (n, 1)
+                shapes[names[3 + level]] = (n, 4)
+                shapes[names[6 + level]] = (n, 10)
+        out = runner.run_binding({runner.input_names[0]: canvas}, output_shapes=shapes)
+        parts = []
+        for j, name in enumerate(runner.output_names):
+            stride = self.strides[j % len(self.strides)]
+            cells = (ch // stride) * (cw // stride)
+            t = out[name].float().reshape(cells, b, self.anchors_per_location, -1)
+            parts.append(t.permute(1, 0, 2, 3).reshape(b, cells * self.anchors_per_location, -1))
+        return parts
+
+    def _candidates_cuda(self, outputs: list[Any], canvas_hw: tuple[int, int],
+                         ks: tuple[int, ...], image_hw: tuple[int, int],
+                         offset: tuple[int, int], scale: float, frame_hw: tuple[int, int],
+                         square: bool) -> tuple[Any, Any, Any, Any, Any]:
+        """Threshold at ``low_threshold``, decode, map back to the upright frame.
+
+        ``ks[i]`` is image i's rotation. ``square``: the canvas held the upright
+        resized image (``image_hw``) at ``offset`` = ``(oy, ox)`` and was then
+        rotated whole. Otherwise the resized image was rotated and then placed
+        at ``offset``. Returns ``(boxes, kps, scores, k_per_row, tilted)``.
+        """
+        import torch
+
+        levels = len(self.strides)
+        scores = torch.cat(outputs[:levels], 1)[..., 0]                  # (B, N)
+        dist = torch.cat(outputs[levels:2 * levels], 1)                  # (B, N, 4)
+        offs = torch.cat(outputs[2 * levels:], 1)                        # (B, N, 10)
+        centers, strides = self._anchors(canvas_hw, scores.device)       # (N, 2), (N, 1)
+        size = (dist[..., :2] + dist[..., 2:]) * strides / scale
+        ok = ((scores >= self.low_threshold) & (size >= self.min_face_size).all(-1)
+              & torch.isfinite(dist).all(-1) & torch.isfinite(offs).all(-1))
+        img, anchor = ok.nonzero(as_tuple=True)
+        c, st = centers[anchor], strides[anchor]
+        d = dist[img, anchor] * st
+        boxes = torch.cat([c - d[:, :2], c + d[:, 2:]], 1)
+        kps = c[:, None, :] + offs[img, anchor].reshape(-1, 5, 2) * st[:, :, None]
+        # Roll in the pass's own frame: the eye-mid -> mouth-mid axis vs +y.
+        axis = (kps[:, 3] + kps[:, 4] - kps[:, 0] - kps[:, 1]) * 0.5
+        roll = torch.rad2deg(torch.atan2(-axis[:, 0], axis[:, 1]))
+        tilted = roll.abs() > self.max_pass_roll
+        key = (ks, str(scores.device))
+        if key not in self._k_rows:
+            self._k_rows[key] = torch.tensor(ks, dtype=torch.float32, device=scores.device)
+        k = self._k_rows[key][img]
+        # Canvas -> frame as (p - offset) / scale in one fused op per tensor:
+        # the per-frame cost here is kernel LAUNCHES (the GPU work is ~0.9 ms
+        # either way), so the upright pass skips the rotation entirely.
+        oy, ox = offset
+        skey = ("shift", ox, oy, scale, str(boxes.device))
+        if skey not in self._k_rows:
+            self._k_rows[skey] = torch.tensor([ox, oy], dtype=boxes.dtype, device=boxes.device)
+        shift = self._k_rows[skey]
+        inv = 1.0 / scale
+        if not any(ks):
+            boxes = torch.sub(boxes, shift.repeat(2)).mul_(inv)
+            kps = torch.sub(kps, shift).mul_(inv)
+        elif square:  # rotation about the whole canvas first, then the placement
+            ch, cw = canvas_hw
+            boxes = (unrotate_boxes_cuda(boxes, k, ch, cw) - shift.repeat(2)).mul_(inv)
+            kps = (unrotate_points_cuda(kps, k[:, None], ch, cw) - shift).mul_(inv)
+        else:       # placement first, then the rotation of the resized image
+            rh, rw = image_hw
+            boxes = unrotate_boxes_cuda(boxes - shift.repeat(2), k, rh, rw).mul_(inv)
+            kps = unrotate_points_cuda(kps - shift, k[:, None], rh, rw).mul_(inv)
+        h, w = frame_hw
+        boxes[:, 0::2] = boxes[:, 0::2].clamp(0, w)
+        boxes[:, 1::2] = boxes[:, 1::2].clamp(0, h)
+        return boxes, kps, scores[img, anchor], k, tilted
+
+    def _primary(self, resized: Any, scale: float, k: int,
+                 frame_hw: tuple[int, int]) -> tuple[Any, ...]:
+        """Batch-1 pass on the tight canvas of the resized frame rotated by ``k``."""
+        import torch
+
+        rh, rw = resized.shape[-2:]
+        rot = torch.rot90(resized, k, dims=[2, 3]) if k else resized
+        th, tw = rot.shape[-2:]
+        m, lo = self.pad_multiple, self.min_canvas
+        ch, cw = max(lo, -(-th // m) * m), max(lo, -(-tw // m) * m)
+        canvas = self._canvas(("primary", ch, cw, th, tw, str(resized.device)), (1, 3, ch, cw),
+                              resized.device)
+        oy, ox = self._offset(th, tw, ch, cw)
+        canvas[..., oy:oy + th, ox:ox + tw].copy_(rot)
+        return self._candidates_cuda(self._infer(canvas), (ch, cw), (k,), (rh, rw), (oy, ox),
+                                     scale, frame_hw, square=False)
+
+    def _sweep(self, resized: Any, scale: float, ks: tuple[int, ...],
+               frame_hw: tuple[int, int]) -> tuple[Any, ...]:
+        """The other angles as ONE batch of square canvases."""
+        import torch
+
+        rh, rw = resized.shape[-2:]
+        s = self.sweep_size
+        base = self._canvas(("sweep", s, rh, rw, str(resized.device)), (1, 3, s, s),
+                            resized.device)
+        oy, ox = (s - rh) // 2, (s - rw) // 2
+        base[..., oy:oy + rh, ox:ox + rw].copy_(resized)
+        batch = torch.cat([torch.rot90(base, k, dims=[2, 3]) for k in ks])  # (3, 3, S, S)
+        return self._candidates_cuda(self._infer(batch), (s, s), ks, (rh, rw), (oy, ox),
+                                     scale, frame_hw, square=True)
+
+    # --------------------------------------------------------------- detection
+    def _should_sweep(self, n_high: int, n_tilted: int) -> bool:
+        if self._force_sweep > 0:
+            return True
+        if n_tilted:
+            self.stats.tilt_sweeps += 1
+            return True
+        if self._recent and n_high < max(self._recent):
+            return True  # a face was lost within the last lost_window frames
+        if n_high > 0:
+            return False
+        if not self.scene_empty:
+            return True
+        due = (self._empty_streak - self.empty_after) % max(1, self.empty_rescan) == 0
+        if not due:
+            self.stats.empty_skips += 1
+        return due
+
+    def _split(self, boxes: Any, kps: Any, scores: Any, tilted: Any,
+               frame_hw: tuple[int, int]) -> tuple[GPUDetections, GPUDetections, Any, int, int]:
+        """NMS over all candidates -> (high, low, rows in rank order, #high, #tilted high).
+
+        The NMS rank puts every candidate upright in its pass above every
+        tilted one (scores are in [0, 1]); the output is then ordered by the
+        real score, so high / low is a prefix split.
+        """
+        import torch
+        from torchvision.ops import batched_nms
+
+        dev = boxes.device
+        if scores.shape[0] == 0:
+            empty = GPUDetections.empty(dev, frame_hw)
+            return empty, GPUDetections.empty(dev, frame_hw), scores.long(), 0, 0
+        rank = scores - 2.0 * tilted.to(scores.dtype)
+        ranked = batched_nms(boxes, rank, torch.zeros_like(scores, dtype=torch.int64),
+                             float(self.iou_threshold))  # rank order
+        kept = ranked[torch.argsort(scores[ranked], descending=True, stable=True)]
+        b, k, s, t = boxes[kept], kps[kept], scores[kept], tilted[kept]
+        high_mask = s >= self.score_threshold
+        counts = torch.stack([high_mask.sum(), (high_mask & t).sum()])
+        n_high, n_tilted = int(counts[0]), int(counts[1])  # scalars (one sync)
+        index = torch.zeros(s.shape[0], dtype=torch.int64, device=dev)
+        high = GPUDetections(b[:n_high], k[:n_high], s[:n_high], index[:n_high], frame_hw, 1)
+        low = GPUDetections(b[n_high:], k[n_high:], s[n_high:], index[n_high:], frame_hw, 1)
+        return high, low, ranked, n_high, n_tilted
+
+    def detect_dual(self, frame: Any) -> DualDetections:
+        """One frame, ``(3, H, W)`` or ``(1, 3, H, W)``; frames in video order."""
+        import torch
+
+        if frame.ndim == 3:
+            frame = frame[None]
+        if frame.shape[0] != 1:
+            raise ValueError("detect_dual takes one frame (frames carry scene state)")
+        h, w = frame.shape[-2:]
+        resized, scale = self._resized(frame)
+        k0 = self._preferred_k if self._preferred_left > 0 else 0
+        boxes, kps, scores, ks, tilted = self._primary(resized, scale, k0, (h, w))
+        high, low, ranked, n_high, n_tilted = self._split(boxes, kps, scores, tilted, (h, w))
+        best_k, swept = k0, False
+        if self._should_sweep(n_high, n_tilted):
+            swept = True
+            self.stats.sweeps += 1
+            others = tuple(k for k in range(4) if k != k0)
+            sb, skp, ss, sk, st = self._sweep(resized, scale, others, (h, w))
+            if ss.shape[0]:
+                upright_before = n_high - n_tilted
+                boxes, kps = torch.cat([boxes, sb]), torch.cat([kps, skp])
+                scores, ks = torch.cat([scores, ss]), torch.cat([ks, sk])
+                tilted = torch.cat([tilted, st])
+                high, low, ranked, n_high, n_tilted = self._split(boxes, kps, scores, tilted,
+                                                                  (h, w))
+                if n_high - n_tilted > upright_before:
+                    self.stats.sweep_hits += 1
+                if n_high:
+                    best_k = int(ks[ranked[0]])  # the best-ranked face's pass
+                    if best_k != k0:
+                        self._preferred_k = best_k
+                        self._preferred_left = self.preferred_hold + 1
+        if self._preferred_left > 0:
+            self._preferred_left -= 1
+        self._force_sweep = max(0, self._force_sweep - 1)
+        self._empty_streak = 0 if n_high else self._empty_streak + 1
+        self._recent = (self._recent + [n_high])[-self.lost_window:]
+        self.stats.frames += 1
+        angle = 90 * best_k
+        self.stats.angle_frames[angle] = self.stats.angle_frames.get(angle, 0) + 1
+        return DualDetections(high, low, angle, swept, n_tilted)
+
+    def detect_cuda(self, frames: Any) -> GPUDetections:
+        """High-score faces (the :class:`GPUSCRFDDetector` interface); a batch is
+        taken as consecutive frames, each through :meth:`detect_dual`."""
+        import torch
+
+        if frames.ndim == 3:
+            frames = frames[None]
+        b, _, h, w = frames.shape
+        parts = [self.detect_dual(frames[i:i + 1]).high for i in range(b)]
+        if b == 1:
+            return parts[0]
+        return GPUDetections(torch.cat([p.boxes for p in parts]),
+                             torch.cat([p.kps for p in parts]),
+                             torch.cat([p.scores for p in parts]),
+                             torch.cat([torch.full_like(p.frame_index, i)
+                                        for i, p in enumerate(parts)]), (h, w), b)

@@ -19,9 +19,9 @@ under `app/`.
 | `core/registry.py` | `ModelSpec` / `ModelRegistry`: declarative specs, verify, fetch |
 | `models/zoo.py` | `MODEL_ZOO`: the 15 declared models with URLs, SHA256 and sizes |
 | `utils/downloads.py` | resumable, retried, hash-verified downloads |
-| `pipeline/detector.py` | `SCRFDDetector`, `YOLOFaceDetector`, `GPUSCRFDDetector` (tight canvas, TensorRT; the render's SCRFD) -> `Face` / `GPUDetections` |
-| `pipeline/tracker.py` | `StridedFaceTracker` (detection every N frames, GPU Lucas-Kanade between, shot cuts); `TemporalFaceTracker` (tracks, EMA, 3-frame retention) |
-| `pipeline/aligner.py` | templates, SVD similarity fit, ROI crop warp + paste-back; `warp_face_cuda` / `warp_face_inverse_cuda` (kornia) |
+| `pipeline/detector.py` | `SCRFDDetector`, `YOLOFaceDetector`, `GPUSCRFDDetector` (tight canvas, TensorRT; the render's SCRFD), `AngleResilientSCRFD` (rotation sweep, dual thresholds) -> `Face` / `GPUDetections` |
+| `pipeline/tracker.py` | `StridedFaceTracker` (detection every N frames, GPU Lucas-Kanade between, shot cuts); `TemporalFaceTracker` (tracks, EMA, 3-frame retention); `RobustByteTracker` (ByteTrack, Kalman, two-stage association) |
+| `pipeline/aligner.py` | templates, SVD similarity fit, ROI crop warp + paste-back; `warp_face_cuda` / `warp_face_inverse_cuda` (kornia); `ProfileGuardedAligner` (closed-form Umeyama, s2/s1 floor) |
 | `pipeline/masker.py` | `CompositeMasker` (host) / `GPUMasker` (VRAM): feathered box x XSeg x BiSeNet regions x valid |
 | `processors/swapper.py` | `IdentityEncoder`/`GPUIdentityEncoder`, `FaceSwapper`/`BatchedFaceSwapper`: HyperSwap 1a/1b/1c, inswapper, Pixel Boost |
 | `processors/enhancer.py` | `FaceEnhancer`/`BatchedFaceEnhancer`: GPEN-BFR 512/1024/2048, RestoreFormer++, LAB colour lock |
@@ -1038,6 +1038,89 @@ of raw detections), stride-1 detection, four clips:
 It cuts jitter ~30% everywhere and lags 1.6-2.7x further behind fast heads;
 the rule set before measuring (default only if fast-motion error does not
 grow) fails on three clips of four. Retention carried 28-174 faces per clip.
+
+## Angle resilience: rotation sweep, ByteTrack, profile-guarded alignment
+
+Three classes next to the ones above. **None is wired into the render yet**
+(the render still runs `GPUSCRFDDetector` + `temporal_smoothing`); switching
+it needs the swap-identity ABBA the tight canvas got, which has not been run.
+
+**`AngleResilientSCRFD`** (`pipeline/detector.py`, a `GPUSCRFDDetector`):
+
+- primary pass: batch 1 on the tight canvas at 0 deg, or at the preferred
+  angle for 10 frames after a sweep found the best face at another angle;
+- sweep: the three other angles as ONE batch of three square 640 canvases
+  (`torch.rot90` of one centred canvas). It runs when the primary pass finds no
+  face (unless the scene is registered empty: 30 empty frames, then one sweep
+  per 15), when it finds fewer faces than either of the last 2 frames, when
+  the tracker reports a lost track (`note_track_lost`), **or when a face it
+  found is rolled > 45 deg in the pass's own frame**;
+- boxes / landmarks mapped back per row on the device (`unrotate_points_cuda`);
+  NMS (IoU 0.45) over everything >= 0.20, ranked so the pass that saw a face
+  upright wins; `DualDetections` high (>= 0.50) / low (0.20-0.50).
+
+The roll trigger exists because the brief's trigger ("sweep when no face is
+found") never fired on rotated content. SCRFD at 0 deg finds rotated faces
+(t1.jpg rotated 90 deg: 4 of 6 at score >= 0.5; 180 deg: 2 of 6) with
+landmarks 5-28% of the face size off. The eye-midpoint -> mouth-midpoint axis
+separates them: upright t1 faces |roll| <= 33 deg, the same faces found in a
+90 deg frame 64-124 deg, in a 180 deg frame ~170 deg (the eye line reads ~0
+there: the network swaps the eyes, so it cannot be the test).
+
+The SCRFD graph was batch 1 only. Its heads end in `Transpose(2, 3, 0, 1) ->
+Reshape(-1, k)`, so naming the batch dim (`named_spatial_dims` rule 3) is
+enough: a batch runs unchanged, its outputs ordered `(h, w, image, anchor)`
+(checked against single-image runs, ORT and TensorRT). The engine profile is
+now batch 1..3, opt 1 (`scrfd_10g_bnkps_sm89_fp16_b3.engine`; rebuild with
+`tools/download_scrfd.py --engine`).
+
+1080p, RTX 4070, TensorRT FP16, 600 iterations x 4 arms (ABBA):
+
+| | median | p95 |
+|---|---:|---:|
+| `GPUSCRFDDetector`, upright | 1.80-1.85 ms | 2.40-2.83 ms |
+| `AngleResilientSCRFD`, upright (no sweep) | 2.20-2.27 ms | 2.82-3.79 ms |
+| held at the preferred angle (rotated content) | 2.83 ms | 6.61 ms |
+| primary + batch-3 sweep | 6.70 ms | 9.03 ms |
+
+The upright cost is CPU kernel launches, not GPU (profiled: 0.84 vs 0.92 ms
+GPU per frame). Skipping the rotation maths when every pass is 0 deg took it
+from +0.97 ms to +0.4 ms (the 0.20 threshold decodes more candidates).
+
+**`RobustByteTracker`** (`pipeline/tracker.py`): ByteTrack's Kalman filter
+(`cx, cy, a, h`, batched in torch, gain via `solve_ex` without a sync), first
+association high detections vs all live tracks (IoU >= 0.2), second
+association still-unmatched tracked tracks vs low detections (IoU >= 0.5),
+lost tracks predicted for 5 frames, new tracks only from high detections.
+Landmarks: EMA alpha 0.75 **about the Kalman motion** (the previous landmarks
+move with the predicted box before blending). Plain EMA trails a face moving
+v px/frame by v/3 (the `TemporalFaceTracker` lag above); the test measures
+6.7 px behind at 20 px/frame for plain, < 1 px compensated. Not yet measured
+on real clips against the zero-lag reference used above.
+
+**`ProfileGuardedAligner`** (`pipeline/aligner.py`): Umeyama through a closed
+form 2x2 SVD (no cuSOLVER, no sync; identical to
+`estimate_similarity_transform_cuda` when the guard does not fire), with
+`s2 = max(s2, 0.15 s1)`, then `warp_face_cuda` (kornia). A similarity cannot
+stretch and its rotation does not depend on `s1, s2`, so the clamp changes
+the crop SCALE only. Landmarks compressed about the nose by cos(yaw):
+
+| yaw | 0 | 60 | 75 | 78 | 85 | 89.9 |
+|---|---:|---:|---:|---:|---:|---:|
+| s2 / s1 | 0.632 | 0.316 | 0.164 | 0.131 | 0.055 | 0.001 |
+| scale, unguarded | 1.867 | 2.122 | 2.084 | 2.056 | 1.960 | 1.869 |
+| scale, guarded | 1.867 | 2.122 | 2.084 | **2.090** | **2.137** | **2.147** |
+
+It fires from ~78 deg; unguarded, the zoom swings back to the frontal value
+as the face reaches profile. Whether the steadier zoom helps the swap is
+unmeasured.
+
+`face_engine/tests/test_angle_resilience.py` (26): recall 6/6 with landmarks
+< 1% of face size at 0 / 90 / 180 / 270 (TensorRT and the ORT fallback), a
+sideways face in a landscape frame, batch 3 == 3 x batch 1, no host copies,
+the empty-scene back-off, a mid-clip roll-over, the profile turn at score 0.22
+(and the single-threshold control that loses it), and 600 frames of upright
+1080p through detect + track + align: **170.8 fps, 0 sweeps, 6 ids**.
 
 ## Models without a source
 

@@ -34,6 +34,17 @@ from roop import ffmpeg_path  # noqa: E402
 
 
 class FfmpegResolutionTests(unittest.TestCase):
+    def setUp(self):
+        # ffmpeg_binary() caches module-wide. These tests re-resolve under mocks
+        # (a fake path, the bare "ffmpeg"); without restoring, the last one's
+        # answer leaked into every later test in the process -- test_hdr_color's
+        # round trip then ran the bare name and died with WinError 2 in the full
+        # suite while passing alone (2026-09-28).
+        self._cached = ffmpeg_path._CACHED
+
+    def tearDown(self):
+        ffmpeg_path._CACHED = self._cached
+
     def test_path_lookup_wins_when_available(self):
         with mock.patch.object(ffmpeg_path.shutil, "which",
                                lambda _n: r"C:\tools\ffmpeg.exe"):
