@@ -353,7 +353,26 @@ class TrackingMixin:
         det_executor = (ThreadPoolExecutor(max_workers=pool_workers, thread_name_prefix='track_det')
                         if pool_workers > 1 else None)
 
-        def _run_detect(fr, crop_bbox, expected_count=None):
+        # Sub-7GB cards run this scan inline (pool 0/0), one frame at a time,
+        # so every rescue pass is wall clock. See face_util.small_card_prepass_active
+        # for the measurement. Inline only: the backoff is order-dependent, and
+        # the pooled path (the 4070) keeps its exact behaviour.
+        from roop.face_util import (small_card_prepass_active, RescueBackoff,
+                                    last_rescue_outcome)
+        small_card_scan = det_executor is None and small_card_prepass_active()
+        rescue_backoff = None
+        if small_card_scan:
+            try:
+                _every = int(os.environ.get('ROOP_SMALL_CARD_PREPASS_RESCUE_EVERY', '8'))
+            except ValueError:
+                _every = 8
+            rescue_backoff = RescueBackoff(every=_every)
+            print(f'[Track] small-card scan: ROI crops skip the rescue ladder '
+                  f'(full-frame fallback covers a miss); a futile full-frame rescue '
+                  f'backs off to every {rescue_backoff.every} frames. '
+                  f'ROOP_SMALL_CARD_PREPASS=full restores the exhaustive scan.')
+
+        def _run_detect(fr, crop_bbox, expected_count=None, idx=None):
             def _cache_identity_embeddings(faces):
                 # Target-assignment identity uses one metric for the whole run.
                 # Temporal association below intentionally remains the existing
@@ -368,10 +387,18 @@ class TrackingMixin:
             # this frame rejected, not a leftover from the previous one.
             audit_detect_frame_begin()
             if crop_bbox is not None:
-                faces = get_all_faces_in_roi(fr, crop_bbox)
+                faces = (get_all_faces_in_roi(fr, crop_bbox, rescue=False)
+                         if small_card_scan else get_all_faces_in_roi(fr, crop_bbox))
                 if faces:
                     return _DetectionResult(_cache_identity_embeddings(faces), mode='roi')
-            faces = get_all_faces(fr, expected_count=expected_count) or []
+            _rescue_ok = True
+            if rescue_backoff is not None and idx is not None:
+                _rescue_ok = rescue_backoff.allow(idx, cut=(idx in shot_boundaries))
+                faces = get_all_faces(fr, expected_count=expected_count,
+                                      **({} if _rescue_ok else {'rescue': False})) or []
+                rescue_backoff.record(idx, _rescue_ok, last_rescue_outcome())
+            else:
+                faces = get_all_faces(fr, expected_count=expected_count) or []
             if HIRES_MISS and expected_count and len(faces) < expected_count:
                 hi_faces = get_all_faces_hires(fr, HIRES_DET_SIZE)
                 # MERGE, do not replace: the already-found face(s) keep the
@@ -898,7 +925,7 @@ class TrackingMixin:
                         else:
                             with _prof('track_detect'), _gpu_guard(pooled=analysis_pooled(), owner='analysis'):
                                 with _prof('detection'):
-                                    faces = _run_detect(frame, crop_bbox, expected_count)
+                                    faces = _run_detect(frame, crop_bbox, expected_count, idx)
                         with _prof('track_consume'):
                             _consume(idx, faces)
                         if temporal_tracker is not None and isinstance(frame, np.ndarray):

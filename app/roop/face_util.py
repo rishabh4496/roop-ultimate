@@ -555,7 +555,7 @@ def _roi_window(frame, bbox, pad_ratio=1.0, min_crop=160):
     return frame[cy1:cy2, cx1:cx2], cx1, cy1
 
 
-def get_all_faces_in_roi(frame, bbox, pad_ratio=1.0, min_crop=160):
+def get_all_faces_in_roi(frame, bbox, pad_ratio=1.0, min_crop=160, rescue=True):
     """Detect faces within a padded crop around `bbox` (a tracked face's
     previous/predicted location) instead of the full frame. The detector's
     input canvas size is unchanged, so a small tracked face fills far more of
@@ -567,7 +567,7 @@ def get_all_faces_in_roi(frame, bbox, pad_ratio=1.0, min_crop=160):
     if win is None:
         return []
     crop, cx1, cy1 = win
-    faces = get_all_faces(crop) or []
+    faces = (get_all_faces(crop) if rescue else get_all_faces(crop, rescue=False)) or []
     for face in faces:
         _offset_face_coords(face, cx1, cy1)
     return faces
@@ -1353,7 +1353,81 @@ def _is_face_duplicate(candidate, existing_items, iou_thresh=0.35, min_sep_ratio
     return False
 
 
-def _detect_faces(frame, expected_count=None):
+# ── Small-card pre-pass rescue policy (VRAM < 7 GB only) ──────────────────────
+# Measured 2026-09-29 on the RTX 3060 Laptop 6GB by sampling the live render
+# with py-spy: 72% of the temporal pre-pass's WALL clock was rescue detection,
+# and only 28% the first detector call. Two causes, both hidden on the 4070
+# because its detector pool runs them 2-4 wide and hardware absorbs the rest:
+#
+#   1. A ROI crop around ONE tracked face inherited expected_count from the
+#      global target list (2 people -> 2), so every crop "came up short" and
+#      paid the 3-turn partial-miss rescue for a second person who was simply
+#      not in the crop. The crop already falls back to a full-frame detect on a
+#      miss, so a ladder inside the crop is run twice.
+#   2. On the full frame the same shortfall (one of two people in shot, or
+#      nobody) re-ran the whole ladder - 2x upscale, three cardinal turns,
+#      CLAHE, then the partial-miss turns - on every frame, for as long as the
+#      person stayed away.
+#
+# The pool cannot be widened on this tier (0/0 is the memory-safety decision),
+# so the fix is fewer passes. ROOP_SMALL_CARD_PREPASS=full restores the old
+# behaviour for an A/B; a card of 7 GB or more never takes this path.
+_RESCUE_TL = threading.local()
+
+
+def small_card_prepass_active() -> bool:
+    if os.environ.get('ROOP_SMALL_CARD_PREPASS', 'auto').strip().lower() in (
+            'full', 'off', '0', 'false', 'no'):
+        return False
+    gb = session_pool._detect_vram_gb()
+    return 0 < gb < 7.0
+
+
+def last_rescue_outcome():
+    """(attempted, gained) for the last _detect_faces on THIS thread.
+
+    `attempted`: any rescue pass actually ran. `gained`: faces those passes
+    added beyond the first detector call. (True, 0) is a futile rescue - the
+    signal RescueBackoff spends."""
+    return getattr(_RESCUE_TL, 'outcome', (False, 0))
+
+
+class RescueBackoff:
+    """Stops re-running a rescue that keeps finding nothing.
+
+    After `patience` consecutive futile rescues, the next attempt waits `every`
+    frames. A rescue that gains a face, a frame that needed none, or a hard cut
+    resets it - so a rotated face that only the rescue can see (which SUCCEEDS
+    every frame) is never throttled, and a person walking out of shot costs one
+    ladder per `every` frames instead of one per frame. Deterministic: it is
+    only used when detection runs inline, in frame order."""
+
+    def __init__(self, every=8, patience=2):
+        self.every = max(1, int(every))
+        self.patience = max(1, int(patience))
+        self.streak = 0
+        self.last_attempt = None
+        self.skipped = 0
+
+    def allow(self, idx, cut=False):
+        if cut:
+            self.streak = 0
+        ok = (self.streak < self.patience or self.last_attempt is None
+              or idx - self.last_attempt >= self.every)
+        return ok
+
+    def record(self, idx, allowed, outcome):
+        attempted, gained = outcome
+        if attempted:
+            self.last_attempt = idx
+            self.streak = 0 if gained > 0 else self.streak + 1
+        elif allowed:
+            self.streak = 0     # nothing was short: the faces are back
+        else:
+            self.skipped += 1
+
+
+def _detect_faces(frame, expected_count=None, rescue=True):
     """Run the selected detector engine and return raw Face objects (unsorted).
     Applies small-face (upscale), close-up scale (downscale), clipped boundary
     (padded), rotated face, and dark/backlit lighting (CLAHE) rescues.
@@ -1369,7 +1443,15 @@ def _detect_faces(frame, expected_count=None):
                 expected_count = len(ifs)
 
     faces = _detect_faces_raw(frame) or []
+    raw_n = len(faces)
+    attempted = False
+    if not rescue:
+        # The caller has a cheaper way to recover (a ROI crop falls back to the
+        # full frame; a backed-off pre-pass tries again later).
+        _RESCUE_TL.outcome = (False, 0)
+        return _enrich_detected_faces(frame, faces)
     if not faces:
+        attempted = True
         engine = getattr(roop.globals, 'detector_engine', 'scrfd')
         has_multiscale = (engine in ('retinaface', 'retinaface_r50')
                           or bool(getattr(roop.globals, 'detector_scale_pyramid', None)))
@@ -1400,6 +1482,7 @@ def _detect_faces(frame, expected_count=None):
     # is tilted, inverted, or lying sideways (e.g. interacting/kissing in d1.mp4),
     # try rotated variants to recover the missing face(s) without duplicating existing ones.
     if expected_count and len(faces) < expected_count:
+        attempted = True
         try:
             h, w = frame.shape[:2]
             new_faces = []
@@ -1423,6 +1506,7 @@ def _detect_faces(frame, expected_count=None):
             _swallowed("roop/face_util.py:1287", _degrade_error, "fallback continued")
             pass
 
+    _RESCUE_TL.outcome = (attempted, max(0, len(faces) - raw_n))
     return _enrich_detected_faces(frame, faces)
 
 
@@ -1514,15 +1598,19 @@ def reset_detector_failures():
         _DETECT_FAIL_SEEN.clear()
 
 
-def get_all_faces(frame: Frame, expected_count: Optional[int] = None) -> Any:
+def get_all_faces(frame: Frame, expected_count: Optional[int] = None,
+                  rescue: bool = True) -> Any:
     try:
+        # `rescue` is only forwarded when it is False, so every existing caller
+        # (and every test double with the narrower signature) is untouched.
+        extra = {} if rescue else {'rescue': False}
         if expected_count is not None:
             try:
-                faces = _detect_faces(frame, expected_count=expected_count)
+                faces = _detect_faces(frame, expected_count=expected_count, **extra)
             except TypeError:
-                faces = _detect_faces(frame)
+                faces = _detect_faces(frame, **extra)
         else:
-            faces = _detect_faces(frame)
+            faces = _detect_faces(frame, **extra)
         if not faces:
             return []
         return sorted(faces, key=lambda x: x.bbox[0])

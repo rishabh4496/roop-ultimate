@@ -5,6 +5,22 @@ full session record is [`SESSION_LOGS.md`](SESSION_LOGS.md); the running enginee
 state lives outside the repository (`RECODE_STATUS.md` in the operator's `roop-keep`
 folder). Entries before 2026-09-21 were moved here from the README on 2026-09-22.
 
+## 2026-09-29
+
+- **3060 (sub-7 GB) temporal pre-pass: 72% of its wall clock was rescue detection.**
+  Sampled the live render with py-spy (40 s, 2 people selected, 720p, 60,778 frames,
+  ~10.7 fps, GPU 25% / 32 W): first detector call 28%, everything else rescue -
+  partial-miss turns 33%, cardinal-turn ladder 21%, CLAHE 9%, 2x upscale 6%.
+  Causes: (1) a ROI crop around ONE tracked face inherited `expected_count=2` from
+  `TARGET_FACE_GROUP`, so every crop paid the three-turn partial-miss rescue for a
+  person who was not in it, and on a ROI miss the ladder then ran again on the
+  full-frame fallback; (2) on the full frame a person out of shot re-ran the whole
+  ladder every frame. Fix (`face_util.small_card_prepass_active`, `RescueBackoff`,
+  `rescue=` on `get_all_faces*`): on a sub-7 GB card, inline scan only, ROI crops
+  skip the ladder and a futile rescue backs off to every 8th frame. The pooled
+  4070 path is byte-for-byte unchanged. NOT yet measured end to end - see
+  SESSION_LOGS 2026-09-29.
+
 ## 2026-09-27
 
 - **Upper-lip colour and kiss flicker (Love.mp4, harjot on the woman, AdaFace).**

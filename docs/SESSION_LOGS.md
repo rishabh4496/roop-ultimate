@@ -2495,3 +2495,46 @@ Reported as: "currently running processing in the terminal but gpu memory usage 
 ### 3. Verification
 - `test_stab_block_dispatch.py`: 12 / 12 tests passing.
 - `test_hardware_portability.py`: 25 / 25 tests passing.
+
+---
+## Session Log (2026-09-29): Why The Pre-Pass Is Slow On The 3060 - Rescue Passes, Not The Detector
+
+Reported as: "optimize for the 3060 6GB, do not change the 4070 - why is the pre-pass slow with the current models and settings".
+
+### 1. Evidence (py-spy on the live render, not inference)
+Render in progress: 2 selected people, 1280x720, 60,778 frames, `hyperswap`, scrfd @512,
+TensorRT, pool 0/0. Pre-pass 10.7 fps average (6-13.5 instantaneous), **GPU 25%, 32 W,
+982 MHz** - the card is idle, the thread is not. 40 s wall-clock sample of the swap
+thread (`--threads`, all states):
+
+    first detector call                  28%   (_detect_faces:1371)
+    partial-miss 3-turn rescue           33%   (:1410)
+    cardinal-turn ladder                 21%   (:1387)
+    CLAHE rescue                          9%   (:1390)
+    2x upscale rescue                     6%   (:1378)
+
+### 2. Causes
+1. **ROI crops inherit the global head count.** `get_all_faces_in_roi` -> `get_all_faces(crop)`
+   -> `_detect_faces` derives `expected_count` from `TARGET_FACE_GROUP` (2). A crop around one
+   tracked face always "comes up short", so it pays three extra detector passes for a person
+   who is not in it - and on a ROI miss the full-frame fallback runs the ladder AGAIN.
+2. **A person out of shot costs a full ladder per frame** (upscale, 3 turns, CLAHE, then the
+   partial-miss turns), for as long as they stay away.
+3. Not addressed: the swapper/enhancer choices (`GPEN 256` is already stripped to `None` by the
+   sub-7GB RSS policy on this tier), and the single-context 0/0 pool, which stays - it is the
+   memory-safety decision for this card.
+
+### 3. Fix (sub-7 GB only; inline scan only)
+`face_util.small_card_prepass_active()` (VRAM < 7 GB, `ROOP_SMALL_CARD_PREPASS=full` opts
+out), `rescue=False` through `get_all_faces` / `get_all_faces_in_roi`, and `RescueBackoff`
+(two futile rescues -> retry every 8 frames; a gain, an unneeded frame or a hard cut resets).
+The 4070 runs the pooled path (`det_executor is not None`), which is untouched.
+
+### 4. Not verified end to end - read before quoting a speedup
+The render that was sampled is still running old code (the backend needs a restart), and
+"one render at a time" forbids a second. Unit tests pin the shape (passes not run; 4070 tier
+not selected). **Still to do on the 3060 after the render ends:** counterbalanced A/B with
+`ROOP_SMALL_CARD_PREPASS=full` vs auto over >=600 frames of a clip where one of two people
+leaves shot, recording `mean_gpu_util_pct`, the `[Temporal]` line (tracks / faces / gap-filled)
+and the swap audit. Recall is the risk: a face only the rescue can see, reappearing inside 8
+frames of a futile streak, is found late. A fast pre-pass with fewer faces is not a win.
