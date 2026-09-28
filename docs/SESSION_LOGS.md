@@ -2553,3 +2553,17 @@ decision boundary and a 1-face / 3-gap-fill difference in detections tipped it. 
 wrong-person faceset, not evidence the fix is better or worse - but it also means recall parity is NOT proven.
 **Still needed:** rerun with a faceset that actually matches the two people in the clip and confirm swap rate
 and `[Temporal]` counts agree between arms before pushing.
+
+### 6. GPU at 30% during the pre-pass - overlapped detector instances (2026-09-29)
+py-spy on a live pre-pass (234,628 frames, one person): serial thread, ~32% of samples inside ORT `run` (GPU wait), the
+rest Python pre/post-processing; `_upright_remeasure` (a second detector pass for rolled faces) was 51% of samples on
+that footage. The 0/0 pool makes the scan serial, so the GPU idles between calls. Fix: on a sub-7 GB card the scan
+builds 2 FaceAnalysis instances for its own duration (only if >= 2.2 GB VRAM free), submits frames to 2 workers, and
+rebuilds at width 1 before the swap. The rescue backoff is decided at submit and recorded at consume, in frame order.
+
+Measured (900-frame slice of d4.mp4, 3060, counterbalanced 1 vs 2 workers, both with the section-3 fix):
+pre-pass 30.9 / 35.8 fps -> 46.9 / 47.5 fps (**about +40%**); end to end 13.0 / 14.0 -> 14.1 / 14.2 fps (swap phase
+dominates now); swap rate 57.9% -> 58.1% (matched). NOT identical detections: 5 tracks / 991 faces -> 4 tracks / 989
+(the ROI plan lags the tracker by the in-flight depth, as on the pooled 4070 path). Not measured on rolled-face footage,
+where the upright-remeasure pass is the larger cost and is unchanged.
+

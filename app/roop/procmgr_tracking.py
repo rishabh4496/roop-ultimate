@@ -84,6 +84,9 @@ class _DetectionResult(list):
     def __init__(self, faces=(), mode='full'):
         super().__init__(faces or [])
         self.mode = mode
+        # (rescue_allowed, (attempted, gained)) when a full-frame detect ran
+        # under the small-card backoff; None otherwise (ROI hit, coast, stop).
+        self.rescue = None
 
 
 def no_source_reason(dd, near, assign_max):
@@ -350,16 +353,36 @@ class TrackingMixin:
         # serial path — only the wall-clock schedule of the GPU calls changes. Falls
         # back to the exact original single-threaded call when pooling is off.
         pool_workers = session_pool.detmask_pool_size() if session_pool.detmask_pooling_enabled() else 1
+        from roop import face_util as _fu
+        from roop.face_util import (small_card_prepass_active, RescueBackoff,
+                                    last_rescue_outcome)
+        small_card_scan = small_card_prepass_active()
+        prepass_widened = False
+        if small_card_scan and pool_workers <= 1:
+            # Sub-7GB tier: pools are 0/0 for the swap phase, which leaves this
+            # scan serial with the GPU ~70% idle (py-spy, 2026-09-29). Overlap
+            # two frames for the length of the scan if the card has room.
+            try:
+                _want = int(os.environ.get('ROOP_SMALL_CARD_PREPASS_WORKERS', '2'))
+            except ValueError:
+                _want = 2
+            if _want > 1 and _fu.prepass_pool_headroom_ok():
+                _fu.set_prepass_pool(_want)
+                _fu._ensure_face_analyser()
+                pool_workers = _want
+                prepass_widened = True
+                print(f'[Track] small-card scan: {_want} overlapped detector instances '
+                      f'for the pre-pass (dropped again before the swap). '
+                      f'ROOP_SMALL_CARD_PREPASS_WORKERS=1 keeps one.')
         det_executor = (ThreadPoolExecutor(max_workers=pool_workers, thread_name_prefix='track_det')
                         if pool_workers > 1 else None)
 
-        # Sub-7GB cards run this scan inline (pool 0/0), one frame at a time,
-        # so every rescue pass is wall clock. See face_util.small_card_prepass_active
-        # for the measurement. Inline only: the backoff is order-dependent, and
-        # the pooled path (the 4070) keeps its exact behaviour.
-        from roop.face_util import (small_card_prepass_active, RescueBackoff,
-                                    last_rescue_outcome)
-        small_card_scan = det_executor is None and small_card_prepass_active()
+        # Sub-7GB cards: every rescue pass is wall clock. See
+        # face_util.small_card_prepass_active for the measurement. The backoff is
+        # order-dependent, so it is DECIDED at submit and RECORDED at consume:
+        # frames are consumed strictly in order, so what the backoff has seen
+        # when frame N is submitted is a fixed function of N, whatever the worker
+        # timing. A card of 7GB+ never reaches this.
         rescue_backoff = None
         if small_card_scan:
             try:
@@ -372,7 +395,7 @@ class TrackingMixin:
                   f'backs off to every {rescue_backoff.every} frames. '
                   f'ROOP_SMALL_CARD_PREPASS=full restores the exhaustive scan.')
 
-        def _run_detect(fr, crop_bbox, expected_count=None, idx=None):
+        def _run_detect(fr, crop_bbox, expected_count=None, rescue_ok=True):
             def _cache_identity_embeddings(faces):
                 # Target-assignment identity uses one metric for the whole run.
                 # Temporal association below intentionally remains the existing
@@ -391,12 +414,11 @@ class TrackingMixin:
                          if small_card_scan else get_all_faces_in_roi(fr, crop_bbox))
                 if faces:
                     return _DetectionResult(_cache_identity_embeddings(faces), mode='roi')
-            _rescue_ok = True
-            if rescue_backoff is not None and idx is not None:
-                _rescue_ok = rescue_backoff.allow(idx, cut=(idx in shot_boundaries))
+            _stamp = None
+            if rescue_backoff is not None:
                 faces = get_all_faces(fr, expected_count=expected_count,
-                                      **({} if _rescue_ok else {'rescue': False})) or []
-                rescue_backoff.record(idx, _rescue_ok, last_rescue_outcome())
+                                      **({} if rescue_ok else {'rescue': False})) or []
+                _stamp = (rescue_ok, last_rescue_outcome())
             else:
                 faces = get_all_faces(fr, expected_count=expected_count) or []
             if HIRES_MISS and expected_count and len(faces) < expected_count:
@@ -422,10 +444,19 @@ class TrackingMixin:
                 # face_detector_threshold is the lever here — see the audit.
                 audit_detect_miss_here(
                     getattr(roop.globals, 'face_detector_threshold', 0.5))
-            return _DetectionResult(faces, mode=('roi_fallback_full'
+            _res = _DetectionResult(faces, mode=('roi_fallback_full'
                                                  if crop_bbox is not None else 'full'))
+            _res.rescue = _stamp
+            return _res
 
-        def _detect_one(fr, crop_bbox=None, expected_count=None, skip_detection=False):
+        def _note_rescue(f_idx, res):
+            """Feed a consumed full-frame result to the backoff, in frame order."""
+            st = getattr(res, 'rescue', None)
+            if rescue_backoff is not None and st is not None:
+                rescue_backoff.record(f_idx, st[0], st[1])
+
+        def _detect_one(fr, crop_bbox=None, expected_count=None, skip_detection=False,
+                        rescue_ok=True):
             # Runs inside a pool worker, one at a time per worker (ThreadPoolExecutor
             # caps concurrency at pool_workers == the analyser pool size), so this is
             # real GPU/model time, not queue-wait — lease_face_analyser() should never
@@ -443,7 +474,7 @@ class TrackingMixin:
                     return _DetectionResult([], mode='coast')
                 with _prof('track_detect'), _gpu_guard(pooled=True):
                     with _prof('detection'):
-                        return _run_detect(fr, crop_bbox, expected_count)
+                        return _run_detect(fr, crop_bbox, expected_count, rescue_ok)
 
         def _consume(f_idx, faces):
             nonlocal active, retired, next_id, reid_refused, contam_seen, contam_reid
@@ -895,8 +926,10 @@ class TrackingMixin:
                     # before submission. Re-check at this boundary so the queue does
                     # not grow new detector work while the run is paused.
                     wait_while_paused()
+                    _rok = (rescue_backoff.allow(idx, cut=(idx in shot_boundaries))
+                            if rescue_backoff is not None else True)
                     in_flight.append((idx, det_executor.submit(
-                        _detect_one, frame, crop_bbox, expected_count, skip_detection)))
+                        _detect_one, frame, crop_bbox, expected_count, skip_detection, _rok)))
                     max_in_flight = pool_workers + 2
                     if len(in_flight) >= max_in_flight:
                         done_idx, done_fut = in_flight.popleft()
@@ -911,6 +944,7 @@ class TrackingMixin:
                                 result = done_fut.result()
                             with _prof('track_consume'):
                                 _consume(done_idx, result)
+                            _note_rescue(done_idx, result)
                             if temporal_tracker is not None and isinstance(frame, np.ndarray):
                                 temporal_tracker.update(
                                     result, done_idx, frame.shape,
@@ -923,11 +957,14 @@ class TrackingMixin:
                         if skip_detection:
                             faces = _DetectionResult([], mode='coast')
                         else:
+                            _rok = (rescue_backoff.allow(idx, cut=(idx in shot_boundaries))
+                                    if rescue_backoff is not None else True)
                             with _prof('track_detect'), _gpu_guard(pooled=analysis_pooled(), owner='analysis'):
                                 with _prof('detection'):
-                                    faces = _run_detect(frame, crop_bbox, expected_count, idx)
+                                    faces = _run_detect(frame, crop_bbox, expected_count, _rok)
                         with _prof('track_consume'):
                             _consume(idx, faces)
+                        _note_rescue(idx, faces)
                         if temporal_tracker is not None and isinstance(frame, np.ndarray):
                             temporal_tracker.update(
                                 faces, idx, frame.shape,
@@ -964,6 +1001,7 @@ class TrackingMixin:
                         break
                     res = done_fut.result()
                     _consume(done_idx, res)
+                    _note_rescue(done_idx, res)
                     # The frame array is no longer available here, but this drain
                     # only occurs after the loop's final submitted frame. The
                     # detector result still carries the actual path, and tracker
@@ -977,6 +1015,15 @@ class TrackingMixin:
             pbar.close()
             if det_executor is not None:
                 det_executor.shutdown(wait=False, cancel_futures=True)
+            if prepass_widened:
+                # The swap phase runs on ONE analyser (its next lease rebuilds
+                # the pool at width 1 and gives the VRAM back).
+                _fu.set_prepass_pool(0)
+                try:
+                    _fu._ensure_face_analyser()      # rebuild at width 1 NOW
+                except Exception as _degrade_error:
+                    _swallowed("roop/procmgr_tracking.py:prepass_shrink", _degrade_error,
+                               "wide analyser pool left for the next lease to shrink")
             # Stop the reader and let it leave cap.read() BEFORE releasing the
             # capture — releasing under an in-flight read is a native-level crash,
             # and the loop exits early on Stop far more often than it hits EOF.

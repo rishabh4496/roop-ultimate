@@ -231,6 +231,8 @@ def _ensure_face_analyser():
         model_key='detector:face-analysis',
         input_shape=(1, 3, _desired_det_size(), _desired_det_size()))
         if session_pool.detmask_pooling_enabled() else 1)
+    if _PREPASS_POOL > target_pool_size:
+        target_pool_size = _PREPASS_POOL
     # A preview wants ONE instance, but it must not SHRINK a pool a render
     # built. `detmask_pooling_enabled()` is False whenever `is_preview` is set,
     # so without this the width flips 2 -> 1 on entering the preview and 1 -> 2
@@ -1373,6 +1375,31 @@ def _is_face_duplicate(candidate, existing_items, iou_thresh=0.35, min_sep_ratio
 # so the fix is fewer passes. ROOP_SMALL_CARD_PREPASS=full restores the old
 # behaviour for an A/B; a card of 7 GB or more never takes this path.
 _RESCUE_TL = threading.local()
+
+# The pre-pass's own analyser-pool width (0 = none requested). The scan is one
+# serial thread on this tier and the GPU idles ~70% of it: half of every frame
+# is Python-side pre/post-processing between detector calls. Two independent
+# FaceAnalysis instances let frame N+1's CPU work overlap frame N's GPU work.
+# Set by the scan for its duration only; the swap phase drops back to 1 (the
+# memory-safety decision for this tier) on its next _ensure_face_analyser.
+_PREPASS_POOL = 0
+
+
+def set_prepass_pool(n: int) -> None:
+    global _PREPASS_POOL
+    _PREPASS_POOL = max(0, int(n))
+
+
+def prepass_pool_headroom_ok(min_free_mb: float = 2200.0) -> bool:
+    """Is there VRAM for one more analyser instance right now?"""
+    try:
+        import torch
+        free, _total = torch.cuda.mem_get_info(getattr(roop.globals, 'cuda_device_id', 0))
+        return free / (1024 ** 2) >= min_free_mb
+    except Exception as _degrade_error:
+        _swallowed("roop/face_util.py:prepass_pool_headroom", _degrade_error,
+                   "no headroom reading; scan stays single-instance")
+        return False
 
 
 def small_card_prepass_active() -> bool:

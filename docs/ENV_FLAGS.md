@@ -617,6 +617,7 @@ loop.
 | `ROOP_TRACK_READAHEAD` | 1 | Decode frames for the pre-pass on their own thread so decoding overlaps detection (~15% off the pre-pass; bit-identical). `0` decodes inline as before. With it on, the `track_decode` stage times the wait *for* a frame, so it only grows if the decoder is genuinely the slower half. |
 | `ROOP_SMALL_CARD_PREPASS` | auto | Sub-7 GB cards only (never a 7 GB+ card). `auto`: ROI crops in the temporal pre-pass skip the rescue ladder (a miss already falls back to a full-frame detect) and a full-frame rescue that keeps finding nothing backs off. `full` restores the exhaustive scan for an A/B. |
 | `ROOP_SMALL_CARD_PREPASS_RESCUE_EVERY` | 8 | Frames between rescue attempts once two in a row found nothing. A rescue that gains a face, a frame that needed none, and a hard cut each reset it. |
+| `ROOP_SMALL_CARD_PREPASS_WORKERS` | 2 | Sub-7 GB cards only. Detector instances the temporal pre-pass overlaps (frame N+1's CPU work under frame N's GPU work). Built for the scan only, when >= 2.2 GB VRAM is free, and rebuilt at width 1 before the swap. `1` keeps the serial scan. |
 | `ROOP_TRACK_ROI_CROP` | 0 | `1` enables ROI-crop pre-pass during identity tracking. |
 | `ROOP_CAPTURE_PIPE` | auto | How preview/timeline decode video. `auto` uses OpenCV except on HEVC pixel formats where it silently returns the wrong frame (10-bit, 4:2:2, 4:4:4 — measured up to 16 frames off), which go through an ffmpeg pipe instead. `1` forces the pipe for everything (slower seeks, always exact), `0` forces OpenCV (fast, wrong on those formats). |
 
