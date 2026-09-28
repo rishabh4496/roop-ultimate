@@ -43,6 +43,12 @@ MaskType = Literal["box", "occlusion", "region"]
 EnhancerName = Literal["none", "gpen_bfr_512", "gpen_bfr_1024", "restoreformer_plus_plus"]
 ProviderName = Literal["cuda", "tensorrt", "cpu"]
 DetectorName = Literal["scrfd_10g_bnkps", "retinaface_r50"]
+# Render-time face tracks (TemporalFaceTracker). "off" is the default: EMA
+# smoothing cut landmark jitter ~30% on four clips but on the fastest-moving
+# decile of frames put the landmarks 1.6-2.7x further from the motion than raw
+# detection (lag; 2026-09-28, face_engine/README.md). "retain" carries a face
+# the detector misses for up to 3 frames on its motion vector, unsmoothed.
+TemporalMode = Literal["off", "retain", "ema"]
 
 
 class RenderParams(BaseModel):
@@ -66,6 +72,8 @@ class RenderParams(BaseModel):
     match_threshold: float = Field(default=0.3, ge=0.0, le=1.0)
     # Render only: full detection every N frames, optical flow between.
     detection_stride: int = Field(default=1, ge=1, le=8)
+    # Render only: see TemporalMode.
+    temporal_smoothing: TemporalMode = "off"
     # Render only: >1 renders keyframe segments in that many GPU processes.
     workers: int = Field(default=1, ge=1, le=8)
 
@@ -227,6 +235,15 @@ class GpuFrameProcessor:
         self.tracker = (StridedFaceTracker(self.detector,
                                            TrackerConfig(detection_stride=p.detection_stride))
                         if tracking and p.detection_stride > 1 else None)
+        self.temporal = None
+        if tracking and p.temporal_smoothing != "off":
+            from face_engine.pipeline.tracker import (
+                TemporalFaceTracker,
+                TemporalTrackerConfig,
+            )
+
+            self.temporal = TemporalFaceTracker(TemporalTrackerConfig(
+                smooth=p.temporal_smoothing == "ema"))
         self.encoder = GPUIdentityEncoder(self.engine, paths["arcface_w600k_r50"])
         self.swapper = BatchedFaceSwapper(self.engine, p.swapper_model, paths[p.swapper_model])
         size = p.boost_size or self.swapper.spec.size
@@ -260,7 +277,19 @@ class GpuFrameProcessor:
             from face_engine.boosted.retinaface_gpu import RetinaFaceR50Detector
 
             return RetinaFaceR50Detector(self.engine, paths["retinaface_r50"])
-        return scrfd(self.detect_engine, paths["scrfd_10g_bnkps"])
+        # GPUSCRFDDetector: tight centred canvas + the dynamic TensorRT engine
+        # (ONNX Runtime when it is not compiled). Against the square-canvas
+        # SCRFDDetector (Balanced, d1 / Love, 300 frames, A-B-B-A, 2026-09-28):
+        # 49.5 vs 42.0 and 59.1 vs 47.8 fps, swap identity 0.7209 vs 0.7231 and
+        # 0.6322 vs 0.6319, faces swapped 508 vs 507 and 469 vs 474. Centred, not
+        # top-left: top-left matched InsightFace's landmarks best but cost 0.011
+        # identity. Score 0.5 as before: the 0.45-0.50 band held the back of a
+        # head and background specks as well as hard real faces.
+        from face_engine.pipeline.detector import GPUSCRFDDetector
+
+        engine = self.engine if p.execution_provider == "tensorrt" else self.detect_engine
+        return GPUSCRFDDetector(engine, paths["scrfd_10g_bnkps"], placement="center",
+                                score_threshold=0.5)
 
     def _build_masker(self, cls: Any, xseg: str | None, bisenet: str | None, config: Any) -> Any:
         """The mask builder (a subclass hook: the boosted pipeline feathers XSeg its own way)."""
@@ -277,9 +306,11 @@ class GpuFrameProcessor:
 
     # ------------------------------------------------------------------ faces
     def _faces(self, frame: torch.Tensor) -> Any:
-        if self.tracker is not None:
-            return self.tracker.update(frame).detections
-        return self.detector.detect_cuda(frame)
+        faces = (self.tracker.update(frame).detections if self.tracker is not None
+                 else self.detector.detect_cuda(frame))
+        if self.temporal is not None:
+            faces = self.temporal.update(faces).detections
+        return faces
 
     def _choose_sources(self, frame: torch.Tensor, kps: torch.Tensor) -> tuple[Any, Any]:
         """``(kept_face_indices, source_embeddings)`` for the faces to swap."""

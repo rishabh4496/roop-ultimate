@@ -87,6 +87,8 @@ class EngineSpec:
         fp32_layers: Layer / tensor name substrings pinned to FP32 in an FP16
             build (on top of decomposed InstanceNorms): the layers measured to
             leave FP16's range.
+        shapes: Full ``(min, opt, max)`` input shapes for inputs whose spatial
+            size varies (``inputs`` then gives the opt shape for sample data).
     """
 
     model: str
@@ -95,6 +97,7 @@ class EngineSpec:
     batch: tuple[int, int, int] = (1, 2, 8)
     batched_graph: bool = True
     fp32_layers: tuple[str, ...] = ()
+    shapes: dict[str, tuple[tuple[int, ...], tuple[int, ...], tuple[int, ...]]] | None = None
 
     @property
     def max_batch(self) -> int:
@@ -116,6 +119,10 @@ ENGINE_SPECS: dict[str, EngineSpec] = {s.model: s for s in (
     EngineSpec("xseg_3", "masker", {"input": (256, 256, 3)}, (1, 2, 8), False),
     # The boosted pipeline's detector (face_engine/boosted): fixed 640, batch <= 2.
     EngineSpec("retinaface_r50", "detector", {"input": (3, 640, 640)}, (1, 1, 2), False),
+    # GPUSCRFDDetector: aspect-preserving canvas (long side 640, sides padded to
+    # a multiple of 32), so the spatial size varies per clip: 1080p -> 384 x 640.
+    EngineSpec("scrfd_10g_bnkps", "detector", {"input.1": (3, 384, 640)}, (1, 1, 1), False,
+               shapes={"input.1": ((1, 3, 384, 384), (1, 3, 640, 640), (1, 3, 1024, 1024))}),
     EngineSpec("bisenet_resnet34", "masker", {"input": (3, 512, 512)}, (1, 2, 4), False),
 )}
 
@@ -256,6 +263,10 @@ def build_engine(spec: EngineSpec, source: Path, precision: str, gpu: GpuInfo, *
         if derived is None:
             raise RuntimeError(f"{spec.model}: no verified dynamic-batch graph")
         graph = derived
+    if spec.shapes:
+        from face_engine.utils.onnx_batch import named_spatial_dims
+
+        graph = named_spatial_dims(graph)
     log = _Logger()
     builder = trt.Builder(log)
     # TensorRT 10 networks are always explicit-batch; the flag is accepted
@@ -285,6 +296,9 @@ def build_engine(spec: EngineSpec, source: Path, precision: str, gpu: GpuInfo, *
     lo, opt, hi = spec.batch
     for i in range(network.num_inputs):
         tensor = network.get_input(i)
+        if spec.shapes and tensor.name in spec.shapes:
+            profile.set_shape(tensor.name, *spec.shapes[tensor.name])
+            continue
         if tensor.name not in spec.inputs:
             raise RuntimeError(f"{spec.model}: graph input {tensor.name!r} not in the spec "
                                f"({sorted(spec.inputs)})")
@@ -442,6 +456,17 @@ def sample_inputs(spec: EngineSpec, batch: int) -> dict[str, np.ndarray]:
         norm = (rgb - np.array([0.485, 0.456, 0.406], np.float32)) / np.array(
             [0.229, 0.224, 0.225], np.float32)
         return {"input": np.ascontiguousarray(norm.transpose(0, 3, 1, 2))}
+    if name == "scrfd_10g_bnkps":
+        import cv2
+
+        h, w = image.shape[:2]
+        scale = 640.0 / max(h, w)
+        rh, rw = round(h * scale), round(w * scale)
+        canvas = np.zeros((-(-rh // 32) * 32, -(-rw // 32) * 32, 3), np.float32)
+        canvas[:rh, :rw] = cv2.resize(image, (rw, rh))[..., ::-1]  # RGB
+        blob = (canvas / 255.0 - 0.5) / 0.5
+        return {"input.1": np.ascontiguousarray(
+            np.repeat(blob.transpose(2, 0, 1)[None], batch, axis=0))}
     if name == "retinaface_r50":
         import cv2
 

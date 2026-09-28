@@ -25,9 +25,9 @@ from face_engine import run as launcher
 
 # ---------------------------------------------------------------------------- engines
 @pytest.mark.parametrize(("profile", "expected"), [
-    ("fast", [("hyperswap_1a_256", "auto")]),
-    ("balanced", [("hyperswap_1a_256", "auto"), ("xseg_3", "fp16")]),
-    ("cinema", [("hyperswap_1a_256", "auto"), ("xseg_3", "fp16"),
+    ("fast", [("scrfd_10g_bnkps", "fp16"), ("hyperswap_1a_256", "auto")]),
+    ("balanced", [("scrfd_10g_bnkps", "fp16"), ("hyperswap_1a_256", "auto"), ("xseg_3", "fp16")]),
+    ("cinema", [("scrfd_10g_bnkps", "fp16"), ("hyperswap_1a_256", "auto"), ("xseg_3", "fp16"),
                 ("bisenet_resnet34", "fp16"), ("gpen_bfr_512", "fp32")]),
 ])
 def test_wanted_engines_match_what_the_processors_load(profile: str,
@@ -40,7 +40,8 @@ def engine_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Any
     """Patched lookups: which engines exist, what the compiler does."""
     from face_engine.core import execution, trt_compiler
 
-    env: dict[str, Any] = {"built": set(), "calls": [], "exit": 0}
+    # The detector engine exists: these tests are about the other engines.
+    env: dict[str, Any] = {"built": {("scrfd_10g_bnkps", "fp16")}, "calls": [], "exit": 0}
     monkeypatch.setattr(trt_compiler, "ENGINE_DIR", tmp_path)
     monkeypatch.setattr(trt_compiler, "discover_gpu", lambda device_id=0: SimpleNamespace(sm="89"))
     monkeypatch.setattr(execution.ExecutionEngine, "available_providers",

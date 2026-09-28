@@ -19,8 +19,8 @@ under `app/`.
 | `core/registry.py` | `ModelSpec` / `ModelRegistry`: declarative specs, verify, fetch |
 | `models/zoo.py` | `MODEL_ZOO`: the 15 declared models with URLs, SHA256 and sizes |
 | `utils/downloads.py` | resumable, retried, hash-verified downloads |
-| `pipeline/detector.py` | `SCRFDDetector`, `YOLOFaceDetector` -> `Face` (bbox, 5 kps, score, frame size); `detect_cuda` -> `GPUDetections` |
-| `pipeline/tracker.py` | `StridedFaceTracker`: detection every N frames, GPU Lucas-Kanade between, histogram shot cuts |
+| `pipeline/detector.py` | `SCRFDDetector`, `YOLOFaceDetector`, `GPUSCRFDDetector` (tight canvas, TensorRT; the render's SCRFD) -> `Face` / `GPUDetections` |
+| `pipeline/tracker.py` | `StridedFaceTracker` (detection every N frames, GPU Lucas-Kanade between, shot cuts); `TemporalFaceTracker` (tracks, EMA, 3-frame retention) |
 | `pipeline/aligner.py` | templates, SVD similarity fit, ROI crop warp + paste-back; `warp_face_cuda` / `warp_face_inverse_cuda` (kornia) |
 | `pipeline/masker.py` | `CompositeMasker` (host) / `GPUMasker` (VRAM): feathered box x XSeg x BiSeNet regions x valid |
 | `processors/swapper.py` | `IdentityEncoder`/`GPUIdentityEncoder`, `FaceSwapper`/`BatchedFaceSwapper`: HyperSwap 1a/1b/1c, inswapper, Pixel Boost |
@@ -966,6 +966,78 @@ figure above.
 - In-process PyAV NVDEC: replaced by Stage 7's decode (see above).
 - "No H2D copies in the loop": one upload of the decoded YUV planes per frame
   remains; frames are CPU-decoded (Stage 7).
+
+## GPU SCRFD on a tight canvas + temporal face tracks
+
+```
+python tools/download_scrfd.py --engine      # model (SHA256-verified) + dynamic TensorRT FP16 engine
+```
+
+`face_engine` never used InsightFace's `FaceAnalysis` (its SCRFD has been GPU
+IOBinding since Stage 2; the `buffalo_l` wrapper is in the Roop app). What is
+new, added next to the existing classes:
+
+**`GPUSCRFDDetector`** (`pipeline/detector.py`), now the render's SCRFD:
+
+- the long side scaled to 640, each side padded only up to a multiple of 32
+  (minimum 384): 1080p -> a 384 x 640 canvas, not 640 x 640;
+- a dynamic-shape TensorRT FP16 engine (profile 384..1024 per side, opt 640 x
+  640; fidelity 9.2e-5 of range). The export names H and W both `?`, which
+  TensorRT reads as one symbol (H must equal W), and declares its 640 output
+  lengths, which ONNX Runtime enforces: the build and the ORT fallback use a
+  copy with named H / W and symbolic outputs (`onnx_batch.named_spatial_dims`);
+- normalization `(rgb/255 - 0.5) / 0.5` (SCRFD's symmetric scaling; the brief
+  calls it ImageNet, which it is not, and ImageNet mean/std loses detections);
+- score threshold, minimum size and finiteness as one mask over every anchor,
+  one device read, only survivors decoded, `batched_nms` (IoU 0.40).
+
+1080p frame, RTX 4070, 200 iterations (preprocess + engine + decode + NMS):
+
+| | median | p95 |
+|---|---:|---:|
+| `SCRFDDetector` (square canvas, ORT CUDA) | 5.91 ms | 7.06 ms |
+| `GPUSCRFDDetector` (TensorRT FP16) | **1.75 ms** | 2.44 ms |
+| `GPUSCRFDDetector` (ORT fallback) | 4.61 ms | 5.36 ms |
+
+(engine alone 0.83-0.91 ms; the first version was 2.07 ms before thresholding
+ahead of decoding and normalizing after the resize.)
+
+**Placement.** Against InsightFace's own SCRFD over the same file, 157 frames
+of four clips, landmark error in % of face size (median / p95):
+square centred canvas 2.42 / 8.60, tight top-left 0.45 / 2.46. But the swap
+itself (Balanced, 300 frames, identity of the re-detected output to the
+source, three different judge detectors agreeing within 0.001) was worse
+top-left:
+
+| | fps d1 / Love | identity d1 / Love | swapped d1 / Love |
+|---|---|---|---|
+| square SCRFD (before) | 42.0 / 47.8 | 0.7231 / 0.6319 | 507 / 474 |
+| tight, top-left | 49.3 / 58.6 | 0.7089 / 0.6205 | 520 / 476 |
+| **tight, centred (default)** | **49.5 / 59.1** | **0.7209 / 0.6322** | **508 / 469** |
+
+(the render keeps score 0.5; the brief's 0.45 added the back of a head and
+background specks along with hard real faces.) Placement is an option
+(`placement="top_left"` for InsightFace-exact landmarks).
+
+**`TemporalFaceTracker`** (`pipeline/tracker.py`): frame-to-frame tracks
+matched by IoU + landmark distance (Hungarian on the small cost matrix), EMA
+`s = alpha * z + (1 - alpha) * s_prev` (alpha 0.75), and a missed face carried
+on its motion vector for up to 3 frames. `RenderParams.temporal_smoothing`
+selects `off` (default) / `retain` / `ema`.
+
+EMA is **not** the default. Against a zero-lag reference (centred 5-frame mean
+of raw detections), stride-1 detection, four clips:
+
+| clip | jitter raw -> EMA | error, fastest 10% of frames, raw -> EMA |
+|---|---|---|
+| d1 | 0.77 -> 0.51 % | 1.25 -> 0.86 % |
+| Weeds | 0.77 -> 0.54 % | 1.00 -> **2.18 %** |
+| Love | 2.17 -> 1.61 % | 2.95 -> **8.09 %** |
+| Monica | 1.58 -> 1.12 % | 3.55 -> **5.80 %** |
+
+It cuts jitter ~30% everywhere and lags 1.6-2.7x further behind fast heads;
+the rule set before measuring (default only if fast-motion error does not
+grow) fails on three clips of four. Retention carried 28-174 faces per clip.
 
 ## Models without a source
 

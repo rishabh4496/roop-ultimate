@@ -506,3 +506,163 @@ class StridedFaceTracker:
         ids = torch.where(new, self._next_id + torch.cumsum(new.long(), 0) - 1, ids)
         self._next_id = self._next_id + new.long().sum()
         return ids
+
+
+# ---------------------------------------------------------------------------- temporal smoothing
+class TemporalTrackerConfig(BaseModel):
+    """:class:`TemporalFaceTracker` settings.
+
+    Attributes:
+        alpha: EMA weight of the NEW measurement: ``s = alpha * z + (1 - alpha) * s_prev``.
+        iou_weight: Match cost = ``w * (1 - IoU) + (1 - w) * landmark distance``
+            (mean point distance / face size, capped at 1).
+        max_cost: Pairs above this cost are not matched.
+        max_missed: Frames a track is carried on its motion vector while its
+            face is not detected before it is dropped.
+        smooth: False matches and retains without smoothing (the raw boxes).
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    alpha: float = Field(default=0.75, gt=0.0, le=1.0)
+    iou_weight: float = Field(default=0.5, ge=0.0, le=1.0)
+    max_cost: float = Field(default=0.7, gt=0.0)
+    max_missed: int = Field(default=3, ge=0)
+    smooth: bool = True
+
+
+@dataclass
+class TemporalFaces:
+    """One frame's tracked faces.
+
+    Attributes:
+        detections: Smoothed (or predicted) boxes and landmarks.
+        track_ids: ``(N,)`` int64 (host list), stable while a face is followed.
+        predicted: ``(N,)`` bool (host list): True for a face carried on its
+            motion vector because the detector missed it this frame.
+    """
+
+    detections: GPUDetections
+    track_ids: list[int]
+    predicted: list[bool]
+
+
+class TemporalFaceTracker:
+    """Frame-to-frame face tracks with EMA smoothing and short-gap retention.
+
+    Feed each frame's :class:`GPUDetections` in order (from a detector or from
+    :class:`StridedFaceTracker`). Detections are matched to tracks by IoU and
+    landmark distance (computed on the GPU; the small cost matrix is read back
+    for the assignment, one sync per frame), smoothed with an EMA, and a track
+    whose face is missed is predicted from its last motion for up to
+    ``max_missed`` frames instead of disappearing (a one-frame miss is a
+    visible flicker: the face pops between swapped and original).
+
+    Smoothing trades jitter for lag: the smoothed landmarks trail a moving face
+    by ``(1 - alpha) / alpha`` frames of its motion. Whether that is a net win
+    is measured, not assumed (``face_engine/README.md``).
+    """
+
+    def __init__(self, config: TemporalTrackerConfig | None = None) -> None:
+        self.config = config or TemporalTrackerConfig()
+        self._boxes: Any = None      # (T, 4) smoothed
+        self._kps: Any = None        # (T, 5, 2) smoothed
+        self._vel_boxes: Any = None  # (T, 4) per-frame motion
+        self._vel_kps: Any = None
+        self._scores: Any = None
+        self._ids: list[int] = []
+        self._missed: list[int] = []
+        self._next_id = 0
+        self.frames = 0
+
+    def reset(self) -> None:
+        self.__init__(self.config)  # type: ignore[misc]
+
+    def _cost(self, boxes: Any, kps: Any) -> Any:
+        """``(T, D)`` match cost between tracks and detections, on the device."""
+        from torchvision.ops import box_iou
+
+        c = self.config
+        iou = box_iou(self._boxes, boxes)
+        size = ((self._boxes[:, 2:] - self._boxes[:, :2]).clamp_min(1).prod(1).sqrt())[:, None]
+        dist = (self._kps[:, None] - kps[None]).norm(dim=-1).mean(-1) / size
+        return c.iou_weight * (1.0 - iou) + (1.0 - c.iou_weight) * dist.clamp(max=1.0)
+
+    def update(self, detections: GPUDetections) -> TemporalFaces:
+        import numpy as np
+        import torch
+        from scipy.optimize import linear_sum_assignment
+
+        c = self.config
+        self.frames += 1
+        boxes, kps, scores = detections.boxes, detections.kps, detections.scores
+        dev = boxes.device
+        n_tracks, n_det = len(self._ids), int(boxes.shape[0])
+        pairs: list[tuple[int, int]] = []
+        if n_tracks and n_det:
+            cost = self._cost(boxes, kps).cpu().numpy()  # small: tracks x detections
+            rows, cols = linear_sum_assignment(cost)
+            pairs = [(int(r), int(k)) for r, k in zip(rows, cols) if cost[r, k] <= c.max_cost]
+        matched_t = {t for t, _ in pairs}
+        matched_d = {d for _, d in pairs}
+        ids: list[int] = []
+        predicted: list[bool] = []
+        a = c.alpha if c.smooth else 1.0
+        new_state: dict[str, list[Any]] = {"b": [], "k": [], "vb": [], "vk": [], "s": []}
+        missed: list[int] = []
+        for t, d in pairs:
+            b = a * boxes[d] + (1 - a) * self._boxes[t]
+            k = a * kps[d] + (1 - a) * self._kps[t]
+            new_state["b"].append(b)
+            new_state["k"].append(k)
+            new_state["vb"].append(b - self._boxes[t])
+            new_state["vk"].append(k - self._kps[t])
+            new_state["s"].append(scores[d])
+            ids.append(self._ids[t])
+            missed.append(0)
+            predicted.append(False)
+        for t in range(n_tracks):
+            if t in matched_t or self._missed[t] >= c.max_missed:
+                continue
+            new_state["b"].append(self._boxes[t] + self._vel_boxes[t])
+            new_state["k"].append(self._kps[t] + self._vel_kps[t])
+            new_state["vb"].append(self._vel_boxes[t])
+            new_state["vk"].append(self._vel_kps[t])
+            new_state["s"].append(self._scores[t])
+            ids.append(self._ids[t])
+            missed.append(self._missed[t] + 1)
+            predicted.append(True)
+        for d in range(n_det):
+            if d in matched_d:
+                continue
+            new_state["b"].append(boxes[d])
+            new_state["k"].append(kps[d])
+            new_state["vb"].append(torch.zeros_like(boxes[d]))
+            new_state["vk"].append(torch.zeros_like(kps[d]))
+            new_state["s"].append(scores[d])
+            ids.append(self._next_id)
+            self._next_id += 1
+            missed.append(0)
+            predicted.append(False)
+        if ids:
+            self._boxes = torch.stack(new_state["b"])
+            self._kps = torch.stack(new_state["k"])
+            self._vel_boxes = torch.stack(new_state["vb"])
+            self._vel_kps = torch.stack(new_state["vk"])
+            self._scores = torch.stack(new_state["s"])
+        else:
+            self._boxes = self._kps = self._vel_boxes = self._vel_kps = self._scores = None
+        self._ids, self._missed = ids, missed
+        if not ids:
+            return TemporalFaces(GPUDetections.empty(dev, detections.frame_size), [], [])
+        h, w = detections.frame_size
+        shown = self._boxes.clone()
+        shown[:, 0::2] = shown[:, 0::2].clamp(0, w)
+        shown[:, 1::2] = shown[:, 1::2].clamp(0, h)
+        order = np.argsort(ids, kind="stable")
+        idx = torch.as_tensor(order, device=dev)
+        return TemporalFaces(
+            GPUDetections(shown[idx], self._kps[idx], self._scores[idx],
+                          torch.zeros(len(ids), dtype=torch.int64, device=dev),
+                          detections.frame_size, 1),
+            [ids[i] for i in order], [predicted[i] for i in order])

@@ -292,6 +292,38 @@ def decomposed_norms(batched: Path) -> int:
         return 0
 
 
+def named_spatial_dims(source: Path | str) -> Path:
+    """A copy of ``source`` with named H / W input dims and symbolic output lengths.
+
+    Exports that call every dynamic dim ``?`` (SCRFD-10G) make TensorRT treat
+    H and W as one symbol, so a non-square optimization profile fails
+    ("Dimensions with name ? must be equal. 448 != 640", 2026-09-28), and its
+    outputs declare the 640 lengths (12800, ...), which ONNX Runtime enforces
+    on every other canvas. Only value-info changes; the nodes are untouched.
+    """
+    import onnx
+
+    source = Path(source)
+    derived = source.with_name(f"{source.stem}.dims.onnx")
+    if _fresh(derived, source, {"kind": "dims", "rule": 2}) is not None:
+        return derived
+    model = onnx.load(str(source))
+    for inp in model.graph.input:
+        dims = inp.type.tensor_type.shape.dim
+        if len(dims) == 4:
+            for i, name in ((2, "height"), (3, "width")):
+                if not dims[i].dim_value:
+                    dims[i].dim_param = name
+    for k, out in enumerate(model.graph.output):
+        dims = out.type.tensor_type.shape.dim
+        if dims:
+            dims[0].dim_param = f"n{k}"  # anchors: depends on the canvas
+    onnx.save(model, str(derived))
+    _sidecar(derived).write_text(json.dumps({**_stamp(source), "kind": "dims", "rule": 2},
+                                            indent=1), encoding="utf-8")
+    return derived
+
+
 def batched_model(source: Path | str, *, fp16: bool = False) -> Path | None:
     """A verified dynamic-batch copy of ``source``, or None when the model
     cannot be batched.
