@@ -98,3 +98,7 @@ jcode-*.exe
 
 # face_engine benchmark sample (made locally from any clip with faces; see face_engine/benchmark.py)
 face_engine/tests/sample_*.mp4
+
+# Git hooks (pre-commit is tracked; Git LFS local hooks are not)
+.githooks/*
+!.githooks/pre-commit

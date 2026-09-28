@@ -1,6 +1,7 @@
 {
   "title": "Roop Ultimate",
   "description": "Face swapping for images and video, with a React UI. Independent project; AGPL-3.0. Private — access is by invitation.",
+  "icon": "icon.png",
   "plugin": {
     "menu": []
   }
