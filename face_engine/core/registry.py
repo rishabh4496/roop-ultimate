@@ -15,6 +15,7 @@ import threading
 from collections.abc import Iterable, Iterator
 from enum import Enum
 from pathlib import Path
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -55,6 +56,8 @@ class ModelSpec(BaseModel):
         sha256: Lower-case hex digest, or None when unpinned/unavailable.
         size: Exact byte size, or None.
         inputs: ``input name -> shape`` as exported (symbolic dims are str).
+        native_resolution: Native square resolution in pixels (e.g. 128, 256, 512).
+        parameters_schema: Schema describing UI sliders (range, step, default).
         dynamic_axes: True when any input dimension is symbolic.
         description: Human-readable summary.
         license: Upstream license identifier or note.
@@ -70,6 +73,8 @@ class ModelSpec(BaseModel):
     sha256: str | None = None
     size: int | None = Field(default=None, gt=0)
     inputs: dict[str, Shape] = Field(default_factory=dict)
+    native_resolution: int | None = None
+    parameters_schema: dict[str, Any] = Field(default_factory=dict)
     description: str = ""
     license: str = "unknown"
     notes: str = ""
@@ -181,5 +186,24 @@ class ModelRegistry:
     def status(self) -> list[dict[str, object]]:
         """One row per model: name, task, present, pinned, downloadable (no hashing)."""
         return [{"name": s.name, "task": s.task.value, "file": s.filename,
+                 "native_resolution": s.native_resolution,
+                 "parameters_schema": s.parameters_schema,
                  "present": self.local_path(s.name).is_file(), "pinned": s.pinned,
                  "downloadable": s.downloadable} for s in self._specs.values()]
+
+    def catalog(self) -> dict[str, dict[str, Any]]:
+        """Structured dictionary for React UI and API consumers."""
+        return {
+            s.name: {
+                "name": s.name,
+                "task": s.task.value,
+                "filename": s.filename,
+                "native_resolution": s.native_resolution,
+                "parameters_schema": s.parameters_schema,
+                "present": self.local_path(s.name).is_file(),
+                "pinned": s.pinned,
+                "downloadable": s.downloadable,
+                "description": s.description,
+            }
+            for s in self._specs.values()
+        }

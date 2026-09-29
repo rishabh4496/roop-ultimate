@@ -1,28 +1,9 @@
 """The model zoo: every model the engine can load, declared once.
 
-Provenance (2026-09-27). Each ``sha256``/``size`` below is the host's own
+Provenance (2026-09-27/2026-09-29). Each ``sha256``/``size`` below is the host's own
 published digest — the Hugging Face ``X-Linked-ETag`` / ``X-Linked-Size`` of
 the exact URL listed (the LFS SHA256) — and was cross-checked by hashing the
-local copy where roop-ultimate already ships the same file (det_10g,
-yoloface_8n, xseg) or by downloading it through this registry (2dfan4,
-bisenet_resnet34, arcface_w600k_r50, gpen_bfr_512, gpen_bfr_1024). Nothing
-here is typed from memory. Input names and shapes were read from each ONNX
-graph, except hyperswap_1b/1c, which share hyperswap_1a's export (same size,
-same I/O).
-
-Two requested models have **no public release located** (Hugging Face model
-search and the FaceFusion 3.x model repos return nothing for either):
-``hrffa`` and ``alphaface_256``. They are registered with no URL and no hash
-so the name resolves and :meth:`ModelRegistry.ensure` fails with a clear
-message; drop a file in the models directory and register a pinned spec
-with ``replace=True`` once a source is confirmed.
-
-Shape notes that differ from common assumptions:
-
-* ``yoloface_8n`` is exported with a FIXED ``1x3x640x640`` input — there is
-  no dynamic axis to use. Letterbox to 640.
-* ``scrfd_10g_bnkps`` (InsightFace ``det_10g``) has dynamic H/W
-  (``1x3x?x?``); 640x640 is its conventional size, not a constraint.
+local copy where roop-ultimate already ships the same file.
 """
 from __future__ import annotations
 
@@ -31,11 +12,14 @@ from pathlib import Path
 from face_engine.core.registry import ModelRegistry, ModelSpec, ModelTask
 
 _FF30 = "https://huggingface.co/facefusion/models-3.0.0/resolve/main/"
+_FF31 = "https://huggingface.co/facefusion/models-3.1.0/resolve/main/"
 _FF32 = "https://huggingface.co/facefusion/models-3.2.0/resolve/main/"
 _FF33 = "https://huggingface.co/facefusion/models-3.3.0/resolve/main/"
+_FF34 = "https://huggingface.co/facefusion/models-3.4.0/resolve/main/"
 _CF = "https://huggingface.co/CountFloyd/deepfake/resolve/main/"
 _FLP = "https://huggingface.co/warmshao/FasterLivePortrait/resolve/main/liveportrait_onnx/"
 _INSIGHT = "https://huggingface.co/public-data/insightface/resolve/main/models/buffalo_l/"
+_SAM_META = "https://dl.fbaipublicfiles.com/segment_anything_2/092824/"
 
 _UNAVAILABLE = ("No public release located on 2026-09-27; register a pinned ModelSpec "
                 "with replace=True once a source is confirmed.")
@@ -100,6 +84,11 @@ MODEL_ZOO: dict[str, ModelSpec] = {spec.name: spec for spec in (
         urls=(_FF33 + f"hyperswap_{variant}_256.onnx",),
         sha256=digest, size=402742682,
         inputs={"source": (1, 512), "target": (1, 3, 256, 256)},
+        native_resolution=256,
+        parameters_schema={
+            "blend_ratio": {"type": "float", "min": 0.0, "max": 1.0, "default": 1.0, "label": "Blend Ratio"},
+            "verify_tol": {"type": "float", "min": 0.3, "max": 1.2, "default": 0.79, "label": "Outcome Guard Tolerance"},
+        },
         description=f"HyperSwap {variant} 256px; [-1,1] input, normed ArcFace source, "
                     "outputs (image, mask)",
         license="FaceFusion model license (see upstream)")
@@ -107,8 +96,24 @@ MODEL_ZOO: dict[str, ModelSpec] = {spec.name: spec for spec in (
           ("1a", "c0e98a8a03a238f461ed3d2570e426b49f46745ee400854a60dceeb70c246add"),
           ("1b", "5124031789c42f71b9558fb71954ef7aedb6da7ed9fac79293e23c61a792a73e"),
           ("1c", "5528c2d76fe9986c99d829278987ef9f3a630cb606db7628d02b57b330f406a5"))),
+    # Alias requested in Stage 1 specification:
+    ModelSpec(
+        name="hyperswap_256", task=ModelTask.SWAP,
+        filename="hyperswap_1a_256.onnx",
+        urls=(_FF33 + "hyperswap_1a_256.onnx",),
+        sha256="c0e98a8a03a238f461ed3d2570e426b49f46745ee400854a60dceeb70c246add",
+        size=402742682,
+        inputs={"source": (1, 512), "target": (1, 3, 256, 256)},
+        native_resolution=256,
+        parameters_schema={
+            "blend_ratio": {"type": "float", "min": 0.0, "max": 1.0, "default": 1.0, "label": "Blend Ratio"},
+            "verify_tol": {"type": "float", "min": 0.3, "max": 1.2, "default": 0.79, "label": "Outcome Guard Tolerance"},
+        },
+        description="HyperSwap 1a 256px canonical alias",
+        license="FaceFusion model license"),
     ModelSpec(
         name="alphaface_256", task=ModelTask.SWAP, filename="alphaface_256.onnx",
+        native_resolution=256,
         description="AlphaFace 256px swapper", notes=_UNAVAILABLE),
     ModelSpec(
         name="inswapper_128_fp16", task=ModelTask.SWAP, filename="inswapper_128_fp16.onnx",
@@ -116,6 +121,11 @@ MODEL_ZOO: dict[str, ModelSpec] = {spec.name: spec for spec in (
         sha256="c4eccca86ad177586c85c28bf1a64a9d9ed237e283a15818d831f7facfd3f420",
         size=277680829,
         inputs={"target": (1, 3, 128, 128), "source": (1, 512)},
+        native_resolution=128,
+        parameters_schema={
+            "blend_ratio": {"type": "float", "min": 0.0, "max": 1.0, "default": 1.0, "label": "Blend Ratio"},
+            "verify_tol": {"type": "float", "min": 0.3, "max": 1.2, "default": 0.79, "label": "Outcome Guard Tolerance"},
+        },
         description="InsightFace inswapper 128 FP16 export; source = normed embedding @ emap",
         license="InsightFace: non-commercial research"),
     ModelSpec(
@@ -124,34 +134,125 @@ MODEL_ZOO: dict[str, ModelSpec] = {spec.name: spec for spec in (
         sha256="e4a3f08c753cb72d04e10aa0f7dbe3deebbf39567d4ead6dce08e98aa49e16af",
         size=554253681,
         inputs={"target": (1, 3, 128, 128), "source": (1, 512)},
+        native_resolution=128,
+        parameters_schema={
+            "blend_ratio": {"type": "float", "min": 0.0, "max": 1.0, "default": 1.0, "label": "Blend Ratio"},
+            "verify_tol": {"type": "float", "min": 0.3, "max": 1.2, "default": 0.79, "label": "Outcome Guard Tolerance"},
+        },
         description="InsightFace inswapper 128 (legacy fallback); source = normed "
                     "embedding @ emap",
         license="InsightFace: non-commercial research"),
-    # ------------------------------------------------------------- occlusion / parsing
+    ModelSpec(
+        name="hififace_256", task=ModelTask.SWAP, filename="hififace_unofficial_256.onnx",
+        urls=(_FF31 + "hififace_unofficial_256.onnx",),
+        sha256="9de9751617976195114d7f067b9b6cf933748363355cf473cab2da57a739c2ef",
+        size=203784742,
+        inputs={"source": (1, 512), "target": (1, 3, 256, 256)},
+        native_resolution=256,
+        parameters_schema={
+            "blend_ratio": {"type": "float", "min": 0.0, "max": 1.0, "default": 1.0, "label": "Blend Ratio"},
+            "verify_tol": {"type": "float", "min": 0.3, "max": 1.2, "default": 0.65, "label": "Outcome Guard Tolerance"},
+        },
+        description="HifiFace (unofficial) 256px swapper; converted+normed ArcFace source",
+        license="see upstream (HifiFace / FaceFusion)"),
+    ModelSpec(
+        name="crossface_hififace", task=ModelTask.EMBEDDING, filename="crossface_hififace.onnx",
+        urls=(_FF34 + "crossface_hififace.onnx",),
+        sha256="dfb75f960cb8ef1967a82838e64963b9ff621c4af3e22f9fda48ad958dddec9a",
+        size=22083800,
+        inputs={"input": (1, 512)},
+        description="Crossface ArcFace-to-HifiFace identity converter",
+        license="see upstream (FaceFusion)"),
+
+    # ------------------------------------------------------------- occlusion / parsing / masking
+    ModelSpec(
+        name="face_occluder_v3", task=ModelTask.OCCLUSION, filename="xseg_3.onnx",
+        urls=(_FF32 + "xseg_3.onnx",),
+        sha256="48ccd7e8541e159a5a754ec9e62df2f12065f7df8f9af842c1750342c6533559",
+        size=70327709,
+        inputs={"input": ("batch", 256, 256, 3)},
+        native_resolution=256,
+        parameters_schema={
+            "mask_blur": {"type": "float", "min": 0.0, "max": 64.0, "default": 12.0, "label": "Mask Blur (px)"},
+            "feathering": {"type": "float", "min": 0.0, "max": 10.0, "default": 1.0, "label": "Feathering Sigma"},
+            "threshold": {"type": "float", "min": 0.0, "max": 1.0, "default": 0.35, "label": "Occlusion Threshold"},
+        },
+        description="Face Occluder v3 (XSeg-3) occlusion segmentation (NHWC input)",
+        license="GPL-3.0 (FaceFusion / DeepFaceLab)"),
+    # Alias xseg_3 pointing to same
     ModelSpec(
         name="xseg_3", task=ModelTask.OCCLUSION, filename="xseg_3.onnx",
         urls=(_FF32 + "xseg_3.onnx",),
         sha256="48ccd7e8541e159a5a754ec9e62df2f12065f7df8f9af842c1750342c6533559",
         size=70327709,
         inputs={"input": ("batch", 256, 256, 3)},
-        description="Face Occluder v3 (XSeg-3) occlusion segmentation (NHWC input)",
+        native_resolution=256,
+        parameters_schema={
+            "mask_blur": {"type": "float", "min": 0.0, "max": 64.0, "default": 12.0, "label": "Mask Blur (px)"},
+            "feathering": {"type": "float", "min": 0.0, "max": 10.0, "default": 1.0, "label": "Feathering Sigma"},
+            "threshold": {"type": "float", "min": 0.0, "max": 1.0, "default": 0.35, "label": "Occlusion Threshold"},
+        },
+        description="Face Occluder v3 (XSeg-3) occlusion segmentation",
         license="GPL-3.0 (FaceFusion / DeepFaceLab)"),
+    ModelSpec(
+        name="dfl_xseg_v2", task=ModelTask.OCCLUSION, filename="xseg.onnx",
+        urls=(_CF + "xseg.onnx",),
+        sha256="0b57328efcb839d85973164b617ceee9dfe6cfcb2c82e8a033bba9f4f09b27e5",
+        size=70327737,
+        inputs={"xseg_input:0": ("batch", 256, 256, 3)},
+        native_resolution=256,
+        parameters_schema={
+            "mask_blur": {"type": "float", "min": 0.0, "max": 64.0, "default": 10.0, "label": "Mask Blur (px)"},
+            "feathering": {"type": "float", "min": 0.0, "max": 10.0, "default": 1.0, "label": "Feathering Sigma"},
+            "threshold": {"type": "float", "min": 0.0, "max": 1.0, "default": 0.50, "label": "Occlusion Threshold"},
+        },
+        description="DeepFaceLab XSeg v2 occlusion segmentation (NHWC input)",
+        license="GPL-3.0 (DeepFaceLab)"),
     ModelSpec(
         name="xseg", task=ModelTask.OCCLUSION, filename="xseg.onnx",
         urls=(_CF + "xseg.onnx",),
         sha256="0b57328efcb839d85973164b617ceee9dfe6cfcb2c82e8a033bba9f4f09b27e5",
         size=70327737,
         inputs={"xseg_input:0": ("batch", 256, 256, 3)},
+        native_resolution=256,
         description="DeepFaceLab XSeg occlusion segmentation (NHWC input)",
         license="GPL-3.0 (DeepFaceLab)"),
+    ModelSpec(
+        name="face_parser_bisenet34", task=ModelTask.PARSING, filename="bisenet_resnet_34.onnx",
+        urls=(_FF30 + "bisenet_resnet_34.onnx",),
+        sha256="4a0b8c958a3c938913bd06a8365dbb3c8761afba6ecbf0d14b3b1f77eb230c96",
+        size=93632546,
+        inputs={"input": ("batch", 3, 512, 512)},
+        native_resolution=512,
+        parameters_schema={
+            "mask_blur": {"type": "float", "min": 0.0, "max": 64.0, "default": 12.0, "label": "Mask Blur (px)"},
+            "feathering": {"type": "float", "min": 0.0, "max": 10.0, "default": 1.5, "label": "Feathering Sigma"},
+        },
+        description="BiSeNet ResNet-34 face parser, 19 CelebAMask-HQ classes",
+        license="MIT (face-parsing)"),
     ModelSpec(
         name="bisenet_resnet34", task=ModelTask.PARSING, filename="bisenet_resnet_34.onnx",
         urls=(_FF30 + "bisenet_resnet_34.onnx",),
         sha256="4a0b8c958a3c938913bd06a8365dbb3c8761afba6ecbf0d14b3b1f77eb230c96",
         size=93632546,
         inputs={"input": ("batch", 3, 512, 512)},
-        description="BiSeNet ResNet-34 face parser, 19 CelebAMask-HQ classes",
+        native_resolution=512,
+        description="BiSeNet ResNet-34 face parser (alias)",
         license="MIT (face-parsing)"),
+    ModelSpec(
+        name="sam2_hiera_tiny", task=ModelTask.OCCLUSION, filename="sam2.1_hiera_tiny.pt",
+        urls=(_SAM_META + "sam2.1_hiera_tiny.pt",),
+        sha256="7402e0d864fa82708a20fbd15bc84245c2f26dff0eb43a4b5b93452deb34be69",
+        size=156008466,
+        native_resolution=1024,
+        parameters_schema={
+            "iou_threshold": {"type": "float", "min": 0.1, "max": 0.95, "default": 0.5, "label": "IoU Threshold"},
+            "margin_ratio": {"type": "float", "min": 0.0, "max": 0.5, "default": 0.15, "label": "Centroid Margin"},
+            "feather_sigma": {"type": "float", "min": 0.5, "max": 4.0, "default": 1.5, "label": "Feather Sigma"},
+        },
+        description="SAM 2.1 Hiera Tiny video tracker for temporal face hull segmentation",
+        license="Apache-2.0 (Meta AI)"),
+
     # ------------------------------------------------------------- restoration
     ModelSpec(
         name="gpen_bfr_512", task=ModelTask.RESTORATION, filename="gpen_bfr_512.onnx",
@@ -159,6 +260,7 @@ MODEL_ZOO: dict[str, ModelSpec] = {spec.name: spec for spec in (
         sha256="d5f066b9068a8b74217f9712e28e875a6144629b108a6f7355acbdb3a2832c54",
         size=284340240,
         inputs={"input": (1, 3, 512, 512)},
+        native_resolution=512,
         description="GPEN blind face restoration 512",
         license="see upstream (GPEN)"),
     ModelSpec(
@@ -167,6 +269,7 @@ MODEL_ZOO: dict[str, ModelSpec] = {spec.name: spec for spec in (
         sha256="bcd31aa52110a2005efc96abbab4546d57e42482648f08715b552423d96b381b",
         size=285203703,
         inputs={"input": (1, 3, 1024, 1024)},
+        native_resolution=1024,
         description="GPEN blind face restoration 1024",
         license="see upstream (GPEN)"),
     ModelSpec(
@@ -175,6 +278,7 @@ MODEL_ZOO: dict[str, ModelSpec] = {spec.name: spec for spec in (
         sha256="66d12a637118d71b00f5a290b8dac13c81c1c0326a127a1978799c6e17bb8d1f",
         size=285582766,
         inputs={"input": (1, 3, 2048, 2048)},
+        native_resolution=2048,
         description="GPEN blind face restoration 2048",
         license="see upstream (GPEN)"),
     ModelSpec(
@@ -184,6 +288,7 @@ MODEL_ZOO: dict[str, ModelSpec] = {spec.name: spec for spec in (
         sha256="f4db5a89902b6a2d452446f5721245a6f7185f699b6aec7b77285adb4d504337",
         size=294264812,
         inputs={"input": (1, 3, 512, 512)},
+        native_resolution=512,
         description="RestoreFormer++ face restoration 512",
         license="see upstream (RestoreFormer)"),
     # ------------------------------------------------------------- expression (LivePortrait)
