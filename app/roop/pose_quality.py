@@ -342,6 +342,10 @@ class CandidateFaceMetric(BaseModel):
     clipped_fraction: float = 0.0
     det_score: float = 0.0
     id_similarity: Optional[float] = None
+    # The detection's geometry, carried so later stages (angle_portfolio) can
+    # crop / embed the chosen frame without re-joining to the scanner output.
+    bbox: Optional[List[float]] = None
+    kps: Optional[List[List[float]]] = None
     ear: Optional[float] = None            # the more open eye; None = unmeasured
     ear_left: Optional[float] = None       # points 36-41
     ear_right: Optional[float] = None      # points 42-47
@@ -362,11 +366,28 @@ def crop_face(frame: np.ndarray, bbox: Sequence[float], pad: float = 0.15) -> Op
     return frame[ay0:ay1, ax0:ax1].copy()
 
 
+def _geometry(cand: Dict[str, Any]) -> Dict[str, Any]:
+    out: Dict[str, Any] = {}
+    for key, shape in (("bbox", (4,)), ("kps", (5, 2))):
+        value = cand.get(key)
+        if value is None:
+            continue
+        try:
+            out[key] = np.asarray(value, dtype=np.float64).reshape(shape).tolist()
+        except (TypeError, ValueError):
+            pass
+    return out
+
+
+def _base(cand: Dict[str, Any]) -> Dict[str, Any]:
+    return {"frame_idx": int(cand["frame_idx"]), "track_id": cand.get("track_id"),
+            "det_score": float(cand.get("det_score") or 0.0),
+            "id_similarity": cand.get("similarity"), **_geometry(cand)}
+
+
 def _metric_for(frame: np.ndarray, cand: Dict[str, Any],
                 landmarks_fn: Optional[Callable] = None) -> CandidateFaceMetric:
-    base = {"frame_idx": int(cand["frame_idx"]), "track_id": cand.get("track_id"),
-            "det_score": float(cand.get("det_score") or 0.0),
-            "id_similarity": cand.get("similarity")}
+    base = _base(cand)
     kps = cand.get("kps")
     bbox = cand.get("bbox")
     if kps is None or bbox is None:
@@ -467,11 +488,7 @@ def evaluate_candidate_frames(media_path: str, candidates: List[Dict],
 
     for i, m in enumerate(results):
         if m is None:
-            c = candidates[i]
-            results[i] = CandidateFaceMetric(frame_idx=int(c["frame_idx"]), track_id=c.get("track_id"),
-                                             det_score=float(c.get("det_score") or 0.0),
-                                             id_similarity=c.get("similarity"),
-                                             reject_reasons=["unreadable_frame"])
+            results[i] = CandidateFaceMetric(**_base(candidates[i]), reject_reasons=["unreadable_frame"])
     return results  # type: ignore[return-value]
 
 
