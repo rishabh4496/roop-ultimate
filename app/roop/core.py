@@ -895,7 +895,10 @@ def get_processing_plugins(masking_engine, swap_model='inswapper', target_face=N
         effective_mask = masking_engine[0] if isinstance(masking_engine, (list, tuple)) and masking_engine else masking_engine
         return dispatch_adaptive_lod(target_face, masking_engine=str(effective_mask or 'RealityUX')).plugins
 
-    processors = {"faceswap": {"swap_model": swap_model}}
+    # File-style names (hyperswap_1a_256, hififace_256) -> SWAP_MODELS keys;
+    # every existing key passes through unchanged. See model_registry.
+    from roop.processors.frame.model_registry import canonical_swap_model
+    processors = {"faceswap": {"swap_model": canonical_swap_model(swap_model)}}
 
     _adaptive_requested = roop.globals.selected_enhancer == 'Adaptive'
     if not _adaptive_requested and roop.globals.selected_enhancer == 'GFPGAN':
@@ -1353,6 +1356,9 @@ def batch_process_regular(output_method, files:list[ProcessEntry], masking_engin
                           processing_request=None, **kwargs) -> None:
     global clip_text, process_mgr
 
+    # One name for the governor, ProcessOptions and the plugins below.
+    from roop.processors.frame.model_registry import canonical_swap_model
+    swap_model = canonical_swap_model(swap_model)
     roop.globals.is_preview = False
     release_resources()
     limit_resources()

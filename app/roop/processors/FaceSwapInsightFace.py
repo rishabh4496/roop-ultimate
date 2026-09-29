@@ -674,9 +674,12 @@ class FaceSwapInsightFace():
             self._seen_faces = 0
             self._lateral_skips = 0
 
-        swap_model = plugin_options.get("swap_model", "inswapper")
-        if swap_model not in SWAP_MODELS:
-            swap_model = "inswapper"
+        # Through the registry: registry names/aliases (hyperswap_1a_256,
+        # hififace_256) map to their SWAP_MODELS key, existing keys pass
+        # through, anything unknown falls back to inswapper as before.
+        from roop.processors.frame.model_registry import resolve_swap_model_key
+        swap_model = resolve_swap_model_key(
+            plugin_options.get("swap_model", "inswapper"), SWAP_MODELS)
         spec = SWAP_MODELS[swap_model]
 
         # Reload when the user switched to a different swap model.
