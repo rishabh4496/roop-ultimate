@@ -41,6 +41,83 @@ def models_dir() -> str:
     return resolve_relative_path('../models')
 
 
+def _is_torch(x) -> bool:
+    return type(x).__module__.startswith("torch")
+
+
+# ── torch warps, for frames already in VRAM ─────────────────────────────────────
+
+def warp_affine_torch(img, M, out_hw, border: str = "replicate"):
+    """cv2.warpAffine(img, M, (w, h)) for an (H,W,C) or (H,W) tensor.
+
+    M maps SOURCE pixels to OUTPUT pixels, as in cv2. Bilinear; `border`
+    'replicate' (cv2.BORDER_REPLICATE) or 'zeros' (BORDER_CONSTANT 0). The
+    result keeps the input's dtype (uint8 is rounded).
+    """
+    import torch
+    import torch.nn.functional as F
+    h_out, w_out = out_hw
+    squeeze = img.dim() == 2
+    x = img[..., None] if squeeze else img
+    H, W = x.shape[:2]
+    inv = np.linalg.inv(np.vstack([np.asarray(M, np.float64).reshape(2, 3), [0, 0, 1]]))
+    # output pixel (u, v) -> source pixel inv @ (u, v, 1) -> grid_sample's [-1, 1]
+    to_norm_src = np.array([[2.0 / W, 0, 1.0 / W - 1], [0, 2.0 / H, 1.0 / H - 1], [0, 0, 1]])
+    from_norm_out = np.array([[w_out / 2.0, 0, w_out / 2.0 - 0.5],
+                              [0, h_out / 2.0, h_out / 2.0 - 0.5], [0, 0, 1]])
+    theta = (to_norm_src @ inv @ from_norm_out)[:2]
+    # The grid by elementwise fp32 math, NOT F.affine_grid: that is a matmul,
+    # and roop/core.py enables TF32 matmul globally -- measured, the crop warp
+    # went from mean 0.11 to 0.75 levels (max 3) off cv2 under it.
+    ys = (torch.arange(h_out, device=x.device, dtype=torch.float32) * 2 + 1) / h_out - 1
+    xs = (torch.arange(w_out, device=x.device, dtype=torch.float32) * 2 + 1) / w_out - 1
+    gy, gx = torch.meshgrid(ys, xs, indexing="ij")
+    t = [[float(v) for v in row] for row in theta]
+    grid = torch.stack([t[0][0] * gx + t[0][1] * gy + t[0][2],
+                        t[1][0] * gx + t[1][1] * gy + t[1][2]], dim=-1)[None]
+    src = x.permute(2, 0, 1)[None].to(torch.float32)
+    out = F.grid_sample(src, grid, mode="bilinear",
+                        padding_mode="border" if border == "replicate" else "zeros",
+                        align_corners=False)[0].permute(1, 2, 0)
+    if img.dtype == torch.uint8:
+        out = out.round().clamp(0, 255).to(torch.uint8)
+    else:
+        out = out.to(img.dtype)
+    return out[..., 0] if squeeze else out
+
+
+def to_crop_torch(swap_crop, denormalize: bool, device):
+    """Model output [1,3,S,S] or [3,S,S] (array or tensor) -> uint8 BGR (S,S,3) tensor."""
+    import torch
+    t = torch.as_tensor(swap_crop, device=device, dtype=torch.float32)
+    if t.dim() == 4:
+        t = t[0]
+    t = t.permute(1, 2, 0)
+    if denormalize:
+        t = (t + 1.0) / 2.0
+    return (t * 255.0).round().clamp(0, 255).flip(-1).to(torch.uint8)
+
+
+def paste_back_torch(crop, M, target_frame, mask):
+    """BaseFaceSwapper.paste_back on tensors (the frame stays on its device)."""
+    import torch
+    from .swapper_base import paste_roi
+    out = target_frame.clone()
+    roi = paste_roi(M, int(crop.shape[0]), target_frame.shape[:2])
+    if roi is None:
+        return out
+    x0, y0, x1, y1 = roi
+    inv = np.linalg.inv(np.vstack([np.asarray(M, np.float64).reshape(2, 3), [0, 0, 1]]))[:2]
+    inv[:, 2] -= (x0, y0)            # the footprint only, as BaseFaceSwapper.paste_back
+    hw = (y1 - y0, x1 - x0)
+    pasted = warp_affine_torch(crop.to(torch.float32), inv, hw, border="replicate")
+    alpha = warp_affine_torch(torch.as_tensor(mask, device=target_frame.device,
+                                              dtype=torch.float32), inv, hw, border="zeros")[..., None]
+    region = target_frame[y0:y1, x0:x1].to(torch.float32)
+    out[y0:y1, x0:x1] = (alpha * pasted + (1.0 - alpha) * region).round().clamp(0, 255).to(torch.uint8)
+    return out
+
+
 class OnnxSpecSwapper(BaseFaceSwapper):
     """A single-network ONNX swapper driven by one SWAP_MODELS entry."""
 
@@ -77,6 +154,8 @@ class OnnxSpecSwapper(BaseFaceSwapper):
         self.converter = None
         self.converter_input = "input"
         self.providers: list = []
+        # TemporalMatrixStabilizer or None; used by `align` (HiFiFace sets it).
+        self.stabilizer = None
         # Converter output per source identity. The crossface MLP is per face,
         # not per frame; production caches it on the Face object, this caches it
         # on the embedding's bytes because the contract hands us only the vector.
@@ -271,11 +350,29 @@ class OnnxSpecSwapper(BaseFaceSwapper):
 
     # -- helpers ---------------------------------------------------------------
 
-    def align(self, frame: np.ndarray, kps: np.ndarray):
-        """(crop, M) for this model's template, via the render's own align_crop."""
-        from roop.face_util import align_crop
-        return align_crop(frame, np.asarray(kps, dtype=np.float32).reshape(5, 2),
-                          self.model_output_size, self.model_template)
+    def align(self, frame, kps, track_id=None, frame_index=None):
+        """(crop, M) for this model's template.
+
+        Without a stabilizer (or without a `track_id`) this is the render's own
+        align_crop, unchanged. With one, M is smoothed FIRST and the crop is
+        warped with the smoothed M, so post_process pastes with the same matrix
+        the crop was taken with (see temporal_stabilizer's module note).
+        A CUDA torch frame is warped in torch and returns a tensor crop.
+        """
+        from roop.face_util import align_crop, estimate_norm
+        pts = kps.detach().cpu().numpy() if _is_torch(kps) else kps
+        pts = np.asarray(pts, dtype=np.float32).reshape(5, 2)
+        size = self.model_output_size
+        stabilizer = getattr(self, "stabilizer", None)
+        if not _is_torch(frame) and (stabilizer is None or track_id is None):
+            return align_crop(frame, pts, size, self.model_template)
+        M = estimate_norm(pts, size, self.model_template).astype(np.float32)
+        if stabilizer is not None and track_id is not None:
+            M = stabilizer.update(M, track_id=track_id, frame_index=frame_index)
+        if _is_torch(frame):
+            return warp_affine_torch(frame, M, (size, size), border="replicate"), M
+        import cv2
+        return cv2.warpAffine(frame, M, (size, size), borderMode=cv2.BORDER_REPLICATE), M
 
     def _require_session(self) -> None:
         if self.session is None:
@@ -291,9 +388,99 @@ class OnnxSpecSwapper(BaseFaceSwapper):
 
 class HiFiFaceSwapper(OnnxSpecSwapper):
     """HifiFace (unofficial) 256: mtcnn_512 alignment, [-1,1] in/out,
-    identity = crossface_hififace(raw embedding), L2-normalized. Batch-dynamic."""
+    identity = crossface_hififace(raw embedding), L2-normalized. Batch-dynamic.
+
+    post_process is the Stage 2 compositor: composite mask (hull x box x
+    occluder x parser x the model's own mask, dilated + normalized blur) ->
+    Reinhard LAB colour match inside that mask -> inverse-affine paste. The
+    stabilizer, when set, acts in `align` (it must: see temporal_stabilizer).
+    """
     spec_key = "hififace"
     accepted_spec_keys = ("hififace",)
+
+    def __init__(self, spec_key: Optional[str] = None, *, blur_amount: float = 0.3,
+                 padding=(0, 0, 0, 0), color_match: bool = True,
+                 parser_session=None, occluder_session=None, stabilizer=None) -> None:
+        super().__init__(spec_key)
+        self.blur_amount = float(blur_amount)
+        self.padding = tuple(padding)
+        self.color_match = bool(color_match)
+        self.parser_session = parser_session
+        self.occluder_session = occluder_session
+        self.stabilizer = stabilizer
+        self.last_composite_mask = None     # the last call's mask, for inspection
+
+    def initialize_session(self, model_path: str, execution_provider: str, **kwargs) -> None:
+        """As the base, plus optional mask models and the stabilizer:
+
+            occluder_path   XSeg / face_occluder ONNX (HIGH on visible face)
+            parser_path     BiSeNet 19-class ONNX (e.g. models/resnet18.onnx)
+            mask_provider   provider for those two (default: execution_provider)
+            stabilize       True, or a smoothing factor, attaches a
+                            TemporalMatrixStabilizer sized to this crop
+        """
+        super().initialize_session(model_path, execution_provider, **kwargs)
+        import onnxruntime
+        providers = resolve_providers(kwargs.get("mask_provider", execution_provider))
+        for attr, key in (("occluder_session", "occluder_path"), ("parser_session", "parser_path")):
+            path = kwargs.get(key)
+            if path:
+                if not os.path.isfile(path):
+                    raise FileNotFoundError(f"{key}: {path}")
+                setattr(self, attr, onnxruntime.InferenceSession(path, providers=providers))
+        stabilize = kwargs.get("stabilize")
+        if stabilize:
+            from .temporal_stabilizer import TemporalMatrixStabilizer
+            factor = 0.9 if stabilize is True else float(stabilize)
+            self.stabilizer = TemporalMatrixStabilizer(factor, crop_size=self.model_output_size)
+
+    def post_process(self, swap_crop, affine_matrix, target_frame, mask,
+                     *, landmarks=None, color_match: Optional[bool] = None):
+        """Swapped crop -> the frame, through mask fusion and colour matching.
+
+        mask       the swap model's own face mask (e.g. `last_mask`), or None
+        landmarks  the target's landmarks in FRAME coordinates (68 / 106 / any
+                   N x 2); mapped into the crop by `affine_matrix`. None
+                   leaves the hull out (box x models only).
+        """
+        from .mask_engine import generate_composite_mask
+        from .color_matcher import match_color_reinhard
+        do_color = self.color_match if color_match is None else bool(color_match)
+        size = self.model_output_size
+        torch_mode = _is_torch(target_frame)
+        M = affine_matrix.detach().cpu().numpy() if _is_torch(affine_matrix) else affine_matrix
+        M = np.asarray(M, dtype=np.float32).reshape(2, 3)
+
+        if torch_mode:
+            crop = to_crop_torch(swap_crop, self.model_denormalize, target_frame.device)
+            target_crop = warp_affine_torch(target_frame, M, (size, size), border="replicate")
+        else:
+            import cv2
+            crop = self.to_crop(swap_crop)
+            target_crop = cv2.warpAffine(np.asarray(target_frame), M, (size, size),
+                                         borderMode=cv2.BORDER_REPLICATE)
+        if tuple(crop.shape[:2]) != (size, size):
+            raise ValueError(f"swap crop {tuple(crop.shape)} is not {size}x{size}")
+
+        lm = None
+        if landmarks is not None:
+            pts = landmarks.detach().cpu().numpy() if _is_torch(landmarks) else landmarks
+            pts = np.asarray(pts, dtype=np.float32).reshape(-1, 2)
+            lm = pts @ M[:, :2].T + M[:, 2]
+        model_mask = None
+        if mask is not None:
+            model_mask = mask.squeeze() if _is_torch(mask) else np.asarray(mask, np.float32).squeeze()
+
+        composite = generate_composite_mask(
+            target_crop, lm, parser_session=self.parser_session,
+            occluder_session=self.occluder_session, blur_amount=self.blur_amount,
+            padding=self.padding, model_mask=model_mask)
+        self.last_composite_mask = composite
+        if do_color:
+            crop = match_color_reinhard(crop, target_crop, composite)
+        if torch_mode:
+            return paste_back_torch(crop, M, target_frame, composite)
+        return self.paste_back(crop, M, target_frame, composite)
 
 
 class HyperSwapSwapper(OnnxSpecSwapper):

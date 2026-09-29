@@ -265,11 +265,42 @@ class BaseFaceSwapper(ABC):
         mask = np.asarray(mask, dtype=np.float32).reshape(mask.shape[-2:])
         if mask.shape != (size, size):
             raise ValueError(f"mask {mask.shape} does not match crop {crop.shape[:2]}")
-        h, w = frame.shape[:2]
+        out = frame.copy()
+        roi = paste_roi(M, size, frame.shape[:2])
+        if roi is None:
+            return out
+        x0, y0, x1, y1 = roi
+        # Only the crop's footprint: warping the whole frame for a 256 px face
+        # cost 40 ms at 1280x886 against ~2 ms here, and every pixel outside
+        # the footprint has alpha 0 anyway. NOT bit-identical to the full-frame
+        # warp: re-basing the translation moves cv2's 1/32 px fixed-point
+        # rounding. Measured over 200 pastes on t1.jpg: max 2 levels, mean
+        # 3e-5 -- far under the 0.71/255 render-to-render noise floor.
         inv = cv2.invertAffineTransform(M)
-        pasted = cv2.warpAffine(crop, inv, (w, h), flags=cv2.INTER_LINEAR,
+        inv[:, 2] -= (x0, y0)
+        pasted = cv2.warpAffine(crop, inv, (x1 - x0, y1 - y0), flags=cv2.INTER_LINEAR,
                                 borderMode=cv2.BORDER_REPLICATE)
-        alpha = cv2.warpAffine(np.clip(mask, 0.0, 1.0), inv, (w, h), flags=cv2.INTER_LINEAR,
-                               borderMode=cv2.BORDER_CONSTANT, borderValue=0.0)[:, :, None]
-        out = alpha * pasted.astype(np.float32) + (1.0 - alpha) * frame.astype(np.float32)
-        return np.clip(out.round(), 0, 255).astype(np.uint8)
+        alpha = cv2.warpAffine(np.clip(mask, 0.0, 1.0), inv, (x1 - x0, y1 - y0),
+                               flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT,
+                               borderValue=0.0)[:, :, None]
+        region = frame[y0:y1, x0:x1].astype(np.float32)
+        blended = alpha * pasted.astype(np.float32) + (1.0 - alpha) * region
+        out[y0:y1, x0:x1] = np.clip(blended.round(), 0, 255).astype(np.uint8)
+        return out
+
+
+def paste_roi(M, size: int, frame_hw) -> Optional[Tuple[int, int, int, int]]:
+    """(x0, y0, x1, y1) frame box covering the crop's footprint under inv(M),
+    one pixel of margin for bilinear taps, clipped to the frame; None if the
+    footprint misses the frame entirely."""
+    M = np.asarray(M, dtype=np.float64).reshape(2, 3)
+    corners = np.array([[0, 0], [size, 0], [0, size], [size, size]], dtype=np.float64)
+    pts = (corners - M[:, 2]) @ np.linalg.inv(M[:, :2]).T
+    h, w = int(frame_hw[0]), int(frame_hw[1])
+    x0 = max(int(np.floor(pts[:, 0].min())) - 1, 0)
+    y0 = max(int(np.floor(pts[:, 1].min())) - 1, 0)
+    x1 = min(int(np.ceil(pts[:, 0].max())) + 2, w)
+    y1 = min(int(np.ceil(pts[:, 1].max())) + 2, h)
+    if x1 <= x0 or y1 <= y0:
+        return None
+    return x0, y0, x1, y1
