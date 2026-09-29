@@ -121,6 +121,28 @@ def validate_tensor(array: np.ndarray, spec: TensorSpec, *, batch: Optional[int]
     return array
 
 
+def validate_tensor_torch(tensor, spec: TensorSpec, *, batch: Optional[int] = None):
+    """validate_tensor for a torch CUDA tensor: same checks, no cast, no host
+    copy. A non-contiguous tensor is made contiguous on the device."""
+    import torch
+    if not torch.is_tensor(tensor):
+        raise ValueError(f"{spec.name}: expected a torch tensor, got {type(tensor).__name__}")
+    want = {np.dtype(np.float32): torch.float32, np.dtype(np.float16): torch.float16}[np.dtype(spec.dtype)]
+    if tensor.dtype != want:
+        raise ValueError(f"{spec.name}: dtype {tensor.dtype}, model expects {want}")
+    if tensor.dim() != spec.rank:
+        raise ValueError(f"{spec.name}: shape {tuple(tensor.shape)} has rank {tensor.dim()}, "
+                         f"model expects rank {spec.rank} {spec.shape}")
+    for axis, (got, need) in enumerate(zip(tensor.shape, spec.shape)):
+        if isinstance(need, int) and need > 0 and got != need:
+            raise ValueError(f"{spec.name}: axis {axis} is {got}, model is static {need}")
+    if batch is not None and tensor.shape[0] != batch:
+        raise ValueError(f"{spec.name}: batch {tensor.shape[0]}, expected {batch}")
+    if not tensor.is_cuda:
+        raise ValueError(f"{spec.name}: tensor is on {tensor.device}, the zero-copy path needs CUDA")
+    return tensor.contiguous()
+
+
 # ── Execution provider names ─────────────────────────────────────────────────
 
 _PROVIDER_ALIASES = {

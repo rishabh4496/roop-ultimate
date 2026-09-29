@@ -119,6 +119,20 @@ module.exports = {
         ]
       }
     },
+    // onnxconverter-common (FP16 model conversion, roop/processors/frame/
+    // inference_engine.convert_onnx_fp16). --no-deps: its releases pin an old
+    // protobuf, which would downgrade the env's; numpy/onnx/packaging are
+    // already installed.
+    {
+      method: "shell.run",
+      params: {
+        venv: "env",
+        path: "app",
+        message: [
+          "uv pip install --no-deps onnxconverter-common==1.16.0"
+        ]
+      }
+    },
     // Seed default configuration from main device so every new user starts with
     // TensorRT provider, mixed precision mode, and optimized look/performance settings.
     {

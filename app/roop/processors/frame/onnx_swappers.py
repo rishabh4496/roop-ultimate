@@ -24,7 +24,7 @@ from typing import Any, Dict, Optional, Sequence
 import numpy as np
 
 from .swapper_base import (BaseFaceSwapper, TensorSpec, inspect_onnx_topology,
-                           resolve_providers, validate_tensor)
+                           resolve_providers, validate_tensor, validate_tensor_torch)
 
 EMBEDDING_DIM = 512
 _EMBEDDING_MODES = ("normed", "normed_emap", "converted_raw", "converted_norm")
@@ -181,6 +181,15 @@ class OnnxSpecSwapper(BaseFaceSwapper):
             converter_path   crossface converter for converted_* models
                              (default: models/<spec converter_file>)
             download         True fetches missing files from the spec URLs
+            precision        'fp16' (default) | 'fp32' -- TensorRT only; see
+                             inference_engine for what it costs and saves
+            strict           raise if the session is not on the requested
+                             provider (default: print it and carry on)
+
+        'tensorrt' / 'cuda' build an OptimizedInferenceSession (provider chain,
+        fixed batch-1 TRT profile, persistent device IO binding); `infer` then
+        also takes torch CUDA tensors and runs zero-copy. Anything else ('cpu',
+        a full provider list) is a plain onnxruntime session, as in Stage 1.
         """
         import onnxruntime
 
@@ -201,9 +210,22 @@ class OnnxSpecSwapper(BaseFaceSwapper):
         if session_options is None:
             from roop.utilities import get_onnx_session_options
             session_options = get_onnx_session_options()
-        self.providers = resolve_providers(execution_provider)
-        self.session = onnxruntime.InferenceSession(model_path, session_options,
-                                                    providers=self.providers)
+        self.engine = None
+        name = execution_provider.lower() if isinstance(execution_provider, str) else None
+        name = {"tensorrtexecutionprovider": "tensorrt", "trt": "tensorrt",
+                "cudaexecutionprovider": "cuda"}.get(name, name)
+        if name in ("tensorrt", "cuda"):
+            from .inference_engine import OptimizedInferenceSession
+            self.engine = OptimizedInferenceSession(
+                model_path, name, kwargs.get("precision", "fp16"),
+                device_id=int(kwargs.get("device_id", 0)), strict=bool(kwargs.get("strict", False)),
+                session_options=session_options)
+            self.session = self.engine.session
+            self.providers = self.engine.providers
+        else:
+            self.providers = resolve_providers(execution_provider)
+            self.session = onnxruntime.InferenceSession(model_path, session_options,
+                                                        providers=self.providers)
 
         if self.embedding_mode == "normed_emap":
             import onnx
@@ -324,14 +346,24 @@ class OnnxSpecSwapper(BaseFaceSwapper):
         missing = set(self.input_specs) - set(inputs)
         if missing:
             raise ValueError(f"{self.spec_key}: feed is missing {sorted(missing)}")
-        batch = int(np.shape(inputs[self.image_input_name])[0])
-        feed = {name: validate_tensor(inputs[name], spec, batch=batch)
-                for name, spec in self.input_specs.items()}
-        outs = self.session.run(None, feed)
+        batch = int(inputs[self.image_input_name].shape[0])
+        if _is_torch(inputs[self.image_input_name]):
+            # Zero-copy path: CUDA tensors in, the engine's persistent CUDA
+            # output buffers out (cloned: the next call overwrites them).
+            if getattr(self, "engine", None) is None or not self.engine.on_device:
+                raise RuntimeError(f"{self.spec_key}: torch inputs need a 'cuda' or 'tensorrt' session")
+            feed = {name: validate_tensor_torch(inputs[name], spec, batch=batch)
+                    for name, spec in self.input_specs.items()}
+            named = self.engine.run_binding(feed, return_all=True, clone=True)
+            outs = [named[n] for n in self.engine.output_names]
+        else:
+            feed = {name: validate_tensor(inputs[name], spec, batch=batch)
+                    for name, spec in self.input_specs.items()}
+            outs = self.session.run(None, feed)
         image = outs[0]
         mask = None
         if len(outs) > 1:
-            m = np.asarray(outs[1])
+            m = outs[1]
             if m.ndim == 4 and m.shape[1] == 1 and m.shape[-2:] == image.shape[-2:]:
                 mask = m
         self._mask_tls.mask = mask
