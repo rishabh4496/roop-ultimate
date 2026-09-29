@@ -136,6 +136,29 @@ def angle_bin(yaw: float, pitch: float) -> Optional[AngleBin]:
     return None
 
 
+# Faces this close to straight-on in yaw define a person's NEUTRAL pitch.
+NEUTRAL_YAW_DEG = 25.0
+
+
+def neutral_pitch(poses: Iterable[Tuple[float, float]]) -> float:
+    """A person's neutral pitch: the median pitch of their near-frontal faces
+    ((yaw, pitch) pairs, |yaw| <= 25), 0 when there are none.
+
+    5-point pitch is read against ONE reference head, so a person whose eye /
+    nose / mouth proportions differ from it reads a constant offset: a level,
+    straight-on passport photo (app/facesets/anshita.png) solves to 19 deg "up"
+    with the mouth closed (solve_pose_jaw_5pt: jaw -0.09, still 23 deg). The
+    offset is anatomy, so it is the same in every frame of that person;
+    subtracting their median removes it. Bins read pitch RELATIVE to this."""
+    vals = sorted(float(p) for y, p in poses
+                  if y is not None and p is not None and math.isfinite(float(y)) and math.isfinite(float(p))
+                  and abs(float(y)) <= NEUTRAL_YAW_DEG)
+    if not vals:
+        return 0.0
+    mid = len(vals) // 2
+    return vals[mid] if len(vals) % 2 else 0.5 * (vals[mid - 1] + vals[mid])
+
+
 def distance_to_bin(yaw: float, pitch: float, bin_: AngleBin) -> float:
     """Degrees from a pose to the bin's region (0 inside it)."""
     y0, y1, p0, p1 = _REGIONS[bin_]
@@ -169,6 +192,13 @@ class AnglePortfolioSelector:
     def __init__(self, max_fill_deg: float = MAX_FILL_DEG):
         self.max_fill_deg = float(max_fill_deg)
         self.report: Dict[AngleBin, BinSlot] = {}
+        # track_id -> neutral pitch subtracted before binning (see neutral_pitch)
+        self.neutral: Dict[Optional[int], float] = {}
+
+    def relative_pitch(self, m: CandidateFaceMetric) -> Optional[float]:
+        if m.pitch is None:
+            return None
+        return float(m.pitch) - self.neutral.get(m.track_id, self.neutral.get(None, 0.0))
 
     def select_portfolio(self, metrics: List[CandidateFaceMetric],
                          overrides: Optional[Dict[AngleBin, CandidateFaceMetric]] = None
@@ -184,10 +214,18 @@ class AnglePortfolioSelector:
         usable = [m for m in metrics
                   if m.is_valid and m.yaw is not None and m.pitch is not None
                   and math.isfinite(m.yaw) and math.isfinite(m.pitch)]
+        # Per person (track), from every candidate that has a pose, valid or not:
+        # the neutral describes the person, not what survived the gates.
+        by_track: Dict[Optional[int], List[Tuple[float, float]]] = {}
+        for m in metrics:
+            if m.yaw is not None and m.pitch is not None:
+                by_track.setdefault(m.track_id, []).append((m.yaw, m.pitch))
+        self.neutral = {t: neutral_pitch(v) for t, v in by_track.items()}
+        self.neutral[None] = neutral_pitch(pose for v in by_track.values() for pose in v)
         groups: Dict[AngleBin, List[CandidateFaceMetric]] = {b: [] for b in AngleBin}
         home: Dict[Tuple[int, Optional[int]], Optional[AngleBin]] = {}
         for m in usable:
-            b = angle_bin(m.yaw, m.pitch)
+            b = angle_bin(m.yaw, self.relative_pitch(m))
             home[_identity(m)] = b
             if b is not None:
                 groups[b].append(m)
@@ -199,7 +237,7 @@ class AnglePortfolioSelector:
             b = AngleBin(b)
             portfolio[b] = m
             used.add(_identity(m))
-            natural = (angle_bin(m.yaw, m.pitch)
+            natural = (angle_bin(m.yaw, self.relative_pitch(m))
                        if m.yaw is not None and m.pitch is not None else None)
             report[b] = BinSlot("override", candidates=len(groups[b]),
                                 source_bin=None if natural is None else natural.name)
@@ -220,7 +258,7 @@ class AnglePortfolioSelector:
             for m in usable:
                 if _identity(m) in used:
                     continue
-                d = distance_to_bin(m.yaw, m.pitch, b)
+                d = distance_to_bin(m.yaw, self.relative_pitch(m), b)
                 if d <= self.max_fill_deg:
                     pairs.append((d, -m.composite_score, int(b), m))
         pairs.sort(key=lambda t: t[:3])
@@ -284,14 +322,19 @@ def shortlist_candidates(detections: List[Dict[str, Any]], frame_shape: Tuple[in
     consecutive frames tends to share its motion blur."""
     from roop.pose_quality import estimate_head_pose
     groups: Dict[Any, List[Dict[str, Any]]] = {}
+    posed = []
     for det in detections:
         kps = det.get("kps")
         if kps is None:
             continue
         yaw, pitch, _roll = estimate_head_pose(np.asarray(kps, dtype=np.float64), frame_shape)
-        if not (math.isfinite(yaw) and math.isfinite(pitch)):
-            continue
-        b = angle_bin(yaw, pitch)
+        if math.isfinite(yaw) and math.isfinite(pitch):
+            posed.append((det, yaw, pitch))
+    neutral: Dict[Any, float] = {}
+    for track in {d.get("track_id") for d, _, _ in posed}:
+        neutral[track] = neutral_pitch((y, p) for d, y, p in posed if d.get("track_id") == track)
+    for det, yaw, pitch in posed:
+        b = angle_bin(yaw, pitch - neutral.get(det.get("track_id"), 0.0))
         key = b if b is not None else ("gap", int(round(yaw / 10.0)), int(round(pitch / 10.0)))
         groups.setdefault(key, []).append(det)
     out: List[Dict[str, Any]] = []
@@ -436,7 +479,12 @@ def build_target_angle_payload(media_path: str, metrics: List[CandidateFaceMetri
         if m is not None:
             entry.update({
                 "frame_idx": m.frame_idx, "track_id": m.track_id,
-                "yaw": m.yaw, "pitch": m.pitch, "pitch_up": None if m.pitch is None else pitch_up(m.pitch),
+                # pitch = as measured; pitch_up = relative to the person's
+                # neutral (what the bins read), up-positive.
+                "yaw": m.yaw, "pitch": m.pitch,
+                "pitch_up": None if m.pitch is None else pitch_up(selector.relative_pitch(m)),
+                "pitch_neutral": None if m.pitch is None else round(
+                    selector.neutral.get(m.track_id, selector.neutral.get(None, 0.0)), 2),
                 "roll": m.roll, "composite_score": m.composite_score, "sharpness": m.sharpness,
                 "id_similarity": m.id_similarity, "ear": m.ear,
             })
@@ -476,7 +524,7 @@ def build_target_angle_payload(media_path: str, metrics: List[CandidateFaceMetri
     return payload
 
 
-__all__ = ["AngleBin", "AnglePortfolioSelector", "BinSlot", "FUSION_BINS", "angle_bin",
+__all__ = ["AngleBin", "AnglePortfolioSelector", "BinSlot", "FUSION_BINS", "angle_bin", "neutral_pitch",
            "distance_to_bin", "pitch_up", "synthesize_fused_embedding", "app_embedding",
            "aligned_crop", "build_target_angle_payload", "shortlist_candidates",
            "DEFAULT_CACHE_ROOT"]

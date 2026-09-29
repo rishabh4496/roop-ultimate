@@ -72,6 +72,8 @@ read_frame: Optional[Callable[[str, int], Any]] = None
 # (frame) -> faces. Default: the configured detector, rescue ladder included.
 detect_faces: Optional[Callable[[Any], list]] = None
 landmarks_fn: Optional[Callable] = pq.app_landmarks_68
+# (index) -> the SOURCE FaceSet at that gallery index; raises IndexError.
+get_source_faceset: Optional[Callable[[int], Any]] = None
 embed_fn: Optional[Callable] = ap.app_embedding
 
 PROGRESS_INTERVAL_S = 0.25
@@ -261,7 +263,21 @@ def _run_pipeline(msg: dict, emit: Callable[[dict], None], cancel: threading.Eve
     _rebuild(sess)
     with _session_lock:
         _session = sess
+    _publish_frame_lut(scan)
     return _public_session(sess)
+
+
+def _publish_frame_lut(scan: Dict[str, Any]) -> None:
+    """The target's pose per scanned frame, for pose-adaptive SOURCE routing in
+    the render (roop.source_portfolio). Read only by sources that carry an
+    angle portfolio, and only while the render's target is this clip."""
+    import roop.globals as roop_globals
+    from roop.source_portfolio import build_frame_lut
+    try:
+        roop_globals.ANGLE_FRAME_LUT = build_frame_lut(scan)
+    except Exception as exc:
+        swallowed("angle_scan.frame_lut", exc, "render routes by live pose instead")
+        roop_globals.ANGLE_FRAME_LUT = None
 
 
 def _cancel_active() -> None:
@@ -533,6 +549,69 @@ def angle_scan_apply(payload: dict = Body(default={})):
         except ValueError as exc:
             return JSONResponse(status_code=409, content={"error": "target_changed", "message": str(exc)})
         return result
+
+
+# ── Source portfolios (pose-adaptive routing in the render) ───────────────────
+def _lut_info() -> Dict[str, Any]:
+    import roop.globals as roop_globals
+    lut = getattr(roop_globals, "ANGLE_FRAME_LUT", None)
+    if lut is None:
+        return {"available": False}
+    return {"available": True, "media_path": lut.media_path, "frames": len(lut), "step": lut.step}
+
+
+def _faceset(index) -> Any:
+    if get_source_faceset is None:
+        raise LookupError("not wired")
+    try:
+        if int(index) < 0:
+            raise IndexError(index)                    # no Python wrap-around to the last source
+        return get_source_faceset(int(index))
+    except (IndexError, TypeError, ValueError):
+        raise LookupError("no source at that index")
+
+
+@router.get("/api/angle-scan/source-portfolio")
+def source_portfolio_status(index: int = 0):
+    try:
+        fs = _faceset(index)
+    except LookupError as exc:
+        return JSONResponse(status_code=404, content={"error": "no_source", "message": str(exc)})
+    pf = getattr(fs, "angle_portfolio", None)
+    return {"source_index": index, "faces": len(getattr(fs, "faces", []) or []),
+            "portfolio": None if pf is None else pf.summary(), "frame_lut": _lut_info()}
+
+
+@router.post("/api/angle-scan/source-portfolio")
+def source_portfolio_build(payload: dict = Body(...)):
+    """Build the SOURCE person's angle portfolio from their FaceSet (Stages 2-3
+    on its faces) and attach it; from the next render on, this source is
+    swapped with the vector matching each target frame's pose."""
+    from roop.source_portfolio import build_source_portfolio
+    index = payload.get("source_index", 0)
+    try:
+        fs = _faceset(index)
+    except LookupError as exc:
+        return JSONResponse(status_code=404, content={"error": "no_source", "message": str(exc)})
+    pf = build_source_portfolio(fs)
+    if pf is None:
+        fs.angle_portfolio = None
+        return JSONResponse(status_code=422, content={
+            "error": "no_portfolio",
+            "message": "This source has no usable frontal or quarter-angle face to fuse. "
+                       "Add a straight-on photo of the person (or build a faceset with more angles)."})
+    fs.angle_portfolio = pf
+    return {"source_index": index, "faces": len(fs.faces), "portfolio": pf.summary(), "frame_lut": _lut_info()}
+
+
+@router.post("/api/angle-scan/source-portfolio/clear")
+def source_portfolio_clear(payload: dict = Body(default={})):
+    try:
+        fs = _faceset(payload.get("source_index", 0))
+    except LookupError as exc:
+        return JSONResponse(status_code=404, content={"error": "no_source", "message": str(exc)})
+    fs.angle_portfolio = None
+    return {"source_index": payload.get("source_index", 0), "portfolio": None, "frame_lut": _lut_info()}
 
 
 __all__ = ["router"]

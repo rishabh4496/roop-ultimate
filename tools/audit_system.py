@@ -32,6 +32,11 @@ Every check drives the REAL components, never mocks of them:
 * ``audit_ultra_restore``       :class:`UltraRestorer` on a real face scaled to
   85 / 220 / 450 px box diagonal (route, network calls, latency, luminance),
   the frequency split's decomposition, the inner-mouth weight.
+* ``audit_pose_routing``        the APP render's pose-adaptive source routing
+  (``app/roop/source_portfolio.route``): per-face overhead through each pose
+  path - frame-LUT hit, neighbouring scanned frame, live keypoint solve - against
+  a 0.8 ms budget, and that every routed vector keeps the swap input's shape and
+  dtype (a changed shape is what would make TensorRT re-bind or re-allocate).
 
 Statuses: PASS, FAIL, UNVERIFIED (a required criterion this rig cannot
 measure: counts as not passing), INFO (reported, not gated). Latency and fps
@@ -76,6 +81,7 @@ GPEN512_DIAG, GPEN512_BUDGET_MS = 220.0, 3.5
 GPEN1024_DIAG, GPEN1024_BUDGET_MS = 450.0, 8.5
 LUMA_TOLERANCE = 0.02
 INNER_MOUTH_MAX = 0.20
+ROUTING_BUDGET_MS = 0.8
 MEMORY_FRAMES = 500
 DEFAULT_CLIP = ROOT / "face_engine" / "tests" / "sample_1080p.mp4"
 PASS, FAIL, UNVERIFIED, INFO = "PASS", "FAIL", "UNVERIFIED", "INFO"
@@ -950,6 +956,66 @@ def audit_ultra_restore(r: Report) -> None:
 
 
 # ============================================================================ report
+def audit_pose_routing(r: Report) -> None:
+    """Pose-adaptive source routing overhead, CPU only (no model is loaded)."""
+    import numpy as np
+
+    app = ROOT / "app"
+    if str(app) not in sys.path:
+        sys.path.insert(0, str(app))
+    from roop import face_util as fu
+    from roop.angle_portfolio import AngleBin
+    from roop.source_portfolio import FrameLUT, LUTEntry, SourcePortfolio, SourceRef, route
+
+    sec = "Pose routing"
+    rng = np.random.default_rng(0)
+
+    def unit(v):
+        return (v / np.linalg.norm(v)).astype(np.float32)
+
+    dim = 512
+    refs = {b: SourceRef(unit(rng.normal(size=dim)), 0.0, 0.0, 0.9, i) for i, b in enumerate(AngleBin)}
+    pf = SourcePortfolio(refs=refs, fused=unit(rng.normal(size=dim)), dim=dim)
+    # Target keypoints on the reference head across the yaw range, in a 1080p frame.
+    faces = []
+    for yaw in np.linspace(-75, 75, 31):
+        pts = fu._project_reference(float(yaw), float(rng.uniform(-20, 20)))
+        pts = (pts - pts.mean(axis=0)) * 180 + (960, 540)
+        x0, y0 = pts.min(axis=0) - 60
+        x1, y1 = pts.max(axis=0) + 60
+        faces.append((pts.astype(np.float32), [float(x0), float(y0), float(x1), float(y1)], float(yaw)))
+    entries = {i: [LUTEntry(yaw=f[2], pitch_up=0.0, bin=None, bbox=tuple(f[1]))] for i, f in enumerate(faces) if i % 3 == 0}
+    lut = FrameLUT(media_path="audit", step=3, entries=entries)
+
+    paths = {"LUT hit": lambda i, f: route(pf, f[0], f[1], frame_idx=(i // 3) * 3, lut=lut),
+             "neighbouring frame": lambda i, f: route(pf, f[0], f[1], frame_idx=(i // 3) * 3 + 1, lut=lut),
+             "live keypoint solve": lambda i, f: route(pf, f[0], f[1], frame_idx=None, lut=None)}
+    shapes = set()
+    for name, call in paths.items():
+        for i, f in enumerate(faces):                      # warm
+            call(i, f)
+        samples = []
+        seen_from = set()
+        for rep_ in range(60):
+            for i, f in enumerate(faces):
+                t = time.perf_counter_ns()
+                out = call(i, f)
+                samples.append((time.perf_counter_ns() - t) / 1e6)
+                shapes.add((out.embedding.shape, str(out.embedding.dtype)))
+                seen_from.add(out.pose_from)
+        samples.sort()
+        mean = statistics.fmean(samples)
+        p99 = samples[int(len(samples) * 0.99) - 1]
+        r.add(sec, f"route() per face, pose from {name}", mean < ROUTING_BUDGET_MS and p99 < ROUTING_BUDGET_MS,
+              f"< {ROUTING_BUDGET_MS} ms (mean and p99)",
+              f"mean {mean:.4f} ms, p99 {p99:.4f} ms over {len(samples)} faces; path {sorted(seen_from)}",
+              latency_ms=mean)
+    r.add(sec, "Swap input vector shape across reference switches", shapes == {((dim,), "float32")},
+          f"one shape ({dim},) float32 for every route",
+          f"{sorted(shapes)}",
+          fix="route() must never hand the swapper a vector of another size.")
+
+
 def render_report(r: Report) -> None:
     from rich.console import Console
     from rich.table import Table
@@ -990,7 +1056,7 @@ def render_report(r: Report) -> None:
         console.print("[bold green]AUDIT PASSED[/]")
 
 
-SECTIONS = ("hardware", "pipeline", "memory", "detector", "restore")
+SECTIONS = ("hardware", "pipeline", "memory", "detector", "restore", "routing")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -1026,6 +1092,7 @@ def main(argv: list[str] | None = None) -> int:
                                                        work)),
             ("detector", lambda: audit_detector_angles(r)),
             ("restore", lambda: audit_ultra_restore(r)),
+            ("routing", lambda: audit_pose_routing(r)),
         ]
         for name, fn in steps:
             if name not in sections:
@@ -1041,7 +1108,7 @@ def main(argv: list[str] | None = None) -> int:
                       f"{type(exc).__name__}: {str(exc)[:160]}", fix="See the traceback above.")
                 _free_gpu()
     order = {"Hardware & drivers": 0, "Zero-copy & leaks": 1, "Angle-resilient detection": 2,
-             "Ultra Restore": 3, "Async CUDA streams": 4, "Stage latency": 5}
+             "Ultra Restore": 3, "Async CUDA streams": 4, "Stage latency": 5, "Pose routing": 6}
     r.checks.sort(key=lambda c: order.get(c.section, 9))
     r.facts["elapsed_s"] = round(time.perf_counter() - t0, 1)
     render_report(r)

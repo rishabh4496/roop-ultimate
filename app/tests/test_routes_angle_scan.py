@@ -270,6 +270,41 @@ def test_apply_hands_every_filled_bin_to_the_bank(client, monkeypatch):
     assert client.post("/api/angle-scan/apply", json={}).status_code == 409
 
 
+def test_source_portfolio_endpoints(client, monkeypatch):
+    import types
+    import roop.globals as g
+    from roop import face_util as _fu
+
+    def src_face(yaw, axis):
+        pts = _fu._project_reference(yaw, 0) * 120 + 300
+        return {"kps": pts.astype(np.float32), "embedding": _emb(axis) * 20, "det_score": 0.9}
+
+    good = types.SimpleNamespace(faces=[src_face(0, 0), src_face(-60, 1), src_face(60, 2)])
+    bad = types.SimpleNamespace(faces=[src_face(-60, 1)])
+    sources = [good, bad]
+    monkeypatch.setattr(ras, "get_source_faceset", lambda i: sources[i])
+    monkeypatch.setattr(g, "ANGLE_FRAME_LUT", None, raising=False)
+
+    _scan(client)                                    # a target scan publishes the frame LUT
+    assert g.ANGLE_FRAME_LUT is not None and len(g.ANGLE_FRAME_LUT) > 0
+
+    r = client.post("/api/angle-scan/source-portfolio", json={"source_index": 0})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["portfolio"]["profile_left"] and body["portfolio"]["profile_right"]
+    assert body["frame_lut"]["available"] and body["frame_lut"]["frames"] == len(g.ANGLE_FRAME_LUT)
+    assert good.angle_portfolio is not None
+    assert client.get("/api/angle-scan/source-portfolio?index=0").json()["portfolio"]["dim"] == 8
+
+    assert client.post("/api/angle-scan/source-portfolio", json={"source_index": 1}).status_code == 422
+    assert getattr(bad, "angle_portfolio", "unset") is None
+    assert client.post("/api/angle-scan/source-portfolio", json={"source_index": -1}).status_code == 404
+    assert client.post("/api/angle-scan/source-portfolio", json={"source_index": 5}).status_code == 404
+
+    cleared = client.post("/api/angle-scan/source-portfolio/clear", json={"source_index": 0}).json()
+    assert cleared["portfolio"] is None and good.angle_portfolio is None
+
+
 def load_tests(loader, tests, pattern):
     """Expose this module's bare `test_*` functions to `unittest discover`."""
     try:

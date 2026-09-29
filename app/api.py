@@ -5871,6 +5871,7 @@ def _angle_scan_apply(person_id, media_id, media_path, picks):
 _routes_angle_scan.resolve_target = _angle_scan_resolve
 _routes_angle_scan.is_busy = _angle_scan_busy
 _routes_angle_scan.apply_to_person = _angle_scan_apply
+_routes_angle_scan.get_source_faceset = lambda index: roop_globals.INPUT_FACESETS[index]
 
 # Backwards-compatible Python imports for callers that used these handlers
 # directly. Route ownership stays in routes_output.router, so these aliases do

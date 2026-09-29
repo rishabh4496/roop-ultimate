@@ -538,6 +538,36 @@ def _compose_affine(A, B):
     return (A3 @ B3)[:2, :]
 
 
+def _with_unit_embedding(inputface, unit):
+    """A copy of the source Face conditioned on ``unit`` (an L2-normalised
+    identity vector): ``embedding`` keeps the original vector's NORM, because
+    the converter-MLP swappers read ``embedding`` and were trained on that
+    magnitude; ``normed_embedding`` becomes ``unit``; cached ``_latent_*``
+    derivations of the old vector are dropped so nothing reuses them. Shared by
+    the Identity Blender and pose-adaptive source routing."""
+    _raw = inputface.get('embedding') if hasattr(inputface, 'get') else None
+    _norm = float(np.linalg.norm(np.asarray(_raw, dtype=np.float32))) if _raw is not None else 1.0
+    out = type(inputface)(inputface)
+    out['embedding'] = (np.asarray(unit, dtype=np.float32) * (_norm if _norm > 1e-6 else 1.0)).astype(np.float32)
+    _unit_normed = np.asarray(unit, dtype=np.float32)
+    if 'normed_embedding' in out:
+        out['normed_embedding'] = _unit_normed
+    if hasattr(out, 'normed_embedding'):
+        try:
+            out.normed_embedding = _unit_normed
+        except (AttributeError, TypeError):
+            pass
+    for key in list(out.keys()):
+        if str(key).startswith('_latent_') or str(key) == '_normed_embedding':
+            del out[key]
+    if hasattr(out, '_normed_embedding'):
+        try:
+            delattr(out, '_normed_embedding')
+        except (AttributeError, TypeError):
+            pass
+    return out
+
+
 class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixin, ColorTransferMixin, MergerMixin, PixelBoostMixin, TrackingMixin):
     plugins = {
         'faceswap'          : 'FaceSwapInsightFace',
@@ -970,6 +1000,8 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
         # job's snapshot on options wins over the live global. Resolved once
         # here against this run's facesets and the gallery, by `_source_id`.
         self._identity_blend = None
+        from roop.source_portfolio import RouteStats
+        self._angle_route_stats = RouteStats()
         try:
             from roop.identity_algebra import BlendRecipe, resolve_recipe
             _recipe = BlendRecipe.from_payload(
@@ -3260,6 +3292,25 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
             _swallowed("roop/ProcessMgr.py:4015", _degrade_error, "fallback continued")
             pass
 
+    def _route_source(self, portfolio, target_face):
+        """source_portfolio.route for this face, with the target scan's frame
+        LUT when it describes the clip being rendered. The render counts frames
+        from the trim start; the LUT is absolute, hence the offset."""
+        from roop.source_portfolio import route
+        lut = getattr(roop.globals, 'ANGLE_FRAME_LUT', None)
+        if lut is not None:
+            cur = getattr(roop.globals, 'target_path', None) or ''
+            if not cur or os.path.normcase(os.path.abspath(cur)) != os.path.normcase(os.path.abspath(lut.media_path or '')):
+                lut = None
+        rel = getattr(self._tls, 'frame_idx', None)
+        abs_idx = None if rel is None else int(rel) + int(getattr(self, '_angle_frame_offset', 0) or 0)
+        return route(portfolio, target_face.kps, [float(v) for v in target_face.bbox],
+                     frame_idx=abs_idx, lut=lut)
+
+    def angle_route_summary(self):
+        stats = getattr(self, '_angle_route_stats', None)
+        return stats.snapshot() if stats is not None else {}
+
     def swap_faces(self, frame, temp_frame=None, stabilize=False, frame_idx=None):
         num_faces_found = 0
         # Used only by retry_rotated() as a conservative admission hint. None
@@ -5346,6 +5397,32 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
             except Exception as e:
                 bar_write(f"[ProcessMgr] V2 pose embedding selection failed: {e}")
 
+        # ── Pose-adaptive source routing (roop/source_portfolio.py) ──────────
+        # Only when this source carries an angle portfolio (built from ITS OWN
+        # faces - never the target's, which would swap the person onto
+        # themselves). Pose comes from the target scan's frame LUT when it has
+        # this face, else from the keypoints. Embedding-mode swappers only, the
+        # same set the Identity Blender below serves.
+        _angle_route = None
+        _angle_portfolio = (getattr(source_faceset, 'angle_portfolio', None)
+                            if source_faceset is not None else None)
+        if (_angle_portfolio is not None and not _swap_is_image and inputface is not None
+                and getattr(swap_p, 'embedding_mode', '') != 'cscs_dual'):
+            _t_route = time.perf_counter_ns()
+            try:
+                _angle_route = self._route_source(_angle_portfolio, target_face)
+                if _angle_route is not None:
+                    inputface = _with_unit_embedding(inputface, _angle_route.embedding)
+            except Exception as e:
+                bar_write(f"[ProcessMgr] pose-adaptive source routing failed: {e}")
+                _angle_route = None
+            self._angle_route_stats.add(
+                'routed' if _angle_route is not None else 'route_failed',
+                time.perf_counter_ns() - _t_route)
+            if _angle_route is not None:
+                self._angle_route_stats.add(_angle_route.kind)
+                self._angle_route_stats.add('pose_' + _angle_route.pose_from)
+
         # Identity Blender: latent blend + attribute offsets on the (already
         # pose-selected) unit ArcFace vector. Same copy-then-override contract
         # as the V2 block above. The raw embedding's norm is kept so the
@@ -5359,27 +5436,7 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                 _raw = inputface.get('embedding') if hasattr(inputface, 'get') else None
                 _new = _blend.transform(_raw, target_face, source_faceset)
                 if _new is not None:
-                    _norm = float(np.linalg.norm(np.asarray(_raw, dtype=np.float32))) if _raw is not None else 1.0
-                    blend_input = type(inputface)(inputface)
-                    _emb_val = (_new * (_norm if _norm > 1e-6 else 1.0)).astype(np.float32)
-                    blend_input['embedding'] = _emb_val
-                    _unit_normed = _new.astype(np.float32)
-                    if 'normed_embedding' in blend_input:
-                        blend_input['normed_embedding'] = _unit_normed
-                    if hasattr(blend_input, 'normed_embedding'):
-                        try:
-                            blend_input.normed_embedding = _unit_normed
-                        except (AttributeError, TypeError):
-                            pass
-                    for key in list(blend_input.keys()):
-                        if str(key).startswith('_latent_') or str(key) == '_normed_embedding':
-                            del blend_input[key]
-                    if hasattr(blend_input, '_normed_embedding'):
-                        try:
-                            delattr(blend_input, '_normed_embedding')
-                        except (AttributeError, TypeError):
-                            pass
-                    inputface = blend_input
+                    inputface = _with_unit_embedding(inputface, _new)
             except Exception as e:
                 bar_write(f"[ProcessMgr] identity blend failed: {e}")
 
@@ -5745,6 +5802,19 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                     enhanced_frame = self._restore_ultra_recombine(
                         enhanced_frame, fake_frame, target_face, M,
                         scale_factor)
+                # Pose-routed profile frames: the enhancer's eye prior renders
+                # the foreshortened (far) eye as if it faced the camera, which
+                # reads as an asymmetric iris; pull it 25% back toward the swap.
+                if (enhanced_frame is not None and _angle_route is not None
+                        and _angle_route.far_eye is not None):
+                    try:
+                        from roop.source_portfolio import damp_far_eye
+                        _k = cv2.transform(np.asarray(target_face.kps, dtype=np.float32)[None], M)[0]
+                        _k = _k * (enhanced_frame.shape[1] / float(fake_frame.shape[1]))
+                        enhanced_frame = damp_far_eye(enhanced_frame, fake_frame, _k, _angle_route.far_eye)
+                        self._angle_route_stats.add('far_eye_damped')
+                    except Exception as e:
+                        bar_write(f"[ProcessMgr] far-eye damping failed: {e}")
 
         # ── Anti-flicker: temporally smooth the enhanced aligned crop ─────────
         # enhanced_frame is registered to the canonical face template, so a

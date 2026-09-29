@@ -13,6 +13,7 @@
 import React, { useEffect, useState } from 'react';
 import AngleCoverageRadar from './AngleCoverageRadar';
 import AngleMatrixGallery from './AngleMatrixGallery';
+import SourceRoutingPanel from './SourceRoutingPanel';
 import useAutoAngleCapture from './useAutoAngleCapture';
 import {
   BIN_BY_NAME, coverageWarnings, fmtAngle, qualityTier, toTimelineFrame, WARNING_TEXT,
@@ -39,6 +40,9 @@ export interface TargetAngleCaptureHUDProps {
   onJumpToFrame: (timelineFrame: number) => void;
   onBankUpdated?: (payload: Record<string, unknown>) => void;
   notify?: Notify;
+  // The SOURCE gallery index mapped to this person (null = none), for pose routing.
+  sourceIndex?: number | null;
+  sourceLabel?: string;
 }
 
 function readAuto(): boolean {
@@ -62,7 +66,7 @@ function Metric({ label, value, title }: { label: string; value: React.ReactNode
 export default function TargetAngleCaptureHUD(props: TargetAngleCaptureHUDProps) {
   const {
     targetPersonId, targetMediaId, targetIndex, isVideo, personLabel,
-    currentFrame, onJumpToFrame, onBankUpdated, notify,
+    currentFrame, onJumpToFrame, onBankUpdated, notify, sourceIndex = null, sourceLabel,
   } = props;
   const [autoScan, setAutoScan] = useState<boolean>(readAuto);
   useEffect(() => {
@@ -273,6 +277,9 @@ export default function TargetAngleCaptureHUD(props: TargetAngleCaptureHUDProps)
           </div>
         )}
       </div>
+
+      <SourceRoutingPanel sourceIndex={sourceIndex} sourceLabel={sourceLabel}
+                          refreshKey={session?.cache_key ?? null} />
 
       {/* Actions */}
       <div className="flex gap-1.5">

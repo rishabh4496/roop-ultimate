@@ -109,6 +109,13 @@ def make_app(clip: str, dist: str, cache: str, counters: dict) -> FastAPI:
     ras.embed_fn = lambda frame, kps: fx._emb(0)
     ras.apply_to_person = apply
     ras._session = None
+    # A SOURCE faceset with a frontal and both profiles (the clip's own head
+    # stands in for a different person here: routing only reads its geometry
+    # and vectors).
+    import types
+    source = types.SimpleNamespace(faces=[fx._face_at(30), fx._face_at(0), fx._face_at(60)])
+    counters["source"] = source
+    ras.get_source_faceset = lambda i: [source][i]
 
     app = FastAPI()
     app.include_router(ras.router)
@@ -206,12 +213,42 @@ async def drive(url: str, counters: dict, screenshot: str | None) -> None:
         toasts = json.loads(await page.evaluate("return document.querySelector('[data-testid=toasts]').textContent;"))
         check("the result is announced", any("Added" in t["message"] for t in toasts), str(toasts))
 
+        # ── pose routing (Stage 5): the SOURCE portfolio ────────────────────
+        off = await page.evaluate("return document.querySelector('[data-testid=source-routing]').dataset.active;")
+        check("pose routing starts off", off == "false", str(off))
+        lut_line = await page.evaluate(
+            "return document.querySelector('[data-testid=source-routing]').textContent;")
+        check("the target scan published a frame LUT", "scanned frames" in lut_line, lut_line[-120:])
+        await page.click_text("[data-testid=source-routing] button", "Enable from source faceset")
+        on = await page.wait_for("document.querySelector('[data-testid=source-routing]').dataset.active === 'true'",
+                                 timeout=10)
+        cells = await page.evaluate(
+            "return Array.from(document.querySelectorAll('[data-testid=source-routing] [data-bin]'))"
+            ".filter(n => n.dataset.has === 'true').map(n => n.dataset.bin);")
+        check("Enable builds the source portfolio and attaches it to the faceset",
+              on and getattr(counters["source"], "angle_portfolio", None) is not None, str(cells))
+        check("the source's frontal and both profiles are listed",
+              {"BIN_0_FRONTAL", "BIN_5_PROFILE_LEFT", "BIN_6_PROFILE_RIGHT"} <= set(cells), str(cells))
+        text = await page.evaluate("return document.querySelector('[data-testid=source-routing]').textContent;")
+        check("the routing rule is stated", "0.7 × source profile + 0.3 × fused" in text, text[:200])
+
         if screenshot:
             await page.screenshot(screenshot)
+
+        await page.click_text("[data-testid=source-routing] button", "Off")
+        cleared = await page.wait_for(
+            "document.querySelector('[data-testid=source-routing]').dataset.active === 'false'", timeout=10)
+        check("Off detaches it", cleared and counters["source"].angle_portfolio is None)
+        await page.click_text("[data-testid=source-routing] button", "Enable from source faceset")
+        await page.wait_for("document.querySelector('[data-testid=source-routing]').dataset.active === 'true'",
+                            timeout=10)
 
         await page.goto(url, settle=2.0)
         rehydrated = await page.wait_for(
             "document.querySelector('[data-testid=angle-matrix] [data-bin=BIN_7_PITCH_UP][data-status=override]') !== null", timeout=10)
+        routing_kept = await page.wait_for(
+            "document.querySelector('[data-testid=source-routing]').dataset.active === 'true'", timeout=10)
+        check("reload shows the source portfolio still attached", routing_kept)
         await asyncio.sleep(1.5)                  # past the auto-trigger's settle delay
         check("reload rehydrates the session", rehydrated)
         check("reload does not rescan", counters["scans"] == 1, f"scans={counters['scans']}")

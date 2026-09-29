@@ -2345,6 +2345,10 @@ export default function FaceSwap({
   });
   const angleHudPersonIndex = targetPersonIds.indexOf(selectedTargetPersonId);
   const angleHudPersonLabel = (angleHudPersonIndex >= 0 && targetNames[angleHudPersonIndex]) || undefined;
+  // The source mapped to that person, for pose-adaptive source routing.
+  const angleHudSourceId = selectedTargetPersonId ? getStableTargetSourceMapping()[selectedTargetPersonId] : undefined;
+  const angleHudSourceIndex = angleHudSourceId == null ? -1
+    : sourceFacesInfo.findIndex((info, index) => String(info?.id || `memory-slot-${index}`) === String(angleHudSourceId));
 
   const handleTimelinePointerMove = (e) => {
     if (!timelineRef.current) return;
@@ -3334,6 +3338,8 @@ export default function FaceSwap({
               onJumpToFrame={jumpToTimelineFrame}
               onBankUpdated={applyAngleBankPayload}
               notify={notify}
+              sourceIndex={angleHudSourceIndex >= 0 ? angleHudSourceIndex : null}
+              sourceLabel={angleHudSourceIndex >= 0 ? (sourceNameAt(angleHudSourceIndex) || undefined) : undefined}
             />
           </Section>
 

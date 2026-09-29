@@ -14,6 +14,11 @@ class BatchProcessingMixin:
 
     def run_batch_inmem(self, output_method, source_video, target_video, frame_start, frame_end, fps, threads: int = 1, skip_audio=False):
         self._writer_error = None
+        # Workers count frames from 0 at the trim start; pose-adaptive source
+        # routing looks the target's pose up by ABSOLUTE frame index.
+        self._angle_frame_offset = int(frame_start or 0)
+        from roop.source_portfolio import RouteStats as _RouteStats
+        self._angle_route_stats = _RouteStats()
         # Dependencies are bound at call time because ProcessMgr owns the
         # shared runtime instrumentation and scheduler singletons. This keeps
         # the extracted batch boundary explicit without creating a second copy
@@ -989,4 +994,7 @@ class BatchProcessingMixin:
                 set_detailed_profiler(None)
         _prof_report()
         _audit_report()
+        _routes = self._angle_route_stats.snapshot() if getattr(self, '_angle_route_stats', None) else {}
+        if _routes.get('routed') or _routes.get('route_failed'):
+            print('[PoseRouting] ' + ', '.join(f'{k}={v}' for k, v in sorted(_routes.items())), flush=True)
         self._report_smoother_summaries()

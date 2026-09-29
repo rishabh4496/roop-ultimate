@@ -95,6 +95,9 @@ def test_nearest_neighbour_fill_and_limits():
         _m(4, 30, 21, 0.7),        # gap: 6 deg from BIN_4, 10 from BIN_7
         _m(5, -12, 30, 0.5),       # up runner-up: 20 deg from the empty BIN_1, too far
     ]
+    # Level straight-on frames that fail the quality gates still define the
+    # person's neutral pitch (0 here), so the geometry below is absolute.
+    metrics += [_m(100 + i, 0, 0, 0.1, valid=False) for i in range(6)]
     sel = ap.AnglePortfolioSelector(max_fill_deg=10)
     pf = sel.select_portfolio(metrics)
     # BIN_4 borrows the gap candidate, flagged with its distance and no source bin
@@ -115,6 +118,25 @@ def test_fill_prefers_the_closer_bin():
     # 3 deg from BIN_3 and 7 deg from BIN_5 -> goes to BIN_3
     pf = ap.AnglePortfolioSelector().select_portfolio([_m(1, -38, 18, 0.5)])
     assert list(pf) == [B.BIN_3_HALF_PROFILE_LEFT]
+
+
+def test_pitch_is_relative_to_the_persons_neutral():
+    """A level, straight-on person whose anatomy reads 19 deg 'up' (the
+    benchmark's passport photo does) must still fill FRONTAL, not PITCH_UP."""
+    metrics = [_m(i, yaw, 19, 0.8) for i, yaw in enumerate((0, 2, -3, -15, 18))]
+    metrics.append(_m(10, 0, 19 + 25, 0.7))                 # genuinely looking up from there
+    sel = ap.AnglePortfolioSelector()
+    pf = sel.select_portfolio(metrics)
+    assert sel.neutral[1] == pytest.approx(-19)             # server convention: pitch = -pitch_up
+    assert pf[B.BIN_0_FRONTAL].frame_idx in (0, 1, 2)
+    assert pf[B.BIN_1_QUARTER_LEFT].frame_idx == 3 and pf[B.BIN_2_QUARTER_RIGHT].frame_idx == 4
+    assert pf[B.BIN_7_PITCH_UP].frame_idx == 10
+    assert sel.relative_pitch(pf[B.BIN_7_PITCH_UP]) == pytest.approx(-25)
+
+
+def test_neutral_pitch_uses_only_near_frontal_faces():
+    assert ap.neutral_pitch([(0, 10), (5, 12), (60, -40), (-70, 50)]) == pytest.approx(11)
+    assert ap.neutral_pitch([(60, -40)]) == 0.0 and ap.neutral_pitch([]) == 0.0
 
 
 # ── fusion ───────────────────────────────────────────────────────────────────

@@ -27,6 +27,8 @@ function Harness() {
           onJumpToFrame={setFrame}
           onBankUpdated={setBank}
           notify={(message, type) => setToasts((t) => [...t, { message, type }])}
+          sourceIndex={params.has('source') ? Number(params.get('source')) : 0}
+          sourceLabel="Source A"
         />
       </div>
       <div className="font-mono text-xs text-slate-300 space-y-2 w-80">
