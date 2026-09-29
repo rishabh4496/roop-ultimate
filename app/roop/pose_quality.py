@@ -36,12 +36,26 @@ Sharpness is Laplacian variance on a size-normalised crop, as in
 crop scores high), and its absolute level slides with grain and compression, so
 the batch evaluator also applies ``face_quality.blur_outlier``: a frame is
 refused for blur only relative to the median of the candidates it came with.
+
+Eye openness
+------------
+Before any sharpness or illumination work, the batch evaluator measures the Eye
+Aspect Ratio on the 68-point landmarks (Soukupova & Cech; the same formula as
+``eyelid_preserver.calculate_ear``) and discards the frame when EAR < 0.20, so a
+closed-eye frame never becomes a reference. Both eyes are measured and the gate
+reads the MORE OPEN one: a blink closes both, while the far eye of a turned head
+is foreshortened and its landmarks are guessed, so gating on either eye alone
+would discard profiles as "closed". A frame whose 68 points cannot be obtained
+is NOT treated as open: ``ear`` stays None and the batch logs how many.
+Uncorrected for pose: looking down shortens the lid opening in the picture, so
+a strongly pitched-down open eye can read below 0.20 (unmeasured on footage).
 """
 from __future__ import annotations
 
+import logging
 import math
 import os
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 import cv2
 import numpy as np
@@ -50,6 +64,8 @@ from pydantic import BaseModel, Field
 from roop.degrade import swallowed as _swallowed
 from roop.face_util import _decompose_projection, _reference_5pt
 from roop.scanner import open_capture
+
+logger = logging.getLogger("roop.pose_quality")
 
 
 def _envf(name: str, default: float) -> float:
@@ -69,6 +85,7 @@ CLIP_HI = 250        # Y >= this counts as blown highlight
 MAX_CLIPPED = _envf("ROOP_POSE_Q_MAX_CLIPPED", 0.25)     # fraction of the crop
 SHARP_FULL = _envf("ROOP_POSE_Q_SHARP_FULL", 350.0)      # same scale as face_quality
 SHARP_SIDE = 160     # crop is resized to this before the Laplacian
+EAR_MIN = _envf("ROOP_POSE_Q_EAR_MIN", 0.20)             # below: eyes closed
 _REFINE = os.environ.get("ROOP_POSE_Q_REFINE", "1").strip().lower() not in ("0", "false", "off", "no")
 
 W_SHARP, W_IOD, W_ILLUM, W_ID, W_ROLL = 0.35, 0.20, 0.15, 0.30, 0.01
@@ -260,6 +277,56 @@ def reject_reasons(breakdown: Dict[str, float]) -> List[str]:
     return reasons
 
 
+# ── Eye openness ─────────────────────────────────────────────────────────────
+def _ear(eye: np.ndarray) -> Optional[float]:
+    """(|p1-p5| + |p2-p4|) / (2 |p0-p3|) over one eye's six points, or None."""
+    width = float(np.linalg.norm(eye[0] - eye[3]))
+    if not width > 1e-6:
+        return None
+    return (float(np.linalg.norm(eye[1] - eye[5])) + float(np.linalg.norm(eye[2] - eye[4]))) / (2.0 * width)
+
+
+def eye_aspect_ratios(landmarks_68: Any) -> Optional[Tuple[float, float]]:
+    """(EAR of points 36-41, EAR of points 42-47) from 68-point landmarks
+    (x, y[, z]; z ignored), or None when they are missing or degenerate."""
+    if landmarks_68 is None:
+        return None
+    try:
+        pts = np.asarray(landmarks_68, dtype=np.float64)
+        pts = pts.reshape(pts.shape[0], -1)[:, :2]
+    except (TypeError, ValueError, IndexError):
+        return None
+    if pts.shape[0] < 68 or not np.isfinite(pts[36:48]).all():
+        return None
+    first, second = _ear(pts[36:42]), _ear(pts[42:48])
+    if first is None or second is None:
+        return None
+    return first, second
+
+
+def eyes_open(landmarks_68: Any, threshold: Optional[float] = None) -> Optional[bool]:
+    """True / False on the more open eye, None when it cannot be measured."""
+    ears = eye_aspect_ratios(landmarks_68)
+    if ears is None:
+        return None
+    return max(ears) >= (EAR_MIN if threshold is None else float(threshold))
+
+
+def app_landmarks_68(frame: np.ndarray, bbox: Sequence[float], kps: Any = None) -> Optional[np.ndarray]:
+    """68 points from the app's own ``landmark_3d_68`` model (loaded with the
+    face analyser; run on demand when it is held lazily), or None."""
+    from insightface.app.common import Face
+    from roop.face_util import lease_face_analyser
+    with lease_face_analyser() as fa:
+        model = getattr(fa, "lm68_model", None) or getattr(fa, "models", {}).get("landmark_3d_68")
+        if model is None:
+            return None
+        face = Face(bbox=np.asarray(bbox, dtype=np.float32),
+                    kps=None if kps is None else np.asarray(kps, dtype=np.float32))
+        pred = model.get(frame, face)
+    return None if pred is None else np.asarray(pred, dtype=np.float64)[:, :2]
+
+
 # ── Batch API ────────────────────────────────────────────────────────────────
 class CandidateFaceMetric(BaseModel):
     frame_idx: int
@@ -275,6 +342,9 @@ class CandidateFaceMetric(BaseModel):
     clipped_fraction: float = 0.0
     det_score: float = 0.0
     id_similarity: Optional[float] = None
+    ear: Optional[float] = None            # the more open eye; None = unmeasured
+    ear_left: Optional[float] = None       # points 36-41
+    ear_right: Optional[float] = None      # points 42-47
     is_valid: bool = False
     reject_reasons: List[str] = Field(default_factory=list)
 
@@ -292,7 +362,8 @@ def crop_face(frame: np.ndarray, bbox: Sequence[float], pad: float = 0.15) -> Op
     return frame[ay0:ay1, ax0:ax1].copy()
 
 
-def _metric_for(frame: np.ndarray, cand: Dict[str, Any]) -> CandidateFaceMetric:
+def _metric_for(frame: np.ndarray, cand: Dict[str, Any],
+                landmarks_fn: Optional[Callable] = None) -> CandidateFaceMetric:
     base = {"frame_idx": int(cand["frame_idx"]), "track_id": cand.get("track_id"),
             "det_score": float(cand.get("det_score") or 0.0),
             "id_similarity": cand.get("similarity")}
@@ -311,6 +382,23 @@ def _metric_for(frame: np.ndarray, cand: Dict[str, Any]) -> CandidateFaceMetric:
     yaw = pitch = roll = frontal = None
     if solved is not None:
         yaw, pitch, roll, frontal = solved
+
+    # Eye openness FIRST: a closed-eye frame is discarded before any sharpness
+    # or illumination work is spent on it.
+    lm68 = cand.get("landmarks_68")
+    if lm68 is None and landmarks_fn is not None:
+        try:
+            lm68 = landmarks_fn(frame, bbox, kps)
+        except Exception as exc:  # one failed landmark call must not end the batch
+            _swallowed("roop/pose_quality.py:landmarks_fn", exc, "EAR read as unmeasured")
+            lm68 = None
+    ears = eye_aspect_ratios(lm68)
+    if ears is not None:
+        base.update(ear_left=round(ears[0], 4), ear_right=round(ears[1], 4), ear=round(max(ears), 4))
+        if max(ears) < EAR_MIN:
+            return CandidateFaceMetric(**base, yaw=yaw, pitch=pitch, roll=roll,
+                                       reject_reasons=["eyes_closed"])
+
     q, bd = compute_quality_score(crop, np.asarray(kps), base["det_score"], base["id_similarity"],
                                   roll=roll, frontal_iod=frontal)
     reasons = reject_reasons(bd)
@@ -324,9 +412,15 @@ def _metric_for(frame: np.ndarray, cand: Dict[str, Any]) -> CandidateFaceMetric:
         is_valid=not reasons, reject_reasons=reasons)
 
 
-def evaluate_candidate_frames(media_path: str, candidates: List[Dict]) -> List[CandidateFaceMetric]:
-    """Pose + quality for Stage-1 detections (dicts with frame_idx, bbox, kps,
-    det_score, similarity; track_id optional). Output order matches input.
+def evaluate_candidate_frames(media_path: str, candidates: List[Dict],
+                              landmarks_fn: Optional[Callable] = app_landmarks_68) -> List[CandidateFaceMetric]:
+    """Pose + eye openness + quality for Stage-1 detections (dicts with
+    frame_idx, bbox, kps, det_score, similarity; track_id and landmarks_68
+    optional). Output order matches input.
+
+    ``landmarks_fn(frame, bbox, kps) -> (68, 2) | None`` supplies the eye points
+    for candidates without ``landmarks_68``; the default runs the app's
+    landmark_3d_68 model. Pass None to skip it (EAR is then unmeasured).
 
     Decodes the video once, sequentially (no seeks), up to the last requested
     frame; each frame is released as soon as its candidates are scored. A frame
@@ -353,8 +447,7 @@ def evaluate_candidate_frames(media_path: str, candidates: List[Dict]) -> List[C
             if not ok or frame is None:
                 continue
             for i in wanted:
-                cand = dict(candidates[i])
-                results[i] = _metric_for(frame, cand)
+                results[i] = _metric_for(frame, dict(candidates[i]), landmarks_fn)
             del frame
 
     # Blur is judged against what the clip offered, not a fixed line.
@@ -364,6 +457,13 @@ def evaluate_candidate_frames(media_path: str, candidates: List[Dict]) -> List[C
         if m is not None and m.sharpness > 0 and blur_outlier(m.sharpness, samples):
             m.reject_reasons.append("blurred")
             m.is_valid = False
+
+    scored = [m for m in results if m is not None]
+    unmeasured = sum(1 for m in scored if m.ear is None)
+    if unmeasured:
+        logger.warning("pose_quality: eye openness unmeasured on %d of %d candidate(s) - "
+                       "no 68-point landmarks; closed-eye frames were NOT filtered there",
+                       unmeasured, len(scored))
 
     for i, m in enumerate(results):
         if m is None:
@@ -376,4 +476,5 @@ def evaluate_candidate_frames(media_path: str, candidates: List[Dict]) -> List[C
 
 
 __all__ = ["CandidateFaceMetric", "estimate_head_pose", "compute_quality_score",
-           "evaluate_candidate_frames", "camera_matrix", "crop_face", "MODEL_POINTS_5"]
+           "evaluate_candidate_frames", "camera_matrix", "crop_face", "MODEL_POINTS_5",
+           "eye_aspect_ratios", "eyes_open", "app_landmarks_68", "EAR_MIN"]

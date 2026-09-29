@@ -147,7 +147,7 @@ def _cands():
 
 def test_batch_scores_every_candidate_in_order(clip):
     cands = _cands()
-    res = pq.evaluate_candidate_frames(clip, cands)
+    res = pq.evaluate_candidate_frames(clip, cands, landmarks_fn=None)
     assert [m.frame_idx for m in res] == [c["frame_idx"] for c in cands]
     assert all(isinstance(m, pq.CandidateFaceMetric) for m in res)
     by = {m.frame_idx: m for m in res}
@@ -163,8 +163,106 @@ def test_batch_scores_every_candidate_in_order(clip):
 
 def test_batch_empty_and_json_roundtrip(clip):
     assert pq.evaluate_candidate_frames(clip, []) == []
-    m = pq.evaluate_candidate_frames(clip, _cands()[-1:])[0]
+    m = pq.evaluate_candidate_frames(clip, _cands()[-1:], landmarks_fn=None)[0]
     assert pq.CandidateFaceMetric.model_validate_json(m.model_dump_json()) == m
+
+
+# ── eye openness ─────────────────────────────────────────────────────────────
+def _eye(x0, y0, opening, width=30.0):
+    """Six points p36..p41 order: corner, 2 upper, corner, 2 lower. EAR = opening / width."""
+    h = opening / 2.0
+    return [(x0, y0), (x0 + 10, y0 - h), (x0 + 20, y0 - h), (x0 + width, y0),
+            (x0 + 20, y0 + h), (x0 + 10, y0 + h)]
+
+
+def _lm68(first_open, second_open, width=30.0):
+    pts = np.zeros((68, 2), np.float64)
+    pts[36:42] = _eye(300, 200, first_open * width, width)
+    pts[42:48] = _eye(360, 200, second_open * width, width)
+    return pts
+
+
+def test_ear_formula_matches_the_brief_and_eyelid_preserver():
+    from roop.eyelid_preserver import calculate_ear
+    rng = np.random.default_rng(1)
+    pts = rng.uniform(0, 100, (68, 3))          # (x, y, z) as landmark_3d_68 returns
+    p = pts[:, :2]
+    brief = (np.linalg.norm(p[37] - p[41]) + np.linalg.norm(p[38] - p[40])) / (2 * np.linalg.norm(p[36] - p[39]))
+    first, second = pq.eye_aspect_ratios(pts)
+    assert first == pytest.approx(brief)
+    assert second == pytest.approx(calculate_ear(p[42:48]), rel=1e-5)
+    assert pq.eye_aspect_ratios(_lm68(0.30, 0.10)) == pytest.approx((0.30, 0.10))
+
+
+@pytest.mark.parametrize("bad", [None, np.zeros((5, 2)), np.full((68, 2), np.nan), np.zeros((68, 2))])
+def test_unmeasurable_eyes_are_not_read_as_open(bad):
+    assert pq.eye_aspect_ratios(bad) is None and pq.eyes_open(bad) is None
+
+
+def test_gate_reads_the_more_open_eye():
+    assert pq.eyes_open(_lm68(0.12, 0.10)) is False       # blink: both closed
+    assert pq.eyes_open(_lm68(0.28, 0.08)) is True        # far eye of a turned head
+    assert pq.eyes_open(_lm68(0.19, 0.19)) is False       # just under 0.20
+    assert pq.eyes_open(_lm68(0.20, 0.05)) is True
+
+
+def test_closed_eyes_discarded_before_sharpness_and_illumination(clip, monkeypatch):
+    calls = []
+    real_sharp, real_illum = pq.sharpness, pq.illumination
+    monkeypatch.setattr(pq, "sharpness", lambda c: calls.append("s") or real_sharp(c))
+    monkeypatch.setattr(pq, "illumination", lambda c: calls.append("i") or real_illum(c))
+    closed = dict(_cands()[-2], landmarks_68=_lm68(0.10, 0.12).tolist())    # frame 0
+    m = pq.evaluate_candidate_frames(clip, [closed], landmarks_fn=None)[0]
+    assert m.reject_reasons == ["eyes_closed"] and not m.is_valid
+    assert m.ear == pytest.approx(0.12) and m.ear_left == pytest.approx(0.10)
+    assert m.sharpness == 0.0 and m.composite_score == 0.0 and calls == []
+    assert m.yaw == pytest.approx(20, abs=0.1)            # pose still reported
+
+    opened = dict(closed, landmarks_68=_lm68(0.31, 0.29).tolist())
+    m = pq.evaluate_candidate_frames(clip, [opened], landmarks_fn=None)[0]
+    assert m.is_valid and m.ear == pytest.approx(0.31) and calls == ["s", "i"]
+
+
+def test_landmarks_fn_used_and_failures_leave_ear_unmeasured(clip, caplog):
+    seen = []
+
+    def fn(frame, bbox, kps):
+        seen.append(frame.shape)
+        return _lm68(0.05, 0.05) if len(seen) == 1 else None
+
+    cands = [c for c in _cands() if c["frame_idx"] in (1, 2, 3)]
+    res = pq.evaluate_candidate_frames(clip, cands, landmarks_fn=fn)
+    assert len(seen) == 3 and seen[0] == (VH, VW, 3)
+    assert [m.reject_reasons for m in res].count(["eyes_closed"]) == 1
+    unmeasured = [m for m in res if m.ear is None]
+    assert len(unmeasured) == 2 and all(m.is_valid for m in unmeasured)
+    assert "unmeasured on 2 of 3" in caplog.text
+
+    def boom(frame, bbox, kps):
+        raise RuntimeError("landmark model failed")
+    res = pq.evaluate_candidate_frames(clip, cands[:1], landmarks_fn=boom)
+    assert res[0].ear is None and res[0].is_valid
+
+
+def test_app_landmarks_68_uses_the_analysers_model(monkeypatch):
+    import contextlib
+    from roop import face_util
+
+    class Model:
+        def get(self, img, face):
+            self.bbox = face.bbox
+            return np.hstack([_lm68(0.3, 0.3), np.zeros((68, 1))])   # (68, 3) like the real one
+
+    class FA:
+        lm68_model = None
+        models = {"landmark_3d_68": Model()}
+
+    fa = FA()
+    monkeypatch.setattr(face_util, "lease_face_analyser", lambda: contextlib.nullcontext(fa))
+    out = pq.app_landmarks_68(np.zeros((10, 10, 3), np.uint8), [1, 2, 8, 9])
+    assert out.shape == (68, 2) and fa.models["landmark_3d_68"].bbox.tolist() == [1, 2, 8, 9]
+    fa.models = {}
+    assert pq.app_landmarks_68(np.zeros((10, 10, 3), np.uint8), [1, 2, 8, 9]) is None
 
 
 def load_tests(loader, tests, pattern):
