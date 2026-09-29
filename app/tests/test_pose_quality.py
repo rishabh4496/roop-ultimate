@@ -51,6 +51,26 @@ def test_pose_recovers_ground_truth_and_agrees_with_weak_perspective(yaw, pitch,
     assert np.max(np.abs(np.subtract(got, wp))) < 3.5
 
 
+@pytest.mark.parametrize("x_px", [300, 960, 1500, 1850])
+@pytest.mark.parametrize("yaw", [-40, 0, 30])
+def test_pose_is_relative_to_the_line_of_sight(x_px, yaw):
+    """A head off to one side reads as the picture shows it, not in camera axes.
+
+    Before the ray correction, a head at x=1850 of a 1920 frame facing down the
+    optical axis read yaw 0 while it LOOKS turned ~25 deg (the angle of the ray
+    to it); the weak-perspective solve, which only sees the face, reads 25."""
+    f = max(H, W)
+    z = f * _IOD / 80
+    cam = (_F @ _rot(yaw, 0, 0) @ _X.T).T
+    cam[:, 0] += (x_px - W / 2) * z / f
+    cam[:, 2] += z
+    pts = np.stack([f * cam[:, 0] / cam[:, 2] + W / 2, f * cam[:, 1] / cam[:, 2] + H / 2], axis=1)
+    ray = np.degrees(np.arctan((x_px - W / 2) / f))
+    got = pq.estimate_head_pose(pts, (H, W))
+    assert got[0] == pytest.approx(yaw + ray, abs=0.2)
+    assert abs(got[0] - fu.solve_pose_5pt(pts)[0]) < 2.0
+
+
 def test_pose_accepts_numpy_frame_shape_with_channels():
     pts = _project(30, 10, 5, 100)
     assert pq.estimate_head_pose(pts, (H, W, 3)) == pytest.approx((30, 10, 5), abs=0.05)
@@ -159,6 +179,37 @@ def test_batch_scores_every_candidate_in_order(clip):
     assert all(m.yaw == pytest.approx(20, abs=0.1) for m in good)
     assert all(m.track_id == 3 and m.composite_score > 0 for m in good)
     assert by[BLURRED].composite_score < min(m.composite_score for m in good)
+
+
+def test_sparse_candidates_use_the_random_access_reader(clip, monkeypatch):
+    reads = []
+
+    def reader(path, idx):
+        reads.append(idx)
+        cap = cv2.VideoCapture(path)
+        try:
+            frame = None
+            for _ in range(idx + 1):
+                ok, frame = cap.read()
+            return frame
+        finally:
+            cap.release()
+
+    monkeypatch.setattr(pq, "SPARSE_GAP_FRAMES", 3)          # 3 candidates over 20 frames = sparse
+    cands = [c for c in _cands() if c["frame_idx"] in (2, 11, 19)]
+    res = pq.evaluate_candidate_frames(clip, cands, landmarks_fn=None, read_frame=reader)
+    assert sorted(reads) == [2, 11, 19]
+    assert all(m.is_valid for m in res)
+    in_clip = [c for c in _cands() if c["frame_idx"] < N]
+    dense = pq.evaluate_candidate_frames(clip, in_clip, landmarks_fn=None, read_frame=reader)
+    assert sorted(reads) == [2, 11, 19] and len(dense) == N      # dense stays sequential
+
+
+def test_should_stop_marks_the_rest_cancelled(clip):
+    in_clip = [c for c in _cands() if c["frame_idx"] < N]
+    res = pq.evaluate_candidate_frames(clip, in_clip, landmarks_fn=None, should_stop=lambda: True)
+    assert all(m.reject_reasons == ["cancelled"] and not m.is_valid for m in res)
+    assert all(m.reject_reasons == ["cancelled"] for m in pq.revalidate(res, min_iod=1))
 
 
 def test_batch_empty_and_json_roundtrip(clip):

@@ -5705,6 +5705,7 @@ import routes_autotune as _routes_autotune
 import routes_telemetry as _routes_telemetry
 import routes_frames as _routes_frames
 import routes_models as _routes_models
+import routes_angle_scan as _routes_angle_scan
 import routes_identity as _routes_identity
 app.include_router(_routes_diagnostics.router)
 app.include_router(_routes_livecam.router)
@@ -5721,6 +5722,7 @@ app.include_router(_routes_autotune.router)
 app.include_router(_routes_telemetry.router)
 app.include_router(_routes_frames.router)
 app.include_router(_routes_models.router)
+app.include_router(_routes_angle_scan.router)
 
 
 def _ws_frame_source(index: int, frame: int, width: int, quality: int):
@@ -5750,6 +5752,125 @@ def _ws_frame_source(index: int, frame: int, width: int, quality: int):
 
 
 _routes_frames.frame_source = _ws_frame_source
+
+
+# ── /ws/angle-scan hooks (routes_angle_scan.py) ──────────────────────────────
+def _angle_scan_resolve(payload):
+    """The target clip and person an angle scan runs on, and the person's
+    captured angle bank as the reference. Same activation and person lookup as
+    /api/target/auto_angles. ValueError carries the message the UI shows."""
+    payload = payload if isinstance(payload, dict) else {}
+    idx, media_id, error = _activate_target_from_payload(
+        payload, index=payload.get("index", state.selected_target_index))
+    if error is not None:
+        try:
+            message = json.loads(error.body).get("message")
+        except Exception as exc:  # noqa: BLE001 - only the message is wanted
+            _swallowed("api.py:_angle_scan_resolve", exc, "generic message used")
+            message = None
+        raise ValueError(message or "target media is not available")
+    if idx < 0 or idx >= len(list_files_process):
+        raise ValueError("no target selected")
+    target_path = list_files_process[idx].filename
+    if util.is_image(target_path) and not target_path.lower().endswith("gif"):
+        raise ValueError("angle capture needs a video target")
+    person_id = _target_person_id_for_payload(payload)
+    if person_id is None:
+        raise ValueError("select a target person first")
+    bank = []
+    for i in _target_face_indices_for_person(person_id):
+        emb = getattr(roop_globals.TARGET_FACES[i], "embedding", None)
+        if emb is not None:
+            bank.append(np.asarray(emb, dtype=np.float32).reshape(-1))
+    if not bank:
+        raise ValueError("capture this person once first - the scan matches against their captured face")
+    return {"media_path": target_path, "media_id": media_id, "person_id": person_id,
+            "references": np.stack(bank)}
+
+
+def _angle_scan_busy():
+    return bool(_progress.get("processing"))
+
+
+def _angle_scan_apply(person_id, media_id, media_path, picks):
+    """Append the portfolio's frames to the person's angle bank, exactly as
+    auto_angles banks a harvested angle (same five parallel lists, then the
+    context save). Each pick is re-detected at its frame so the banked Face is
+    a full detector+recogniser Face; a pick whose face is not found again
+    (IoU < 0.3) or that is a near-duplicate of a banked angle is skipped."""
+    from roop.face_util import get_all_faces, _attach_source_crops, clamp_cut_values
+    added, skipped = [], []
+    with _target_context_lock:
+        active = getattr(state, "active_target_media_id", None)
+        if media_id is not None and active is not None and active != media_id:
+            raise ValueError("the active target changed since the scan; scan again")
+        person_indices = _target_face_indices_for_person(person_id)
+        if not person_indices:
+            raise ValueError("that person no longer exists")
+        raw_group = roop_globals.TARGET_FACE_GROUP[person_indices[0]]
+
+        def _unit(v):
+            v = np.asarray(v, dtype=np.float32).reshape(-1)
+            n = float(np.linalg.norm(v))
+            return v / n if n > 1e-9 else None
+
+        bank = [u for u in (_unit(getattr(roop_globals.TARGET_FACES[i], "embedding", None))
+                            for i in person_indices
+                            if getattr(roop_globals.TARGET_FACES[i], "embedding", None) is not None)
+                if u is not None]
+        for pick in picks:
+            img = get_video_frame(media_path, int(pick["frame_idx"]) + 1)
+            if img is None:
+                skipped.append({"bin": pick["bin"], "reason": "unreadable frame"})
+                continue
+            want = [float(v) for v in pick["bbox"]]
+            best, best_iou = None, 0.0
+            for f in get_all_faces(img) or []:
+                box = [float(v) for v in f.bbox]
+                ix = max(0.0, min(want[2], box[2]) - max(want[0], box[0]))
+                iy = max(0.0, min(want[3], box[3]) - max(want[1], box[1]))
+                inter = ix * iy
+                union = ((want[2] - want[0]) * (want[3] - want[1])
+                         + (box[2] - box[0]) * (box[3] - box[1]) - inter)
+                iou = inter / union if union > 0 else 0.0
+                if iou > best_iou:
+                    best, best_iou = f, iou
+            if best is None or best_iou < 0.3:
+                skipped.append({"bin": pick["bin"], "reason": "face not found again at that frame"})
+                continue
+            e = _unit(getattr(best, "embedding", None)) if getattr(best, "embedding", None) is not None else None
+            if e is None:
+                skipped.append({"bin": pick["bin"], "reason": "no embedding"})
+                continue
+            if bank and max(float(b @ e) for b in bank if b.shape == e.shape) > 0.97:
+                skipped.append({"bin": pick["bin"], "reason": "already in the angle bank"})
+                continue
+            (sx, sy, ex, ey) = best["bbox"].astype("int")
+            sx, ex, sy, ey = clamp_cut_values(sx, ex, sy, ey, img)
+            crop = img[sy:ey, sx:ex]
+            if crop.size < 1:
+                skipped.append({"bin": pick["bin"], "reason": "empty crop"})
+                continue
+            _attach_source_crops(best, img)
+            roop_globals.TARGET_FACES.append(best)
+            roop_globals.TARGET_FACE_GROUP.append(raw_group)
+            roop_globals.TARGET_FACE_PERSON_IDS.append(person_id)
+            roop_globals.TARGET_REFERENCE_FACE_IDS.append(new_target_reference_face_id())
+            ui_globals.ui_target_thumbs.append(util.convert_to_gradio(crop))
+            bank.append(e)
+            added.append({"bin": pick["bin"], "frame_idx": int(pick["frame_idx"]),
+                          "index": len(roop_globals.TARGET_FACES) - 1})
+        if added:
+            print(f"[AngleScan] +{len(added)} angle(s) for {person_id}: "
+                  + ", ".join(a["bin"] for a in added)
+                  + (f"; skipped {len(skipped)}" if skipped else ""), flush=True)
+        _save_active_target_context_locked()
+        return _target_faces_payload({"added": len(added), "added_bins": added, "skipped": skipped})
+
+
+_routes_angle_scan.resolve_target = _angle_scan_resolve
+_routes_angle_scan.is_busy = _angle_scan_busy
+_routes_angle_scan.apply_to_person = _angle_scan_apply
 
 # Backwards-compatible Python imports for callers that used these handlers
 # directly. Route ownership stays in routes_output.router, so these aliases do

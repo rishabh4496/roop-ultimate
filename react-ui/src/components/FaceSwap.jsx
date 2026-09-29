@@ -1,4 +1,6 @@
 import OutputVideoPlayer from './OutputVideoPlayer';
+import { TargetAngleCaptureHUD } from './BiometricAngleHUD';
+import { applyTargetFacesPayload } from './faceswap/targetPayload';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { getJSON, postJSON, postFile, postFiles, API } from '../api';
@@ -2331,6 +2333,19 @@ export default function FaceSwap({
     }
   };
 
+  // Biometric Angle HUD hooks. "Jump" lands on the scanned frame exactly: the
+  // HUD converts the server's 0-based frame_idx to this 1-based timeline frame.
+  const jumpToTimelineFrame = (f) => setFrame(Math.max(1, Math.min(Math.round(f), maxFrames)));
+  // "Add to angle bank" returns the same target payload as auto-capture; apply
+  // it through the same steps PersonGroups uses.
+  const applyAngleBankPayload = (res) => applyTargetFacesPayload(res, {
+    applyTargetContext, targetMediaId: activeTargetMediaId, setTargetFaces, setTargetGroups,
+    setTargetNames, setTargetFacesInfo, setFaceMapping, setTargetPersonIds, setTargetReferenceFaceIds,
+    setSelectedTargetPersonId, setSelectedReferenceFaceId, clearPreviewCache,
+  });
+  const angleHudPersonIndex = targetPersonIds.indexOf(selectedTargetPersonId);
+  const angleHudPersonLabel = (angleHudPersonIndex >= 0 && targetNames[angleHudPersonIndex]) || undefined;
+
   const handleTimelinePointerMove = (e) => {
     if (!timelineRef.current) return;
     const clientX = e.clientX ?? e.touches?.[0]?.clientX;
@@ -3305,6 +3320,20 @@ export default function FaceSwap({
               setTargetFacesInfo={setTargetFacesInfo}
               notify={notify}
               clearPreviewCache={clearPreviewCache}
+            />
+          </Section>
+
+          <Section title="Angle capture" collapsible defaultOpen>
+            <TargetAngleCaptureHUD
+              targetPersonId={selectedTargetPersonId}
+              targetMediaId={activeTargetMediaId}
+              targetIndex={selTarget}
+              isVideo={(targets[selTarget]?.frames || 0) > 1}
+              personLabel={angleHudPersonLabel}
+              currentFrame={frame}
+              onJumpToFrame={jumpToTimelineFrame}
+              onBankUpdated={applyAngleBankPayload}
+              notify={notify}
             />
           </Section>
 

@@ -267,7 +267,14 @@ class TestTargetFaceCapture(unittest.TestCase):
         self.assertIn("applyTargetContext={applyTargetContext}", fs_source)
         self.assertIn("setSelectedReferenceFaceId(referenceId)", pg_source)
         self.assertIn("setFaceSelection('Selected people')", pg_source)
-        self.assertIn("applyTargetContext(res", pg_source)
+        # PersonGroups applies API payloads through the helper it shares with the
+        # Biometric Angle HUD; the context call lives there.
+        helper = os.path.join(APP, "..", "react-ui", "src", "components", "faceswap", "targetPayload.js")
+        with open(helper, "r", encoding="utf-8") as handle:
+            helper_source = handle.read()
+        self.assertIn("applyTargetFacesPayload(res, {", pg_source)
+        self.assertIn("applyTargetContext, targetMediaId", pg_source)
+        self.assertIn("h.applyTargetContext(res", helper_source)
 
 
 if __name__ == "__main__":

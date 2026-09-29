@@ -74,6 +74,25 @@ def _normed(vec: Any) -> Optional[np.ndarray]:
     return out / norm if norm > 1e-7 else None
 
 
+def _normed_bank(value: Any) -> Optional[np.ndarray]:
+    """(k, d) unit rows from one embedding or a bank of them; None if unusable.
+
+    A person captured at several angles is matched against their CLOSEST
+    angle, the same min-distance rule the swap applies to an angle bank."""
+    if value is None:
+        return None
+    try:
+        arr = np.asarray(value, dtype=np.float32)
+    except (TypeError, ValueError):
+        return None
+    if arr.ndim == 1:
+        arr = arr[None, :]
+    if arr.ndim != 2 or arr.shape[0] == 0 or arr.shape[1] == 0:
+        return None
+    rows = [r for r in (_normed(row) for row in arr) if r is not None]
+    return np.stack(rows) if rows else None
+
+
 def _face_field(face: Any, name: str) -> Any:
     if isinstance(face, dict):
         return face.get(name)
@@ -155,6 +174,11 @@ class TemporalPrePassScanner:
         self.progress = progress
         self._cancel = threading.Event()
         self._tracks: Dict[int, List[Dict[str, Any]]] = {}
+        # Updated in place during a scan; read by ``progress`` callbacks.
+        # tracklet_size is the detections in the largest tracklet that has
+        # already cleared the threshold on some frame - a live estimate, the
+        # final membership is decided on the top-K mean at the end.
+        self.live: Dict[str, Any] = {}
         self.last_result: Optional[Dict[str, Any]] = None
 
     # ── public API ─────────────────────────────────────────────────────────
@@ -162,6 +186,12 @@ class TemporalPrePassScanner:
                          step_frames: int = 3) -> Dict[str, Any]:
         """Scan off the event loop; see _scan for the result schema."""
         return await asyncio.to_thread(self._scan, video_path, reference_embedding, step_frames)
+
+    def scan(self, video_path: str, reference_embedding: Any, step_frames: Optional[int] = 3) -> Dict[str, Any]:
+        """Blocking form of scan_media, for a caller already on a worker thread.
+        ``reference_embedding`` may be one vector or a (k, d) bank; a face's
+        similarity is its best match over the bank."""
+        return self._scan(video_path, reference_embedding, step_frames)
 
     def extract_tracklet_candidates(self, track_id: int) -> List[Dict[str, Any]]:
         """Every detection of ``track_id`` from the last scan, ranked as capture
@@ -191,7 +221,7 @@ class TemporalPrePassScanner:
     def _scan(self, video_path: str, reference_embedding: Any, step_frames: Optional[int]) -> Dict[str, Any]:
         if not video_path or not os.path.isfile(video_path):
             raise FileNotFoundError(video_path)
-        reference = _normed(reference_embedding)
+        reference = _normed_bank(reference_embedding)
         if reference is None:
             raise ValueError("reference_embedding is empty or not finite")
         self._cancel.clear()
@@ -206,6 +236,8 @@ class TemporalPrePassScanner:
         dim_mismatch = 0
         frames_scanned = faces_seen = 0
         cancelled = False
+        track_best: Dict[int, float] = {}
+        tracklet_size = 0
 
         self._warn_if_cv2_differs(video_path)
         with open_capture(video_path) as capture:
@@ -220,6 +252,11 @@ class TemporalPrePassScanner:
             # or every detector blink fragments the tracklet.
             tracker = TemporalFaceTracker(max_misses=max(3, 2 * step),
                                           reid_age=max(45, 15 * step))
+            frame_shape: Tuple[int, int] = (int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0),
+                                            int(capture.get(cv2.CAP_PROP_FRAME_WIDTH) or 0))
+            self.live = {"frame_idx": 0, "frame_total": frame_total, "step_frames": step,
+                         "frames_scanned": 0, "faces_seen": 0, "tracklet_size": 0,
+                         "scan_fps": 0.0, "elapsed_s": 0.0}
 
             idx = -1
             decoded = 0
@@ -264,12 +301,23 @@ class TemporalPrePassScanner:
                         if record.pop("_dim_mismatch", False):
                             dim_mismatch += 1
                         tracks.setdefault(int(track_id), []).append(record)
+                        tid = int(track_id)
+                        if record["similarity"] is not None:
+                            track_best[tid] = max(track_best.get(tid, -2.0), record["similarity"])
+                        if track_best.get(tid, -2.0) >= self.similarity_threshold:
+                            tracklet_size = max(tracklet_size, len(tracks[tid]))
                 else:
                     tracker.update([], idx, frame.shape, detection_mode="full")
                 # Frames are 6-25 MB each at 1080p-4K; do not let the loop
                 # variables pin one across the next decode.
                 del frame, faces
-                if self.progress is not None and frames_scanned % 50 == 0:
+                frame_shape = frame_shape if all(frame_shape) else (int(frame.shape[0]), int(frame.shape[1]))
+                if frames_scanned % 10 == 0:
+                    elapsed_now = time.perf_counter() - t0
+                    self.live.update(frame_idx=idx, frames_scanned=frames_scanned, faces_seen=faces_seen,
+                                     tracklet_size=tracklet_size, elapsed_s=round(elapsed_now, 2),
+                                     scan_fps=round(frames_scanned / elapsed_now, 1) if elapsed_now > 0 else 0.0)
+                if self.progress is not None and frames_scanned % 10 == 0:
                     try:
                         self.progress(idx, frame_total)
                     except Exception as exc:
@@ -286,7 +334,7 @@ class TemporalPrePassScanner:
         if dim_mismatch:
             logger.warning("scanner: %d face embedding(s) did not match the reference's "
                            "dimension %d - is the reference from another recognizer?",
-                           dim_mismatch, reference.size)
+                           dim_mismatch, reference.shape[1])
 
         index, rejected = self._classify(tracks)
         self._tracks = tracks
@@ -295,6 +343,7 @@ class TemporalPrePassScanner:
             "video_path": video_path,
             "frame_total": frame_total,
             "fps": fps,
+            "frame_shape": list(frame_shape),
             "step_frames": step,
             "similarity_threshold": self.similarity_threshold,
             "frames_decoded": decoded,
@@ -348,8 +397,8 @@ class TemporalPrePassScanner:
         similarity = None
         record: Dict[str, Any] = {}
         if emb is not None:
-            if emb.shape == reference.shape:
-                similarity = round(float(np.dot(emb, reference)), 4)
+            if emb.shape[0] == reference.shape[1]:
+                similarity = round(float(np.max(reference @ emb)), 4)
             else:
                 record["_dim_mismatch"] = True
         record.update({

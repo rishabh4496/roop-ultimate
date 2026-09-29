@@ -4,6 +4,7 @@ import { PERSON_COLORS } from './constants';
 import { confirmDialog } from './confirm';
 import { Icon } from '../icons';
 import { targetPersonRecords, normalizeSourceIndex, SKIP } from './faceswap/faceMapping';
+import { applyTargetFacesPayload } from './faceswap/targetPayload';
 
 // Coarse pose buckets we consider "primary coverage" for a person. Anything the
 // backend labels (e.g. "Left Profile + Up Tilt") is matched against these by
@@ -97,36 +98,13 @@ export default function PersonGroups({
     || targetPersonIds?.[selTargetFace]
     || people[0]?.[0];
 
-  // Push the parallel arrays back to the parent from an API payload.
-  const applyPayload = (res) => {
-    if (!res) return;
-    if (applyTargetContext) {
-      applyTargetContext(res, res.target_media_id || targetMediaId);
-    }
-    if (res.target_faces) setTargetFaces(res.target_faces);
-    if (res.target_groups) {
-      const flat = res.target_groups.map((g) => Array.isArray(g) ? (g[0] ?? 0) : (typeof g === 'number' ? g : parseInt(g, 10) || 0));
-      setTargetGroups(flat);
-    }
-    if (res.target_names !== undefined && setTargetNames) setTargetNames(res.target_names || []);
-    if (res.target_faces_info !== undefined && setTargetFacesInfo) setTargetFacesInfo(res.target_faces_info || []);
-    if (res.target_person_source_mapping !== undefined && setFaceMapping) {
-      setFaceMapping(res.target_person_source_mapping || {});
-    } else if (res.face_mapping && !Array.isArray(res.face_mapping) && setFaceMapping) {
-      setFaceMapping(res.face_mapping || {});
-    }
-    if (res.target_person_ids && setTargetPersonIds) setTargetPersonIds(res.target_person_ids);
-    if (res.target_reference_face_ids && setTargetReferenceFaceIds) setTargetReferenceFaceIds(res.target_reference_face_ids);
-    if (res.selected_target_person_id && setSelectedTargetPersonId) setSelectedTargetPersonId(res.selected_target_person_id);
-    if (setSelectedReferenceFaceId) {
-      const refId = res.selected_reference_face_id
-        ?? (res.target_reference_face_ids?.[res.selected_target_face_index ?? 0] || null);
-      if (refId !== undefined) {
-        setSelectedReferenceFaceId(refId);
-      }
-    }
-    if (clearPreviewCache) clearPreviewCache();
-  };
+  // Push the parallel arrays back to the parent from an API payload. Shared
+  // with the Biometric Angle HUD (faceswap/targetPayload.js).
+  const applyPayload = (res) => applyTargetFacesPayload(res, {
+    applyTargetContext, targetMediaId, setTargetFaces, setTargetGroups, setTargetNames,
+    setTargetFacesInfo, setFaceMapping, setTargetPersonIds, setTargetReferenceFaceIds,
+    setSelectedTargetPersonId, setSelectedReferenceFaceId, clearPreviewCache,
+  });
 
   const isExpanded = (rank) => (rank in expanded ? expanded[rank] : rank === selRank);
   const toggleExpand = (rank) => setExpanded((e) => ({ ...e, [rank]: !isExpanded(rank) }));

@@ -1,0 +1,21 @@
+{
+  // Type-checks the TypeScript parts of the UI (the rest is JSX and is not
+  // checked). Vite compiles .ts/.tsx itself; this config is for `tsc` only:
+  //   node ../node_modules/typescript/bin/tsc -p tsconfig.json
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "jsx": "react-jsx",
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "allowJs": true,
+    "checkJs": false,
+    "allowImportingTsExtensions": false,
+    "isolatedModules": true,
+    "types": []
+  },
+  "include": ["src/**/*.ts", "src/**/*.tsx"]
+}

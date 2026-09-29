@@ -148,10 +148,12 @@ def distance_to_bin(yaw: float, pitch: float, bin_: AngleBin) -> float:
 @dataclass
 class BinSlot:
     """Why a bin holds what it holds."""
-    status: str                           # "selected" | "nearest" | "missing"
+    status: str                           # "selected" | "nearest" | "override" | "missing"
     candidates: int = 0                   # valid candidates that fell in the bin
     distance_deg: float = 0.0             # > 0 only for "nearest"
-    source_bin: Optional[str] = None      # the bin a "nearest" fill came from (None = a gap)
+    # The bin a "nearest" fill or an "override" frame actually sits in by its
+    # own pose (None = a lattice gap, or no pose).
+    source_bin: Optional[str] = None
 
 
 def _rank_key(m: CandidateFaceMetric):
@@ -168,10 +170,17 @@ class AnglePortfolioSelector:
         self.max_fill_deg = float(max_fill_deg)
         self.report: Dict[AngleBin, BinSlot] = {}
 
-    def select_portfolio(self, metrics: List[CandidateFaceMetric]) -> Dict[AngleBin, CandidateFaceMetric]:
+    def select_portfolio(self, metrics: List[CandidateFaceMetric],
+                         overrides: Optional[Dict[AngleBin, CandidateFaceMetric]] = None
+                         ) -> Dict[AngleBin, CandidateFaceMetric]:
         """Best valid candidate per bin. An empty bin takes the nearest unused
         candidate within ``max_fill_deg`` of it (flagged "nearest" in
-        ``self.report``) or stays out of the result (flagged "missing")."""
+        ``self.report``) or stays out of the result (flagged "missing").
+
+        ``overrides`` are the user's own picks: they win their bin whatever
+        their pose or validity (flagged "override", with the bin their pose
+        really falls in), and are not lent to other bins."""
+        overrides = dict(overrides or {})
         usable = [m for m in metrics
                   if m.is_valid and m.yaw is not None and m.pitch is not None
                   and math.isfinite(m.yaw) and math.isfinite(m.pitch)]
@@ -186,7 +195,17 @@ class AnglePortfolioSelector:
         portfolio: Dict[AngleBin, CandidateFaceMetric] = {}
         report: Dict[AngleBin, BinSlot] = {}
         used = set()
+        for b, m in overrides.items():
+            b = AngleBin(b)
+            portfolio[b] = m
+            used.add(_identity(m))
+            natural = (angle_bin(m.yaw, m.pitch)
+                       if m.yaw is not None and m.pitch is not None else None)
+            report[b] = BinSlot("override", candidates=len(groups[b]),
+                                source_bin=None if natural is None else natural.name)
         for b in AngleBin:
+            if b in portfolio:
+                continue
             if groups[b]:
                 best = max(groups[b], key=_rank_key)
                 portfolio[b] = best
@@ -252,6 +271,40 @@ def synthesize_fused_embedding(portfolio: Dict[AngleBin, CandidateFaceMetric],
     return (fused / norm).astype(np.float32)
 
 
+def shortlist_candidates(detections: List[Dict[str, Any]], frame_shape: Tuple[int, int],
+                         per_bin: int = 40) -> List[Dict[str, Any]]:
+    """At most ``per_bin`` Stage-1 detections per pose bin (gaps grouped by
+    10-degree cell, a quarter of that each), spread evenly over time.
+
+    Stage 2 decodes and runs the landmark model per candidate; a long clip's
+    member tracklets hold tens of thousands of detections that are mostly the
+    same pose. The pose is solved here from the keypoints alone (no decode), so
+    thinning never costs a rare angle its only frames. Evenly spaced in time
+    rather than top-scored because sharpness is not known yet and a burst of
+    consecutive frames tends to share its motion blur."""
+    from roop.pose_quality import estimate_head_pose
+    groups: Dict[Any, List[Dict[str, Any]]] = {}
+    for det in detections:
+        kps = det.get("kps")
+        if kps is None:
+            continue
+        yaw, pitch, _roll = estimate_head_pose(np.asarray(kps, dtype=np.float64), frame_shape)
+        if not (math.isfinite(yaw) and math.isfinite(pitch)):
+            continue
+        b = angle_bin(yaw, pitch)
+        key = b if b is not None else ("gap", int(round(yaw / 10.0)), int(round(pitch / 10.0)))
+        groups.setdefault(key, []).append(det)
+    out: List[Dict[str, Any]] = []
+    for key, dets in groups.items():
+        cap = per_bin if isinstance(key, AngleBin) else max(1, per_bin // 4)
+        dets = sorted(dets, key=lambda d: int(d["frame_idx"]))
+        if len(dets) > cap:
+            picks = np.linspace(0, len(dets) - 1, cap).round().astype(int)
+            dets = [dets[i] for i in sorted(set(picks.tolist()))]
+        out.extend(dets)
+    return sorted(out, key=lambda d: int(d["frame_idx"]))
+
+
 # ── Frame export ─────────────────────────────────────────────────────────────
 def app_embedding(frame: np.ndarray, kps: Any) -> Optional[np.ndarray]:
     """The app's own recognizer (the analyser's 'recognition' model, i.e. the
@@ -306,17 +359,20 @@ def build_target_angle_payload(media_path: str, metrics: List[CandidateFaceMetri
                                selector: Optional[AnglePortfolioSelector] = None,
                                embed_fn: Optional[Callable] = app_embedding,
                                cache_root: Optional[str] = None,
-                               jpeg_quality: int = 92) -> Dict[str, Any]:
+                               jpeg_quality: int = 92,
+                               overrides: Optional[Dict[AngleBin, CandidateFaceMetric]] = None,
+                               inline_images: bool = True) -> Dict[str, Any]:
     """Select, export and fuse; returns the React payload.
 
     Writes ``<cache_root>/<key>/bin_<n>.jpg``, ``fused_embedding.npy`` and
     ``manifest.json``; the key covers the file's identity and the exact
     selection, so a repeat call with the same selection is served from disk
     without decoding. ``cache_root`` defaults to ``app/output/cache/target_angles``
-    (``ROOP_TARGET_ANGLE_CACHE`` overrides).
+    (``ROOP_TARGET_ANGLE_CACHE`` overrides). ``inline_images=False`` leaves the
+    base64 ``image`` fields out (a caller serving the files by URL).
     """
     selector = selector or AnglePortfolioSelector()
-    portfolio = selector.select_portfolio(metrics)
+    portfolio = selector.select_portfolio(metrics, overrides=overrides)
     root = cache_root or os.environ.get("ROOP_TARGET_ANGLE_CACHE") or DEFAULT_CACHE_ROOT
     key = _media_key(media_path, portfolio)
     out_dir = os.path.join(root, key)
@@ -329,7 +385,9 @@ def build_target_angle_payload(media_path: str, metrics: List[CandidateFaceMetri
             for entry in payload["bins"]:
                 if entry.get("file"):
                     with open(os.path.join(out_dir, entry["file"]), "rb") as fh:
-                        entry["image"] = _dataurl(fh.read())
+                        data = fh.read()
+                    if inline_images:
+                        entry["image"] = _dataurl(data)
             payload["cached"] = True
             return payload
         except (OSError, ValueError, KeyError) as exc:
@@ -412,7 +470,7 @@ def build_target_angle_payload(media_path: str, metrics: List[CandidateFaceMetri
     with open(manifest_path, "w", encoding="utf-8") as fh:
         json.dump(payload, fh, indent=1)
     for entry in bins:
-        if entry.get("file"):
+        if entry.get("file") and inline_images:
             entry["image"] = _dataurl(images[AngleBin(entry["index"])])
     payload["cached"] = False
     return payload
@@ -420,4 +478,5 @@ def build_target_angle_payload(media_path: str, metrics: List[CandidateFaceMetri
 
 __all__ = ["AngleBin", "AnglePortfolioSelector", "BinSlot", "FUSION_BINS", "angle_bin",
            "distance_to_bin", "pitch_up", "synthesize_fused_embedding", "app_embedding",
-           "aligned_crop", "build_target_angle_payload", "DEFAULT_CACHE_ROOT"]
+           "aligned_crop", "build_target_angle_payload", "shortlist_candidates",
+           "DEFAULT_CACHE_ROOT"]

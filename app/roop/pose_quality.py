@@ -117,6 +117,17 @@ def camera_matrix(frame_shape: Sequence[int]) -> np.ndarray:
     return np.array([[f, 0.0, w / 2.0], [0.0, f, h / 2.0], [0.0, 0.0, 1.0]], dtype=np.float64)
 
 
+def _ray_frame(t: np.ndarray) -> np.ndarray:
+    """The minimal rotation taking the optical axis (0, 0, 1) onto the ray t."""
+    d = np.asarray(t, dtype=np.float64) / max(float(np.linalg.norm(t)), 1e-12)
+    v = np.array([-d[1], d[0], 0.0])                  # (0, 0, 1) x d
+    s = float(np.linalg.norm(v))
+    if s < 1e-9:
+        return np.eye(3)
+    vx = np.array([[0.0, -v[2], v[1]], [v[2], 0.0, -v[0]], [-v[1], v[0], 0.0]])
+    return np.eye(3) + vx + vx @ vx * ((1.0 - d[2]) / (s * s))
+
+
 def _solve(landmarks_2d: Any, frame_shape: Sequence[int]):
     """(yaw, pitch, roll, frontal_iod_px) or None."""
     pts = np.asarray(landmarks_2d, dtype=np.float64).reshape(-1, 2)
@@ -136,15 +147,23 @@ def _solve(landmarks_2d: Any, frame_shape: Sequence[int]):
         if not np.isfinite(rvec).all() or not np.isfinite(tvec).all():
             return None
     R, _ = cv2.Rodrigues(rvec)
-    out = _decompose_projection(_TO_DECOMPOSE @ R[:2].T)
-    if out is None:
-        return None
-    yaw, pitch, roll, _scale = out
     tz = float(tvec[2, 0])
     # EPnP can return the mirror solution behind the camera; a head there is
     # not a head in the picture.
     if not tz > 1e-6:
         return None
+    # Relative to the LINE OF SIGHT, not the camera axes. solvePnP's rotation
+    # is in camera axes, so a head off to one side looking straight down the
+    # optical axis reads yaw 0 while the picture shows it turned by the ray
+    # angle (up to ~27 deg at the edge of a 16:9 frame with f = max(w, h)).
+    # The bins sort crops by how the face LOOKS, and the weak-perspective
+    # solver the render uses only sees that, so rotate the ray onto the
+    # optical axis first (the minimal rotation, which adds no roll about it).
+    R = _ray_frame(tvec.reshape(3)).T @ R
+    out = _decompose_projection(_TO_DECOMPOSE @ R[:2].T)
+    if out is None:
+        return None
+    yaw, pitch, roll, _scale = out
     frontal_iod = float(K[0, 0]) * _REF_IOD / tz
     return float(yaw), float(pitch), float(roll), frontal_iod
 
@@ -275,6 +294,39 @@ def reject_reasons(breakdown: Dict[str, float]) -> List[str]:
     if breakdown["shadow_clipped"] + breakdown["highlight_clipped"] > MAX_CLIPPED:
         reasons.append("clipped")
     return reasons
+
+
+# Reasons decided before any photometric scoring ran: the frame has no
+# sharpness/size numbers to re-gate.
+_UNSCORED = {"no_landmarks", "bad_bbox", "eyes_closed", "unreadable_frame", "cancelled"}
+
+
+def revalidate(metrics: List["CandidateFaceMetric"], min_iod: Optional[float] = None,
+               blur_frac: Optional[float] = None) -> List["CandidateFaceMetric"]:
+    """Copies of ``metrics`` with the SIZE and BLUR gates re-applied at new
+    thresholds, from the numbers already measured - no decode, no model call,
+    so a UI slider can move them live. Every other reason (dark, clipped, eyes
+    closed, unreadable...) is kept as it was. The composite score is not
+    recomputed: thresholds decide validity, not ranking.
+
+    ``blur_frac`` is ``face_quality.blur_outlier``'s fraction of the batch
+    median (0 disables the blur gate)."""
+    from roop.face_quality import blur_outlier
+    min_iod = MIN_IOD_PX if min_iod is None else float(min_iod)
+    out = []
+    for m in metrics:
+        c = m.model_copy(deep=True)
+        scored = not any(r in _UNSCORED for r in c.reject_reasons)
+        c.reject_reasons = [r for r in c.reject_reasons if r not in ("too_small", "blurred")]
+        if scored and c.frontal_iod_px < min_iod:
+            c.reject_reasons.append("too_small")
+        out.append((c, scored))
+    samples = [c.sharpness for c, scored in out if scored and c.sharpness > 0]
+    for c, scored in out:
+        if scored and c.sharpness > 0 and blur_outlier(c.sharpness, samples, frac=blur_frac):
+            c.reject_reasons.append("blurred")
+        c.is_valid = not c.reject_reasons
+    return [c for c, _ in out]
 
 
 # ── Eye openness ─────────────────────────────────────────────────────────────
@@ -433,8 +485,18 @@ def _metric_for(frame: np.ndarray, cand: Dict[str, Any],
         is_valid=not reasons, reject_reasons=reasons)
 
 
+# Mean frames between candidate frames above which a random-access reader (when
+# given) beats decoding the whole run: sequential grab() runs ~440 fps here, a
+# robust seek costs ~40-200 ms, so the break-even is roughly 20-90 frames; the
+# margin keeps short, dense clips on the cheaper sequential path.
+SPARSE_GAP_FRAMES = 150
+
+
 def evaluate_candidate_frames(media_path: str, candidates: List[Dict],
-                              landmarks_fn: Optional[Callable] = app_landmarks_68) -> List[CandidateFaceMetric]:
+                              landmarks_fn: Optional[Callable] = app_landmarks_68,
+                              progress: Optional[Callable[[int, int], None]] = None,
+                              read_frame: Optional[Callable[[str, int], Any]] = None,
+                              should_stop: Optional[Callable[[], bool]] = None) -> List[CandidateFaceMetric]:
     """Pose + eye openness + quality for Stage-1 detections (dicts with
     frame_idx, bbox, kps, det_score, similarity; track_id and landmarks_68
     optional). Output order matches input.
@@ -442,6 +504,14 @@ def evaluate_candidate_frames(media_path: str, candidates: List[Dict],
     ``landmarks_fn(frame, bbox, kps) -> (68, 2) | None`` supplies the eye points
     for candidates without ``landmarks_68``; the default runs the app's
     landmark_3d_68 model. Pass None to skip it (EAR is then unmeasured).
+    ``progress(done, total)`` is called after each decoded candidate frame.
+
+    ``read_frame(path, frame_idx)`` is a random-access reader (0-based index);
+    when given and the candidates are sparse (mean gap > SPARSE_GAP_FRAMES), each
+    candidate frame is fetched with it instead of decoding every frame up to
+    the last one - on a two-hour clip that is ~216k grabs for a few hundred
+    frames. ``should_stop()`` is polled per frame; when it turns true the batch
+    stops and the unscored rows read ``cancelled``.
 
     Decodes the video once, sequentially (no seeks), up to the last requested
     frame; each frame is released as soon as its candidates are scored. A frame
@@ -455,21 +525,50 @@ def evaluate_candidate_frames(media_path: str, candidates: List[Dict],
     results: List[Optional[CandidateFaceMetric]] = [None] * len(candidates)
     last = max(by_frame)
 
-    with open_capture(media_path) as capture:
-        idx = -1
-        while idx < last:
-            idx += 1
-            if not capture.grab():
+    done = 0
+    stopped = False
+
+    def score(frame, wanted):
+        nonlocal done
+        for i in wanted:
+            results[i] = _metric_for(frame, dict(candidates[i]), landmarks_fn)
+        done += len(wanted)
+        if progress is not None:
+            try:
+                progress(done, len(candidates))
+            except Exception as exc:
+                _swallowed("roop/pose_quality.py:progress", exc, "batch continued")
+
+    frames = sorted(by_frame)
+    sparse = read_frame is not None and len(frames) > 0 and (last + 1) / len(frames) > SPARSE_GAP_FRAMES
+    if sparse:
+        for idx in frames:
+            if should_stop is not None and should_stop():
+                stopped = True
                 break
-            wanted = by_frame.get(idx)
-            if not wanted:
+            frame = read_frame(media_path, idx)
+            if frame is None:
                 continue
-            ok, frame = capture.retrieve()
-            if not ok or frame is None:
-                continue
-            for i in wanted:
-                results[i] = _metric_for(frame, dict(candidates[i]), landmarks_fn)
+            score(frame, by_frame[idx])
             del frame
+    else:
+        with open_capture(media_path) as capture:
+            idx = -1
+            while idx < last:
+                idx += 1
+                if should_stop is not None and idx % 32 == 0 and should_stop():
+                    stopped = True
+                    break
+                if not capture.grab():
+                    break
+                wanted = by_frame.get(idx)
+                if not wanted:
+                    continue
+                ok, frame = capture.retrieve()
+                if not ok or frame is None:
+                    continue
+                score(frame, wanted)
+                del frame
 
     # Blur is judged against what the clip offered, not a fixed line.
     from roop.face_quality import blur_outlier
@@ -488,10 +587,11 @@ def evaluate_candidate_frames(media_path: str, candidates: List[Dict],
 
     for i, m in enumerate(results):
         if m is None:
-            results[i] = CandidateFaceMetric(**_base(candidates[i]), reject_reasons=["unreadable_frame"])
+            results[i] = CandidateFaceMetric(**_base(candidates[i]),
+                                             reject_reasons=["cancelled" if stopped else "unreadable_frame"])
     return results  # type: ignore[return-value]
 
 
 __all__ = ["CandidateFaceMetric", "estimate_head_pose", "compute_quality_score",
            "evaluate_candidate_frames", "camera_matrix", "crop_face", "MODEL_POINTS_5",
-           "eye_aspect_ratios", "eyes_open", "app_landmarks_68", "EAR_MIN"]
+           "eye_aspect_ratios", "eyes_open", "app_landmarks_68", "EAR_MIN", "revalidate"]
