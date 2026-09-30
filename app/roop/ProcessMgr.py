@@ -2185,6 +2185,9 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
             wait_ms = float(os.environ.get('ROOP_BATCH_SWAP_WAIT_MS', '4.0'))
         except ValueError:
             wait_ms = 4.0
+        if hasattr(swap_p, 'warmup_batch'):
+            with _gpu_guard(pooled=pooled, owner='swap'):
+                swap_p.warmup_batch(max_b)
         b = swap_batcher.SwapBatcher(
             swap_p.RunBatchMulti, lambda: _gpu_guard(pooled=pooled, owner='swap'),
             max_batch=max_b, max_wait_ms=wait_ms)

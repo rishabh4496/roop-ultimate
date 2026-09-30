@@ -2203,6 +2203,37 @@ class FaceSwapInsightFace():
                   f"(falling back to sequential single-frame swaps).")
             return self._sequential_fallback(requests)
 
+    def warmup_batch(self, batch_size: int = 1) -> bool:
+        """Pre-warm TensorRT engine and execution providers for a batched shape.
+
+        Without this, cross-frame batching hits TensorRT dynamic engine compilation
+        on the first batched frame mid-render, which can stall workers for several
+        minutes without terminal feedback.
+        """
+        if batch_size <= 1 or getattr(self, '_batch_unsupported', False):
+            return True
+        spec = SWAP_MODELS.get(self.loaded_model_key, {})
+        if not spec.get("batch_capable", True):
+            return True
+        if getattr(self, 'model_swap_insightface', None) is None:
+            return False
+        h = w = int(spec.get("output_size", 256) or 256)
+        dummy_blob = np.zeros((batch_size, 3, h, w), dtype=np.float32)
+        dummy_latent = np.zeros((batch_size, 512), dtype=np.float32)
+        feed = {self.image_input_name: dummy_blob, self.embed_input_name: dummy_latent}
+        t0 = time.time()
+        try:
+            self._infer(feed)
+            dt = time.time() - t0
+            note = " (engine build)" if dt > 5.0 else ""
+            print(f"[Warmup] swapper:{self.loaded_model_key} batch {batch_size}: in {dt:.2f}s{note}", flush=True)
+            if getattr(self, 'secondary', None) is not None and hasattr(self.secondary, 'warmup_batch'):
+                self.secondary.warmup_batch(batch_size)
+            return True
+        except Exception as exc:
+            _swallowed("FaceSwapInsightFace.py:warmup_batch", exc, "batch warmup fallback")
+            return False
+
     def Release(self):
         summary = self.mix_summary()
         if summary:

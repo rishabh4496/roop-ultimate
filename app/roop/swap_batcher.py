@@ -143,7 +143,10 @@ class SwapBatcher:
                     raise RuntimeError(
                         'swap batch returned %d outputs for %d requests' %
                         (len(outs), len(batch)))
-                self._record(len(batch), time.perf_counter() - t0)
+                dt = time.perf_counter() - t0
+                if dt > 10.0:
+                    print(f"[BatchSwap] batch {len(batch)} inference took {dt:.1f}s (TensorRT engine compilation / warm-up)", flush=True)
+                self._record(len(batch), dt)
             for r, o in zip(batch, outs):
                 r.out = o
                 r.ev.set()
