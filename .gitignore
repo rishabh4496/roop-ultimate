@@ -92,6 +92,7 @@ app/sidecar_keep/weights/
 app/roop/assets/benchmark/source_reference.png
 roop/assets/benchmark/*.mp4
 app/roop/assets/benchmark/*.mp4
+app/assets/benchmark/
 # Agent/tool binaries dropped into the repo root by local tooling.
 # 123 MB and unreferenced by any script -- never commit one.
 jcode-*.exe
