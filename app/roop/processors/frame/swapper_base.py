@@ -267,12 +267,16 @@ class BaseFaceSwapper(ABC):
 
     @staticmethod
     def paste_back(crop: np.ndarray, affine_matrix: np.ndarray, target_frame: np.ndarray,
-                   mask: Optional[np.ndarray] = None) -> np.ndarray:
+                   mask: Optional[np.ndarray] = None,
+                   linear_blend: bool = False) -> np.ndarray:
         """Inverse-warp `crop` (aligned by `affine_matrix`) into a copy of the frame.
 
         `mask` is in CROP space, float in [0,1], shape (S,S), (1,S,S) or
         (1,1,S,S); None pastes the whole crop. Returns a new uint8 frame.
+        `linear_blend`: When True, performs blending in linear light (gamma 1.0)
+        to eliminate edge dark fringes.
         """
+        import os
         import cv2
 
         frame = np.asarray(target_frame)
@@ -305,6 +309,22 @@ class BaseFaceSwapper(ABC):
         alpha = cv2.warpAffine(np.clip(mask, 0.0, 1.0), inv, (x1 - x0, y1 - y0),
                                flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT,
                                borderValue=0.0)[:, :, None]
+        if np.all(alpha <= 1e-6):
+            return out
+        use_linear = linear_blend or (
+            str(os.environ.get('ROOP_SWAPPER_LINEAR_PASTE', '0')).strip().lower() in ('1', 'true', 'yes', 'on')
+        )
+        if use_linear:
+            try:
+                from roop.compositing_engine import LinearColorSpace
+                p_lin = LinearColorSpace.srgb_to_linear(pasted)
+                r_lin = LinearColorSpace.srgb_to_linear(frame[y0:y1, x0:x1])
+                blended_lin = alpha * p_lin + (1.0 - alpha) * r_lin
+                out[y0:y1, x0:x1] = LinearColorSpace.linear_to_srgb(blended_lin)
+                return out
+            except Exception as exc:
+                from roop.degrade import swallowed as _swallowed
+                _swallowed("roop/processors/frame/swapper_base.py:paste_back", exc, "fallback legacy blend")
         region = frame[y0:y1, x0:x1].astype(np.float32)
         blended = alpha * pasted.astype(np.float32) + (1.0 - alpha) * region
         out[y0:y1, x0:x1] = np.clip(blended.round(), 0, 255).astype(np.uint8)

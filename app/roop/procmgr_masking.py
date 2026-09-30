@@ -730,10 +730,25 @@ class MaskingMixin:
                            'face was composited without it: %s: %s'
                            % (type(exc).__name__, str(exc)[:160]))
 
+        _compositing_engine = str(os.environ.get('ROOP_COMPOSITING_ENGINE', '1')).strip().lower() not in (
+            '0', 'false', 'no', 'off')
         if _composite_plan is not None:
             blended_roi = composite_multiband(
                 roi_paste.astype(np.uint8), roi_target.astype(np.uint8),
                 roi_matte[:, :, 0], _composite_plan).astype(np.float32)
+        elif _compositing_engine:
+            try:
+                from roop.compositing_engine import COMPOSITING_ENGINE
+                blended_roi = COMPOSITING_ENGINE.composite_roi(
+                    roi_paste, roi_target, roi_matte,
+                    enable_photometric=True,
+                    enable_linear_blend=True,
+                    enable_multiband=True,
+                    enable_sharpening=True
+                )
+            except Exception as exc:
+                _swallowed("roop/procmgr_masking.py:compositing_engine", exc, "compositing engine fallback")
+                blended_roi = roi_matte * roi_paste + (1.0 - roi_matte) * roi_target
         else:
             blended_roi = roi_matte * roi_paste + (1.0 - roi_matte) * roi_target
 

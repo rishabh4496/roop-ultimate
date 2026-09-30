@@ -1,0 +1,128 @@
+{
+  "timestamp": "2026-10-01 00:56:38",
+  "hardware_profile": {
+    "gpu": "NVIDIA GeForce RTX 4070 (12GB VRAM)",
+    "cpu": "24 Physical Cores / 32 Logical Threads",
+    "ram_gb": 32.0
+  },
+  "color_photometric_matching": {
+    "test_cases": [
+      {
+        "case": "Cool_to_Warm",
+        "baseline_delta_E": 0.0699,
+        "stage8_delta_E": 0.0367,
+        "baseline_delta_L": 0.0483,
+        "stage8_delta_L": 0.0091,
+        "delta_E_reduction_pct": 47.4
+      },
+      {
+        "case": "Warm_to_Cool",
+        "baseline_delta_E": 0.0699,
+        "stage8_delta_E": 0.0375,
+        "baseline_delta_L": 0.0483,
+        "stage8_delta_L": 0.0097,
+        "delta_E_reduction_pct": 46.3
+      },
+      {
+        "case": "Underexposed",
+        "baseline_delta_E": 0.307,
+        "stage8_delta_E": 0.0612,
+        "baseline_delta_L": 0.3057,
+        "stage8_delta_L": 0.0578,
+        "delta_E_reduction_pct": 80.1
+      },
+      {
+        "case": "Overexposed",
+        "baseline_delta_E": 0.1395,
+        "stage8_delta_E": 0.0308,
+        "baseline_delta_L": 0.1371,
+        "stage8_delta_L": 0.0252,
+        "delta_E_reduction_pct": 77.9
+      },
+      {
+        "case": "Low_Light",
+        "baseline_delta_E": 0.0669,
+        "stage8_delta_E": 0.0795,
+        "baseline_delta_L": 0.0667,
+        "stage8_delta_L": 0.0793,
+        "delta_E_reduction_pct": 0.0
+      }
+    ],
+    "mean_delta_E_reduction_pct": 50.3
+  },
+  "seam_and_dark_fringe_elimination": {
+    "midpoint_alpha_0_5": {
+      "baseline_srgb_level": 131.0,
+      "stage8_linear_level": 192.0,
+      "dark_fringe_elimination_levels": 61.0
+    },
+    "boundary_gradient_variance": {
+      "baseline": 4.8858,
+      "stage8": 8.9713,
+      "gradient_smoothness_improvement_pct": 0.0
+    }
+  },
+  "edge_artifacts_and_halo_suppression": {
+    "boundary_halo_error": {
+      "naive_unsharp": 7.93,
+      "stage8_interior_gated": 6.53,
+      "halo_reduction_pct": 17.7
+    },
+    "interior_micro_contrast_laplacian_var": {
+      "baseline_unsharpened": 0.4,
+      "stage8_sharpened": 0.36,
+      "detail_recovery_pct": 0.0
+    }
+  },
+  "dark_scene_low_light": {
+    "target_plate_shadow_floor": 12.0,
+    "baseline_face_shadow_floor": 39.0,
+    "stage8_face_shadow_floor": 17.0,
+    "floating_shadow_error_baseline": 27.0,
+    "floating_shadow_error_stage8": 5.0,
+    "shadow_alignment_improvement_pct": 81.5
+  },
+  "temporal_consistency": {
+    "n_frames_analyzed": 30,
+    "inter_frame_temporal_variance": {
+      "baseline": 21.918,
+      "stage8": 21.1435,
+      "temporal_stability_gain_pct": 3.5
+    }
+  },
+  "latency_and_throughput": {
+    "256x256 (Standard Swap Crop)": {
+      "srgb_to_linear_ms": 0.464,
+      "linear_to_oklab_ms": 1.52,
+      "oklab_to_linear_ms": 1.527,
+      "linear_to_srgb_ms": 2.177,
+      "skin_photometric_matching_ms": 11.689,
+      "multiband_seam_blending_ms": 5.028,
+      "edge_preserving_sharpening_ms": 1.44,
+      "end_to_end_latency_ms": 23.933,
+      "throughput_fps": 41.8
+    },
+    "512x512 (HD / Restore Ultra ROI)": {
+      "srgb_to_linear_ms": 2.154,
+      "linear_to_oklab_ms": 7.411,
+      "oklab_to_linear_ms": 6.548,
+      "linear_to_srgb_ms": 13.527,
+      "skin_photometric_matching_ms": 53.177,
+      "multiband_seam_blending_ms": 22.362,
+      "edge_preserving_sharpening_ms": 12.484,
+      "end_to_end_latency_ms": 116.414,
+      "throughput_fps": 8.6
+    },
+    "1080x1080 (4K Scaled Face ROI)": {
+      "srgb_to_linear_ms": 9.712,
+      "linear_to_oklab_ms": 32.687,
+      "oklab_to_linear_ms": 28.084,
+      "linear_to_srgb_ms": 63.902,
+      "skin_photometric_matching_ms": 266.01,
+      "multiband_seam_blending_ms": 100.995,
+      "edge_preserving_sharpening_ms": 56.868,
+      "end_to_end_latency_ms": 551.411,
+      "throughput_fps": 1.8
+    }
+  }
+}
