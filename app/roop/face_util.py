@@ -179,6 +179,34 @@ def _build_face_analyser():
         # otherwise the DEFAULT engine would be the only one still dropping
         # them. See roop/nms.py.
         bind_instance_nms(fa.det_model)
+    try:
+        from roop.model_lifecycle import register_model_lifecycle, format_shape_from_session
+        dev_id = getattr(roop.globals, 'cuda_device_id', 0) or 0
+        dev_str = f"cuda:{dev_id}" if "cpu" not in str(providers[0]).lower() else "cpu"
+        all_models = dict(fa.models)
+        if getattr(fa, 'lm68_model', None) is not None:
+            all_models['landmark_3d_68'] = fa.lm68_model
+        if getattr(fa, 'det_model', None) is not None:
+            all_models['detection'] = fa.det_model
+        for task, m in all_models.items():
+            sess = getattr(m, 'session', None)
+            if sess is not None and hasattr(sess, 'get_inputs'):
+                act_p = sess.get_providers()[0] if sess.get_providers() else str(providers[0])
+                in_shape = format_shape_from_session(sess)
+                register_model_lifecycle(
+                    model=f"buffalo_l:{task}",
+                    device=dev_str,
+                    provider=act_p,
+                    precision=_precision if '_precision' in locals() else "mixed",
+                    input_shape=in_shape,
+                    engine_cache="N/A (InsightFace)" if "tensorrt" not in act_p.lower() else "ENABLED",
+                    vram_cost="shared",
+                    init_time="included in fa.prepare",
+                    session_id=id(sess),
+                )
+    except Exception:
+        pass
+
     return fa
 
 

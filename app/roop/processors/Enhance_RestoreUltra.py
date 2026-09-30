@@ -99,3 +99,8 @@ class Enhance_RestoreUltra(Enhance_RestoreFormerPPlus):
         result = enhance_restore_ultra(result, reference,
                                        target_face=target_face)
         return result, scale_factor
+
+    def Release(self):
+        super().Release()
+        Enhance_RestoreUltra.model_restoreformerpplus = None
+        Enhance_RestoreUltra.pool = None

@@ -135,6 +135,7 @@ class Mask_RealityUX():
         self._xseg = Mask_XSeg()
         self._parser = Mask_FaceParser()
         self._parser_enabled = True
+        self._executor = None
         # Non-None here (not a real SessionPool) purely to satisfy the
         # ProcessMgr call site's `getattr(p, 'pool', None) is not None` check
         # (procmgr.py mask stage, `_gpu_guard(pooled=...)`) -- that check only
@@ -153,7 +154,14 @@ class Mask_RealityUX():
         self._parser_enabled = _small_card_parser_enabled()
         if self._parser_enabled:
             self._parser.Initialize(plugin_options)
+            import concurrent.futures
+            if self._executor is None:
+                self._executor = concurrent.futures.ThreadPoolExecutor(
+                    max_workers=1, thread_name_prefix="realityux_aux")
         else:
+            if self._executor is not None:
+                self._executor.shutdown(wait=False)
+                self._executor = None
             print('[Mask_RealityUX] sub-7GB CUDA profile: retaining the '
                   'authoritative XSeg mask and skipping the auxiliary BiSeNet '
                   'parser to stay within the laptop RSS budget. Set '
@@ -169,27 +177,13 @@ class Mask_RealityUX():
         # pooling is on) -- run them concurrently instead of paying for both
         # sequentially. ORT's actual inference releases the GIL, so this is
         # real wall-clock overlap, not just Python-level interleaving.
-        out = {}
-        errors = {}
-
-        def _run(key, fn):
-            try:
-                out[key] = fn()
-            except Exception as e:
-                _swallowed("roop/processors/Mask_RealityUX.py:176", e, "fallback continued")
-                errors[key] = e
-
-        t_parser = threading.Thread(
-            target=_run, args=('labels', lambda: self._parser.RunLabels(img1)))
-        t_parser.start()
-        _run('xseg', lambda: _to_2d(self._xseg.Run(img1, keywords)))
-        t_parser.join()
-
-        if errors:
-            raise next(iter(errors.values()))
-
-        xseg_mask = out['xseg']
-        labels = out['labels']                                   # (512,512) class ids
+        if self._executor is not None:
+            future = self._executor.submit(self._parser.RunLabels, img1)
+            xseg_mask = _to_2d(self._xseg.Run(img1, keywords))
+            labels = future.result()
+        else:
+            labels = self._parser.RunLabels(img1)
+            xseg_mask = _to_2d(self._xseg.Run(img1, keywords))
 
         # Classes BiSeNet is allowed to subtract from XSeg's swap region:
         # non-face accessories/features -- ears(7,8,9), cloth(16), hair(17), hat(18).
@@ -271,6 +265,9 @@ class Mask_RealityUX():
         return combined.astype(np.float32)
 
     def Release(self):
+        if getattr(self, '_executor', None) is not None:
+            self._executor.shutdown(wait=False)
+            self._executor = None
         self._xseg.Release()
         if self._parser_enabled:
             self._parser.Release()

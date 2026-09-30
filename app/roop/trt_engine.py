@@ -95,6 +95,17 @@ class TensorRTInferenceSession:
         sess_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
         sess_options.enable_mem_pattern = True
 
+        import time
+        _t0 = time.perf_counter()
+        _t0_wall = time.time()
+        _vram0 = 0.0
+        try:
+            import torch
+            if torch.cuda.is_available() and device_id < torch.cuda.device_count():
+                _vram0 = torch.cuda.memory_allocated(device_id) / (1024.0 * 1024.0)
+        except Exception:
+            pass
+
         _prepare_runtime()
         logger.info("Initializing session for %s with TensorRT EP...", os.path.basename(model_path))
         self.session = ort.InferenceSession(self.model_path, sess_options=sess_options, providers=providers)
@@ -107,6 +118,32 @@ class TensorRTInferenceSession:
                 "%s: TensorRT did not bind (active: %s); running on %s",
                 os.path.basename(model_path), self.active_providers,
                 self.active_providers[0] if self.active_providers else "nothing")
+
+        try:
+            _elapsed = time.perf_counter() - _t0
+            _vram1 = 0.0
+            import torch
+            if torch.cuda.is_available() and device_id < torch.cuda.device_count():
+                _vram1 = torch.cuda.memory_allocated(device_id) / (1024.0 * 1024.0)
+            _vram_cost = max(0.0, _vram1 - _vram0)
+            from roop.model_lifecycle import register_model_lifecycle, check_engine_cache_status, format_shape_from_session
+            active_p = self.active_providers[0] if self.active_providers else "unknown"
+            shape_str = format_shape_from_session(self.session)
+            dev_str = f"cuda:{device_id}"
+            cache_status = check_engine_cache_status(os.path.basename(model_path), self.cache_dir, _t0_wall, active_p)
+            register_model_lifecycle(
+                model=os.path.basename(model_path),
+                device=dev_str,
+                provider=active_p,
+                precision="fp16" if enable_fp16 else "fp32",
+                input_shape=shape_str,
+                engine_cache=cache_status,
+                vram_cost=_vram_cost,
+                init_time=_elapsed,
+                session_id=id(self.session),
+            )
+        except Exception:
+            pass
 
     @property
     def is_tensorrt(self) -> bool:

@@ -369,6 +369,19 @@ def format_diagnostics_report(data: Dict[str, Any]) -> str:
         "=== Result ===",
         f"{res['status']}",
     ]
+
+    try:
+        from roop.model_lifecycle import get_model_lifecycle_records, format_model_lifecycle_table
+        recs = get_model_lifecycle_records()
+        if recs:
+            lines.extend([
+                "",
+                "=== Model Lifecycle & Runtime Architecture ===",
+                format_model_lifecycle_table(recs)
+            ])
+    except Exception:
+        pass
+
     return "\n".join(lines)
 
 

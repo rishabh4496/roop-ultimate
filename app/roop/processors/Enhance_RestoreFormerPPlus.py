@@ -74,6 +74,24 @@ class Enhance_RestoreFormerPPlus():
                     lambda i, _e=([primary] + extras): _e[i], n,
                     model_key='enhancer:restoreformer', input_shape=(1, 3, 512, 512))
 
+            try:
+                from roop.model_lifecycle import register_model_lifecycle, format_shape_from_session
+                act_p = self.model_restoreformerpplus.get_providers()[0]
+                in_shape = format_shape_from_session(self.model_restoreformerpplus)
+                register_model_lifecycle(
+                    model=getattr(self, 'processorname', 'restoreformer++'),
+                    device=self.devicename,
+                    provider=act_p,
+                    precision=_precision if '_precision' in locals() else "mixed",
+                    input_shape=in_shape,
+                    engine_cache="ENABLED" if "tensorrt" in act_p.lower() else f"N/A ({act_p})",
+                    vram_cost="pooled" if self.pool is not None else "shared",
+                    init_time="initialized",
+                    session_id=id(self.model_restoreformerpplus),
+                )
+            except Exception:
+                pass
+
     def Run(self, source_faceset: FaceSet, target_face: Face, temp_frame: Frame) -> Frame:
         if temp_frame is None or getattr(temp_frame, 'size', 0) == 0:
             return temp_frame, 1

@@ -253,6 +253,24 @@ class Enhance_GPEN256Pro:
                 print(f"[GPEN 256 Pro] multi-context pool unavailable ({e}); "
                       f"falling back to single session")
 
+        try:
+            from roop.model_lifecycle import register_model_lifecycle, format_shape_from_session
+            act_p = self.session.get_providers()[0]
+            in_shape = format_shape_from_session(self.session)
+            register_model_lifecycle(
+                model=getattr(self, 'processorname', 'gpen_256_pro'),
+                device=self.devicename,
+                provider=act_p,
+                precision=_precision if '_precision' in locals() else "fp16",
+                input_shape=in_shape,
+                engine_cache="ENABLED" if "tensorrt" in act_p.lower() else f"N/A ({act_p})",
+                vram_cost="pooled" if self.pool is not None else "shared",
+                init_time="initialized",
+                session_id=id(self.session),
+            )
+        except Exception:
+            pass
+
     def Release(self):
         line = self.cost_summary()
         if line:

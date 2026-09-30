@@ -53,8 +53,8 @@ class Mask_XSeg():
             self.model_inputs = self.model_xseg.get_inputs()
             self.model_outputs = self.model_xseg.get_outputs()
 
-            # replace Mac mps with cpu for the moment
-            self.devicename = self.plugin_options["devicename"].replace('mps', 'cpu')
+            dev = str(self.plugin_options["devicename"]).lower()
+            self.devicename = 'cuda' if 'cuda' in dev else ('mps' if 'mps' in dev else 'cpu')
 
             # Optional multi-session pool: primary + (N-1) extras → up to N threads
             # run the mask concurrently, each on its own TensorRT context.
@@ -66,16 +66,42 @@ class Mask_XSeg():
                     lambda i, _e=([self.model_xseg] + extras): _e[i], n,
                     model_key='mask:xseg', input_shape=(1, 3, 512, 512))
 
+            try:
+                from roop.model_lifecycle import register_model_lifecycle, format_shape_from_session
+                act_p = self.model_xseg.get_providers()[0]
+                in_shape = format_shape_from_session(self.model_xseg)
+                register_model_lifecycle(
+                    model=getattr(self, 'processorname', 'mask_xseg'),
+                    device=self.devicename,
+                    provider=act_p,
+                    precision=_precision if '_precision' in locals() else "fp32",
+                    input_shape=in_shape,
+                    engine_cache="ENABLED" if "tensorrt" in act_p.lower() else f"N/A ({act_p})",
+                    vram_cost="pooled" if self.pool is not None else "shared",
+                    init_time="initialized",
+                    session_id=id(self.model_xseg),
+                )
+            except Exception:
+                pass
+
+
+    def _get_io_binding(self, sess):
+        iob = getattr(sess, '_cached_io_binding', None)
+        if iob is None:
+            iob = sess.io_binding()
+            iob.bind_output(self.model_outputs[0].name, self.devicename)
+            sess._cached_io_binding = iob
+        return iob
+
 
     def _run_session(self, sess, temp_frame):
         if getattr(self, '_cpu_only', False):
             return sess.run([o.name for o in self.model_outputs],
                             {self.model_inputs[0].name: temp_frame})
-        io_binding = sess.io_binding()
-        io_binding.bind_cpu_input(self.model_inputs[0].name, temp_frame)
-        io_binding.bind_output(self.model_outputs[0].name, self.devicename)
-        sess.run_with_iobinding(io_binding)
-        return io_binding.copy_outputs_to_cpu()
+        iob = self._get_io_binding(sess)
+        iob.bind_cpu_input(self.model_inputs[0].name, temp_frame)
+        sess.run_with_iobinding(iob)
+        return iob.copy_outputs_to_cpu()
 
 
     def Run(self, img1, keywords:str) -> Frame:
@@ -99,6 +125,8 @@ class Mask_XSeg():
         if self.pool is not None:
             self.pool.release()
             self.pool = None
+        if hasattr(self.model_xseg, '_cached_io_binding'):
+            del self.model_xseg._cached_io_binding
         del self.model_xseg
         self.model_xseg = None
 

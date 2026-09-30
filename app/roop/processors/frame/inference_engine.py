@@ -288,6 +288,16 @@ class OptimizedInferenceSession:
             session_options = get_onnx_session_options()
         self._session_options = session_options
 
+        import time
+        _t0 = time.perf_counter()
+        _t0_wall = time.time()
+        _vram0 = 0.0
+        try:
+            if self._torch is not None and self._torch.cuda.is_available():
+                _vram0 = self._torch.cuda.memory_allocated(self.device_id) / (1024.0 * 1024.0)
+        except Exception:
+            pass
+
         model_arg = self.model_path
         try:
             self.session = self._build(onnxruntime, model_arg, provider)
@@ -315,6 +325,32 @@ class OptimizedInferenceSession:
         self.input_names = [i.name for i in self.session.get_inputs()]
         self.output_names = [o.name for o in self.session.get_outputs()]
         self._check_provider()        # again: the CUDA EP can be dropped DURING the first run
+
+        try:
+            _elapsed = time.perf_counter() - _t0
+            _vram1 = 0.0
+            if self._torch is not None and self._torch.cuda.is_available():
+                _vram1 = self._torch.cuda.memory_allocated(self.device_id) / (1024.0 * 1024.0)
+            _vram_cost = max(0.0, _vram1 - _vram0)
+            from roop.model_lifecycle import register_model_lifecycle, check_engine_cache_status, format_shape_from_session
+            active_p = getattr(self, "active_provider", provider)
+            dev_str = f"cuda:{self.device_id}" if provider != "cpu" else "cpu"
+            shape_str = format_shape_from_session(self.session)
+            cache_status = check_engine_cache_status(Path(self.model_path).stem, self.cache_dir, _t0_wall, active_p)
+            register_model_lifecycle(
+                model=Path(self.model_path).stem,
+                device=dev_str,
+                provider=active_p,
+                precision=self.precision,
+                input_shape=shape_str,
+                engine_cache=cache_status,
+                vram_cost=_vram_cost,
+                init_time=_elapsed,
+                session_id=id(self.session),
+                extra={"fallback_note": self.fallback_note},
+            )
+        except Exception:
+            pass
 
     # -- construction ----------------------------------------------------------
 

@@ -803,6 +803,24 @@ class FaceSwapInsightFace():
                     model_key=f"swapper:{swap_model}",
                     input_shape=(1, 3, spec["output_size"], spec["output_size"]))
 
+            try:
+                from roop.model_lifecycle import register_model_lifecycle, format_shape_from_session
+                act_p = self.model_swap_insightface.get_providers()[0]
+                in_shape = format_shape_from_session(self.model_swap_insightface)
+                register_model_lifecycle(
+                    model=f"faceswap:{swap_model}",
+                    device=self.devicename,
+                    provider=act_p,
+                    precision="fp32" if "inswapper" in swap_model else "mixed",
+                    input_shape=in_shape,
+                    engine_cache="ENABLED" if "tensorrt" in act_p.lower() else f"N/A ({act_p})",
+                    vram_cost="pooled" if self.pool is not None else "shared",
+                    init_time="initialized",
+                    session_id=id(self.model_swap_insightface),
+                )
+            except Exception:
+                pass
+
             self._load_quantized(model_path, swap_model)
 
             # Publish the per-model contract ProcessMgr reads.

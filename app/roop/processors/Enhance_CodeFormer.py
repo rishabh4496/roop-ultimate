@@ -176,6 +176,24 @@ class Enhance_CodeFormer():
                     print(f"[CodeFormer] multi-context pool unavailable ({e}); "
                           f"falling back to one session behind the GPU lock")
 
+            try:
+                from roop.model_lifecycle import register_model_lifecycle, format_shape_from_session
+                act_p = self.model_codeformer.get_providers()[0]
+                in_shape = format_shape_from_session(self.model_codeformer)
+                register_model_lifecycle(
+                    model=getattr(self, 'processorname', 'codeformer'),
+                    device=self.devicename,
+                    provider=act_p,
+                    precision="fp16" if getattr(self, 'fp16', False) else "fp32",
+                    input_shape=in_shape,
+                    engine_cache="ENABLED" if "tensorrt" in act_p.lower() else f"N/A ({act_p})",
+                    vram_cost="pooled" if self.pool is not None else "shared",
+                    init_time="initialized",
+                    session_id=id(self.model_codeformer),
+                )
+            except Exception:
+                pass
+
 
     def Run(self, source_faceset: FaceSet, target_face: Face, temp_frame: Frame) -> Frame:
         if temp_frame is None or getattr(temp_frame, 'size', 0) == 0:
@@ -198,11 +216,14 @@ class Enhance_CodeFormer():
         cf_fidelity = getattr(roop.globals, 'codeformer_fidelity', 0.5)
 
         def _infer(sess):
-            iob = sess.io_binding()
+            iob = getattr(sess, '_cached_io_binding', None)
+            if iob is None:
+                iob = sess.io_binding()
+                iob.bind_output(self.model_outputs[0].name, self.devicename)
+                sess._cached_io_binding = iob
             iob.bind_cpu_input(self.model_inputs[0].name, x)
             iob.bind_cpu_input(self.model_inputs[1].name,
                                np.array([cf_fidelity], dtype=np.float64))
-            iob.bind_output(self.model_outputs[0].name, self.devicename)
             sess.run_with_iobinding(iob)
             return iob.copy_outputs_to_cpu()
 
@@ -242,6 +263,8 @@ class Enhance_CodeFormer():
         if self.pool is not None:
             self.pool.release()
             self.pool = None
+        if hasattr(self.model_codeformer, '_cached_io_binding'):
+            del self.model_codeformer._cached_io_binding
         del self.model_codeformer
         self.model_codeformer = None
         self._lut = None

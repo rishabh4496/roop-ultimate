@@ -1,0 +1,78 @@
+{
+  "count": 5,
+  "timestamp": 1790789262.8957028,
+  "models": [
+    {
+      "model": "mask_xseg",
+      "device": "cuda",
+      "provider": "CUDAExecutionProvider",
+      "precision": "fp32",
+      "input_shape": "unk__1491x256x256x3",
+      "engine_cache": "N/A (CUDAExecutionProvider)",
+      "vram_cost": "pooled",
+      "init_time": "initialized",
+      "reused": false,
+      "session_id": 2939624306096,
+      "timestamp": 1790789260.3612642,
+      "extra": {}
+    },
+    {
+      "model": "mask_xseg3",
+      "device": "cuda",
+      "provider": "CUDAExecutionProvider",
+      "precision": "fp32",
+      "input_shape": "unk__1491x256x256x3",
+      "engine_cache": "N/A (CUDAExecutionProvider)",
+      "vram_cost": "pooled",
+      "init_time": "initialized",
+      "reused": false,
+      "session_id": 2939623843216,
+      "timestamp": 1790789260.9730124,
+      "extra": {}
+    },
+    {
+      "model": "mask_xseg",
+      "device": "cuda",
+      "provider": "CUDAExecutionProvider",
+      "precision": "fp32",
+      "input_shape": "unk__1491x256x256x3",
+      "engine_cache": "N/A (CUDAExecutionProvider)",
+      "vram_cost": "pooled",
+      "init_time": "initialized",
+      "reused": false,
+      "session_id": 2939623842880,
+      "timestamp": 1790789261.4030445,
+      "extra": {}
+    },
+    {
+      "model": "restore_ultra",
+      "device": "cuda",
+      "provider": "CUDAExecutionProvider",
+      "precision": "fp32",
+      "input_shape": "1x3x512x512",
+      "engine_cache": "N/A (CUDAExecutionProvider)",
+      "vram_cost": "pooled",
+      "init_time": "initialized",
+      "reused": false,
+      "session_id": 2939623848112,
+      "timestamp": 1790789262.4332705,
+      "extra": {}
+    },
+    {
+      "model": "inswapper_128",
+      "device": "cuda:0",
+      "provider": "cuda",
+      "precision": "fp32",
+      "input_shape": "1x3x128x128, 1x512",
+      "engine_cache": "N/A (cuda)",
+      "vram_cost": "0.4 MB",
+      "init_time": "459.9 ms",
+      "reused": false,
+      "session_id": 2939624600192,
+      "timestamp": 1790789262.8957028,
+      "extra": {
+        "fallback_note": null
+      }
+    }
+  ]
+}
