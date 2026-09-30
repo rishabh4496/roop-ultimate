@@ -197,8 +197,10 @@ class RestoreUltraBufferPool:
         """
         hwc = self.get_hwc_buffer((512, 512, 3))
         np.copyto(hwc, result_chw[::-1].transpose(1, 2, 0))
-        np.clip(hwc, -1.0, 1.0, out=hwc)
-        return np.rint((hwc + 1.0) * 127.5).clip(0.0, 255.0).astype(np.uint8)
+        hwc += 1.0
+        hwc *= 127.5
+        np.clip(hwc, 0.0, 255.0, out=hwc)
+        return hwc.astype(np.uint8)
 
     @classmethod
     def get_knee_lut(cls, threshold: float, softness: float, strength: float) -> np.ndarray:
@@ -361,9 +363,16 @@ class IdentityPreservationGuard:
         r_crop = restored[y0:y1, x0:x1]
         ref_crop = reference[y0:y1, x0:x1]
 
+        # Fast decimation: downsample to 64x64 thumbnail via INTER_AREA.
+        # Box-filter area averaging provides ideal anti-aliased low-frequency integration,
+        # accelerating the subsequent Lab and Delta-E computations by >20x.
+        if r_crop.shape[0] > 64 or r_crop.shape[1] > 64:
+            r_crop = cv2.resize(r_crop, (64, 64), interpolation=cv2.INTER_AREA)
+            ref_crop = cv2.resize(ref_crop, (64, 64), interpolation=cv2.INTER_AREA)
+
         # Low-frequency structural tone check in Lab
-        r_lab = cv2.cvtColor(cv2.GaussianBlur(r_crop, (0, 0), sigmaX=3.0), cv2.COLOR_BGR2LAB).astype(np.float32)
-        ref_lab = cv2.cvtColor(cv2.GaussianBlur(ref_crop, (0, 0), sigmaX=3.0), cv2.COLOR_BGR2LAB).astype(np.float32)
+        r_lab = cv2.cvtColor(cv2.GaussianBlur(r_crop, (0, 0), sigmaX=1.5), cv2.COLOR_BGR2LAB).astype(np.float32)
+        ref_lab = cv2.cvtColor(cv2.GaussianBlur(ref_crop, (0, 0), sigmaX=1.5), cv2.COLOR_BGR2LAB).astype(np.float32)
 
         # Delta E approximation (L*a*b* Euclidean distance)
         delta_e = np.sqrt(np.mean((r_lab - ref_lab) ** 2, axis=-1))

@@ -1428,6 +1428,8 @@ def save_settings(settings: dict = Body(...)):
                       " binds to all interfaces and requires the per-launch token printed"
                       " at startup. It is not active until then.", flush=True)
             setattr(roop_globals.CFG, k, v)
+            if hasattr(roop_globals, k):
+                setattr(roop_globals, k, v)
         if "provider" in settings:
             try:
                 from roop.backend_manager import canonical_provider_decision

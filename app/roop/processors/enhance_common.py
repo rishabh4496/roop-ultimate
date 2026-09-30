@@ -360,6 +360,8 @@ def _inject_bilateral_detail(enhanced, ref, sigma_color, threshold, softness,
     the whole 511-value domain), and independent of how much of the crop sits
     over the knee.
     """
+    if strength <= 0.001 or enhanced is None or ref is None:
+        return enhanced
     base_ref = cv2.bilateralFilter(ref, d=5, sigmaColor=sigma_color,
                                    sigmaSpace=4.0)
     idx = cv2.subtract(ref, base_ref, dtype=cv2.CV_16S)
