@@ -1,0 +1,41 @@
+{
+  "timestamp": "2026-09-30 23:21:19",
+  "results": [
+    {
+      "strategy": "baseline_raw_umeyama",
+      "fps": 7161.4,
+      "landmark_jitter_rms_px": 1.038,
+      "translation_jitter_rms_px": 1.198,
+      "scale_jitter_rms": 0.03964,
+      "rotation_jitter_rms_deg": 2.029,
+      "rapid_motion_lag_px": 1.41,
+      "profile_success_pct": 100.0,
+      "border_success_pct": 100.0,
+      "matrix_health_pct": 100.0
+    },
+    {
+      "strategy": "fixed_matrix_ema",
+      "fps": 7738.1,
+      "landmark_jitter_rms_px": 0.881,
+      "translation_jitter_rms_px": 0.932,
+      "scale_jitter_rms": 0.03079,
+      "rotation_jitter_rms_deg": 1.614,
+      "rapid_motion_lag_px": 3.5,
+      "profile_success_pct": 100.0,
+      "border_success_pct": 100.0,
+      "matrix_health_pct": 100.0
+    },
+    {
+      "strategy": "stage4_pose_aware_stabilizer",
+      "fps": 746.7,
+      "landmark_jitter_rms_px": 0.589,
+      "translation_jitter_rms_px": 0.187,
+      "scale_jitter_rms": 0.00586,
+      "rotation_jitter_rms_deg": 0.322,
+      "rapid_motion_lag_px": 1.83,
+      "profile_success_pct": 100.0,
+      "border_success_pct": 100.0,
+      "matrix_health_pct": 100.0
+    }
+  ]
+}
