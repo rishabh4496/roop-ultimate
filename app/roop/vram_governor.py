@@ -384,6 +384,52 @@ def governed_gpen_size(requested: int) -> int:
     return min(int(requested), int(plan.gpen_size))
 
 
+def governed_memory_limits(width: int = 1920, height: int = 1080) -> Any:
+    """Return the active dynamic runtime memory limits computed by VramRuntimeSelector."""
+    from roop.vram_ram_manager import GLOBAL_MEMORY_SELECTOR
+    return GLOBAL_MEMORY_SELECTOR.select_limits(width=width, height=height)
+
+
+def governed_worker_count(requested: int) -> int:
+    """Clamp requested worker thread count to memory safety limits."""
+    try:
+        limits = governed_memory_limits()
+        return max(1, min(int(requested), int(limits.worker_count)))
+    except Exception as exc:
+        _swallowed("roop/vram_governor.py:governed_worker_count", exc)
+        return max(1, int(requested))
+
+
+def governed_buffer_depth(requested: int) -> int:
+    """Clamp requested per-stage queue buffer depth to memory safety limits."""
+    try:
+        limits = governed_memory_limits()
+        return max(1, min(int(requested), int(limits.buffer_depth)))
+    except Exception as exc:
+        _swallowed("roop/vram_governor.py:governed_buffer_depth", exc)
+        return max(1, int(requested))
+
+
+def governed_face_concurrency(requested: int) -> int:
+    """Clamp simultaneous in-flight face crops to avoid VRAM exhaustion."""
+    try:
+        limits = governed_memory_limits()
+        return max(1, min(int(requested), int(limits.face_crop_concurrency)))
+    except Exception as exc:
+        _swallowed("roop/vram_governor.py:governed_face_concurrency", exc)
+        return max(1, int(requested))
+
+
+def governed_enhancer_concurrency(requested: int) -> int:
+    """Clamp simultaneous enhancer context invocations."""
+    try:
+        limits = governed_memory_limits()
+        return max(1, min(int(requested), int(limits.enhancer_concurrency)))
+    except Exception as exc:
+        _swallowed("roop/vram_governor.py:governed_enhancer_concurrency", exc)
+        return max(1, int(requested))
+
+
 def admit(job: JobSpec, margin_gb: float, device_id: int = 0) -> Optional[VramPlan]:
     """Plan the render and start the peak sampler. None when there is no GPU."""
     global _active
