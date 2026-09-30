@@ -1,0 +1,68 @@
+{
+  "frame_resolution": "1280x720",
+  "total_frame_ms": 286.2889,
+  "stages_ms": {
+    "decode": 1.7584,
+    "preprocessing": 0.3815,
+    "detection": {
+      "total": 29.2877,
+      "scrfd_raw_infer": 29.2089,
+      "aux_recognition_arcface": 0.0552
+    },
+    "landmark_alignment": {
+      "total": 1.2442,
+      "pose_jaw_solve": 0.5653,
+      "canonical_affine_warp": 0.6585
+    },
+    "source_selection": 0.0021,
+    "face_swap": {
+      "total": 159.3394,
+      "prep_crop": 0.4661,
+      "latent_prep": 0.032,
+      "gpu_kernel_pure": 80.77843475341797,
+      "gpu_infer_wall": 94.0054,
+      "post_normalize": 0.633,
+      "color_transfer": 64.1432
+    },
+    "restoration": 0.008,
+    "xseg_masking": {
+      "total": 64.2237,
+      "resize_256": 0.0386,
+      "gpu_kernel_pure": 63.77219009399414,
+      "post_threshold_d2h": 0.1775
+    },
+    "blending": {
+      "total": 7.88,
+      "affine_inversion": 0.015,
+      "matte_feather": 4.9413,
+      "bounded_roi_blend": 2.9098
+    },
+    "postprocessing_verify": {
+      "total": 20.8821,
+      "verify_swap_redetection": 20.8765
+    },
+    "encode": 1.2414
+  },
+  "micro_operations": {
+    "h2d_transfer_count": 2,
+    "h2d_total_kb": 1536.0,
+    "d2h_transfer_count": 2,
+    "d2h_total_kb": 1024.0,
+    "numpy_torch_conversions": 2,
+    "image_copies_count": 1,
+    "resize_ops_count": 1,
+    "resize_details": [
+      [
+        "256x256->256x256",
+        34.4
+      ]
+    ],
+    "warp_ops_count": 2,
+    "color_conversions_count": 4,
+    "face_detections_count": 2,
+    "landmark_calculations_count": 1,
+    "gpu_sync_stalls_ms": 0.0,
+    "peak_python_heap_mb": 23.84440040588379,
+    "peak_vram_allocated_mb": 1.751953125
+  }
+}
