@@ -1,4 +1,6 @@
 import os
+import threading
+from typing import Any, Optional, Union, Dict, Tuple
 import numpy as np
 import cv2
 import onnxruntime
@@ -8,6 +10,8 @@ from roop.typing import Frame
 from roop.utilities import resolve_relative_path, conditional_download
 from roop import session_pool
 from roop.precision_policy import providers_for
+from roop.degrade import swallowed as _swallowed
+from roop.xseg3_optimizer import BUFFER_POOL, MASK_CACHE
 
 
 # FaceFusion's third-generation XSeg occluder (added in FF 3.2). Same family and
@@ -29,6 +33,7 @@ class Mask_XSeg3():
 
     processorname = 'mask_xseg3'
     type = 'mask'
+    _session_lock = threading.Lock()
 
     def __init__(self):
         # Opt-in SessionPool (ROOP_DETMASK_POOL) of independent TensorRT sessions
@@ -67,11 +72,11 @@ class Mask_XSeg3():
             # run the mask concurrently, each on its own TensorRT context.
             if session_pool.detmask_pooling_enabled():
                 n = session_pool.detmask_pool_size(
-                    model_key='mask:xseg3', input_shape=(1, 3, 512, 512))
+                    model_key='mask:xseg3', input_shape=(1, 256, 256, 3))
                 extras = [_build(i) for i in range(n - 1)]
                 self.pool = session_pool.SessionPool(
                     lambda i, _e=([self.model_xseg3] + extras): _e[i], n,
-                    model_key='mask:xseg3', input_shape=(1, 3, 512, 512))
+                    model_key='mask:xseg3', input_shape=(1, 256, 256, 3))
 
             try:
                 from roop.model_lifecycle import register_model_lifecycle, format_shape_from_session
@@ -88,8 +93,8 @@ class Mask_XSeg3():
                     init_time="initialized",
                     session_id=id(self.model_xseg3),
                 )
-            except Exception:
-                pass
+            except Exception as _e_reg:
+                _swallowed("roop/processors/Mask_XSeg3.py:model_lifecycle", _e_reg, "model lifecycle register fallback")
 
     def _get_io_binding(self, sess):
         iob = getattr(sess, '_cached_io_binding', None)
@@ -108,25 +113,61 @@ class Mask_XSeg3():
         sess.run_with_iobinding(iob)
         return iob.copy_outputs_to_cpu()
 
-    def Run(self, img1, keywords: str) -> Frame:
-        # Model input: (1, 256, 256, 3) NHWC, float32 in [0, 1].
-        temp_frame = cv2.resize(img1, (256, 256), interpolation=cv2.INTER_CUBIC)
-        temp_frame = temp_frame.astype('float32') / 255.0
-        temp_frame = temp_frame[None, ...]
+    def Run(self, img1, keywords: str = "", target_face: Optional[Any] = None,
+            frame_idx: Optional[int] = None, track_id: Optional[Any] = None) -> Frame:
+        if img1 is None or getattr(img1, 'size', 0) == 0:
+            return img1
+
+        # Check geometry-aware cache for conditional mask reuse
+        kps = (target_face.get('kps') if isinstance(target_face, dict)
+               else getattr(target_face, 'kps', None)) if target_face is not None else None
+        f_idx = frame_idx if frame_idx is not None else 0
+        t_id = track_id if track_id is not None else (
+            target_face.get('_track_id', target_face.get('track_id')) if isinstance(target_face, dict)
+            else (getattr(target_face, '_track_id', None) or getattr(target_face, 'track_id', None))
+        ) if target_face is not None else None
+
+        can_reuse, cached_mask, _reason = MASK_CACHE.evaluate_reuse(
+            track_id=t_id,
+            current_kps=kps,
+            target_face=target_face,
+            crop_bgr=img1,
+            frame_idx=f_idx
+        )
+        if can_reuse and cached_mask is not None:
+            return cached_mask
+
+        # Model input: (1, 256, 256, 3) NHWC, float32 in [0, 1] via preallocated buffer pool
+        temp_frame = BUFFER_POOL.prepare_model_input(img1)
+
         if self.pool is not None:
             with self.pool.lease() as sess:
                 ort_outs = self._run_session(sess, temp_frame)
         else:
-            ort_outs = self._run_session(self.model_xseg3, temp_frame)
+            with self._session_lock:
+                ort_outs = self._run_session(self.model_xseg3, temp_frame)
+
         # Output: (1, 256, 256, 1) → drop batch + channel dims to a 2D mask.
         result = ort_outs[0][0]
         if result.ndim == 3:
             result = result[..., 0]
-        result = np.clip(result, 0, 1.0)
+        result = np.clip(result, 0.0, 1.0)
+
         # Raw model is HIGH on the visible face. Invert so HIGH = occluder/hidden
         # region → restore original there. ROOP_XSEG3_RAW=1 skips the invert.
         if os.environ.get('ROOP_XSEG3_RAW', '0') != '1':
             result = 1.0 - result
+
+        # Record fresh observation in geometry cache
+        MASK_CACHE.update(
+            track_id=t_id,
+            mask_256=result,
+            current_kps=kps,
+            target_face=target_face,
+            crop_bgr=img1,
+            frame_idx=f_idx
+        )
+
         return result
 
     def Release(self):

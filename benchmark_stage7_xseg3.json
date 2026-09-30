@@ -1,0 +1,35 @@
+{
+  "stage": "STAGE 7 \u2014 XSEG 3 MASK QUALITY & PERFORMANCE AUDIT",
+  "device": "NVIDIA GeForce RTX 4070 (12GB VRAM)",
+  "model": "xseg_3.onnx",
+  "input_contract": "(1, 256, 256, 3) NHWC float32 in [0, 1]",
+  "output_contract": "(1, 256, 256, 1) NHWC float32 in [0, 1]",
+  "latency_metrics": {
+    "preprocessing_naive_ms": 0.117,
+    "preprocessing_pool_ms": 0.108,
+    "preprocessing_speedup": 1.08,
+    "inference_ms": 33.559,
+    "postprocessing_ms": 0.06,
+    "smoothstep_morphology_ms": 0.127,
+    "guided_filter_ms": 6.909,
+    "refine_stage_ms": 7.037,
+    "cache_warp_reuse_ms": 0.344,
+    "e2e_full_infer_ms": 45.527,
+    "e2e_cached_ms": 7.265,
+    "e2e_speedup": 6.27,
+    "fps_full_inference": 22.0,
+    "fps_cached_warp": 137.6
+  },
+  "visual_quality_metrics": {
+    "hairline_stair_step_reduction": 1.12,
+    "specular_hole_closed": true,
+    "glasses_rim_edge_correlation_opt": 0.5302,
+    "glasses_rim_edge_correlation_legacy": 0.2291,
+    "crossing_hand_preservation_score": 0.9968,
+    "edge_shimmer_variance_legacy": 0.005887064817843252,
+    "edge_shimmer_variance_stabilized": 0.0021559294465736583,
+    "edge_shimmer_reduction_factor": 2.73,
+    "mask_pops_legacy_count": 29,
+    "mask_pops_stabilized_count": 27
+  }
+}

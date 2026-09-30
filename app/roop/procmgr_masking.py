@@ -1144,8 +1144,18 @@ class MaskingMixin:
         # Phase 7 is intentionally causal and opt-in. The support is derived
         # from this track's own landmarks, while the ownership field comes
         # from face_overlap; neither can borrow another track's identity.
+        _track_id = None
+        if target_face is not None:
+            _track_id = (target_face.get('_track_id')
+                         if isinstance(target_face, dict)
+                         else getattr(target_face, '_track_id', None))
+            if _track_id is None:
+                _track_id = (target_face.get('track_id')
+                             if isinstance(target_face, dict)
+                             else getattr(target_face, 'track_id', None))
+
         _occlusion_mgr = self._temporal_engine('temporal_occlusion')
-        _occlusion_tid = None
+        _occlusion_tid = _track_id
         _occlusion_decision = None
         _occlusion_support = None
         if (_occlusion_mgr is not None and _occlusion_mgr.enabled
@@ -1153,9 +1163,6 @@ class MaskingMixin:
                 and rotation_action is None):
             try:
                 from roop.temporal_occlusion import build_face_support
-                _occlusion_tid = (target_face.get('_track_id')
-                                  if isinstance(target_face, dict)
-                                  else getattr(target_face, '_track_id', None))
                 _lm106 = getattr(target_face, 'landmark_2d_106', None)
                 _occlusion_support = build_face_support(
                     landmarks=_lm106,
@@ -1334,7 +1341,16 @@ class MaskingMixin:
                                              cv2.BORDER_CONSTANT, value=0)
             
             # Run the mask processor on the unwarped padded crop
-            mask_crop = processor.Run(cropped, self.options.masking_text)
+            if p_name == 'mask_xseg3':
+                mask_crop = processor.Run(
+                    cropped,
+                    self.options.masking_text,
+                    target_face=target_face,
+                    frame_idx=getattr(self._tls, 'frame_idx', None),
+                    track_id=_track_id,
+                )
+            else:
+                mask_crop = processor.Run(cropped, self.options.masking_text)
             
             # Resize mask to padded-crop dimensions
             padded_w = x1 - x0
@@ -1371,6 +1387,14 @@ class MaskingMixin:
                     getattr(self._tls, 'frame_idx', None),
                     getattr(self._tls, 'cur_M', None),
                     frame.shape)
+            elif p_name == 'mask_xseg3':
+                img_mask = processor.Run(
+                    frame,
+                    self.options.masking_text,
+                    target_face=target_face,
+                    frame_idx=getattr(self._tls, 'frame_idx', None),
+                    track_id=_track_id,
+                )
             else:
                 img_mask = processor.Run(frame, self.options.masking_text)
                 if p_name == 'mask_xseg' and mask_guided_filter_enabled():
@@ -1380,10 +1404,40 @@ class MaskingMixin:
         # Specific improvement for the occluder family: threshold and blur to
         # prevent ghosting (xseg_3 shares the face_occluder output convention).
         if p_name in ('mask_occluder', 'mask_xseg3'):
-            binary_mask = (img_mask > 0.35).astype(np.float32)
-            k = _edge_blur_kernel(M, frame.shape, img_mask.shape)
-            img_mask = (cv2.GaussianBlur(binary_mask, (k, k), 0) if k > 1
-                        else binary_mask)
+            if p_name == 'mask_occluder':
+                binary_mask = (img_mask > 0.35).astype(np.float32)
+                k = _edge_blur_kernel(M, frame.shape, img_mask.shape)
+                img_mask = (cv2.GaussianBlur(binary_mask, (k, k), 0) if k > 1
+                            else binary_mask)
+            else:
+                # Stage 7: Confidence-aware smoothstep refinement & photographic edge guided filtering
+                # replaces hard >0.35 thresholding which caused mask popping and edge shimmer.
+                try:
+                    from roop.xseg3_optimizer import refine_xseg3_mask, TEMPORAL_STABILIZER
+                    _conf = 1.0
+                    if target_face is not None:
+                        _conf = float(target_face.get('_temporal_confidence', target_face.get('det_score', 1.0))
+                                      if isinstance(target_face, dict)
+                                      else getattr(target_face, '_temporal_confidence', getattr(target_face, 'det_score', 1.0)))
+                    with _prof('mask_refine'):
+                        img_mask = refine_xseg3_mask(
+                            raw_mask_256=img_mask,
+                            guide_frame=frame,
+                            target_face=target_face,
+                            confidence=_conf,
+                        )
+                    if not (self._stab_active and self._cur_mask_stab() is not None):
+                        _f_idx = getattr(self._tls, 'frame_idx', None)
+                        if _track_id is not None and _f_idx is not None:
+                            with _prof('mask_stabilize'):
+                                img_mask = TEMPORAL_STABILIZER.stabilize(
+                                    track_id=_track_id,
+                                    current_mask=img_mask,
+                                    frame_idx=_f_idx,
+                                    kps=kps
+                                )
+                except Exception as _e_xseg3:
+                    _swallowed("roop/procmgr_masking.py:xseg3_refine", _e_xseg3, "xseg3 refinement fallback")
 
         if p_name in dense_maskers and kps is not None and M is not None:
             img_mask = _recover_undersized_mask(img_mask, kps, M)
