@@ -908,7 +908,15 @@ class FaceSwapInsightFace():
         crossface MLP runs once per source face, not once per frame."""
         mode = self.embedding_mode
         if mode == "normed":
-            return source_face.normed_embedding.reshape((1, -1)).astype(np.float32)
+            cache_key = f"_latent_{self.loaded_model_key}"
+            cached = source_face.get(cache_key) if hasattr(source_face, 'get') else None
+            if cached is not None:
+                return cached
+            from roop.hyperswap_optimizer import get_hyperswap_source_cache
+            latent = get_hyperswap_source_cache().get_latent(
+                source_face, model_key=self.loaded_model_key, embedding_mode="normed"
+            )
+            return latent
         if mode in ("converted_raw", "converted_norm"):
             cache_key = f"_latent_{self.loaded_model_key}"
             cached = source_face.get(cache_key) if hasattr(source_face, 'get') else None
@@ -954,10 +962,14 @@ class FaceSwapInsightFace():
                 pass
             return latent
         # Default: inswapper-family normed_embedding @ emap.
-        latent = source_face.normed_embedding.reshape((1, -1)).astype(np.float32)
-        if self.emap is not None:
-            latent = np.dot(latent, self.emap)
-            latent /= np.linalg.norm(latent)
+        cache_key = f"_latent_{self.loaded_model_key}"
+        cached = source_face.get(cache_key) if hasattr(source_face, 'get') else None
+        if cached is not None:
+            return cached
+        from roop.hyperswap_optimizer import get_hyperswap_source_cache
+        latent = get_hyperswap_source_cache().get_latent(
+            source_face, model_key=self.loaded_model_key, embedding_mode="normed_emap", emap=self.emap
+        )
         return latent
 
     def _prepare_source_crop(self, source_face: Face) -> np.ndarray:

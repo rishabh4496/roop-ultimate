@@ -313,12 +313,13 @@ class OnnxSpecSwapper(BaseFaceSwapper):
         if not np.isfinite(emb).all():
             raise ValueError(f"{self.spec_key}: source_embedding is not finite")
         mode = self.embedding_mode
+        key = (mode, emb.tobytes())
+        with self._latent_lock:
+            cached = self._latent_cache.get(key)
+        if cached is not None:
+            return cached
+
         if mode.startswith("converted_"):
-            key = emb.tobytes()
-            with self._latent_lock:
-                cached = self._latent_cache.get(key)
-            if cached is not None:
-                return cached
             converted = self.converter.run(None, {self.converter_input: emb})[0].ravel()
             if mode == "converted_norm":
                 converted = converted / np.linalg.norm(converted)
@@ -337,7 +338,12 @@ class OnnxSpecSwapper(BaseFaceSwapper):
         if mode == "normed_emap" and self.emap is not None:
             latent = np.dot(latent, self.emap)
             latent /= np.linalg.norm(latent)
-        return np.ascontiguousarray(latent.astype(np.float32))
+        latent_final = np.ascontiguousarray(latent.astype(np.float32))
+        with self._latent_lock:
+            self._latent_cache[key] = latent_final
+            while len(self._latent_cache) > 64:
+                self._latent_cache.popitem(last=False)
+        return latent_final
 
     # -- 3. infer ------------------------------------------------------------
 
