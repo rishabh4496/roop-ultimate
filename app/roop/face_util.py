@@ -1704,6 +1704,30 @@ def get_all_faces_hires(frame: Frame, det_size: int) -> Any:
         return []
 
 
+def get_adaptive_faces(frame: Frame, frame_idx: Optional[int] = None,
+                       expected_count: Optional[int] = None,
+                       force_full: bool = False) -> Any:
+    """Detect faces using the adaptive detector strategy:
+    Reuses valid tracks when motion is low, triggers full re-detection on
+    motion/confidence/count/geometry/occlusion events, and employs ROI rescue for
+    missing tracked faces before full recovery.
+    """
+    try:
+        from roop.adaptive_detector import get_adaptive_face_detector
+        detector = get_adaptive_face_detector()
+        return detector.detect(
+            frame,
+            frame_idx=frame_idx,
+            expected_count=expected_count,
+            det_fn=lambda fr: get_all_faces(fr, expected_count=expected_count),
+            roi_det_fn=lambda fr, box: get_all_faces_in_roi(fr, box),
+            force_full=force_full
+        )
+    except Exception as exc:
+        _swallowed("roop/face_util.py:get_adaptive_faces", exc, "fallback continued")
+        return get_all_faces(frame, expected_count=expected_count)
+
+
 def _attach_source_crops(face, img):
     """Pre-warp and cache the aligned source-face crops the image-source swap
     models (BlendSwap / UniFace) consume. Cheap (a couple of small warps) and

@@ -28,6 +28,7 @@ from roop.face_util import (
     release_face_analyser,
     release_face_analyser_aux,
     get_all_faces,
+    get_adaptive_faces,
     get_first_face,
     get_all_faces_in_roi,
     detect_boxes_in_roi,

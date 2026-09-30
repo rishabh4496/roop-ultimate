@@ -59,6 +59,10 @@ face_detector_nms = 0.40
 detector_scale_pyramid = 'auto'  # Multi-scale pyramid levels: 'auto', '0.5,0.75,1.0', or 'none'
 detector_padding_border = 64     # Frame boundary context padding (px) for close-ups and edge cuts
 detector_padding_mode = 'reflect' # Padding mode: 'reflect' or 'constant'
+adaptive_detection = True
+adaptive_detect_interval = 8
+adaptive_motion_threshold = 0.05
+adaptive_roi_rescue = True
 sam2_model_size = 'tiny'   # SAM2 tracked-mask checkpoint: tiny|small|base_plus|large
 track_identities = True    # video: lock each tracked person to one source (anti identity-flip)
 # Skin-tone / lighting match of the swapped crop to the original crop.

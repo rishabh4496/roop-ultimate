@@ -1,0 +1,63 @@
+{
+  "timestamp": "2026-09-30 23:12:42",
+  "hardware": "NVIDIA GeForce RTX 4070",
+  "num_frames": 80,
+  "results": [
+    {
+      "mode": "full_detection_every_frame",
+      "frames_processed": 80,
+      "duration_seconds": 4.895,
+      "fps": 16.34,
+      "total_faces_found": 478,
+      "missed_detections": 0,
+      "false_detections": 0,
+      "profile_detections": 83,
+      "small_face_detections": 0,
+      "mean_gpu_util_pct": 55.8,
+      "peak_vram_mb": 3027.5,
+      "speedup_vs_baseline": 1.0
+    },
+    {
+      "mode": "temporal_detection",
+      "frames_processed": 80,
+      "duration_seconds": 1.706,
+      "fps": 46.9,
+      "total_faces_found": 477,
+      "missed_detections": 0,
+      "false_detections": 0,
+      "profile_detections": 85,
+      "small_face_detections": 0,
+      "mean_gpu_util_pct": 60.2,
+      "peak_vram_mb": 3043.4,
+      "speedup_vs_baseline": 2.87
+    },
+    {
+      "mode": "roi_recovery",
+      "frames_processed": 80,
+      "duration_seconds": 7.803,
+      "fps": 10.25,
+      "total_faces_found": 480,
+      "missed_detections": 0,
+      "false_detections": 0,
+      "profile_detections": 81,
+      "small_face_detections": 0,
+      "mean_gpu_util_pct": 56.0,
+      "peak_vram_mb": 3044.6,
+      "speedup_vs_baseline": 0.63
+    },
+    {
+      "mode": "adaptive_detection",
+      "frames_processed": 80,
+      "duration_seconds": 3.105,
+      "fps": 25.77,
+      "total_faces_found": 483,
+      "missed_detections": 0,
+      "false_detections": 0,
+      "profile_detections": 85,
+      "small_face_detections": 0,
+      "mean_gpu_util_pct": 56.6,
+      "peak_vram_mb": 3040.3,
+      "speedup_vs_baseline": 1.58
+    }
+  ]
+}
