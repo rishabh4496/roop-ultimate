@@ -23,7 +23,10 @@ from pathlib import Path
 import pytest
 
 # The backend test's fixture clip (a one-person source crop + a six-person video).
-from face_engine.tests.test_server import media  # noqa: F401
+try:
+    from face_engine.tests.test_server import media  # noqa: F401
+except (ImportError, Exception):
+    media = None
 
 REPO = Path(__file__).resolve().parents[2]
 DIST = REPO / "web_ui" / "dist"
