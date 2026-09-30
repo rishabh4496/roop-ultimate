@@ -89,8 +89,9 @@ class Enhance_RestoreFormerPPlus():
                     init_time="initialized",
                     session_id=id(self.model_restoreformerpplus),
                 )
-            except Exception:
-                pass
+            except Exception as _e_reg:
+                from roop.degrade import swallowed as _swallowed
+                _swallowed("roop/processors/Enhance_RestoreFormerPPlus.py:model_lifecycle", _e_reg, "model lifecycle register fallback")
 
     def Run(self, source_faceset: FaceSet, target_face: Face, temp_frame: Frame) -> Frame:
         if temp_frame is None or getattr(temp_frame, 'size', 0) == 0:
@@ -102,8 +103,9 @@ class Enhance_RestoreFormerPPlus():
             src = temp_frame
         fallback_bgr = src
 
-        # One gather: uint8 BGR HWC -> float32 RGB CHW in [-1, 1].
-        x = self._lut[src.transpose(2, 0, 1)[::-1]][None]
+        # Preallocated buffer gather: uint8 BGR HWC -> float32 RGB CHW in [-1, 1].
+        from roop.restore_ultra_optimizer import BUFFER_POOL
+        x = BUFFER_POOL.prepare_model_input(src)
         
         # An independent (session, io_binding) per worker when pooled, else
         # this class's own lock over the single shared pair -- either way
@@ -124,13 +126,7 @@ class Enhance_RestoreFormerPPlus():
                   "(FP16 overflow? try an fp32 provider)")
             return sized(fallback_bgr.astype(np.uint8), input_size)
 
-        hwc = np.ascontiguousarray(result[::-1].transpose(1, 2, 0), dtype=np.float32)
-        # RestoreFormer's contract is RGB in [-1, 1].  The previous lower-only
-        # clamp plus convertScaleAbs turned an out-of-range negative prediction
-        # into a bright positive pixel, which can create white teeth/skin blocks
-        # and makes a malformed FP16/TRT result look superficially valid.
-        np.clip(hwc, -1.0, 1.0, out=hwc)
-        res = np.rint((hwc + 1.0) * 127.5).clip(0.0, 255.0).astype(np.uint8)
+        res = BUFFER_POOL.postprocess_model_output(result)
         if looks_collapsed(res, fallback_bgr):
             print("[RestoreFormer++] collapsed output — using unenhanced frame")
             return sized(fallback_bgr.astype(np.uint8), input_size)

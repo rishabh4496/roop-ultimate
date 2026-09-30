@@ -1,0 +1,92 @@
+{
+  "device": "NVIDIA GeForce RTX 4070",
+  "total_vram_mb": 12281.5,
+  "profiles": {
+    "FAST": {
+      "name": "FAST",
+      "finish_latency_ms": 18.643029999293503,
+      "fps": 53.639349399636004,
+      "detail_weight": 0.5,
+      "strength": 0.18,
+      "crispness": 0.16,
+      "eye_clarity": 0.3,
+      "pore_variance": 4.932257652282715,
+      "edge_sharpness": 184.16302490234375,
+      "eye_clarity_score": 49.59495735168457,
+      "identity_similarity": 0.9861036337477133,
+      "halo_overshoot_pct": 4.2095184326171875,
+      "description": "Lightweight, high-throughput enhancement tuned for real-time previews and laptop GPUs (RTX 3060)."
+    },
+    "BALANCED": {
+      "name": "BALANCED",
+      "finish_latency_ms": 18.65016000047035,
+      "fps": 53.618842946912004,
+      "detail_weight": 0.65,
+      "strength": 0.24,
+      "crispness": 0.22,
+      "eye_clarity": 0.4,
+      "pore_variance": 5.89073371887207,
+      "edge_sharpness": 319.76947021484375,
+      "eye_clarity_score": 52.699289321899414,
+      "identity_similarity": 0.9766549956051435,
+      "halo_overshoot_pct": 11.899566650390625,
+      "description": "Balanced enhancement trading moderate compute for photorealistic skin pores and natural iris depth."
+    },
+    "QUALITY": {
+      "name": "QUALITY",
+      "finish_latency_ms": 18.841199999224045,
+      "fps": 53.07517568101734,
+      "detail_weight": 0.75,
+      "strength": 0.3,
+      "crispness": 0.26,
+      "eye_clarity": 0.48,
+      "pore_variance": 6.588200569152832,
+      "edge_sharpness": 439.013427734375,
+      "eye_clarity_score": 55.076255798339844,
+      "identity_similarity": 0.9680419309624416,
+      "halo_overshoot_pct": 10.900115966796875,
+      "description": "High-fidelity production standard with anti-halo bounding and authentic texture injection."
+    },
+    "ULTRA": {
+      "name": "ULTRA",
+      "finish_latency_ms": 18.623085000217543,
+      "fps": 53.696796206875426,
+      "detail_weight": 0.85,
+      "strength": 0.36,
+      "crispness": 0.32,
+      "eye_clarity": 0.55,
+      "pore_variance": 7.3288373947143555,
+      "edge_sharpness": 594.6027221679688,
+      "eye_clarity_score": 57.71678161621094,
+      "identity_similarity": 0.9570652269534862,
+      "halo_overshoot_pct": 17.869949340820312,
+      "description": "Maximum micro-detail for high-res closeups, fine eyelashes, iris luminosity, and pore recovery."
+    }
+  },
+  "latency_breakdown_ms": {
+    "preprocessing_ms": 2.426125000056345,
+    "inference_ms": 38.93805000006978,
+    "postprocessing_ms": 4.525414998352062,
+    "finish_filtering_ms": 23.305905000597704,
+    "recombination_ms": 2.495805000216933,
+    "total_latency_ms": 72.05272500104911,
+    "throughput_fps": 13.878725613575888,
+    "peak_vram_mb": 0.0,
+    "delta_vram_mb": 0.0,
+    "peak_rss_mb": 6388.7421875
+  },
+  "precision_comparison": {
+    "fp32": {
+      "supported": true,
+      "inference_ms": 38.93805000006978,
+      "numerical_stability": "STABLE",
+      "non_finite_overflow": 0
+    },
+    "mixed_fp16": {
+      "supported": true,
+      "inference_ms": 25.309732500045357,
+      "numerical_stability": "GUARDED (CANDIDATE)",
+      "non_finite_overflow": 0
+    }
+  }
+}

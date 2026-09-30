@@ -96,8 +96,17 @@ class Enhance_RestoreUltra(Enhance_RestoreFormerPPlus):
             reference = cv2.resize(reference,
                                    (result.shape[1], result.shape[0]),
                                    interpolation=cv2.INTER_CUBIC)
-        result = enhance_restore_ultra(result, reference,
-                                       target_face=target_face)
+        # Apply Restore Ultra profile with adaptive strength and identity preservation guard
+        import roop.globals
+        from roop.restore_ultra_optimizer import apply_restore_ultra_profile
+        profile = getattr(roop.globals, 'restore_ultra_profile', 'QUALITY')
+        adaptive = bool(getattr(roop.globals, 'restore_ultra_adaptive_strength', True))
+        id_guard = bool(getattr(roop.globals, 'restore_ultra_identity_guard', True))
+
+        result = apply_restore_ultra_profile(
+            result, reference, profile_name=profile,
+            target_face=target_face, adaptive=adaptive, identity_guard=id_guard
+        )
         return result, scale_factor
 
     def Release(self):

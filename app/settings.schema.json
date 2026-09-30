@@ -685,6 +685,18 @@
       "default": false,
       "type": "bool"
     },
+    "restore_ultra_profile": {
+      "default": "QUALITY",
+      "type": "str"
+    },
+    "restore_ultra_adaptive_strength": {
+      "default": true,
+      "type": "bool"
+    },
+    "restore_ultra_identity_guard": {
+      "default": true,
+      "type": "bool"
+    },
     "stabilize_landmarks": {
       "default": true,
       "type": "bool"

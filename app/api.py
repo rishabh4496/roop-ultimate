@@ -4479,6 +4479,9 @@ def preview(payload: dict = Body(...)):
         roop_globals.restore_ultra_frequency_blend = bool(payload.get("restore_ultra_frequency_blend", getattr(roop_globals.CFG, "restore_ultra_frequency_blend", True)))
         roop_globals.restore_ultra_detail_weight = float(payload.get("restore_ultra_detail_weight", getattr(roop_globals.CFG, "restore_ultra_detail_weight", 0.75)))
         roop_globals.restore_ultra_inner_only = bool(payload.get("restore_ultra_inner_only", getattr(roop_globals.CFG, "restore_ultra_inner_only", False)))
+        roop_globals.restore_ultra_profile = str(payload.get("restore_ultra_profile", getattr(roop_globals.CFG, "restore_ultra_profile", "QUALITY")))
+        roop_globals.restore_ultra_adaptive_strength = bool(payload.get("restore_ultra_adaptive_strength", getattr(roop_globals.CFG, "restore_ultra_adaptive_strength", True)))
+        roop_globals.restore_ultra_identity_guard = bool(payload.get("restore_ultra_identity_guard", getattr(roop_globals.CFG, "restore_ultra_identity_guard", True)))
         roop_globals.mask_erode_dilate_radius = int(payload.get(
             "mask_erode_dilate_radius",
             getattr(roop_globals.CFG, "mask_erode_dilate_radius", 0)))
@@ -4997,6 +5000,9 @@ def _run_swap(payload):
         roop_globals.restore_ultra_frequency_blend = bool(payload.get("restore_ultra_frequency_blend", getattr(roop_globals.CFG, "restore_ultra_frequency_blend", True)))
         roop_globals.restore_ultra_detail_weight = float(payload.get("restore_ultra_detail_weight", getattr(roop_globals.CFG, "restore_ultra_detail_weight", 0.75)))
         roop_globals.restore_ultra_inner_only = bool(payload.get("restore_ultra_inner_only", getattr(roop_globals.CFG, "restore_ultra_inner_only", False)))
+        roop_globals.restore_ultra_profile = str(payload.get("restore_ultra_profile", getattr(roop_globals.CFG, "restore_ultra_profile", "QUALITY")))
+        roop_globals.restore_ultra_adaptive_strength = bool(payload.get("restore_ultra_adaptive_strength", getattr(roop_globals.CFG, "restore_ultra_adaptive_strength", True)))
+        roop_globals.restore_ultra_identity_guard = bool(payload.get("restore_ultra_identity_guard", getattr(roop_globals.CFG, "restore_ultra_identity_guard", True)))
         roop_globals.mask_erode_dilate_radius = int(payload.get(
             "mask_erode_dilate_radius",
             getattr(roop_globals.CFG, "mask_erode_dilate_radius", 0)))

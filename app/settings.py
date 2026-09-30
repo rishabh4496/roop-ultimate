@@ -1080,6 +1080,9 @@ class Settings:
         self.restore_ultra_frequency_blend = self.default_get(data, 'restore_ultra_frequency_blend', True)
         self.restore_ultra_detail_weight = self.default_get(data, 'restore_ultra_detail_weight', 0.75)
         self.restore_ultra_inner_only = self.default_get(data, 'restore_ultra_inner_only', False)
+        self.restore_ultra_profile = self.default_get(data, 'restore_ultra_profile', 'QUALITY')
+        self.restore_ultra_adaptive_strength = self.default_get(data, 'restore_ultra_adaptive_strength', True)
+        self.restore_ultra_identity_guard = self.default_get(data, 'restore_ultra_identity_guard', True)
         # Dense-landmark smoothing. Rides on stabilize_face: the kps filter above
         # left `landmark_2d_106` raw, and that array is what the paste matte's
         # outline is drawn from, so the crop was stabilised while its own edge
@@ -1448,6 +1451,9 @@ class Settings:
             'restore_ultra_frequency_blend': self.restore_ultra_frequency_blend,
             'restore_ultra_detail_weight': self.restore_ultra_detail_weight,
             'restore_ultra_inner_only': self.restore_ultra_inner_only,
+            'restore_ultra_profile': self.restore_ultra_profile,
+            'restore_ultra_adaptive_strength': self.restore_ultra_adaptive_strength,
+            'restore_ultra_identity_guard': self.restore_ultra_identity_guard,
             'stabilize_landmarks': self.stabilize_landmarks,
             'stabilize_hf_texture': self.stabilize_hf_texture,
             'stabilize_hf_texture_weight': self.stabilize_hf_texture_weight,

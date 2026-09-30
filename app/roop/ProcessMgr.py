@@ -3191,7 +3191,14 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
             return restored
         try:
             from roop import enhance_blend
-            w = float(getattr(roop.globals, 'restore_ultra_detail_weight', 0.75))
+            from roop.restore_ultra_optimizer import get_profile, compute_adaptive_scaling
+            prof = get_profile(getattr(roop.globals, 'restore_ultra_profile', 'QUALITY'))
+            w = float(getattr(roop.globals, 'restore_ultra_detail_weight', prof.detail_weight))
+            if getattr(roop.globals, 'restore_ultra_profile', None) and getattr(roop.globals, 'restore_ultra_detail_weight', 0.75) == 0.75:
+                w = prof.detail_weight
+            if bool(getattr(roop.globals, 'restore_ultra_adaptive_strength', True)):
+                scaling = compute_adaptive_scaling(restored.shape[:2], target_face=target_face)
+                w *= scaling.detail_weight_mult
             region = None
             if bool(getattr(roop.globals, 'restore_ultra_inner_only', False)):
                 lm = getattr(target_face, 'landmark_2d_106', None)
