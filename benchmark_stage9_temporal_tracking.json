@@ -1,0 +1,57 @@
+{
+  "stage": "STAGE 9 \u2014 TEMPORAL FACE TRACKING AND FLICKER CONTROL",
+  "landmark_jitter_suppression": {
+    "raw_jitter_variance_px2": 39.7168,
+    "tracked_jitter_variance_px2": 5.7907,
+    "jitter_reduction_pct": 85.42,
+    "flicker_suppressed": true
+  },
+  "crossing_faces_identity_stability": {
+    "crossings_detected": 24,
+    "robust_stability_score_pct": 100.0,
+    "naive_stability_score_pct": 100.0,
+    "identity_flips_prevented": true
+  },
+  "detector_dropout_recovery": {
+    "consecutive_drop_frames": 5,
+    "coasted_frames_produced": 5,
+    "dropout_recovery_rate_pct": 100.0,
+    "recovered_cleanly": true
+  },
+  "discontinuity_guard_and_spline": {
+    "hermite_tangent_matched": true,
+    "continuous_motion_interpolated": true,
+    "shot_cut_discontinuity_blocked": true,
+    "scale_jump_discontinuity_blocked": true,
+    "identity_divergence_discontinuity_blocked": true,
+    "all_discontinuities_guarded": true
+  },
+  "profile_and_rapid_motion": {
+    "profile_turning_handled": true,
+    "profile_transitions_count": 4,
+    "rapid_motion_fidelity_r": 1.0,
+    "legitimate_motion_preserved": true
+  },
+  "reid_returning_actor": {
+    "initial_track_id": 0,
+    "recovered_track_id": 0,
+    "preserved_source_assignment": 2,
+    "reid_archive_hits": 1,
+    "identity_persistence_success": true
+  },
+  "performance_profile": {
+    "1_face": {
+      "latency_ms": 0.167,
+      "throughput_fps": 5996.5
+    },
+    "2_face": {
+      "latency_ms": 0.336,
+      "throughput_fps": 2979.6
+    },
+    "5_face": {
+      "latency_ms": 0.985,
+      "throughput_fps": 1015.4
+    },
+    "spline_calc_latency_us": 0.309
+  }
+}

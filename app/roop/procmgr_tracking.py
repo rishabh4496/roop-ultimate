@@ -2219,28 +2219,36 @@ class TrackingMixin:
 
     @staticmethod
     def _interp_face(a, b, w, emb_mean):
-        """Linear blend of two Face observations at fraction w ∈ (0,1) of a→b.
-        NB: copy.copy() crashes on an insightface Face (its __getattr__ returns
-        None for missing dunders), so shallow-copy via the dict constructor."""
-        f = type(a)(a)
+        """Confidence-aware Cubic Hermite blend of two Face observations at fraction w in (0,1)."""
+        try:
+            from roop.temporal_state_machine import ConfidenceAwareInterpolator
+            cand = ConfidenceAwareInterpolator.interpolate_face(a, b, w, emb_mean)
+            f = type(a)(cand)
+            f['embedding'] = emb_mean
+            f['_interpolated'] = True
+            return f
+        except Exception as _e_herm:
+            from roop.degrade import swallowed as _swallowed
+            _swallowed("roop/procmgr_tracking.py:_interp_face", _e_herm, "fallback lerp")
+            f = type(a)(a)
 
-        def _lerp(x, y):
-            return (1.0 - w) * np.asarray(x, np.float64) + w * np.asarray(y, np.float64)
+            def _lerp(x, y):
+                return (1.0 - w) * np.asarray(x, np.float64) + w * np.asarray(y, np.float64)
 
-        f['bbox'] = _lerp(a.bbox, b.bbox).astype(np.float32)
-        if getattr(a, 'kps', None) is not None and getattr(b, 'kps', None) is not None:
-            f['kps'] = _lerp(a.kps, b.kps).astype(np.float32)
-        for key in ('landmark_2d_106', 'landmark_3d_68'):
-            va, vb = getattr(a, key, None), getattr(b, key, None)
-            if va is not None and vb is not None and np.shape(va) == np.shape(vb):
-                f[key] = _lerp(va, vb).astype(np.float32)
-        # Identity for embedding matching: the track's mean. Set the RAW
-        # embedding — normed_embedding is a read-only property derived from it.
-        f['embedding'] = emb_mean
-        f['det_score'] = np.float32(min(float(getattr(a, 'det_score', 0.6) or 0.6),
-                                        float(getattr(b, 'det_score', 0.6) or 0.6)))
-        f['_interpolated'] = True
-        return f
+            f['bbox'] = _lerp(a.bbox, b.bbox).astype(np.float32)
+            if getattr(a, 'kps', None) is not None and getattr(b, 'kps', None) is not None:
+                f['kps'] = _lerp(a.kps, b.kps).astype(np.float32)
+            for key in ('landmark_2d_106', 'landmark_3d_68'):
+                va, vb = getattr(a, key, None), getattr(b, key, None)
+                if va is not None and vb is not None and np.shape(va) == np.shape(vb):
+                    f[key] = _lerp(va, vb).astype(np.float32)
+            # Identity for embedding matching: the track's mean. Set the RAW
+            # embedding — normed_embedding is a read-only property derived from it.
+            f['embedding'] = emb_mean
+            f['det_score'] = np.float32(min(float(getattr(a, 'det_score', 0.6) or 0.6),
+                                            float(getattr(b, 'det_score', 0.6) or 0.6)))
+            f['_interpolated'] = True
+            return f
 
     def _coast_track_gaps(self, merged, idxs, tid, other_real, cuts=None):
         """Fill frames interpolation left empty with guarded Kalman predictions.
@@ -2467,6 +2475,18 @@ class TrackingMixin:
                         self._interp_refused_cut += (i - prev - 1)
                         prev = i
                         continue
+                    try:
+                        from roop.temporal_state_machine import ConfidenceAwareInterpolator
+                        is_disc, _ = ConfidenceAwareInterpolator.check_discontinuity(
+                            a, b, int(span), cuts=cuts, frame_lo=prev, frame_hi=i
+                        )
+                        if is_disc:
+                            self._interp_refused += (i - prev - 1)
+                            prev = i
+                            continue
+                    except Exception as _e_disc:
+                        _swallowed("roop/procmgr_tracking.py:discontinuity", _e_disc, "fallback bridgeable")
+
                     # Only bridge a gap the face could actually have crossed. A
                     # Re-ID reconnection carries no spatial constraint, so the two
                     # anchors can be on opposite sides of the frame — filling that
