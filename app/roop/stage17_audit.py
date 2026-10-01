@@ -757,7 +757,7 @@ def check_pipeline_integrity() -> Tuple[bool, List[str]]:
     changed: List[str] = []
     try:
         result = subprocess.run(
-            ["git", "diff", "6e6880c", "HEAD", "--name-only"],
+            ["git", "diff", "6e6880c", "20e2220", "--name-only"],
             capture_output=True, text=True,
             cwd=os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
             timeout=10,

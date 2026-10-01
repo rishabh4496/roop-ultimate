@@ -394,7 +394,9 @@ _enable_tensorrt_runtime()
 # Rule 2: min(max(2, cores - 1), knee)    -- left one CPU core unused
 # Rule 3: reach the measured knee when the CPU has that many physical cores;
 #         retain one core of headroom on smaller CPUs.
-_THREAD_RULE = 3
+# Rule 4: high-tier workstations (>=11GB VRAM, >=16 cores, e.g. RTX 4070 Desktop)
+#         scale knee to 20 to saturate cross-frame dynamic batch queues.
+_THREAD_RULE = 4
 _HARDWARE_CACHE = None
 _DEFAULT_PROVIDER_CACHE = None
 
@@ -870,7 +872,12 @@ class Settings:
                     # entire CPU only when it reaches the already-measured GPU
                     # knee. A smaller CPU still keeps one core for decoding,
                     # encoding and UI responsiveness.
-                    knee = 8 if vram_gb < 7 else 10
+                    if vram_gb < 7:
+                        knee = 8
+                    elif vram_gb >= 11 and cores >= 16:
+                        knee = 20
+                    else:
+                        knee = 10
                     usable_cores = cores if cores >= knee else max(2, cores - 1)
                     default_threads = int(min(usable_cores, knee))
                     threads_basis = f"v{_THREAD_RULE}|{cores}|{knee}"

@@ -309,9 +309,14 @@ def audit_model_onnx(model_path: Union[str, Path]) -> ModelAuditMetadata:
     except Exception as exc:
         _swallowed("roop/inference_optimizer.py:279", exc, "onnx inspection fallback")
         # Minimal fallback without onnx library
-        input_names = ["input"]
-        output_names = ["output"]
-        input_shapes = {"input": (1, 3, 256, 256)}
+        if category == ModelCategory.SWAPPER:
+            input_names = ["target", "source"]
+            output_names = ["output"]
+            input_shapes = {"target": (1, 3, 256, 256), "source": (1, 512)}
+        else:
+            input_names = ["input"]
+            output_names = ["output"]
+            input_shapes = {"input": (1, 3, 256, 256)}
         is_static = True
 
     # A model is "small" if its weights are < 45MB or category is landmark/recognizer

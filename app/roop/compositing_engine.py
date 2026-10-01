@@ -69,6 +69,37 @@ _M2_LMS_TO_OKLAB = np.array([
 _M2_INV_OKLAB_TO_LMS = np.linalg.inv(_M2_LMS_TO_OKLAB).astype(np.float32)
 _M1_INV_LMS_TO_RGB = np.linalg.inv(_M1_RGB_TO_LMS).astype(np.float32)
 
+try:
+    import torch
+    import torch.nn.functional as F
+    import torchvision.transforms.functional as TF
+    _TORCH_AVAILABLE = True
+    _TORCH_CUDA = torch.cuda.is_available()
+except Exception as _e:
+    _swallowed("roop/compositing_engine.py:torch_import", _e, "torch unavailable")
+    _TORCH_AVAILABLE = False
+    _TORCH_CUDA = False
+
+_CUDA_M1 = None
+_CUDA_M2 = None
+_CUDA_M2_INV = None
+_CUDA_M1_INV = None
+_CUDA_K = None
+_CUDA_K_VERT = None
+
+def _ensure_cuda_constants():
+    global _CUDA_M1, _CUDA_M2, _CUDA_M2_INV, _CUDA_M1_INV, _CUDA_K, _CUDA_K_VERT
+    if _CUDA_M1 is None and _TORCH_CUDA:
+        try:
+            _CUDA_M1 = torch.from_numpy(_M1_RGB_TO_LMS.T).float().cuda()
+            _CUDA_M2 = torch.from_numpy(_M2_LMS_TO_OKLAB.T).float().cuda()
+            _CUDA_M2_INV = torch.from_numpy(_M2_INV_OKLAB_TO_LMS.T).float().cuda()
+            _CUDA_M1_INV = torch.from_numpy(_M1_INV_LMS_TO_RGB.T).float().cuda()
+            _CUDA_K = torch.tensor([0.06136, 0.24477, 0.38774, 0.24477, 0.06136], dtype=torch.float32, device='cuda').view(1, 1, 1, 5).repeat(3, 1, 1, 1)
+            _CUDA_K_VERT = _CUDA_K.transpose(2, 3)
+        except Exception as _e_init:
+            _swallowed("roop/compositing_engine.py:cuda_init", _e_init, "cuda init fallback")
+
 
 class LinearColorSpace:
     """Accurate, SIMD-accelerated conversions between sRGB and Linear RGB."""
@@ -182,37 +213,60 @@ class SkinPhotometricMatcher:
         else:
             ref_target = target_bgr
 
-        # Extract skin regions
-        skin_paste = cls.extract_skin_mask(paste_bgr)
-        skin_target = cls.extract_skin_mask(ref_target)
-        joint_skin = skin_paste * skin_target
-        sample_mask = joint_skin > 0.25
-
-        if int(sample_mask.sum()) < 48:
-            sample_mask = skin_target > 0.20
+        # Extract skin regions and compute photometric statistics
+        if h > 128 or w > 128:
+            s_w, s_h = min(128, w), min(128, h)
+            p_s = cv2.resize(paste_bgr, (s_w, s_h), interpolation=cv2.INTER_AREA)
+            t_s = cv2.resize(ref_target, (s_w, s_h), interpolation=cv2.INTER_AREA)
+            skin_p_s = cls.extract_skin_mask(p_s)
+            skin_t_s = cls.extract_skin_mask(t_s)
+            sample_mask = (skin_p_s * skin_t_s) > 0.25
             if int(sample_mask.sum()) < 48:
-                return paste_bgr
+                sample_mask = skin_t_s > 0.20
+                if int(sample_mask.sum()) < 48:
+                    return paste_bgr
+            p_s_ok = OKLabColorSpace.linear_bgr_to_oklab(LinearColorSpace.srgb_to_linear(p_s))
+            t_s_ok = OKLabColorSpace.linear_bgr_to_oklab(LinearColorSpace.srgb_to_linear(t_s))
+            med_L_p = float(np.median(p_s_ok[:, :, 0][sample_mask]))
+            med_L_t = float(np.median(t_s_ok[:, :, 0][sample_mask]))
+            std_L_p = float(np.std(p_s_ok[:, :, 0][sample_mask]))
+            std_L_t = float(np.std(t_s_ok[:, :, 0][sample_mask]))
+            med_a_p = float(np.median(p_s_ok[:, :, 1][sample_mask]))
+            med_a_t = float(np.median(t_s_ok[:, :, 1][sample_mask]))
+            med_b_p = float(np.median(p_s_ok[:, :, 2][sample_mask]))
+            med_b_t = float(np.median(t_s_ok[:, :, 2][sample_mask]))
+            skin_paste = cv2.resize(skin_p_s, (w, h), interpolation=cv2.INTER_LINEAR)
+        else:
+            skin_paste = cls.extract_skin_mask(paste_bgr)
+            skin_target = cls.extract_skin_mask(ref_target)
+            joint_skin = skin_paste * skin_target
+            sample_mask = joint_skin > 0.25
 
-        # Convert both to Linear Light -> OKLab
+            if int(sample_mask.sum()) < 48:
+                sample_mask = skin_target > 0.20
+                if int(sample_mask.sum()) < 48:
+                    return paste_bgr
+
+            paste_ok_temp = OKLabColorSpace.linear_bgr_to_oklab(LinearColorSpace.srgb_to_linear(paste_bgr))
+            target_oklab = OKLabColorSpace.linear_bgr_to_oklab(LinearColorSpace.srgb_to_linear(ref_target))
+            med_L_p = float(np.median(paste_ok_temp[:, :, 0][sample_mask]))
+            med_L_t = float(np.median(target_oklab[:, :, 0][sample_mask]))
+            std_L_p = float(np.std(paste_ok_temp[:, :, 0][sample_mask]))
+            std_L_t = float(np.std(target_oklab[:, :, 0][sample_mask]))
+            med_a_p = float(np.median(paste_ok_temp[:, :, 1][sample_mask]))
+            med_a_t = float(np.median(target_oklab[:, :, 1][sample_mask]))
+            med_b_p = float(np.median(paste_ok_temp[:, :, 2][sample_mask]))
+            med_b_t = float(np.median(target_oklab[:, :, 2][sample_mask]))
+
+        # Convert paste to Linear Light -> OKLab for modulation
         paste_lin = LinearColorSpace.srgb_to_linear(paste_bgr)
-        target_lin = LinearColorSpace.srgb_to_linear(ref_target)
-
         paste_oklab = OKLabColorSpace.linear_bgr_to_oklab(paste_lin)
-        target_oklab = OKLabColorSpace.linear_bgr_to_oklab(target_lin)
-
-        # 1. Lightness (L) Exposure & Contrast Alignment
         L_p = paste_oklab[:, :, 0]
-        L_t = target_oklab[:, :, 0]
-
-        med_L_p = float(np.median(L_p[sample_mask]))
-        med_L_t = float(np.median(L_t[sample_mask]))
 
         # Target exposure delta
         delta_L = (med_L_t - med_L_p) * exposure_weight * strength
 
         # Bounded contrast scaling on skin
-        std_L_p = float(np.std(L_p[sample_mask]))
-        std_L_t = float(np.std(L_t[sample_mask]))
         contrast_ratio = float(np.clip(std_L_t / max(std_L_p, 0.02), 0.75, 1.25))
 
         # Modulate L channel
@@ -227,13 +281,6 @@ class SkinPhotometricMatcher:
 
         a_p = paste_oklab[:, :, 1]
         b_p = paste_oklab[:, :, 2]
-        a_t = target_oklab[:, :, 1]
-        b_t = target_oklab[:, :, 2]
-
-        med_a_p = float(np.median(a_p[sample_mask]))
-        med_a_t = float(np.median(a_t[sample_mask]))
-        med_b_p = float(np.median(b_p[sample_mask]))
-        med_b_t = float(np.median(b_t[sample_mask]))
 
         # Bounded chromatic shifts (prevents neon orange/red or severe blue casts)
         delta_a = float(np.clip(med_a_t - med_a_p, -0.06, 0.06)) * eff_chroma_weight
@@ -393,6 +440,142 @@ class CompositingQualityEngine:
                 cls._instance = super().__new__(cls)
             return cls._instance
 
+    def _composite_roi_cuda(
+        self,
+        roi_paste: np.ndarray,
+        roi_target: np.ndarray,
+        roi_matte: np.ndarray,
+        enable_photometric: bool = True,
+        enable_linear_blend: bool = True,
+        enable_multiband: bool = True,
+        enable_sharpening: bool = True,
+        photometric_strength: float = 0.85,
+        sharpen_strength: float = 0.22
+    ) -> np.ndarray:
+        """PyTorch CUDA accelerated compositing pipeline for RTX 4070 and desktop GPUs."""
+        _ensure_cuda_constants()
+        if _CUDA_M1 is None:
+            raise RuntimeError("CUDA constants not initialized")
+
+        paste_u8 = np.clip(roi_paste, 0.0, 255.0).astype(np.uint8)
+        target_u8 = np.clip(roi_target, 0.0, 255.0).astype(np.uint8)
+        H, W = paste_u8.shape[:2]
+        dark_tier = DarkSceneToneMapper.classify_scene_luminance(target_u8)
+
+        p_gpu = torch.from_numpy(paste_u8).cuda().float() / 255.0
+        t_gpu = torch.from_numpy(target_u8).cuda().float() / 255.0
+        m_gpu = torch.from_numpy(np.asarray(roi_matte, dtype=np.float32)).cuda()
+        if m_gpu.ndim == 2:
+            m_gpu = m_gpu.unsqueeze(-1)
+        m_gpu = torch.clamp(m_gpu, 0.0, 1.0)
+
+        # 1. Exact IEC 61966-2-1 sRGB to Linear Light on GPU
+        p_lin = torch.where(p_gpu <= 0.04045, p_gpu / 12.92, torch.pow((p_gpu + 0.055) / 1.055, 2.4))
+        t_lin = torch.where(t_gpu <= 0.04045, t_gpu / 12.92, torch.pow((t_gpu + 0.055) / 1.055, 2.4))
+        paste_lin = p_lin
+
+        # 2. Skin Photometric & Exposure Matching in Perceptually Uniform OKLab
+        if enable_photometric and photometric_strength > 1e-4:
+            s_w, s_h = min(128, W), min(128, H)
+            p_s = cv2.resize(paste_u8, (s_w, s_h), interpolation=cv2.INTER_AREA) if (H > 128 or W > 128) else paste_u8
+            t_s = cv2.resize(target_u8, (s_w, s_h), interpolation=cv2.INTER_AREA) if (H > 128 or W > 128) else target_u8
+            skin_p = SkinPhotometricMatcher.extract_skin_mask(p_s)
+            skin_t = SkinPhotometricMatcher.extract_skin_mask(t_s)
+            joint_skin = skin_p * skin_t
+            sample_mask = joint_skin > 0.25
+            if int(sample_mask.sum()) < 48:
+                sample_mask = skin_t > 0.20
+            if int(sample_mask.sum()) >= 48:
+                p_s_lin = LinearColorSpace.srgb_to_linear(p_s)
+                t_s_lin = LinearColorSpace.srgb_to_linear(t_s)
+                p_s_ok = OKLabColorSpace.linear_bgr_to_oklab(p_s_lin)
+                t_s_ok = OKLabColorSpace.linear_bgr_to_oklab(t_s_lin)
+                L_p_s, a_p_s, b_p_s = p_s_ok[:, :, 0], p_s_ok[:, :, 1], p_s_ok[:, :, 2]
+                L_t_s = t_s_ok[:, :, 0]
+                med_L_p = float(np.median(L_p_s[sample_mask]))
+                med_L_t = float(np.median(L_t_s[sample_mask]))
+                std_L_p = float(np.std(L_p_s[sample_mask]))
+                std_L_t = float(np.std(L_t_s[sample_mask]))
+                contrast_ratio = float(np.clip(std_L_t / max(std_L_p, 0.02), 0.75, 1.25))
+                delta_L = (med_L_t - med_L_p) * 0.90 * photometric_strength
+                chroma_damp = 0.50 if dark_tier in ('DARK', 'VERY_DARK') else 1.0
+                eff_chroma_weight = 0.65 * photometric_strength * chroma_damp
+                med_a_p = float(np.median(a_p_s[sample_mask]))
+                med_a_t = float(np.median(t_s_ok[:, :, 1][sample_mask]))
+                med_b_p = float(np.median(b_p_s[sample_mask]))
+                med_b_t = float(np.median(t_s_ok[:, :, 2][sample_mask]))
+                delta_a = float(np.clip(med_a_t - med_a_p, -0.06, 0.06)) * eff_chroma_weight
+                delta_b = float(np.clip(med_b_t - med_b_p, -0.06, 0.06)) * eff_chroma_weight
+
+                rgb_p = paste_lin.flip(-1)
+                lms_p = torch.pow(torch.clamp(torch.matmul(rgb_p, _CUDA_M1), min=1e-12), 1.0 / 3.0)
+                oklab_p = torch.matmul(lms_p, _CUDA_M2)
+                L_p = oklab_p[..., 0]
+                adj_L = (L_p - med_L_p) * contrast_ratio + med_L_p + delta_L
+                sk_f = cv2.resize(skin_p, (W, H), interpolation=cv2.INTER_LINEAR) if (H > 128 or W > 128) else skin_p
+                sk_gpu = torch.from_numpy(sk_f).cuda().float().unsqueeze(-1)
+                oklab_p[..., 0] = L_p + (adj_L - L_p) * sk_gpu[..., 0]
+                oklab_p[..., 1] = oklab_p[..., 1] + delta_a * sk_gpu[..., 0]
+                oklab_p[..., 2] = oklab_p[..., 2] + delta_b * sk_gpu[..., 0]
+                lms_inv = torch.matmul(oklab_p, _CUDA_M2_INV)
+                rgb_matched = torch.matmul(torch.pow(torch.clamp(lms_inv, min=0.0), 3.0), _CUDA_M1_INV)
+                paste_lin = rgb_matched.flip(-1)
+
+        # 3. Dark Scene Tone Mapping
+        if dark_tier != 'NORMAL':
+            t_luma = 0.114 * t_lin[:, :, 0] + 0.587 * t_lin[:, :, 1] + 0.299 * t_lin[:, :, 2]
+            black_floor = float(torch.quantile(t_luma, 0.01))
+            p_luma = 0.114 * paste_lin[:, :, 0] + 0.587 * paste_lin[:, :, 1] + 0.299 * paste_lin[:, :, 2]
+            lift = torch.clamp(black_floor - p_luma, min=0.0)
+            factor = 0.75 if dark_tier == 'VERY_DARK' else 0.45
+            paste_lin = paste_lin + lift.unsqueeze(-1) * factor
+
+        # 4. Linear-Light Blending & Frequency Decomposition
+        if enable_linear_blend:
+            if enable_multiband:
+                p_bch = paste_lin.permute(2, 0, 1).unsqueeze(0)
+                t_bch = t_lin.permute(2, 0, 1).unsqueeze(0)
+                k_blur_low = min(25, max(3, (min(H, W) - 1) | 1))
+                low_p = TF.gaussian_blur(p_bch, [k_blur_low, k_blur_low], [6.0, 6.0])
+                low_t = TF.gaussian_blur(t_bch, [k_blur_low, k_blur_low], [6.0, 6.0])
+                high_p = p_bch - low_p
+                high_t = t_bch - low_t
+                m_bch = m_gpu.permute(2, 0, 1).unsqueeze(0)
+                k_maxpool = min(13, max(3, (min(H, W) // 2) | 1))
+                m_dil = F.max_pool2d(m_bch, kernel_size=k_maxpool, stride=1, padding=k_maxpool // 2)
+                k_blur_exp = min(37, max(3, (min(H, W) - 1) | 1))
+                exp_m = TF.gaussian_blur(m_dil, [k_blur_exp, k_blur_exp], [9.0, 9.0])
+                blended_low = exp_m * low_p + (1.0 - exp_m) * low_t
+                blended_high = m_bch * high_p + (1.0 - m_bch) * high_t
+                blended_lin = (blended_low + blended_high).squeeze(0).permute(1, 2, 0)
+            else:
+                blended_lin = m_gpu * paste_lin + (1.0 - m_gpu) * t_lin
+
+            # 5. Edge-Preserving Micro-Sharpening
+            if enable_sharpening and sharpen_strength > 1e-4:
+                b_bch = blended_lin.permute(2, 0, 1).unsqueeze(0)
+                k_blur_shp = min(7, max(3, (min(H, W) - 1) | 1))
+                blurred = TF.gaussian_blur(b_bch, [k_blur_shp, k_blur_shp], [1.0, 1.0]).squeeze(0).permute(1, 2, 0)
+                high_pass = blended_lin - blurred
+                mag = torch.abs(high_pass)
+                coring = torch.clamp((mag - 0.004) / 0.03, 0.0, 1.0) * torch.exp(-torch.pow(mag / 0.15, 2.0))
+                a_interior = torch.clamp((m_gpu - 0.6) / 0.35, 0.0, 1.0)
+                sharpened = blended_lin + high_pass * coring * (sharpen_strength * a_interior)
+                blended_lin = torch.clamp(sharpened, min=0.0)
+
+            # 6. Inverse IEC 61966-2-1 EOTF with Soft-Knee Highlights
+            x = torch.clamp(blended_lin, min=0.0)
+            x = torch.where(x > 1.0, 1.0 + torch.tanh(x - 1.0) * 0.45, x)
+            srgb = torch.where(
+                x <= 0.0031308,
+                12.92 * x,
+                1.055 * torch.pow(torch.clamp(x, min=1e-12), 1.0 / 2.4) - 0.055
+            )
+            return torch.clamp(torch.round(srgb * 255.0), 0.0, 255.0).byte().cpu().numpy()
+        else:
+            out = m_gpu * p_gpu + (1.0 - m_gpu) * t_gpu
+            return torch.clamp(torch.round(out * 255.0), 0.0, 255.0).byte().cpu().numpy()
+
     def composite_roi(
         self,
         roi_paste: np.ndarray,
@@ -415,6 +598,20 @@ class CompositingQualityEngine:
         Returns:
             uint8 BGR composite.
         """
+        if _TORCH_CUDA:
+            try:
+                return self._composite_roi_cuda(
+                    roi_paste, roi_target, roi_matte,
+                    enable_photometric=enable_photometric,
+                    enable_linear_blend=enable_linear_blend,
+                    enable_multiband=enable_multiband,
+                    enable_sharpening=enable_sharpening,
+                    photometric_strength=photometric_strength,
+                    sharpen_strength=sharpen_strength
+                )
+            except Exception as _e_cuda:
+                _swallowed("roop/compositing_engine.py:composite_roi_cuda", _e_cuda, "cuda compositing fallback")
+
         # Ensure uint8 inputs for initial color analysis
         paste_u8 = np.clip(roi_paste, 0.0, 255.0).astype(np.uint8)
         target_u8 = np.clip(roi_target, 0.0, 255.0).astype(np.uint8)

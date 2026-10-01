@@ -263,6 +263,26 @@ class TestCompositingQualityEngine(unittest.TestCase):
         for res in results:
             self.assertTrue(np.array_equal(res, expected), "Thread concurrency diverged from single-thread result")
 
+    def test_cuda_acceleration_fidelity(self):
+        """CUDA-accelerated compositing must closely match CPU output within quantization noise."""
+        import torch
+        if not torch.cuda.is_available():
+            self.skipTest("CUDA not available")
+
+        # Disable CUDA momentarily to get pure CPU ground truth
+        import roop.compositing_engine as ce
+        orig_torch_cuda = ce._TORCH_CUDA
+        try:
+            ce._TORCH_CUDA = False
+            cpu_result = self.engine.composite_roi(self.paste, self.target, self.matte)
+            ce._TORCH_CUDA = True
+            cuda_result = self.engine.composite_roi(self.paste, self.target, self.matte)
+            diff = np.abs(cpu_result.astype(int) - cuda_result.astype(int))
+            self.assertLessEqual(diff.max(), 3, f"CUDA compositing exceeded max error tolerance: {diff.max()}")
+            self.assertLessEqual(diff.mean(), 0.5, f"CUDA compositing exceeded mean error tolerance: {diff.mean()}")
+        finally:
+            ce._TORCH_CUDA = orig_torch_cuda
+
 
 if __name__ == "__main__":
     unittest.main()

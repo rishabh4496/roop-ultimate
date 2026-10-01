@@ -730,7 +730,7 @@ class MaskingMixin:
                            'face was composited without it: %s: %s'
                            % (type(exc).__name__, str(exc)[:160]))
 
-        _compositing_engine = str(os.environ.get('ROOP_COMPOSITING_ENGINE', '1')).strip().lower() not in (
+        _compositing_engine = str(os.environ.get('ROOP_COMPOSITING_ENGINE', '0')).strip().lower() not in (
             '0', 'false', 'no', 'off')
         if _composite_plan is not None:
             blended_roi = composite_multiband(

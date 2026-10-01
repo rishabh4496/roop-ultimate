@@ -1,6 +1,7 @@
 from roop.degrade import swallowed as _swallowed
 import os
 import threading
+import time
 
 import roop.globals
 import cv2

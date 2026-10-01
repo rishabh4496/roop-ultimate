@@ -146,7 +146,7 @@ def first_face_frame(video, stride=1, limit=600):
     raise SystemExit(f"no detectable face found in the first {limit} frames of {video}")
 
 
-def run_swap(clip_path, facesets, targets, groups, options, out_dir):
+def run_swap(clip_path, facesets, targets, groups, options, out_dir, frames=0):
     import roop.globals as g
     from roop import ProcessMgr as _pm
     from roop import procmgr_runtime as _rt
@@ -162,7 +162,7 @@ def run_swap(clip_path, facesets, targets, groups, options, out_dir):
     g.output_path = out_dir
     os.makedirs(out_dir, exist_ok=True)
 
-    entry = ProcessEntry(clip_path, 0, 0, 30.0)
+    entry = ProcessEntry(clip_path, 0, frames, 30.0)
     before = set(os.listdir(out_dir))
     t0 = time.time()
     batch_process_with_options([entry], options, None)
@@ -198,6 +198,8 @@ def main():
     ap.add_argument("--threads", type=int, default=None,
                     help="defaults to config.yaml's live 'max_threads' setting if not "
                          "given, matching what the real app actually runs with")
+    ap.add_argument("--frames", type=int, default=0,
+                    help="limit number of frames to swap (0 = all)")
     ap.add_argument("--mode", default="all", choices=["all", "selected", "all_input"],
                     help="swap mode: 'all' (swap every detected face with source), 'selected' (track captured target person), 'all_input'")
     ap.add_argument("--out", default=os.path.join(APP, "output"))
@@ -216,7 +218,7 @@ def main():
     # (via a throwaway Settings load) so the baseline is the pipeline the user
     # actually has configured right now, not an arbitrary hardcoded combo.
     from settings import Settings
-    cfg_probe = Settings("config.yaml")
+    cfg_probe = Settings(os.path.join(APP, "config.yaml"))
     swap_model = cfg_probe.swap_model
     mask_engine_display = cfg_probe.mask_engine
     mask_engine = map_mask_engine(mask_engine_display)
@@ -279,7 +281,7 @@ def main():
     out_dir = os.path.join(args.out, args.tag)
     os.makedirs(out_dir, exist_ok=True)
 
-    out, elapsed, face_log = run_swap(args.video, facesets, targets, groups, options, out_dir)
+    out, elapsed, face_log = run_swap(args.video, facesets, targets, groups, options, out_dir, frames=args.frames)
     if not out:
         print(f"[bench] FAILED: no output produced for {args.video}", flush=True)
         sys.exit(1)
