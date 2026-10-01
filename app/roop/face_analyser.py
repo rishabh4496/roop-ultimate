@@ -700,11 +700,11 @@ def canonicalize_face_alignment(image: Frame, face: Any, image_size: int, mode: 
 
     if dst is not None:
         cv2.warpAffine(image, paste_matrix, (image_size, image_size), dst=dst,
-                       flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
+                       flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE)
         aligned = dst
     else:
         aligned = cv2.warpAffine(image, paste_matrix, (image_size, image_size),
-                                 flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
+                                 flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE)
     return aligned, paste_matrix, {
         'yaw': yaw, 'pitch': pitch, 'roll': roll_deg, 'pre_rotation': R,
         'inverse_pre_rotation': inv_R, 'applied_roll_prerotation': applied,

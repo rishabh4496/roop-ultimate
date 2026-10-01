@@ -5287,6 +5287,7 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                         M = _stable_M
                         aligned_img = cv2.warpAffine(
                             plate, M, (subsample_size, subsample_size),
+                            flags=cv2.INTER_CUBIC,
                             borderMode=cv2.BORDER_REPLICATE)
                         fake_frame = aligned_img
                         target_face.matrix = M
@@ -5749,8 +5750,10 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                         # face itself needs to be the swapped version. Warp both
                         # and composite on the swap crop's own footprint.
                         _ctx = cv2.warpAffine(plate, _M_e, (_ss, _ss),
+                                              flags=cv2.INTER_CUBIC,
                                               borderMode=cv2.BORDER_REPLICATE)
                         _sw = cv2.warpAffine(fake_frame, _A, (_ss, _ss),
+                                             flags=cv2.INTER_CUBIC,
                                              borderMode=cv2.BORDER_REPLICATE)
                         _cov = cv2.warpAffine(
                             np.full(fake_frame.shape[:2], 255, np.uint8), _A,
@@ -5798,6 +5801,7 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                     enhanced_frame = cv2.warpAffine(
                         enhanced_frame, _B,
                         (enhanced_frame.shape[1], enhanced_frame.shape[0]),
+                        flags=cv2.INTER_CUBIC,
                         borderMode=cv2.BORDER_REPLICATE)
                 if (_target_appearance is not None and enhanced_frame is not None):
                     # This guard runs for every restorer, including GPEN and

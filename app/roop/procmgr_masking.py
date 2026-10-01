@@ -675,6 +675,7 @@ class MaskingMixin:
             roi_size = (x1 - x0, y1 - y0)
             roi_paste = cv2.warpAffine(
                 upsk_face, roi_IM, roi_size,
+                flags=cv2.INTER_CUBIC,
                 borderMode=cv2.BORDER_REPLICATE).astype(np.float32)
             if upsk_face is not fake_face and getattr(self.options, 'blend_ratio', 1.0) < 0.999:
                 # IM is scaled to upsk_face's resolution — bring fake_face to
@@ -685,6 +686,7 @@ class MaskingMixin:
                         interpolation=cv2.INTER_CUBIC)
                 roi_fake = cv2.warpAffine(
                     fake_face, roi_IM, roi_size,
+                    flags=cv2.INTER_CUBIC,
                     borderMode=cv2.BORDER_REPLICATE)
                 roi_paste = cv2.addWeighted(
                     roi_paste.astype(np.uint8), self.options.blend_ratio,
@@ -692,6 +694,7 @@ class MaskingMixin:
         else:
             paste_face = cv2.warpAffine(
                 upsk_face, IM, (target_img.shape[1], target_img.shape[0]),
+                flags=cv2.INTER_CUBIC,
                 borderMode=cv2.BORDER_REPLICATE)
             if upsk_face is not fake_face and getattr(self.options, 'blend_ratio', 1.0) < 0.999:
                 if fake_face.shape[:2] != upsk_face.shape[:2]:
@@ -700,6 +703,7 @@ class MaskingMixin:
                         interpolation=cv2.INTER_CUBIC)
                 fake_face = cv2.warpAffine(
                     fake_face, IM, (target_img.shape[1], target_img.shape[0]),
+                    flags=cv2.INTER_CUBIC,
                     borderMode=cv2.BORDER_REPLICATE)
                 paste_face = cv2.addWeighted(
                     paste_face, self.options.blend_ratio,

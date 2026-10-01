@@ -372,18 +372,17 @@ class Enhance_GPEN256Pro:
             g_gpu = torch.from_numpy(cls._grain(target_size).copy()).to(device, dtype=torch.float32).permute(2, 0, 1).unsqueeze(0)
             cls._grain_gpu[target_size] = g_gpu
         hf_std = torch.std(hf_texture)
-        if graph_safe:
-            k = (1.0 - torch.clamp(hf_std / 3.5, 0.0, 1.0)) / 0.85
-            injected_texture = injected_texture + g_gpu * (w_tex * k)
-        elif hf_std < 3.5:
-            k = (1.0 - min(1.0, float(hf_std) / 3.5)) / 0.85
-            injected_texture = injected_texture + g_gpu * (w_tex * k)
+        k = (1.0 - torch.clamp(hf_std / 3.5, 0.0, 1.0)) / 0.85
+        injected_texture = injected_texture + g_gpu * (w_tex * k)
 
         k_sharp, r_ksharp = cls._gaussian_kernel_2d_gpu(0.8 * (target_size / 256.0), device)
         padded_rest = _F.pad(rest_f, (r_ksharp, r_ksharp, r_ksharp, r_ksharp), mode='reflect')
         rest_blur = _F.conv2d(padded_rest, k_sharp.repeat(3, 1, 1, 1), groups=3)
         hf_restored = rest_f - rest_blur
-        sharpness_amount = 0.42 - skin_gate * 0.30
+        # Floor prevents sharpness collapsing to 0.12 on soft-input frames
+        # (e.g. periodic full-frame detection frames where skin_gate→1.0).
+        # Range is now [0.20..0.42] instead of [0.12..0.42].
+        sharpness_amount = torch.clamp(0.42 - skin_gate * 0.30, min=0.20)
         sharpened_features = hf_restored * sharpness_amount
         return torch.clamp(rest_f + injected_texture + sharpened_features, 0, 255).to(torch.uint8)
 
@@ -421,7 +420,7 @@ class Enhance_GPEN256Pro:
                     r, s, target_size, graph_safe=True))
             state.runner = runner
         out = runner.replay((r_t, s_t), key=key)
-        return out[0].permute(1, 2, 0).cpu().numpy()
+        return np.ascontiguousarray(out[0].permute(1, 2, 0).contiguous().cpu().numpy())
 
     @classmethod
     def _enhance_textures_and_sharpness_gpu(cls, restored, source, input_size):
@@ -436,10 +435,10 @@ class Enhance_GPEN256Pro:
             return cls._enhance_textures_and_sharpness_graph(
                 restored, source, input_size, target_size, device)
 
-        r_t = torch.from_numpy(restored).to(device, dtype=torch.float32).permute(2, 0, 1).unsqueeze(0)
-        s_t = torch.from_numpy(source).to(device, dtype=torch.float32).permute(2, 0, 1).unsqueeze(0)
+        r_t = torch.from_numpy(np.ascontiguousarray(restored)).to(device, dtype=torch.float32).permute(2, 0, 1).unsqueeze(0).contiguous()
+        s_t = torch.from_numpy(np.ascontiguousarray(source)).to(device, dtype=torch.float32).permute(2, 0, 1).unsqueeze(0).contiguous()
         out = cls._gpu_filter_core(r_t, s_t, target_size, graph_safe=False)
-        return out[0].permute(1, 2, 0).cpu().numpy()
+        return np.ascontiguousarray(out[0].permute(1, 2, 0).contiguous().cpu().numpy())
 
     @classmethod
     def _enhance_textures_and_sharpness(cls, restored, source, input_size):
@@ -565,7 +564,11 @@ class Enhance_GPEN256Pro:
             sigma_sharp = 0.8 * (target_size / 256.0)
             rest_blur = cv2.GaussianBlur(rest_f, (0, 0), sigma_sharp)
             hf_restored = cv2.subtract(rest_f, rest_blur)
-            sharpness_amount = cv2.subtract(0.42, cv2.multiply(skin_gate, 0.30))
+            # Floor at 0.20 mirrors the GPU path: prevents sharpening
+            # collapsing to 0.12 on soft/smooth GPEN inputs.
+            sharpness_amount = np.maximum(
+                cv2.subtract(0.42, cv2.multiply(skin_gate, 0.30)),
+                np.float32(0.20))
             sharpened_features = cv2.multiply(
                 hf_restored,
                 cv2.cvtColor(sharpness_amount, cv2.COLOR_GRAY2BGR))

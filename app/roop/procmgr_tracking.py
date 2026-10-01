@@ -684,13 +684,47 @@ class TrackingMixin:
                     elif is_reid:
                         best['vel'] = np.zeros(4, dtype=np.float32)
                         best['prev_bbox'] = None
-                    best['bbox'] = bbox
+                    # ── Full-frame detection bbox/kps damping ─────────────────
+                    # Every full_interval (default 8) frames TemporalFaceTracker
+                    # schedules a full-frame detection that downsamples the
+                    # 1280×720 frame to a 512×512 detector canvas. The face
+                    # occupies only ~30×40px there, so its bbox centroid shifts
+                    # ~4.3px compared to the ROI detection used on every other
+                    # frame. On an established stable track this sudden jump
+                    # shocks the AdaptiveLandmarkSmoother EMA, producing a
+                    # subpixel phase change in the affine matrix M. HyperSwap
+                    # sees a slightly different crop, outputs softer texture,
+                    # and GPEN's skin_gate then suppresses sharpening further.
+                    #
+                    # Fix: on a full-frame detection result, blend the new bbox
+                    # and landmarks 50/50 with the previous values rather than
+                    # hard-replacing them. The correction still accumulates
+                    # across consecutive full-frame detections (once every 8
+                    # frames) without shocking the smoother. Skip blending for
+                    # new tracks (no prev bbox), re-ID frames (geometry is
+                    # already lost), and coast/roi modes (no jump to dampen).
+                    _is_full_det = getattr(faces, 'mode', '') == 'full'
+                    _is_established = (not is_reid
+                                       and best.get('first_seen', f_idx) < f_idx
+                                       and best.get('prev_bbox') is not None)
+                    if _is_full_det and _is_established:
+                        # 50% blend absorbs the jump while still pulling the
+                        # track toward the true position over multiple cycles.
+                        best['bbox'] = 0.5 * best['bbox'] + 0.5 * bbox
+                    else:
+                        best['bbox'] = bbox
                     best['last_seen'] = f_idx
                     _lm = getattr(face, 'landmark_2d_106', None)
                     if _lm is None:
                         _lm = getattr(face, 'kps', None)
                     if _lm is not None:
-                        best['landmarks'] = np.asarray(_lm).copy()
+                        _lm_arr = np.asarray(_lm, dtype=np.float32)
+                        if _is_full_det and _is_established and 'landmarks' in best and best['landmarks'] is not None:
+                            # Blend kps at the same ratio as bbox to keep M consistent.
+                            best['landmarks'] = (0.5 * np.asarray(best['landmarks'], dtype=np.float32)
+                                                 + 0.5 * _lm_arr)
+                        else:
+                            best['landmarks'] = _lm_arr.copy()
                     _pose = getattr(face, 'pose', None)
                     if _pose is not None:
                         best['pose'] = np.asarray(_pose).copy()

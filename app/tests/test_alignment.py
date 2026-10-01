@@ -644,14 +644,23 @@ class TestClippedFaceCrop(unittest.TestCase):
 
         warpAffine only consults the border mode for samples outside the source,
         so a face fully inside the frame has to come out bit-identical to the
-        old BORDER_CONSTANT call — otherwise this quietly changed every render.
+        reference call that uses the same interpolation — otherwise this quietly
+        changed every render.
+
+        align_crop uses INTER_CUBIC (changed 2026-10-01 to reduce subpixel
+        Laplacian loss at 512x512 output). The reference here matches that so
+        the test continues to check only the border-mode behaviour.
         """
         import cv2
         from roop.face_util import align_crop
         img = self._img()
         kps = np.asarray(self.INTERIOR, np.float32)
         new_crop, M = align_crop(img, kps, 256, "arcface")
-        old_crop = cv2.warpAffine(img, M, (256, 256), borderValue=0.0)
+        # Reference uses INTER_CUBIC + BORDER_CONSTANT to isolate the border
+        # mode: only out-of-bounds samples differ between BORDER_CONSTANT and
+        # BORDER_REFLECT, so an interior face should be bit-identical.
+        old_crop = cv2.warpAffine(img, M, (256, 256),
+                                  flags=cv2.INTER_CUBIC, borderValue=0.0)
         self.assertTrue(np.array_equal(new_crop, old_crop),
                         "border mode changed the crop of a face that is not clipped")
 

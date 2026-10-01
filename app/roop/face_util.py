@@ -2980,10 +2980,10 @@ def align_crop(img, landmark, image_size=112, mode="arcface", dst=None):
     # frame this is bit-identical to the old call (verified).
     if dst is not None:
         warped = cv2.warpAffine(img, M, (image_size, image_size), dst=dst,
-                                borderMode=cv2.BORDER_REPLICATE)
+                                flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE)
         return dst, M
     warped = cv2.warpAffine(img, M, (image_size, image_size),
-                            borderMode=cv2.BORDER_REPLICATE)
+                            flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE)
     return warped, M
 
 

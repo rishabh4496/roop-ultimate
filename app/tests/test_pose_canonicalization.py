@@ -109,6 +109,7 @@ class PoseCanonicalizationTest(unittest.TestCase):
                             fit.estimate(kps, swap_template_points(128, mode))
                             expected_matrix = fit.params[:2]
                             expected = cv2.warpAffine(image, expected_matrix, (128, 128),
+                                                      flags=cv2.INTER_CUBIC,
                                                       borderMode=cv2.BORDER_REPLICATE)
                             dst = np.empty_like(expected)
                             crop, matrix, info = canonicalize_face_alignment(
