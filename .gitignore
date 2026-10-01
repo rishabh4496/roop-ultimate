@@ -103,3 +103,11 @@ face_engine/tests/sample_*.mp4
 # Git hooks (pre-commit is tracked; Git LFS local hooks are not)
 .githooks/*
 !.githooks/pre-commit
+
+# Diagnostic / session scratch directories (created during investigations)
+scratch/
+temp_frames_analysis/
+temp_fs_inspect/
+app/scratch/
+*.npy
+test_gpen256pro_out.png
