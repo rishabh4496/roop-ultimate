@@ -103,7 +103,8 @@ class RecognitionInferenceEngine:
 
     def __init__(self, model_name: str, models_dir: str, device: str = "auto",
                  gpu_id: int = 0, *, trt_fp16: bool = True,
-                 cudnn_algo: Optional[str] = None, strict: bool = False) -> None:
+                 cudnn_algo: Optional[str] = None, strict: bool = False,
+                 cpu_threads: Optional[int] = None) -> None:
         """
         device     -- 'auto' | 'tensorrt' | 'cuda' | 'directml' | 'coreml' | 'cpu'. 'auto'
                       picks the best provider this machine offers (TensorRT only on Ada).
@@ -111,6 +112,8 @@ class RecognitionInferenceEngine:
                       vectors made with different settings against each other.
         cudnn_algo -- override the per-architecture default ('DEFAULT'|'HEURISTIC'|'EXHAUSTIVE').
         strict     -- raise instead of degrading to CPU when a GPU provider was requested.
+        cpu_threads -- intra-op threads for a CPU-tier session (default: one per physical core).
+                      A process pool must divide the cores between its workers.
         """
         key = _DEVICES.get(str(device).strip().lower())
         if key is None:
@@ -125,6 +128,9 @@ class RecognitionInferenceEngine:
         self.trt_fp16 = bool(trt_fp16)
         self.cudnn_algo = str(cudnn_algo).upper() if cudnn_algo else None
         self.strict = bool(strict)
+        if cpu_threads is not None and int(cpu_threads) < 1:
+            raise ValueError("cpu_threads must be >= 1, got %r" % (cpu_threads,))
+        self.cpu_threads = None if cpu_threads is None else int(cpu_threads)
 
         self.spec: RecognitionModelSpec = get_model_spec(model_name)
         self.model_path: str = resolve_model_path(model_name, models_dir)
@@ -264,7 +270,7 @@ class RecognitionInferenceEngine:
         so.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
         if label == "CPU":
             # Thread counts are SESSION options, not CPU-provider options.
-            so.intra_op_num_threads = _physical_cores()
+            so.intra_op_num_threads = self.cpu_threads or _physical_cores()
             so.inter_op_num_threads = 1
         else:
             # The few nodes left on the CPU provider must not add to a pipeline that

@@ -197,6 +197,7 @@ ALLOWED_RECOGNITION_IMPORTERS = frozenset({
     "roop/recognition_engine.py",
     "roop/recognition_registry.py",
     "roop/ui_recognition.py",
+    "roop/worker_pool.py",            # tracking-side recipe for process pools; no render uses it
     "routes_recognition.py",
 })
 

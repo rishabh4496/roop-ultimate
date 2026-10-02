@@ -22,6 +22,16 @@ folder). Entries before 2026-09-21 were moved here from the README on 2026-09-22
   `norm_crop` gives the same, so the live vector comes from an earlier landmark estimate).
   Measured on the 4070: TensorRT FP16 vs CPU min cosine 0.99996+; EXHAUSTIVE cuDNN ~= HEURISTIC
   for these nets; a build/release cycle returns to the same +120 MiB (CUDA context), no growth.
+- **Worker-process recipe for the recognition engine (`roop/worker_pool.py`); nothing in the render uses
+  it.** The app's pipeline is one process with worker threads, and `face_engine` already has a spawn
+  pool that builds its processor inside each worker and assigns GPUs round-robin, so no pool was added
+  to either. This is the tested recipe for putting `RecognitionInferenceEngine` behind a
+  `ProcessPoolExecutor`: the engine is NOT picklable (build it in the pool initializer), spawn only,
+  round-robin GPU assignment through a shared counter, and CPU cores divided between workers (new
+  `cpu_threads` engine option; the default was every physical core per session). Measured on the 4070
+  with two spawned workers building a cold TensorRT cache at once: both initialised, a second run read
+  the shared cache, embeddings matched a parent CPU reference at >= 0.99997 cosine. A failing
+  initializer surfaces as `BrokenProcessPool`, not a hang.
 - **The swapper's identity input is guarded and isolated from the tracking recogniser.** The swap
   path was already separate (it reads the 512-d w600k vector on `face.embedding`, computes the latent
   once per source face and caches it on the Face + a shared LRU), so no parallel swapper was built.
