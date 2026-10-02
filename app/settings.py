@@ -305,6 +305,38 @@ def apply_live_env(cfg, environ=None):
     return apply_env(cfg, environ, keys=LIVE_ENV_SETTINGS)
 
 
+def batch_size_arg(text):
+    """argparse ``type=`` for ``--execution-batch-size``: an integer >= 1."""
+    import argparse
+    try:
+        value = int(str(text).strip())
+    except ValueError:
+        raise argparse.ArgumentTypeError("must be an integer >= 1, got %r" % (text,))
+    if value < 1:
+        raise argparse.ArgumentTypeError("must be an integer >= 1, got %d" % value)
+    return value
+
+
+def apply_execution_batch_size(value, environ=None):
+    """Make ``--execution-batch-size`` the cross-frame swap batch ceiling.
+
+    Sets ROOP_BATCH_SWAP_MAX, which ProcessMgr reads at use time. It is an
+    explicit environment value, so it beats config.yaml's ``perf_batch_max``; and
+    it is released from the settings-owned set so a later UI save (which
+    re-derives owned variables from config) cannot silently replace the flag for
+    the rest of the process. ``None`` is a no-op. 1 means no cross-frame
+    batching; the effective size is still clamped to the worker thread count and
+    by the VRAM governor, and the flag has no effect while perf_batch_swap is
+    'off'.
+    """
+    if value is None:
+        return None
+    environ = os.environ if environ is None else environ
+    environ['ROOP_BATCH_SWAP_MAX'] = str(int(value))
+    _SETTINGS_OWNED_VARS.discard('ROOP_BATCH_SWAP_MAX')
+    return int(value)
+
+
 # --- Make the TensorRT execution provider actually loadable on Windows ---
 # onnxruntime advertises 'TensorrtExecutionProvider' as available even when its
 # native runtime DLLs cannot be loaded. Loading onnxruntime_providers_tensorrt.dll

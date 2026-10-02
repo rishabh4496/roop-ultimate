@@ -38,6 +38,40 @@ folder). Entries before 2026-09-21 were moved here from the README on 2026-09-22
   FP16 file (they already run FP16 under TensorRT `mixed`, and a landmark shift would
   break alignment). `ORT_ENABLE_ALL` is already the `get_onnx_session_options` default.
 
+- **Frame dumps to disk: the render was already zero-disk; two helper caches were not.**
+  The default render is a rawvideo pipe in (`video_stream`) and out
+  (`NvencRawWriter`/`ffmpeg_writer`: NVENC `-preset p5`, `-pix_fmt yuv420p`, audio
+  muxed) and the unified scheduler holds at most `_MAX_STREAM_INFLIGHT = 4` frames. What
+  still wrote frames: (1) the SAM2 pre-pass wrote EVERY frame of the clip as a JPEG for
+  SAM2 to decode again - now `SAM2FrameBuffer` builds SAM2's exact input tensor in RAM
+  (bit-equal to `_load_img_as_tensor`, tested), injected into `init_state` through a
+  scoped, always-restored patch of `sam2.sam2_video_predictor.load_video_frames`; (2) the
+  scrub-preview fallback cached one JPEG per probed frame in `%TEMP%/roop_scrub_cache` -
+  now an ffmpeg stdout pipe (lossless BMP) plus an 8-entry RAM LRU.
+  NOT changed, by decision: Keep Frames (Frame Editor deliverable), per-frame-mask
+  re-processing and the legacy `use_new_method=False` route still use the frame-folder
+  path; removing them removes features. SAM2 still holds the whole clip as float32
+  (~12.6 MB/frame at 1024^2), a limit of the library, not of disk.
+- **Per-thread queue path capped at 64 live frames** (`frame_capped_queue_depth`,
+  `ROOP_MAX_FRAMES_IN_FLIGHT`, 0 = off): live frames are `threads * (2*depth + 1)`; at
+  20 threads depth 3 meant 140, now depth 1 = 60. Applies ONLY to the per-thread queue
+  path (scheduler disabled, or stabilization off and scheduler not allowed); not
+  A/B-measured. The stabilized parallel path (`_run_stab_parallel`) is deliberately NOT
+  capped: it holds ~5 chunk copies sized by a RAM-share budget (`_default_stab_chunk_mb`,
+  the 16 GB OOM fix and the 2-worker-round throughput tuning), which is hundreds of
+  frames at 720p-1080p by design.
+- **`--execution-batch-size N`** (run.py and core.py): sets `ROOP_BATCH_SWAP_MAX`, the
+  cross-frame swap batch ceiling. Beats config `perf_batch_max`, and is released from the
+  settings-owned set so a UI save cannot replace it mid-process. 1 = no batching; the
+  effective size is still clamped to worker threads and the VRAM governor.
+- **Batched swap + GPU warp: already done / already rejected, not redone.** Cross-frame
+  batching has been live since 2026-08-15 (`SwapBatcher` -> `RunBatchMulti`, one source
+  identity per crop, ceiling 8 on >= 11.5 GB). The swapper is `realswap` by default;
+  `inswapper_128` is not what renders. Moving `cv2.warpAffine`/blend to torch CUDA was
+  measured 1.1-40x SLOWER at real call sizes and reverted (bf96c1f), and the swap stage
+  is at the GPU floor (~75 faces/s; deleting a whole network buys +4.8%), so more GPU
+  work cannot help a GPU-bound pipeline.
+
 ## 2026-09-29
 
 - **3060 (sub-7 GB) temporal pre-pass: 72% of its wall clock was rescue detection.**

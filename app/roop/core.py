@@ -128,6 +128,10 @@ def parse_args() -> None:
     # parses the launcher arguments before calling core.run(), and core.run()
     # parses them again before ui.main resolves the actual provider chain.
     program.add_argument('--execution-provider', help='Execution provider override: auto, cpu, cuda, tensorrt, rocm, or dml', dest='execution_provider', default=None)
+    # run.py parses and applies this one; it is declared here too because
+    # core.run() re-parses the same argv and would otherwise reject it.
+    from settings import batch_size_arg
+    program.add_argument('--execution-batch-size', help='Cross-frame face-swap batch ceiling (default: auto; 1 disables)', dest='execution_batch_size', type=batch_size_arg, default=None)
     program.add_argument('--enable-occlusion-mask', help='Enable foreground occlusion masking', dest='enable_occlusion_mask', action='store_true', default=True)
     program.add_argument('--disable-occlusion-mask', help='Disable foreground occlusion masking', dest='enable_occlusion_mask', action='store_false')
     program.add_argument('--detector-scale-pyramid', help='Multi-scale detector pyramid levels (e.g. "0.5,0.75,1.0", "auto", or "none")', dest='detector_scale_pyramid', default=None)
@@ -164,6 +168,8 @@ def parse_args() -> None:
     program.add_argument('--react', action='store_true', default=False,
                          help='Force React client mode')
     roop.globals.startup_args = program.parse_args()
+    from settings import apply_execution_batch_size
+    apply_execution_batch_size(getattr(roop.globals.startup_args, 'execution_batch_size', None))
     project_flags = ("render", "output", "export_fcpxml", "export_edl", "scene_detect")
     if not getattr(roop.globals.startup_args, "project", None) and any(
             getattr(roop.globals.startup_args, flag, None) for flag in project_flags):

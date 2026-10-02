@@ -159,11 +159,16 @@ from roop.win_asyncio_compat import install as _install_win_asyncio_compat
 _install_win_asyncio_compat()
 
 from roop import core
+from settings import batch_size_arg, apply_execution_batch_size
 import argparse
 parser = argparse.ArgumentParser()
 parser.add_argument('--cuda_device_id', type=int, default=0,
                     help='CUDA device index within CUDA_VISIBLE_DEVICES (distributed workers use 0)')
 parser.add_argument('--execution-provider', default=None, help='Execution provider override: auto, cpu, cuda, tensorrt, rocm, or dml')
+parser.add_argument('--execution-batch-size', dest='execution_batch_size',
+                    type=batch_size_arg, default=None,
+                    help='cross-frame face-swap batch ceiling (default: auto). 1 disables batching; '
+                         'clamped to the worker thread count and free VRAM. Beats config.yaml perf_batch_max')
 parser.add_argument('--source', '--source-path', dest='source_reference_path', default=None,
                     help='source image or folder of same-identity reference images')
 parser.add_argument('--project', dest='project', default=None,
@@ -220,6 +225,9 @@ if not getattr(args, 'project', None) and any(getattr(args, flag, None) for flag
 if getattr(args, 'diagnose_runtime', False):
     from roop.runtime_diagnostics import run_diagnose_runtime
     sys.exit(run_diagnose_runtime())
+if apply_execution_batch_size(getattr(args, 'execution_batch_size', None)) is not None:
+    print(f"[BatchSwap] --execution-batch-size {args.execution_batch_size}: "
+          "cross-frame batch ceiling set from the command line.", flush=True)
 if getattr(args, 'react', False) or getattr(args, 'ui', None) == 'react':
     os.environ['ROOP_REACT_CLIENT'] = '1'
 elif getattr(args, 'ui', None) in ('gradio', 'legacy'):
