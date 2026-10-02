@@ -22,6 +22,17 @@ folder). Entries before 2026-09-21 were moved here from the README on 2026-09-22
   `norm_crop` gives the same, so the live vector comes from an earlier landmark estimate).
   Measured on the 4070: TensorRT FP16 vs CPU min cosine 0.99996+; EXHAUSTIVE cuDNN ~= HEURISTIC
   for these nets; a build/release cycle returns to the same +120 MiB (CUDA context), no growth.
+- **glintr100 calibrated against w600k and AdaFace on 16 real clips: not wired, and a keypoint finding.**
+  `tools/calibrate_recognition.py` (track-based same-person pairs, scene cuts break tracks, clip-level
+  bootstrap) on 3,836 same / 1,183 different pairs. glintr100 was never better than w600k and was the lowest
+  point estimate in every cut (AUC 0.9842 vs 0.9898 on identical raw-keypoint crops, interval below zero on all
+  15 clips; borderline once 3 label-noisy clips are dropped); AdaFace is indistinguishable from w600k on identical
+  crops. The pipeline's keypoint refinement (`_refine_kps_from_68`) runs AFTER buffalo_l embeds, so every
+  recogniser that aligns from the final `face.kps` - AdaFace in production included - reads a worse crop:
+  replacing refined with detector keypoints improves AUC for all three models (AdaFace +0.0052, CI +0.0013 to
+  +0.0129) and cuts AdaFace's false accepts at w600k's false-reject rate from 19.0% to 8.5%. NOT changed (the
+  refined points exist for the swapper); a follow-up would keep the detector keypoints beside them. Method,
+  tables and caveats: `docs/development/RECOGNIZER_CALIBRATION.md`.
 - **Read-only faceset embeddings in any recognition model's space (`roop/faceset_manager.py`); no
   loader or render calls it.** `load_and_validate_faceset(fsz, model_id)` returns a faceset's reference-face
   embeddings in `model_id`'s space and NEVER writes the archive. Why not the "migrate the archive when the

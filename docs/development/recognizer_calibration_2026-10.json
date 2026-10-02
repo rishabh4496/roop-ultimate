@@ -1,0 +1,1344 @@
+{
+ "date": "2026-10-03",
+ "description": "tools/calibrate_recognition.py, 16 clips, 5 windows x 30 samples, step 6, min face 48 px; summaries only (raw distance arrays omitted). Models run FP32 on CUDA.",
+ "raw_keypoints": {
+  "args": {
+   "bootstrap": 1000,
+   "clips": [
+    "G:/pinokio/roop-keep/double",
+    "G:/pinokio/roop-keep/single",
+    "G:/pinokio/roop-keep/Love.mp4",
+    "G:/pinokio/roop-keep/Monica Bellucci .mp4",
+    "G:/pinokio/roop-keep/Weeds.mp4"
+   ],
+   "max_same_per_track": 60,
+   "min_face_px": 48.0,
+   "models": "default,default@crop,adaface,glintr100",
+   "models_dir": "G:/pinokio/cache/TEMP/claude/G--pinokio-api-roop-ultimate/deb6230e-fc6c-41f9-b04b-d8cdfba813f0/scratchpad/models",
+   "out": "G:/pinokio/cache/TEMP/claude/G--pinokio-api-roop-ultimate/deb6230e-fc6c-41f9-b04b-d8cdfba813f0/scratchpad/final_raw.json",
+   "per_window": 30,
+   "raw_kps": true,
+   "seed": 0,
+   "step": 6,
+   "windows": 5
+  },
+  "bootstrap": {
+   "adaface": {
+    "auc_ci": [
+     -0.01032670631152704,
+     0.0015315075828156914
+    ],
+    "delta_auc": -0.0014539295892035953,
+    "delta_eer": -0.0022095751299165906,
+    "eer_ci": [
+     -0.007771828720210957,
+     0.0024469876223431205
+    ],
+    "frac_better_auc": 0.193,
+    "frac_better_eer": 0.819
+   },
+   "baseline": "default@crop",
+   "clips": 15,
+   "default": {
+    "auc_ci": [
+     0.00016300186811346595,
+     0.002477605369271929
+    ],
+    "delta_auc": 0.000598960184541919,
+    "delta_eer": -0.001062249757035335,
+    "eer_ci": [
+     -0.008291462682107455,
+     0.00021489794120380315
+    ],
+    "frac_better_auc": 1.0,
+    "frac_better_eer": 0.863
+   },
+   "glintr100": {
+    "auc_ci": [
+     -0.013454773120827176,
+     -0.001089579696407174
+    ],
+    "delta_auc": -0.005455586189022754,
+    "delta_eer": 0.004388524286921106,
+    "eer_ci": [
+     -0.003582463483924367,
+     0.013415541509359367
+    ],
+    "frac_better_auc": 0.002,
+    "frac_better_eer": 0.127
+   },
+   "resamples": 1000
+  },
+  "clips": {
+   "Love.mp4": {
+    "faces": 130,
+    "samples": 150,
+    "tracks_with_pairs": 23
+   },
+   "Monica Bellucci .mp4": {
+    "faces": 382,
+    "samples": 150,
+    "tracks_with_pairs": 43
+   },
+   "Weeds.mp4": {
+    "faces": 129,
+    "samples": 150,
+    "tracks_with_pairs": 13
+   },
+   "d1.mp4": {
+    "faces": 110,
+    "samples": 60,
+    "tracks_with_pairs": 7
+   },
+   "d2.mp4": {
+    "faces": 104,
+    "samples": 60,
+    "tracks_with_pairs": 6
+   },
+   "d3.mp4": {
+    "faces": 120,
+    "samples": 60,
+    "tracks_with_pairs": 4
+   },
+   "d4.mp4": {
+    "faces": 287,
+    "samples": 150,
+    "tracks_with_pairs": 21
+   },
+   "d5.mp4": {
+    "faces": 112,
+    "samples": 60,
+    "tracks_with_pairs": 9
+   },
+   "d6.mp4": {
+    "faces": 120,
+    "samples": 60,
+    "tracks_with_pairs": 4
+   },
+   "s1.mp4": {
+    "faces": 17,
+    "samples": 30,
+    "tracks_with_pairs": 2
+   },
+   "s2.mp4": {
+    "faces": 2,
+    "samples": 30,
+    "tracks_with_pairs": 0
+   },
+   "s3.mp4": {
+    "faces": 30,
+    "samples": 30,
+    "tracks_with_pairs": 1
+   },
+   "s4.mp4": {
+    "faces": 63,
+    "samples": 60,
+    "tracks_with_pairs": 3
+   },
+   "s5.mp4": {
+    "faces": 127,
+    "samples": 150,
+    "tracks_with_pairs": 5
+   },
+   "s6.mp4": {
+    "faces": 130,
+    "samples": 150,
+    "tracks_with_pairs": 5
+   },
+   "s7.mp4": {
+    "faces": 62,
+    "samples": 90,
+    "tracks_with_pairs": 4
+   }
+  },
+  "matched_frr": {
+   "models": {
+    "adaface": {
+     "far": 0.08453085376162299,
+     "frr": 0.02580813347236705,
+     "threshold": 0.7484039162360226
+    },
+    "default": {
+     "far": 0.05156382079459002,
+     "frr": 0.02580813347236705,
+     "threshold": 0.7479780099276312
+    },
+    "default@crop": {
+     "far": 0.08875739644970414,
+     "frr": 0.02580813347236705,
+     "threshold": 0.7481896212634028
+    },
+    "glintr100": {
+     "far": 0.18427726120033813,
+     "frr": 0.02580813347236705,
+     "threshold": 0.8187022369970186
+    }
+   },
+   "target_frr": 0.02580813347236705
+  },
+  "models": {
+   "adaface": {
+    "at_current_default": {
+     "far": 0.005917159763313609,
+     "frr": 0.0727320125130344,
+     "threshold": 0.5
+    },
+    "auc": 0.9883164080645431,
+    "diff": {
+     "median": 0.9203823272858439,
+     "min": 0.1436674564260383,
+     "p1": 0.5924184048245675,
+     "p5": 0.7239268258747318
+    },
+    "eer": 0.030596158473755332,
+    "eer_threshold": 0.6980728902238499,
+    "gap_p95_p5": 0.14377331675336658,
+    "midpoint_threshold": 0.6520401674980485,
+    "n_diff": 1183,
+    "n_same": 3836,
+    "same": {
+     "max": 1.0318326402451077,
+     "median": 0.14087869618143795,
+     "p90": 0.4393680096542746,
+     "p95": 0.5801535091213652,
+     "p99": 0.9069696496769267
+    }
+   },
+   "default": {
+    "at_current_default": {
+     "far": 0.05325443786982249,
+     "frr": 0.02580813347236705,
+     "threshold": 0.75
+    },
+    "auc": 0.9905220110762744,
+    "diff": {
+     "median": 0.9345337058327896,
+     "min": 0.22596186806145335,
+     "p1": 0.6105569127343102,
+     "p5": 0.7449975777681879
+    },
+    "eer": 0.031279500959456044,
+    "eer_threshold": 0.7148651438499309,
+    "gap_p95_p5": 0.14842641148425062,
+    "midpoint_threshold": 0.6707843720260626,
+    "n_diff": 1183,
+    "n_same": 3836,
+    "same": {
+     "max": 0.9836236320160276,
+     "median": 0.13826757850279514,
+     "p90": 0.43189381625383294,
+     "p95": 0.5965711662839372,
+     "p99": 0.9035657863035903
+    }
+   },
+   "default@crop": {
+    "auc": 0.9898481441555156,
+    "diff": {
+     "median": 0.93343548132679,
+     "min": 0.19936507590268293,
+     "p1": 0.5995704843429392,
+     "p5": 0.7178135520357597
+    },
+    "eer": 0.03316756236464266,
+    "eer_threshold": 0.6998844468327714,
+    "gap_p95_p5": 0.1116576695139706,
+    "midpoint_threshold": 0.6619847172787744,
+    "n_diff": 1183,
+    "n_same": 3836,
+    "same": {
+     "max": 0.9863436694193798,
+     "median": 0.14195503106075574,
+     "p90": 0.4363152337606838,
+     "p95": 0.6061558825217891,
+     "p99": 0.9038022937840844
+    }
+   },
+   "glintr100": {
+    "auc": 0.984214149530585,
+    "diff": {
+     "median": 0.9211535877656261,
+     "min": 0.21299357086003867,
+     "p1": 0.5287203371350446,
+     "p5": 0.7277819159070572
+    },
+    "eer": 0.03710565122693141,
+    "eer_threshold": 0.7036308678055357,
+    "gap_p95_p5": 0.10020883033550365,
+    "midpoint_threshold": 0.6776775007393054,
+    "n_diff": 1183,
+    "n_same": 3836,
+    "same": {
+     "max": 1.0322057708964267,
+     "median": 0.13254747254546062,
+     "p90": 0.44566305325816125,
+     "p95": 0.6275730855715536,
+     "p99": 0.9455368046273106
+    }
+   }
+  },
+  "per_clip": {
+   "adaface": {
+    "Love.mp4": {
+     "diff_p5": 0.23003066923765092,
+     "n_diff": 38,
+     "n_same": 264,
+     "same_p95": 0.9230424712821286
+    },
+    "Monica Bellucci .mp4": {
+     "diff_p5": 0.7446077132376797,
+     "n_diff": 718,
+     "n_same": 502,
+     "same_p95": 0.41612994039088375
+    },
+    "Weeds.mp4": {
+     "diff_p5": 0.9136799957470854,
+     "n_diff": 21,
+     "n_same": 326,
+     "same_p95": 0.610034360541094
+    },
+    "d1.mp4": {
+     "diff_p5": 0.7927213320878175,
+     "n_diff": 50,
+     "n_same": 97,
+     "same_p95": 0.23700152087529305
+    },
+    "d2.mp4": {
+     "diff_p5": 1.0570355463530954,
+     "n_diff": 44,
+     "n_same": 206,
+     "same_p95": 0.09958648905555803
+    },
+    "d3.mp4": {
+     "diff_p5": 0.6938626841095711,
+     "n_diff": 60,
+     "n_same": 240,
+     "same_p95": 0.15284207549071585
+    },
+    "d4.mp4": {
+     "diff_p5": 0.8586346829431056,
+     "n_diff": 137,
+     "n_same": 732,
+     "same_p95": 0.49230390160816256
+    },
+    "d5.mp4": {
+     "diff_p5": 0.9013851294192357,
+     "n_diff": 52,
+     "n_same": 280,
+     "same_p95": 0.4135883475760633
+    },
+    "d6.mp4": {
+     "diff_p5": 0.8373064219395545,
+     "n_diff": 60,
+     "n_same": 240,
+     "same_p95": 0.23533845661996308
+    },
+    "s1.mp4": {
+     "diff_p5": NaN,
+     "n_diff": 0,
+     "n_same": 42,
+     "same_p95": 0.8097060782258095
+    },
+    "s2.mp4": {
+     "diff_p5": NaN,
+     "n_diff": 0,
+     "n_same": 0,
+     "same_p95": NaN
+    },
+    "s3.mp4": {
+     "diff_p5": NaN,
+     "n_diff": 0,
+     "n_same": 60,
+     "same_p95": 0.11088900310536706
+    },
+    "s4.mp4": {
+     "diff_p5": 0.9695380362805956,
+     "n_diff": 3,
+     "n_same": 121,
+     "same_p95": 0.27501005903781606
+    },
+    "s5.mp4": {
+     "diff_p5": NaN,
+     "n_diff": 0,
+     "n_same": 261,
+     "same_p95": 0.48786720070475986
+    },
+    "s6.mp4": {
+     "diff_p5": NaN,
+     "n_diff": 0,
+     "n_same": 285,
+     "same_p95": 0.44498870261643286
+    },
+    "s7.mp4": {
+     "diff_p5": NaN,
+     "n_diff": 0,
+     "n_same": 180,
+     "same_p95": 0.9119151645936855
+    }
+   },
+   "default": {
+    "Love.mp4": {
+     "diff_p5": 0.32587605946215825,
+     "n_diff": 38,
+     "n_same": 264,
+     "same_p95": 0.9134554991664433
+    },
+    "Monica Bellucci .mp4": {
+     "diff_p5": 0.7393425304609829,
+     "n_diff": 718,
+     "n_same": 502,
+     "same_p95": 0.36482920683955317
+    },
+    "Weeds.mp4": {
+     "diff_p5": 0.8870752255943326,
+     "n_diff": 21,
+     "n_same": 326,
+     "same_p95": 0.5873782194741212
+    },
+    "d1.mp4": {
+     "diff_p5": 0.8644891847791767,
+     "n_diff": 50,
+     "n_same": 97,
+     "same_p95": 0.25726419848861026
+    },
+    "d2.mp4": {
+     "diff_p5": 0.9911423935252005,
+     "n_diff": 44,
+     "n_same": 206,
+     "same_p95": 0.11091974134260563
+    },
+    "d3.mp4": {
+     "diff_p5": 0.7129941166609401,
+     "n_diff": 60,
+     "n_same": 240,
+     "same_p95": 0.14392697868428178
+    },
+    "d4.mp4": {
+     "diff_p5": 0.8755679839306745,
+     "n_diff": 137,
+     "n_same": 732,
+     "same_p95": 0.46333958331817887
+    },
+    "d5.mp4": {
+     "diff_p5": 0.8901473447260675,
+     "n_diff": 52,
+     "n_same": 280,
+     "same_p95": 0.4242476972737823
+    },
+    "d6.mp4": {
+     "diff_p5": 0.8798431662528697,
+     "n_diff": 60,
+     "n_same": 240,
+     "same_p95": 0.22853324250042772
+    },
+    "s1.mp4": {
+     "diff_p5": NaN,
+     "n_diff": 0,
+     "n_same": 42,
+     "same_p95": 0.8357102077439069
+    },
+    "s2.mp4": {
+     "diff_p5": NaN,
+     "n_diff": 0,
+     "n_same": 0,
+     "same_p95": NaN
+    },
+    "s3.mp4": {
+     "diff_p5": NaN,
+     "n_diff": 0,
+     "n_same": 60,
+     "same_p95": 0.11087074019251494
+    },
+    "s4.mp4": {
+     "diff_p5": 0.9140834866316349,
+     "n_diff": 3,
+     "n_same": 121,
+     "same_p95": 0.2852103224346263
+    },
+    "s5.mp4": {
+     "diff_p5": NaN,
+     "n_diff": 0,
+     "n_same": 261,
+     "same_p95": 0.4992273132166106
+    },
+    "s6.mp4": {
+     "diff_p5": NaN,
+     "n_diff": 0,
+     "n_same": 285,
+     "same_p95": 0.5448249093337358
+    },
+    "s7.mp4": {
+     "diff_p5": NaN,
+     "n_diff": 0,
+     "n_same": 180,
+     "same_p95": 0.9194937823795564
+    }
+   },
+   "default@crop": {
+    "Love.mp4": {
+     "diff_p5": 0.3444826818679931,
+     "n_diff": 38,
+     "n_same": 264,
+     "same_p95": 0.9128232526659563
+    },
+    "Monica Bellucci .mp4": {
+     "diff_p5": 0.7344729151407579,
+     "n_diff": 718,
+     "n_same": 502,
+     "same_p95": 0.37910668248033436
+    },
+    "Weeds.mp4": {
+     "diff_p5": 0.8804520613349948,
+     "n_diff": 21,
+     "n_same": 326,
+     "same_p95": 0.6033842518559775
+    },
+    "d1.mp4": {
+     "diff_p5": 0.8648934693210262,
+     "n_diff": 50,
+     "n_same": 97,
+     "same_p95": 0.263330205275473
+    },
+    "d2.mp4": {
+     "diff_p5": 0.9901499608857567,
+     "n_diff": 44,
+     "n_same": 206,
+     "same_p95": 0.11312042412048418
+    },
+    "d3.mp4": {
+     "diff_p5": 0.6928000393945494,
+     "n_diff": 60,
+     "n_same": 240,
+     "same_p95": 0.17323090459973317
+    },
+    "d4.mp4": {
+     "diff_p5": 0.8730220584714896,
+     "n_diff": 137,
+     "n_same": 732,
+     "same_p95": 0.47693189228317723
+    },
+    "d5.mp4": {
+     "diff_p5": 0.89625282118191,
+     "n_diff": 52,
+     "n_same": 280,
+     "same_p95": 0.42525651460290137
+    },
+    "d6.mp4": {
+     "diff_p5": 0.8742763170809281,
+     "n_diff": 60,
+     "n_same": 240,
+     "same_p95": 0.2123005415771593
+    },
+    "s1.mp4": {
+     "diff_p5": NaN,
+     "n_diff": 0,
+     "n_same": 42,
+     "same_p95": 0.8357731421566467
+    },
+    "s2.mp4": {
+     "diff_p5": NaN,
+     "n_diff": 0,
+     "n_same": 0,
+     "same_p95": NaN
+    },
+    "s3.mp4": {
+     "diff_p5": NaN,
+     "n_diff": 0,
+     "n_same": 60,
+     "same_p95": 0.1122876781780889
+    },
+    "s4.mp4": {
+     "diff_p5": 0.9082364706673554,
+     "n_diff": 3,
+     "n_same": 121,
+     "same_p95": 0.29380156115164247
+    },
+    "s5.mp4": {
+     "diff_p5": NaN,
+     "n_diff": 0,
+     "n_same": 261,
+     "same_p95": 0.5014794591498928
+    },
+    "s6.mp4": {
+     "diff_p5": NaN,
+     "n_diff": 0,
+     "n_same": 285,
+     "same_p95": 0.5432844040597635
+    },
+    "s7.mp4": {
+     "diff_p5": NaN,
+     "n_diff": 0,
+     "n_same": 180,
+     "same_p95": 0.9234087204134407
+    }
+   },
+   "glintr100": {
+    "Love.mp4": {
+     "diff_p5": 0.28516503912830554,
+     "n_diff": 38,
+     "n_same": 264,
+     "same_p95": 0.9580117651082466
+    },
+    "Monica Bellucci .mp4": {
+     "diff_p5": 0.7069051185170023,
+     "n_diff": 718,
+     "n_same": 502,
+     "same_p95": 0.37123466242529035
+    },
+    "Weeds.mp4": {
+     "diff_p5": 0.8606859379626302,
+     "n_diff": 21,
+     "n_same": 326,
+     "same_p95": 0.6047704050199217
+    },
+    "d1.mp4": {
+     "diff_p5": 0.8416007110037708,
+     "n_diff": 50,
+     "n_same": 97,
+     "same_p95": 0.24800817668171649
+    },
+    "d2.mp4": {
+     "diff_p5": 1.0331241738488401,
+     "n_diff": 44,
+     "n_same": 206,
+     "same_p95": 0.09537746708650521
+    },
+    "d3.mp4": {
+     "diff_p5": 0.7202411863762956,
+     "n_diff": 60,
+     "n_same": 240,
+     "same_p95": 0.16862585706001493
+    },
+    "d4.mp4": {
+     "diff_p5": 0.8654886888336332,
+     "n_diff": 137,
+     "n_same": 732,
+     "same_p95": 0.46694871100027163
+    },
+    "d5.mp4": {
+     "diff_p5": 0.8332762428118882,
+     "n_diff": 52,
+     "n_same": 280,
+     "same_p95": 0.3978937693960058
+    },
+    "d6.mp4": {
+     "diff_p5": 0.8305279632830156,
+     "n_diff": 60,
+     "n_same": 240,
+     "same_p95": 0.22231967204161948
+    },
+    "s1.mp4": {
+     "diff_p5": NaN,
+     "n_diff": 0,
+     "n_same": 42,
+     "same_p95": 0.8619949459440772
+    },
+    "s2.mp4": {
+     "diff_p5": NaN,
+     "n_diff": 0,
+     "n_same": 0,
+     "same_p95": NaN
+    },
+    "s3.mp4": {
+     "diff_p5": NaN,
+     "n_diff": 0,
+     "n_same": 60,
+     "same_p95": 0.11330404325905974
+    },
+    "s4.mp4": {
+     "diff_p5": 0.995778159106979,
+     "n_diff": 3,
+     "n_same": 121,
+     "same_p95": 0.2614992067271421
+    },
+    "s5.mp4": {
+     "diff_p5": NaN,
+     "n_diff": 0,
+     "n_same": 261,
+     "same_p95": 0.531333801260496
+    },
+    "s6.mp4": {
+     "diff_p5": NaN,
+     "n_diff": 0,
+     "n_same": 285,
+     "same_p95": 0.7861038376267705
+    },
+    "s7.mp4": {
+     "diff_p5": NaN,
+     "n_diff": 0,
+     "n_same": 180,
+     "same_p95": 0.949339494339196
+    }
+   }
+  }
+ },
+ "refined_keypoints_production": {
+  "args": {
+   "bootstrap": 1000,
+   "clips": [
+    "G:/pinokio/roop-keep/double",
+    "G:/pinokio/roop-keep/single",
+    "G:/pinokio/roop-keep/Love.mp4",
+    "G:/pinokio/roop-keep/Monica Bellucci .mp4",
+    "G:/pinokio/roop-keep/Weeds.mp4"
+   ],
+   "max_same_per_track": 60,
+   "min_face_px": 48.0,
+   "models": "default,default@crop,adaface,glintr100",
+   "models_dir": "G:/pinokio/cache/TEMP/claude/G--pinokio-api-roop-ultimate/deb6230e-fc6c-41f9-b04b-d8cdfba813f0/scratchpad/models",
+   "out": "G:/pinokio/cache/TEMP/claude/G--pinokio-api-roop-ultimate/deb6230e-fc6c-41f9-b04b-d8cdfba813f0/scratchpad/final_refined.json",
+   "per_window": 30,
+   "raw_kps": false,
+   "seed": 0,
+   "step": 6,
+   "windows": 5
+  },
+  "bootstrap": {
+   "adaface": {
+    "auc_ci": [
+     -0.01380180762888958,
+     0.001463532587509988
+    ],
+    "delta_auc": -0.00279493591566099,
+    "delta_eer": -0.0008337568474318276,
+    "eer_ci": [
+     -0.004398304599421599,
+     0.005125834842968468
+    ],
+    "frac_better_auc": 0.14,
+    "frac_better_eer": 0.65
+   },
+   "baseline": "default@crop",
+   "clips": 15,
+   "default": {
+    "auc_ci": [
+     0.001618337174563425,
+     0.010672514982407939
+    ],
+    "delta_auc": 0.004539896052652648,
+    "delta_eer": -0.004953376955203651,
+    "eer_ci": [
+     -0.015587482769082502,
+     -0.0015802414157785355
+    ],
+    "frac_better_auc": 1.0,
+    "frac_better_eer": 0.997
+   },
+   "glintr100": {
+    "auc_ci": [
+     -0.01304749993041597,
+     -0.0005813272831553338
+    ],
+    "delta_auc": -0.004807590204726375,
+    "delta_eer": 0.005136540343709025,
+    "eer_ci": [
+     -2.5720164609052268e-06,
+     0.012165351851643002
+    ],
+    "frac_better_auc": 0.015,
+    "frac_better_eer": 0.025
+   },
+   "resamples": 1000
+  },
+  "clips": {
+   "Love.mp4": {
+    "faces": 130,
+    "samples": 150,
+    "tracks_with_pairs": 23
+   },
+   "Monica Bellucci .mp4": {
+    "faces": 382,
+    "samples": 150,
+    "tracks_with_pairs": 43
+   },
+   "Weeds.mp4": {
+    "faces": 129,
+    "samples": 150,
+    "tracks_with_pairs": 13
+   },
+   "d1.mp4": {
+    "faces": 110,
+    "samples": 60,
+    "tracks_with_pairs": 7
+   },
+   "d2.mp4": {
+    "faces": 104,
+    "samples": 60,
+    "tracks_with_pairs": 6
+   },
+   "d3.mp4": {
+    "faces": 120,
+    "samples": 60,
+    "tracks_with_pairs": 4
+   },
+   "d4.mp4": {
+    "faces": 287,
+    "samples": 150,
+    "tracks_with_pairs": 21
+   },
+   "d5.mp4": {
+    "faces": 112,
+    "samples": 60,
+    "tracks_with_pairs": 9
+   },
+   "d6.mp4": {
+    "faces": 120,
+    "samples": 60,
+    "tracks_with_pairs": 4
+   },
+   "s1.mp4": {
+    "faces": 17,
+    "samples": 30,
+    "tracks_with_pairs": 2
+   },
+   "s2.mp4": {
+    "faces": 2,
+    "samples": 30,
+    "tracks_with_pairs": 0
+   },
+   "s3.mp4": {
+    "faces": 30,
+    "samples": 30,
+    "tracks_with_pairs": 1
+   },
+   "s4.mp4": {
+    "faces": 63,
+    "samples": 60,
+    "tracks_with_pairs": 3
+   },
+   "s5.mp4": {
+    "faces": 127,
+    "samples": 150,
+    "tracks_with_pairs": 5
+   },
+   "s6.mp4": {
+    "faces": 130,
+    "samples": 150,
+    "tracks_with_pairs": 5
+   },
+   "s7.mp4": {
+    "faces": 62,
+    "samples": 90,
+    "tracks_with_pairs": 4
+   }
+  },
+  "matched_frr": {
+   "models": {
+    "adaface": {
+     "far": 0.19019442096365174,
+     "frr": 0.02580813347236705,
+     "threshold": 0.8291324077174418
+    },
+    "default": {
+     "far": 0.05156382079459002,
+     "frr": 0.02580813347236705,
+     "threshold": 0.7479780099276312
+    },
+    "default@crop": {
+     "far": 0.19949281487743026,
+     "frr": 0.02580813347236705,
+     "threshold": 0.8358077862657853
+    },
+    "glintr100": {
+     "far": 0.31022823330515636,
+     "frr": 0.02580813347236705,
+     "threshold": 0.8677169977769121
+    }
+   },
+   "target_frr": 0.02580813347236705
+  },
+  "models": {
+   "adaface": {
+    "at_current_default": {
+     "far": 0.009298393913778529,
+     "frr": 0.07950990615224192,
+     "threshold": 0.5
+    },
+    "auc": 0.9829860722417071,
+    "diff": {
+     "median": 0.9226658765556033,
+     "min": 0.08888062586928158,
+     "p1": 0.5096280318292896,
+     "p5": 0.7248150838074352
+    },
+    "eer": 0.03534793393019109,
+    "eer_threshold": 0.7146690709915182,
+    "gap_p95_p5": 0.12134570697151692,
+    "midpoint_threshold": 0.6641422303216767,
+    "n_diff": 1183,
+    "n_same": 3836,
+    "same": {
+     "max": 1.0660171982913111,
+     "median": 0.14015619535318558,
+     "p90": 0.4564862991197258,
+     "p95": 0.6034693768359183,
+     "p99": 0.9504114452248204
+    }
+   },
+   "default": {
+    "at_current_default": {
+     "far": 0.05325443786982249,
+     "frr": 0.02580813347236705,
+     "threshold": 0.75
+    },
+    "auc": 0.9905220110762744,
+    "diff": {
+     "median": 0.9345337058327896,
+     "min": 0.22596186806145335,
+     "p1": 0.6105569127343102,
+     "p5": 0.7449975777681879
+    },
+    "eer": 0.031279500959456044,
+    "eer_threshold": 0.7148651438499309,
+    "gap_p95_p5": 0.14842641148425062,
+    "midpoint_threshold": 0.6707843720260626,
+    "n_diff": 1183,
+    "n_same": 3836,
+    "same": {
+     "max": 0.9836236320160276,
+     "median": 0.13826757850279514,
+     "p90": 0.43189381625383294,
+     "p95": 0.5965711662839372,
+     "p99": 0.9035657863035903
+    }
+   },
+   "default@crop": {
+    "auc": 0.9858576091430828,
+    "diff": {
+     "median": 0.9314675295040706,
+     "min": 0.14183479768615104,
+     "p1": 0.5474727741515116,
+     "p5": 0.7273053774810841
+    },
+    "eer": 0.0362919646327844,
+    "eer_threshold": 0.7156192902065039,
+    "gap_p95_p5": 0.11470802662951218,
+    "midpoint_threshold": 0.6699513641663281,
+    "n_diff": 1183,
+    "n_same": 3836,
+    "same": {
+     "max": 1.0595618782481215,
+     "median": 0.1429526413708297,
+     "p90": 0.4549709278810828,
+     "p95": 0.612597350851572,
+     "p99": 0.9145746172025411
+    }
+   },
+   "glintr100": {
+    "auc": 0.9805799398323662,
+    "diff": {
+     "median": 0.9232202858754406,
+     "min": 0.12512504388151535,
+     "p1": 0.411986437573479,
+     "p5": 0.7235970899088844
+    },
+    "eer": 0.04130442830611275,
+    "eer_threshold": 0.7117119551074598,
+    "gap_p95_p5": 0.07796075864924934,
+    "midpoint_threshold": 0.6846167105842598,
+    "n_diff": 1183,
+    "n_same": 3836,
+    "same": {
+     "max": 1.0982174263040725,
+     "median": 0.13392132711222932,
+     "p90": 0.4477288103900958,
+     "p95": 0.645636331259635,
+     "p99": 0.9483266897954012
+    }
+   }
+  },
+  "per_clip": {
+   "adaface": {
+    "Love.mp4": {
+     "diff_p5": 0.282231640757284,
+     "n_diff": 38,
+     "n_same": 264,
+     "same_p95": 0.9655113025692351
+    },
+    "Monica Bellucci .mp4": {
+     "diff_p5": 0.7561490108809727,
+     "n_diff": 718,
+     "n_same": 502,
+     "same_p95": 0.4422858886898337
+    },
+    "Weeds.mp4": {
+     "diff_p5": 0.9216039400066223,
+     "n_diff": 21,
+     "n_same": 326,
+     "same_p95": 0.5826495917320252
+    },
+    "d1.mp4": {
+     "diff_p5": 0.8065167490129626,
+     "n_diff": 50,
+     "n_same": 97,
+     "same_p95": 0.2036461778262087
+    },
+    "d2.mp4": {
+     "diff_p5": 1.0587683147651343,
+     "n_diff": 44,
+     "n_same": 206,
+     "same_p95": 0.09855934888578077
+    },
+    "d3.mp4": {
+     "diff_p5": 0.7017681171648875,
+     "n_diff": 60,
+     "n_same": 240,
+     "same_p95": 0.14796992101442843
+    },
+    "d4.mp4": {
+     "diff_p5": 0.8626346491569634,
+     "n_diff": 137,
+     "n_same": 732,
+     "same_p95": 0.5097259057246538
+    },
+    "d5.mp4": {
+     "diff_p5": 0.906414000585585,
+     "n_diff": 52,
+     "n_same": 280,
+     "same_p95": 0.42495712700974536
+    },
+    "d6.mp4": {
+     "diff_p5": 0.84795886489879,
+     "n_diff": 60,
+     "n_same": 240,
+     "same_p95": 0.23136436398351823
+    },
+    "s1.mp4": {
+     "diff_p5": NaN,
+     "n_diff": 0,
+     "n_same": 42,
+     "same_p95": 0.9886601180554777
+    },
+    "s2.mp4": {
+     "diff_p5": NaN,
+     "n_diff": 0,
+     "n_same": 0,
+     "same_p95": NaN
+    },
+    "s3.mp4": {
+     "diff_p5": NaN,
+     "n_diff": 0,
+     "n_same": 60,
+     "same_p95": 0.11068984361608483
+    },
+    "s4.mp4": {
+     "diff_p5": 0.9713422293215825,
+     "n_diff": 3,
+     "n_same": 121,
+     "same_p95": 0.2548620821506117
+    },
+    "s5.mp4": {
+     "diff_p5": NaN,
+     "n_diff": 0,
+     "n_same": 261,
+     "same_p95": 0.4866518281500143
+    },
+    "s6.mp4": {
+     "diff_p5": NaN,
+     "n_diff": 0,
+     "n_same": 285,
+     "same_p95": 0.4643884720033244
+    },
+    "s7.mp4": {
+     "diff_p5": NaN,
+     "n_diff": 0,
+     "n_same": 180,
+     "same_p95": 0.9611524545653748
+    }
+   },
+   "default": {
+    "Love.mp4": {
+     "diff_p5": 0.32587605946215825,
+     "n_diff": 38,
+     "n_same": 264,
+     "same_p95": 0.9134554991664433
+    },
+    "Monica Bellucci .mp4": {
+     "diff_p5": 0.7393425304609829,
+     "n_diff": 718,
+     "n_same": 502,
+     "same_p95": 0.36482920683955317
+    },
+    "Weeds.mp4": {
+     "diff_p5": 0.8870752255943326,
+     "n_diff": 21,
+     "n_same": 326,
+     "same_p95": 0.5873782194741212
+    },
+    "d1.mp4": {
+     "diff_p5": 0.8644891847791767,
+     "n_diff": 50,
+     "n_same": 97,
+     "same_p95": 0.25726419848861026
+    },
+    "d2.mp4": {
+     "diff_p5": 0.9911423935252005,
+     "n_diff": 44,
+     "n_same": 206,
+     "same_p95": 0.11091974134260563
+    },
+    "d3.mp4": {
+     "diff_p5": 0.7129941166609401,
+     "n_diff": 60,
+     "n_same": 240,
+     "same_p95": 0.14392697868428178
+    },
+    "d4.mp4": {
+     "diff_p5": 0.8755679839306745,
+     "n_diff": 137,
+     "n_same": 732,
+     "same_p95": 0.46333958331817887
+    },
+    "d5.mp4": {
+     "diff_p5": 0.8901473447260675,
+     "n_diff": 52,
+     "n_same": 280,
+     "same_p95": 0.4242476972737823
+    },
+    "d6.mp4": {
+     "diff_p5": 0.8798431662528697,
+     "n_diff": 60,
+     "n_same": 240,
+     "same_p95": 0.22853324250042772
+    },
+    "s1.mp4": {
+     "diff_p5": NaN,
+     "n_diff": 0,
+     "n_same": 42,
+     "same_p95": 0.8357102077439069
+    },
+    "s2.mp4": {
+     "diff_p5": NaN,
+     "n_diff": 0,
+     "n_same": 0,
+     "same_p95": NaN
+    },
+    "s3.mp4": {
+     "diff_p5": NaN,
+     "n_diff": 0,
+     "n_same": 60,
+     "same_p95": 0.11087074019251494
+    },
+    "s4.mp4": {
+     "diff_p5": 0.9140834866316349,
+     "n_diff": 3,
+     "n_same": 121,
+     "same_p95": 0.2852103224346263
+    },
+    "s5.mp4": {
+     "diff_p5": NaN,
+     "n_diff": 0,
+     "n_same": 261,
+     "same_p95": 0.4992273132166106
+    },
+    "s6.mp4": {
+     "diff_p5": NaN,
+     "n_diff": 0,
+     "n_same": 285,
+     "same_p95": 0.5448249093337358
+    },
+    "s7.mp4": {
+     "diff_p5": NaN,
+     "n_diff": 0,
+     "n_same": 180,
+     "same_p95": 0.9194937823795564
+    }
+   },
+   "default@crop": {
+    "Love.mp4": {
+     "diff_p5": 0.36972976910604327,
+     "n_diff": 38,
+     "n_same": 264,
+     "same_p95": 0.9137188532894706
+    },
+    "Monica Bellucci .mp4": {
+     "diff_p5": 0.742970344998274,
+     "n_diff": 718,
+     "n_same": 502,
+     "same_p95": 0.36819225208145945
+    },
+    "Weeds.mp4": {
+     "diff_p5": 0.862724680407087,
+     "n_diff": 21,
+     "n_same": 326,
+     "same_p95": 0.600040442836773
+    },
+    "d1.mp4": {
+     "diff_p5": 0.858682217869916,
+     "n_diff": 50,
+     "n_same": 97,
+     "same_p95": 0.19987389916950069
+    },
+    "d2.mp4": {
+     "diff_p5": 0.9899508698510728,
+     "n_diff": 44,
+     "n_same": 206,
+     "same_p95": 0.11473299264028303
+    },
+    "d3.mp4": {
+     "diff_p5": 0.7029993042321183,
+     "n_diff": 60,
+     "n_same": 240,
+     "same_p95": 0.1680044187229027
+    },
+    "d4.mp4": {
+     "diff_p5": 0.8741208115241917,
+     "n_diff": 137,
+     "n_same": 732,
+     "same_p95": 0.5054298232870059
+    },
+    "d5.mp4": {
+     "diff_p5": 0.8843479503518308,
+     "n_diff": 52,
+     "n_same": 280,
+     "same_p95": 0.4236624545474301
+    },
+    "d6.mp4": {
+     "diff_p5": 0.8878335625694475,
+     "n_diff": 60,
+     "n_same": 240,
+     "same_p95": 0.20383858174995653
+    },
+    "s1.mp4": {
+     "diff_p5": NaN,
+     "n_diff": 0,
+     "n_same": 42,
+     "same_p95": 0.95271132452722
+    },
+    "s2.mp4": {
+     "diff_p5": NaN,
+     "n_diff": 0,
+     "n_same": 0,
+     "same_p95": NaN
+    },
+    "s3.mp4": {
+     "diff_p5": NaN,
+     "n_diff": 0,
+     "n_same": 60,
+     "same_p95": 0.10484607820584324
+    },
+    "s4.mp4": {
+     "diff_p5": 0.9669951914419354,
+     "n_diff": 3,
+     "n_same": 121,
+     "same_p95": 0.2961976273296594
+    },
+    "s5.mp4": {
+     "diff_p5": NaN,
+     "n_diff": 0,
+     "n_same": 261,
+     "same_p95": 0.5483236030570958
+    },
+    "s6.mp4": {
+     "diff_p5": NaN,
+     "n_diff": 0,
+     "n_same": 285,
+     "same_p95": 0.6221464167317552
+    },
+    "s7.mp4": {
+     "diff_p5": NaN,
+     "n_diff": 0,
+     "n_same": 180,
+     "same_p95": 0.9601948643814588
+    }
+   },
+   "glintr100": {
+    "Love.mp4": {
+     "diff_p5": 0.18578855218997203,
+     "n_diff": 38,
+     "n_same": 264,
+     "same_p95": 0.9546157621860315
+    },
+    "Monica Bellucci .mp4": {
+     "diff_p5": 0.7117018931226747,
+     "n_diff": 718,
+     "n_same": 502,
+     "same_p95": 0.36073525679930574
+    },
+    "Weeds.mp4": {
+     "diff_p5": 0.9378048594667038,
+     "n_diff": 21,
+     "n_same": 326,
+     "same_p95": 0.575555521028496
+    },
+    "d1.mp4": {
+     "diff_p5": 0.9051637122740608,
+     "n_diff": 50,
+     "n_same": 97,
+     "same_p95": 0.24509618226094732
+    },
+    "d2.mp4": {
+     "diff_p5": 1.02797440480982,
+     "n_diff": 44,
+     "n_same": 206,
+     "same_p95": 0.09393947342150405
+    },
+    "d3.mp4": {
+     "diff_p5": 0.7167455282273313,
+     "n_diff": 60,
+     "n_same": 240,
+     "same_p95": 0.14484411138003742
+    },
+    "d4.mp4": {
+     "diff_p5": 0.8761739241851955,
+     "n_diff": 137,
+     "n_same": 732,
+     "same_p95": 0.4639396512024404
+    },
+    "d5.mp4": {
+     "diff_p5": 0.8354333403423988,
+     "n_diff": 52,
+     "n_same": 280,
+     "same_p95": 0.3962983151468169
+    },
+    "d6.mp4": {
+     "diff_p5": 0.8291929866337945,
+     "n_diff": 60,
+     "n_same": 240,
+     "same_p95": 0.21681820342114005
+    },
+    "s1.mp4": {
+     "diff_p5": NaN,
+     "n_diff": 0,
+     "n_same": 42,
+     "same_p95": 0.933656388407114
+    },
+    "s2.mp4": {
+     "diff_p5": NaN,
+     "n_diff": 0,
+     "n_same": 0,
+     "same_p95": NaN
+    },
+    "s3.mp4": {
+     "diff_p5": NaN,
+     "n_diff": 0,
+     "n_same": 60,
+     "same_p95": 0.08421209947374642
+    },
+    "s4.mp4": {
+     "diff_p5": 0.9443933744281747,
+     "n_diff": 3,
+     "n_same": 121,
+     "same_p95": 0.22745439302284565
+    },
+    "s5.mp4": {
+     "diff_p5": NaN,
+     "n_diff": 0,
+     "n_same": 261,
+     "same_p95": 0.5218059096073457
+    },
+    "s6.mp4": {
+     "diff_p5": NaN,
+     "n_diff": 0,
+     "n_same": 285,
+     "same_p95": 0.7849197316417489
+    },
+    "s7.mp4": {
+     "diff_p5": NaN,
+     "n_diff": 0,
+     "n_same": 180,
+     "same_p95": 0.9546164250003134
+    }
+   }
+  }
+ }
+}
