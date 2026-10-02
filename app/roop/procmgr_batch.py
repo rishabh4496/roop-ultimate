@@ -825,6 +825,19 @@ class BatchProcessingMixin:
                 self._log_memory_stage('phase3:tracking-prepass-fallback')
 
         self._log_memory_stage('phase4:before-main-processing')
+        # Live FPS + queue monitor (ROOP_PIPELINE_LOG_EVERY, default 100, 0 = off).
+        # `_runtime_read/write_queue` are only (re)bound by the parallel-stab path
+        # and survive between runs, so clear them or a threaded render following a
+        # stabilized one would sample the previous run's dead queues.
+        self._runtime_read_queue = None
+        self._runtime_write_queue = None
+        from roop.pipeline_monitor import PipelineMonitor, log_every_from_env
+        from roop.procmgr_runtime import bar_write as _bar_write
+        _every = log_every_from_env()
+        self._pipeline_monitor = (PipelineMonitor(_every, self._pipeline_queue_state, _bar_write)
+                                  if _every > 0 else None)
+        if self._pipeline_monitor is not None:
+            self._pipeline_monitor.start()
         # Avoid generational collections in the frame hot loop.  Frame queues
         # are bounded and frame references are released at encode/checkpoint
         # flushes; the finalizer below performs the only explicit sweep.
@@ -995,6 +1008,10 @@ class BatchProcessingMixin:
             self._log_memory_stage('phase3:run-cleanup-complete')
             self._psutil_proc = None
             self._active_inference_workers = None
+            _pipeline_monitor = getattr(self, '_pipeline_monitor', None)
+            self._pipeline_monitor = None
+            if _pipeline_monitor is not None:
+                _pipeline_monitor.finish()
             if self._runtime_monitor is not None:
                 self._runtime_summary = self._runtime_monitor.finish(
                     queue_depths=self._runtime_queue_snapshot(),

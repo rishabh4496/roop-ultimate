@@ -864,6 +864,35 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
             snapshot['output'] = one(getattr(self, '_runtime_write_queue', None))
         return snapshot
 
+    def _pipeline_queue_state(self):
+        """{'input': (depth, capacity), 'output': (depth, capacity)} for the path
+        THIS render is running, for the pipeline monitor.
+
+        The per-thread ``frames_queue``/``processed_queue`` lists are created for
+        every render but only USED by the threaded worker path, so they cannot be
+        read blindly: on the parallel-stabilization and one-owner-stream paths
+        they are structural zeros, which would read as "starved" forever.
+        """
+        def group(queues):
+            depth = cap = 0
+            for queue in queues:
+                depth += int(queue.qsize())
+                cap += int(queue.maxsize)
+            return depth, cap
+
+        scheduler = getattr(self, '_runtime_scheduler', None)
+        live = getattr(scheduler, 'live_queues', None)
+        if live:                                  # one-owner stream
+            return {'input': group([live[0]]), 'output': group([live[1]])}
+        if getattr(self, '_runtime_read_queue', None) is not None:   # parallel stab
+            # One slot here is a whole stabilization CHUNK, not a frame.
+            return {'input': group([self._runtime_read_queue]),
+                    'output': group([self._runtime_write_queue])
+                    if getattr(self, '_runtime_write_queue', None) is not None else (0, 0),
+                    'unit': 'chunks'}
+        return {'input': group(self.frames_queue or ()),                 # threaded workers
+                'output': group(self.processed_queue or ())}
+
     def _runtime_adaptive_boundary(self):
         monitor = getattr(self, '_runtime_monitor', None)
         controller = getattr(self, '_runtime_adaptive', None)
@@ -2915,6 +2944,12 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
 
 
     def update_progress(self, progress: Any = None) -> None:
+        # Every path (threaded workers, parallel stabilization, the one-owner
+        # stream) calls this once per finished frame, so it is the one place the
+        # pipeline monitor can count frames without knowing which path runs.
+        monitor = getattr(self, '_pipeline_monitor', None)
+        if monitor is not None:
+            monitor.frame_done()
         if progress is None:
             return
         # Throttle psutil memory probe to 500ms to avoid Windows syscall overhead in worker loops

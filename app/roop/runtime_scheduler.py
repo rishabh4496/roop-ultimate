@@ -267,6 +267,7 @@ class UnifiedRuntimeScheduler:
         self._last_bottleneck = "unknown"
         self._active = 0
         self._last_snapshot = None
+        self.live_queues = None
 
     @property
     def worker_count(self) -> int:
@@ -612,6 +613,9 @@ class UnifiedRuntimeScheduler:
         self._stop.clear()
         decode_q: Queue = Queue(maxsize=self.queue_capacity)
         encode_q: Queue = Queue(maxsize=self.queue_capacity)
+        # Exposed so the pipeline monitor can read this stream's real queues;
+        # they are otherwise local to this call.
+        self.live_queues = (decode_q, encode_q)
         errors = []
         decoder_done = object()
         processor_done = object()
@@ -788,6 +792,7 @@ class UnifiedRuntimeScheduler:
         for thread in threads:
             thread.join()
         self._stop.set()
+        self.live_queues = None
         # Cancellation/error paths can leave packets in a queue after another
         # stage has stopped.  Drop those frame references before returning to
         # ProcessMgr's checkpoint/final GC boundary.

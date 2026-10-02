@@ -72,6 +72,26 @@ folder). Entries before 2026-09-21 were moved here from the README on 2026-09-22
   is at the GPU floor (~75 faces/s; deleting a whole network buys +4.8%), so more GPU
   work cannot help a GPU-bound pipeline.
 
+- **Live pipeline monitor: FPS + queue state every 100 frames.** The decoupled pipeline
+  asked for (decode / GPU worker / NVENC writer on bounded queues, off the GIL) already
+  exists: ffmpeg decode (NVDEC where the codec allows, `nvdec_reader`) and NVENC encode
+  run in child processes, a reader thread and a writer thread bound the workers, and a
+  frame-lease semaphore is the real memory bound. It was NOT restructured: the one-owner
+  stream (`scheduler.run`: one CUDA owner, three threads) is only used for streaming
+  stabilization because TensorRT contexts are not shareable across threads and stateful
+  filters cannot advance out of order, and the threaded worker path measured 3.4x faster
+  (2026-09-24). What was missing was visibility while it runs - the scheduler's bottleneck
+  verdict printed once, at the end, with diagnostics on. `roop/pipeline_monitor.py`
+  now logs `[Pipeline] frames N | X fps (avg Y) | in a/b (empty p%) | out c/d (full q%) |
+  verdict` per window (`ROOP_PIPELINE_LOG_EVERY`, default 100, 0 = off) and a closing
+  `done:` summary. Queue state is sampled on every finished frame, and the verdict is the
+  share of samples where the INPUT side was empty (`DECODE-STARVED`) or the OUTPUT side
+  was full (`ENCODER-BOUND`); a full input queue is healthy (the reader should be ahead of
+  a GPU-bound pipeline). It hooks `update_progress`, the one call every path makes per
+  frame, and `_pipeline_queue_state` reads the queues of the path actually running - the
+  per-thread lists exist on every render but are structural zeros on the stabilized and
+  one-owner paths. It cannot raise into a render (probe and emit failures are swallowed).
+
 ## 2026-09-29
 
 - **3060 (sub-7 GB) temporal pre-pass: 72% of its wall clock was rescue detection.**
