@@ -22,6 +22,18 @@ folder). Entries before 2026-09-21 were moved here from the README on 2026-09-22
   `norm_crop` gives the same, so the live vector comes from an earlier landmark estimate).
   Measured on the 4070: TensorRT FP16 vs CPU min cosine 0.99996+; EXHAUSTIVE cuDNN ~= HEURISTIC
   for these nets; a build/release cycle returns to the same +120 MiB (CUDA context), no growth.
+- **All six recognition models compared on one video with a face swap (`tools/compare_recognition_swap.py`; report
+  `docs/development/RECOGNIZER_VIDEO_COMPARISON.md`).** On `Monica Bellucci .mp4` (7,647 frames, 15,900 faces) each model
+  decides which faces are "the main subject" and only those get harjot swapped in; a 3x2 grid video shows the six decisions
+  with live speed figures. Quality: w600k, AdaFace and Glint-R100 are practically tied (decisions differ on 68-87 of
+  15,900 faces); MobileFaceNet and SFace miss 6.5-11% of the swaps the majority agrees on, SFace flips twice as often.
+  Speed (4070, TensorRT FP16, batch 1): 0.90 ms/face SFace to 2.25 ms Glint-R100/AdaFace, but detection dominates, so the
+  pipeline-fps spread is only 34.0-37.6. No ground truth: the subject is a model-voted cluster of tracks and nobody is
+  identified by face. Lessons recorded in the tool: pixel difference is the wrong yardstick for "was this swapped"
+  (a swap keeps lighting, so a swapped face differs by ~7/255; use identity cosine to the source), and the real pipeline's
+  "selected" mode swaps only the captured target (92% of faces had no track entry), so swapping every face needs
+  `ProcessMgr.process_face` driven directly. The render writes to `*.part.mp4` and renames on success: an MP4 has no
+  playable index until the end, and an earlier version overwrote a good file with a half-written one.
 - **Every registered recogniser calibrated against w600k on 16 real clips: none wired, and a keypoint finding.**
   (Written for glintr100; `mobilefacenet` and `facerecognizersf` were added the same day: both clearly worse than
   w600k, AUC intervals below zero, EER 5.5-6.2% vs 3.1%; `antelopev2` is glintr100's file.)
