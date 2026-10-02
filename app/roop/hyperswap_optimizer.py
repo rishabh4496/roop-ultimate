@@ -22,6 +22,8 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 import cv2
 import numpy as np
 
+from roop.swap_identity import validate_identity_embedding
+
 try:
     import pynvml
     pynvml.nvmlInit()
@@ -77,7 +79,8 @@ class HyperSwapSourceCache:
         if raw_emb is None:
             raise ValueError(f"source_face has no embedding for {model_key}")
 
-        emb_arr = np.asarray(raw_emb, dtype=np.float32).reshape(1, 512)
+        # Size / finite / non-zero, with the reason in the message (roop/swap_identity.py).
+        emb_arr = validate_identity_embedding(raw_emb, "source face for %s" % model_key)
         cache_id = f"{model_key}_{embedding_mode}_{hash(emb_arr.tobytes())}"
 
         with self._lock:

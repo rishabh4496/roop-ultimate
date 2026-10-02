@@ -22,6 +22,18 @@ folder). Entries before 2026-09-21 were moved here from the README on 2026-09-22
   `norm_crop` gives the same, so the live vector comes from an earlier landmark estimate).
   Measured on the 4070: TensorRT FP16 vs CPU min cosine 0.99996+; EXHAUSTIVE cuDNN ~= HEURISTIC
   for these nets; a build/release cycle returns to the same +120 MiB (CUDA context), no growth.
+- **The swapper's identity input is guarded and isolated from the tracking recogniser.** The swap
+  path was already separate (it reads the 512-d w600k vector on `face.embedding`, computes the latent
+  once per source face and caches it on the Face + a shared LRU), so no parallel swapper was built.
+  Two real holes were closed: `HyperSwapSourceCache.get_latent` reshaped anything to (1, 512) and a
+  ZERO embedding became a zero latent that was cached (a swap toward nobody, reported as success).
+  `roop/swap_identity.validate_identity_embedding` now gates that path and the crossface-converter
+  path (size, finite, non-zero; the message names the hazard). A shape check cannot tell a 512-d
+  AdaFace/Glint vector from w600k, so that case is closed structurally:
+  `tests/test_swap_identity_isolation.py` fails if any production file outside the recognition modules
+  imports the tracking API (AST scan; `ALLOWED_RECOGNITION_IMPORTERS`). Not done, on purpose: a
+  GPU-resident source-latent cache (the latent is 2 KB, already computed once; ORT io_binding was
+  removed for CUDA error 999) and a separate `frame_swapper.py` (the draft skipped inswapper's emap).
 - **Recognition verification + benchmark harness** (`tests/test_recognition_pipeline.py`).
   Correctness on models already on disk (a missing one is a visible skip, never a download; real
   aligned faces check same-vs-different separation, margin 0.10 = half the narrowest measured gap

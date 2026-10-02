@@ -13,6 +13,7 @@ from roop.typing import Face, Frame
 from roop.utilities import (resolve_relative_path, conditional_download,
                             CudaOrtIOBinding, cuda_warp_affine)
 from roop import session_pool
+from roop.swap_identity import validate_identity_embedding
 from roop.precision_policy import providers_for
 
 
@@ -923,7 +924,8 @@ class FaceSwapInsightFace():
             cached = source_face.get(cache_key) if hasattr(source_face, 'get') else None
             if cached is not None:
                 return cached
-            emb = np.asarray(source_face.embedding, dtype=np.float32).reshape(-1, 512)
+            emb = validate_identity_embedding(
+                source_face.embedding, "source face for %s" % self.loaded_model_key)
             converted = self.converter.run(None, {self.converter_input: emb})[0]
             converted = converted.ravel()
             if mode == "converted_norm":
