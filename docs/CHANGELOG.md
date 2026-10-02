@@ -154,6 +154,33 @@ folder). Entries before 2026-09-21 were moved here from the README on 2026-09-22
   VRAM with the render. The cache already matches on GPU + driver + compute capability by
   construction; run the prebuild once before starting the app instead.
 
+- **Why the GPU sat at ~65% on a stabilized render, and a +9.6% fix for small-frame clips.**
+  Diagnosed on `D:\k1.mp4` (480x854, 11,179 frames, live config: hyperswap + Restore Ultra +
+  XSeg, all stabilizers on, 20 threads) which rendered 13.2 fps main pass (pre-pass 69.6 fps,
+  end-to-end 10.7). Sampled at 1 Hz: system CPU 29%, busiest thread 62% (max 94%), GPU SM 65%,
+  143 W of 200 W, memory bandwidth 43%, reader read-wait 0.1 s and writer stall 0 s over 1,500
+  frames - no resource saturated and the GIL not pegged. The profiler shows 7.9 frames in flight
+  against 12 workers: ~20-25% of worker time goes on the WARM-UP frames every block re-runs and
+  discards (6 of every 30 frames in a 24-frame block, uncounted by `frame_total`), and ~12-17% on
+  the join barrier at the end of every chunk (the fastest worker finishes at 50-90% of the slowest;
+  `[STAB CHUNK]` imbalance 25% of processing wall on this clip's close-ups). The ceiling from GPU
+  work alone is ~24 fps (swap 7 ms + mask 3 ms + restorer ~20 ms per face x 1.37 faces/frame), so
+  ~90% GPU utilization would be ~21 fps - but utilization is a symptom, not a target: removing
+  warm-up work removes GPU work too, so fps rises while SM utilization stays ~65%.
+  `_stab_parallel_geometry` now picks an 8x-warm-up block (priming 25% -> 12.5%) automatically
+  WHEN the RAM budget still holds two whole rounds of them (2 x workers blocks); otherwise the 4x
+  block is kept, because a blanket 8x would make the shrink steps cut 1080p blocks below today's.
+  New knob `ROOP_STAB_BLOCK_MULT` (2-16, explicit always wins; 4 restores the old behaviour).
+  Counterbalanced A B C C B A on frames 3000-7600, 4,600 frames, identity unchanged on every arm
+  (0.330, 38/38): default 18.77 fps (18.80 / 18.73, 0.4% apart) | `BLOCKS_PER_WORKER=4` 19.31 |
+  `BLOCK_MULT=8` 20.58 (20.66 / 20.50). Default path re-run after the change: 20.12 fps, banner
+  `24 blocks x 48f`; the 1080p regression clip keeps `12 blocks x 24f` and its output is identical
+  to baseline (face SSIM 1.0). The whole k1 clip is NOT 20 fps: this slice is easier than average
+  (the first 1,500-frame slice was 19.4, the clip average 13.2), and the per-face restorer is the
+  dominant cost on its close-ups. Remaining known loss: the end-of-chunk join barrier (12-17%);
+  a persistent pool that starts the next chunk's blocks before the current chunk joins would
+  recover part of it but touches the pause/checkpoint/writer-drain machinery - not done here.
+
 ## 2026-09-29
 
 - **3060 (sub-7 GB) temporal pre-pass: 72% of its wall clock was rescue detection.**

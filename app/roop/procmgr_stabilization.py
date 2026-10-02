@@ -217,8 +217,19 @@ class StabilizationSchedulingMixin:
         #
         # A multiple of 1 is a no-op: every expression below is already >= wu.
         _floor = max(1, int(getattr(self, '_stab_min_block_multiple', 1) or 1)) * wu
+        # A block is `mult` x the warm-up it discards, so redundant priming is
+        # 1/mult of its work: 25% at the default 4x, 12.5% at 8x. A bigger block
+        # needs more RAM per chunk, and the shrink steps below already back off
+        # to 2x/1x whenever too few blocks fit, so a larger value can only ever
+        # take effect on a machine that can hold it. Default 4 = unchanged.
+        _explicit_mult = (os.environ.get('ROOP_STAB_BLOCK_MULT', '') or '').strip()
+        try:
+            _mult = int(_explicit_mult) if _explicit_mult else 4
+        except ValueError:
+            _mult, _explicit_mult = 4, ''
+        _mult = max(2, min(16, _mult))
         block = max(_floor,
-                    max(2 * wu, 16) if self._runtime_stab_small else max(4 * wu, 24))
+                    max(2 * wu, 16) if self._runtime_stab_small else max(_mult * wu, 24))
         budget_mb = self._default_stab_chunk_mb()
         _env_budget = (os.environ.get('ROOP_STAB_CHUNK_MB', '') or '').strip()
         if _env_budget:
@@ -231,6 +242,20 @@ class StabilizationSchedulingMixin:
             except ValueError:
                 pass
         frame_mb = max(0.1, (self._stab_frame_bytes or (1920 * 1080 * 3)) / (1024.0 ** 2))
+        # AUTOMATIC larger block, only when it costs nothing: with no explicit
+        # ROOP_STAB_BLOCK_MULT, an 8x block halves the redundant priming (25% ->
+        # 12.5% of a block's work) but only if the RAM budget still holds TWO
+        # WHOLE ROUNDS of them (2 x threads blocks). Otherwise the shrink steps
+        # below would cut blocks to 2x warm-up -- smaller than today's -- and
+        # 1080p frames would get worse, so those keep the 4x block.
+        # Measured 2026-10-02 (D:\k1.mp4, 480x854, 4600 frames, A B C C B A,
+        # identity unchanged): default 18.77 fps, 8x 20.58 fps (+9.6%); the two
+        # default runs differed by 0.4%.
+        if (not _explicit_mult and not self._runtime_stab_small and wu > 0
+                and threads >= 2):
+            _big = max(8 * wu, 24)
+            if _big > block and int((budget_mb / frame_mb) // _big) >= 2 * threads:
+                block = _big
         fits = max(1, int((budget_mb / frame_mb) // block))
         if fits < threads and threads >= 2 and wu > 0:
             adaptive_block = max(_floor, max(2 * wu, 16))
