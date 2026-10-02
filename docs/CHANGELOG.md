@@ -5,6 +5,32 @@ full session record is [`SESSION_LOGS.md`](SESSION_LOGS.md); the running enginee
 state lives outside the repository (`RECODE_STATUS.md` in the operator's `roop-keep`
 folder). Entries before 2026-09-21 were moved here from the README on 2026-09-22.
 
+## 2026-10-03
+
+- **Startup canary for TensorRT swapper engines (`roop/swap_canary.py`, hooked in
+  `FaceSwapInsightFace._canary_gate`).** An inswapper TensorRT FP16/"mixed" engine can build, warm up,
+  report the TensorRT provider and run at full speed while emitting the WRONG picture for every face:
+  inswapper unrolls InstanceNorm and the squared terms reach ~7e6, past FP16's 65504, and whether TRT
+  keeps them in FP32 depends on tactic selection at build time. Measured on the RTX 4070 (TRT 10.9, ORT
+  1.23.2, 14 real crops, SSIM vs CUDA FP32): production options 0.9973 min / identity unchanged;
+  the same options without `trt_build_heuristics_enable`, or without the 2 GB workspace + sequential
+  build, 0.749 / identity 0.762 -> 0.087. Nothing in `predictor.verify_and_warmup` can see it. The canary
+  compares the engine to a transient CUDA FP32 session on two synthetic inputs (good >= 0.9958, corrupt
+  <= 0.8653; floor 0.98), and on failure rebuilds on the TensorRT FP32 engine (15.9 ms, SSIM 0.99985,
+  identity 0.7685 vs 0.7682), else CUDA/CPU. Verified end to end through the real `Initialize`: production
+  engine passes (0.9974, 0.45 s), an injected corrupt engine is caught (0.40) and replaced; no false
+  positives on inswapper / hyperswap / hififace / realswap (all >= 0.9974). `ROOP_SWAP_CANARY=0` disables.
+  Also fixed: `_rebuild_without_trt` called `get_onnx_session_options` which was only imported locally
+  inside `Initialize` (a latent `NameError` on the GHOST fallback), and the model-lifecycle log hard-coded
+  `precision="fp32"` for every inswapper while production ran it mixed.
+- **Stage 1-3 optimisation prompts audited, nothing built** (decode/zero-disk, pre-pass keyframes +
+  embedding cache, ORT FP16/IOBinding): the default render already streams through rawvideo pipes with
+  no frame images (one 31 MB encoded segment is the only temp write), the pre-pass already runs N=8
+  keyframes + ROI + scene-cut, and cached embeddings cannot reach cosine 0.995 (adjacent frames 0.913).
+  IOBinding and the requested session options measure at zero gain; the ORT FP16 converters corrupt
+  this graph even with every op blocked. See the memory notes `default-render-already-zero-frame-files`,
+  `stage2-prepass-contract-unreachable`, `stage3-ort-contract-measured`.
+
 ## 2026-10-02
 
 - **Pluggable recognition backend (additive; live matching NOT rewired).**

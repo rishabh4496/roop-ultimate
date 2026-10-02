@@ -192,7 +192,9 @@ touch the render pipeline, which uses its own readers.
 
 | Flag | Default | Effect |
 |------|---------|--------|
-| `ROOP_SWAP_FP16` | 0 | `1` lets the swapper run FP16 under TRT (**not recommended** — causes rainbow/smudge from FP16 overflow; default forces FP32). |
+| `ROOP_SWAP_FP16` | 0 | `1` skips the swapper precision policy entirely and hands TensorRT the raw provider list (**not recommended**). Without it the swapper follows `trt_precision` through `roop/precision_policy.py`; under `mixed` inswapper runs a TensorRT FP16/mixed engine (~5.6 ms/crop on an RTX 4070, SSIM 0.997 vs FP32). Raw FP16 can overflow (rainbow/smudge, or a silently wrong picture); the startup canary below guards the policy path. |
+| `ROOP_SWAP_FP32` | 0 | `1` forces the swapper onto a TensorRT FP32 engine (separate `_swap_fp32` cache; ~15 ms/crop for inswapper). The overflow-safe override. |
+| `ROOP_SWAP_CANARY` | 1 | Startup canary for TensorRT swapper engines (`roop/swap_canary.py`). After the swapper session is built it runs two fixed synthetic inputs through the engine and through a transient CUDA FP32 reference (~0.4-1 s, once per model load) and requires SSIM >= 0.98 (good engines measured >= 0.9958, a corrupt one <= 0.87). On failure the swapper is rebuilt on the TensorRT FP32 engine, else CUDA/CPU, and `[SwapCanary] ... FAILED` is printed. Only runs when TensorRT FP16 is requested and a CUDA reference exists (never on the 3060 profile, where TensorRT is not admitted). `0` disables. |
 | `ROOP_GPEN_FP16` | 0 | `1` lets GPEN run FP16 (not recommended; default FP32 for correct faces). |
 | `ROOP_UPSCALE_TRT` | 0 | `1` runs ESRGAN x4 upscalers under TensorRT (**not recommended** — goes all-black under TRT FP16; default forces CUDA/CPU FP32). |
 | `ROOP_UPSCALE_TILE` | 256 | Tile size (px) for AI upscalers; lower if VRAM is tight on heavy ×4 models. |

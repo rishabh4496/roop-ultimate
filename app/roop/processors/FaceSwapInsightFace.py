@@ -11,8 +11,10 @@ import onnxruntime
 
 from roop.typing import Face, Frame
 from roop.utilities import (resolve_relative_path, conditional_download,
-                            CudaOrtIOBinding, cuda_warp_affine)
+                            CudaOrtIOBinding, cuda_warp_affine,
+                            get_onnx_session_options)
 from roop import session_pool
+from roop import swap_canary as _canary_mod
 from roop.swap_identity import validate_identity_embedding
 from roop.precision_policy import providers_for
 
@@ -557,6 +559,15 @@ def _swap_providers(providers, model_key='face_swap', model_path=None):
         print(f"[RealSwap] TensorRT precision={decision.effective}; "
               f"policy={decision.model}; preserving guarded precision", flush=True)
         return selected
+    return _force_fp32_providers(providers)
+
+
+def _force_fp32_providers(providers):
+    """The provider list with the TensorRT entry switched to an FP32 engine.
+
+    Shared by the ``ROOP_SWAP_FP32`` / ``trt_precision=fp32`` override above and
+    by the startup canary's fallback (``FaceSwapInsightFace._canary_gate``).
+    """
     patched = []
     for p in providers:
         if isinstance(p, (tuple, list)) and len(p) == 2 and 'tensorrt' in str(p[0]).lower():
@@ -565,7 +576,7 @@ def _swap_providers(providers, model_key='face_swap', model_path=None):
             # Separate engine cache so the FP32 swap engine never collides with
             # the FP16 engines TensorRT builds for the other models.
             cache = opts.get('trt_engine_cache_path')
-            if cache:
+            if cache and not str(cache).endswith('_swap_fp32'):
                 fp32_cache = cache + '_swap_fp32'
                 os.makedirs(fp32_cache, exist_ok=True)
                 opts['trt_engine_cache_path'] = fp32_cache
@@ -776,6 +787,16 @@ class FaceSwapInsightFace():
                 f"swapper:{swap_model}",
                 default_hw=(spec["output_size"],))
 
+            # A TensorRT FP16/mixed swapper engine can build, warm up and run at
+            # full speed while emitting the wrong picture (see roop/swap_canary).
+            self._canary_gate(swap_model, spec)
+            # `_build` (pool extras) closes over this name: after a fallback the
+            # extras must be built on the providers the primary now runs on, not
+            # on the TensorRT FP16 ones the canary just rejected.
+            swap_providers = (
+                [p for p in swap_providers if not self._is_trt(p)]
+                if self._trt_disabled else self._swap_providers)
+
             # Resolve input tensor names by rank instead of assuming names:
             # rank-4 = the image (NCHW), rank-2 = the identity embedding.
             for inp in self.model_swap_insightface.get_inputs():
@@ -813,7 +834,11 @@ class FaceSwapInsightFace():
                     model=f"faceswap:{swap_model}",
                     device=self.devicename,
                     provider=act_p,
-                    precision="fp32" if "inswapper" in swap_model else "mixed",
+                    # What the providers actually ask for. This used to say
+                    # "fp32" for every inswapper while production ran it mixed.
+                    precision=("mixed" if ("inswapper" not in swap_model
+                                           or _canary_mod.trt_fp16_active(self._swap_providers))
+                               else "fp32"),
                     input_shape=in_shape,
                     engine_cache="ENABLED" if "tensorrt" in act_p.lower() else f"N/A ({act_p})",
                     vram_cost="pooled" if self.pool is not None else "shared",
@@ -1008,6 +1033,72 @@ class FaceSwapInsightFace():
     def _is_trt(p):
         name = p[0] if isinstance(p, (tuple, list)) else p
         return 'tensorrt' in str(name).lower()
+
+    def _canary_gate(self, swap_model, spec):
+        """Verify a TensorRT FP16/mixed swapper engine against CUDA FP32 and
+        rebuild it safely if it is corrupt.
+
+        Runs once, right after the session is built and warmed, and only when
+        the TensorRT provider asked for FP16 kernels (nothing else can drift).
+        On failure the swapper is rebuilt on the TensorRT FP32 engine (the same
+        ``_swap_fp32`` cache ``ROOP_SWAP_FP32=1`` uses, ~15 ms vs ~5.6 ms for
+        inswapper); if that cannot be built or also fails, on CUDA/CPU.
+        ``self.swap_canary`` keeps the last result for diagnostics.
+        """
+        from roop import swap_canary
+        self.swap_canary = None
+        providers = self._swap_providers
+        if not swap_canary.enabled() or not swap_canary.trt_fp16_active(providers):
+            return
+        reference_providers = swap_canary.non_trt_providers(providers)
+        if not any('cuda' in str(p[0] if isinstance(p, (tuple, list)) else p).lower()
+                   for p in reference_providers):
+            return   # no GPU reference to compare against; nothing to verify with
+        tag = f"swapper:{swap_model}"
+        emap = self.emap if self.embedding_mode == "normed_emap" else None
+
+        def _reference():
+            return onnxruntime.InferenceSession(
+                self._model_arg, get_onnx_session_options(), providers=reference_providers)
+
+        result = swap_canary.check_engine(
+            self.model_swap_insightface, _reference, tag, emap=emap)
+        self.swap_canary = result
+        if not result.ran:
+            print(f"[SwapCanary] {tag}: skipped - {result.reason}", flush=True)
+            return
+        if result.passed:
+            print(f"[SwapCanary] {tag}: OK - min SSIM {result.min_ssim:.4f} vs FP32 "
+                  f"({result.seconds:.1f}s)", flush=True)
+            return
+
+        print(f"[SwapCanary] {tag}: FAILED - {result.reason}; cases={result.per_case}. "
+              f"This TensorRT FP16/mixed engine would swap every face to the wrong picture "
+              f"with no error. Rebuilding on a TensorRT FP32 engine.", flush=True)
+        fp32 = _force_fp32_providers(providers)
+        try:
+            self.model_swap_insightface = onnxruntime.InferenceSession(
+                self._model_arg, get_onnx_session_options(), providers=fp32)
+            from roop import predictor
+            predictor.verify_and_warmup(
+                self.model_swap_insightface, fp32, tag + ":fp32-fallback",
+                default_hw=(spec["output_size"],))
+            self._swap_providers = fp32
+            again = swap_canary.check_engine(
+                self.model_swap_insightface, _reference, tag, emap=emap)
+            if again.passed is False:
+                raise RuntimeError(f"FP32 engine also failed the canary: {again.reason}")
+            self.swap_canary = again
+            print(f"[SwapCanary] {tag}: running on the TensorRT FP32 engine "
+                  f"(min SSIM {again.min_ssim}).", flush=True)
+        except Exception as exc:
+            _swallowed("FaceSwapInsightFace.py:_canary_gate", exc,
+                       "TensorRT FP32 fallback failed; using CUDA/CPU")
+            print(f"[SwapCanary] {tag}: TensorRT FP32 rebuild failed "
+                  f"({type(exc).__name__}: {exc}); falling back to CUDA/CPU.", flush=True)
+            self._swap_providers = providers
+            self._trt_disabled = False
+            self._rebuild_without_trt()
 
     def _rebuild_without_trt(self) -> bool:
         """Rebuild the swap session(s) with the TensorRT provider stripped out,
