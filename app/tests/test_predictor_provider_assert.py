@@ -77,19 +77,88 @@ class ProviderAssertionTest(unittest.TestCase):
         self.assertIn(CUDA, message)
         self.assertIn("onnxruntime", message)
 
-    def test_tensorrt_not_requested_never_raises(self):
+    def test_tensorrt_not_requested_never_raises_for_a_working_gpu_session(self):
         """The sub-7GB tier and the FP32-forced models must not trip this.
 
         `resolve_provider_names` strips TensorRT on a small card and
         `precision_policy` routes several models to CUDA on purpose; in both
-        cases TensorRT is absent from the REQUESTED list, which is the input to
-        this check.
+        cases TensorRT is absent from the REQUESTED list, and the session is on
+        CUDA, so there is nothing to flag.
         """
+        session = StubSession([CUDA, CPU])
+        self.assertEqual(
+            predictor.assert_session_providers(session, [CUDA, CPU], "m"),
+            [CUDA, CPU])
+
+    def test_no_gpu_requested_never_raises(self):
+        """cpu / force_cpu / a CPU-only model must be able to run on the CPU."""
         session = StubSession([CPU])
         self.assertEqual(
-            predictor.assert_session_providers(session, [CUDA, CPU], "m"), [CPU])
-        self.assertEqual(
             predictor.assert_session_providers(session, [CPU], "m"), [CPU])
+        self.assertEqual(
+            predictor.assert_session_providers(session, ["DmlExecutionProvider", CPU],
+                                               "m"), [CPU])
+
+    def test_cuda_requested_but_cpu_only_raises(self):
+        """The case the TensorRT-only check could not see.
+
+        A missing cuDNN DLL, a CPU-only onnxruntime wheel, or a rejected provider
+        option leaves a perfectly working CPU session with no TensorRT anywhere
+        in the request.
+        """
+        for requested in ([CUDA, CPU], [(CUDA, {"device_id": 0}), CPU], [TRT, CUDA, CPU]):
+            with self.subTest(requested=requested):
+                predictor.reset()
+                with self.assertRaises(predictor.ProviderAssertionError) as ctx:
+                    predictor.assert_session_providers(
+                        StubSession([CPU]), requested, "detector", strict=True)
+                self.assertIn("CPU-only", str(ctx.exception))
+                self.assertIn("detector", str(ctx.exception))
+
+    def test_cpu_fallback_is_a_warning_when_not_strict(self):
+        from roop import backend_manager
+        before = len(backend_manager.session_degradations())
+        active = predictor.assert_session_providers(
+            StubSession([CPU]), [CUDA, CPU], "m", strict=False)
+        self.assertEqual(active, [CPU])
+        entries = backend_manager.session_degradations()[before:]
+        self.assertTrue(entries)
+        self.assertEqual(entries[-1]["from"], CUDA)
+
+    def test_binding_is_recorded_for_the_startup_log(self):
+        predictor.assert_session_providers(StubSession([CUDA, CPU]), [CUDA, CPU], "swapper")
+        bound = predictor.bound_sessions()
+        self.assertEqual(bound["swapper"]["active"], [CUDA, CPU])
+        self.assertEqual(bound["swapper"]["requested"], [CUDA, CPU])
+
+    def test_tensorrt_dropped_to_cuda_is_only_a_warning_when_checked_loosely(self):
+        """verify_built (detectors, buffalo_l): CUDA is still a GPU."""
+        from roop import backend_manager
+        before = len(backend_manager.session_degradations())
+        active = predictor.assert_session_providers(
+            StubSession([CUDA, CPU]), [TRT, CUDA, CPU], "det", check_tensorrt=False)
+        self.assertEqual(active, [CUDA, CPU])
+        self.assertGreater(len(backend_manager.session_degradations()), before)
+
+    def test_verify_built_reaches_through_insightface_wrappers(self):
+        class Model:
+            def __init__(self, providers):
+                self.session = StubSession(providers)
+
+        class Analysis:
+            models = {"detection": Model([CUDA, CPU]), "recognition": Model([CPU])}
+
+        with self.assertRaises(predictor.ProviderAssertionError) as ctx:
+            predictor.verify_built(Analysis(), [CUDA, CPU], "buffalo_l")
+        self.assertIn("buffalo_l/recognition", str(ctx.exception))
+        # A bare model carrying .session, and a non-session, are both handled.
+        predictor.verify_built(Model([CUDA, CPU]), [CUDA, CPU], "one")
+        predictor.verify_built(object(), [CUDA, CPU], "stub")
+        predictor.verify_built(Model([CPU]), [CPU], "cpu-only-request")
+
+    def test_device_memory_is_none_without_torch_loaded(self):
+        with mock.patch.dict(sys.modules, {"torch": None}):
+            self.assertIsNone(predictor.device_memory())
 
     def test_tuple_form_providers_are_recognised(self):
         """Provider options arrive as ("Name", {...}); a bare `in` test misses them.
@@ -191,6 +260,26 @@ class WarmupTest(unittest.TestCase):
         with self.assertRaises(predictor.ProviderAssertionError):
             predictor.verify_and_warmup(session, [TRT, CPU], "m")
         self.assertEqual(session.ran, [])
+
+    def test_a_provider_dropped_during_the_first_run_is_caught(self):
+        """ORT re-initialises on CPU inside the first inference (measured
+        2026-08-12), so the construction-time check alone would pass."""
+        class DropsOnRun(StubSession):
+            def run(self, outputs, feed):
+                self._providers = [CPU]
+                return super().run(outputs, feed)
+
+        session = DropsOnRun([CUDA, CPU], inputs=[StubMeta("in", [1, 3, 8, 8])])
+        with self.assertRaises(predictor.ProviderAssertionError) as ctx:
+            predictor.verify_and_warmup(session, [CUDA, CPU], "m")
+        self.assertIn("first inference", str(ctx.exception))
+
+    def test_warmup_reports_vram_when_the_device_is_readable(self):
+        session = StubSession([CUDA, CPU], inputs=[StubMeta("in", [1, 3, 8, 8])])
+        snapshot = {"used": 3000.0, "free": 9000.0, "total": 12000.0}
+        with mock.patch.object(predictor, "device_memory", return_value=snapshot):
+            predictor.verify_and_warmup(session, [CUDA, CPU], "m")
+        self.assertEqual(predictor.bound_sessions()["m"]["vram_used_mib"], 3000.0)
 
     def test_warmup_can_be_disabled(self):
         with mock.patch.dict(os.environ, {"ROOP_WARMUP": "0"}):

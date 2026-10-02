@@ -5,6 +5,39 @@ full session record is [`SESSION_LOGS.md`](SESSION_LOGS.md); the running enginee
 state lives outside the repository (`RECODE_STATUS.md` in the operator's `roop-keep`
 folder). Entries before 2026-09-21 were moved here from the README on 2026-09-22.
 
+## 2026-10-02
+
+- **A CUDA session that came up CPU-only was invisible; now it raises.** The
+  `predictor` assertion only fired when TensorRT was *requested*, so a session that asked
+  for CUDA and silently got `CPUExecutionProvider` (missing cuDNN DLL, a CPU-only
+  onnxruntime wheel shadowing onnxruntime-gpu, a rejected provider option) passed every
+  check. `assert_session_providers` now raises `ProviderAssertionError` when CUDA or
+  TensorRT was requested and no GPU provider is active; a session that requested no GPU
+  provider (`cpu`, `force_cpu`, CPU-only models) can never trip it, and a TensorRT->CUDA
+  drop is still only fatal where it was before. It is now also checked (a) after the
+  warm-up inference, because ORT drops the EP *during the first run* (`verify_and_warmup`),
+  and (b) on every session built through `backend_manager.build_session_with_fallback` -
+  the detectors and `buffalo_l`, which never called the assertion. That check sits outside
+  the `try` on purpose: a CPU-only session is not a build failure and must not be
+  swallowed into the next fallback attempt. `ROOP_STRICT_PROVIDER=0` downgrades it to a
+  warning + recorded degradation, as before.
+- **Startup now says what is bound and what it costs.** One `[Provider] <tag>: active =
+  ...` line per session and a `VRAM used / total (+delta since previous model)` line per
+  loaded model (device-wide, read from the driver); `predictor.bound_sessions()` exposes
+  both. `core` prints the resolved CUDA EP options once.
+- **CUDA EP `gpu_mem_limit` defaults to 10 GiB** (an explicit `perf_gpu_mem_limit` /
+  `ROOP_CUDA_MEM_LIMIT` still wins). Per-session arena ceiling: on the 12 GB desktop it
+  keeps one session from pushing the card into WDDM shared-memory paging; on the 6 GB
+  laptop it is above physical VRAM and changes nothing. Not scaled down for the laptop -
+  a tighter cap there is untested.
+- **Deliberately NOT changed (request said otherwise):** `cudnn_conv_algo_search` stays
+  `HEURISTIC` (DEFAULT measured +55-241% slower per `cudnn_algo.py`; the CodeFormer
+  family is lowered per model by a device probe); `inswapper_128`/swappers stay off a
+  FP16 graph (FP16 overflow -> rainbow smudge, `precision_policy` `face_swap: fp16 =
+  unsafe`; FP16 also costs identity 0.352 -> 0.407); detectors are not converted to an
+  FP16 file (they already run FP16 under TensorRT `mixed`, and a landmark shift would
+  break alignment). `ORT_ENABLE_ALL` is already the `get_onnx_session_options` default.
+
 ## 2026-09-29
 
 - **3060 (sub-7 GB) temporal pre-pass: 72% of its wall clock was rescue detection.**

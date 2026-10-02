@@ -304,6 +304,26 @@ class GracefulFallback(unittest.TestCase):
         # one, not the CPU repeat of it.
         self.assertIn('the model itself is invalid', str(caught.exception))
 
+    def test_a_silent_cpu_only_session_is_fatal_not_a_fallback(self):
+        """ORT returning a CPU-only session is NOT a build failure -- nothing
+        raised -- so it must not be swallowed into the next attempt."""
+        from roop import predictor
+
+        class CpuOnly:
+            def get_providers(self):
+                return ['CPUExecutionProvider']
+
+        calls = []
+
+        def build(chain):
+            calls.append(chain)
+            return CpuOnly()
+
+        with redirect_stdout(io.StringIO()):
+            with self.assertRaises(predictor.ProviderAssertionError):
+                build_session_with_fallback(build, _trt(), tag='silent')
+        self.assertEqual(len(calls), 1)
+
     def test_a_working_chain_is_never_downgraded(self):
         calls = []
         session, used = build_session_with_fallback(

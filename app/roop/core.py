@@ -202,6 +202,22 @@ def encode_execution_providers(execution_providers: List[str]) -> List[str]:
     return [execution_provider.replace('ExecutionProvider', '').lower() for execution_provider in execution_providers]
 
 
+_DEFAULT_CUDA_MEM_LIMIT = 10 * 1024 * 1024 * 1024
+_logged_cuda_options = set()
+
+
+def _log_cuda_options_once(cuda_opts: dict) -> None:
+    """Print the resolved CUDA EP options the first time each distinct set is built."""
+    key = tuple(sorted(cuda_opts.items()))
+    if key in _logged_cuda_options:
+        return
+    _logged_cuda_options.add(key)
+    shown = dict(cuda_opts)
+    if isinstance(shown.get('gpu_mem_limit'), int):
+        shown['gpu_mem_limit'] = '%.1f GiB' % (shown['gpu_mem_limit'] / (1024 ** 3))
+    print('[Provider] CUDAExecutionProvider options: %s' % shown)
+
+
 def decode_execution_providers(execution_providers: List[str]) -> List[str]:
     import onnxruntime
     try:
@@ -244,12 +260,23 @@ def decode_execution_providers(execution_providers: List[str]) -> List[str]:
                     'do_copy_in_default_stream': True,
                     'arena_extend_strategy': os.environ.get('ROOP_CUDA_ARENA_STRATEGY', 'kSameAsRequested'),
                 }
+                # Per-session arena ceiling. An explicit value (the
+                # perf_gpu_mem_limit setting / ROOP_CUDA_MEM_LIMIT, in bytes)
+                # always wins; otherwise 10 GiB. On the 12 GB desktop that
+                # leaves ~2 GB outside any one session's arena, so a runaway
+                # allocation fails inside ORT instead of spilling into WDDM
+                # shared memory over PCIe (the 100%-util / 84 W freeze). On the
+                # 6 GB laptop the figure is above the physical VRAM, so it
+                # changes nothing there -- deliberately NOT scaled down, because
+                # a tighter cap on that card is untested.
                 cuda_mem_limit = os.environ.get('ROOP_CUDA_MEM_LIMIT')
+                cuda_opts['gpu_mem_limit'] = _DEFAULT_CUDA_MEM_LIMIT
                 if cuda_mem_limit:
                     try:
                         cuda_opts['gpu_mem_limit'] = int(cuda_mem_limit)
                     except ValueError:
                         pass
+                _log_cuda_options_once(cuda_opts)
                 list_providers[i] = ('CUDAExecutionProvider', cuda_opts)
                 torch.cuda.set_device(roop.globals.cuda_device_id)
             elif list_providers[i] == 'TensorrtExecutionProvider':

@@ -608,7 +608,7 @@ def build_session_with_fallback(build, providers, tag: str = "model"):
         if not chain:
             continue
         try:
-            return build(chain), chain
+            session = build(chain)
         except Exception as error:  # noqa: BLE001 - the point is to degrade
             _swallowed("roop/backend_manager.py:376", error, "fallback continued")
             if first_error is None:
@@ -624,6 +624,14 @@ def build_session_with_fallback(build, providers, tag: str = "model"):
                 requested_provider=_name(chain[0]),
                 active_provider=_name(next_chain[0]),
             )
+        else:
+            # Outside the try on purpose: a construction that RAISED is a real,
+            # recorded step down the chain, but a construction that returned a
+            # CPU-only session when CUDA/TensorRT was requested is ORT failing
+            # silently, and must not be swallowed into the next attempt.
+            from roop import predictor
+            predictor.verify_built(session, chain, tag)
+            return session, chain
     if first_error is not None:
         raise first_error
     raise RuntimeError(f"{tag}: no usable execution provider chain")
