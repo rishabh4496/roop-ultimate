@@ -8,6 +8,35 @@ application state.
 
 from __future__ import annotations
 
+import os
+
+
+def frame_capped_queue_depth(qdepth, threads, max_frames=None):
+    """Largest per-thread queue depth that keeps the per-thread queue path's live
+    frames at or under *max_frames* (default ``ROOP_MAX_FRAMES_IN_FLIGHT``, 64;
+    0 disables the cap).
+
+    Each worker owns an input queue and an output queue plus the frame it is
+    holding, so live frames are ``threads * (2 * depth + 1)``. The depth never
+    drops below 1, so with more than ``max_frames / 3`` threads the cap cannot be
+    met by queue depth alone and the result is simply 1.
+
+    This governs only the per-thread queue path. The unified scheduler is bounded
+    by its own RAM budget (at most 4 frames in flight), and stabilized parallel
+    renders by ``_default_stab_chunk_mb``'s RAM-share budget, which is a
+    throughput/RAM trade-off tuned separately and deliberately not capped here.
+    """
+    if max_frames is None:
+        try:
+            max_frames = int(os.environ.get('ROOP_MAX_FRAMES_IN_FLIGHT', '64') or '64')
+        except ValueError:
+            max_frames = 64
+    qdepth = max(1, int(qdepth))
+    if max_frames <= 0:
+        return qdepth
+    per_thread = max(1, int(max_frames) // max(1, int(threads)))
+    return max(1, min(qdepth, (per_thread - 1) // 2))
+
 
 class BatchProcessingMixin:
     """Own the per-clip batch lifecycle separately from face operations."""
@@ -711,6 +740,13 @@ class BatchProcessingMixin:
         qdepth = max(1, min(4, int(qdepth)))
         if self._runtime_in_flight_frames is not None:
             qdepth = min(qdepth, max(1, int(self._runtime_in_flight_frames)))
+        _uncapped_qdepth = qdepth
+        qdepth = frame_capped_queue_depth(qdepth, threads)
+        if qdepth != _uncapped_qdepth:
+            print(f'[Buffers] per-thread queue depth {_uncapped_qdepth} -> {qdepth} '
+                  f'to keep at most ~{threads * (2 * qdepth + 1)} frames live '
+                  f'({threads} threads); ROOP_MAX_FRAMES_IN_FLIGHT overrides.',
+                  flush=True)
         # An explicit output-buffer choice is useful for a slow CPU encoder or
         # a RAM-tight laptop. Keep the automatic runtime bound unless the user
         # deliberately supplies this override.

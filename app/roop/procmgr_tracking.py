@@ -142,52 +142,48 @@ def _readahead_depth(cap, budget_mb=256.0, lo=4, hi=16):
 
 class TrackingMixin:
     def _precompute_sam2(self, sam2_p, source_video, frame_start, frame_end, frame_count):
-        """SAM2 pre-pass: dump the trimmed frames to a temp JPEG dir (0-based,
-        matching the swap reader's frame_idx), detect the faces on frame 0 to seed
-        the tracker, and let SAM2 propagate full-frame masks across the clip."""
-        import tempfile, shutil
+        """SAM2 pre-pass: decode the trimmed frames straight into an in-RAM SAM2
+        input buffer (0-based, matching the swap reader's frame_idx; nothing is
+        written to disk), detect the faces on frame 0 to seed the tracker, and let
+        SAM2 propagate full-frame masks across the clip."""
         from roop.face_util import get_all_faces
 
-        tmp = tempfile.mkdtemp(prefix='sam2_')
+        from roop import hdr_pipeline as _hdr_pipeline
+        buffer = sam2_p.new_frame_buffer(frame_count or 0)
+        cap = _hdr_pipeline.video_capture(source_video)
         try:
-            from roop import hdr_pipeline as _hdr_pipeline
-            cap = _hdr_pipeline.video_capture(source_video)
-            try:
-                if frame_start and frame_start > 0:
-                    cap.set(cv2.CAP_PROP_POS_FRAMES, frame_start)
-                first = None
-                idx = 0
-                while roop.globals.processing:
-                    wait_while_paused()
-                    if not roop.globals.processing:
-                        break
-                    ret, fr = cap.read()
-                    if not ret or fr is None:
-                        break
-                    if first is None:
-                        first = fr
-                    cv2.imwrite(os.path.join(tmp, f'{idx:06d}.jpg'), fr)
-                    idx += 1
-                    if frame_count and idx >= frame_count:
-                        break
-            finally:
-                cap.release()
-
-            if first is None or idx == 0:
-                sam2_p.precomputed = {}
-                return
-
-            with pause_scope(lambda: bool(roop.globals.processing)) as allowed:
-                if not allowed:
-                    return
-                with _gpu_guard(pooled=analysis_pooled(), owner='analysis'):
-                    faces = get_all_faces(first) or []
-            boxes = [f.bbox.astype(np.float32) for f in faces if getattr(f, 'bbox', None) is not None]
-            print(f'[SAM2] seeding tracker with {len(boxes)} face(s) over {idx} frames')
-            h, w = first.shape[:2]
-            sam2_p.precompute(tmp, boxes, (h, w))
+            if frame_start and frame_start > 0:
+                cap.set(cv2.CAP_PROP_POS_FRAMES, frame_start)
+            first = None
+            while roop.globals.processing:
+                wait_while_paused()
+                if not roop.globals.processing:
+                    break
+                ret, fr = cap.read()
+                if not ret or fr is None:
+                    break
+                if first is None:
+                    first = fr
+                buffer.add(fr)
+                if frame_count and buffer.count >= frame_count:
+                    break
         finally:
-            shutil.rmtree(tmp, ignore_errors=True)
+            cap.release()
+        idx = buffer.count
+
+        if first is None or idx == 0:
+            sam2_p.precomputed = {}
+            return
+
+        with pause_scope(lambda: bool(roop.globals.processing)) as allowed:
+            if not allowed:
+                return
+            with _gpu_guard(pooled=analysis_pooled(), owner='analysis'):
+                faces = get_all_faces(first) or []
+        boxes = [f.bbox.astype(np.float32) for f in faces if getattr(f, 'bbox', None) is not None]
+        print(f'[SAM2] seeding tracker with {len(boxes)} face(s) over {idx} frames')
+        h, w = first.shape[:2]
+        sam2_p.precompute(buffer, boxes, (h, w))
 
     @staticmethod
     def _bbox_iou(a, b):
