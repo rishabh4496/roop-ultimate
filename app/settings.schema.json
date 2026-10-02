@@ -42,6 +42,7 @@
     "perf_gpu_affine",
     "perf_pinned_buffers",
     "temporal_step",
+    "enhance_min_face_px",
     "recognizer",
     "identity_confidence_threshold",
     "face_demarcate",
@@ -1236,6 +1237,18 @@
       },
       "env": {
         "var": "ROOP_TEMPORAL_STEP",
+        "kind": "value"
+      }
+    },
+    "enhance_min_face_px": {
+      "default": 0,
+      "type": "int",
+      "ui": {
+        "label": "Skip restorer below face size (px)",
+        "section": "Advanced performance"
+      },
+      "env": {
+        "var": "ROOP_ENHANCE_MIN_FACE_PX",
         "kind": "value"
       }
     },

@@ -164,7 +164,8 @@ class GeneratedFilesAreCurrent(unittest.TestCase):
 # oracle above cannot know them; each instead has to behave exactly like an
 # existing key of the same kind (test_new_keys_behave_like_their_kind).
 ADDED_AFTER_REGISTRY = ('perf_batch_max', 'perf_nvenc_preset', 'perf_gpu_affine',
-                        'perf_pinned_buffers', 'temporal_step', 'identity_confidence_threshold',
+                        'perf_pinned_buffers', 'temporal_step', 'enhance_min_face_px',
+                        'identity_confidence_threshold',
                         'hf_flow_backend', 'hf_flow_vram', 'hf_flow_weights',
                         'hf_flow_cycle_sigma', 'hf_flow_bilateral_sigma',
                         'hdr_pipeline', 'hdr_source_transfer', 'hdr_source_primaries',

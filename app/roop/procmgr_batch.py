@@ -1008,6 +1008,9 @@ class BatchProcessingMixin:
             self._log_memory_stage('phase3:run-cleanup-complete')
             self._psutil_proc = None
             self._active_inference_workers = None
+            _gate = getattr(self, '_enhance_gate', None)
+            if _gate is not None and _gate.summary():
+                print(_gate.summary(), flush=True)
             _pipeline_monitor = getattr(self, '_pipeline_monitor', None)
             self._pipeline_monitor = None
             if _pipeline_monitor is not None:

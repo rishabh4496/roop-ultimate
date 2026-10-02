@@ -92,6 +92,37 @@ folder). Entries before 2026-09-21 were moved here from the README on 2026-09-22
   per-thread lists exist on every render but are structural zeros on the stabilized and
   one-owner paths. It cannot raise into a render (probe and emit failures are swallowed).
 
+- **Small-face restorer gate (`enhance_min_face_px` / `ROOP_ENHANCE_MIN_FACE_PX`, default
+  0 = off).** The restorers are the one stage where the network itself is the cost (at its
+  own floor; no pool, thread or host trick left - 09-28 A/B, `enhancer-pool-does-not-help`),
+  so the only lever is running it less. A face whose shorter detected-box side is under the
+  threshold in frame pixels skips the restorer and the swapped crop is pasted as-is - the
+  same result as the "fast bilinear resize" alternative, since the paste warp is that
+  resize, and the same `enhanced_frame is None` state "no enhancer selected" already
+  produces, so every stage after it was already correct. Per-track hysteresis (resume only
+  at 1.15x the limit) stops a face at the edge flipping every few frames, which would read
+  as texture flicker. A UI slider ("Skip restorer below face size (px)"), live between
+  renders; `[EnhanceGate] restorer skipped on N of M faces under T px` prints at the end of
+  every render with the gate on. OFF by default because it changes how small faces look.
+  Proven executing on the 4070 (regression clip, threshold forced to 2000): enhance stage 0
+  calls, 408/408 skipped, swaps 300/300 intact, and the regression gate correctly flagged the
+  look change (face SSIM 0.9638 < 0.970). Forced all-skip is an UPPER bound (main pass 14.6 ->
+  32.2 fps), not what a real threshold buys: that clip's smallest face is 108 px, so 96
+  would skip nothing there. The win is wide/crowd footage.
+- **Restorer audit - not changed, with the evidence.** (1) FP16: the ONNX restorers already
+  run TensorRT FP16 ("mixed") via `precision_policy`; GFPGAN (flat grey face), GPEN
+  1024/2048 (NaN) and DMDNet (PyTorch, FP32-only) are marked unsafe on measured failures.
+  (2) `torch.compile` / `autocast`: only DMDNet is PyTorch (already `inference_mode`), and
+  `triton` is not installed here, so inductor cannot generate CUDA kernels. (3) Batching to
+  `[B,3,512,512]`: one TensorRT context already saturates the card (1->6 contexts: 40.0 ->
+  36.0 faces/s), GPEN is a StyleGAN with batch-1 baked tensors, and the exports are fixed
+  batch-1. (4) Keeping crops on the GPU between swap and restore: moving cv2
+  warp/blend onto torch CUDA measured 1.1-40x slower at real call sizes (bf96c1f), and the
+  GPU-vs-CPU look filter was measured NEUTRAL end to end on a 600-frame counterbalanced A/B
+  (GPEN 256 Pro 7.10 vs 7.19 fps; Restore Ultra's 12 ms CPU finish 7.99 vs 7.98), because a
+  render costs about its restorer's network GPU time (+9.0 / +16.9 / +25.7 / +30.8 ms per
+  frame for GPEN 256 / 256 Pro / UltraMax / Restore Ultra).
+
 ## 2026-09-29
 
 - **3060 (sub-7 GB) temporal pre-pass: 72% of its wall clock was rescue detection.**

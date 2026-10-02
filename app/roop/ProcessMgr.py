@@ -977,6 +977,11 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
     def initialize(self, input_faces, target_faces, options):
         self.input_face_datas = input_faces
         self.target_face_datas = target_faces
+        # Small-face restorer gate (ROOP_ENHANCE_MIN_FACE_PX, 0 = off). One per
+        # run: it carries per-track hysteresis and the skip counters that the
+        # end-of-render summary reads.
+        from roop.enhance_gate import EnhanceGate
+        self._enhance_gate = EnhanceGate()
         # Decide ONCE per run whether AdaFace drives identity matching, and warm
         # every captured target face. All-or-nothing: a run must not compare some
         # pairs on one metric and some on another against a single threshold.
@@ -5732,6 +5737,20 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                                 roop.globals, 'identity_detail_strength', 0.0) or 0.0) > 0.0))
                     except Exception as e:
                         bar_write(f"[ProcessMgr] adaptive face metrics failed: {e}")
+            elif (p.type == 'enhance'
+                  and getattr(self, '_enhance_gate', None) is not None
+                  and self._enhance_gate.should_skip(
+                      target_face,
+                      self._temporal_track_id(target_face)
+                      if self._temporal_track_id(target_face) is not None
+                      else face_index)):
+                # Face too small for a 512 restoration to survive the paste back
+                # down: leave `enhanced_frame` as it is (None unless an earlier
+                # restorer produced one) so the swap crop itself is pasted. This
+                # is the same state "no enhancer selected" already produces, so
+                # every stage below that tests `enhanced_frame is not None` is
+                # already correct. Counted and printed at the end of the render.
+                pass
             else:
                 # Pooled (no global lock) ONLY when this enhancer built its own
                 # SessionPool (e.g. RestoreFormer++). Enhancers without a pool

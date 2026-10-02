@@ -74,6 +74,7 @@ UI_SETTINGS = (
     ('perf_gpu_affine', 'CUDA affine warp', 'Advanced performance'),
     ('perf_pinned_buffers', 'Pinned host buffers (zero-copy)', 'Advanced performance'),
     ('temporal_step', 'Face tracking interval (frames)', 'Advanced performance'),
+    ('enhance_min_face_px', 'Skip restorer below face size (px)', 'Advanced performance'),
     # Identity & tracking
     ('recognizer', 'Recognition model', 'Identity & tracking'),
     ('identity_confidence_threshold', 'Identity confidence threshold', 'Identity & tracking'),
@@ -144,6 +145,8 @@ ENV_SETTINGS = (
     ('perf_gpu_affine', 'ROOP_GPU_AFFINE', 'tristate'),
     ('perf_pinned_buffers', 'ROOP_PINNED_BUFFERS', 'tristate'),
     ('temporal_step', 'ROOP_TEMPORAL_STEP', 'value'),
+    # Read at USE time (ProcessMgr.initialize, once per render) -- see LIVE_ENV_SETTINGS.
+    ('enhance_min_face_px', 'ROOP_ENHANCE_MIN_FACE_PX', 'value'),
     # Flow-texture locking.  These are config-only performance knobs: the
     # visible Face Swap control intentionally remains the on/off + carry weight
     # pair, while backend selection and local RAFT weights are deployment facts.
@@ -177,7 +180,8 @@ ENV_SETTINGS = (
 # key here whose variable IS read at import would make the panel lie: it would
 # re-export a value nothing reads again.
 LIVE_ENV_SETTINGS = ('perf_batch_max', 'perf_nvenc_preset', 'perf_gpu_affine',
-                     'perf_pinned_buffers', 'temporal_step', 'identity_confidence_threshold',
+                     'perf_pinned_buffers', 'temporal_step', 'enhance_min_face_px',
+                     'identity_confidence_threshold',
                      'hdr_pipeline', 'hdr_source_transfer', 'hdr_source_primaries',
                      'hdr_output_codec')
 
@@ -1321,6 +1325,10 @@ class Settings:
         # interocular distance p95), and interpolated faces bypass the identity
         # gates. Keep 1 unless the footage is near-frontal and static.
         self.temporal_step = self.default_get(data, 'temporal_step', 1)
+        # Faces whose shorter detected-box side is under this many frame pixels
+        # are pasted from the swap crop without running the restorer. 0 = off:
+        # it changes how small faces look, so it is the user's opt-in.
+        self.enhance_min_face_px = self.default_get(data, 'enhance_min_face_px', 0)
         # Free VRAM the governor keeps in reserve when it plans a render (GB,
         # 0.5-4.0). Below it, it lowers the swap batch, then GPEN's resolution.
         self.vram_safety_margin_gb = self.default_get(data, 'vram_safety_margin_gb', 1.5)
@@ -1583,6 +1591,7 @@ class Settings:
             'perf_gpu_affine': self.perf_gpu_affine,
             'perf_pinned_buffers': self.perf_pinned_buffers,
             'temporal_step': self.temporal_step,
+            'enhance_min_face_px': self.enhance_min_face_px,
             'vram_safety_margin_gb': self.vram_safety_margin_gb,
             'recognizer': self.recognizer,
             'face_demarcate': self.face_demarcate,
