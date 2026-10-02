@@ -1,6 +1,6 @@
 {
  "date": "2026-10-03",
- "description": "tools/calibrate_recognition.py, 16 clips, 5 windows x 30 samples, step 6, min face 48 px; summaries only (raw distance arrays omitted). Models run FP32 on CUDA.",
+ "description": "tools/calibrate_recognition.py, 16 clips, 5 windows x 30 samples, step 6, min face 48 px; summaries only (raw distance arrays omitted). Six models: default, default@crop, adaface, glintr100, mobilefacenet, facerecognizersf (antelopev2 is the same file as glintr100). FP32 on CUDA.",
  "raw_keypoints": {
   "args": {
    "bootstrap": 1000,
@@ -13,9 +13,9 @@
    ],
    "max_same_per_track": 60,
    "min_face_px": 48.0,
-   "models": "default,default@crop,adaface,glintr100",
+   "models": "default,default@crop,adaface,glintr100,mobilefacenet,facerecognizersf",
    "models_dir": "G:/pinokio/cache/TEMP/claude/G--pinokio-api-roop-ultimate/deb6230e-fc6c-41f9-b04b-d8cdfba813f0/scratchpad/models",
-   "out": "G:/pinokio/cache/TEMP/claude/G--pinokio-api-roop-ultimate/deb6230e-fc6c-41f9-b04b-d8cdfba813f0/scratchpad/final_raw.json",
+   "out": "G:/pinokio/cache/TEMP/claude/G--pinokio-api-roop-ultimate/deb6230e-fc6c-41f9-b04b-d8cdfba813f0/scratchpad/all_raw.json",
    "per_window": 30,
    "raw_kps": true,
    "seed": 0,
@@ -53,6 +53,20 @@
     "frac_better_auc": 1.0,
     "frac_better_eer": 0.863
    },
+   "facerecognizersf": {
+    "auc_ci": [
+     -0.020773089944894692,
+     -0.001997836266619342
+    ],
+    "delta_auc": -0.005424833445570931,
+    "delta_eer": 0.022984037612168457,
+    "eer_ci": [
+     0.012319181180682204,
+     0.03724983574550246
+    ],
+    "frac_better_auc": 0.001,
+    "frac_better_eer": 0.0
+   },
    "glintr100": {
     "auc_ci": [
      -0.013454773120827176,
@@ -66,6 +80,20 @@
     ],
     "frac_better_auc": 0.002,
     "frac_better_eer": 0.127
+   },
+   "mobilefacenet": {
+    "auc_ci": [
+     -0.023721703199614187,
+     -0.0026056121394182914
+    ],
+    "delta_auc": -0.008685498837137984,
+    "delta_eer": 0.018527940811089473,
+    "eer_ci": [
+     0.00408181828868576,
+     0.039030853797905794
+    ],
+    "frac_better_auc": 0.002,
+    "frac_better_eer": 0.009
    },
    "resamples": 1000
   },
@@ -168,10 +196,20 @@
      "frr": 0.02580813347236705,
      "threshold": 0.7481896212634028
     },
+    "facerecognizersf": {
+     "far": 0.2037193575655114,
+     "frr": 0.02580813347236705,
+     "threshold": 0.6657221898477454
+    },
     "glintr100": {
      "far": 0.18427726120033813,
      "frr": 0.02580813347236705,
      "threshold": 0.8187022369970186
+    },
+    "mobilefacenet": {
+     "far": 0.2569737954353339,
+     "frr": 0.02580813347236705,
+     "threshold": 0.7992220883225334
     }
    },
    "target_frr": 0.02580813347236705
@@ -253,6 +291,28 @@
      "p99": 0.9038022937840844
     }
    },
+   "facerecognizersf": {
+    "auc": 0.9844153400141208,
+    "diff": {
+     "median": 0.7915599700921261,
+     "min": 0.18560982349454902,
+     "p1": 0.4755725200273645,
+     "p5": 0.5514478501007117
+    },
+    "eer": 0.058229880731284434,
+    "eer_threshold": 0.5565467874888281,
+    "gap_p95_p5": -0.026359809806574375,
+    "midpoint_threshold": 0.5646277550039989,
+    "n_diff": 1183,
+    "n_same": 3836,
+    "same": {
+     "max": 1.0649606572218877,
+     "median": 0.134125696600585,
+     "p90": 0.43283691387061135,
+     "p95": 0.5778076599072861,
+     "p99": 0.7704847100988649
+    }
+   },
    "glintr100": {
     "auc": 0.984214149530585,
     "diff": {
@@ -273,6 +333,28 @@
      "p90": 0.44566305325816125,
      "p95": 0.6275730855715536,
      "p99": 0.9455368046273106
+    }
+   },
+   "mobilefacenet": {
+    "auc": 0.9808635456946999,
+    "diff": {
+     "median": 0.8888004178516751,
+     "min": 0.23523267768191847,
+     "p1": 0.5649292854958174,
+     "p5": 0.6286109679756385
+    },
+    "eer": 0.0549751343546964,
+    "eer_threshold": 0.6310946842166831,
+    "gap_p95_p5": -0.02235316760526429,
+    "midpoint_threshold": 0.6397875517782707,
+    "n_diff": 1183,
+    "n_same": 3836,
+    "same": {
+     "max": 1.058134244315409,
+     "median": 0.15712379616392813,
+     "p90": 0.4924317493477958,
+     "p95": 0.6509641355809028,
+     "p99": 0.9260401378709038
     }
    }
   },
@@ -571,6 +653,104 @@
      "same_p95": 0.9234087204134407
     }
    },
+   "facerecognizersf": {
+    "Love.mp4": {
+     "diff_p5": 0.2846060242527692,
+     "n_diff": 38,
+     "n_same": 264,
+     "same_p95": 0.7893688871551328
+    },
+    "Monica Bellucci .mp4": {
+     "diff_p5": 0.5853162739392431,
+     "n_diff": 718,
+     "n_same": 502,
+     "same_p95": 0.41577438206329126
+    },
+    "Weeds.mp4": {
+     "diff_p5": 0.6490362917997311,
+     "n_diff": 21,
+     "n_same": 326,
+     "same_p95": 0.5407743955290396
+    },
+    "d1.mp4": {
+     "diff_p5": 0.5640848985513369,
+     "n_diff": 50,
+     "n_same": 97,
+     "same_p95": 0.333727258671911
+    },
+    "d2.mp4": {
+     "diff_p5": 0.8430675450529467,
+     "n_diff": 44,
+     "n_same": 206,
+     "same_p95": 0.12728700918205055
+    },
+    "d3.mp4": {
+     "diff_p5": 0.5114302004805473,
+     "n_diff": 60,
+     "n_same": 240,
+     "same_p95": 0.18494303013084418
+    },
+    "d4.mp4": {
+     "diff_p5": 0.7405790734295461,
+     "n_diff": 137,
+     "n_same": 732,
+     "same_p95": 0.445648422568889
+    },
+    "d5.mp4": {
+     "diff_p5": 0.6747552412025051,
+     "n_diff": 52,
+     "n_same": 280,
+     "same_p95": 0.5470545420667571
+    },
+    "d6.mp4": {
+     "diff_p5": 0.6310167891467123,
+     "n_diff": 60,
+     "n_same": 240,
+     "same_p95": 0.2149016917886066
+    },
+    "s1.mp4": {
+     "diff_p5": NaN,
+     "n_diff": 0,
+     "n_same": 42,
+     "same_p95": 0.7291334782338084
+    },
+    "s2.mp4": {
+     "diff_p5": NaN,
+     "n_diff": 0,
+     "n_same": 0,
+     "same_p95": NaN
+    },
+    "s3.mp4": {
+     "diff_p5": NaN,
+     "n_diff": 0,
+     "n_same": 60,
+     "same_p95": 0.24478749175449335
+    },
+    "s4.mp4": {
+     "diff_p5": 0.9941670434512833,
+     "n_diff": 3,
+     "n_same": 121,
+     "same_p95": 0.3304996597035432
+    },
+    "s5.mp4": {
+     "diff_p5": NaN,
+     "n_diff": 0,
+     "n_same": 261,
+     "same_p95": 0.5890756739288407
+    },
+    "s6.mp4": {
+     "diff_p5": NaN,
+     "n_diff": 0,
+     "n_same": 285,
+     "same_p95": 0.529452371430999
+    },
+    "s7.mp4": {
+     "diff_p5": NaN,
+     "n_diff": 0,
+     "n_same": 180,
+     "same_p95": 0.7531238463782819
+    }
+   },
    "glintr100": {
     "Love.mp4": {
      "diff_p5": 0.28516503912830554,
@@ -668,6 +848,104 @@
      "n_same": 180,
      "same_p95": 0.949339494339196
     }
+   },
+   "mobilefacenet": {
+    "Love.mp4": {
+     "diff_p5": 0.3429336977330507,
+     "n_diff": 38,
+     "n_same": 264,
+     "same_p95": 0.9730814442608838
+    },
+    "Monica Bellucci .mp4": {
+     "diff_p5": 0.6828977524359707,
+     "n_diff": 718,
+     "n_same": 502,
+     "same_p95": 0.4508415137041568
+    },
+    "Weeds.mp4": {
+     "diff_p5": 0.9092847658390866,
+     "n_diff": 21,
+     "n_same": 326,
+     "same_p95": 0.5946223140776836
+    },
+    "d1.mp4": {
+     "diff_p5": 0.7672380718413487,
+     "n_diff": 50,
+     "n_same": 97,
+     "same_p95": 0.33363655661591435
+    },
+    "d2.mp4": {
+     "diff_p5": 1.00274921057363,
+     "n_diff": 44,
+     "n_same": 206,
+     "same_p95": 0.15205992714968
+    },
+    "d3.mp4": {
+     "diff_p5": 0.593636411896252,
+     "n_diff": 60,
+     "n_same": 240,
+     "same_p95": 0.21935636498828623
+    },
+    "d4.mp4": {
+     "diff_p5": 0.7973313169643506,
+     "n_diff": 137,
+     "n_same": 732,
+     "same_p95": 0.5333086197133334
+    },
+    "d5.mp4": {
+     "diff_p5": 0.7709488121725262,
+     "n_diff": 52,
+     "n_same": 280,
+     "same_p95": 0.5196787765332502
+    },
+    "d6.mp4": {
+     "diff_p5": 0.8721538642093051,
+     "n_diff": 60,
+     "n_same": 240,
+     "same_p95": 0.25150261900426724
+    },
+    "s1.mp4": {
+     "diff_p5": NaN,
+     "n_diff": 0,
+     "n_same": 42,
+     "same_p95": 0.849169278370392
+    },
+    "s2.mp4": {
+     "diff_p5": NaN,
+     "n_diff": 0,
+     "n_same": 0,
+     "same_p95": NaN
+    },
+    "s3.mp4": {
+     "diff_p5": NaN,
+     "n_diff": 0,
+     "n_same": 60,
+     "same_p95": 0.156499272697829
+    },
+    "s4.mp4": {
+     "diff_p5": 0.9057894647231322,
+     "n_diff": 3,
+     "n_same": 121,
+     "same_p95": 0.3516261430398415
+    },
+    "s5.mp4": {
+     "diff_p5": NaN,
+     "n_diff": 0,
+     "n_same": 261,
+     "same_p95": 0.687960083659173
+    },
+    "s6.mp4": {
+     "diff_p5": NaN,
+     "n_diff": 0,
+     "n_same": 285,
+     "same_p95": 0.6091036321304676
+    },
+    "s7.mp4": {
+     "diff_p5": NaN,
+     "n_diff": 0,
+     "n_same": 180,
+     "same_p95": 0.8940790150936202
+    }
    }
   }
  },
@@ -683,9 +961,9 @@
    ],
    "max_same_per_track": 60,
    "min_face_px": 48.0,
-   "models": "default,default@crop,adaface,glintr100",
+   "models": "default,default@crop,adaface,glintr100,mobilefacenet,facerecognizersf",
    "models_dir": "G:/pinokio/cache/TEMP/claude/G--pinokio-api-roop-ultimate/deb6230e-fc6c-41f9-b04b-d8cdfba813f0/scratchpad/models",
-   "out": "G:/pinokio/cache/TEMP/claude/G--pinokio-api-roop-ultimate/deb6230e-fc6c-41f9-b04b-d8cdfba813f0/scratchpad/final_refined.json",
+   "out": "G:/pinokio/cache/TEMP/claude/G--pinokio-api-roop-ultimate/deb6230e-fc6c-41f9-b04b-d8cdfba813f0/scratchpad/all_refined.json",
    "per_window": 30,
    "raw_kps": false,
    "seed": 0,
@@ -723,6 +1001,20 @@
     "frac_better_auc": 1.0,
     "frac_better_eer": 0.997
    },
+   "facerecognizersf": {
+    "auc_ci": [
+     -0.019139632266826568,
+     -0.000595461384951332
+    ],
+    "delta_auc": -0.00624061002235915,
+    "delta_eer": 0.020643735622306543,
+    "eer_ci": [
+     0.011166308821100113,
+     0.03500627368416754
+    ],
+    "frac_better_auc": 0.014,
+    "frac_better_eer": 0.001
+   },
    "glintr100": {
     "auc_ci": [
      -0.01304749993041597,
@@ -736,6 +1028,20 @@
     ],
     "frac_better_auc": 0.015,
     "frac_better_eer": 0.025
+   },
+   "mobilefacenet": {
+    "auc_ci": [
+     -0.022508957024039766,
+     -0.0021745752776420307
+    ],
+    "delta_auc": -0.008485515717649272,
+    "delta_eer": 0.019717809552503032,
+    "eer_ci": [
+     0.0046497292489491564,
+     0.04179318087187334
+    ],
+    "frac_better_auc": 0.002,
+    "frac_better_eer": 0.002
    },
    "resamples": 1000
   },
@@ -838,10 +1144,20 @@
      "frr": 0.02580813347236705,
      "threshold": 0.8358077862657853
     },
+    "facerecognizersf": {
+     "far": 0.27557058326289097,
+     "frr": 0.02580813347236705,
+     "threshold": 0.6946612929378956
+    },
     "glintr100": {
      "far": 0.31022823330515636,
      "frr": 0.02580813347236705,
      "threshold": 0.8677169977769121
+    },
+    "mobilefacenet": {
+     "far": 0.3508030431107354,
+     "frr": 0.02580813347236705,
+     "threshold": 0.8401085285806178
     }
    },
    "target_frr": 0.02580813347236705
@@ -923,6 +1239,28 @@
      "p99": 0.9145746172025411
     }
    },
+   "facerecognizersf": {
+    "auc": 0.9799624855773087,
+    "diff": {
+     "median": 0.7934781588788002,
+     "min": 0.13810774543371773,
+     "p1": 0.4409925468508424,
+     "p5": 0.5584372650633601
+    },
+    "eer": 0.05836022483973073,
+    "eer_threshold": 0.56253311473022,
+    "gap_p95_p5": -0.036321804098139565,
+    "midpoint_threshold": 0.5765981671124298,
+    "n_diff": 1183,
+    "n_same": 3836,
+    "same": {
+     "max": 1.1659341421138876,
+     "median": 0.13036163624222297,
+     "p90": 0.4447167145097572,
+     "p95": 0.5947590691614997,
+     "p99": 0.785783702107846
+    }
+   },
    "glintr100": {
     "auc": 0.9805799398323662,
     "diff": {
@@ -943,6 +1281,28 @@
      "p90": 0.4477288103900958,
      "p95": 0.645636331259635,
      "p99": 0.9483266897954012
+    }
+   },
+   "mobilefacenet": {
+    "auc": 0.9770645052388856,
+    "diff": {
+     "median": 0.8911082618492683,
+     "min": 0.18682924221956354,
+     "p1": 0.5604872384750875,
+     "p5": 0.6375771924846728
+    },
+    "eer": 0.06161497121631877,
+    "eer_threshold": 0.6429337447550241,
+    "gap_p95_p5": -0.048837604297566894,
+    "midpoint_threshold": 0.6619959946334563,
+    "n_diff": 1183,
+    "n_same": 3836,
+    "same": {
+     "max": 1.0179386078820916,
+     "median": 0.15703386024427585,
+     "p90": 0.5146605811893372,
+     "p95": 0.6864147967822397,
+     "p99": 0.9521837613060643
     }
    }
   },
@@ -1241,6 +1601,104 @@
      "same_p95": 0.9601948643814588
     }
    },
+   "facerecognizersf": {
+    "Love.mp4": {
+     "diff_p5": 0.24924133830059636,
+     "n_diff": 38,
+     "n_same": 264,
+     "same_p95": 0.7866006518614539
+    },
+    "Monica Bellucci .mp4": {
+     "diff_p5": 0.5716199052466792,
+     "n_diff": 718,
+     "n_same": 502,
+     "same_p95": 0.4246466441581493
+    },
+    "Weeds.mp4": {
+     "diff_p5": 0.695718518919954,
+     "n_diff": 21,
+     "n_same": 326,
+     "same_p95": 0.5577535204186896
+    },
+    "d1.mp4": {
+     "diff_p5": 0.5453951459215007,
+     "n_diff": 50,
+     "n_same": 97,
+     "same_p95": 0.250228968711507
+    },
+    "d2.mp4": {
+     "diff_p5": 0.8480347846437973,
+     "n_diff": 44,
+     "n_same": 206,
+     "same_p95": 0.10632403515148828
+    },
+    "d3.mp4": {
+     "diff_p5": 0.5314015846430774,
+     "n_diff": 60,
+     "n_same": 240,
+     "same_p95": 0.2078008120966103
+    },
+    "d4.mp4": {
+     "diff_p5": 0.7671567040187843,
+     "n_diff": 137,
+     "n_same": 732,
+     "same_p95": 0.48469392405138234
+    },
+    "d5.mp4": {
+     "diff_p5": 0.6591356415368463,
+     "n_diff": 52,
+     "n_same": 280,
+     "same_p95": 0.5280342013810068
+    },
+    "d6.mp4": {
+     "diff_p5": 0.6593070759501322,
+     "n_diff": 60,
+     "n_same": 240,
+     "same_p95": 0.224826375764121
+    },
+    "s1.mp4": {
+     "diff_p5": NaN,
+     "n_diff": 0,
+     "n_same": 42,
+     "same_p95": 1.1561419297104565
+    },
+    "s2.mp4": {
+     "diff_p5": NaN,
+     "n_diff": 0,
+     "n_same": 0,
+     "same_p95": NaN
+    },
+    "s3.mp4": {
+     "diff_p5": NaN,
+     "n_diff": 0,
+     "n_same": 60,
+     "same_p95": 0.173889459930123
+    },
+    "s4.mp4": {
+     "diff_p5": 0.8476179604393301,
+     "n_diff": 3,
+     "n_same": 121,
+     "same_p95": 0.24426256891415388
+    },
+    "s5.mp4": {
+     "diff_p5": NaN,
+     "n_diff": 0,
+     "n_same": 261,
+     "same_p95": 0.6251451959374282
+    },
+    "s6.mp4": {
+     "diff_p5": NaN,
+     "n_diff": 0,
+     "n_same": 285,
+     "same_p95": 0.5460748112655052
+    },
+    "s7.mp4": {
+     "diff_p5": NaN,
+     "n_diff": 0,
+     "n_same": 180,
+     "same_p95": 0.7438943506446773
+    }
+   },
    "glintr100": {
     "Love.mp4": {
      "diff_p5": 0.18578855218997203,
@@ -1337,6 +1795,104 @@
      "n_diff": 0,
      "n_same": 180,
      "same_p95": 0.9546164250003134
+    }
+   },
+   "mobilefacenet": {
+    "Love.mp4": {
+     "diff_p5": 0.3085962035200882,
+     "n_diff": 38,
+     "n_same": 264,
+     "same_p95": 0.9601774253824391
+    },
+    "Monica Bellucci .mp4": {
+     "diff_p5": 0.6758832920731158,
+     "n_diff": 718,
+     "n_same": 502,
+     "same_p95": 0.4391625587647666
+    },
+    "Weeds.mp4": {
+     "diff_p5": 0.9182369942015214,
+     "n_diff": 21,
+     "n_same": 326,
+     "same_p95": 0.6235020522335402
+    },
+    "d1.mp4": {
+     "diff_p5": 0.7932745050290313,
+     "n_diff": 50,
+     "n_same": 97,
+     "same_p95": 0.29555721405830304
+    },
+    "d2.mp4": {
+     "diff_p5": 0.9821734368828661,
+     "n_diff": 44,
+     "n_same": 206,
+     "same_p95": 0.1354996473970237
+    },
+    "d3.mp4": {
+     "diff_p5": 0.605125692868003,
+     "n_diff": 60,
+     "n_same": 240,
+     "same_p95": 0.239005984798188
+    },
+    "d4.mp4": {
+     "diff_p5": 0.8038068747701327,
+     "n_diff": 137,
+     "n_same": 732,
+     "same_p95": 0.5573566872990712
+    },
+    "d5.mp4": {
+     "diff_p5": 0.7562463284640697,
+     "n_diff": 52,
+     "n_same": 280,
+     "same_p95": 0.5365745842873697
+    },
+    "d6.mp4": {
+     "diff_p5": 0.862554136884487,
+     "n_diff": 60,
+     "n_same": 240,
+     "same_p95": 0.2576691690116038
+    },
+    "s1.mp4": {
+     "diff_p5": NaN,
+     "n_diff": 0,
+     "n_same": 42,
+     "same_p95": 1.005625747695403
+    },
+    "s2.mp4": {
+     "diff_p5": NaN,
+     "n_diff": 0,
+     "n_same": 0,
+     "same_p95": NaN
+    },
+    "s3.mp4": {
+     "diff_p5": NaN,
+     "n_diff": 0,
+     "n_same": 60,
+     "same_p95": 0.13532245960055103
+    },
+    "s4.mp4": {
+     "diff_p5": 0.9110671866240706,
+     "n_diff": 3,
+     "n_same": 121,
+     "same_p95": 0.2712391913853158
+    },
+    "s5.mp4": {
+     "diff_p5": NaN,
+     "n_diff": 0,
+     "n_same": 261,
+     "same_p95": 0.6563929444326944
+    },
+    "s6.mp4": {
+     "diff_p5": NaN,
+     "n_diff": 0,
+     "n_same": 285,
+     "same_p95": 0.6580866940612824
+    },
+    "s7.mp4": {
+     "diff_p5": NaN,
+     "n_diff": 0,
+     "n_same": 180,
+     "same_p95": 0.9247009507168198
     }
    }
   }

@@ -22,7 +22,9 @@ folder). Entries before 2026-09-21 were moved here from the README on 2026-09-22
   `norm_crop` gives the same, so the live vector comes from an earlier landmark estimate).
   Measured on the 4070: TensorRT FP16 vs CPU min cosine 0.99996+; EXHAUSTIVE cuDNN ~= HEURISTIC
   for these nets; a build/release cycle returns to the same +120 MiB (CUDA context), no growth.
-- **glintr100 calibrated against w600k and AdaFace on 16 real clips: not wired, and a keypoint finding.**
+- **Every registered recogniser calibrated against w600k on 16 real clips: none wired, and a keypoint finding.**
+  (Written for glintr100; `mobilefacenet` and `facerecognizersf` were added the same day: both clearly worse than
+  w600k, AUC intervals below zero, EER 5.5-6.2% vs 3.1%; `antelopev2` is glintr100's file.)
   `tools/calibrate_recognition.py` (track-based same-person pairs, scene cuts break tracks, clip-level
   bootstrap) on 3,836 same / 1,183 different pairs. glintr100 was never better than w600k and was the lowest
   point estimate in every cut (AUC 0.9842 vs 0.9898 on identical raw-keypoint crops, interval below zero on all
@@ -30,8 +32,12 @@ folder). Entries before 2026-09-21 were moved here from the README on 2026-09-22
   crops. The pipeline's keypoint refinement (`_refine_kps_from_68`) runs AFTER buffalo_l embeds, so every
   recogniser that aligns from the final `face.kps` - AdaFace in production included - reads a worse crop:
   replacing refined with detector keypoints improves AUC for all three models (AdaFace +0.0052, CI +0.0013 to
-  +0.0129) and cuts AdaFace's false accepts at w600k's false-reject rate from 19.0% to 8.5%. NOT changed (the
-  refined points exist for the swapper); a follow-up would keep the detector keypoints beside them. Method,
+  +0.0129) and cuts AdaFace's false accepts at w600k's false-reject rate from 19.0% to 8.5%. FIXED the same day:
+  `face_util._stash_recognition_crops` builds the recognition crop from the detector keypoints just before the
+  refinement (AdaFace only, separate key, released once embedded) and AdaFace prefers it; measured through the
+  live path AdaFace's distances now equal the raw-keypoint ideal for all 5,019 pairs (AUC 0.9830 -> 0.9883, FAR
+  19.0% -> 8.5%), regression benchmark PASS with and without AdaFace and pixel-identical to the unchanged code.
+  The AdaFace thresholds were NOT re-calibrated (distances moved up to 0.48); that is still owed. Method,
   tables and caveats: `docs/development/RECOGNIZER_CALIBRATION.md`.
 - **Read-only faceset embeddings in any recognition model's space (`roop/faceset_manager.py`); no
   loader or render calls it.** `load_and_validate_faceset(fsz, model_id)` returns a faceset's reference-face

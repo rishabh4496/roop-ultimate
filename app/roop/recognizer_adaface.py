@@ -69,6 +69,7 @@ _session = None
 _lock = threading.Lock()
 _run_active = False          # set by begin_run(); all-or-nothing per run
 _CROP_KEY = '_src_crop_arcface_112_v2'
+_REC_CROP_KEY = '_rec_crop_arcface_112_v2'      # == face_util.REC_CROP_KEY
 _EMB_KEY = '_adaface_embedding'
 
 
@@ -142,10 +143,15 @@ def face_embedding(face, frame=None):
         return cached
 
     crop = None
-    try:
-        crop = face[_CROP_KEY]
-    except (KeyError, TypeError, IndexError):
-        crop = getattr(face, _CROP_KEY, None)
+    # The crop built from the detector's own keypoints (face_util._stash_recognition_crops) beats the one built
+    # from the refined keypoints: it is the alignment the recognisers were trained for.
+    for key in (_REC_CROP_KEY, _CROP_KEY):
+        try:
+            crop = face[key]
+        except (KeyError, TypeError, IndexError):
+            crop = getattr(face, key, None)
+        if crop is not None:
+            break
 
     if crop is None and frame is not None:
         kps = getattr(face, 'kps', None)
@@ -180,6 +186,14 @@ def face_embedding(face, frame=None):
         except Exception as _degrade_error:
             _swallowed("roop/recognizer_adaface.py:169", _degrade_error, "fallback continued")
             pass
+    # The detector-keypoint crop is 37 KB and the embedding now stands in for it. The pre-pass keeps every
+    # observed face for the whole clip, so leaving one per face would add ~2 GB on a 27k-frame two-person clip.
+    # Only dropped once the embedding is cached on the face (otherwise a later call could not rebuild it).
+    try:
+        if face.get(_EMB_KEY) is not None:
+            face.pop(_REC_CROP_KEY, None)
+    except Exception as _degrade_error:
+        _swallowed("roop/recognizer_adaface.py:release_rec_crop", _degrade_error, "crop kept")
     return emb
 
 

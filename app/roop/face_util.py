@@ -499,6 +499,35 @@ def _refine_kps_from_68(face) -> None:
         pass
 
 
+REC_CROP_KEY = '_rec_crop_arcface_112_v2'
+
+
+def _stash_recognition_crops(frame, faces) -> None:
+    """Attach the 112 ArcFace crop built from the DETECTOR's keypoints, before the 68-point refinement
+    replaces them. Only when a non-w600k recogniser is enabled (AdaFace); otherwise it costs nothing.
+
+    buffalo_l embeds on the detector's keypoints, so w600k is unaffected by the refinement; but every other
+    recogniser aligns from the final `face.kps`, and measured on 16 real clips that crop is worse (AdaFace
+    AUC 0.9830 vs 0.9883, false accepts at w600k's false-reject rate 19.0% vs 8.5%; see
+    docs/development/RECOGNIZER_CALIBRATION.md). A crop is an image, so no later move/scale/rotation of
+    `kps` can leave it stale. It is a SEPARATE key from `_src_crop_arcface_112_v2`, which is also the swap
+    input of the image-source swap models and must keep following the refined keypoints."""
+    try:
+        from roop import recognizer_adaface
+        if not recognizer_adaface.enabled():
+            return
+    except Exception as _degrade_error:
+        _swallowed("roop/face_util.py:_stash_recognition_crops import", _degrade_error, "no recognition crops")
+        return
+    for f in faces:
+        try:
+            kps = getattr(f, 'kps', None)
+            if kps is not None:
+                f[REC_CROP_KEY] = align_crop(frame, np.asarray(kps, dtype=np.float32), 112, mode='arcface_112_v2')[0]
+        except Exception as _degrade_error:
+            _swallowed("roop/face_util.py:_stash_recognition_crops", _degrade_error, "face keeps refined-keypoint crop")
+
+
 def _scale_face_coords(face, inv_scale: float) -> None:
     """Scale a Face's spatial fields by inv_scale in place (used to map faces
     detected on an upscaled frame back to original-frame coordinates)."""
@@ -1302,6 +1331,7 @@ def _enrich_detected_faces(frame, faces):
         face_contact.stamp_contamination(faces)
 
     if faces and getattr(roop.globals, 'refine_landmarks', False):
+        _stash_recognition_crops(frame, faces)
         for f in faces:
             _refine_kps_from_68(f)
     return faces or []

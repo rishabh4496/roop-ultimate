@@ -1,11 +1,13 @@
-# Recognition model calibration: glintr100 vs w600k vs AdaFace (2026-10-03)
+# Recognition model calibration: every registered model vs w600k (2026-10-03)
 
-Question: should glintr100 (Glint-R100, registry key `glintr100`) be wired into live identity matching, and
-what distance threshold would it need? Tool: `app/tools/calibrate_recognition.py`; raw summaries in
+Question: should any registered recognition model other than w600k be wired into live identity matching, and
+what distance threshold would it need? (`antelopev2` is the same file as `glintr100` and is not run separately.) Tool: `app/tools/calibrate_recognition.py`; raw summaries in
 [`recognizer_calibration_2026-10.json`](recognizer_calibration_2026-10.json).
 
-**Answer: no. glintr100 never beat the model in production, and was the weakest in every cut of the data.
-The margin is small; the evidence is "never better, consistently a little worse", not "decisively worse".**
+**Answer: no. No model beat w600k in any cut. AdaFace is indistinguishable from it on identical crops; glintr100
+is slightly worse (borderline once label-noisy clips are dropped); `mobilefacenet` and `facerecognizersf` are
+clearly worse (intervals below zero in every cut). "Never better" is the finding, and for the two small models
+it is also "measurably worse".**
 A byproduct matters more than the question: the pipeline's keypoint refinement degrades the crops that every
 non-w600k recogniser is fed, including AdaFace in production (see "Keypoints").
 
@@ -87,6 +89,31 @@ checked against the ratio-rescaled gates (`recognizer_adaface.scale()`), which a
 showed can land inside the population they protect (commit 5fa4001: a ratio-rescaled floor refused the target's own
 track); a per-track p0 check against the rescaled gates would be required before any wiring.
 
+## The two small models (`mobilefacenet`, `facerecognizersf`), same footage and pairs
+
+| Keypoints | Model | AUC | EER | FAR at w600k's FRR (2.58%) | threshold for that FRR |
+| :--- | :--- | ---: | ---: | ---: | ---: |
+| raw | `mobilefacenet` | 0.9809 | 5.50% | 25.70% | 0.799 |
+| raw | `facerecognizersf` | 0.9844 | 5.82% | 20.37% | 0.666 |
+| refined (production) | `mobilefacenet` | 0.9771 | 6.16% | 35.08% | 0.840 |
+| refined (production) | `facerecognizersf` | 0.9800 | 5.84% | 27.56% | 0.695 |
+
+Against `default@crop` on identical crops (15 clips, 1000 clip resamples, 95% interval):
+
+| Keypoints | Model | dAUC | dEER (pp) |
+| :--- | :--- | :--- | :--- |
+| raw | `mobilefacenet` | -0.0087 (-0.0237, -0.0026) | +1.85 (+0.41, +3.90) |
+| raw | `facerecognizersf` | -0.0054 (-0.0208, -0.0020) | +2.30 (+1.23, +3.72) |
+| refined | `mobilefacenet` | -0.0085 (-0.0225, -0.0022) | +1.97 (+0.46, +4.18) |
+| refined | `facerecognizersf` | -0.0062 (-0.0191, -0.0006) | +2.06 (+1.12, +3.50) |
+
+On the 12 clean clips (without `Love`, `s1`, `s7`) the AUC and EER intervals for both models stay below zero /
+above zero in every cut except `mobilefacenet`'s refined-keypoint AUC (-0.0023, interval -0.0069 to +0.0003),
+and their EERs are 2.5-3.1% against w600k's 1.0%. They are the cheapest models (CPU 3.4 and 5.1 ms per face vs
+41 ms), which is the only reason to want one; on this footage that speed costs 1.3-1.8 pp of equal-error rate.
+Their keypoint sensitivity matches the others: refined -> raw AUC +0.0036 (+0.0009, +0.0088) for
+`mobilefacenet` and +0.0039 (+0.0002, +0.0124) for `facerecognizersf`.
+
 ## Keypoints: refinement hurts recognition crops (applies to AdaFace in production)
 
 With `refine_landmarks` on, the pipeline replaces the detector's 5 keypoints with ones derived from the 68
@@ -103,10 +130,45 @@ Replacing refined keypoints with the detector's raw ones, same clips and same pa
 | `adaface` | 0.9830 -> 0.9883 | +0.0052 (+0.0013, +0.0129) | 3.53% -> 3.06% | -0.54 (-1.70, -0.05) |
 | `glintr100` | 0.9806 -> 0.9842 | +0.0033 (+0.0006, +0.0077) | 4.13% -> 3.71% | -0.45 (-1.28, +0.00) |
 
-At w600k's false-reject rate AdaFace's false-accept rate falls from 19.0% to 8.5%. **Not changed in this commit:**
-the refined keypoints exist for swap-alignment stability and must stay for the swapper. The follow-up would be to
-keep the detector's keypoints beside them (e.g. `kps_det`) and align recognition crops from those, then re-run
-the regression benchmark and the per-track p0 table. That touches production matching, so it needs its own decision.
+At w600k's false-reject rate AdaFace's false-accept rate falls from 19.0% to 8.5%.
+
+### Implemented (follow-up, same day)
+
+The refined keypoints stay for the swapper. `face_util._stash_recognition_crops` now builds the 112 ArcFace crop from
+the detector's own keypoints immediately BEFORE `_refine_kps_from_68` overwrites them, stores it under
+`_rec_crop_arcface_112_v2`, and `recognizer_adaface.face_embedding` prefers it. Properties that make it safe:
+
+* **Only when AdaFace is on** (`ROOP_ADAFACE` / `recognizer: adaface`); with the default config nothing runs.
+* **A separate key.** `_src_crop_arcface_112_v2` is also the swap input of BlendSwap/UniFace and keeps following the
+  refined points (tested).
+* **Cannot go stale.** The crop is an image; ROI detection that shifts `kps` afterwards cannot invalidate it (tested).
+* **Released once used.** The pre-pass keeps every observed face for the whole clip; at 37 KB per crop a 27k-frame
+  two-person clip would hold ~2 GB. The crop is dropped as soon as the embedding is cached on the face. The 2 GB
+  figure is arithmetic, not a measurement; the benchmark below is too short (408 faces, ~15 MB) to show it.
+* Faces without the crop (interpolated or coasted ones, built by blending) fall back to today's behaviour.
+
+Measured through the pipeline's own detection path (`ROOP_ADAFACE=1`, same 16 clips, same 3,836 + 1,183 pairs):
+
+| AdaFace, production path | before | after |
+| :--- | ---: | ---: |
+| AUC | 0.9830 | 0.9883 |
+| EER | 3.53% | 3.06% |
+| FAR at w600k's FRR (2.58%) | 19.0% | 8.5% |
+
+The after-fix distances equal the raw-keypoint run's for every pair (max |difference| 0.00000, n = 5,019) and differ
+from the pre-fix run's by up to 0.48 (mean 0.02): the production path now produces exactly the ideal crop. Against
+w600k on identical crops AdaFace is now slightly ahead on EER (-0.60 pp, 95% CI -1.51 to -0.09) and level on AUC
+(+0.0021, CI -0.0045 to +0.0077); w600k with its own detector-time alignment (AUC 0.9905, FAR 5.2%) is still the
+best configuration measured.
+
+Regression benchmark (`run.py --benchmark --benchmark-mode regression`, 300 frames, 20 threads): default config and
+`ROOP_ADAFACE=1` both PASS with 300/300 swapped and changed ("AdaFace identity matching ACTIVE" in the second).
+Face SSIM vs the golden render is 0.9919 (min 0.9891, face PSNR 47.1 dB) in BOTH, and identical with the change
+stashed, so the change moves no pixels; it is also lower than the 1.0 an earlier run today showed, from something that
+predates this change and was not traced. fps 7.30 (stashed), 6.99 (default), 8.12 (AdaFace): within this rig's noise,
+not a speedup. **Not re-calibrated:** the AdaFace thresholds (`ROOP_ADAFACE_DIST` 0.5 and the ratio-rescaled gates in
+`recognizer_adaface.scale()`) were chosen on the old crops; the distances moved by up to 0.48, so the per-track p0 check
+against the rescaled gates (see commit 5fa4001) is still owed before relying on them.
 
 ## What this does and does not show
 
@@ -116,7 +178,7 @@ the regression benchmark and the per-track p0 table. That touches production mat
   reliable. Single-person clips contribute no different-person pairs.
 * Models ran FP32 on CUDA. TensorRT FP16 moves embeddings by < 0.0001 cosine (Stage 2 measurement), far below
   these differences, but it was not re-measured here.
-* Not measured: the RTX 3060, `mobilefacenet`, `facerecognizersf`, `antelopev2` (same file as glintr100).
+* Not measured: the RTX 3060.
 
 ## Reproduce
 
