@@ -27,7 +27,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 import torch                                                       # noqa: E402
 
 from roop.optimized_processor import (                            # noqa: E402
-    CudaAffineBatch, CudaFrameBridge, CudaIOBinding, GpuFaceSwapProcessor,
+    CudaAffineBatch, CudaIOBinding, GpuFaceSwapProcessor,
     dynamic_batch_model_bytes)
 from roop.optimized_prepass import FaceObservation, FrameAnalysis  # noqa: E402
 
@@ -423,7 +423,6 @@ class TestGpuFaceSwapProcessor(unittest.TestCase):
                 scale = rng.uniform(0.9, 1.3)
                 m = np.array([[scale, 0.0, 0.0], [0.0, scale, 0.0]], np.float64)
                 m[:, 2] = (160 - 60 * k, 110)       # face placement in the frame
-                inv = cv2.invertAffineTransform(m)
                 # landmarks such that the fitted alignment maps them onto the template
                 pts = (self.TEMPLATE.astype(np.float64) @ cv2.invertAffineTransform(
                     np.array([[scale, 0, 0], [0, scale, 0]]))[:, :2].T) + m[:, 2] * 0

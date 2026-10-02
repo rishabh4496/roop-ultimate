@@ -262,7 +262,6 @@ class TestCanaryGate(unittest.TestCase):
 
     def test_good_engine_is_left_alone(self):
         s = self._swapper(self.MIXED)
-        engine = s.model_swap_insightface
         built = self._run(s, _reference_fn)
         self.assertTrue(s.swap_canary.passed)
         self.assertIs(s._swap_providers[0][1]["trt_fp16_enable"], True)
