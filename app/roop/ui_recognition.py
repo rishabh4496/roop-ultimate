@@ -192,11 +192,12 @@ def model_catalog(models_dir: str) -> List[Dict[str, Any]]:
     for spec in RECOGNITION_REGISTRY.values():
         twins = [n for n in by_file[spec.filename] if n != spec.name]
         rows.append({
-            "name": spec.name,
+            "key": spec.name,
             "display_name": spec.display_name,
+            "dim": spec.output_dim,
+            "description": spec.description,
             "input": "%dx%d" % tuple(spec.input_size),
             "color_space": spec.color_space,
-            "output_dim": spec.output_dim,
             "quality_score": spec.extract_quality_score,
             "downloaded": os.path.isfile(os.path.join(models_dir, spec.filename)),
             "same_file_as": twins,
@@ -262,7 +263,7 @@ def apply_selection(model: Any, provider: Any, models_dir: str,
     model, provider = normalise_selection(model, provider)
     previous = (face_analyser.recognition_model_name(),
                 (active_engine_info() or {}).get("requested_device"))
-    downloaded_before = {r["name"]: r["downloaded"] for r in model_catalog(models_dir)}[model]
+    downloaded_before = {r["key"]: r["downloaded"] for r in model_catalog(models_dir)}[model]
     engine = face_analyser.set_recognition_model(
         model, None if provider == FOLLOW_APP else provider, gpu_id, models_dir)
     info = engine.describe()
@@ -283,13 +284,12 @@ def apply_selection(model: Any, provider: Any, models_dir: str,
     }
 
 
-def status(cfg: Any, models_dir: str, device_id: int = 0) -> Dict[str, Any]:
-    """Everything the panel renders, in one call."""
+def current(cfg: Any, models_dir: str, device_id: int = 0) -> Dict[str, Any]:
+    """The saved selection, what is loaded now, and what this machine is best at."""
     model, provider = saved_selection(cfg)
     return {
         "selection": {"model": model, "provider": provider},
         "advice": hardware_advice(device_id).as_dict(),
-        "models": model_catalog(models_dir),
         "providers": provider_options(),
         "active": active_engine_info(),
         "scope": SCOPE_NOTE,

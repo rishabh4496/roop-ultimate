@@ -45,8 +45,13 @@ folder). Entries before 2026-09-21 were moved here from the README on 2026-09-22
 - **Settings > Face recognition (React + API; the Gradio UI is untouched).**
   `roop/ui_recognition.py` (framework-neutral: tier advice from compute capability + the
   providers ORT offers, model catalogue, apply), `routes_recognition.py`
-  (`GET /api/recognition`, `POST /api/recognition/apply`, 409 while a render runs, nothing saved
-  when the build fails) and `RecognitionPanel.jsx`. Two new settings, `recognition_model` and
+  (`GET /api/recognition/models`, `GET /api/recognition/current`, `POST /api/recognition/set`
+  `{model_name, provider}`: 400 bad input, 409 while a render runs, 500 with the reason (traceback to
+  the server log only) and nothing saved when the build fails) and `RecognitionPanel.jsx`, shown under
+  Identity & tracking as "Identity API: embedding backend" (the existing "Recognition model" control
+  above it is the live-matching `recognizer`). Applying also updates App's settings state
+  (`recognitionSync.mergeSelection`): App autosaves the WHOLE settings object, so without it the next
+  unrelated edit would post the stale selection back and undo the saved choice. Two new settings, `recognition_model` and
   `recognition_provider` (default `default` / `app` = follow the app's provider), persisted by
   `Settings` and READ by `face_analyser.get_recognition_engine()` on first use. The panel states
   that live swap matching is not switched by it. Tier advice does not use

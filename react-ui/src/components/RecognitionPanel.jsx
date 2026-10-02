@@ -2,22 +2,24 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { getJSON, postJSON } from '../api';
 import { Button, Select } from './ui';
 
-// Face recognition backend: which recogniser and which provider the embedding API uses,
-// what this machine is best at, and applying it. Everything comes from /api/recognition
-// (routes_recognition.py -> roop/ui_recognition.py). Applying may download the model and
-// build a TensorRT engine, so it can take minutes; a failed apply keeps the old engine.
+// Embedding backend for the identity API: which recogniser and which provider, what this machine
+// is best at, and applying it. Data comes from /api/recognition/models and /current, applying is
+// POST /api/recognition/set (routes_recognition.py -> roop/ui_recognition.py). Applying may
+// download the model and build a TensorRT engine, so it can take minutes; a failed apply keeps
+// the old engine and saves nothing.
 
 const specLine = (m) => [
   `input ${m.input}`,
   m.color_space,
-  `${m.output_dim}-d`,
+  `${m.dim}-d`,
   m.quality_score ? 'quality score' : null,
   m.downloaded ? 'downloaded' : 'downloads on first use',
   m.same_file_as?.length ? `same file as ${m.same_file_as.join(', ')}` : null,
 ].filter(Boolean).join(' · ');
 
-export default function RecognitionPanel({ notify }) {
+export default function RecognitionPanel({ notify, onApplied }) {
   const [data, setData] = useState(null);
+  const [models, setModels] = useState([]);
   const [model, setModel] = useState('default');
   const [provider, setProvider] = useState('app');
   const [busy, setBusy] = useState(false);
@@ -25,12 +27,16 @@ export default function RecognitionPanel({ notify }) {
 
   const load = useCallback(async () => {
     try {
-      const d = await getJSON('/api/recognition', { timeout: 20000 });
-      setData(d);
-      setModel(d.selection.model);
-      setProvider(d.selection.provider);
+      const [list, cur] = await Promise.all([
+        getJSON('/api/recognition/models', { timeout: 20000 }),
+        getJSON('/api/recognition/current', { timeout: 20000 }),
+      ]);
+      setModels(list.models);
+      setData(cur);
+      setModel(cur.selection.model);
+      setProvider(cur.selection.provider);
     } catch (e) {
-      notify?.(`Face recognition: ${e.message || e}`, 'error');
+      notify?.(`Embedding backend: ${e.message || e}`, 'error');
     }
   }, [notify]);
 
@@ -38,20 +44,22 @@ export default function RecognitionPanel({ notify }) {
 
   if (!data) return <p className="text-xs text-white/40">Reading the recognition backend…</p>;
 
-  const { advice, models, providers, active } = data;
-  const spec = models.find((m) => m.name === model);
+  const { advice, providers, active } = data;
+  const spec = models.find((m) => m.key === model);
   const chosen = providers.find((p) => p.value === provider);
   const unavailable = chosen && !chosen.available;
   const dirty = model !== data.selection.model || provider !== data.selection.provider;
   const hint = advice.model_hint && advice.model_hint !== model
-    ? models.find((m) => m.name === advice.model_hint) : null;
+    ? models.find((m) => m.key === advice.model_hint) : null;
 
   const apply = async () => {
     setBusy(true);
     try {
-      const res = await postJSON('/api/recognition/apply', { model, provider }, { timeout: 15 * 60 * 1000 });
+      const res = await postJSON('/api/recognition/set', { model_name: model, provider }, { timeout: 15 * 60 * 1000 });
       setLast(res);
       setData(res.after);
+      setModels((await getJSON('/api/recognition/models', { timeout: 20000 })).models);   // downloaded flags
+      onApplied?.({ model: res.model, provider: res.provider });
       notify?.(res.message, res.degraded ? 'warning' : 'success');
     } catch (e) {
       notify?.(e.message || String(e), 'error');
@@ -62,6 +70,11 @@ export default function RecognitionPanel({ notify }) {
 
   return (
     <div className="flex flex-col gap-3 text-xs">
+      <p className="text-white/50">
+        The <b>Recognition model</b> control above decides who is who in renders. This one picks the backbone
+        for the identity embedding API (Face Bank style pooling and tracking helpers).
+      </p>
+
       <div className="rounded-md border border-white/10 bg-white/[0.03] p-2 flex flex-col gap-1">
         <div className="flex flex-wrap items-center gap-2">
           <span className="px-2 py-0.5 rounded-md border border-white/20 text-nano font-semibold text-white/80">{advice.label}</span>
@@ -76,7 +89,7 @@ export default function RecognitionPanel({ notify }) {
             Use suggested provider
           </Button>
           {hint && (
-            <Button size="sm" variant="secondary" onClick={() => setModel(hint.name)} disabled={busy}>
+            <Button size="sm" variant="secondary" onClick={() => setModel(hint.key)} disabled={busy}>
               Use suggested model ({hint.display_name})
             </Button>
           )}
@@ -84,14 +97,19 @@ export default function RecognitionPanel({ notify }) {
       </div>
 
       <Select
-        label="Recognition model"
+        label="Embedding API model"
         info="Backbone used by the embedding API. A different model is a different identity metric: embeddings from two models are never comparable."
         value={model}
         onChange={setModel}
-        options={models.map((m) => ({ value: m.name, label: m.display_name }))}
+        options={models.map((m) => ({ value: m.key, label: m.display_name }))}
         disabled={busy}
       />
-      {spec && <p className="-mt-2 text-nano text-white/45">{specLine(spec)}</p>}
+      {spec && (
+        <div className="-mt-2 flex flex-col gap-0.5">
+          <p className="text-white/60">{spec.description}</p>
+          <p className="text-nano text-white/45">{specLine(spec)}</p>
+        </div>
+      )}
 
       <Select
         label="Hardware acceleration"

@@ -49,6 +49,7 @@ class TestRegistryTable(unittest.TestCase):
             self.assertTrue(s.url.startswith("https://") and s.filename, key)
             self.assertFalse(os.path.isabs(s.filename), key)
             self.assertIn(s.color_space, ("RGB", "BGR"))
+            self.assertTrue(s.description.strip(), "%s has no UI description" % key)
             self.assertEqual((len(s.input_size), len(s.mean), len(s.std)), (2, 3, 3))
             self.assertTrue(all(v > 0 for v in s.std), key)
 

@@ -46,6 +46,7 @@ class RecognitionModelSpec:
     std: Tuple[float, float, float] = (127.5, 127.5, 127.5)
     output_dim: int = 512
     extract_quality_score: bool = False         # True: embedding norm is a quality score
+    description: str = ""                      # one or two plain sentences for the UI
 
 
 _HF = "https://huggingface.co"
@@ -56,6 +57,7 @@ RECOGNITION_REGISTRY: Dict[str, RecognitionModelSpec] = {
     "default": RecognitionModelSpec(
         name="default",
         display_name="ArcFace ResNet-50 (w600k_r50)",
+        description='InsightFace buffalo_l ResNet-50 trained on WebFace600K. Its vector also drives the swapper, so it is the reference identity space.',
         url=f"{_HF}/immich-app/buffalo_l/resolve/main/recognition/model.onnx",
         filename="buffalo_l/w600k_r50.onnx",
         sha256="4c06341c33c2ca1f86781dab0e829f88ad5b64be9fba56e56bc9ebdefc619e43",
@@ -66,6 +68,7 @@ RECOGNITION_REGISTRY: Dict[str, RecognitionModelSpec] = {
     "adaface": RecognitionModelSpec(
         name="adaface",
         display_name="AdaFace IR-101 (WebFace4M)",
+        description='AdaFace IR-101 trained on WebFace4M; a quality-adaptive margin makes it steadier on blurred and low-light faces. It has its own distance scale: do not reuse w600k thresholds.',
         url=f"{_HF}/Evn9172/cvlface_adaface_ir101_webface4m_onnx/resolve/main/adaface_ir101.onnx",
         filename="adaface_ir101.onnx",
         sha256="d177da5864546e761579af1a91e308d7c868a32670f37e7b8b04628a78d7e5b5",
@@ -74,6 +77,7 @@ RECOGNITION_REGISTRY: Dict[str, RecognitionModelSpec] = {
     "glintr100": RecognitionModelSpec(
         name="glintr100",
         display_name="ArcFace Glint-R100 (Glint360k)",
+        description="ArcFace ResNet-100 trained on Glint360K, the largest backbone offered here and the recogniser in InsightFace's antelopev2 pack.",
         url=f"{_HF}/DIAMONIK7777/antelopev2/resolve/main/glintr100.onnx",
         filename="glintr100.onnx",
         sha256="4ab1d6435d639628a6f3e5008dd4f929edf4c4124b1a7169e1048f9fef534cdf",
@@ -83,6 +87,7 @@ RECOGNITION_REGISTRY: Dict[str, RecognitionModelSpec] = {
     "antelopev2": RecognitionModelSpec(
         name="antelopev2",
         display_name="Antelopev2 (Glint-R100)",
+        description="The antelopev2 pack's recogniser. It is the same file as Glint-R100 and is listed under both names.",
         url=f"{_HF}/DIAMONIK7777/antelopev2/resolve/main/glintr100.onnx",
         filename="glintr100.onnx",
         sha256="4ab1d6435d639628a6f3e5008dd4f929edf4c4124b1a7169e1048f9fef534cdf",
@@ -92,6 +97,7 @@ RECOGNITION_REGISTRY: Dict[str, RecognitionModelSpec] = {
     "mobilefacenet": RecognitionModelSpec(
         name="mobilefacenet",
         display_name="MobileFaceNet (w600k_mbf)",
+        description='MobileFaceNet trained on WebFace600K (InsightFace buffalo_s). The smallest backbone and the one to prefer on CPU-only machines.',
         url=f"{_HF}/immich-app/buffalo_s/resolve/main/recognition/model.onnx",
         filename="w600k_mbf.onnx",
         sha256="9cc6e4a75f0e2bf0b1aed94578f144d15175f357bdc05e815e5c4a02b319eb4f",
@@ -102,6 +108,7 @@ RECOGNITION_REGISTRY: Dict[str, RecognitionModelSpec] = {
     "facerecognizersf": RecognitionModelSpec(
         name="facerecognizersf",
         display_name="OpenCV FaceRecognizerSF (SFace)",
+        description='OpenCV Zoo SFace (2021 Dec): 128-d features from raw BGR 112x112 crops. The graph has a fixed batch of 1.',
         url=("https://github.com/opencv/opencv_zoo/raw/main/models/"
              "face_recognition_sface/face_recognition_sface_2021dec.onnx"),
         filename="face_recognition_sface_2021dec.onnx",

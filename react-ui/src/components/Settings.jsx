@@ -14,6 +14,7 @@ import BenchmarkPanel from './BenchmarkPanel';
 import TrtCachePanel from './TrtCachePanel';
 import AutoTunePanel from './AutoTunePanel';
 import RecognitionPanel from './RecognitionPanel';
+import { mergeSelection } from './recognitionSync';
 
 // A Section that participates in the settings search and the "only changed"
 // filter. With either active it keeps just the controls that match (or the
@@ -692,6 +693,10 @@ export default function Settings({ meta, settings, setSettings, notify }) {
           <Select label="Process priority" info="ROOP_PRIORITY — Windows scheduling priority class while rendering. 'high' is the default and finishes soonest; drop to 'normal' to keep the rest of the machine more responsive. EcoQoS power throttling is always opted out of regardless of this — being backgrounded by Windows used to cost real throughput, and that is not a setting." {...bind('process_priority', 'auto')} options={m.priorities || ['auto', 'high', 'above_normal', 'normal']} />
         </FilterSection>
 
+        <Section title="Identity API: embedding backend" icon={Icon.faces} className="break-inside-avoid mb-4">
+          <RecognitionPanel notify={notify} onApplied={(sel) => setSettings((s) => mergeSelection(s, sel))} />
+        </Section>
+
         <FilterSection title="Output" icon={Icon.outputs} query={query} onlyModified={onlyModified} onResetKeys={resetKeys}>
           <Select label="Image format" {...bind('output_image_format')} options={m.image_formats || ['jpg', 'png']} />
           <Select label="Video format" {...bind('output_video_format')} options={m.video_formats || ['mp4', 'mkv', 'webm']} />
@@ -747,10 +752,6 @@ export default function Settings({ meta, settings, setSettings, notify }) {
             }
           }}
         />
-      </Section>
-
-      <Section title="Face recognition" icon={Icon.faces} className="mb-4">
-        <RecognitionPanel notify={notify} />
       </Section>
 
       {/* Hardware Benchmark & Optimization Suite */}

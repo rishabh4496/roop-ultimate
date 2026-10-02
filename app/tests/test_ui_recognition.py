@@ -4,6 +4,8 @@ The tier tests feed classify_hardware() hand-made facts, so every tier is covere
 that hardware; the route tests mount only the router (no api.py, no GPU) with the engine
 faked at face_analyser.set_recognition_model.
 """
+import contextlib
+import io
 import os
 import sys
 import tempfile
@@ -101,16 +103,16 @@ class TestTiers(unittest.TestCase):
 class TestCatalogAndOptions(unittest.TestCase):
     def test_catalog_lists_every_registered_model_with_its_specs(self):
         with tempfile.TemporaryDirectory() as d:
-            rows = {r["name"]: r for r in ui.model_catalog(d)}
+            rows = {r["key"]: r for r in ui.model_catalog(d)}
         self.assertEqual(set(rows), set(ui.RECOGNITION_REGISTRY))
-        self.assertEqual((rows["facerecognizersf"]["output_dim"], rows["adaface"]["color_space"],
+        self.assertEqual((rows["facerecognizersf"]["dim"], rows["adaface"]["color_space"],
                           rows["default"]["input"]), (128, "BGR", "112x112"))
         self.assertFalse(any(r["downloaded"] for r in rows.values()))
 
     def test_downloaded_flag_and_shared_file(self):
         with tempfile.TemporaryDirectory() as d:
             open(os.path.join(d, "glintr100.onnx"), "wb").close()
-            rows = {r["name"]: r for r in ui.model_catalog(d)}
+            rows = {r["key"]: r for r in ui.model_catalog(d)}
         self.assertTrue(rows["glintr100"]["downloaded"] and rows["antelopev2"]["downloaded"])
         self.assertEqual(rows["glintr100"]["same_file_as"], ["antelopev2"])
         self.assertEqual(rows["default"]["same_file_as"], [])
@@ -216,38 +218,77 @@ class TestRoutes(unittest.TestCase):
             self.addCleanup(p.stop)
         rr.bind_progress({"processing": False})
 
-    def test_status_has_everything_the_panel_draws(self):
-        body = self.client.get("/api/recognition").json()
+    def set(self, **body):
+        return self.client.post("/api/recognition/set", json=body)
+
+    def test_models_lists_every_backbone_with_the_documented_fields(self):
+        rows = self.client.get("/api/recognition/models").json()["models"]
+        self.assertEqual({r["key"] for r in rows}, set(ui.RECOGNITION_REGISTRY))
+        for r in rows:
+            self.assertTrue({"key", "display_name", "dim", "description"} <= set(r), r)
+            self.assertTrue(r["description"].strip(), "%s has no description" % r["key"])
+            self.assertIn(r["dim"], (128, 512))
+        self.assertEqual({r["key"]: r["dim"] for r in rows}["facerecognizersf"], 128)
+
+    def test_current_reports_selection_hardware_and_what_is_loaded(self):
+        body = self.client.get("/api/recognition/current").json()
         self.assertEqual(body["selection"], {"model": "default", "provider": "app"})
         self.assertEqual(body["advice"]["tier"], ui.TIER_CPU)
-        self.assertEqual(len(body["models"]), len(ui.RECOGNITION_REGISTRY))
         self.assertIsNone(body["active"])
+        self.assertIn("cpu", [p["value"] for p in body["providers"]])
         self.assertIn("Live swap matching", body["scope"])
 
-    def test_apply_persists_only_after_a_successful_build(self):
+    def test_set_persists_only_after_a_successful_build(self):
         with mock.patch.object(face_analyser, "set_recognition_model", return_value=_fake_engine("glintr100", "cpu")):
-            r = self.client.post("/api/recognition/apply", json={"model": "glintr100", "provider": "cpu"})
+            r = self.set(model_name="glintr100", provider="cpu")
         self.assertEqual(r.status_code, 200, r.text)
         self.assertEqual((self.cfg.recognition_model, self.cfg.recognition_provider, self.cfg.saves),
                          ("glintr100", "cpu", 1))
         self.assertEqual(r.json()["after"]["selection"], {"model": "glintr100", "provider": "cpu"})
+        self.assertTrue(r.json()["reinitialized"])
 
-    def test_failed_build_saves_nothing_and_says_so(self):
-        with mock.patch.object(face_analyser, "set_recognition_model", side_effect=RuntimeError("hash mismatch")):
-            r = self.client.post("/api/recognition/apply", json={"model": "adaface", "provider": "cpu"})
-        self.assertEqual(r.status_code, 502)
-        self.assertIn("hash mismatch", r.json()["message"])
+    def test_provider_defaults_to_following_the_app(self):
+        with mock.patch.object(face_analyser, "set_recognition_model", return_value=_fake_engine("adaface")) as build:
+            self.assertEqual(self.set(model_name="adaface").status_code, 200)
+        self.assertIsNone(build.call_args[0][1])
+        self.assertEqual(self.cfg.recognition_provider, "app")
+
+    def test_failed_load_is_a_500_with_the_reason_but_no_traceback_and_nothing_saved(self):
+        boom = RuntimeError("Cryptographic hash mismatch for adaface_ir101.onnx")
+        with mock.patch.object(face_analyser, "set_recognition_model", side_effect=boom):
+            r = self.set(model_name="adaface", provider="cpu")
+        self.assertEqual(r.status_code, 500)
+        message = r.json()["message"]
+        self.assertIn("hash mismatch", message)
+        self.assertNotIn("Traceback", message)
+        self.assertNotIn(".py", message)
         self.assertEqual((self.cfg.recognition_model, self.cfg.saves), ("default", 0))
 
-    def test_bad_input_is_a_400_and_a_running_render_is_a_409(self):
-        self.assertEqual(self.client.post("/api/recognition/apply", json={"model": "nope"}).status_code, 400)
-        self.assertEqual(self.client.post("/api/recognition/apply", json={"provider": "tpu"}).status_code, 400)
+    def test_the_traceback_goes_to_the_server_log(self):
+        buf = io.StringIO()
+        with mock.patch.object(face_analyser, "set_recognition_model", side_effect=RuntimeError("no network")),                 contextlib.redirect_stdout(buf):
+            self.set(model_name="adaface", provider="cpu")
+        self.assertIn("Traceback", buf.getvalue())
+
+    def test_bad_input_is_a_400_with_the_valid_choices(self):
+        for body, needle in (({"model_name": "nope"}, "Valid options"), ({"model_name": "adaface", "provider": "tpu"}, "Unsupported provider"),
+                             ({}, "model_name is required"), ({"provider": "cpu"}, "model_name is required")):
+            r = self.set(**body)
+            self.assertEqual(r.status_code, 400, body)
+            self.assertIn(needle, r.json()["message"])
+        self.assertEqual(self.cfg.saves, 0)
+
+    def test_a_running_render_is_a_409_and_nothing_is_built(self):
         rr.bind_progress({"processing": True})
         with mock.patch.object(face_analyser, "set_recognition_model") as build:
-            r = self.client.post("/api/recognition/apply", json={"model": "adaface"})
+            r = self.set(model_name="adaface")
         self.assertEqual(r.status_code, 409)
         build.assert_not_called()
         self.assertEqual(self.cfg.saves, 0)
+
+    def test_the_old_apply_and_aggregate_routes_are_gone(self):
+        self.assertEqual(self.client.post("/api/recognition/apply", json={"model": "adaface"}).status_code, 404)
+        self.assertEqual(self.client.get("/api/recognition").status_code, 404)
 
 
 if __name__ == "__main__":
