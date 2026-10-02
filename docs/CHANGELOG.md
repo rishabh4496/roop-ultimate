@@ -22,6 +22,14 @@ folder). Entries before 2026-09-21 were moved here from the README on 2026-09-22
   `norm_crop` gives the same, so the live vector comes from an earlier landmark estimate).
   Measured on the 4070: TensorRT FP16 vs CPU min cosine 0.99996+; EXHAUSTIVE cuDNN ~= HEURISTIC
   for these nets; a build/release cycle returns to the same +120 MiB (CUDA context), no growth.
+- **Recognition verification + benchmark harness** (`tests/test_recognition_pipeline.py`).
+  Correctness on models already on disk (a missing one is a visible skip, never a download; real
+  aligned faces check same-vs-different separation, margin 0.10 = half the narrowest measured gap
+  of 0.195), GPU/CPU equivalence, and real fallback (including ORT itself dropping CUDA). Benchmark:
+  `python tests/test_recognition_pipeline.py --benchmark [--device auto] [--out t.md]`. VRAM is
+  device-wide (`torch.cuda.memory_allocated` cannot see ORT's allocations and would print 0), warm-up
+  includes a clock ramp, and a failed model is a FAILED row + non-zero exit. Mutation-checked: removing
+  normalisation fails 13 tests; assuming the provider instead of reading it back fails the ORT-drop test.
 - **Settings > Face recognition (React + API; the Gradio UI is untouched).**
   `roop/ui_recognition.py` (framework-neutral: tier advice from compute capability + the
   providers ORT offers, model catalogue, apply), `routes_recognition.py`
