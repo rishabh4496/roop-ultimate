@@ -1109,6 +1109,11 @@ class Settings:
         self.use_frontalization = self.default_get(data, 'use_frontalization', False)
         self.frontalization_threshold = self.default_get(data, 'frontalization_threshold', 15.0)
         self.swap_model = self.default_get(data, 'swap_model', 'realswap')
+        # Face recognition backend for the embedding API (face_analyser.set_recognition_model).
+        # Does NOT switch live swap matching -- see roop/ui_recognition.SCOPE_NOTE. 'app' =
+        # follow the provider the rest of the app runs on.
+        self.recognition_model = self.default_get(data, 'recognition_model', 'default')
+        self.recognition_provider = self.default_get(data, 'recognition_provider', 'app')
         # One Euro temporal face stabilization (video)
         self.stabilize_face = self.default_get(data, 'stabilize_face', True)
         self.stabilize_method = self.default_get(data, 'stabilize_method', 'one_euro')
@@ -1484,6 +1489,9 @@ class Settings:
             'frontalization_threshold': self.frontalization_threshold,
             # Swap model
             'swap_model': self.swap_model,
+            # Face recognition backend (embedding API only)
+            'recognition_model': self.recognition_model,
+            'recognition_provider': self.recognition_provider,
             # One Euro temporal face stabilization
             'stabilize_face': self.stabilize_face,
             'stabilize_method': self.stabilize_method,

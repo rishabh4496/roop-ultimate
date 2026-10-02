@@ -634,6 +634,14 @@
       "default": "realswap",
       "type": "str"
     },
+    "recognition_model": {
+      "default": "default",
+      "type": "str"
+    },
+    "recognition_provider": {
+      "default": "app",
+      "type": "str"
+    },
     "stabilize_face": {
       "default": true,
       "type": "bool"

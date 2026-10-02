@@ -9,8 +9,10 @@ stabilizer matrices, and GPU tensor allocations.
 from __future__ import annotations
 from roop.degrade import swallowed as _swallowed
 
+import gc
 import os
-from threading import RLock
+from collections import deque
+from threading import Lock, RLock
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import cv2
@@ -1465,3 +1467,312 @@ def find_similar_faces(
             matching_faces.append(face)
 
     return matching_faces
+
+
+# ---------------------------------------------------------------------------
+# Pluggable recognition backend + quality-weighted identity bank
+# ---------------------------------------------------------------------------
+#
+# SCOPE, deliberately narrow. Everything below is ADDITIVE and inert until called:
+#
+#   * insightface's FaceAnalysis (SCRFD detection + the buffalo_l w600k embedding that
+#     face.embedding carries) is untouched. That vector is not just a matching signal --
+#     it is fed to the swapper as the identity -- so replacing it would change swap OUTPUT.
+#     Production identity MATCHING keeps going through roop.recognizer_adaface, which
+#     already owns the all-or-nothing "one metric per run" rule and its calibrated gate.
+#   * A recogniser chosen here has its own cosine scale. Nothing in this section knows a
+#     calibrated threshold for any model but w600k/AdaFace, so the live gates (which are
+#     w600k-tuned constants) are NOT rewired to it. Calibrate with tools/calibrate_identity.py
+#     first; then routing a gate through extract_face_embedding() is a one-line change.
+#
+# What this section is for: building/pooling references with any registered recogniser
+# (set_recognition_model + extract_face_embedding + IdentityBank / fuse_quality_weighted).
+
+_RECOGNITION_ALIGN_MODE = "arcface_112_v2"       # same template recognizer_adaface crops with
+_recognition_build_lock = Lock()                 # serialises (slow) engine builds
+_recognition_state_lock = Lock()                 # guards the pointer swap only (fast)
+_recognition_engine = None
+_recognition_key: Optional[Tuple[str, str, int, str]] = None
+_recognition_invalid_inputs = 0
+
+
+def _app_recognition_device() -> str:
+    """The device the app itself is configured for (never silently upgraded past it)."""
+    for entry in (getattr(roop.globals, "execution_providers", None) or []):
+        name = str(entry[0] if isinstance(entry, (tuple, list)) else entry).lower()
+        if "tensorrt" in name:
+            return "tensorrt"
+        if "cuda" in name:
+            return "cuda"
+        if "dml" in name or "directml" in name:
+            return "directml"
+        if "coreml" in name:
+            return "coreml"
+        if "cpu" in name:
+            return "cpu"
+    return "cpu"
+
+
+def set_recognition_model(model_name: str = "default",
+                          preferred_provider: Optional[str] = None,
+                          gpu_id: Optional[int] = None,
+                          models_dir: Optional[str] = None):
+    """Select (or hot-swap) the recognition backend; returns the live engine.
+
+    `preferred_provider` is one of 'auto'|'tensorrt'|'cuda'|'directml'|'coreml'|'cpu'; None
+    follows ``roop.globals.execution_providers``. The face detector is not touched.
+
+    Swap order is build -> publish -> release: the new engine is fully built, warmed up and
+    provider-verified BEFORE the pointer moves, so a failed swap (bad model name, missing
+    download, no usable provider) raises and leaves the previous engine serving, and a
+    thread already inside the old engine finishes its inference. The old engine is then
+    dropped and collected, which is what returns its VRAM; both exist for a moment, a
+    few hundred MB for these models. The same configuration is a no-op.
+    """
+    global _recognition_engine, _recognition_key
+    from roop.recognition_registry import get_model_spec
+    from roop.utilities import resolve_relative_path
+
+    get_model_spec(model_name)                               # unknown name fails before any build
+    device = str(preferred_provider or _app_recognition_device()).lower()
+    gpu = int(getattr(roop.globals, "cuda_device_id", 0) if gpu_id is None else gpu_id)
+    directory = os.path.abspath(models_dir or resolve_relative_path("../models"))
+    key = (model_name, device, gpu, directory)
+
+    with _recognition_build_lock:
+        with _recognition_state_lock:
+            if _recognition_engine is not None and _recognition_key == key:
+                return _recognition_engine
+        from roop.recognition_engine import RecognitionInferenceEngine
+        engine = RecognitionInferenceEngine(model_name, directory, device, gpu)
+        with _recognition_state_lock:
+            previous = _recognition_engine
+            _recognition_engine, _recognition_key = engine, key
+        del previous
+        gc.collect()                                         # ORT frees the session with its last reference
+        return engine
+
+
+def _configured_recognition() -> Tuple[str, Optional[str]]:
+    """(model, provider) saved in Settings; provider None = follow the app. Invalid -> defaults.
+
+    This is what makes the Settings > Face recognition choice REAL on a fresh process: the
+    first extract_face_embedding() builds whatever was saved there.
+    """
+    from roop.recognition_registry import get_model_spec
+    cfg = getattr(roop.globals, "CFG", None)
+    model = str(getattr(cfg, "recognition_model", None) or "default")
+    provider = str(getattr(cfg, "recognition_provider", None) or "app").lower()
+    try:
+        get_model_spec(model)
+    except ValueError as exc:
+        _swallowed("roop/face_analyser.py:_configured_recognition", exc, "saved model unknown; default used")
+        model = "default"
+    return model, (None if provider == "app" else provider)
+
+
+def get_recognition_engine():
+    """The active engine; built on first use from the saved selection ('default' = w600k_r50)."""
+    with _recognition_state_lock:
+        engine = _recognition_engine
+    if engine is not None:
+        return engine
+    model, provider = _configured_recognition()
+    return set_recognition_model(model, provider)
+
+
+def release_recognition_engine() -> None:
+    """Drop the engine and return its GPU memory. The detector is left alone."""
+    global _recognition_engine, _recognition_key
+    with _recognition_build_lock:
+        with _recognition_state_lock:
+            previous, _recognition_engine, _recognition_key = _recognition_engine, None, None
+        del previous
+        gc.collect()
+
+
+def recognition_model_name() -> Optional[str]:
+    """Name of the active recogniser, or None when none has been built."""
+    with _recognition_state_lock:
+        return _recognition_key[0] if _recognition_key else None
+
+
+def recognition_invalid_input_count() -> int:
+    """How many extract_face_embedding calls got unusable landmarks/images and returned zeros."""
+    return _recognition_invalid_inputs
+
+
+def _valid_landmarks_5(landmarks_5: Any) -> Optional[np.ndarray]:
+    try:
+        kps = np.asarray(landmarks_5, dtype=np.float32)
+    except (TypeError, ValueError):
+        return None
+    if kps.shape != (5, 2) or not np.isfinite(kps).all():
+        return None
+    return kps
+
+
+def extract_face_embedding(face_img: np.ndarray, landmarks_5: np.ndarray) -> Tuple[np.ndarray, float]:
+    """Align one face to the recogniser's crop and return (unit embedding, quality).
+
+    Alignment is the repo's own ``align_crop`` (similarity transform to the 112 ArcFace
+    template, edge-replicated borders) -- the crop recognizer_adaface already feeds its
+    models -- not a second, slightly different warp.
+
+    Unusable input (None/!=(5,2)/non-finite landmarks, empty image) returns
+    ``(zeros(output_dim), 0.0)`` and is counted (recognition_invalid_input_count()); a zero
+    vector has quality 0 so IdentityBank refuses it. A failing ENGINE is not swallowed:
+    that raises, because a zero vector there would read as "matched nobody".
+    """
+    global _recognition_invalid_inputs
+    engine = get_recognition_engine()
+    kps = _valid_landmarks_5(landmarks_5)
+    if (kps is None or face_img is None or getattr(face_img, "ndim", 0) != 3
+            or face_img.shape[0] < 2 or face_img.shape[1] < 2):
+        _recognition_invalid_inputs += 1
+        return np.zeros(engine.spec.output_dim, dtype=np.float32), 0.0
+    crop, _ = align_crop(face_img, kps, engine.spec.input_size[0], mode=_RECOGNITION_ALIGN_MODE)
+    return engine.compute_embedding(crop)
+
+
+def fuse_quality_weighted(embeddings: Sequence[np.ndarray],
+                          qualities: Optional[Sequence[float]] = None) -> Optional[np.ndarray]:
+    """v = sum(q_i * v_i) / ||sum(q_i * v_i)||, the quality-weighted master reference.
+
+    Samples with a non-finite/zero vector or a non-finite/non-positive quality are skipped
+    (they are invalid, not "low quality"). Returns None when nothing usable remains or the
+    weighted sum cancels to zero.
+    """
+    total = None
+    for index, raw in enumerate(embeddings):
+        q = 1.0 if qualities is None else qualities[index]
+        vec = np.asarray(raw, dtype=np.float64).reshape(-1)
+        norm = float(np.linalg.norm(vec))
+        if not (np.isfinite(norm) and norm > 1e-6 and np.isfinite(q) and q > 0.0):
+            continue
+        weighted = (vec / norm) * float(q)
+        total = weighted if total is None else total + weighted
+    if total is None:
+        return None
+    norm = float(np.linalg.norm(total))
+    if norm <= 1e-12:
+        return None
+    return (total / norm).astype(np.float32)
+
+
+class IdentityBank:
+    """Sliding-window, quality-weighted identity pool for tracked subjects. Thread-safe.
+
+    Each subject keeps its last `window` (embedding, quality) samples; its master vector is
+    ``fuse_quality_weighted`` over them, so one blurry frame cannot drag a clean reference
+    off the person. Similarity is the cosine S_C = u . v of unit vectors.
+
+    `similarity_threshold` is a cosine SIMILARITY and is specific to the recogniser: the
+    0.65 default is NOT calibrated for any registered model. Pass a measured value.
+
+    `model_name` pins the bank to one recogniser. Vectors from two models are the same
+    shape and mean nothing to each other, so a mismatching sample raises instead of being
+    silently averaged in.
+    """
+
+    def __init__(self, similarity_threshold: float = 0.65, window: int = 60,
+                 model_name: Optional[str] = None) -> None:
+        if window < 1:
+            raise ValueError("window must be >= 1")
+        self.similarity_threshold = float(similarity_threshold)
+        self.window = int(window)
+        self.model_name = model_name
+        self._lock = RLock()
+        self._samples: Dict[int, deque] = {}
+        self._master: Dict[int, Optional[np.ndarray]] = {}
+        self._next_id = 0
+        self._dim: Optional[int] = None
+
+    @staticmethod
+    def compute_cosine_similarity(u: np.ndarray, v: np.ndarray) -> float:
+        return compute_cosine_similarity(u, v)
+
+    def ids(self) -> List[int]:
+        with self._lock:
+            return list(self._samples)
+
+    def __len__(self) -> int:
+        with self._lock:
+            return len(self._samples)
+
+    def sample_count(self, track_id: int) -> int:
+        with self._lock:
+            return len(self._samples.get(track_id, ()))
+
+    def master_embedding(self, track_id: int) -> Optional[np.ndarray]:
+        """Fused unit vector for a subject; None for an unknown id."""
+        with self._lock:
+            if track_id not in self._samples:
+                return None
+            if self._master.get(track_id) is None:
+                records = self._samples[track_id]
+                fused = fuse_quality_weighted([r[0] for r in records], [r[1] for r in records])
+                # Antipodal samples cancel; fall back to the newest rather than a zero vector.
+                self._master[track_id] = fused if fused is not None else records[-1][0]
+            return self._master[track_id].copy()
+
+    def match(self, embedding: np.ndarray) -> Tuple[Optional[int], float]:
+        """(best subject id, cosine similarity) without modifying the bank; (None, -1.0) if empty."""
+        with self._lock:
+            best_id, best = None, -1.0
+            for track_id in self._samples:
+                sim = self.compute_cosine_similarity(embedding, self.master_embedding(track_id))
+                if best_id is None or sim > best:
+                    best_id, best = track_id, sim
+            return best_id, best
+
+    def update_identity(self, embedding: np.ndarray, quality: float = 1.0,
+                        assigned_id: Optional[int] = None,
+                        model_name: Optional[str] = None) -> Optional[int]:
+        """Add a sample to `assigned_id`, else to the best match >= threshold, else a new subject.
+
+        Returns the subject id, or None when the sample is unusable (zero / non-finite vector,
+        non-positive quality) and there is no `assigned_id` to credit. An unusable sample for a
+        known `assigned_id` is skipped and that id returned, so a track survives a bad frame.
+        """
+        vec = np.asarray(embedding, dtype=np.float32).reshape(-1)
+        norm = float(np.linalg.norm(vec))
+        usable = np.isfinite(norm) and norm > 1e-6 and np.isfinite(quality) and quality > 0.0
+        with self._lock:
+            if model_name is not None:
+                if self.model_name is None:
+                    self.model_name = model_name
+                elif model_name != self.model_name:
+                    raise ValueError(f"bank holds '{self.model_name}' embeddings; got '{model_name}'")
+            known = assigned_id is not None and assigned_id in self._samples
+            if not usable:
+                return assigned_id if known else None
+            if self._dim is None:
+                self._dim = vec.size
+            elif vec.size != self._dim:
+                raise ValueError(f"embedding has {vec.size} values; bank holds {self._dim}")
+            unit = (vec / norm).astype(np.float32)
+
+            target = assigned_id if known else None
+            if target is None:
+                best_id, best = self.match(unit)
+                if best_id is not None and best >= self.similarity_threshold:
+                    target = best_id
+            if target is None:
+                target = self._next_id
+                self._next_id += 1
+                self._samples[target] = deque(maxlen=self.window)
+            self._samples[target].append((unit, float(quality)))
+            self._master[target] = None
+            return target
+
+    def remove(self, track_id: int) -> None:
+        with self._lock:
+            self._samples.pop(track_id, None)
+            self._master.pop(track_id, None)
+
+    def clear(self) -> None:
+        with self._lock:
+            self._samples.clear()
+            self._master.clear()
+            self._dim = None

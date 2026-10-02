@@ -13,6 +13,7 @@ import EnvironmentHealth from './EnvironmentHealth';
 import BenchmarkPanel from './BenchmarkPanel';
 import TrtCachePanel from './TrtCachePanel';
 import AutoTunePanel from './AutoTunePanel';
+import RecognitionPanel from './RecognitionPanel';
 
 // A Section that participates in the settings search and the "only changed"
 // filter. With either active it keeps just the controls that match (or the
@@ -746,6 +747,10 @@ export default function Settings({ meta, settings, setSettings, notify }) {
             }
           }}
         />
+      </Section>
+
+      <Section title="Face recognition" icon={Icon.faces} className="mb-4">
+        <RecognitionPanel notify={notify} />
       </Section>
 
       {/* Hardware Benchmark & Optimization Suite */}

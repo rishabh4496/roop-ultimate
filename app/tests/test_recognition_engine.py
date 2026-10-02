@@ -170,6 +170,42 @@ class TestFallbackChain(_EngineCase):
             self.build({}, cudnn_algo="FASTEST")
 
 
+class TestThreadSafety(_EngineCase):
+    def _hammer(self, e):
+        import threading
+        inside, worst = [0], [0]
+        guard = threading.Lock()
+        real = e.session.run
+
+        def counting_run(*a, **k):
+            with guard:
+                inside[0] += 1
+                worst[0] = max(worst[0], inside[0])
+            try:
+                import time
+                time.sleep(0.002)
+                return real(*a, **k)
+            finally:
+                with guard:
+                    inside[0] -= 1
+        e.session.run = counting_run
+        crop = np.zeros((112, 112, 3), np.uint8)
+        threads = [threading.Thread(target=lambda: [e.compute_embedding(crop) for _ in range(5)])
+                   for _ in range(6)]
+        [t.start() for t in threads]
+        [t.join() for t in threads]
+        return worst[0]
+
+    def test_tensorrt_session_runs_one_inference_at_a_time(self):
+        e = self.build({})                                   # TensorRT-led
+        self.assertEqual(self._hammer(e), 1)
+
+    def test_cuda_session_is_not_serialised(self):
+        e = self.build({}, device="cuda")
+        self.assertIsNone(e._run_lock)
+        self.assertGreater(self._hammer(e), 1)
+
+
 class TestHardwareProfiles(_EngineCase):
     def cuda_options(self, gpu, **kw):
         e = self.build({}, device="cuda", gpu=gpu, **kw)

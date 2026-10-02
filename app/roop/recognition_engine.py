@@ -142,6 +142,11 @@ class RecognitionInferenceEngine:
         self.session: ort.InferenceSession = self._build_verified_session()
         self.input_name: str = self.session.get_inputs()[0].name
         self.output_name: str = self.session.get_outputs()[0].name
+        # A TensorRT execution context is not thread-safe (the app serialises TRT stages
+        # with its own _gpu_guard for the same reason). CUDA and CPU sessions are, so
+        # only a TensorRT-led session pays for the lock.
+        self._run_lock = (threading.Lock()
+                          if self.active_providers and self.active_providers[0] == _TRT else None)
 
     # ------------------------------------------------------------------ providers
 
@@ -340,7 +345,11 @@ class RecognitionInferenceEngine:
         zero vector must never pass for "a face that matched nobody".
         """
         blob = self.preprocess(face_crop)
-        raw = self.session.run([self.output_name], {self.input_name: blob})[0]
+        if self._run_lock is not None:
+            with self._run_lock:
+                raw = self.session.run([self.output_name], {self.input_name: blob})[0]
+        else:
+            raw = self.session.run([self.output_name], {self.input_name: blob})[0]
         z = np.asarray(raw, dtype=np.float32).reshape(-1)
         norm = float(np.linalg.norm(z))
         if not np.isfinite(norm) or norm <= 1e-12:

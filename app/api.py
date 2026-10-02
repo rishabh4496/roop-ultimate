@@ -5709,6 +5709,7 @@ import routes_export as _routes_export
 import routes_storage as _routes_storage
 import routes_benchmark as _routes_benchmark
 import routes_trt_cache as _routes_trt_cache
+import routes_recognition as _routes_recognition
 import routes_autotune as _routes_autotune
 import routes_telemetry as _routes_telemetry
 import routes_frames as _routes_frames
@@ -5726,6 +5727,7 @@ app.include_router(_routes_export.router)
 app.include_router(_routes_storage.router)
 app.include_router(_routes_benchmark.router)
 app.include_router(_routes_trt_cache.router)
+app.include_router(_routes_recognition.router)
 app.include_router(_routes_identity.router)
 app.include_router(_routes_autotune.router)
 app.include_router(_routes_telemetry.router)
@@ -5898,6 +5900,7 @@ _api_media.API_TEMP = API_TEMP
 _routes_diagnostics._progress = _progress
 _routes_benchmark.bind_progress(_progress)
 _routes_trt_cache.bind_progress(_progress)
+_routes_recognition.bind_progress(_progress)
 _routes_autotune.bind(_progress, _run_swap)
 _routes_diagnostics.list_files_process = list_files_process
 _routes_livecam._progress = _progress

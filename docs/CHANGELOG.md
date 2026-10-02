@@ -7,6 +7,32 @@ folder). Entries before 2026-09-21 were moved here from the README on 2026-09-22
 
 ## 2026-10-02
 
+- **Pluggable recognition backend (additive; live matching NOT rewired).**
+  `roop/recognition_registry.py` pins six recognisers (w600k_r50, AdaFace IR-101, Glint-R100 /
+  antelopev2 - one file, MobileFaceNet, SFace) by URL + SHA-256, every one downloaded and
+  hash-checked; MagFace / CosFace / GhostFaceNet are NOT registered because no ONNX export
+  exists to pin. `roop/recognition_engine.py` builds a TensorRT > CUDA > DirectML/CoreML > CPU
+  session and VERIFIES each tier after a real inference (ORT drops a provider silently, even
+  during the first run), TensorRT runs behind a per-engine lock. `face_analyser` gains
+  `set_recognition_model` (build -> publish -> release hot-swap), `extract_face_embedding`
+  (the repo's `align_crop`, arcface_112_v2), `fuse_quality_weighted` and `IdentityBank`.
+  Deliberately not routed into production: `face.embedding` also feeds the swapper, thresholds
+  are per-model (only w600k/AdaFace have any), and the engine's embedding from the final
+  `kps` agrees with `face.embedding` only to 0.937-0.995 cosine (insightface's own
+  `norm_crop` gives the same, so the live vector comes from an earlier landmark estimate).
+  Measured on the 4070: TensorRT FP16 vs CPU min cosine 0.99996+; EXHAUSTIVE cuDNN ~= HEURISTIC
+  for these nets; a build/release cycle returns to the same +120 MiB (CUDA context), no growth.
+- **Settings > Face recognition (React + API; the Gradio UI is untouched).**
+  `roop/ui_recognition.py` (framework-neutral: tier advice from compute capability + the
+  providers ORT offers, model catalogue, apply), `routes_recognition.py`
+  (`GET /api/recognition`, `POST /api/recognition/apply`, 409 while a render runs, nothing saved
+  when the build fails) and `RecognitionPanel.jsx`. Two new settings, `recognition_model` and
+  `recognition_provider` (default `default` / `app` = follow the app's provider), persisted by
+  `Settings` and READ by `face_analyser.get_recognition_engine()` on first use. The panel states
+  that live swap matching is not switched by it. Tier advice does not use
+  `runtime_optimizer.HardwareProfiler.profile()` (~15 s: ffmpeg, TensorRT builder); only the CPU
+  tier suggests a different model (MobileFaceNet, measured 3.9 ms vs 41 ms), and only as a suggestion.
+
 - **A CUDA session that came up CPU-only was invisible; now it raises.** The
   `predictor` assertion only fired when TensorRT was *requested*, so a session that asked
   for CUDA and silently got `CPUExecutionProvider` (missing cuDNN DLL, a CPU-only
