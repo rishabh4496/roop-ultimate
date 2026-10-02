@@ -466,6 +466,12 @@ def main(argv: Optional[list[str]] = None) -> int:
     global _OFFLINE
     args = _parse_args(argv)
     _OFFLINE = bool(args.offline)
+    logger.warning(
+        "NOTE: the engines this tool builds are NOT read by the app. It writes a flat "
+        "cache at %s for inswapper_128 / GPEN-512 / scrfd_2.5g, while the app loads "
+        "app/models/trt_cache/<GPU+driver+version+precision namespace>/ for the models in "
+        "config.yaml. To pre-build what the app will actually use, run "
+        "tools/prebuild_engines.py instead.", CACHE_DIR)
     selected = _selected_models(args.model, native=bool(args.native))
     MODELS_DIR.mkdir(parents=True, exist_ok=True)
     CACHE_DIR.mkdir(parents=True, exist_ok=True)

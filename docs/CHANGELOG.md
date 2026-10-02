@@ -123,6 +123,37 @@ folder). Entries before 2026-09-21 were moved here from the README on 2026-09-22
   render costs about its restorer's network GPU time (+9.0 / +16.9 / +25.7 / +30.8 ms per
   frame for GPEN 256 / 256 Pro / UltraMax / Restore Ultra).
 
+- **`tools/build_trt_engines.py` built engines the app never loads; new
+  `tools/prebuild_engines.py` builds the ones it does.** The old tool compiles
+  inswapper_128 / GPEN-512 / scrfd_2.5g into a flat `<repo>/models/trt_cache` with its own
+  provider options; the app reads `app/models/trt_cache/<namespace>/` (GPU, sm, driver,
+  CUDA/TRT/ORT versions, precision, tuning knobs) for the models in config.yaml
+  (`hyperswap`+`hififace`, Restore Ultra, XSeg, buffalo_l...). An engine is keyed on that
+  namespace and the session's options, so nothing it wrote could ever be hit - the same
+  "reports success while not running" class as the rest of this file. It now logs a warning
+  saying so (behaviour otherwise unchanged; automation may call it). The new tool brings the
+  app up the way a render does (`init_pipeline` -> the processor loop `ProcessMgr.initialize`
+  runs), runs one dummy inference per session (TensorRT builds on the FIRST inference, not at
+  construction), and per stage prints the time, the engine-cache growth (>= 256 KB = COLD, built
+  now; else warm), and whether each session is on TensorRT AFTER that pass. A stage with no
+  inspectable session is reported UNVERIFIED rather than fine (the first draft said "every
+  session is on TensorRT" while two of four stages had inspected none). Proven on the 4070: warm
+  stack = 4 stages, 12 sessions verified, +0 MB, 26 s; a forced cold namespace
+  (`ROOP_TRT_BUILDER_OPT_LEVEL=1`, analyser only) = 83.1 s, +173.6 MB, COLD, 5 sessions on
+  TensorRT (that test namespace was deleted afterwards). Run with the app stopped:
+  `python tools/prebuild_engines.py [--only analyser,swapper,mask,enhancer]`.
+- **Not built, with the reasons.** (1) A hand-written native-`tensorrt` runner with `.engine`
+  files: native TensorRT exists in `FaceSwapInsightFace` (`_native`) and `trt_quant.py`, and was
+  measured NOT faster than ORT's TRT EP with IO binding (RestoreFormer++ 21.11 vs 20.44 ms;
+  native FP16 numpy 8.9 vs 6.4 ms swapper); INT8 cost -0.026 identity and FP8 runs 0 FP8 layers on
+  Ada/TRT 10.9 (`swap-int8-fp8-rejected`). Targeting sm89 and explicit profiles (swapper min 1 /
+  opt 4 / max 8) are already how the app builds. (2) Compile in the background while the app
+  renders on CUDA: an engine is keyed on the exact session options of each loader (graph
+  optimization level, shape profile, precision-forced cache dirs), so a throwaway session only
+  helps if it matches every one of ~40 construction sites, and it would contend for the GPU and
+  VRAM with the render. The cache already matches on GPU + driver + compute capability by
+  construction; run the prebuild once before starting the app instead.
+
 ## 2026-09-29
 
 - **3060 (sub-7 GB) temporal pre-pass: 72% of its wall clock was rescue detection.**
