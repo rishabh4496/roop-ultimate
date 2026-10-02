@@ -22,6 +22,21 @@ folder). Entries before 2026-09-21 were moved here from the README on 2026-09-22
   `norm_crop` gives the same, so the live vector comes from an earlier landmark estimate).
   Measured on the 4070: TensorRT FP16 vs CPU min cosine 0.99996+; EXHAUSTIVE cuDNN ~= HEURISTIC
   for these nets; a build/release cycle returns to the same +120 MiB (CUDA context), no growth.
+- **Read-only faceset embeddings in any recognition model's space (`roop/faceset_manager.py`); no
+  loader or render calls it.** `load_and_validate_faceset(fsz, model_id)` returns a faceset's reference-face
+  embeddings in `model_id`'s space and NEVER writes the archive. Why not the "migrate the archive when the
+  backbone changes" design: a legacy `.fsz` stores only PNGs (no embeddings; `_ingest_faceset` re-detects
+  and re-embeds on every load), and a V2 archive's cached vectors are w600k by design - the swapper's
+  identity, which the temporal identity code pairs with the target's w600k vector - so rewriting them would
+  change swap output. `default` returns V2's cached vectors (no detection, no engine) or the detector's own
+  embedding; any other model detects the references, aligns with `align_crop` and uses the ACTIVE engine
+  (it refuses rather than swap engines). Unusable faces are listed in `skipped`, never zero vectors; results
+  are immutable and cached per (archive hash, model). `describe_faceset` reports the declared embedding
+  space (`identity.embedding_model` if a future writer adds one; absent = `default`). Measured on 6 real
+  archives: the default-space result equals the loader's own embeddings (3/3 identical); AdaFace
+  re-embedding takes 1.2 s for 6 archives (16 ms cached); same-faceset cosine mean 0.70 vs 0.12 across
+  people, extremes touching (min 0.438 / max 0.448), so a gate needs a calibrated threshold first. A test
+  fails if any app module imports it.
 - **Worker-process recipe for the recognition engine (`roop/worker_pool.py`); nothing in the render uses
   it.** The app's pipeline is one process with worker threads, and `face_engine` already has a spawn
   pool that builds its processor inside each worker and assigns GPUs round-robin, so no pool was added
