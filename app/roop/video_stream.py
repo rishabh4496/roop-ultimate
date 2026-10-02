@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 import os
 import subprocess
+import threading
 from typing import Generator, Optional, Tuple
 
 import numpy as np
@@ -22,6 +23,52 @@ from roop import synthetic_label as _synthetic_label
 from roop.degrade import swallowed as _swallowed
 
 logger = logging.getLogger("roop.video")
+
+
+class StderrDrainer:
+    """Continuously drain a subprocess stderr pipe in a background daemon thread
+    to prevent OS pipe buffer exhaustion deadlocks while retaining trailing lines
+    for diagnostics if the process fails."""
+
+    def __init__(self, stream, max_bytes: int = 16384):
+        self._stream = stream
+        self._max_bytes = max(1024, int(max_bytes))
+        self._buffer = bytearray()
+        self._lock = threading.Lock()
+        self._stopped = False
+        if stream is not None:
+            self._thread = threading.Thread(target=self._drain, name="stderr-drainer", daemon=True)
+            self._thread.start()
+        else:
+            self._thread = None
+
+    def _drain(self) -> None:
+        try:
+            read_fn = getattr(self._stream, "read", None)
+            if not callable(read_fn):
+                return
+            while not self._stopped:
+                chunk = read_fn(4096)
+                if not chunk:
+                    break
+                with self._lock:
+                    self._buffer.extend(chunk)
+                    if len(self._buffer) > self._max_bytes:
+                        del self._buffer[:-self._max_bytes]
+        except Exception as _degrade_error:
+            _swallowed("roop/video_stream.py:StderrDrainer", _degrade_error, "drain finished")
+
+    def stop(self) -> None:
+        self._stopped = True
+
+    def get_bytes(self) -> bytes:
+        with self._lock:
+            return bytes(self._buffer)
+
+    def get_text(self) -> str:
+        with self._lock:
+            return self._buffer.decode("utf-8", "replace").strip()
+
 
 _CREATE_NO_WINDOW = 0x08000000
 _HARDWARE_CODECS = frozenset({
@@ -103,6 +150,7 @@ class NVHardwareVideoReader:
         self.start_frame = max(0, int(start_frame))
         self.frame_size = self.width * self.height * 3
         self.proc: Optional[subprocess.Popen] = None
+        self._stderr_drainer: Optional[StderrDrainer] = None
         self._iterator = None
         self._eof = False
         self._reported_error = False
@@ -152,8 +200,11 @@ class NVHardwareVideoReader:
                 bufsize=max(self.frame_size * 2, 64 * 1024),
                 **_popen_kwargs(),
             )
+            if self.proc.stderr is not None:
+                self._stderr_drainer = StderrDrainer(self.proc.stderr)
         except Exception:
             self.proc = None
+            self._stderr_drainer = None
             raise
 
     @staticmethod
@@ -207,19 +258,30 @@ class NVHardwareVideoReader:
 
     def _finish(self) -> None:
         proc = self.proc
+        drainer = self._stderr_drainer
         self.proc = None
+        self._stderr_drainer = None
         if proc is None:
             return
         stderr = b""
         try:
-            _, stderr = proc.communicate(timeout=10)
+            if drainer is not None:
+                proc.wait(timeout=10)
+            else:
+                _, stderr = proc.communicate(timeout=10)
         except subprocess.TimeoutExpired:
             try:
                 proc.kill()
             except Exception as _degrade_error:
                 _swallowed("roop/video_stream.py:219", _degrade_error,
                            "fallback continued")
-            _, stderr = proc.communicate()
+            if drainer is not None:
+                try:
+                    proc.wait(timeout=5)
+                except Exception as _degrade_error:
+                    _swallowed("roop/video_stream.py:wait", _degrade_error, "wait failed")
+            else:
+                _, stderr = proc.communicate()
         except Exception as exc:
             logger.debug("NVDEC process cleanup failed: %s", exc)
             try:
@@ -227,6 +289,9 @@ class NVHardwareVideoReader:
                 proc.wait(timeout=5)
             except Exception:
                 pass
+        if drainer is not None:
+            drainer.stop()
+            stderr = drainer.get_bytes()
         if proc.returncode not in (None, 0) and not self._reported_error:
             detail = (stderr or b"").decode("utf-8", "replace").strip()
             logger.error(
@@ -388,8 +453,12 @@ class NVHardwareVideoReader:
     def release(self) -> None:
         """Stop FFmpeg promptly on cancellation or an abandoned generator."""
         proc = self.proc
+        drainer = self._stderr_drainer
         self.proc = None
+        self._stderr_drainer = None
         self._eof = True
+        if drainer is not None:
+            drainer.stop()
         if proc is None:
             if self._fallback_capture is not None:
                 fallback = self._fallback_capture
@@ -471,6 +540,7 @@ class NVHardwareVideoWriter:
         self.ffmpeg_params = list(ffmpeg_params or [])
         self.colorspace = colorspace
         self.proc: Optional[subprocess.Popen] = None
+        self._stderr_drainer: Optional[StderrDrainer] = None
         self.frames_written = 0
         self._fell_back = False
         self._closed = False
@@ -596,8 +666,12 @@ class NVHardwareVideoWriter:
             bufsize=max(self.width * self.height * 3 * 2, 64 * 1024),
             **_popen_kwargs(),
         )
+        if self.proc.stderr is not None:
+            self._stderr_drainer = StderrDrainer(self.proc.stderr)
 
     def _error_detail(self) -> str:
+        if self._stderr_drainer is not None:
+            return self._stderr_drainer.get_text()
         if self.proc is None or self.proc.stderr is None:
             return ""
         try:
@@ -611,7 +685,12 @@ class NVHardwareVideoWriter:
         failed_codec = self.codec
         fallback = _SOFTWARE_FALLBACKS[failed_codec]
         old = self.proc
-        detail = self._error_detail()
+        old_drainer = self._stderr_drainer
+        self.proc = None
+        self._stderr_drainer = None
+        if old_drainer is not None:
+            old_drainer.stop()
+        detail = old_drainer.get_text() if old_drainer is not None else ""
         if old is not None:
             try:
                 old.wait(timeout=5)
@@ -680,19 +759,32 @@ class NVHardwareVideoWriter:
             return
         self._closed = True
         proc = self.proc
+        drainer = self._stderr_drainer
         self.proc = None
+        self._stderr_drainer = None
         if proc is None:
             return
         communication_error = None
         stderr = b""
         try:
-            _, stderr = proc.communicate(timeout=120)
+            if proc.stdin is not None and not proc.stdin.closed:
+                proc.stdin.close()
+            if drainer is not None:
+                proc.wait(timeout=120)
+            else:
+                _, stderr = proc.communicate(timeout=120)
         except subprocess.TimeoutExpired as exc:
             communication_error = exc
             try:
                 proc.kill()
             finally:
-                _, stderr = proc.communicate()
+                if drainer is not None:
+                    try:
+                        proc.wait(timeout=5)
+                    except Exception as _degrade_error:
+                        _swallowed("roop/video_stream.py:writer_wait", _degrade_error, "wait failed")
+                else:
+                    _, stderr = proc.communicate()
         except Exception as exc:
             communication_error = exc
             try:
@@ -701,19 +793,20 @@ class NVHardwareVideoWriter:
             except Exception:
                 pass
             try:
+                proc.kill()
                 proc.wait(timeout=5)
             except Exception:
+                pass
+            if drainer is None:
                 try:
-                    proc.kill()
-                    proc.wait(timeout=5)
+                    if proc.stderr is not None and not proc.stderr.closed:
+                        stderr = proc.stderr.read() or b""
                 except Exception:
                     pass
-            try:
-                if proc.stderr is not None and not proc.stderr.closed:
-                    stderr = proc.stderr.read() or b""
-            except Exception:
-                pass
         finally:
+            if drainer is not None:
+                drainer.stop()
+                stderr = drainer.get_bytes()
             for stream in (getattr(proc, "stdin", None), getattr(proc, "stderr", None)):
                 try:
                     if stream is not None and not stream.closed:
@@ -744,12 +837,16 @@ class NVHardwareVideoWriter:
     def abort(self) -> None:
         self._closed = True
         proc = self.proc
+        drainer = self._stderr_drainer
         self.proc = None
+        self._stderr_drainer = None
+        if drainer is not None:
+            drainer.stop()
         if proc is not None:
             try:
                 if proc.poll() is None:
                     proc.kill()
-                proc.communicate(timeout=10)
+                proc.wait(timeout=5)
             except Exception:
                 pass
         try:
@@ -830,6 +927,7 @@ def open_video_capture(
 __all__ = [
     "NVHardwareVideoReader",
     "NVHardwareVideoWriter",
+    "StderrDrainer",
     "hardware_stream_enabled",
     "open_video_capture",
 ]

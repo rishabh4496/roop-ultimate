@@ -2311,6 +2311,7 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                     source_height,
                     source_fps,
                     fallback_capture=cap,
+                    start_frame=frame_start,
                     tag='stabilized decode',
                 )
                 if frame_start > 0:
