@@ -23,6 +23,31 @@ folder). Entries before 2026-09-21 were moved here from the README on 2026-09-22
   Also fixed: `_rebuild_without_trt` called `get_onnx_session_options` which was only imported locally
   inside `Initialize` (a latent `NameError` on the GHOST fallback), and the model-lifecycle log hard-coded
   `precision="fp32"` for every inswapper while production ran it mixed.
+- **Stage 4: device-side alignment, inversion, masks and compositing in `CudaAffineBatch`
+  (`roop/optimized_processor.py`) - dormant path, NOT wired into the production render.**
+  `GpuFaceSwapProcessor` / `MemoryStreamingProcessor` / `vectorized_pipeline` already existed (batched crops,
+  `[B, 512]` identity, `grid_sample` warp, in-VRAM paste) but had no callers and no tests. Added:
+  `similarity_from_landmarks` (closed-form least-squares similarity on the GPU, == `estimate_norm`),
+  `invert_affine` (batched closed form, == `cv2.invertAffineTransform` incl. its singular -> zeros),
+  `gaussian_blur` (== `cv2.GaussianBlur`, incl. OpenCV's version-dependent fixed 1/3/5/7/9 kernels) and
+  `box_mask` (Gaussian-feathered box matte, cached), an `occlusion_masks` / `occlusion_provider` hook so an
+  XSeg tensor stays in VRAM, and `dynamic_batch_model_bytes` (a swap model that accepts PRE-BOUND batched
+  outputs: `_relax_batch_dim` leaves 237 stale batch-1 `value_info` entries, so a bound `[B,3,128,128]` output
+  was rejected). **Behaviour change in the dormant path:** `paste_faces` now feathers by default when the model
+  emits no matte (it used to paste the whole square crop with a hard edge for inswapper); `feather=False` keeps
+  the old behaviour. 39 tests (`app/tests/test_cuda_affine_batch.py`).
+  Measured (RTX 4070, d1.mp4 1080p, 240 frames, 1.8 faces/frame, real inswapper_128 FP32 on the CUDA EP, real
+  detections and source, each arm run in both orders): CPU/OpenCV one crop at a time 13.0 fps, 0.075 CPU-s/frame,
+  GPU 46%; same with a batched model call 13.5 fps (model batching alone is +3%); GPU arm 25.5 fps (1.89x),
+  0.042 CPU-s/frame (-44.5% vs CPU, -43.5% vs batched CPU), GPU util 91%; GPU-vs-CPU output SSIM 0.9998, mean
+  difference 0.027 of 255, 3e-5 of pixels differ by more than 2 levels, max 9 levels. Parity: matrices ~1e-9
+  (float64) / ~1e-6 relative (float32), Gaussian masks ~2e-6; the RESAMPLING cannot reach 1e-4 against OpenCV
+  (OpenCV quantises sample coordinates to 1/32 px: bilinear max 5.5e-3 of full scale, 44% of pixels above 1e-4;
+  5x worse under the global TF32 flag). Caveats: this is a sequential swap-stage harness, not the production
+  render - production runs 20 threads and is GPU-bound with tracking, masks, stabilisation and enhancers, where
+  the warp/blend is ~6-10% of host time, so the whole-render CPU drop is far below 40%; tensor-core activity was
+  not measured (nvidia-smi does not expose it). ORT's CUDA EP runs convolutions in TF32 by default, which is why
+  batched rows differ from batch-1 rows by 1.4e-2 (2.4e-5 with `use_tf32=0`).
 - **Stage 1-3 optimisation prompts audited, nothing built** (decode/zero-disk, pre-pass keyframes +
   embedding cache, ORT FP16/IOBinding): the default render already streams through rawvideo pipes with
   no frame images (one 31 MB encoded segment is the only temp write), the pre-pass already runs N=8

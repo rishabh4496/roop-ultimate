@@ -792,6 +792,32 @@ def _resolved_output_shape(
     return tuple(values)
 
 
+def dynamic_batch_model_bytes(model_path: str | os.PathLike[str]) -> bytes:
+    """A swap model with a genuinely dynamic batch axis, ready for pre-bound outputs.
+
+    ``FaceSwapInsightFace._relax_batch_dim`` makes the public input/output batch
+    dimension symbolic and fixes the ``Reshape`` constants, which is all
+    ``session.run`` needs (ORT allocates the outputs itself).  It leaves the graph's
+    ``value_info`` annotations alone, and every one of them still says batch 1 --
+    inswapper_128 has 237.  ORT then reports the output as ``[1, 3, 128, 128]`` and
+    rejects a pre-bound ``[B, 3, 128, 128]`` output buffer ("Got invalid dimensions
+    for output ... Expected: 1"), which is exactly what :meth:`CudaIOBinding.run_gpu`
+    and :class:`GpuFaceSwapProcessor` do.  Dropping the stale annotations lets ORT
+    re-infer them from the symbolic batch.  Measured: batch 1..7 then runs through
+    ``run_gpu`` (rows equal the batch-1 model to ~1.5e-2 under ORT's default TF32
+    convolutions, exactly on CPU).
+    """
+
+    import onnx
+
+    from roop.processors.FaceSwapInsightFace import _relax_batch_dim
+
+    model = onnx.load(str(model_path))
+    _relax_batch_dim(model)
+    del model.graph.value_info[:]
+    return model.SerializeToString()
+
+
 class CudaIOBinding:
     """Best-effort persistent CUDA input binding for one ORT session."""
 
@@ -1347,7 +1373,206 @@ class TrtOnnxBatchRunner:
 
 
 class CudaAffineBatch:
-    """GPU affine sampler that preserves the prepass's OpenCV matrix meaning."""
+    """GPU affine sampler that preserves the prepass's OpenCV matrix meaning.
+
+    Everything here is device-agnostic torch math (it runs on CPU tensors too, which
+    is how the parity tests exercise it) and none of it calls OpenCV.
+
+    PARITY, MEASURED (RTX 4070, real Love.mp4 faces, ``tests/test_cuda_affine_batch.py``):
+    the *matrices* (:meth:`similarity_from_landmarks`, :meth:`invert_affine`) and the
+    *Gaussian masks* (:meth:`gaussian_blur`, :meth:`box_mask`) reproduce their OpenCV /
+    skimage counterparts to ~1e-6.  The *resampling* (:meth:`warp_frames`,
+    :meth:`paste_faces`) cannot: OpenCV quantises sampling coordinates to 1/32 px
+    (``INTER_BITS``), so even bilinear differs from ``grid_sample`` by up to ~5e-3 of
+    full scale (1.4/255), mean ~2e-4 -- a floor no float path reproduces, and ~5x
+    worse again under the global TF32 flag ``roop/core.py`` sets.  Do not promise a
+    per-pixel 1e-4 against ``cv2.warpAffine``.
+    """
+
+    # cv2.getGaussianKernel's hard-coded kernels, used when sigma <= 0.  Computing
+    # them from the sigma formula gives a DIFFERENT kernel (ksize 3: 0.274/0.452/0.274
+    # instead of 0.25/0.5/0.25), which is exactly the production anti-alias blur.
+    # The table is OpenCV's and VERSION-DEPENDENT (4.11 also fixes ksize 9, at 2e-3
+    # from the formula); tests/test_cuda_affine_batch.py compares every odd size up to
+    # 31 against the installed cv2, so a changed table fails there instead of drifting.
+    _CV_SMALL_KERNELS = {
+        1: (1.0,),
+        3: (0.25, 0.5, 0.25),
+        5: (0.0625, 0.25, 0.375, 0.25, 0.0625),
+        7: (0.03125, 0.109375, 0.21875, 0.28125, 0.21875, 0.109375, 0.03125),
+        9: (4 / 256, 13 / 256, 30 / 256, 51 / 256, 60 / 256, 51 / 256, 30 / 256, 13 / 256, 4 / 256),
+    }
+    _BOX_MASK_CACHE: Dict[Any, Any] = {}
+
+    @staticmethod
+    def invert_affine(matrices: Any) -> Any:
+        """Closed-form inverse of N x 2 x 3 affine matrices, batched on the device.
+
+        Same contract as ``cv2.invertAffineTransform``, including its singular
+        behaviour: a matrix with a zero determinant inverts to zeros instead of
+        raising or producing inf/NaN that would poison a whole batch.
+        """
+
+        torch = _torch_module
+        if torch is None:
+            raise RuntimeError("PyTorch is required for CUDA affine transforms")
+        if matrices.ndim != 3 or tuple(matrices.shape[1:]) != (2, 3):
+            raise ValueError("invert_affine expects N x 2 x 3 matrices")
+        a, b, tx = matrices[:, 0, 0], matrices[:, 0, 1], matrices[:, 0, 2]
+        c, d, ty = matrices[:, 1, 0], matrices[:, 1, 1], matrices[:, 1, 2]
+        det = a * d - b * c
+        safe = torch.where(det != 0, det, torch.ones_like(det))
+        inv_det = torch.where(det != 0, 1.0 / safe, torch.zeros_like(det))
+        ia, ib = d * inv_det, -b * inv_det
+        ic, id_ = -c * inv_det, a * inv_det
+        row0 = torch.stack((ia, ib, -(ia * tx + ib * ty)), dim=-1)
+        row1 = torch.stack((ic, id_, -(ic * tx + id_ * ty)), dim=-1)
+        return torch.stack((row0, row1), dim=1)
+
+    @staticmethod
+    def similarity_from_landmarks(landmarks: Any, template: Any) -> Any:
+        """Least-squares 2x3 similarity transforms, computed on the device.
+
+        ``landmarks`` is N x K x 2 (frame pixels), ``template`` is K x 2 (crop
+        pixels, e.g. ``roop.face_util.swap_template_points(size)``).  Returns the
+        N x 2 x 3 matrices that map landmarks onto the template with uniform scale,
+        rotation and translation -- the same fit as ``estimate_norm`` (skimage's
+        ``SimilarityTransform``), as a closed form: treating points as complex
+        numbers, ``a = sum(conj(x) * y) / sum(|x|^2)`` on mean-centred points, so no
+        SVD and no per-face host call.  Solved in float64 (it is N x 5 points) and
+        returned in the input dtype.
+        """
+
+        torch = _torch_module
+        if torch is None:
+            raise RuntimeError("PyTorch is required for CUDA affine transforms")
+        if landmarks.ndim != 3 or landmarks.shape[-1] != 2:
+            raise ValueError("landmarks must be N x K x 2")
+        template = torch.as_tensor(template, device=landmarks.device)
+        if template.ndim != 2 or tuple(template.shape) != tuple(landmarks.shape[1:]):
+            raise ValueError("template must be K x 2 and match the landmark count")
+        out_dtype = landmarks.dtype if landmarks.dtype.is_floating_point else torch.float32
+        x = landmarks.to(torch.float64)
+        y = template.to(torch.float64).unsqueeze(0)
+        mean_x = x.mean(dim=1, keepdim=True)
+        mean_y = y.mean(dim=1, keepdim=True)
+        xc, yc = x - mean_x, y - mean_y
+        denominator = (xc * xc).sum(dim=(1, 2)).clamp_min(1e-12)
+        real = (xc[..., 0] * yc[..., 0] + xc[..., 1] * yc[..., 1]).sum(dim=1) / denominator
+        imag = (xc[..., 0] * yc[..., 1] - xc[..., 1] * yc[..., 0]).sum(dim=1) / denominator
+        mx, my = mean_x[:, 0, 0], mean_x[:, 0, 1]
+        tx = mean_y[:, 0, 0] - (real * mx - imag * my)
+        ty = mean_y[:, 0, 1] - (imag * mx + real * my)
+        row0 = torch.stack((real, -imag, tx), dim=-1)
+        row1 = torch.stack((imag, real, ty), dim=-1)
+        return torch.stack((row0, row1), dim=1).to(out_dtype)
+
+    @classmethod
+    def gaussian_kernel_1d(cls, ksize: int, sigma: float = 0.0, *, device: Any = None,
+                           dtype: Any = None) -> Any:
+        """The 1-D kernel ``cv2.getGaussianKernel(ksize, sigma)`` returns."""
+
+        torch = _torch_module
+        if torch is None:
+            raise RuntimeError("PyTorch is required for CUDA Gaussian blur")
+        ksize = int(ksize)
+        if ksize <= 0 or ksize % 2 == 0:
+            raise ValueError("Gaussian kernel size must be a positive odd integer")
+        sigma = float(sigma)
+        if sigma <= 0.0 and ksize in cls._CV_SMALL_KERNELS:
+            values = torch.tensor(cls._CV_SMALL_KERNELS[ksize], dtype=torch.float64)
+        else:
+            if sigma <= 0.0:
+                sigma = 0.3 * ((ksize - 1) * 0.5 - 1.0) + 0.8
+            offsets = torch.arange(ksize, dtype=torch.float64) - (ksize - 1) / 2.0
+            values = torch.exp(-(offsets * offsets) / (2.0 * sigma * sigma))
+            values = values / values.sum()
+        return values.to(device=device, dtype=dtype or torch.float32)
+
+    @classmethod
+    def gaussian_blur(cls, images: Any, ksize: int = 0, sigma: float = 0.0) -> Any:
+        """``cv2.GaussianBlur`` for an N x C x H x W float tensor, on the device.
+
+        Separable, with ``BORDER_REFLECT_101`` edges (torch's ``reflect``), and the
+        same kernel selection and ``ksize`` derivation as OpenCV for float images
+        (``ksize == 0`` -> ``round(sigma * 8 + 1) | 1``).
+        """
+
+        torch = _torch_module
+        if torch is None:
+            raise RuntimeError("PyTorch is required for CUDA Gaussian blur")
+        import torch.nn.functional as functional
+
+        if images.ndim != 4:
+            raise ValueError("gaussian_blur expects an N x C x H x W tensor")
+        if int(ksize) <= 0:
+            if float(sigma) <= 0.0:
+                raise ValueError("gaussian_blur needs a kernel size or a positive sigma")
+            ksize = int(round(float(sigma) * 8.0 + 1.0)) | 1
+        ksize = int(ksize)
+        if ksize == 1:
+            return images
+        pad = ksize // 2
+        height, width = int(images.shape[2]), int(images.shape[3])
+        if pad >= min(height, width):
+            raise ValueError(
+                f"Gaussian kernel {ksize} is too large for a {height}x{width} image "
+                "(reflect-101 padding needs pad < size)"
+            )
+        kernel = cls.gaussian_kernel_1d(ksize, sigma, device=images.device, dtype=images.dtype)
+        n, c = int(images.shape[0]), int(images.shape[1])
+        flat = images.reshape(n * c, 1, height, width)
+        flat = functional.pad(flat, (pad, pad, pad, pad), mode="reflect")
+        flat = functional.conv2d(flat, kernel.reshape(1, 1, 1, ksize))
+        flat = functional.conv2d(flat, kernel.reshape(1, 1, ksize, 1))
+        return flat.reshape(n, c, height, width)
+
+    @classmethod
+    def box_mask(cls, size: int, blur: float = 0.3,
+                 padding: Sequence[float] = (0.0, 0.0, 0.0, 0.0), *,
+                 device: Any = None, dtype: Any = None) -> Any:
+        """A 1 x 1 x S x S box matte with a Gaussian soft falloff, on the device.
+
+        ``padding`` is (top, right, bottom, left) in percent of the crop.  The
+        border band is ``max(blur_amount // 2, 1, padding)`` pixels wide, where
+        ``blur_amount = int(size * 0.5 * blur)``, and the Gaussian has
+        ``sigma = blur_amount * 0.25`` -- the FaceFusion-style static box mask the
+        swap crops are conventionally blended with.  Cached per (size, blur,
+        padding, device): it is constant for a run.
+        """
+
+        torch = _torch_module
+        if torch is None:
+            raise RuntimeError("PyTorch is required for CUDA masks")
+        size = int(size)
+        if size <= 2:
+            raise ValueError("box_mask size must be larger than 2")
+        padding = tuple(float(p) for p in padding)
+        if len(padding) != 4:
+            raise ValueError("padding must be (top, right, bottom, left)")
+        dtype = dtype or torch.float32
+        key = (size, float(blur), padding, str(device), str(dtype))
+        cached = cls._BOX_MASK_CACHE.get(key)
+        if cached is not None:
+            return cached
+        blur_amount = int(size * 0.5 * max(0.0, float(blur)))
+        blur_area = max(blur_amount // 2, 1)
+        top = max(blur_area, int(size * padding[0] / 100.0))
+        right = max(blur_area, int(size * padding[1] / 100.0))
+        bottom = max(blur_area, int(size * padding[2] / 100.0))
+        left = max(blur_area, int(size * padding[3] / 100.0))
+        mask = torch.ones((1, 1, size, size), dtype=torch.float32)
+        mask[:, :, :top, :] = 0.0
+        mask[:, :, size - bottom:, :] = 0.0
+        mask[:, :, :, :left] = 0.0
+        mask[:, :, :, size - right:] = 0.0
+        if blur_amount > 0:
+            mask = cls.gaussian_blur(mask, 0, blur_amount * 0.25)
+        mask = mask.to(device=device, dtype=dtype).contiguous()
+        if len(cls._BOX_MASK_CACHE) > 16:
+            cls._BOX_MASK_CACHE.clear()
+        cls._BOX_MASK_CACHE[key] = mask
+        return mask
 
     @staticmethod
     def _matrix3(matrices: Any) -> Any:
@@ -1404,7 +1629,7 @@ class CudaAffineBatch:
             raise ValueError("warp_frames expects NCHW frames and N x 2 x 3 matrices")
         height = int(frames.shape[2])
         width = int(frames.shape[3])
-        inverse = torch_linalg_inverse(cls._matrix3(matrices))[:, :2, :]
+        inverse = cls.invert_affine(matrices)
         grid = cls._grid(
             inverse,
             input_height=height,
@@ -1429,8 +1654,21 @@ class CudaAffineBatch:
         matrices: Any,
         masks: Optional[Any] = None,
         blend_ratio: float = 1.0,
+        feather: bool = True,
+        feather_blur: float = 0.3,
+        occlusion_masks: Optional[Any] = None,
     ) -> Any:
-        """Reverse-warp aligned faces and alpha-composite them on CUDA."""
+        """Reverse-warp aligned faces and alpha-composite them on CUDA.
+
+        The matte is, in order of precedence: ``masks`` (a model/XSeg matte, used as
+        given), else a Gaussian-feathered box (:meth:`box_mask`) when ``feather`` is
+        true, else all ones.  The all-ones case pastes the whole square crop with a
+        hard edge -- which is what this used to do for every model that emits no
+        mask of its own (inswapper), leaving a visible seam; ``feather=False``
+        keeps that behaviour for callers that supply their own edge.
+        ``occlusion_masks`` (N x 1 x S x S, 1 = keep the swap) multiplies into
+        whichever matte applies, so an XSeg/occluder tensor stays in VRAM.
+        """
 
         if _torch_module is None:
             raise RuntimeError("PyTorch is required for CUDA face compositing")
@@ -1456,16 +1694,32 @@ class CudaAffineBatch:
             align_corners=False,
         )
         if masks is None:
-            alpha = _torch_module.ones(
-                (int(aligned_faces.shape[0]), 1, crop_size, crop_size),
-                dtype=aligned_faces.dtype,
-                device=aligned_faces.device,
-            )
+            if feather:
+                alpha = cls.box_mask(
+                    crop_size, feather_blur,
+                    device=aligned_faces.device, dtype=aligned_faces.dtype,
+                ).expand(int(aligned_faces.shape[0]), -1, -1, -1)
+            else:
+                alpha = _torch_module.ones(
+                    (int(aligned_faces.shape[0]), 1, crop_size, crop_size),
+                    dtype=aligned_faces.dtype,
+                    device=aligned_faces.device,
+                )
         else:
             alpha = masks
             if alpha.ndim == 3:
                 alpha = alpha.unsqueeze(1)
             alpha = alpha.to(dtype=aligned_faces.dtype)
+        if occlusion_masks is not None:
+            occlusion = occlusion_masks
+            if occlusion.ndim == 3:
+                occlusion = occlusion.unsqueeze(1)
+            if tuple(occlusion.shape[-2:]) != (crop_size, crop_size):
+                occlusion = functional.interpolate(
+                    occlusion.to(dtype=aligned_faces.dtype),
+                    size=(crop_size, crop_size), mode="bilinear", align_corners=False,
+                )
+            alpha = alpha * occlusion.to(dtype=aligned_faces.dtype)
         alpha = functional.grid_sample(
             alpha,
             grid,
@@ -1625,11 +1879,33 @@ class GpuFaceSwapProcessor:
         blend_ratio: float = 1.0,
         restorer: Optional[Callable[[Any], Any]] = None,
         bridge: Optional[CudaFrameBridge] = None,
+        alignment_template: Optional[Any] = None,
+        feather: bool = True,
+        feather_blur: float = 0.3,
+        occlusion_provider: Optional[Callable[[Any], Any]] = None,
     ) -> None:
+        """
+        ``alignment_template`` (K x 2, crop pixels, e.g.
+        ``roop.face_util.swap_template_points(input_size)``) makes the alignment
+        matrices a GPU computation from each face's landmarks
+        (:meth:`CudaAffineBatch.similarity_from_landmarks`); without it the
+        prepass's ``face.matrix`` is uploaded as before.  ``feather`` /
+        ``feather_blur`` feather the paste when the model emits no matte of its
+        own.  ``occlusion_provider(aligned_target)`` receives the N x 3 x S x S
+        aligned TARGET crops (BGR, 0..1, still in VRAM) and returns an N x 1 x S x S
+        keep-the-swap matte, so an XSeg/occluder network never leaves the GPU.
+        """
         if _torch_module is None:
             raise RuntimeError("PyTorch is required for GpuFaceSwapProcessor")
         self.torch = _torch_module
         self.runner = runner
+        self.alignment_template = (
+            None if alignment_template is None
+            else np.ascontiguousarray(alignment_template, dtype=np.float32)
+        )
+        self.feather = bool(feather)
+        self.feather_blur = float(feather_blur)
+        self.occlusion_provider = occlusion_provider
         self.input_size = int(input_size)
         if self.input_size <= 0:
             raise ValueError("input_size must be positive")
@@ -1681,21 +1957,35 @@ class GpuFaceSwapProcessor:
         gpu_frames = self.bridge.upload_bgr(frames)
         frame_ids: List[int] = []
         matrices: List[Float32Array] = []
+        landmarks: List[Float32Array] = []
         for frame_index, analysis in enumerate(analyses):
             for face in analysis.faces:
                 frame_ids.append(frame_index)
                 matrices.append(face.matrix)
+                landmarks.append(face.landmarks)
         if not matrices:
             return [np.ascontiguousarray(frame) for frame in frames]
-        matrix_tensor = self.torch.as_tensor(
-            np.ascontiguousarray(np.stack(matrices), dtype=np.float32),
-            device=gpu_frames.device,
-        )
+        if self.alignment_template is not None:
+            matrix_tensor = CudaAffineBatch.similarity_from_landmarks(
+                self.torch.as_tensor(
+                    np.ascontiguousarray(np.stack(landmarks), dtype=np.float32),
+                    device=gpu_frames.device,
+                ),
+                self.alignment_template,
+            )
+        else:
+            matrix_tensor = self.torch.as_tensor(
+                np.ascontiguousarray(np.stack(matrices), dtype=np.float32),
+                device=gpu_frames.device,
+            )
         frame_index_tensor = self.torch.as_tensor(
             frame_ids, dtype=self.torch.long, device=gpu_frames.device
         )
         face_frames = gpu_frames.index_select(0, frame_index_tensor)
         aligned = CudaAffineBatch.warp_frames(face_frames, matrix_tensor, self.input_size)
+        occlusion = (
+            self.occlusion_provider(aligned) if self.occlusion_provider is not None else None
+        )
         if self.model_channel_order == "rgb":
             aligned = aligned[:, [2, 1, 0], :, :]
         aligned = (aligned - self.model_mean) / self.model_standard_deviation
@@ -1723,6 +2013,9 @@ class GpuFaceSwapProcessor:
             matrix_tensor,
             masks=masks,
             blend_ratio=self.blend_ratio,
+            feather=self.feather,
+            feather_blur=self.feather_blur,
+            occlusion_masks=occlusion,
         )
         return self.bridge.download_bgr(composite)
 
