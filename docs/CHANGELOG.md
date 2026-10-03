@@ -7,6 +7,21 @@ folder). Entries before 2026-09-21 were moved here from the README on 2026-09-22
 
 ## 2026-10-03
 
+- **Batched restorer acceleration (Stage 6 brief): measured, not built.** RestoreFormer++ (the network
+  under Restore Ultra) on the 4070, TensorRT "mixed" FP16 through the app's own provider policy,
+  GPU-resident IOBinding, real FFHQ-aligned crops, a dynamic-batch graph from the swapper's
+  `_relax_batch_dim` with the repo's own TensorRT shape profile: **24.4 / 25.6 / 25.2 / 25.0 ms per
+  face at B = 1 / 2 / 4 / 8** (second run 25.1 / 25.1 / 25.0 / 24.8; the fixed batch-1 production
+  engine read 25.2 and 21.7 between runs, i.e. ~15% engine-to-engine spread). One 512 network already
+  saturates the card, so the contract's -60% per-face latency is unreachable by batching (measured
+  0%). SSIM of the shipped FP16 "mixed" output against TensorRT FP32 is 0.9960-0.9970 mean
+  (min 0.9950) at B=1, already under the brief's 0.998, so a faster FP16 path cannot meet that gate
+  either. The rest of the brief already exists or was already measured: FP16 "mixed" is the policy
+  default; IOBinding is in use; the < 48 px bypass is `enhance_gate.py` (`enhance_min_face_px`,
+  default 0 = off because it changes the look; set 48 for the brief's behaviour); GPU-resident
+  pre/post scaling measured 1.1-40x slower and NEUTRAL end to end (see the restorer audit below).
+  `tools/bench_restorer_batch.py` reproduces the table.
+
 - **An untrimmed render lost its last video frame whenever the source audio ended before the video
   (`util_ffmpeg.restore_audio`).** A 90-frame 29.97 fps render came back with 89: the single-command
   branch (used when the trim starts at 0) ended with `-shortest`, and source audio routinely ends a
