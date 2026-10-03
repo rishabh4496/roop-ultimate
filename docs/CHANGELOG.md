@@ -7,6 +7,54 @@ folder). Entries before 2026-09-21 were moved here from the README on 2026-09-22
 
 ## 2026-10-03
 
+- **`pinokio_batch_runner.py` had never rendered anything; fixed, and a failed video no longer kills
+  the queue.** The Stage 9 brief asks for a 50-job batch through it. The first real run died on the
+  first frame of the first video: `TypeError: QueueProgress.__init__() got multiple values for keyword
+  argument 'total'`. `ProcessMgr` builds its progress bar as `ChunkedProgress(total=N, ...)`; the
+  replacement class wrote `total=total or kwargs.pop("total", None)`, which short-circuits whenever the
+  frame count is known, so `total` was passed twice. Nothing tested the runner or
+  `roop/process_manager.py` (no test imported either), which is how it stayed broken. Now
+  `make_worker_progress()` (module level, tested). Also: `IsolatedVideoBatch.run` raised on the first
+  failed video and never started the rest, so a 50-video run died at video N; `--keep-going` /
+  `run(keep_going=True)` records `{"status": "failed", "error": ...}` and continues (default
+  unchanged; exit code 1 if any failed). `app/tests/test_batch_isolation.py`: real `spawn` children
+  with stub workers - a fresh process per video, progress events reach the parent, stop on first
+  failure by default, continue with `keep_going`, a child that dies silently (`os._exit`) is a failure
+  and not a hang, stop requests kill the child, and the progress class takes the keywords
+  `ProcessMgr` passes.
+- **50-video batch through the runner, measured.** 50 distinct 24-frame 1080p clips (hyperswap + Restore
+  Ultra, shipped config), `--keep-going`, memory sampled from outside every 2 s: **50/50 completed, 0
+  failed, 2867 s.** The runner process: 24.2 MB for the first 30 jobs, 17.6 MB at the end (it never
+  imports torch/onnxruntime); no python or ffmpeg process left afterwards. Each child peaks at about
+  10.0 GB RSS (first ten jobs) vs 10.2 GB (last ten), +4.5 MB/job, which is not cumulative because
+  every child is a fresh process (the child's peak follows that moment's free-RAM-derived stabilizer
+  budget). System-wide free RAM during jobs drifted 11.1 -> 9.7 GB and GPU memory read 839 MB before and
+  1455 MB after with nothing of ours alive: other applications (browsers, desktop); per-process GPU
+  memory is not reported on this driver, so the GPU number is not attributed process by process.
+- **Telemetry latency under a render (Stage 9 brief): the in-process design misses 25 ms, and the
+  cause is model loading, not the frame loop.** `/ws/telemetry` answers a text `ping` with a `pong`;
+  timed at 20 Hz against the real backend during three consecutive renders
+  (`tools/probe_telemetry_latency.py`): idle p50 0.6 / p99 7.5 / max 7.6 ms; during the first ~25 s of
+  a job (model load) p50 1.0 / p95 120 / **p99 1249 / max 5200 ms**; in the frame-processing phase p50
+  0.9, p95 5-11, p99 13-97, max 145 ms. `py-spy dump` taken while a ping was outstanding put the GIL on
+  `onnxruntime InferenceSession` creation (`_create_inference_session`) in every case, with
+  `onnx.shape_inference`, `release_face_analyser` and a hardware-profile call alongside: C calls that
+  hold the GIL for seconds freeze the event loop, the WebSocket and the progress sampler together.
+  Only another PROCESS removes that. Not built: moving `/api/swap` into a worker process rewrites the
+  parts of `api.py` that share the render's in-process state (the progress dict the sampler reads,
+  live preview and `/ws/frames`, pause/stop, project checkpoints, `roop.globals` that routes mutate),
+  and is a decision for the owner, not a side effect of a perf task. Already process-isolated:
+  `pinokio_batch_runner.py` (a spawn child per video, no CUDA in the parent) and
+  `distributed_render.py` (a process per GPU).
+- **Shared-memory IPC and a lifecycle manager (Stage 9 brief): not needed as specified.** The runner's
+  progress is a stdlib `multiprocessing` queue at <= 2 events/s; no measurement shows it as a cost, and
+  the parent must not import torch, so `torch.multiprocessing` would be a regression. `release_resources`
+  already runs at the start of every job (face analyser, `ProcessMgr`, caches, `gc.collect`,
+  `torch.cuda.empty_cache`), and `gc.collect` already runs at hard cuts in the pre-pass and in the
+  stabilizers. `empty_cache` at a cut would free nothing: quiescent torch allocation is 9.4 MB because
+  inference runs through onnxruntime, whose sessions and TensorRT contexts are only released by
+  tearing the session (process exit, for the batch path) down.
+
 - **Landmark smoothing (Stage 8 brief): measured against the smoother that actually runs; a Kalman
   option added.** The brief assumed One Euro was the smoother. It is not the default: with
   `stabilize_landmarks` on (the default) the tracked pre-pass runs `AdaptiveLandmarkSmoother`

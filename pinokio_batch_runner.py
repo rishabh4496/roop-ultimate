@@ -104,6 +104,27 @@ class QueueProgress:
         self.close()
 
 
+def make_worker_progress(total: int, report: Any) -> type:
+    """The class ``ProcessMgr`` instantiates in place of its own progress bar.
+
+    ``ProcessMgr`` constructs it as ``ChunkedProgress(total=N, desc=..., unit=...)``,
+    i.e. it passes ``total`` BY KEYWORD. The first version of this class wrote
+    ``super().__init__(total=total or kwargs.pop("total", None), **kwargs)``: with a
+    known frame count ``total or ...`` short-circuits, ``kwargs.pop`` never runs, and
+    ``total`` is passed twice -- ``TypeError: got multiple values for keyword argument
+    'total'`` on the first frame of the first video, so the runner never rendered
+    anything (found 2026-10-03 by the first real batch run; nothing tested it).
+    """
+
+    class WorkerProgress(QueueProgress):
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            declared = kwargs.pop("total", None)       # always removed, whichever wins
+            super().__init__(total=total or declared, **kwargs)
+            self.bind(report)
+
+    return WorkerProgress
+
+
 def _frame_count(video_path: str) -> int:
     import cv2
 
@@ -138,15 +159,10 @@ def render_video_worker(job: VideoJob, report: Any) -> dict[str, Any]:
     total = _frame_count(input_path)
     report(message=f"initialising renderer ({total or 'unknown'} frames)", frame_total=total)
 
-    class WorkerProgress(QueueProgress):
-        def __init__(self, *args: Any, **kwargs: Any) -> None:
-            super().__init__(total=total or kwargs.pop("total", None), **kwargs)
-            self.bind(report)
-
     # ProcessMgr resolves ChunkedProgress from its module global.  Replacing it
     # here keeps the standard renderer unchanged while giving the parent real
     # frame/FPS/ETA events.
-    process_mgr_module.ChunkedProgress = WorkerProgress
+    process_mgr_module.ChunkedProgress = make_worker_progress(total, report)
     ensure_ffmpeg()
 
     cfg = Settings("config.yaml")
@@ -243,6 +259,9 @@ def main(argv: Iterable[str] | None = None) -> int:
                         help="replace already completed outputs")
     parser.add_argument("--dry-run", action="store_true",
                         help="create result folders and list jobs without rendering")
+    parser.add_argument("--keep-going", action="store_true",
+                        help="a failed video is logged and the queue continues (default: the "
+                             "first failure stops the batch); the exit code is 1 if any failed")
     parser.add_argument("--log", type=Path, default=None,
                         help="defaults to <root>/pinokio_batch_runner.log")
     args = parser.parse_args(argv)
@@ -273,12 +292,17 @@ def main(argv: Iterable[str] | None = None) -> int:
             logger.info("%s %s", event_type.upper(), event)
 
     try:
-        results = IsolatedVideoBatch(render_video_worker).run(jobs, on_progress=on_progress)
+        results = IsolatedVideoBatch(render_video_worker).run(
+            jobs, on_progress=on_progress, keep_going=args.keep_going)
     except WorkerFailed as exc:
         logger.exception("batch stopped: %s", exc)
         return 1
-    logger.info("batch finished: %d video(s) completed", len(results))
-    return 0
+    failed = [r for r in results if r.get("status") == "failed"]
+    logger.info("batch finished: %d video(s) completed, %d failed",
+                len(results) - len(failed), len(failed))
+    for result in failed:
+        logger.error("FAILED %s: %s", result["job"]["input_path"], result.get("error"))
+    return 1 if failed else 0
 
 
 if __name__ == "__main__":

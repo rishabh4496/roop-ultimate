@@ -101,12 +101,30 @@ class IsolatedVideoBatch:
         self._context = mp.get_context("spawn")
 
     def run(self, jobs: Iterable[VideoJob], *, on_progress: Optional[ProgressCallback] = None,
-            stop_requested: Optional[Callable[[], bool]] = None) -> list[dict[str, Any]]:
+            stop_requested: Optional[Callable[[], bool]] = None,
+            keep_going: bool = False) -> list[dict[str, Any]]:
+        """Render `jobs` one at a time, each in its own spawn child.
+
+        By default the first failure raises `WorkerFailed` and the rest of the queue is
+        never started (a 50-video run then dies at video N). With `keep_going` a failed
+        video is recorded as ``{"status": "failed", "error": ...}`` and the queue
+        continues: the child is its own process, so a crash cannot have damaged the
+        next one.
+        """
         results: list[dict[str, Any]] = []
         for job in jobs:
             if stop_requested and stop_requested():
                 break
-            results.append(self._run_one(job, on_progress, stop_requested))
+            try:
+                results.append(self._run_one(job, on_progress, stop_requested))
+            except WorkerFailed as exc:
+                if not keep_going:
+                    raise
+                message = str(exc).strip().splitlines()[0][:500] if str(exc).strip() else "failed"
+                results.append({"job": job.as_dict(), "status": "failed", "error": message})
+                if on_progress:
+                    on_progress({"type": "job_failed", "input_path": job.input_path,
+                                 "group": job.group, "error": message})
         return results
 
     def _run_one(self, job: VideoJob, on_progress: Optional[ProgressCallback],
