@@ -115,9 +115,16 @@ class HardwarePortability(unittest.TestCase):
                          "machine's derived default, whatever that is")
 
     def test_the_same_machine_keeps_everything(self):
-        """A reset that fires on every load would be a bug, not a safeguard."""
+        """A reset that fires on every load would be a bug, not a safeguard.
+
+        The thread count is written the way the app writes a number the USER chose
+        (`_threads_auto: false`). An unstamped 10 is a LEGACY value, and the loader
+        deliberately re-derives a legacy value that sits below the machine's knee
+        (the desktop's is 20 under Rule 4) -- see test_an_unstamped_config_...
+        """
         self._write(hardware_signature=settings_mod.hardware_signature(MAIN),
                     perf_detmask_pool='4', max_threads=10, auto_thread_selection=False,
+                    _threads_auto=False, _threads_basis='user',
                     benchmark_results={'best_threads': {'standard': 10}})
         s = self._load_on(MAIN)
         self.assertEqual(s.perf_detmask_pool, '4')
@@ -127,11 +134,21 @@ class HardwarePortability(unittest.TestCase):
 
     def test_an_unstamped_config_is_left_alone(self):
         """Upgrading into this feature must not wipe the settings of the machine
-        that is already working. First load stamps; it does not reset."""
+        that is already working. First load stamps; it does not reset.
+
+        The pool is the thing that must survive. `max_threads` follows the loader's
+        LEGACY rule (settings.py, "LEGACY config, written before provenance was
+        recorded"): an unstamped value BELOW what this machine derives is migrated to
+        the derived one, an unstamped value at or above it is left alone. The expected
+        number is computed from the same machine's own derivation, so this holds on a
+        knee-10 card and on the knee-20 desktop alike.
+        """
+        self._write(perf_detmask_pool='4', auto_thread_selection=False)
+        derived = self._load_on(MAIN).max_threads                  # no saved threads: derives
         self._write(perf_detmask_pool='4', max_threads=10, auto_thread_selection=False)
         s = self._load_on(MAIN)
         self.assertEqual(s.perf_detmask_pool, '4')
-        self.assertEqual(s.max_threads, 10)
+        self.assertEqual(s.max_threads, 10 if 10 >= derived else derived)
         self.assertEqual(s.hardware_signature, settings_mod.hardware_signature(MAIN))
 
     def test_preferences_survive_the_move(self):
@@ -267,8 +284,10 @@ class AutoTiersCoverBothCards(unittest.TestCase):
             return cfg.max_threads
 
         try:
-            self.assertEqual(derive(11.99, 24), 10,
-                             'a 12GB/24-core machine must derive the measured knee')
+            self.assertEqual(derive(11.99, 24), 20,
+                             'a 12GB/24-core machine is the high tier (Rule 4): knee 20')
+            self.assertEqual(derive(11.99, 12), 10,
+                             'a 12GB/12-core machine is below the high tier: knee 10')
             self.assertEqual(derive(6.0, 8), 8,
                              'a 6GB/8-core machine must reach its measured knee')
             self.assertEqual(derive(6.0, 4), 3,

@@ -43,7 +43,16 @@ def _configure_torch_cuda_acceleration() -> None:
             return
         torch.backends.cuda.matmul.allow_tf32 = True
         torch.backends.cudnn.allow_tf32 = True
-        torch.backends.cudnn.benchmark = True
+        # NOT `cudnn.benchmark = True` (this line used to set it). Measured 2026-10-03 on the
+        # RTX 4070, compositing engine CUDA path, 48 DIFFERENT ROI sizes (a face that moves and
+        # scales): 17.7 ms/call with it off, 456 ms/call with it on single-threaded and 485
+        # ms/call at 8 threads (7.5 off): it autotunes on every new shape. For ONE repeated shape
+        # it bought nothing (17.4 vs 17.5 ms; the GPEN 256 Pro GPU filter, fixed shape, 1.6 vs
+        # 1.6 ms). It also made results depend on the thread: PyTorch's cuDNN benchmark cache is
+        # thread-local, so each worker autotunes alone and can pick a different algorithm, and
+        # the same input came back one level different on ~4 pixels (430 of 960 concurrent
+        # calls differed from the single-thread result once core was imported).
+        torch.backends.cudnn.benchmark = False
     except Exception as _degrade_error:
         # Backend selection remains functional even if a CUDA runtime is only
         # partially initialised at import time.

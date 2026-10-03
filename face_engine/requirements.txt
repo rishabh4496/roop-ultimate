@@ -1,0 +1,12 @@
+# Packages face_engine imports that the roop app itself does not need. The app's venv
+# (app/env) must have them to run face_engine/tests; a missing one is a test FAILURE by design
+# (conftest.py: "a missing package is then a real failure" outside the light profile).
+#
+# PyAV: frame-exact decode / segments / remux (media/capturer.py, media/decoder.py).
+# 17.x is what every figure in README.md was measured with. `--no-deps` is enough (it bundles
+# its own FFmpeg libraries) and avoids touching the app's pinned torch / numpy / opencv.
+av>=17,<18
+# kornia: GPU warps and paste-back (pipeline/aligner.py, boosted/xseg_masker.py). Install with
+# `pip install --no-deps kornia kornia_rs` for the same reason.
+kornia>=0.8,<0.9
+kornia_rs>=0.2

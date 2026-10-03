@@ -7,6 +7,42 @@ folder). Entries before 2026-09-21 were moved here from the README on 2026-09-22
 
 ## 2026-10-03
 
+- **Every test failure fixed (full suite green); two real defects found on the way.**
+  * **`torch.backends.cudnn.benchmark = True` removed from `roop/core.py`.** It made
+    `tests/test_stage8_compositing.py::test_thread_safety` fail in every full run and pass alone, and
+    it was a real defect: with it on, a ROI whose size changes every frame (a face that moves and
+    scales) re-autotunes cuDNN on each new shape - the compositing engine's CUDA path measured 17.7
+    ms/call off and 456 ms/call on single-threaded (485 at 8 threads, 7.5 off); for one repeated shape
+    it bought nothing (17.4 vs 17.5 ms; GPEN 256 Pro GPU filter 1.6 vs 1.6). PyTorch's cuDNN benchmark
+    cache is thread-local, so each worker autotuned alone and could pick a different algorithm: with
+    `roop.core` imported (what a full run adds), 430 of 960 concurrent calls differed by one level on
+    ~4 pixels from the single-thread result. `app/tests/test_cudnn_determinism.py` pins the flag and the
+    concurrent determinism (the same check diverges in 44 of 128 calls with the old flag).
+  * **`Enhance_GPEN256Pro` swallowed a model-lifecycle fault silently** (`except Exception: pass`), which
+    `test_enhancer_guards` forbids; now reports through `swallowed()` like its siblings.
+  * **Stale test expectations updated** (not code): `test_hardware_portability` still assumed the
+    12 GB desktop's thread knee is 10, but Rule 4 (>= 11 GB and >= 16 cores) makes it 20 and the loader
+    deliberately migrates an unstamped legacy value below the derived one; the "same machine" test now
+    writes the user-pinned stamp the app writes, the "unstamped" test computes its expectation from the
+    machine's own derivation, and the derive test covers 12 GB/24 cores -> 20 and 12 GB/12 cores -> 10.
+    `face_engine` `test_zoo_declarations_are_complete` / `test_unavailable_model_fails_clearly` knew 25
+    models and 6 swappers; the zoo has 32 entries and 8 swappers. The "unique filenames" assertion now checks what it
+    meant (different models never share a file): four entries are deliberate ALIASES of one artifact
+    (same file, URL, size and SHA-256).
+  * **face_engine's environment, declared and verified.** 35 failures and 12 errors were
+    `No module named 'av'` / `'kornia'`: `face_engine/requirements.txt` now lists both (installed with
+    `--no-deps`; torch, numpy, opencv and onnxruntime unchanged). Tests that need a compiled
+    TensorRT engine fell back to an in-process build (GPEN-512 403 s, xseg_3 509 s, hyperswap_1a 224 s on
+    an RTX 4070) and a run looked hung for 20+ minutes; `tools/compile_engines.py --models all` builds all
+    ten once (verified for fidelity), and the Ultra Restore end-to-end tests and the web UI test now
+    SKIP with the command to run when the engine is absent (checked without building anything).
+  * **`web_ui` did not build from a clean `npm ci`:** `vite.config.ts` uses `process` and `tsc -b`
+    failed with TS2591 because `@types/node` was never a dependency and `tsconfig.json` lists `types`
+    explicitly. Added `@types/node` 22.20.5 and `"node"` to `types`; build and the 26 vitest tests pass, and
+    the browser end-to-end test (real Chromium, real server) passes.
+  * Detector latency test (`test_1080p_latency_on_rtx_4070`): first RUN of it here, because it was skipped until the SCRFD engine existed. Median of one 200-iteration block measured 1.92-2.06 ms on an idle 4070 against a hard 2.0 ms, a coin flip (README 1.75 ms was another day); now best of three blocks against 2.2 ms (an engine optimised for 384x640 instead of 640x640 was only ~3% faster, so not changed).
+  * Result: `face_engine` 283 passed / 2 xfailed (~6 min); app + root trees 4963 passed / 24 skipped / 2 xfailed, 0 failed.
+
 - **`pinokio_batch_runner.py` had never rendered anything; fixed, and a failed video no longer kills
   the queue.** The Stage 9 brief asks for a 50-job batch through it. The first real run died on the
   first frame of the first video: `TypeError: QueueProgress.__init__() got multiple values for keyword

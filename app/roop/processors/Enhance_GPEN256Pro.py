@@ -268,8 +268,12 @@ class Enhance_GPEN256Pro:
                 init_time="initialized",
                 session_id=id(self.session),
             )
-        except Exception:
-            pass
+        except Exception as _e_reg:
+            # Same convention as Enhance_RestoreFormerPPlus: a lifecycle-registry fault
+            # must not cost the model, but it must not be silent either.
+            from roop.degrade import swallowed as _swallowed
+            _swallowed("roop/processors/Enhance_GPEN256Pro.py:model_lifecycle", _e_reg,
+                       "model lifecycle register fallback")
 
     def Release(self):
         line = self.cost_summary()

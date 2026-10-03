@@ -49,6 +49,11 @@ def server(tmp_path_factory: pytest.TempPathFactory):  # type: ignore[no-untyped
     drv = _driver()
     if drv.find_browser() is None:
         pytest.skip("no Chromium-based browser on this host")
+    # The live preview starts a TensorRT build of the swapper when no compiled engine exists
+    # (~4 min for hyperswap_1a_256 on an RTX 4070), longer than this test waits for the preview.
+    if not list((REPO / ".cache" / "trt_engines").glob("hyperswap_1a_256_sm*_fp16_b*.engine")):
+        pytest.skip("no compiled hyperswap_1a_256 engine; run "
+                    "`python tools/compile_engines.py --models swapper` once (minutes)")
     from face_engine.tests.test_server import (
         _analysis,  # noqa: F401 - ensures models resolve
     )

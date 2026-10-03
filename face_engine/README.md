@@ -1216,3 +1216,19 @@ once a source exists.
 python -m pytest face_engine/tests
 FACE_ENGINE_REQUIRE_TRT=1 python -m pytest face_engine/tests   # fail if TensorRT is not granted
 ```
+
+Prerequisites a fresh checkout does not have (all gitignored or not installed), each of which
+makes tests FAIL or SKIP rather than pass:
+
+* **Packages** the app does not need: `pip install --no-deps -r face_engine/requirements.txt`
+  (PyAV for decode/remux, kornia for the GPU warps). Without PyAV about 40 tests fail with
+  `No module named 'av'`.
+* **Compiled TensorRT engines** (`.cache/trt_engines`, built per GPU):
+  `python tools/compile_engines.py --precision fp16 --models all` once. Measured on an RTX 4070:
+  GPEN-512 403 s, xseg_3 509 s, hyperswap_1a_256 224 s, retinaface_r50 217 s, GPEN-1024 151 s,
+  inswapper 102 s, bisenet 80 s, scrfd 61 s (the three hyperswap variants share most of it).
+  Without them the Ultra Restore end-to-end tests and the web UI test skip with the command to
+  run; before those guards an in-process build inside the test made a run look hung for 20+
+  minutes (other tests still fall back to building their own session). With the engines the whole
+  tree is 278 passed in ~6 minutes.
+* **The built web UI** for `test_web_ui_e2e.py`: `npm ci && npm run build` in `web_ui/`.

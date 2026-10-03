@@ -358,11 +358,25 @@ def test_zoo_declarations_are_complete() -> None:
                 "hyperswap_1a_256", "hyperswap_1b_256", "hyperswap_1c_256", "alphaface_256",
                 "inswapper_128", "inswapper_128_fp16", "xseg", "xseg_3", "bisenet_resnet34", "gpen_bfr_512", "gpen_bfr_1024",
                 "gpen_bfr_2048", "restoreformer_plus_plus",
+                # added after this list was written (all pinned + sized, so the integrity
+                # assertions below cover them): the hififace / hyperswap-256 swappers and their
+                # CrossFace embedder, the DFL XSeg v2 / face-occluder v3 / SAM2 occluders and
+                # the BiSeNet-34 parser.
+                "hififace_256", "crossface_hififace", "hyperswap_256", "dfl_xseg_v2",
+                "face_occluder_v3", "face_parser_bisenet34", "sam2_hiera_tiny",
                 *(f"liveportrait_{k}" for k in ("appearance", "motion", "warping", "stitching",
                                                 "eye", "landmark"))}
     assert set(MODEL_ZOO) == expected
-    filenames = [s.filename for s in MODEL_ZOO.values()]
-    assert len(filenames) == len(set(filenames))
+    # Two specs may share a file only as ALIASES of one artifact (hyperswap_256 = hyperswap_1a_256,
+    # face_occluder_v3 = xseg_3, dfl_xseg_v2 = xseg, face_parser_bisenet34 = bisenet_resnet34):
+    # identical bytes, so a download of either can never clobber the other. Different models
+    # writing one filename is the bug this guards.
+    by_file: dict[str, list] = {}
+    for s in MODEL_ZOO.values():
+        by_file.setdefault(s.filename, []).append(s)
+    for filename, specs in by_file.items():
+        assert len({(s.sha256, s.size, s.urls) for s in specs}) == 1, (
+            f"{filename}: {[s.name for s in specs]} are different artifacts under one filename")
     for spec in MODEL_ZOO.values():
         # A URL without a pinned hash would download unverified bytes.
         assert spec.downloadable == spec.pinned, spec.name
@@ -376,7 +390,8 @@ def test_unavailable_model_fails_clearly(tmp_path: Path) -> None:
     registry = build_default_registry(tmp_path)
     with pytest.raises(ModelUnavailableError, match="hrffa"):
         registry.ensure("hrffa", show_progress=False)
-    assert len(registry.by_task(ModelTask.SWAP)) == 6
+    # hyperswap 1a/1b/1c/256, inswapper 128 (+fp16), alphaface, hififace
+    assert len(registry.by_task(ModelTask.SWAP)) == 8
 
 
 class _FakeResponse:

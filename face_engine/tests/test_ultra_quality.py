@@ -355,6 +355,16 @@ def test_end_to_end_routes_restores_and_stays_on_the_gpu(gpu: dict[str, Any], wi
     from face_engine.enhancers import UltraRestorer
     from face_engine.pipeline.masker import GPUMasker
 
+    # Without a compiled engine the restorer falls back to an in-process ONNX Runtime /
+    # TensorRT build of the GPEN network: 400+ s for GPEN-512 on an RTX 4070 (150 s for 1024),
+    # which reads as a hung test run. Check the compiled engine WITHOUT building anything
+    # (`_need_trt` goes through `uses_tensorrt`, whose fallback is that very build).
+    from face_engine.core.trt_compiler import aot_engine
+    model = "gpen_bfr_512" if route == Route.GPEN_512 else "gpen_bfr_1024"
+    if aot_engine(gpu["ure"].model_paths[model], gpu["ure"].precision, gpu["engine"].config) is None:
+        pytest.skip(f"no compiled {model} fp16 engine; run "
+                    f"`python tools/compile_engines.py --models {model}` once (minutes)")
+
     frame, kps, boxes = gpu["frames"][width]
     parser = GPUMasker(gpu["engine"], bisenet_path=gpu["reg"].ensure("bisenet_resnet34"))
     out = UltraRestorer(gpu["ure"], parser=parser).process(frame, kps, boxes, reference=frame)
