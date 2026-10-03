@@ -5,6 +5,53 @@ full session record is [`SESSION_LOGS.md`](SESSION_LOGS.md); the running enginee
 state lives outside the repository (`RECODE_STATUS.md` in the operator's `roop-keep`
 folder). Entries before 2026-09-21 were moved here from the README on 2026-09-22.
 
+## 2026-10-04
+
+- **"The fps collapses after a while" is the footage getting busier, not the render degrading (measured on
+  a live 54,714-frame job and reproduced from fresh processes).** Job: 1276x716, hyperswap + Restore Ultra
+  + XSeg, TensorRT/mixed, 10 stabilization workers, i9-14900K + RTX 4070. True fps per 3,600-frame part
+  (from the `[Resume] part N written` times): 38 (frames 3.6-7.2k) -> 22 -> 19 -> 13 -> 10 -> 9 -> **7.8**
+  (39.6-43.2k) -> **16.6** (43.2-46.8k) -> 10.7 -> 9.1; whole job 13.5 fps avg. It recovers, so it is not
+  monotonic ageing. The same frames rendered by a FRESH backend (slice checkpoints through
+  `/api/projects/<id>/resume`, 1,500 frames each) gave the same rate for the same position, so process age,
+  leaked state, thermals and host memory are all excluded: frames 3.6-5.1k **33.6 / 33.0 / 35.4** fps,
+  25.2-26.7k **17.4**, 43.2-44.7k **17.2 / 17.6 / 19.3**. Swapped faces per frame (swap audit, which
+  includes the warm-up frames) 0.54 / 1.14 / 1.21, so swapped faces/s was **18.0 / 19.8 / 21.0** - flat,
+  even slightly rising. A two-point fit gives about 8 ms per frame plus **~41 ms per swapped face** (10
+  workers), a ceiling near 24 faces/s; fps = 1 / (that), so fps must fall as faces per frame rise. Same
+  finding as 2026-09-29's 30 -> 16 fps (0.45 -> 1.15 faces/frame).
+  What the live process looked like at 10 fps (py-spy `--gil`, 25 s, no pause): the **GIL was held in 95% of
+  samples**, 2.4 of 32 cores busy, GPU 30% at 2835 MHz with no throttle reason, RSS a 13.6-15.7 GB
+  sawtooth with a ~55 s period (one chunk of frames) and no growth, 0 pages in/out, pagefile 0.7 GB, thread
+  and handle counts flat, and an idle backend back at 4.2 GB afterwards. The GIL profile is flat (~40 host
+  lines at ~1%): Restore Ultra 25%, warm-up frames (re-run and discarded, 24 f blocks / 6 f warm-up) 22%,
+  colour transfer 7.7%, the outcome-guard re-detection (`_verify_after`) 7.2%, masks 5.5%, stabilizer 5.4%.
+  Nothing there scales with elapsed frames. Not found, therefore not "fixed": a leak, an O(frames) scan,
+  throttling or paging. The lever is less host work per face (`phase-12`), not a fix to the drift.
+  **Shipped:** the `[Pipeline]` line now ends with `| 1.20 faces/frame, 21.0 faces/s` (per window and in the
+  closing `done` line), so a busy stretch reads as what it is. It counts faces painted into FINISHED frames
+  (a per-thread tally in `_composite_faces`, read back in `update_progress`; warm-up frames are written off
+  in `_process_block`), which is why it is ~20% under the audit's swapped count. Checked on the real path:
+  0.43 faces/frame @ 35.4 fps = 15.2 faces/s early, 0.97 @ 19.3 = 18.7 faces/s late.
+- **`python run.py --project X.roop --render` had never worked, and its first fix exposed a second silent
+  failure.** (1) `render_project` imported `roop.globals as globals_` and then used the builtin `globals`:
+  `AttributeError: 'builtin_function_or_method' object has no attribute 'output_path'` before any frame.
+  (2) Past that, the render ran on CUDA / fp32 instead of the app's TensorRT / mixed, because the
+  `MODEL_RUNTIME_INIT` phase that sets `roop.globals.execution_providers` runs in `ui/main.py` only.
+  Restore Ultra's graph then failed on every frame (cuDNN frontend `GRAPH_EXECUTION_FAILED` on
+  `/encoder/downsample/conv_3`), each failure wrote the ORIGINAL frame, and the run still ended "Done" at
+  17 fps - a render that swaps nothing and reads fast. `render_project` now runs that phase with the config
+  first; verified: `provider_active=tensorrt ... precision=mixed`, 0 failed frames, 35.57 fps and 15.2
+  faces/s on frames 3.6-5.1k, the same as the backend. Tests: `test_project_io_nle.py`
+  (`test_render_project_reaches_the_worker`). **Still open:** `--output <dir>` is not honoured by the
+  headless path (the slice outputs landed in `app/output`).
+- **Side finding, not chased: every job after the second in one backend starts with ~2.2 GB less free VRAM
+  and the VRAM governor steps the swap batch 8 -> 4 -> 2 -> 1.** `[VramGovernor]` read 10,575 / 10,510 MB
+  free before jobs 1 and 2, then 8,040 / 8,302 / 8,298 MB before jobs 3-5 (headroom 1.2-2.3 GB, "batch cap
+  1"). fps was unchanged (33.0 vs 33.6 fps; 17.6 vs 17.2) - consistent with cross-frame batching being
+  neutral on this GIL-bound path - so it is a mis-accounting to fix, not a slowdown measured here. Probably
+  the same thing as the "job 0 ~9 fps, later jobs ~7.6" note in the entry below.
+
 ## 2026-10-03
 
 - **More VRAM does not make the render faster (measured on the real backend, 2026-10-04).** The question

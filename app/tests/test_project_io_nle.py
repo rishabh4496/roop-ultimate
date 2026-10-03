@@ -101,6 +101,47 @@ class ProjectIoTests(unittest.TestCase):
             except FileNotFoundError:
                 pass
 
+    def test_render_project_reaches_the_worker(self):
+        """`--project --render` died on its first statement after the loader:
+        `import roop.globals as globals_` was followed by `globals.output_path`,
+        i.e. the builtin `globals()` function, so no headless render ever started."""
+        import types
+        from unittest import mock
+        import roop.globals as globals_
+
+        started, events = [], []
+        fake_api = types.SimpleNamespace(
+            _progress={"processing": False, "error": ""},
+            _start_existing_project=lambda pid, payload: (
+                started.append((pid, payload)) or {"status": "started"}))
+        fake_routes = types.SimpleNamespace(
+            _load_into_runtime=lambda record: events.append("load"))
+        machine = types.SimpleNamespace(
+            execute_phase=lambda phase, fn, *args: events.append(("phase", phase.value, args)))
+        cfg = object()
+        record = {"id": "headless-1", "output": {"directory": str(self.root / "out"),
+                                                 "filename": "clip.mp4"},
+                  "settings": {"payload": {"swap_model": "hyperswap"}}}
+        self.project.write_text(json.dumps(self.document()), encoding="utf-8")
+        saved = (getattr(globals_, "output_path", None),
+                 getattr(globals_, "_project_output_file", None))
+        try:
+            with mock.patch.dict(sys.modules, {"api": fake_api, "routes_projects": fake_routes}), \
+                    mock.patch("roop.startup_state_machine.get_startup_state_machine",
+                               return_value=machine), \
+                    mock.patch.object(project_render, "_ensure_checkpoint", return_value=record):
+                code = project_render.render_project(str(self.project), cfg=cfg)
+            self.assertEqual(code, 0)
+            # The provider phase the UI runs (ui/main.py) must run here too, with the
+            # config, and BEFORE the project loads: otherwise the render stays on the
+            # module default (CUDA, fp32) and silently writes original frames.
+            self.assertEqual(events, [("phase", "MODEL_RUNTIME_INIT", (cfg,)), "load"])
+            self.assertEqual(started, [("headless-1", {"swap_model": "hyperswap"})])
+            self.assertEqual(globals_.output_path, str(self.root / "out"))
+            self.assertEqual(globals_._project_output_file, "clip.mp4")
+        finally:
+            globals_.output_path, globals_._project_output_file = saved
+
 
 class NleInterchangeTests(unittest.TestCase):
     def setUp(self):

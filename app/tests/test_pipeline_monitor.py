@@ -238,6 +238,47 @@ class QueueStateSelectionTest(unittest.TestCase):
         self.assertEqual(state, {'input': (1, 3), 'output': (0, 3)})
 
 
+class FacesTest(unittest.TestCase):
+    """fps alone misreads a render: the cost of a frame is its face count."""
+
+    def test_window_reports_faces_per_frame_and_per_second(self):
+        mon, clock, out = make(every=100)
+        mon.start()
+        for _ in range(100):
+            clock.t += 0.1                            # 10 fps
+            mon.frame_done(work=2)
+        self.assertIn('| 2.00 faces/frame, 20.0 faces/s', out[0])
+
+    def test_faces_per_second_stays_flat_when_fps_halves_as_faces_double(self):
+        mon, clock, out = make(every=100)
+        mon.start()
+        for _ in range(100):
+            clock.t += 0.05                           # 20 fps, 1 face a frame
+            mon.frame_done(work=1)
+        for _ in range(100):
+            clock.t += 0.10                           # 10 fps, 2 faces a frame
+            mon.frame_done(work=2)
+        self.assertIn('20.00 fps', out[0])
+        self.assertIn('10.00 fps', out[1])
+        self.assertTrue(out[0].endswith('1.00 faces/frame, 20.0 faces/s'))
+        self.assertTrue(out[1].endswith('2.00 faces/frame, 20.0 faces/s'))
+
+    def test_a_path_that_cannot_count_faces_prints_the_old_line(self):
+        mon, clock, out = make(every=100)
+        mon.start()
+        run_frames(mon, clock, 100, 0.1)
+        self.assertNotIn('faces', out[0])
+
+    def test_closing_summary_carries_the_whole_run_figure(self):
+        mon, clock, out = make(every=100)
+        mon.start()
+        for _ in range(50):
+            clock.t += 0.1
+            mon.frame_done(work=3)
+        line = mon.finish()
+        self.assertTrue(line.endswith('3.00 faces/frame, 30.0 faces/s'))
+
+
 class WiringTest(unittest.TestCase):
     """The hook must be where every path passes: update_progress, even with no bar."""
 
@@ -248,9 +289,25 @@ class WiringTest(unittest.TestCase):
             self.skipTest('ProcessMgr unavailable: %s' % exc)
         seen = []
         holder = types.SimpleNamespace(_pipeline_monitor=types.SimpleNamespace(
-            frame_done=lambda: seen.append(1)))
+            frame_done=lambda work=0: seen.append(work)))
         ProcessMgr.update_progress(holder, None)      # progress=None returns early
-        self.assertEqual(seen, [1])
+        self.assertEqual(seen, [0])                   # no thread-local tally: nothing to report
+
+    def test_update_progress_reports_only_the_faces_this_thread_painted_since_last_time(self):
+        try:
+            from roop.ProcessMgr import ProcessMgr
+        except Exception as exc:
+            self.skipTest('ProcessMgr unavailable: %s' % exc)
+        seen = []
+        holder = types.SimpleNamespace(
+            _tls=threading.local(),
+            _pipeline_monitor=types.SimpleNamespace(frame_done=lambda work=0: seen.append(work)))
+        holder._tls.faces_painted = 5                 # a warm-up frame painted 5 ...
+        holder._tls.faces_reported = 5                # ... which _process_block wrote off
+        holder._tls.faces_painted += 2                # the real frame painted 2
+        ProcessMgr.update_progress(holder, None)
+        ProcessMgr.update_progress(holder, None)      # a frame with no faces reports 0, not 2 again
+        self.assertEqual(seen, [2, 0])
 
     def test_monitor_is_created_after_prepasses_and_finished_in_cleanup(self):
         here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))

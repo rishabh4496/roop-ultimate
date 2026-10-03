@@ -2670,6 +2670,9 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                         except Exception as _degrade_error:
                             _swallowed("roop/ProcessMgr.py:3521", _degrade_error, "fallback continued")
                             pass
+                    # Warm-up frames paint faces too, but they are discarded: do not
+                    # let the first real frame report them as its own.
+                    self._tls.faces_reported = getattr(self._tls, 'faces_painted', 0)
                     _process_started = time.perf_counter()
                     for ci in range(ca, _base + b):
                         if not roop.globals.processing:
@@ -2958,7 +2961,16 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
         # pipeline monitor can count frames without knowing which path runs.
         monitor = getattr(self, '_pipeline_monitor', None)
         if monitor is not None:
-            monitor.frame_done()
+            # Faces painted by THIS thread since its last report: on the stabilized
+            # path that is exactly the frame it just finished (the block's warm-up
+            # frames are written off in `_process_block`), so fps can be read
+            # beside faces/s -- fps alone falls whenever the footage gets busier.
+            tls = getattr(self, '_tls', None)
+            painted = getattr(tls, 'faces_painted', 0)
+            faces = painted - getattr(tls, 'faces_reported', 0)
+            if tls is not None:
+                tls.faces_reported = painted
+            monitor.frame_done(work=faces)
         if progress is None:
             return
         # Throttle psutil memory probe to 500ms to avoid Windows syscall overhead in worker loops
@@ -4599,6 +4611,11 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                 return (-1e3, 0.0)
 
         order = sorted(range(len(pending)), key=lambda k: _depth(pending[k][1]))
+        # Per-thread tally of faces painted, read back by `update_progress` as the
+        # delta over one finished frame (the pipeline monitor's faces/frame).
+        _tls = getattr(self, '_tls', None)
+        if _tls is not None:
+            _tls.faces_painted = getattr(_tls, 'faces_painted', 0) + len(order)
         # Painted faces first, so `order` and the region keys stay indices into
         # `pending`; the bystanders sit past the end and are claimants only.
         claimants = [f for _, f in pending] + list(bystanders or ())

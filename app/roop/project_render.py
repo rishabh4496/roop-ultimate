@@ -138,10 +138,21 @@ def render_project(project_path: str, *, output: str | None = None, cfg: Any = N
     import api
     import routes_projects
     import roop.globals as globals_
+    from roop.startup_state_machine import (
+        StartupPhase, execute_model_runtime_init, get_startup_state_machine)
+
+    # `roop.globals.execution_providers` is set by this phase, which ui/main.py runs
+    # for the UI backend and a headless render never reaches. Without it the module
+    # default (CUDA, fp32) stays in force: measured 2026-10-04, the swapper ran on
+    # CUDA, Restore Ultra's graph then failed on every frame ("cuDNN frontend ...
+    # /encoder/downsample/conv_3"), each failure wrote the ORIGINAL frame, and the
+    # render still ended "Done" at an impressive fps.
+    get_startup_state_machine().execute_phase(
+        StartupPhase.MODEL_RUNTIME_INIT, execute_model_runtime_init, cfg)
 
     routes_projects._load_into_runtime(record)
-    globals.output_path = record.get("output", {}).get("directory") or globals.output_path
-    globals._project_output_file = (record.get("output") or {}).get("filename") or None
+    globals_.output_path = record.get("output", {}).get("directory") or globals_.output_path
+    globals_._project_output_file = (record.get("output") or {}).get("filename") or None
     response = api._start_existing_project(record["id"], (record.get("settings") or {}).get("payload") or {})
     if not isinstance(response, dict) or response.get("status") != "started":
         print(f"[Project] could not start render: {response}", file=sys.stderr)

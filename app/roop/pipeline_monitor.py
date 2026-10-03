@@ -9,9 +9,15 @@ bottleneck verdict only printed once, at the end, and only with diagnostics on.
 This logs one line per window of ``every`` finished frames (default 100,
 ``ROOP_PIPELINE_LOG_EVERY``; 0 turns it off):
 
-    [Pipeline] frames 300 | 7.31 fps (avg 7.29) | in 14.2/20 (empty 0%) | out 0.3/20 (full 0%) | OK
+    [Pipeline] frames 300 | 7.31 fps (avg 7.29) | in 14.2/20 (empty 0%) | out 0.3/20 (full 0%) | OK | 1.20 faces/frame, 8.8 faces/s
 
-and a closing summary. Queue state is SAMPLED on every finished frame rather than
+and a closing summary. The trailing faces figure appears once the renderer reports
+how many faces it painted into a finished frame (``frame_done(work=n)``). It is there
+because frames/s alone misreads a render: the cost of a frame is its face count, so
+fps falls whenever the footage gets busier even though faces/s -- the real
+throughput -- stays flat (measured 2026-10-04 on a 54,714-frame render: 33 fps at 0.54
+faces/frame, 17 fps at 1.2, both ~18-21 faces/s, reproduced from a fresh process).
+Queue state is SAMPLED on every finished frame rather than
 read once at the tick, because a single instantaneous read of a queue that
 oscillates says nothing; the verdict is the share of samples in the window where
 the input side was empty (workers had nothing to do: decode-starved) or the
@@ -65,12 +71,14 @@ class PipelineMonitor:
         self._tot_samples = 0
         self._tot_starved = 0
         self._tot_backed_up = 0
+        self._tot_work = 0       # faces painted into finished frames, whole run
         self.lines = []          # every emitted line, for tests and diagnostics
 
     # -- window bookkeeping -------------------------------------------------
     def _reset_window(self, now):
         self._w_t0 = now
         self._w_frames = 0
+        self._w_work = 0
         self._w_samples = 0
         self._w_in_empty = 0
         self._w_out_full = 0
@@ -109,8 +117,11 @@ class PipelineMonitor:
             self._w_out_full += 1
 
     # -- the hook -----------------------------------------------------------
-    def frame_done(self):
-        """Call once per finished frame. Safe from any thread."""
+    def frame_done(self, work: int = 0):
+        """Call once per finished frame. Safe from any thread.
+
+        ``work`` is the number of faces painted into that frame (0 when the path
+        cannot say); it only feeds the faces/frame and faces/s figures."""
         if self.every <= 0:
             return
         with self._lock:
@@ -119,6 +130,9 @@ class PipelineMonitor:
                 self._reset_window(self._t0)
             self.frames += 1
             self._w_frames += 1
+            if work > 0:
+                self._w_work += work
+                self._tot_work += work
             self._sample()
             if self._w_frames >= self.every:
                 self._tick()
@@ -149,6 +163,9 @@ class PipelineMonitor:
         line = '[Pipeline] frames %d | %.2f fps (avg %.2f) | %s | %s' % (
             self.frames, self._w_frames / win, self.frames / total, queues,
             self._verdict())
+        if self._tot_work > 0:
+            line += ' | %.2f faces/frame, %.1f faces/s' % (
+                self._w_work / max(1, self._w_frames), self._w_work / win)
         self._tot_samples += self._w_samples
         self._tot_starved += self._w_in_empty
         self._tot_backed_up += self._w_out_full
@@ -183,5 +200,8 @@ class PipelineMonitor:
                 tail = 'queues n/a'
             line = '[Pipeline] done: %d frames in %.1fs = %.2f fps | %s' % (
                 self.frames, elapsed, self.frames / elapsed, tail)
+            if self._tot_work > 0:
+                line += ' | %.2f faces/frame, %.1f faces/s' % (
+                    self._tot_work / max(1, self.frames), self._tot_work / elapsed)
             self._emit_line(line)
             return line

@@ -90,6 +90,10 @@ removing work per face.**
   pixel threshold.
 - **`--threads 20`** on every bench run.
 - **Report processing fps to the user roughly every 3 minutes** during a run.
+- **Read faces/s beside fps.** The `[Pipeline]` line ends `N faces/frame, M faces/s`. fps falls
+  whenever the footage gets busier (measured twice: 33 -> 17 fps with faces/s flat at 18-21,
+  reproduced from a fresh process, so not leak/thermals/RAM); it is a regression only if faces/s
+  falls. To tell content from process age, re-render the same slice in a fresh backend.
 - **One render at a time.** A render holds ~12-15 GB; anything else that loads models
   kills it.
 - **Measure model cost through `angle_bench.init_pipeline`**, never a bare python process:
