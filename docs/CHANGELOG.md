@@ -7,6 +7,24 @@ folder). Entries before 2026-09-21 were moved here from the README on 2026-09-22
 
 ## 2026-10-03
 
+- **More VRAM does not make the render faster (measured on the real backend, 2026-10-04).** The question
+  was whether the 7.4 of 12 GB a render uses can be spent on speed. Real backend, `config.yaml` as shipped,
+  `/api/swap` on s3.mp4 frames 0-200 (hyperswap + Restore Ultra), three consecutive renders per arm, NVML
+  sampling; steady-state loop fps (jobs 1-2; job 0 reads ~9 in every arm) and VRAM peak:
+  shipped pools 2/2/2, four arms: 7.57 / 7.55 / 7.66 / 7.61 / 7.56 / 7.34 fps, **7.1-7.3 GB**;
+  pools 4/4/4: 6.70 / 6.46 fps, **11.7 GB** (-12%); pools 3/3/3: 7.35 then 4.77 fps, 9.6 GB (degrades
+  across renders); `ROOP_CUDA_ARENA_STRATEGY=kNextPowerOfTwo`: 7.60 / 7.65 fps, 7.2 GB (no effect). The
+  swap batch is already at its engine's 8 and the provider limit is already 10 GiB. GPU utilisation
+  averaged ~30% over a job either way, so the card is not the constraint a bigger pool would relieve;
+  it matches the earlier pool / enhancer-pool / detmask-pool results (monotonically worse past 2).
+  The shipped 2/2/2 is the best point and the ~3 GB left free is the safety margin
+  (`vram_safety_margin_gb: 3`), not waste. Two traps hit while measuring: a test-rig process sits at
+  12.0 GB by itself (it keeps a second set of models resident), so it cannot answer a headroom question,
+  and killing a python process does not stop a background shell loop that launches the next arm
+  (overlapping renders produced 12 GB / 1 fps readings that were pure contention).
+  Side observation, not chased: in every arm, job 0 of a fresh backend ran ~9 fps and the next
+  renders in the same backend ~7.6 (-17%).
+
 - **Every test failure fixed (full suite green); two real defects found on the way.**
   * **`torch.backends.cudnn.benchmark = True` removed from `roop/core.py`.** It made
     `tests/test_stage8_compositing.py::test_thread_safety` fail in every full run and pass alone, and
