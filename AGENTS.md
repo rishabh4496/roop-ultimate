@@ -80,6 +80,14 @@ removing work per face.**
   (`python run.py --benchmark --benchmark-mode regression`, ~3 min on the 4070). It is the
   only check that fails when a render stops swapping: 4bd577d shipped a render that swapped
   nothing with the suite green. See `docs/development/REGRESSION_BENCHMARK.md`.
+- **A render's PIXELS depend on free RAM.** The stabilizer block size is derived from free
+  RAM at render start (12-frame vs 16-frame blocks measured: same config, face SSIM 0.971,
+  LPIPS 0.030). Pin `ROOP_STAB_CHUNK_MB` for any fidelity A/B or golden comparison and read
+  the `[Stabilize] parallel: ... blocks x Nf` line to prove both arms took one path.
+- **Fidelity / A-V / leak regression:** `pytest tests/test_performance_regression.py`
+  (~25 min; a bulk `pytest` deselects its `perf` tests). See
+  `docs/development/PERFORMANCE_REGRESSION.md`. Its "did it swap" gate is identity, not a
+  pixel threshold.
 - **`--threads 20`** on every bench run.
 - **Report processing fps to the user roughly every 3 minutes** during a run.
 - **One render at a time.** A render holds ~12-15 GB; anything else that loads models

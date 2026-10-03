@@ -47,6 +47,10 @@ os.environ.setdefault("PYTHONIOENCODING", "utf-8")
 def pytest_configure(config):
     config.addinivalue_line(
         "markers",
+        "perf: a multi-minute production render (tests/test_performance_regression.py). "
+        "Excluded from a bulk run; run it by naming the file or with `-m perf`.")
+    config.addinivalue_line(
+        "markers",
         "gpu: needs a CUDA/TensorRT device or the full ML stack (torch, onnxruntime, "
         "insightface, model files). CI runs with -m 'not gpu'.")
     if LIGHT and not any(isinstance(f, _HeavyImportSkips) for f in sys.meta_path):
@@ -102,9 +106,27 @@ def pytest_make_collect_report(collector):
     report.longrepr = (str(getattr(collector, "path", collector.name)), 0, f"Skipped: {reason}")
 
 
+def _perf_requested(config) -> bool:
+    """True when the caller asked for the perf suite: `-m perf`, or a path / node id
+    naming a perf module on the command line (`pytest tests/test_performance_regression.py`)."""
+    if "perf" in (config.getoption("-m", default="") or ""):
+        return True
+    return any("test_performance_regression" in str(arg) for arg in config.invocation_params.args)
+
+
 def pytest_collection_modifyitems(config, items):
     """Explicit `gpu` marks are the contract; in the light profile, tests that
-    import the stack at module level never reach here (skipped at import)."""
+    import the stack at module level never reach here (skipped at import).
+
+    `perf` tests are real multi-minute production renders (tests/test_performance_regression.py:
+    ~25 min on the 4070, ~12 GB of RAM). A bulk `pytest` run does not include them; naming
+    the file or passing `-m perf` does. They are DESELECTED, not skipped, so a bulk run's
+    skip count does not hide them as "passed"."""
+    if not _perf_requested(config):
+        perf = [item for item in items if item.get_closest_marker("perf")]
+        if perf:
+            config.hook.pytest_deselected(items=perf)
+            items[:] = [item for item in items if not item.get_closest_marker("perf")]
     if not LIGHT:
         return
     for item in items:

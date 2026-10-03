@@ -805,11 +805,22 @@ def restore_audio(intermediate_video: str, original_video: str, trim_frame_start
            '-c:v', 'copy', '-c:a', 'copy',
            '-vsync', 'cfr', '-fps_mode', 'cfr',
            '-avoid_negative_ts', 'make_zero',
-           '-shortest',
           ]
     )
-    if duration is not None:
-        commands += ['-t', format(duration, '.6f')]
+    # Bounded by the VIDEO's own length, never `-shortest`. Source audio ends a
+    # fraction of a frame before its video as a matter of course (AAC packets are
+    # 21.3 ms), and `-shortest` then dropped the render's LAST frame: a 90-frame
+    # 29.97 fps render came out as 89 (found 2026-10-03 by
+    # tests/test_performance_regression.py; the trimmed branch above fixed the same
+    # defect for b1.mp4, 120 -> 117, and this untrimmed branch kept it). A render
+    # that was STOPPED early is shorter than its trim, so this bound still keeps the
+    # audio from running on past the last frame.
+    video_s = _stream_duration(intermediate_video, 'v:0')
+    bounds = [b for b in (duration, video_s) if b is not None]
+    if bounds:
+        commands += ['-t', format(min(bounds), '.6f')]
+    else:
+        commands += ['-shortest']     # video length unknown: the old behaviour
     if final_video.lower().endswith(('.mp4', '.mov', '.m4v')):
         commands += ['-movflags', '+faststart']
     commands += [final_video]

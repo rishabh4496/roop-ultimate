@@ -7,6 +7,23 @@ folder). Entries before 2026-09-21 were moved here from the README on 2026-09-22
 
 ## 2026-10-03
 
+- **An untrimmed render lost its last video frame whenever the source audio ended before the video
+  (`util_ffmpeg.restore_audio`).** A 90-frame 29.97 fps render came back with 89: the single-command
+  branch (used when the trim starts at 0) ended with `-shortest`, and source audio routinely ends a
+  fraction of a frame early (an AAC packet is 21.3 ms). The trimmed branch had been fixed for the same
+  defect (b1.mp4, 120 -> 117); this one had not. It is now bounded by the render's own video length
+  (`-t`), as the trimmed branch is. Found by the new `tests/test_performance_regression.py` A/V check;
+  `app/tests/test_restore_audio_frame_count.py` (real ffmpeg, fails without the fix).
+  `scripts/verify_roop_keep.py` also found no `ffprobe` on Pinokio's PATH and reported every output
+  "unreadable"; it now falls back to the app's resolver.
+- **Performance / fidelity regression suite (`tests/test_performance_regression.py`,
+  [`docs/development/PERFORMANCE_REGRESSION.md`](development/PERFORMANCE_REGRESSION.md)).** Production
+  renders of a still, 1080p and 4K, PSNR/SSIM/LPIPS vs a baseline, an identity "did it swap" gate, A/V
+  timing and a leak soak. Measured finding: a render is not a pure function of its config - the
+  stabilizer block size follows FREE RAM, and 12- vs 16-frame blocks differ by face SSIM 0.971 / LPIPS
+  0.030 on one config. The rig pins `ROOP_STAB_CHUNK_MB`. The render tests carry a `perf` marker and are
+  deselected from a bulk `pytest` run.
+
 - **Startup canary for TensorRT swapper engines (`roop/swap_canary.py`, hooked in
   `FaceSwapInsightFace._canary_gate`).** An inswapper TensorRT FP16/"mixed" engine can build, warm up,
   report the TensorRT provider and run at full speed while emitting the WRONG picture for every face:

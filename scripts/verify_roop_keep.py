@@ -172,9 +172,25 @@ def _fraction(value: Any) -> Optional[float]:
         return None
 
 
+def locate_ffprobe() -> Optional[str]:
+    """PATH first, then the app's own resolver (Pinokio puts no ffprobe on PATH, so
+    the PATH-only lookup made every timing check report "unreadable")."""
+    found = shutil.which("ffprobe")
+    if found:
+        return found
+    app_dir = str(REPO_ROOT / "app")
+    if app_dir not in sys.path:
+        sys.path.insert(0, app_dir)
+    try:
+        from roop.ffmpeg_path import ffprobe_binary
+        return ffprobe_binary()
+    except Exception:
+        return None
+
+
 def timestamp_integrity(path: Path) -> Dict[str, Any]:
     """Read container timing without decoding/re-encoding the evidence video."""
-    ffprobe = shutil.which("ffprobe")
+    ffprobe = locate_ffprobe()
     if not ffprobe or not path.is_file():
         return {"available": False, "path": str(path)}
     command = [ffprobe, "-v", "error", "-show_streams", "-show_format", "-of", "json", str(path)]

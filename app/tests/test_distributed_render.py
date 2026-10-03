@@ -90,3 +90,102 @@ def test_chunk_project_is_local_and_audio_disabled(tmp_path):
     assert saved["settings"]["blend_ratio"] == .85
     assert saved["render"]["filename"] == "out.mp4"
     assert dist.project_io.resolve_media(saved["media"]["sources"][0], str(project)) == str(asset)
+
+
+# --- multi-GPU worker isolation (Stage 5) -----------------------------------
+# One GPU is all this rig has, so the orchestration is exercised with stubs; what is
+# asserted is the contract that makes the CUDA-stream work safe across workers: each
+# worker is its OWN process (torch streams, the caching allocator and cuBLAS workspaces
+# are process-private), pinned to exactly one physical GPU and addressing it as device
+# 0, and no GPU ever runs two chunks at once.
+def _stub_render_distributed(monkeypatch, tmp_path, gpus, n_chunks, render_seconds=0.05):
+    import sys
+    import threading
+    import time
+    import types
+
+    source = tmp_path / "target.mp4"
+    source.write_bytes(b"x")
+    document = {"media": {"target": {}, "sources": []}, "timeline": {}, "settings": {}}
+    chunks = [dist.Chunk(i, i * 10, (i + 1) * 10, Fraction(i), Fraction(i + 1))
+              for i in range(n_chunks)]
+    monkeypatch.setattr(dist.project_io, "load_project", lambda p: document)
+    monkeypatch.setattr(dist.project_io, "resolve_media", lambda ref, p: str(source))
+    monkeypatch.setattr(dist, "plan_chunks", lambda *a, **k: (chunks, "h264", Fraction(10)))
+    monkeypatch.setattr(dist, "detect_gpus", lambda: list(gpus))
+    monkeypatch.setattr(dist, "copy_slice",
+                        lambda src, chunk, codec, dest: Path(dest).write_bytes(b"s"))
+
+    def project_for_chunk(doc, project_path, src, chunk, output, destination):
+        Path(destination).write_text(json.dumps({"id": f"p{chunk.index}"}), encoding="utf-8")
+    monkeypatch.setattr(dist, "_project_for_chunk", project_for_chunk)
+    monkeypatch.setattr(dist, "_export_elementary", lambda c, o, codec: Path(o).write_bytes(b"e"))
+    monkeypatch.setattr(dist, "_signature", lambda path: ("h264", 1920, 1080))
+    monkeypatch.setattr(dist, "_duration",
+                        lambda path: float(sum(c.frames for c in chunks)) / 10
+                        if path.endswith("joined.mp4") or path.endswith("final.mp4")
+                        else 1.0)
+    total = sum(c.frames for c in chunks)
+    monkeypatch.setattr(dist, "_count",
+                        lambda path: total if path.endswith(("joined.mp4", "final.mp4")) else 10)
+
+    checkpoint = types.ModuleType("project_checkpoint")
+    checkpoint.project_path = lambda cid: str(tmp_path / f"{cid}.ckpt")
+    monkeypatch.setitem(sys.modules, "project_checkpoint", checkpoint)
+    util = types.ModuleType("roop.util_ffmpeg")
+    util.restore_audio = lambda joined, audio, a, b, out: Path(out).write_bytes(b"o") or True
+    monkeypatch.setitem(sys.modules, "roop.util_ffmpeg", util)
+
+    class Cfg:
+        output_video_codec = "libx264"
+        output_video_format = "mp4"
+        clear_output = False
+        video_swapping_method = "In-Memory processing"
+    settings = types.ModuleType("settings")
+    settings.Settings = lambda path: Cfg()
+    monkeypatch.setitem(sys.modules, "settings", settings)
+
+    calls, active, overlaps, lock = [], {}, [], threading.Lock()
+
+    def fake_run(command, *, timeout=None, env=None, cwd=None):
+        if "--render" in command:
+            device = env["CUDA_VISIBLE_DEVICES"]
+            with lock:
+                calls.append({"command": list(command), "env": dict(env), "cwd": cwd,
+                              "thread": threading.get_ident()})
+                if active.get(device):
+                    overlaps.append(device)
+                active[device] = active.get(device, 0) + 1
+            time.sleep(render_seconds)
+            Path(command[command.index("--output") + 1]).write_bytes(b"r")
+            with lock:
+                active[device] -= 1
+        elif command[-1].endswith("joined.mp4"):
+            Path(command[-1]).write_bytes(b"j")
+        return types.SimpleNamespace(stdout="", stderr="", returncode=0)
+    monkeypatch.setattr(dist, "_run", fake_run)
+    # the stub final file is named by the caller; give _count/_duration their names
+    final = str(tmp_path / "final.mp4")
+    dist.render_distributed(str(tmp_path / "job.roop"), final, work_dir=str(tmp_path / "w"))
+    return calls, overlaps
+
+
+def test_each_worker_is_a_separate_process_pinned_to_one_gpu(monkeypatch, tmp_path):
+    calls, overlaps = _stub_render_distributed(monkeypatch, tmp_path, ["GPU-a", "GPU-b"], 6)
+    assert len(calls) == 6                                   # every chunk rendered once
+    for call in calls:
+        command = call["command"]
+        assert command[0] == sys.executable                  # a child process, not a thread
+        assert command[command.index("--cuda_device_id") + 1] == "0"
+        assert call["env"]["CUDA_VISIBLE_DEVICES"] in ("GPU-a", "GPU-b")
+        assert "," not in call["env"]["CUDA_VISIBLE_DEVICES"]    # exactly one GPU
+    assert {c["env"]["CUDA_VISIBLE_DEVICES"] for c in calls} == {"GPU-a", "GPU-b"}
+    assert overlaps == []                                    # no GPU ran two chunks at once
+
+
+def test_workers_never_outnumber_chunks_and_never_share_a_gpu(monkeypatch, tmp_path):
+    calls, overlaps = _stub_render_distributed(monkeypatch, tmp_path,
+                                               ["GPU-a", "GPU-b", "GPU-c"], 2)
+    assert len(calls) == 2
+    assert len({c["env"]["CUDA_VISIBLE_DEVICES"] for c in calls}) == 2   # one chunk per GPU
+    assert overlaps == []
