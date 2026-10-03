@@ -7,6 +7,34 @@ folder). Entries before 2026-09-21 were moved here from the README on 2026-09-22
 
 ## 2026-10-03
 
+- **Matte blur / erode / dilate ran over the WHOLE frame; now over the matte's support, bit-identically
+  (`roop/mask_roi.py`).** The Stage 7 brief asked for the mask feather chain on the GPU. Instrumenting
+  `cv2` through a real 1080p render found the real defect first: the paste matte is non-zero around one
+  face, yet `blur_area` (3x3 blur, elliptical erode, a Gaussian ~10% of the face wide) and
+  `create_landmark_mask` (hull dilate) ran on the full 1920x1080 uint8 frame: GaussianBlur k105-113
+  ~77 ms/call, dilate 39-43 ~43 ms, erode 27-29 ~19 ms, ~224 CPU-ms per frame at the app's
+  single-threaded cv2 (`tools/profile_cv2_mask_ops.py`). `mask_roi` runs the SAME cv2 call on the
+  matte's bounding box padded by 2r+2 and writes into a zero frame; outside the box the input is 0 and
+  blur/erode/dilate of 0 is 0, so it is exact: `app/tests/test_mask_roi.py` asserts `np.array_equal`
+  against cv2 (blobs on every frame edge, thin bands, islands, single pixels, kernels to 111, ellipse
+  and rect). Real renders: 246-frame 1080p, 8 counterbalanced arms ROI on/off, **all eight outputs
+  byte-identical** (md5), and the perf suite's pre-change goldens still match bit for bit. **End-to-end
+  fps is NEUTRAL** (4.69 vs 4.67; spread +-0.1) as the GPU-bound frame predicts; process CPU time -4.3%
+  (230 vs 240 CPU-s per render); in-render the k~110 blur dropped 77 -> ~24 ms/call. `ROOP_MASK_ROI=0`
+  restores the full-frame calls. Gain scales with how small the face is in the frame (3.0x at a 250 px
+  face, 1.9x at 450 px).
+- **GPU mask morphology (Stage 7 brief): measured, not built.** `tools/bench_mask_gpu_morphology.py`:
+  torch `conv2d` Gaussian matches cv2 to 0.004 (the brief's 0.01 is met) and the whole chain is
+  0.2-4 ms on the GPU against 2-130 ms of cv2, BUT `max_pool2d` erosion/dilation is a SQUARE; the
+  shipped erode (`blur_area`) and hull dilate use `MORPH_ELLIPSE`, and the square differs from cv2's
+  ellipse by up to 1.0 per pixel (whole chain 0.13), so the recipe cannot meet its own bound against the
+  production masks (an ellipse needs per-row 1-D pools). It would also add GPU work to a render that
+  waits on the GPU, and the numpy blend still needs the mask back on the host. The production XSeg is
+  DFL XSeg 256 on TensorRT, ~2.5 ms/call (4.6 ms with its cv2 resize and 256 KB host I/O); the 15-25 ms
+  the brief quotes was CPU matte work, now mostly removed above. Temporal mask reuse already exists as
+  `XSeg3MaskCache` (2.5 deg / 1.8 px, close to the brief's 2 deg / 1.5 px) but is wired only inside the
+  `Mask_XSeg3` engine; at ~2.5 ms/call there is little for it to save on the production engine.
+
 - **Batched restorer acceleration (Stage 6 brief): measured, not built.** RestoreFormer++ (the network
   under Restore Ultra) on the 4070, TensorRT "mixed" FP16 through the app's own provider policy,
   GPU-resident IOBinding, real FFHQ-aligned crops, a dynamic-batch graph from the swapper's

@@ -18,6 +18,7 @@ import cv2
 import numpy as np
 
 import roop.globals
+from roop import mask_roi
 from roop.typing import Frame, Face
 from roop.face_util import clamp_cut_values, kps_pose_ratios
 from roop.nonfrontal import nonfrontal_score
@@ -951,8 +952,11 @@ class MaskingMixin:
                            'used the Gaussian feather: %s: %s'
                            % (type(exc).__name__, str(exc)[:160]))
 
-        # Always apply minimal anti-aliasing after the affine warp
-        img_matte = cv2.GaussianBlur(img_matte, (3, 3), 0)
+        # Always apply minimal anti-aliasing after the affine warp.
+        # `mask_roi` runs the same cv2 calls on the matte's support only (the matte is
+        # non-zero around one face, and these were full-frame passes: ~140 ms of
+        # single-threaded cv2 per 1080p face under 20 workers). Bit-identical.
+        img_matte = mask_roi.gaussian_blur(img_matte, (3, 3))
         if face_mask_blend <= 0:
             return img_matte
         mask_h_inds, mask_w_inds = np.where(img_matte > 127)
@@ -977,9 +981,9 @@ class MaskingMixin:
         erosion_px = max(1, blend_px // 4)
         kernel = cv2.getStructuringElement(
             cv2.MORPH_ELLIPSE, (erosion_px * 2 + 1, erosion_px * 2 + 1))
-        img_matte = cv2.erode(img_matte, kernel, iterations=1)
+        img_matte = mask_roi.erode(img_matte, kernel)
 
-        return cv2.GaussianBlur(img_matte, (blur_size, blur_size), 0)
+        return mask_roi.gaussian_blur(img_matte, (blur_size, blur_size))
 
     def create_landmark_mask(self, landmarks_2d, frame_shape, blend_amount, kps=None):
         """Build a binary mask from the convex hull of facial landmarks.
@@ -1009,7 +1013,7 @@ class MaskingMixin:
             expand_px = max(1, int(np.sqrt(face_h * face_w) * blend_amount / 400))
             kernel    = cv2.getStructuringElement(
                 cv2.MORPH_ELLIPSE, (expand_px * 2 + 1, expand_px * 2 + 1))
-            mask = cv2.dilate(mask, kernel, iterations=1)
+            mask = mask_roi.dilate(mask, kernel)
 
         # Explicit contour control.  Read it per frame because preview and
         # render requests can update globals without restarting the process.
@@ -1025,8 +1029,8 @@ class MaskingMixin:
             radius = abs(signed_radius)
             kernel = cv2.getStructuringElement(
                 cv2.MORPH_ELLIPSE, (radius * 2 + 1, radius * 2 + 1))
-            mask = (cv2.dilate if signed_radius > 0 else cv2.erode)(
-                mask, kernel, iterations=1)
+            mask = (mask_roi.dilate if signed_radius > 0 else mask_roi.erode)(
+                mask, kernel)
 
         return mask
 
