@@ -1105,6 +1105,9 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
             if method == 'ema':
                 from roop.one_euro import EmaKpsStabilizer
                 self._kps_stab_factory = lambda: EmaKpsStabilizer(alpha=0.3)
+            elif method == 'kalman':
+                from roop.one_euro import KalmanKpsStabilizer
+                self._kps_stab_factory = lambda: KalmanKpsStabilizer()
             else:
                 from roop.one_euro import KpsStabilizer
                 _mc = getattr(options, 'stabilize_min_cutoff', 0.05)

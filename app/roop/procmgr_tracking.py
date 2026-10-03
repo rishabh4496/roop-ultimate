@@ -2593,7 +2593,18 @@ class TrackingMixin:
                 # `bbox` deliberately keeps its own filter: it is a detection
                 # rectangle, not part of the alignment/hull pair.
                 coupled = None
-                if bool(getattr(self.options, 'stabilize_landmarks', True)):
+                # `stabilize_method == 'kalman'` replaces the coupled smoother for this
+                # track: a constant-velocity Kalman filter on the 5 keypoints, with the
+                # dense landmarks carried by the SAME displacement (the shift of the
+                # keypoint centroid), so the crop and its own outline still cannot
+                # disagree. The method select was never consulted on this path before:
+                # with `stabilize_landmarks` on (the default) the coupled smoother ran
+                # whatever the select said.
+                kalman = None
+                if method == 'kalman':
+                    from roop.one_euro import KalmanKpsStabilizer
+                    kalman = KalmanKpsStabilizer()
+                elif bool(getattr(self.options, 'stabilize_landmarks', True)):
                     from roop.temporal_smoother import AdaptiveLandmarkSmoother
                     coupled = AdaptiveLandmarkSmoother.from_env()
                 cuts = getattr(self, '_shot_boundaries', None) or set()
@@ -2601,12 +2612,21 @@ class TrackingMixin:
                     if i in cuts:
                         if coupled is not None and hasattr(coupled, 'reset'):
                             coupled.reset()
+                        if kalman is not None:
+                            kalman.reset()
                         _filters.clear()
                         _state.clear()
                     f = merged[i]
                     kps = getattr(f, 'kps', None)
                     lm = getattr(f, 'landmark_2d_106', None)
-                    if coupled is not None and kps is not None:
+                    if kalman is not None and kps is not None:
+                        raw_kps = np.asarray(kps, np.float64)
+                        kps_s = kalman.apply(raw_kps, i)
+                        f['kps'] = np.asarray(kps_s, np.float32)
+                        if lm is not None:
+                            shift = np.asarray(kps_s, np.float64).mean(axis=0) - raw_kps.mean(axis=0)
+                            f['landmark_2d_106'] = (np.asarray(lm, np.float64) + shift).astype(np.float32)
+                    elif coupled is not None and kps is not None:
                         # This pass IS contiguous and per-track by construction
                         # (`for i in sorted(merged)` on one thread), which is
                         # the condition the smoother's frame-contiguity guard

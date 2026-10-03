@@ -351,6 +351,142 @@ class KpsStabilizer:
         return smoothed.astype(np.float32)
 
 
+class _KalmanCV:
+    """Constant-velocity Kalman filter over N independent coordinates, vectorised.
+
+    State per coordinate is (position, velocity) in PIXELS; the 2x2 covariance is kept as
+    its three distinct entries. The measurement noise `R` and process noise `q` are passed
+    per step because they scale with the face (the state must not: dividing absolute
+    coordinates by a fluctuating face size injects exactly the jitter being removed).
+    Process noise is raised by `boost` on the coordinates whose innovation exceeds `gate`
+    measurement sigmas, so a head turn is followed at once and a still head is smoothed hard.
+    """
+
+    __slots__ = ('gate', 'boost', 'x', 'v', 'p00', 'p01', 'p11')
+
+    def __init__(self, z, R, vel_var, gate, boost):
+        self.gate, self.boost = gate, boost
+        self.x = np.array(z, dtype=np.float64)
+        self.v = np.zeros_like(self.x)
+        self.p00 = np.full_like(self.x, R)
+        self.p01 = np.zeros_like(self.x)
+        self.p11 = np.full_like(self.x, vel_var)
+
+    def coast(self, frames):
+        self.x = self.x + self.v * frames
+
+    def step(self, z, R, q):
+        xp = self.x + self.v
+        innov = z - xp
+        qk = q * np.where(np.abs(innov) > self.gate * math.sqrt(R), self.boost, 1.0)
+        p00 = self.p00 + 2.0 * self.p01 + self.p11 + 0.25 * qk
+        p01 = self.p01 + self.p11 + 0.5 * qk
+        p11 = self.p11 + qk
+        s = p00 + R
+        k0, k1 = p00 / s, p01 / s
+        self.x = xp + k0 * innov
+        self.v = self.v + k1 * innov
+        self.p00 = (1.0 - k0) * p00
+        self.p01 = (1.0 - k0) * p01
+        self.p11 = p11 - k1 * p01
+        return self.x
+
+
+class KalmanKpsStabilizer:
+    """Constant-velocity Kalman smoothing of the 5-point keypoints (`stabilize_method: kalman`).
+
+    A drop-in for `KpsStabilizer` (same `apply` / `reset` / `warmup_frames`, same
+    nearest-centroid track matching). One Euro's speed estimate is a differentiated,
+    barely filtered signal, so detector noise itself opens the filter on a still head:
+    measured on a static face rendered with sensor noise through x264 (detector sigma
+    0.52 px), the shipped One Euro (0.1 / 0.1) removes 51% of the >2 Hz jitter (58% above
+    4 Hz) at half a frame of lag, and no min_cutoff / beta / d_cutoff within its range
+    reaches 80% without a frame of lag and a head-turn error 2-3x larger. This filter
+    removes 77% / 81% with no measurable lag and a lower overall tracking error against
+    the known motion (1.01 px against 1.13 px for One Euro, raw 0.90 px).
+
+    Units are the face's own size (an EMA of the keypoint extent), so the defaults hold
+    at any resolution. Defaults come from that one static-face / known-motion clip
+    (innovation gate 4 sigma, process noise x1e4 on a gated coordinate). It is NOT the
+    default method: on real conversational footage (heads that move, mouths that talk,
+    so there is genuine >4 Hz keypoint motion) it measured no better than One Euro
+    (6-10% of the >4 Hz band removed against 6-18%), because there the band is not
+    detector noise. It is offered, not chosen for you.
+    """
+
+    # Measured detector noise on a static 266 px face: 0.52 px = 0.00195 of its size.
+    NOISE_REL = 0.00195
+    # Process noise for an un-gated coordinate: 3e-4 px^2 on that 266 px face, relative.
+    Q_REL = 3e-4 / (266.3 ** 2)
+    GATE = 4.0
+    BOOST = 1e4
+    # Initial velocity uncertainty (~1 px/frame on that face); only the seed transient.
+    VEL_REL = 0.004
+
+    def __init__(self, noise_rel=None, q_rel=None, gate=None, boost=None,
+                 max_missing=8, match_scale=0.6):
+        self.noise_rel = float(self.NOISE_REL if noise_rel is None else noise_rel)
+        self.q_rel = float(self.Q_REL if q_rel is None else q_rel)
+        self.gate = float(self.GATE if gate is None else gate)
+        self.boost = float(self.BOOST if boost is None else boost)
+        self.max_missing = int(max_missing)
+        self.match_scale = float(match_scale)
+        self.tracks = []        # [{kf, scale, centroid, last_t}]
+
+    def warmup_frames(self, eps=0.01):
+        """Frames for the filter to forget its seed to <= `eps`: the slowest closed-loop
+        pole of the steady-state, un-gated filter (the still case is the worst case)."""
+        R, q = self.noise_rel ** 2, self.q_rel
+        p = np.array([[R, 0.0], [0.0, 1e-3]])
+        F = np.array([[1.0, 1.0], [0.0, 1.0]])
+        Q = q * np.array([[0.25, 0.5], [0.5, 1.0]])
+        for _ in range(2000):
+            pp = F @ p @ F.T + Q
+            k = pp[:, 0] / (pp[0, 0] + R)
+            p = (np.eye(2) - np.outer(k, [1.0, 0.0])) @ pp
+        pp = F @ p @ F.T + Q
+        k = pp[:, 0] / (pp[0, 0] + R)
+        rho = float(np.max(np.abs(np.linalg.eigvals((np.eye(2) - np.outer(k, [1.0, 0.0])) @ F))))
+        return ema_warmup_frames(1.0 - rho, eps)
+
+    def reset(self):
+        self.tracks = []
+
+    def apply(self, kps, t):
+        """Return temporally-smoothed (5,2) keypoints for the face at frame `t`."""
+        kps = np.asarray(kps, dtype=np.float64)
+        if kps.shape != (5, 2):
+            return kps.astype(np.float32)
+        centroid = kps.mean(axis=0)
+        size = max(float(np.ptp(kps[:, 0])), float(np.ptp(kps[:, 1])), 1.0)
+
+        best, best_d = None, float('inf')
+        for tr in self.tracks:
+            d = float(np.linalg.norm(tr['centroid'] - centroid))
+            if d < best_d:
+                best_d, best = d, tr
+
+        if best is not None and best_d <= self.match_scale * size and (t - best['last_t']) <= self.max_missing:
+            tr = best
+            tr['scale'] = 0.9 * tr['scale'] + 0.1 * size
+            missed = int(t - tr['last_t']) - 1
+            if missed > 0:                           # coast through dropped frames
+                tr['kf'].coast(missed)
+            sc = tr['scale']
+            smoothed = tr['kf'].step(kps.reshape(10), (self.noise_rel * sc) ** 2, self.q_rel * sc * sc)
+        else:
+            tr = {'kf': _KalmanCV(kps.reshape(10), (self.noise_rel * size) ** 2,
+                                  (self.VEL_REL * size) ** 2, self.gate, self.boost),
+                  'scale': size, 'centroid': centroid, 'last_t': t}
+            self.tracks.append(tr)
+            smoothed = kps.reshape(10)
+        smoothed = smoothed.reshape(5, 2)
+        tr['centroid'] = smoothed.mean(axis=0)
+        tr['last_t'] = t
+        self.tracks = [x for x in self.tracks if (t - x['last_t']) <= self.max_missing]
+        return smoothed.astype(np.float32)
+
+
 class EmaKpsStabilizer:
     """Smooths face 5-point keypoints across frames using an Exponential Moving Average (EMA)."""
 

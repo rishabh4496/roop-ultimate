@@ -7,6 +7,39 @@ folder). Entries before 2026-09-21 were moved here from the README on 2026-09-22
 
 ## 2026-10-03
 
+- **Landmark smoothing (Stage 8 brief): measured against the smoother that actually runs; a Kalman
+  option added.** The brief assumed One Euro was the smoother. It is not the default: with
+  `stabilize_landmarks` on (the default) the tracked pre-pass runs `AdaptiveLandmarkSmoother`
+  (velocity-adaptive EMA, beta 0.35 still / 0.90 fast, coupled with the dense landmarks); One Euro
+  and the "Smoothing method" select / min-cutoff / beta sliders were only consulted when that was
+  off, so on the default path they changed nothing. Measured on one real face rendered with sensor
+  noise through x264 (detector sigma 0.52 px), static and with a known path (0.4 Hz sway + a 60 px
+  head turn in 8 frames), keypoint jitter removed above 2 Hz / 4 Hz, lag, head-turn peak error:
+  shipped smoother -67.4 % / -73.8 %, 1.00 frame, 2.30 px; One Euro 0.1/0.1 -50.8 % / -58.0 %,
+  0.50 frame, 1.65 px (raw detector 1.41 px). No One Euro min_cutoff / beta / d_cutoff gets 80%
+  without a frame of lag and 2-3x the head-turn error (its speed estimate is a barely filtered
+  derivative, so detector noise opens it on a still head). A constant-velocity Kalman filter with
+  innovation-gated process noise (`KalmanKpsStabilizer`, `stabilize_method: kalman`) removes
+  **-77.0 % / -81.0 %, no measurable lag, 1.79 px**, tracking error 1.01 px against 1.94 px for the
+  shipped smoother. **That is on a still head only.** On real conversational footage (Weeds, Monica
+  Bellucci; continuous single-face runs of 100-126 frames, heads moving, mouths talking) the >4 Hz
+  band removed is 11.6 % / 6.4 % for Kalman against 12.2 % / 9.0 % for the shipped smoother, because
+  there that band is partly real motion; so it is an opt-in, not the default (the brief's 80% holds
+  for a still head with this filter, and for nothing on moving footage). Wired into the tracked
+  pre-pass (dense landmarks follow the keypoint centroid shift) and the per-frame path, added to
+  the React method select. Real render: same fps (3.45 vs 3.44), 98.7% of face frames swapped in
+  both, A/V passes, output differs (frame PSNR 45.4). The stored detections are
+  `app/tests/data/synthetic_face_jitter.npz`; `tools/gen_jitter_fixture.py` regenerates them.
+- **GPU color transfer / multiband compositing (Stage 8 brief): measured, not built.** Reinhard
+  (LAB mean/std) on torch CUDA: 1.2 ms at 256^2 and 1.4 ms at 512^2 with upload/download, against
+  2.7 ms / 11.1 ms for the shipped single-threaded cv2 path (mean difference from cv2's 8-bit LAB
+  0.9/255, max 5: not bit-identical). The existing `cuda_laplacian_pyramid_blend` (3 levels, already
+  behind `composite_multiband`) is 1.7 / 3.8 / 9.1 ms at 400^2 / 640^2 / 1024^2 against 4.8 / 12.4 /
+  32.0 ms for the numpy blend. So "under 3 ms" holds for a small ROI with transfers and for the
+  resident case; it is not built because the render is GPU-bound and the stage shares are small
+  (lighting 3.2% and blend 5.7% of thread time, earlier profile), and "entirely in VRAM" needs the
+  frame on the GPU while decode and encode are host pipes. Not measured: the 3060 laptop.
+
 - **Matte blur / erode / dilate ran over the WHOLE frame; now over the matte's support, bit-identically
   (`roop/mask_roi.py`).** The Stage 7 brief asked for the mask feather chain on the GPU. Instrumenting
   `cv2` through a real 1080p render found the real defect first: the paste matte is non-zero around one

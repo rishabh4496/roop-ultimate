@@ -3349,8 +3349,8 @@ export default function FaceSwap({
             <Toggle label="Stabilize face (video)" info="Temporal keypoint smoothing — reduces swap wobble. Runs at Max Threads (2-pass) unless Enhancer Flicker is on." checked={!!p.stabilize_face} onChange={(v) => set('stabilize_face', v)} />
             {p.stabilize_face && (
               <>
-                <Select label="Smoothing method" info="One Euro = adaptive (best jitter-vs-lag). EMA = simpler fixed smoothing." value={p.stabilize_method || 'one_euro'} onChange={(v) => set('stabilize_method', v)} options={['one_euro', 'ema']} />
-                {p.stabilize_method !== 'ema' && (
+                <Select label="Smoothing method" info="One Euro = adaptive (default). Kalman = removes more high-frequency jitter on a still head (about 80% against 51%) with no lag on steady motion; measured no better on footage where the head moves and talks. EMA = simpler fixed smoothing." value={p.stabilize_method || 'one_euro'} onChange={(v) => set('stabilize_method', v)} options={['one_euro', 'kalman', 'ema']} />
+                {(p.stabilize_method || 'one_euro') === 'one_euro' && (
                   <>
                     <Slider label="Smoothing (min cutoff)" info="lower = smoother, more lag" min={0.01} max={0.3} step={0.01} value={num(p.stabilize_min_cutoff, 0.05)} onChange={(v) => set('stabilize_min_cutoff', v)} />
                     <Slider label="Reactivity (beta)" info="higher = less lag on fast motion" min={0} max={0.2} step={0.01} value={num(p.stabilize_beta, 0.02)} onChange={(v) => set('stabilize_beta', v)} />
