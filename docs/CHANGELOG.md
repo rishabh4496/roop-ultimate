@@ -7,6 +7,15 @@ folder). Entries before 2026-09-21 were moved here from the README on 2026-09-22
 
 ## 2026-10-04
 
+- **New detector engine `retinaface_r50_gpu` (not the default).** face_engine's on-device RetinaFace R50 wired in as a hybrid engine
+  (`roop/retinaface_gpu_engine.py`): padding, pyramid (same triggers, single-pass reuse), TensorRT AOT engine, decode and gate on the
+  GPU; the app's `nms_keep` / `diou_nms` finish on the survivors; pool from `detector_pool_size`; the bound runner is logged. Preprocessing
+  defaults to `squash` (reproduces the existing r50 to 4 faces in 3,412); `ROOP_R50_GPU_PREPROCESS=letterbox` is face_engine's geometry
+  (loses 76/24/0/83 of the existing engine's faces and boxes an empty floor at 0.92). A/B vs scrfd (`docs/perf/gpu_engine_2026-10-04.md`):
+  wrong-faceset 0 in all 20 renders; swapped d4 855 vs 799, d1 1243 vs 1147, d6 1456 = 1456, **Love 412 vs 506**; 131 of 3,264 baseline faces
+  not matched at IoU 0.5 (the existing r50 loses the same ones); detector-only 4.8-5.2 ms at 720p/1080p (existing r50 10.8-10.9, scrfd 5.7-7.4),
+  but pre-pass fps is not better. The AOT engine is stamped on file mtime, so `app/models/retinaface_r50.onnx` would silently run on ORT;
+  the wrapper uses the registry copy. d9.mp4 no longer exists.
 - **Multi-scale detector reuses its single pass (`face_detector.MultiScaleFaceDetector.detect`).** Only the retinaface /
   retinaface_r50 engines reach it (not scrfd, so no render on the current config changes). When the adaptive single pass
   triggers the pyramid, its result now fills the pyramid's scale-1.0 slot and only the other levels run: 4 -> 3 detector

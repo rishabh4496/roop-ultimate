@@ -1,0 +1,71 @@
+{
+ "rows": [
+  {
+   "label": "d4_r50_1",
+   "clip": "d4",
+   "arm": "r50",
+   "window": null,
+   "rc": 0,
+   "failed_frames": 0,
+   "detector_failed": 0,
+   "faces_seen": 991,
+   "swapped": 869,
+   "wrong_faceset": 0,
+   "wrong_faceset_of": 557,
+   "tracks": 11,
+   "tracks_stitched_from": 14,
+   "tracks_matched_to_a_source": 5,
+   "track_frames": 600,
+   "swap_audit": "==== SWAP AUDIT \u2014 why each detected face was or was not swapped ==== faces seen 991 100.0% of those, gap-filled 85 8.6% of those, crop shared with the face beside it 64 6.5% swapped (identity lock) 869 87.7% of those, partly behind an object (masked, still swapped) 378 38.1% of those SWAPPED, gap-filled 30 3.0% veto: far from assigned person 68 6.9% refused by the track veto, before any threshold 68 6.9% refused: crop shared with the face beside it 34 3.4% veto: source used twice in frame 30 3.0% no track entry matched 24 2.4% fallback missed (over match threshold) 16 1.6% fallback missed (this person's source already used this frame) 4 0.4% discarded: the swap put the face somewhere it was not 1 0.1% -> 123 of 991 detected faces (12.4%) were NOT swapped. 1 of those were swapped and then DISCARDED by the outcome check, which pastes the original face back \u2014 a refusal like any other as far as the output is concerned. ROOP_VERIFY_SWAP=0 turns it off. Frames where a face was found but left un-swapped are what reads as flicker. The largest refusal line above is the gate to loosen. 30 of the 869 faces actually swapped (3.5%) had INTERPOLATED landmarks \u2014 nobody detected them, their box and keypoints were filled in between neighbours. That is a different artefact from the one above: the swap is not missing, it is registered from a guess, so on a moving head it shifts every other frame. Set ROOP_TEMPORAL_STEP=1 if this is high. Of those, 16 were refused for distance alone, and this is how far past the match threshold (0.75) their BEST candidate sat: within 1.05x the threshold (0.79): 0 ( 0.0% of them) within 1.10x the threshold (0.83): 1 ( 6.2% of them) within 1.20x the threshold (0.90): 3 ( 18.8% of them) within 1.50x the threshold (1.12): 16 (100.0% of them) within 2.00x the threshold (1.50): 16 (100.0% of them) median refusal sits at 1.26x the threshold (0.95). Separately, 130 frames of 744 (17.5% of frames) had NO face detected at all \u2014 that is the detector losing the face, not a gate refusing it, so it is a different problem from every refusal above. The detector returned nothing on 114 frame(s) it looked at; its own best REJECTED candidate there scored (threshold 0.50): would return at threshold 0.45: 3 ( 2.6% of them) would return at threshold 0.40: 7 ( 6.1% of them) would return at threshold 0.30: 11 ( 9.6% of them) would return at threshold 0.20: 18 ( 15.8% of them) would return at threshold 0.10: 25 ( 21.9% of them) median best-rejected score 0.022. THE DETECTOR SAW ALMOST NOTHING on the median miss. Lowering face_detector_threshold recovers few of these and buys false boxes that then compete for a source and a track \u2014 the lever here is the detector ENGINE or resolution, not the threshold.",
+   "verdicts": [
+    "box 0 from the left (harjot): 483 frames, swapped 459 (95.0%), on/off transitions 24 WRONG FACESET APPLIED on 0 of 206 swaps attributed to harjot anywhere in frame (from the pipeline's own decision) output re-measured as the other person on 84 of 433 gradable frames",
+    "box 1 from the left (ashna): 250 frames, swapped 233 (93.2%), on/off transitions 11 WRONG FACESET APPLIED on 0 of 351 swaps attributed to ashna anywhere in frame (from the pipeline's own decision) output re-measured as the other person on 0 of 224 gradable frames"
+   ],
+   "md5": "1f3b21c80eb03b4544ba085a9a0a9a8e",
+   "prepass_seconds": 23.25,
+   "prepass_fps": 25.8,
+   "frame_loop_fps": 13.51,
+   "wall_seconds": 204.7,
+   "detector_sessions": [
+    "[Session] retinaface:r50 file=retinaface_r50.onnx provider=TensorrtExecutionProvider trt_fp16=on input=input:bx3xhxw requested=Tensorrt,CUDA,CPU"
+   ],
+   "gpudet": {},
+   "raw_total": 2980,
+   "first_pass_empty": 157,
+   "peak_gpu_mb": 9526.0
+  },
+  {
+   "label": "Love_r50_1",
+   "clip": "Love",
+   "arm": "r50",
+   "window": null,
+   "rc": 0,
+   "failed_frames": 0,
+   "detector_failed": 0,
+   "faces_seen": 1322,
+   "swapped": 434,
+   "wrong_faceset": 0,
+   "wrong_faceset_of": 256,
+   "tracks": 21,
+   "tracks_stitched_from": 32,
+   "tracks_matched_to_a_source": 4,
+   "track_frames": 600,
+   "swap_audit": "==== SWAP AUDIT \u2014 why each detected face was or was not swapped ==== faces seen 1322 100.0% of those, crop shared with the face beside it 611 46.2% of those, gap-filled 321 24.3% no track entry matched 571 43.2% refused: crop shared with the face beside it 485 36.7% swapped (identity lock) 427 32.3% veto: source used twice in frame 324 24.5% fallback missed (over match threshold) 249 18.8% fallback missed (this person's source already used this frame) 154 11.6% swapped (per-frame match) 7 0.5% of those, partly behind an object (masked, still swapped) 269 20.3% of those SWAPPED, gap-filled 31 2.3% discarded: the swap put the face somewhere it was not 4 0.3% -> 892 of 1322 detected faces (67.5%) were NOT swapped. 4 of those were swapped and then DISCARDED by the outcome check, which pastes the original face back \u2014 a refusal like any other as far as the output is concerned. ROOP_VERIFY_SWAP=0 turns it off. Frames where a face was found but left un-swapped are what reads as flicker. The largest refusal line above is the gate to loosen. 31 of the 434 faces actually swapped (7.1%) had INTERPOLATED landmarks \u2014 nobody detected them, their box and keypoints were filled in between neighbours. That is a different artefact from the one above: the swap is not missing, it is registered from a guess, so on a moving head it shifts every other frame. Set ROOP_TEMPORAL_STEP=1 if this is high. Of those, 249 were refused for distance alone, and this is how far past the match threshold (0.75) their BEST candidate sat: within 1.05x the threshold (0.79): 15 ( 6.0% of them) within 1.10x the threshold (0.83): 28 ( 11.2% of them) within 1.20x the threshold (0.90): 157 ( 63.1% of them) within 1.50x the threshold (1.12): 249 (100.0% of them) within 2.00x the threshold (1.50): 249 (100.0% of them) median refusal sits at 1.17x the threshold (0.88). Separately, 8 frames of 744 (1.1% of frames) had NO face detected at all \u2014 that is the detector losing the face, not a gate refusing it, so it is a different problem from every refusal above. The detector returned nothing on 39 frame(s) it looked at; its own best REJECTED candidate there scored (threshold 0.50): would return at threshold 0.45: 8 ( 20.5% of them) would return at threshold 0.40: 14 ( 35.9% of them) would return at threshold 0.30: 27 ( 69.2% of them) would return at threshold 0.20: 35 ( 89.7% of them) would return at threshold 0.10: 38 ( 97.4% of them) median best-rejected score 0.349. Separately, 111 detections were dropped as the JUNCTION between two touching faces rather than a face \u2014 half of each neighbour, which the detector reports at up to 0.99 confidence. ROOP_FACE_MERGE=0 keeps them.",
+   "verdicts": [
+    "box 0 from the left (harjot): 554 frames, swapped 301 (54.3%), on/off transitions 58 WRONG FACESET APPLIED on 0 of 256 swaps attributed to harjot anywhere in frame (from the pipeline's own decision) output re-measured as the other person on 0 of 0 gradable frames"
+   ],
+   "md5": "0dda82fa824278b326060963b846c518",
+   "prepass_seconds": 16.06,
+   "prepass_fps": 37.37,
+   "frame_loop_fps": 23.38,
+   "wall_seconds": 145.5,
+   "detector_sessions": [
+    "[Session] retinaface:r50 file=retinaface_r50.onnx provider=TensorrtExecutionProvider trt_fp16=on input=input:bx3xhxw requested=Tensorrt,CUDA,CPU"
+   ],
+   "gpudet": {},
+   "raw_total": 1636,
+   "first_pass_empty": 76,
+   "peak_gpu_mb": 9515.0
+  }
+ ]
+}

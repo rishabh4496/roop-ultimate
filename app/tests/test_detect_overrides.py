@@ -103,10 +103,13 @@ class OverridesReachTheSelectedEngine(unittest.TestCase):
         self.assertIn('eff_thresh', raw)
         calls = [c for c in re.findall(r'_hybrid_\w+\([^)]*\)', raw)
                  if not c.startswith('_hybrid_detector_faces(')]
-        self.assertEqual(len(calls), 4, f'expected 4 hybrid dispatches, got {calls}')
+        self.assertEqual(len(calls), 5, f'expected 5 hybrid dispatches, got {calls}')
         for call in calls:
             with self.subTest(call=call):
-                self.assertIn('eff_size', call)
+                # retinaface_r50_gpu runs a fixed 640x640 export (the pyramid supplies the
+                # scales), so a det_size has nothing to steer there; the threshold must arrive.
+                if not call.startswith('_hybrid_retinaface_gpu_faces('):
+                    self.assertIn('eff_size', call)
                 self.assertIn('eff_thresh', call)
 
     def test_effective_values_fall_back_to_the_configured_ones(self):

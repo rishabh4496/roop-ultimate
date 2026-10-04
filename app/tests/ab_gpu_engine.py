@@ -192,6 +192,8 @@ def speed(args):
     engines = ["scrfd", "retinaface_r50", NEW]
     sets = {}
     for clip, rel, lo, hi in CLIPS:
+        if args.only and clip not in args.only.split(","):
+            continue
         n = 30 if clip == "d6" else 60
         step = max(1, (hi - lo) // n)
         sets[clip] = [fr for i, (idx, fr) in enumerate(frames(lo, hi, rel)) if i % step == 0][:n]
@@ -215,7 +217,7 @@ def speed(args):
 
     order = engines + engines[::-1]                                  # A B C C B A
     res = {}
-    for threads in (1, 2):
+    for threads in [int(t) for t in args.threads.split(',')]:
         for clip in sets:
             ms = {e: [] for e in engines}
             for e in order:
@@ -236,6 +238,7 @@ def main():
     ap.add_argument("--date", default="2026-10-04")
     ap.add_argument("--expected", type=int, default=2)
     ap.add_argument("--only", default="")
+    ap.add_argument("--threads", default="1,2", help="speed phase: concurrent callers")
     ap.add_argument("--engines", default="", help="comma list; BASELINE = the live config's engine")
     ap.add_argument("--tag", default="", help="suffix naming a variant of the NEW engine, e.g. [squash]")
     ap.add_argument("--fresh", action="store_true", help="ignore the per-engine cache")

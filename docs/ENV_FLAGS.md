@@ -174,6 +174,7 @@ UI's progress bar and ETA are fed separately and are unaffected by all of these.
 |------|---------|--------|
 | ROOP_PROFILE_DETAIL | 0 | 1 attaches the Phase 14 profiler to the existing stage hook and emits CPU time, CUDA event time, allocator deltas/peaks, steady-state allocator values, and explicit transfer counters for the required-stage matrix. It is observational and does not change scheduling. |
 | ROOP_PROFILE_DETAIL_SYNC | 0 | 1 fences the selected CUDA device at detailed-stage boundaries and records synchronization windows. This is invasive diagnosis only, not normal throughput. |
+| ROOP_R50_GPU_PREPROCESS | squash | `retinaface_r50_gpu` input geometry: `squash` (direct 640x640 resize, reproduces the existing `retinaface_r50`) or `letterbox` (face_engine's own; a different detector in practice, see docs/perf/gpu_engine_2026-10-04.md). |
 | ROOP_BLEND_ROI_WARP | 1 | Warp the swapped/enhanced face into the active matte ROI instead of the whole output frame. The affine is translated exactly into ROI coordinates; 0 restores full-frame warps for a controlled regression comparison. |
 
 ## Timeline / preview frame decoding
