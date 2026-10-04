@@ -4,11 +4,37 @@ Skin tone / lighting transfer (reinhard, LCT, MKL) plus the high-frequency
 detail transfer, split out of ProcessMgr as a mixin so the bodies move verbatim.
 """
 
+import threading
+
 import cv2
 import numpy as np
 
 import roop.globals
 from roop.appearance_conditioning import VERY_DARK, _soft_mask
+
+# Per-thread work buffers for `_color_transfer_lct`: (float32 in, float32 out, uint8 out) per crop
+# shape. The two lighting calls per swapped face alternate between a 256 px and a 512 px crop on the
+# same worker, so shapes are cached side by side; a crop bigger than _LCT_SCRATCH_MAX_PIXELS (GPEN
+# 1024/2048) allocates as before rather than pinning 9 bytes per pixel per worker thread.
+_LCT_TLS = threading.local()
+_LCT_SCRATCH_MAX_PIXELS = 512 * 512
+_LCT_SCRATCH_MAX_SHAPES = 4
+
+
+def _lct_scratch(shape):
+    h, w = shape[:2]
+    if h * w > _LCT_SCRATCH_MAX_PIXELS:
+        return (np.empty(shape, np.float32), np.empty(shape, np.float32), np.empty(shape, np.uint8))
+    cache = getattr(_LCT_TLS, 'cache', None)
+    if cache is None:
+        cache = _LCT_TLS.cache = {}
+    bufs = cache.get(shape)
+    if bufs is None:
+        if len(cache) >= _LCT_SCRATCH_MAX_SHAPES:
+            cache.clear()
+        bufs = cache[shape] = (np.empty(shape, np.float32), np.empty(shape, np.float32),
+                               np.empty(shape, np.uint8))
+    return bufs
 
 
 class ColorTransferMixin:
@@ -306,20 +332,35 @@ class ColorTransferMixin:
     def _color_transfer_lct(self, source, target):
         """Linear (covariance-whitening) color transfer in LAB. Whitens the
         swapped crop's color distribution and re-colors it with the target's
-        mean+covariance — corrects hue casts a per-channel scale leaves behind."""
+        mean+covariance — corrects hue casts a per-channel scale leaves behind.
+
+        Bit-identical to the version that converted both crops whole and clipped
+        through fresh arrays (tests/test_color_transfer_lct_exact.py keeps that
+        version as the reference). It ran twice per swapped face, once at the swap
+        crop's size and once at the enhancer's 512 px, where it cost 5.2 ms of a
+        3 ms budget; what was removed is work that fed nothing:
+
+          * the TARGET's BGR->LAB conversion covered every pixel and then only every
+            16th was read. BGR->LAB is per pixel, so the sampled pixels are converted
+            on their own (same flat stride, so shapes whose rows are not a multiple
+            of 16 wide sample the same pixels they always did);
+          * `np.clip(...).astype(np.uint8)` allocated two 3 MB temporaries per call on
+            each of ten worker threads. The float32 transform output is now clamped in
+            place and truncated into a reused per-thread buffer -- the same
+            clip-then-truncate, without the allocations. (cv2.min/max take a Scalar:
+            a bare float would clamp only channel 0.)
+        """
         s_lab = cv2.cvtColor(source, cv2.COLOR_BGR2LAB)
-        t_lab = cv2.cvtColor(target, cv2.COLOR_BGR2LAB)
-        s_f = s_lab.astype(np.float32)
-        s_flat = s_f.reshape(-1, 3)
         # A 512x512 crop has 262k pixels. The transform is only 3x3, so using
         # every 16th pixel gives 16,384 spatially distributed samples, which is
         # more than enough for stable first/second-order colour statistics. The
         # previous stride of 4 accidentally used 65,536 samples despite the
         # original 16k design note, making this twice-per-face stage needlessly
-        # expensive. Keep the full source float buffer for the final transform,
-        # but convert only sampled LAB pixels for the statistics.
+        # expensive. The source keeps its whole LAB image for the final transform;
+        # the target is only ever read at the sampled pixels.
         s_sub = s_lab.reshape(-1, 3)[::16].astype(np.float32)
-        t_sub = t_lab.reshape(-1, 3)[::16].astype(np.float32)
+        t_sub_bgr = np.ascontiguousarray(target.reshape(-1, 3)[::16]).reshape(-1, 1, 3)
+        t_sub = cv2.cvtColor(t_sub_bgr, cv2.COLOR_BGR2LAB).reshape(-1, 3).astype(np.float32)
         s_mean, t_mean = s_sub.mean(0), t_sub.mean(0)
         eps = np.eye(3, dtype=np.float32) * 1e-4
         # np.cov spends most of its time in generic shape/mean handling. These
@@ -340,8 +381,12 @@ class ColorTransferMixin:
         A = msqrt_t @ minv_s
         offset = t_mean - s_mean @ A.T
         M = np.hstack([A, offset.reshape(3, 1)])
-        out_lab = cv2.transform(s_f, M)
-        out_u8 = np.clip(out_lab, 0, 255).astype(np.uint8)
+        s_f, out_f, out_u8 = _lct_scratch(s_lab.shape)
+        np.copyto(s_f, s_lab)                               # uint8 -> float32, no allocation
+        cv2.transform(s_f, M, dst=out_f)
+        cv2.max(out_f, (0.0, 0.0, 0.0, 0.0), dst=out_f)
+        cv2.min(out_f, (255.0, 255.0, 255.0, 255.0), dst=out_f)
+        np.copyto(out_u8, out_f, casting='unsafe')          # truncation, as .astype(np.uint8)
         return cv2.cvtColor(out_u8, cv2.COLOR_LAB2BGR)
 
     def _color_transfer_mkl(self, source, target):

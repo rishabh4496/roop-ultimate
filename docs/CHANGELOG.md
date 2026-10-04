@@ -7,6 +7,14 @@ folder). Entries before 2026-09-21 were moved here from the README on 2026-09-22
 
 ## 2026-10-05
 
+- **`lighting` stage: LCT bit-identical and 42% cheaper at 512 px (`docs/perf/stage_precision_verify_lighting_2026-10-05.md`).** `_color_transfer_lct`
+  converted the whole target crop to LAB and read every 16th pixel, and clipped through fresh 3 MB arrays on ten threads. It now converts only the sampled
+  pixels and clamps/truncates in place into a bounded per-thread buffer: 512 px 5.17 -> 3.01 ms, 256 px 1.06 -> 0.93; in a d4 render `lighting` 6.8 -> 5.6 ms/call
+  with a byte-identical output (`490d9baa...`). `tests/test_color_transfer_lct_exact.py` keeps the old implementation as the reference (`array_equal`).
+  Same report: **XSeg and RestoreFormer++ already run on TensorRT mixed** (one TRT node per run, no CUDA/CPU partition; Stage 0 ran provider cuda) - but
+  against an FP32 reference the shipped mixed path misses the stated gate on real crops (XSeg IoU min 0.860, 17/120 faces < 0.995; RF++ PSNR min 31.2 dB,
+  12/120 < 45 dB); FP32 passes for XSeg (+0.7 ms/call) and nearly for RF++ (+18 ms/call). Nothing changed pending a decision. Verification already
+  detects through the GPU detector when `retinaface_r50_gpu` is active (451/451 main-pass executions, counters); pinned by `test_verify_detector_routing.py`.
 - **Peak VRAM held under ~90% without changing a model or a precision (`docs/perf/vram_budget_2026-10-05.md`).** (1) After a replayed
   render's pre-pass the FaceAnalysis pool and every hybrid detector pool shrink to width 1 (`face_util.shrink_analysis_pools`, from
   `_release_replayed_analysis`; the ceiling ends with the pool and is cleared at every run start): -56 MiB on the live scrfd config,

@@ -1,0 +1,60 @@
+{
+ "faces": 120,
+ "gates": {
+  "mask_iou": 0.995,
+  "enhancer_psnr_db": 45.0
+ },
+ "xseg": {
+  "reference_vs_cpu_iou_min": 0.9999765988814265,
+  "nodes_per_run_by_provider": {
+   "TensorrtExecutionProvider": 1.0
+  },
+  "tf32": {
+   "iou_min": 1.0,
+   "iou_mean": 1.0,
+   "iou_p01": 1.0,
+   "faces_below_gate": 0,
+   "ms_per_call": 43.91
+  },
+  "trt_mix": {
+   "iou_min": 0.8597773897861196,
+   "iou_mean": 0.9956978045470065,
+   "iou_p01": 0.9705958051282186,
+   "faces_below_gate": 17,
+   "ms_per_call": 2.42
+  },
+  "trt_fp32": {
+   "iou_min": 0.9998362534796136,
+   "iou_mean": 0.9999878036918116,
+   "iou_p01": 0.9999272581878557,
+   "faces_below_gate": 0,
+   "ms_per_call": 3.1
+  }
+ },
+ "restoreformer++": {
+  "nodes_per_run_by_provider": {
+   "TensorrtExecutionProvider": 1.0
+  },
+  "tf32": {
+   "psnr_min_db": 50.68297866948409,
+   "psnr_mean_db": 74.18552504021564,
+   "psnr_p01_db": 51.59025227277016,
+   "faces_below_gate": 0,
+   "ms_per_call": 167.66
+  },
+  "trt_mix": {
+   "psnr_min_db": 31.186939686426356,
+   "psnr_mean_db": 50.30198781524665,
+   "psnr_p01_db": 36.50060075080318,
+   "faces_below_gate": 12,
+   "ms_per_call": 56.16
+  },
+  "trt_fp32": {
+   "psnr_min_db": 38.1040130483512,
+   "psnr_mean_db": 62.32279872900566,
+   "psnr_p01_db": 47.19285910568747,
+   "faces_below_gate": 1,
+   "ms_per_call": 74.59
+  }
+ }
+}
