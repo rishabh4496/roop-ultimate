@@ -1,6 +1,7 @@
 from roop.degrade import swallowed as _swallowed
 import math
 import os
+import sys
 import threading
 import contextlib
 from queue import Queue
@@ -20,6 +21,7 @@ from roop.nms import bind_instance_nms
 from roop import face_contact
 from roop.precision_policy import providers_for
 from roop.backend_manager import build_session_with_fallback
+from roop import baseline_probe as _bp
 
 # Pool of independent insightface FaceAnalysis instances (opt-in, ROOP_DETMASK_POOL).
 #
@@ -126,11 +128,40 @@ def analysis_pooled() -> bool:
     return len(FACE_ANALYSER_POOL) > 1
 
 
+def _probe_analyser(fa, requested):
+    """Measurement only (roop/baseline_probe.py): log every session this
+    FaceAnalysis owns once, and count the aux models' own `get` calls.
+
+    The counters wrap the MODEL, not a caller, so they hold for every path that
+    reaches it: `FaceAnalysis.get`, `_hybrid_detector_faces`, the CLAHE rescue and
+    `ensure_landmark_3d_68`.
+    """
+    try:
+        _bp.log_analyser_build(fa, getattr(roop.globals, 'g_desired_face_analysis', None))
+        owned = dict(fa.models)
+        if getattr(fa, 'lm68_model', None) is not None:
+            owned['landmark_3d_68'] = fa.lm68_model
+        if getattr(fa, 'det_model', None) is not None:
+            owned['detection'] = fa.det_model
+        for task, model in owned.items():
+            sess = getattr(model, 'session', None)
+            if sess is not None and hasattr(sess, 'get_providers'):
+                _bp.log_session('buffalo_l:%s' % task, sess, requested,
+                                model_file=getattr(model, 'model_file', None))
+            if task == 'detection':
+                _bp.wrap_counter(model, 'detect', 'aux.buffalo_l.detection.detect')
+            else:
+                _bp.wrap_counter(model, 'get', 'aux.buffalo_l.%s.get' % task)
+    except Exception as _degrade_error:
+        _swallowed("roop/face_util.py:_probe_analyser", _degrade_error, "probe skipped")
+
+
 def _build_face_analyser():
     model_path = resolve_relative_path('..')
     allowed_modules = roop.globals.g_desired_face_analysis
     providers = _face_analysis_providers()
     providers, _precision = providers_for('recognition:buffalo_l', providers)
+    _requested_providers = list(providers)      # before any step-down (baseline_probe)
     # buffalo_l builds several sessions at once, so a TensorRT engine failure
     # here used to take the whole application down at startup on a machine
     # where CUDA would have run every one of them. Step down instead, loudly.
@@ -179,6 +210,7 @@ def _build_face_analyser():
         # otherwise the DEFAULT engine would be the only one still dropping
         # them. See roop/nms.py.
         bind_instance_nms(fa.det_model)
+    _probe_analyser(fa, _requested_providers)
     try:
         from roop.model_lifecycle import register_model_lifecycle, format_shape_from_session
         dev_id = getattr(roop.globals, 'cuda_device_id', 0) or 0
@@ -486,6 +518,7 @@ def _refine_kps_from_68(face) -> None:
         pts = np.asarray(lm)[:, :2].astype(np.float32)
         if pts.shape[0] < 68:
             return
+        _bp.count('aux.refine_kps.applied')
         refined = np.array([
             pts[36:42].mean(axis=0),   # left eye center
             pts[42:48].mean(axis=0),   # right eye center
@@ -774,6 +807,15 @@ def _detect_faces_raw(frame, det_size=None, det_thresh=None, aux=True):
     embedding nor the landmarks.
     """
     engine = getattr(roop.globals, 'detector_engine', 'scrfd')
+    if _bp.enabled():
+        # Counted at the call that runs the detector, attributed to its direct
+        # caller, so "rescue X ran" is read off real executions.
+        _bp.count('raw.total')
+        _bp.count('raw.aux' if aux else 'raw.noaux')
+        _bp.count('raw.engine.%s' % engine)
+        _bp.count('raw.caller.%s' % _bp.caller_name())
+        if det_size is not None:
+            _bp.count('raw.det_size_override.%s' % det_size)
     nms_thresh = getattr(roop.globals, 'face_detector_nms', 0.40)
     eff_size = det_size if det_size is not None else _desired_det_size()[0]
     # RetinaFace r50's dynamic ONNX axes are a TensorRT optimization profile,
@@ -818,7 +860,8 @@ def _detect_faces_raw(frame, det_size=None, det_thresh=None, aux=True):
                 fa.det_model.input_size = orig_input_size
             if det_thresh is not None and orig_det_thresh is not None:
                 fa.det_model.det_thresh = orig_det_thresh
-                
+
+    _bp.count('raw.faces_out', len(faces or []))
     return faces or []
 
 
@@ -1131,6 +1174,7 @@ def ensure_landmark_3d_68(frame, faces):
     todo = [f for f in faces if getattr(f, 'landmark_3d_68', None) is None]
     if not todo:
         return faces
+    _bp.count('aux.lm68.ensure_faces_missing', len(todo))
     try:
         with lease_face_analyser() as fa:
             model = getattr(fa, 'lm68_model', None)
@@ -1221,6 +1265,8 @@ def _upright_remeasure(frame, faces):
     if not wanted:
         return faces
 
+    _bp.count('aux.upright_remeasure.rolled_calls')
+    _bp.count('aux.upright_remeasure.rolled_faces', sum(len(v) for v in wanted.values()))
     h, w = frame.shape[:2]
     # Whether the ORIGINAL faces got here on the 68-point axis or the keypoint
     # one. The outcome test below compares a candidate's tilt against the
@@ -1277,6 +1323,7 @@ def _upright_remeasure(frame, faces):
             nc = float(np.linalg.norm(emb_c)) if emb_c is not None else 0.0
             no = float(np.linalg.norm(emb_o)) if emb_o is not None else 0.0
             if nc > no + 2.0 or abs(tilt) < abs(otilt) - 5.0 or (abs(tilt) < 65.0 and nc >= no - 0.5):
+                _bp.count('aux.upright_remeasure.replaced')
                 faces[i] = cand
     return faces
 
@@ -1295,14 +1342,17 @@ def _enrich_detected_faces(frame, faces):
     # (The companion stamp, how much of each survivor's recognition crop
     # belongs to its neighbour, is taken further down, once the keypoints are
     # the ones the recogniser really cropped with.)
+    _bp.count('aux.enrich.calls')
     if faces:
         faces, _merged = face_contact.suppress_merged(faces)
         if _merged:
+            _bp.count('aux.contact.merged_dropped', int(_merged))
             _note_merged(_merged)
 
     # The orientation axis, before anything reads it — including
     # _upright_remeasure below, whose whole gate is that axis.
     if faces and _lm68_should_measure(faces):
+        _bp.count('aux.lm68.measure_requested')
         ensure_landmark_3d_68(frame, faces)
         # A probe that lands on a head the keypoints are reading wrong is the
         # one observation that proves they cannot be trusted here, so it arms
@@ -1317,6 +1367,7 @@ def _enrich_detected_faces(frame, faces):
 
     # Before anything downstream reads the keypoints or the embedding.
     if faces and UPRIGHT_REMEASURE:
+        _bp.count('aux.upright_remeasure.calls')
         faces = _upright_remeasure(frame, faces)
 
     # How much of each recognition crop belongs to the face beside it. AFTER
@@ -1331,6 +1382,7 @@ def _enrich_detected_faces(frame, faces):
         face_contact.stamp_contamination(faces)
 
     if faces and getattr(roop.globals, 'refine_landmarks', False):
+        _bp.count('aux.refine_kps.calls')
         _stash_recognition_crops(frame, faces)
         for f in faces:
             _refine_kps_from_68(f)
@@ -1530,6 +1582,14 @@ def _detect_faces(frame, expected_count=None, rescue=True):
     faces = _detect_faces_raw(frame) or []
     raw_n = len(faces)
     attempted = False
+    _bp.count('detect.calls' if rescue else 'detect.calls_norescue')
+    _bp.count('detect.first_pass_faces', raw_n)
+    if not raw_n:
+        _bp.count('detect.first_pass_empty')
+    if expected_count:
+        _bp.count('detect.expected_count_set')
+        if raw_n < expected_count:
+            _bp.count('detect.first_pass_short_of_expected')
     if not rescue:
         # The caller has a cheaper way to recover (a ROI crop falls back to the
         # full frame; a backed-off pre-pass tries again later).
@@ -1543,18 +1603,27 @@ def _detect_faces(frame, expected_count=None, rescue=True):
         # 1. Small-face rescue
         if getattr(roop.globals, 'rescue_small_faces', False):
             faces = _rescue_upscaled(frame) or []
+            _bp.rescue('upscaled', faces)
         # 2. Close-up rescue (skip if multiscale detector already ran downscaled passes)
         if not faces and not has_multiscale:
             faces = _rescue_downscaled(frame) or []
+            _bp.rescue('downscaled', faces)
+        elif not faces:
+            _bp.rescue_skipped('downscaled', engine)
         # 3. Boundary padding rescue (skip if multiscale detector already applied border context padding)
         if not faces and not has_multiscale:
             faces = _rescue_padded(frame) or []
+            _bp.rescue('padded', faces)
+        elif not faces:
+            _bp.rescue_skipped('padded', engine)
         # 4. Rotated face rescue
         if not faces:
             faces = _rescue_rotated(frame, expected_count=expected_count) or []
+            _bp.rescue('rotated', faces)
         # 5. Lighting rescue (dark/backlit footage; CLAHE contrast normalization)
         if not faces:
             faces = _rescue_clahe(frame) or []
+            _bp.rescue('clahe', faces)
 
     # A SECOND DETECTOR ENGINE here was measured and REJECTED (2026-09-27,
     # Love.mp4, 1550 frames at stride 2): SCRFD at 0.5 found 151 faces the
@@ -1568,6 +1637,7 @@ def _detect_faces(frame, expected_count=None, rescue=True):
     # try rotated variants to recover the missing face(s) without duplicating existing ones.
     if expected_count and len(faces) < expected_count:
         attempted = True
+        _bp.count('rescue.partial_miss.entered')
         try:
             h, w = frame.shape[:2]
             new_faces = []
@@ -1575,11 +1645,14 @@ def _detect_faces(frame, expected_count=None, rescue=True):
                                ("clockwise", rotate_clockwise),
                                ("anticlockwise", rotate_anticlockwise)):
                 try:
+                    _n_before = len(new_faces)
+                    _bp.count('rescue.partial_%s.attempted' % angle)
                     r_faces = _detect_faces_raw(rot(frame)) or []
                     for rf in r_faces:
                         _unrotate_face_coords(rf, w, h, angle)
                         if not _is_face_duplicate(rf, list(faces) + new_faces):
                             new_faces.append(rf)
+                    _bp.count('rescue.partial_%s.gained' % angle, len(new_faces) - _n_before)
                     if len(faces) + len(new_faces) >= expected_count:
                         break
                 except Exception as _rot_err:

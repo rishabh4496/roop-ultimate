@@ -13,7 +13,7 @@ from roop.typing import Face, Frame
 from roop.utilities import (resolve_relative_path, conditional_download,
                             CudaOrtIOBinding, cuda_warp_affine,
                             get_onnx_session_options)
-from roop import session_pool
+from roop import session_pool, baseline_probe
 from roop import swap_canary as _canary_mod
 from roop.swap_identity import validate_identity_embedding
 from roop.precision_policy import providers_for
@@ -772,8 +772,11 @@ class FaceSwapInsightFace():
             self._batch_unsupported = not spec.get("batch_capable", True)
 
             def _build(_i=0):
-                return onnxruntime.InferenceSession(
+                sess = onnxruntime.InferenceSession(
                     model_arg, get_onnx_session_options(), providers=swap_providers)
+                baseline_probe.log_session(f'swapper:{swap_model}', sess,
+                                           swap_providers, model_file=model_path)
+                return sess
 
             self.model_swap_insightface = _build()
 
@@ -1079,6 +1082,8 @@ class FaceSwapInsightFace():
         try:
             self.model_swap_insightface = onnxruntime.InferenceSession(
                 self._model_arg, get_onnx_session_options(), providers=fp32)
+            baseline_probe.log_session(f'swapper:{swap_model}:fp32-fallback',
+                                       self.model_swap_insightface, fp32)
             from roop import predictor
             predictor.verify_and_warmup(
                 self.model_swap_insightface, fp32, tag + ":fp32-fallback",
@@ -1115,8 +1120,11 @@ class FaceSwapInsightFace():
         if len(providers) == len(self._swap_providers):
             return False   # no TRT provider to strip — can't help, re-raise
         def _build(_i=0):
-            return onnxruntime.InferenceSession(
+            sess = onnxruntime.InferenceSession(
                 self._model_arg, get_onnx_session_options(), providers=providers)
+            baseline_probe.log_session(f'swapper:{self.loaded_model_key}:no-trt', sess,
+                                       providers)
+            return sess
         self.model_swap_insightface = _build()
         if getattr(self, '_io_bindings', None) is not None:
             self._io_bindings.clear()

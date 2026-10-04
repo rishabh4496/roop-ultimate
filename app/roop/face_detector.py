@@ -35,6 +35,7 @@ Features:
 
 from __future__ import annotations
 from roop.degrade import swallowed as _swallowed
+from roop import baseline_probe as _bp
 
 import concurrent.futures
 import math
@@ -499,6 +500,8 @@ class MultiScaleFaceDetector:
         configured = getattr(roop.globals, 'detector_scale_pyramid', None) if scales is None else scales
         parsed_scales = parse_scale_pyramid(configured)
 
+        _bp.count('pyramid.detect_calls')
+
         # 3. Adaptive check: If not explicitly configured and not forced, run quick baseline
         if parsed_scales is None and not force_pyramid:
             if not should_trigger_pyramid(frame.shape[:2], estimated_face_height=estimated_face_height):
@@ -508,10 +511,19 @@ class MultiScaleFaceDetector:
 
                 # Check if result indicates close-up or missed face requiring pyramid
                 if not should_trigger_pyramid(frame.shape[:2], initial_dets=unpad_b):
+                    _bp.count('pyramid.path.single_scale')
                     return unpad_b, (unpad_k if unpad_k is not None else np.zeros((0, 5, 2), dtype=np.float32))
+                # A full single pass was already paid; the pyramid below repeats it.
+                _bp.count('pyramid.trigger.initial_closeup')
+                _bp.count('pyramid.single_pass_then_pyramid')
+            else:
+                _bp.count('pyramid.trigger.estimated_face_height')
+        elif parsed_scales != [1.0]:
+            _bp.count('pyramid.trigger.configured_or_forced')
 
         # Explicit single-scale / pyramid disabled (e.g. parsed_scales == [1.0])
         if parsed_scales == [1.0]:
+            _bp.count('pyramid.path.explicit_single_scale')
             b_single, k_single = detect_fn(padded_frame, int(det_size), float(det_thresh))
             unpad_b, unpad_k = remove_context_padding(b_single, k_single, pad_offsets)
             return unpad_b, (unpad_k if unpad_k is not None else np.zeros((0, 5, 2), dtype=np.float32))
@@ -519,6 +531,8 @@ class MultiScaleFaceDetector:
         # 4. Multi-scale dynamic image pyramid execution
         active_scales = parsed_scales if parsed_scales is not None else self.default_scales
         pyramid = generate_scale_pyramid(padded_frame, active_scales)
+        _bp.count('pyramid.path.pyramid_executed')
+        _bp.count('pyramid.scale_passes', len(pyramid))
 
         all_candidate_boxes: List[np.ndarray] = []
         all_candidate_kpss: List[np.ndarray] = []

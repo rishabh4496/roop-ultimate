@@ -23,6 +23,7 @@ from roop.processors.FaceSwapInsightFace import (verify_tol_for as _swap_verify_
                                                   batch_swap_enabled as _batch_swap_enabled)
 from roop import orientation
 from roop import runtime_banner as _runtime_banner
+from roop import baseline_probe as _bp
 from roop import synthetic_label as _synthetic_label
 from roop import selected_routing
 from roop.face_util import estimate_norm, solve_pose_5pt, solve_pose_jaw_5pt
@@ -810,6 +811,9 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
               f"vram_free={entry['vram_free_gb'] if entry['vram_free_gb'] is not None else 'n/a'}GB "
               f"vram_total={entry['vram_total_gb'] if entry['vram_total_gb'] is not None else 'n/a'}GB",
               flush=True)
+        # Measurement only (ROOP_PROFILE): torch + nvidia-smi at every phase
+        # boundary, so pre-pass start / after pre-pass are on the record.
+        _bp.vram_snapshot(entry['stage'])
 
     def _runtime_worker_enter(self, threadindex):
         monitor = getattr(self, '_runtime_monitor', None)
@@ -1317,6 +1321,7 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                         _swallowed("roop/ProcessMgr.py:1155", _degrade_error, "fallback continued")
                         pass
                 p.Initialize(extoption)
+                _bp.vram_snapshot(f'initialize:{key}')
                 newprocessors.append(p)
             else:
                 print(f"Not using {module}")
@@ -2283,6 +2288,16 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                   f"({blocks_per_chunk / max(1, stab_width):.1f} per worker, so an "
                   f"idle worker has one to steal), warm-up {WU}f "
                   f"(<=1% seed residual at boundaries).")
+        # Measurement only: the same geometry as one key=value line, with the
+        # redundant fraction and the RAM it was derived from beside it.
+        _geo = dict(getattr(self, '_stab_geometry_info', None) or {})
+        _geo.update(getattr(self, '_stab_budget_info', None) or {})
+        _geo.update({'workers': int(stab_width), 'blocks_per_chunk': int(blocks_per_chunk),
+                     'block': int(block), 'wu': int(WU), 'chunk_frames': int(CHUNK),
+                     'chunk_mb': round(CHUNK * float(_geo.get('frame_mb', 0.0)), 1),
+                     'ROOP_STAB_CHUNK_override': os.environ.get('ROOP_STAB_CHUNK', 'unset'),
+                     'ROOP_STAB_WARMUP_override': os.environ.get('ROOP_STAB_WARMUP', 'unset')})
+        _bp.log_stab_geometry(_geo)
 
         self._parallel_stab = True
         self._stab_active = True
@@ -2655,21 +2670,32 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                     self._tls.last_found_bboxes = None
                     self._tls.temporal_block = True
                     ca = _base + a
-                    for ci in range(max(0, ca - WU), ca):   # warm-up: prime filter, discard
-                        if not roop.globals.processing:
-                            return
-                        self._tls.t = _base_global + ci
-                        try:
-                            # Pass the real frame index so the temporal-detection /
-                            # SAM2 / identity-track caches stay usable in this path.
-                            allowed, _ = _process_stab_frame(
-                                _combined[ci], frame_idx=_base_global + ci)
-                            if not allowed:
-                                pause_interrupted.set()
+                    # Measured, not derived: the warm-up frames this block actually
+                    # runs (the first block of a clip has fewer than WU) against the
+                    # frames it outputs. baseline_probe.report() turns them into the
+                    # redundant share; the counts below are split out as "main+warmup".
+                    _bp.count('stab.blocks')
+                    _bp.count('stab.warmup_frames', ca - max(0, ca - WU))
+                    _bp.count('stab.output_frames', b - a)
+                    _bp.warmup_enter()
+                    try:
+                        for ci in range(max(0, ca - WU), ca):   # warm-up: prime filter, discard
+                            if not roop.globals.processing:
                                 return
-                        except Exception as _degrade_error:
-                            _swallowed("roop/ProcessMgr.py:3521", _degrade_error, "fallback continued")
-                            pass
+                            self._tls.t = _base_global + ci
+                            try:
+                                # Pass the real frame index so the temporal-detection /
+                                # SAM2 / identity-track caches stay usable in this path.
+                                allowed, _ = _process_stab_frame(
+                                    _combined[ci], frame_idx=_base_global + ci)
+                                if not allowed:
+                                    pause_interrupted.set()
+                                    return
+                            except Exception as _degrade_error:
+                                _swallowed("roop/ProcessMgr.py:3521", _degrade_error, "fallback continued")
+                                pass
+                    finally:
+                        _bp.warmup_exit()
                     # Warm-up frames paint faces too, but they are discarded: do not
                     # let the first real frame report them as its own.
                     self._tls.faces_reported = getattr(self._tls, 'faces_painted', 0)
@@ -2959,6 +2985,7 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
         # Every path (threaded workers, parallel stabilization, the one-owner
         # stream) calls this once per finished frame, so it is the one place the
         # pipeline monitor can count frames without knowing which path runs.
+        _bp.frame_tick()
         monitor = getattr(self, '_pipeline_monitor', None)
         if monitor is not None:
             # Faces painted by THIS thread since its last report: on the stabilized

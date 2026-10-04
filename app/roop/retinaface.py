@@ -293,6 +293,7 @@ def _build_one(model_type, model_path, providers, file):
     # Optional NPU/iGPU offload for this small per-face graph; off unless the
     # user opts in, and a no-op on a build without the OpenVINO provider.
     providers = detector_providers(providers, 'face_detection')
+    _requested = list(providers)        # before any step-down (baseline_probe)
     if model_type == 'r50':
         from roop.utilities import get_onnx_session_options
         # A detector that cannot build its TensorRT engine must degrade to
@@ -315,6 +316,9 @@ def _build_one(model_type, model_path, providers, file):
         # signature and contract; bound per instance, so site-packages is
         # untouched. See roop/nms.py.
         bind_instance_nms(det)
+    from roop import baseline_probe
+    baseline_probe.log_session(f'retinaface:{model_type}', getattr(det, 'session', None),
+                               _requested, model_file=model_path)
     return det
 
 

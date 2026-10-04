@@ -57,6 +57,7 @@ class BatchProcessingMixin:
         import sys
         import cv2
         import roop
+        from roop import baseline_probe as _bp
         from concurrent.futures import ThreadPoolExecutor, as_completed
         from queue import Queue
         from threading import Thread
@@ -712,6 +713,9 @@ class BatchProcessingMixin:
         if self.output_to_cam:
             self.streamwriter = StreamWriter((width, height), int(fps))
 
+        # Everything from here to `phase4:before-main-processing` is a pre-pass
+        # for the baseline counters (roop/baseline_probe.py).
+        _bp.set_phase('prepass')
         # 2-pass stabilization, pass 1: precompute smoothed kps sequentially so
         # pass 2 (the swap) can run multi-threaded. Done before auto-tuning so the
         # tuner calibrates the real pass-2 workload.
@@ -731,6 +735,7 @@ class BatchProcessingMixin:
         self.num_threads = threads
         self.processing_threads = self.num_threads
         _configure_opencv_worker_threads(self.num_threads)
+        _bp.log_threading('render-start (main thread, after _configure_opencv_worker_threads)')
         self.frames_queue = []
         self.processed_queue = []
         # A little buffering per thread smooths variable per-frame times so the
@@ -825,6 +830,7 @@ class BatchProcessingMixin:
                 self._log_memory_stage('phase3:tracking-prepass-fallback')
 
         self._log_memory_stage('phase4:before-main-processing')
+        _bp.set_phase('main')
         # Live FPS + queue monitor (ROOP_PIPELINE_LOG_EVERY, default 100, 0 = off).
         # `_runtime_read/write_queue` are only (re)bound by the parallel-stab path
         # and survive between runs, so clear them or a threaded render following a

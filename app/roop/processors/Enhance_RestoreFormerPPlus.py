@@ -10,7 +10,7 @@ from roop.utilities import resolve_relative_path
 from roop.processors.enhance_common import (is_usable, looks_collapsed, sized,
                                             exclusive)
 from roop.precision_policy import providers_for
-from roop import session_pool
+from roop import session_pool, baseline_probe
 
 class Enhance_RestoreFormerPPlus():
     plugin_options:dict = None
@@ -52,6 +52,8 @@ class Enhance_RestoreFormerPPlus():
 
             def _build(_i=0):
                 sess = onnxruntime.InferenceSession(model_path, opts, providers=session_providers)
+                baseline_probe.log_session('enhancer:restoreformer++', sess,
+                                           session_providers, model_file=model_path)
                 outs = sess.get_outputs()
                 iob = sess.io_binding()
                 iob.bind_output(outs[0].name, self.devicename)

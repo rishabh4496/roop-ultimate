@@ -726,7 +726,7 @@ same result as running the model on every face.
 
 | Flag | Default | Effect |
 |------|---------|--------|
-| `ROOP_PROFILE` | 0 | `1` prints per-stage wall-clock timing (analyze/detect/mask/swap/enhance/…) summed across worker threads. Unrelated to `ROOP_YAW_ALIGN`. |
+| `ROOP_PROFILE` | 0 | `1` prints per-stage wall-clock timing (analyze/detect/mask/swap/enhance/…) summed across worker threads. Unrelated to `ROOP_YAW_ALIGN`. Since 2026-10-04 it also turns on the baseline probes in `roop/baseline_probe.py` (measurement only): a `BASELINE COUNTERS` table beside STAGE TIMING (raw detector executions by caller, pyramid triggers, every rescue attempted/succeeded/gained, aux-model calls, stabilizer warm-up vs output frames, split by setup/prepass/main/warm-up), `[VRAM]` samples (torch + nvidia-smi) at each phase boundary, after each processor Initialize and every 500 frames, and a `[Threads]` dump (threadpoolctl + OpenCV) at render start and from the first worker thread. The `[Session]` line per distinct session and the `[StabGeometry]` line are always printed. |
 | `ROOP_DEBUG_MATCH` | unset | Prints identity-matching diagnostics during the swap pass. |
 | `ROOP_DEBUG_ANGLE` | 0 | `1` prints, per face per masker: the yaw/pitch keypoint proxies, the non-frontal verdict, which masking path ran, and what fraction of the canonical crop the unwarped box covers. Noisy on video — use on a single preview frame. |
 

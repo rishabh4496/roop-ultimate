@@ -9,6 +9,7 @@ Moved verbatim from ProcessMgr.py; the tuning constants keep their env vars and
 their original comments explaining the measured values behind them.
 """
 from roop.degrade import swallowed as _swallowed
+from roop import baseline_probe as _bp
 
 import contextlib
 import functools
@@ -727,6 +728,8 @@ def _prof_reset():
     with _prof_lock:
         _prof_times.clear()
         _prof_counts.clear()
+    # The baseline counters describe the same run the stage table does.
+    _bp.reset()
 
 
 def _prof_report():
@@ -741,6 +744,8 @@ def _prof_report():
             c = _prof_counts[k]
             print(f"  {k:16s} {t:8.2f}s {100 * t / total:6.1f}% {c:8d} {1000 * t / max(c, 1):8.2f}", flush=True)
         print("=============================================================================\n", flush=True)
+    if _PROFILE:
+        _bp.report()
     if _DETAILED_PROFILER is not None:
         _DETAILED_PROFILER.print_report()
 

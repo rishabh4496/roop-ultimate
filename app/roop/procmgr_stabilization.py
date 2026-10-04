@@ -179,6 +179,12 @@ class StabilizationSchedulingMixin:
         # resulting budget cannot fund a parallel block.  The one-MB floor is
         # only a finite-value guard and is not a RAM reservation.
         budget = max(1.0, min(hard_cap, (avail_mb * share) / live))
+        # Measurement only (baseline_probe.log_stab_geometry): the inputs of this
+        # derivation, as they were at the moment it ran.
+        self._stab_budget_info = {
+            'derived_avail_mb': round(avail_mb, 1), 'derived_total_mb': round(total_mb, 1),
+            'ram_share': round(share, 3), 'live_copies': int(live),
+            'hard_cap_mb': round(float(hard_cap), 1), 'derived_budget_mb': round(budget, 1)}
         if not getattr(self, '_stab_budget_notified', False):
             self._stab_budget_notified = True
             print(f"[Stabilize] {avail_mb / 1024.0:.1f} GB RAM free of {total_mb / 1024.0:.1f} GB: chunk budget "
@@ -231,6 +237,7 @@ class StabilizationSchedulingMixin:
         block = max(_floor,
                     max(2 * wu, 16) if self._runtime_stab_small else max(_mult * wu, 24))
         budget_mb = self._default_stab_chunk_mb()
+        _budget_source = 'derived from free RAM'
         _env_budget = (os.environ.get('ROOP_STAB_CHUNK_MB', '') or '').strip()
         if _env_budget:
             # Explicit means explicit, the same rule the pool knobs settled on:
@@ -239,6 +246,7 @@ class StabilizationSchedulingMixin:
             # when nothing was asked for.
             try:
                 budget_mb = float(_env_budget)
+                _budget_source = 'ROOP_STAB_CHUNK_MB'
             except ValueError:
                 pass
         frame_mb = max(0.1, (self._stab_frame_bytes or (1920 * 1080 * 3)) / (1024.0 ** 2))
@@ -354,4 +362,16 @@ class StabilizationSchedulingMixin:
             # so work-stealing eliminates worker idle stalls and GPU utilization valleys.
             rounds = 2 if (fits // width) >= 2 else 1
         blocks_per_chunk = width * rounds
+        # Measurement only: the geometry's own inputs, read back by
+        # _run_stab_parallel -> baseline_probe.log_stab_geometry.
+        self._stab_geometry_info = {
+            'wu': int(wu), 'block': int(block), 'workers': int(width),
+            'threads_requested': int(threads), 'blocks_per_chunk': int(blocks_per_chunk),
+            'rounds': int(rounds), 'blocks_that_fit': int(fits),
+            'frame_mb': round(frame_mb, 3),
+            'effective_chunk_mb': round(float(budget_mb), 1),
+            'chunk_mb_source': _budget_source,
+            'env_ROOP_STAB_CHUNK_MB': _env_budget or 'unset',
+            'block_mult': 'ROOP_STAB_BLOCK_MULT=%s' % _explicit_mult if _explicit_mult else 'auto',
+            'runtime_stab_small': bool(self._runtime_stab_small)}
         return wu, block, width, blocks_per_chunk

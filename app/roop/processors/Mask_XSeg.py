@@ -6,7 +6,7 @@ import roop.globals
 
 from roop.typing import Frame
 from roop.utilities import resolve_relative_path
-from roop import session_pool
+from roop import session_pool, baseline_probe
 from roop.precision_policy import providers_for
 
 THREAD_LOCK_CLIP = threading.Lock()
@@ -47,7 +47,9 @@ class Mask_XSeg():
             self._cpu_only = providers == ['CPUExecutionProvider']
 
             def _build(_i=0):
-                return onnxruntime.InferenceSession(model_path, _sess_opts, providers=providers)
+                sess = onnxruntime.InferenceSession(model_path, _sess_opts, providers=providers)
+                baseline_probe.log_session('mask:xseg', sess, providers, model_file=model_path)
+                return sess
 
             self.model_xseg = _build()
             self.model_inputs = self.model_xseg.get_inputs()

@@ -7,6 +7,14 @@ folder). Entries before 2026-09-21 were moved here from the README on 2026-09-22
 
 ## 2026-10-04
 
+- **Baseline probes (measurement only, no behaviour change).** New `roop/baseline_probe.py`; see the
+  `ROOP_PROFILE` row in `ENV_FLAGS.md` for what it prints. `[Session] model file provider trt_fp16 input
+  requested` is logged once per distinct session at the five construction sites (buffalo_l via
+  `face_util._build_face_analyser`, `retinaface._build_one`, `Mask_XSeg`, `FaceSwapInsightFace` incl. its
+  fp32/no-TRT rebuilds, `Enhance_RestoreFormerPPlus`), reading the provider ORT actually BOUND and the TRT fp16
+  option off the live session, and flags a bound provider that differs from the first one requested.
+  `tests/baseline_snapshot.py` drives the four reference clips and writes `docs/perf/baseline_<date>.md`.
+  Tests: `app/tests/test_baseline_probe.py`.
 - **"The fps collapses after a while" is the footage getting busier, not the render degrading (measured on
   a live 54,714-frame job and reproduced from fresh processes).** Job: 1276x716, hyperswap + Restore Ultra
   + XSeg, TensorRT/mixed, 10 stabilization workers, i9-14900K + RTX 4070. True fps per 3,600-frame part
