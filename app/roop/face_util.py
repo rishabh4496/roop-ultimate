@@ -722,150 +722,6 @@ def detect_boxes_in_roi(frame, bbox, pad_ratio=1.0, min_crop=160, rotation_actio
     return faces
 
 
-# ── Batched aux models for the tracking pre-pass (roop/aux_batch.py) ──────────────
-# recognition + landmark_2d_106 + landmark_3d_68 run one face at a time inside every
-# detector-pool worker. Inside `aux_batch_scope` they run through one shared engine that
-# crops on the GPU and batches every face of every frame waiting at that moment. Outside
-# the scope nothing here is reachable: `_AUX_SCOPE['on']` is False and `_apply_aux` is the
-# original per-face loop.
-#
-# ROOP_AUX_BATCH=1 turns it on; the DEFAULT IS OFF, because it was measured and it is SLOWER.
-# d4, 600 frames, pre-pass only, RTX 4070, ABBA (docs/perf/aux_batch_2026-10-05.md):
-#   per-face (this code path's default)  60.9 / 64.9 fps, track_detect 30.3 / 29.7 ms
-#   batched FP16, GPU crops              49.8 / 50.3 fps, track_detect 39.1 / 38.6 ms
-#   batched FP32, GPU crops              44.1 / 43.8 fps, track_detect 44.2 / 44.7 ms
-#   batched FP16, CPU crops              62.0 / 58.7 fps, track_detect 31.2 / 33.0 ms
-# Why: two detector workers means at most two frames ever ask at once, and their aux calls
-# overlap rarely -- the engine saw 1.36 faces and exactly 1.00 frames per batch, so there is
-# nothing to amortise (the models are 2.4 ms/face at B=1, 0.9 at B=4, but B=4 never happens),
-# while a GPU crop costs more than the cv2.warpAffine it replaces. Do not flip this default
-# without a pre-pass that keeps >= 4 faces in flight; see the report.
-_AUX_SCOPE = {'on': False, 'engine': None, 'gave_up': False}
-_AUX_LOCK = threading.Lock()
-_AUX_WARNED = set()
-
-
-def aux_batch_wanted() -> bool:
-    return os.environ.get('ROOP_AUX_BATCH', '0').strip().lower() in ('1', 'on', 'true', 'yes')
-
-
-def aux_batch_active() -> bool:
-    return bool(_AUX_SCOPE['on']) and not _AUX_SCOPE['gave_up']
-
-
-@contextlib.contextmanager
-def aux_batch_scope(enabled=None):
-    """Batch the aux models of every detection made inside this block (the tracking scan).
-
-    The engine is built on first use, from the FaceAnalysis the caller already holds, so a
-    scope around code that never reaches a real analyser costs nothing. Yields a dict that
-    carries the engine's summary after the block ends.
-    """
-    result = {'engine': None, 'summary': None}
-    on = aux_batch_wanted() if enabled is None else bool(enabled)
-    if not on:
-        yield result
-        return
-    with _AUX_LOCK:
-        _AUX_SCOPE.update(on=True, engine=None, gave_up=False)
-    try:
-        yield result
-    finally:
-        with _AUX_LOCK:
-            engine = _AUX_SCOPE['engine']
-            _AUX_SCOPE.update(on=False, engine=None, gave_up=False)
-        if engine is not None:
-            result['engine'] = engine
-            result['summary'] = engine.summary()
-            print('[Track] aux batch: %s' % result['summary'])
-            engine.close()
-
-
-def _aux_engine_for(fa):
-    """The scope's engine, built from `fa`'s models on first use; None = per-face path."""
-    if not _AUX_SCOPE['on'] or _AUX_SCOPE['gave_up']:
-        return None
-    engine = _AUX_SCOPE['engine']
-    if engine is not None:
-        return engine
-    with _AUX_LOCK:
-        if not _AUX_SCOPE['on'] or _AUX_SCOPE['gave_up']:
-            return None
-        if _AUX_SCOPE['engine'] is not None:
-            return _AUX_SCOPE['engine']
-        try:
-            from roop import aux_batch
-            models = dict(getattr(fa, 'models', {}) or {})
-            if getattr(fa, 'lm68_model', None) is not None:
-                models['landmark_3d_68'] = fa.lm68_model
-            if not any(t in models for t in aux_batch.AUX_TASKS):
-                raise RuntimeError('this analyser has none of the batched models')
-            free_mb = 0.0
-            try:
-                import torch
-                free, _total = torch.cuda.mem_get_info(getattr(roop.globals, 'cuda_device_id', 0) or 0)
-                free_mb = free / (1024 ** 2)
-            except Exception as _mem_error:
-                _swallowed("roop/face_util.py:aux_batch_mem", _mem_error, "no VRAM reading")
-            if free_mb < 1500.0:
-                raise RuntimeError('only %.0f MiB of VRAM free' % free_mb)
-            _AUX_SCOPE['engine'] = aux_batch.AuxBatchEngine(
-                models, device_id=getattr(roop.globals, 'cuda_device_id', 0) or 0)
-            print('[Track] aux batch engine ready (%.1f s): %s'
-                  % (_AUX_SCOPE['engine'].build_seconds, _AUX_SCOPE['engine'].describe()))
-            return _AUX_SCOPE['engine']
-        except Exception as exc:
-            _AUX_SCOPE['gave_up'] = True
-            _swallowed("roop/face_util.py:aux_batch_build", exc, "per-face aux models for this scan")
-            print('[Track] aux batch UNAVAILABLE, scanning with the per-face aux models: %s: %s'
-                  % (type(exc).__name__, str(exc)[:300]), flush=True)
-            return None
-
-
-def _apply_aux(frame, faces, fa, models=None, tasks=None, swallow=None):
-    """Run `fa`'s non-detection models on `faces`, as `FaceAnalysis.get` does per face.
-
-    Inside `aux_batch_scope` the recognition and landmark models go through the shared batched
-    engine; any failure there is counted, announced once, and the per-face loop below runs
-    instead for this call -- the original behaviour, errors included. `swallow` is the tag of
-    a caller that always tolerated a failing (face, model) pair (the CLAHE rescue, the lazy
-    68-point measurement): the loop then logs and continues exactly as that caller did.
-    """
-    faces = list(faces)
-    if not faces:
-        return
-    models = fa.models if models is None else models
-    handled = ()
-    engine = _aux_engine_for(fa)
-    if engine is not None:
-        want = tuple(t for t in (tasks or ('recognition', 'landmark_2d_106', 'landmark_3d_68'))
-                     if t in models)
-        if want:
-            try:
-                engine.run(frame, faces, want)
-                handled = want
-            except Exception as exc:
-                _bp.count('aux_batch.fallback')
-                sig = (type(exc).__name__, str(exc)[:120])
-                with _AUX_LOCK:
-                    first = sig not in _AUX_WARNED
-                    _AUX_WARNED.add(sig)
-                if first:
-                    print('[Track] aux batch FAILED for one call, per-face aux models used: %s: %s'
-                          % sig, flush=True)
-    for face in faces:
-        for taskname, model in models.items():
-            if taskname == 'detection' or taskname in handled:
-                continue
-            if swallow is None:
-                model.get(frame, face)
-                continue
-            try:
-                model.get(frame, face)
-            except Exception as _aux_err:
-                _swallowed(swallow, _aux_err, "fallback continued")
-
-
 def _hybrid_detector_faces(frame, fa, bboxes, kpss, aux=True):
     """Wrap raw detector output (bbox + 5 kps per face) into full Face objects
     using buffalo_l's aux models (recognition + 106/68 landmarks) — mirrors
@@ -915,9 +771,12 @@ def _hybrid_detector_faces(frame, fa, bboxes, kpss, aux=True):
 
         face = Face(bbox=np.array([x1, y1, x2, y2], dtype=np.float32),
                     kps=kps, det_score=float(raw_box[4]))
+        if aux:
+            for taskname, model in fa.models.items():
+                if taskname == 'detection':
+                    continue
+                model.get(frame, face)
         ret.append(face)
-    if aux:
-        _apply_aux(frame, ret, fa)
     return ret
 
 
@@ -1036,12 +895,6 @@ def _detect_faces_raw(frame, det_size=None, det_thresh=None, aux=True, unclamped
                     faces = _faces_like_insightface(bboxes, kpss)
                 else:
                     faces = _hybrid_detector_faces(frame, fa, bboxes, kpss, aux=False)
-            elif aux_batch_active():
-                # `FaceAnalysis.get` split at its own seam: the same detector call and the
-                # same unclamped Face objects, then every face's aux models at once.
-                bboxes, kpss = fa.det_model.detect(frame, max_num=0, metric='default')
-                faces = _faces_like_insightface(bboxes, kpss)
-                _apply_aux(frame, faces, fa)
             else:
                 faces = fa.get(frame)
         finally:
@@ -1169,8 +1022,15 @@ def _rescue_clahe(frame: Frame):
         faces = _detect_faces_raw(eq, aux=False)
         if faces:
             with lease_face_analyser() as fa:
-                _apply_aux(frame, [f for f in faces if getattr(f, 'kps', None) is not None], fa,
-                           swallow="roop/face_util.py:clahe_aux")
+                for face in faces:
+                    if getattr(face, 'kps', None) is not None:
+                        for taskname, model in fa.models.items():
+                            if taskname == 'detection':
+                                continue
+                            try:
+                                model.get(frame, face)
+                            except Exception as _aux_err:
+                                _swallowed("roop/face_util.py:clahe_aux", _aux_err, "fallback continued")
             return faces
     except Exception as _degrade_error:
         _swallowed("roop/face_util.py:790", _degrade_error, "fallback continued")
@@ -1269,7 +1129,11 @@ def _rotated_pass(frame, angle, rotate, known, w, h):
     _bp.count('rescue.rotated_pass.survivors', len(survivors))
     if survivors:
         with lease_face_analyser() as fa:
-            _apply_aux(rframe, survivors, fa)
+            for face in survivors:
+                for taskname, model in fa.models.items():
+                    if taskname == 'detection':
+                        continue
+                    model.get(rframe, face)
         for face in survivors:
             _unrotate_face_coords(face, w, h, angle)
     return survivors
@@ -1417,8 +1281,12 @@ def ensure_landmark_3d_68(frame, faces):
             model = getattr(fa, 'lm68_model', None)
             if model is None:
                 return faces
-            _apply_aux(frame, todo, fa, models={'landmark_3d_68': model},
-                       swallow="roop/face_util.py:955")
+            for f in todo:
+                try:
+                    model.get(frame, f)
+                except Exception as _degrade_error:
+                    _swallowed("roop/face_util.py:955", _degrade_error, "fallback continued")
+                    pass
     except Exception as _degrade_error:
         _swallowed("roop/face_util.py:957", _degrade_error, "fallback continued")
         pass
