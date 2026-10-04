@@ -1,0 +1,166 @@
+[
+ [
+  {
+   "clip": "d4",
+   "arm": "A",
+   "pos": 0,
+   "wall_s": 9.53,
+   "fps": 62.94,
+   "track_detect_ms": 29.28,
+   "track_detect_calls": 600,
+   "tracks": 5,
+   "aux_batch": null,
+   "vs_first_arm": null
+  },
+  {
+   "clip": "d4",
+   "arm": "A",
+   "pos": 1,
+   "wall_s": 9.0,
+   "fps": 66.64,
+   "track_detect_ms": 28.75,
+   "track_detect_calls": 600,
+   "tracks": 5,
+   "aux_batch": null,
+   "vs_first_arm": {
+    "tracks": [
+     5,
+     5
+    ],
+    "tracks_identical_shape": true,
+    "frames_and_obs_equal": true,
+    "max_bbox_px": 0.0,
+    "min_emb_mean_cos": 0.9999999999999998,
+    "assignment_frames_equal": true,
+    "assignment_frames": 600,
+    "frames_with_different_source_assignment": 0,
+    "assignments_identical": true
+   }
+  },
+  {
+   "clip": "d4",
+   "arm": "B",
+   "pos": 2,
+   "wall_s": 12.06,
+   "fps": 49.76,
+   "track_detect_ms": 39.13,
+   "track_detect_calls": 600,
+   "tracks": 5,
+   "aux_batch": "579 batches, 579 jobs, 785 faces (mean 1.36 faces/batch, max 2; mean 1.00 frames/batch) | crops+upload 4546 ms, inference 2058 ms, post 167 ms total | build 1.3 s | recognition=Tensorrt, landmark_2d_106=Tensorrt, landmark_3d_68=Tensorrt",
+   "vs_first_arm": {
+    "tracks": [
+     5,
+     5
+    ],
+    "tracks_identical_shape": true,
+    "frames_and_obs_equal": true,
+    "max_bbox_px": 15.216217041015625,
+    "min_emb_mean_cos": 0.999950781266931,
+    "assignment_frames_equal": true,
+    "assignment_frames": 600,
+    "frames_with_different_source_assignment": 0,
+    "assignments_identical": true
+   }
+  },
+  {
+   "clip": "d4",
+   "arm": "C",
+   "pos": 3,
+   "wall_s": 13.59,
+   "fps": 44.14,
+   "track_detect_ms": 44.22,
+   "track_detect_calls": 600,
+   "tracks": 5,
+   "aux_batch": "579 batches, 579 jobs, 785 faces (mean 1.36 faces/batch, max 2; mean 1.00 frames/batch) | crops+upload 4469 ms, inference 3548 ms, post 172 ms total | build 1.6 s | recognition=Tensorrt, landmark_2d_106=Tensorrt, landmark_3d_68=Tensorrt",
+   "vs_first_arm": {
+    "tracks": [
+     5,
+     5
+    ],
+    "tracks_identical_shape": true,
+    "frames_and_obs_equal": true,
+    "max_bbox_px": 15.216217041015625,
+    "min_emb_mean_cos": 0.999934738987651,
+    "assignment_frames_equal": true,
+    "assignment_frames": 600,
+    "frames_with_different_source_assignment": 0,
+    "assignments_identical": true
+   }
+  },
+  {
+   "clip": "d4",
+   "arm": "C",
+   "pos": 4,
+   "wall_s": 13.7,
+   "fps": 43.8,
+   "track_detect_ms": 44.68,
+   "track_detect_calls": 600,
+   "tracks": 5,
+   "aux_batch": "579 batches, 579 jobs, 785 faces (mean 1.36 faces/batch, max 2; mean 1.00 frames/batch) | crops+upload 4522 ms, inference 3551 ms, post 174 ms total | build 1.6 s | recognition=Tensorrt, landmark_2d_106=Tensorrt, landmark_3d_68=Tensorrt",
+   "vs_first_arm": {
+    "tracks": [
+     5,
+     5
+    ],
+    "tracks_identical_shape": true,
+    "frames_and_obs_equal": true,
+    "max_bbox_px": 15.216217041015625,
+    "min_emb_mean_cos": 0.999934738987651,
+    "assignment_frames_equal": true,
+    "assignment_frames": 600,
+    "frames_with_different_source_assignment": 0,
+    "assignments_identical": true
+   }
+  },
+  {
+   "clip": "d4",
+   "arm": "B",
+   "pos": 5,
+   "wall_s": 11.92,
+   "fps": 50.33,
+   "track_detect_ms": 38.61,
+   "track_detect_calls": 600,
+   "tracks": 5,
+   "aux_batch": "579 batches, 579 jobs, 785 faces (mean 1.36 faces/batch, max 2; mean 1.00 frames/batch) | crops+upload 4524 ms, inference 1991 ms, post 175 ms total | build 1.3 s | recognition=Tensorrt, landmark_2d_106=Tensorrt, landmark_3d_68=Tensorrt",
+   "vs_first_arm": {
+    "tracks": [
+     5,
+     5
+    ],
+    "tracks_identical_shape": true,
+    "frames_and_obs_equal": true,
+    "max_bbox_px": 15.216217041015625,
+    "min_emb_mean_cos": 0.999950781266931,
+    "assignment_frames_equal": true,
+    "assignment_frames": 600,
+    "frames_with_different_source_assignment": 0,
+    "assignments_identical": true
+   }
+  },
+  {
+   "clip": "d4",
+   "arm": "A",
+   "pos": 6,
+   "wall_s": 9.28,
+   "fps": 64.64,
+   "track_detect_ms": 29.72,
+   "track_detect_calls": 600,
+   "tracks": 5,
+   "aux_batch": null,
+   "vs_first_arm": {
+    "tracks": [
+     5,
+     5
+    ],
+    "tracks_identical_shape": true,
+    "frames_and_obs_equal": true,
+    "max_bbox_px": 0.0,
+    "min_emb_mean_cos": 0.9999999999999998,
+    "assignment_frames_equal": true,
+    "assignment_frames": 600,
+    "frames_with_different_source_assignment": 0,
+    "assignments_identical": true
+   }
+  }
+ ]
+]

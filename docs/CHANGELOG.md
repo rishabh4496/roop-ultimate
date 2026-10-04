@@ -5,6 +5,18 @@ full session record is [`SESSION_LOGS.md`](SESSION_LOGS.md); the running enginee
 state lives outside the repository (`RECODE_STATUS.md` in the operator's `roop-keep`
 folder). Entries before 2026-09-21 were moved here from the README on 2026-09-22.
 
+## 2026-10-05
+
+- **Batched aux models for the tracking pre-pass (`roop/aux_batch.py`, opt-in `ROOP_AUX_BATCH=1`, default OFF).** recognition +
+  `landmark_2d_106` + `landmark_3d_68` for every face of the frames waiting at once, on batch-relaxed copies of the three ONNX
+  graphs (TensorRT profile 1..16) with GPU crops that reproduce `cv2.warpAffine` bit for bit (OpenCV's fixed-point bilinear
+  emulated on the device); leader/follower coalescing, no timer; `_consume` unchanged. The four per-face aux loops in
+  `face_util` now share `_apply_aux` - flag off is bit-identical to the old code (652/652 faces exactly equal over 450 frames).
+  **Measured slower** (d4 pre-pass 60.9-66.6 fps per-face vs 49.8-50.3 batched FP16 / 44 FP32; `track_detect` 29-30 vs 39 / 44 ms;
+  CPU crops neutral): the two detector workers give 1.36 faces and 1.00 frames per batch, nothing to amortise. Embedding cosine
+  >= 0.9998 vs the existing path; the 0.3 px landmark bar cannot be met against it because the existing TensorRT-FP16 68-point
+  path is itself a median 1.25 px (max 9.5) from FP32 truth. `docs/perf/aux_batch_2026-10-05.md`.
+
 ## 2026-10-04
 
 - **New detector engine `retinaface_r50_gpu` (not the default).** face_engine's on-device RetinaFace R50 wired in as a hybrid engine

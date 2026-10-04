@@ -835,6 +835,11 @@ class TrackingMixin:
                     _swallowed("roop/procmgr_tracking.py:633", _degrade_error, "fallback continued")
                     pass
 
+        # recognition + 106/68-point landmarks for every face of every frame in flight, in
+        # one batched inference on GPU crops (roop/aux_batch.py). Scoped to THIS scan: the
+        # swap phase's per-face models are untouched. ROOP_AUX_BATCH=0 reverts.
+        aux_scope = _fu.aux_batch_scope()
+        aux_info = aux_scope.__enter__()
         try:
             if cap is not None and frame_start and frame_start > 0:
                 cap.set(cv2.CAP_PROP_POS_FRAMES, frame_start)
@@ -1045,6 +1050,8 @@ class TrackingMixin:
             pbar.close()
             if det_executor is not None:
                 det_executor.shutdown(wait=False, cancel_futures=True)
+            aux_scope.__exit__(None, None, None)
+            self._aux_batch_summary = aux_info.get('summary')
             if prepass_widened:
                 # The swap phase runs on ONE analyser (its next lease rebuilds
                 # the pool at width 1 and gives the VRAM back).
