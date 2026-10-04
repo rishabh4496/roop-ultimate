@@ -152,7 +152,7 @@ def rescue_skipped(name: str, engine: str) -> None:
     if not enabled():
         return
     count('rescue.%s.skipped_multiscale' % name)
-    if engine not in ('retinaface', 'retinaface_r50'):
+    if engine not in ('retinaface', 'retinaface_r50', 'retinaface_r50_gpu'):
         count('rescue.%s.skipped_with_no_pyramid_engine' % name)
 
 
@@ -268,6 +268,29 @@ def log_session(tag: str, sess, requested=None, model_file=None) -> None:
                  note), flush=True)
     except Exception as exc:
         _swallowed("roop/baseline_probe.py:log_session", exc, "session not logged")
+
+
+def log_runner(tag: str, file: str, provider: str, trt_fp16: str, input_shape: str,
+               requested=None, instances: int = 1) -> None:
+    """`log_session` for an inference runner that is not an ORT session (face_engine's AOT
+    TensorRT engine): same `[Session]` line, same dedup and table."""
+    try:
+        req = _names(requested)
+        sig = (tag, provider, trt_fp16, input_shape)
+        with _sessions_lock:
+            rec = _sessions.get(sig)
+            if rec is not None:
+                rec['instances'] += instances
+                return
+            _sessions[sig] = {'tag': tag, 'file': os.path.basename(str(file)), 'provider': provider,
+                              'trt_fp16': trt_fp16, 'input': input_shape, 'requested': req,
+                              'instances': instances}
+        print('[Session] %s file=%s provider=%s trt_fp16=%s input=%s requested=%s instances=%d'
+              % (tag, os.path.basename(str(file)), provider, trt_fp16, input_shape,
+                 ','.join(r.replace('ExecutionProvider', '') for r in req) or '-', instances),
+              flush=True)
+    except Exception as exc:
+        _swallowed("roop/baseline_probe.py:log_runner", exc, "runner not logged")
 
 
 def sessions() -> list:

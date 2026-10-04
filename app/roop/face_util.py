@@ -72,7 +72,7 @@ def _desired_det_size():
 
 # Engines that bring their OWN detector and only borrow buffalo_l's aux models
 # via _hybrid_detector_faces (which skips taskname == 'detection').
-_HYBRID_ENGINES = ('yoloface', 'retinaface', 'retinaface_r50', 'yunet')
+_HYBRID_ENGINES = ('yoloface', 'retinaface', 'retinaface_r50', 'retinaface_r50_gpu', 'yunet')
 
 
 def _current_engine():
@@ -417,6 +417,11 @@ def release_face_analyser():
     except Exception as _degrade_error:
         _swallowed("roop/face_util.py:317", _degrade_error, "fallback continued")
         pass
+    try:
+        from roop.retinaface_gpu_engine import release_detector as _release_retina_gpu
+        _release_retina_gpu()
+    except Exception as _degrade_error:
+        _swallowed("roop/face_util.py:release_retina_gpu", _degrade_error, "fallback continued")
     try:
         from roop.yunet import release_detector as _release_yunet
         _release_yunet()
@@ -789,6 +794,15 @@ def _hybrid_retinaface_faces(frame, fa, det_size, det_thresh, model_type='10g', 
     return _hybrid_detector_faces(frame, fa, bboxes, kpss, aux=aux)
 
 
+def _hybrid_retinaface_gpu_faces(frame, fa, det_thresh, aux=True):
+    """face_engine's on-device RetinaFace R50 (roop/retinaface_gpu_engine.py): padding, the
+    pyramid, the network, decode and the score gate on the GPU; the app's shared NMS rules on
+    the few survivors. Same (bboxes, kpss) contract as `retinaface.detect`."""
+    from roop import retinaface_gpu_engine
+    bboxes, kpss = retinaface_gpu_engine.detect(frame, det_thresh=det_thresh)
+    return _hybrid_detector_faces(frame, fa, bboxes, kpss, aux=aux)
+
+
 def _hybrid_yunet_faces(frame, fa, det_size, det_thresh, aux=True):
     from roop import yunet
     bboxes, kpss = yunet.detect(frame, det_size=det_size, det_thresh=det_thresh)
@@ -869,6 +883,8 @@ def _detect_faces_raw(frame, det_size=None, det_thresh=None, aux=True, unclamped
                 faces = _hybrid_retinaface_faces(frame, fa, eff_size, eff_thresh, model_type='10g', aux=aux)
             elif engine == 'retinaface_r50':
                 faces = _hybrid_retinaface_faces(frame, fa, eff_size, eff_thresh, model_type='r50', aux=aux)
+            elif engine == 'retinaface_r50_gpu':
+                faces = _hybrid_retinaface_gpu_faces(frame, fa, eff_thresh, aux=aux)
             elif engine == 'yunet':
                 faces = _hybrid_yunet_faces(frame, fa, eff_size, eff_thresh, aux=aux)
             elif not aux:
@@ -1683,7 +1699,7 @@ def _detect_faces(frame, expected_count=None, rescue=True):
     if not faces:
         attempted = True
         engine = getattr(roop.globals, 'detector_engine', 'scrfd')
-        has_multiscale = (engine in ('retinaface', 'retinaface_r50')
+        has_multiscale = (engine in ('retinaface', 'retinaface_r50', 'retinaface_r50_gpu')
                           or bool(getattr(roop.globals, 'detector_scale_pyramid', None)))
         # 1. Small-face rescue.
         #

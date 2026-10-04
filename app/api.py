@@ -1811,7 +1811,7 @@ def get_meta():
                           "Segment Anything 2 (tracked)"],
         "sam2_model_sizes": ["tiny", "small", "base_plus", "large"],
         "color_transfer_modes": ["none", "rct", "lct", "mkl", "idt"],
-        "detector_engines": ["scrfd", "yoloface", "retinaface", "retinaface_r50", "yunet"],
+        "detector_engines": ["scrfd", "yoloface", "retinaface", "retinaface_r50", "retinaface_r50_gpu", "yunet"],
         "encoder_presets": ["auto", "ultrafast", "superfast", "veryfast", "faster",
                              "fast", "medium", "slow", "slower", "veryslow"],
         "pool_sizes": ["auto", "1", "2", "3", "4", "5", "6", "7", "8",

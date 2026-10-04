@@ -487,6 +487,7 @@ def _detector_model(engine):
         'scrfd': ('SCRFD det_10g', 'buffalo_l/det_10g.onnx'),
         'retinaface': ('RetinaFace 10g', 'retinaface_10g.onnx'),
         'retinaface_r50': ('RetinaFace r50', 'retinaface_r50.onnx'),
+        'retinaface_r50_gpu': ('RetinaFace r50 (on-device)', 'retinaface_r50.onnx'),
         'yoloface': ('YOLOFace 8n', 'yoloface_8n.onnx'),
     }
     label, rel = table.get(engine, table['scrfd'])
