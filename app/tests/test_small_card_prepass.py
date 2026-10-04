@@ -8,8 +8,10 @@ rescue for a person who was not in it; and a person out of shot re-ran the whole
 ladder on every frame. These tests pin the SHAPE of the fix - that the passes
 are not run - not a speed, which this host cannot measure reliably.
 """
+import contextlib
 import os
 import sys
+import types
 import unittest
 from unittest.mock import patch
 
@@ -22,6 +24,15 @@ import numpy as np
 import roop.globals
 from roop import face_util
 from roop.face_util import RescueBackoff
+
+
+@contextlib.contextmanager
+def _no_aux_models():
+    """The rotated rescues lease an analyser to run the aux models on the faces they keep
+    (face_util._rotated_pass); these tests stub the detector and care about which faces
+    come back, so the lease yields an analyser with no models."""
+    yield types.SimpleNamespace(models={})
+
 
 
 class _Face:
@@ -88,7 +99,8 @@ class RescueSwitch(_TwoTargets):
             calls['n'] += 1
             return [_Face(10)] if calls['n'] == 1 else (
                 [_Face(200)] if calls['n'] == 2 else [])
-        with patch('roop.face_util._detect_faces_raw', side_effect=raw):
+        with patch('roop.face_util._detect_faces_raw', side_effect=raw), \
+                patch('roop.face_util.lease_face_analyser', _no_aux_models):
             faces = face_util.get_all_faces(_frame())
         self.assertEqual(len(faces), 2)
         attempted, gained = face_util.last_rescue_outcome()

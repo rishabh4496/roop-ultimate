@@ -12,10 +12,12 @@ Covers:
 9. Crop contamination missing quad fallback check.
 """
 import ast
+import contextlib
 import inspect
 import math
 import os
 import sys
+import types
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -27,6 +29,15 @@ import cv2
 import numpy as np
 
 import roop.globals
+
+
+@contextlib.contextmanager
+def _no_aux_models():
+    """The rotated rescues lease an analyser to run the aux models on the faces they keep
+    (face_util._rotated_pass); these tests stub the detector and care about which faces
+    come back, so the lease yields an analyser with no models."""
+    yield types.SimpleNamespace(models={})
+
 from roop.face_detector import (
     MultiScaleFaceDetector,
     generate_scale_pyramid,
@@ -254,11 +265,12 @@ class TestRotatedAndInteractingFaceRescue(unittest.TestCase):
 
         test_frame = np.zeros((480, 640, 3), dtype=np.uint8)
 
-        with patch('roop.face_util._detect_faces_raw', side_effect=mock_detect_faces_raw):
+        with patch('roop.face_util._detect_faces_raw', side_effect=mock_detect_faces_raw), \
+                patch('roop.face_util.lease_face_analyser', _no_aux_models):
             faces = _rescue_rotated(test_frame)
 
         self.assertIsNotNone(faces)
-        self.assertEqual(len(faces), 2, "_rescue_rotated must accumulate faces across multiple orientations")
+        self.assertEqual(len(faces), 2,"_rescue_rotated must accumulate faces across multiple orientations")
 
     def test_rescue_rotated_per_orientation_try_except(self):
         """D16: An exception in one rotation does not abort remaining candidate orientations."""
@@ -282,11 +294,12 @@ class TestRotatedAndInteractingFaceRescue(unittest.TestCase):
 
         test_frame = np.zeros((480, 640, 3), dtype=np.uint8)
 
-        with patch('roop.face_util._detect_faces_raw', side_effect=mock_detect_faces_raw):
+        with patch('roop.face_util._detect_faces_raw', side_effect=mock_detect_faces_raw), \
+                patch('roop.face_util.lease_face_analyser', _no_aux_models):
             faces = _rescue_rotated(test_frame)
 
         self.assertIsNotNone(faces)
-        self.assertEqual(len(faces), 1, "Failure in first orientation must not abort subsequent orientation")
+        self.assertEqual(len(faces), 1,"Failure in first orientation must not abort subsequent orientation")
 
     def test_clahe_rescue_enrichment_uses_clean_original_frame(self):
         """D15: Detection uses CLAHE frame with aux=False, auxiliary enrichment uses clean frame."""

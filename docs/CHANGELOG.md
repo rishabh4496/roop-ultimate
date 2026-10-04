@@ -7,6 +7,19 @@ folder). Entries before 2026-09-21 were moved here from the README on 2026-09-22
 
 ## 2026-10-04
 
+- **The rotated rescues run the aux models only on faces they keep (`face_util._rotated_pass`).** `_rescue_rotated` and
+  the partial-miss rescue detected on a rotated frame with recognition + 106/68-point landmarks and discarded the aux
+  work of every duplicate. They now detect with `aux=False` (and `unclamped=True`, so SCRFD geometry is what `fa.get()`
+  gave), test duplicates on an un-rotated COPY of the coordinates, then run the aux models on the rotated frame from the
+  rotated keypoints for survivors only and un-rotate those. Measured (`docs/perf/rescue_aux_2026-10-04.md`): 1,558 faces
+  on 1,018 frames bit-identical to the old code (bbox, kps, embedding, landmarks; old-vs-old null identical too); whole
+  renders of d4, Love and d1 give the baseline's decoded md5, swap audit and WRONG-FACESET counts exactly; aux calls
+  d4 pre-pass -34%, Love -4%, d1 -10%, detector executions unchanged; d4 pre-pass 30.2 -> 34.3 fps (ABBA). Love's
+  timing is not measurable (the machine slowed mid-sequence).
+- **`_rescue_upscaled` stays on retinaface_r50 (proposed skip rejected on its own gate).** Skip-if-never-gains: on the 175
+  frames where r50's first pass is empty in the baseline windows it returned a face on 13 (Love 10, d4 3) - mostly large
+  partly-occluded kiss faces that scrfd misses, plus a few spurious boxes. `tests/probe_r50_upscale_gain.py`, decision
+  recorded at the call site, `test_rotated_pass.py` pins it.
 - **Baseline probes (measurement only, no behaviour change).** New `roop/baseline_probe.py`; see the
   `ROOP_PROFILE` row in `ENV_FLAGS.md` for what it prints. `[Session] model file provider trt_fp16 input
   requested` is logged once per distinct session at the five construction sites (buffalo_l via
