@@ -15,6 +15,11 @@ folder). Entries before 2026-09-21 were moved here from the README on 2026-09-22
   option off the live session, and flags a bound provider that differs from the first one requested.
   `tests/baseline_snapshot.py` drives the four reference clips and writes `docs/perf/baseline_<date>.md`.
   Tests: `app/tests/test_baseline_probe.py`.
+  First baseline (4070, `docs/perf/baseline_2026-10-04.md`): pinned to the first run's `ROOP_STAB_CHUNK_MB`, repeats
+  are bit-identical; unpinned, free RAM changes the stabilizer geometry and the pixels; the first render of a clip
+  runs 28-40% slower than a bit-identical repeat (cause not isolated); at 4K only 3 of 10 stabilizer workers fit
+  the RAM budget; on SCRFD `bool('auto')` makes `has_multiscale` true so the close-up and padded rescues never
+  run (counters, not code reading). Nothing was changed on the back of these.
 - **"The fps collapses after a while" is the footage getting busier, not the render degrading (measured on
   a live 54,714-frame job and reproduced from fresh processes).** Job: 1276x716, hyperswap + Restore Ultra
   + XSeg, TensorRT/mixed, 10 stabilization workers, i9-14900K + RTX 4070. True fps per 3,600-frame part

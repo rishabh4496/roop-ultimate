@@ -1,0 +1,499 @@
+{
+ "date": "2026-10-04_pinned_d6",
+ "head": {
+  "head": "f9aaf963a774f7a7f48006cb9b5c565a80153c38",
+  "short": "f9aaf96",
+  "dirty_files": [
+   "pp/tests/baseline_snapshot.py"
+  ]
+ },
+ "software": {
+  "python": "3.10.20",
+  "torch": "2.7.0+cu128",
+  "cuda": "12.8",
+  "onnxruntime": "1.23.2",
+  "opencv": "4.11.0",
+  "ffmpeg": "8.1.2",
+  "gpu": "NVIDIA GeForce RTX 4070, 12282 MiB, 616.56, 8.9",
+  "tensorrt": "10.9.0.34"
+ },
+ "threads": 10,
+ "config": {
+  "swap_model": "hyperswap",
+  "selected_enhancer": "Restore Ultra",
+  "mask_engine": "DFL XSeg",
+  "mask_engine_2": "None",
+  "provider": "tensorrt",
+  "trt_precision": "mixed",
+  "output_video_codec": "hevc_nvenc",
+  "video_quality": 14,
+  "max_threads": 10,
+  "detector_engine": "scrfd",
+  "face_detector_size": "512",
+  "face_detector_threshold": 0.5,
+  "detector_scale_pyramid": "auto",
+  "rescue_small_faces": true,
+  "temporal_detection": true,
+  "track_identities": true,
+  "stabilize_face": true,
+  "stabilize_mask": true,
+  "stabilize_enhancer": true,
+  "stabilize_landmarks": true,
+  "stabilize_method": "one_euro",
+  "recognizer": "default",
+  "refine_landmarks": true,
+  "autorotate_faces": true,
+  "perf_trt_pool": "2",
+  "perf_detmask_pool": "2",
+  "perf_detector_pool": "2",
+  "perf_batch_swap": "on",
+  "perf_nvdec": "on",
+  "restore_ultra_profile": "FAST"
+ },
+ "records": [
+  {
+   "label": "d6",
+   "clip": "d6",
+   "returncode": 0,
+   "wall_seconds": 1670.3,
+   "video": "G:\\pinokio\\roop-keep\\double\\d6.mp4",
+   "fixture": {
+    "path": "G:\\pinokio\\roop-keep\\double\\d6.mp4",
+    "bytes": 47069279,
+    "width": 3840,
+    "height": 2160,
+    "frames": 488,
+    "fps": "25/1",
+    "codec": "h264"
+   },
+   "window": [
+    0,
+    0
+   ],
+   "sources": "harjot,mahek",
+   "threads": 10,
+   "machine_before": {
+    "available_ram_mb": 16834.2,
+    "total_ram_mb": 32451.8,
+    "gpu_mem_used_mib": 1072.0,
+    "gpu_util_pct": 6.0,
+    "gpu_sm_mhz": 450.0,
+    "gpu_temp_c": 44.0,
+    "gpu_power_w": "38.15"
+   },
+   "cmd": [
+    "G:\\pinokio\\api\\roop-ultimate\\app\\env\\Scripts\\python.exe",
+    "two_face_video.py",
+    "--tag",
+    "d6",
+    "--video",
+    "G:\\pinokio\\roop-keep\\double\\d6.mp4",
+    "--sources",
+    "harjot,mahek",
+    "--start",
+    "0",
+    "--end",
+    "0",
+    "--provider",
+    "tensorrt",
+    "--swap-model",
+    "hyperswap",
+    "--enhancer",
+    "Restore Ultra",
+    "--mask-engine",
+    "DFL XSeg",
+    "--codec",
+    "hevc_nvenc",
+    "--tracking",
+    "1",
+    "--stabilize-face",
+    "1",
+    "--stabilize-mask",
+    "1",
+    "--stabilize-mask-strength",
+    "0.5",
+    "--stabilize-enhancer",
+    "1",
+    "--threads",
+    "10",
+    "--cuda-device-id",
+    "0",
+    "--swap-model-mask-strength",
+    "0",
+    "--merger-clarity",
+    "1",
+    "--identity-detail-strength",
+    "0",
+    "--temporal-compositing-strength",
+    "0.65",
+    "--capture-budget",
+    "900.0",
+    "--out",
+    "G:\\pinokio\\api\\roop-ultimate\\app\\output\\baseline_2026-10-04_pinned_d6"
+   ],
+   "log": "G:\\pinokio\\api\\roop-ultimate\\app\\output\\baseline_2026-10-04_pinned_d6\\d6.log",
+   "sessions": [
+    "[Session] buffalo_l analyser build #1 allowed_modules=all models=['detection', 'genderage', 'landmark_2d_106', 'landmark_3d_68', 'recognition'] lm68_lazy_model=False",
+    "[Session] buffalo_l:landmark_3d_68 file=1k3d68.onnx provider=TensorrtExecutionProvider trt_fp16=on input=data:Nonex3x192x192 requested=Tensorrt,CUDA,CPU",
+    "[Session] buffalo_l:landmark_2d_106 file=2d106det.onnx provider=TensorrtExecutionProvider trt_fp16=on input=data:Nonex3x192x192 requested=Tensorrt,CUDA,CPU",
+    "[Session] buffalo_l:detection file=det_10g.onnx provider=TensorrtExecutionProvider trt_fp16=on input=input.1:1x3x?x? requested=Tensorrt,CUDA,CPU",
+    "[Session] buffalo_l:genderage file=genderage.onnx provider=TensorrtExecutionProvider trt_fp16=on input=data:Nonex3x96x96 requested=Tensorrt,CUDA,CPU",
+    "[Session] buffalo_l:recognition file=w600k_r50.onnx provider=TensorrtExecutionProvider trt_fp16=on input=input.1:Nonex3x112x112 requested=Tensorrt,CUDA,CPU",
+    "[Session] buffalo_l analyser build #2 allowed_modules=all models=['detection', 'genderage', 'landmark_2d_106', 'landmark_3d_68', 'recognition'] lm68_lazy_model=False",
+    "[Session] swapper:hyperswap file=hyperswap_1a_256.onnx provider=TensorrtExecutionProvider trt_fp16=on input=source:Nx512,target:Nx3x256x256 requested=Tensorrt,CUDA,CPU",
+    "[Session] enhancer:restoreformer++ file=restoreformer_plus_plus.onnx provider=TensorrtExecutionProvider trt_fp16=on input=input:1x3x512x512 requested=Tensorrt,CUDA,CPU",
+    "[Session] mask:xseg file=xseg.onnx provider=TensorrtExecutionProvider trt_fp16=on input=xseg_input:0:unk__1491x256x256x3 requested=Tensorrt,CUDA,CPU",
+    "[Session] buffalo_l analyser build #3 allowed_modules=['detection', 'landmark_2d_106', 'landmark_3d_68', 'recognition'] models=['detection', 'landmark_2d_106', 'landmark_3d_68', 'recognition'] lm68_lazy_model=False",
+    "[Session] buffalo_l analyser build #4 allowed_modules=['detection', 'landmark_2d_106', 'landmark_3d_68', 'recognition'] models=['detection', 'landmark_2d_106', 'landmark_3d_68', 'recognition'] lm68_lazy_model=False",
+    "[Session] buffalo_l analyser build #5 allowed_modules=['detection', 'landmark_2d_106', 'landmark_3d_68', 'recognition'] models=['detection', 'landmark_2d_106', 'landmark_3d_68', 'recognition'] lm68_lazy_model=False",
+    "[Session] buffalo_l analyser build #6 allowed_modules=['detection', 'landmark_2d_106', 'landmark_3d_68', 'recognition'] models=['detection', 'landmark_2d_106', 'landmark_3d_68', 'recognition'] lm68_lazy_model=False"
+   ],
+   "vram": [
+    "[VRAM] initialize:faceswap | torch used 3165.5 / total 12281.5 MiB, free 9116.0 | nvidia-smi used 3200.0 MiB | rss 7.785 GB",
+    "[VRAM] initialize:restore_ultra | torch used 3479.5 / total 12281.5 MiB, free 8802.0 | nvidia-smi used 3515.0 MiB (+315 MiB vs initialize:faceswap) | rss 8.482 GB",
+    "[VRAM] initialize:mask_xseg | torch used 3495.5 / total 12281.5 MiB, free 8786.0 | nvidia-smi used 3531.0 MiB (+16 MiB vs initialize:restore_ultra) | rss 8.608 GB",
+    "[VRAM] initialize:mask_occluder | torch used 3511.5 / total 12281.5 MiB, free 8770.0 | nvidia-smi used 3547.0 MiB (+16 MiB vs initialize:mask_xseg) | rss 8.734 GB",
+    "[VRAM] phase4:processors-ready | torch used 3511.5 / total 12281.5 MiB, free 8770.0 | nvidia-smi used 3547.0 MiB (+0 MiB vs initialize:mask_occluder) | rss 8.734 GB",
+    "[VRAM] phase3:initialize-complete | torch used 3511.5 / total 12281.5 MiB, free 8770.0 | nvidia-smi used 3547.0 MiB (+0 MiB vs phase4:processors-ready) | rss 8.734 GB",
+    "[VRAM] phase3:run-start | torch used 3511.5 / total 12281.5 MiB, free 8770.0 | nvidia-smi used 3547.0 MiB (+0 MiB vs phase3:initialize-complete) | rss 8.735 GB",
+    "[VRAM] phase3:runtime-profiled | torch used 3511.5 / total 12281.5 MiB, free 8770.0 | nvidia-smi used 3546.0 MiB (-1 MiB vs phase3:run-start) | rss 8.735 GB",
+    "[VRAM] phase3:temporal-prepass-start | torch used 3511.5 / total 12281.5 MiB, free 8770.0 | nvidia-smi used 3546.0 MiB (+0 MiB vs phase3:runtime-profiled) | rss 8.735 GB",
+    "[VRAM] phase3:temporal-prepass-complete | torch used 4143.5 / total 12281.5 MiB, free 8138.0 | nvidia-smi used 4155.0 MiB (+609 MiB vs phase3:temporal-prepass-start) | rss 9.897 GB",
+    "[VRAM] phase3:auxiliary-analysis-sessions-for-replay | torch used 3653.5 / total 12281.5 MiB, free 8628.0 | nvidia-smi used 3665.0 MiB (-490 MiB vs phase3:temporal-prepass-complete) | rss 9.312 GB",
+    "[VRAM] phase4:before-main-processing | torch used 3653.5 / total 12281.5 MiB, free 8628.0 | nvidia-smi used 3665.0 MiB (+0 MiB vs phase3:auxiliary-analysis-sessions-for-replay) | rss 9.312 GB",
+    "[VRAM] phase3:run-cleanup-complete | torch used 6527.5 / total 12281.5 MiB, free 5754.0 | nvidia-smi used 6539.0 MiB (+2874 MiB vs phase4:before-main-processing) | rss 9.484 GB"
+   ],
+   "thread_lines": [
+    "[Threads] render-start (main thread, after _configure_opencv_worker_threads) | cv2.getNumThreads=1 cv2.getNumberOfCPUs=32 cv2.useOptimized=True torch.get_num_threads=24 torch.get_num_interop_threads=24 os.cpu_count=32 psutil.physical=24 | env {'ROOP_RUNTIME_CV_THREADS': '1'}",
+    "[Threads]   pool blas/openblas num_threads=24 version=0.3.23.dev layer=pthreads file=libopenblas64__v0.3.23-293-gc2f4bdbb-gcc_10_3_0-2bde3a66a51006b2b53eb373ff767a3f.dll",
+    "[Threads]   pool openmp/openmp num_threads=24 version=None layer=None file=libiomp5md.dll",
+    "[Threads]   pool openmp/openmp num_threads=1 version=None layer=None file=libiompstubs5md.dll",
+    "[Threads]   pool blas/openblas num_threads=24 version=0.3.28 layer=pthreads file=libscipy_openblas-f07f5a5d207a3a47104dca54d6d0c86a.dll",
+    "[Threads] first-worker-thread (stab_proc0) | cv2.getNumThreads=1 cv2.getNumberOfCPUs=32 cv2.useOptimized=True torch.get_num_threads=24 torch.get_num_interop_threads=24 os.cpu_count=32 psutil.physical=24 | env {'ROOP_RUNTIME_CV_THREADS': '1'}"
+   ],
+   "stab_geometry": [
+    "[StabGeometry] wu=6 block=12 workers=3 threads_requested=10 blocks_per_chunk=3 rounds=1 blocks_that_fit=3 frame_mb=23.73 effective_chunk_mb=1122.5 chunk_mb_source=ROOP_STAB_CHUNK_MB env_ROOP_STAB_CHUNK_MB=1122.5 block_mult=auto runtime_stab_small=False derived_avail_mb=9197.6 derived_total_mb=32451.8 ram_share=0.75 live_copies=5 hard_cap_mb=4096.0 derived_budget_mb=1379.6 chunk_frames=36 chunk_mb=854.3 ROOP_STAB_CHUNK_override=unset ROOP_STAB_WARMUP_override=unset redundant_wu_per_block=0.5 redundant_share=0.3333 psutil_available_mb=9197.6 psutil_total_mb=32451.8"
+   ],
+   "stab_lines": [
+    "[Stabilize] 9.4 GB RAM free of 31.7 GB: chunk budget 1440 MB (cap 4096 MB), holding 5 live copies (~7.0 GB of frames). ROOP_STAB_CHUNK_MB overrides this exactly.",
+    "[Stabilize] parallel stabilization ON (threads=10, warm-up overlap) \u2014 enhancer + mask smoothing run multi-threaded.",
+    "[Stabilize] warm-up 6f needs 12f blocks; the memory budget fits 3 of them, so this run stabilises 3-wide instead of 10. Raise ROOP_STAB_CHUNK_MB to widen it."
+   ],
+   "runtime_lines": [
+    "[Runtime] phase=init provider_active=tensorrt requested=tensorrt>cuda>cpu precision=mixed swap_model=hyperswap batch_mode=sequential target_selection=selected/multi_person selected_person=[0, 1] selected_groups=[0, 1] persons=2",
+    "[CPU] OpenCV kernel threads=1 optimized=True across 10 frame workers",
+    "[RuntimeScheduler] unified coordinator ON: mode=ordered-chunk, workers=10, queue=1, in_flight=1",
+    "[BatchSwap] cross-frame batching ON (max_batch=8, threads=10, wait=4.0ms).",
+    "[Runtime] phase=video provider_active=tensorrt requested=tensorrt>cuda>cpu precision=mixed swap_model=hyperswap batch_mode=xframe target_selection=selected/multi_person selected_person=[0, 1] selected_groups=[0, 1] persons=2 selection_invariant=OK"
+   ],
+   "memory_stages": [
+    "[Memory] stage=phase4:processors-ready rss=8.7345GB vram_free=8.5645GB vram_total=11.9937GB",
+    "[Memory] stage=phase3:initialize-complete rss=8.7345GB vram_free=8.5645GB vram_total=11.9937GB",
+    "[Memory] stage=phase3:run-start rss=8.7346GB vram_free=8.5645GB vram_total=11.9937GB",
+    "[Memory] stage=phase3:runtime-profiled rss=8.7346GB vram_free=8.5645GB vram_total=11.9937GB",
+    "[Memory] stage=phase3:temporal-prepass-start rss=8.7348GB vram_free=8.5645GB vram_total=11.9937GB",
+    "[Memory] stage=phase3:temporal-prepass-complete rss=9.8968GB vram_free=7.9473GB vram_total=11.9937GB",
+    "[Memory] stage=phase3:auxiliary-analysis-sessions-for-replay rss=9.3122GB vram_free=8.4258GB vram_total=11.9937GB",
+    "[Memory] stage=phase4:before-main-processing rss=9.3122GB vram_free=8.4258GB vram_total=11.9937GB",
+    "[Memory] stage=phase3:run-cleanup-complete rss=9.4837GB vram_free=5.6191GB vram_total=11.9937GB"
+   ],
+   "pipeline_lines": [
+    "[Pipeline] frames 100 | 0.48 fps (avg 0.48) | in 1.0/1 chunks (empty 0%) | out 0.0/1 chunks (full 0%) | OK | 2.00 faces/frame, 1.0 faces/s",
+    "[Pipeline] frames 200 | 0.52 fps (avg 0.50) | in 1.0/1 chunks (empty 0%) | out 0.0/1 chunks (full 0%) | OK | 2.00 faces/frame, 1.0 faces/s",
+    "[Pipeline] frames 300 | 0.51 fps (avg 0.50) | in 1.0/1 chunks (empty 0%) | out 0.0/1 chunks (full 0%) | OK | 2.00 faces/frame, 1.0 faces/s",
+    "[Pipeline] frames 400 | 0.47 fps (avg 0.49) | in 1.0/1 chunks (empty 0%) | out 0.0/1 chunks (full 0%) | OK | 2.00 faces/frame, 0.9 faces/s",
+    "[Pipeline] done: 488 frames in 1009.0s = 0.48 fps | decode-starved 0% | encoder-bound 0% of samples | 2.00 faces/frame, 1.0 faces/s"
+   ],
+   "pipeline_done": "[Pipeline] done: 488 frames in 1009.0s = 0.48 fps | decode-starved 0% | encoder-bound 0% of samples | 2.00 faces/frame, 1.0 faces/s",
+   "frame_loop_fps": 0.48,
+   "faces_per_frame": 2.0,
+   "faces_per_s": 1.0,
+   "capture_lines": [
+    "[bench] auto-capture: 2 people, seed frame 456, separation 0.871, 244 frames scanned in 105.8s",
+    "[bench]   person 0: frame 400, off-axis 9.1 deg (best frame)",
+    "[bench]   person 1: frame 94, off-axis 6.5 deg (best frame)"
+   ],
+   "bench_config": "[bench] swap_model=hyperswap mask_engine=DFL XSeg enhancer=Restore Ultra provider=tensorrt adaptive_profile=BALANCED color_transfer=lct threads=10 tracking=True swap_model_mask=0.0 merger_clarity=1.0 identity_detail=0.0 target_appearance=False target_strength=0.75 target_alpha=0.3 temporal_compositing=False compositing_strength=0.65 temporal_quality=False quality_logging=False",
+   "person_verdicts": [
+    "  box 0 from the left (harjot): 488 frames, swapped 488 (100.0%), on/off transitions 0\n      WRONG FACESET APPLIED on 0 of 488 swaps attributed to harjot anywhere in frame (from the pipeline's own decision)\n      output re-measured as the other person on 0 of 488 gradable frames\n",
+    "  box 1 from the left (mahek): 488 frames, swapped 488 (100.0%), on/off transitions 0\n      WRONG FACESET APPLIED on 0 of 488 swaps attributed to mahek anywhere in frame (from the pipeline's own decision)\n      output re-measured as the other person on 0 of 488 gradable frames\n"
+   ],
+   "swap_audit": "==== SWAP AUDIT \u2014 why each detected face was or was not swapped ====\n  faces seen                                                      1456  100.0%\n  swapped (identity lock)                                         1456  100.0%\n    of those, partly behind an object (masked, still swapped)      184   12.6%",
+   "stage_timing_block": "==== STAGE TIMING (ROOP_PROFILE) \u2014 wall-clock summed across worker threads ====\n  stage                total   share    calls   ms/call\n  blend             2295.78s   47.5%     1456  1576.77\n  frame_total       1900.24s   39.3%      488  3893.92\n  enhance            113.60s    2.3%     1456    78.02\n  track_detect       113.49s    2.3%      488   232.56\n  detection          113.49s    2.3%      488   232.56\n  track_decode        79.60s    1.6%      488   163.12\n  swap                52.71s    1.1%     1456    36.20\n  mask                49.41s    1.0%     2912    16.97\n  stabilize           47.63s    1.0%     8736     5.45\n  decode              28.54s    0.6%      488    58.49\n  verify              15.47s    0.3%      785    19.71\n  lighting            11.61s    0.2%     2912     3.99\n  encode               6.60s    0.1%      488    13.52\n  alignment            5.03s    0.1%     1456     3.45\n  enhance_recombine     2.69s    0.1%     1456     1.85\n  encode_finalize      0.27s    0.0%        1   271.28\n  track_consume        0.25s    0.0%      485     0.52\n  track_wait           0.20s    0.0%      485     0.41\n  faceset_lookup       0.00s    0.0%     1456     0.00",
+   "counters": {
+    "aux.buffalo_l.detection.detect": {
+     "main": 1015,
+     "main+warmup": 498,
+     "prepass": 976
+    },
+    "aux.buffalo_l.landmark_2d_106.get": {
+     "prepass": 1952
+    },
+    "aux.buffalo_l.landmark_3d_68.get": {
+     "prepass": 1952
+    },
+    "aux.buffalo_l.recognition.get": {
+     "prepass": 1952
+    },
+    "aux.enrich.calls": {
+     "prepass": 488
+    },
+    "aux.refine_kps.applied": {
+     "prepass": 976
+    },
+    "aux.refine_kps.calls": {
+     "prepass": 488
+    },
+    "aux.upright_remeasure.calls": {
+     "prepass": 488
+    },
+    "aux.upright_remeasure.replaced": {
+     "prepass": 488
+    },
+    "aux.upright_remeasure.rolled_calls": {
+     "prepass": 488
+    },
+    "aux.upright_remeasure.rolled_faces": {
+     "prepass": 488
+    },
+    "detect.calls": {
+     "prepass": 488
+    },
+    "detect.expected_count_set": {
+     "prepass": 488
+    },
+    "detect.first_pass_faces": {
+     "prepass": 976
+    },
+    "raw.aux": {
+     "prepass": 976
+    },
+    "raw.caller._detect_faces": {
+     "prepass": 488
+    },
+    "raw.caller._upright_remeasure": {
+     "prepass": 488
+    },
+    "raw.caller.detect_boxes_in_roi": {
+     "main": 527,
+     "main+warmup": 258
+    },
+    "raw.caller.get_faces_detector_only": {
+     "main": 488,
+     "main+warmup": 240
+    },
+    "raw.engine.scrfd": {
+     "main": 1015,
+     "main+warmup": 498,
+     "prepass": 976
+    },
+    "raw.faces_out": {
+     "main": 1287,
+     "main+warmup": 628,
+     "prepass": 1952
+    },
+    "raw.noaux": {
+     "main": 1015,
+     "main+warmup": 498
+    },
+    "raw.total": {
+     "main": 1015,
+     "main+warmup": 498,
+     "prepass": 976
+    },
+    "stab.blocks": {
+     "main": 41
+    },
+    "stab.output_frames": {
+     "main": 488
+    },
+    "stab.warmup_frames": {
+     "main": 240
+    }
+   },
+   "failed_frames": 0,
+   "detector_failed": 0,
+   "swapped_lines": [
+    "  faces seen                                                      1456  100.0%",
+    "  swapped (identity lock)                                         1456  100.0%"
+   ],
+   "stab_ram_line": {
+    "free_gb": 9.4,
+    "total_gb": 31.7,
+    "derived_chunk_budget_mb": 1440
+   },
+   "stabilizer_path": "parallel-blocks",
+   "stages": {
+    "blend": {
+     "total_s": 2295.78,
+     "share_pct": 47.5,
+     "calls": 1456,
+     "ms_per_call": 1576.77
+    },
+    "frame_total": {
+     "total_s": 1900.24,
+     "share_pct": 39.3,
+     "calls": 488,
+     "ms_per_call": 3893.92
+    },
+    "enhance": {
+     "total_s": 113.6,
+     "share_pct": 2.3,
+     "calls": 1456,
+     "ms_per_call": 78.02
+    },
+    "track_detect": {
+     "total_s": 113.49,
+     "share_pct": 2.3,
+     "calls": 488,
+     "ms_per_call": 232.56
+    },
+    "detection": {
+     "total_s": 113.49,
+     "share_pct": 2.3,
+     "calls": 488,
+     "ms_per_call": 232.56
+    },
+    "track_decode": {
+     "total_s": 79.6,
+     "share_pct": 1.6,
+     "calls": 488,
+     "ms_per_call": 163.12
+    },
+    "swap": {
+     "total_s": 52.71,
+     "share_pct": 1.1,
+     "calls": 1456,
+     "ms_per_call": 36.2
+    },
+    "mask": {
+     "total_s": 49.41,
+     "share_pct": 1.0,
+     "calls": 2912,
+     "ms_per_call": 16.97
+    },
+    "stabilize": {
+     "total_s": 47.63,
+     "share_pct": 1.0,
+     "calls": 8736,
+     "ms_per_call": 5.45
+    },
+    "decode": {
+     "total_s": 28.54,
+     "share_pct": 0.6,
+     "calls": 488,
+     "ms_per_call": 58.49
+    },
+    "verify": {
+     "total_s": 15.47,
+     "share_pct": 0.3,
+     "calls": 785,
+     "ms_per_call": 19.71
+    },
+    "lighting": {
+     "total_s": 11.61,
+     "share_pct": 0.2,
+     "calls": 2912,
+     "ms_per_call": 3.99
+    },
+    "encode": {
+     "total_s": 6.6,
+     "share_pct": 0.1,
+     "calls": 488,
+     "ms_per_call": 13.52
+    },
+    "alignment": {
+     "total_s": 5.03,
+     "share_pct": 0.1,
+     "calls": 1456,
+     "ms_per_call": 3.45
+    },
+    "enhance_recombine": {
+     "total_s": 2.69,
+     "share_pct": 0.1,
+     "calls": 1456,
+     "ms_per_call": 1.85
+    },
+    "encode_finalize": {
+     "total_s": 0.27,
+     "share_pct": 0.0,
+     "calls": 1,
+     "ms_per_call": 271.28
+    },
+    "track_consume": {
+     "total_s": 0.25,
+     "share_pct": 0.0,
+     "calls": 485,
+     "ms_per_call": 0.52
+    },
+    "track_wait": {
+     "total_s": 0.2,
+     "share_pct": 0.0,
+     "calls": 485,
+     "ms_per_call": 0.41
+    },
+    "faceset_lookup": {
+     "total_s": 0.0,
+     "share_pct": 0.0,
+     "calls": 1456,
+     "ms_per_call": 0.0
+    }
+   },
+   "run": {
+    "processing_seconds": 1091.95,
+    "fps": 0.45,
+    "frames": 488,
+    "fps_check": 0.45,
+    "faces_seen": 1456,
+    "faces_swapped": 1456,
+    "wrong_faceset": 0,
+    "attributed_swaps": 976,
+    "trt_pool": 2,
+    "detmask_pool": 2,
+    "feature_identity_detail": 0.0,
+    "feature_target_appearance": false,
+    "feature_target_strength": 0.75,
+    "feature_target_alpha": 0.3
+   },
+   "adaptive_downgrades": {},
+   "telemetry": {
+    "telemetry_samples": 2962,
+    "peak_cpu_e_pct": 99.838,
+    "mean_cpu_e_pct": 5.617,
+    "peak_cpu_frequency_mhz": 3200.0,
+    "mean_cpu_frequency_mhz": 3200.0,
+    "peak_cpu_max_frequency_mhz": 3200.0,
+    "mean_cpu_max_frequency_mhz": 3200.0,
+    "peak_cpu_p_pct": 99.594,
+    "mean_cpu_p_pct": 23.505,
+    "peak_cpu_pct": 99.325,
+    "mean_cpu_pct": 14.561,
+    "peak_gpu_mem_util_pct": 50.0,
+    "mean_gpu_mem_util_pct": 3.704,
+    "peak_gpu_memory_mb": 7339.0,
+    "mean_gpu_memory_mb": 5359.934,
+    "peak_gpu_sm_mhz": 2835.0,
+    "mean_gpu_sm_mhz": 818.655,
+    "peak_gpu_temp_c": 58.0,
+    "mean_gpu_temp_c": 49.278,
+    "peak_gpu_util_pct": 100.0,
+    "mean_gpu_util_pct": 20.093,
+    "peak_power_w": 69.16,
+    "mean_power_w": 43.251,
+    "peak_procs": 6,
+    "mean_procs": 4.15,
+    "peak_ram_used_gb": 28.869,
+    "mean_ram_used_gb": 25.108,
+    "peak_rss_gb": 15.903,
+    "mean_rss_gb": 11.953
+   },
+   "output": {
+    "file": "G:\\pinokio\\api\\roop-ultimate\\app\\output\\baseline_2026-10-04_pinned_d6\\d6\\work\\clip_17-00-45.mp4",
+    "sha256": "b0cfb82d53b0963033587cfb1af3e0940dd91c184fdf5226c4794d5f5773b7a6",
+    "decoded_video_md5": "2019bef4cf93f3624fc81f315c19c003",
+    "bytes": 50095194,
+    "rows_csv_sha256": "4b40cee22d3110a65efba05f3121624b4cc7fc589adc40401415570604dede03"
+   }
+  }
+ ]
+}

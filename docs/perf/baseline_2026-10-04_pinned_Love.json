@@ -1,0 +1,583 @@
+{
+ "date": "2026-10-04_pinned_Love",
+ "head": {
+  "head": "f9aaf963a774f7a7f48006cb9b5c565a80153c38",
+  "short": "f9aaf96",
+  "dirty_files": [
+   "pp/tests/baseline_snapshot.py"
+  ]
+ },
+ "software": {
+  "python": "3.10.20",
+  "torch": "2.7.0+cu128",
+  "cuda": "12.8",
+  "onnxruntime": "1.23.2",
+  "opencv": "4.11.0",
+  "ffmpeg": "8.1.2",
+  "gpu": "NVIDIA GeForce RTX 4070, 12282 MiB, 616.56, 8.9",
+  "tensorrt": "10.9.0.34"
+ },
+ "threads": 10,
+ "config": {
+  "swap_model": "hyperswap",
+  "selected_enhancer": "Restore Ultra",
+  "mask_engine": "DFL XSeg",
+  "mask_engine_2": "None",
+  "provider": "tensorrt",
+  "trt_precision": "mixed",
+  "output_video_codec": "hevc_nvenc",
+  "video_quality": 14,
+  "max_threads": 10,
+  "detector_engine": "scrfd",
+  "face_detector_size": "512",
+  "face_detector_threshold": 0.5,
+  "detector_scale_pyramid": "auto",
+  "rescue_small_faces": true,
+  "temporal_detection": true,
+  "track_identities": true,
+  "stabilize_face": true,
+  "stabilize_mask": true,
+  "stabilize_enhancer": true,
+  "stabilize_landmarks": true,
+  "stabilize_method": "one_euro",
+  "recognizer": "default",
+  "refine_landmarks": true,
+  "autorotate_faces": true,
+  "perf_trt_pool": "2",
+  "perf_detmask_pool": "2",
+  "perf_detector_pool": "2",
+  "perf_batch_swap": "on",
+  "perf_nvdec": "on",
+  "restore_ultra_profile": "FAST"
+ },
+ "records": [
+  {
+   "label": "Love",
+   "clip": "Love",
+   "returncode": 0,
+   "wall_seconds": 169.7,
+   "video": "G:\\pinokio\\roop-keep\\Love.mp4",
+   "fixture": {
+    "path": "G:\\pinokio\\roop-keep\\Love.mp4",
+    "bytes": 8044337,
+    "width": 1280,
+    "height": 720,
+    "frames": 3456,
+    "fps": "24000/1001",
+    "codec": "h264"
+   },
+   "window": [
+    1100,
+    1700
+   ],
+   "sources": "harjot",
+   "threads": 10,
+   "machine_before": {
+    "available_ram_mb": 16736.0,
+    "total_ram_mb": 32451.8,
+    "gpu_mem_used_mib": 1051.0,
+    "gpu_util_pct": 5.0,
+    "gpu_sm_mhz": 540.0,
+    "gpu_temp_c": 45.0,
+    "gpu_power_w": "38.69"
+   },
+   "cmd": [
+    "G:\\pinokio\\api\\roop-ultimate\\app\\env\\Scripts\\python.exe",
+    "two_face_video.py",
+    "--tag",
+    "Love",
+    "--video",
+    "G:\\pinokio\\roop-keep\\Love.mp4",
+    "--sources",
+    "harjot",
+    "--start",
+    "1100",
+    "--end",
+    "1700",
+    "--provider",
+    "tensorrt",
+    "--swap-model",
+    "hyperswap",
+    "--enhancer",
+    "Restore Ultra",
+    "--mask-engine",
+    "DFL XSeg",
+    "--codec",
+    "hevc_nvenc",
+    "--tracking",
+    "1",
+    "--stabilize-face",
+    "1",
+    "--stabilize-mask",
+    "1",
+    "--stabilize-mask-strength",
+    "0.5",
+    "--stabilize-enhancer",
+    "1",
+    "--threads",
+    "10",
+    "--cuda-device-id",
+    "0",
+    "--swap-model-mask-strength",
+    "0",
+    "--merger-clarity",
+    "1",
+    "--identity-detail-strength",
+    "0",
+    "--temporal-compositing-strength",
+    "0.65",
+    "--capture-budget",
+    "900.0",
+    "--out",
+    "G:\\pinokio\\api\\roop-ultimate\\app\\output\\baseline_2026-10-04_pinned_Love",
+    "--capture",
+    "3024",
+    "--capture-face",
+    "0"
+   ],
+   "log": "G:\\pinokio\\api\\roop-ultimate\\app\\output\\baseline_2026-10-04_pinned_Love\\Love.log",
+   "sessions": [
+    "[Session] buffalo_l analyser build #1 allowed_modules=all models=['detection', 'genderage', 'landmark_2d_106', 'landmark_3d_68', 'recognition'] lm68_lazy_model=False",
+    "[Session] buffalo_l:landmark_3d_68 file=1k3d68.onnx provider=TensorrtExecutionProvider trt_fp16=on input=data:Nonex3x192x192 requested=Tensorrt,CUDA,CPU",
+    "[Session] buffalo_l:landmark_2d_106 file=2d106det.onnx provider=TensorrtExecutionProvider trt_fp16=on input=data:Nonex3x192x192 requested=Tensorrt,CUDA,CPU",
+    "[Session] buffalo_l:detection file=det_10g.onnx provider=TensorrtExecutionProvider trt_fp16=on input=input.1:1x3x?x? requested=Tensorrt,CUDA,CPU",
+    "[Session] buffalo_l:genderage file=genderage.onnx provider=TensorrtExecutionProvider trt_fp16=on input=data:Nonex3x96x96 requested=Tensorrt,CUDA,CPU",
+    "[Session] buffalo_l:recognition file=w600k_r50.onnx provider=TensorrtExecutionProvider trt_fp16=on input=input.1:Nonex3x112x112 requested=Tensorrt,CUDA,CPU",
+    "[Session] buffalo_l analyser build #2 allowed_modules=all models=['detection', 'genderage', 'landmark_2d_106', 'landmark_3d_68', 'recognition'] lm68_lazy_model=False",
+    "[Session] swapper:hyperswap file=hyperswap_1a_256.onnx provider=TensorrtExecutionProvider trt_fp16=on input=source:Nx512,target:Nx3x256x256 requested=Tensorrt,CUDA,CPU",
+    "[Session] enhancer:restoreformer++ file=restoreformer_plus_plus.onnx provider=TensorrtExecutionProvider trt_fp16=on input=input:1x3x512x512 requested=Tensorrt,CUDA,CPU",
+    "[Session] mask:xseg file=xseg.onnx provider=TensorrtExecutionProvider trt_fp16=on input=xseg_input:0:unk__1491x256x256x3 requested=Tensorrt,CUDA,CPU",
+    "[Session] buffalo_l analyser build #3 allowed_modules=['detection', 'landmark_2d_106', 'landmark_3d_68', 'recognition'] models=['detection', 'landmark_2d_106', 'landmark_3d_68', 'recognition'] lm68_lazy_model=False",
+    "[Session] buffalo_l analyser build #4 allowed_modules=['detection', 'landmark_2d_106', 'landmark_3d_68', 'recognition'] models=['detection', 'landmark_2d_106', 'landmark_3d_68', 'recognition'] lm68_lazy_model=False",
+    "[Session] buffalo_l analyser build #5 allowed_modules=['detection', 'landmark_2d_106', 'landmark_3d_68', 'recognition'] models=['detection', 'landmark_2d_106', 'landmark_3d_68', 'recognition'] lm68_lazy_model=False",
+    "[Session] buffalo_l analyser build #6 allowed_modules=['detection', 'landmark_2d_106', 'landmark_3d_68', 'recognition'] models=['detection', 'landmark_2d_106', 'landmark_3d_68', 'recognition'] lm68_lazy_model=False"
+   ],
+   "vram": [
+    "[VRAM] initialize:faceswap | torch used 3165.5 / total 12281.5 MiB, free 9116.0 | nvidia-smi used 3193.0 MiB | rss 7.62 GB",
+    "[VRAM] initialize:restore_ultra | torch used 3479.5 / total 12281.5 MiB, free 8802.0 | nvidia-smi used 3501.0 MiB (+308 MiB vs initialize:faceswap) | rss 8.316 GB",
+    "[VRAM] initialize:mask_xseg | torch used 3495.5 / total 12281.5 MiB, free 8786.0 | nvidia-smi used 3517.0 MiB (+16 MiB vs initialize:restore_ultra) | rss 8.442 GB",
+    "[VRAM] initialize:mask_occluder | torch used 3511.5 / total 12281.5 MiB, free 8770.0 | nvidia-smi used 3537.0 MiB (+20 MiB vs initialize:mask_xseg) | rss 8.568 GB",
+    "[VRAM] phase4:processors-ready | torch used 3511.5 / total 12281.5 MiB, free 8770.0 | nvidia-smi used 3537.0 MiB (+0 MiB vs initialize:mask_occluder) | rss 8.568 GB",
+    "[VRAM] phase3:initialize-complete | torch used 3511.5 / total 12281.5 MiB, free 8770.0 | nvidia-smi used 3537.0 MiB (+0 MiB vs phase4:processors-ready) | rss 8.568 GB",
+    "[VRAM] phase3:run-start | torch used 3511.5 / total 12281.5 MiB, free 8770.0 | nvidia-smi used 3537.0 MiB (+0 MiB vs phase3:initialize-complete) | rss 8.568 GB",
+    "[VRAM] phase3:runtime-profiled | torch used 3511.5 / total 12281.5 MiB, free 8770.0 | nvidia-smi used 3538.0 MiB (+1 MiB vs phase3:run-start) | rss 8.568 GB",
+    "[VRAM] phase3:temporal-prepass-start | torch used 3511.5 / total 12281.5 MiB, free 8770.0 | nvidia-smi used 3538.0 MiB (+0 MiB vs phase3:runtime-profiled) | rss 8.569 GB",
+    "[VRAM] phase3:temporal-prepass-complete | torch used 4143.5 / total 12281.5 MiB, free 8138.0 | nvidia-smi used 4157.0 MiB (+619 MiB vs phase3:temporal-prepass-start) | rss 9.623 GB",
+    "[VRAM] phase3:auxiliary-analysis-sessions-for-replay | torch used 3653.5 / total 12281.5 MiB, free 8628.0 | nvidia-smi used 3666.0 MiB (-491 MiB vs phase3:temporal-prepass-complete) | rss 9.038 GB",
+    "[VRAM] phase4:before-main-processing | torch used 3653.5 / total 12281.5 MiB, free 8628.0 | nvidia-smi used 3666.0 MiB (+0 MiB vs phase3:auxiliary-analysis-sessions-for-replay) | rss 9.038 GB",
+    "[VRAM] frame 500 | torch used 6739.5 / total 12281.5 MiB, free 5542.0 | nvidia-smi used 6945.0 MiB (+3279 MiB vs phase4:before-main-processing) | rss 9.808 GB [async]",
+    "[VRAM] phase3:run-cleanup-complete | torch used 6551.5 / total 12281.5 MiB, free 5730.0 | nvidia-smi used 6565.0 MiB (-380 MiB vs frame 500) | rss 9.274 GB"
+   ],
+   "thread_lines": [
+    "[Threads] render-start (main thread, after _configure_opencv_worker_threads) | cv2.getNumThreads=1 cv2.getNumberOfCPUs=32 cv2.useOptimized=True torch.get_num_threads=24 torch.get_num_interop_threads=24 os.cpu_count=32 psutil.physical=24 | env {'ROOP_RUNTIME_CV_THREADS': '1'}",
+    "[Threads]   pool blas/openblas num_threads=24 version=0.3.23.dev layer=pthreads file=libopenblas64__v0.3.23-293-gc2f4bdbb-gcc_10_3_0-2bde3a66a51006b2b53eb373ff767a3f.dll",
+    "[Threads]   pool openmp/openmp num_threads=24 version=None layer=None file=libiomp5md.dll",
+    "[Threads]   pool openmp/openmp num_threads=1 version=None layer=None file=libiompstubs5md.dll",
+    "[Threads]   pool blas/openblas num_threads=24 version=0.3.28 layer=pthreads file=libscipy_openblas-f07f5a5d207a3a47104dca54d6d0c86a.dll",
+    "[Threads] first-worker-thread (stab_proc0) | cv2.getNumThreads=1 cv2.getNumberOfCPUs=32 cv2.useOptimized=True torch.get_num_threads=24 torch.get_num_interop_threads=24 os.cpu_count=32 psutil.physical=24 | env {'ROOP_RUNTIME_CV_THREADS': '1'}"
+   ],
+   "stab_geometry": [
+    "[StabGeometry] wu=6 block=24 workers=10 threads_requested=10 blocks_per_chunk=20 rounds=2 blocks_that_fit=23 frame_mb=2.637 effective_chunk_mb=1494.9 chunk_mb_source=ROOP_STAB_CHUNK_MB env_ROOP_STAB_CHUNK_MB=1494.9 block_mult=auto runtime_stab_small=False derived_avail_mb=9415.3 derived_total_mb=32451.8 ram_share=0.75 live_copies=5 hard_cap_mb=4096.0 derived_budget_mb=1412.3 chunk_frames=480 chunk_mb=1265.8 ROOP_STAB_CHUNK_override=unset ROOP_STAB_WARMUP_override=unset redundant_wu_per_block=0.25 redundant_share=0.2 psutil_available_mb=9415.3 psutil_total_mb=32451.8"
+   ],
+   "stab_lines": [
+    "[Stabilize] 9.5 GB RAM free of 31.7 GB: chunk budget 1454 MB (cap 4096 MB), holding 5 live copies (~7.1 GB of frames). ROOP_STAB_CHUNK_MB overrides this exactly.",
+    "[Stabilize] parallel stabilization ON (threads=10, warm-up overlap) \u2014 enhancer + mask smoothing run multi-threaded.",
+    "[Stabilize] parallel: 10 workers, 20 blocks x 24f per chunk (2.0 per worker, so an idle worker has one to steal), warm-up 6f (<=1% seed residual at boundaries)."
+   ],
+   "runtime_lines": [
+    "[Runtime] phase=init provider_active=tensorrt requested=tensorrt>cuda>cpu precision=mixed swap_model=hyperswap batch_mode=sequential target_selection=selected/multi_person selected_person=[0] selected_groups=[0] persons=1",
+    "[CPU] OpenCV kernel threads=1 optimized=True across 10 frame workers",
+    "[RuntimeScheduler] unified coordinator ON: mode=ordered-chunk, workers=10, queue=3, in_flight=4",
+    "[BatchSwap] cross-frame batching ON (max_batch=8, threads=10, wait=4.0ms).",
+    "[Runtime] phase=video provider_active=tensorrt requested=tensorrt>cuda>cpu precision=mixed swap_model=hyperswap batch_mode=xframe target_selection=selected/multi_person selected_person=[0] selected_groups=[0] persons=1 selection_invariant=OK"
+   ],
+   "memory_stages": [
+    "[Memory] stage=phase4:processors-ready rss=8.5678GB vram_free=8.5645GB vram_total=11.9937GB",
+    "[Memory] stage=phase3:initialize-complete rss=8.5678GB vram_free=8.5645GB vram_total=11.9937GB",
+    "[Memory] stage=phase3:run-start rss=8.5683GB vram_free=8.5645GB vram_total=11.9937GB",
+    "[Memory] stage=phase3:runtime-profiled rss=8.5684GB vram_free=8.5645GB vram_total=11.9937GB",
+    "[Memory] stage=phase3:temporal-prepass-start rss=8.5687GB vram_free=8.5645GB vram_total=11.9937GB",
+    "[Memory] stage=phase3:temporal-prepass-complete rss=9.6226GB vram_free=7.9473GB vram_total=11.9937GB",
+    "[Memory] stage=phase3:auxiliary-analysis-sessions-for-replay rss=9.0379GB vram_free=8.4258GB vram_total=11.9937GB",
+    "[Memory] stage=phase4:before-main-processing rss=9.0379GB vram_free=8.4258GB vram_total=11.9937GB",
+    "[Memory] stage=phase3:run-cleanup-complete rss=9.2742GB vram_free=5.5957GB vram_total=11.9937GB"
+   ],
+   "pipeline_lines": [
+    "[Pipeline] frames 100 | 83.41 fps (avg 83.41) | in 0.0/1 chunks (empty 100%) | out 0.0/1 chunks (full 0%) | DECODE-STARVED: workers waited on input",
+    "[Pipeline] frames 200 | 20.08 fps (avg 32.36) | in 0.6/1 chunks (empty 44%) | out 0.0/1 chunks (full 0%) | DECODE-STARVED: workers waited on input | 0.41 faces/frame, 8.2 faces/s",
+    "[Pipeline] frames 300 | 21.97 fps (avg 27.95) | in 1.0/1 chunks (empty 0%) | out 0.0/1 chunks (full 0%) | OK | 0.87 faces/frame, 19.1 faces/s",
+    "[Pipeline] frames 400 | 19.74 fps (avg 25.32) | in 1.0/1 chunks (empty 0%) | out 0.0/1 chunks (full 0%) | OK | 1.00 faces/frame, 19.7 faces/s",
+    "[Pipeline] frames 500 | 10.97 fps (avg 20.07) | in 1.0/1 chunks (empty 0%) | out 0.0/1 chunks (full 0%) | OK | 0.97 faces/frame, 10.6 faces/s",
+    "[Pipeline] frames 600 | 21.52 fps (avg 20.30) | in 1.0/1 chunks (empty 0%) | out 0.0/1 chunks (full 0%) | OK | 0.77 faces/frame, 16.6 faces/s",
+    "[Pipeline] done: 600 frames in 30.0s = 19.98 fps | decode-starved 24% | encoder-bound 0% of samples | 0.67 faces/frame, 13.4 faces/s"
+   ],
+   "pipeline_done": "[Pipeline] done: 600 frames in 30.0s = 19.98 fps | decode-starved 24% | encoder-bound 0% of samples | 0.67 faces/frame, 13.4 faces/s",
+   "frame_loop_fps": 19.98,
+   "faces_per_frame": 0.67,
+   "faces_per_s": 13.4,
+   "capture_lines": [
+    "[bench] target: face 0 (left to right) of frame 3024, box [438, 154, 655, 465]"
+   ],
+   "bench_config": "[bench] swap_model=hyperswap mask_engine=DFL XSeg enhancer=Restore Ultra provider=tensorrt adaptive_profile=BALANCED color_transfer=lct threads=10 tracking=True swap_model_mask=0.0 merger_clarity=1.0 identity_detail=0.0 target_appearance=False target_strength=0.75 target_alpha=0.3 temporal_compositing=False compositing_strength=0.65 temporal_quality=False quality_logging=False",
+   "person_verdicts": [
+    "  box 0 from the left (harjot): 501 frames, swapped 330 (65.9%), on/off transitions 22\n      WRONG FACESET APPLIED on 0 of 212 swaps attributed to harjot anywhere in frame (from the pipeline's own decision)\n      output re-measured as the other person on 0 of 0 gradable frames\n"
+   ],
+   "swap_audit": "==== SWAP AUDIT \u2014 why each detected face was or was not swapped ====\n  faces seen                                                         1133  100.0%\n    of those, crop shared with the face beside it                     320   28.2%\n    of those, gap-filled                                              302   26.7%\n  swapped (identity lock)                                             490   43.2%\n  no track entry matched                                              464   41.0%\n  fallback missed (this person's source already used this frame)      241   21.3%\n  fallback missed (over match threshold)                              223   19.7%\n  veto: source used twice in frame                                    179   15.8%\n  refused: crop shared with the face beside it                        163   14.4%\n  swapped (per-frame match)                                            16    1.4%\n    of those, partly behind an object (masked, still swapped)         281   24.8%\n    of those SWAPPED, gap-filled                                       93    8.2%\n  discarded: the swap put the face somewhere it was not                 7    0.6%\n  -> 634 of 1133 detected faces (56.0%) were NOT swapped.\n     7 of those were swapped and then DISCARDED by the outcome check, which pastes the original face back \u2014 a refusal like any other as far as the output is concerned. ROOP_VERIFY_SWAP=0 turns it off.\n     Frames where a face was found but left un-swapped are what reads as flicker. The largest refusal line above is the gate to loosen.\n     93 of the 506 faces actually swapped (18.4%) had INTERPOLATED landmarks \u2014 nobody detected them, their box and keypoints were filled in between neighbours.\n     That is a different artefact from the one above: the swap is not missing, it is registered from a guess, so on a moving head it shifts every other frame. Set ROOP_TEMPORAL_STEP=1 if this is high.\n     Of those, 223 were refused for distance alone, and this is how far past the match threshold (0.75) their BEST candidate sat:\n       within 1.05x the threshold (0.79):       5  (  2.2% of them)\n       within 1.10x the threshold (0.83):      13  (  5.8% of them)\n       within 1.20x the threshold (0.90):     161  ( 72.2% of them)\n       within 1.50x the threshold (1.12):     223  (100.0% of them)\n       within 2.00x the threshold (1.50):     223  (100.0% of them)\n       median refusal sits at 1.17x the threshold (0.88).\n     Separately, 37 frames of 744 (5.0% of frames) had NO face detected at all \u2014 that is the detector losing the face, not a gate refusing it, so it is a different problem from every refusal above.\n     (no detector scores recorded \u2014 only retinaface reports them; on another engine, compare engines or raise the detector resolution.)\n     Separately, 1 detections were dropped as the JUNCTION between two touching faces rather than a face \u2014 half of each neighbour, which the detector reports at up to 0.99 confidence. ROOP_FACE_MERGE=0 keeps them.",
+   "stage_timing_block": "==== STAGE TIMING (ROOP_PROFILE) \u2014 wall-clock summed across worker threads ====\n  stage                total   share    calls   ms/call\n  frame_total        148.21s   39.5%      600   247.02\n  enhance             44.10s   11.8%      506    87.16\n  stabilize           33.16s    8.8%     3036    10.92\n  swap                29.47s    7.9%      506    58.23\n  track_detect        26.50s    7.1%      600    44.16\n  detection           26.49s    7.1%      600    44.16\n  mask                20.07s    5.4%     1012    19.83\n  blend               14.60s    3.9%      506    28.86\n  track_wait          11.24s    3.0%      597    18.83\n  lighting             8.17s    2.2%     1012     8.08\n  verify               7.16s    1.9%      422    16.96\n  enhance_recombine     1.65s    0.4%      506     3.26\n  decode               1.47s    0.4%      600     2.44\n  alignment            1.08s    0.3%      506     2.13\n  encode               0.92s    0.2%      600     1.53\n  track_decode         0.17s    0.0%      600     0.29\n  track_consume        0.17s    0.0%      597     0.28\n  encode_finalize      0.13s    0.0%        1   132.32\n  faceset_lookup       0.00s    0.0%      506     0.00",
+   "counters": {
+    "aux.buffalo_l.detection.detect": {
+     "main": 364,
+     "main+warmup": 96,
+     "prepass": 1847
+    },
+    "aux.buffalo_l.landmark_2d_106.get": {
+     "prepass": 721
+    },
+    "aux.buffalo_l.landmark_3d_68.get": {
+     "prepass": 721
+    },
+    "aux.buffalo_l.recognition.get": {
+     "prepass": 721
+    },
+    "aux.contact.merged_dropped": {
+     "prepass": 1
+    },
+    "aux.enrich.calls": {
+     "prepass": 651
+    },
+    "aux.refine_kps.applied": {
+     "prepass": 680
+    },
+    "aux.refine_kps.calls": {
+     "prepass": 509
+    },
+    "aux.upright_remeasure.calls": {
+     "prepass": 509
+    },
+    "aux.upright_remeasure.replaced": {
+     "prepass": 10
+    },
+    "aux.upright_remeasure.rolled_calls": {
+     "prepass": 10
+    },
+    "aux.upright_remeasure.rolled_faces": {
+     "prepass": 10
+    },
+    "detect.calls": {
+     "prepass": 651
+    },
+    "detect.expected_count_set": {
+     "prepass": 181
+    },
+    "detect.first_pass_empty": {
+     "prepass": 166
+    },
+    "detect.first_pass_faces": {
+     "prepass": 652
+    },
+    "detect.first_pass_short_of_expected": {
+     "prepass": 129
+    },
+    "raw.aux": {
+     "prepass": 1693
+    },
+    "raw.caller._detect_faces": {
+     "prepass": 1026
+    },
+    "raw.caller._rescue_clahe": {
+     "prepass": 154
+    },
+    "raw.caller._rescue_rotated": {
+     "prepass": 491
+    },
+    "raw.caller._rescue_upscaled": {
+     "prepass": 166
+    },
+    "raw.caller._upright_remeasure": {
+     "prepass": 10
+    },
+    "raw.caller.detect_boxes_in_roi": {
+     "main": 335,
+     "main+warmup": 87
+    },
+    "raw.caller.get_faces_detector_only": {
+     "main": 29,
+     "main+warmup": 9
+    },
+    "raw.engine.scrfd": {
+     "main": 364,
+     "main+warmup": 96,
+     "prepass": 1847
+    },
+    "raw.faces_out": {
+     "main": 306,
+     "main+warmup": 76,
+     "prepass": 721
+    },
+    "raw.noaux": {
+     "main": 364,
+     "main+warmup": 96,
+     "prepass": 154
+    },
+    "raw.total": {
+     "main": 364,
+     "main+warmup": 96,
+     "prepass": 1847
+    },
+    "rescue.clahe.attempted": {
+     "prepass": 154
+    },
+    "rescue.clahe.gained": {
+     "prepass": 13
+    },
+    "rescue.clahe.succeeded": {
+     "prepass": 12
+    },
+    "rescue.downscaled.skipped_multiscale": {
+     "prepass": 165
+    },
+    "rescue.downscaled.skipped_with_no_pyramid_engine": {
+     "prepass": 165
+    },
+    "rescue.padded.skipped_multiscale": {
+     "prepass": 165
+    },
+    "rescue.padded.skipped_with_no_pyramid_engine": {
+     "prepass": 165
+    },
+    "rescue.partial_180.attempted": {
+     "prepass": 125
+    },
+    "rescue.partial_180.gained": {
+     "prepass": 1
+    },
+    "rescue.partial_anticlockwise.attempted": {
+     "prepass": 125
+    },
+    "rescue.partial_anticlockwise.gained": {
+     "prepass": 1
+    },
+    "rescue.partial_clockwise.attempted": {
+     "prepass": 125
+    },
+    "rescue.partial_clockwise.gained": {
+     "prepass": 1
+    },
+    "rescue.partial_miss.entered": {
+     "prepass": 125
+    },
+    "rescue.rotated.attempted": {
+     "prepass": 165
+    },
+    "rescue.rotated.gained": {
+     "prepass": 12
+    },
+    "rescue.rotated.succeeded": {
+     "prepass": 11
+    },
+    "rescue.upscaled.attempted": {
+     "prepass": 166
+    },
+    "rescue.upscaled.gained": {
+     "prepass": 1
+    },
+    "rescue.upscaled.succeeded": {
+     "prepass": 1
+    },
+    "stab.blocks": {
+     "main": 25
+    },
+    "stab.output_frames": {
+     "main": 600
+    },
+    "stab.warmup_frames": {
+     "main": 144
+    }
+   },
+   "failed_frames": 0,
+   "detector_failed": 0,
+   "swapped_lines": [
+    "  faces seen                                                         1133  100.0%",
+    "  swapped (identity lock)                                             490   43.2%",
+    "  swapped (per-frame match)                                            16    1.4%"
+   ],
+   "stab_ram_line": {
+    "free_gb": 9.5,
+    "total_gb": 31.7,
+    "derived_chunk_budget_mb": 1454
+   },
+   "stabilizer_path": "parallel-blocks",
+   "stages": {
+    "frame_total": {
+     "total_s": 148.21,
+     "share_pct": 39.5,
+     "calls": 600,
+     "ms_per_call": 247.02
+    },
+    "enhance": {
+     "total_s": 44.1,
+     "share_pct": 11.8,
+     "calls": 506,
+     "ms_per_call": 87.16
+    },
+    "stabilize": {
+     "total_s": 33.16,
+     "share_pct": 8.8,
+     "calls": 3036,
+     "ms_per_call": 10.92
+    },
+    "swap": {
+     "total_s": 29.47,
+     "share_pct": 7.9,
+     "calls": 506,
+     "ms_per_call": 58.23
+    },
+    "track_detect": {
+     "total_s": 26.5,
+     "share_pct": 7.1,
+     "calls": 600,
+     "ms_per_call": 44.16
+    },
+    "detection": {
+     "total_s": 26.49,
+     "share_pct": 7.1,
+     "calls": 600,
+     "ms_per_call": 44.16
+    },
+    "mask": {
+     "total_s": 20.07,
+     "share_pct": 5.4,
+     "calls": 1012,
+     "ms_per_call": 19.83
+    },
+    "blend": {
+     "total_s": 14.6,
+     "share_pct": 3.9,
+     "calls": 506,
+     "ms_per_call": 28.86
+    },
+    "track_wait": {
+     "total_s": 11.24,
+     "share_pct": 3.0,
+     "calls": 597,
+     "ms_per_call": 18.83
+    },
+    "lighting": {
+     "total_s": 8.17,
+     "share_pct": 2.2,
+     "calls": 1012,
+     "ms_per_call": 8.08
+    },
+    "verify": {
+     "total_s": 7.16,
+     "share_pct": 1.9,
+     "calls": 422,
+     "ms_per_call": 16.96
+    },
+    "enhance_recombine": {
+     "total_s": 1.65,
+     "share_pct": 0.4,
+     "calls": 506,
+     "ms_per_call": 3.26
+    },
+    "decode": {
+     "total_s": 1.47,
+     "share_pct": 0.4,
+     "calls": 600,
+     "ms_per_call": 2.44
+    },
+    "alignment": {
+     "total_s": 1.08,
+     "share_pct": 0.3,
+     "calls": 506,
+     "ms_per_call": 2.13
+    },
+    "encode": {
+     "total_s": 0.92,
+     "share_pct": 0.2,
+     "calls": 600,
+     "ms_per_call": 1.53
+    },
+    "track_decode": {
+     "total_s": 0.17,
+     "share_pct": 0.0,
+     "calls": 600,
+     "ms_per_call": 0.29
+    },
+    "track_consume": {
+     "total_s": 0.17,
+     "share_pct": 0.0,
+     "calls": 597,
+     "ms_per_call": 0.28
+    },
+    "encode_finalize": {
+     "total_s": 0.13,
+     "share_pct": 0.0,
+     "calls": 1,
+     "ms_per_call": 132.32
+    },
+    "faceset_lookup": {
+     "total_s": 0.0,
+     "share_pct": 0.0,
+     "calls": 506,
+     "ms_per_call": 0.0
+    }
+   },
+   "run": {
+    "processing_seconds": 75.67,
+    "fps": 7.93,
+    "frames": 600,
+    "fps_check": 7.93,
+    "faces_seen": 1133,
+    "faces_swapped": 490,
+    "wrong_faceset": 0,
+    "attributed_swaps": 212,
+    "trt_pool": 2,
+    "detmask_pool": 2,
+    "feature_identity_detail": 0.0,
+    "feature_target_appearance": false,
+    "feature_target_strength": 0.75,
+    "feature_target_alpha": 0.3
+   },
+   "adaptive_downgrades": {},
+   "telemetry": {
+    "telemetry_samples": 298,
+    "peak_cpu_e_pct": 99.062,
+    "mean_cpu_e_pct": 8.966,
+    "peak_cpu_frequency_mhz": 3200.0,
+    "mean_cpu_frequency_mhz": 3200.0,
+    "peak_cpu_max_frequency_mhz": 3200.0,
+    "mean_cpu_max_frequency_mhz": 3200.0,
+    "peak_cpu_p_pct": 98.963,
+    "mean_cpu_p_pct": 23.033,
+    "peak_cpu_pct": 98.653,
+    "mean_cpu_pct": 16.0,
+    "peak_gpu_mem_util_pct": 74.0,
+    "mean_gpu_mem_util_pct": 8.366,
+    "peak_gpu_memory_mb": 6945.0,
+    "mean_gpu_memory_mb": 3817.45,
+    "peak_gpu_sm_mhz": 2835.0,
+    "mean_gpu_sm_mhz": 1262.668,
+    "peak_gpu_temp_c": 60.0,
+    "mean_gpu_temp_c": 46.805,
+    "peak_gpu_util_pct": 96.0,
+    "mean_gpu_util_pct": 25.279,
+    "peak_power_w": 144.8,
+    "mean_power_w": 57.727,
+    "peak_procs": 4,
+    "mean_procs": 2.477,
+    "peak_ram_used_gb": 25.222,
+    "mean_ram_used_gb": 21.479,
+    "peak_rss_gb": 11.747,
+    "mean_rss_gb": 7.88
+   },
+   "output": {
+    "file": "G:\\pinokio\\api\\roop-ultimate\\app\\output\\baseline_2026-10-04_pinned_Love\\Love\\work\\clip_16-36-15.mp4",
+    "sha256": "be5f4be5a53136e3441366e9ff14b4c45fd18f862133b0250739cce519744bbb",
+    "decoded_video_md5": "87f08da47b2228a046916568f2d33f89",
+    "bytes": 22159997,
+    "rows_csv_sha256": "ca2bc3733022fdbfd8a25a584bd8a15ae216b6d56f980fbb30c1489c609eff7c"
+   }
+  }
+ ]
+}

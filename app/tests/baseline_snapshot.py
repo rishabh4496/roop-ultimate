@@ -110,13 +110,18 @@ def parse_log(text):
     out = {}
     out["sessions"] = re.findall(r"^\[Session\] .*$", text, re.M)
     out["vram"] = re.findall(r"^\[VRAM\] .*$", text, re.M)
-    out["threads"] = re.findall(r"^\[Threads\].*$", text, re.M)
+    out["thread_lines"] = re.findall(r"^\[Threads\].*$", text, re.M)
     out["stab_geometry"] = re.findall(r"^\[StabGeometry\] .*$", text, re.M)
     out["stab_lines"] = [l for l in re.findall(r"^\[Stabilize\].*$", text, re.M)]
     out["runtime_lines"] = re.findall(r"^\[(?:Runtime|RuntimeScheduler|BatchSwap|CPU)\].*$", text, re.M)
     out["memory_stages"] = re.findall(r"^\[Memory\] .*$", text, re.M)
     out["pipeline_lines"] = re.findall(r"^\[Pipeline\] .*$", text, re.M)
     out["pipeline_done"] = next((l for l in out["pipeline_lines"] if "done:" in l), None)
+    mfps = re.search(r"= ([\d.]+) fps", out["pipeline_done"] or "")
+    out["frame_loop_fps"] = float(mfps.group(1)) if mfps else None
+    mfs = re.search(r"([\d.]+) faces/frame, ([\d.]+) faces/s", out["pipeline_done"] or "")
+    out["faces_per_frame"] = float(mfs.group(1)) if mfs else None
+    out["faces_per_s"] = float(mfs.group(2)) if mfs else None
     out["capture_lines"] = re.findall(r"^\[bench\] (?:auto-capture|  person|target|plus|  note).*$",
                                       text, re.M)
     out["bench_config"] = next(iter(re.findall(r"^\[bench\] swap_model=.*$", text, re.M)), None)
@@ -136,7 +141,7 @@ def parse_log(text):
         out["stab_ram_line"] = {"free_gb": float(mm.group(1)), "total_gb": float(mm.group(2)),
                                 "derived_chunk_budget_mb": int(mm.group(3))}
     out["stabilizer_path"] = (
-        "parallel-blocks" if re.search(r"\[Stabilize\] parallel:", text) else
+        "parallel-blocks" if (out["stab_geometry"] or re.search(r"\[Stabilize\] parallel:", text)) else
         "unified-scheduler" if "unified frame pipeline ON" in text else
         "2-pass" if "[Stabilize] 2-pass" in text else "sequential/none")
     return out
@@ -288,7 +293,10 @@ def md_for(rec):
              % (fx.get("width"), fx.get("height"), fx.get("frames"), rec["window"][0],
                 rec["window"][1] or "end", rec["sources"], rec["threads"], rec["returncode"],
                 rec["wall_seconds"]))
-    L.append("- **fps %s** (encoder line) | `%s`" % (run.get("fps"), rec.get("pipeline_done")))
+    L.append("- **frame-loop fps %s, %s faces/frame, %s faces/s** (`[Pipeline] done`, excludes setup and the "
+             "pre-pass); end-to-end %s fps (`took N secs`, includes model init + pre-pass)"
+             % (rec.get("frame_loop_fps"), rec.get("faces_per_frame"), rec.get("faces_per_s"), run.get("fps")))
+    L.append("- `%s`" % rec.get("pipeline_done"))
     if run.get("faces_seen") is not None:
         L.append("- faces_seen %s, faces_swapped (identity lock) %s"
                  % (run.get("faces_seen"), run.get("faces_swapped")))
@@ -368,7 +376,7 @@ def md_for(rec):
     L.append("")
     L.extend(rec["vram"])
     L.append("")
-    L.extend(rec["threads"])
+    L.extend(rec["thread_lines"])
     L.append("")
     L.extend(rec["stab_lines"])
     L.append("")
@@ -388,17 +396,32 @@ def null_control_md(records):
         return ""
 
     def fps(r):
-        return (r.get("run") or {}).get("fps")
+        return r.get("frame_loop_fps")
 
     ca, cb = a["counters"], b["counters"]
     diff = [k for k in sorted(set(ca) | set(cb))
             if counters_total(ca, k) != counters_total(cb, k)]
     fa, fb = fps(a), fps(b)
     spread = (100.0 * abs(fa - fb) / ((fa + fb) / 2)) if fa and fb else None
-    L = ["## Null control: d4 rendered twice with the same config", "",
+    pins = [r for r in records if r["label"].startswith("d4_pinned_")]
+    L = []
+    if len(pins) >= 2:
+        x, y = pins[0], pins[1]
+        sp = 100.0 * abs(x["frame_loop_fps"] - y["frame_loop_fps"]) / ((x["frame_loop_fps"] + y["frame_loop_fps"]) / 2)
+        L += ["## Null control, pinned: d4 twice with ROOP_STAB_CHUNK_MB=%s" % _geo(x).get("effective_chunk_mb"), "",
+              "Frame-loop fps **%s vs %s (spread %.1f %%)**; decoded md5 identical to each other AND to run A: **%s**; "
+              "rows.csv identical to run A: **%s**; counters identical: **%s**."
+              % (x["frame_loop_fps"], y["frame_loop_fps"], sp,
+                 x["output"]["decoded_video_md5"] == y["output"]["decoded_video_md5"] == a["output"]["decoded_video_md5"],
+                 x["output"]["rows_csv_sha256"] == y["output"]["rows_csv_sha256"] == a["output"]["rows_csv_sha256"],
+                 all(counters_total(x["counters"], k) == counters_total(a["counters"], k) for k in a["counters"])), ""]
+    L += ["## Null control, unpinned: d4 rendered twice, free RAM left to decide the geometry", "",
          "| | run A (`d4`) | run B (`d4_null_repeat`) | same? |", "|---|---|---|---|",
-         "| fps (encoder line) | %s | %s | spread %s |"
+         "| frame-loop fps | %s | %s | spread %s |"
          % (fa, fb, "n/a" if spread is None else "%.1f %%" % spread),
+         "| end-to-end fps | %s | %s | |" % ((a.get("run") or {}).get("fps"), (b.get("run") or {}).get("fps")),
+         "| available RAM before the run (GB) | %.1f | %.1f | |"
+         % (a["machine_before"]["available_ram_mb"] / 1024, b["machine_before"]["available_ram_mb"] / 1024),
          "| decoded video md5 | `%s` | `%s` | %s |" % (a["output"]["decoded_video_md5"],
                                                       b["output"]["decoded_video_md5"],
                                                       a["output"]["decoded_video_md5"] == b["output"]["decoded_video_md5"]),
@@ -420,10 +443,77 @@ def null_control_md(records):
     return "\n".join(L)
 
 
-def write_markdown(json_path, findings_path=None):
+def _geo(rec):
+    g = (rec.get("stab_geometry") or [""])[0]
+    return dict(x.split("=", 1) for x in g.replace("[StabGeometry] ", "").split(" ") if "=" in x)
+
+
+def summary_md(recs):
+    L = ["## Summary", "",
+         "Frame-loop fps is `[Pipeline] done` (excludes model init and the pre-pass). `discard %` is "
+         "MEASURED stabilizer warm-up frames over all frames the stabilized loop processed. Rows "
+         "marked *pinned* ran with `ROOP_STAB_CHUNK_MB` exported at the value the first run derived.", "",
+         "| run | clip | window | stab workers x block (blocks/chunk) | chunk MB (source) | loop fps | faces/frame | faces/s | discard % | swapped / faces seen | decoded md5 |",
+         "|---|---|---|---|---|---:|---:|---:|---:|---|---|"]
+    for r in recs:
+        kv = _geo(r)
+        c = r["counters"]
+        wu, outf = counters_total(c, "stab.warmup_frames"), counters_total(c, "stab.output_frames")
+        disc = "%.1f" % (100.0 * wu / (wu + outf)) if (wu + outf) else "-"
+        run = r.get("run") or {}
+        L.append("| %s | %s | %s..%s | %s x %s (%s) | %s (%s) | **%s** | %s | %s | %s | %s / %s | `%s` |" % (
+            r["label"], r["clip"], r["window"][0], r["window"][1] or "end",
+            kv.get("workers"), kv.get("block"), kv.get("blocks_per_chunk"),
+            kv.get("effective_chunk_mb"), "pinned" if kv.get("chunk_mb_source") == "ROOP_STAB_CHUNK_MB" else "derived",
+            r.get("frame_loop_fps"), r.get("faces_per_frame"), r.get("faces_per_s"), disc,
+            run.get("faces_swapped"), run.get("faces_seen"),
+            (r["output"]["decoded_video_md5"] or "")[:12]))
+    L.append("")
+    by = {}
+    for r in recs:
+        by.setdefault(r["clip"], []).append(r)
+    L += ["### Repeat pairs (same clip, same window, same config)", "",
+          "| clip | first run | repeat | same stabilizer geometry | same decoded md5 | same rows.csv | loop fps first -> repeat |",
+          "|---|---|---|---|---|---|---|"]
+    for clip, rs in by.items():
+        for other in rs[1:]:
+            first = rs[0]
+            L.append("| %s | %s | %s | %s | %s | %s | %s -> %s |" % (
+                clip, first["label"], other["label"],
+                {k: v for k, v in _geo(first).items() if k in ("workers", "block", "blocks_per_chunk")}
+                == {k: v for k, v in _geo(other).items() if k in ("workers", "block", "blocks_per_chunk")},
+                first["output"]["decoded_video_md5"] == other["output"]["decoded_video_md5"],
+                first["output"]["rows_csv_sha256"] == other["output"]["rows_csv_sha256"],
+                first.get("frame_loop_fps"), other.get("frame_loop_fps")))
+    L.append("")
+    return "\n".join(L)
+
+
+def write_markdown(json_path, findings_path=None, merge=()):
     with open(json_path, encoding="utf-8") as fh:
         res = json.load(fh)
     recs = res["records"]
+    for extra in merge:
+        with open(extra, encoding="utf-8") as fh:
+            more = json.load(fh)["records"]
+        for r in more:
+            if r["label"] == r["clip"]:
+                r["label"] = r["clip"] + "_pinned"
+        recs = recs + more
+    for r in recs:
+        # JSON written before the key collision fix kept the [Threads] lines under
+        # "threads" (overwriting the integer); recover both and the frame-loop fps.
+        if isinstance(r.get("threads"), list):
+            r["thread_lines"] = r["threads"]
+            r["threads"] = res["threads"]
+        if "frame_loop_fps" not in r:
+            mf = re.search(r"= ([\d.]+) fps", r.get("pipeline_done") or "")
+            r["frame_loop_fps"] = float(mf.group(1)) if mf else None
+            mm = re.search(r"([\d.]+) faces/frame, ([\d.]+) faces/s", r.get("pipeline_done") or "")
+            r["faces_per_frame"] = float(mm.group(1)) if mm else None
+            r["faces_per_s"] = float(mm.group(2)) if mm else None
+        if r.get("stab_geometry"):
+            r["stabilizer_path"] = "parallel-blocks"
     L = ["# Performance baseline %s" % res["date"], "",
          "Reference every later stage must match. Measurement only: produced by "
          "`app/tests/baseline_snapshot.py` at `%s` (uncommitted python files at run time: %s)."
@@ -436,6 +526,7 @@ def write_markdown(json_path, findings_path=None):
     L += ["```", "", "## config.yaml values that shaped the run (read live)", "", "```"]
     L += ["%-26s %s" % kv for kv in res["config"].items()]
     L += ["```", ""]
+    L += [summary_md([r for r in recs if r["label"] != "d4_null_repeat" or True])]
     nc = null_control_md(recs)
     if nc:
         L += [nc]
@@ -469,13 +560,20 @@ def main():
     ap.add_argument("--no-null", action="store_true")
     ap.add_argument("--threads", type=int, default=None, help="default: config.yaml max_threads")
     ap.add_argument("--out", default=None)
+    ap.add_argument("--pin-chunk-mb", default=None, metavar="MB",
+                    help="export ROOP_STAB_CHUNK_MB for every render (AGENTS.md: pin it for any "
+                         "pixel comparison; free RAM otherwise decides the stabilizer geometry)")
+    ap.add_argument("--repeat", type=int, default=1,
+                    help="render each selected clip N times (labels <clip>_pinned_<i>)")
     ap.add_argument("--render-md", default=None, metavar="JSON",
                     help="only (re)write the markdown from an existing baseline JSON")
+    ap.add_argument("--merge", nargs="*", default=[], metavar="JSON",
+                    help="extra baseline JSONs whose records are appended (the pinned repeats)")
     ap.add_argument("--findings", default=None, metavar="FILE",
                     help="hand-written findings inserted under the title by --render-md")
     args = ap.parse_args()
     if args.render_md:
-        print(write_markdown(args.render_md, args.findings))
+        print(write_markdown(args.render_md, args.findings, args.merge))
         return 0
 
     from settings import Settings
@@ -487,6 +585,8 @@ def main():
     env = dict(os.environ)
     env["ROOP_PROFILE"] = "1"
     env["PYTHONIOENCODING"] = "utf-8"
+    if args.pin_chunk_mb:
+        env["ROOP_STAB_CHUNK_MB"] = str(args.pin_chunk_mb)
     env.setdefault("ROOP_PIPELINE_LOG_EVERY", "100")
     env = bc.ensure_ffmpeg(env)
     os.environ["PATH"] = env["PATH"]
@@ -519,7 +619,9 @@ def main():
         print("  warm-up done (rc %s, fps %s) -- discarded" % (w["returncode"], w.get("run", {}).get("fps")),
               flush=True)
     for name in wanted:
-        records.append(run_one(name, name, CLIPS[name], cfg, args, env, out_root, threads))
+        for i in range(max(1, args.repeat)):
+            label = name if args.repeat <= 1 else "%s_pinned_%d" % (name, i + 1)
+            records.append(run_one(label, name, CLIPS[name], cfg, args, env, out_root, threads))
     if not args.no_null and "d4" in wanted:
         records.append(run_one("d4_null_repeat", "d4", CLIPS["d4"], cfg, args, env, out_root, threads))
 
