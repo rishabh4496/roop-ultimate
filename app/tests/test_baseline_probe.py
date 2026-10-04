@@ -364,9 +364,14 @@ def ladder(monkeypatch):
     calls = []
     raw_results = []
 
-    def raw(frame, det_size=None, det_thresh=None, aux=True):
+    def raw(frame, det_size=None, det_thresh=None, aux=True, unclamped=False):
         calls.append('raw')
         return list(raw_results.pop(0)) if raw_results else []
+
+    @contextlib.contextmanager
+    def no_aux_models():
+        # the rotated rescues lease an analyser to run the aux models on survivors
+        yield types.SimpleNamespace(models={})
 
     def mk(name, result):
         def stub(frame, **kw):
@@ -376,6 +381,7 @@ def ladder(monkeypatch):
 
     state = types.SimpleNamespace(calls=calls, raw_results=raw_results, mk=mk)
     monkeypatch.setattr(fu, '_detect_faces_raw', raw)
+    monkeypatch.setattr(fu, 'lease_face_analyser', no_aux_models)
     monkeypatch.setattr(fu, '_enrich_detected_faces', lambda frame, faces: faces)
     monkeypatch.setattr(g, 'rescue_small_faces', True, raising=False)
     monkeypatch.setattr(g, 'detector_engine', 'scrfd', raising=False)

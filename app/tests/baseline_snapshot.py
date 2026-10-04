@@ -226,10 +226,18 @@ def run_one(label, clip_name, spec, cfg, args, env, out_root, threads, window=No
     last = [started]
     latest = [""]
 
+    stamps = {}
+
     def on_line(line):
         if line.startswith("[Pipeline] frames"):
             latest[0] = line
         now = time.perf_counter()
+        # The pre-pass has no timing line of its own; the driver sees the two phase
+        # markers as they stream (the child flushes each), so it times them itself.
+        if line.startswith("[Memory] stage=phase3:temporal-prepass-start"):
+            stamps["start"] = now
+        elif line.startswith("[Memory] stage=phase3:temporal-prepass-complete"):
+            stamps["end"] = now
         # AGENTS.md: surface processing fps about every three minutes during a run.
         if now - last[0] >= 180:
             last[0] = now
@@ -251,6 +259,11 @@ def run_one(label, clip_name, spec, cfg, args, env, out_root, threads, window=No
                                              for i, c in enumerate(cmd)],
            "log": log_path}
     rec.update(parse_log(text))
+    mt = re.search(r"\[Track\] \d+ tracks over (\d+) frames", text)
+    if "start" in stamps and "end" in stamps and mt:
+        rec["prepass_seconds"] = round(stamps["end"] - stamps["start"], 2)
+        rec["prepass_frames"] = int(mt.group(1))
+        rec["prepass_fps"] = round(int(mt.group(1)) / max(1e-9, stamps["end"] - stamps["start"]), 2)
     rec["stages"] = bc.parse_stage_timing(text)
     try:
         rec["run"] = bc.parse_run(text)
@@ -297,6 +310,9 @@ def md_for(rec):
              "pre-pass); end-to-end %s fps (`took N secs`, includes model init + pre-pass)"
              % (rec.get("frame_loop_fps"), rec.get("faces_per_frame"), rec.get("faces_per_s"), run.get("fps")))
     L.append("- `%s`" % rec.get("pipeline_done"))
+    if rec.get("prepass_fps"):
+        L.append("- pre-pass: %s frames in %s s = **%s fps**" % (
+            rec["prepass_frames"], rec["prepass_seconds"], rec["prepass_fps"]))
     if run.get("faces_seen") is not None:
         L.append("- faces_seen %s, faces_swapped (identity lock) %s"
                  % (run.get("faces_seen"), run.get("faces_swapped")))
@@ -563,6 +579,9 @@ def main():
     ap.add_argument("--pin-chunk-mb", default=None, metavar="MB",
                     help="export ROOP_STAB_CHUNK_MB for every render (AGENTS.md: pin it for any "
                          "pixel comparison; free RAM otherwise decides the stabilizer geometry)")
+    ap.add_argument("--docs-dir", default=None, metavar="DIR",
+                    help="where the JSON/markdown go (default docs/perf); the A/B orchestrator "
+                         "points this at app/output so arms do not litter the repository")
     ap.add_argument("--repeat", type=int, default=1,
                     help="render each selected clip N times (labels <clip>_pinned_<i>)")
     ap.add_argument("--render-md", default=None, metavar="JSON",
@@ -636,7 +655,7 @@ def main():
                   "autorotate_faces", "perf_trt_pool", "perf_detmask_pool", "perf_detector_pool",
                   "perf_batch_swap", "perf_nvdec", "restore_ultra_profile")},
               "records": records}
-    docs = os.path.join(REPO, "docs", "perf")
+    docs = args.docs_dir or os.path.join(REPO, "docs", "perf")
     os.makedirs(docs, exist_ok=True)
     js = os.path.join(docs, "baseline_%s.json" % args.date)
     with open(js, "w", encoding="utf-8") as fh:

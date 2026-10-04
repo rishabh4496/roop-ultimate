@@ -789,8 +789,25 @@ def _hybrid_yunet_faces(frame, fa, det_size, det_thresh, aux=True):
     return _hybrid_detector_faces(frame, fa, bboxes, kpss, aux=aux)
 
 
-def _detect_faces_raw(frame, det_size=None, det_thresh=None, aux=True):
+def _faces_like_insightface(bboxes, kpss):
+    """`Face` objects built exactly as `FaceAnalysis.get()` builds them: no clamping to
+    the frame, no filtering. `_hybrid_detector_faces` clamps boxes and keypoints to the
+    canvas, which is right for a caller that only reads them but would move an
+    edge face's geometry (and the crop its embedding is taken from) relative to the
+    `fa.get()` path the rescues used before they split detection from the aux models."""
+    from insightface.app.common import Face
+    faces = []
+    for i in range(bboxes.shape[0]):
+        faces.append(Face(bbox=bboxes[i, 0:4], kps=(kpss[i] if kpss is not None else None),
+                          det_score=bboxes[i, 4]))
+    return faces
+
+
+def _detect_faces_raw(frame, det_size=None, det_thresh=None, aux=True, unclamped=False):
     """Run the selected detector engine and return raw Face objects (unsorted) without rescues.
+
+    `unclamped=True` (only meaningful with `aux=False` on SCRFD) returns the faces with
+    the geometry `fa.get()` would have given them -- see `_faces_like_insightface`.
 
     det_size / det_thresh override the configured detection resolution and
     confidence floor for THIS call. They must reach whichever engine is selected,
@@ -852,7 +869,10 @@ def _detect_faces_raw(frame, det_size=None, det_thresh=None, aux=True):
                 # SCRFD's own detector, without FaceAnalysis.get()'s aux loop.
                 # Same call insightface makes internally; max_num=0 means "all".
                 bboxes, kpss = fa.det_model.detect(frame, max_num=0, metric='default')
-                faces = _hybrid_detector_faces(frame, fa, bboxes, kpss, aux=False)
+                if unclamped:
+                    faces = _faces_like_insightface(bboxes, kpss)
+                else:
+                    faces = _hybrid_detector_faces(frame, fa, bboxes, kpss, aux=False)
             else:
                 faces = fa.get(frame)
         finally:
@@ -1032,6 +1052,71 @@ def _unrotate_face_coords(face, orig_w, orig_h, angle):
         face.landmark_3d_68 = lm
 
 
+class _Geometry:
+    """bbox + kps only: what `_is_face_duplicate` reads. A throw-away copy of a face's
+    coordinates that can be un-rotated without touching the face itself."""
+    __slots__ = ('bbox', 'kps')
+
+    def __init__(self, face):
+        self.bbox = np.array(face.bbox, dtype=np.float32)
+        kps = getattr(face, 'kps', None)
+        self.kps = None if kps is None else np.array(kps, dtype=np.float32)
+
+
+def _rotated_pass(frame, angle, rotate, known, w, h):
+    """One cardinal-turn detection pass of a rescue: the NEW faces, in frame coordinates.
+
+    Returns exactly the faces the old `_detect_faces_raw(rotate(frame))` + un-rotate +
+    `_is_face_duplicate(.., known)` loop kept, with the same embeddings and landmarks,
+    but the aux models (recognition, 106- and 68-point landmarks) run only on the
+    survivors. A duplicate's aux work was computed and then thrown away.
+
+    How it stays identical:
+      * detection is `aux=False`, `unclamped=True` -- the same bbox/kps/det_score
+        `fa.get()` produced;
+      * the duplicate test runs on an un-rotated COPY of each candidate's coordinates,
+        which is what the un-rotated face used to be tested with, against `known` plus
+        this pass's earlier survivors, in the same order;
+      * the survivors then get the aux models on the ROTATED frame from their
+        ROTATED-space keypoints -- where the face is upright, which is why the old
+        embeddings were good -- and only then are un-rotated in place.
+    A failure in the aux step drops the whole pass, as a failure inside the old
+    `_detect_faces_raw` did. Never nests leases: the detection lease is released
+    before the aux one is taken.
+    """
+    rframe = rotate(frame)
+    cands = _detect_faces_raw(rframe, aux=False, unclamped=True) or []
+    hybrid = _hybrid_engine_active()
+    seen = list(known)
+    survivors = []
+    for rf in cands:
+        if hybrid:
+            # The hybrid aux=True path skips a face without a 5-point fit before the
+            # duplicate test ever sees it; keep that.
+            kps = getattr(rf, 'kps', None)
+            if kps is None or np.asarray(kps).shape != (5, 2):
+                continue
+        geo = _Geometry(rf)
+        _unrotate_face_coords(geo, w, h, angle)
+        if _is_face_duplicate(geo, seen):
+            _bp.count('rescue.rotated_pass.duplicates_aux_skipped')
+            continue
+        seen.append(geo)
+        survivors.append(rf)
+    _bp.count('rescue.rotated_pass.detected', len(cands))
+    _bp.count('rescue.rotated_pass.survivors', len(survivors))
+    if survivors:
+        with lease_face_analyser() as fa:
+            for face in survivors:
+                for taskname, model in fa.models.items():
+                    if taskname == 'detection':
+                        continue
+                    model.get(rframe, face)
+        for face in survivors:
+            _unrotate_face_coords(face, w, h, angle)
+    return survivors
+
+
 def _rescue_rotated(frame: Frame, expected_count=None):
     """Retry detection on rotated frame variants.
 
@@ -1047,15 +1132,9 @@ def _rescue_rotated(frame: Frame, expected_count=None):
                                ("anticlockwise", rotate_anticlockwise),
                                ("180", rotate_image_180)):
             try:
-                r_frame = rotated(frame)
-                faces = _detect_faces_raw(r_frame)
-                if faces:
-                    for f in faces:
-                        _unrotate_face_coords(f, w, h, angle)
-                        if not _is_face_duplicate(f, accumulated):
-                            accumulated.append(f)
-                    if expected_count and len(accumulated) >= expected_count:
-                        break
+                accumulated.extend(_rotated_pass(frame, angle, rotated, accumulated, w, h))
+                if expected_count and len(accumulated) >= expected_count:
+                    break
             except Exception as _rot_err:
                 _swallowed("roop/face_util.py:rot_angle", _rot_err, "fallback continued")
                 continue
@@ -1600,7 +1679,18 @@ def _detect_faces(frame, expected_count=None, rescue=True):
         engine = getattr(roop.globals, 'detector_engine', 'scrfd')
         has_multiscale = (engine in ('retinaface', 'retinaface_r50')
                           or bool(getattr(roop.globals, 'detector_scale_pyramid', None)))
-        # 1. Small-face rescue
+        # 1. Small-face rescue.
+        #
+        # NOT skipped on retinaface_r50, though that was proposed (its direct square
+        # resize to 640 makes a 2x upscale a near-identical input, and the upscaled
+        # frame trips the >=500 px pyramid) and the gate was "skip only if it never
+        # gains a face". Measured 2026-10-04 with tests/probe_r50_upscale_gain.py on the
+        # baseline clips' own frames: of the 175 frames where r50's first pass is empty
+        # (all there are in the four baseline windows), `_rescue_upscaled` returned a
+        # face on 13 -- Love 10, d4 3. Mostly large (240-425 px), partly occluded kiss
+        # faces that scrfd also misses on 10 of the 13; a few are spurious (two
+        # frame-corner boxes on d4). The gate failed, so the rescue stays. Re-run the
+        # probe before revisiting; test_rotated_pass pins that it still runs.
         if getattr(roop.globals, 'rescue_small_faces', False):
             faces = _rescue_upscaled(frame) or []
             _bp.rescue('upscaled', faces)
@@ -1647,11 +1737,7 @@ def _detect_faces(frame, expected_count=None, rescue=True):
                 try:
                     _n_before = len(new_faces)
                     _bp.count('rescue.partial_%s.attempted' % angle)
-                    r_faces = _detect_faces_raw(rot(frame)) or []
-                    for rf in r_faces:
-                        _unrotate_face_coords(rf, w, h, angle)
-                        if not _is_face_duplicate(rf, list(faces) + new_faces):
-                            new_faces.append(rf)
+                    new_faces.extend(_rotated_pass(frame, angle, rot, list(faces) + new_faces, w, h))
                     _bp.count('rescue.partial_%s.gained' % angle, len(new_faces) - _n_before)
                     if len(faces) + len(new_faces) >= expected_count:
                         break

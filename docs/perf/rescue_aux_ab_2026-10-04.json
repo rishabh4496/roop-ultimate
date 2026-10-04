@@ -1,0 +1,117 @@
+{
+ "base": "f9aaf96",
+ "expected_count": 2,
+ "engine": "scrfd",
+ "null_old_vs_old": {
+  "label": "old vs old (same code, second call)",
+  "frames": 1018,
+  "faces_compared": 1558,
+  "frames_with_different_face_count": 0,
+  "max_bbox_abs": 0.0,
+  "max_kps_abs": 0.0,
+  "max_det_score_abs": 0.0,
+  "min_embedding_cosine": 0.9999999999999998,
+  "max_lm106_abs": 0.0,
+  "max_lm68_abs": 0.0,
+  "faces_exactly_equal": 1558,
+  "faces_below_0.9999_cosine": 0
+ },
+ "old_vs_new": {
+  "label": "old vs new",
+  "frames": 1018,
+  "faces_compared": 1558,
+  "frames_with_different_face_count": 0,
+  "max_bbox_abs": 0.0,
+  "max_kps_abs": 0.0,
+  "max_det_score_abs": 0.0,
+  "min_embedding_cosine": 0.9999999999999998,
+  "max_lm106_abs": 0.0,
+  "max_lm68_abs": 0.0,
+  "faces_exactly_equal": 1558,
+  "faces_below_0.9999_cosine": 0
+ },
+ "aux_calls_old": {
+  "aux.buffalo_l.recognition.get": 2718,
+  "aux.buffalo_l.landmark_2d_106.get": 2718,
+  "aux.buffalo_l.landmark_3d_68.get": 2718
+ },
+ "aux_calls_new": {
+  "aux.buffalo_l.recognition.get": 2233,
+  "aux.buffalo_l.landmark_2d_106.get": 2233,
+  "aux.buffalo_l.landmark_3d_68.get": 2233
+ },
+ "aux_calls_saved": {
+  "aux.buffalo_l.recognition.get": 485,
+  "aux.buffalo_l.landmark_2d_106.get": 485,
+  "aux.buffalo_l.landmark_3d_68.get": 485
+ },
+ "detect_faces_seconds_old": 69.88,
+ "detect_faces_seconds_new": 59.19,
+ "per_clip": {
+  "d4": {
+   "frames": 300,
+   "rescue_frames": 114,
+   "aux_old": 1959,
+   "aux_new": 1269
+  },
+  "Love": {
+   "frames": 300,
+   "rescue_frames": 95,
+   "aux_old": 1704,
+   "aux_new": 1095
+  },
+  "d1": {
+   "frames": 418,
+   "rescue_frames": 52,
+   "aux_old": 4491,
+   "aux_new": 4335
+  }
+ },
+ "worst_old_vs_new": [
+  {
+   "i": 6,
+   "bbox": 0.0,
+   "kps": 0.0,
+   "det_score": 0.0,
+   "emb_cos": 0.9999999999999998,
+   "lm106": 0.0,
+   "lm68": 0.0
+  },
+  {
+   "i": 8,
+   "bbox": 0.0,
+   "kps": 0.0,
+   "det_score": 0.0,
+   "emb_cos": 0.9999999999999998,
+   "lm106": 0.0,
+   "lm68": 0.0
+  },
+  {
+   "i": 32,
+   "bbox": 0.0,
+   "kps": 0.0,
+   "det_score": 0.0,
+   "emb_cos": 0.9999999999999998,
+   "lm106": 0.0,
+   "lm68": 0.0
+  },
+  {
+   "i": 58,
+   "bbox": 0.0,
+   "kps": 0.0,
+   "det_score": 0.0,
+   "emb_cos": 0.9999999999999998,
+   "lm106": 0.0,
+   "lm68": 0.0
+  },
+  {
+   "i": 65,
+   "bbox": 0.0,
+   "kps": 0.0,
+   "det_score": 0.0,
+   "emb_cos": 0.9999999999999998,
+   "lm106": 0.0,
+   "lm68": 0.0
+  }
+ ]
+}
