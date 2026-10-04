@@ -798,6 +798,13 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
         except Exception as _degrade_error:
             _swallowed("roop/ProcessMgr.py:727", _degrade_error, "fallback continued")
             pass
+        if vram_free_gb is not None and vram_total_gb:
+            try:
+                from roop.vram_governor import warn_if_vram_critical
+                warn_if_vram_critical((vram_total_gb - vram_free_gb) * 1024.0,
+                                      vram_total_gb * 1024.0, str(stage))
+            except Exception as _degrade_error:
+                _swallowed("roop/ProcessMgr.py:vram_critical", _degrade_error, "no warning")
         entry = {
             'stage': str(stage),
             'rss_gb': round(rss_gb, 4) if rss_gb is not None else None,
@@ -966,6 +973,18 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
             gc.collect()
             self._log_memory_stage(
                 f'phase3:{_released.replace(" ", "-")}-for-replay')
+            # The pools' width was for the pre-pass, which is over: the swap phase
+            # needs one detector for verification and rescue. Ends with the pool
+            # (see face_util.shrink_analysis_pools).
+            try:
+                _shrunk = face_util.shrink_analysis_pools(1)
+                if _shrunk['analyser'] or _shrunk['detectors']:
+                    print(f"[Runtime] analysis pools shrunk to width 1 for the swap phase: "
+                          f"{_shrunk['analyser']} analyser and {_shrunk['detectors']} "
+                          f"detector instance(s) released", flush=True)
+                    self._log_memory_stage('phase3:analysis-pools-shrunk')
+            except Exception as exc:
+                print(f'[Runtime] analysis pool shrink skipped: {exc}', flush=True)
             return True
         except Exception as exc:
             print(f'[Runtime] analysis replay release skipped: {exc}', flush=True)

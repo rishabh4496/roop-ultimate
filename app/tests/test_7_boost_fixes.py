@@ -107,10 +107,14 @@ class TestBoostFixes(unittest.TestCase):
         pm._temporal_covered = 100
 
         with patch('roop.face_util.release_face_analyser_aux') as mock_release, \
+             patch('roop.face_util.shrink_analysis_pools',
+                   return_value={'analyser': 0, 'detectors': 0}) as mock_shrink, \
              patch('gc.collect') as mock_gc:
             result = pm._release_replayed_analysis(frame_count=100)
             self.assertTrue(result)
             mock_release.assert_called_once()
+            # The pre-pass's pool width is released with its aux sessions.
+            mock_shrink.assert_called_once_with(1)
             mock_gc.assert_called_once()
             self.assertTrue(pm._replay_analysis_released)
 

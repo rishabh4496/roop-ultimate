@@ -73,10 +73,26 @@ A busy GPU with very low frame throughput can be paging into shared system
 memory. Check dedicated **and shared** GPU memory along with available RAM;
 the free-VRAM reading before inference does not capture later context
 allocations. On the 12 GB RTX 4070, the automatic swapper, detect/mask, and
-detector pools stay at **2/2/2**, including multi-face workloads. Saved explicit
+detector pools stay at **2/2/2**, including multi-face workloads, **while the card
+has room for them**: at the start of a render the VRAM governor reads the free
+memory (all processes) and, if the projected peak would pass 90% of the card or
+leave less than your `vram_safety_margin_gb`, it lowers the swap batch and then
+the pool widths one context at a time (`[VramGovernor] step-down: ...`, then
+`[SessionPool] ... pool 2 -> 1 by this render's VRAM plan`). That never changes a
+model or a precision, and the widths come back on the next render. Another
+application holding several GB of VRAM is the usual trigger. Saved explicit
 pool settings override automatic defaults, so restore these three values when
 diagnosing an oversized pool. Restart the app to release resident contexts and
 apply the saved settings. Appearance settings do not need to change.
+
+**Windows: make an over-commit fail fast instead of crawling.** Past about 95%
+VRAM the driver spills into shared system memory over PCIe; the render does not
+stop, it slows to a fraction of a frame per second while GPU utilisation still
+reads 90%+. The app prints `[VramGovernor] WARNING: GPU memory is NN% used ...`
+once when it sees that. To turn the spill into an immediate allocation error:
+NVIDIA Control Panel > Manage 3D Settings > Program Settings > add the
+`python.exe` the warning names > **CUDA - Sysmem Fallback Policy** > **Prefer No
+Sysmem Fallback**. Closing other GPU applications is the other fix.
 
 The sub-7 GB tier retains its single-context policy, and stabilization keeps
 the existing 4096 MB desktop / 1536 MB laptop chunk caps and available-RAM

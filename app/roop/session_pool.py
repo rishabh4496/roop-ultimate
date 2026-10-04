@@ -453,6 +453,42 @@ def _live_vram_mb():
     return 0.0, 0.0
 
 
+# _resource_spec family -> the key the render's VRAM plan caps it under.
+_CAP_KEYS = {'swapper': 'swap', 'enhancer': 'enhancer', 'enhancer-heavy': 'enhancer',
+             'detector': 'detmask', 'mask': 'detmask'}
+
+
+def shrink_lease_pool(pool, width, timeout=30.0):
+    """Shrink a ``{'items': [...], 'q': Queue}`` lease pool to ``width`` in place.
+
+    Every instance is taken out of the queue first -- the lease protocol is what
+    makes an instance exclusive, so this waits for any lease still out -- the
+    first ``width`` go back in, and the rest are returned for the caller to
+    release. Nothing is shrunk (returns []) if a lease stays out past
+    ``timeout``: an instance in use is never torn down.
+    """
+    import time
+    width = max(1, int(width))
+    items, q = pool.get('items'), pool.get('q')
+    if not items or q is None or len(items) <= width:
+        return []
+    expected = len(items)
+    taken = []
+    deadline = time.monotonic() + timeout
+    try:
+        for _ in range(expected):
+            taken.append(q.get(timeout=max(0.0, deadline - time.monotonic())))
+    except Empty:
+        for it in taken:
+            q.put(it)
+        return []
+    keep, drop = list(items[:width]), list(items[width:])
+    items[:] = keep
+    for it in keep:
+        q.put(it)
+    return drop
+
+
 class TensorRTResourceManager:
     """Tracks resident pools and admits work without destroying active contexts.
 
@@ -485,6 +521,35 @@ class TensorRTResourceManager:
         # something releases the pool. Memoise per model, and let `unregister`
         # -- the actual release -- be what invalidates it.
         self._decisions = {}
+        # The widest pool the render's VRAM plan allows per model family, from
+        # MEASURED free memory (vram_governor.admit). See set_budget_caps.
+        self._caps = {}
+        self._cap_noted = set()
+
+    def set_budget_caps(self, caps):
+        """Publish the per-family pool-width ceiling of the render's VRAM plan.
+
+        ``caps`` maps 'swap' / 'enhancer' / 'detmask' (detector and mask pools)
+        to the widest pool, >= 1, that the plan's measured free memory leaves
+        room for; None or {} clears it. Unlike a policy cap this one is the
+        PHYSICAL kind (see select_pool_size) and applies to explicit pool
+        settings too: a pool wider than the card can hold does not run slower
+        in a tunable way, it pages. Replaces any earlier set. Pools already
+        built are not touched -- the caps shape the NEXT build, which is every
+        render's ProcessMgr.initialize.
+        """
+        with self._lock:
+            self._caps = {k: max(1, int(v)) for k, v in (caps or {}).items()}
+            self._cap_noted = set()
+
+    def budget_caps(self):
+        with self._lock:
+            return dict(self._caps)
+
+    def _cap_for(self, model_key, input_shape=None):
+        key = _CAP_KEYS.get(_resource_spec(model_key, input_shape).model_key)
+        with self._lock:
+            return self._caps.get(key) if key else None
 
     def _safety_mb(self, total_mb):
         return max(self.SAFETY_FLOOR_MB,
@@ -500,6 +565,31 @@ class TensorRTResourceManager:
 
     def select_pool_size(self, requested, model_key, input_shape=None,
                          batch_size=1, explicit=False):
+        """Choose a buildable pool size, then apply the render plan's budget cap.
+
+        The cap is applied OUTSIDE the memoised decision: it moves with the
+        render (set at admission, cleared at its end) and must never be frozen
+        into a decision the next render reads back.
+        """
+        selected = self._decide_pool_size(requested, model_key, input_shape,
+                                          batch_size, explicit)
+        if selected < 2:
+            return selected
+        cap = self._cap_for(model_key, input_shape)
+        if cap is None or selected <= cap:
+            return selected
+        note = (str(model_key), selected, cap)
+        with self._lock:
+            first = note not in self._cap_noted
+            self._cap_noted.add(note)
+        if first:
+            print(f"[SessionPool] {model_key}: pool {selected} -> {cap} by this "
+                  f"render's VRAM plan (measured free memory; see [VramGovernor]).",
+                  flush=True)
+        return cap
+
+    def _decide_pool_size(self, requested, model_key, input_shape=None,
+                          batch_size=1, explicit=False):
         """Choose a buildable pool size.
 
         Two separate caps are applied here, and they are NOT the same kind of

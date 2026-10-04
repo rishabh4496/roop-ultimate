@@ -7,6 +7,18 @@ folder). Entries before 2026-09-21 were moved here from the README on 2026-09-22
 
 ## 2026-10-05
 
+- **Peak VRAM held under ~90% without changing a model or a precision (`docs/perf/vram_budget_2026-10-05.md`).** (1) After a replayed
+  render's pre-pass the FaceAnalysis pool and every hybrid detector pool shrink to width 1 (`face_util.shrink_analysis_pools`, from
+  `_release_replayed_analysis`; the ceiling ends with the pool and is cleared at every run start): -56 MiB on the live scrfd config,
+  **-1,240 MiB on `retinaface_r50`** (peak 73.3% -> 63.2%). (2) `vram_governor.plan_job` now lowers pool widths - one context of one
+  pool at a time, the one freeing most first - after the swap batch and before GPEN's look-changing resolution, holds the plan to
+  `max(margin, 10% of the card)`, and publishes the widths to `TensorRTResourceManager.set_budget_caps`, which enforces them on every
+  pool (explicit settings too) until the render ends; decided from NVML free memory, never a GPU name. Another process holding 5 GiB:
+  peak **96.7% -> 76.9%**, no fps loss, pools 2/2/2 -> 1/1/1. (3) Windows, once per process at >= 95% VRAM: a warning naming NVIDIA
+  Control Panel > CUDA - Sysmem Fallback Policy > Prefer No Sysmem Fallback for this `python.exe` (admission, the peak sampler and the
+  `[VRAM]` stage log; written through `bar_write`). Output bit-identical in every arm (d4 600 frames `490d9baa...`). New harness flag
+  `--governor` (`two_face_video.py`, `baseline_snapshot.py`): that harness bypasses the governor otherwise. Not measured: the 3060, or
+  consecutive renders in one session.
 - **Batched aux models for the tracking pre-pass: built, measured SLOWER, REMOVED.** recognition + `landmark_2d_106` +
   `landmark_3d_68` for every face of the frames waiting at once, on batch-relaxed ONNX copies (TensorRT profile 1..16) with GPU
   crops that reproduced `cv2.warpAffine` bit for bit. d4 pre-pass 60.9-66.6 fps per-face vs 49.8-50.3 batched FP16 / 44 FP32

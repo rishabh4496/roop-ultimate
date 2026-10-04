@@ -105,6 +105,7 @@ class BatchProcessingMixin:
         self._memory_stage_log = []
         self._stage_profiler = None
         self._stage_profile_report = None
+        face_util.clear_analysis_pool_ceiling()
         self._log_memory_stage('phase3:run-start')
         if getattr(roop.globals, 'lipsync_enabled', False):
             try:

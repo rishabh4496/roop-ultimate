@@ -113,7 +113,7 @@ def parse_log(text):
     out["thread_lines"] = re.findall(r"^\[Threads\].*$", text, re.M)
     out["stab_geometry"] = re.findall(r"^\[StabGeometry\] .*$", text, re.M)
     out["stab_lines"] = [l for l in re.findall(r"^\[Stabilize\].*$", text, re.M)]
-    out["runtime_lines"] = re.findall(r"^\[(?:Runtime|RuntimeScheduler|BatchSwap|CPU)\].*$", text, re.M)
+    out["runtime_lines"] = re.findall(r"^\[(?:Runtime|RuntimeScheduler|BatchSwap|CPU|VramGovernor|SessionPool)\].*$", text, re.M)
     out["memory_stages"] = re.findall(r"^\[Memory\] .*$", text, re.M)
     out["pipeline_lines"] = re.findall(r"^\[Pipeline\] .*$", text, re.M)
     out["pipeline_done"] = next((l for l in out["pipeline_lines"] if "done:" in l), None)
@@ -208,6 +208,8 @@ def build_cmd(clip_name, spec, cfg, args, out_root, tag, threads, window=None, c
            "--out", out_root]
     if getattr(args, "detector_engine", None):
         cmd += ["--detector-engine", args.detector_engine]
+    if getattr(args, "governor", False):
+        cmd += ["--governor"]
     if cap is not None:
         cmd += ["--capture", str(cap)]
         if spec["capture_face"] is not None:
@@ -583,6 +585,8 @@ def main():
                          "pixel comparison; free RAM otherwise decides the stabilizer geometry)")
     ap.add_argument("--detector-engine", default=None,
                     help="render with this detector engine instead of config.yaml's (harness only)")
+    ap.add_argument("--governor", action="store_true",
+                    help="admit each render through the VRAM governor, as the production path does")
     ap.add_argument("--window", nargs=2, type=int, default=None, metavar=("START", "END"),
                     help="override the clip's frame window (a shorter slice for an A/B)")
     ap.add_argument("--docs-dir", default=None, metavar="DIR",

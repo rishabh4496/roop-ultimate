@@ -156,3 +156,14 @@ def release_detector():
     global _pool
     with _detector_lock:
         _pool = None
+
+
+def shrink_detector(width=1):
+    """Drop detector instances beyond ``width``; returns how many were dropped.
+
+    The swap phase of a replayed render only calls the detector for verification and
+    rescue paths, so the pre-pass's width is idle memory by then
+    (face_util.shrink_analysis_pools)."""
+    from roop import session_pool
+    with _detector_lock:
+        return len(session_pool.shrink_lease_pool(_pool, width)) if _pool else 0

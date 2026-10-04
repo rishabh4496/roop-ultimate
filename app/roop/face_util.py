@@ -41,6 +41,9 @@ _ANALYSER_DET_SIZE = None         # det_size the pool was built with (rebuild on
 _ANALYSER_DET_THRESH = None       # det_thresh the pool was built with (rebuild on change)
 _ANALYSER_ENGINE = None           # detector engine the pool was built with (rebuild on change)
 _ANALYSER_LM68_LAZY = None        # lm68_lazy the pool was built with (rebuild on change)
+# Set by shrink_analysis_pools once a replayed render's pre-pass is over: the widest the
+# pool may be until it is next released. None = the pool's own sizing rules.
+_ANALYSER_POOL_CEILING = None
 THREAD_LOCK_ANALYSER = threading.Lock()
 THREAD_LOCK_SWAPPER = threading.Lock()
 FACE_SWAPPER = None
@@ -294,6 +297,8 @@ def _ensure_face_analyser():
         if session_pool.detmask_pooling_enabled() else 1)
     if _PREPASS_POOL > target_pool_size:
         target_pool_size = _PREPASS_POOL
+    if _ANALYSER_POOL_CEILING:
+        target_pool_size = min(target_pool_size, _ANALYSER_POOL_CEILING)
     # A preview wants ONE instance, but it must not SHRINK a pool a render
     # built. `detmask_pooling_enabled()` is False whenever `is_preview` is set,
     # so without this the width flips 2 -> 1 on entering the preview and 1 -> 2
@@ -394,9 +399,76 @@ def _ensure_face_analyser():
     return FACE_ANALYSER
 
 
-def release_face_analyser():
-    global FACE_ANALYSER, FACE_ANALYSER_POOL, _ANALYSER_Q
+def shrink_analysis_pools(width=1):
+    """Shrink the FaceAnalysis pool and every hybrid detector pool to ``width``.
+
+    Called once the temporal pre-pass has materialised every detection a render will
+    consume (ProcessMgr._release_replayed_analysis). The pre-pass is what the pools'
+    width is for -- on d4 it ran 2598 detector executions against 170 + 37 in the whole
+    swap phase -- so afterwards each extra instance is a TensorRT context and its
+    activations held for nothing. The kept instance serves verification, autorotation and
+    the rescue paths exactly as before; with one instance ``analysis_pooled()`` is False and
+    those calls take the analysis stage lock, which is what a width-1 pool has always done.
+
+    ``_ANALYSER_POOL_CEILING`` stops ``_ensure_face_analyser`` rebuilding the pool at its
+    configured width on the next call; it ends with the pool (``release_face_analyser``,
+    which the run's cleanup calls), so the next render's pre-pass is full width again.
+    Returns {'analyser': n dropped, 'detectors': n dropped}.
+    """
+    global FACE_ANALYSER, FACE_ANALYSER_POOL, _ANALYSER_Q, _ANALYSER_POOL_CEILING
+    width = max(1, int(width))
+    dropped = []
     with THREAD_LOCK_ANALYSER:
+        _ANALYSER_POOL_CEILING = width
+        if len(FACE_ANALYSER_POOL) > width:
+            keep = list(FACE_ANALYSER_POOL[:width])
+            dropped = list(FACE_ANALYSER_POOL[width:])
+            FACE_ANALYSER_POOL = keep
+            FACE_ANALYSER = keep[0]
+            q = Queue()
+            for fa in keep:
+                q.put(fa)
+            _ANALYSER_Q = q
+            # A lease taken before the swap may still hold a dropped instance.
+            with _ANALYSER_LEASE_COND:
+                while _ANALYSER_LEASES:
+                    _ANALYSER_LEASE_COND.wait()
+    if dropped:
+        _cleanup_fa_pool(dropped)
+    n_detectors = 0
+    for module in ('roop.yoloface', 'roop.retinaface', 'roop.retinaface_gpu_engine', 'roop.yunet'):
+        try:
+            n_detectors += int(__import__(module, fromlist=['shrink_detector'])
+                               .shrink_detector(width) or 0)
+        except Exception as _degrade_error:
+            _swallowed("roop/face_util.py:shrink_detector:%s" % module, _degrade_error,
+                       "that detector pool keeps its width")
+    if n_detectors:
+        import gc
+        gc.collect()
+        try:
+            import torch
+            if torch.cuda.is_available():
+                with torch.cuda.device(getattr(roop.globals, 'cuda_device_id', 0)):
+                    torch.cuda.empty_cache()
+        except Exception as _degrade_error:
+            _swallowed("roop/face_util.py:shrink_empty_cache", _degrade_error, "fallback continued")
+    return {'analyser': len(dropped), 'detectors': n_detectors}
+
+
+def clear_analysis_pool_ceiling():
+    """End shrink_analysis_pools' ceiling. Called at the start of every run so a ceiling
+    that outlived its pool (a render that died between the shrink and the cleanup) cannot
+    hold the next render's pre-pass at width 1; the pool is rebuilt at its own width."""
+    global _ANALYSER_POOL_CEILING
+    with THREAD_LOCK_ANALYSER:
+        _ANALYSER_POOL_CEILING = None
+
+
+def release_face_analyser():
+    global FACE_ANALYSER, FACE_ANALYSER_POOL, _ANALYSER_Q, _ANALYSER_POOL_CEILING
+    with THREAD_LOCK_ANALYSER:
+        _ANALYSER_POOL_CEILING = None
         old_pool = list(FACE_ANALYSER_POOL)
         FACE_ANALYSER = None
         FACE_ANALYSER_POOL = []

@@ -679,7 +679,12 @@ def trim(video, start, end, out_path, fps=None):
     return out_path
 
 
-def run_swap(clip_path, facesets, targets, groups, options, out_dir):
+def run_swap(clip_path, facesets, targets, groups, options, out_dir, governor=None):
+    """`governor`: {'mask_engine', 'swap_model'} to run the render under the VRAM plan the
+    production path (core.batch_process_regular) admits it under -- the render guard and
+    `vram_governor.admit`, which sets the pool widths. This harness calls
+    `batch_process_with_options` directly, which skips both, so without it a run here
+    measures a pipeline the user's renders do not take."""
     import roop.globals as g
     from roop import ProcessMgr as _pm
     from roop import procmgr_runtime as _rt
@@ -708,7 +713,18 @@ def run_swap(clip_path, facesets, targets, groups, options, out_dir):
         _fps = 30.0
     entry = ProcessEntry(clip_path, 0, 0, float(_fps))
     before = set(os.listdir(out_dir))
-    batch_process_with_options([entry], options, None)
+    if governor:
+        from roop import vram_governor
+        from roop.core import _admit_vram_governor
+        _reading = vram_governor.query_vram_mb(int(getattr(g, 'cuda_device_id', 0) or 0))
+        _admit_vram_governor([entry], governor['mask_engine'], governor['swap_model'], list(facesets),
+                             (_reading[2] / 1024.0) if _reading else 0.0)
+    try:
+        batch_process_with_options([entry], options, None)
+    finally:
+        if governor:
+            from roop import vram_governor
+            vram_governor.finish()
 
     log = _pm._SWAP_LOG
     _pm._SWAP_LOG = None
@@ -1098,6 +1114,9 @@ def main():
                     help="log Phase 13 anomaly, track, frame, confidence and correction")
     ap.add_argument("--temporal-quality-history", type=int, default=None,
                     help="Phase 13 short history length; defaults to config")
+    ap.add_argument("--governor", action="store_true",
+                    help="admit the render through the VRAM governor, as the production path does "
+                         "(sets TensorRT pool widths from measured free memory)")
     ap.add_argument("--out", default=os.path.join(APP, "output", "bench_two_face"))
     args = ap.parse_args()
 
@@ -1285,7 +1304,10 @@ def main():
     print(f"[bench] clip: {n_plates} frames "
           f"[{args.start}..{args.start + n_plates})", flush=True)
 
-    out, (swap_log, face_log) = run_swap(clip, facesets, targets, groups, options, work)
+    out, (swap_log, face_log) = run_swap(
+        clip, facesets, targets, groups, options, work,
+        governor=({'mask_engine': args.mask_engine, 'swap_model': args.swap_model}
+                  if args.governor else None))
     if not out:
         raise SystemExit("no output produced")
     print(f"[bench] output: {frame_count(out)} frames", flush=True)

@@ -418,3 +418,11 @@ def detect(frame, det_size=640, det_thresh=0.5, model_type='10g', scales=None):
 def release_detector():
     with _detector_lock:
         _POOLS.clear()
+
+
+def shrink_detector(width=1):
+    """Drop detector instances beyond ``width``; returns how many were dropped.
+    See face_util.shrink_analysis_pools for why the swap phase can run on one."""
+    from roop import session_pool
+    with _detector_lock:
+        return sum(len(session_pool.shrink_lease_pool(p, width)) for p in _POOLS.values())

@@ -10,7 +10,13 @@ When the projected headroom is below the margin it steps the job down, cheapest
 change first:
 
     1. the cross-frame swap batch cap, 8 -> 4 -> 2 -> 1   (throughput only)
-    2. GPEN 2048 -> 1024 -> 512                           (changes the look)
+    2. TensorRT pool widths, one pool one context at a time, whichever frees the
+       most first                                          (throughput only)
+    3. GPEN 2048 -> 1024 -> 512                           (changes the look)
+
+The plan is held to a ceiling of CEILING_FRACTION (90%) of the card, whatever the
+user's margin slider says: the projected peak must leave max(margin, 10% of total)
+free. Nothing here changes a model or a precision.
 
 Each step is printed as a `[VramGovernor]` line; the plan's `batch_cap` is read
 by `ProcessMgr._make_swap_batcher` and its `gpen_size` by
@@ -18,8 +24,9 @@ by `ProcessMgr._make_swap_batcher` and its `gpen_size` by
 through admission, so it is never governed.
 
 WHAT IT DOES NOT DO. It does not refuse a render -- `render_guard` does that,
-against a floor of its own -- and it does not resize TensorRT pools, which
-`session_pool.TensorRTResourceManager` already admits against live free VRAM.
+against a floor of its own. Pool widths are decided here, from the measured free
+memory, and ENFORCED by `session_pool.TensorRTResourceManager` (`set_budget_caps`),
+which still admits each pool against live free VRAM on its own.
 
 NOT TO BE CONFUSED WITH `optimized_processor.VramGovernor`, which governs the
 vectorized pipeline -- reached only from benchmark_comparison.py and
@@ -40,13 +47,20 @@ import json
 import os
 import threading
 import time
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from typing import Any, Dict, List, Optional, Tuple
 
 from roop.degrade import swallowed as _swallowed
 
 DEFAULT_MARGIN_GB = 1.5
 MARGIN_RANGE_GB = (0.5, 4.0)
+# The projected peak must stay at or below this fraction of the card.
+CEILING_FRACTION = 0.90
+# Above this fraction of the card a Windows driver spills to shared system memory.
+CRITICAL_FRACTION = 0.95
+# Pool name (the key session_pool caps under) -> the JobSpec field holding its width.
+_POOL_FIELDS = (('enhancer', 'enhancer_contexts'), ('swap', 'swap_contexts'),
+                ('detmask', 'detmask_contexts'))
 BATCH_STEPS = (8, 4, 2, 1)
 GPEN_STEPS = (2048, 1024, 512)
 # A learned ratio outside this band means the sample was polluted (another
@@ -241,6 +255,8 @@ class VramPlan:
     components: Dict[str, float] = field(default_factory=dict)
     actions: List[str] = field(default_factory=list)
     fits: bool = True
+    # Pool widths this plan allows, only for the pools it LOWERED ({} = none).
+    pool_caps: Dict[str, int] = field(default_factory=dict)
 
     def as_dict(self) -> dict:
         return asdict(self)
@@ -248,16 +264,22 @@ class VramPlan:
 
 def plan_job(job: JobSpec, free_mb: float, total_mb: float,
              margin_gb: float = DEFAULT_MARGIN_GB, ratio: float = 1.0) -> VramPlan:
-    """Pure: the smallest step-down that leaves `margin_gb` free, if any does."""
-    margin_mb = clamp_margin_gb(margin_gb) * 1024.0
+    """Pure: the smallest step-down that leaves `margin_gb` free, if any does.
+
+    "Leaves free" is the larger of the margin and the ceiling's own 10% of the card,
+    so a small slider setting cannot plan a peak past CEILING_FRACTION."""
+    margin_mb = max(clamp_margin_gb(margin_gb) * 1024.0,
+                    (1.0 - CEILING_FRACTION) * float(total_mb or 0.0))
     ratio = max(_RATIO_BAND[0], min(_RATIO_BAND[1], float(ratio or 1.0)))
     requested_gpen = gpen_size_for(job.enhancer)
     batch = max(1, int(job.batch_cap))
     gpen = requested_gpen
     actions: List[str] = []
 
-    def total(b, g):
-        parts = estimate_budget_mb(job, b, g)
+    current = job
+
+    def total(b, g, j=None):
+        parts = estimate_budget_mb(current if j is None else j, b, g)
         return sum(parts.values()) * ratio, parts
 
     budget, parts = total(batch, gpen)
@@ -267,8 +289,28 @@ def plan_job(job: JobSpec, free_mb: float, total_mb: float,
         actions.append(f"swap batch {batch} -> {lower}")
         batch = lower
         budget, parts = total(batch, gpen)
-    # Step 2: the enhancer resolution -- only once the batch is exhausted,
-    # because this one changes the look of the output.
+    # Step 2: pool widths, one context of one pool at a time, never a model or a
+    # precision. Whichever pool frees the most memory goes first, so the plan
+    # never has all of them at the full width while any of them still has a spare
+    # context to give; a pool whose models are not in this job frees nothing and
+    # is left alone.
+    while free_mb - budget < margin_mb:
+        best = None
+        for key, field_name in _POOL_FIELDS:
+            width = int(getattr(current, field_name))
+            if width < 2:
+                continue
+            lowered = replace(current, **{field_name: width - 1})
+            lowered_budget, _ = total(batch, gpen, lowered)
+            if lowered_budget < budget and (best is None or lowered_budget < best[0]):
+                best = (lowered_budget, key, field_name, width, lowered)
+        if best is None:
+            break
+        _, key, field_name, width, current = best
+        actions.append(f"{key} pool {width} -> {width - 1}")
+        budget, parts = total(batch, gpen)
+    # Step 3: the enhancer resolution -- only once the batch and the pools are
+    # exhausted, because this one changes the look of the output.
     while free_mb - budget < margin_mb and gpen and gpen > GPEN_STEPS[-1]:
         lower = next(s for s in GPEN_STEPS if s < gpen)
         actions.append(f"GPEN {gpen} -> {lower}")
@@ -281,7 +323,10 @@ def plan_job(job: JobSpec, free_mb: float, total_mb: float,
         requested_batch_cap=max(1, int(job.batch_cap)),
         requested_gpen_size=requested_gpen, ratio=round(ratio, 3),
         signature=job.signature(), components={k: round(v * ratio, 1) for k, v in parts.items()},
-        actions=actions, fits=(free_mb - budget) >= margin_mb)
+        actions=actions, fits=(free_mb - budget) >= margin_mb,
+        pool_caps={key: int(getattr(current, field_name))
+                   for key, field_name in _POOL_FIELDS
+                   if int(getattr(current, field_name)) < int(getattr(job, field_name))})
 
 
 # ── calibration store ──────────────────────────────────────────────────────
@@ -289,11 +334,34 @@ def plan_job(job: JobSpec, free_mb: float, total_mb: float,
 _store_lock = threading.Lock()
 
 
+def _signature_family(signature: str) -> Optional[Tuple[str, ...]]:
+    """A signature with its three context counts (fields 3-5) removed, or None."""
+    parts = str(signature).split('|')
+    return tuple(parts[:3] + parts[6:]) if len(parts) == 7 else None
+
+
 def load_ratio(signature: str, path: str = _CALIBRATION_FILE) -> float:
+    """The learned peak/estimate ratio for `signature`.
+
+    A pool-width step-down plans a signature no render has run yet (its context
+    counts differ), and a ratio of 1.0 would call the narrower plan cheaper than
+    the wider one measured -- the ratio is 1.5-1.8 on the 4070 -- so the plan could
+    "fit" on the strength of a prior known to be low. With no exact row the
+    LARGEST ratio of the same configuration at other widths is used instead.
+    """
     try:
         with open(path, 'r', encoding='utf-8') as handle:
-            row = (json.load(handle) or {}).get(signature) or {}
-        return float(row.get('ratio', 1.0))
+            data = json.load(handle) or {}
+        row = data.get(signature)
+        if row is not None:
+            return float(row.get('ratio', 1.0))
+        family = _signature_family(signature)
+        if family is not None:
+            kin = [float(r.get('ratio', 1.0)) for sig, r in data.items()
+                   if _signature_family(sig) == family and isinstance(r, dict)]
+            if kin:
+                return max(kin)
+        return 1.0
     except FileNotFoundError:
         return 1.0
     except Exception as _degrade_error:
@@ -349,6 +417,7 @@ class _PeakSampler:
             sample = query_vram_mb(self.device_id)
             if sample:
                 self.peak_used = max(self.peak_used, sample[1])
+                warn_if_vram_critical(sample[1], sample[2], 'the render')
             self._stop.wait(self.period)
 
     def start(self):
@@ -358,6 +427,64 @@ class _PeakSampler:
         self._stop.set()
         self._thread.join(timeout=2.0)
         return max(0.0, self.peak_used - self.baseline)
+
+
+_critical_lock = threading.Lock()
+_critical_warned = False
+
+
+def _say(text: str) -> None:
+    """print() that cannot land in the middle of the render's progress bar.
+
+    The 95% warning is raised from the sampler thread, i.e. while the bar is being
+    redrawn on the current line; a bare print() was measured to append it to the bar.
+    """
+    try:
+        from roop.procmgr_runtime import bar_write
+        bar_write(text)
+    except Exception as _degrade_error:
+        _swallowed("roop/vram_governor.py:_say", _degrade_error, "plain print")
+        print(text, flush=True)
+
+
+def warn_if_vram_critical(used_mb: float, total_mb: float, where: str = '',
+                          platform: Optional[str] = None) -> bool:
+    """Once per process, on Windows, when device VRAM use reaches CRITICAL_FRACTION.
+
+    Past ~95% the WDDM driver starts spilling device allocations into shared system
+    memory over PCIe. The render does not fail, it crawls: Stage 0 ran 13 scenarios in
+    one process, the card filled from 5.0 GB to 12.1 GB (98.8%) and the same stage fell
+    from 11.6 fps to 0.3-0.6 fps at 93-95% GPU "utilisation" -- which reads as a hang.
+    The driver setting below turns that into an allocation failure at the point of the
+    over-commit instead. Returns True when it printed.
+    """
+    global _critical_warned
+    import sys
+    if (platform or sys.platform) != 'win32' or not total_mb or total_mb <= 0:
+        return False
+    if used_mb < CRITICAL_FRACTION * total_mb:
+        return False
+    with _critical_lock:
+        if _critical_warned:
+            return False
+        _critical_warned = True
+    _say(f"[VramGovernor] WARNING: GPU memory is {100.0 * used_mb / total_mb:.0f}% used "
+          f"({used_mb:.0f} of {total_mb:.0f} MiB){' at ' + where if where else ''}. Past ~95% "
+          f"the Windows driver spills to shared system memory over PCIe and throughput "
+          f"collapses (measured on a 12 GB card: 11.6 fps down to 0.3-0.6 fps while GPU "
+          f"utilisation read 93-95%), which looks like a hang. To make an over-commit fail "
+          f"fast instead: NVIDIA Control Panel > Manage 3D Settings > Program Settings > "
+          f"add {sys.executable} > 'CUDA - Sysmem Fallback Policy' > "
+          f"'Prefer No Sysmem Fallback'. Or free VRAM: close other GPU applications, or "
+          f"lower ROOP_TRT_POOL / ROOP_DETMASK_POOL.")
+    return True
+
+
+def _reset_critical_warning() -> None:
+    """Tests only: let the once-per-process warning fire again."""
+    global _critical_warned
+    with _critical_lock:
+        _critical_warned = False
 
 
 _active_lock = threading.Lock()
@@ -442,6 +569,13 @@ def admit(job: JobSpec, margin_gb: float, device_id: int = 0) -> Optional[VramPl
     sampler = _PeakSampler(device_id, used_mb)
     with _active_lock:
         _active = (plan, sampler, used_mb)
+    try:
+        from roop import session_pool
+        session_pool.resource_manager().set_budget_caps(plan.pool_caps)
+    except Exception as _degrade_error:
+        _swallowed("roop/vram_governor.py:admit_caps", _degrade_error,
+                   "pool widths follow their own sizing rules")
+    warn_if_vram_critical(used_mb, total_mb, 'render start')
     sampler.start()
     parts = ' '.join(f"{k}={v:.0f}" for k, v in plan.components.items())
     print(f"[VramGovernor] {plan.free_mb:.0f}MB free of {plan.total_mb:.0f}MB, "
@@ -451,6 +585,11 @@ def admit(job: JobSpec, margin_gb: float, device_id: int = 0) -> Optional[VramPl
           + (f", GPEN {plan.gpen_size}" if plan.gpen_size else ''), flush=True)
     for action in plan.actions:
         print(f"[VramGovernor] step-down: {action}", flush=True)
+    if plan.pool_caps:
+        print(f"[VramGovernor] pool widths capped at "
+              f"{', '.join(f'{k}={v}' for k, v in sorted(plan.pool_caps.items()))} "
+              f"(measured {plan.free_mb:.0f}MB free of {plan.total_mb:.0f}MB; "
+              f"ceiling {CEILING_FRACTION:.0%} of the card)", flush=True)
     if not plan.fits:
         print("[VramGovernor] WARNING: still short of the margin after every "
               "step-down; the render continues on the smallest plan.", flush=True)
@@ -462,6 +601,11 @@ def finish() -> Optional[Dict[str, float]]:
     global _active
     with _active_lock:
         active, _active = _active, None
+    try:
+        from roop import session_pool
+        session_pool.resource_manager().set_budget_caps(None)
+    except Exception as _degrade_error:
+        _swallowed("roop/vram_governor.py:finish_caps", _degrade_error, "caps left set")
     if not active:
         return None
     plan, sampler, _baseline = active
