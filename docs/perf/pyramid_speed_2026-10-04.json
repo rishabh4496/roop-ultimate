@@ -1,0 +1,44 @@
+{
+ "frames": 40,
+ "model_type": "r50",
+ "results": {
+  "1 plain thread (pool idle)": {
+   "old": [
+    12.676,
+    12.624
+   ],
+   "new": [
+    14.37,
+    13.926
+   ],
+   "new_reuse_only": [
+    14.012,
+    14.016
+   ],
+   "mean_old": 12.65,
+   "mean_new": 14.148,
+   "mean_new_reuse_only": 14.014,
+   "new_vs_old_pct": 11.8,
+   "reuse_only_vs_old_pct": 10.8
+  },
+  "2 pool-worker threads (render-like)": {
+   "old": [
+    26.942,
+    25.643
+   ],
+   "new": [
+    29.879,
+    27.504
+   ],
+   "new_reuse_only": [
+    29.594,
+    29.263
+   ],
+   "mean_old": 26.293,
+   "mean_new": 28.692,
+   "mean_new_reuse_only": 29.429,
+   "new_vs_old_pct": 9.1,
+   "reuse_only_vs_old_pct": 11.9
+  }
+ }
+}

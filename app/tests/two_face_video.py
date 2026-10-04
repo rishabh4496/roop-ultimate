@@ -987,6 +987,9 @@ def main():
                          "to Person N' button does. Use it to tell a contact "
                          "failure apart from a face simply being at a pose the "
                          "single capture does not cover.")
+    ap.add_argument("--detector-engine", default=None,
+                    help="override config.yaml's detector_engine for this run only "
+                         "(scrfd, retinaface, retinaface_r50, yoloface, yunet); the file is not touched")
     ap.add_argument("--provider", default="cuda")
     ap.add_argument("--cuda-device-id", type=int, default=0)
     ap.add_argument("--swap-model", default="inswapper")
@@ -1111,6 +1114,9 @@ def main():
     g = ab.init_pipeline(args.provider, args.swap_model, args.enhancer,
                          args.mask_engine, cuda_device_id=args.cuda_device_id,
                          sync_config=True)
+    if args.detector_engine:
+        g.detector_engine = args.detector_engine
+        g.CFG.detector_engine = args.detector_engine
     if args.color_transfer_mode is not None:
         g.color_transfer_mode = args.color_transfer_mode
     # After init_pipeline, which has already built CFG from config.yaml -- so a

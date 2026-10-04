@@ -40,6 +40,7 @@ from roop import baseline_probe as _bp
 import concurrent.futures
 import math
 import os
+import threading
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
 
 import cv2
@@ -436,6 +437,65 @@ def should_trigger_pyramid(
     return False
 
 
+# ── Who is calling, and where the extra scale passes run ──────────────────────
+#
+# A pyramid call used to build a ThreadPoolExecutor of its own, per call, to run its
+# scale passes side by side. That is only worth anything when the detector pool has
+# idle instances, i.e. when the caller is alone. Inside the render the caller is one
+# of N workers (the pre-pass, the swap loop and the stabilizer blocks all call the
+# detector from a pool of threads), the N of them already keep every detector
+# instance leased, and the extra threads just queue behind them -- plus pay a thread
+# create/join per call.
+#
+# "Inside a pool worker" is read off the FaceAnalysis pool, not off thread names or
+# the outer pools' creation sites: every pyramid call comes from
+# `face_util._detect_faces_raw`, which holds a pooled analyser lease while the hybrid
+# detector runs, and `lease_face_analyser` marks the thread for exactly that long.
+_POOL_WORKER = threading.local()
+
+
+def pool_worker_enter() -> None:
+    _POOL_WORKER.depth = getattr(_POOL_WORKER, 'depth', 0) + 1
+
+
+def pool_worker_exit() -> None:
+    _POOL_WORKER.depth = max(0, getattr(_POOL_WORKER, 'depth', 0) - 1)
+
+
+def in_pool_worker() -> bool:
+    return getattr(_POOL_WORKER, 'depth', 0) > 0
+
+
+_SCALE_EXECUTOR: Optional[concurrent.futures.ThreadPoolExecutor] = None
+_SCALE_EXECUTOR_WIDTH = 0
+_SCALE_EXECUTOR_LOCK = threading.Lock()
+
+
+def _scale_executor(width: int) -> concurrent.futures.ThreadPoolExecutor:
+    """The one persistent executor for scale passes made by a caller that is NOT a pool
+    worker. Tasks only call the detector (never submit more work), so a caller waiting
+    on its futures cannot deadlock the executor. Widened, never shrunk, if the detector
+    pool is resized."""
+    global _SCALE_EXECUTOR, _SCALE_EXECUTOR_WIDTH
+    with _SCALE_EXECUTOR_LOCK:
+        if _SCALE_EXECUTOR is None or width > _SCALE_EXECUTOR_WIDTH:
+            old = _SCALE_EXECUTOR
+            _SCALE_EXECUTOR = concurrent.futures.ThreadPoolExecutor(
+                max_workers=max(1, int(width)), thread_name_prefix='pyramid_scale')
+            _SCALE_EXECUTOR_WIDTH = max(1, int(width))
+            if old is not None:
+                old.shutdown(wait=False)
+        return _SCALE_EXECUTOR
+
+
+def shutdown_scale_executor() -> None:
+    global _SCALE_EXECUTOR, _SCALE_EXECUTOR_WIDTH
+    with _SCALE_EXECUTOR_LOCK:
+        ex, _SCALE_EXECUTOR, _SCALE_EXECUTOR_WIDTH = _SCALE_EXECUTOR, None, 0
+    if ex is not None:
+        ex.shutdown(wait=True)
+
+
 class MultiScaleFaceDetector:
     """Multi-Scale Face Detector with frame boundary context padding and DIoU-NMS."""
 
@@ -489,6 +549,14 @@ class MultiScaleFaceDetector:
             from roop.retinaface import _detect_single_instance
             detect_fn = lambda f, ds, dt: _detect_single_instance(f, det_size=ds, det_thresh=dt, model_type='r50')
 
+        _inner_detect_fn = detect_fn
+
+        def detect_fn(f, ds, dt):
+            # one count per detector INFERENCE this call pays for (the unit the
+            # "detect calls per frame" figure is made of)
+            _bp.count('pyramid.detect_fn_calls')
+            return _inner_detect_fn(f, ds, dt)
+
         pad_amount = self.padding if padding is None else max(MIN_BORDER_PADDING_PX, int(padding))
         pad_mode = self.padding_mode if padding_mode is None else str(padding_mode)
         nms_thresh = getattr(roop.globals, 'face_detector_nms', self.nms_thresh)
@@ -501,6 +569,10 @@ class MultiScaleFaceDetector:
         parsed_scales = parse_scale_pyramid(configured)
 
         _bp.count('pyramid.detect_calls')
+        # The adaptive single pass, kept when it triggers the pyramid: it ran the detector
+        # on `padded_frame` at scale 1.0 with this call's det_size / det_thresh, which is
+        # exactly the pyramid's scale-1.0 pass.
+        single_pass = None
 
         # 3. Adaptive check: If not explicitly configured and not forced, run quick baseline
         if parsed_scales is None and not force_pyramid:
@@ -513,9 +585,11 @@ class MultiScaleFaceDetector:
                 if not should_trigger_pyramid(frame.shape[:2], initial_dets=unpad_b):
                     _bp.count('pyramid.path.single_scale')
                     return unpad_b, (unpad_k if unpad_k is not None else np.zeros((0, 5, 2), dtype=np.float32))
-                # A full single pass was already paid; the pyramid below repeats it.
+                # A full single pass was already paid; the pyramid below reuses it as its
+                # scale-1.0 pass instead of running the detector on the same image again.
                 _bp.count('pyramid.trigger.initial_closeup')
                 _bp.count('pyramid.single_pass_then_pyramid')
+                single_pass = (b_single, k_single)
             else:
                 _bp.count('pyramid.trigger.estimated_face_height')
         elif parsed_scales != [1.0]:
@@ -545,12 +619,34 @@ class MultiScaleFaceDetector:
             b_orig, k_orig = rescale_detections(b_scaled, k_scaled, scale_factor=scale_val)
             return b_orig, k_orig
 
-        if parallel and concurrency > 1 and len(pyramid) > 1:
-            workers = min(len(pyramid), concurrency)
-            with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
-                results = list(executor.map(_detect_scale_worker, pyramid))
+        # The scale-1.0 image IS `padded_frame` (generate_scale_pyramid does not copy
+        # it), so a kept single pass is that level's result. It goes back into the same
+        # slot of the results, because the merge below is order-sensitive on ties.
+        results: List[Optional[Tuple[np.ndarray, np.ndarray]]] = [None] * len(pyramid)
+        todo: List[int] = []
+        for idx, (scale_val, scaled_img) in enumerate(pyramid):
+            if single_pass is not None and scaled_img is padded_frame:
+                results[idx] = rescale_detections(single_pass[0], single_pass[1], scale_factor=scale_val)
+                _bp.count('pyramid.single_pass_reused')
+            else:
+                todo.append(idx)
+
+        if parallel and concurrency > 1 and len(todo) > 1:
+            if in_pool_worker():
+                # One of N pool workers already keeps the detector pool busy.
+                _bp.count('pyramid.mode.sequential_in_pool_worker')
+                for idx in todo:
+                    results[idx] = _detect_scale_worker(pyramid[idx])
+            else:
+                _bp.count('pyramid.mode.shared_executor')
+                executor = _scale_executor(min(len(todo), concurrency))
+                for idx, res in zip(todo, executor.map(_detect_scale_worker,
+                                                       [pyramid[i] for i in todo])):
+                    results[idx] = res
         else:
-            results = [_detect_scale_worker(item) for item in pyramid]
+            _bp.count('pyramid.mode.sequential')
+            for idx in todo:
+                results[idx] = _detect_scale_worker(pyramid[idx])
 
         for b_cand, k_cand in results:
             if b_cand is not None and len(b_cand) > 0:

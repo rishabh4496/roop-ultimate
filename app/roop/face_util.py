@@ -22,6 +22,7 @@ from roop import face_contact
 from roop.precision_policy import providers_for
 from roop.backend_manager import build_session_with_fallback
 from roop import baseline_probe as _bp
+from roop import face_detector as _fd
 
 # Pool of independent insightface FaceAnalysis instances (opt-in, ROOP_DETMASK_POOL).
 #
@@ -491,9 +492,14 @@ def lease_face_analyser():
             _ANALYSER_LEASES += 1
     if queue is not None:
         fa = queue.get()
+        # Holding one of N pooled instances makes this thread one of the N pool workers:
+        # the multi-scale detector reads that to run its scale passes in this thread
+        # instead of queueing more threads behind the pool (face_detector.in_pool_worker).
+        _fd.pool_worker_enter()
         try:
             yield fa
         finally:
+            _fd.pool_worker_exit()
             queue.put(fa)
             with _ANALYSER_LEASE_COND:
                 _ANALYSER_LEASES -= 1

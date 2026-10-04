@@ -206,6 +206,8 @@ def build_cmd(clip_name, spec, cfg, args, out_root, tag, threads, window=None, c
            "--temporal-compositing-strength", str(getattr(cfg, "temporal_compositing_strength", 0.65)),
            "--capture-budget", str(CAPTURE_BUDGET_S),
            "--out", out_root]
+    if getattr(args, "detector_engine", None):
+        cmd += ["--detector-engine", args.detector_engine]
     if cap is not None:
         cmd += ["--capture", str(cap)]
         if spec["capture_face"] is not None:
@@ -579,6 +581,10 @@ def main():
     ap.add_argument("--pin-chunk-mb", default=None, metavar="MB",
                     help="export ROOP_STAB_CHUNK_MB for every render (AGENTS.md: pin it for any "
                          "pixel comparison; free RAM otherwise decides the stabilizer geometry)")
+    ap.add_argument("--detector-engine", default=None,
+                    help="render with this detector engine instead of config.yaml's (harness only)")
+    ap.add_argument("--window", nargs=2, type=int, default=None, metavar=("START", "END"),
+                    help="override the clip's frame window (a shorter slice for an A/B)")
     ap.add_argument("--docs-dir", default=None, metavar="DIR",
                     help="where the JSON/markdown go (default docs/perf); the A/B orchestrator "
                          "points this at app/output so arms do not litter the repository")
@@ -640,7 +646,8 @@ def main():
     for name in wanted:
         for i in range(max(1, args.repeat)):
             label = name if args.repeat <= 1 else "%s_pinned_%d" % (name, i + 1)
-            records.append(run_one(label, name, CLIPS[name], cfg, args, env, out_root, threads))
+            records.append(run_one(label, name, CLIPS[name], cfg, args, env, out_root, threads,
+                                   window=tuple(args.window) if args.window else None))
     if not args.no_null and "d4" in wanted:
         records.append(run_one("d4_null_repeat", "d4", CLIPS["d4"], cfg, args, env, out_root, threads))
 
