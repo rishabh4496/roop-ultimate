@@ -634,6 +634,11 @@ class MultiScaleFaceDetector:
         if parallel and concurrency > 1 and len(todo) > 1:
             if in_pool_worker():
                 # One of N pool workers already keeps the detector pool busy.
+                # Measured 2026-10-04 (r50, d6 triggered frames, ABBA, 2 pool-worker callers):
+                # this is NEUTRAL against the shared executor (28.7 vs 29.4 calls/s, inside
+                # the 1-8% scatter between repeats of one arm); the whole speed-up comes
+                # from reusing the single pass. Kept as specified; it saves the thread
+                # handoff, and the executor path is one line away if it ever matters.
                 _bp.count('pyramid.mode.sequential_in_pool_worker')
                 for idx in todo:
                     results[idx] = _detect_scale_worker(pyramid[idx])

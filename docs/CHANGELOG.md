@@ -7,6 +7,17 @@ folder). Entries before 2026-09-21 were moved here from the README on 2026-09-22
 
 ## 2026-10-04
 
+- **Multi-scale detector reuses its single pass (`face_detector.MultiScaleFaceDetector.detect`).** Only the retinaface /
+  retinaface_r50 engines reach it (not scrfd, so no render on the current config changes). When the adaptive single pass
+  triggers the pyramid, its result now fills the pyramid's scale-1.0 slot and only the other levels run: 4 -> 3 detector
+  inferences per triggered frame. The scale passes run in the caller's thread when it holds a pooled FaceAnalysis lease
+  (`face_detector.in_pool_worker`, set by `lease_face_analyser`), else on one persistent executor instead of one per call.
+  `generate_scale_pyramid` already built every level once from the padded frame; trigger thresholds untouched.
+  Measured on r50 (`docs/perf/pyramid_2026-10-04.md`): 1,468 frames incl. all of d6 4K and 80 synthetic close-ups, merged
+  boxes/kps/scores 0.0 px from the old code (plain and pool-worker thread); d6 4.0 -> 3.0 inferences/frame; whole r50 renders
+  of d6 old/new/new/old: no hang, identical md5 / swap audit / verdicts; function-level +10.8..+11.9% from the reuse, the
+  pool-worker shortcut itself neutral. On r50 the pyramid merge is not redundant (it returns fewer boxes than the plain
+  single pass on 213 of 488 d6 frames).
 - **The rotated rescues run the aux models only on faces they keep (`face_util._rotated_pass`).** `_rescue_rotated` and
   the partial-miss rescue detected on a rotated frame with recognition + 106/68-point landmarks and discarded the aux
   work of every duplicate. They now detect with `aux=False` (and `unclamped=True`, so SCRFD geometry is what `fa.get()`
