@@ -430,11 +430,157 @@ def _finalize(model_key, model_path, providers, device_id=0):
         # Local import: trt_shape_profile imports canonical_model_key from
         # this module, so a module-level import here would be circular.
         from roop.trt_shape_profile import apply_shape_profile
-        return apply_shape_profile(providers, model_key, model_path)
+        providers = apply_shape_profile(providers, model_key, model_path)
     except Exception as _degrade_error:
         # Shape profiling is an optimisation, never a reason to fail a build.
         _swallowed("roop/precision_policy.py:426", _degrade_error, "fallback continued")
-        return providers
+    return apply_build_override(providers, model_key, model_path)
+
+
+# ── per-model TensorRT build overrides ─────────────────────────────────────────────────────────────
+#
+# core.py sets ONE set of engine-build options for every model: `trt_build_heuristics_enable` exactly when precision is
+# 'mixed', and `trt_builder_optimization_level` 3 (ROOP_TRT_BUILDER_OPT_LEVEL). Those decide which tactics a build
+# picks, and that is not neutral: swap_canary.py records the same options minus heuristics building a swapper engine that
+# runs at full speed and paints the wrong face. Whether the global choice is right for a given SMALL model (a detector,
+# a mask net, a recogniser) is therefore a per-model measurement (docs/perf/trt_matrix.md), not a global setting.
+#
+# A model is identified by its FILE stem, lower-cased ('retinaface_r50', 'xseg', 'w600k_r50'): canonical_model_key is too
+# coarse for this (every detector is 'face_detection', every recogniser and landmark net 'recognition').
+#
+# With no entry the providers and the cache namespace are returned UNCHANGED - an install that never opts in keeps every
+# engine it has built. With an entry whose effective options differ from the global ones (or that carries a `tag`), the
+# engine AND timing cache directories gain a suffix derived from the effective values, so an engine built under one
+# schedule can never be loaded for another and a timing cache cannot carry tactics across them.
+#
+# SWAPPERS ARE REFUSED (model key 'face_swap'): heuristics stay on there until the explicit-FP32-islands work is done.
+#
+#   ROOP_TRT_MODEL_BUILD="retinaface_r50:h=0,l=5,tag=r1;xseg:h=1"      h = heuristics (0/1), l = level (0-5), tag = free text
+#
+# The env var wins over BUILD_OVERRIDES. `tag` exists for the build matrix (two builds of one config need two caches).
+
+#: Adopted overrides, filled only from a measured result. stem -> {"heuristics": bool, "level": int}.
+BUILD_OVERRIDES: dict = {}
+BUILD_OVERRIDE_ENV = "ROOP_TRT_MODEL_BUILD"
+_PROTECTED_KEYS = frozenset({"face_swap"})
+_override_announced: set = set()
+override_log: list = []         # every override applied or refused in this process, for harnesses and tests
+
+
+def _stem(model_path) -> str:
+    return os.path.splitext(os.path.basename(str(model_path or "")))[0].lower()
+
+
+def parse_build_overrides(text: str) -> dict:
+    """'stem:h=0,l=5,tag=x;stem2:h=1' -> {stem: {'heuristics': bool?, 'level': int?, 'tag': str?}}. Raises ValueError."""
+    out = {}
+    for part in [p.strip() for p in str(text or "").split(";") if p.strip()]:
+        stem, sep, fields = part.partition(":")
+        stem = stem.strip().lower()
+        if not stem or not sep:
+            raise ValueError("expected 'stem:h=0,l=5', got %r" % part)
+        entry = {}
+        for kv in [f.strip() for f in fields.split(",") if f.strip()]:
+            key, eq, val = kv.partition("=")
+            key, val = key.strip().lower(), val.strip()
+            if not eq:
+                raise ValueError("expected key=value, got %r in %r" % (kv, part))
+            if key in ("h", "heuristics"):
+                if val.lower() not in ("0", "1", "true", "false", "on", "off"):
+                    raise ValueError("heuristics must be 0/1, got %r" % val)
+                entry["heuristics"] = val.lower() in ("1", "true", "on")
+            elif key in ("l", "level"):
+                if not val.isdigit() or not 0 <= int(val) <= 5:
+                    raise ValueError("level must be 0-5, got %r" % val)
+                entry["level"] = int(val)
+            elif key == "tag":
+                if not re.fullmatch(r"[A-Za-z0-9_-]{1,24}", val):
+                    raise ValueError("tag must be 1-24 of [A-Za-z0-9_-], got %r" % val)
+                entry["tag"] = val
+            else:
+                raise ValueError("unknown override field %r in %r" % (key, part))
+        if not entry:
+            raise ValueError("no fields for %r" % stem)
+        out[stem] = entry
+    return out
+
+
+def build_override_for(model_key, model_path):
+    """The override entry for this model, or None. Env wins over BUILD_OVERRIDES; swappers are always None."""
+    stem = _stem(model_path)
+    if not stem:
+        return None
+    entry = dict(BUILD_OVERRIDES.get(stem) or {})
+    raw = os.environ.get(BUILD_OVERRIDE_ENV, "").strip()
+    if raw:
+        try:
+            entry.update(parse_build_overrides(raw).get(stem) or {})
+        except ValueError as exc:
+            # Loud, once: a malformed experiment flag must not look like a run with no override.
+            if ("bad", raw) not in _override_announced:
+                _override_announced.add(("bad", raw))
+                print("[TRT] %s IGNORED (%s): %r" % (BUILD_OVERRIDE_ENV, exc, raw), flush=True)
+                override_log.append({"stem": stem, "refused": "malformed: %s" % exc})
+            return None
+    if not entry:
+        return None
+    if canonical_model_key(model_key, model_path) in _PROTECTED_KEYS:
+        if ("protected", stem) not in _override_announced:
+            _override_announced.add(("protected", stem))
+            print("[TRT] build override for %s refused: swappers keep the global build options (heuristics on) until "
+                  "the explicit FP32-island work is done" % stem, flush=True)
+            override_log.append({"stem": stem, "refused": "swapper"})
+        return None
+    return entry
+
+
+def apply_build_override(providers, model_key, model_path):
+    """Return *providers* with the per-model heuristics / builder-level override applied (see the block comment above)."""
+    try:
+        entry = build_override_for(model_key, model_path)
+    except Exception as exc:                                    # an optimisation hook never fails a build
+        _swallowed("roop/precision_policy.py:build_override", exc, "no override applied")
+        return list(providers or ())
+    if not entry:
+        return list(providers or ())
+    stem = _stem(model_path)
+    patched, applied = [], False
+    for provider in list(providers or ()):
+        if not (isinstance(provider, (tuple, list)) and len(provider) == 2 and "tensorrt" in str(provider[0]).lower()):
+            patched.append(provider)
+            continue
+        name, options = provider[0], dict(provider[1])
+        heur = bool(options.get("trt_build_heuristics_enable")) if entry.get("heuristics") is None else entry["heuristics"]
+        level = int(options.get("trt_builder_optimization_level", 3)) if entry.get("level") is None else entry["level"]
+        tag = entry.get("tag")
+        differs = (heur != bool(options.get("trt_build_heuristics_enable"))
+                   or level != int(options.get("trt_builder_optimization_level", 3)))
+        cache = options.get("trt_engine_cache_path")
+        if not (differs or tag) or not cache:
+            patched.append(provider)
+            continue
+        identity = json.dumps({"heuristics": heur, "level": level, "tag": tag}, sort_keys=True, separators=(",", ":"))
+        suffix = "_ovh%dl%d%s_%s" % (int(heur), level, ("_" + tag) if tag else "",
+                                    hashlib.sha256(identity.encode()).hexdigest()[:8])
+        scoped = str(cache) + suffix
+        try:
+            os.makedirs(scoped, exist_ok=True)
+        except OSError:
+            patched.append(provider)            # unwritable: skip the override rather than fail the session
+            continue
+        options["trt_build_heuristics_enable"] = heur
+        options["trt_builder_optimization_level"] = level
+        options["trt_engine_cache_path"] = scoped
+        if options.get("trt_timing_cache_path"):
+            options["trt_timing_cache_path"] = scoped
+        patched.append((name, options))
+        applied = True
+        if ("applied", stem, suffix) not in _override_announced:
+            _override_announced.add(("applied", stem, suffix))
+            print("[TRT] build override for %s: heuristics=%s level=%d%s -> cache %s" % (
+                stem, heur, level, (" tag=" + tag) if tag else "", suffix), flush=True)
+            override_log.append({"stem": stem, "heuristics": heur, "level": level, "tag": tag, "suffix": suffix})
+    return patched if applied else list(providers or ())
 
 
 def _cudnn_algo(model_key, model_path, providers, device_id=0):
