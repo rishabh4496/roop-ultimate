@@ -7,6 +7,12 @@ folder). Entries before 2026-09-21 were moved here from the README on 2026-09-22
 
 ## 2026-10-09
 
+- **Opt-in static TensorRT profile for `retinaface_r50` (`docs/perf/r50_static_profile_2026-10-09.md`); defaults unchanged.** `ROOP_TRT_STATIC_PROFILE=1` pins the ORT
+  detector to `1x3x640x640` (own cache namespace `_spstatic...`) instead of the 320-1280 / batch 1-8 band: each pooled instance's first inference costs +56 MiB
+  instead of +1.17 GiB (-2.2 GiB at pool 2), latency neutral. Output differs from the band by FP16 tactic noise (the same distance from an FP32 render as the band
+  itself), so the literal IoU 0.99 / 0.5 px gate is NOT met and it ships off. A pinned engine ignores `det_size` (warns once). Letterbox vs squash for
+  `retinaface_r50_gpu` re-measured: squash stays (d1 recall 833 -> 764 matched, duplicates 19 -> 75 pairs); TensorRT/FP32 score ratio 1.000 in every geometry, so
+  "letterbox suppresses scores under TensorRT" is not supported - the cause is scale.
 - **`tools/quality_harness.py`: a quality harness with no simulated or constant metrics (`docs/perf/quality_harness_method.md`).** Reference = a full-FP32 render
   (`trt_precision=fp32`, `ROOP_SWAP_FP32=1`, verified from live `[Session]` records and a first-inference probe) of d1/d4/d6/Love/s7, 300 frames, lossless x264.
   Per candidate: identity cosine vs the source with AdaFace (independent of the pipeline's w600k), masked SSIM/PSNR on the composited face, keypoint drift, skin

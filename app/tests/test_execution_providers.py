@@ -25,6 +25,7 @@ import io
 import os
 import sys
 import unittest
+from unittest import mock
 from contextlib import contextmanager, redirect_stdout
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -168,6 +169,122 @@ class ShapeProfiles(unittest.TestCase):
         self.assertIsNone(resolve_profile('face_swap', None))
         self.assertIsNone(resolve_profile('face_swap', '/no/such/model.onnx'))
         self.assertEqual(apply_shape_profile(_trt(), 'face_swap', None), _trt())
+
+
+class StaticOverride(unittest.TestCase):
+    """retinaface_r50's per-model static profile (min = opt = max = 1x3x640x640).
+
+    Every test names ROOP_TRT_STATIC_PROFILE itself, so none depends on the shipped default.
+    """
+
+    def _r50(self):
+        path = _model('retinaface_r50.onnx')
+        if path is None:
+            self.skipTest('retinaface_r50.onnx not installed')
+        return path
+
+    def test_override_pins_all_three_shapes(self):
+        path = self._r50()
+        with mock.patch.dict(os.environ, {'ROOP_TRT_STATIC_PROFILE': '1'}):
+            profile = resolve_profile('face_detection:r50', path)
+        self.assertIsNotNone(profile)
+        self.assertEqual(profile.min_shapes, 'input:1x3x640x640')
+        self.assertEqual(profile.opt_shapes, 'input:1x3x640x640')
+        self.assertEqual(profile.max_shapes, 'input:1x3x640x640')
+        self.assertEqual(profile.static_shape, (1, 3, 640, 640))
+
+    def test_override_off_restores_the_band(self):
+        path = self._r50()
+        with mock.patch.dict(os.environ, {'ROOP_TRT_STATIC_PROFILE': '0'}):
+            profile = resolve_profile('face_detection:r50', path)
+        self.assertEqual(profile.max_shapes, 'input:8x3x1280x1280')
+        self.assertIsNone(profile.static_shape)
+
+    def test_cache_namespace_changes(self):
+        """An engine built for the band must never be loaded for the static profile."""
+        path = self._r50()
+        with mock.patch.dict(os.environ, {'ROOP_TRT_STATIC_PROFILE': '0'}):
+            band = resolve_profile('face_detection:r50', path).namespace
+        with mock.patch.dict(os.environ, {'ROOP_TRT_STATIC_PROFILE': '1'}):
+            static = resolve_profile('face_detection:r50', path).namespace
+        self.assertNotEqual(band, static)
+        self.assertIn('static', static)
+
+    def test_override_only_touches_the_named_model(self):
+        for name, key in (('hififace_unofficial_256.onnx', 'face_swap'),
+                          ('hyperswap_1a_256.onnx', 'face_swap')):
+            path = _model(name)
+            if path is None:
+                continue
+            with mock.patch.dict(os.environ, {'ROOP_TRT_STATIC_PROFILE': '1'}):
+                profile = resolve_profile(key, path)
+            self.assertTrue(profile is None or profile.static_shape is None, name)
+
+    def test_override_is_refused_when_the_graph_disagrees(self):
+        """A graph that pins another channel count is not the model it was measured on."""
+        spec = (trt_shape_profile.InputSpec('input', (None, 1, None, None)),)
+        with mock.patch.object(trt_shape_profile, 'graph_inputs', lambda _p: spec), \
+                mock.patch.dict(os.environ, {'ROOP_TRT_STATIC_PROFILE': '1'}):
+            profile = resolve_profile('face_detection:r50', '/x/retinaface_r50.onnx')
+        self.assertIsNone(profile.static_shape)
+
+    def test_shape_profile_off_beats_the_override(self):
+        path = self._r50()
+        with mock.patch.dict(os.environ, {'ROOP_TRT_STATIC_PROFILE': '1', 'ROOP_TRT_SHAPE_PROFILE': '0'}):
+            self.assertIsNone(resolve_profile('face_detection:r50', path))
+
+    def test_describe_reports_the_override(self):
+        path = self._r50()
+        with mock.patch.dict(os.environ, {'ROOP_TRT_STATIC_PROFILE': '1'}):
+            self.assertEqual(trt_shape_profile.describe('face_detection:r50', path)['static_override'],
+                             [1, 3, 640, 640])
+
+    def test_pinned_hw_reads_the_provider_options(self):
+        path = self._r50()
+        cache = os.path.join(APP, 'models', 'trt_cache', '_unittest_static_hw')
+        with mock.patch.dict(os.environ, {'ROOP_TRT_STATIC_PROFILE': '1'}):
+            patched = apply_shape_profile(_trt(cache), 'face_detection:r50', path)
+        self.assertEqual(trt_shape_profile.pinned_hw(patched), (640, 640))
+        self.assertIn('static', _opts(patched)['trt_engine_cache_path'])
+        with mock.patch.dict(os.environ, {'ROOP_TRT_STATIC_PROFILE': '0'}):
+            band = apply_shape_profile(_trt(cache), 'face_detection:r50', path)
+        self.assertIsNone(trt_shape_profile.pinned_hw(band))          # a band constrains nothing
+        self.assertIsNone(trt_shape_profile.pinned_hw(['CPUExecutionProvider']))   # a stepped-down chain
+
+    def test_detector_follows_the_engine_not_the_request(self):
+        """A pinned engine gets its own size whatever det_size asks for; an unpinned one is untouched."""
+        import numpy as np
+        from roop import retinaface
+
+        class _Sess:
+            def get_inputs(self):
+                return [mock.Mock(shape=['b', 3, 'h', 'w'], name='input')]
+
+            def get_outputs(self):
+                return [mock.Mock(), mock.Mock(), mock.Mock()]
+
+            def run(self, names, feed):
+                shapes.append(tuple(feed[next(iter(feed))].shape))
+                n = 1
+                return [np.zeros((1, n, 4), np.float32), np.zeros((1, n, 2), np.float32),
+                        np.zeros((1, n, 10), np.float32)]
+
+        shapes = []
+        det = retinaface.RetinaFace3Output('retinaface_r50.onnx', session=_Sess())
+        det.pinned_input_size = (640, 640)
+        retinaface._pinned_warned[0] = True                           # keep the test quiet
+        frame = np.zeros((720, 1280, 3), np.uint8)
+        try:
+            det.detect(frame, input_size=(512, 512))
+        except Exception:
+            pass                                                       # priors/outputs are fake; only the fed shape matters
+        self.assertEqual(shapes[-1][-2:], (640, 640))
+        det.pinned_input_size = None
+        try:
+            det.detect(frame, input_size=(512, 512))
+        except Exception:
+            pass
+        self.assertEqual(shapes[-1][-2:], (512, 512))
 
 
 class ProfileCacheIdentity(unittest.TestCase):

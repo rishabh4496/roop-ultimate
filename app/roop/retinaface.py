@@ -50,6 +50,16 @@ _R50_VARIANCE = (0.1, 0.2)
 _R50_DEFAULT_INPUT_SIZE = (640, 640)
 
 _prior_cache = {}
+_pinned_warned = [False]
+
+
+def _warn_pinned_once(requested, pinned):
+    if _pinned_warned[0]:
+        return
+    _pinned_warned[0] = True
+    print('[RetinaFace] r50 TensorRT engine has a static %dx%d profile; det_size %dx%d ignored '
+          '(ROOP_TRT_STATIC_PROFILE=0 restores the 320-1280 band).'
+          % (pinned[0], pinned[1], int(requested[0]), int(requested[1])), flush=True)
 
 
 def _generate_priors(image_size, min_sizes_cfg=_R50_MIN_SIZES, steps=_R50_STEPS):
@@ -119,6 +129,9 @@ class RetinaFace3Output:
         self.det_thresh = 0.5
         # biubug6 preprocessing: BGR, mean-subtract only, no std scaling.
         self.input_mean = (104.0, 117.0, 123.0)
+        # (w, h) of a STATIC TensorRT profile (trt_shape_profile.pinned_hw), set by _build_one only
+        # when the session really is bound to one. Anything else is outside the engine's profile.
+        self.pinned_input_size = None
 
         if self.session is None:
             from roop.utilities import get_onnx_session_options
@@ -154,6 +167,13 @@ class RetinaFace3Output:
             # Defensive fallback for callers constructing the object through a
             # legacy path that did not populate session input metadata.
             input_size = _R50_DEFAULT_INPUT_SIZE
+        pinned = self.pinned_input_size
+        if pinned is not None and tuple(int(v) for v in input_size) != tuple(pinned):
+            # The engine was built for ONE shape; any other is rejected by TensorRT, and
+            # face_util.get_all_faces swallows the error into a render with no faces. Use the
+            # engine's size, as yoloface does for its fixed export (2026-08-24).
+            _warn_pinned_once(input_size, pinned)
+            input_size = pinned
         # This ResNet50 export is trained on a square, directly-resized image.
         # Letterboxing it (the correct SCRFD/10g geometry) suppresses r50 face
         # scores under TensorRT, especially on 16:9 footage. Keep independent
@@ -304,6 +324,9 @@ def _build_one(model_type, model_path, providers, file):
                 model_path, get_onnx_session_options(), providers=chain),
             providers, tag=f'retinaface_{model_type}')
         det = RetinaFace3Output(model_path, session=session)
+        # `providers` is the chain that really built (a TensorRT step-down drops the profile with it)
+        from roop.trt_shape_profile import pinned_hw
+        det.pinned_input_size = pinned_hw(providers)
     else:
         from insightface.model_zoo import get_model
         det, providers = build_session_with_fallback(

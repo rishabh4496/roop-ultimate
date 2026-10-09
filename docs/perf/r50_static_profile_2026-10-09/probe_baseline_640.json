@@ -1,0 +1,96 @@
+{
+ "det_size": 640,
+ "clip": "double/d4.mp4",
+ "env": {
+  "ROOP_TRT_STATIC_PROFILE": "0"
+ },
+ "describe": {
+  "model": "face_detection",
+  "inputs": [
+   {
+    "name": "input",
+    "dims": [
+     null,
+     3,
+     null,
+     null
+    ],
+    "dynamic": true
+   }
+  ],
+  "band": [
+   320,
+   512,
+   1280
+  ],
+  "profiled": true,
+  "static_override": null,
+  "reason": "dynamic input dimensions present",
+  "options": {
+   "trt_profile_min_shapes": "input:1x3x320x320",
+   "trt_profile_opt_shapes": "input:1x3x512x512",
+   "trt_profile_max_shapes": "input:8x3x1280x1280"
+  }
+ },
+ "decision": {
+  "requested": "mixed",
+  "effective": "mixed",
+  "backend": "tensorrt"
+ },
+ "provider_options": {
+  "trt_fp16_enable": true,
+  "trt_layer_norm_fp32_fallback": true,
+  "trt_engine_cache_path": "G:\\pinokio\\api\\roop-ultimate\\app\\models\\trt_cache\\mixed_NVIDIA_GeForce_RTX_4070_sm0809_cuda12.8_drv616.56_trt10.9.0.34_ort1.23.2_lnfp32_seq_heur_b3_a-1_g0_c40b4a7d8494df527_sp12x512input8x3x1280x1280",
+  "trt_profile_min_shapes": "input:1x3x320x320",
+  "trt_profile_opt_shapes": "input:1x3x512x512",
+  "trt_profile_max_shapes": "input:8x3x1280x1280"
+ },
+ "frame_shape": [
+  720,
+  1280,
+  3
+ ],
+ "pool_width": 2,
+ "steady_ms": {
+  "median": 6.782,
+  "p10": 6.208,
+  "p90": 11.187,
+  "n": 100
+ },
+ "vram": [
+  {
+   "label": "after init_pipeline (before the r50 pool)",
+   "torch_used_mib": 1177.5,
+   "smi_used_mib": 1164.0
+  },
+  {
+   "label": "after pool build (2 session(s), no inference yet)",
+   "torch_used_mib": 1753.5,
+   "smi_used_mib": 1740.0,
+   "seconds": 4.78
+  },
+  {
+   "label": "instance 0 first inference",
+   "torch_used_mib": 2921.5,
+   "smi_used_mib": 2908.0,
+   "delta_torch_mib": 1168.0,
+   "delta_smi_mib": 1168.0,
+   "first_call_ms": 74.4,
+   "faces": 2
+  },
+  {
+   "label": "instance 1 first inference",
+   "torch_used_mib": 4093.5,
+   "smi_used_mib": 4080.0,
+   "delta_torch_mib": 1172.0,
+   "delta_smi_mib": 1172.0,
+   "first_call_ms": 47.3,
+   "faces": 2
+  },
+  {
+   "label": "after 100 steady calls",
+   "torch_used_mib": 4093.5,
+   "smi_used_mib": 4080.0
+  }
+ ]
+}

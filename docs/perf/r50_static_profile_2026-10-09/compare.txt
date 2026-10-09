@@ -1,0 +1,46 @@
+A = ['band_a', 'band_b']   B = ['static_a', 'static_b']
+  arm band_a       static_enabled=False pool={"width": 2, "pinned_input_size": [null, null], "provider": "TensorrtExecutionProvider", "profile": {"trt_engine_cache_path": "G:\\pinokio\\api\\roop-ultimate\\app\\models\\trt_cache\\mixed_NVIDIA_GeForce_RTX_4070_sm0809_cuda12.8_drv616.56_trt10.9.0.34_ort1.23.2_lnfp32_seq_heur_b3_a-1_g0_c40b4a7d8494df527_sp12x512input8x3x1280x1280", "trt_profile_opt_shapes": "input:1x3x512x512", "trt_profile_min_shapes": "input:1x3x320x320", "trt_profile_max_shapes": "input:8x3x1280x1280"}}
+  arm band_b       static_enabled=False pool={"width": 2, "pinned_input_size": [null, null], "provider": "TensorrtExecutionProvider", "profile": {"trt_engine_cache_path": "G:\\pinokio\\api\\roop-ultimate\\app\\models\\trt_cache\\mixed_NVIDIA_GeForce_RTX_4070_sm0809_cuda12.8_drv616.56_trt10.9.0.34_ort1.23.2_lnfp32_seq_heur_b3_a-1_g0_c40b4a7d8494df527_sp12x512input8x3x1280x1280", "trt_profile_opt_shapes": "input:1x3x512x512", "trt_profile_min_shapes": "input:1x3x320x320", "trt_profile_max_shapes": "input:8x3x1280x1280"}}
+  arm static_a     static_enabled=True pool={"width": 2, "pinned_input_size": [[640, 640], [640, 640]], "provider": "TensorrtExecutionProvider", "profile": {"trt_engine_cache_path": "G:\\pinokio\\api\\roop-ultimate\\app\\models\\trt_cache\\mixed_NVIDIA_GeForce_RTX_4070_sm0809_cuda12.8_drv616.56_trt10.9.0.34_ort1.23.2_lnfp32_seq_heur_b3_a-1_g0_c40b4a7d8494df527_spstaticinput1x3x640x640", "trt_profile_opt_shapes": "input:1x3x640x640", "trt_profile_min_shapes": "input:1x3x640x640", "trt_profile_max_shapes": "input:1x3x640x640"}}
+  arm static_b     static_enabled=True pool={"width": 2, "pinned_input_size": [[640, 640], [640, 640]], "provider": "TensorrtExecutionProvider", "profile": {"trt_engine_cache_path": "G:\\pinokio\\api\\roop-ultimate\\app\\models\\trt_cache\\mixed_NVIDIA_GeForce_RTX_4070_sm0809_cuda12.8_drv616.56_trt10.9.0.34_ort1.23.2_lnfp32_seq_heur_b3_a-1_g0_c40b4a7d8494df527_spstaticinput1x3x640x640", "trt_profile_opt_shapes": "input:1x3x640x640", "trt_profile_min_shapes": "input:1x3x640x640", "trt_profile_max_shapes": "input:1x3x640x640"}}
+
+== same-face agreement, first A arm vs first B arm
+d1 {"faces_a": 458, "faces_b": 456, "matched": 456, "only_in_a": 2, "only_in_b": 0, "iou_min": 0.95692, "iou_median": 0.99868, "pairs_iou_lt_0.99": 10, "kps_max_px_median": 0.2356, "kps_max_px_max": 11.702, "pairs_kps_gt_0.5px": 36, "dup_boxes_a": 0, "dup_boxes_b": 0, "worst_pairs(frame,iou,kps_px)": [[20, 0.9735, 11.588], [21, 0.975, 11.702], [55, 0.9719, 9.523], [75, 0.9569, 8.903], [136, 0.9657, 5.415], [137, 0.9638, 5.543], [146, 0.9623, 10.509], [150, 0.9968, 0.572]]}
+d4 {"faces_a": 672, "faces_b": 672, "matched": 672, "only_in_a": 0, "only_in_b": 0, "iou_min": 0.94215, "iou_median": 0.99897, "pairs_iou_lt_0.99": 9, "kps_max_px_median": 0.1534, "kps_max_px_max": 11.959, "pairs_kps_gt_0.5px": 15, "dup_boxes_a": 0, "dup_boxes_b": 0, "worst_pairs(frame,iou,kps_px)": [[1, 0.9557, 9.195], [34, 0.9982, 0.663], [44, 0.9958, 0.942], [52, 0.999, 0.575], [91, 0.9421, 11.959], [122, 0.9563, 4.628], [128, 0.9979, 0.554], [165, 0.9768, 4.173]]}
+d6 {"faces_a": 1018, "faces_b": 1017, "matched": 1017, "only_in_a": 1, "only_in_b": 0, "iou_min": 0.82162, "iou_median": 0.99871, "pairs_iou_lt_0.99": 23, "kps_max_px_median": 1.3349, "kps_max_px_max": 266.085, "pairs_kps_gt_0.5px": 972, "dup_boxes_a": 0, "dup_boxes_b": 0, "worst_pairs(frame,iou,kps_px)": [[0, 0.997, 1.085], [0, 0.9939, 3.713], [1, 0.9973, 0.735], [1, 0.9887, 11.239], [2, 0.9974, 3.527], [3, 0.9993, 0.843], [3, 0.9972, 4.683], [4, 0.9989, 1.587]]}
+
+== NULL control: first A arm vs second A arm (same flag, separate process)
+d1 {"faces_a": 458, "faces_b": 458, "matched": 458, "only_in_a": 0, "only_in_b": 0, "iou_min": 1.0, "iou_median": 1.0, "pairs_iou_lt_0.99": 0, "kps_max_px_median": 0.0, "kps_max_px_max": 0.0, "pairs_kps_gt_0.5px": 0, "dup_boxes_a": 0, "dup_boxes_b": 0, "worst_pairs(frame,iou,kps_px)": []}
+d4 {"faces_a": 672, "faces_b": 672, "matched": 672, "only_in_a": 0, "only_in_b": 0, "iou_min": 1.0, "iou_median": 1.0, "pairs_iou_lt_0.99": 0, "kps_max_px_median": 0.0, "kps_max_px_max": 0.0, "pairs_kps_gt_0.5px": 0, "dup_boxes_a": 0, "dup_boxes_b": 0, "worst_pairs(frame,iou,kps_px)": []}
+d6 {"faces_a": 1018, "faces_b": 1018, "matched": 1018, "only_in_a": 0, "only_in_b": 0, "iou_min": 1.0, "iou_median": 1.0, "pairs_iou_lt_0.99": 0, "kps_max_px_median": 0.0, "kps_max_px_max": 0.0, "pairs_kps_gt_0.5px": 0, "dup_boxes_a": 0, "dup_boxes_b": 0, "worst_pairs(frame,iou,kps_px)": []}
+
+== detect ms/frame (production call, all A arms pooled vs all B arms pooled)
+d1  A {'median': 13.513, 'mean': 12.384, 'p90': 16.622, 'n': 834} | B {'median': 9.466, 'mean': 9.805, 'p90': 10.83, 'n': 834} | B/A median 0.701 mean 0.792
+      band_a       median 14.898 mean 15.731
+      band_b       median 8.663 mean 9.036
+      static_a     median 10.069 mean 10.549
+      static_b     median 8.655 mean 9.061
+d4  A {'median': 8.808, 'mean': 9.704, 'p90': 12.049, 'n': 1200} | B {'median': 7.91, 'mean': 8.088, 'p90': 8.758, 'n': 1200} | B/A median 0.898 mean 0.833
+      band_a       median 10.984 mean 11.201
+      band_b       median 8.026 mean 8.206
+      static_a     median 7.674 mean 7.917
+      static_b     median 8.078 mean 8.259
+d6  A {'median': 79.302, 'mean': 84.066, 'p90': 117.299, 'n': 976} | B {'median': 72.412, 'mean': 72.217, 'p90': 77.641, 'n': 976} | B/A median 0.913 mean 0.859
+      band_a       median 82.280 mean 93.125
+      band_b       median 74.928 mean 75.007
+      static_a     median 72.153 mean 71.475
+      static_b     median 72.559 mean 72.959
+
+== VRAM, device-wide MiB
+  band_a       init 1177.5 | after first call 2979.5 | peak sample 4149.5 | end 4149.5 | first call 12225.9 ms
+  band_b       init 1177.5 | after first call 2979.5 | peak sample 4149.5 | end 4149.5 | first call 8103.5 ms
+  static_a     init 1177.5 | after first call 1867.5 | peak sample 1925.5 | end 1925.5 | first call 8497.8 ms
+  static_b     init 1177.5 | after first call 1867.5 | peak sample 1925.5 | end 1925.5 | first call 8955.8 ms
+
+== detector/rescue counters (A first arm vs B first arm)
+d1 A {"raw.total": 418, "raw.noaux": 418, "raw.engine.retinaface_r50": 418, "raw.caller.run": 418, "raw.faces_out": 459} 
+   B {"raw.total": 418, "raw.noaux": 418, "raw.engine.retinaface_r50": 418, "raw.caller.run": 418, "raw.faces_out": 457}
+d4 A {"raw.total": 600, "raw.noaux": 600, "raw.engine.retinaface_r50": 600, "raw.caller.run": 600, "raw.faces_out": 672} 
+   B {"raw.total": 600, "raw.noaux": 600, "raw.engine.retinaface_r50": 600, "raw.caller.run": 600, "raw.faces_out": 672}
+d6 A {"raw.total": 488, "raw.noaux": 488, "raw.engine.retinaface_r50": 488, "raw.caller.run": 488, "raw.faces_out": 1018} 
+   B {"raw.total": 488, "raw.noaux": 488, "raw.engine.retinaface_r50": 488, "raw.caller.run": 488, "raw.faces_out": 1017}

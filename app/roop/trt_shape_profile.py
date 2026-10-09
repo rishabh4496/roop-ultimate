@@ -96,6 +96,28 @@ class InputSpec:
         return any(d is None for d in self.dims)
 
 
+# Per-model STATIC overrides: model file stem -> the one shape min = opt = max is pinned to.
+#
+# A band is the right default for a graph with free axes, but a band has a price this module's
+# docstring does not mention: TensorRT sizes the execution context's activation memory for the
+# profile's MAX shape.  retinaface_r50 is band (1,3,320,320) / (1,3,512,512) / (8,3,1280,1280); the
+# pipeline never batches the detector and never feeds more than one det_size per render, yet every
+# pooled instance's first inference grew device memory by ~1.16 GiB (2026-10-09 probe,
+# tests/r50_profile_probe.py).  The export is only calibrated at 640 (its priors, and
+# face_engine's detector which refuses anything else), so 1x3x640x640 is the whole useful range.
+#
+# The consequence is that an input of any other size is OUTSIDE the profile, so a model with an
+# override also has to be fed that size: RetinaFace3Output reads `pinned_hw` and ignores det_size
+# with a warning, instead of letting TensorRT reject the shape and `get_all_faces` swallow the
+# error into a render with no faces (the yoloface failure of 2026-08-24).
+_STATIC_OVERRIDES: Dict[str, Tuple[int, ...]] = {
+    "retinaface_r50": (1, 3, 640, 640),
+}
+
+# Whether the overrides apply when ROOP_TRT_STATIC_PROFILE is unset.
+_STATIC_PROFILE_DEFAULT = False
+
+
 @dataclass(frozen=True)
 class ShapeProfile:
     """Resolved ORT TensorRT profile options plus their cache identity."""
@@ -104,6 +126,7 @@ class ShapeProfile:
     opt_shapes: str
     max_shapes: str
     namespace: str
+    static_shape: Optional[Tuple[int, ...]] = None
 
     def as_options(self) -> Dict[str, str]:
         return {
@@ -235,6 +258,64 @@ def enabled() -> bool:
         "0", "off", "false", "no")
 
 
+def static_enabled() -> bool:
+    """Whether the per-model static overrides apply.
+
+    ROOP_TRT_STATIC_PROFILE=1 / 0 forces it; unset follows ``_STATIC_PROFILE_DEFAULT``.  It is
+    what makes the override A/B-able against the band it replaces (each arm gets its own engine
+    cache namespace, so both stay warm).
+    """
+    raw = os.environ.get("ROOP_TRT_STATIC_PROFILE")
+    if raw is None or not raw.strip():
+        return _STATIC_PROFILE_DEFAULT
+    return raw.strip().lower() not in ("0", "off", "false", "no")
+
+
+def _static_override(model_path: str | None,
+                     specs: Sequence[InputSpec]) -> Optional[Tuple[int, ...]]:
+    """The override shape for *model_path*, or None when it does not apply.
+
+    It applies only to a model with exactly one feed input whose rank matches and whose STATIC
+    dimensions agree with the override: a graph that pins a different channel count is not the
+    model the override was measured on, and forcing a shape onto it would build a wrong engine.
+    """
+    if not model_path or not static_enabled() or len(specs) != 1:
+        return None
+    stem = os.path.splitext(os.path.basename(str(model_path)))[0].lower()
+    shape = _STATIC_OVERRIDES.get(stem)
+    spec = specs[0]
+    if shape is None or len(spec.dims) != len(shape):
+        return None
+    if any(d is not None and d != s for d, s in zip(spec.dims, shape)):
+        return None
+    return shape
+
+
+def pinned_hw(providers: Sequence) -> Optional[Tuple[int, int]]:
+    """(width, height) when the TensorRT provider in *providers* carries a STATIC profile.
+
+    Read from the provider options themselves (min == opt == max), not from the request: a
+    chain that was stepped down to CUDA/CPU has no profile, and then nothing constrains the
+    input size.  Width comes first, matching ``RetinaFace3Output.input_size``.
+    """
+    for provider in providers or ():
+        if not (isinstance(provider, (tuple, list)) and len(provider) == 2
+                and "tensorrt" in str(provider[0]).lower()):
+            continue
+        options = provider[1] or {}
+        lo = options.get("trt_profile_min_shapes")
+        hi = options.get("trt_profile_max_shapes")
+        mid = options.get("trt_profile_opt_shapes")
+        if not lo or not (lo == hi == mid) or "," in str(lo):
+            return None
+        try:
+            dims = [int(d) for d in str(lo).split(":", 1)[1].split("x")]
+        except (IndexError, ValueError):
+            return None
+        return (dims[-1], dims[-2]) if len(dims) >= 2 else None
+    return None
+
+
 def resolve_profile(model_key: str | None,
                     model_path: str | None) -> Optional[ShapeProfile]:
     """Return the profile for *model_path*, or None when nothing is dynamic."""
@@ -243,6 +324,13 @@ def resolve_profile(model_key: str | None,
     specs = graph_inputs(model_path)
     if not specs or not any(spec.dynamic for spec in specs):
         return None
+    pinned = _static_override(model_path, specs)
+    if pinned is not None and ":" not in specs[0].name:
+        shape = "%s:%s" % (specs[0].name, "x".join(str(d) for d in pinned))
+        # A distinct namespace: an engine built for one shape range is not interchangeable with
+        # one built for another, and "static" in the name keeps the two caches recognisable.
+        namespace = "_spstatic" + re.sub(r"[^A-Za-z0-9]+", "", shape)[-24:]
+        return ShapeProfile(shape, shape, shape, namespace, static_shape=pinned)
     spatial = _band_for(model_key, model_path)
     if any(":" in spec.name for spec in specs):
         # ORT parses these options as "name:dxdxd", splitting on the FIRST
@@ -320,6 +408,8 @@ def describe(model_key: str | None, model_path: str | None) -> dict:
                    for s in specs],
         "band": list(_band_for(model_key, model_path)),
         "profiled": profile is not None,
+        "static_override": (list(profile.static_shape)
+                            if profile is not None and profile.static_shape else None),
         "reason": ("dynamic input dimensions present" if profile is not None
                    else "all input dimensions are static; a profile would be inert"),
         "options": profile.as_options() if profile is not None else {},

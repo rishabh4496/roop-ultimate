@@ -1,0 +1,306 @@
+{
+ "d1": {
+  "frames": 40,
+  "reference_faces(cuda_fp32 squash)": 57,
+  "trt_mixed | squash": {
+   "anchors": 1656,
+   "faces": 58,
+   "found": 57,
+   "missed": 0,
+   "extra": 0,
+   "median_max_score": 0.9968,
+   "trt_over_fp32_score_median": 1.0,
+   "trt_over_fp32_score_p5": 0.9961
+  },
+  "trt_mixed | lb_centred_aa": {
+   "anchors": 1983,
+   "faces": 81,
+   "found": 49,
+   "missed": 8,
+   "extra": 32,
+   "median_max_score": 0.9989,
+   "trt_over_fp32_score_median": 1.0,
+   "trt_over_fp32_score_p5": 0.9955
+  },
+  "trt_mixed | lb_centred": {
+   "anchors": 1955,
+   "faces": 81,
+   "found": 49,
+   "missed": 8,
+   "extra": 32,
+   "median_max_score": 0.9989,
+   "trt_over_fp32_score_median": 1.0,
+   "trt_over_fp32_score_p5": 0.9946
+  },
+  "trt_mixed | lb_topleft": {
+   "anchors": 1934,
+   "faces": 82,
+   "found": 49,
+   "missed": 8,
+   "extra": 35,
+   "median_max_score": 0.999,
+   "trt_over_fp32_score_median": 1.0,
+   "trt_over_fp32_score_p5": 0.9952
+  },
+  "cuda_fp32 | squash": {
+   "anchors": 1654,
+   "faces": 57,
+   "found": 57,
+   "missed": 0,
+   "extra": 0,
+   "median_max_score": 0.9968
+  },
+  "cuda_fp32 | lb_centred_aa": {
+   "anchors": 1984,
+   "faces": 81,
+   "found": 49,
+   "missed": 8,
+   "extra": 32,
+   "median_max_score": 0.9989
+  },
+  "cuda_fp32 | lb_centred": {
+   "anchors": 1959,
+   "faces": 81,
+   "found": 49,
+   "missed": 8,
+   "extra": 32,
+   "median_max_score": 0.9989
+  },
+  "cuda_fp32 | lb_topleft": {
+   "anchors": 1936,
+   "faces": 82,
+   "found": 49,
+   "missed": 8,
+   "extra": 35,
+   "median_max_score": 0.999
+  }
+ },
+ "d4": {
+  "frames": 40,
+  "reference_faces(cuda_fp32 squash)": 45,
+  "trt_mixed | squash": {
+   "anchors": 1510,
+   "faces": 45,
+   "found": 45,
+   "missed": 0,
+   "extra": 0,
+   "median_max_score": 0.9861,
+   "trt_over_fp32_score_median": 1.0,
+   "trt_over_fp32_score_p5": 0.9966
+  },
+  "trt_mixed | lb_centred_aa": {
+   "anchors": 1996,
+   "faces": 45,
+   "found": 44,
+   "missed": 1,
+   "extra": 1,
+   "median_max_score": 0.9977,
+   "trt_over_fp32_score_median": 1.0,
+   "trt_over_fp32_score_p5": 0.9986
+  },
+  "trt_mixed | lb_centred": {
+   "anchors": 1996,
+   "faces": 45,
+   "found": 44,
+   "missed": 1,
+   "extra": 1,
+   "median_max_score": 0.9977,
+   "trt_over_fp32_score_median": 1.0,
+   "trt_over_fp32_score_p5": 0.9986
+  },
+  "trt_mixed | lb_topleft": {
+   "anchors": 2013,
+   "faces": 46,
+   "found": 44,
+   "missed": 1,
+   "extra": 2,
+   "median_max_score": 0.9977,
+   "trt_over_fp32_score_median": 1.0,
+   "trt_over_fp32_score_p5": 0.9982
+  },
+  "cuda_fp32 | squash": {
+   "anchors": 1510,
+   "faces": 45,
+   "found": 45,
+   "missed": 0,
+   "extra": 0,
+   "median_max_score": 0.9861
+  },
+  "cuda_fp32 | lb_centred_aa": {
+   "anchors": 1997,
+   "faces": 45,
+   "found": 44,
+   "missed": 1,
+   "extra": 1,
+   "median_max_score": 0.9977
+  },
+  "cuda_fp32 | lb_centred": {
+   "anchors": 1997,
+   "faces": 45,
+   "found": 44,
+   "missed": 1,
+   "extra": 1,
+   "median_max_score": 0.9977
+  },
+  "cuda_fp32 | lb_topleft": {
+   "anchors": 2012,
+   "faces": 46,
+   "found": 44,
+   "missed": 1,
+   "extra": 2,
+   "median_max_score": 0.9977
+  }
+ },
+ "d6": {
+  "frames": 40,
+  "reference_faces(cuda_fp32 squash)": 102,
+  "trt_mixed | squash": {
+   "anchors": 5537,
+   "faces": 102,
+   "found": 102,
+   "missed": 0,
+   "extra": 0,
+   "median_max_score": 0.9941,
+   "trt_over_fp32_score_median": 1.0,
+   "trt_over_fp32_score_p5": 0.9977
+  },
+  "trt_mixed | lb_centred_aa": {
+   "anchors": 2963,
+   "faces": 82,
+   "found": 83,
+   "missed": 19,
+   "extra": 1,
+   "median_max_score": 0.9999,
+   "trt_over_fp32_score_median": 1.0,
+   "trt_over_fp32_score_p5": 0.9985
+  },
+  "trt_mixed | lb_centred": {
+   "anchors": 2967,
+   "faces": 81,
+   "found": 83,
+   "missed": 19,
+   "extra": 1,
+   "median_max_score": 0.9999,
+   "trt_over_fp32_score_median": 1.0,
+   "trt_over_fp32_score_p5": 0.9986
+  },
+  "trt_mixed | lb_topleft": {
+   "anchors": 2977,
+   "faces": 80,
+   "found": 82,
+   "missed": 20,
+   "extra": 1,
+   "median_max_score": 0.9999,
+   "trt_over_fp32_score_median": 1.0,
+   "trt_over_fp32_score_p5": 0.9988
+  },
+  "cuda_fp32 | squash": {
+   "anchors": 5539,
+   "faces": 102,
+   "found": 102,
+   "missed": 0,
+   "extra": 0,
+   "median_max_score": 0.9941
+  },
+  "cuda_fp32 | lb_centred_aa": {
+   "anchors": 2964,
+   "faces": 82,
+   "found": 83,
+   "missed": 19,
+   "extra": 1,
+   "median_max_score": 0.9999
+  },
+  "cuda_fp32 | lb_centred": {
+   "anchors": 2966,
+   "faces": 81,
+   "found": 83,
+   "missed": 19,
+   "extra": 1,
+   "median_max_score": 0.9999
+  },
+  "cuda_fp32 | lb_topleft": {
+   "anchors": 2976,
+   "faces": 80,
+   "found": 82,
+   "missed": 20,
+   "extra": 1,
+   "median_max_score": 0.9999
+  }
+ },
+ "Love": {
+  "frames": 40,
+  "reference_faces(cuda_fp32 squash)": 49,
+  "trt_mixed | squash": {
+   "anchors": 1501,
+   "faces": 50,
+   "found": 49,
+   "missed": 0,
+   "extra": 0,
+   "median_max_score": 0.9748,
+   "trt_over_fp32_score_median": 1.0,
+   "trt_over_fp32_score_p5": 0.9953
+  },
+  "trt_mixed | lb_centred_aa": {
+   "anchors": 1858,
+   "faces": 87,
+   "found": 48,
+   "missed": 1,
+   "extra": 35,
+   "median_max_score": 0.9981,
+   "trt_over_fp32_score_median": 1.0,
+   "trt_over_fp32_score_p5": 0.996
+  },
+  "trt_mixed | lb_centred": {
+   "anchors": 1858,
+   "faces": 87,
+   "found": 48,
+   "missed": 1,
+   "extra": 35,
+   "median_max_score": 0.9981,
+   "trt_over_fp32_score_median": 1.0,
+   "trt_over_fp32_score_p5": 0.996
+  },
+  "trt_mixed | lb_topleft": {
+   "anchors": 1928,
+   "faces": 90,
+   "found": 47,
+   "missed": 2,
+   "extra": 36,
+   "median_max_score": 0.9983,
+   "trt_over_fp32_score_median": 1.0,
+   "trt_over_fp32_score_p5": 0.9962
+  },
+  "cuda_fp32 | squash": {
+   "anchors": 1500,
+   "faces": 49,
+   "found": 49,
+   "missed": 0,
+   "extra": 0,
+   "median_max_score": 0.9749
+  },
+  "cuda_fp32 | lb_centred_aa": {
+   "anchors": 1860,
+   "faces": 87,
+   "found": 48,
+   "missed": 1,
+   "extra": 35,
+   "median_max_score": 0.9981
+  },
+  "cuda_fp32 | lb_centred": {
+   "anchors": 1860,
+   "faces": 87,
+   "found": 48,
+   "missed": 1,
+   "extra": 35,
+   "median_max_score": 0.9981
+  },
+  "cuda_fp32 | lb_topleft": {
+   "anchors": 1926,
+   "faces": 90,
+   "found": 47,
+   "missed": 2,
+   "extra": 36,
+   "median_max_score": 0.9983
+  }
+ }
+}
