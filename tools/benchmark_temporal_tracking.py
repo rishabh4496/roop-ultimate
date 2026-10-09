@@ -1,5 +1,8 @@
 """Stage 9 — Temporal Face Tracking and Flicker Control Benchmark Harness.
 
+SYNTHETIC INPUTS: random 512-d embeddings and generated keypoint trajectories with injected noise.
+Its numbers describe the generated scene, not the application on real footage (tools/_synthetic_inputs.py).
+
 Comprehensive validation and benchmark for:
 1. Landmark Jitter & Flicker Suppression (Kalman & Spline vs Raw Jittery Detections)
 2. Identity Stability Across Interacting / Crossing Faces (Identity Freeze vs Swap)
@@ -486,6 +489,13 @@ def benchmark_tracking_latency_and_throughput() -> Dict[str, Any]:
 
 def run_full_stage9_benchmark() -> Dict[str, Any]:
     """Runs all Stage 9 temporal tracking benchmarks and outputs report summary."""
+    import sys as _sys, os as _os
+    _sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
+    from _synthetic_inputs import declare
+    SYNTHETIC = declare(__file__,
+                        inputs=['identity embeddings are np.random.randn(512) (seeds 42 / 1337 / 999), not recogniser output', 'landmark / box trajectories are generated and perturbed with Gaussian noise; crossings, dropouts and re-entries are scripted'],
+                        valid_for='tracker / smoother logic on scripted scenarios',
+                        not_valid_for='identity-matching accuracy or jitter suppression on real faces')
     print("=" * 80)
     print("STAGE 9 — TEMPORAL FACE TRACKING & FLICKER CONTROL BENCHMARK")
     print("=" * 80)
@@ -539,6 +549,7 @@ def run_full_stage9_benchmark() -> Dict[str, Any]:
 
     full_report = {
         "stage": "STAGE 9 — TEMPORAL FACE TRACKING AND FLICKER CONTROL",
+        "synthetic_inputs": SYNTHETIC,
         "landmark_jitter_suppression": jitter_res,
         "crossing_faces_identity_stability": cross_res,
         "detector_dropout_recovery": drop_res,

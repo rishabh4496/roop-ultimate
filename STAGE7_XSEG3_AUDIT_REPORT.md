@@ -1,5 +1,12 @@
 # STAGE 7 — XSEG 3 MASK QUALITY & PERFORMANCE AUDIT REPORT
 
+<!-- synthetic-input-banner -->
+> **Synthetic inputs (marked 2026-10-09).** The figures in this report come from `tools/benchmark_xseg3.py`, whose inputs are
+> generated: drawn canvases and np.random.uniform stand-ins for the mask network output in the quality tests. They describe the generated scene, not the application on real footage, and the tool now says so
+> itself (banner at run time, `synthetic_inputs` in its JSON). For quality measured on real footage against a
+> full-FP32 reference see `tools/quality_harness.py`.
+
+
 **Date:** 2026-10-01  
 **Hardware Profile (Main):** NVIDIA GeForce RTX 4070 (12.0 GB VRAM, 200W TDP, PCIe 4.0 x16, 24 Cores / 32 Threads, 32 GB RAM)  
 **Hardware Profile (Secondary):** NVIDIA GeForce RTX 3060 Laptop GPU (6.0 GB VRAM, mobile TDP, 16 GB RAM, RSS < 2.5 GB constraint)  

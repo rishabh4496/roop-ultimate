@@ -1,5 +1,8 @@
 """Stage 8 — Compositing Quality Engine Benchmark Harness.
 
+SYNTHETIC INPUTS: flat-colour panels (np.full) and seeded-RNG patterns as target and paste.
+Its numbers describe the generated scene, not the application on real footage (tools/_synthetic_inputs.py).
+
 Benchmarks:
 1. Color Error:
    - Evaluates chromatic and luminance error (OKLab Delta E and Delta L) between
@@ -409,6 +412,14 @@ def benchmark_latency_and_throughput(iterations: int = 100) -> Dict[str, Any]:
 
 def run_full_benchmark() -> Dict[str, Any]:
     """Execute complete Stage 8 benchmark suite and return metrics dictionary."""
+    import sys as _sys, os as _os
+    _sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
+    from _synthetic_inputs import declare
+    SYNTHETIC = declare(__file__,
+                        inputs=['target / paste images are flat colour panels (np.full) and synthetic gradients; np.random.default_rng(2026) for noise', "'skin tone', 'illumination' and 'edge' cases are arithmetic constructions, not photographs"],
+                        valid_for='the arithmetic of the compositor on controlled colours (colour error, seam / halo behaviour)',
+                        not_valid_for='visual quality on real faces under real lighting',
+                        hard_coded_fields=["report 'hardware_profile' (gpu 'NVIDIA GeForce RTX 4070 (12GB VRAM)', cpu '24 Physical Cores / 32 Logical Threads', ram_gb 32.0) is typed in, not detected"])
     print("=" * 80)
     print("STAGE 8 — COMPOSITING QUALITY ENGINE BENCHMARK SUITE")
     print("=" * 80)
@@ -442,6 +453,7 @@ def run_full_benchmark() -> Dict[str, Any]:
 
     full_report = {
         "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "synthetic_inputs": SYNTHETIC,
         "hardware_profile": {
             "gpu": "NVIDIA GeForce RTX 4070 (12GB VRAM)",
             "cpu": "24 Physical Cores / 32 Logical Threads",

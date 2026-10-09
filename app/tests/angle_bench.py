@@ -121,6 +121,11 @@ def init_pipeline(provider, swap_model, enhancer, mask_engine,
 
     g.CFG = Settings("config.yaml")
     g.CFG.provider = provider
+    # ROOP_BENCH_TRT_PRECISION: tools/quality_harness.py renders its reference at trt_precision=fp32 without editing
+    # the user's config.yaml. Opt-in; unset = config.yaml, exactly as before. Applied BEFORE decode_execution_providers
+    # below, which is where the TensorRT build options (fp16 on/off, cache namespace) are derived from it.
+    if os.environ.get("ROOP_BENCH_TRT_PRECISION"):
+        g.CFG.trt_precision = os.environ["ROOP_BENCH_TRT_PRECISION"].strip().lower()
     if sync_config:
         # FIRST, so every explicit assignment below and every caller override
         # still wins. This only adds the keys nobody states.

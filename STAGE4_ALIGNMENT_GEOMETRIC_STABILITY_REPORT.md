@@ -1,5 +1,12 @@
 # STAGE 4 — Face Alignment and Geometric Stability Report
 
+<!-- synthetic-input-banner -->
+> **Synthetic inputs (marked 2026-10-09).** The figures in this report come from `tools/benchmark_alignment_stability.py`, whose inputs are
+> generated: keypoint trajectories generated from a seeded RNG with injected Gaussian jitter. They describe the generated scene, not the application on real footage, and the tool now says so
+> itself (banner at run time, `synthetic_inputs` in its JSON). For quality measured on real footage against a
+> full-FP32 reference see `tools/quality_harness.py`.
+
+
 **Date:** 2026-09-30  
 **Target Hardware:** Dual-Device Architecture  
 - **Primary:** NVIDIA GeForce RTX 4070 Desktop (12 GB VRAM, 32 GB RAM)  

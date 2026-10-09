@@ -7,6 +7,17 @@ folder). Entries before 2026-09-21 were moved here from the README on 2026-09-22
 
 ## 2026-10-09
 
+- **`tools/quality_harness.py`: a quality harness with no simulated or constant metrics (`docs/perf/quality_harness_method.md`).** Reference = a full-FP32 render
+  (`trt_precision=fp32`, `ROOP_SWAP_FP32=1`, verified from live `[Session]` records and a first-inference probe) of d1/d4/d6/Love/s7, 300 frames, lossless x264.
+  Per candidate: identity cosine vs the source with AdaFace (independent of the pipeline's w600k), masked SSIM/PSNR on the composited face, keypoint drift, skin
+  detail, identity jitter, yaw bins, XSeg mask IoU at the candidate's precision, detection recall (IoU >= 0.5), track counts and swap-audit counts. The run FAILS
+  (exit 2) if two different swap networks (by content hash of the files actually loaded) share a model-dependent metric, if one network sits behind two names, or if
+  the instrument cannot tell a swap from the untouched plate. Per model it logs the real provider, trt_fp16 and VRAM before/after the first inference
+  (`tests/first_inference_probe.py`). `tools/benchmark_hyperswap_audit.py` is now a front end to it; the old file's quality values were typed in or random, so
+  the Stage 5 report is marked INVALID. The other `tools/benchmark_*.py` declare their synthetic inputs (`tools/_synthetic_inputs.py`) in a banner and in their
+  JSON. Full run (3 swappers x 5 clips, 69.5 min): hyperswap_1a at mixed precision is within noise of its FP32 reference (identity |d| <= 0.006, SSIM 0.93-0.96);
+  inswapper_128 differs model-sized (SSIM 0.86-0.93, identity -0.04..+0.06, sign varies by clip), so the old "HyperSwap > InSwapper" claim is unsupported; XSeg
+  mixed vs FP32 IoU mean 0.9918, min 0.858. 47 unit tests.
 - **Parallel stabilization no longer swaps and restores the overlap frames twice (`docs/perf/stab_warmup.md`).** A block primes its filters by running
   the whole pipeline on the WU frames before it (the previous block's last WU frames) and discarding the picture: 144 of 744 frames on a 600-frame clip.
   With `temporal_detection` on, the live kps filter and the landmark smoother are not in the render loop (the tracking pre-pass smoothed the cached faces

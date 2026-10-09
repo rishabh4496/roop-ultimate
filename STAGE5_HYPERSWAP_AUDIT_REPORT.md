@@ -1,5 +1,17 @@
 # STAGE 5 — HyperSwap Quality and Performance Audit Report
 
+<!-- synthetic-input-banner -->
+> **INVALID - DO NOT CITE (marked 2026-10-09).** The figures in this report came from an earlier version of
+> `tools/benchmark_hyperswap_audit.py` that did not measure them. Its identity similarity was typed in per model
+> (0.88 / 0.84 / 0.81 / 0.865 / 0.86 plus Gaussian noise); its eye / mouth "alignment error" compared a keypoint set
+> with itself plus noise; its profile, occlusion and temporal scores were constants (94.5 / 88.0, 92.0 / 85.5,
+> 96.2 / 95.8); it ran one repeated crop with random embeddings; and it ran `hyperswap_1a_256.onnx` under the names
+> HyperSwap 1B, 1C and RealSwap (neither 1B nor 1C is on disk). The identical `0.448 px`, `187.7`, `94.5%` and `92.0%`
+> in every row below are the tell. The tool has been rewritten onto `tools/quality_harness.py` (real renders, a
+> full-FP32 reference, AdaFace identity, masked SSIM / PSNR, and a guard that fails the run if two models score
+> identically). Re-run `tools/benchmark_hyperswap_audit.py` for numbers; do not rely on anything below.
+
+
 **Date:** 2026-09-30  
 **Target Hardware:** Dual-Device Architecture  
 - **Primary:** NVIDIA GeForce RTX 4070 Desktop (12 GB VRAM, 32 GB RAM)  

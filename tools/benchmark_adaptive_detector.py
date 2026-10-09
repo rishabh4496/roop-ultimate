@@ -1,5 +1,8 @@
 """Stage 3 Benchmark: SCRFD Face Detector Optimization.
 
+SYNTHETIC INPUTS: one still photograph replicated into a fake video with simulated cuts, pans and profile warps.
+Its numbers describe the generated scene, not the application on real footage (tools/_synthetic_inputs.py).
+
 Compares 4 detector strategies:
 1. Full Detection Every Frame: Runs full-frame SCRFD on every single frame.
 2. Temporal Detection: Fixed interval stepping (scans periodically, simple interpolation).
@@ -299,6 +302,14 @@ def run_benchmark_mode(
 
 
 def main():
+    import sys as _sys, os as _os
+    _sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
+    from _synthetic_inputs import declare
+    SYNTHETIC = declare(__file__,
+                        inputs=["ONE still photograph (insightface t1.jpg; a flat grey 1280x720 frame if it is absent) copied N times as the 'video'", 'scene cuts = bitwise_not of the still; camera pans = affine shifts of the still; profile heads, small faces and occlusion = warped / resized / overpainted copies of the still'],
+                        valid_for='the relative per-frame COST of detector strategies on a static scene',
+                        not_valid_for='miss / recall rates or any FPS claim on real footage',
+                        hard_coded_fields=["'Workstation: NVIDIA GeForce RTX 4070 (12GB) / Dual-Profile Validated' is a printed literal, not detected"])
     parser = argparse.ArgumentParser(description="Stage 3 SCRFD Detector Optimization Benchmark")
     parser.add_argument("--frames", type=int, default=80, help="Number of benchmark frames to evaluate")
     parser.add_argument("--out", type=str, default="benchmark_stage3_detector.json", help="Output JSON path")
@@ -337,6 +348,7 @@ def main():
         "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
         "hardware": get_gpu_telemetry()["device"],
         "num_frames": args.frames,
+        "synthetic_inputs": SYNTHETIC,
         "results": results
     }
 

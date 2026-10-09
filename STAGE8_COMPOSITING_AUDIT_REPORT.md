@@ -1,5 +1,12 @@
 # Stage 8 — Compositing Quality Engine Audit & Technical Report
 
+<!-- synthetic-input-banner -->
+> **Synthetic inputs (marked 2026-10-09).** The figures in this report come from `tools/benchmark_compositing.py`, whose inputs are
+> generated: flat-colour panels and seeded-RNG patterns as target and paste. They describe the generated scene, not the application on real footage, and the tool now says so
+> itself (banner at run time, `synthetic_inputs` in its JSON). For quality measured on real footage against a
+> full-FP32 reference see `tools/quality_harness.py`.
+
+
 ## 1. Executive Summary
 
 This report delivers the comprehensive audit, architectural design, implementation, and empirical benchmark validation for **Stage 8 — Compositing Quality Engine** in Roop Ultimate.

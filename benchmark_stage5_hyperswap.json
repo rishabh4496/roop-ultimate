@@ -1,95 +1,5560 @@
 {
-  "timestamp": "2026-09-30 23:28:22",
-  "results": [
-    {
-      "swapper_model": "hyperswap_1a",
-      "cached_source": false,
-      "frames_processed": 100,
-      "fps": 78.09,
-      "mean_latency_ms": 12.81,
-      "identity_similarity_cosine": 0.8611,
-      "eye_alignment_error_px": 0.448,
-      "mouth_alignment_error_px": 0.419,
-      "skin_detail_laplacian_var": 187.7,
-      "profile_quality_pct": 94.5,
-      "occlusion_robustness_pct": 92.0,
-      "temporal_consistency_pct": 95.8,
-      "peak_vram_mb": 2366.3
+  "schema_version": 2,
+  "generated_by": "tools/benchmark_hyperswap_audit.py via tools/quality_harness.py",
+  "supersedes": "the pre-2026-10-09 file of this name, whose quality values were typed in or random (see the module docstring); that output was INVALID",
+  "timestamp": "2026-10-09 21:06:49",
+  "frames": 300,
+  "clips": [
+    "d1",
+    "d4",
+    "d6",
+    "Love",
+    "s7"
+  ],
+  "reference": {
+    "swap_model": "hyperswap",
+    "trt_precision": "fp32",
+    "env": {
+      "ROOP_SWAP_FP32": "1"
     },
-    {
-      "swapper_model": "hyperswap_1a",
-      "cached_source": true,
-      "frames_processed": 100,
-      "fps": 74.52,
-      "mean_latency_ms": 13.42,
-      "identity_similarity_cosine": 0.8611,
-      "eye_alignment_error_px": 0.448,
-      "mouth_alignment_error_px": 0.419,
-      "skin_detail_laplacian_var": 187.7,
-      "profile_quality_pct": 94.5,
-      "occlusion_robustness_pct": 92.0,
-      "temporal_consistency_pct": 96.2,
-      "peak_vram_mb": 2352.3
-    },
-    {
-      "swapper_model": "hyperswap_1b",
-      "cached_source": true,
-      "frames_processed": 100,
-      "fps": 78.25,
-      "mean_latency_ms": 12.78,
-      "identity_similarity_cosine": 0.8811,
-      "eye_alignment_error_px": 0.448,
-      "mouth_alignment_error_px": 0.419,
-      "skin_detail_laplacian_var": 187.7,
-      "profile_quality_pct": 94.5,
-      "occlusion_robustness_pct": 92.0,
-      "temporal_consistency_pct": 96.2,
-      "peak_vram_mb": 2352.3
-    },
-    {
-      "swapper_model": "hyperswap_1c",
-      "cached_source": true,
-      "frames_processed": 100,
-      "fps": 81.68,
-      "mean_latency_ms": 12.24,
-      "identity_similarity_cosine": 0.8411,
-      "eye_alignment_error_px": 0.448,
-      "mouth_alignment_error_px": 0.419,
-      "skin_detail_laplacian_var": 187.7,
-      "profile_quality_pct": 94.5,
-      "occlusion_robustness_pct": 92.0,
-      "temporal_consistency_pct": 96.2,
-      "peak_vram_mb": 1846.3
-    },
-    {
-      "swapper_model": "inswapper_128",
-      "cached_source": true,
-      "frames_processed": 100,
-      "fps": 54.53,
-      "mean_latency_ms": 18.34,
-      "identity_similarity_cosine": 0.8111,
-      "eye_alignment_error_px": 0.448,
-      "mouth_alignment_error_px": 0.419,
-      "skin_detail_laplacian_var": 895.8,
-      "profile_quality_pct": 88.0,
-      "occlusion_robustness_pct": 85.5,
-      "temporal_consistency_pct": 96.2,
-      "peak_vram_mb": 2360.3
-    },
-    {
-      "swapper_model": "realswap",
-      "cached_source": true,
-      "frames_processed": 100,
-      "fps": 85.07,
-      "mean_latency_ms": 11.75,
-      "identity_similarity_cosine": 0.8661,
-      "eye_alignment_error_px": 0.448,
-      "mouth_alignment_error_px": 0.419,
-      "skin_detail_laplacian_var": 187.7,
-      "profile_quality_pct": 94.5,
-      "occlusion_robustness_pct": 92.0,
-      "temporal_consistency_pct": 96.2,
-      "peak_vram_mb": 1848.3
+    "renders": {
+      "d1": {
+        "frame_loop_fps": 4.26,
+        "tracks": 3,
+        "swap_audit": {
+          "faces seen": 748,
+          "of those, crop shared with the face beside it": 22,
+          "swapped (identity lock)": 672,
+          "of those, partly behind an object (masked, still swapped)": 671,
+          "veto: far from assigned person": 72,
+          "refused by the track veto, before any threshold": 72,
+          "discarded: the swap put the face somewhere it was not": 16,
+          "veto: source used twice in frame": 4,
+          "refused: crop shared with the face beside it": 4
+        },
+        "output_sha256": "8edbadb8e44be7f7816b84cee8320fec853e74ed99e71734c3c6bde88e6e5152"
+      },
+      "d4": {
+        "frame_loop_fps": 8.75,
+        "tracks": 2,
+        "swap_audit": {
+          "faces seen": 508,
+          "swapped (identity lock)": 508,
+          "of those, partly behind an object (masked, still swapped)": 308,
+          "frames with no face detected at all": 118,
+          "frames considered": 372
+        },
+        "output_sha256": "93e0b2592d5250be742597a79847a8b713fb1ce58f28ced7bd5aeeb23ace060d"
+      },
+      "d6": {
+        "frame_loop_fps": 0.74,
+        "tracks": 2,
+        "swap_audit": {
+          "faces seen": 888,
+          "swapped (identity lock)": 888,
+          "of those, partly behind an object (masked, still swapped)": 78
+        },
+        "output_sha256": "06ae27a1b97bf721cb9772bfebda50d8b8c2800b878ea072e44bd18b54e79968"
+      },
+      "Love": {
+        "frame_loop_fps": 19.02,
+        "tracks": 9,
+        "swap_audit": {
+          "faces seen": 425,
+          "of those, gap-filled": 68,
+          "of those, crop shared with the face beside it": 66,
+          "no track entry matched": 224,
+          "fallback missed (over match threshold)": 166,
+          "swapped (identity lock)": 165,
+          "of those, partly behind an object (masked, still swapped)": 58,
+          "of those SWAPPED, gap-filled": 10,
+          "fallback missed (this person's source already used this frame)": 58,
+          "veto: source used twice in frame": 36,
+          "refused: crop shared with the face beside it": 36,
+          "frames with no face detected at all": 51,
+          "frames considered": 372
+        },
+        "output_sha256": "7fd0f079c1b0f0036f322188f64d5bafb26d8d322b3cb9d90b70e39847cc62b7"
+      },
+      "s7": {
+        "frame_loop_fps": 8.83,
+        "tracks": 1,
+        "swap_audit": {
+          "faces seen": 324,
+          "of those, gap-filled": 50,
+          "swapped (identity lock)": 324,
+          "of those, partly behind an object (masked, still swapped)": 151,
+          "of those SWAPPED, gap-filled": 50,
+          "frames with no face detected at all": 48,
+          "frames considered": 372
+        },
+        "output_sha256": "d9e73fe8c5285c498a46b8af0c24d0bf0128cd6aec32ec4a70a1fc2bddaff98e"
+      }
     }
-  ]
+  },
+  "skipped_variants": [
+    {
+      "variant": "hyperswap_1b",
+      "reason": "hyperswap_1b_256.onnx not on disk (the pipeline would download it from https://huggingface.co/facefusion/models-3.3.0/resolve/main/hyperswap_1b_256.onnx); pass --download-missing to allow that"
+    },
+    {
+      "variant": "hyperswap_1c",
+      "reason": "hyperswap_1c_256.onnx not on disk (the pipeline would download it from https://huggingface.co/facefusion/models-3.3.0/resolve/main/hyperswap_1c_256.onnx); pass --download-missing to allow that"
+    }
+  ],
+  "variants": {
+    "hyperswap_1a": {
+      "per_clip": {
+        "d1": {
+          "faces_scored": 491,
+          "eye_drift_px": {
+            "n": 421,
+            "mean": 16.290489311163896,
+            "median": 12.088,
+            "p05": 6.29,
+            "min": 1.817
+          },
+          "mouth_drift_px": {
+            "n": 421,
+            "mean": 22.404489311163896,
+            "median": 13.973,
+            "p05": 3.546,
+            "min": 1.117
+          },
+          "eye_drift_reference_px_control": {
+            "n": 428,
+            "mean": 16.542955607476635,
+            "median": 12.104,
+            "p05": 6.35005,
+            "min": 1.767
+          },
+          "mouth_drift_reference_px_control": {
+            "n": 428,
+            "mean": 22.432750000000002,
+            "median": 14.06,
+            "p05": 3.54935,
+            "min": 1.371
+          },
+          "output_face_redetected": {
+            "redetected": 421,
+            "of": 491
+          },
+          "skin_detail": {
+            "n": 491,
+            "mean": 56.43423180378276,
+            "median": 61.174380870323766,
+            "p05": 33.22036650907127,
+            "min": 15.338554613880873
+          },
+          "skin_detail_ratio_vs_reference": {
+            "n": 491,
+            "mean": 0.9919065318968457,
+            "median": 0.9925561590301656,
+            "p05": 0.9491745878046164,
+            "min": 0.36527583643300066
+          },
+          "identity_jitter": {
+            "n": 2,
+            "mean": 0.022349038315498553,
+            "median": 0.022349038315498553,
+            "p05": 0.009028990892630586,
+            "min": 0.007548985623423035
+          },
+          "by_yaw": {
+            "0-20": {
+              "faces": 0,
+              "identity_cos": {
+                "n": 0,
+                "mean": null,
+                "median": null,
+                "p05": null,
+                "min": null
+              },
+              "ssim": {
+                "n": 0,
+                "mean": null,
+                "median": null,
+                "p05": null,
+                "min": null
+              },
+              "identity_delta_vs_reference": {
+                "n": 0,
+                "mean": null,
+                "median": null,
+                "p05": null,
+                "min": null
+              }
+            },
+            "20-45": {
+              "faces": 0,
+              "identity_cos": {
+                "n": 0,
+                "mean": null,
+                "median": null,
+                "p05": null,
+                "min": null
+              },
+              "ssim": {
+                "n": 0,
+                "mean": null,
+                "median": null,
+                "p05": null,
+                "min": null
+              },
+              "identity_delta_vs_reference": {
+                "n": 0,
+                "mean": null,
+                "median": null,
+                "p05": null,
+                "min": null
+              }
+            },
+            "45-75": {
+              "faces": 182,
+              "identity_cos": {
+                "n": 182,
+                "mean": 0.7369345797973682,
+                "median": 0.7439071085748585,
+                "p05": 0.7203294703310616,
+                "min": 0.028990715881866334
+              },
+              "ssim": {
+                "n": 182,
+                "mean": 0.9522959953953314,
+                "median": 0.9573238695350142,
+                "p05": 0.9345834995380125,
+                "min": 0.7918066969516416
+              },
+              "identity_delta_vs_reference": {
+                "n": 182,
+                "mean": 0.0019384585794528623,
+                "median": 0.0008113889666247487,
+                "p05": -0.01198212829388332,
+                "min": -0.022862721445363388
+              }
+            },
+            "75+": {
+              "faces": 309,
+              "identity_cos": {
+                "n": 309,
+                "mean": 0.5502696426609555,
+                "median": 0.5331281793892853,
+                "p05": 0.05730519679174393,
+                "min": -0.050406133655911844
+              },
+              "ssim": {
+                "n": 309,
+                "mean": 0.943679218826043,
+                "median": 0.951560820430716,
+                "p05": 0.8999666370211715,
+                "min": 0.6249500380360036
+              },
+              "identity_delta_vs_reference": {
+                "n": 309,
+                "mean": -0.0029344734495857726,
+                "median": -0.0007924511410192236,
+                "p05": -0.02780786453675761,
+                "min": -0.23767358520531934
+              }
+            }
+          },
+          "identity_cos": {
+            "n": 491,
+            "mean": 0.6194611264874873,
+            "median": 0.730582388113182,
+            "p05": 0.0954759982512711,
+            "min": -0.050406133655911844
+          },
+          "identity_cos_reference": {
+            "n": 491,
+            "mean": 0.620589339999629,
+            "median": 0.7296815789486953,
+            "p05": 0.09786048370818418,
+            "min": -0.02625305271284674
+          },
+          "identity_cos_plate_control": {
+            "n": 491,
+            "mean": 0.08528807317247972,
+            "median": 0.13341180689339327,
+            "p05": -0.045062480639166555,
+            "min": -0.06384473967681645
+          },
+          "identity_delta_vs_reference": {
+            "n": 491,
+            "mean": -0.0011282135121417163,
+            "median": -0.00024807091089429356,
+            "p05": -0.020361012020920527,
+            "min": -0.23767358520531934
+          },
+          "ssim": {
+            "n": 491,
+            "mean": 0.9468732174729075,
+            "median": 0.9544790117676187,
+            "p05": 0.9030130044694427,
+            "min": 0.6249500380360036
+          },
+          "psnr_db": {
+            "n": 491,
+            "mean": 39.78201837113329,
+            "median": 39.952529183181625,
+            "p05": 31.79159122467921,
+            "min": 17.381500134526995
+          },
+          "plate_vs_reference_ssim_control": {
+            "n": 491,
+            "mean": 0.8561560509763573,
+            "median": 0.8589669871602487,
+            "p05": 0.8265022296302413,
+            "min": 0.6566007733213309
+          },
+          "detection_recall": {
+            "matched": 600,
+            "reference_faces": 600,
+            "recall": 1.0
+          },
+          "source_within_cosine_control": {
+            "harjot": {
+              "n": 10,
+              "mean": 0.6659066879605919,
+              "median": 0.6454290741523523,
+              "p05": 0.5645084011442497,
+              "min": 0.5566791140253347
+            },
+            "shambhavi": {
+              "n": 10,
+              "mean": 0.6968592172860941,
+              "median": 0.6465367434038175,
+              "p05": 0.6080300629356706,
+              "min": 0.6035694940033474
+            }
+          },
+          "per_face_csv": "G:\\pinokio\\api\\roop-ultimate\\app\\output\\quality_full\\scores\\hyperswap_1a__d1.csv",
+          "tracks": {
+            "reference": 3,
+            "candidate": 3
+          },
+          "swap_audit": {
+            "reference": {
+              "faces seen": 748,
+              "of those, crop shared with the face beside it": 22,
+              "swapped (identity lock)": 672,
+              "of those, partly behind an object (masked, still swapped)": 671,
+              "veto: far from assigned person": 72,
+              "refused by the track veto, before any threshold": 72,
+              "discarded: the swap put the face somewhere it was not": 16,
+              "veto: source used twice in frame": 4,
+              "refused: crop shared with the face beside it": 4
+            },
+            "candidate": {
+              "faces seen": 748,
+              "of those, crop shared with the face beside it": 23,
+              "swapped (identity lock)": 677,
+              "of those, partly behind an object (masked, still swapped)": 677,
+              "veto: far from assigned person": 67,
+              "refused by the track veto, before any threshold": 67,
+              "discarded: the swap put the face somewhere it was not": 17,
+              "veto: source used twice in frame": 4,
+              "refused: crop shared with the face beside it": 4
+            }
+          },
+          "render": {
+            "fps": 4.39,
+            "fps_note": "lossless x264 encode (CPU-bound): not model or render speed",
+            "output_sha256": "1934f20d8550cddc9c7b81d6a582121763db8dc3540d40160f42d47358df737e",
+            "failed_frames": 0
+          }
+        },
+        "d4": {
+          "faces_scored": 412,
+          "eye_drift_px": {
+            "n": 412,
+            "mean": 2.037645631067961,
+            "median": 2.0380000000000003,
+            "p05": 0.7716000000000001,
+            "min": 0.3
+          },
+          "mouth_drift_px": {
+            "n": 412,
+            "mean": 6.587936893203883,
+            "median": 6.8085,
+            "p05": 2.72715,
+            "min": 0.899
+          },
+          "eye_drift_reference_px_control": {
+            "n": 412,
+            "mean": 2.042514563106796,
+            "median": 1.996,
+            "p05": 0.7894,
+            "min": 0.218
+          },
+          "mouth_drift_reference_px_control": {
+            "n": 412,
+            "mean": 6.568373786407766,
+            "median": 6.7725,
+            "p05": 2.6871,
+            "min": 0.801
+          },
+          "output_face_redetected": {
+            "redetected": 412,
+            "of": 412
+          },
+          "skin_detail": {
+            "n": 412,
+            "mean": 63.844297937052474,
+            "median": 61.301885995074294,
+            "p05": 47.925312594421015,
+            "min": 40.68770047331621
+          },
+          "skin_detail_ratio_vs_reference": {
+            "n": 412,
+            "mean": 0.997218552393827,
+            "median": 0.9999178405799557,
+            "p05": 0.9647312393288713,
+            "min": 0.7410961317119209
+          },
+          "identity_jitter": {
+            "n": 2,
+            "mean": 0.012870631908652407,
+            "median": 0.012870631908652407,
+            "p05": 0.00936676355722366,
+            "min": 0.008977444851509354
+          },
+          "by_yaw": {
+            "0-20": {
+              "faces": 307,
+              "identity_cos": {
+                "n": 307,
+                "mean": 0.6515270846842915,
+                "median": 0.6503899546095251,
+                "p05": 0.5937490928125418,
+                "min": 0.546964539397289
+              },
+              "ssim": {
+                "n": 307,
+                "mean": 0.9623698988314371,
+                "median": 0.9634878596786604,
+                "p05": 0.9522809223911589,
+                "min": 0.9240688679570975
+              },
+              "identity_delta_vs_reference": {
+                "n": 307,
+                "mean": -0.0032375725825555287,
+                "median": -0.0022970897295394588,
+                "p05": -0.021917939967289222,
+                "min": -0.05754694332027288
+              }
+            },
+            "20-45": {
+              "faces": 105,
+              "identity_cos": {
+                "n": 105,
+                "mean": 0.6256685376280647,
+                "median": 0.6320430813090224,
+                "p05": 0.5593513997120355,
+                "min": 0.51885529641359
+              },
+              "ssim": {
+                "n": 105,
+                "mean": 0.9579966071389829,
+                "median": 0.9586705241163098,
+                "p05": 0.9484263483585302,
+                "min": 0.940799405185127
+              },
+              "identity_delta_vs_reference": {
+                "n": 105,
+                "mean": -0.00047016492181821586,
+                "median": -0.00034205170999412893,
+                "p05": -0.01849367097097008,
+                "min": -0.024871974509295902
+              }
+            },
+            "45-75": {
+              "faces": 0,
+              "identity_cos": {
+                "n": 0,
+                "mean": null,
+                "median": null,
+                "p05": null,
+                "min": null
+              },
+              "ssim": {
+                "n": 0,
+                "mean": null,
+                "median": null,
+                "p05": null,
+                "min": null
+              },
+              "identity_delta_vs_reference": {
+                "n": 0,
+                "mean": null,
+                "median": null,
+                "p05": null,
+                "min": null
+              }
+            },
+            "75+": {
+              "faces": 0,
+              "identity_cos": {
+                "n": 0,
+                "mean": null,
+                "median": null,
+                "p05": null,
+                "min": null
+              },
+              "ssim": {
+                "n": 0,
+                "mean": null,
+                "median": null,
+                "p05": null,
+                "min": null
+              },
+              "identity_delta_vs_reference": {
+                "n": 0,
+                "mean": null,
+                "median": null,
+                "p05": null,
+                "min": null
+              }
+            }
+          },
+          "identity_cos": {
+            "n": 412,
+            "mean": 0.6449369209927774,
+            "median": 0.6459239634804013,
+            "p05": 0.5834381687102662,
+            "min": 0.51885529641359
+          },
+          "identity_cos_reference": {
+            "n": 412,
+            "mean": 0.6474692076423781,
+            "median": 0.6476301472952914,
+            "p05": 0.5869622697484905,
+            "min": 0.5050034569179582
+          },
+          "identity_cos_plate_control": {
+            "n": 412,
+            "mean": -0.04395285073675147,
+            "median": -0.03755984552786289,
+            "p05": -0.14098985439474773,
+            "min": -0.16526741948460286
+          },
+          "identity_delta_vs_reference": {
+            "n": 412,
+            "mean": -0.002532286649600631,
+            "median": -0.001934500551570073,
+            "p05": -0.020746690700985938,
+            "min": -0.05754694332027288
+          },
+          "ssim": {
+            "n": 412,
+            "mean": 0.9612553463370009,
+            "median": 0.9625753255878409,
+            "p05": 0.9503294847081701,
+            "min": 0.9240688679570975
+          },
+          "psnr_db": {
+            "n": 412,
+            "mean": 41.14712761605853,
+            "median": 41.35233977797003,
+            "p05": 39.32604071319739,
+            "min": 34.724787155305734
+          },
+          "plate_vs_reference_ssim_control": {
+            "n": 412,
+            "mean": 0.8944266180376058,
+            "median": 0.896441484154805,
+            "p05": 0.8743394136756811,
+            "min": 0.8448393652520162
+          },
+          "detection_recall": {
+            "matched": 412,
+            "reference_faces": 412,
+            "recall": 1.0
+          },
+          "source_within_cosine_control": {
+            "harjot": {
+              "n": 10,
+              "mean": 0.6659066879605919,
+              "median": 0.6454290741523523,
+              "p05": 0.5645084011442497,
+              "min": 0.5566791140253347
+            },
+            "ashna": {
+              "n": 10,
+              "mean": 0.6412160955146754,
+              "median": 0.5572155253462221,
+              "p05": 0.47636753397972703,
+              "min": 0.4625724834828884
+            }
+          },
+          "per_face_csv": "G:\\pinokio\\api\\roop-ultimate\\app\\output\\quality_full\\scores\\hyperswap_1a__d4.csv",
+          "tracks": {
+            "reference": 2,
+            "candidate": 2
+          },
+          "swap_audit": {
+            "reference": {
+              "faces seen": 508,
+              "swapped (identity lock)": 508,
+              "of those, partly behind an object (masked, still swapped)": 308,
+              "frames with no face detected at all": 118,
+              "frames considered": 372
+            },
+            "candidate": {
+              "faces seen": 508,
+              "swapped (identity lock)": 508,
+              "of those, partly behind an object (masked, still swapped)": 315,
+              "frames with no face detected at all": 118,
+              "frames considered": 372
+            }
+          },
+          "render": {
+            "fps": 10.8,
+            "fps_note": "lossless x264 encode (CPU-bound): not model or render speed",
+            "output_sha256": "745e8fc6cec06680c2e4c6ce2ef11d6ed5d1bd93e6cfce28e9b808c1b4971b73",
+            "failed_frames": 0
+          }
+        },
+        "d6": {
+          "faces_scored": 600,
+          "eye_drift_px": {
+            "n": 600,
+            "mean": 13.167273333333334,
+            "median": 12.295,
+            "p05": 6.748349999999999,
+            "min": 2.579
+          },
+          "mouth_drift_px": {
+            "n": 600,
+            "mean": 22.646918333333332,
+            "median": 21.853,
+            "p05": 7.1848,
+            "min": 4.04
+          },
+          "eye_drift_reference_px_control": {
+            "n": 600,
+            "mean": 13.119219999999999,
+            "median": 12.263,
+            "p05": 7.04435,
+            "min": 3.173
+          },
+          "mouth_drift_reference_px_control": {
+            "n": 600,
+            "mean": 22.368761666666668,
+            "median": 21.8245,
+            "p05": 7.4924,
+            "min": 3.57
+          },
+          "output_face_redetected": {
+            "redetected": 600,
+            "of": 600
+          },
+          "skin_detail": {
+            "n": 600,
+            "mean": 4.96569299442412,
+            "median": 4.843942940103604,
+            "p05": 4.639020169991337,
+            "min": 4.45097671287218
+          },
+          "skin_detail_ratio_vs_reference": {
+            "n": 600,
+            "mean": 0.9997759201723693,
+            "median": 0.9999925879724252,
+            "p05": 0.988949400936289,
+            "min": 0.9698284510057319
+          },
+          "identity_jitter": {
+            "n": 2,
+            "mean": 0.008535700469757775,
+            "median": 0.008535700469757775,
+            "p05": 0.008319933308216955,
+            "min": 0.008295959179156863
+          },
+          "by_yaw": {
+            "0-20": {
+              "faces": 555,
+              "identity_cos": {
+                "n": 555,
+                "mean": 0.6765991048497133,
+                "median": 0.682246569706637,
+                "p05": 0.6254964296002623,
+                "min": 0.5546093582506735
+              },
+              "ssim": {
+                "n": 555,
+                "mean": 0.9619806968559158,
+                "median": 0.9624292760471137,
+                "p05": 0.9454913791414962,
+                "min": 0.9332592357823417
+              },
+              "identity_delta_vs_reference": {
+                "n": 555,
+                "mean": 0.0009082817702543476,
+                "median": 0.000656875738295426,
+                "p05": -0.013247132806997065,
+                "min": -0.029176222113998285
+              }
+            },
+            "20-45": {
+              "faces": 45,
+              "identity_cos": {
+                "n": 45,
+                "mean": 0.7055691848886311,
+                "median": 0.7072888560841606,
+                "p05": 0.6782438967570397,
+                "min": 0.6607050944201204
+              },
+              "ssim": {
+                "n": 45,
+                "mean": 0.9586375258061997,
+                "median": 0.9597063441344674,
+                "p05": 0.9457963934558784,
+                "min": 0.9427427844023354
+              },
+              "identity_delta_vs_reference": {
+                "n": 45,
+                "mean": 0.0013786910289773832,
+                "median": 0.0008061911752347273,
+                "p05": -0.010405436365302688,
+                "min": -0.014180204943559871
+              }
+            },
+            "45-75": {
+              "faces": 0,
+              "identity_cos": {
+                "n": 0,
+                "mean": null,
+                "median": null,
+                "p05": null,
+                "min": null
+              },
+              "ssim": {
+                "n": 0,
+                "mean": null,
+                "median": null,
+                "p05": null,
+                "min": null
+              },
+              "identity_delta_vs_reference": {
+                "n": 0,
+                "mean": null,
+                "median": null,
+                "p05": null,
+                "min": null
+              }
+            },
+            "75+": {
+              "faces": 0,
+              "identity_cos": {
+                "n": 0,
+                "mean": null,
+                "median": null,
+                "p05": null,
+                "min": null
+              },
+              "ssim": {
+                "n": 0,
+                "mean": null,
+                "median": null,
+                "p05": null,
+                "min": null
+              },
+              "identity_delta_vs_reference": {
+                "n": 0,
+                "mean": null,
+                "median": null,
+                "p05": null,
+                "min": null
+              }
+            }
+          },
+          "identity_cos": {
+            "n": 600,
+            "mean": 0.6787718608526321,
+            "median": 0.6848630372588969,
+            "p05": 0.6260643896143424,
+            "min": 0.5546093582506735
+          },
+          "identity_cos_reference": {
+            "n": 600,
+            "mean": 0.6778282983879736,
+            "median": 0.6846337757593621,
+            "p05": 0.6188819061154784,
+            "min": 0.5582639534323348
+          },
+          "identity_cos_plate_control": {
+            "n": 600,
+            "mean": -0.01062751231735154,
+            "median": -0.007256145835732826,
+            "p05": -0.1275189953595124,
+            "min": -0.14161661126333847
+          },
+          "identity_delta_vs_reference": {
+            "n": 600,
+            "mean": 0.0009435624646585753,
+            "median": 0.0006733002935818133,
+            "p05": -0.01322511791159548,
+            "min": -0.029176222113998285
+          },
+          "ssim": {
+            "n": 600,
+            "mean": 0.9617299590271869,
+            "median": 0.9615210213478496,
+            "p05": 0.9454377368753337,
+            "min": 0.9332592357823417
+          },
+          "psnr_db": {
+            "n": 600,
+            "mean": 38.7043950578537,
+            "median": 38.565969578775864,
+            "p05": 35.895448342209555,
+            "min": 32.633241148587125
+          },
+          "plate_vs_reference_ssim_control": {
+            "n": 600,
+            "mean": 0.9167104650872621,
+            "median": 0.9242294294689781,
+            "p05": 0.8777650663236175,
+            "min": 0.8578598148610379
+          },
+          "detection_recall": {
+            "matched": 600,
+            "reference_faces": 600,
+            "recall": 1.0
+          },
+          "source_within_cosine_control": {
+            "harjot": {
+              "n": 10,
+              "mean": 0.6659066879605919,
+              "median": 0.6454290741523523,
+              "p05": 0.5645084011442497,
+              "min": 0.5566791140253347
+            },
+            "mahek": {
+              "n": 10,
+              "mean": 0.701488126969381,
+              "median": 0.6420877198156798,
+              "p05": 0.563040293947799,
+              "min": 0.5444400907976947
+            }
+          },
+          "per_face_csv": "G:\\pinokio\\api\\roop-ultimate\\app\\output\\quality_full\\scores\\hyperswap_1a__d6.csv",
+          "tracks": {
+            "reference": 2,
+            "candidate": 2
+          },
+          "swap_audit": {
+            "reference": {
+              "faces seen": 888,
+              "swapped (identity lock)": 888,
+              "of those, partly behind an object (masked, still swapped)": 78
+            },
+            "candidate": {
+              "faces seen": 888,
+              "swapped (identity lock)": 888,
+              "of those, partly behind an object (masked, still swapped)": 73
+            }
+          },
+          "render": {
+            "fps": 0.49,
+            "fps_note": "lossless x264 encode (CPU-bound): not model or render speed",
+            "output_sha256": "4e62c44536eff1ec1b7309847356b14e8460f5ad575774effdffc83c243fe433",
+            "failed_frames": 0
+          }
+        },
+        "Love": {
+          "faces_scored": 95,
+          "eye_drift_px": {
+            "n": 94,
+            "mean": 4.435936170212766,
+            "median": 1.7225000000000001,
+            "p05": 0.72025,
+            "min": 0.523
+          },
+          "mouth_drift_px": {
+            "n": 94,
+            "mean": 4.330021276595745,
+            "median": 2.55,
+            "p05": 1.43415,
+            "min": 1.152
+          },
+          "eye_drift_reference_px_control": {
+            "n": 95,
+            "mean": 4.320378947368422,
+            "median": 1.836,
+            "p05": 0.8458,
+            "min": 0.577
+          },
+          "mouth_drift_reference_px_control": {
+            "n": 95,
+            "mean": 4.201957894736842,
+            "median": 2.659,
+            "p05": 1.534,
+            "min": 0.931
+          },
+          "output_face_redetected": {
+            "redetected": 94,
+            "of": 95
+          },
+          "skin_detail": {
+            "n": 95,
+            "mean": 66.97517253988137,
+            "median": 72.21540303912518,
+            "p05": 38.889409450033206,
+            "min": 6.579030195327733
+          },
+          "skin_detail_ratio_vs_reference": {
+            "n": 95,
+            "mean": 1.0000794545427667,
+            "median": 1.0043954582763832,
+            "p05": 0.9300156561148654,
+            "min": 0.14166005551609243
+          },
+          "identity_jitter": {
+            "n": 1,
+            "mean": 0.023588678141377575,
+            "median": 0.023588678141377575,
+            "p05": 0.023588678141377575,
+            "min": 0.023588678141377575
+          },
+          "by_yaw": {
+            "0-20": {
+              "faces": 2,
+              "identity_cos": {
+                "n": 2,
+                "mean": 0.668928226322772,
+                "median": 0.668928226322772,
+                "p05": 0.6684156485695887,
+                "min": 0.6683586954859017
+              },
+              "ssim": {
+                "n": 2,
+                "mean": 0.8304109869739588,
+                "median": 0.8304109869739588,
+                "p05": 0.8196767901821739,
+                "min": 0.8184841016497534
+              },
+              "identity_delta_vs_reference": {
+                "n": 2,
+                "mean": 0.009170970261577538,
+                "median": 0.009170970261577538,
+                "p05": -0.00653078366324118,
+                "min": -0.008275422988221037
+              }
+            },
+            "20-45": {
+              "faces": 31,
+              "identity_cos": {
+                "n": 31,
+                "mean": 0.6298749932357309,
+                "median": 0.6425210101239934,
+                "p05": 0.5297173143882765,
+                "min": 0.48331229946077514
+              },
+              "ssim": {
+                "n": 31,
+                "mean": 0.9367211420634609,
+                "median": 0.9402152132111021,
+                "p05": 0.9112425702890928,
+                "min": 0.9027227912865627
+              },
+              "identity_delta_vs_reference": {
+                "n": 31,
+                "mean": 0.02804089002990934,
+                "median": 0.0021747294769179915,
+                "p05": -0.023213114832715764,
+                "min": -0.07768243152776089
+              }
+            },
+            "45-75": {
+              "faces": 62,
+              "identity_cos": {
+                "n": 62,
+                "mean": 0.6438825149488046,
+                "median": 0.66649298384375,
+                "p05": 0.4603095718215991,
+                "min": -0.07114641455878996
+              },
+              "ssim": {
+                "n": 62,
+                "mean": 0.9433456277335763,
+                "median": 0.9446889492070369,
+                "p05": 0.9287673698024838,
+                "min": 0.9156768224403574
+              },
+              "identity_delta_vs_reference": {
+                "n": 62,
+                "mean": -0.005075895613130722,
+                "median": 0.0028836102982796596,
+                "p05": -0.01671925863490147,
+                "min": -0.5186877551282099
+              }
+            },
+            "75+": {
+              "faces": 0,
+              "identity_cos": {
+                "n": 0,
+                "mean": null,
+                "median": null,
+                "p05": null,
+                "min": null
+              },
+              "ssim": {
+                "n": 0,
+                "mean": null,
+                "median": null,
+                "p05": null,
+                "min": null
+              },
+              "identity_delta_vs_reference": {
+                "n": 0,
+                "mean": null,
+                "median": null,
+                "p05": null,
+                "min": null
+              }
+            }
+          },
+          "identity_cos": {
+            "n": 95,
+            "mean": 0.639838917576622,
+            "median": 0.6583610844546817,
+            "p05": 0.4951709229601952,
+            "min": -0.07114641455878996
+          },
+          "identity_cos_reference": {
+            "n": 95,
+            "mean": 0.6338083491193985,
+            "median": 0.6573726237773855,
+            "p05": 0.4624566174501562,
+            "min": 0.3049771274369691
+          },
+          "identity_cos_plate_control": {
+            "n": 95,
+            "mean": -0.02815976200196102,
+            "median": -0.0420272831676988,
+            "p05": -0.07221462515363809,
+            "min": -0.08521431852375091
+          },
+          "identity_delta_vs_reference": {
+            "n": 95,
+            "mean": 0.006030568457223577,
+            "median": 0.0027793222837612097,
+            "p05": -0.021342709362254984,
+            "min": -0.5186877551282099
+          },
+          "ssim": {
+            "n": 95,
+            "mean": 0.9388063820778628,
+            "median": 0.9442376676049743,
+            "p05": 0.9129202400655975,
+            "min": 0.8184841016497534
+          },
+          "psnr_db": {
+            "n": 95,
+            "mean": 39.771060048326824,
+            "median": 40.46221916329579,
+            "p05": 35.65931891652498,
+            "min": 32.98266391699629
+          },
+          "plate_vs_reference_ssim_control": {
+            "n": 95,
+            "mean": 0.8889203409783978,
+            "median": 0.8827351564314881,
+            "p05": 0.8713875494065719,
+            "min": 0.8244331067548072
+          },
+          "detection_recall": {
+            "matched": 283,
+            "reference_faces": 283,
+            "recall": 1.0
+          },
+          "source_within_cosine_control": {
+            "harjot": {
+              "n": 10,
+              "mean": 0.6659066879605919,
+              "median": 0.6454290741523523,
+              "p05": 0.5645084011442497,
+              "min": 0.5566791140253347
+            }
+          },
+          "per_face_csv": "G:\\pinokio\\api\\roop-ultimate\\app\\output\\quality_full\\scores\\hyperswap_1a__Love.csv",
+          "tracks": {
+            "reference": 9,
+            "candidate": 8
+          },
+          "swap_audit": {
+            "reference": {
+              "faces seen": 425,
+              "of those, gap-filled": 68,
+              "of those, crop shared with the face beside it": 66,
+              "no track entry matched": 224,
+              "fallback missed (over match threshold)": 166,
+              "swapped (identity lock)": 165,
+              "of those, partly behind an object (masked, still swapped)": 58,
+              "of those SWAPPED, gap-filled": 10,
+              "fallback missed (this person's source already used this frame)": 58,
+              "veto: source used twice in frame": 36,
+              "refused: crop shared with the face beside it": 36,
+              "frames with no face detected at all": 51,
+              "frames considered": 372
+            },
+            "candidate": {
+              "faces seen": 411,
+              "of those, crop shared with the face beside it": 67,
+              "of those, gap-filled": 51,
+              "no track entry matched": 219,
+              "fallback missed (over match threshold)": 159,
+              "swapped (identity lock)": 155,
+              "fallback missed (this person's source already used this frame)": 58,
+              "veto: source used twice in frame": 37,
+              "refused: crop shared with the face beside it": 37,
+              "swapped (per-frame match)": 2,
+              "of those, partly behind an object (masked, still swapped)": 48,
+              "frames with no face detected at all": 60,
+              "frames considered": 372
+            }
+          },
+          "render": {
+            "fps": 15.42,
+            "fps_note": "lossless x264 encode (CPU-bound): not model or render speed",
+            "output_sha256": "307b3efe875d45eb66051c5ec07ce18f09601f4c054e265d2650fd847f8a1e91",
+            "failed_frames": 0
+          }
+        },
+        "s7": {
+          "faces_scored": 218,
+          "eye_drift_px": {
+            "n": 218,
+            "mean": 9.436573394495412,
+            "median": 4.3309999999999995,
+            "p05": 1.691,
+            "min": 0.998
+          },
+          "mouth_drift_px": {
+            "n": 218,
+            "mean": 7.848215596330276,
+            "median": 4.3085,
+            "p05": 1.9537,
+            "min": 0.965
+          },
+          "eye_drift_reference_px_control": {
+            "n": 218,
+            "mean": 9.543844036697248,
+            "median": 4.38,
+            "p05": 1.7389000000000001,
+            "min": 0.903
+          },
+          "mouth_drift_reference_px_control": {
+            "n": 218,
+            "mean": 8.160555045871561,
+            "median": 4.3294999999999995,
+            "p05": 2.00965,
+            "min": 1.159
+          },
+          "output_face_redetected": {
+            "redetected": 218,
+            "of": 218
+          },
+          "skin_detail": {
+            "n": 218,
+            "mean": 160.5445469303423,
+            "median": 135.14942661685296,
+            "p05": 78.84644271182982,
+            "min": 70.70096692080098
+          },
+          "skin_detail_ratio_vs_reference": {
+            "n": 218,
+            "mean": 1.0002716191828662,
+            "median": 0.9961513716906916,
+            "p05": 0.9599006477495815,
+            "min": 0.8399696504523843
+          },
+          "identity_jitter": {
+            "n": 1,
+            "mean": 0.015813010461918412,
+            "median": 0.015813010461918412,
+            "p05": 0.015813010461918412,
+            "min": 0.015813010461918412
+          },
+          "by_yaw": {
+            "0-20": {
+              "faces": 27,
+              "identity_cos": {
+                "n": 27,
+                "mean": 0.7820710335313825,
+                "median": 0.7836233605319125,
+                "p05": 0.7679373127106203,
+                "min": 0.7611392318623404
+              },
+              "ssim": {
+                "n": 27,
+                "mean": 0.9581049404958932,
+                "median": 0.9592706256842538,
+                "p05": 0.9419113192441921,
+                "min": 0.9365259303933074
+              },
+              "identity_delta_vs_reference": {
+                "n": 27,
+                "mean": -0.0010665746684322798,
+                "median": -0.0007625615834644384,
+                "p05": -0.007680265500397898,
+                "min": -0.01135827373123166
+              }
+            },
+            "20-45": {
+              "faces": 42,
+              "identity_cos": {
+                "n": 42,
+                "mean": 0.7241398334308522,
+                "median": 0.7485643259490056,
+                "p05": 0.6378690413364758,
+                "min": -0.0015074853736042305
+              },
+              "ssim": {
+                "n": 42,
+                "mean": 0.9478689046042875,
+                "median": 0.9594701799955687,
+                "p05": 0.8753735873794833,
+                "min": 0.8584143269156571
+              },
+              "identity_delta_vs_reference": {
+                "n": 42,
+                "mean": -0.0058084248027372165,
+                "median": -0.003323947290486129,
+                "p05": -0.026636038057968506,
+                "min": -0.06618126579397625
+              }
+            },
+            "45-75": {
+              "faces": 64,
+              "identity_cos": {
+                "n": 64,
+                "mean": 0.6640764032498749,
+                "median": 0.6919597767370369,
+                "p05": 0.43154153819408425,
+                "min": 0.2409835400020895
+              },
+              "ssim": {
+                "n": 64,
+                "mean": 0.9415595642402012,
+                "median": 0.94802186125279,
+                "p05": 0.8958882236648001,
+                "min": 0.8329587794896319
+              },
+              "identity_delta_vs_reference": {
+                "n": 64,
+                "mean": -0.007656691539629476,
+                "median": -0.0015644925705262658,
+                "p05": -0.016131522467357072,
+                "min": -0.2916140748673584
+              }
+            },
+            "75+": {
+              "faces": 85,
+              "identity_cos": {
+                "n": 85,
+                "mean": 0.5191822700173637,
+                "median": 0.5387212038155428,
+                "p05": 0.3470777885735764,
+                "min": 0.243191926125834
+              },
+              "ssim": {
+                "n": 85,
+                "mean": 0.9018930239001564,
+                "median": 0.9082267707607662,
+                "p05": 0.8401652123765007,
+                "min": 0.8123566354741707
+              },
+              "identity_delta_vs_reference": {
+                "n": 85,
+                "mean": 0.0007240394641998742,
+                "median": 0.00045380766170588505,
+                "p05": -0.022457284649792852,
+                "min": -0.06084794621988171
+              }
+            }
+          },
+          "identity_cos": {
+            "n": 218,
+            "mean": 0.6337668516922524,
+            "median": 0.6555442553206716,
+            "p05": 0.38082748054646626,
+            "min": -0.0015074853736042305
+          },
+          "identity_cos_reference": {
+            "n": 218,
+            "mean": 0.6369835317924448,
+            "median": 0.6725671995323073,
+            "p05": 0.3808475223134923,
+            "min": 0.06467378042037202
+          },
+          "identity_cos_plate_control": {
+            "n": 218,
+            "mean": 0.06425553511289345,
+            "median": 0.06168187429146017,
+            "p05": -0.0027804721354393346,
+            "min": -0.027460119974321667
+          },
+          "identity_delta_vs_reference": {
+            "n": 218,
+            "mean": -0.003216680100192348,
+            "median": -0.0015644925705262658,
+            "p05": -0.02156670234011383,
+            "min": -0.2916140748673584
+          },
+          "ssim": {
+            "n": 218,
+            "mean": 0.9293580116039236,
+            "median": 0.9429308840516915,
+            "p05": 0.8580380070961937,
+            "min": 0.8123566354741707
+          },
+          "psnr_db": {
+            "n": 218,
+            "mean": 36.66644491351016,
+            "median": 37.35494828009382,
+            "p05": 30.62268845220949,
+            "min": 27.28736781852838
+          },
+          "plate_vs_reference_ssim_control": {
+            "n": 218,
+            "mean": 0.8345430851049828,
+            "median": 0.8361977051104628,
+            "p05": 0.7786606488697597,
+            "min": 0.7587721119642186
+          },
+          "detection_recall": {
+            "matched": 218,
+            "reference_faces": 218,
+            "recall": 1.0
+          },
+          "source_within_cosine_control": {
+            "harjot": {
+              "n": 10,
+              "mean": 0.6659066879605919,
+              "median": 0.6454290741523523,
+              "p05": 0.5645084011442497,
+              "min": 0.5566791140253347
+            }
+          },
+          "per_face_csv": "G:\\pinokio\\api\\roop-ultimate\\app\\output\\quality_full\\scores\\hyperswap_1a__s7.csv",
+          "tracks": {
+            "reference": 1,
+            "candidate": 1
+          },
+          "swap_audit": {
+            "reference": {
+              "faces seen": 324,
+              "of those, gap-filled": 50,
+              "swapped (identity lock)": 324,
+              "of those, partly behind an object (masked, still swapped)": 151,
+              "of those SWAPPED, gap-filled": 50,
+              "frames with no face detected at all": 48,
+              "frames considered": 372
+            },
+            "candidate": {
+              "faces seen": 324,
+              "of those, gap-filled": 50,
+              "swapped (identity lock)": 324,
+              "of those, partly behind an object (masked, still swapped)": 155,
+              "of those SWAPPED, gap-filled": 50,
+              "frames with no face detected at all": 48,
+              "frames considered": 372
+            }
+          },
+          "render": {
+            "fps": 9.02,
+            "fps_note": "lossless x264 encode (CPU-bound): not model or render speed",
+            "output_sha256": "28cd3d5429251f4429b4b6dbb26cdc1e279b05c39ebcf6fbc98be78468d1b07f",
+            "failed_frames": 0
+          }
+        }
+      },
+      "swapper_files": [
+        {
+          "file": "hyperswap_1a_256.onnx",
+          "sha256": "c0e98a8a03a238f461ed3d2570e426b49f46745ee400854a60dceeb70c246add"
+        }
+      ],
+      "model_key": "hyperswap_1a_256.onnx=c0e98a8a03a238f4",
+      "variant": {
+        "swap_model": "hyperswap",
+        "trt_precision": "mixed",
+        "env": {}
+      }
+    },
+    "inswapper_128": {
+      "per_clip": {
+        "d1": {
+          "faces_scored": 491,
+          "eye_drift_px": {
+            "n": 314,
+            "mean": 5.844025477707006,
+            "median": 5.352,
+            "p05": 3.42025,
+            "min": 1.653
+          },
+          "mouth_drift_px": {
+            "n": 314,
+            "mean": 6.010474522292994,
+            "median": 4.8235,
+            "p05": 3.4299,
+            "min": 2.622
+          },
+          "eye_drift_reference_px_control": {
+            "n": 428,
+            "mean": 16.542955607476635,
+            "median": 12.104,
+            "p05": 6.35005,
+            "min": 1.767
+          },
+          "mouth_drift_reference_px_control": {
+            "n": 428,
+            "mean": 22.432750000000002,
+            "median": 14.06,
+            "p05": 3.54935,
+            "min": 1.371
+          },
+          "output_face_redetected": {
+            "redetected": 314,
+            "of": 491
+          },
+          "skin_detail": {
+            "n": 491,
+            "mean": 53.04853545118111,
+            "median": 57.900400106210796,
+            "p05": 32.72263805967388,
+            "min": 15.338554613880873
+          },
+          "skin_detail_ratio_vs_reference": {
+            "n": 491,
+            "mean": 0.9445378620416512,
+            "median": 0.9499198554198601,
+            "p05": 0.8258839031566133,
+            "min": 0.36527583643300066
+          },
+          "identity_jitter": {
+            "n": 2,
+            "mean": 0.026940532745155208,
+            "median": 0.026940532745155208,
+            "p05": 0.012206212126209742,
+            "min": 0.010569065390771355
+          },
+          "by_yaw": {
+            "0-20": {
+              "faces": 0,
+              "identity_cos": {
+                "n": 0,
+                "mean": null,
+                "median": null,
+                "p05": null,
+                "min": null
+              },
+              "ssim": {
+                "n": 0,
+                "mean": null,
+                "median": null,
+                "p05": null,
+                "min": null
+              },
+              "identity_delta_vs_reference": {
+                "n": 0,
+                "mean": null,
+                "median": null,
+                "p05": null,
+                "min": null
+              }
+            },
+            "20-45": {
+              "faces": 0,
+              "identity_cos": {
+                "n": 0,
+                "mean": null,
+                "median": null,
+                "p05": null,
+                "min": null
+              },
+              "ssim": {
+                "n": 0,
+                "mean": null,
+                "median": null,
+                "p05": null,
+                "min": null
+              },
+              "identity_delta_vs_reference": {
+                "n": 0,
+                "mean": null,
+                "median": null,
+                "p05": null,
+                "min": null
+              }
+            },
+            "45-75": {
+              "faces": 182,
+              "identity_cos": {
+                "n": 182,
+                "mean": 0.7447204777135858,
+                "median": 0.7545435292273847,
+                "p05": 0.7188565159973316,
+                "min": 0.04400155672766382
+              },
+              "ssim": {
+                "n": 182,
+                "mean": 0.8661492697821884,
+                "median": 0.8678145776639246,
+                "p05": 0.8496782882992548,
+                "min": 0.8003827161692838
+              },
+              "identity_delta_vs_reference": {
+                "n": 182,
+                "mean": 0.009724356495670636,
+                "median": 0.011408392430550474,
+                "p05": -0.0239436265943474,
+                "min": -0.05472236994286095
+              }
+            },
+            "75+": {
+              "faces": 309,
+              "identity_cos": {
+                "n": 309,
+                "mean": 0.4951356196525796,
+                "median": 0.4540268887587454,
+                "p05": 0.03613417044969864,
+                "min": -0.049590071102323156
+              },
+              "ssim": {
+                "n": 309,
+                "mean": 0.8565931054170303,
+                "median": 0.8620176971471408,
+                "p05": 0.8020741989686615,
+                "min": 0.6297501861488474
+              },
+              "identity_delta_vs_reference": {
+                "n": 309,
+                "mean": -0.05806849645796174,
+                "median": -0.035212168474353156,
+                "p05": -0.17062622174160846,
+                "min": -0.29979304167342197
+              }
+            }
+          },
+          "identity_cos": {
+            "n": 491,
+            "mean": 0.5876497625591033,
+            "median": 0.7235364654582765,
+            "p05": 0.06482338289550951,
+            "min": -0.049590071102323156
+          },
+          "identity_cos_reference": {
+            "n": 491,
+            "mean": 0.620589339999629,
+            "median": 0.7296815789486953,
+            "p05": 0.09786048370818418,
+            "min": -0.02625305271284674
+          },
+          "identity_cos_plate_control": {
+            "n": 491,
+            "mean": 0.08528807317247972,
+            "median": 0.13341180689339327,
+            "p05": -0.045062480639166555,
+            "min": -0.06384473967681645
+          },
+          "identity_delta_vs_reference": {
+            "n": 491,
+            "mean": -0.032939577440525704,
+            "median": -0.0138918666119211,
+            "p05": -0.15478973740877508,
+            "min": -0.29979304167342197
+          },
+          "ssim": {
+            "n": 491,
+            "mean": 0.8601353089087995,
+            "median": 0.8630850907808971,
+            "p05": 0.818372254419933,
+            "min": 0.6297501861488474
+          },
+          "psnr_db": {
+            "n": 491,
+            "mean": 26.79362836290759,
+            "median": 26.218629459790932,
+            "p05": 22.791347866782957,
+            "min": 17.50166566344616
+          },
+          "plate_vs_reference_ssim_control": {
+            "n": 491,
+            "mean": 0.8561560509763573,
+            "median": 0.8589669871602487,
+            "p05": 0.8265022296302413,
+            "min": 0.6566007733213309
+          },
+          "detection_recall": {
+            "matched": 600,
+            "reference_faces": 600,
+            "recall": 1.0
+          },
+          "source_within_cosine_control": {
+            "harjot": {
+              "n": 10,
+              "mean": 0.6659066879605919,
+              "median": 0.6454290741523523,
+              "p05": 0.5645084011442497,
+              "min": 0.5566791140253347
+            },
+            "shambhavi": {
+              "n": 10,
+              "mean": 0.6968592172860941,
+              "median": 0.6465367434038175,
+              "p05": 0.6080300629356706,
+              "min": 0.6035694940033474
+            }
+          },
+          "per_face_csv": "G:\\pinokio\\api\\roop-ultimate\\app\\output\\quality_full\\scores\\inswapper_128__d1.csv",
+          "tracks": {
+            "reference": 3,
+            "candidate": 3
+          },
+          "swap_audit": {
+            "reference": {
+              "faces seen": 748,
+              "of those, crop shared with the face beside it": 22,
+              "swapped (identity lock)": 672,
+              "of those, partly behind an object (masked, still swapped)": 671,
+              "veto: far from assigned person": 72,
+              "refused by the track veto, before any threshold": 72,
+              "discarded: the swap put the face somewhere it was not": 16,
+              "veto: source used twice in frame": 4,
+              "refused: crop shared with the face beside it": 4
+            },
+            "candidate": {
+              "faces seen": 748,
+              "of those, crop shared with the face beside it": 23,
+              "swapped (identity lock)": 677,
+              "of those, partly behind an object (masked, still swapped)": 677,
+              "veto: far from assigned person": 67,
+              "refused by the track veto, before any threshold": 67,
+              "discarded: the swap put the face somewhere it was not": 19,
+              "veto: source used twice in frame": 4,
+              "refused: crop shared with the face beside it": 4
+            }
+          },
+          "render": {
+            "fps": 5.89,
+            "fps_note": "lossless x264 encode (CPU-bound): not model or render speed",
+            "output_sha256": "11d92dd0561419a491db4acc5155879edddde45be0750e10955ae95e06c71391",
+            "failed_frames": 0
+          }
+        },
+        "d4": {
+          "faces_scored": 412,
+          "eye_drift_px": {
+            "n": 412,
+            "mean": 3.3343470873786414,
+            "median": 3.5885,
+            "p05": 1.01885,
+            "min": 0.65
+          },
+          "mouth_drift_px": {
+            "n": 412,
+            "mean": 3.6914296116504857,
+            "median": 3.322,
+            "p05": 1.3535000000000001,
+            "min": 0.647
+          },
+          "eye_drift_reference_px_control": {
+            "n": 412,
+            "mean": 2.042514563106796,
+            "median": 1.996,
+            "p05": 0.7894,
+            "min": 0.218
+          },
+          "mouth_drift_reference_px_control": {
+            "n": 412,
+            "mean": 6.568373786407766,
+            "median": 6.7725,
+            "p05": 2.6871,
+            "min": 0.801
+          },
+          "output_face_redetected": {
+            "redetected": 412,
+            "of": 412
+          },
+          "skin_detail": {
+            "n": 412,
+            "mean": 64.63063352871121,
+            "median": 61.07663556466129,
+            "p05": 48.72854504505638,
+            "min": 39.86840534032891
+          },
+          "skin_detail_ratio_vs_reference": {
+            "n": 412,
+            "mean": 1.0089010208007285,
+            "median": 1.0107164956445094,
+            "p05": 0.9403765774373731,
+            "min": 0.7479952983677857
+          },
+          "identity_jitter": {
+            "n": 2,
+            "mean": 0.016717259404379344,
+            "median": 0.016717259404379344,
+            "p05": 0.010393456965904675,
+            "min": 0.0096908122505186
+          },
+          "by_yaw": {
+            "0-20": {
+              "faces": 307,
+              "identity_cos": {
+                "n": 307,
+                "mean": 0.7015458050253179,
+                "median": 0.7092813656605821,
+                "p05": 0.6252470998818788,
+                "min": 0.5778218884131444
+              },
+              "ssim": {
+                "n": 307,
+                "mean": 0.9002765906764888,
+                "median": 0.9018538258055351,
+                "p05": 0.8666552353837894,
+                "min": 0.8407174574119917
+              },
+              "identity_delta_vs_reference": {
+                "n": 307,
+                "mean": 0.04678114775847105,
+                "median": 0.047547435074330124,
+                "p05": -0.017141196852306893,
+                "min": -0.07746938355330524
+              }
+            },
+            "20-45": {
+              "faces": 105,
+              "identity_cos": {
+                "n": 105,
+                "mean": 0.6941637211997148,
+                "median": 0.7059128521466601,
+                "p05": 0.6051759469152842,
+                "min": 0.5264206471689784
+              },
+              "ssim": {
+                "n": 105,
+                "mean": 0.9036748488800749,
+                "median": 0.9047903024307751,
+                "p05": 0.8897309446371012,
+                "min": 0.8750695614025596
+              },
+              "identity_delta_vs_reference": {
+                "n": 105,
+                "mean": 0.06802501864983183,
+                "median": 0.07111951684952089,
+                "p05": 0.02727138660950106,
+                "min": -0.05905376654200589
+              }
+            },
+            "45-75": {
+              "faces": 0,
+              "identity_cos": {
+                "n": 0,
+                "mean": null,
+                "median": null,
+                "p05": null,
+                "min": null
+              },
+              "ssim": {
+                "n": 0,
+                "mean": null,
+                "median": null,
+                "p05": null,
+                "min": null
+              },
+              "identity_delta_vs_reference": {
+                "n": 0,
+                "mean": null,
+                "median": null,
+                "p05": null,
+                "min": null
+              }
+            },
+            "75+": {
+              "faces": 0,
+              "identity_cos": {
+                "n": 0,
+                "mean": null,
+                "median": null,
+                "p05": null,
+                "min": null
+              },
+              "ssim": {
+                "n": 0,
+                "mean": null,
+                "median": null,
+                "p05": null,
+                "min": null
+              },
+              "identity_delta_vs_reference": {
+                "n": 0,
+                "mean": null,
+                "median": null,
+                "p05": null,
+                "min": null
+              }
+            }
+          },
+          "identity_cos": {
+            "n": 412,
+            "mean": 0.6996644487105405,
+            "median": 0.7071985935616616,
+            "p05": 0.6201043732297635,
+            "min": 0.5264206471689784
+          },
+          "identity_cos_reference": {
+            "n": 412,
+            "mean": 0.6474692076423781,
+            "median": 0.6476301472952914,
+            "p05": 0.5869622697484905,
+            "min": 0.5050034569179582
+          },
+          "identity_cos_plate_control": {
+            "n": 412,
+            "mean": -0.04395285073675147,
+            "median": -0.03755984552786289,
+            "p05": -0.14098985439474773,
+            "min": -0.16526741948460286
+          },
+          "identity_delta_vs_reference": {
+            "n": 412,
+            "mean": 0.05219524106816252,
+            "median": 0.05517962735302584,
+            "p05": -0.011112801150036055,
+            "min": -0.07746938355330524
+          },
+          "ssim": {
+            "n": 412,
+            "mean": 0.9011426516264317,
+            "median": 0.9026924428604577,
+            "p05": 0.874379242162419,
+            "min": 0.8407174574119917
+          },
+          "psnr_db": {
+            "n": 412,
+            "mean": 30.667683856545118,
+            "median": 30.87974470885773,
+            "p05": 28.475339867735126,
+            "min": 25.055443886591537
+          },
+          "plate_vs_reference_ssim_control": {
+            "n": 412,
+            "mean": 0.8944266180376058,
+            "median": 0.896441484154805,
+            "p05": 0.8743394136756811,
+            "min": 0.8448393652520162
+          },
+          "detection_recall": {
+            "matched": 412,
+            "reference_faces": 412,
+            "recall": 1.0
+          },
+          "source_within_cosine_control": {
+            "harjot": {
+              "n": 10,
+              "mean": 0.6659066879605919,
+              "median": 0.6454290741523523,
+              "p05": 0.5645084011442497,
+              "min": 0.5566791140253347
+            },
+            "ashna": {
+              "n": 10,
+              "mean": 0.6412160955146754,
+              "median": 0.5572155253462221,
+              "p05": 0.47636753397972703,
+              "min": 0.4625724834828884
+            }
+          },
+          "per_face_csv": "G:\\pinokio\\api\\roop-ultimate\\app\\output\\quality_full\\scores\\inswapper_128__d4.csv",
+          "tracks": {
+            "reference": 2,
+            "candidate": 2
+          },
+          "swap_audit": {
+            "reference": {
+              "faces seen": 508,
+              "swapped (identity lock)": 508,
+              "of those, partly behind an object (masked, still swapped)": 308,
+              "frames with no face detected at all": 118,
+              "frames considered": 372
+            },
+            "candidate": {
+              "faces seen": 508,
+              "swapped (identity lock)": 508,
+              "of those, partly behind an object (masked, still swapped)": 315,
+              "frames with no face detected at all": 118,
+              "frames considered": 372
+            }
+          },
+          "render": {
+            "fps": 9.88,
+            "fps_note": "lossless x264 encode (CPU-bound): not model or render speed",
+            "output_sha256": "37b2e75aacf7a75b63d2e513d3f3653e0dd146df910d413bf980606b5ffd2fae",
+            "failed_frames": 0
+          }
+        },
+        "d6": {
+          "faces_scored": 600,
+          "eye_drift_px": {
+            "n": 600,
+            "mean": 13.023211666666667,
+            "median": 11.3015,
+            "p05": 6.487550000000001,
+            "min": 2.577
+          },
+          "mouth_drift_px": {
+            "n": 600,
+            "mean": 17.403213333333333,
+            "median": 16.889499999999998,
+            "p05": 8.9038,
+            "min": 4.639
+          },
+          "eye_drift_reference_px_control": {
+            "n": 600,
+            "mean": 13.119219999999999,
+            "median": 12.263,
+            "p05": 7.04435,
+            "min": 3.173
+          },
+          "mouth_drift_reference_px_control": {
+            "n": 600,
+            "mean": 22.368761666666668,
+            "median": 21.8245,
+            "p05": 7.4924,
+            "min": 3.57
+          },
+          "output_face_redetected": {
+            "redetected": 600,
+            "of": 600
+          },
+          "skin_detail": {
+            "n": 600,
+            "mean": 5.030276736270001,
+            "median": 4.9151191781893235,
+            "p05": 4.682380709494928,
+            "min": 4.51696103651891
+          },
+          "skin_detail_ratio_vs_reference": {
+            "n": 600,
+            "mean": 1.0131032097474981,
+            "median": 1.0116939678821635,
+            "p05": 0.9901904895314221,
+            "min": 0.9761585857575885
+          },
+          "identity_jitter": {
+            "n": 2,
+            "mean": 0.008153779048820812,
+            "median": 0.008153779048820812,
+            "p05": 0.007687503309881148,
+            "min": 0.0076356948944434075
+          },
+          "by_yaw": {
+            "0-20": {
+              "faces": 555,
+              "identity_cos": {
+                "n": 555,
+                "mean": 0.736156897595201,
+                "median": 0.7345541339647018,
+                "p05": 0.6727365824584493,
+                "min": 0.634652627357627
+              },
+              "ssim": {
+                "n": 555,
+                "mean": 0.9302982628533554,
+                "median": 0.932621950345896,
+                "p05": 0.911450279083041,
+                "min": 0.8898651544692716
+              },
+              "identity_delta_vs_reference": {
+                "n": 555,
+                "mean": 0.060466074515742006,
+                "median": 0.07034160104189757,
+                "p05": 0.004635860815485782,
+                "min": -0.013012467949359618
+              }
+            },
+            "20-45": {
+              "faces": 45,
+              "identity_cos": {
+                "n": 45,
+                "mean": 0.7143224783271348,
+                "median": 0.7134550830381666,
+                "p05": 0.7021309115422706,
+                "min": 0.6956544074899609
+              },
+              "ssim": {
+                "n": 45,
+                "mean": 0.9219147885848091,
+                "median": 0.9221148728979442,
+                "p05": 0.9174072369350771,
+                "min": 0.9165714345968242
+              },
+              "identity_delta_vs_reference": {
+                "n": 45,
+                "mean": 0.010131984467480998,
+                "median": 0.006513120808505524,
+                "p05": -0.0053363713202559055,
+                "min": -0.010285066971213674
+              }
+            },
+            "45-75": {
+              "faces": 0,
+              "identity_cos": {
+                "n": 0,
+                "mean": null,
+                "median": null,
+                "p05": null,
+                "min": null
+              },
+              "ssim": {
+                "n": 0,
+                "mean": null,
+                "median": null,
+                "p05": null,
+                "min": null
+              },
+              "identity_delta_vs_reference": {
+                "n": 0,
+                "mean": null,
+                "median": null,
+                "p05": null,
+                "min": null
+              }
+            },
+            "75+": {
+              "faces": 0,
+              "identity_cos": {
+                "n": 0,
+                "mean": null,
+                "median": null,
+                "p05": null,
+                "min": null
+              },
+              "ssim": {
+                "n": 0,
+                "mean": null,
+                "median": null,
+                "p05": null,
+                "min": null
+              },
+              "identity_delta_vs_reference": {
+                "n": 0,
+                "mean": null,
+                "median": null,
+                "p05": null,
+                "min": null
+              }
+            }
+          },
+          "identity_cos": {
+            "n": 600,
+            "mean": 0.734519316150096,
+            "median": 0.7317922207938112,
+            "p05": 0.6731653205904536,
+            "min": 0.634652627357627
+          },
+          "identity_cos_reference": {
+            "n": 600,
+            "mean": 0.6778282983879736,
+            "median": 0.6846337757593621,
+            "p05": 0.6188819061154784,
+            "min": 0.5582639534323348
+          },
+          "identity_cos_plate_control": {
+            "n": 600,
+            "mean": -0.01062751231735154,
+            "median": -0.007256145835732826,
+            "p05": -0.1275189953595124,
+            "min": -0.14161661126333847
+          },
+          "identity_delta_vs_reference": {
+            "n": 600,
+            "mean": 0.05669101776212243,
+            "median": 0.0643064724781422,
+            "p05": 0.0029715221554981355,
+            "min": -0.013012467949359618
+          },
+          "ssim": {
+            "n": 600,
+            "mean": 0.9296695022832144,
+            "median": 0.9302558184886621,
+            "p05": 0.911819169606866,
+            "min": 0.8898651544692716
+          },
+          "psnr_db": {
+            "n": 600,
+            "mean": 28.081479257100593,
+            "median": 28.028901333564363,
+            "p05": 26.58131012763965,
+            "min": 25.991329797516602
+          },
+          "plate_vs_reference_ssim_control": {
+            "n": 600,
+            "mean": 0.9167104650872621,
+            "median": 0.9242294294689781,
+            "p05": 0.8777650663236175,
+            "min": 0.8578598148610379
+          },
+          "detection_recall": {
+            "matched": 600,
+            "reference_faces": 600,
+            "recall": 1.0
+          },
+          "source_within_cosine_control": {
+            "harjot": {
+              "n": 10,
+              "mean": 0.6659066879605919,
+              "median": 0.6454290741523523,
+              "p05": 0.5645084011442497,
+              "min": 0.5566791140253347
+            },
+            "mahek": {
+              "n": 10,
+              "mean": 0.701488126969381,
+              "median": 0.6420877198156798,
+              "p05": 0.563040293947799,
+              "min": 0.5444400907976947
+            }
+          },
+          "per_face_csv": "G:\\pinokio\\api\\roop-ultimate\\app\\output\\quality_full\\scores\\inswapper_128__d6.csv",
+          "tracks": {
+            "reference": 2,
+            "candidate": 2
+          },
+          "swap_audit": {
+            "reference": {
+              "faces seen": 888,
+              "swapped (identity lock)": 888,
+              "of those, partly behind an object (masked, still swapped)": 78
+            },
+            "candidate": {
+              "faces seen": 888,
+              "swapped (identity lock)": 888,
+              "of those, partly behind an object (masked, still swapped)": 73
+            }
+          },
+          "render": {
+            "fps": 0.74,
+            "fps_note": "lossless x264 encode (CPU-bound): not model or render speed",
+            "output_sha256": "eb4fd5ac043d983bb57090a52d90b3f6bac85bf7e2d68c196f2e2e00c9697520",
+            "failed_frames": 0
+          }
+        },
+        "Love": {
+          "faces_scored": 95,
+          "eye_drift_px": {
+            "n": 93,
+            "mean": 3.8745806451612905,
+            "median": 1.53,
+            "p05": 0.8593999999999999,
+            "min": 0.709
+          },
+          "mouth_drift_px": {
+            "n": 93,
+            "mean": 4.42152688172043,
+            "median": 2.264,
+            "p05": 1.2442000000000002,
+            "min": 1.062
+          },
+          "eye_drift_reference_px_control": {
+            "n": 95,
+            "mean": 4.320378947368422,
+            "median": 1.836,
+            "p05": 0.8458,
+            "min": 0.577
+          },
+          "mouth_drift_reference_px_control": {
+            "n": 95,
+            "mean": 4.201957894736842,
+            "median": 2.659,
+            "p05": 1.534,
+            "min": 0.931
+          },
+          "output_face_redetected": {
+            "redetected": 93,
+            "of": 95
+          },
+          "skin_detail": {
+            "n": 95,
+            "mean": 65.71342823909326,
+            "median": 68.57563369228386,
+            "p05": 40.76411876711915,
+            "min": 6.579030195327733
+          },
+          "skin_detail_ratio_vs_reference": {
+            "n": 95,
+            "mean": 1.005160092508142,
+            "median": 0.9518987674144471,
+            "p05": 0.8927396853067991,
+            "min": 0.14166005551609243
+          },
+          "identity_jitter": {
+            "n": 1,
+            "mean": 0.02766084889092589,
+            "median": 0.02766084889092589,
+            "p05": 0.02766084889092589,
+            "min": 0.02766084889092589
+          },
+          "by_yaw": {
+            "0-20": {
+              "faces": 2,
+              "identity_cos": {
+                "n": 2,
+                "mean": 0.5367536530193127,
+                "median": 0.5367536530193127,
+                "p05": 0.5038170584834815,
+                "min": 0.5001574368683891
+              },
+              "ssim": {
+                "n": 2,
+                "mean": 0.7818194084507238,
+                "median": 0.7818194084507238,
+                "p05": 0.7681030625051782,
+                "min": 0.7665790240667842
+              },
+              "identity_delta_vs_reference": {
+                "n": 2,
+                "mean": -0.12300360304188174,
+                "median": -0.12300360304188174,
+                "p05": -0.172154529255715,
+                "min": -0.17761574327947427
+              }
+            },
+            "20-45": {
+              "faces": 31,
+              "identity_cos": {
+                "n": 31,
+                "mean": 0.5558424584466637,
+                "median": 0.595628279342439,
+                "p05": 0.24153176582762012,
+                "min": 0.13048756933294206
+              },
+              "ssim": {
+                "n": 31,
+                "mean": 0.9000144467645985,
+                "median": 0.8973853513655737,
+                "p05": 0.888627695663763,
+                "min": 0.8833625932595869
+              },
+              "identity_delta_vs_reference": {
+                "n": 31,
+                "mean": -0.045991644759157756,
+                "median": -0.030825086936216772,
+                "p05": -0.25099043605673005,
+                "min": -0.2782436555308204
+              }
+            },
+            "45-75": {
+              "faces": 62,
+              "identity_cos": {
+                "n": 62,
+                "mean": 0.6226538622552802,
+                "median": 0.6453678861677961,
+                "p05": 0.43345485135896844,
+                "min": -0.07114641455878996
+              },
+              "ssim": {
+                "n": 62,
+                "mean": 0.8963822685938564,
+                "median": 0.8952600509666838,
+                "p05": 0.883817731647145,
+                "min": 0.8638583994938895
+              },
+              "identity_delta_vs_reference": {
+                "n": 62,
+                "mean": -0.026304548306655278,
+                "median": -0.012807801765116755,
+                "p05": -0.09272217133415292,
+                "min": -0.5186877551282099
+              }
+            },
+            "75+": {
+              "faces": 0,
+              "identity_cos": {
+                "n": 0,
+                "mean": null,
+                "median": null,
+                "p05": null,
+                "min": null
+              },
+              "ssim": {
+                "n": 0,
+                "mean": null,
+                "median": null,
+                "p05": null,
+                "min": null
+              },
+              "identity_delta_vs_reference": {
+                "n": 0,
+                "mean": null,
+                "median": null,
+                "p05": null,
+                "min": null
+              }
+            }
+          },
+          "identity_cos": {
+            "n": 95,
+            "mean": 0.5990438208180271,
+            "median": 0.6357419330022085,
+            "p05": 0.3927215562805204,
+            "min": -0.07114641455878996
+          },
+          "identity_cos_reference": {
+            "n": 95,
+            "mean": 0.6338083491193985,
+            "median": 0.6573726237773855,
+            "p05": 0.4624566174501562,
+            "min": 0.3049771274369691
+          },
+          "identity_cos_plate_control": {
+            "n": 95,
+            "mean": -0.02815976200196102,
+            "median": -0.0420272831676988,
+            "p05": -0.07221462515363809,
+            "min": -0.08521431852375091
+          },
+          "identity_delta_vs_reference": {
+            "n": 95,
+            "mean": -0.03476452830137138,
+            "median": -0.018978828208516485,
+            "p05": -0.19395601750650257,
+            "min": -0.5186877551282099
+          },
+          "ssim": {
+            "n": 95,
+            "mean": 0.8951556559939272,
+            "median": 0.895924174126245,
+            "p05": 0.8830186514461907,
+            "min": 0.7665790240667842
+          },
+          "psnr_db": {
+            "n": 95,
+            "mean": 33.5816930695046,
+            "median": 33.774699761341004,
+            "p05": 31.80886470106502,
+            "min": 27.30968116149672
+          },
+          "plate_vs_reference_ssim_control": {
+            "n": 95,
+            "mean": 0.8889203409783978,
+            "median": 0.8827351564314881,
+            "p05": 0.8713875494065719,
+            "min": 0.8244331067548072
+          },
+          "detection_recall": {
+            "matched": 283,
+            "reference_faces": 283,
+            "recall": 1.0
+          },
+          "source_within_cosine_control": {
+            "harjot": {
+              "n": 10,
+              "mean": 0.6659066879605919,
+              "median": 0.6454290741523523,
+              "p05": 0.5645084011442497,
+              "min": 0.5566791140253347
+            }
+          },
+          "per_face_csv": "G:\\pinokio\\api\\roop-ultimate\\app\\output\\quality_full\\scores\\inswapper_128__Love.csv",
+          "tracks": {
+            "reference": 9,
+            "candidate": 8
+          },
+          "swap_audit": {
+            "reference": {
+              "faces seen": 425,
+              "of those, gap-filled": 68,
+              "of those, crop shared with the face beside it": 66,
+              "no track entry matched": 224,
+              "fallback missed (over match threshold)": 166,
+              "swapped (identity lock)": 165,
+              "of those, partly behind an object (masked, still swapped)": 58,
+              "of those SWAPPED, gap-filled": 10,
+              "fallback missed (this person's source already used this frame)": 58,
+              "veto: source used twice in frame": 36,
+              "refused: crop shared with the face beside it": 36,
+              "frames with no face detected at all": 51,
+              "frames considered": 372
+            },
+            "candidate": {
+              "faces seen": 411,
+              "of those, crop shared with the face beside it": 67,
+              "of those, gap-filled": 51,
+              "no track entry matched": 219,
+              "fallback missed (over match threshold)": 159,
+              "swapped (identity lock)": 155,
+              "fallback missed (this person's source already used this frame)": 58,
+              "veto: source used twice in frame": 37,
+              "refused: crop shared with the face beside it": 37,
+              "swapped (per-frame match)": 2,
+              "of those, partly behind an object (masked, still swapped)": 48,
+              "frames with no face detected at all": 60,
+              "frames considered": 372
+            }
+          },
+          "render": {
+            "fps": 14.99,
+            "fps_note": "lossless x264 encode (CPU-bound): not model or render speed",
+            "output_sha256": "1f013da582e86c5196af878d639b8509df0c7350a2006ff7ba095c6b03ea361a",
+            "failed_frames": 0
+          }
+        },
+        "s7": {
+          "faces_scored": 218,
+          "eye_drift_px": {
+            "n": 218,
+            "mean": 5.77411009174312,
+            "median": 4.026,
+            "p05": 1.6992000000000003,
+            "min": 0.785
+          },
+          "mouth_drift_px": {
+            "n": 218,
+            "mean": 6.870784403669726,
+            "median": 5.7145,
+            "p05": 3.2326,
+            "min": 2.605
+          },
+          "eye_drift_reference_px_control": {
+            "n": 218,
+            "mean": 9.543844036697248,
+            "median": 4.38,
+            "p05": 1.7389000000000001,
+            "min": 0.903
+          },
+          "mouth_drift_reference_px_control": {
+            "n": 218,
+            "mean": 8.160555045871561,
+            "median": 4.3294999999999995,
+            "p05": 2.00965,
+            "min": 1.159
+          },
+          "output_face_redetected": {
+            "redetected": 218,
+            "of": 218
+          },
+          "skin_detail": {
+            "n": 218,
+            "mean": 163.85858547953097,
+            "median": 139.27377523653655,
+            "p05": 80.81567413945584,
+            "min": 73.68509311378831
+          },
+          "skin_detail_ratio_vs_reference": {
+            "n": 218,
+            "mean": 1.020391506993901,
+            "median": 1.019753949706524,
+            "p05": 0.940376614573,
+            "min": 0.8424580233854689
+          },
+          "identity_jitter": {
+            "n": 1,
+            "mean": 0.014527000638568969,
+            "median": 0.014527000638568969,
+            "p05": 0.014527000638568969,
+            "min": 0.014527000638568969
+          },
+          "by_yaw": {
+            "0-20": {
+              "faces": 27,
+              "identity_cos": {
+                "n": 27,
+                "mean": 0.8079826527019913,
+                "median": 0.8067821021960949,
+                "p05": 0.7892584001542233,
+                "min": 0.7851029922202876
+              },
+              "ssim": {
+                "n": 27,
+                "mean": 0.8995410690245911,
+                "median": 0.8992912780252996,
+                "p05": 0.887361048803311,
+                "min": 0.8834350214058877
+              },
+              "identity_delta_vs_reference": {
+                "n": 27,
+                "mean": 0.02484504450217671,
+                "median": 0.02121618359752353,
+                "p05": 0.005445170824268419,
+                "min": -0.001786769675683475
+              }
+            },
+            "20-45": {
+              "faces": 42,
+              "identity_cos": {
+                "n": 42,
+                "mean": 0.7022835491478224,
+                "median": 0.8062358192454998,
+                "p05": 0.09082271486335784,
+                "min": 0.038230081609804546
+              },
+              "ssim": {
+                "n": 42,
+                "mean": 0.8886373449486941,
+                "median": 0.8927072989532938,
+                "p05": 0.8427577070585915,
+                "min": 0.8269857696433501
+              },
+              "identity_delta_vs_reference": {
+                "n": 42,
+                "mean": -0.027664709085767063,
+                "median": 0.04623780474498901,
+                "p05": -0.5696264232775401,
+                "min": -0.6124667833025254
+              }
+            },
+            "45-75": {
+              "faces": 64,
+              "identity_cos": {
+                "n": 64,
+                "mean": 0.6456732495059616,
+                "median": 0.6907871554106999,
+                "p05": 0.08440248948848318,
+                "min": 0.05479264551272583
+              },
+              "ssim": {
+                "n": 64,
+                "mean": 0.8875480322514864,
+                "median": 0.8833311727617843,
+                "p05": 0.8653894657669987,
+                "min": 0.8305740312854564
+              },
+              "identity_delta_vs_reference": {
+                "n": 64,
+                "mean": -0.026059845283542812,
+                "median": 0.014726877797035132,
+                "p05": -0.33709236683065347,
+                "min": -0.6170737961264051
+              }
+            },
+            "75+": {
+              "faces": 85,
+              "identity_cos": {
+                "n": 85,
+                "mean": 0.4484838722391298,
+                "median": 0.45731254954766615,
+                "p05": 0.25824406247143133,
+                "min": 0.02285371594799216
+              },
+              "ssim": {
+                "n": 85,
+                "mean": 0.8393684970211251,
+                "median": 0.8315451445882923,
+                "p05": 0.8034839485796148,
+                "min": 0.7709895969078842
+              },
+              "identity_delta_vs_reference": {
+                "n": 85,
+                "mean": -0.0699743583140342,
+                "median": -0.04092811617857417,
+                "p05": -0.27926448556437355,
+                "min": -0.34127977522500297
+              }
+            }
+          },
+          "identity_cos": {
+            "n": 218,
+            "mean": 0.5997965953938985,
+            "median": 0.6666657772875366,
+            "p05": 0.10819462483514193,
+            "min": 0.02285371594799216
+          },
+          "identity_cos_reference": {
+            "n": 218,
+            "mean": 0.6369835317924448,
+            "median": 0.6725671995323073,
+            "p05": 0.3808475223134923,
+            "min": 0.06467378042037202
+          },
+          "identity_cos_plate_control": {
+            "n": 218,
+            "mean": 0.06425553511289345,
+            "median": 0.06168187429146017,
+            "p05": -0.0027804721354393346,
+            "min": -0.027460119974321667
+          },
+          "identity_delta_vs_reference": {
+            "n": 218,
+            "mean": -0.03718693639854629,
+            "median": 0.00192450737692762,
+            "p05": -0.33193930423488793,
+            "min": -0.6170737961264051
+          },
+          "ssim": {
+            "n": 218,
+            "mean": 0.8704576773504582,
+            "median": 0.8778266994947967,
+            "p05": 0.8128075172368362,
+            "min": 0.7709895969078842
+          },
+          "psnr_db": {
+            "n": 218,
+            "mean": 28.75274784480631,
+            "median": 28.872860640755928,
+            "p05": 25.227304229627066,
+            "min": 24.69201481838461
+          },
+          "plate_vs_reference_ssim_control": {
+            "n": 218,
+            "mean": 0.8345430851049828,
+            "median": 0.8361977051104628,
+            "p05": 0.7786606488697597,
+            "min": 0.7587721119642186
+          },
+          "detection_recall": {
+            "matched": 218,
+            "reference_faces": 218,
+            "recall": 1.0
+          },
+          "source_within_cosine_control": {
+            "harjot": {
+              "n": 10,
+              "mean": 0.6659066879605919,
+              "median": 0.6454290741523523,
+              "p05": 0.5645084011442497,
+              "min": 0.5566791140253347
+            }
+          },
+          "per_face_csv": "G:\\pinokio\\api\\roop-ultimate\\app\\output\\quality_full\\scores\\inswapper_128__s7.csv",
+          "tracks": {
+            "reference": 1,
+            "candidate": 1
+          },
+          "swap_audit": {
+            "reference": {
+              "faces seen": 324,
+              "of those, gap-filled": 50,
+              "swapped (identity lock)": 324,
+              "of those, partly behind an object (masked, still swapped)": 151,
+              "of those SWAPPED, gap-filled": 50,
+              "frames with no face detected at all": 48,
+              "frames considered": 372
+            },
+            "candidate": {
+              "faces seen": 324,
+              "of those, gap-filled": 50,
+              "swapped (identity lock)": 324,
+              "of those, partly behind an object (masked, still swapped)": 155,
+              "of those SWAPPED, gap-filled": 50,
+              "frames with no face detected at all": 48,
+              "frames considered": 372
+            }
+          },
+          "render": {
+            "fps": 12.34,
+            "fps_note": "lossless x264 encode (CPU-bound): not model or render speed",
+            "output_sha256": "5f58c4c5789e85c1f2addc59f29c1b3e4d54ee1ee6fd148a3148aa245f549180",
+            "failed_frames": 0
+          }
+        }
+      },
+      "swapper_files": [
+        {
+          "file": "inswapper_128.onnx",
+          "sha256": "e4a3f08c753cb72d04e10aa0f7dbe3deebbf39567d4ead6dce08e98aa49e16af"
+        }
+      ],
+      "model_key": "inswapper_128.onnx=e4a3f08c753cb72d",
+      "variant": {
+        "swap_model": "inswapper",
+        "trt_precision": "mixed",
+        "env": {}
+      }
+    },
+    "realswap": {
+      "per_clip": {
+        "d1": {
+          "faces_scored": 491,
+          "eye_drift_px": {
+            "n": 421,
+            "mean": 16.29458432304038,
+            "median": 12.088,
+            "p05": 6.29,
+            "min": 1.817
+          },
+          "mouth_drift_px": {
+            "n": 421,
+            "mean": 22.40322090261283,
+            "median": 13.973,
+            "p05": 3.546,
+            "min": 1.117
+          },
+          "eye_drift_reference_px_control": {
+            "n": 428,
+            "mean": 16.542955607476635,
+            "median": 12.104,
+            "p05": 6.35005,
+            "min": 1.767
+          },
+          "mouth_drift_reference_px_control": {
+            "n": 428,
+            "mean": 22.432750000000002,
+            "median": 14.06,
+            "p05": 3.54935,
+            "min": 1.371
+          },
+          "output_face_redetected": {
+            "redetected": 421,
+            "of": 491
+          },
+          "skin_detail": {
+            "n": 491,
+            "mean": 56.431925844569435,
+            "median": 61.174380870323766,
+            "p05": 33.22036650907127,
+            "min": 15.338554613880873
+          },
+          "skin_detail_ratio_vs_reference": {
+            "n": 491,
+            "mean": 0.9918745501643857,
+            "median": 0.9925561590301656,
+            "p05": 0.9491745878046164,
+            "min": 0.36527583643300066
+          },
+          "identity_jitter": {
+            "n": 2,
+            "mean": 0.022334900363810046,
+            "median": 0.022334900363810046,
+            "p05": 0.00902753746202223,
+            "min": 0.007548941584045806
+          },
+          "by_yaw": {
+            "0-20": {
+              "faces": 0,
+              "identity_cos": {
+                "n": 0,
+                "mean": null,
+                "median": null,
+                "p05": null,
+                "min": null
+              },
+              "ssim": {
+                "n": 0,
+                "mean": null,
+                "median": null,
+                "p05": null,
+                "min": null
+              },
+              "identity_delta_vs_reference": {
+                "n": 0,
+                "mean": null,
+                "median": null,
+                "p05": null,
+                "min": null
+              }
+            },
+            "20-45": {
+              "faces": 0,
+              "identity_cos": {
+                "n": 0,
+                "mean": null,
+                "median": null,
+                "p05": null,
+                "min": null
+              },
+              "ssim": {
+                "n": 0,
+                "mean": null,
+                "median": null,
+                "p05": null,
+                "min": null
+              },
+              "identity_delta_vs_reference": {
+                "n": 0,
+                "mean": null,
+                "median": null,
+                "p05": null,
+                "min": null
+              }
+            },
+            "45-75": {
+              "faces": 182,
+              "identity_cos": {
+                "n": 182,
+                "mean": 0.7369625364979213,
+                "median": 0.7439071085748585,
+                "p05": 0.7203294703310616,
+                "min": 0.03240340227127464
+              },
+              "ssim": {
+                "n": 182,
+                "mean": 0.952297679521907,
+                "median": 0.9573238695350142,
+                "p05": 0.9345834995380125,
+                "min": 0.7917917190304239
+              },
+              "identity_delta_vs_reference": {
+                "n": 182,
+                "mean": 0.001966415280005931,
+                "median": 0.0008113889666247487,
+                "p05": -0.011801377174547212,
+                "min": -0.022862721445363388
+              }
+            },
+            "75+": {
+              "faces": 309,
+              "identity_cos": {
+                "n": 309,
+                "mean": 0.5502661709332132,
+                "median": 0.5331281793892853,
+                "p05": 0.05730519679174393,
+                "min": -0.050406133655911844
+              },
+              "ssim": {
+                "n": 309,
+                "mean": 0.9436794802697391,
+                "median": 0.951560820430716,
+                "p05": 0.8999666370211715,
+                "min": 0.6249500380360036
+              },
+              "identity_delta_vs_reference": {
+                "n": 309,
+                "mean": -0.002937945177328045,
+                "median": -0.0008450465450686728,
+                "p05": -0.02780786453675761,
+                "min": -0.23767358520531934
+              }
+            }
+          },
+          "identity_cos": {
+            "n": 491,
+            "mean": 0.6194693044011906,
+            "median": 0.730582388113182,
+            "p05": 0.0954759982512711,
+            "min": -0.050406133655911844
+          },
+          "identity_cos_reference": {
+            "n": 491,
+            "mean": 0.620589339999629,
+            "median": 0.7296815789486953,
+            "p05": 0.09786048370818418,
+            "min": -0.02625305271284674
+          },
+          "identity_cos_plate_control": {
+            "n": 491,
+            "mean": 0.08528807317247972,
+            "median": 0.13341180689339327,
+            "p05": -0.045062480639166555,
+            "min": -0.06384473967681645
+          },
+          "identity_delta_vs_reference": {
+            "n": 491,
+            "mean": -0.0011200355984384654,
+            "median": -0.00024807091089429356,
+            "p05": -0.020361012020920527,
+            "min": -0.23767358520531934
+          },
+          "ssim": {
+            "n": 491,
+            "mean": 0.946874006265451,
+            "median": 0.9544790117676187,
+            "p05": 0.9030130044694427,
+            "min": 0.6249500380360036
+          },
+          "psnr_db": {
+            "n": 491,
+            "mean": 39.78207568048591,
+            "median": 39.952529183181625,
+            "p05": 31.79159122467921,
+            "min": 17.381500134526995
+          },
+          "plate_vs_reference_ssim_control": {
+            "n": 491,
+            "mean": 0.8561560509763573,
+            "median": 0.8589669871602487,
+            "p05": 0.8265022296302413,
+            "min": 0.6566007733213309
+          },
+          "detection_recall": {
+            "matched": 600,
+            "reference_faces": 600,
+            "recall": 1.0
+          },
+          "source_within_cosine_control": {
+            "harjot": {
+              "n": 10,
+              "mean": 0.6659066879605919,
+              "median": 0.6454290741523523,
+              "p05": 0.5645084011442497,
+              "min": 0.5566791140253347
+            },
+            "shambhavi": {
+              "n": 10,
+              "mean": 0.6968592172860941,
+              "median": 0.6465367434038175,
+              "p05": 0.6080300629356706,
+              "min": 0.6035694940033474
+            }
+          },
+          "per_face_csv": "G:\\pinokio\\api\\roop-ultimate\\app\\output\\quality_full\\scores\\realswap__d1.csv",
+          "tracks": {
+            "reference": 3,
+            "candidate": 3
+          },
+          "swap_audit": {
+            "reference": {
+              "faces seen": 748,
+              "of those, crop shared with the face beside it": 22,
+              "swapped (identity lock)": 672,
+              "of those, partly behind an object (masked, still swapped)": 671,
+              "veto: far from assigned person": 72,
+              "refused by the track veto, before any threshold": 72,
+              "discarded: the swap put the face somewhere it was not": 16,
+              "veto: source used twice in frame": 4,
+              "refused: crop shared with the face beside it": 4
+            },
+            "candidate": {
+              "faces seen": 748,
+              "of those, crop shared with the face beside it": 23,
+              "swapped (identity lock)": 677,
+              "of those, partly behind an object (masked, still swapped)": 677,
+              "veto: far from assigned person": 67,
+              "refused by the track veto, before any threshold": 67,
+              "discarded: the swap put the face somewhere it was not": 17,
+              "veto: source used twice in frame": 4,
+              "refused: crop shared with the face beside it": 4
+            }
+          },
+          "render": {
+            "fps": 6.47,
+            "fps_note": "lossless x264 encode (CPU-bound): not model or render speed",
+            "output_sha256": "c3c94a2ac4f02f6735d543a23edd4fee30ecaa7eab6959add2743bdb0cccbcb2",
+            "failed_frames": 0
+          }
+        },
+        "d4": {
+          "faces_scored": 412,
+          "eye_drift_px": {
+            "n": 412,
+            "mean": 2.2532912621359222,
+            "median": 2.2945,
+            "p05": 0.97415,
+            "min": 0.404
+          },
+          "mouth_drift_px": {
+            "n": 412,
+            "mean": 6.682121359223301,
+            "median": 6.8505,
+            "p05": 2.6176500000000003,
+            "min": 0.829
+          },
+          "eye_drift_reference_px_control": {
+            "n": 412,
+            "mean": 2.042514563106796,
+            "median": 1.996,
+            "p05": 0.7894,
+            "min": 0.218
+          },
+          "mouth_drift_reference_px_control": {
+            "n": 412,
+            "mean": 6.568373786407766,
+            "median": 6.7725,
+            "p05": 2.6871,
+            "min": 0.801
+          },
+          "output_face_redetected": {
+            "redetected": 412,
+            "of": 412
+          },
+          "skin_detail": {
+            "n": 412,
+            "mean": 63.58379673354757,
+            "median": 60.80345275940772,
+            "p05": 47.90979359045429,
+            "min": 40.071137673292554
+          },
+          "skin_detail_ratio_vs_reference": {
+            "n": 412,
+            "mean": 0.993107915800611,
+            "median": 0.9968648824561332,
+            "p05": 0.9521165572325612,
+            "min": 0.7456231737557916
+          },
+          "identity_jitter": {
+            "n": 2,
+            "mean": 0.013867818119924807,
+            "median": 0.013867818119924807,
+            "p05": 0.009741193993336289,
+            "min": 0.00928268020149312
+          },
+          "by_yaw": {
+            "0-20": {
+              "faces": 307,
+              "identity_cos": {
+                "n": 307,
+                "mean": 0.64114194936818,
+                "median": 0.6380962527291808,
+                "p05": 0.5707973342410969,
+                "min": 0.49710808733130174
+              },
+              "ssim": {
+                "n": 307,
+                "mean": 0.9539942710957499,
+                "median": 0.9546178480708604,
+                "p05": 0.944994964052374,
+                "min": 0.9182001164163927
+              },
+              "identity_delta_vs_reference": {
+                "n": 307,
+                "mean": -0.013622707898666975,
+                "median": -0.011183221418091915,
+                "p05": -0.05397518019480294,
+                "min": -0.09104936093649252
+              }
+            },
+            "20-45": {
+              "faces": 105,
+              "identity_cos": {
+                "n": 105,
+                "mean": 0.638905115418411,
+                "median": 0.6550941604488072,
+                "p05": 0.5304806375539236,
+                "min": 0.509155422493292
+              },
+              "ssim": {
+                "n": 105,
+                "mean": 0.9507380541191796,
+                "median": 0.9510853251359519,
+                "p05": 0.941231848354598,
+                "min": 0.9361833518951544
+              },
+              "identity_delta_vs_reference": {
+                "n": 105,
+                "mean": 0.01276641286852813,
+                "median": 0.017919919177657895,
+                "p05": -0.02977286242900339,
+                "min": -0.05068399322229711
+              }
+            },
+            "45-75": {
+              "faces": 0,
+              "identity_cos": {
+                "n": 0,
+                "mean": null,
+                "median": null,
+                "p05": null,
+                "min": null
+              },
+              "ssim": {
+                "n": 0,
+                "mean": null,
+                "median": null,
+                "p05": null,
+                "min": null
+              },
+              "identity_delta_vs_reference": {
+                "n": 0,
+                "mean": null,
+                "median": null,
+                "p05": null,
+                "min": null
+              }
+            },
+            "75+": {
+              "faces": 0,
+              "identity_cos": {
+                "n": 0,
+                "mean": null,
+                "median": null,
+                "p05": null,
+                "min": null
+              },
+              "ssim": {
+                "n": 0,
+                "mean": null,
+                "median": null,
+                "p05": null,
+                "min": null
+              },
+              "identity_delta_vs_reference": {
+                "n": 0,
+                "mean": null,
+                "median": null,
+                "p05": null,
+                "min": null
+              }
+            }
+          },
+          "identity_cos": {
+            "n": 412,
+            "mean": 0.640571882463506,
+            "median": 0.6464731195270105,
+            "p05": 0.5646860314796668,
+            "min": 0.49710808733130174
+          },
+          "identity_cos_reference": {
+            "n": 412,
+            "mean": 0.6474692076423781,
+            "median": 0.6476301472952914,
+            "p05": 0.5869622697484905,
+            "min": 0.5050034569179582
+          },
+          "identity_cos_plate_control": {
+            "n": 412,
+            "mean": -0.04395285073675147,
+            "median": -0.03755984552786289,
+            "p05": -0.14098985439474773,
+            "min": -0.16526741948460286
+          },
+          "identity_delta_vs_reference": {
+            "n": 412,
+            "mean": -0.006897325178872106,
+            "median": -0.002987206483553162,
+            "p05": -0.04975095463666177,
+            "min": -0.09104936093649252
+          },
+          "ssim": {
+            "n": 412,
+            "mean": 0.9531644099730802,
+            "median": 0.9539571130550402,
+            "p05": 0.9430104987496347,
+            "min": 0.9182001164163927
+          },
+          "psnr_db": {
+            "n": 412,
+            "mean": 38.661475424551476,
+            "median": 38.878903312163416,
+            "p05": 36.23895825344113,
+            "min": 33.39211603846711
+          },
+          "plate_vs_reference_ssim_control": {
+            "n": 412,
+            "mean": 0.8944266180376058,
+            "median": 0.896441484154805,
+            "p05": 0.8743394136756811,
+            "min": 0.8448393652520162
+          },
+          "detection_recall": {
+            "matched": 412,
+            "reference_faces": 412,
+            "recall": 1.0
+          },
+          "source_within_cosine_control": {
+            "harjot": {
+              "n": 10,
+              "mean": 0.6659066879605919,
+              "median": 0.6454290741523523,
+              "p05": 0.5645084011442497,
+              "min": 0.5566791140253347
+            },
+            "ashna": {
+              "n": 10,
+              "mean": 0.6412160955146754,
+              "median": 0.5572155253462221,
+              "p05": 0.47636753397972703,
+              "min": 0.4625724834828884
+            }
+          },
+          "per_face_csv": "G:\\pinokio\\api\\roop-ultimate\\app\\output\\quality_full\\scores\\realswap__d4.csv",
+          "tracks": {
+            "reference": 2,
+            "candidate": 2
+          },
+          "swap_audit": {
+            "reference": {
+              "faces seen": 508,
+              "swapped (identity lock)": 508,
+              "of those, partly behind an object (masked, still swapped)": 308,
+              "frames with no face detected at all": 118,
+              "frames considered": 372
+            },
+            "candidate": {
+              "faces seen": 508,
+              "swapped (identity lock)": 508,
+              "of those, partly behind an object (masked, still swapped)": 315,
+              "frames with no face detected at all": 118,
+              "frames considered": 372
+            }
+          },
+          "render": {
+            "fps": 9.57,
+            "fps_note": "lossless x264 encode (CPU-bound): not model or render speed",
+            "output_sha256": "db56b652f6774df02e0ecaa0d3c5b71e7f39c21b0cc2bbba82f2c077e05e4a42",
+            "failed_frames": 0
+          }
+        },
+        "d6": {
+          "faces_scored": 600,
+          "eye_drift_px": {
+            "n": 600,
+            "mean": 12.488146666666667,
+            "median": 11.9655,
+            "p05": 6.923,
+            "min": 4.083
+          },
+          "mouth_drift_px": {
+            "n": 600,
+            "mean": 22.526541666666667,
+            "median": 21.040999999999997,
+            "p05": 6.6637,
+            "min": 3.28
+          },
+          "eye_drift_reference_px_control": {
+            "n": 600,
+            "mean": 13.119219999999999,
+            "median": 12.263,
+            "p05": 7.04435,
+            "min": 3.173
+          },
+          "mouth_drift_reference_px_control": {
+            "n": 600,
+            "mean": 22.368761666666668,
+            "median": 21.8245,
+            "p05": 7.4924,
+            "min": 3.57
+          },
+          "output_face_redetected": {
+            "redetected": 600,
+            "of": 600
+          },
+          "skin_detail": {
+            "n": 600,
+            "mean": 4.9544743803127345,
+            "median": 4.8266196766196945,
+            "p05": 4.632671549490016,
+            "min": 4.4796262572954895
+          },
+          "skin_detail_ratio_vs_reference": {
+            "n": 600,
+            "mean": 0.9975073187370621,
+            "median": 0.9974767032406497,
+            "p05": 0.9860275618164276,
+            "min": 0.9695996123073269
+          },
+          "identity_jitter": {
+            "n": 2,
+            "mean": 0.00851788716364622,
+            "median": 0.00851788716364622,
+            "p05": 0.008379694265635984,
+            "min": 0.008364339499190401
+          },
+          "by_yaw": {
+            "0-20": {
+              "faces": 555,
+              "identity_cos": {
+                "n": 555,
+                "mean": 0.6758681350835589,
+                "median": 0.6755926808162318,
+                "p05": 0.6231598302375975,
+                "min": 0.5481074553609506
+              },
+              "ssim": {
+                "n": 555,
+                "mean": 0.9564519773984345,
+                "median": 0.9564689876512463,
+                "p05": 0.9420756880338025,
+                "min": 0.9276397160835945
+              },
+              "identity_delta_vs_reference": {
+                "n": 555,
+                "mean": 0.00017731200409993296,
+                "median": -0.0008309554909960992,
+                "p05": -0.022566474292546712,
+                "min": -0.0467140029571943
+              }
+            },
+            "20-45": {
+              "faces": 45,
+              "identity_cos": {
+                "n": 45,
+                "mean": 0.6907323711137103,
+                "median": 0.6903830336606748,
+                "p05": 0.6782920756755456,
+                "min": 0.6694903003871358
+              },
+              "ssim": {
+                "n": 45,
+                "mean": 0.9530629352738105,
+                "median": 0.9538124522614717,
+                "p05": 0.9435588744464763,
+                "min": 0.939880838081541
+              },
+              "identity_delta_vs_reference": {
+                "n": 45,
+                "mean": -0.013458122745943454,
+                "median": -0.01638246419648315,
+                "p05": -0.02697976355091498,
+                "min": -0.02858585139886438
+              }
+            },
+            "45-75": {
+              "faces": 0,
+              "identity_cos": {
+                "n": 0,
+                "mean": null,
+                "median": null,
+                "p05": null,
+                "min": null
+              },
+              "ssim": {
+                "n": 0,
+                "mean": null,
+                "median": null,
+                "p05": null,
+                "min": null
+              },
+              "identity_delta_vs_reference": {
+                "n": 0,
+                "mean": null,
+                "median": null,
+                "p05": null,
+                "min": null
+              }
+            },
+            "75+": {
+              "faces": 0,
+              "identity_cos": {
+                "n": 0,
+                "mean": null,
+                "median": null,
+                "p05": null,
+                "min": null
+              },
+              "ssim": {
+                "n": 0,
+                "mean": null,
+                "median": null,
+                "p05": null,
+                "min": null
+              },
+              "identity_delta_vs_reference": {
+                "n": 0,
+                "mean": null,
+                "median": null,
+                "p05": null,
+                "min": null
+              }
+            }
+          },
+          "identity_cos": {
+            "n": 600,
+            "mean": 0.6769829527858203,
+            "median": 0.6789708400094612,
+            "p05": 0.6251583721616419,
+            "min": 0.5481074553609506
+          },
+          "identity_cos_reference": {
+            "n": 600,
+            "mean": 0.6778282983879736,
+            "median": 0.6846337757593621,
+            "p05": 0.6188819061154784,
+            "min": 0.5582639534323348
+          },
+          "identity_cos_plate_control": {
+            "n": 600,
+            "mean": -0.01062751231735154,
+            "median": -0.007256145835732826,
+            "p05": -0.1275189953595124,
+            "min": -0.14161661126333847
+          },
+          "identity_delta_vs_reference": {
+            "n": 600,
+            "mean": -0.0008453456021533209,
+            "median": -0.0017716717937740212,
+            "p05": -0.02470511604846849,
+            "min": -0.0467140029571943
+          },
+          "ssim": {
+            "n": 600,
+            "mean": 0.9561977992390877,
+            "median": 0.9559371912436653,
+            "p05": 0.942147974544951,
+            "min": 0.9276397160835945
+          },
+          "psnr_db": {
+            "n": 600,
+            "mean": 36.11160948834365,
+            "median": 35.97841013446933,
+            "p05": 34.55872895069625,
+            "min": 32.347451025727196
+          },
+          "plate_vs_reference_ssim_control": {
+            "n": 600,
+            "mean": 0.9167104650872621,
+            "median": 0.9242294294689781,
+            "p05": 0.8777650663236175,
+            "min": 0.8578598148610379
+          },
+          "detection_recall": {
+            "matched": 600,
+            "reference_faces": 600,
+            "recall": 1.0
+          },
+          "source_within_cosine_control": {
+            "harjot": {
+              "n": 10,
+              "mean": 0.6659066879605919,
+              "median": 0.6454290741523523,
+              "p05": 0.5645084011442497,
+              "min": 0.5566791140253347
+            },
+            "mahek": {
+              "n": 10,
+              "mean": 0.701488126969381,
+              "median": 0.6420877198156798,
+              "p05": 0.563040293947799,
+              "min": 0.5444400907976947
+            }
+          },
+          "per_face_csv": "G:\\pinokio\\api\\roop-ultimate\\app\\output\\quality_full\\scores\\realswap__d6.csv",
+          "tracks": {
+            "reference": 2,
+            "candidate": 2
+          },
+          "swap_audit": {
+            "reference": {
+              "faces seen": 888,
+              "swapped (identity lock)": 888,
+              "of those, partly behind an object (masked, still swapped)": 78
+            },
+            "candidate": {
+              "faces seen": 888,
+              "swapped (identity lock)": 888,
+              "of those, partly behind an object (masked, still swapped)": 73
+            }
+          },
+          "render": {
+            "fps": 0.74,
+            "fps_note": "lossless x264 encode (CPU-bound): not model or render speed",
+            "output_sha256": "e84558a30fefbb1c149933396fdc8370dba1bbef4904c0ed80516927c431fe88",
+            "failed_frames": 0
+          }
+        },
+        "Love": {
+          "faces_scored": 95,
+          "eye_drift_px": {
+            "n": 94,
+            "mean": 4.280276595744681,
+            "median": 1.8250000000000002,
+            "p05": 1.1653,
+            "min": 0.531
+          },
+          "mouth_drift_px": {
+            "n": 94,
+            "mean": 4.117734042553191,
+            "median": 2.554,
+            "p05": 1.56325,
+            "min": 1.117
+          },
+          "eye_drift_reference_px_control": {
+            "n": 95,
+            "mean": 4.320378947368422,
+            "median": 1.836,
+            "p05": 0.8458,
+            "min": 0.577
+          },
+          "mouth_drift_reference_px_control": {
+            "n": 95,
+            "mean": 4.201957894736842,
+            "median": 2.659,
+            "p05": 1.534,
+            "min": 0.931
+          },
+          "output_face_redetected": {
+            "redetected": 94,
+            "of": 95
+          },
+          "skin_detail": {
+            "n": 95,
+            "mean": 67.15334280355881,
+            "median": 71.77356799380743,
+            "p05": 39.390246712968114,
+            "min": 6.579030195327733
+          },
+          "skin_detail_ratio_vs_reference": {
+            "n": 95,
+            "mean": 1.00903470129007,
+            "median": 0.9973593432304257,
+            "p05": 0.9279896354384575,
+            "min": 0.14166005551609243
+          },
+          "identity_jitter": {
+            "n": 1,
+            "mean": 0.024159173785245493,
+            "median": 0.024159173785245493,
+            "p05": 0.024159173785245493,
+            "min": 0.024159173785245493
+          },
+          "by_yaw": {
+            "0-20": {
+              "faces": 2,
+              "identity_cos": {
+                "n": 2,
+                "mean": 0.6105339932606129,
+                "median": 0.6105339932606129,
+                "p05": 0.5887981501780847,
+                "min": 0.5863830565022482
+              },
+              "ssim": {
+                "n": 2,
+                "mean": 0.8193715185106243,
+                "median": 0.8193715185106243,
+                "p05": 0.8069902406799098,
+                "min": 0.8056145431431637
+              },
+              "identity_delta_vs_reference": {
+                "n": 2,
+                "mean": -0.04922326280058159,
+                "median": -0.04922326280058159,
+                "p05": -0.0871734375611118,
+                "min": -0.09139012364561516
+              }
+            },
+            "20-45": {
+              "faces": 31,
+              "identity_cos": {
+                "n": 31,
+                "mean": 0.6129050539008654,
+                "median": 0.6285945658091422,
+                "p05": 0.5223284856498538,
+                "min": 0.5008254091233488
+              },
+              "ssim": {
+                "n": 31,
+                "mean": 0.9275285387365136,
+                "median": 0.9316883377186664,
+                "p05": 0.90869111299692,
+                "min": 0.9002881041473021
+              },
+              "identity_delta_vs_reference": {
+                "n": 31,
+                "mean": 0.011070950695043809,
+                "median": -0.00985920213931557,
+                "p05": -0.05085676053040017,
+                "min": -0.06279534628544481
+              }
+            },
+            "45-75": {
+              "faces": 62,
+              "identity_cos": {
+                "n": 62,
+                "mean": 0.6262422384239938,
+                "median": 0.6405058772009948,
+                "p05": 0.45062138622687253,
+                "min": -0.07114641455878996
+              },
+              "ssim": {
+                "n": 62,
+                "mean": 0.9316404332844398,
+                "median": 0.9330512027811289,
+                "p05": 0.9190468397686377,
+                "min": 0.9134600557309536
+              },
+              "identity_delta_vs_reference": {
+                "n": 62,
+                "mean": -0.022716172137941543,
+                "median": -0.015375567914259813,
+                "p05": -0.04182205632566809,
+                "min": -0.5186877551282099
+              }
+            },
+            "75+": {
+              "faces": 0,
+              "identity_cos": {
+                "n": 0,
+                "mean": null,
+                "median": null,
+                "p05": null,
+                "min": null
+              },
+              "ssim": {
+                "n": 0,
+                "mean": null,
+                "median": null,
+                "p05": null,
+                "min": null
+              },
+              "identity_delta_vs_reference": {
+                "n": 0,
+                "mean": null,
+                "median": null,
+                "p05": null,
+                "min": null
+              }
+            }
+          },
+          "identity_cos": {
+            "n": 95,
+            "mean": 0.6215594046287966,
+            "median": 0.6346849300189775,
+            "p05": 0.4980909549016315,
+            "min": -0.07114641455878996
+          },
+          "identity_cos_reference": {
+            "n": 95,
+            "mean": 0.6338083491193985,
+            "median": 0.6573726237773855,
+            "p05": 0.4624566174501562,
+            "min": 0.3049771274369691
+          },
+          "identity_cos_plate_control": {
+            "n": 95,
+            "mean": -0.02815976200196102,
+            "median": -0.0420272831676988,
+            "p05": -0.07221462515363809,
+            "min": -0.08521431852375091
+          },
+          "identity_delta_vs_reference": {
+            "n": 95,
+            "mean": -0.0122489444906019,
+            "median": -0.01370910115915247,
+            "p05": -0.056266378171640576,
+            "min": -0.5186877551282099
+          },
+          "ssim": {
+            "n": 95,
+            "mean": 0.9279351010682994,
+            "median": 0.9327681392743938,
+            "p05": 0.9092993547799947,
+            "min": 0.8056145431431637
+          },
+          "psnr_db": {
+            "n": 95,
+            "mean": 37.94376756082021,
+            "median": 38.18090859909462,
+            "p05": 35.16635406743955,
+            "min": 32.163614876561034
+          },
+          "plate_vs_reference_ssim_control": {
+            "n": 95,
+            "mean": 0.8889203409783978,
+            "median": 0.8827351564314881,
+            "p05": 0.8713875494065719,
+            "min": 0.8244331067548072
+          },
+          "detection_recall": {
+            "matched": 283,
+            "reference_faces": 283,
+            "recall": 1.0
+          },
+          "source_within_cosine_control": {
+            "harjot": {
+              "n": 10,
+              "mean": 0.6659066879605919,
+              "median": 0.6454290741523523,
+              "p05": 0.5645084011442497,
+              "min": 0.5566791140253347
+            }
+          },
+          "per_face_csv": "G:\\pinokio\\api\\roop-ultimate\\app\\output\\quality_full\\scores\\realswap__Love.csv",
+          "tracks": {
+            "reference": 9,
+            "candidate": 8
+          },
+          "swap_audit": {
+            "reference": {
+              "faces seen": 425,
+              "of those, gap-filled": 68,
+              "of those, crop shared with the face beside it": 66,
+              "no track entry matched": 224,
+              "fallback missed (over match threshold)": 166,
+              "swapped (identity lock)": 165,
+              "of those, partly behind an object (masked, still swapped)": 58,
+              "of those SWAPPED, gap-filled": 10,
+              "fallback missed (this person's source already used this frame)": 58,
+              "veto: source used twice in frame": 36,
+              "refused: crop shared with the face beside it": 36,
+              "frames with no face detected at all": 51,
+              "frames considered": 372
+            },
+            "candidate": {
+              "faces seen": 411,
+              "of those, crop shared with the face beside it": 67,
+              "of those, gap-filled": 51,
+              "no track entry matched": 219,
+              "fallback missed (over match threshold)": 159,
+              "swapped (identity lock)": 155,
+              "fallback missed (this person's source already used this frame)": 58,
+              "veto: source used twice in frame": 37,
+              "refused: crop shared with the face beside it": 37,
+              "swapped (per-frame match)": 2,
+              "of those, partly behind an object (masked, still swapped)": 48,
+              "frames with no face detected at all": 60,
+              "frames considered": 372
+            }
+          },
+          "render": {
+            "fps": 14.11,
+            "fps_note": "lossless x264 encode (CPU-bound): not model or render speed",
+            "output_sha256": "d9706d236856d39b17b6a950b76488cb9860e82c2349c286f59185c497dac2ec",
+            "failed_frames": 0
+          }
+        },
+        "s7": {
+          "faces_scored": 218,
+          "eye_drift_px": {
+            "n": 218,
+            "mean": 9.486619266055047,
+            "median": 4.404,
+            "p05": 1.7757,
+            "min": 0.998
+          },
+          "mouth_drift_px": {
+            "n": 218,
+            "mean": 7.851252293577981,
+            "median": 4.2989999999999995,
+            "p05": 2.06015,
+            "min": 1.039
+          },
+          "eye_drift_reference_px_control": {
+            "n": 218,
+            "mean": 9.543844036697248,
+            "median": 4.38,
+            "p05": 1.7389000000000001,
+            "min": 0.903
+          },
+          "mouth_drift_reference_px_control": {
+            "n": 218,
+            "mean": 8.160555045871561,
+            "median": 4.3294999999999995,
+            "p05": 2.00965,
+            "min": 1.159
+          },
+          "output_face_redetected": {
+            "redetected": 218,
+            "of": 218
+          },
+          "skin_detail": {
+            "n": 218,
+            "mean": 159.96133056268826,
+            "median": 134.14088043541727,
+            "p05": 78.84744137965099,
+            "min": 70.70096692080098
+          },
+          "skin_detail_ratio_vs_reference": {
+            "n": 218,
+            "mean": 0.9959262309710651,
+            "median": 0.9925847959899046,
+            "p05": 0.9565476111551022,
+            "min": 0.8401149942393648
+          },
+          "identity_jitter": {
+            "n": 1,
+            "mean": 0.015125926174819523,
+            "median": 0.015125926174819523,
+            "p05": 0.015125926174819523,
+            "min": 0.015125926174819523
+          },
+          "by_yaw": {
+            "0-20": {
+              "faces": 27,
+              "identity_cos": {
+                "n": 27,
+                "mean": 0.7748978088786139,
+                "median": 0.7743184522448054,
+                "p05": 0.7656650724836859,
+                "min": 0.7624135230975997
+              },
+              "ssim": {
+                "n": 27,
+                "mean": 0.9468664274446248,
+                "median": 0.9488671059808351,
+                "p05": 0.9333322644724514,
+                "min": 0.9281940234554403
+              },
+              "identity_delta_vs_reference": {
+                "n": 27,
+                "mean": -0.008239799321200858,
+                "median": -0.008535878107367889,
+                "p05": -0.022826237024887074,
+                "min": -0.024126084589037644
+              }
+            },
+            "20-45": {
+              "faces": 42,
+              "identity_cos": {
+                "n": 42,
+                "mean": 0.7159882573081421,
+                "median": 0.7537002240945541,
+                "p05": 0.577094655738605,
+                "min": 0.03702641012628599
+              },
+              "ssim": {
+                "n": 42,
+                "mean": 0.9385996666609981,
+                "median": 0.9471688414724009,
+                "p05": 0.8756055910231458,
+                "min": 0.8579995919569059
+              },
+              "identity_delta_vs_reference": {
+                "n": 42,
+                "mean": -0.013960000925447366,
+                "median": -0.004370185905870905,
+                "p05": -0.07824019337326986,
+                "min": -0.12756112145454968
+              }
+            },
+            "45-75": {
+              "faces": 64,
+              "identity_cos": {
+                "n": 64,
+                "mean": 0.6652009800649431,
+                "median": 0.6888339487832427,
+                "p05": 0.43348858498170456,
+                "min": 0.2409835400020895
+              },
+              "ssim": {
+                "n": 64,
+                "mean": 0.9384950334150011,
+                "median": 0.9441153365403061,
+                "p05": 0.8961657046213052,
+                "min": 0.8325109047262501
+              },
+              "identity_delta_vs_reference": {
+                "n": 64,
+                "mean": -0.006532114724561336,
+                "median": 0.0008202622112785662,
+                "p05": -0.02144533868676634,
+                "min": -0.2561359793991937
+              }
+            },
+            "75+": {
+              "faces": 85,
+              "identity_cos": {
+                "n": 85,
+                "mean": 0.5194143772469222,
+                "median": 0.5387212038155428,
+                "p05": 0.34854482923909547,
+                "min": 0.243191926125834
+              },
+              "ssim": {
+                "n": 85,
+                "mean": 0.9018935688862949,
+                "median": 0.9082267707607662,
+                "p05": 0.8401652123765007,
+                "min": 0.8123566354741707
+              },
+              "identity_delta_vs_reference": {
+                "n": 85,
+                "mean": 0.0009561466937583252,
+                "median": 0.00045380766170588505,
+                "p05": -0.022457284649792852,
+                "min": -0.06084794621988171
+              }
+            }
+          },
+          "identity_cos": {
+            "n": 218,
+            "mean": 0.6317285891596757,
+            "median": 0.652533632217798,
+            "p05": 0.38436171041874706,
+            "min": 0.03702641012628599
+          },
+          "identity_cos_reference": {
+            "n": 218,
+            "mean": 0.6369835317924448,
+            "median": 0.6725671995323073,
+            "p05": 0.3808475223134923,
+            "min": 0.06467378042037202
+          },
+          "identity_cos_plate_control": {
+            "n": 218,
+            "mean": 0.06425553511289345,
+            "median": 0.06168187429146017,
+            "p05": -0.0027804721354393346,
+            "min": -0.027460119974321667
+          },
+          "identity_delta_vs_reference": {
+            "n": 218,
+            "mean": -0.005254942632769177,
+            "median": -0.0015513346090639812,
+            "p05": -0.02702323714130856,
+            "min": -0.2561359793991937
+          },
+          "ssim": {
+            "n": 218,
+            "mean": 0.9252808029112931,
+            "median": 0.9378952569302474,
+            "p05": 0.8576854823812552,
+            "min": 0.8123566354741707
+          },
+          "psnr_db": {
+            "n": 218,
+            "mean": 35.72293116615697,
+            "median": 36.35614131617831,
+            "p05": 30.58464983792706,
+            "min": 27.29035368240136
+          },
+          "plate_vs_reference_ssim_control": {
+            "n": 218,
+            "mean": 0.8345430851049828,
+            "median": 0.8361977051104628,
+            "p05": 0.7786606488697597,
+            "min": 0.7587721119642186
+          },
+          "detection_recall": {
+            "matched": 218,
+            "reference_faces": 218,
+            "recall": 1.0
+          },
+          "source_within_cosine_control": {
+            "harjot": {
+              "n": 10,
+              "mean": 0.6659066879605919,
+              "median": 0.6454290741523523,
+              "p05": 0.5645084011442497,
+              "min": 0.5566791140253347
+            }
+          },
+          "per_face_csv": "G:\\pinokio\\api\\roop-ultimate\\app\\output\\quality_full\\scores\\realswap__s7.csv",
+          "tracks": {
+            "reference": 1,
+            "candidate": 1
+          },
+          "swap_audit": {
+            "reference": {
+              "faces seen": 324,
+              "of those, gap-filled": 50,
+              "swapped (identity lock)": 324,
+              "of those, partly behind an object (masked, still swapped)": 151,
+              "of those SWAPPED, gap-filled": 50,
+              "frames with no face detected at all": 48,
+              "frames considered": 372
+            },
+            "candidate": {
+              "faces seen": 324,
+              "of those, gap-filled": 50,
+              "swapped (identity lock)": 324,
+              "of those, partly behind an object (masked, still swapped)": 155,
+              "of those SWAPPED, gap-filled": 50,
+              "frames with no face detected at all": 48,
+              "frames considered": 372
+            }
+          },
+          "render": {
+            "fps": 13.26,
+            "fps_note": "lossless x264 encode (CPU-bound): not model or render speed",
+            "output_sha256": "16a654252ef94e7a88bd9a645a7d5f7645373ddc916abc36a8f1ebf7661d54f1",
+            "failed_frames": 0
+          }
+        }
+      },
+      "swapper_files": [
+        {
+          "file": "hififace_unofficial_256.onnx",
+          "sha256": "9de9751617976195114d7f067b9b6cf933748363355cf473cab2da57a739c2ef"
+        },
+        {
+          "file": "hyperswap_1a_256.onnx",
+          "sha256": "c0e98a8a03a238f461ed3d2570e426b49f46745ee400854a60dceeb70c246add"
+        }
+      ],
+      "model_key": "hififace_unofficial_256.onnx=9de9751617976195,hyperswap_1a_256.onnx=c0e98a8a03a238f4",
+      "variant": {
+        "swap_model": "realswap",
+        "trt_precision": "mixed",
+        "env": {}
+      }
+    }
+  },
+  "xseg_iou_by_precision": {
+    "mixed": {
+      "info": {
+        "precision": "mixed",
+        "provider": "TensorrtExecutionProvider",
+        "trt_fp16": "on",
+        "crops": 209,
+        "vram_before_first_inference_mib": 1631.5,
+        "vram_after_first_inference_mib": 1753.5
+      },
+      "iou": {
+        "n": 209,
+        "mean": 0.9918329376929095,
+        "median": 0.996674303451334,
+        "p05": 0.9716127923207569,
+        "min": 0.8583445491251682
+      },
+      "below_0.95": 6,
+      "crops": 209
+    }
+  },
+  "per_model_runtime_log": {
+    "reference": [
+      {
+        "file": "1k3d68.onnx",
+        "provider": "TensorrtExecutionProvider",
+        "inputs": "data:Nx3x192x192",
+        "trt_fp16": [
+          "off"
+        ],
+        "renders_observed": 30,
+        "vram_before_mib": {
+          "n": 30,
+          "mean": 2879.5,
+          "median": 2350.5,
+          "p05": 1787.5,
+          "min": 1787.5
+        },
+        "vram_after_mib": {
+          "n": 30,
+          "mean": 3067.8333333333335,
+          "median": 2537.5,
+          "p05": 1975.5,
+          "min": 1975.5
+        },
+        "first_inference_delta_mib": {
+          "n": 30,
+          "mean": 188.33333333333334,
+          "median": 188.0,
+          "p05": 184.0,
+          "min": 184.0
+        },
+        "first_call_ms": {
+          "n": 30,
+          "mean": 190.64333333333335,
+          "median": 196.75,
+          "p05": 114.58,
+          "min": 109.5
+        }
+      },
+      {
+        "file": "2d106det.onnx",
+        "provider": "TensorrtExecutionProvider",
+        "inputs": "data:Nx3x192x192",
+        "trt_fp16": [
+          "off"
+        ],
+        "renders_observed": 29,
+        "vram_before_mib": {
+          "n": 29,
+          "mean": 3141.9137931034484,
+          "median": 2545.5,
+          "p05": 1975.5,
+          "min": 1975.5
+        },
+        "vram_after_mib": {
+          "n": 29,
+          "mean": 3162.603448275862,
+          "median": 2563.5,
+          "p05": 1993.5,
+          "min": 1993.5
+        },
+        "first_inference_delta_mib": {
+          "n": 29,
+          "mean": 20.689655172413794,
+          "median": 20.0,
+          "p05": 18.0,
+          "min": 18.0
+        },
+        "first_call_ms": {
+          "n": 29,
+          "mean": 69.52413793103447,
+          "median": 68.8,
+          "p05": 41.48,
+          "min": 40.5
+        }
+      },
+      {
+        "file": "det_10g.onnx",
+        "provider": "TensorrtExecutionProvider",
+        "inputs": "input.1:1x3xNxN",
+        "trt_fp16": [
+          "off"
+        ],
+        "renders_observed": 30,
+        "vram_before_mib": {
+          "n": 30,
+          "mean": 2766.1,
+          "median": 2282.5,
+          "p05": 1717.5,
+          "min": 1717.5
+        },
+        "vram_after_mib": {
+          "n": 30,
+          "mean": 2835.766666666667,
+          "median": 2350.5,
+          "p05": 1787.5,
+          "min": 1787.5
+        },
+        "first_inference_delta_mib": {
+          "n": 30,
+          "mean": 69.66666666666667,
+          "median": 68.0,
+          "p05": 68.0,
+          "min": 68.0
+        },
+        "first_call_ms": {
+          "n": 30,
+          "mean": 62.63666666666666,
+          "median": 57.35,
+          "p05": 29.415000000000003,
+          "min": 28.6
+        }
+      },
+      {
+        "file": "face_occluder.onnx",
+        "provider": "TensorrtExecutionProvider",
+        "inputs": "in_face:0:Nx256x256x3",
+        "trt_fp16": [
+          "off"
+        ],
+        "renders_observed": 10,
+        "vram_before_mib": {
+          "n": 10,
+          "mean": 7598.5,
+          "median": 7598.5,
+          "p05": 7505.5,
+          "min": 7505.5
+        },
+        "vram_after_mib": {
+          "n": 10,
+          "mean": 7775.5,
+          "median": 7766.5,
+          "p05": 7691.5,
+          "min": 7691.5
+        },
+        "first_inference_delta_mib": {
+          "n": 10,
+          "mean": 177.0,
+          "median": 186.0,
+          "p05": 150.9,
+          "min": 150.0
+        },
+        "first_call_ms": {
+          "n": 10,
+          "mean": 408.91999999999996,
+          "median": 407.9,
+          "p05": 268.755,
+          "min": 267.0
+        }
+      },
+      {
+        "file": "genderage.onnx",
+        "provider": "TensorrtExecutionProvider",
+        "inputs": "data:Nx3x96x96",
+        "trt_fp16": [
+          "off"
+        ],
+        "renders_observed": 10,
+        "vram_before_mib": {
+          "n": 10,
+          "mean": 2271.5,
+          "median": 2271.5,
+          "p05": 1993.5,
+          "min": 1993.5
+        },
+        "vram_after_mib": {
+          "n": 10,
+          "mean": 2286.5,
+          "median": 2286.5,
+          "p05": 2009.5,
+          "min": 2009.5
+        },
+        "first_inference_delta_mib": {
+          "n": 10,
+          "mean": 15.0,
+          "median": 15.0,
+          "p05": 14.0,
+          "min": 14.0
+        },
+        "first_call_ms": {
+          "n": 10,
+          "mean": 17.060000000000002,
+          "median": 15.65,
+          "p05": 10.59,
+          "min": 8.7
+        }
+      },
+      {
+        "file": "hyperswap_1a_256.onnx",
+        "provider": "TensorrtExecutionProvider",
+        "inputs": "source:Nx512,target:Nx3x256x256",
+        "trt_fp16": [
+          "off"
+        ],
+        "renders_observed": 10,
+        "vram_before_mib": {
+          "n": 10,
+          "mean": 2981.5,
+          "median": 2979.5,
+          "p05": 1661.5,
+          "min": 1661.5
+        },
+        "vram_after_mib": {
+          "n": 10,
+          "mean": 4473.5,
+          "median": 4471.5,
+          "p05": 3155.5,
+          "min": 3155.5
+        },
+        "first_inference_delta_mib": {
+          "n": 10,
+          "mean": 1492.0,
+          "median": 1492.0,
+          "p05": 1490.0,
+          "min": 1490.0
+        },
+        "first_call_ms": {
+          "n": 10,
+          "mean": 799.42,
+          "median": 872.0999999999999,
+          "p05": 491.075,
+          "min": 485.0
+        }
+      },
+      {
+        "file": "restoreformer_plus_plus.onnx",
+        "provider": "TensorrtExecutionProvider",
+        "inputs": "input:1x3x512x512",
+        "trt_fp16": [
+          "off"
+        ],
+        "renders_observed": 9,
+        "vram_before_mib": {
+          "n": 9,
+          "mean": 6133.944444444444,
+          "median": 5831.5,
+          "p05": 5799.5,
+          "min": 5799.5
+        },
+        "vram_after_mib": {
+          "n": 9,
+          "mean": 6872.611111111111,
+          "median": 7135.5,
+          "p05": 6464.3,
+          "min": 6451.5
+        },
+        "first_inference_delta_mib": {
+          "n": 9,
+          "mean": 738.6666666666666,
+          "median": 670.0,
+          "p05": 652.0,
+          "min": 652.0
+        },
+        "first_call_ms": {
+          "n": 9,
+          "mean": 80.66666666666667,
+          "median": 86.6,
+          "p05": 54.32,
+          "min": 54.0
+        }
+      },
+      {
+        "file": "w600k_r50.onnx",
+        "provider": "TensorrtExecutionProvider",
+        "inputs": "input.1:Nx3x112x112",
+        "trt_fp16": [
+          "off"
+        ],
+        "renders_observed": 29,
+        "vram_before_mib": {
+          "n": 29,
+          "mean": 3218.396551724138,
+          "median": 2563.5,
+          "p05": 2009.5,
+          "min": 2009.5
+        },
+        "vram_after_mib": {
+          "n": 29,
+          "mean": 3466.603448275862,
+          "median": 2793.5,
+          "p05": 2273.5,
+          "min": 2273.5
+        },
+        "first_inference_delta_mib": {
+          "n": 29,
+          "mean": 248.20689655172413,
+          "median": 240.0,
+          "p05": 230.0,
+          "min": 230.0
+        },
+        "first_call_ms": {
+          "n": 29,
+          "mean": 286.0103448275862,
+          "median": 307.6,
+          "p05": 177.9,
+          "min": 169.2
+        }
+      },
+      {
+        "file": "xseg.onnx",
+        "provider": "TensorrtExecutionProvider",
+        "inputs": "xseg_input:0:Nx256x256x3",
+        "trt_fp16": [
+          "off"
+        ],
+        "renders_observed": 10,
+        "vram_before_mib": {
+          "n": 10,
+          "mean": 7180.1,
+          "median": 7245.5,
+          "p05": 6783.9,
+          "min": 6481.5
+        },
+        "vram_after_mib": {
+          "n": 10,
+          "mean": 7356.3,
+          "median": 7421.5,
+          "p05": 6978.9,
+          "min": 6685.5
+        },
+        "first_inference_delta_mib": {
+          "n": 10,
+          "mean": 176.2,
+          "median": 176.0,
+          "p05": 158.1,
+          "min": 150.0
+        },
+        "first_call_ms": {
+          "n": 10,
+          "mean": 351.95,
+          "median": 350.8,
+          "p05": 201.79000000000002,
+          "min": 200.8
+        }
+      }
+    ],
+    "hyperswap_1a": [
+      {
+        "file": "1k3d68.onnx",
+        "provider": "TensorrtExecutionProvider",
+        "inputs": "data:Nx3x192x192",
+        "trt_fp16": [
+          "on"
+        ],
+        "renders_observed": 30,
+        "vram_before_mib": {
+          "n": 30,
+          "mean": 2541.0333333333333,
+          "median": 2073.5,
+          "p05": 1767.5,
+          "min": 1767.5
+        },
+        "vram_after_mib": {
+          "n": 30,
+          "mean": 2628.0333333333333,
+          "median": 2140.5,
+          "p05": 1871.5,
+          "min": 1871.5
+        },
+        "first_inference_delta_mib": {
+          "n": 30,
+          "mean": 87.0,
+          "median": 90.0,
+          "p05": 66.0,
+          "min": 66.0
+        },
+        "first_call_ms": {
+          "n": 30,
+          "mean": 101.73333333333333,
+          "median": 88.5,
+          "p05": 56.940000000000005,
+          "min": 53.3
+        }
+      },
+      {
+        "file": "2d106det.onnx",
+        "provider": "TensorrtExecutionProvider",
+        "inputs": "data:Nx3x192x192",
+        "trt_fp16": [
+          "on"
+        ],
+        "renders_observed": 26,
+        "vram_before_mib": {
+          "n": 26,
+          "mean": 2747.1153846153848,
+          "median": 2153.5,
+          "p05": 1871.5,
+          "min": 1871.5
+        },
+        "vram_after_mib": {
+          "n": 26,
+          "mean": 2764.8846153846152,
+          "median": 2169.5,
+          "p05": 1885.5,
+          "min": 1885.5
+        },
+        "first_inference_delta_mib": {
+          "n": 26,
+          "mean": 17.76923076923077,
+          "median": 17.0,
+          "p05": 14.0,
+          "min": 14.0
+        },
+        "first_call_ms": {
+          "n": 26,
+          "mean": 22.08461538461539,
+          "median": 21.1,
+          "p05": 13.950000000000001,
+          "min": 11.6
+        }
+      },
+      {
+        "file": "det_10g.onnx",
+        "provider": "TensorrtExecutionProvider",
+        "inputs": "input.1:1x3xNxN",
+        "trt_fp16": [
+          "on"
+        ],
+        "renders_observed": 30,
+        "vram_before_mib": {
+          "n": 30,
+          "mean": 2464.0333333333333,
+          "median": 2024.5,
+          "p05": 1717.5,
+          "min": 1717.5
+        },
+        "vram_after_mib": {
+          "n": 30,
+          "mean": 2514.366666666667,
+          "median": 2073.5,
+          "p05": 1767.5,
+          "min": 1767.5
+        },
+        "first_inference_delta_mib": {
+          "n": 30,
+          "mean": 50.333333333333336,
+          "median": 50.0,
+          "p05": 48.0,
+          "min": 48.0
+        },
+        "first_call_ms": {
+          "n": 30,
+          "mean": 37.279999999999994,
+          "median": 36.3,
+          "p05": 21.625,
+          "min": 16.7
+        }
+      },
+      {
+        "file": "face_occluder.onnx",
+        "provider": "TensorrtExecutionProvider",
+        "inputs": "in_face:0:Nx256x256x3",
+        "trt_fp16": [
+          "on"
+        ],
+        "renders_observed": 10,
+        "vram_before_mib": {
+          "n": 10,
+          "mean": 6455.5,
+          "median": 6455.5,
+          "p05": 6413.5,
+          "min": 6413.5
+        },
+        "vram_after_mib": {
+          "n": 10,
+          "mean": 6537.5,
+          "median": 6537.5,
+          "p05": 6497.5,
+          "min": 6497.5
+        },
+        "first_inference_delta_mib": {
+          "n": 10,
+          "mean": 82.0,
+          "median": 82.0,
+          "p05": 80.0,
+          "min": 80.0
+        },
+        "first_call_ms": {
+          "n": 10,
+          "mean": 200.14,
+          "median": 195.64999999999998,
+          "p05": 85.345,
+          "min": 79.0
+        }
+      },
+      {
+        "file": "genderage.onnx",
+        "provider": "TensorrtExecutionProvider",
+        "inputs": "data:Nx3x96x96",
+        "trt_fp16": [
+          "on"
+        ],
+        "renders_observed": 10,
+        "vram_before_mib": {
+          "n": 10,
+          "mean": 2015.5,
+          "median": 2015.5,
+          "p05": 1885.5,
+          "min": 1885.5
+        },
+        "vram_after_mib": {
+          "n": 10,
+          "mean": 2027.5,
+          "median": 2027.5,
+          "p05": 1897.5,
+          "min": 1897.5
+        },
+        "first_inference_delta_mib": {
+          "n": 10,
+          "mean": 12.0,
+          "median": 12.0,
+          "p05": 12.0,
+          "min": 12.0
+        },
+        "first_call_ms": {
+          "n": 10,
+          "mean": 13.23,
+          "median": 11.25,
+          "p05": 7.745,
+          "min": 7.7
+        }
+      },
+      {
+        "file": "hyperswap_1a_256.onnx",
+        "provider": "CUDAExecutionProvider",
+        "inputs": "source:Nx512,target:Nx3x256x256",
+        "trt_fp16": [
+          "n/a"
+        ],
+        "renders_observed": 5,
+        "vram_before_mib": {
+          "n": 5,
+          "mean": 3547.5,
+          "median": 3547.5,
+          "p05": 3547.5,
+          "min": 3547.5
+        },
+        "vram_after_mib": {
+          "n": 5,
+          "mean": 3705.5,
+          "median": 3705.5,
+          "p05": 3705.5,
+          "min": 3705.5
+        },
+        "first_inference_delta_mib": {
+          "n": 5,
+          "mean": 158.0,
+          "median": 158.0,
+          "p05": 158.0,
+          "min": 158.0
+        },
+        "first_call_ms": {
+          "n": 5,
+          "mean": 862.2199999999999,
+          "median": 881.0,
+          "p05": 545.34,
+          "min": 497.2
+        }
+      },
+      {
+        "file": "hyperswap_1a_256.onnx",
+        "provider": "TensorrtExecutionProvider",
+        "inputs": "source:Nx512,target:Nx3x256x256",
+        "trt_fp16": [
+          "on"
+        ],
+        "renders_observed": 10,
+        "vram_before_mib": {
+          "n": 10,
+          "mean": 2650.5,
+          "median": 2648.5,
+          "p05": 1661.5,
+          "min": 1661.5
+        },
+        "vram_after_mib": {
+          "n": 10,
+          "mean": 4137.5,
+          "median": 4135.5,
+          "p05": 3149.5,
+          "min": 3149.5
+        },
+        "first_inference_delta_mib": {
+          "n": 10,
+          "mean": 1487.0,
+          "median": 1487.0,
+          "p05": 1486.0,
+          "min": 1486.0
+        },
+        "first_call_ms": {
+          "n": 10,
+          "mean": 929.7099999999998,
+          "median": 827.45,
+          "p05": 500.84999999999997,
+          "min": 455.4
+        }
+      },
+      {
+        "file": "restoreformer_plus_plus.onnx",
+        "provider": "TensorrtExecutionProvider",
+        "inputs": "input:1x3x512x512",
+        "trt_fp16": [
+          "on"
+        ],
+        "renders_observed": 10,
+        "vram_before_mib": {
+          "n": 10,
+          "mean": 5421.5,
+          "median": 5421.5,
+          "p05": 5153.5,
+          "min": 5153.5
+        },
+        "vram_after_mib": {
+          "n": 10,
+          "mean": 5958.1,
+          "median": 5956.5,
+          "p05": 5689.5,
+          "min": 5689.5
+        },
+        "first_inference_delta_mib": {
+          "n": 10,
+          "mean": 536.6,
+          "median": 536.0,
+          "p05": 534.0,
+          "min": 534.0
+        },
+        "first_call_ms": {
+          "n": 10,
+          "mean": 57.36999999999999,
+          "median": 54.95,
+          "p05": 40.535000000000004,
+          "min": 40.4
+        }
+      },
+      {
+        "file": "w600k_r50.onnx",
+        "provider": "TensorrtExecutionProvider",
+        "inputs": "input.1:Nx3x112x112",
+        "trt_fp16": [
+          "on"
+        ],
+        "renders_observed": 28,
+        "vram_before_mib": {
+          "n": 28,
+          "mean": 2725.4285714285716,
+          "median": 2157.5,
+          "p05": 1897.5,
+          "min": 1897.5
+        },
+        "vram_after_mib": {
+          "n": 28,
+          "mean": 2836.785714285714,
+          "median": 2265.5,
+          "p05": 2011.5,
+          "min": 2011.5
+        },
+        "first_inference_delta_mib": {
+          "n": 28,
+          "mean": 111.35714285714286,
+          "median": 108.0,
+          "p05": 106.0,
+          "min": 106.0
+        },
+        "first_call_ms": {
+          "n": 28,
+          "mean": 118.29285714285713,
+          "median": 111.65,
+          "p05": 75.935,
+          "min": 65.4
+        }
+      },
+      {
+        "file": "xseg.onnx",
+        "provider": "TensorrtExecutionProvider",
+        "inputs": "xseg_input:0:Nx256x256x3",
+        "trt_fp16": [
+          "on"
+        ],
+        "renders_observed": 10,
+        "vram_before_mib": {
+          "n": 10,
+          "mean": 6262.1,
+          "median": 6264.5,
+          "p05": 6223.5,
+          "min": 6223.5
+        },
+        "vram_after_mib": {
+          "n": 10,
+          "mean": 6355.5,
+          "median": 6355.5,
+          "p05": 6297.5,
+          "min": 6297.5
+        },
+        "first_inference_delta_mib": {
+          "n": 10,
+          "mean": 93.4,
+          "median": 95.0,
+          "p05": 66.0,
+          "min": 66.0
+        },
+        "first_call_ms": {
+          "n": 10,
+          "mean": 215.64000000000001,
+          "median": 223.85,
+          "p05": 116.465,
+          "min": 86.0
+        }
+      }
+    ],
+    "inswapper_128": [
+      {
+        "file": "1k3d68.onnx",
+        "provider": "TensorrtExecutionProvider",
+        "inputs": "data:Nx3x192x192",
+        "trt_fp16": [
+          "on"
+        ],
+        "renders_observed": 30,
+        "vram_before_mib": {
+          "n": 30,
+          "mean": 2145.3,
+          "median": 2069.5,
+          "p05": 1767.5,
+          "min": 1767.5
+        },
+        "vram_after_mib": {
+          "n": 30,
+          "mean": 2232.3,
+          "median": 2136.5,
+          "p05": 1871.5,
+          "min": 1871.5
+        },
+        "first_inference_delta_mib": {
+          "n": 30,
+          "mean": 87.0,
+          "median": 91.0,
+          "p05": 66.0,
+          "min": 66.0
+        },
+        "first_call_ms": {
+          "n": 30,
+          "mean": 84.35000000000001,
+          "median": 66.75,
+          "p05": 52.08,
+          "min": 50.9
+        }
+      },
+      {
+        "file": "2d106det.onnx",
+        "provider": "TensorrtExecutionProvider",
+        "inputs": "data:Nx3x192x192",
+        "trt_fp16": [
+          "on"
+        ],
+        "renders_observed": 27,
+        "vram_before_mib": {
+          "n": 27,
+          "mean": 2286.3888888888887,
+          "median": 2145.5,
+          "p05": 1871.5,
+          "min": 1871.5
+        },
+        "vram_after_mib": {
+          "n": 27,
+          "mean": 2304.0925925925926,
+          "median": 2161.5,
+          "p05": 1885.5,
+          "min": 1885.5
+        },
+        "first_inference_delta_mib": {
+          "n": 27,
+          "mean": 17.703703703703702,
+          "median": 16.0,
+          "p05": 14.0,
+          "min": 14.0
+        },
+        "first_call_ms": {
+          "n": 27,
+          "mean": 18.28148148148148,
+          "median": 18.6,
+          "p05": 11.81,
+          "min": 11.2
+        }
+      },
+      {
+        "file": "det_10g.onnx",
+        "provider": "TensorrtExecutionProvider",
+        "inputs": "input.1:1x3xNxN",
+        "trt_fp16": [
+          "on"
+        ],
+        "renders_observed": 28,
+        "vram_before_mib": {
+          "n": 28,
+          "mean": 2071.0714285714284,
+          "median": 2011.5,
+          "p05": 1717.5,
+          "min": 1717.5
+        },
+        "vram_after_mib": {
+          "n": 28,
+          "mean": 2121.785714285714,
+          "median": 2059.5,
+          "p05": 1767.5,
+          "min": 1767.5
+        },
+        "first_inference_delta_mib": {
+          "n": 28,
+          "mean": 50.714285714285715,
+          "median": 50.0,
+          "p05": 48.0,
+          "min": 48.0
+        },
+        "first_call_ms": {
+          "n": 28,
+          "mean": 29.64642857142857,
+          "median": 33.9,
+          "p05": 17.1,
+          "min": 16.5
+        }
+      },
+      {
+        "file": "face_occluder.onnx",
+        "provider": "TensorrtExecutionProvider",
+        "inputs": "in_face:0:Nx256x256x3",
+        "trt_fp16": [
+          "on"
+        ],
+        "renders_observed": 10,
+        "vram_before_mib": {
+          "n": 10,
+          "mean": 4066.5,
+          "median": 4066.5,
+          "p05": 4025.5,
+          "min": 4025.5
+        },
+        "vram_after_mib": {
+          "n": 10,
+          "mean": 4148.5,
+          "median": 4148.5,
+          "p05": 4107.5,
+          "min": 4107.5
+        },
+        "first_inference_delta_mib": {
+          "n": 10,
+          "mean": 82.0,
+          "median": 82.0,
+          "p05": 82.0,
+          "min": 82.0
+        },
+        "first_call_ms": {
+          "n": 10,
+          "mean": 134.81,
+          "median": 120.85,
+          "p05": 77.71,
+          "min": 76.0
+        }
+      },
+      {
+        "file": "genderage.onnx",
+        "provider": "TensorrtExecutionProvider",
+        "inputs": "data:Nx3x96x96",
+        "trt_fp16": [
+          "on"
+        ],
+        "renders_observed": 10,
+        "vram_before_mib": {
+          "n": 10,
+          "mean": 2015.5,
+          "median": 2015.5,
+          "p05": 1885.5,
+          "min": 1885.5
+        },
+        "vram_after_mib": {
+          "n": 10,
+          "mean": 2027.5,
+          "median": 2027.5,
+          "p05": 1897.5,
+          "min": 1897.5
+        },
+        "first_inference_delta_mib": {
+          "n": 10,
+          "mean": 12.0,
+          "median": 12.0,
+          "p05": 12.0,
+          "min": 12.0
+        },
+        "first_call_ms": {
+          "n": 10,
+          "mean": 10.139999999999999,
+          "median": 10.45,
+          "p05": 6.77,
+          "min": 6.5
+        }
+      },
+      {
+        "file": "inswapper_128.onnx",
+        "provider": "CUDAExecutionProvider",
+        "inputs": "source:Nx512,target:Nx3x128x128",
+        "trt_fp16": [
+          "n/a"
+        ],
+        "renders_observed": 5,
+        "vram_before_mib": {
+          "n": 5,
+          "mean": 2517.5,
+          "median": 2517.5,
+          "p05": 2517.5,
+          "min": 2517.5
+        },
+        "vram_after_mib": {
+          "n": 5,
+          "mean": 2709.5,
+          "median": 2709.5,
+          "p05": 2709.5,
+          "min": 2709.5
+        },
+        "first_inference_delta_mib": {
+          "n": 5,
+          "mean": 192.0,
+          "median": 192.0,
+          "p05": 192.0,
+          "min": 192.0
+        },
+        "first_call_ms": {
+          "n": 5,
+          "mean": 381.22,
+          "median": 368.8,
+          "p05": 331.22,
+          "min": 323.1
+        }
+      },
+      {
+        "file": "inswapper_128.onnx",
+        "provider": "TensorrtExecutionProvider",
+        "inputs": "source:Nx512,target:Nx3x128x128",
+        "trt_fp16": [
+          "on"
+        ],
+        "renders_observed": 10,
+        "vram_before_mib": {
+          "n": 10,
+          "mean": 2049.1,
+          "median": 2048.5,
+          "p05": 1661.5,
+          "min": 1661.5
+        },
+        "vram_after_mib": {
+          "n": 10,
+          "mean": 2373.7,
+          "median": 2364.5,
+          "p05": 1977.5,
+          "min": 1977.5
+        },
+        "first_inference_delta_mib": {
+          "n": 10,
+          "mean": 324.6,
+          "median": 316.0,
+          "p05": 314.9,
+          "min": 314.0
+        },
+        "first_call_ms": {
+          "n": 10,
+          "mean": 401.26,
+          "median": 353.65,
+          "p05": 216.315,
+          "min": 211.5
+        }
+      },
+      {
+        "file": "restoreformer_plus_plus.onnx",
+        "provider": "TensorrtExecutionProvider",
+        "inputs": "input:1x3x512x512",
+        "trt_fp16": [
+          "on"
+        ],
+        "renders_observed": 10,
+        "vram_before_mib": {
+          "n": 10,
+          "mean": 3035.5,
+          "median": 3036.5,
+          "p05": 2768.0,
+          "min": 2763.5
+        },
+        "vram_after_mib": {
+          "n": 10,
+          "mean": 3566.9,
+          "median": 3565.5,
+          "p05": 3297.5,
+          "min": 3297.5
+        },
+        "first_inference_delta_mib": {
+          "n": 10,
+          "mean": 531.4,
+          "median": 532.0,
+          "p05": 524.0,
+          "min": 524.0
+        },
+        "first_call_ms": {
+          "n": 10,
+          "mean": 56.17999999999999,
+          "median": 55.45,
+          "p05": 39.415,
+          "min": 37.3
+        }
+      },
+      {
+        "file": "w600k_r50.onnx",
+        "provider": "TensorrtExecutionProvider",
+        "inputs": "input.1:Nx3x112x112",
+        "trt_fp16": [
+          "on"
+        ],
+        "renders_observed": 30,
+        "vram_before_mib": {
+          "n": 30,
+          "mean": 2292.633333333333,
+          "median": 2159.5,
+          "p05": 1897.5,
+          "min": 1897.5
+        },
+        "vram_after_mib": {
+          "n": 30,
+          "mean": 2403.9666666666667,
+          "median": 2267.5,
+          "p05": 2011.5,
+          "min": 2011.5
+        },
+        "first_inference_delta_mib": {
+          "n": 30,
+          "mean": 111.33333333333333,
+          "median": 109.0,
+          "p05": 108.0,
+          "min": 108.0
+        },
+        "first_call_ms": {
+          "n": 30,
+          "mean": 92.86666666666666,
+          "median": 79.3,
+          "p05": 64.26,
+          "min": 63.8
+        }
+      },
+      {
+        "file": "xseg.onnx",
+        "provider": "TensorrtExecutionProvider",
+        "inputs": "xseg_input:0:Nx256x256x3",
+        "trt_fp16": [
+          "on"
+        ],
+        "renders_observed": 10,
+        "vram_before_mib": {
+          "n": 10,
+          "mean": 3873.3,
+          "median": 3875.5,
+          "p05": 3831.5,
+          "min": 3831.5
+        },
+        "vram_after_mib": {
+          "n": 10,
+          "mean": 3967.5,
+          "median": 3967.5,
+          "p05": 3909.5,
+          "min": 3909.5
+        },
+        "first_inference_delta_mib": {
+          "n": 10,
+          "mean": 94.2,
+          "median": 97.0,
+          "p05": 68.0,
+          "min": 68.0
+        },
+        "first_call_ms": {
+          "n": 10,
+          "mean": 166.39000000000001,
+          "median": 173.45,
+          "p05": 86.215,
+          "min": 85.9
+        }
+      }
+    ],
+    "realswap": [
+      {
+        "file": "1k3d68.onnx",
+        "provider": "TensorrtExecutionProvider",
+        "inputs": "data:Nx3x192x192",
+        "trt_fp16": [
+          "on"
+        ],
+        "renders_observed": 28,
+        "vram_before_mib": {
+          "n": 28,
+          "mean": 2768.714285714286,
+          "median": 2059.5,
+          "p05": 1767.5,
+          "min": 1767.5
+        },
+        "vram_after_mib": {
+          "n": 28,
+          "mean": 2856.0,
+          "median": 2127.5,
+          "p05": 1871.5,
+          "min": 1871.5
+        },
+        "first_inference_delta_mib": {
+          "n": 28,
+          "mean": 87.28571428571429,
+          "median": 100.0,
+          "p05": 66.0,
+          "min": 66.0
+        },
+        "first_call_ms": {
+          "n": 28,
+          "mean": 77.97500000000001,
+          "median": 63.7,
+          "p05": 51.585,
+          "min": 50.6
+        }
+      },
+      {
+        "file": "2d106det.onnx",
+        "provider": "TensorrtExecutionProvider",
+        "inputs": "data:Nx3x192x192",
+        "trt_fp16": [
+          "on"
+        ],
+        "renders_observed": 27,
+        "vram_before_mib": {
+          "n": 27,
+          "mean": 2914.8333333333335,
+          "median": 2127.5,
+          "p05": 1871.5,
+          "min": 1871.5
+        },
+        "vram_after_mib": {
+          "n": 27,
+          "mean": 2933.1296296296296,
+          "median": 2145.5,
+          "p05": 1885.5,
+          "min": 1885.5
+        },
+        "first_inference_delta_mib": {
+          "n": 27,
+          "mean": 18.296296296296298,
+          "median": 16.0,
+          "p05": 14.0,
+          "min": 14.0
+        },
+        "first_call_ms": {
+          "n": 27,
+          "mean": 19.762962962962963,
+          "median": 17.8,
+          "p05": 11.31,
+          "min": 10.6
+        }
+      },
+      {
+        "file": "?",
+        "provider": "CUDAExecutionProvider",
+        "inputs": "source:Nx512,target:Nx3x256x256",
+        "trt_fp16": [
+          "n/a"
+        ],
+        "renders_observed": 9,
+        "vram_before_mib": {
+          "n": 9,
+          "mean": 3681.722222222222,
+          "median": 3547.5,
+          "p05": 3547.5,
+          "min": 3547.5
+        },
+        "vram_after_mib": {
+          "n": 9,
+          "mean": 3813.277777777778,
+          "median": 3705.5,
+          "p05": 3705.5,
+          "min": 3705.5
+        },
+        "first_inference_delta_mib": {
+          "n": 9,
+          "mean": 131.55555555555554,
+          "median": 158.0,
+          "p05": 98.0,
+          "min": 98.0
+        },
+        "first_call_ms": {
+          "n": 9,
+          "mean": 410.0,
+          "median": 478.0,
+          "p05": 87.60000000000001,
+          "min": 73.2
+        }
+      },
+      {
+        "file": "?",
+        "provider": "TensorrtExecutionProvider",
+        "inputs": "source:Nx512,target:Nx3x256x256",
+        "trt_fp16": [
+          "on"
+        ],
+        "renders_observed": 20,
+        "vram_before_mib": {
+          "n": 20,
+          "mean": 3801.3,
+          "median": 3754.5,
+          "p05": 1661.5,
+          "min": 1661.5
+        },
+        "vram_after_mib": {
+          "n": 20,
+          "mean": 4701.6,
+          "median": 4654.5,
+          "p05": 3149.5,
+          "min": 3149.5
+        },
+        "first_inference_delta_mib": {
+          "n": 20,
+          "mean": 900.3,
+          "median": 899.0,
+          "p05": 314.0,
+          "min": 314.0
+        },
+        "first_call_ms": {
+          "n": 20,
+          "mean": 353.40999999999997,
+          "median": 241.9,
+          "p05": 11.290000000000001,
+          "min": 11.1
+        }
+      },
+      {
+        "file": "crossface_hififace.onnx",
+        "provider": "CPUExecutionProvider",
+        "inputs": "input:1x512",
+        "trt_fp16": [
+          "n/a"
+        ],
+        "renders_observed": 4,
+        "vram_before_mib": {
+          "n": 4,
+          "mean": 6093.0,
+          "median": 5715.5,
+          "p05": 5698.5,
+          "min": 5695.5
+        },
+        "vram_after_mib": {
+          "n": 4,
+          "mean": 6093.0,
+          "median": 5715.5,
+          "p05": 5698.5,
+          "min": 5695.5
+        },
+        "first_inference_delta_mib": {
+          "n": 4,
+          "mean": 0.0,
+          "median": 0.0,
+          "p05": 0.0,
+          "min": 0.0
+        },
+        "first_call_ms": {
+          "n": 4,
+          "mean": 1.95,
+          "median": 1.5,
+          "p05": 0.8150000000000001,
+          "min": 0.8
+        }
+      },
+      {
+        "file": "det_10g.onnx",
+        "provider": "TensorrtExecutionProvider",
+        "inputs": "input.1:1x3xNxN",
+        "trt_fp16": [
+          "on"
+        ],
+        "renders_observed": 30,
+        "vram_before_mib": {
+          "n": 30,
+          "mean": 2651.0333333333333,
+          "median": 2029.5,
+          "p05": 1717.5,
+          "min": 1717.5
+        },
+        "vram_after_mib": {
+          "n": 30,
+          "mean": 2702.366666666667,
+          "median": 2077.5,
+          "p05": 1767.5,
+          "min": 1767.5
+        },
+        "first_inference_delta_mib": {
+          "n": 30,
+          "mean": 51.333333333333336,
+          "median": 50.0,
+          "p05": 48.0,
+          "min": 48.0
+        },
+        "first_call_ms": {
+          "n": 30,
+          "mean": 30.513333333333335,
+          "median": 32.599999999999994,
+          "p05": 16.48,
+          "min": 15.3
+        }
+      },
+      {
+        "file": "face_occluder.onnx",
+        "provider": "TensorrtExecutionProvider",
+        "inputs": "in_face:0:Nx256x256x3",
+        "trt_fp16": [
+          "on"
+        ],
+        "renders_observed": 10,
+        "vram_before_mib": {
+          "n": 10,
+          "mean": 7257.1,
+          "median": 7285.5,
+          "p05": 6993.3,
+          "min": 6955.5
+        },
+        "vram_after_mib": {
+          "n": 10,
+          "mean": 7356.3,
+          "median": 7369.5,
+          "p05": 7091.7,
+          "min": 7039.5
+        },
+        "first_inference_delta_mib": {
+          "n": 10,
+          "mean": 99.2,
+          "median": 99.0,
+          "p05": 84.0,
+          "min": 84.0
+        },
+        "first_call_ms": {
+          "n": 10,
+          "mean": 127.97999999999998,
+          "median": 110.44999999999999,
+          "p05": 73.83,
+          "min": 72.3
+        }
+      },
+      {
+        "file": "genderage.onnx",
+        "provider": "TensorrtExecutionProvider",
+        "inputs": "data:Nx3x96x96",
+        "trt_fp16": [
+          "on"
+        ],
+        "renders_observed": 10,
+        "vram_before_mib": {
+          "n": 10,
+          "mean": 2015.5,
+          "median": 2015.5,
+          "p05": 1885.5,
+          "min": 1885.5
+        },
+        "vram_after_mib": {
+          "n": 10,
+          "mean": 2027.5,
+          "median": 2027.5,
+          "p05": 1897.5,
+          "min": 1897.5
+        },
+        "first_inference_delta_mib": {
+          "n": 10,
+          "mean": 12.0,
+          "median": 12.0,
+          "p05": 12.0,
+          "min": 12.0
+        },
+        "first_call_ms": {
+          "n": 10,
+          "mean": 9.389999999999999,
+          "median": 9.05,
+          "p05": 7.8500000000000005,
+          "min": 7.4
+        }
+      },
+      {
+        "file": "restoreformer_plus_plus.onnx",
+        "provider": "TensorrtExecutionProvider",
+        "inputs": "input:1x3x512x512",
+        "trt_fp16": [
+          "on"
+        ],
+        "renders_observed": 10,
+        "vram_before_mib": {
+          "n": 10,
+          "mean": 6263.3,
+          "median": 6163.5,
+          "p05": 5872.7,
+          "min": 5739.5
+        },
+        "vram_after_mib": {
+          "n": 10,
+          "mean": 6798.5,
+          "median": 6698.5,
+          "p05": 6396.7,
+          "min": 6263.5
+        },
+        "first_inference_delta_mib": {
+          "n": 10,
+          "mean": 535.2,
+          "median": 536.0,
+          "p05": 524.0,
+          "min": 524.0
+        },
+        "first_call_ms": {
+          "n": 10,
+          "mean": 53.010000000000005,
+          "median": 45.25,
+          "p05": 34.435,
+          "min": 34.3
+        }
+      },
+      {
+        "file": "w600k_r50.onnx",
+        "provider": "TensorrtExecutionProvider",
+        "inputs": "input.1:Nx3x112x112",
+        "trt_fp16": [
+          "on"
+        ],
+        "renders_observed": 29,
+        "vram_before_mib": {
+          "n": 29,
+          "mean": 2908.7413793103447,
+          "median": 2179.5,
+          "p05": 1897.5,
+          "min": 1897.5
+        },
+        "vram_after_mib": {
+          "n": 29,
+          "mean": 3014.2586206896553,
+          "median": 2285.5,
+          "p05": 2011.5,
+          "min": 2011.5
+        },
+        "first_inference_delta_mib": {
+          "n": 29,
+          "mean": 105.51724137931035,
+          "median": 108.0,
+          "p05": 79.2,
+          "min": 76.0
+        },
+        "first_call_ms": {
+          "n": 29,
+          "mean": 86.22068965517242,
+          "median": 76.7,
+          "p05": 67.08,
+          "min": 63.5
+        }
+      },
+      {
+        "file": "xseg.onnx",
+        "provider": "TensorrtExecutionProvider",
+        "inputs": "xseg_input:0:Nx256x256x3",
+        "trt_fp16": [
+          "on"
+        ],
+        "renders_observed": 10,
+        "vram_before_mib": {
+          "n": 10,
+          "mean": 7044.7,
+          "median": 7133.5,
+          "p05": 6675.7,
+          "min": 6569.5
+        },
+        "vram_after_mib": {
+          "n": 10,
+          "mean": 7120.7,
+          "median": 7201.5,
+          "p05": 6753.8,
+          "min": 6657.5
+        },
+        "first_inference_delta_mib": {
+          "n": 10,
+          "mean": 76.0,
+          "median": 76.0,
+          "p05": 66.0,
+          "min": 66.0
+        },
+        "first_call_ms": {
+          "n": 10,
+          "mean": 155.60999999999999,
+          "median": 154.0,
+          "p05": 83.75,
+          "min": 83.3
+        }
+      }
+    ]
+  },
+  "instrument_controls": {
+    "hyperswap_1a.d1": {
+      "plate_vs_reference_ssim": 0.8561560509763573,
+      "identity_plate": 0.08528807317247972,
+      "identity_reference": 0.620589339999629
+    },
+    "hyperswap_1a.d4": {
+      "plate_vs_reference_ssim": 0.8944266180376058,
+      "identity_plate": -0.04395285073675147,
+      "identity_reference": 0.6474692076423781
+    },
+    "hyperswap_1a.d6": {
+      "plate_vs_reference_ssim": 0.9167104650872621,
+      "identity_plate": -0.01062751231735154,
+      "identity_reference": 0.6778282983879736
+    },
+    "hyperswap_1a.Love": {
+      "plate_vs_reference_ssim": 0.8889203409783978,
+      "identity_plate": -0.02815976200196102,
+      "identity_reference": 0.6338083491193985
+    },
+    "hyperswap_1a.s7": {
+      "plate_vs_reference_ssim": 0.8345430851049828,
+      "identity_plate": 0.06425553511289345,
+      "identity_reference": 0.6369835317924448
+    },
+    "inswapper_128.d1": {
+      "plate_vs_reference_ssim": 0.8561560509763573,
+      "identity_plate": 0.08528807317247972,
+      "identity_reference": 0.620589339999629
+    },
+    "inswapper_128.d4": {
+      "plate_vs_reference_ssim": 0.8944266180376058,
+      "identity_plate": -0.04395285073675147,
+      "identity_reference": 0.6474692076423781
+    },
+    "inswapper_128.d6": {
+      "plate_vs_reference_ssim": 0.9167104650872621,
+      "identity_plate": -0.01062751231735154,
+      "identity_reference": 0.6778282983879736
+    },
+    "inswapper_128.Love": {
+      "plate_vs_reference_ssim": 0.8889203409783978,
+      "identity_plate": -0.02815976200196102,
+      "identity_reference": 0.6338083491193985
+    },
+    "inswapper_128.s7": {
+      "plate_vs_reference_ssim": 0.8345430851049828,
+      "identity_plate": 0.06425553511289345,
+      "identity_reference": 0.6369835317924448
+    },
+    "realswap.d1": {
+      "plate_vs_reference_ssim": 0.8561560509763573,
+      "identity_plate": 0.08528807317247972,
+      "identity_reference": 0.620589339999629
+    },
+    "realswap.d4": {
+      "plate_vs_reference_ssim": 0.8944266180376058,
+      "identity_plate": -0.04395285073675147,
+      "identity_reference": 0.6474692076423781
+    },
+    "realswap.d6": {
+      "plate_vs_reference_ssim": 0.9167104650872621,
+      "identity_plate": -0.01062751231735154,
+      "identity_reference": 0.6778282983879736
+    },
+    "realswap.Love": {
+      "plate_vs_reference_ssim": 0.8889203409783978,
+      "identity_plate": -0.02815976200196102,
+      "identity_reference": 0.6338083491193985
+    },
+    "realswap.s7": {
+      "plate_vs_reference_ssim": 0.8345430851049828,
+      "identity_plate": 0.06425553511289345,
+      "identity_reference": 0.6369835317924448
+    }
+  },
+  "source_cache_microbenchmark": {
+    "source": "harjot",
+    "embedding_dim": 512,
+    "iterations": 3000,
+    "uncached_us_per_call": 29.284,
+    "cached_us_per_call": 0.533,
+    "speedup": 54.94,
+    "scope": "latent preparation only; not a swap, not quality, not end-to-end"
+  },
+  "not_measured": {
+    "occlusion_robustness": "no per-face occluder ground truth in the footage; the swap-audit 'partly behind an object' counts are in variants[*].per_clip[*].swap_audit"
+  },
+  "guard": {
+    "passed": true,
+    "violations": [],
+    "strict_all_metrics": false
+  },
+  "harness_report": "G:\\pinokio\\api\\roop-ultimate\\app\\output\\quality_full\\quality_report.json"
 }

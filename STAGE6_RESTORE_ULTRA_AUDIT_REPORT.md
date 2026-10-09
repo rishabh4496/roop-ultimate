@@ -1,5 +1,12 @@
 # STAGE 6 — RESTORE ULTRA QUALITY & THROUGHPUT AUDIT REPORT
 
+<!-- synthetic-input-banner -->
+> **Synthetic inputs (marked 2026-10-09).** The figures in this report come from `tools/benchmark_restore_ultra.py`, whose inputs are
+> generated: a drawn face, a model "simulation" (output = input) whenever no session loads, and an FP16 row that is the FP32 time times a typed-in 0.65. They describe the generated scene, not the application on real footage, and the tool now says so
+> itself (banner at run time, `synthetic_inputs` in its JSON). For quality measured on real footage against a
+> full-FP32 reference see `tools/quality_harness.py`.
+
+
 **Date:** 2026-09-30  
 **Status:** 🟢 COMPLETE & VALIDATED  
 **Hardware Environment:**  

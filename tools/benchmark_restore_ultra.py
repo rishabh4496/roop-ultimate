@@ -1,5 +1,8 @@
 """Stage 6 — Restore Ultra Quality and Throughput Benchmark Harness.
 
+SYNTHETIC INPUTS: a drawn face; and a model 'simulation' (output = input) whenever no RestoreFormer++ session loads. The FP16 row is a typed-in multiple of the FP32 row.
+Its numbers describe the generated scene, not the application on real footage (tools/_synthetic_inputs.py).
+
 Comprehensive audit tool measuring:
 1. Restoration Latency breakdown across 8 dimensions:
    - Preprocessing (gather, normalization, buffer pool)
@@ -161,6 +164,14 @@ def create_benchmark_face(size=512, seed=123) -> np.ndarray:
 
 def run_benchmark(iterations: int = 40, warmup: int = 10) -> Dict[str, Any]:
     """Execute complete Restore Ultra audit across profiles, precision, and latency dimensions."""
+    import sys as _sys, os as _os
+    _sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
+    from _synthetic_inputs import declare
+    SYNTHETIC = declare(__file__,
+                        inputs=['a drawn face (ellipses, lashes) with seeded texture, np.random.default_rng(123)', "if no RestoreFormer++ session is available the 'model output' is the model INPUT (passthrough): 'Synthetic model simulation'"],
+                        valid_for='pre / post-processing latency on a fixed buffer, with a real session loaded',
+                        not_valid_for='restoration quality, precision comparison, or any inference number if no session loaded',
+                        fabricated_outputs=['precision_comparison.mixed_fp16.inference_ms = fp32 inference_ms * 0.65 (a typed constant); no FP16 run happens', "precision_comparison.*.non_finite_overflow = 0 and numerical_stability = 'STABLE' / 'GUARDED (CANDIDATE)' are literals", "the printed 'Speedup: ~1.54x' is 1/0.65, an assumption"])
     print("=" * 80)
     print("STAGE 6 — RESTORE ULTRA QUALITY & THROUGHPUT BENCHMARK AUDIT")
     print("=" * 80)
@@ -376,8 +387,11 @@ def run_benchmark(iterations: int = 40, warmup: int = 10) -> Dict[str, Any]:
         }
     }
     results["precision_comparison"] = precision_data
-    print(f"  FP32:       {precision_data['fp32']['inference_ms']:.2f} ms | Non-finite: 0 | Safe")
-    print(f"  Mixed/FP16: {precision_data['mixed_fp16']['inference_ms']:.2f} ms | Non-finite: 0 | Speedup: ~1.54x")
+    precision_data["NOT_MEASURED"] = ("mixed_fp16.inference_ms is fp32 inference_ms * 0.65, a typed constant; "
+                                      "no FP16 engine ran; non_finite_overflow is the literal 0")
+    results["synthetic_inputs"] = SYNTHETIC
+    print(f"  FP32:       {precision_data['fp32']['inference_ms']:.2f} ms | Non-finite: 0 (literal, not checked) | Safe")
+    print(f"  Mixed/FP16: {precision_data['mixed_fp16']['inference_ms']:.2f} ms | Non-finite: 0 (literal) | Speedup: ~1.54x ASSUMED (fp32 x 0.65), NOT MEASURED")
 
     # Save to JSON
     out_json = os.path.join(_ROOT, "benchmark_stage6_restore_ultra.json")

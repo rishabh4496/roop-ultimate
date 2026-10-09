@@ -1245,7 +1245,21 @@ def main():
     means = [faceset_mean(fs) for fs in facesets]
     print(f"[bench] sources: {', '.join(f'{names[i]} ({len(facesets[i].faces)} faces)' for i in range(len(names)))}", flush=True)
 
-    if args.capture_face >= 0:
+    # ROOP_BENCH_FIXTURE_IN / ROOP_BENCH_FIXTURE_OUT (tools/quality_harness.py): the captured target people are part of
+    # what a render is measured against, and auto-capture is NOT precision-invariant - on s7 an FP32 and an FP16
+    # detector broke a 15.0 vs 15.3 deg "best frame" tie differently and captured different frames. So one render
+    # (the FP32 reference) saves what it captured and the others load it. Plain dicts, rebuilt with type(face)(dict):
+    # an insightface Face does not survive pickle / copy (its __getattr__ answers None for missing dunders).
+    _fixture_in = os.environ.get("ROOP_BENCH_FIXTURE_IN")
+    _fixture_pinned = bool(_fixture_in and os.path.exists(_fixture_in))
+    if _fixture_pinned:
+        import pickle
+        with open(_fixture_in, "rb") as fh:
+            _saved_targets, groups = pickle.load(fh)
+        from insightface.app.common import Face as _Face
+        targets = [_Face(d) for d in _saved_targets]
+        print(f"[bench] fixture pinned from {_fixture_in}: {len(targets)} target face(s), groups {groups}", flush=True)
+    elif args.capture_face >= 0:
         # One chosen person, the way a user clicks one face box in the UI and
         # then presses "auto angles". Auto-capture with one faceset picks the
         # most capturable person, which on Love.mp4 was the man (frame 80)
@@ -1293,6 +1307,13 @@ def main():
         targets, groups = auto_capture_targets(
             args.video, expect=len(names), time_budget=args.capture_budget,
             log_prefix="[bench]")
+
+    _fixture_out = os.environ.get("ROOP_BENCH_FIXTURE_OUT")
+    if _fixture_out and not _fixture_pinned:
+        import pickle
+        with open(_fixture_out, "wb") as fh:
+            pickle.dump(([dict(t) for t in targets], list(groups)), fh)
+        print(f"[bench] fixture saved to {_fixture_out}: {len(targets)} target face(s), groups {list(groups)}", flush=True)
 
     # This harness runs the production "selected" mode, but it is not going
     # through the API boundary that normally supplies the canonical selection

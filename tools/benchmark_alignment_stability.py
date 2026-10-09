@@ -1,5 +1,8 @@
 """Stage 4 Benchmark: Face Alignment and Geometric Stability.
 
+SYNTHETIC INPUTS: 5-point keypoint trajectories from a seeded RNG with injected Gaussian jitter on a flat grey frame.
+Its numbers describe the generated scene, not the application on real footage (tools/_synthetic_inputs.py).
+
 Measures alignment stability and geometric fidelity independently from face swap quality:
 1. Baseline: Raw 5-point Umeyama (no temporal smoothing).
 2. Fixed EMA Filter: Matrix-level EMA (alpha=0.85).
@@ -337,6 +340,13 @@ def evaluate_alignment_strategy(
 
 
 def main():
+    import sys as _sys, os as _os
+    _sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
+    from _synthetic_inputs import declare
+    SYNTHETIC = declare(__file__,
+                        inputs=['keypoint sequences generated from np.random.seed(1337) with Gaussian jitter added to ground-truth trajectories', "yaw 'foreshortening' and occlusion are simulated geometry drawn on flat grey 120 frames"],
+                        valid_for='relative jitter / lag of alignment filters on controlled synthetic trajectories',
+                        not_valid_for='alignment stability or profile success on real heads and real detections')
     parser = argparse.ArgumentParser(description="Stage 4 Geometric Alignment & Stability Benchmark")
     parser.add_argument("--frames", type=int, default=120, help="Number of benchmark sequence frames")
     args = parser.parse_args()
@@ -361,7 +371,7 @@ def main():
 
     out_file = os.path.join(ROOT, "benchmark_stage4_alignment.json")
     with open(out_file, "w") as f:
-        json.dump({"timestamp": time.strftime("%Y-%m-%d %H:%M:%S"), "results": results}, f, indent=2)
+        json.dump({"timestamp": time.strftime("%Y-%m-%d %H:%M:%S"), "synthetic_inputs": SYNTHETIC, "results": results}, f, indent=2)
     print(f"\nSaved structured telemetry to: {out_file}\n")
 
     print("=" * 115)

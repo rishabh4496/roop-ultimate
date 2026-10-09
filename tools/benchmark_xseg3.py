@@ -1,5 +1,8 @@
 """Stage 7 — XSeg 3 Mask Quality and Performance Benchmark Harness.
 
+SYNTHETIC INPUTS: drawn canvases and, in the quality tests, np.random.uniform stand-ins for the mask network output.
+Its numbers describe the generated scene, not the application on real footage (tools/_synthetic_inputs.py).
+
 Measures:
 1. Mask Latency Breakdown across 7 stages:
    - Preprocessing (LUT & Buffer Pool vs naive allocation)
@@ -335,6 +338,14 @@ def benchmark_visual_quality(processor: Mask_XSeg3) -> Dict[str, Any]:
 
 
 def main():
+    import sys as _sys, os as _os
+    _sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
+    from _synthetic_inputs import declare
+    SYNTHETIC = declare(__file__,
+                        inputs=['canvases with a skin-tone fill and drawn hair / hand / glasses shapes', "'dummy_ort_out' and raw_mask_256 are np.random.uniform arrays standing in for XSeg output in the refinement tests"],
+                        valid_for='latency of pre / post-processing and the refinement arithmetic',
+                        not_valid_for='XSeg mask quality or any real-footage claim',
+                        hard_coded_fields=["report 'device' ('NVIDIA GeForce RTX 4070 (12GB VRAM)') and the latency banner text are typed in, not detected"])
     print("=" * 80)
     print("STAGE 7 — XSEG 3 MASK QUALITY & PERFORMANCE AUDIT BENCHMARK")
     print("=" * 80)
@@ -348,6 +359,7 @@ def main():
     quality_results = benchmark_visual_quality(processor)
 
     full_report = {
+        "synthetic_inputs": SYNTHETIC,
         "stage": "STAGE 7 — XSEG 3 MASK QUALITY & PERFORMANCE AUDIT",
         "device": "NVIDIA GeForce RTX 4070 (12GB VRAM)",
         "model": "xseg_3.onnx",

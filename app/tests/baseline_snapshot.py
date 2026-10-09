@@ -185,7 +185,8 @@ def build_cmd(clip_name, spec, cfg, args, out_root, tag, threads, window=None, c
     start, end = window if window is not None else spec["window"]
     video = fixtures.clip(spec["rel"], required=True)
     cap = spec["capture"] if capture is None else capture
-    cmd = [sys.executable, os.path.join(HERE, "two_face_video.py"),
+    # ROOP_BENCH_LAUNCHER: a script that wraps two_face_video.py (same argv), e.g. tests/first_inference_probe.py.
+    cmd = [sys.executable, os.environ.get("ROOP_BENCH_LAUNCHER") or os.path.join(HERE, "two_face_video.py"),
            "--tag", tag, "--video", video, "--sources", spec["sources"],
            "--start", str(start), "--end", str(end),
            "--provider", str(cfg.provider),

@@ -1,5 +1,12 @@
 # Stage 9 — Temporal Face Tracking and Flicker Control Audit Report
 
+<!-- synthetic-input-banner -->
+> **Synthetic inputs (marked 2026-10-09).** The figures in this report come from `tools/benchmark_temporal_tracking.py`, whose inputs are
+> generated: random 512-d embeddings and generated keypoint trajectories with injected noise. They describe the generated scene, not the application on real footage, and the tool now says so
+> itself (banner at run time, `synthetic_inputs` in its JSON). For quality measured on real footage against a
+> full-FP32 reference see `tools/quality_harness.py`.
+
+
 **Roop Ultimate Engineering Pipeline**  
 **Stage 9 Execution Date:** October 2026  
 **Status:** Complete, Validated & Benchmarked  
