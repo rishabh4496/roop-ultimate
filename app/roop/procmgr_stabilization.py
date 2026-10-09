@@ -193,6 +193,56 @@ class StabilizationSchedulingMixin:
                   f"ROOP_STAB_CHUNK_MB overrides this exactly.")
         return budget
 
+    # Restorers whose output is a pure function of (crop, face): the network and a stateless finish. The cache serves
+    # swap and enhance across blocks, so an enhancer with ANY per-track memory (the adaptive enhancer, a temporal
+    # restorer) would hand one block another block's history. Anything not listed here runs today's path untouched.
+    _DEDUP_ENHANCERS = ('restore_ultra', 'restoreformer++')
+
+    def _stab_dedup_plan(self, block, warmup, n_frames):
+        """(StabRawCache | None, reason). The cache is built only when the raw stage is provably state-independent.
+
+        See docs/perf/stab_warmup.md. The decisive condition is that no per-block filter touches what the networks
+        see: with ``temporal_detection`` on, the live kps filter and the landmark smoother are dropped from the render
+        loop (procmgr_batch.py: `_temporal_mode`) because the tracking pre-pass already smoothed the cached faces
+        sequentially. Anything that could make a block's warm-up differ from its neighbour's real frame - an ordered
+        temporal engine, a live kps filter, a processor with hidden state - turns the cache off. ROOP_STAB_DEDUP=0
+        turns it off unconditionally.
+        """
+        if os.environ.get('ROOP_STAB_DEDUP', '1').strip().lower() in ('0', 'false', 'no', 'off'):
+            return None, 'disabled by ROOP_STAB_DEDUP=0'
+        if warmup <= 0:
+            return None, 'no warm-up to deduplicate'
+        if warmup > block:
+            return None, 'warm-up %d exceeds the %d-frame block (a frame could be visited three times)' % (warmup, block)
+        if not getattr(self, '_temporal_mode', False) or getattr(self, '_temporal_faces', None) is None:
+            return None, 'temporal_detection is off (faces are not pre-smoothed)'
+        if self.kps_stabilizer is not None or getattr(self, '_kps_stab_factory', None) is not None:
+            return None, 'a live kps filter changes the alignment per block'
+        if getattr(getattr(self, '_landmark_smoother', None), 'enabled', False):
+            return None, 'a live landmark smoother changes the alignment per block'
+        for name in ('temporal_identity', 'temporal_occlusion', 'target_appearance', 'temporal_compositing',
+                     'temporal_quality'):
+            if getattr(getattr(self, '_' + name, None), 'enabled', False):
+                return None, '%s keeps an ordered per-track history' % name
+        # The shared stage is swap -> [enhance]. Every mask processor still runs on every visit (process_mask applies
+        # THIS block's MaskStabilizer inside itself for the dense maskers, so nothing it returns may cross blocks),
+        # which also means any number and kind of maskers is fine - but all of swap/enhance must come before them,
+        # because the seam is "before the first mask processor".
+        types = [getattr(p, 'type', None) for p in self.processors]
+        if (not types or types[0] != 'swap' or types.count('swap') != 1 or types.count('enhance') > 1
+                or any(t not in ('swap', 'enhance', 'mask') for t in types)):
+            return None, 'processor chain %s is not swap -> [enhance] -> mask*' % (types,)
+        first_mask = types.index('mask') if 'mask' in types else len(types)
+        if any(t != 'mask' for t in types[first_mask:]):
+            return None, 'a mask processor runs before swap/enhance in %s' % (types,)
+        if getattr(getattr(self, '_enhance_gate', None), 'enabled', False):
+            return None, 'the enhance gate keeps per-track hysteresis (enhance_min_face_px > 0)'
+        for p in self.processors:
+            if getattr(p, 'type', None) == 'enhance' and getattr(p, 'processorname', None) not in self._DEDUP_ENHANCERS:
+                return None, 'enhancer %r is not on the verified stateless list' % getattr(p, 'processorname', None)
+        from roop.stab_dedup import StabRawCache
+        return StabRawCache(block, warmup, n_frames), 'on'
+
     def _stab_parallel_geometry(self, threads):
         """(warm_up, block_frames, width) for parallel stabilization.
 

@@ -1,0 +1,116 @@
+{
+ "date": "2026-10-09",
+ "head": {
+  "head": "6dbe7bea8f2df627f680304f62e87f2e7b33faee",
+  "short": "6dbe7be",
+  "dirty_files": [
+   "pp/roop/ProcessMgr.py",
+   "app/roop/procmgr_stabilization.py",
+   "app/tests/two_face_video.py",
+   "app/roop/stab_dedup.py",
+   "app/tests/ab_stab_blocks_vs_sequential.py",
+   "app/tests/ab_stab_dedup.py",
+   "app/tests/test_stab_dedup.py"
+  ]
+ },
+ "clip": "d4",
+ "window": [
+  0,
+  240
+ ],
+ "threads": 10,
+ "chunk_mb": "8000",
+ "sequential_fps": 3.0,
+ "arms": {
+  "SEQ2": {
+   "geometry": {},
+   "fps": 3.05,
+   "peak_rss_gb": 10.206,
+   "faces_per_s": 5.2,
+   "stabilizer_path": "sequential/none",
+   "frames_compared": 240,
+   "frames_differing": 0,
+   "mean_abs_diff": 0.0,
+   "p99_frame_mean": 0.0,
+   "max_abs_diff": 0.0,
+   "head_of_block_mean": null,
+   "body_mean": 0.0
+  },
+  "P4": {
+   "geometry": {
+    "wu": 6,
+    "block": 24,
+    "workers": 10,
+    "blocks_per_chunk": 20
+   },
+   "fps": 9.32,
+   "peak_rss_gb": 10.822,
+   "faces_per_s": 16.0,
+   "stabilizer_path": "parallel-blocks",
+   "frames_compared": 240,
+   "frames_differing": 125,
+   "mean_abs_diff": 0.01877,
+   "p99_frame_mean": 0.35932,
+   "max_abs_diff": 13.0,
+   "head_of_block_mean": 0.04734,
+   "body_mean": 0.01202
+  },
+  "P8": {
+   "geometry": {
+    "wu": 6,
+    "block": 48,
+    "workers": 10,
+    "blocks_per_chunk": 20
+   },
+   "fps": 7.59,
+   "peak_rss_gb": 10.552,
+   "faces_per_s": 13.0,
+   "stabilizer_path": "parallel-blocks",
+   "frames_compared": 240,
+   "frames_differing": 71,
+   "mean_abs_diff": 0.01342,
+   "p99_frame_mean": 0.35931,
+   "max_abs_diff": 14.0,
+   "head_of_block_mean": 0.05852,
+   "body_mean": 0.00531
+  },
+  "P16": {
+   "geometry": {
+    "wu": 6,
+    "block": 96,
+    "workers": 10,
+    "blocks_per_chunk": 20
+   },
+   "fps": 5.18,
+   "peak_rss_gb": 10.439,
+   "faces_per_s": 8.9,
+   "stabilizer_path": "parallel-blocks",
+   "frames_compared": 240,
+   "frames_differing": 56,
+   "mean_abs_diff": 0.0125,
+   "p99_frame_mean": 0.3597,
+   "max_abs_diff": 14.0,
+   "head_of_block_mean": 0.0409,
+   "body_mean": 0.01201
+  }
+ },
+ "mean_diff_monotone_non_increasing_with_block": true,
+ "sequential_vs_sequential": {
+  "geometry": {},
+  "fps": 3.05,
+  "peak_rss_gb": 10.206,
+  "faces_per_s": 5.2,
+  "stabilizer_path": "sequential/none",
+  "frames_compared": 240,
+  "frames_differing": 0,
+  "mean_abs_diff": 0.0,
+  "p99_frame_mean": 0.0,
+  "max_abs_diff": 0.0,
+  "head_of_block_mean": null,
+  "body_mean": 0.0
+ },
+ "sequential_sha256": {
+  "SEQ": "01c326c0d5bc4b3f749827ad3dde5cbb09c0a43ad49c42ff5cb15c9c14974b88",
+  "SEQ2": "01c326c0d5bc4b3f749827ad3dde5cbb09c0a43ad49c42ff5cb15c9c14974b88"
+ }
+}

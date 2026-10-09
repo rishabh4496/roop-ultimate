@@ -1119,6 +1119,13 @@ def main():
                          "(sets TensorRT pool widths from measured free memory)")
     ap.add_argument("--out", default=os.path.join(APP, "output", "bench_two_face"))
     args = ap.parse_args()
+    # ROOP_BENCH_CODEC / ROOP_BENCH_CRF: take the encoder out of a pixel comparison. Any lossy encoder with rate
+    # control (hevc_nvenc above all) turns one sub-pixel difference in one face into a whole-frame quantization
+    # difference that persists for the rest of the clip - the "0.71/255 noise floor" - so a fidelity A/B has to
+    # render with `libx264` and CRF 0 (lossless in YUV). Opt-in and explicit; unset = exactly what this harness
+    # always did, and the codec still reaches the pipeline only through `args.codec`.
+    if os.environ.get("ROOP_BENCH_CODEC"):
+        args.codec = os.environ["ROOP_BENCH_CODEC"]
 
     ensure_ffmpeg()
     _apply_startup_runtime_environment()
@@ -1174,6 +1181,9 @@ def main():
         g.temporal_quality_history = max(2, int(args.temporal_quality_history))
     g.video_encoder = args.codec
     g.video_quality = 12
+    # ROOP_BENCH_CRF: see the ROOP_BENCH_CODEC note after argument parsing.
+    if os.environ.get("ROOP_BENCH_CRF"):
+        g.video_quality = int(os.environ["ROOP_BENCH_CRF"])
     g.execution_threads = args.threads if args.threads is not None else g.CFG.max_threads
     if args.auto_threads:
         # This is a benchmark-only override.  Production preserves a user's

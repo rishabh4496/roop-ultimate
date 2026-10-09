@@ -5,6 +5,29 @@ full session record is [`SESSION_LOGS.md`](SESSION_LOGS.md); the running enginee
 state lives outside the repository (`RECODE_STATUS.md` in the operator's `roop-keep`
 folder). Entries before 2026-09-21 were moved here from the README on 2026-09-22.
 
+## 2026-10-09
+
+- **Parallel stabilization no longer swaps and restores the overlap frames twice (`docs/perf/stab_warmup.md`).** A block primes its filters by running
+  the whole pipeline on the WU frames before it (the previous block's last WU frames) and discarding the picture: 144 of 744 frames on a 600-frame clip.
+  With `temporal_detection` on, the live kps filter and the landmark smoother are not in the render loop (the tracking pre-pass smoothed the cached faces
+  sequentially), so the swap net and the restorer are pure functions of (frame, face, M). `roop/stab_dedup.py` lets whichever block reaches an overlap
+  frame first publish `(fake_frame, enhanced_frame, scale_factor, swap_model_mask)`; the other takes it and runs only its own mask / enhancer / HF
+  filters. Every mask processor still runs on each visit - `process_mask` applies the block's `MaskStabilizer` inside itself, so nothing it returns is
+  shared. Eligible only for `temporal_detection` with no live kps filter, no ordered temporal engine, `swap -> [restore_ultra | restoreformer++] ->
+  mask*`, `warmup <= block`, per face no rotation/frontalization/temporal-quality; otherwise today's path, untouched. Bounded by `ROOP_STAB_DEDUP_MB`
+  (384); `ROOP_STAB_DEDUP=0` turns it off. ABBA, live config, 600 frames, pinned chunk budget: **d4 +6.8%, s7 +9.6% fps, output file sha256 and decoded
+  md5 identical in all four arms**, swap calls -136 / -126 (16.4% / 19.3% of all face inference), peak RSS unchanged. 31 unit tests.
+- **Larger blocks (8x) are not worth it at the RAM this machine has, and nothing was changed.** At equal chunk RAM 8x is 9.6% (d4) and 3.7% (s7) SLOWER
+  than 4x. Against a sequential render with the encoder taken out (x264 CRF 0, new `ROOP_BENCH_CODEC` / `ROOP_BENCH_CRF` env overrides in
+  `two_face_video.py`) the mean difference falls monotonically with block size (0.0188 -> 0.0134 -> 0.0125 of 255 for 24/48/96-frame blocks), i.e.
+  "closer, never further" holds, but the shipped blocks are already 0.019/255 away. The RAM-derived chunk budget the brief asked for already exists
+  (`_default_stab_chunk_mb`, 75% share on a 32 GB desktop); its 40% cap would have shrunk it here.
+- **A hevc_nvenc comparison is not a pixel comparison.** The same two renders differ by 0.65/255 encoded and 0.019/255 lossless: a rate-controlled
+  encoder turns one sub-pixel difference into a whole-frame difference that persists. Pinned-geometry renders were bit-identical in every repeat
+  (16 parallel, 3 sequential), so the "0.7142/255 noise floor" in AGENTS.md did not reproduce; it may belong to un-pinned geometries.
+- **XSeg bound / CUDA-graph sessions (opt-in `ROOP_TRT_BOUND=xseg=graph`) and RF++ batching: measured, nothing kept on by default**
+  (`docs/perf/trt_bound_sessions_2026-10-09.md`, commit 6dbe7be). The 10-06 "graph not bit-identical" finding was a harness bug.
+
 ## 2026-10-05
 
 - **`lighting` stage: LCT bit-identical and 42% cheaper at 512 px (`docs/perf/stage_precision_verify_lighting_2026-10-05.md`).** `_color_transfer_lct`

@@ -1,0 +1,58 @@
+{
+ "date": "2026-10-09",
+ "head": {
+  "head": "6dbe7bea8f2df627f680304f62e87f2e7b33faee",
+  "short": "6dbe7be",
+  "dirty_files": [
+   "pp/roop/ProcessMgr.py",
+   "app/roop/procmgr_stabilization.py",
+   "app/roop/stab_dedup.py",
+   "app/tests/ab_stab_blocks_vs_sequential.py",
+   "app/tests/ab_stab_dedup.py",
+   "app/tests/test_stab_dedup.py"
+  ]
+ },
+ "clip": "d4",
+ "window": [
+  0,
+  240
+ ],
+ "threads": 10,
+ "chunk_mb": "8000",
+ "sequential_fps": 3.08,
+ "arms": {
+  "SEQ2": {
+   "geometry": {},
+   "fps": 3.06,
+   "peak_rss_gb": 9.986,
+   "faces_per_s": 5.3,
+   "stabilizer_path": "sequential/none",
+   "frames_compared": 240,
+   "frames_differing": 0,
+   "mean_abs_diff": 0.0,
+   "p99_frame_mean": 0.0,
+   "max_abs_diff": 0.0,
+   "head_of_block_mean": null,
+   "body_mean": 0.0
+  }
+ },
+ "mean_diff_monotone_non_increasing_with_block": true,
+ "sequential_vs_sequential": {
+  "geometry": {},
+  "fps": 3.06,
+  "peak_rss_gb": 9.986,
+  "faces_per_s": 5.3,
+  "stabilizer_path": "sequential/none",
+  "frames_compared": 240,
+  "frames_differing": 0,
+  "mean_abs_diff": 0.0,
+  "p99_frame_mean": 0.0,
+  "max_abs_diff": 0.0,
+  "head_of_block_mean": null,
+  "body_mean": 0.0
+ },
+ "sequential_sha256": {
+  "SEQ": "d2ebd41e662371cc44a49ea2e94fb3f27bbd66f5924fb2c0bff6e3e81f59be58",
+  "SEQ2": "d2ebd41e662371cc44a49ea2e94fb3f27bbd66f5924fb2c0bff6e3e81f59be58"
+ }
+}

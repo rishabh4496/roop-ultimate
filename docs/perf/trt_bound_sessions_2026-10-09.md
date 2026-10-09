@@ -71,6 +71,11 @@ A = shipped, B = `ROOP_TRT_BOUND=xseg=graph`. Discarded warm-up per clip. Frame-
 | d4 | 9.60, 9.89 | 9.39, 10.30 | 1.010 | 3.0% | 963 all | 10.8, 11.1 / 10.5, 11.6 |
 | s7 | 12.10, 11.25 | 11.44, 11.51 | 0.983 | 7.3% | 652 all | 10.6, 9.9 / 10.0, 10.1 |
 
+**The picture is bit-identical too (added later the same day).** All four renders of each clip have the same file sha256 and
+decoded-video md5, A and B alike (d4 `6650e371b02b`, s7 `891f687daa2c`; the same hashes reappear in
+`stab_dedup_2026-10-09.json` from an independent session). So the XSeg CUDA graph changes nothing the viewer sees, only
+how long the call takes, and a render at a pinned geometry is bit-reproducible on this machine.
+
 Path proven: every B log carries `mask:xseg[graph] x2` (both pooled contexts bound), every A log `mask:xseg x2`;
 same stabilizer path (parallel-blocks) and `faces_seen` in all arms; 0 failed frames. B-vs-B spread on d4 was 9%,
 larger than the effect, so neither clip can resolve a difference under ~7%.

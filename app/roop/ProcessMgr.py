@@ -684,6 +684,10 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
         # {frame_idx: [(raw_centroid(2,), smoothed_kps(5,2)), ...]}
         self._precomputed_kps = None
         self._precomputed_mode = False
+        # Parallel-stabilization warm-up dedup (roop.stab_dedup): the raw swap /
+        # restore / mask of frames two neighbouring blocks both process. None
+        # outside a parallel stabilized run, and whenever the run is not eligible.
+        self._stab_raw = None
         # Cross-frame swap batcher (Phase 2): coalesces concurrent swap calls
         # from worker threads into one batched inference. Set per video run.
         self._swap_batcher = None
@@ -2318,6 +2322,12 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                      'ROOP_STAB_WARMUP_override': os.environ.get('ROOP_STAB_WARMUP', 'unset')})
         _bp.log_stab_geometry(_geo)
 
+        # Warm-up dedup: whichever of two neighbouring blocks reaches an overlap frame first computes its raw
+        # swap / restore / mask; the other takes it and only replays its own filters. See roop.stab_dedup and
+        # docs/perf/stab_warmup.md. None (today's behaviour exactly) unless the raw stage is provably state-free.
+        self._stab_raw, _dedup_why = self._stab_dedup_plan(block, WU, frame_count)
+        print(f"[StabDedup] {'ON' if self._stab_raw is not None else 'off'}: {_dedup_why}", flush=True)
+
         self._parallel_stab = True
         self._stab_active = True
         cap = None
@@ -2653,6 +2663,7 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                                     _combined=combined, _base=base,
                                     _base_global=base_global, _results=results,
                                     _progress_cb=progress_cb):
+                    _dedup = self._stab_raw
                     self._tls.kps = self._kps_stab_factory() if self._kps_stab_factory else None
                     self._tls.enh = self._enh_stab_factory() if self._enh_stab_factory else None
                     self._tls.mask = self._mask_stab_factory() if self._mask_stab_factory else None
@@ -2713,6 +2724,9 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                             except Exception as _degrade_error:
                                 _swallowed("roop/ProcessMgr.py:3521", _degrade_error, "fallback continued")
                                 pass
+                            finally:
+                                if _dedup is not None:
+                                    _dedup.abandon()
                     finally:
                         _bp.warmup_exit()
                     # Warm-up frames paint faces too, but they are discarded: do not
@@ -2748,6 +2762,9 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                             )
                             out = fallback_frame
                             pause_controller.pending_output(1)
+                        finally:
+                            if _dedup is not None:
+                                _dedup.abandon()
                         if out is None:
                             bar_write(
                                 f'[ProcessMgr] stabilization frame {gi} produced no '
@@ -2917,6 +2934,9 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                           flush=True)
                 carry = combined[-WU:] if WU > 0 else []
                 chunk_start += len(chunk)
+                if self._stab_raw is not None:
+                    # Everything older than the carried tail has had both of its visits (or never will).
+                    self._stab_raw.drop_before(chunk_start - WU)
                 del combined, chunk, results, workers
         finally:
             # Tell the reader's sentinel loop that the consumer is leaving.
@@ -2980,6 +3000,10 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                 _swallowed("roop/ProcessMgr.py:3689", _degrade_error, "fallback continued")
                 pass
             rt.join(timeout=5)
+            if self._stab_raw is not None:
+                print(self._stab_raw.summary_line(), flush=True)
+                self._stab_raw.clear()
+                self._stab_raw = None
             self._parallel_stab = False
             self._stab_chunk_queue_capacity = None
             self._runtime_read_queue = None
@@ -5592,8 +5616,44 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
 
         fake_frame = aligned_for_swap
 
+        # ── Warm-up dedup (roop.stab_dedup, docs/perf/stab_warmup.md) ─────────
+        # The swap, the restorer and the mask net below are pure functions of
+        # (frame, face, M): none of them reads a stabilizer's state (the kps and
+        # landmark smoothing already happened in the tracking pre-pass). Only the
+        # mask / enhancer / HF filters AFTER the seam carry state. A frame that
+        # two neighbouring blocks both process (one as warm-up, one for real) is
+        # therefore computed once: whoever gets there first publishes the raw
+        # stage, the other takes it and replays its own filters on top.
+        _raw_hit = None
+        _raw_slot = None
+        _raw_cache = self._stab_raw
+        if (_raw_cache is not None and getattr(self._tls, 'temporal_block', False)
+                and applied_rotation_action is None and rotation_action is None
+                and M_frontal is None and aligned_for_swap is aligned_img
+                and not (_quality_mgr is not None and _quality_mgr.enabled)):
+            _raw_gi = getattr(self._tls, 'frame_idx', None)
+            if _raw_gi is not None and _raw_cache.in_zone(int(_raw_gi)):
+                _raw_state, _raw_obj = _raw_cache.acquire((
+                    int(_raw_gi), int(face_index), int(selected_src_idx),
+                    -1 if _temporal_tid is None else int(_temporal_tid),
+                    np.ascontiguousarray(M, dtype=np.float32).tobytes()))
+                if _raw_state == 'hit':
+                    _raw_hit = _raw_obj
+                    fake_frame = _raw_hit['fake_frame']
+                    enhanced_frame = _raw_hit['enhanced_frame']
+                    scale_factor = _raw_hit['scale_factor']
+                    self._tls.swap_model_mask = _raw_hit['swap_model_mask']
+                    _bp.count('stab.dedup.served')
+                elif _raw_state == 'produce':
+                    _raw_slot = _raw_obj
+                    _bp.count('stab.dedup.produced')
+                else:
+                    _bp.count('stab.dedup.bypass')
+
         for p in self.processors:
             if p.type == 'swap':
+              if _raw_hit is not None:
+                continue          # served by the neighbouring block (roop.stab_dedup)
               with _prof('swap'):
                 # A composite swapper (realswap) crops its SECOND net straight
                 # from the plate rather than from this crop, which saves the
@@ -5752,6 +5812,18 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                     except Exception as e:
                         bar_write(f"[ProcessMgr] Defrontalization failed: {e}")
             elif p.type == 'mask':
+                if _raw_slot is not None:
+                    # THE SEAM, before the first mask processor. Swap and enhance
+                    # are state-free and are all that is shared; process_mask
+                    # applies this block's MaskStabilizer INSIDE itself (dense
+                    # maskers), so what it returns is already filtered and must
+                    # never cross blocks. Publish copies before anything below
+                    # can touch these arrays.
+                    _raw_cache.publish(_raw_slot, {
+                        'fake_frame': fake_frame, 'enhanced_frame': enhanced_frame,
+                        'scale_factor': scale_factor,
+                        'swap_model_mask': getattr(self._tls, 'swap_model_mask', None)})
+                    _raw_slot = None
                 # Keep the pre-mask crops: if the temporal filter changes the
                 # weight field, rebuild the composite from the same raw inputs
                 # instead of filtering an already-composited result twice.
@@ -5819,6 +5891,8 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                 # already correct. Counted and printed at the end of the render.
                 pass
             else:
+                if _raw_hit is not None:
+                    continue      # served by the neighbouring block (roop.stab_dedup)
                 # Pooled (no global lock) ONLY when this enhancer built its own
                 # SessionPool (e.g. RestoreFormer++). Enhancers without a pool
                 # (GFPGAN/GPEN/CodeFormer/DMDNet) must take the global lock, or
@@ -5950,6 +6024,12 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                         self._angle_route_stats.add('far_eye_damped')
                     except Exception as e:
                         bar_write(f"[ProcessMgr] far-eye damping failed: {e}")
+
+        if _raw_slot is not None:
+            _raw_cache.publish(_raw_slot, {
+                'fake_frame': fake_frame, 'enhanced_frame': enhanced_frame, 'scale_factor': scale_factor,
+                'swap_model_mask': getattr(self._tls, 'swap_model_mask', None)})
+            _raw_slot = None
 
         # ── Anti-flicker: temporally smooth the enhanced aligned crop ─────────
         # enhanced_frame is registered to the canonical face template, so a

@@ -1,0 +1,1337 @@
+{
+ "date": "2026-10-09",
+ "head": {
+  "head": "6dbe7bea8f2df627f680304f62e87f2e7b33faee",
+  "short": "6dbe7be",
+  "dirty_files": [
+   "pp/roop/ProcessMgr.py",
+   "app/roop/procmgr_stabilization.py",
+   "app/tests/two_face_video.py",
+   "app/roop/stab_dedup.py",
+   "app/tests/ab_stab_blocks_vs_sequential.py",
+   "app/tests/ab_stab_dedup.py",
+   "app/tests/test_stab_dedup.py"
+  ]
+ },
+ "threads": 10,
+ "extra_env": [],
+ "a_env": [
+  "ROOP_STAB_DEDUP=0"
+ ],
+ "b_env": [],
+ "config": {
+  "swap_model": "hyperswap",
+  "selected_enhancer": "Restore Ultra",
+  "mask_engine": "DFL XSeg",
+  "provider": "tensorrt",
+  "trt_precision": "mixed",
+  "max_threads": "10",
+  "detector_engine": "scrfd",
+  "face_detector_size": "512",
+  "temporal_detection": "True",
+  "stabilize_face": "True",
+  "stabilize_mask": "True",
+  "stabilize_enhancer": "True",
+  "stabilize_hf_texture": "True",
+  "perf_trt_pool": "2",
+  "perf_detmask_pool": "2"
+ },
+ "clips": {
+  "d4": {
+   "chunk_mb": 1938,
+   "A_fps": [
+    10.11,
+    10.23
+   ],
+   "B_fps": [
+    10.73,
+    11.01
+   ],
+   "A_mean": 10.17,
+   "B_mean": 10.87,
+   "ratio_B_over_A": 1.0688,
+   "A_vs_A_spread_pct": 1.18,
+   "B_vs_B_spread_pct": 2.58,
+   "all_output_sha256_equal": true,
+   "all_decoded_md5_equal": true,
+   "sha256": {
+    "d4_1A": "aa0df5a0329b3480b14a5b5081f4dec18aea539045223f29a4911b2590ab20ad",
+    "d4_2B": "aa0df5a0329b3480b14a5b5081f4dec18aea539045223f29a4911b2590ab20ad",
+    "d4_3B": "aa0df5a0329b3480b14a5b5081f4dec18aea539045223f29a4911b2590ab20ad",
+    "d4_4A": "aa0df5a0329b3480b14a5b5081f4dec18aea539045223f29a4911b2590ab20ad"
+   },
+   "decoded_md5": {
+    "d4_1A": "0f91bb3467837c5cd1e62f336b7ed22a",
+    "d4_2B": "0f91bb3467837c5cd1e62f336b7ed22a",
+    "d4_3B": "0f91bb3467837c5cd1e62f336b7ed22a",
+    "d4_4A": "0f91bb3467837c5cd1e62f336b7ed22a"
+   },
+   "swap_calls_A": 508,
+   "swap_calls_B": 412,
+   "swap_calls_skipped": 96,
+   "warmup_frames": 54,
+   "overlap_visits_computed": {
+    "warm-up visit": 96,
+    "output visit": 0
+   },
+   "overlap_visits_served": {
+    "warm-up visit": 0,
+    "output visit": 96
+   },
+   "overlap_visits_bypassed": 0,
+   "every_overlap_frame_computed_once": true,
+   "duplicate_inference_removed_pct_of_all": 18.9,
+   "duplicate_inference_removed_pct_of_overlap": 50.0,
+   "peak_rss_gb_A": [
+    10.743,
+    10.784
+   ],
+   "peak_rss_gb_B": [
+    10.784,
+    10.789
+   ],
+   "dedup_state_B": [
+    "ON: on",
+    "ON: on"
+   ],
+   "dedup_summary_B": [
+    "[StabDedup] produced 96, served 96 (0 after waiting 0.0s total), bypassed 0, producer-failed 0, dropped unconsumed 0, over the 384 MB cap 0; peak held 90 MB (block 24, warm-up 6)",
+    "[StabDedup] produced 96, served 96 (0 after waiting 0.0s total), bypassed 0, producer-failed 0, dropped unconsumed 0, over the 384 MB cap 0; peak held 90 MB (block 24, warm-up 6)"
+   ],
+   "arms": [
+    {
+     "label": "d4_1A",
+     "arm": "A",
+     "returncode": 0,
+     "frame_loop_fps": 10.11,
+     "faces_per_s": 17.4,
+     "faces_per_frame": 1.72,
+     "stabilizer_path": "parallel-blocks",
+     "failed_frames": 0,
+     "swapped_lines": [
+      "  faces seen                                                       508  100.0%",
+      "  swapped (identity lock)                                          508  100.0%"
+     ],
+     "wall_seconds": 100.5,
+     "stages": {
+      "frame_total": {
+       "total_s": 148.19,
+       "share_pct": 42.7,
+       "calls": 240,
+       "ms_per_call": 617.46
+      },
+      "enhance": {
+       "total_s": 46.19,
+       "share_pct": 13.3,
+       "calls": 508,
+       "ms_per_call": 90.93
+      },
+      "swap": {
+       "total_s": 32.12,
+       "share_pct": 9.3,
+       "calls": 508,
+       "ms_per_call": 63.22
+      },
+      "stabilize": {
+       "total_s": 31.14,
+       "share_pct": 9.0,
+       "calls": 3048,
+       "ms_per_call": 10.22
+      },
+      "mask": {
+       "total_s": 24.39,
+       "share_pct": 7.0,
+       "calls": 1016,
+       "ms_per_call": 24.01
+      },
+      "blend": {
+       "total_s": 20.71,
+       "share_pct": 6.0,
+       "calls": 508,
+       "ms_per_call": 40.77
+      },
+      "track_detect": {
+       "total_s": 14.3,
+       "share_pct": 4.1,
+       "calls": 240,
+       "ms_per_call": 59.59
+      },
+      "detection": {
+       "total_s": 14.3,
+       "share_pct": 4.1,
+       "calls": 240,
+       "ms_per_call": 59.59
+      },
+      "track_wait": {
+       "total_s": 5.91,
+       "share_pct": 1.7,
+       "calls": 237,
+       "ms_per_call": 24.93
+      },
+      "lighting": {
+       "total_s": 5.52,
+       "share_pct": 1.6,
+       "calls": 1016,
+       "ms_per_call": 5.43
+      },
+      "enhance_recombine": {
+       "total_s": 1.56,
+       "share_pct": 0.4,
+       "calls": 508,
+       "ms_per_call": 3.07
+      },
+      "alignment": {
+       "total_s": 0.95,
+       "share_pct": 0.3,
+       "calls": 508,
+       "ms_per_call": 1.87
+      },
+      "verify": {
+       "total_s": 0.53,
+       "share_pct": 0.2,
+       "calls": 27,
+       "ms_per_call": 19.55
+      },
+      "decode": {
+       "total_s": 0.51,
+       "share_pct": 0.1,
+       "calls": 240,
+       "ms_per_call": 2.11
+      },
+      "encode": {
+       "total_s": 0.33,
+       "share_pct": 0.1,
+       "calls": 240,
+       "ms_per_call": 1.38
+      },
+      "track_decode": {
+       "total_s": 0.15,
+       "share_pct": 0.0,
+       "calls": 240,
+       "ms_per_call": 0.63
+      },
+      "encode_finalize": {
+       "total_s": 0.13,
+       "share_pct": 0.0,
+       "calls": 1,
+       "ms_per_call": 126.08
+      },
+      "track_consume": {
+       "total_s": 0.09,
+       "share_pct": 0.0,
+       "calls": 237,
+       "ms_per_call": 0.37
+      },
+      "faceset_lookup": {
+       "total_s": 0.0,
+       "share_pct": 0.0,
+       "calls": 508,
+       "ms_per_call": 0.0
+      }
+     },
+     "counters": {
+      "aux.buffalo_l.detection.detect": {
+       "main": 27,
+       "prepass": 566
+      },
+      "aux.buffalo_l.landmark_2d_106.get": {
+       "prepass": 412
+      },
+      "aux.buffalo_l.landmark_3d_68.get": {
+       "prepass": 412
+      },
+      "aux.buffalo_l.recognition.get": {
+       "prepass": 412
+      },
+      "aux.enrich.calls": {
+       "prepass": 246
+      },
+      "aux.refine_kps.applied": {
+       "prepass": 412
+      },
+      "aux.refine_kps.calls": {
+       "prepass": 206
+      },
+      "aux.upright_remeasure.calls": {
+       "prepass": 206
+      },
+      "detect.calls": {
+       "prepass": 246
+      },
+      "detect.expected_count_set": {
+       "prepass": 246
+      },
+      "detect.first_pass_empty": {
+       "prepass": 40
+      },
+      "detect.first_pass_faces": {
+       "prepass": 412
+      },
+      "detect.first_pass_short_of_expected": {
+       "prepass": 40
+      },
+      "raw.aux": {
+       "prepass": 286
+      },
+      "raw.caller._detect_faces": {
+       "prepass": 246
+      },
+      "raw.caller._rescue_clahe": {
+       "prepass": 40
+      },
+      "raw.caller._rescue_upscaled": {
+       "prepass": 40
+      },
+      "raw.caller._rotated_pass": {
+       "prepass": 240
+      },
+      "raw.caller.detect_boxes_in_roi": {
+       "main": 27
+      },
+      "raw.engine.scrfd": {
+       "main": 27,
+       "prepass": 566
+      },
+      "raw.faces_out": {
+       "main": 27,
+       "prepass": 412
+      },
+      "raw.noaux": {
+       "main": 27,
+       "prepass": 280
+      },
+      "raw.total": {
+       "main": 27,
+       "prepass": 566
+      },
+      "rescue.clahe.attempted": {
+       "prepass": 40
+      },
+      "rescue.downscaled.skipped_multiscale": {
+       "prepass": 40
+      },
+      "rescue.downscaled.skipped_with_no_pyramid_engine": {
+       "prepass": 40
+      },
+      "rescue.padded.skipped_multiscale": {
+       "prepass": 40
+      },
+      "rescue.padded.skipped_with_no_pyramid_engine": {
+       "prepass": 40
+      },
+      "rescue.partial_180.attempted": {
+       "prepass": 40
+      },
+      "rescue.partial_180.gained": {
+       "prepass": 0
+      },
+      "rescue.partial_anticlockwise.attempted": {
+       "prepass": 40
+      },
+      "rescue.partial_anticlockwise.gained": {
+       "prepass": 0
+      },
+      "rescue.partial_clockwise.attempted": {
+       "prepass": 40
+      },
+      "rescue.partial_clockwise.gained": {
+       "prepass": 0
+      },
+      "rescue.partial_miss.entered": {
+       "prepass": 40
+      },
+      "rescue.rotated.attempted": {
+       "prepass": 40
+      },
+      "rescue.rotated_pass.detected": {
+       "prepass": 0
+      },
+      "rescue.rotated_pass.survivors": {
+       "prepass": 0
+      },
+      "rescue.upscaled.attempted": {
+       "prepass": 40
+      },
+      "stab.blocks": {
+       "main": 10
+      },
+      "stab.output_frames": {
+       "main": 240
+      },
+      "stab.warmup_frames": {
+       "main": 54
+      }
+     },
+     "telemetry": {
+      "telemetry_samples": 175,
+      "peak_cpu_e_pct": 100.0,
+      "mean_cpu_e_pct": 10.63,
+      "peak_cpu_frequency_mhz": 3200.0,
+      "mean_cpu_frequency_mhz": 3200.0,
+      "peak_cpu_max_frequency_mhz": 3200.0,
+      "mean_cpu_max_frequency_mhz": 3200.0,
+      "peak_cpu_p_pct": 100.0,
+      "mean_cpu_p_pct": 25.452,
+      "peak_cpu_pct": 100.0,
+      "mean_cpu_pct": 18.041,
+      "peak_gpu_mem_util_pct": 77.0,
+      "mean_gpu_mem_util_pct": 20.32,
+      "peak_gpu_memory_mb": 6426.0,
+      "mean_gpu_memory_mb": 2870.051,
+      "peak_gpu_sm_mhz": 2835.0,
+      "mean_gpu_sm_mhz": 1551.257,
+      "peak_gpu_temp_c": 57.0,
+      "mean_gpu_temp_c": 45.571,
+      "peak_gpu_util_pct": 98.0,
+      "mean_gpu_util_pct": 27.223,
+      "peak_power_w": 155.4,
+      "mean_power_w": 57.763,
+      "peak_procs": 4,
+      "mean_procs": 2.154,
+      "peak_ram_used_gb": 21.07,
+      "mean_ram_used_gb": 17.62,
+      "peak_rss_gb": 10.743,
+      "mean_rss_gb": 7.166
+     },
+     "output": {
+      "file": "G:\\pinokio\\api\\roop-ultimate\\app\\output\\ab_stab_dedup_2026-10-09_final2\\d4_1A\\work\\clip_15-22-38.mp4",
+      "sha256": "aa0df5a0329b3480b14a5b5081f4dec18aea539045223f29a4911b2590ab20ad",
+      "decoded_video_md5": "0f91bb3467837c5cd1e62f336b7ed22a",
+      "bytes": 8270923,
+      "rows_csv_sha256": "7a5d1ec03af7a3fc12c2b37fe1626dcb937d0cfa17cb3e72dbffb0f3c840f91f"
+     },
+     "dedup_state": "off: disabled by ROOP_STAB_DEDUP=0",
+     "dedup_summary": null,
+     "swap_calls": 508
+    },
+    {
+     "label": "d4_2B",
+     "arm": "B",
+     "returncode": 0,
+     "frame_loop_fps": 10.73,
+     "faces_per_s": 18.4,
+     "faces_per_frame": 1.72,
+     "stabilizer_path": "parallel-blocks",
+     "failed_frames": 0,
+     "swapped_lines": [
+      "  faces seen                                                       508  100.0%",
+      "  swapped (identity lock)                                          508  100.0%"
+     ],
+     "wall_seconds": 100.2,
+     "stages": {
+      "frame_total": {
+       "total_s": 137.29,
+       "share_pct": 42.0,
+       "calls": 240,
+       "ms_per_call": 572.02
+      },
+      "enhance": {
+       "total_s": 40.17,
+       "share_pct": 12.3,
+       "calls": 412,
+       "ms_per_call": 97.5
+      },
+      "stabilize": {
+       "total_s": 31.19,
+       "share_pct": 9.5,
+       "calls": 3048,
+       "ms_per_call": 10.23
+      },
+      "swap": {
+       "total_s": 28.89,
+       "share_pct": 8.8,
+       "calls": 412,
+       "ms_per_call": 70.13
+      },
+      "mask": {
+       "total_s": 23.56,
+       "share_pct": 7.2,
+       "calls": 1016,
+       "ms_per_call": 23.19
+      },
+      "blend": {
+       "total_s": 21.33,
+       "share_pct": 6.5,
+       "calls": 508,
+       "ms_per_call": 42.0
+      },
+      "track_detect": {
+       "total_s": 14.41,
+       "share_pct": 4.4,
+       "calls": 240,
+       "ms_per_call": 60.04
+      },
+      "detection": {
+       "total_s": 14.41,
+       "share_pct": 4.4,
+       "calls": 240,
+       "ms_per_call": 60.03
+      },
+      "track_wait": {
+       "total_s": 5.93,
+       "share_pct": 1.8,
+       "calls": 237,
+       "ms_per_call": 25.01
+      },
+      "lighting": {
+       "total_s": 5.38,
+       "share_pct": 1.6,
+       "calls": 920,
+       "ms_per_call": 5.85
+      },
+      "enhance_recombine": {
+       "total_s": 1.34,
+       "share_pct": 0.4,
+       "calls": 412,
+       "ms_per_call": 3.24
+      },
+      "alignment": {
+       "total_s": 1.01,
+       "share_pct": 0.3,
+       "calls": 508,
+       "ms_per_call": 1.98
+      },
+      "verify": {
+       "total_s": 0.6,
+       "share_pct": 0.2,
+       "calls": 27,
+       "ms_per_call": 22.15
+      },
+      "decode": {
+       "total_s": 0.5,
+       "share_pct": 0.2,
+       "calls": 240,
+       "ms_per_call": 2.08
+      },
+      "encode": {
+       "total_s": 0.35,
+       "share_pct": 0.1,
+       "calls": 240,
+       "ms_per_call": 1.46
+      },
+      "track_decode": {
+       "total_s": 0.15,
+       "share_pct": 0.0,
+       "calls": 240,
+       "ms_per_call": 0.61
+      },
+      "encode_finalize": {
+       "total_s": 0.12,
+       "share_pct": 0.0,
+       "calls": 1,
+       "ms_per_call": 123.81
+      },
+      "track_consume": {
+       "total_s": 0.09,
+       "share_pct": 0.0,
+       "calls": 237,
+       "ms_per_call": 0.38
+      },
+      "faceset_lookup": {
+       "total_s": 0.0,
+       "share_pct": 0.0,
+       "calls": 508,
+       "ms_per_call": 0.0
+      }
+     },
+     "counters": {
+      "aux.buffalo_l.detection.detect": {
+       "main": 27,
+       "prepass": 566
+      },
+      "aux.buffalo_l.landmark_2d_106.get": {
+       "prepass": 412
+      },
+      "aux.buffalo_l.landmark_3d_68.get": {
+       "prepass": 412
+      },
+      "aux.buffalo_l.recognition.get": {
+       "prepass": 412
+      },
+      "aux.enrich.calls": {
+       "prepass": 246
+      },
+      "aux.refine_kps.applied": {
+       "prepass": 412
+      },
+      "aux.refine_kps.calls": {
+       "prepass": 206
+      },
+      "aux.upright_remeasure.calls": {
+       "prepass": 206
+      },
+      "detect.calls": {
+       "prepass": 246
+      },
+      "detect.expected_count_set": {
+       "prepass": 246
+      },
+      "detect.first_pass_empty": {
+       "prepass": 40
+      },
+      "detect.first_pass_faces": {
+       "prepass": 412
+      },
+      "detect.first_pass_short_of_expected": {
+       "prepass": 40
+      },
+      "raw.aux": {
+       "prepass": 286
+      },
+      "raw.caller._detect_faces": {
+       "prepass": 246
+      },
+      "raw.caller._rescue_clahe": {
+       "prepass": 40
+      },
+      "raw.caller._rescue_upscaled": {
+       "prepass": 40
+      },
+      "raw.caller._rotated_pass": {
+       "prepass": 240
+      },
+      "raw.caller.detect_boxes_in_roi": {
+       "main": 27
+      },
+      "raw.engine.scrfd": {
+       "main": 27,
+       "prepass": 566
+      },
+      "raw.faces_out": {
+       "main": 27,
+       "prepass": 412
+      },
+      "raw.noaux": {
+       "main": 27,
+       "prepass": 280
+      },
+      "raw.total": {
+       "main": 27,
+       "prepass": 566
+      },
+      "rescue.clahe.attempted": {
+       "prepass": 40
+      },
+      "rescue.downscaled.skipped_multiscale": {
+       "prepass": 40
+      },
+      "rescue.downscaled.skipped_with_no_pyramid_engine": {
+       "prepass": 40
+      },
+      "rescue.padded.skipped_multiscale": {
+       "prepass": 40
+      },
+      "rescue.padded.skipped_with_no_pyramid_engine": {
+       "prepass": 40
+      },
+      "rescue.partial_180.attempted": {
+       "prepass": 40
+      },
+      "rescue.partial_180.gained": {
+       "prepass": 0
+      },
+      "rescue.partial_anticlockwise.attempted": {
+       "prepass": 40
+      },
+      "rescue.partial_anticlockwise.gained": {
+       "prepass": 0
+      },
+      "rescue.partial_clockwise.attempted": {
+       "prepass": 40
+      },
+      "rescue.partial_clockwise.gained": {
+       "prepass": 0
+      },
+      "rescue.partial_miss.entered": {
+       "prepass": 40
+      },
+      "rescue.rotated.attempted": {
+       "prepass": 40
+      },
+      "rescue.rotated_pass.detected": {
+       "prepass": 0
+      },
+      "rescue.rotated_pass.survivors": {
+       "prepass": 0
+      },
+      "rescue.upscaled.attempted": {
+       "prepass": 40
+      },
+      "stab.blocks": {
+       "main": 10
+      },
+      "stab.dedup.produced": {
+       "main+warmup": 96
+      },
+      "stab.dedup.served": {
+       "main": 96
+      },
+      "stab.output_frames": {
+       "main": 240
+      },
+      "stab.warmup_frames": {
+       "main": 54
+      }
+     },
+     "telemetry": {
+      "telemetry_samples": 174,
+      "peak_cpu_e_pct": 93.4,
+      "mean_cpu_e_pct": 12.324,
+      "peak_cpu_frequency_mhz": 3200.0,
+      "mean_cpu_frequency_mhz": 3200.0,
+      "peak_cpu_max_frequency_mhz": 3200.0,
+      "mean_cpu_max_frequency_mhz": 3200.0,
+      "peak_cpu_p_pct": 93.869,
+      "mean_cpu_p_pct": 25.733,
+      "peak_cpu_pct": 93.634,
+      "mean_cpu_pct": 19.029,
+      "peak_gpu_mem_util_pct": 74.0,
+      "mean_gpu_mem_util_pct": 19.08,
+      "peak_gpu_memory_mb": 6623.0,
+      "mean_gpu_memory_mb": 2817.971,
+      "peak_gpu_sm_mhz": 2835.0,
+      "mean_gpu_sm_mhz": 1545.259,
+      "peak_gpu_temp_c": 57.0,
+      "mean_gpu_temp_c": 44.908,
+      "peak_gpu_util_pct": 98.0,
+      "mean_gpu_util_pct": 23.937,
+      "peak_power_w": 156.82,
+      "mean_power_w": 53.957,
+      "peak_procs": 4,
+      "mean_procs": 2.155,
+      "peak_ram_used_gb": 21.415,
+      "mean_ram_used_gb": 17.667,
+      "peak_rss_gb": 10.784,
+      "mean_rss_gb": 7.112
+     },
+     "output": {
+      "file": "G:\\pinokio\\api\\roop-ultimate\\app\\output\\ab_stab_dedup_2026-10-09_final2\\d4_2B\\work\\clip_15-24-19.mp4",
+      "sha256": "aa0df5a0329b3480b14a5b5081f4dec18aea539045223f29a4911b2590ab20ad",
+      "decoded_video_md5": "0f91bb3467837c5cd1e62f336b7ed22a",
+      "bytes": 8270923,
+      "rows_csv_sha256": "7a5d1ec03af7a3fc12c2b37fe1626dcb937d0cfa17cb3e72dbffb0f3c840f91f"
+     },
+     "dedup_state": "ON: on",
+     "dedup_summary": "[StabDedup] produced 96, served 96 (0 after waiting 0.0s total), bypassed 0, producer-failed 0, dropped unconsumed 0, over the 384 MB cap 0; peak held 90 MB (block 24, warm-up 6)",
+     "swap_calls": 412
+    },
+    {
+     "label": "d4_3B",
+     "arm": "B",
+     "returncode": 0,
+     "frame_loop_fps": 11.01,
+     "faces_per_s": 18.9,
+     "faces_per_frame": 1.72,
+     "stabilizer_path": "parallel-blocks",
+     "failed_frames": 0,
+     "swapped_lines": [
+      "  faces seen                                                       508  100.0%",
+      "  swapped (identity lock)                                          508  100.0%"
+     ],
+     "wall_seconds": 99.6,
+     "stages": {
+      "frame_total": {
+       "total_s": 131.83,
+       "share_pct": 41.6,
+       "calls": 240,
+       "ms_per_call": 549.29
+      },
+      "enhance": {
+       "total_s": 36.94,
+       "share_pct": 11.7,
+       "calls": 412,
+       "ms_per_call": 89.67
+      },
+      "stabilize": {
+       "total_s": 31.36,
+       "share_pct": 9.9,
+       "calls": 3048,
+       "ms_per_call": 10.29
+      },
+      "swap": {
+       "total_s": 27.75,
+       "share_pct": 8.8,
+       "calls": 412,
+       "ms_per_call": 67.36
+      },
+      "blend": {
+       "total_s": 21.7,
+       "share_pct": 6.9,
+       "calls": 508,
+       "ms_per_call": 42.71
+      },
+      "mask": {
+       "total_s": 21.51,
+       "share_pct": 6.8,
+       "calls": 1016,
+       "ms_per_call": 21.17
+      },
+      "track_detect": {
+       "total_s": 14.78,
+       "share_pct": 4.7,
+       "calls": 240,
+       "ms_per_call": 61.57
+      },
+      "detection": {
+       "total_s": 14.78,
+       "share_pct": 4.7,
+       "calls": 240,
+       "ms_per_call": 61.57
+      },
+      "track_wait": {
+       "total_s": 6.09,
+       "share_pct": 1.9,
+       "calls": 237,
+       "ms_per_call": 25.68
+      },
+      "lighting": {
+       "total_s": 5.65,
+       "share_pct": 1.8,
+       "calls": 920,
+       "ms_per_call": 6.14
+      },
+      "enhance_recombine": {
+       "total_s": 1.34,
+       "share_pct": 0.4,
+       "calls": 412,
+       "ms_per_call": 3.24
+      },
+      "alignment": {
+       "total_s": 1.08,
+       "share_pct": 0.3,
+       "calls": 508,
+       "ms_per_call": 2.12
+      },
+      "verify": {
+       "total_s": 0.64,
+       "share_pct": 0.2,
+       "calls": 27,
+       "ms_per_call": 23.78
+      },
+      "decode": {
+       "total_s": 0.49,
+       "share_pct": 0.2,
+       "calls": 240,
+       "ms_per_call": 2.06
+      },
+      "encode": {
+       "total_s": 0.35,
+       "share_pct": 0.1,
+       "calls": 240,
+       "ms_per_call": 1.46
+      },
+      "track_decode": {
+       "total_s": 0.15,
+       "share_pct": 0.0,
+       "calls": 240,
+       "ms_per_call": 0.63
+      },
+      "encode_finalize": {
+       "total_s": 0.12,
+       "share_pct": 0.0,
+       "calls": 1,
+       "ms_per_call": 124.86
+      },
+      "track_consume": {
+       "total_s": 0.08,
+       "share_pct": 0.0,
+       "calls": 237,
+       "ms_per_call": 0.35
+      },
+      "faceset_lookup": {
+       "total_s": 0.0,
+       "share_pct": 0.0,
+       "calls": 508,
+       "ms_per_call": 0.0
+      }
+     },
+     "counters": {
+      "aux.buffalo_l.detection.detect": {
+       "main": 27,
+       "prepass": 566
+      },
+      "aux.buffalo_l.landmark_2d_106.get": {
+       "prepass": 412
+      },
+      "aux.buffalo_l.landmark_3d_68.get": {
+       "prepass": 412
+      },
+      "aux.buffalo_l.recognition.get": {
+       "prepass": 412
+      },
+      "aux.enrich.calls": {
+       "prepass": 246
+      },
+      "aux.refine_kps.applied": {
+       "prepass": 412
+      },
+      "aux.refine_kps.calls": {
+       "prepass": 206
+      },
+      "aux.upright_remeasure.calls": {
+       "prepass": 206
+      },
+      "detect.calls": {
+       "prepass": 246
+      },
+      "detect.expected_count_set": {
+       "prepass": 246
+      },
+      "detect.first_pass_empty": {
+       "prepass": 40
+      },
+      "detect.first_pass_faces": {
+       "prepass": 412
+      },
+      "detect.first_pass_short_of_expected": {
+       "prepass": 40
+      },
+      "raw.aux": {
+       "prepass": 286
+      },
+      "raw.caller._detect_faces": {
+       "prepass": 246
+      },
+      "raw.caller._rescue_clahe": {
+       "prepass": 40
+      },
+      "raw.caller._rescue_upscaled": {
+       "prepass": 40
+      },
+      "raw.caller._rotated_pass": {
+       "prepass": 240
+      },
+      "raw.caller.detect_boxes_in_roi": {
+       "main": 27
+      },
+      "raw.engine.scrfd": {
+       "main": 27,
+       "prepass": 566
+      },
+      "raw.faces_out": {
+       "main": 27,
+       "prepass": 412
+      },
+      "raw.noaux": {
+       "main": 27,
+       "prepass": 280
+      },
+      "raw.total": {
+       "main": 27,
+       "prepass": 566
+      },
+      "rescue.clahe.attempted": {
+       "prepass": 40
+      },
+      "rescue.downscaled.skipped_multiscale": {
+       "prepass": 40
+      },
+      "rescue.downscaled.skipped_with_no_pyramid_engine": {
+       "prepass": 40
+      },
+      "rescue.padded.skipped_multiscale": {
+       "prepass": 40
+      },
+      "rescue.padded.skipped_with_no_pyramid_engine": {
+       "prepass": 40
+      },
+      "rescue.partial_180.attempted": {
+       "prepass": 40
+      },
+      "rescue.partial_180.gained": {
+       "prepass": 0
+      },
+      "rescue.partial_anticlockwise.attempted": {
+       "prepass": 40
+      },
+      "rescue.partial_anticlockwise.gained": {
+       "prepass": 0
+      },
+      "rescue.partial_clockwise.attempted": {
+       "prepass": 40
+      },
+      "rescue.partial_clockwise.gained": {
+       "prepass": 0
+      },
+      "rescue.partial_miss.entered": {
+       "prepass": 40
+      },
+      "rescue.rotated.attempted": {
+       "prepass": 40
+      },
+      "rescue.rotated_pass.detected": {
+       "prepass": 0
+      },
+      "rescue.rotated_pass.survivors": {
+       "prepass": 0
+      },
+      "rescue.upscaled.attempted": {
+       "prepass": 40
+      },
+      "stab.blocks": {
+       "main": 10
+      },
+      "stab.dedup.produced": {
+       "main+warmup": 96
+      },
+      "stab.dedup.served": {
+       "main": 96
+      },
+      "stab.output_frames": {
+       "main": 240
+      },
+      "stab.warmup_frames": {
+       "main": 54
+      }
+     },
+     "telemetry": {
+      "telemetry_samples": 173,
+      "peak_cpu_e_pct": 99.037,
+      "mean_cpu_e_pct": 11.229,
+      "peak_cpu_frequency_mhz": 3200.0,
+      "mean_cpu_frequency_mhz": 3200.0,
+      "peak_cpu_max_frequency_mhz": 3200.0,
+      "mean_cpu_max_frequency_mhz": 3200.0,
+      "peak_cpu_p_pct": 97.938,
+      "mean_cpu_p_pct": 25.287,
+      "peak_cpu_pct": 98.488,
+      "mean_cpu_pct": 18.258,
+      "peak_gpu_mem_util_pct": 67.0,
+      "mean_gpu_mem_util_pct": 19.341,
+      "peak_gpu_memory_mb": 6408.0,
+      "mean_gpu_memory_mb": 2808.058,
+      "peak_gpu_sm_mhz": 2835.0,
+      "mean_gpu_sm_mhz": 1513.092,
+      "peak_gpu_temp_c": 57.0,
+      "mean_gpu_temp_c": 44.838,
+      "peak_gpu_util_pct": 92.0,
+      "mean_gpu_util_pct": 23.775,
+      "peak_power_w": 155.32,
+      "mean_power_w": 53.751,
+      "peak_procs": 4,
+      "mean_procs": 2.162,
+      "peak_ram_used_gb": 21.403,
+      "mean_ram_used_gb": 17.748,
+      "peak_rss_gb": 10.789,
+      "mean_rss_gb": 7.101
+     },
+     "output": {
+      "file": "G:\\pinokio\\api\\roop-ultimate\\app\\output\\ab_stab_dedup_2026-10-09_final2\\d4_3B\\work\\clip_15-26-00.mp4",
+      "sha256": "aa0df5a0329b3480b14a5b5081f4dec18aea539045223f29a4911b2590ab20ad",
+      "decoded_video_md5": "0f91bb3467837c5cd1e62f336b7ed22a",
+      "bytes": 8270923,
+      "rows_csv_sha256": "7a5d1ec03af7a3fc12c2b37fe1626dcb937d0cfa17cb3e72dbffb0f3c840f91f"
+     },
+     "dedup_state": "ON: on",
+     "dedup_summary": "[StabDedup] produced 96, served 96 (0 after waiting 0.0s total), bypassed 0, producer-failed 0, dropped unconsumed 0, over the 384 MB cap 0; peak held 90 MB (block 24, warm-up 6)",
+     "swap_calls": 412
+    },
+    {
+     "label": "d4_4A",
+     "arm": "A",
+     "returncode": 0,
+     "frame_loop_fps": 10.23,
+     "faces_per_s": 17.6,
+     "faces_per_frame": 1.72,
+     "stabilizer_path": "parallel-blocks",
+     "failed_frames": 0,
+     "swapped_lines": [
+      "  faces seen                                                       508  100.0%",
+      "  swapped (identity lock)                                          508  100.0%"
+     ],
+     "wall_seconds": 100.7,
+     "stages": {
+      "frame_total": {
+       "total_s": 145.78,
+       "share_pct": 42.5,
+       "calls": 240,
+       "ms_per_call": 607.43
+      },
+      "enhance": {
+       "total_s": 44.59,
+       "share_pct": 13.0,
+       "calls": 508,
+       "ms_per_call": 87.78
+      },
+      "stabilize": {
+       "total_s": 30.99,
+       "share_pct": 9.0,
+       "calls": 3048,
+       "ms_per_call": 10.17
+      },
+      "swap": {
+       "total_s": 30.95,
+       "share_pct": 9.0,
+       "calls": 508,
+       "ms_per_call": 60.93
+      },
+      "mask": {
+       "total_s": 22.64,
+       "share_pct": 6.6,
+       "calls": 1016,
+       "ms_per_call": 22.29
+      },
+      "blend": {
+       "total_s": 21.74,
+       "share_pct": 6.3,
+       "calls": 508,
+       "ms_per_call": 42.8
+      },
+      "track_detect": {
+       "total_s": 14.86,
+       "share_pct": 4.3,
+       "calls": 240,
+       "ms_per_call": 61.93
+      },
+      "detection": {
+       "total_s": 14.86,
+       "share_pct": 4.3,
+       "calls": 240,
+       "ms_per_call": 61.92
+      },
+      "track_wait": {
+       "total_s": 6.13,
+       "share_pct": 1.8,
+       "calls": 237,
+       "ms_per_call": 25.84
+      },
+      "lighting": {
+       "total_s": 5.69,
+       "share_pct": 1.7,
+       "calls": 1016,
+       "ms_per_call": 5.6
+      },
+      "enhance_recombine": {
+       "total_s": 1.54,
+       "share_pct": 0.4,
+       "calls": 508,
+       "ms_per_call": 3.03
+      },
+      "alignment": {
+       "total_s": 1.02,
+       "share_pct": 0.3,
+       "calls": 508,
+       "ms_per_call": 2.0
+      },
+      "verify": {
+       "total_s": 0.67,
+       "share_pct": 0.2,
+       "calls": 27,
+       "ms_per_call": 24.86
+      },
+      "decode": {
+       "total_s": 0.49,
+       "share_pct": 0.1,
+       "calls": 240,
+       "ms_per_call": 2.06
+      },
+      "encode": {
+       "total_s": 0.35,
+       "share_pct": 0.1,
+       "calls": 240,
+       "ms_per_call": 1.47
+      },
+      "track_decode": {
+       "total_s": 0.15,
+       "share_pct": 0.0,
+       "calls": 240,
+       "ms_per_call": 0.63
+      },
+      "encode_finalize": {
+       "total_s": 0.12,
+       "share_pct": 0.0,
+       "calls": 1,
+       "ms_per_call": 121.95
+      },
+      "track_consume": {
+       "total_s": 0.09,
+       "share_pct": 0.0,
+       "calls": 237,
+       "ms_per_call": 0.38
+      },
+      "faceset_lookup": {
+       "total_s": 0.0,
+       "share_pct": 0.0,
+       "calls": 508,
+       "ms_per_call": 0.0
+      }
+     },
+     "counters": {
+      "aux.buffalo_l.detection.detect": {
+       "main": 27,
+       "prepass": 566
+      },
+      "aux.buffalo_l.landmark_2d_106.get": {
+       "prepass": 412
+      },
+      "aux.buffalo_l.landmark_3d_68.get": {
+       "prepass": 412
+      },
+      "aux.buffalo_l.recognition.get": {
+       "prepass": 412
+      },
+      "aux.enrich.calls": {
+       "prepass": 246
+      },
+      "aux.refine_kps.applied": {
+       "prepass": 412
+      },
+      "aux.refine_kps.calls": {
+       "prepass": 206
+      },
+      "aux.upright_remeasure.calls": {
+       "prepass": 206
+      },
+      "detect.calls": {
+       "prepass": 246
+      },
+      "detect.expected_count_set": {
+       "prepass": 246
+      },
+      "detect.first_pass_empty": {
+       "prepass": 40
+      },
+      "detect.first_pass_faces": {
+       "prepass": 412
+      },
+      "detect.first_pass_short_of_expected": {
+       "prepass": 40
+      },
+      "raw.aux": {
+       "prepass": 286
+      },
+      "raw.caller._detect_faces": {
+       "prepass": 246
+      },
+      "raw.caller._rescue_clahe": {
+       "prepass": 40
+      },
+      "raw.caller._rescue_upscaled": {
+       "prepass": 40
+      },
+      "raw.caller._rotated_pass": {
+       "prepass": 240
+      },
+      "raw.caller.detect_boxes_in_roi": {
+       "main": 27
+      },
+      "raw.engine.scrfd": {
+       "main": 27,
+       "prepass": 566
+      },
+      "raw.faces_out": {
+       "main": 27,
+       "prepass": 412
+      },
+      "raw.noaux": {
+       "main": 27,
+       "prepass": 280
+      },
+      "raw.total": {
+       "main": 27,
+       "prepass": 566
+      },
+      "rescue.clahe.attempted": {
+       "prepass": 40
+      },
+      "rescue.downscaled.skipped_multiscale": {
+       "prepass": 40
+      },
+      "rescue.downscaled.skipped_with_no_pyramid_engine": {
+       "prepass": 40
+      },
+      "rescue.padded.skipped_multiscale": {
+       "prepass": 40
+      },
+      "rescue.padded.skipped_with_no_pyramid_engine": {
+       "prepass": 40
+      },
+      "rescue.partial_180.attempted": {
+       "prepass": 40
+      },
+      "rescue.partial_180.gained": {
+       "prepass": 0
+      },
+      "rescue.partial_anticlockwise.attempted": {
+       "prepass": 40
+      },
+      "rescue.partial_anticlockwise.gained": {
+       "prepass": 0
+      },
+      "rescue.partial_clockwise.attempted": {
+       "prepass": 40
+      },
+      "rescue.partial_clockwise.gained": {
+       "prepass": 0
+      },
+      "rescue.partial_miss.entered": {
+       "prepass": 40
+      },
+      "rescue.rotated.attempted": {
+       "prepass": 40
+      },
+      "rescue.rotated_pass.detected": {
+       "prepass": 0
+      },
+      "rescue.rotated_pass.survivors": {
+       "prepass": 0
+      },
+      "rescue.upscaled.attempted": {
+       "prepass": 40
+      },
+      "stab.blocks": {
+       "main": 10
+      },
+      "stab.output_frames": {
+       "main": 240
+      },
+      "stab.warmup_frames": {
+       "main": 54
+      }
+     },
+     "telemetry": {
+      "telemetry_samples": 176,
+      "peak_cpu_e_pct": 97.244,
+      "mean_cpu_e_pct": 13.027,
+      "peak_cpu_frequency_mhz": 3200.0,
+      "mean_cpu_frequency_mhz": 3200.0,
+      "peak_cpu_max_frequency_mhz": 3200.0,
+      "mean_cpu_max_frequency_mhz": 3200.0,
+      "peak_cpu_p_pct": 96.381,
+      "mean_cpu_p_pct": 25.956,
+      "peak_cpu_pct": 96.813,
+      "mean_cpu_pct": 19.492,
+      "peak_gpu_mem_util_pct": 62.0,
+      "mean_gpu_mem_util_pct": 18.926,
+      "peak_gpu_memory_mb": 6609.0,
+      "mean_gpu_memory_mb": 2892.17,
+      "peak_gpu_sm_mhz": 2835.0,
+      "mean_gpu_sm_mhz": 1614.972,
+      "peak_gpu_temp_c": 57.0,
+      "mean_gpu_temp_c": 45.045,
+      "peak_gpu_util_pct": 97.0,
+      "mean_gpu_util_pct": 24.909,
+      "peak_power_w": 154.92,
+      "mean_power_w": 58.377,
+      "peak_procs": 4,
+      "mean_procs": 2.199,
+      "peak_ram_used_gb": 21.429,
+      "mean_ram_used_gb": 17.832,
+      "peak_rss_gb": 10.784,
+      "mean_rss_gb": 7.153
+     },
+     "output": {
+      "file": "G:\\pinokio\\api\\roop-ultimate\\app\\output\\ab_stab_dedup_2026-10-09_final2\\d4_4A\\work\\clip_15-27-41.mp4",
+      "sha256": "aa0df5a0329b3480b14a5b5081f4dec18aea539045223f29a4911b2590ab20ad",
+      "decoded_video_md5": "0f91bb3467837c5cd1e62f336b7ed22a",
+      "bytes": 8270923,
+      "rows_csv_sha256": "7a5d1ec03af7a3fc12c2b37fe1626dcb937d0cfa17cb3e72dbffb0f3c840f91f"
+     },
+     "dedup_state": "off: disabled by ROOP_STAB_DEDUP=0",
+     "dedup_summary": null,
+     "swap_calls": 508
+    }
+   ]
+  }
+ }
+}

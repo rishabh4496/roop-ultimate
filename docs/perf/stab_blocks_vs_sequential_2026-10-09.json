@@ -1,0 +1,102 @@
+{
+ "date": "2026-10-09",
+ "head": {
+  "head": "6dbe7bea8f2df627f680304f62e87f2e7b33faee",
+  "short": "6dbe7be",
+  "dirty_files": [
+   "pp/roop/ProcessMgr.py",
+   "app/roop/procmgr_stabilization.py",
+   "app/roop/stab_dedup.py",
+   "app/tests/ab_stab_blocks_vs_sequential.py",
+   "app/tests/ab_stab_dedup.py",
+   "app/tests/test_stab_dedup.py"
+  ]
+ },
+ "clip": "d4",
+ "window": [
+  0,
+  240
+ ],
+ "threads": 10,
+ "chunk_mb": "8000",
+ "sequential_fps": 2.88,
+ "arms": {
+  "P4": {
+   "geometry": {
+    "wu": 6,
+    "block": 24,
+    "workers": 10,
+    "blocks_per_chunk": 20
+   },
+   "fps": 10.56,
+   "peak_rss_gb": 10.856,
+   "faces_per_s": 18.1,
+   "stabilizer_path": "parallel-blocks",
+   "frames_compared": 240,
+   "frames_differing": 219,
+   "mean_abs_diff": 0.65647,
+   "p99_frame_mean": 0.96422,
+   "max_abs_diff": 22.0,
+   "head_of_block_mean": 0.70957,
+   "body_mean": 0.72527
+  },
+  "P8": {
+   "geometry": {
+    "wu": 6,
+    "block": 48,
+    "workers": 10,
+    "blocks_per_chunk": 20
+   },
+   "fps": 8.43,
+   "peak_rss_gb": 10.522,
+   "faces_per_s": 14.5,
+   "stabilizer_path": "parallel-blocks",
+   "frames_compared": 240,
+   "frames_differing": 211,
+   "mean_abs_diff": 0.64031,
+   "p99_frame_mean": 0.96626,
+   "max_abs_diff": 25.0,
+   "head_of_block_mean": 0.75783,
+   "body_mean": 0.73644
+  },
+  "P16": {
+   "geometry": {
+    "wu": 6,
+    "block": 96,
+    "workers": 10,
+    "blocks_per_chunk": 20
+   },
+   "fps": 5.8,
+   "peak_rss_gb": 10.409,
+   "faces_per_s": 9.9,
+   "stabilizer_path": "parallel-blocks",
+   "frames_compared": 240,
+   "frames_differing": 211,
+   "mean_abs_diff": 0.63689,
+   "p99_frame_mean": 0.96372,
+   "max_abs_diff": 27.0,
+   "head_of_block_mean": 0.83089,
+   "body_mean": 0.72159
+  },
+  "P32": {
+   "geometry": {
+    "wu": 6,
+    "block": 96,
+    "workers": 10,
+    "blocks_per_chunk": 20
+   },
+   "fps": 5.74,
+   "peak_rss_gb": 10.444,
+   "faces_per_s": 9.9,
+   "stabilizer_path": "parallel-blocks",
+   "frames_compared": 240,
+   "frames_differing": 211,
+   "mean_abs_diff": 0.63689,
+   "p99_frame_mean": 0.96372,
+   "max_abs_diff": 27.0,
+   "head_of_block_mean": 0.83089,
+   "body_mean": 0.72159
+  }
+ },
+ "mean_diff_monotone_non_increasing_with_block": true
+}
