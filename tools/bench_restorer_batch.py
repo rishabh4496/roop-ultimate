@@ -157,12 +157,19 @@ def main() -> int:
 
     dyn = session(str(dynamic), providers_for(args.model_key, g.execution_providers,
                                               str(dynamic))[0])
+    # Per-face identity of a batched call against the SAME engine at batch 1 (the acceptance test for a
+    # cross-frame enhancer batcher: a face must not change because of who it was batched with).
+    b1_out = [run(dyn, x_all[k:k + 1], 1)[0][0] for k in range(8)]
     for b in (1, 2, 4, 8):
         y, dt = run(dyn, x_all[:b], args.iters)
         s = [ssim_fn(post(y[k]), baseline[k]) for k in range(b)]
+        same = sum(int(np.array_equal(y[k], b1_out[k])) for k in range(b))
+        worst = max(float(np.abs(y[k].astype(np.float64) - b1_out[k].astype(np.float64)).max()) for k in range(b))
         result[f"dynamic_b{b}"] = {"ms_per_call": dt * 1e3, "ms_per_face": dt * 1e3 / b,
                                    "ssim_vs_fp32_mean": float(np.mean(s)),
-                                   "ssim_vs_fp32_min": float(np.min(s))}
+                                   "ssim_vs_fp32_min": float(np.min(s)),
+                                   "bit_identical_to_b1": f"{same}/{b}",
+                                   "max_abs_diff_vs_b1": worst}
     base_ms = result["production_b1"]["ms_per_face"]
     result["best_batched_ms_per_face"] = min(result[f"dynamic_b{b}"]["ms_per_face"]
                                              for b in (2, 4, 8))

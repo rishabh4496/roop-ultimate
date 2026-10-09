@@ -1,0 +1,13 @@
+{
+  "gpu": "NVIDIA GeForce RTX 4070",
+  "model": "restoreformer_plus_plus.onnx",
+  "tool": "tools/bench_restorer_batch.py (bit-identity columns added 2026-10-09)",
+  "production_b1": {"ms_per_face": 20.358, "ssim_vs_fp32_mean": 0.99645, "ssim_vs_fp32_min": 0.99457},
+  "dynamic_b1": {"ms_per_call": 21.323, "ms_per_face": 21.323, "bit_identical_to_b1": "1/1", "max_abs_diff_vs_b1": 0.0},
+  "dynamic_b2": {"ms_per_call": 46.559, "ms_per_face": 23.280, "bit_identical_to_b1": "2/2", "max_abs_diff_vs_b1": 0.0},
+  "dynamic_b4": {"ms_per_call": 90.858, "ms_per_face": 22.715, "bit_identical_to_b1": "4/4", "max_abs_diff_vs_b1": 0.0},
+  "dynamic_b8": {"ms_per_call": 180.328, "ms_per_face": 22.541, "bit_identical_to_b1": "8/8", "max_abs_diff_vs_b1": 0.0},
+  "best_batched_ms_per_face": 22.541,
+  "latency_reduction_vs_production": -0.107,
+  "verdict": "batch>1 works and is bit-identical per face, but per-face cost is flat-to-worse (call time scales linearly with B). No cross-frame enhancer batcher built."
+}

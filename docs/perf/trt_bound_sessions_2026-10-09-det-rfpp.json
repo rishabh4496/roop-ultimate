@@ -1,0 +1,134 @@
+{
+ "detector@512": {
+  "unsupported": "RuntimeError: Error in execution: Got invalid dimensions for output: 448 for the following indices  index: 0 Got: 8192 Expected: 12800  Please fix either the inputs/outputs or the model."
+ },
+ "detector@640": {
+  "bound": {
+   "bit_identical_inputs": "40/40",
+   "max_abs_diff_when_not": 0.0,
+   "latency_ms": {
+    "median": 2.013,
+    "p10": 1.857,
+    "p90": 2.556
+   },
+   "vs_prod": 0.95
+  },
+  "graph": {
+   "bit_identical_inputs": "40/40",
+   "max_abs_diff_when_not": 0.0,
+   "latency_ms": {
+    "median": 1.756,
+    "p10": 1.643,
+    "p90": 2.297
+   },
+   "vs_prod": 0.8287
+  },
+  "prod": {
+   "latency_ms": {
+    "median": 2.119,
+    "p10": 1.967,
+    "p90": 2.968
+   },
+   "vs_prod": 1.0
+  },
+  "pooled_2x": {
+   "prod": {
+    "calls_per_s": 506.1,
+    "vs_prod": 1.0
+   },
+   "bound": {
+    "calls_per_s": 564.7,
+    "vs_prod": 1.116
+   },
+   "graph": {
+    "calls_per_s": 685.7,
+    "vs_prod": 1.355
+   }
+  },
+  "stability": {
+   "bound": {
+    "calls": 10000,
+    "rechecks_not_identical": 0,
+    "error": null,
+    "median_first1000_ms": 2.191,
+    "median_last1000_ms": 2.17,
+    "device_free_mib_before": 10258,
+    "device_free_mib_after": 10258
+   },
+   "graph": {
+    "calls": 10000,
+    "rechecks_not_identical": 0,
+    "error": null,
+    "median_first1000_ms": 2.091,
+    "median_last1000_ms": 2.035,
+    "device_free_mib_before": 10274,
+    "device_free_mib_after": 10274
+   }
+  }
+ },
+ "restoreformer++": {
+  "bound": {
+   "bit_identical_inputs": "40/40",
+   "max_abs_diff_when_not": 0.0,
+   "latency_ms": {
+    "median": 73.145,
+    "p10": 66.06,
+    "p90": 90.115
+   },
+   "vs_prod": 3.2802
+  },
+  "graph": {
+   "bit_identical_inputs": "40/40",
+   "max_abs_diff_when_not": 0.0,
+   "latency_ms": {
+    "median": 72.603,
+    "p10": 65.197,
+    "p90": 88.611
+   },
+   "vs_prod": 3.2559
+  },
+  "prod": {
+   "latency_ms": {
+    "median": 22.299,
+    "p10": 21.243,
+    "p90": 24.129
+   },
+   "vs_prod": 1.0
+  },
+  "pooled_2x": {
+   "prod": {
+    "calls_per_s": 47.6,
+    "vs_prod": 1.0
+   },
+   "bound": {
+    "calls_per_s": 25.0,
+    "vs_prod": 0.525
+   },
+   "graph": {
+    "calls_per_s": 26.6,
+    "vs_prod": 0.559
+   }
+  },
+  "stability": {
+   "bound": {
+    "calls": 3000,
+    "rechecks_not_identical": 0,
+    "error": null,
+    "median_first1000_ms": 76.28,
+    "median_last1000_ms": 83.011,
+    "device_free_mib_before": 8634,
+    "device_free_mib_after": 8634
+   },
+   "graph": {
+    "calls": 3000,
+    "rechecks_not_identical": 0,
+    "error": null,
+    "median_first1000_ms": 68.875,
+    "median_last1000_ms": 71.245,
+    "device_free_mib_before": 8894,
+    "device_free_mib_after": 8894
+   }
+  }
+ },
+ "_note": "Detector sections are valid. The restoreformer++ section is SUPERSEDED by trt_bound_sessions_2026-10-09-rfpp-xseg-v2.json: this run bound all 15 graph outputs (14 are feature maps up to 64 MB), so bound/graph read 3.3x slower than production; the v2 run binds outputs[0] only, as the app does."
+}

@@ -1,0 +1,1192 @@
+{
+ "date": "2026-10-09",
+ "head": {
+  "head": "ab8c57ade0f8ba0bd64118097e5c58a3d224c4a4",
+  "short": "ab8c57a",
+  "dirty_files": [
+   "pp/roop/core.py",
+   "app/roop/processors/Mask_XSeg.py",
+   "tools/bench_restorer_batch.py",
+   "app/roop/trt_bound_session.py",
+   "app/tests/ab_trt_bound_render.py",
+   "app/tests/ab_trt_bound_sessions.py",
+   "app/tests/ab_trt_build_heuristics.py",
+   "app/tests/test_trt_bound_session.py"
+  ]
+ },
+ "b_value": "xseg=graph",
+ "threads": 10,
+ "config": {
+  "swap_model": "hyperswap",
+  "selected_enhancer": "Restore Ultra",
+  "mask_engine": "DFL XSeg",
+  "provider": "tensorrt",
+  "trt_precision": "mixed",
+  "max_threads": "10",
+  "detector_engine": "scrfd",
+  "face_detector_size": "512",
+  "perf_trt_pool": "2",
+  "perf_detmask_pool": "2",
+  "perf_detector_pool": "2"
+ },
+ "clips": {
+  "d4": {
+   "A_fps": [
+    9.6,
+    9.89
+   ],
+   "B_fps": [
+    9.39,
+    10.3
+   ],
+   "chunk_mb": 1496,
+   "A_mean": 9.745,
+   "B_mean": 9.845,
+   "ratio_B_over_A": 1.0103,
+   "A_vs_A_spread_pct": 2.98,
+   "arms": [
+    {
+     "label": "d4_1A",
+     "arm": "A",
+     "returncode": 0,
+     "frame_loop_fps": 9.6,
+     "faces_per_s": 10.8,
+     "faces_per_frame": 1.12,
+     "stabilizer_path": "parallel-blocks",
+     "bound_session_lines": 0,
+     "bound_fallback_lines": 0,
+     "failed_frames": 0,
+     "swapped_lines": [
+      "  faces seen                                                       963  100.0%",
+      "  swapped (identity lock)                                          823   85.5%",
+      "  swapped (per-frame match)                                          5    0.5%"
+     ],
+     "wall_seconds": 286.3,
+     "stages": {
+      "frame_total": {
+       "total_s": 391.66,
+       "share_pct": 41.2,
+       "calls": 600,
+       "ms_per_call": 652.77
+      },
+      "stabilize": {
+       "total_s": 102.3,
+       "share_pct": 10.8,
+       "calls": 4968,
+       "ms_per_call": 20.59
+      },
+      "enhance": {
+       "total_s": 96.23,
+       "share_pct": 10.1,
+       "calls": 828,
+       "ms_per_call": 116.22
+      },
+      "track_detect": {
+       "total_s": 66.01,
+       "share_pct": 6.9,
+       "calls": 600,
+       "ms_per_call": 110.01
+      },
+      "detection": {
+       "total_s": 66.0,
+       "share_pct": 6.9,
+       "calls": 600,
+       "ms_per_call": 110.0
+      },
+      "swap": {
+       "total_s": 58.25,
+       "share_pct": 6.1,
+       "calls": 828,
+       "ms_per_call": 70.35
+      },
+      "blend": {
+       "total_s": 57.69,
+       "share_pct": 6.1,
+       "calls": 828,
+       "ms_per_call": 69.67
+      },
+      "mask": {
+       "total_s": 42.81,
+       "share_pct": 4.5,
+       "calls": 1656,
+       "ms_per_call": 25.85
+      },
+      "track_wait": {
+       "total_s": 28.32,
+       "share_pct": 3.0,
+       "calls": 597,
+       "ms_per_call": 47.43
+      },
+      "lighting": {
+       "total_s": 22.46,
+       "share_pct": 2.4,
+       "calls": 1656,
+       "ms_per_call": 13.56
+      },
+      "enhance_recombine": {
+       "total_s": 7.26,
+       "share_pct": 0.8,
+       "calls": 828,
+       "ms_per_call": 8.76
+      },
+      "alignment": {
+       "total_s": 4.08,
+       "share_pct": 0.4,
+       "calls": 828,
+       "ms_per_call": 4.93
+      },
+      "verify": {
+       "total_s": 3.79,
+       "share_pct": 0.4,
+       "calls": 138,
+       "ms_per_call": 27.47
+      },
+      "decode": {
+       "total_s": 1.81,
+       "share_pct": 0.2,
+       "calls": 600,
+       "ms_per_call": 3.02
+      },
+      "encode": {
+       "total_s": 1.31,
+       "share_pct": 0.1,
+       "calls": 600,
+       "ms_per_call": 2.19
+      },
+      "track_consume": {
+       "total_s": 0.27,
+       "share_pct": 0.0,
+       "calls": 597,
+       "ms_per_call": 0.45
+      },
+      "encode_finalize": {
+       "total_s": 0.26,
+       "share_pct": 0.0,
+       "calls": 1,
+       "ms_per_call": 255.99
+      },
+      "track_decode": {
+       "total_s": 0.19,
+       "share_pct": 0.0,
+       "calls": 600,
+       "ms_per_call": 0.32
+      },
+      "faceset_lookup": {
+       "total_s": 0.0,
+       "share_pct": 0.0,
+       "calls": 828,
+       "ms_per_call": 0.0
+      }
+     },
+     "output": {
+      "file": "G:\\pinokio\\api\\roop-ultimate\\app\\output\\ab_trt_bound_2026-10-09\\d4_1A\\work\\clip_11-52-09.mp4",
+      "sha256": "6650e371b02b88acc0ed9e0650d57fba2a5870f25c34870d69e7516529fc5108",
+      "decoded_video_md5": "1c6774f2efd855231740a23a4ab3bb84",
+      "bytes": 20217026,
+      "rows_csv_sha256": "bf8a9a978fa50749225ca2763284bb2a6d3961729be5f529cda677fdb3c2055f"
+     }
+    },
+    {
+     "label": "d4_2B",
+     "arm": "B",
+     "returncode": 0,
+     "frame_loop_fps": 9.39,
+     "faces_per_s": 10.5,
+     "faces_per_frame": 1.12,
+     "stabilizer_path": "parallel-blocks",
+     "bound_session_lines": 1,
+     "bound_fallback_lines": 0,
+     "failed_frames": 0,
+     "swapped_lines": [
+      "  faces seen                                                       963  100.0%",
+      "  swapped (identity lock)                                          823   85.5%",
+      "  swapped (per-frame match)                                          5    0.5%"
+     ],
+     "wall_seconds": 292.2,
+     "stages": {
+      "frame_total": {
+       "total_s": 405.38,
+       "share_pct": 42.3,
+       "calls": 600,
+       "ms_per_call": 675.64
+      },
+      "stabilize": {
+       "total_s": 107.66,
+       "share_pct": 11.2,
+       "calls": 4968,
+       "ms_per_call": 21.67
+      },
+      "enhance": {
+       "total_s": 97.69,
+       "share_pct": 10.2,
+       "calls": 828,
+       "ms_per_call": 117.99
+      },
+      "track_detect": {
+       "total_s": 60.08,
+       "share_pct": 6.3,
+       "calls": 600,
+       "ms_per_call": 100.14
+      },
+      "detection": {
+       "total_s": 60.08,
+       "share_pct": 6.3,
+       "calls": 600,
+       "ms_per_call": 100.13
+      },
+      "blend": {
+       "total_s": 60.06,
+       "share_pct": 6.3,
+       "calls": 828,
+       "ms_per_call": 72.53
+      },
+      "swap": {
+       "total_s": 59.67,
+       "share_pct": 6.2,
+       "calls": 828,
+       "ms_per_call": 72.07
+      },
+      "mask": {
+       "total_s": 38.2,
+       "share_pct": 4.0,
+       "calls": 1656,
+       "ms_per_call": 23.07
+      },
+      "track_wait": {
+       "total_s": 25.51,
+       "share_pct": 2.7,
+       "calls": 597,
+       "ms_per_call": 42.73
+      },
+      "lighting": {
+       "total_s": 24.05,
+       "share_pct": 2.5,
+       "calls": 1656,
+       "ms_per_call": 14.52
+      },
+      "enhance_recombine": {
+       "total_s": 7.78,
+       "share_pct": 0.8,
+       "calls": 828,
+       "ms_per_call": 9.4
+      },
+      "alignment": {
+       "total_s": 4.12,
+       "share_pct": 0.4,
+       "calls": 828,
+       "ms_per_call": 4.98
+      },
+      "verify": {
+       "total_s": 3.71,
+       "share_pct": 0.4,
+       "calls": 138,
+       "ms_per_call": 26.91
+      },
+      "decode": {
+       "total_s": 1.83,
+       "share_pct": 0.2,
+       "calls": 600,
+       "ms_per_call": 3.05
+      },
+      "encode": {
+       "total_s": 1.31,
+       "share_pct": 0.1,
+       "calls": 600,
+       "ms_per_call": 2.19
+      },
+      "track_consume": {
+       "total_s": 0.28,
+       "share_pct": 0.0,
+       "calls": 597,
+       "ms_per_call": 0.46
+      },
+      "encode_finalize": {
+       "total_s": 0.26,
+       "share_pct": 0.0,
+       "calls": 1,
+       "ms_per_call": 263.86
+      },
+      "track_decode": {
+       "total_s": 0.18,
+       "share_pct": 0.0,
+       "calls": 600,
+       "ms_per_call": 0.31
+      },
+      "faceset_lookup": {
+       "total_s": 0.0,
+       "share_pct": 0.0,
+       "calls": 828,
+       "ms_per_call": 0.0
+      }
+     },
+     "output": {
+      "file": "G:\\pinokio\\api\\roop-ultimate\\app\\output\\ab_trt_bound_2026-10-09\\d4_2B\\work\\clip_11-57-09.mp4",
+      "sha256": "6650e371b02b88acc0ed9e0650d57fba2a5870f25c34870d69e7516529fc5108",
+      "decoded_video_md5": "1c6774f2efd855231740a23a4ab3bb84",
+      "bytes": 20217026,
+      "rows_csv_sha256": "bf8a9a978fa50749225ca2763284bb2a6d3961729be5f529cda677fdb3c2055f"
+     }
+    },
+    {
+     "label": "d4_3B",
+     "arm": "B",
+     "returncode": 0,
+     "frame_loop_fps": 10.3,
+     "faces_per_s": 11.6,
+     "faces_per_frame": 1.12,
+     "stabilizer_path": "parallel-blocks",
+     "bound_session_lines": 1,
+     "bound_fallback_lines": 0,
+     "failed_frames": 0,
+     "swapped_lines": [
+      "  faces seen                                                       963  100.0%",
+      "  swapped (identity lock)                                          823   85.5%",
+      "  swapped (per-frame match)                                          5    0.5%"
+     ],
+     "wall_seconds": 306.4,
+     "stages": {
+      "frame_total": {
+       "total_s": 358.82,
+       "share_pct": 41.6,
+       "calls": 600,
+       "ms_per_call": 598.04
+      },
+      "enhance": {
+       "total_s": 93.06,
+       "share_pct": 10.8,
+       "calls": 828,
+       "ms_per_call": 112.39
+      },
+      "stabilize": {
+       "total_s": 92.3,
+       "share_pct": 10.7,
+       "calls": 4968,
+       "ms_per_call": 18.58
+      },
+      "track_detect": {
+       "total_s": 57.11,
+       "share_pct": 6.6,
+       "calls": 600,
+       "ms_per_call": 95.18
+      },
+      "detection": {
+       "total_s": 57.1,
+       "share_pct": 6.6,
+       "calls": 600,
+       "ms_per_call": 95.17
+      },
+      "swap": {
+       "total_s": 55.31,
+       "share_pct": 6.4,
+       "calls": 828,
+       "ms_per_call": 66.8
+      },
+      "blend": {
+       "total_s": 52.56,
+       "share_pct": 6.1,
+       "calls": 828,
+       "ms_per_call": 63.47
+      },
+      "mask": {
+       "total_s": 36.21,
+       "share_pct": 4.2,
+       "calls": 1656,
+       "ms_per_call": 21.86
+      },
+      "track_wait": {
+       "total_s": 24.22,
+       "share_pct": 2.8,
+       "calls": 597,
+       "ms_per_call": 40.58
+      },
+      "lighting": {
+       "total_s": 19.37,
+       "share_pct": 2.2,
+       "calls": 1656,
+       "ms_per_call": 11.7
+      },
+      "enhance_recombine": {
+       "total_s": 6.38,
+       "share_pct": 0.7,
+       "calls": 828,
+       "ms_per_call": 7.7
+      },
+      "verify": {
+       "total_s": 3.52,
+       "share_pct": 0.4,
+       "calls": 138,
+       "ms_per_call": 25.5
+      },
+      "alignment": {
+       "total_s": 3.45,
+       "share_pct": 0.4,
+       "calls": 828,
+       "ms_per_call": 4.17
+      },
+      "decode": {
+       "total_s": 1.99,
+       "share_pct": 0.2,
+       "calls": 600,
+       "ms_per_call": 3.31
+      },
+      "encode": {
+       "total_s": 1.44,
+       "share_pct": 0.2,
+       "calls": 600,
+       "ms_per_call": 2.4
+      },
+      "encode_finalize": {
+       "total_s": 0.25,
+       "share_pct": 0.0,
+       "calls": 1,
+       "ms_per_call": 251.27
+      },
+      "track_consume": {
+       "total_s": 0.24,
+       "share_pct": 0.0,
+       "calls": 597,
+       "ms_per_call": 0.4
+      },
+      "track_decode": {
+       "total_s": 0.18,
+       "share_pct": 0.0,
+       "calls": 600,
+       "ms_per_call": 0.31
+      },
+      "faceset_lookup": {
+       "total_s": 0.0,
+       "share_pct": 0.0,
+       "calls": 828,
+       "ms_per_call": 0.0
+      }
+     },
+     "output": {
+      "file": "G:\\pinokio\\api\\roop-ultimate\\app\\output\\ab_trt_bound_2026-10-09\\d4_3B\\work\\clip_12-01-53.mp4",
+      "sha256": "6650e371b02b88acc0ed9e0650d57fba2a5870f25c34870d69e7516529fc5108",
+      "decoded_video_md5": "1c6774f2efd855231740a23a4ab3bb84",
+      "bytes": 20217026,
+      "rows_csv_sha256": "bf8a9a978fa50749225ca2763284bb2a6d3961729be5f529cda677fdb3c2055f"
+     }
+    },
+    {
+     "label": "d4_4A",
+     "arm": "A",
+     "returncode": 0,
+     "frame_loop_fps": 9.89,
+     "faces_per_s": 11.1,
+     "faces_per_frame": 1.12,
+     "stabilizer_path": "parallel-blocks",
+     "bound_session_lines": 0,
+     "bound_fallback_lines": 0,
+     "failed_frames": 0,
+     "swapped_lines": [
+      "  faces seen                                                       963  100.0%",
+      "  swapped (identity lock)                                          823   85.5%",
+      "  swapped (per-frame match)                                          5    0.5%"
+     ],
+     "wall_seconds": 294.9,
+     "stages": {
+      "frame_total": {
+       "total_s": 379.83,
+       "share_pct": 40.7,
+       "calls": 600,
+       "ms_per_call": 633.06
+      },
+      "stabilize": {
+       "total_s": 99.85,
+       "share_pct": 10.7,
+       "calls": 4968,
+       "ms_per_call": 20.1
+      },
+      "enhance": {
+       "total_s": 95.46,
+       "share_pct": 10.2,
+       "calls": 828,
+       "ms_per_call": 115.29
+      },
+      "track_detect": {
+       "total_s": 67.74,
+       "share_pct": 7.3,
+       "calls": 600,
+       "ms_per_call": 112.91
+      },
+      "detection": {
+       "total_s": 67.74,
+       "share_pct": 7.3,
+       "calls": 600,
+       "ms_per_call": 112.89
+      },
+      "swap": {
+       "total_s": 56.0,
+       "share_pct": 6.0,
+       "calls": 828,
+       "ms_per_call": 67.63
+      },
+      "blend": {
+       "total_s": 55.23,
+       "share_pct": 5.9,
+       "calls": 828,
+       "ms_per_call": 66.7
+      },
+      "mask": {
+       "total_s": 42.08,
+       "share_pct": 4.5,
+       "calls": 1656,
+       "ms_per_call": 25.41
+      },
+      "track_wait": {
+       "total_s": 29.22,
+       "share_pct": 3.1,
+       "calls": 597,
+       "ms_per_call": 48.95
+      },
+      "lighting": {
+       "total_s": 21.13,
+       "share_pct": 2.3,
+       "calls": 1656,
+       "ms_per_call": 12.76
+      },
+      "enhance_recombine": {
+       "total_s": 6.93,
+       "share_pct": 0.7,
+       "calls": 828,
+       "ms_per_call": 8.37
+      },
+      "verify": {
+       "total_s": 3.9,
+       "share_pct": 0.4,
+       "calls": 138,
+       "ms_per_call": 28.26
+      },
+      "alignment": {
+       "total_s": 3.85,
+       "share_pct": 0.4,
+       "calls": 828,
+       "ms_per_call": 4.66
+      },
+      "decode": {
+       "total_s": 1.97,
+       "share_pct": 0.2,
+       "calls": 600,
+       "ms_per_call": 3.28
+      },
+      "encode": {
+       "total_s": 1.32,
+       "share_pct": 0.1,
+       "calls": 600,
+       "ms_per_call": 2.21
+      },
+      "encode_finalize": {
+       "total_s": 0.28,
+       "share_pct": 0.0,
+       "calls": 1,
+       "ms_per_call": 283.06
+      },
+      "track_consume": {
+       "total_s": 0.26,
+       "share_pct": 0.0,
+       "calls": 597,
+       "ms_per_call": 0.43
+      },
+      "track_decode": {
+       "total_s": 0.19,
+       "share_pct": 0.0,
+       "calls": 600,
+       "ms_per_call": 0.32
+      },
+      "faceset_lookup": {
+       "total_s": 0.0,
+       "share_pct": 0.0,
+       "calls": 828,
+       "ms_per_call": 0.0
+      }
+     },
+     "output": {
+      "file": "G:\\pinokio\\api\\roop-ultimate\\app\\output\\ab_trt_bound_2026-10-09\\d4_4A\\work\\clip_12-07-07.mp4",
+      "sha256": "6650e371b02b88acc0ed9e0650d57fba2a5870f25c34870d69e7516529fc5108",
+      "decoded_video_md5": "1c6774f2efd855231740a23a4ab3bb84",
+      "bytes": 20217026,
+      "rows_csv_sha256": "bf8a9a978fa50749225ca2763284bb2a6d3961729be5f529cda677fdb3c2055f"
+     }
+    }
+   ]
+  },
+  "s7": {
+   "A_fps": [
+    12.1,
+    11.25
+   ],
+   "B_fps": [
+    11.44,
+    11.51
+   ],
+   "chunk_mb": 1406,
+   "A_mean": 11.675,
+   "B_mean": 11.475,
+   "ratio_B_over_A": 0.9829,
+   "A_vs_A_spread_pct": 7.28,
+   "arms": [
+    {
+     "label": "s7_1A",
+     "arm": "A",
+     "returncode": 0,
+     "frame_loop_fps": 12.1,
+     "faces_per_s": 10.6,
+     "faces_per_frame": 0.88,
+     "stabilizer_path": "parallel-blocks",
+     "bound_session_lines": 0,
+     "bound_fallback_lines": 0,
+     "failed_frames": 0,
+     "swapped_lines": [
+      "  faces seen                                                       652  100.0%",
+      "  swapped (identity lock)                                          652  100.0%"
+     ],
+     "wall_seconds": 242.5,
+     "stages": {
+      "frame_total": {
+       "total_s": 285.6,
+       "share_pct": 40.5,
+       "calls": 600,
+       "ms_per_call": 476.01
+      },
+      "stabilize": {
+       "total_s": 69.59,
+       "share_pct": 9.9,
+       "calls": 3912,
+       "ms_per_call": 17.79
+      },
+      "enhance": {
+       "total_s": 69.5,
+       "share_pct": 9.9,
+       "calls": 652,
+       "ms_per_call": 106.6
+      },
+      "blend": {
+       "total_s": 55.0,
+       "share_pct": 7.8,
+       "calls": 652,
+       "ms_per_call": 84.35
+      },
+      "track_detect": {
+       "total_s": 47.34,
+       "share_pct": 6.7,
+       "calls": 600,
+       "ms_per_call": 78.91
+      },
+      "detection": {
+       "total_s": 47.34,
+       "share_pct": 6.7,
+       "calls": 600,
+       "ms_per_call": 78.9
+      },
+      "swap": {
+       "total_s": 41.35,
+       "share_pct": 5.9,
+       "calls": 652,
+       "ms_per_call": 63.42
+      },
+      "mask": {
+       "total_s": 29.72,
+       "share_pct": 4.2,
+       "calls": 1304,
+       "ms_per_call": 22.8
+      },
+      "track_wait": {
+       "total_s": 20.93,
+       "share_pct": 3.0,
+       "calls": 597,
+       "ms_per_call": 35.05
+      },
+      "lighting": {
+       "total_s": 15.0,
+       "share_pct": 2.1,
+       "calls": 1304,
+       "ms_per_call": 11.51
+      },
+      "verify": {
+       "total_s": 12.1,
+       "share_pct": 1.7,
+       "calls": 506,
+       "ms_per_call": 23.92
+      },
+      "enhance_recombine": {
+       "total_s": 4.92,
+       "share_pct": 0.7,
+       "calls": 652,
+       "ms_per_call": 7.54
+      },
+      "alignment": {
+       "total_s": 2.72,
+       "share_pct": 0.4,
+       "calls": 652,
+       "ms_per_call": 4.18
+      },
+      "decode": {
+       "total_s": 1.85,
+       "share_pct": 0.3,
+       "calls": 600,
+       "ms_per_call": 3.09
+      },
+      "encode": {
+       "total_s": 1.38,
+       "share_pct": 0.2,
+       "calls": 600,
+       "ms_per_call": 2.29
+      },
+      "encode_finalize": {
+       "total_s": 0.25,
+       "share_pct": 0.0,
+       "calls": 1,
+       "ms_per_call": 252.65
+      },
+      "track_decode": {
+       "total_s": 0.18,
+       "share_pct": 0.0,
+       "calls": 600,
+       "ms_per_call": 0.31
+      },
+      "track_consume": {
+       "total_s": 0.15,
+       "share_pct": 0.0,
+       "calls": 597,
+       "ms_per_call": 0.25
+      },
+      "faceset_lookup": {
+       "total_s": 0.0,
+       "share_pct": 0.0,
+       "calls": 652,
+       "ms_per_call": 0.0
+      }
+     },
+     "output": {
+      "file": "G:\\pinokio\\api\\roop-ultimate\\app\\output\\ab_trt_bound_2026-10-09\\s7_1A\\work\\clip_12-14-30.mp4",
+      "sha256": "891f687daa2c38cfdae17e3b505965d586250bf092c19087d0d01fbc758291bc",
+      "decoded_video_md5": "4703a6f751504163d5701ce34ecfb134",
+      "bytes": 20312316,
+      "rows_csv_sha256": "e3aa0c0fe83980403a680dc2de619c5cb7d8cbf5c35ba6202c338827a09a24e3"
+     }
+    },
+    {
+     "label": "s7_2B",
+     "arm": "B",
+     "returncode": 0,
+     "frame_loop_fps": 11.44,
+     "faces_per_s": 10.0,
+     "faces_per_frame": 0.88,
+     "stabilizer_path": "parallel-blocks",
+     "bound_session_lines": 1,
+     "bound_fallback_lines": 0,
+     "failed_frames": 0,
+     "swapped_lines": [
+      "  faces seen                                                       652  100.0%",
+      "  swapped (identity lock)                                          652  100.0%"
+     ],
+     "wall_seconds": 257.1,
+     "stages": {
+      "frame_total": {
+       "total_s": 303.55,
+       "share_pct": 41.2,
+       "calls": 600,
+       "ms_per_call": 505.92
+      },
+      "stabilize": {
+       "total_s": 76.03,
+       "share_pct": 10.3,
+       "calls": 3912,
+       "ms_per_call": 19.44
+      },
+      "enhance": {
+       "total_s": 72.62,
+       "share_pct": 9.9,
+       "calls": 652,
+       "ms_per_call": 111.38
+      },
+      "blend": {
+       "total_s": 58.21,
+       "share_pct": 7.9,
+       "calls": 652,
+       "ms_per_call": 89.28
+      },
+      "track_detect": {
+       "total_s": 46.98,
+       "share_pct": 6.4,
+       "calls": 600,
+       "ms_per_call": 78.31
+      },
+      "detection": {
+       "total_s": 46.97,
+       "share_pct": 6.4,
+       "calls": 600,
+       "ms_per_call": 78.29
+      },
+      "swap": {
+       "total_s": 42.73,
+       "share_pct": 5.8,
+       "calls": 652,
+       "ms_per_call": 65.54
+      },
+      "mask": {
+       "total_s": 25.54,
+       "share_pct": 3.5,
+       "calls": 1304,
+       "ms_per_call": 19.59
+      },
+      "track_wait": {
+       "total_s": 20.53,
+       "share_pct": 2.8,
+       "calls": 597,
+       "ms_per_call": 34.4
+      },
+      "lighting": {
+       "total_s": 17.42,
+       "share_pct": 2.4,
+       "calls": 1304,
+       "ms_per_call": 13.36
+      },
+      "verify": {
+       "total_s": 13.24,
+       "share_pct": 1.8,
+       "calls": 506,
+       "ms_per_call": 26.16
+      },
+      "enhance_recombine": {
+       "total_s": 5.53,
+       "share_pct": 0.8,
+       "calls": 652,
+       "ms_per_call": 8.48
+      },
+      "alignment": {
+       "total_s": 3.13,
+       "share_pct": 0.4,
+       "calls": 652,
+       "ms_per_call": 4.79
+      },
+      "decode": {
+       "total_s": 1.9,
+       "share_pct": 0.3,
+       "calls": 600,
+       "ms_per_call": 3.17
+      },
+      "encode": {
+       "total_s": 1.37,
+       "share_pct": 0.2,
+       "calls": 600,
+       "ms_per_call": 2.29
+      },
+      "encode_finalize": {
+       "total_s": 0.29,
+       "share_pct": 0.0,
+       "calls": 1,
+       "ms_per_call": 285.9
+      },
+      "track_decode": {
+       "total_s": 0.19,
+       "share_pct": 0.0,
+       "calls": 600,
+       "ms_per_call": 0.32
+      },
+      "track_consume": {
+       "total_s": 0.19,
+       "share_pct": 0.0,
+       "calls": 597,
+       "ms_per_call": 0.31
+      },
+      "faceset_lookup": {
+       "total_s": 0.0,
+       "share_pct": 0.0,
+       "calls": 652,
+       "ms_per_call": 0.0
+      }
+     },
+     "output": {
+      "file": "G:\\pinokio\\api\\roop-ultimate\\app\\output\\ab_trt_bound_2026-10-09\\s7_2B\\work\\clip_12-18-41.mp4",
+      "sha256": "891f687daa2c38cfdae17e3b505965d586250bf092c19087d0d01fbc758291bc",
+      "decoded_video_md5": "4703a6f751504163d5701ce34ecfb134",
+      "bytes": 20312316,
+      "rows_csv_sha256": "e3aa0c0fe83980403a680dc2de619c5cb7d8cbf5c35ba6202c338827a09a24e3"
+     }
+    },
+    {
+     "label": "s7_3B",
+     "arm": "B",
+     "returncode": 0,
+     "frame_loop_fps": 11.51,
+     "faces_per_s": 10.1,
+     "faces_per_frame": 0.88,
+     "stabilizer_path": "parallel-blocks",
+     "bound_session_lines": 1,
+     "bound_fallback_lines": 0,
+     "failed_frames": 0,
+     "swapped_lines": [
+      "  faces seen                                                       652  100.0%",
+      "  swapped (identity lock)                                          652  100.0%"
+     ],
+     "wall_seconds": 261.4,
+     "stages": {
+      "frame_total": {
+       "total_s": 298.87,
+       "share_pct": 40.9,
+       "calls": 600,
+       "ms_per_call": 498.12
+      },
+      "stabilize": {
+       "total_s": 75.18,
+       "share_pct": 10.3,
+       "calls": 3912,
+       "ms_per_call": 19.22
+      },
+      "enhance": {
+       "total_s": 71.99,
+       "share_pct": 9.9,
+       "calls": 652,
+       "ms_per_call": 110.42
+      },
+      "blend": {
+       "total_s": 56.99,
+       "share_pct": 7.8,
+       "calls": 652,
+       "ms_per_call": 87.4
+      },
+      "track_detect": {
+       "total_s": 47.18,
+       "share_pct": 6.5,
+       "calls": 600,
+       "ms_per_call": 78.64
+      },
+      "detection": {
+       "total_s": 47.17,
+       "share_pct": 6.5,
+       "calls": 600,
+       "ms_per_call": 78.62
+      },
+      "swap": {
+       "total_s": 44.97,
+       "share_pct": 6.2,
+       "calls": 652,
+       "ms_per_call": 68.98
+      },
+      "mask": {
+       "total_s": 25.53,
+       "share_pct": 3.5,
+       "calls": 1304,
+       "ms_per_call": 19.58
+      },
+      "track_wait": {
+       "total_s": 20.46,
+       "share_pct": 2.8,
+       "calls": 597,
+       "ms_per_call": 34.27
+      },
+      "lighting": {
+       "total_s": 16.87,
+       "share_pct": 2.3,
+       "calls": 1304,
+       "ms_per_call": 12.94
+      },
+      "verify": {
+       "total_s": 12.92,
+       "share_pct": 1.8,
+       "calls": 506,
+       "ms_per_call": 25.54
+      },
+      "enhance_recombine": {
+       "total_s": 5.38,
+       "share_pct": 0.7,
+       "calls": 652,
+       "ms_per_call": 8.25
+      },
+      "alignment": {
+       "total_s": 2.97,
+       "share_pct": 0.4,
+       "calls": 652,
+       "ms_per_call": 4.56
+      },
+      "decode": {
+       "total_s": 1.89,
+       "share_pct": 0.3,
+       "calls": 600,
+       "ms_per_call": 3.16
+      },
+      "encode": {
+       "total_s": 1.31,
+       "share_pct": 0.2,
+       "calls": 600,
+       "ms_per_call": 2.18
+      },
+      "encode_finalize": {
+       "total_s": 0.21,
+       "share_pct": 0.0,
+       "calls": 1,
+       "ms_per_call": 210.53
+      },
+      "track_decode": {
+       "total_s": 0.18,
+       "share_pct": 0.0,
+       "calls": 600,
+       "ms_per_call": 0.3
+      },
+      "track_consume": {
+       "total_s": 0.18,
+       "share_pct": 0.0,
+       "calls": 597,
+       "ms_per_call": 0.3
+      },
+      "faceset_lookup": {
+       "total_s": 0.0,
+       "share_pct": 0.0,
+       "calls": 652,
+       "ms_per_call": 0.0
+      }
+     },
+     "output": {
+      "file": "G:\\pinokio\\api\\roop-ultimate\\app\\output\\ab_trt_bound_2026-10-09\\s7_3B\\work\\clip_12-23-04.mp4",
+      "sha256": "891f687daa2c38cfdae17e3b505965d586250bf092c19087d0d01fbc758291bc",
+      "decoded_video_md5": "4703a6f751504163d5701ce34ecfb134",
+      "bytes": 20312316,
+      "rows_csv_sha256": "e3aa0c0fe83980403a680dc2de619c5cb7d8cbf5c35ba6202c338827a09a24e3"
+     }
+    },
+    {
+     "label": "s7_4A",
+     "arm": "A",
+     "returncode": 0,
+     "frame_loop_fps": 11.25,
+     "faces_per_s": 9.9,
+     "faces_per_frame": 0.88,
+     "stabilizer_path": "parallel-blocks",
+     "bound_session_lines": 0,
+     "bound_fallback_lines": 0,
+     "failed_frames": 0,
+     "swapped_lines": [
+      "  faces seen                                                       652  100.0%",
+      "  swapped (identity lock)                                          652  100.0%"
+     ],
+     "wall_seconds": 257.9,
+     "stages": {
+      "frame_total": {
+       "total_s": 307.09,
+       "share_pct": 40.8,
+       "calls": 600,
+       "ms_per_call": 511.81
+      },
+      "stabilize": {
+       "total_s": 76.55,
+       "share_pct": 10.2,
+       "calls": 3912,
+       "ms_per_call": 19.57
+      },
+      "enhance": {
+       "total_s": 72.81,
+       "share_pct": 9.7,
+       "calls": 652,
+       "ms_per_call": 111.68
+      },
+      "blend": {
+       "total_s": 60.66,
+       "share_pct": 8.1,
+       "calls": 652,
+       "ms_per_call": 93.03
+      },
+      "track_detect": {
+       "total_s": 49.91,
+       "share_pct": 6.6,
+       "calls": 600,
+       "ms_per_call": 83.18
+      },
+      "detection": {
+       "total_s": 49.9,
+       "share_pct": 6.6,
+       "calls": 600,
+       "ms_per_call": 83.17
+      },
+      "swap": {
+       "total_s": 42.62,
+       "share_pct": 5.7,
+       "calls": 652,
+       "ms_per_call": 65.36
+      },
+      "mask": {
+       "total_s": 29.82,
+       "share_pct": 4.0,
+       "calls": 1304,
+       "ms_per_call": 22.87
+      },
+      "track_wait": {
+       "total_s": 22.04,
+       "share_pct": 2.9,
+       "calls": 597,
+       "ms_per_call": 36.93
+      },
+      "lighting": {
+       "total_s": 16.37,
+       "share_pct": 2.2,
+       "calls": 1304,
+       "ms_per_call": 12.55
+      },
+      "verify": {
+       "total_s": 12.98,
+       "share_pct": 1.7,
+       "calls": 506,
+       "ms_per_call": 25.66
+      },
+      "enhance_recombine": {
+       "total_s": 5.51,
+       "share_pct": 0.7,
+       "calls": 652,
+       "ms_per_call": 8.44
+      },
+      "alignment": {
+       "total_s": 2.94,
+       "share_pct": 0.4,
+       "calls": 652,
+       "ms_per_call": 4.5
+      },
+      "decode": {
+       "total_s": 1.77,
+       "share_pct": 0.2,
+       "calls": 600,
+       "ms_per_call": 2.96
+      },
+      "encode": {
+       "total_s": 1.31,
+       "share_pct": 0.2,
+       "calls": 600,
+       "ms_per_call": 2.19
+      },
+      "track_decode": {
+       "total_s": 0.22,
+       "share_pct": 0.0,
+       "calls": 600,
+       "ms_per_call": 0.37
+      },
+      "encode_finalize": {
+       "total_s": 0.22,
+       "share_pct": 0.0,
+       "calls": 1,
+       "ms_per_call": 218.1
+      },
+      "track_consume": {
+       "total_s": 0.16,
+       "share_pct": 0.0,
+       "calls": 597,
+       "ms_per_call": 0.26
+      },
+      "faceset_lookup": {
+       "total_s": 0.0,
+       "share_pct": 0.0,
+       "calls": 652,
+       "ms_per_call": 0.0
+      }
+     },
+     "output": {
+      "file": "G:\\pinokio\\api\\roop-ultimate\\app\\output\\ab_trt_bound_2026-10-09\\s7_4A\\work\\clip_12-27-24.mp4",
+      "sha256": "891f687daa2c38cfdae17e3b505965d586250bf092c19087d0d01fbc758291bc",
+      "decoded_video_md5": "4703a6f751504163d5701ce34ecfb134",
+      "bytes": 20312316,
+      "rows_csv_sha256": "e3aa0c0fe83980403a680dc2de619c5cb7d8cbf5c35ba6202c338827a09a24e3"
+     }
+    }
+   ]
+  }
+ }
+}

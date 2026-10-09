@@ -1,0 +1,130 @@
+{
+ "xseg": {
+  "bound": {
+   "bit_identical_inputs": "40/40",
+   "max_abs_diff_when_not": 0.0,
+   "latency_ms": {
+    "median": 3.531,
+    "p10": 3.127,
+    "p90": 4.591
+   },
+   "vs_prod": 1.0444
+  },
+  "graph": {
+   "bit_identical_inputs": "40/40",
+   "max_abs_diff_when_not": 0.0,
+   "latency_ms": {
+    "median": 1.565,
+    "p10": 1.506,
+    "p90": 1.903
+   },
+   "vs_prod": 0.4629
+  },
+  "prod": {
+   "latency_ms": {
+    "median": 3.381,
+    "p10": 2.998,
+    "p90": 4.442
+   },
+   "vs_prod": 1.0
+  },
+  "pooled_2x": {
+   "prod": {
+    "calls_per_s": 264.6,
+    "vs_prod": 1.0
+   },
+   "bound": {
+    "calls_per_s": 278.2,
+    "vs_prod": 1.051
+   },
+   "graph": {
+    "calls_per_s": 738.4,
+    "vs_prod": 2.791
+   }
+  },
+  "stability": {
+   "bound": {
+    "calls": 10000,
+    "rechecks_not_identical": 0,
+    "error": null,
+    "median_first1000_ms": 3.36,
+    "median_last1000_ms": 3.443,
+    "device_free_mib_before": 10222,
+    "device_free_mib_after": 10222
+   },
+   "graph": {
+    "calls": 10000,
+    "rechecks_not_identical": 0,
+    "error": null,
+    "median_first1000_ms": 1.596,
+    "median_last1000_ms": 1.585,
+    "device_free_mib_before": 10224,
+    "device_free_mib_after": 10224
+   }
+  }
+ },
+ "restoreformer++": {
+  "bound": {
+   "bit_identical_inputs": "40/40",
+   "max_abs_diff_when_not": 0.0,
+   "latency_ms": {
+    "median": 21.773,
+    "p10": 21.204,
+    "p90": 25.72
+   },
+   "vs_prod": 1.0024
+  },
+  "graph": {
+   "bit_identical_inputs": "40/40",
+   "max_abs_diff_when_not": 0.0,
+   "latency_ms": {
+    "median": 20.261,
+    "p10": 19.783,
+    "p90": 22.514
+   },
+   "vs_prod": 0.9328
+  },
+  "prod": {
+   "latency_ms": {
+    "median": 21.72,
+    "p10": 21.04,
+    "p90": 25.959
+   },
+   "vs_prod": 1.0
+  },
+  "pooled_2x": {
+   "prod": {
+    "calls_per_s": 51.3,
+    "vs_prod": 1.0
+   },
+   "bound": {
+    "calls_per_s": 49.7,
+    "vs_prod": 0.969
+   },
+   "graph": {
+    "calls_per_s": 46.6,
+    "vs_prod": 0.908
+   }
+  },
+  "stability": {
+   "bound": {
+    "calls": 3000,
+    "rechecks_not_identical": 0,
+    "error": null,
+    "median_first1000_ms": 21.53,
+    "median_last1000_ms": 21.343,
+    "device_free_mib_before": 8984,
+    "device_free_mib_after": 8984
+   },
+   "graph": {
+    "calls": 3000,
+    "rechecks_not_identical": 0,
+    "error": null,
+    "median_first1000_ms": 20.135,
+    "median_last1000_ms": 20.224,
+    "device_free_mib_before": 8988,
+    "device_free_mib_after": 8988
+   }
+  }
+ }
+}

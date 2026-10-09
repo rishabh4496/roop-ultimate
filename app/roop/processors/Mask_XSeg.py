@@ -26,6 +26,7 @@ class Mask_XSeg():
         # so the mask runs concurrently across worker threads. None → single shared
         # session serialised by the global lock (original safe default).
         self.pool = None
+        self._bound = {}     # id(ort session) -> BoundStaticSession (ROOP_TRT_BOUND only)
 
 
     def Initialize(self, plugin_options:dict):
@@ -46,7 +47,28 @@ class Mask_XSeg():
             providers, _precision = providers_for('masking:xseg', providers, model_path)
             self._cpu_only = providers == ['CPUExecutionProvider']
 
+            # Opt-in A/B (ROOP_TRT_BOUND=xseg=bound|graph): persistent device I/O on the session's own
+            # stream, optionally replayed as a CUDA graph. Unset = the path below, unchanged.
+            from roop.trt_bound_session import bound_mode, BoundStaticSession
+            _bmode = None if self._cpu_only else bound_mode('xseg')
+
             def _build(_i=0):
+                if _bmode:
+                    try:
+                        _in = onnxruntime.InferenceSession(model_path, _sess_opts, providers=providers).get_inputs()[0].name
+                        bound = BoundStaticSession(model_path, providers, input_shapes={_in: (1, 256, 256, 3)},
+                                                   cuda_graph=(_bmode == 'graph'), session_options=_sess_opts)
+                        if 'tensorrt' in bound.provider.lower():
+                            baseline_probe.log_session('mask:xseg[%s]' % _bmode, bound.session, providers,
+                                                       model_file=model_path)
+                            self._bound[id(bound.session)] = bound
+                            return bound.session
+                        print('[XSeg] ROOP_TRT_BOUND=%s: provider is %s, not TensorRT -- using the shipped path'
+                              % (_bmode, bound.provider))
+                        bound.close()
+                    except Exception as exc:                       # noqa: BLE001
+                        print('[XSeg] ROOP_TRT_BOUND=%s failed (%s: %s) -- using the shipped path'
+                              % (_bmode, type(exc).__name__, str(exc)[:160]))
                 sess = onnxruntime.InferenceSession(model_path, _sess_opts, providers=providers)
                 baseline_probe.log_session('mask:xseg', sess, providers, model_file=model_path)
                 return sess
@@ -97,6 +119,9 @@ class Mask_XSeg():
 
 
     def _run_session(self, sess, temp_frame):
+        bound = self._bound.get(id(sess))
+        if bound is not None:
+            return bound.run({self.model_inputs[0].name: temp_frame})
         if getattr(self, '_cpu_only', False):
             return sess.run([o.name for o in self.model_outputs],
                             {self.model_inputs[0].name: temp_frame})
@@ -127,6 +152,9 @@ class Mask_XSeg():
         if self.pool is not None:
             self.pool.release()
             self.pool = None
+        for _b in self._bound.values():
+            _b.close()
+        self._bound = {}
         if hasattr(self.model_xseg, '_cached_io_binding'):
             del self.model_xseg._cached_io_binding
         del self.model_xseg

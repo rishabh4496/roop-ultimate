@@ -1,0 +1,139 @@
+{
+ "tensorrt": "10.9.0.34",
+ "onnxruntime": "1.23.2",
+ "results": {
+  "detector@512": {
+   "latency_ms": {
+    "heur_on": {
+     "median": 1.188,
+     "p10": 1.128,
+     "p90": 1.77
+    },
+    "heur_off": {
+     "median": 1.208,
+     "p10": 1.138,
+     "p90": 1.764
+    }
+   },
+   "fidelity": {
+    "heur_on": {
+     "frames_with_different_count": 0,
+     "box_iou_min": 0.9956,
+     "kps_max_px": 0.31
+    },
+    "heur_off": {
+     "frames_with_different_count": 0,
+     "box_iou_min": 0.9965,
+     "kps_max_px": 0.29
+    }
+   },
+   "off_over_on_median": 1.0168
+  },
+  "detector@640": {
+   "latency_ms": {
+    "heur_on": {
+     "median": 1.449,
+     "p10": 1.4,
+     "p90": 1.653
+    },
+    "heur_off": {
+     "median": 1.48,
+     "p10": 1.416,
+     "p90": 1.704
+    }
+   },
+   "fidelity": {
+    "heur_on": {
+     "frames_with_different_count": 0,
+     "box_iou_min": 0.9965,
+     "kps_max_px": 0.31
+    },
+    "heur_off": {
+     "frames_with_different_count": 0,
+     "box_iou_min": 0.9957,
+     "kps_max_px": 0.3
+    }
+   },
+   "off_over_on_median": 1.0214
+  },
+  "swapper(hyperswap)": {
+   "latency_ms": {
+    "heur_on": {
+     "median": 4.239,
+     "p10": 4.072,
+     "p90": 4.626
+    },
+    "heur_off": {
+     "median": 4.259,
+     "p10": 4.098,
+     "p90": 4.67
+    }
+   },
+   "fidelity": {
+    "heur_on": {
+     "ssim_min": 1.0,
+     "ssim_mean": 1.0
+    },
+    "heur_off": {
+     "ssim_min": 1.0,
+     "ssim_mean": 1.0
+    },
+    "canary_min_ssim": {
+     "heur_on": 0.99997,
+     "heur_off": 0.99997
+    }
+   },
+   "off_over_on_median": 1.0048
+  },
+  "xseg": {
+   "latency_ms": {
+    "heur_on": {
+     "median": 2.063,
+     "p10": 1.987,
+     "p90": 2.35
+    },
+    "heur_off": {
+     "median": 2.143,
+     "p10": 2.035,
+     "p90": 2.427
+    }
+   },
+   "fidelity": {
+    "heur_on": {
+     "iou_min": 0.9615,
+     "iou_mean": 0.99621
+    },
+    "heur_off": {
+     "iou_min": 0.9675,
+     "iou_mean": 0.99728
+    }
+   },
+   "off_over_on_median": 1.0388
+  },
+  "restoreformer++": {
+   "latency_ms": {
+    "heur_on": {
+     "median": 51.79,
+     "p10": 50.579,
+     "p90": 54.089
+    },
+    "heur_off": {
+     "median": 53.042,
+     "p10": 51.399,
+     "p90": 54.59
+    }
+   },
+   "fidelity": {
+    "heur_on": {
+     "psnr_min_db": 38.27,
+     "psnr_mean_db": 51.19
+    },
+    "heur_off": {
+     "psnr_min_db": 38.11,
+     "psnr_mean_db": 51.25
+    }
+   },
+   "off_over_on_median": 1.0242
+  }
+ }
+}

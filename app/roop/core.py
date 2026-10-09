@@ -352,10 +352,21 @@ def decode_execution_providers(execution_providers: List[str]) -> List[str]:
                 cuda_graph = cuda_graph_value in ('1', 'true', 'yes', 'on')
                 cache_label = cache_namespace(trt_precision,
                                               roop.globals.cuda_device_id)
+                # ROOP_TRT_BUILD_HEURISTICS: unset keeps the shipped behaviour
+                # (heuristic tactic selection exactly when precision is 'mixed');
+                # 1/0 forces it. An A/B switch: heuristics decide WHICH tactics the
+                # build picks, and that is not neutral -- swap_canary.py records the
+                # same options minus heuristics building a swapper engine that runs
+                # at full speed and paints the wrong face. A forced value gets its
+                # own cache namespace (it is in `builder_config` below), so it can
+                # never reuse, or poison, an engine built the shipped way.
+                _heur_env = os.environ.get('ROOP_TRT_BUILD_HEURISTICS', '').strip().lower()
+                build_heuristics = (trt_precision == 'mixed' if _heur_env == ''
+                                    else _heur_env in ('1', 'true', 'yes', 'on'))
                 # LayerNorm fallback changes TensorRT's graph partitioning and
                 # therefore must not reuse engines built with the old setting.
                 if trt_precision == 'mixed':
-                    cache_label += '_lnfp32_seq_heur'
+                    cache_label += '_lnfp32_seq' + ('_heur' if build_heuristics else '')
                 # ── Engine-build tuning, scaled to the GPU ──────────────────
                 try:
                     total_vram = torch.cuda.get_device_properties(roop.globals.cuda_device_id).total_memory
@@ -417,7 +428,7 @@ def decode_execution_providers(execution_providers: List[str]) -> List[str]:
                     'context_memory_sharing': True,
                     'layer_norm_fp32_fallback': trt_precision == 'mixed',
                     'force_sequential_engine_build': trt_precision == 'mixed',
-                    'build_heuristics': trt_precision == 'mixed',
+                    'build_heuristics': build_heuristics,
                     'builder_optimization_level': builder_opt,
                     'cuda_graph': cuda_graph,
                     'auxiliary_streams': auxiliary_streams,
@@ -470,7 +481,7 @@ def decode_execution_providers(execution_providers: List[str]) -> List[str]:
                     # bounded for the large GPEN/CodeFormer graphs. Runtime
                     # inference remains TensorRT mixed; this only changes how
                     # the first engine is searched and built.
-                    'trt_build_heuristics_enable': trt_precision == 'mixed',
+                    'trt_build_heuristics_enable': build_heuristics,
                     # ORT documents level 3 as the default-quality baseline;
                     # level 1 can leave performance on the table on large
                     # enhancer graphs. This is build-time only.
