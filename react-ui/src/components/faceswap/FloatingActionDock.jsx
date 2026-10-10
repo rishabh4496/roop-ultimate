@@ -3,8 +3,10 @@ import { motion, AnimatePresence } from '../../motion';
 import { Icon } from '../../icons';
 
 /**
- * FloatingActionDock — the always-visible action bar at bottom centre: render,
- * preview, workspace layout, ambilight, preset studio, pop-out, drawer toggles.
+ * FloatingActionDock — the always-visible action bar at bottom centre: preview,
+ * workspace layout, ambilight, preset studio, pop-out, drawer toggles. (Not
+ * Start/Cancel: the run bar owns those. The Face Swap tab reserves room below its
+ * content for this dock and a scroll-padding for focus, so it covers nothing.)
  *
  * Colour here follows the design tokens, and that is load-bearing rather than
  * tidiness. This bar is on screen on every tab, and it used to carry FOUR
@@ -21,10 +23,6 @@ import { Icon } from '../../icons';
 export default function FloatingActionDock({
   workspaceMode,
   setWorkspaceMode,
-  isRendering,
-  onStartSwap,
-  onCancelSwap,
-  progress,
   onPreview,
   previewing,
   ambilightEnabled,
@@ -54,33 +52,11 @@ export default function FloatingActionDock({
     <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 pointer-events-auto transition-all duration-300">
       <div className="relative flex items-center gap-2.5 rounded-full border border-white/15 bg-black/85 px-4 py-2.5 shadow-2xl backdrop-blur-xl ring-1 ring-white/10">
         
-        {/* Render Button with Live Status Ring */}
-        <div className="relative flex items-center">
-          {isRendering ? (
-            <button
-              onClick={onCancelSwap}
-              className="fill-danger relative flex items-center gap-2 rounded-full px-4 py-2 text-xs font-semibold shadow-lg transition-all active:scale-95"
-              title="Cancel current swap job"
-            >
-              {/* A steady dot, not `animate-ping`. The progress number next to it
-                  already says the job is live, and a pulsing ring on the one
-                  control the eye is drawn to is the decoration this UI dropped. */}
-              <span className="h-1.5 w-1.5 rounded-full bg-white/90" />
-              <span>Cancel ({Math.round(progress)}%)</span>
-            </button>
-          ) : (
-            <button
-              onClick={onStartSwap}
-              className="fill-accent group relative flex items-center gap-2 overflow-hidden rounded-full px-5 py-2 text-xs font-bold shadow-lg transition-all hover:scale-105 active:scale-95"
-              title="Start Face Swap processing"
-            >
-              <span className="text-base group-hover:scale-110 transition-transform">▶</span>
-              <span>Start Swap</span>
-            </button>
-          )}
-        </div>
-
-        <div className="h-4 w-px bg-white/15" />
+        {/* There is no Start / Cancel here. The run bar at the top of the
+            workspace is the ONE run control (it turns into Cancel while a job is
+            in flight, and says in words why it is unavailable). This dock used to
+            carry a second Start that was never disabled, so with no media loaded
+            it posted a swap the run bar had correctly refused. */}
 
         {/* Instant Preview Button */}
         <button
@@ -149,7 +125,7 @@ export default function FloatingActionDock({
                       }`}
                     >
                       <div className="text-xs flex items-center gap-2"><mode.icon size={13} />{mode.label}</div>
-                      <div className="text-micro text-white/50 pl-[21px]">{mode.desc}</div>
+                      <div className="text-note text-white/50 pl-[21px]">{mode.desc}</div>
                     </button>
                   ))}
                 </div>

@@ -183,10 +183,14 @@ function TrackerSlider({ slider: s, value, enabled, onSetParam }) {
           : 'border-white/5 hover:border-white/15'
       }`}
     >
-      <div className="flex items-center justify-between gap-1.5">
+      <div className="flex items-start justify-between gap-1.5">
+        {/* The label WRAPS (two lines, then clamps) instead of truncating to
+            "Original / Enh…" -- a slider whose name you cannot read is not one
+            you can use. The title carries the whole label, and the info text,
+            for the rare name that is still clamped. */}
         <span
-          className="text-mini font-semibold text-white/75 truncate group-hover/card:text-white transition-colors"
-          title={s.info}
+          className="min-w-0 text-note leading-snug font-semibold text-white/75 line-clamp-2 break-words group-hover/card:text-white transition-colors"
+          title={s.info ? `${s.label} — ${s.info}` : s.label}
         >
           {s.label}
         </span>
@@ -198,7 +202,7 @@ function TrackerSlider({ slider: s, value, enabled, onSetParam }) {
           aria-label={modified
             ? `${s.label} is ${s.format(value)}. Reset to ${s.format(s.defaultVal)}`
             : `${s.label} is ${s.format(value)}, the default`}
-          className={`shrink-0 text-mini font-mono font-bold tabular-nums px-1.5 py-0.5 rounded border transition-colors ${
+          className={`shrink-0 text-note font-mono font-bold tabular-nums px-1.5 py-0.5 rounded border transition-colors ${
             modified && enabled
               ? 'text-accent bg-[var(--accent)]/10 border-[var(--accent)]/30 hover:bg-[var(--accent)]/20 cursor-pointer'
               : 'text-muted bg-white/[0.03] border-white/10 cursor-default'
@@ -208,8 +212,8 @@ function TrackerSlider({ slider: s, value, enabled, onSetParam }) {
         </button>
       </div>
 
-      <div className="flex items-center gap-1.5 mt-1.5">
-        <span className="text-nano font-mono text-muted tabular-nums shrink-0">{s.min}</span>
+      <div className="flex items-center gap-1.5 mt-0.5">
+        <span className="text-note font-mono text-muted tabular-nums shrink-0">{s.min}</span>
         <div className="relative flex-1 flex items-center">
           <input
             type="range"
@@ -220,9 +224,12 @@ function TrackerSlider({ slider: s, value, enabled, onSetParam }) {
             disabled={!enabled}
             aria-label={s.label}
             onChange={(e) => onSetParam && onSetParam(s.key, parseFloat(e.target.value))}
-            className="w-full h-1 rounded-lg appearance-none bg-white/10 cursor-pointer accent-[var(--accent)] focus:outline-none focus-visible:ring-1 focus-visible:ring-[var(--accent)] disabled:cursor-not-allowed"
+            className="w-full accent-[var(--accent)] focus:outline-none disabled:cursor-not-allowed"
+            // The filled part of the rail. It goes through `--range-track`
+            // (the track pseudo-element in index.css) rather than `background`,
+            // because the input's own box is now the 24px hit area.
             style={{
-              background: `linear-gradient(to right, var(--accent) 0%, var(--accent) ${percent}%, rgba(255,255,255,0.1) ${percent}%, rgba(255,255,255,0.1) 100%)`,
+              '--range-track': `linear-gradient(to right, var(--accent) 0%, var(--accent) ${percent}%, rgba(255,255,255,0.1) ${percent}%, rgba(255,255,255,0.1) 100%)`,
             }}
           />
           {/* Where the slider ships. Not a control — the value badge resets. */}
@@ -234,7 +241,7 @@ function TrackerSlider({ slider: s, value, enabled, onSetParam }) {
             />
           )}
         </div>
-        <span className="text-nano font-mono text-muted tabular-nums shrink-0">{s.max}</span>
+        <span className="text-note font-mono text-muted tabular-nums shrink-0">{s.max}</span>
       </div>
     </div>
   );
@@ -469,7 +476,7 @@ export default function SliderTrackerBar({
             </span>
             {activePreset === 'Custom' && (
               <span
-                className="px-2 py-1 rounded-lg text-micro font-bold border border-dashed border-white/25 text-white/60 bg-white/[0.03]"
+                className="px-2 py-1 rounded-lg text-note font-bold border border-dashed border-white/25 text-white/60 bg-white/[0.03]"
                 title="Current slider values do not match any saved preset"
               >
                 Custom
@@ -494,7 +501,7 @@ export default function SliderTrackerBar({
                     type="button"
                     onClick={() => applyPreset(p)}
                     disabled={!sliderEffectEnabled}
-                    className="px-2.5 py-1 text-micro font-bold disabled:cursor-not-allowed"
+                    className="px-2.5 py-1 text-note font-bold disabled:cursor-not-allowed"
                   >
                     {p.name}
                   </button>
@@ -531,14 +538,14 @@ export default function SliderTrackerBar({
                   type="button"
                   onClick={handleSaveCurrentPreset}
                   disabled={!newPresetName.trim()}
-                  className="px-2.5 py-1 rounded-lg text-micro font-bold bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)] transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                  className="px-2.5 py-1 rounded-lg text-note font-bold bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)] transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                 >
                   Save
                 </button>
                 <button
                   type="button"
                   onClick={() => setIsSaving(false)}
-                  className="px-2 py-1 rounded-lg text-micro font-bold bg-white/10 text-white/60 hover:text-white transition-colors"
+                  className="px-2 py-1 rounded-lg text-note font-bold bg-white/10 text-white/60 hover:text-white transition-colors"
                 >
                   Cancel
                 </button>
@@ -548,7 +555,7 @@ export default function SliderTrackerBar({
                 type="button"
                 onClick={() => setIsSaving(true)}
                 disabled={!sliderEffectEnabled}
-                className="px-2.5 py-1 rounded-lg text-micro font-bold bg-[var(--accent)]/15 hover:bg-[var(--accent)]/25 border border-[var(--accent)]/40 text-white transition-all shadow-[0_0_10px_var(--accent-glow)] flex items-center gap-1 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                className="px-2.5 py-1 rounded-lg text-note font-bold bg-[var(--accent)]/15 hover:bg-[var(--accent)]/25 border border-[var(--accent)]/40 text-white transition-all shadow-[0_0_10px_var(--accent-glow)] flex items-center gap-1 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
                 title="Save current slider values as a custom preset"
               >
                 <span>Save Preset</span>
@@ -611,15 +618,14 @@ export default function SliderTrackerBar({
                       </span>
                     </button>
 
-                    {/* The grid stops at 4 columns until the ultrawide
-                        breakpoints. The bar sits between the two side panels,
-                        so its container is well under the viewport width — six
-                        columns at 2xl left about 105px for the label, which
-                        truncates "Original / Enhanced Blend" to nothing useful.
-                        3xl/4xl are this project's own ultrawide steps
-                        (1920/2560px), added for exactly this kind of layout. */}
+                    {/* auto-fit with a 220px floor, not a breakpoint ladder. The
+                        bar sits between two side panels, so its width has
+                        little to do with the viewport's; a fixed column count
+                        per breakpoint gave 4 columns of ~81px labels at 1440
+                        ("Original / Enh…"). Each card now gets at least 220px,
+                        however wide the container is. */}
                     {!collapsed && (
-                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 3xl:grid-cols-5 4xl:grid-cols-6 gap-2 mt-1.5">
+                      <div className="grid grid-cols-[repeat(auto-fit,minmax(220px,1fr))] gap-2 mt-1.5">
                         {g.sliders.map((s) => (
                           <TrackerSlider
                             key={s.key}

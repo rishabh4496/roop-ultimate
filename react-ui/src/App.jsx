@@ -1086,7 +1086,7 @@ export default function App() {
             </h1>
             {(meta?.git_version || meta?.installed_commit?.short) && (
               <span
-                className="text-nano font-mono text-muted tracking-wider block mt-0.5"
+                data-small-ok="build stamp: the full commit is in the title" className="text-nano font-mono text-muted tracking-wider block mt-0.5"
                 title={meta?.installed_commit?.sha
                   ? `commit ${meta.installed_commit.sha}${meta.installed_commit.date ? ` · ${meta.installed_commit.date}` : ''}`
                   : undefined}
@@ -1287,7 +1287,7 @@ export default function App() {
                   <div key={s.id} className="p-3 rounded-xl bg-white/5 border border-white/10 flex items-center justify-between gap-2 hover:border-white/20 transition-all">
                     <div className="min-w-0 flex-1">
                       <div className="font-bold text-xs text-white truncate">{s.name}</div>
-                      <div className="text-nano font-mono text-muted">{new Date(s.time).toLocaleString()}</div>
+                      <div className="text-note font-mono text-muted">{new Date(s.time).toLocaleString()}</div>
                     </div>
                     <div className="flex items-center gap-1.5 shrink-0">
                       <button type="button" onClick={() => loadSessionSnapshot(s)} className="px-2.5 py-1 rounded bg-white/10 hover:bg-white/20 text-xs font-semibold text-white">Load</button>

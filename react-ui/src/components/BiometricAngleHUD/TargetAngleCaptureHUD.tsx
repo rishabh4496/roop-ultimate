@@ -116,7 +116,7 @@ export default function TargetAngleCaptureHUD(props: TargetAngleCaptureHUDProps)
 
   if (!isVideo) {
     return (
-      <div className="rounded-xl border border-slate-700/60 bg-slate-950/60 p-3 font-mono text-[11px] text-slate-400">
+      <div className="rounded-xl border border-slate-700/60 bg-slate-950/60 p-3 font-mono text-note text-slate-400">
         Angle capture needs a video target.
       </div>
     );
@@ -128,14 +128,14 @@ export default function TargetAngleCaptureHUD(props: TargetAngleCaptureHUDProps)
       {/* Header */}
       <div className="flex items-center justify-between gap-2">
         <div className="min-w-0">
-          <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-cyan-300/80">Biometric angle capture</div>
-          <div className="text-[11px] text-slate-400 truncate">
+          <div className="font-mono text-micro uppercase tracking-[0.18em] text-cyan-300/80">Biometric angle capture</div>
+          <div className="text-note text-slate-400 truncate">
             {targetPersonId
               ? `${personLabel || 'Selected person'}${current ? ` · ${filled}/9 bins` : ''}`
               : 'Select a target person to begin'}
           </div>
         </div>
-        <label className="flex items-center gap-1.5 font-mono text-[10px] text-slate-400 shrink-0 cursor-pointer">
+        <label className="flex items-center gap-1.5 font-mono text-note text-slate-400 shrink-0 cursor-pointer">
           <input type="checkbox" checked={autoScan} onChange={(e) => setAutoScan(e.target.checked)}
                  className="accent-cyan-400" />
           AUTO
@@ -145,7 +145,7 @@ export default function TargetAngleCaptureHUD(props: TargetAngleCaptureHUDProps)
       {/* Progress */}
       {hud.isScanning && (
         <div className="space-y-1" data-testid="angle-progress" aria-live="polite">
-          <div className="flex justify-between font-mono text-[10px] text-cyan-200/90">
+          <div className="flex justify-between font-mono text-note text-cyan-200/90">
             <span>{hud.phase ? PHASE_LABEL[hud.phase] : 'Starting'}</span>
             <span className="tabular-nums">{Math.round(hud.progress * 100)}%</span>
           </div>
@@ -153,7 +153,7 @@ export default function TargetAngleCaptureHUD(props: TargetAngleCaptureHUDProps)
                role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(hud.progress * 100)}>
             <div className="h-full bg-cyan-400 transition-[width] duration-300" style={{ width: `${hud.progress * 100}%` }} />
           </div>
-          <div className="grid grid-cols-3 gap-1 font-mono text-[10px] text-slate-400 tabular-nums">
+          <div className="grid grid-cols-3 gap-1 font-mono text-note text-slate-400 tabular-nums">
             <span title="Sampled frames analysed per second">{stats?.scan_fps != null ? `${stats.scan_fps} fps` : '— fps'}</span>
             <span title="Detections in the largest tracklet that matches this person so far" className="text-center">
               trk {stats?.tracklet_size ?? 0}
@@ -165,7 +165,7 @@ export default function TargetAngleCaptureHUD(props: TargetAngleCaptureHUDProps)
             </span>
           </div>
           <button type="button" onClick={hud.cancelScan}
-                  className="w-full rounded border border-slate-700 hover:border-slate-500 font-mono text-[10px] py-0.5 text-slate-300">
+                  className="w-full rounded border border-slate-700 hover:border-slate-500 font-mono text-note py-0.5 text-slate-300">
             Cancel scan
           </button>
         </div>
@@ -174,7 +174,7 @@ export default function TargetAngleCaptureHUD(props: TargetAngleCaptureHUDProps)
       {/* Errors / notices */}
       {(hud.error || hud.notice) && (
         <div role={hud.error ? 'alert' : 'status'}
-             className={`flex items-start justify-between gap-2 rounded-lg border px-2 py-1.5 text-[11px] ${hud.error
+             className={`flex items-start justify-between gap-2 rounded-lg border px-2 py-1.5 text-note ${hud.error
                ? 'border-rose-400/40 bg-rose-500/10 text-rose-100' : 'border-slate-600/50 bg-slate-800/50 text-slate-300'}`}>
           <span>{hud.error ? hud.error.message : hud.notice}</span>
           <button type="button" onClick={hud.dismissMessage} aria-label="Dismiss" className="text-slate-400 hover:text-white">×</button>
@@ -184,14 +184,14 @@ export default function TargetAngleCaptureHUD(props: TargetAngleCaptureHUDProps)
       {/* Coverage warnings */}
       {!hud.isScanning && warnings.map((w) => (
         <div key={w.bins.join()} role="alert" data-testid="angle-warning"
-             className="rounded-lg border border-amber-400/40 bg-amber-500/10 px-2 py-1.5 text-[11px] text-amber-100">
-          <span className="font-mono text-[10px] uppercase tracking-wider text-amber-300 mr-1">Coverage</span>
+             className="rounded-lg border border-amber-400/40 bg-amber-500/10 px-2 py-1.5 text-note text-amber-100">
+          <span className="font-mono text-micro uppercase tracking-wider text-amber-300 mr-1">Coverage</span>
           {w.message}
         </div>
       ))}
 
       {current && session && session.tracklets.length === 0 && !hud.isScanning && (
-        <div className="rounded-lg border border-amber-400/40 bg-amber-500/10 px-2 py-1.5 text-[11px] text-amber-100">
+        <div className="rounded-lg border border-amber-400/40 bg-amber-500/10 px-2 py-1.5 text-note text-amber-100">
           No part of the clip matched this person
           {session.best_rejected_score != null
             ? ` (closest other face scored ${session.best_rejected_score.toFixed(2)} against a ${session.scan.similarity_threshold ?? 0.65} threshold)`
@@ -209,7 +209,7 @@ export default function TargetAngleCaptureHUD(props: TargetAngleCaptureHUDProps)
               <img src={refEntry.url} alt={`${BIN_BY_NAME[ref].label} reference`} loading="lazy" decoding="async"
                    className="w-20 h-20 rounded object-cover border border-cyan-400/20 shrink-0" />
             )}
-            <div className="flex-1 min-w-0 font-mono text-[10px] space-y-0.5">
+            <div className="flex-1 min-w-0 font-mono text-note space-y-0.5">
               <div className="text-cyan-300/90 uppercase tracking-wider truncate">
                 {BIN_BY_NAME[ref].label} · {qualityTier(refEntry) || '—'}
               </div>
@@ -231,7 +231,7 @@ export default function TargetAngleCaptureHUD(props: TargetAngleCaptureHUDProps)
 
       {/* Matrix */}
       {hud.overrideBin && (
-        <div className="rounded border border-violet-400/40 bg-violet-500/10 px-2 py-1 text-[11px] text-violet-100">
+        <div className="rounded border border-violet-400/40 bg-violet-500/10 px-2 py-1 text-note text-violet-100">
           Scrub the timeline to a frame showing the <b>{BIN_BY_NAME[hud.overrideBin].label.toLowerCase()}</b> angle,
           then press Assign.
         </div>
@@ -251,7 +251,7 @@ export default function TargetAngleCaptureHUD(props: TargetAngleCaptureHUDProps)
       />
 
       {/* Thresholds */}
-      <div className="space-y-2 rounded-lg border border-slate-700/50 p-2 font-mono text-[10px]">
+      <div className="space-y-2 rounded-lg border border-slate-700/50 p-2 font-mono text-note">
         <label className="block space-y-0.5">
           <span className="flex justify-between text-slate-400">
             <span title="Faces smaller than this frontal-equivalent eye distance are refused">min eye distance</span>
@@ -284,11 +284,11 @@ export default function TargetAngleCaptureHUD(props: TargetAngleCaptureHUDProps)
       {/* Actions */}
       <div className="flex gap-1.5">
         <button type="button" onClick={hud.startScan} disabled={hud.isScanning || !targetPersonId}
-                className="flex-1 rounded-lg border border-cyan-400/30 hover:border-cyan-300/60 hover:bg-cyan-400/10 font-mono text-[10px] uppercase tracking-wider py-1.5 text-cyan-200 disabled:opacity-40">
+                className="flex-1 rounded-lg border border-cyan-400/30 hover:border-cyan-300/60 hover:bg-cyan-400/10 font-mono text-micro uppercase tracking-wider py-1.5 text-cyan-200 disabled:opacity-40">
           {current ? 'Rescan' : 'Scan'}
         </button>
         <button type="button" onClick={apply} disabled={!current || !filled || hud.pending || hud.isScanning}
-                className="flex-[1.6] rounded-lg bg-cyan-400/15 hover:bg-cyan-400/25 border border-cyan-300/40 font-mono text-[10px] uppercase tracking-wider py-1.5 text-cyan-100 disabled:opacity-40"
+                className="flex-[1.6] rounded-lg bg-cyan-400/15 hover:bg-cyan-400/25 border border-cyan-300/40 font-mono text-micro uppercase tracking-wider py-1.5 text-cyan-100 disabled:opacity-40"
                 title="Add the chosen frames to this person's angle bank, so the swap matches them at these angles">
           Add to angle bank ({current ? filled : 0})
         </button>

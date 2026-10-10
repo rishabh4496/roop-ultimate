@@ -5,6 +5,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { getJSON, postJSON, postFile, postFiles, API } from '../api';
 import { Section, Select, Slider, Toggle, TextInput, Button, FaceGallery, Card } from './ui';
+import { confirmDialog } from './confirm';
 import { Icon } from '../icons';
 import PersonGroups from './PersonGroups';
 import QualityReport from './QualityReport';
@@ -68,7 +69,7 @@ import useGridPreviewLoader from './faceswap/useGridPreviewLoader';
 import useWorkspaceLayout from './faceswap/useWorkspaceLayout';
 import { TRACKER_DEFAULT_VALUES, TRACKER_BYPASS_VALUES } from './faceswap/trackerConfig';
 import { TiltCard } from '../motion';
-import { LiveText, LiveValue } from './LiveTelemetry';
+import { LiveText } from './LiveTelemetry';
 import { selectProg, etaMsOf, useTelemetryStore } from '../store/telemetryStore';
 import { outputMediaUrl, outputSource } from './outputUrl';
 import { useFrameSocketHold } from '../transport/useFrameSocket';
@@ -200,6 +201,17 @@ export default function FaceSwap({
     drawers, setDrawers,
     showLeftPanel, showRightPanel, showTimelineDeck,
   } = useWorkspaceLayout();
+
+  // The floating dock covers the bottom of the viewport on this tab. Tabbing to a
+  // control, or scrollIntoView, scrolls it only to the viewport edge -- i.e. under
+  // the dock -- so keep a bottom inset on the scroller while Face Swap is mounted
+  // (WCAG 2.4.11, focus not obscured). Restored on unmount: other tabs have no dock.
+  useEffect(() => {
+    const root = document.documentElement;
+    const prev = root.style.scrollPaddingBottom;
+    root.style.scrollPaddingBottom = '104px';
+    return () => { root.style.scrollPaddingBottom = prev; };
+  }, []);
 
   const [showPresetStudio, setShowPresetStudio] = useState(false);
   const [pinnedIdentities, setPinnedIdentities] = useState(() => {
@@ -2093,6 +2105,23 @@ export default function FaceSwap({
   // Resume moved to the Processing tab with the run bar that carried them.
   const stop = onStopRun || (async () => { await postJSON('/api/stop', {}); notify('Stopping…', 'info'); });
 
+  // The run bar's one primary control. While a job is in flight it BECOMES the
+  // cancel control, in the same place, so a double-click on Start would land on
+  // Cancel -- hence the confirm (the header chip's Stop asks the same question).
+  const confirmStop = async () => {
+    if (await confirmDialog({ title: 'Stop job?', message: 'Stop the active job? The partial output so far is finalized and kept.', confirmLabel: 'Stop', danger: true })) {
+      stop();
+    }
+  };
+
+  // WHY Start is unavailable, in words. One derivation feeds both the button's
+  // `disabled` and the sentence beside it, so they cannot disagree. Empty means
+  // Start is available (or a run is already in flight, which the bar shows itself).
+  const startBlockedReason = progress.processing ? ''
+    : targets.length === 0 ? 'Add a target video or image to start.'
+    : sourceFaces.length === 0 ? 'Add a source face to start.'
+    : '';
+
   // Hide the previous "Latest output" while a job is running so a new upload +
   // run never shows a stale result. The poll keeps reporting the old _last_output
   // until the new job finishes, so we gate on `processing` rather than clearing
@@ -2784,7 +2813,11 @@ export default function FaceSwap({
       : 'text-muted border-white/10 bg-white/5');
 
   return (
-    <div className="flex flex-col lg:flex-row gap-4 items-start w-full">
+    // pb-28: the floating dock is fixed over the bottom ~80px of the viewport. Without
+    // this room the last row of every column could be scrolled no higher than the
+    // dock's own top edge, so whatever sat there (the final setting, a button) was
+    // unreachable by mouse. See also the scroll-padding effect near the dock hook.
+    <div className="flex flex-col lg:flex-row gap-4 items-start w-full pb-28">
 
       {/* COLUMN 1: Settings & Controls — sticky sidebar on large viewports so it
           follows the scroll (and never leaves the lower-left area empty) while
@@ -3031,14 +3064,14 @@ export default function FaceSwap({
                     : 'border-white/10 bg-white/5 text-white/75 hover:bg-white/10'
                 }`}
               >
-                <div className="flex items-center justify-between mb-1">
+                <div className="flex flex-wrap items-center justify-between gap-x-1 gap-y-1 mb-1">
                   <span className="text-xs font-bold text-emerald-400">⚡ Fast</span>
-                  <span className="text-nano px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-mono font-medium">25–60 FPS</span>
+                  <span className="text-note whitespace-nowrap px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-mono font-medium">25–60 FPS</span>
                 </div>
                 <div className="text-mini text-white/90 font-medium leading-tight">
                   GPEN-512 / GFPGAN
                 </div>
-                <div className="text-micro text-muted mt-0.5">
+                <div className="text-note text-muted mt-0.5">
                   Realtime scrubbing
                 </div>
               </button>
@@ -3055,14 +3088,14 @@ export default function FaceSwap({
                     : 'border-white/10 bg-white/5 text-white/75 hover:bg-white/10'
                 }`}
               >
-                <div className="flex items-center justify-between mb-1">
+                <div className="flex flex-wrap items-center justify-between gap-x-1 gap-y-1 mb-1">
                   <span className="text-xs font-bold text-blue-400">⚖️ Balanced</span>
-                  <span className="text-nano px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-300 font-mono font-medium">w = 0.6</span>
+                  <span className="text-note whitespace-nowrap px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-300 font-mono font-medium">w = 0.6</span>
                 </div>
                 <div className="text-mini text-white/90 font-medium leading-tight">
                   CodeFormer
                 </div>
-                <div className="text-micro text-muted mt-0.5">
+                <div className="text-note text-muted mt-0.5">
                   Optimal fidelity weight
                 </div>
               </button>
@@ -3078,14 +3111,14 @@ export default function FaceSwap({
                     : 'border-white/10 bg-white/5 text-white/75 hover:bg-white/10'
                 }`}
               >
-                <div className="flex items-center justify-between mb-1">
+                <div className="flex flex-wrap items-center justify-between gap-x-1 gap-y-1 mb-1">
                   <span className="text-xs font-bold text-purple-400">🎬 VFX Master</span>
-                  <span className="text-nano px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-300 font-mono font-medium">2–6 FPS</span>
+                  <span className="text-note whitespace-nowrap px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-300 font-mono font-medium">2–6 FPS</span>
                 </div>
                 <div className="text-mini text-white/90 font-medium leading-tight">
                   Tile Diffusion
                 </div>
-                <div className="text-micro text-muted mt-0.5">
+                <div className="text-note text-muted mt-0.5">
                   Offline rendering only
                 </div>
               </button>
@@ -3571,7 +3604,7 @@ export default function FaceSwap({
                       <div className="shrink-0 opacity-75 hidden text-white/50"><TypeIcon size={16} /></div>
                       <div className="flex-1 min-w-0">
                         <span className="truncate block font-bold text-white/90 group-hover:text-white transition-colors">{t.name}</span>
-                        <div className="flex items-center gap-2 mt-0.5 text-micro font-medium text-muted">
+                        <div className="flex items-center gap-2 mt-0.5 text-note font-medium text-muted">
                           {isVideo ? (
                             <span>{t.frames} frames · {t.fps} FPS{duration ? ` · ${duration}s` : ''}</span>
                           ) : (
@@ -3715,9 +3748,13 @@ export default function FaceSwap({
             <div className="w-full space-y-3">
               <div className="rounded-2xl glass-panel p-3.5 sm:p-4 flex flex-col md:flex-row items-center justify-between gap-3 sm:gap-4 shadow-xl border border-white/5 w-full">
                 <div className="flex items-center gap-3 w-full md:w-auto">
-                  <Button variant="primary" size="lg" onClick={start} disabled={targets.length === 0 || sourceFaces.length === 0 || progress.processing} className="w-full md:w-auto justify-center">▶ Start Swapping</Button>
+                  {progress.processing ? (
+                    <Button variant="stop" size="lg" onClick={confirmStop} aria-describedby="run-status" className="w-full md:w-auto justify-center">■ Cancel render</Button>
+                  ) : (
+                    <Button variant="primary" size="lg" onClick={start} disabled={!!startBlockedReason} aria-describedby="run-status" className="w-full md:w-auto justify-center">▶ Start Swapping</Button>
+                  )}
                   {maxFrames > 1 && (
-                    <Button variant="secondary" size="lg" onClick={renderPreviewClip} disabled={targets.length === 0 || sourceFaces.length === 0 || isGeneratingPreviewClip || progress.processing} className="!text-orange-400 border border-orange-500/20 hover:bg-orange-500/10 w-full md:w-auto justify-center">
+                    <Button variant="secondary" size="lg" onClick={renderPreviewClip} disabled={!!startBlockedReason || isGeneratingPreviewClip || progress.processing} aria-describedby="run-status" className="!text-orange-400 border border-orange-500/20 hover:bg-orange-500/10 w-full md:w-auto justify-center">
                       Render 5s Preview
                     </Button>
                   )}
@@ -3728,7 +3765,9 @@ export default function FaceSwap({
                   )}
                 </div>
                 <div className="flex items-center gap-4">
-                  <div className="flex items-center gap-2.5 text-sm font-semibold text-[var(--text-muted)] max-w-xs truncate text-right">
+                  {/* No `truncate`: this is where the user is told WHY Start is
+                      unavailable, so it wraps rather than being cut to "No tar…". */}
+                  <div id="run-status" className="flex items-center gap-2.5 text-sm font-semibold text-[var(--text-muted)] max-w-sm text-right">
                     {progress.processing ? (
                       <>
                         <span className={`h-2.5 w-2.5 rounded-full ${progress.paused ? 'bg-amber-400' : 'bg-[var(--accent)] animate-pulse shadow-[0_0_8px_var(--accent-glow)]'}`} />
@@ -3744,8 +3783,8 @@ export default function FaceSwap({
                       </>
                     ) : (
                       <>
-                        <span className={`h-2.5 w-2.5 rounded-full ${targets.length > 0 && sourceFaces.length > 0 ? 'bg-emerald-500 animate-pulse shadow-[0_0_8px_#10b981]' : 'bg-red-500/50'}`} />
-                        {targets.length === 0 ? 'No target media selected' : sourceFaces.length === 0 ? 'No source faces loaded' : 'Ready to swap'}
+                        <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${startBlockedReason ? 'bg-amber-400' : 'bg-emerald-500 animate-pulse shadow-[0_0_8px_#10b981]'}`} />
+                        <span className={startBlockedReason ? 'text-amber-300' : undefined}>{startBlockedReason || 'Ready to swap'}</span>
                       </>
                     )}
                   </div>
@@ -4107,7 +4146,7 @@ export default function FaceSwap({
                   </div>
                 ))}
               </div>
-              <div className="mt-3 pt-3 border-t border-white/5 text-micro text-muted leading-snug">
+              <div className="mt-3 pt-3 border-t border-white/5 text-note text-muted leading-snug">
                 {estLearned
                   ? 'Learned from your completed runs with these settings. Accuracy improves as you process more.'
                   : calibEst?.source === 'global'
@@ -4239,27 +4278,18 @@ export default function FaceSwap({
       )}
 
       {/* Floating Action Dock HUD */}
-      {/* The dock shows the render's percentage; only IT re-renders for it. */}
-      <LiveValue select={(s) => Math.round(selectProg(s) * 100)}>
-        {(pct) => (
-          <FloatingActionDock
-            workspaceMode={workspaceMode}
-            setWorkspaceMode={setWorkspaceMode}
-            isRendering={!!progress.processing}
-            onStartSwap={start}
-            onCancelSwap={stop}
-            progress={pct}
-            onPreview={() => refreshPreview({ force: true })}
-            previewing={previewing}
-            ambilightEnabled={ambilightEnabled}
-            setAmbilightEnabled={setAmbilightEnabled}
-            onOpenPopout={() => popoutManager.openPopout(previewSrc || rawUrl)}
-            onOpenPresetStudio={() => setShowPresetStudio(true)}
-            drawers={drawers}
-            setDrawers={setDrawers}
-          />
-        )}
-      </LiveValue>
+      <FloatingActionDock
+        workspaceMode={workspaceMode}
+        setWorkspaceMode={setWorkspaceMode}
+        onPreview={() => refreshPreview({ force: true })}
+        previewing={previewing}
+        ambilightEnabled={ambilightEnabled}
+        setAmbilightEnabled={setAmbilightEnabled}
+        onOpenPopout={() => popoutManager.openPopout(previewSrc || rawUrl)}
+        onOpenPresetStudio={() => setShowPresetStudio(true)}
+        drawers={drawers}
+        setDrawers={setDrawers}
+      />
 
       {/* Preset Studio & Recipe Manager Modal */}
       <PresetStudioModal

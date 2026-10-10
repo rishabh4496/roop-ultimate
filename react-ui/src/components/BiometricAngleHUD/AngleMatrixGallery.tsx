@@ -45,7 +45,7 @@ export interface AngleMatrixGalleryProps {
 
 function Telemetry({ entry }: { entry: BinEntry }) {
   return (
-    <div className="absolute inset-x-0 bottom-0 px-1 py-0.5 bg-slate-950/80 font-mono text-[9px] leading-tight text-cyan-100/90 tabular-nums">
+    <div className="absolute inset-x-0 bottom-0 px-1 py-0.5 bg-slate-950/80 font-mono text-note leading-tight text-cyan-100/90 tabular-nums">
       <div className="flex justify-between gap-1">
         <span title="Yaw (+ = turned toward the viewer's right)">Y{fmtAngle(entry.yaw)}</span>
         <span title="Pitch (+ = looking up)">P{fmtAngle(entry.pitch_up)}</span>
@@ -88,21 +88,21 @@ export default function AngleMatrixGallery(props: AngleMatrixGalleryProps) {
                      draggable={false} className="absolute inset-0 w-full h-full object-cover" />
               ) : (
                 <div className="absolute inset-0 grid place-items-center text-center px-1">
-                  <span className="font-mono text-[9px] uppercase tracking-wider text-amber-200/70">
+                  <span className="font-mono text-nano uppercase tracking-wider text-amber-200/70">
                     {entry ? (entry.export_error || 'no crop') : 'no frame'}
                   </span>
                 </div>
               )}
-              <span className="absolute top-0.5 left-0.5 px-1 rounded bg-slate-950/80 font-mono text-[9px] font-semibold text-slate-200/90">
+              <span className="absolute top-0.5 left-0.5 px-1 rounded bg-slate-950/80 font-mono text-note font-semibold text-slate-200/90">
                 {spec.short}
               </span>
               {tier && (
-                <span className={`absolute top-0.5 right-0.5 px-1 rounded border font-mono text-[8px] uppercase ${TIER_STYLE[tier]}`}>
+                <span className={`absolute top-0.5 right-0.5 px-1 rounded border font-mono text-nano uppercase ${TIER_STYLE[tier]}`}>
                   {tier}
                 </span>
               )}
               {chip && (
-                <span className={`absolute top-4 right-0.5 px-1 rounded font-mono text-[8px] ${chip.cls}`}
+                <span className={`absolute top-4 right-0.5 px-1 rounded font-mono text-nano ${chip.cls}`}
                       title={entry?.status === 'nearest'
                         ? `Borrowed from ${entry.distance_deg.toFixed(1)}° outside this bin`
                         : 'Picked by hand'}>
@@ -115,11 +115,11 @@ export default function AngleMatrixGallery(props: AngleMatrixGalleryProps) {
             {assigning ? (
               <div className="flex flex-col gap-0.5 p-1">
                 <button type="button" disabled={busy} onClick={() => onAssign(name, currentFrame)}
-                        className="w-full rounded bg-violet-500/25 hover:bg-violet-500/40 text-violet-100 font-mono text-[9px] py-0.5 disabled:opacity-50">
+                        className="w-full rounded bg-violet-500/25 hover:bg-violet-500/40 text-violet-100 font-mono text-note py-0.5 disabled:opacity-50">
                   Assign frame {currentFrame}
                 </button>
                 <button type="button" onClick={onCancelOverride}
-                        className="w-full rounded text-slate-400 hover:text-slate-200 font-mono text-[9px]">
+                        className="w-full rounded text-slate-400 hover:text-slate-200 font-mono text-note">
                   cancel
                 </button>
               </div>
@@ -128,19 +128,19 @@ export default function AngleMatrixGallery(props: AngleMatrixGalleryProps) {
                 <button type="button" disabled={!entry || entry.frame_idx == null}
                         onClick={() => entry?.frame_idx != null && onJump(toTimelineFrame(entry.frame_idx))}
                         title={entry?.frame_idx != null ? `Jump to frame ${toTimelineFrame(entry.frame_idx)}` : 'No frame'}
-                        className="flex-1 font-mono text-[9px] py-1 text-cyan-200/80 hover:text-cyan-100 hover:bg-cyan-400/10 disabled:opacity-30 disabled:hover:bg-transparent">
+                        className="flex-1 font-mono text-note py-1 text-cyan-200/80 hover:text-cyan-100 hover:bg-cyan-400/10 disabled:opacity-30 disabled:hover:bg-transparent">
                   JUMP
                 </button>
                 {entry?.status === 'override' ? (
                   <button type="button" disabled={busy} onClick={() => onClearOverride(name)}
                           title="Remove the manual pick and use the automatic one"
-                          className="flex-1 font-mono text-[9px] py-1 text-violet-200/80 hover:text-violet-100 hover:bg-violet-400/10 border-l border-white/5 disabled:opacity-40">
+                          className="flex-1 font-mono text-note py-1 text-violet-200/80 hover:text-violet-100 hover:bg-violet-400/10 border-l border-white/5 disabled:opacity-40">
                     AUTO
                   </button>
                 ) : (
                   <button type="button" disabled={busy} onClick={() => onBeginOverride(name)}
                           title="Scrub the timeline to a better frame and assign it to this bin"
-                          className="flex-1 font-mono text-[9px] py-1 text-slate-300/80 hover:text-white hover:bg-white/5 border-l border-white/5 disabled:opacity-40">
+                          className="flex-1 font-mono text-note py-1 text-slate-300/80 hover:text-white hover:bg-white/5 border-l border-white/5 disabled:opacity-40">
                     RETAKE
                   </button>
                 )}

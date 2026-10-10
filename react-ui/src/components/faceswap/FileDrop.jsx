@@ -149,7 +149,7 @@ export default function FileDrop({ label, accept, multiple, onFiles, busy, hint,
                   // confirmation, and the click would also re-trigger the drop
                   // zone it is sitting inside.
                   onClick={(e) => { e.preventDefault(); e.stopPropagation(); onCancel(); }}
-                  className="ml-1 px-2 py-0.5 rounded-md text-micro font-bold text-white/50 hover:text-white bg-white/[0.06] hover:bg-white/15 border border-white/10 transition-colors pointer-events-auto"
+                  className="ml-1 px-2 py-0.5 rounded-md text-note font-bold text-white/50 hover:text-white bg-white/[0.06] hover:bg-white/15 border border-white/10 transition-colors pointer-events-auto"
                   title="Cancel this upload"
                   aria-label="Cancel this upload"
                 >
@@ -166,7 +166,7 @@ export default function FileDrop({ label, accept, multiple, onFiles, busy, hint,
                     style={{ width: `${pct}%` }}
                   />
                 </div>
-                <div className="flex items-center justify-center gap-2 text-micro text-muted font-mono tabular-nums">
+                <div className="flex items-center justify-center gap-2 text-note text-muted font-mono tabular-nums">
                   <span>{fmtBytes(progress.loaded)} / {fmtBytes(progress.total)}</span>
                   {rate > 0 && <><span>·</span><span>{fmtBytes(rate)}/s</span></>}
                   {eta > 0 && <><span>·</span><span>{fmtEta(eta)}</span></>}
@@ -196,7 +196,7 @@ export default function FileDrop({ label, accept, multiple, onFiles, busy, hint,
             </motion.div>
             <div className="text-left">
               <span className={`text-xs font-bold tracking-wide block ${drag ? 'text-accent' : 'text-white/80'}`}>{drag ? 'Drop files now' : label}</span>
-              {!drag && hint && <span className="block text-micro text-muted mt-0.5">{hint}</span>}
+              {!drag && hint && <span className="block text-note text-muted mt-0.5">{hint}</span>}
             </div>
           </div>
         )}
@@ -238,12 +238,12 @@ export default function FileDrop({ label, accept, multiple, onFiles, busy, hint,
                       className="px-2.5 py-1 rounded-lg text-mini font-semibold text-white/50 hover:text-white border border-white/10 hover:border-white/25 transition-colors">
                 Cancel
               </button>
-              <span className="text-micro text-muted">Ctrl + Enter</span>
+              <span className="text-note text-muted">Ctrl + Enter</span>
             </div>
           </div>
         ) : (
           <button type="button" onClick={() => setPathOpen(true)}
-                  className="text-micro font-semibold text-muted hover:text-accent transition-colors"
+                  className="text-note font-semibold text-muted hover:text-accent transition-colors"
                   title="Reference a file already on this machine instead of uploading a copy of it">
             or add by path — no copy, no wait
           </button>

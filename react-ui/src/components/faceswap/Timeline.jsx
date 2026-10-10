@@ -436,11 +436,11 @@ export default function Timeline({
       <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
         <div className="flex items-baseline gap-2.5 min-w-0">
           <span className="text-mini font-semibold uppercase tracking-[0.18em] text-[var(--text-muted)]">Timeline</span>
-          <span className="font-mono text-micro tabular-nums text-muted truncate">
+          <span className="font-mono text-note tabular-nums text-muted truncate">
             {maxFrames.toLocaleString()} frames · {fps} fps · {fmtTC(maxFrames, fps)}
           </span>
           {zoomed && (
-            <span className="rounded-md border border-[var(--border-color)] bg-[var(--surface-2)] px-1.5 py-0.5 font-mono text-nano tabular-nums text-[var(--text-muted)]"
+            <span className="rounded-md border border-[var(--border-color)] bg-[var(--surface-2)] px-1.5 py-0.5 font-mono text-note tabular-nums text-[var(--text-muted)]"
                   title="Visible range — the track is zoomed in">
               showing {fmtTC(vStart, fps)}–{fmtTC(vEnd, fps)} · {Math.round((maxFrames - 1) / vSpan)}×
             </span>
@@ -454,7 +454,7 @@ export default function Timeline({
           <span className="inline-flex items-baseline gap-1.5 rounded-lg border border-[var(--accent)]/25 bg-[var(--accent)]/[0.08] px-2 py-1 font-mono text-mini tabular-nums text-accent"
                 title="Length of the selected range — this is what gets rendered">
             {fmtTC(rangeLen, fps)}
-            <span className="text-nano">{rangeLen.toLocaleString()} f · {rangeShare}%</span>
+            <span className="text-note">{rangeLen.toLocaleString()} f · {rangeShare}%</span>
           </span>
         </div>
       </div>
@@ -471,7 +471,7 @@ export default function Timeline({
           return (
             <React.Fragment key={f}>
               <span className="absolute bottom-0 w-px h-2.5 bg-[var(--text-muted)]/40" style={{ left: `${pct}%` }} />
-              <span className="absolute bottom-3 font-mono text-nano tabular-nums text-muted whitespace-nowrap"
+              <span className="absolute bottom-3 font-mono text-note tabular-nums text-muted whitespace-nowrap"
                     style={{ left: `${pct}%`, transform: anchor(pct) }}>
                 {ticks.frameMode ? fmtTCF(f, fps) : fmtTC(f, fps)}
               </span>
@@ -512,7 +512,7 @@ export default function Timeline({
                 onError={(e) => { e.currentTarget.style.visibility = 'hidden'; }}
                 onLoad={(e) => { e.currentTarget.style.visibility = 'visible'; }}
               />
-              <div className="mt-1 flex items-baseline justify-between px-0.5 font-mono text-micro tabular-nums">
+              <div className="mt-1 flex items-baseline justify-between px-0.5 font-mono text-note tabular-nums">
                 <span className="text-[var(--text-main)] font-semibold">{fmtTC(hoverFrame, fps)}</span>
                 <span className="text-muted">f {hoverFrame.toLocaleString()}</span>
               </div>
@@ -626,7 +626,7 @@ export default function Timeline({
         {inView(frame) && (
           <div className={`absolute -bottom-2 z-30 pointer-events-none ${isScrubbing ? '' : 'transition-[left] duration-100 ease-out'}`}
                style={{ left: `${currentPct}%`, transform: anchor(currentPct) }}>
-            <span className="rounded-md bg-[var(--accent)] px-1.5 py-0.5 font-mono text-nano font-bold tabular-nums text-white shadow-[0_2px_6px_rgba(0,0,0,0.5)]">
+            <span className="rounded-md bg-[var(--accent)] px-1.5 py-0.5 font-mono text-note font-bold tabular-nums text-white shadow-[0_2px_6px_rgba(0,0,0,0.5)]">
               {fmtTCF(frame, fps)}
             </span>
           </div>
@@ -678,7 +678,7 @@ export default function Timeline({
             title="Type a frame number and press Enter to jump"
             aria-label="Frame number"
           />
-          <span className="text-micro tabular-nums text-muted">/ {maxFrames.toLocaleString()}</span>
+          <span className="text-note tabular-nums text-muted">/ {maxFrames.toLocaleString()}</span>
         </div>
 
         {/* Transport */}
@@ -752,7 +752,7 @@ export default function Timeline({
             {markers.length > 0 && (
               <button type="button" onClick={() => persistMarkers([])}
                       title={`Clear all ${markers.length} markers`}
-                      className="px-1.5 py-1 rounded-md font-mono text-micro font-bold tabular-nums text-amber-300/80 hover:text-amber-200 hover:bg-white/[0.06] transition-colors">
+                      className="px-1.5 py-1 rounded-md font-mono text-note font-bold tabular-nums text-amber-300/80 hover:text-amber-200 hover:bg-white/[0.06] transition-colors">
                 {markers.length}✕
               </button>
             )}
@@ -761,7 +761,7 @@ export default function Timeline({
           <div className="spring-cluster flex items-center rounded-lg border border-[var(--border-color)] bg-[var(--surface-2)] p-0.5" title="Playback speed">
             {SPEEDS.map((r) => (
               <button key={r} type="button" onClick={() => setPlaybackRate(r)}
-                      className={`px-1.5 py-1 rounded-md text-micro font-bold tabular-nums transition-colors ${
+                      className={`px-1.5 py-1 rounded-md text-note font-bold tabular-nums transition-colors ${
                         playbackRate === r
                           ? 'bg-[var(--accent)] text-white'
                           : 'text-[var(--text-muted)] hover:text-[var(--text-main)] hover:bg-white/[0.06]'}`}>
@@ -788,7 +788,7 @@ export default function Timeline({
                     onClick={() => (zoomed ? resetView() : setView && setView({
                       start: Math.max(1, startFrame), end: Math.max(startFrame + 1, endFrame) }))}
                     title={zoomed ? 'Zoom out to the whole clip' : 'Zoom to the selected In/Out range'}
-                    className="px-2 py-1 rounded-md text-micro font-bold text-[var(--text-muted)] hover:text-[var(--text-main)] hover:bg-white/[0.06] transition-colors">
+                    className="px-2 py-1 rounded-md text-note font-bold text-[var(--text-muted)] hover:text-[var(--text-main)] hover:bg-white/[0.06] transition-colors">
               {zoomed ? 'All' : 'Range'}
             </button>
           </div>

@@ -53,9 +53,11 @@ NOT_A_SIZE = {
 
 
 def _jsx_files():
+    # .tsx too: BiometricAngleHUD/*.tsx carried 36 arbitrary text-[9|10|11px]
+    # values for as long as this scan skipped it.
     for root, _dirs, names in os.walk(SRC):
         for name in sorted(names):
-            if name.endswith(('.jsx', '.js')):
+            if name.endswith(('.jsx', '.js', '.tsx')):
                 yield os.path.join(root, name)
 
 
@@ -100,6 +102,72 @@ class TypeScale(unittest.TestCase):
             'these look like font-size tokens but are defined nowhere, so '
             'Tailwind emits no rule and the text silently inherits its parent '
             'size: ' + ', '.join(offenders))
+
+
+# ── Body text is 12px or more ───────────────────────────────────────────────
+# `nano` (9px) and `micro` (10px) are CHROME sizes: a pill badge, a <kbd>, a
+# 1-3 character tick, an uppercase letter-spaced tag. A label, a value, a caption
+# or a button's text is body text and does not use them. Whether a given piece of
+# text is chrome is a property of the rendered element, so the whole page is
+# checked in the browser (react-ui/e2e/faceswap-layout.spec.js); what is checked
+# HERE is what can be said from the source alone.
+MIN_BODY_PX = 12
+CHROME_TOKENS = {'nano', 'micro'}
+
+
+def _theme_sizes():
+    with open(CSS, encoding='utf-8') as fh:
+        css = fh.read()
+    return {name: int(px) for name, px in re.findall(r'--text-([a-z]+)\s*:\s*(\d+)px', css)}
+
+
+def _block(src, start_pat):
+    """From the first match of start_pat to the brace that closes its first `{`."""
+    m = re.search(start_pat, src)
+    if not m:
+        return ''
+    i = src.find('{', m.end())
+    depth = 0
+    for j in range(i, len(src)):
+        depth += (src[j] == '{') - (src[j] == '}')
+        if depth == 0:
+            return src[m.start():j + 1]
+    return ''
+
+
+class BodyTextFloor(unittest.TestCase):
+    def test_only_the_chrome_steps_are_under_12px(self):
+        small = {n for n, px in _theme_sizes().items() if px < MIN_BODY_PX}
+        self.assertEqual(
+            small, CHROME_TOKENS,
+            'the steps under 12px must be exactly nano and micro (chrome). '
+            '`mini` was 11px and is body text (captions on 150 call sites): '
+            'raise a body step rather than adding another small one. '
+            f'got {sorted(small)}')
+
+    def test_body_primitives_do_not_use_chrome_sizes(self):
+        """Field/Slider/Toggle/Button and a tracker slider card are all labels,
+        values and button text: none may reach for text-nano / text-micro."""
+        def code(path):
+            with open(path, encoding='utf-8') as fh:
+                src = fh.read()
+            src = re.sub(r'/\*.*?\*/', '', src, flags=re.S)
+            return '\n'.join(l.split('//', 1)[0] for l in src.split('\n'))
+
+        ui = code(os.path.join(SRC, 'components', 'ui.jsx'))
+        tracker = code(os.path.join(SRC, 'components', 'faceswap', 'SliderTrackerBar.jsx'))
+        regions = {
+            'ui.jsx Field': _block(ui, r'export const Field\s*='),
+            'ui.jsx Slider': _block(ui, r'export const Slider\s*='),
+            'ui.jsx Toggle': _block(ui, r'export const Toggle\s*='),
+            'ui.jsx Button': _block(ui, r'export const Button\s*='),
+            'SliderTrackerBar TrackerSlider': _block(tracker, r'function TrackerSlider'),
+        }
+        offenders = []
+        for name, body in regions.items():
+            self.assertTrue(body, f'could not find {name}; the pattern has drifted from the source')
+            offenders += [f'{name}: text-{t}' for t in CHROME_TOKENS if re.search(rf'\btext-{t}\b', body)]
+        self.assertEqual(offenders, [], 'body-text components use a chrome size: ' + ', '.join(offenders))
 
 
 if __name__ == '__main__':

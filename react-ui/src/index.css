@@ -60,10 +60,19 @@
 
      Sizes below `nano` are gone on purpose: 7px and 8px uppercase text with
      letter-spacing is past legible, so those uses are promoted to the 9px
-     floor. `test_ui_type_scale.py` keeps new one-off sizes out. */
-  --text-nano: 9px;      /* badges + overlay chips; the legibility floor */
-  --text-micro: 10px;    /* micro-labels — the workhorse of this UI */
-  --text-mini: 11px;     /* captions, secondary metadata */
+     floor. `test_ui_type_scale.py` keeps new one-off sizes out.
+
+     BODY TEXT IS 12px OR MORE. Labels, values, captions, descriptions and
+     button text are body text. `nano` and `micro` are CHROME sizes, for text
+     that is not read as a sentence: a pill badge, a `<kbd>`, a 1-3 character
+     tick or glyph, an uppercase letter-spaced tag. Anything else under 12px
+     fails `e2e/type-scale.spec.js` (and a `text-nano`/`text-micro` class on a
+     component the test lists as body-only fails test_ui_type_scale.py).
+     `mini` used to be 11px and is the caption size of 150 call sites, so it
+     was RAISED to 12 rather than renamed; it now equals `note`. */
+  --text-nano: 9px;      /* chrome only: badges, overlay chips, ticks */
+  --text-micro: 10px;    /* chrome only: uppercase tags, pill text */
+  --text-mini: 12px;     /* captions, secondary metadata (was 11px) */
   --text-note: 12px;     /* like text-xs, without its line-height */
   --text-compact: 13px;  /* dense body copy */
   --text-plain: 14px;    /* like text-sm, without its line-height */
@@ -1241,19 +1250,45 @@ html[data-render-lite] .animate-scanner-sweep {
 }
 
 /* Custom Webkit range input styling to match Apple Sliders */
+/* The element box is the HIT AREA and is 24px tall (WCAG 2.5.8 target size):
+   the rail used to BE the input's own 4-6px-tall background, so grabbing it
+   meant landing within 2-3px of the line. The visible rail is now the track
+   pseudo-element, still 6px, and `--range-track` lets a caller paint it (the
+   slider tracker draws its filled portion that way). This is unlayered CSS, so
+   it also wins over the `h-1`/`h-1.5` utilities still on the call sites. */
 input[type="range"] {
   -webkit-appearance: none;
+  appearance: none;
   width: 100%;
-  background: rgba(255, 255, 255, 0.12);
-  border-radius: 99px;
+  height: 24px;
+  margin: 0;
+  background: transparent;
   outline: none;
-  transition: background 0.3s;
+  cursor: pointer;
+}
+
+input[type="range"]:disabled {
+  cursor: not-allowed;
+}
+
+input[type="range"]::-webkit-slider-runnable-track {
+  height: 6px;
+  border-radius: 99px;
+  background: var(--range-track, rgba(255, 255, 255, 0.12));
+}
+
+input[type="range"]::-moz-range-track {
+  height: 6px;
+  border-radius: 99px;
+  background: var(--range-track, rgba(255, 255, 255, 0.12));
 }
 
 input[type="range"]::-webkit-slider-thumb {
   -webkit-appearance: none;
   width: 15px;
   height: 15px;
+  /* Centre the 15px thumb on the 6px rail: (6 - 15) / 2. */
+  margin-top: -4.5px;
   border-radius: 99px;
   background: #ffffff;
   border: 2px solid var(--accent);
@@ -1262,12 +1297,31 @@ input[type="range"]::-webkit-slider-thumb {
   transition: transform 0.15s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.2s ease;
 }
 
+input[type="range"]::-moz-range-thumb {
+  width: 11px;
+  height: 11px;
+  border-radius: 99px;
+  background: #ffffff;
+  border: 2px solid var(--accent);
+  box-shadow: 0 2px 6px rgba(0,0,0,0.35);
+  cursor: pointer;
+}
+
 input[type="range"]::-webkit-slider-thumb:hover {
   box-shadow: 0 0 0 5px var(--input-focus);
 }
 
 input[type="range"]::-webkit-slider-thumb:active {
   transform: scale(1.25);
+}
+
+/* The outline is off on the (now invisible) 24px box, so keyboard focus is
+   shown on the thumb, where the eye already is. */
+input[type="range"]:focus-visible::-webkit-slider-thumb {
+  box-shadow: 0 0 0 3px var(--bg-base, #0A0B11), 0 0 0 5px var(--accent);
+}
+input[type="range"]:focus-visible::-moz-range-thumb {
+  box-shadow: 0 0 0 3px var(--bg-base, #0A0B11), 0 0 0 5px var(--accent);
 }
 
 /* ── Light Theme Readability & Contrast ────────────────────────────────────
