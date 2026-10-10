@@ -59,7 +59,5 @@
   "tabStops": {
     "faceswap": 291
   },
-  "idleRequests": {
-    "stub500": 196
-  }
+  "idleRequests": {}
 }

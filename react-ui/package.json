@@ -22,7 +22,8 @@
     "test:facebank": "node .render-check/cinematic-facebank-check.mjs",
     "test:telemetry-queue": "node .render-check/telemetry-queue-check.mjs",
     "test:recognition": "node .render-check/recognition-sync-check.mjs",
-    "test:render-checks": "npm run test:render && npm run test:mapping && npm run test:stage14 && npm run test:batch && npm run test:render:mutations && npm run test:player && npm run test:preview && npm run test:timeline && npm run test:facebank && npm run test:telemetry-queue && npm run test:recognition",
+    "test:retry-policy": "node .render-check/retry-policy-check.mjs",
+    "test:render-checks": "npm run test:render &&npm run test:mapping && npm run test:stage14 && npm run test:batch && npm run test:render:mutations && npm run test:player && npm run test:preview && npm run test:timeline && npm run test:facebank && npm run test:telemetry-queue && npm run test:recognition && npm run test:retry-policy",
     "test:e2e": "playwright test -c e2e/playwright.config.js",
     "test:e2e:baseline": "node e2e/baseline.js",
     "check": "npm run lint && npm run build && npm run test:e2e && npm run test:render-checks"

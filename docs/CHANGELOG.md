@@ -7,6 +7,15 @@ folder). Entries before 2026-09-21 were moved here from the README on 2026-09-22
 
 ## 2026-10-10
 
+- **React UI: a failed frame request is no longer retried forever (`react-ui/src/components/faceswap/retryPolicy.js`).** With a backend answering 500, `useThrottledFrameRequest` re-armed itself from
+  `finally` every 150 ms (the wanted URL is still not the frame on screen after a FAILURE): **196 `/api/target/preview` requests in 30 s from an idle Face Swap tab** (found by the new
+  `react-ui/e2e/idle-requests.spec.js`), and 7.5% of a core against 1.7% when frames load (`idle-cpu.spec.js`; 1.8% after). Failures are now counted per URL: exponential backoff with jitter
+  (0.5 s, 1, 2, 4 s), give up on the 5th consecutive one, reset on a URL change or a manual retry; an AbortError is never counted. The hook returns `{error, retry}` and the stage shows
+  "Frame unavailable - Retry" (over a stale swap or the empty placeholder) instead of silently keeping the previous picture. Audit of the other loops: `usePlaybackBuffer` had the same shape on its
+  HTTP chunk path (a failed chunk was re-asked on the next animation frame, up to 60/s while playing) and now backs off the same way and STOPS playback with a toast after 5; `useJobRecovery`
+  (fixed 15 s heartbeat, holds on failure), `frameSocket` / `useTelemetrySocket` / App's boot and offline retries (already exponential or fixed-slow), the grid-preview loader (one pass per
+  dependency change) and `PreviewCanvas` (one decode per URL) are not loops and are unchanged. Not changed: `PreviewCanvas` still fetches the stage URL itself in parallel with the hook (one duplicate
+  request per frame, success or failure).
 - **RestoreFormer++ FP16 vs FP32 islands (`docs/perf/restorer_fp16_islands_2026-10-10.md`): target not reachable; shipped path unchanged; restorer canary added.** On 32 real crops (ORT CPU FP32 reference) the
   FP16 restorer loses 0.0033 SSIM, spread over the encoder and the VQ codebook lookup - not softmax or norms (FP32 on all of them: 0.99658 -> 0.99669). The only engine to clear 0.998 keeps the
   encoder + quantiser in FP32 (0.99816) at 31.6 ms vs 21.8 ms (69% speed); on the final composited face it recovers 0.0013 of a 0.010 SSIM loss (46.1 -> 46.5 dB, identity delta <= 0.0005). The

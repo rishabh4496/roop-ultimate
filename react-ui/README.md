@@ -44,7 +44,9 @@ The suite refuses to run if `dist/` is missing or older than `src/`.
 | Spec | Asserts |
 | --- | --- |
 | `a11y.spec.js` | axe (WCAG 2.x A/AA + best-practice) on all 9 tabs |
-| `idle-requests.spec.js` | idle Face Swap: preview `500` -> <= 6 `/api/target/preview` requests in 30 s; valid PNG -> 0 after the first load |
+| `idle-requests.spec.js` | idle Face Swap: preview `500` -> <= 6 stage-frame requests (`/api/target/preview` with no `width`) in 30 s and no URL of any kind more than 6 times; valid PNG -> 0 preview requests after the first load |
+| `frame-unavailable.spec.js` | after the retries are spent the stage says "Frame unavailable - Retry" (placeholder and stale-swap cases), stops asking, and Retry recovers |
+| `idle-cpu.spec.js` | idle CPU with a failing preview is within 2x of the valid-frame case (+2% of a core of slack) |
 | `nav-visibility.spec.js` | every nav tab fully visible, page not scrolling sideways, at 1024/1280/1440/1920 px |
 | `tab-stops.spec.js` | Tab presses to walk the Face Swap tab (real key presses) |
 

@@ -52,6 +52,7 @@ import useProfiles from './faceswap/useProfiles';
 import { useSystemTelemetryPoller } from './faceswap/useTelemetry';
 import SystemTelemetryHud from './faceswap/SystemTelemetryHud';
 import useThrottledFrameRequest from './faceswap/useThrottledFrameRequest';
+import FrameUnavailable from './faceswap/FrameUnavailable';
 import {
   dataUrlToOwnedBlobUrl, releaseOwner, revokeUrl, blobUrlToDataUrl,
 } from './faceswap/objectUrls';
@@ -973,8 +974,13 @@ export default function FaceSwap({
     isPlaying, setIsPlaying,
     isLooping, setIsLooping,
     playbackRate, setPlaybackRate,
-    playStalled, playbackSource, clearPlaybackFrame,
+    playStalled, playError, playbackSource, clearPlaybackFrame,
   } = usePlaybackBuffer({ frame, setFrame, selTarget, maxFrames, targets });
+  // Playback stops itself after five failed chunks in a row (usePlaybackBuffer);
+  // without a word the Play button would just pop back out.
+  useEffect(() => {
+    if (playError) notify('Playback stopped: the backend would not return frames. Press Play to try again.', 'error');
+  }, [playError, notify]);
   // Keep /ws/frames connected while this panel is up, so pressing Play streams
   // over the socket from the first frame instead of first paying a handshake
   // (the buffer falls back to HTTP chunks whenever it is not open).
@@ -2115,7 +2121,10 @@ export default function FaceSwap({
   // Throttled to 150 ms, one request in flight, and — the part useSequentialImage
   // could not do — the superseded request is ABORTED rather than left to finish
   // into a frame nobody will look at. See useThrottledFrameRequest.
-  const { frame: rawFrameBitmap, frameSrc: loadedRawUrl } =
+  const {
+    frame: rawFrameBitmap, frameSrc: loadedRawUrl,
+    error: rawFrameError, retry: retryRawFrame,
+  } =
     // NOT while playing: playback frames come from the buffered player (see
     // usePlaybackBuffer). Left enabled, every played frame also queued a
     // random-access still request on the same single decoder the playback
@@ -2165,6 +2174,14 @@ export default function FaceSwap({
     // the two branches above can answer.
     return previewSrc || rawUrl;
   })();
+
+  // The raw frame for the playhead failed every retry, so whatever the stage
+  // shows is NOT the frame asked for -- say so rather than leave a stale picture
+  // that looks current. A swapped preview (or a cached one) for THIS frame is the
+  // right picture, and then there is nothing to apologise for.
+  const frameUnavailable = !!rawFrameError && !rawIsCurrent
+    && !(previewSrc && previewFor === `${activeTargetMediaId || `legacy-index-${selTarget}`}_${frame}`)
+    && !getCachedPreview(selTarget, frame)?.image;
 
   // Keep a detached pop-out monitor in sync. It used to receive exactly one
   // frame — the one it was opened with — because nothing ever called
@@ -3859,12 +3876,17 @@ export default function FaceSwap({
                     previewing={previewing}
                     previewSecs={previewSecs}
                     setIsPlaying={setIsPlaying}
+                    frameUnavailable={frameUnavailable}
+                    onRetryFrame={retryRawFrame}
                   />
                 </div>
               )
             ) : (
               <div className="relative aspect-video rounded-2xl overflow-hidden bg-gradient-to-br from-white/[0.03] to-black/20 border border-white/10 flex items-center justify-center select-none">
                 <div className="absolute inset-0 pointer-events-none opacity-70" style={{ background: 'radial-gradient(circle at 50% 42%, var(--accent-glow), transparent 62%)' }} />
+                {frameUnavailable && (
+                  <FrameUnavailable onRetry={retryRawFrame} className="absolute inset-x-0 bottom-4 z-10" />
+                )}
                 {previewing ? (
                   <div className="relative flex flex-col items-center gap-3">
                     <div className="h-9 w-9 rounded-full border-2 border-white/10 border-t-[var(--accent)] animate-spin" />

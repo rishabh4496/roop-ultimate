@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState, useMemo } from 'react'
 import AIScannerOverlay from './AIScannerOverlay';
 import PreviewCanvas from './PreviewCanvas';
 import CompareSlider from './CompareSlider';
+import FrameUnavailable from './FrameUnavailable';
 import FastCanvasPlayer from '../player/FastCanvasPlayer';
 import {
   clampPan, panAnchoredAt, panCenteringAt, transformFor, uiScale, wheelZoom,
@@ -53,6 +54,10 @@ export default function InteractivePreview({
   // caught up to the playhead. Never unmounted, so starting playback costs no
   // canvas setup and stopping cannot flash.
   playbackSource = null,
+  // The frame for the playhead could not be fetched (retries spent). The canvas
+  // still holds the last good picture, which is not the frame asked for.
+  frameUnavailable = false,
+  onRetryFrame,
 }) {
   const [sliderPosition, setSliderPosition] = useState(50);
   // The live value during a drag. `sliderPosition` only ever holds the value
@@ -1003,6 +1008,10 @@ export default function InteractivePreview({
             Rendering {previewSecs}s
           </div>
         </div>
+      )}
+
+      {frameUnavailable && (
+        <FrameUnavailable onRetry={onRetryFrame} className="absolute inset-x-0 bottom-4 z-50" />
       )}
 
       {stageInfo()}

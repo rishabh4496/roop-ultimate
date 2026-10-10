@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { decodeFrame, releaseFrame } from './frameDecoder';
+import { createFailureTracker, isAbort } from './retryPolicy';
 
 // ── One frame request at a time, throttled, and cancelled the moment it is
 //    superseded ────────────────────────────────────────────────────────────
@@ -35,6 +36,19 @@ import { decodeFrame, releaseFrame } from './frameDecoder';
 // FaceSwap), so a shorter period cannot produce more frames — it only produces
 // more cancelled work. The throttle is bypassed entirely when the URL settles
 // (a keyboard step, a click on the track), because there is nothing to coalesce.
+//
+// ── A failed request is not a reason to ask again at once ─────────────────
+//
+// `drain` re-runs from every request's `finally`, and "the wanted URL is not the
+// frame on screen" stays true after a FAILURE — so with a backend answering 500
+// this hook was a request loop, one every throttle period: 196 in 30 s from an
+// idle tab (react-ui/e2e/idle-requests.spec.js). Failures are now counted per
+// URL (retryPolicy.js): each pushes the next attempt out exponentially with
+// jitter (0.5 s .. 8 s), the fifth consecutive one gives up, and the hook
+// returns `error` and `retry` so the stage can say so instead of silently
+// holding a frame that is not the one asked for. The count resets when the URL
+// (or `enabled`) changes and on `retry()`. An AbortError is the normal end of a
+// superseded request and is never counted.
 
 const DEFAULT_THROTTLE_MS = 150;
 
@@ -50,12 +64,23 @@ export default function useThrottledFrameRequest(url, {
   const frameRef = useRef({ img: null, src: '' });
   const [version, setVersion] = useState(0);
   const [pending, setPending] = useState(false);
+  // Set once the wanted URL has failed its whole retry budget; cleared by a URL
+  // change or retry(). While retries are still being spent it stays null, so a
+  // single blip never flashes an error over a working preview.
+  const [error, setError] = useState(null);
 
   const wantedRef = useRef('');
   const inFlightRef = useRef(null);     // { ctrl, src }
   const lastStartRef = useRef(0);
   const timerRef = useRef(null);
   const aliveRef = useRef(true);
+  const throttleRef = useRef(throttleMs);
+  throttleRef.current = throttleMs;
+  const failuresRef = useRef(null);
+  if (failuresRef.current === null) failuresRef.current = createFailureTracker();
+  // Earliest time the next attempt may start, when the last one failed.
+  const notBeforeRef = useRef(0);
+  const drainRef = useRef(() => {});
 
   // Re-arm on mount, not just disarm on unmount: StrictMode mounts, cleans up
   // and mounts again with these same refs, so a cleanup-only version would
@@ -65,49 +90,80 @@ export default function useThrottledFrameRequest(url, {
     return () => { aliveRef.current = false; };
   }, []);
 
-  useEffect(() => {
-    wantedRef.current = enabled ? (url || '') : '';
+  const start = useCallback((src) => {
+    lastStartRef.current = performance.now();
+    const ctrl = new AbortController();
+    inFlightRef.current = { ctrl, src };
+    setPending(true);
 
-    const start = (src) => {
-      lastStartRef.current = performance.now();
-      const ctrl = new AbortController();
-      inFlightRef.current = { ctrl, src };
-      setPending(true);
-
-      decodeFrame(src, { signal: ctrl.signal }).then((img) => {
-        if (!aliveRef.current || ctrl.signal.aborted) { releaseFrame(img); return; }
-        // Release the frame being replaced. A 4K ImageBitmap is ~33 MB of
-        // resident memory that nothing collects until it is closed, so a scrub
-        // that skipped this would grow the heap by a frame per tick.
-        releaseFrame(frameRef.current.img);
-        frameRef.current = { img, src };
-        setVersion((v) => v + 1);
-      }).catch(() => {
-        // AbortError is the normal outcome for every frame the user swept past;
-        // a genuine failure leaves the previous frame up rather than blanking.
-      }).finally(() => {
-        if (inFlightRef.current?.ctrl === ctrl) {
-          inFlightRef.current = null;
-          if (aliveRef.current) setPending(false);
-        }
-        drain();
-      });
-    };
-
-    // Issue the newest wanted URL, respecting the throttle period.
-    const drain = () => {
-      if (!aliveRef.current) return;
-      const want = wantedRef.current;
-      if (!want || want === frameRef.current.src) return;
-      if (inFlightRef.current) return;                 // finally() re-drains
-      const wait = throttleMs - (performance.now() - lastStartRef.current);
-      if (wait > 0) {
-        if (timerRef.current) return;                  // trailing edge already armed
-        timerRef.current = setTimeout(() => { timerRef.current = null; drain(); }, wait);
-        return;
+    decodeFrame(src, { signal: ctrl.signal }).then((img) => {
+      if (!aliveRef.current || ctrl.signal.aborted) { releaseFrame(img); return; }
+      failuresRef.current.ok(src);
+      notBeforeRef.current = 0;
+      // Release the frame being replaced. A 4K ImageBitmap is ~33 MB of
+      // resident memory that nothing collects until it is closed, so a scrub
+      // that skipped this would grow the heap by a frame per tick.
+      releaseFrame(frameRef.current.img);
+      frameRef.current = { img, src };
+      setVersion((v) => v + 1);
+      setError(null);
+    }).catch((err) => {
+      // AbortError is the normal outcome for every frame the user swept past —
+      // not a failure, and not counted. A genuine failure leaves the previous
+      // frame up rather than blanking, and schedules the next attempt later.
+      if (isAbort(err) || ctrl.signal.aborted || !aliveRef.current) return;
+      if (wantedRef.current !== src) return;      // the user has moved on
+      const f = failuresRef.current.fail(src);
+      if (f.exhausted) {
+        setError(Object.assign(new Error('Frame unavailable'), {
+          attempts: f.count, url: src, cause: err,
+        }));
+      } else {
+        notBeforeRef.current = performance.now() + f.delay;
       }
-      start(want);
-    };
+    }).finally(() => {
+      if (inFlightRef.current?.ctrl === ctrl) {
+        inFlightRef.current = null;
+        if (aliveRef.current) setPending(false);
+      }
+      drainRef.current();
+    });
+  }, []);
+
+  // Issue the newest wanted URL, respecting the throttle period and, after a
+  // failure, the backoff.
+  const drain = useCallback(() => {
+    if (!aliveRef.current) return;
+    const want = wantedRef.current;
+    if (!want || want === frameRef.current.src) return;
+    if (failuresRef.current.exhausted(want)) return;  // given up; retry() re-arms
+    if (inFlightRef.current) return;                 // finally() re-drains
+    const now = performance.now();
+    const wait = Math.max(
+      throttleRef.current - (now - lastStartRef.current),
+      notBeforeRef.current - now,
+    );
+    if (wait > 0) {
+      if (timerRef.current) return;                  // trailing edge already armed
+      timerRef.current = setTimeout(() => { timerRef.current = null; drain(); }, wait);
+      return;
+    }
+    start(want);
+  }, [start]);
+  drainRef.current = drain;
+
+  useEffect(() => {
+    const wanted = enabled ? (url || '') : '';
+    if (wanted !== wantedRef.current) {
+      // A different URL (or the hook switched off/on) is a fresh start: the old
+      // one's failures say nothing about this one, and a backoff timer armed for
+      // the old URL must not hold the new one back.
+      failuresRef.current.reset();
+      notBeforeRef.current = 0;
+      if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; }
+      setError(null);
+    }
+    wantedRef.current = wanted;
 
     if (!wantedRef.current) {
       // Nothing wanted any more: cancel what is running rather than letting it
@@ -127,7 +183,16 @@ export default function useThrottledFrameRequest(url, {
     }
     drain();
     return undefined;
-  }, [url, enabled, throttleMs]);
+  }, [url, enabled, throttleMs, drain]);
+
+  /** Manual retry: forget the failures and ask again straight away. */
+  const retry = useCallback(() => {
+    failuresRef.current.reset();
+    notBeforeRef.current = 0;
+    if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; }
+    setError(null);
+    drainRef.current();
+  }, []);
 
   useEffect(() => () => {
     if (timerRef.current) clearTimeout(timerRef.current);
@@ -146,5 +211,12 @@ export default function useThrottledFrameRequest(url, {
     version,
     /** True while a request is on the wire. */
     pending,
+    /**
+     * null, or an Error ({attempts, url}) once the wanted URL failed five times
+     * in a row. `frame` is then NOT the frame that was asked for.
+     */
+    error,
+    /** Clear the failure streak and request the wanted URL again now. */
+    retry,
   };
 }

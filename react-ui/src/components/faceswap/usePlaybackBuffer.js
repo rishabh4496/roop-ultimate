@@ -3,6 +3,7 @@ import { API } from '../../api';
 import { frameSocket } from '../../transport/frameSocket';
 import { UI_HZ } from '../../store/telemetryStore';
 import { nextNeededFrame } from './playbackWindow';
+import { createFailureTracker, isAbort } from './retryPolicy';
 
 // The whole playback surface of the Face Swap timeline: the play/loop/rate
 // controls' state, the rolling frame buffer behind them, and the rAF clock that
@@ -75,6 +76,9 @@ export default function usePlaybackBuffer({ frame, setFrame, selTarget, maxFrame
   // True while the playhead is held on a frame that hasn't arrived yet.
   const [playStalled, setPlayStalled] = useState(false);
   const stalledRef = useRef(false);
+  // Set when playback STOPPED itself because frames kept failing to arrive (see
+  // retryPolicy.js); cleared the next time play is pressed.
+  const [playError, setPlayError] = useState(null);
   // Which transport fed the last frame: 'socket' | 'http' | ''. Diagnostic.
   const viaRef = useRef('');
   // Counters for verification (tests/frame_transport_ab.py reads them through
@@ -148,6 +152,7 @@ export default function usePlaybackBuffer({ frame, setFrame, selTarget, maxFrame
       setPlayStalled(false);
       return undefined;
     }
+    setPlayError(null);
     const idx = selTarget;
     const fps = targetsRef.current[idx]?.fps || 25;
     // The timeline is 1-based (a fresh target reports start_frame 0), so clamp
@@ -216,6 +221,13 @@ export default function usePlaybackBuffer({ frame, setFrame, selTarget, maxFrame
     // server said no (not a video, target gone), and reopening every tick would
     // turn that into a request loop. HTTP takes over and reports the same way.
     let socketFailed = false;
+    // The same rule for the HTTP chunk path. A failed chunk used to be re-asked
+    // on the very next animation frame -- up to 60 requests a second against a
+    // backend that was answering 500. Now each consecutive failure pushes the
+    // next attempt out (0.5 s, 1 s, 2 s, 4 s) and the fifth stops playback with
+    // an error; any chunk that lands clears the streak.
+    const chunkFailures = createFailureTracker();
+    let chunkNotBefore = 0;
 
     // See playbackWindow.js for the rule (and the loop-wrap bug it fixes).
     const nextNeeded = () => nextNeededFrame({
@@ -268,8 +280,24 @@ export default function usePlaybackBuffer({ frame, setFrame, selTarget, maxFrame
           // contract). Record it, or the tail is re-requested every tick.
           if (parts.length < n) clipEnd = Math.max(1, fr + parts.length - 1);
           viaRef.current = 'http';
+          chunkFailures.reset();
+          chunkNotBefore = 0;
         })
-        .catch(() => { /* aborted, or a failed chunk: pump() re-requests it */ })
+        .catch((err) => {
+          // Aborted (seek, stop, teardown) is not a failure. A real one is
+          // re-requested by pump() -- but only after the backoff, and only five
+          // times.
+          if (cancelled || ctrl.signal.aborted || isAbort(err)) return;
+          const f = chunkFailures.fail('chunk');
+          if (f.exhausted) {
+            setPlayError(Object.assign(new Error('Playback frames unavailable'), {
+              attempts: f.count, cause: err,
+            }));
+            setIsPlaying(false);
+          } else {
+            chunkNotBefore = performance.now() + f.delay;
+          }
+        })
         .finally(done);
     };
 
@@ -356,6 +384,7 @@ export default function usePlaybackBuffer({ frame, setFrame, selTarget, maxFrame
       if (inFlight > 0) return;                         // an HTTP chunk owns the decoder
       if (!socketFailed && frameSocket.isOpen() && pumpSocket()) return;
       if (stream) return;                               // draining; wait for it
+      if (performance.now() < chunkNotBefore) return;   // backing off a failed chunk
       const fr = nextNeeded();
       if (fr !== null) fetchChunk(fr);
     };
@@ -467,6 +496,7 @@ export default function usePlaybackBuffer({ frame, setFrame, selTarget, maxFrame
     isLooping, setIsLooping,
     playbackRate, setPlaybackRate,
     playStalled,
+    playError,
     playbackSource,
     clearPlaybackFrame,
   };
