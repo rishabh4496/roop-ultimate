@@ -13,6 +13,12 @@
 >
 > See `docs/development/UI_V1_V2_MIGRATION_AUDIT.md` for the audit and the
 > per-feature decisions.
+>
+> **2026-10-11:** a second attempt at the same design, six component folders in
+> `react-ui/src/components/` (`studio`, `preview`, `timeline`, `facebank`, `queue`,
+> `telemetry`; including the `StudioWorkspace.jsx` named below), was added on
+> 2026-09-29, never imported by the app, and deleted (commit message and
+> `docs/CHANGELOG.md` 2026-10-11 say why). Recoverable from `8c10e91`.
 
 ## Professional AI Media Workstation Architecture
 

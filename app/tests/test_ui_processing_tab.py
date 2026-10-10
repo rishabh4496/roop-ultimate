@@ -55,7 +55,9 @@ class ProcessingTabWiring(unittest.TestCase):
                       "the Processing tab must be transient — it exists only for a run")
         self.assertRegex(code, r"tab === 'processing'\s*&&\s*\(?\s*<Processing",
                          "the Processing tab is declared but never rendered")
-        self.assertIn("const Processing = lazy(loadProcessing)", code,
+        # lazyPanel is React.lazy that can be retried after a failed chunk (a bare
+        # lazy memoizes its rejection forever); it is still one import() per tab.
+        self.assertIn("const Processing = lazyPanel(loadProcessing)", code,
                       "Processing is not code-split like the other tab panels")
 
     def test_props_app_passes_are_the_props_processing_reads(self):

@@ -93,12 +93,10 @@
         "src/components/FaceSwap.jsx",
         "src/components/Gallery.jsx",
         "src/components/PersonGroups.jsx",
-        "src/components/facebank/FaceBankRouter.jsx",
         "src/components/faceswap/FacesetLibrary.jsx",
         "src/components/faceswap/InteractivePreview.jsx",
         "src/components/faceswap/MediaTabSessionBar.jsx",
-        "src/components/faceswap/PresetStudioModal.jsx",
-        "src/components/preview/CinematicPreview.jsx"
+        "src/components/faceswap/PresetStudioModal.jsx"
       ],
       "rules": {
         "jsx-a11y/click-events-have-key-events": "off"
@@ -106,8 +104,7 @@
     },
     {
       "files": [
-        "src/components/BenchmarkPanel.jsx",
-        "src/components/facebank/FaceBankRouter.jsx"
+        "src/components/BenchmarkPanel.jsx"
       ],
       "rules": {
         "jsx-a11y/label-has-associated-control": "off"
@@ -138,8 +135,7 @@
     {
       "files": [
         "src/components/PersonGroups.jsx",
-        "src/components/faceswap/CompareGrid.jsx",
-        "src/components/timeline/CinematicTimeline.jsx"
+        "src/components/faceswap/CompareGrid.jsx"
       ],
       "rules": {
         "jsx-a11y/no-noninteractive-tabindex": "off"
@@ -152,13 +148,10 @@
         "src/components/CommandPalette.jsx",
         "src/components/FaceSwap.jsx",
         "src/components/PersonGroups.jsx",
-        "src/components/facebank/FaceBankRouter.jsx",
         "src/components/faceswap/FacesetLibrary.jsx",
         "src/components/faceswap/InteractivePreview.jsx",
         "src/components/faceswap/MediaTabSessionBar.jsx",
-        "src/components/faceswap/PresetStudioModal.jsx",
-        "src/components/preview/CinematicPreview.jsx",
-        "src/components/timeline/CinematicTimeline.jsx"
+        "src/components/faceswap/PresetStudioModal.jsx"
       ],
       "rules": {
         "jsx-a11y/no-static-element-interactions": "off"

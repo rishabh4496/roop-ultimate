@@ -54,7 +54,7 @@
     "app/update_health.py": "7e9323cee2b05a60f14b8c71970263c6904209dfffb0f64333c30f9342f1304e",
     "app/update_manager.py": "9c909789c2c0f5a995c4f6a825c97db8c4d20322ecfa7b7d5fc4747da91e9f92",
     "react-ui/package-lock.json": "c7f402b1c64a9bc52f158eab62243581b8eb84ea83f9155efeed08fe8bcf3bae",
-    "react-ui/package.json": "9ef1361e773e94b49af59141f75f9cde2edadf5ee6cc316d43cc19004917eb05",
+    "react-ui/package.json": "75fcf135957dd8681998dbbb5eb5ee7fe306e5c9e3be790ba4be967a27c9d2fc",
     "scripts/fix_tensorrt.js": "1084ea447a5076b65469ca2b4824142245946908620c0c11d960531f5a0721ac",
     "torch.js": "fc11d982a64ed659e0fe8f40e46bb11d163afb5262ed8a6784dc9d2e4c534006",
     "update.js": "1072c0006075cbdf406e41a2dad48ef111634daaa7f38df0c3dea5a4b2a55c4e"

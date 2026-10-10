@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback, useRef, useMemo, Suspense, lazy } from 'react';
+import React, { useEffect, useState, useCallback, useRef, useMemo, Suspense } from 'react';
 import { getJSON, postJSON } from './api';
 import { Toasts, Confetti, MotionIcon } from './components/ui';
 import QualityProfilesModal, { BUILTIN_PROFILES } from './components/QualityProfilesModal';
@@ -6,6 +6,7 @@ import CommandPalette from './components/CommandPalette';
 import HeaderControls from './components/HeaderNav';
 import ModelSplash from './components/ModelSplash';
 import ErrorBoundary from './components/ErrorBoundary';
+import { lazyPanel, resetFailedPanels } from './components/lazyPanel';
 import { ConfirmHost, confirmDialog, promptDialog } from './components/confirm';
 import { fmtTime } from './components/faceswap/utils';
 import useRunCompleteAlert from './components/faceswap/useRunCompleteAlert';
@@ -43,15 +44,15 @@ const loadExtras = () => import('./components/Extras');
 const loadGallery = () => import('./components/Gallery');
 const loadRunHistory = () => import('./components/RunHistory');
 
-const Home = lazy(loadHome);
-const FaceSwap = lazy(loadFaceSwap);
-const BatchSwap = lazy(loadBatchSwap);
-const Processing = lazy(loadProcessing);
-const Settings = lazy(loadSettings);
-const FaceManager = lazy(loadFaceManager);
-const Extras = lazy(loadExtras);
-const Gallery = lazy(loadGallery);
-const RunHistory = lazy(loadRunHistory);
+const Home = lazyPanel(loadHome);
+const FaceSwap = lazyPanel(loadFaceSwap);
+const BatchSwap = lazyPanel(loadBatchSwap);
+const Processing = lazyPanel(loadProcessing);
+const Settings = lazyPanel(loadSettings);
+const FaceManager = lazyPanel(loadFaceManager);
+const Extras = lazyPanel(loadExtras);
+const Gallery = lazyPanel(loadGallery);
+const RunHistory = lazyPanel(loadRunHistory);
 
 // Lightweight fallback while a tab chunk loads — mirrors the app's connecting
 // spinner so the swap reads as intentional, not a flash of empty space. It
@@ -1341,7 +1342,7 @@ export default function App() {
               animate="animate"
               exit="exit"
             >
-              <ErrorBoundary resetKey={tab}>
+              <ErrorBoundary resetKey={tab} onReset={resetFailedPanels}>
               <Suspense fallback={<TabFallback />}>
                 {tab === 'home' && (
                   <Home
